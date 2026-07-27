@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { resolveTopMeanWorkerCount, TopMeanWorkerPool } from "../lib/batch-backtest/sp500-top-mean-worker-pool";
+import {
+    resolveTopMeanShardSize,
+    resolveTopMeanWorkerCount,
+    TopMeanWorkerPool,
+} from "../lib/batch-backtest/sp500-top-mean-worker-pool";
 import type { TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
 
 function testWorkerCountResolution(): void {
@@ -11,6 +15,24 @@ function testWorkerCountResolution(): void {
 
     const clampedHigh = resolveTopMeanWorkerCount(32);
     assert.equal(clampedHigh, 24, "Worker count above max must be clamped to 24");
+}
+
+function testShardSizeFeedsEveryWorker(): void {
+    assert.equal(
+        resolveTopMeanShardSize(100, 4),
+        7,
+        "100-pair smoke runs create enough shards to keep four workers fed",
+    );
+    assert.equal(
+        resolveTopMeanShardSize(10_000, 4),
+        250,
+        "large runs retain the established 250-pair upper bound",
+    );
+    assert.equal(
+        resolveTopMeanShardSize(100, 4, 20),
+        20,
+        "an explicit shard size remains authoritative",
+    );
 }
 
 function testWorkerPoolCancel(): void {
@@ -283,6 +305,7 @@ async function testRetryDrainsAcrossWorkerRelease(): Promise<void> {
 
 async function main(): Promise<void> {
     testWorkerCountResolution();
+    testShardSizeFeedsEveryWorker();
     testWorkerPoolCancel();
     await testWorkerPathResolution();
     await testPersistentWorkerPoolEndToEnd();

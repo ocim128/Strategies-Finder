@@ -179,6 +179,22 @@ The S&P 500 TOP_MEAN UI Coordinator runs a long-running batch evaluation over th
 2. **Worker Pool Execution**: Node worker threads (`sp500-top-mean-worker.ts`) execute built-in strategy across pair shards and write atomic `CompactPairArtifact` files under `artifacts/sp500-top-mean/<runId>/shards/`.
 3. **Replay & Asset Ranking**: Invokes `runOpenScoreUsdReplay` using target asset price series and compact pair artifacts, yielding TOP_MEAN asset ranking summaries.
 
+### Performance Diagnostics
+
+Completed runs include `performance` (`sp500_top_mean_performance.v1`) in the
+TOP_MEAN summary. The Batch panel renders the same compact lines included by
+Copy Result and Copy Diagnostic:
+
+- coordinator wall time by preflight, backtesting, snapshot, replay, and result write;
+- worker throughput, shard distribution, worker startup/bundle time;
+- summed worker time for dataset loading, candle preparation, backtest execution, and artifact creation;
+- worker leg/pair/disk cache hit and miss counters;
+- replay scan/event/candidate/outcome/aggregate time and target-dataset load time.
+
+Worker cost is summed across parallel workers and can exceed coordinator wall
+time. Use wall time for before/after latency and summed worker cost to identify
+the bottleneck.
+
 ### API Endpoints
 
 - `POST /api/batch-backtest/sp500-top-mean/run`
@@ -194,6 +210,7 @@ npm run typecheck
 ..\..\..\node_modules\.bin\esno tests\compact-pair-artifact.spec.ts
 ..\..\..\node_modules\.bin\esno tests\sp500-top-mean-worker.spec.ts
 ..\..\..\node_modules\.bin\esno tests\sp500-top-mean-worker-pool.spec.ts
+..\..\..\node_modules\.bin\esno tests\sp500-top-mean-performance.spec.ts
 ..\..\..\node_modules\.bin\esno tests\sp500-top-mean-server-plugin.spec.ts
 ..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts
 ```

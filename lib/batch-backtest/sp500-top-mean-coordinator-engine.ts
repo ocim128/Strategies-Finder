@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import type { BatchSyntheticPairArtifact } from "./batch-synthetic-artifact";
@@ -15,7 +16,11 @@ import {
 } from "./sp500-top-mean-artifact-store";
 import { enumerateSp500Pairs, type CoverageCounts } from "./sp500-pair-enumerator";
 import type { TopMeanRunManifest } from "./compact-pair-artifact";
-import { TOP_MEAN_DEFAULT_SHARD_SIZE, TopMeanWorkerPool, resolveTopMeanWorkerCount } from "./sp500-top-mean-worker-pool";
+import {
+    TopMeanWorkerPool,
+    resolveTopMeanShardSize,
+    resolveTopMeanWorkerCount,
+} from "./sp500-top-mean-worker-pool";
 import {
     runOpenScoreUsdReplay,
     type OpenScoreUsdReplayResult,
@@ -33,6 +38,10 @@ import {
     type StabilityComparison,
     type StabilityWindowResult,
 } from "./sp500-top-mean-stability-compare";
+import {
+    formatTopMeanPerformanceLines,
+    type TopMeanPerformanceDiagnostic,
+} from "./sp500-top-mean-performance";
 
 export interface TopMeanCoordinatorRunRequest {
     runId: string;
@@ -78,6 +87,8 @@ export interface TopMeanResultSummary {
     }>;
     warnings: string[];
     reportLines: string[];
+    /** Server-measured wall time, worker cost, throughput, and cache counters. */
+    performance?: TopMeanPerformanceDiagnostic;
     /**
      * Phase-1 current snapshot: TOP_MEAN derived from positions open at the
      * latest common closed candle, computed from compact artifacts. Separate
@@ -107,6 +118,7 @@ export interface TopMeanStatusResponse {
      */
     actualEngineMode: string;
     engineUsage: { rust: number; typescript: number };
+    performance?: TopMeanPerformanceDiagnostic;
     error?: string;
     result?: TopMeanResultSummary;
     /**
@@ -158,6 +170,8 @@ export class TopMeanCoordinatorEngine {
     private stabilityResult: StabilityComparison | null = null;
     /** Aggregated actual engine usage across completed pair backtests. */
     private engineUsage: { rust: number; typescript: number } = { rust: 0, typescript: 0 };
+    private performanceStartedAtMs = 0;
+    private performanceDiagnostic: TopMeanPerformanceDiagnostic | null = null;
 
     constructor(
         private readonly _request: TopMeanCoordinatorRunRequest,
@@ -183,6 +197,9 @@ export class TopMeanCoordinatorEngine {
             requestedEngineMode: this._request.useRustEnginePreference ? "rust" : "typescript",
             actualEngineMode: this.resolveActualEngineMode(),
             engineUsage: { ...this.engineUsage },
+            ...(this.performanceDiagnostic
+                ? { performance: this.performanceSnapshot() }
+                : {}),
             error: this.manifest?.error,
             result: this.resultSummary || undefined,
             ...(this.stabilityTotalWindows > 0 && !this.stabilityResult
@@ -200,6 +217,26 @@ export class TopMeanCoordinatorEngine {
 
     private resolveActualEngineMode(): string {
         return this.resolveEngineMode(this.engineUsage);
+    }
+
+    private performanceSnapshot(): TopMeanPerformanceDiagnostic {
+        const diagnostic = this.performanceDiagnostic!;
+        return {
+            ...diagnostic,
+            totalMs: this.performanceStartedAtMs > 0
+                ? performance.now() - this.performanceStartedAtMs
+                : diagnostic.totalMs,
+            phases: { ...diagnostic.phases },
+            replay: { ...diagnostic.replay },
+            ...(diagnostic.worker
+                ? {
+                    worker: {
+                        ...diagnostic.worker,
+                        cache: { ...diagnostic.worker.cache },
+                    },
+                }
+                : {}),
+        };
     }
 
     private resolveEngineMode(usage: { rust: number; typescript: number }): string {
@@ -239,6 +276,34 @@ export class TopMeanCoordinatorEngine {
     }
 
     public async run(emitNdjson: (event: unknown) => void): Promise<void> {
+        this.performanceStartedAtMs = performance.now();
+        this.performanceDiagnostic = {
+            schema: "sp500_top_mean_performance.v1",
+            startedAt: new Date().toISOString(),
+            totalMs: 0,
+            pairCount: 0,
+            completedPairs: 0,
+            failedPairs: 0,
+            workerCount: resolveTopMeanWorkerCount(this._request.workerCount),
+            pairsPerSecond: 0,
+            phases: {
+                preflightMs: 0,
+                backtestingMs: 0,
+                snapshotMs: 0,
+                replayMs: 0,
+                resultWriteMs: 0,
+            },
+            replay: {
+                scanMs: 0,
+                eventsMs: 0,
+                targetsMs: 0,
+                outcomesMs: 0,
+                aggregateMs: 0,
+                targetLoadMs: 0,
+                targetDatasets: 0,
+            },
+        };
+        const preflightStartedAt = performance.now();
         activeEngineInstance = this;
         reconcileInterruptedManifestsOnStartup(this.baseDir);
         cleanOldArtifacts(this.baseDir);
@@ -272,6 +337,11 @@ export class TopMeanCoordinatorEngine {
                 useRustEnginePreference: this._request.useRustEnginePreference,
                 canonicalAssets: enumRes.eligibleAssets,
             });
+            const resolvedWorkerCount = resolveTopMeanWorkerCount(this._request.workerCount);
+            const resolvedShardSize = resolveTopMeanShardSize(
+                enumRes.canonicalPairs.length,
+                resolvedWorkerCount,
+            );
 
             let manifest = loadManifest(this._request.runId, this.baseDir);
 
@@ -289,13 +359,10 @@ export class TopMeanCoordinatorEngine {
                     strategyKey: this._request.strategyKey,
                     interval: this._request.interval,
                     pairCount: enumRes.canonicalPairs.length,
-                    // `shardSize`/`totalShards` are authoritative from the worker
-                    // pool (it owns partitioning); seed with the same default so
-                    // the on-disk manifest before the first pool.execute() is not
-                    // misleading (previously hardcoded 50, which the pool always
-                    // overwrote with 250).
-                    shardSize: TOP_MEAN_DEFAULT_SHARD_SIZE,
-                    totalShards: Math.ceil(enumRes.canonicalPairs.length / TOP_MEAN_DEFAULT_SHARD_SIZE),
+                    // Seed the manifest with the same dynamically resolved size
+                    // the worker pool will use so pre-worker status is accurate.
+                    shardSize: resolvedShardSize,
+                    totalShards: Math.ceil(enumRes.canonicalPairs.length / resolvedShardSize),
                     completedShards: [],
                     failedShards: [],
                     completedPairsCount: 0,
@@ -305,12 +372,14 @@ export class TopMeanCoordinatorEngine {
                 };
             }
             this.manifest = manifest;
+            this.performanceDiagnostic.pairCount = enumRes.canonicalPairs.length;
             this.engineUsage = {
                 rust: manifest.engineUsage?.rust ?? 0,
                 typescript: manifest.engineUsage?.typescript ?? 0,
             };
             this.updateManifestEngineTelemetry(manifest);
             saveManifest(manifest, this.baseDir);
+            this.performanceDiagnostic.phases.preflightMs = performance.now() - preflightStartedAt;
 
             if (this.isStopped) {
                 this.emitInterrupted(emitNdjson);
@@ -332,6 +401,7 @@ export class TopMeanCoordinatorEngine {
             this.progressText = `Running backtests across ${enumRes.canonicalPairs.length} pairs...`;
 
             this.pool = new TopMeanWorkerPool();
+            const backtestingStartedAt = performance.now();
 
             const usage = await this.pool.execute({
                 runId: this._request.runId,
@@ -356,6 +426,13 @@ export class TopMeanCoordinatorEngine {
                     });
                 },
             });
+            this.performanceDiagnostic.phases.backtestingMs = performance.now() - backtestingStartedAt;
+            this.performanceDiagnostic.worker = usage.performance;
+            this.performanceDiagnostic.completedPairs = manifest.completedPairsCount;
+            this.performanceDiagnostic.failedPairs = manifest.failedPairsCount;
+            this.performanceDiagnostic.pairsPerSecond = this.performanceDiagnostic.phases.backtestingMs > 0
+                ? manifest.completedPairsCount / (this.performanceDiagnostic.phases.backtestingMs / 1000)
+                : 0;
             this.absorbEngineUsage(usage);
             this.updateManifestEngineTelemetry(manifest);
             saveManifest(manifest, this.baseDir);
@@ -373,10 +450,12 @@ export class TopMeanCoordinatorEngine {
             this.progressText = "Computing current TOP_MEAN snapshot from artifacts...";
             emitNdjson({ type: "progress", phase: "replay", text: this.progressText });
 
+            const snapshotStartedAt = performance.now();
             const currentSnapshotResult = await computeCurrentTopMeanSnapshot(
                 () => iterateRunRawCompactArtifacts(this._request.runId, this.baseDir),
                 { shouldStop: () => this.isStopped },
             );
+            this.performanceDiagnostic.phases.snapshotMs = performance.now() - snapshotStartedAt;
             this.currentSnapshotResult = currentSnapshotResult;
 
             if (this.isStopped) {
@@ -397,25 +476,45 @@ export class TopMeanCoordinatorEngine {
             // The replay's later write merges its fields into the same file
             // via `{ ...replayResult, currentSnapshot }`.
             const resultJsonPath = join(getRunDir(this._request.runId, this.baseDir), "result.json");
+            const snapshotWriteStartedAt = performance.now();
             atomicWriteJsonSync(resultJsonPath, { currentSnapshot: currentSnapshotResult });
+            this.performanceDiagnostic.phases.resultWriteMs += performance.now() - snapshotWriteStartedAt;
             emitNdjson({ type: "current_snapshot", currentSnapshot: currentSnapshotResult });
 
             // 3. Replay & Asset Selector Study Phase
             this.progressText = "Running OPEN_SCORE USD replay and asset selection analysis...";
             emitNdjson({ type: "progress", phase: "replay", text: this.progressText });
+            const replayStartedAt = performance.now();
+            type ReplayPhase = "scan" | "events" | "targets" | "outcomes" | "aggregate";
+            let activeReplayPhase: ReplayPhase | null = null;
+            let activeReplayPhaseStartedAt = replayStartedAt;
+            const finishActiveReplayPhase = (): void => {
+                if (!activeReplayPhase) return;
+                const elapsedMs = performance.now() - activeReplayPhaseStartedAt;
+                if (activeReplayPhase === "scan") this.performanceDiagnostic!.replay.scanMs += elapsedMs;
+                else if (activeReplayPhase === "events") this.performanceDiagnostic!.replay.eventsMs += elapsedMs;
+                else if (activeReplayPhase === "targets") this.performanceDiagnostic!.replay.targetsMs += elapsedMs;
+                else if (activeReplayPhase === "outcomes") this.performanceDiagnostic!.replay.outcomesMs += elapsedMs;
+                else this.performanceDiagnostic!.replay.aggregateMs += elapsedMs;
+            };
 
             const eligibleTargets = enumRes.eligibleTargets;
             const requestInterval = this._request.interval;
 
+            const targetPerformance = this.performanceDiagnostic;
             const targetLoader = () => (async function* () {
                 for (let i = 0; i < eligibleTargets.length; i++) {
                     const { asset, symbol } = eligibleTargets[i]!;
-                    const candles = await loadServerBatchDataset(symbol, requestInterval);
-                    yield {
-                        asset,
-                        symbol,
-                        data: candles,
-                    };
+                    const targetLoadStartedAt = performance.now();
+                    let data: Awaited<ReturnType<typeof loadServerBatchDataset>>;
+                    try {
+                        data = await loadServerBatchDataset(symbol, requestInterval);
+                    } finally {
+                        const completedAt = performance.now();
+                        targetPerformance.replay.targetLoadMs += completedAt - targetLoadStartedAt;
+                        targetPerformance.replay.targetDatasets += 1;
+                    }
+                    yield { asset, symbol, data };
                 }
             })();
 
@@ -433,10 +532,18 @@ export class TopMeanCoordinatorEngine {
                     slippageRate,
                     commissionRate,
                     shouldStop: () => this.isStopped,
+                    onPhase: (phase) => {
+                        if (phase === activeReplayPhase) return;
+                        finishActiveReplayPhase();
+                        activeReplayPhase = phase;
+                        activeReplayPhaseStartedAt = performance.now();
+                    },
                     ...(this._request.sampleFromSec !== undefined ? { sampleFromSec: this._request.sampleFromSec } : {}),
                     ...(this._request.sampleToSec !== undefined ? { sampleToSec: this._request.sampleToSec } : {}),
                 },
             );
+            finishActiveReplayPhase();
+            this.performanceDiagnostic.phases.replayMs = performance.now() - replayStartedAt;
 
             if (this.isStopped) {
                 this.emitInterrupted(emitNdjson);
@@ -448,7 +555,20 @@ export class TopMeanCoordinatorEngine {
             // (written in step 2b). Existing replayResult fields are
             // preserved verbatim (spread first); currentSnapshot is re-stated
             // so the file stays internally consistent after the overwrite.
-            atomicWriteJsonSync(resultJsonPath, { ...replayResult, currentSnapshot: currentSnapshotResult });
+            this.performanceDiagnostic.completedPairs = manifest.completedPairsCount;
+            this.performanceDiagnostic.failedPairs = manifest.failedPairsCount;
+            this.performanceDiagnostic.completedAt = new Date().toISOString();
+            this.performanceDiagnostic.totalMs = performance.now() - this.performanceStartedAtMs;
+            const finalWriteStartedAt = performance.now();
+            atomicWriteJsonSync(resultJsonPath, {
+                ...replayResult,
+                currentSnapshot: currentSnapshotResult,
+                performance: this.performanceSnapshot(),
+            });
+            this.performanceDiagnostic.phases.resultWriteMs += performance.now() - finalWriteStartedAt;
+            this.performanceDiagnostic.completedAt = new Date().toISOString();
+            this.performanceDiagnostic.totalMs = performance.now() - this.performanceStartedAtMs;
+            const performanceLines = formatTopMeanPerformanceLines(this.performanceDiagnostic);
 
             // Build result summary
             const horizonSummaries = replayResult.horizons.map((h) => {
@@ -471,7 +591,8 @@ export class TopMeanCoordinatorEngine {
                 counts: this.counts,
                 horizons: horizonSummaries,
                 warnings: replayResult.warnings,
-                reportLines: replayResult.reportLines,
+                reportLines: [...replayResult.reportLines, "", ...performanceLines],
+                performance: this.performanceDiagnostic,
                 currentSnapshot: currentSnapshotResult,
             };
 
@@ -497,6 +618,10 @@ export class TopMeanCoordinatorEngine {
 
             this.currentPhase = "failed";
             this.progressText = `Fatal error: ${message}`;
+            if (this.performanceDiagnostic) {
+                this.performanceDiagnostic.completedAt = new Date().toISOString();
+                this.performanceDiagnostic.totalMs = performance.now() - this.performanceStartedAtMs;
+            }
             if (this.manifest) {
                 this.manifest.status = "failed";
                 this.manifest.error = message;
@@ -511,6 +636,7 @@ export class TopMeanCoordinatorEngine {
             emitNdjson({
                 type: "fatal",
                 error: message,
+                ...(this.performanceDiagnostic ? { performance: this.performanceSnapshot() } : {}),
                 ...(this.currentSnapshotResult ? { currentSnapshot: this.currentSnapshotResult } : {}),
             });
         } finally {
@@ -602,6 +728,11 @@ export class TopMeanCoordinatorEngine {
             // Per-window manifest in the window-scoped subdir. Resume is
             // supported per-window: a reattach picks up where it left off if
             // the manifest already exists with matching fingerprint.
+            const windowWorkerCount = resolveTopMeanWorkerCount(this._request.workerCount);
+            const windowShardSize = resolveTopMeanShardSize(
+                enumRes.canonicalPairs.length,
+                windowWorkerCount,
+            );
             let windowManifest = loadManifest(this._request.runId, this.baseDir, w.windowKey);
             if (windowManifest) {
                 if (windowManifest.fingerprint !== fingerprint) {
@@ -617,9 +748,8 @@ export class TopMeanCoordinatorEngine {
                     strategyKey: this._request.strategyKey,
                     interval: this._request.interval,
                     pairCount: enumRes.canonicalPairs.length,
-                    // Seed with the pool's actual default (see normal-path twin).
-                    shardSize: TOP_MEAN_DEFAULT_SHARD_SIZE,
-                    totalShards: Math.ceil(enumRes.canonicalPairs.length / TOP_MEAN_DEFAULT_SHARD_SIZE),
+                    shardSize: windowShardSize,
+                    totalShards: Math.ceil(enumRes.canonicalPairs.length / windowShardSize),
                     completedShards: [],
                     failedShards: [],
                     completedPairsCount: 0,
@@ -633,7 +763,7 @@ export class TopMeanCoordinatorEngine {
                 typescript: windowManifest.engineUsage?.typescript ?? 0,
             };
             windowManifest.requestedEngineMode = this._request.useRustEnginePreference ? "rust" : "typescript";
-            windowManifest.workerCount = resolveTopMeanWorkerCount(this._request.workerCount);
+            windowManifest.workerCount = windowWorkerCount;
             saveManifest(windowManifest, this.baseDir, w.windowKey);
 
             const usage = await this.pool.execute({
@@ -751,6 +881,10 @@ export class TopMeanCoordinatorEngine {
     private emitInterrupted(emitNdjson: (event: unknown) => void): void {
         this.currentPhase = "interrupted";
         this.progressText = "Run stopped by user.";
+        if (this.performanceDiagnostic) {
+            this.performanceDiagnostic.completedAt = new Date().toISOString();
+            this.performanceDiagnostic.totalMs = performance.now() - this.performanceStartedAtMs;
+        }
         if (this.manifest) {
             this.manifest.status = "interrupted";
             this.updateManifestEngineTelemetry(this.manifest);
@@ -760,6 +894,7 @@ export class TopMeanCoordinatorEngine {
         emitNdjson({
             type: "done",
             interrupted: true,
+            ...(this.performanceDiagnostic ? { performance: this.performanceSnapshot() } : {}),
         });
     }
 }

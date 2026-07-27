@@ -33,6 +33,7 @@ import type { CoverageCounts } from "./sp500-pair-enumerator";
 import type { CurrentTopMeanResult } from "./sp500-top-mean-current-snapshot";
 import type { TopMeanResultSummary } from "./sp500-top-mean-coordinator-engine";
 import type { StabilityComparison } from "./sp500-top-mean-stability-compare";
+import type { TopMeanPerformanceDiagnostic } from "./sp500-top-mean-performance";
 
 /** Shared shape of the phase-1 current snapshot carried on several events. */
 export type TopMeanCurrentSnapshot = CurrentTopMeanResult;
@@ -62,6 +63,11 @@ export type TopMeanStreamEvent =
         totalWindows?: number;
     }
     | { type: "done"; result: TopMeanResultSummary }
-    | { type: "done"; interrupted: true }
+    | { type: "done"; interrupted: true; performance?: TopMeanPerformanceDiagnostic }
     | { type: "stability_done"; comparison: StabilityComparison }
-    | { type: "fatal"; error: string; currentSnapshot?: TopMeanCurrentSnapshot };
+    | {
+        type: "fatal";
+        error: string;
+        currentSnapshot?: TopMeanCurrentSnapshot;
+        performance?: TopMeanPerformanceDiagnostic;
+    };

@@ -1,7 +1,8 @@
 import { parentPort, workerData, isMainThread } from "node:worker_threads";
+import { performance } from "node:perf_hooks";
 import { executeBacktest, prepareClosedCandleData, resolveExecutorBacktestSettings } from "../backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
-import { loadServerBatchDataset } from "./server-batch-data-loader";
+import { getServerBatchDatasetCacheStats, loadServerBatchDataset } from "./server-batch-data-loader";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import { stripIbkrMarker } from "../local-daily-datasets";
@@ -11,6 +12,7 @@ import type { CompactPairArtifact, CompactTrade } from "./compact-pair-artifact"
 import type { BacktestSettings, OHLCVData, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import { strategies } from "../strategies/library";
+import type { TopMeanCacheCounters, TopMeanWorkerTiming } from "./sp500-top-mean-performance";
 
 export interface TopMeanWorkerTaskData {
     shardIndex: number;
@@ -49,6 +51,7 @@ export type TopMeanWorkerMessage =
           shardIndex: number;
           artifacts: CompactPairArtifact[];
           engineUsage?: { rust: number; typescript: number };
+          performance: TopMeanWorkerTiming;
       }
     | {
           type: "error";
@@ -69,7 +72,28 @@ export function sliceTopMeanCandlesFromSec(candles: OHLCVData[], fromSec?: numbe
     });
 }
 
-export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<{ artifacts: CompactPairArtifact[]; engineUsage: { rust: number; typescript: number } }> {
+function subtractCacheCounters(
+    after: ReturnType<typeof getServerBatchDatasetCacheStats>,
+    before: ReturnType<typeof getServerBatchDatasetCacheStats>,
+): TopMeanCacheCounters {
+    return {
+        legHits: after.leg.hits - before.leg.hits,
+        legMisses: after.leg.misses - before.leg.misses,
+        pairHits: after.pair.hits - before.pair.hits,
+        pairMisses: after.pair.misses - before.pair.misses,
+        diskHits: after.disk.hits - before.disk.hits,
+        diskMisses: after.disk.misses - before.disk.misses,
+        diskWrites: after.disk.writes - before.disk.writes,
+    };
+}
+
+export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<{
+    artifacts: CompactPairArtifact[];
+    engineUsage: { rust: number; typescript: number };
+    performance: TopMeanWorkerTiming;
+}> {
+    const shardStartedAt = performance.now();
+    const cacheBefore = getServerBatchDatasetCacheStats();
     const strategy = strategies[data.strategyKey];
     if (!strategy) {
         throw new Error(`Built-in strategy "${data.strategyKey}" not found in manifest.`);
@@ -82,8 +106,30 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
     const artifacts: CompactPairArtifact[] = [];
     let rustCount = 0;
     let typescriptCount = 0;
+    const timing: TopMeanWorkerTiming = {
+        attemptedPairs: 0,
+        completedPairs: 0,
+        failedPairs: 0,
+        loadMs: 0,
+        prepareMs: 0,
+        backtestMs: 0,
+        artifactMs: 0,
+        pairWallMs: 0,
+        shardWallMs: 0,
+        cache: {
+            legHits: 0,
+            legMisses: 0,
+            pairHits: 0,
+            pairMisses: 0,
+            diskHits: 0,
+            diskMisses: 0,
+            diskWrites: 0,
+        },
+    };
 
     for (const pair of data.pairs) {
+        const pairStartedAt = performance.now();
+        timing.attemptedPairs += 1;
         let pairSymbol = pair.symbol;
         const parsed = parsePortfolioSyntheticPairSymbol(pairSymbol);
         const direct = parsed ? null : canonicalizeLegIdentity(pairSymbol);
@@ -94,7 +140,13 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
         const quoteSymbol = parsed ? parsed.quoteSymbol : "";
 
         try {
-            let candles = await loadServerBatchDataset(pairSymbol, data.interval);
+            const loadStartedAt = performance.now();
+            let candles: OHLCVData[];
+            try {
+                candles = await loadServerBatchDataset(pairSymbol, data.interval);
+            } finally {
+                timing.loadMs += performance.now() - loadStartedAt;
+            }
 
             // Stability mode: trim loaded candles to [backtestFromSec, inf) so
             // the open position reflects a simulation that started at this
@@ -107,6 +159,7 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
             }
 
             if (!candles || candles.length < 200) {
+                timing.failedPairs += 1;
                 if (parentPort) {
                     parentPort.postMessage({
                         type: "progress",
@@ -135,6 +188,7 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
             // not the closed bar. The snapshot asks "as-of which closed
             // candle?", and closedCandleTimeSec is the unambiguous answer
             // regardless of execution model.
+            const prepareStartedAt = performance.now();
             const closedCandleData = prepareClosedCandleData(
                 candles,
                 data.interval,
@@ -142,7 +196,9 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                 nowSec,
             );
             const closedWindow = selectClosedCandleWindow(candles, data.interval, nowSec, 1);
+            timing.prepareMs += performance.now() - prepareStartedAt;
 
+            const backtestStartedAt = performance.now();
             const output = await executeBacktest({
                 ohlcvData: candles,
                 closedCandleDataOverride: closedCandleData,
@@ -169,7 +225,9 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                     skipResultPostProcessing: true,
                 },
             });
+            timing.backtestMs += performance.now() - backtestStartedAt;
 
+            const artifactStartedAt = performance.now();
             const compactTrades: CompactTrade[] = (output.result?.trades || []).map((t) => ({
                 type: t.type,
                 entryTime: t.entryTime,
@@ -202,6 +260,8 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
             };
 
             artifacts.push(artifact);
+            timing.artifactMs += performance.now() - artifactStartedAt;
+            timing.completedPairs += 1;
             if (output.engineUsed === "rust") rustCount += 1;
             else typescriptCount += 1;
 
@@ -216,6 +276,7 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                 } as TopMeanWorkerMessage);
             }
         } catch (err) {
+            timing.failedPairs += 1;
             const message = err instanceof Error ? err.message : String(err);
             if (parentPort) {
                 parentPort.postMessage({
@@ -227,10 +288,18 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                     error: message,
                 } as TopMeanWorkerMessage);
             }
+        } finally {
+            timing.pairWallMs += performance.now() - pairStartedAt;
         }
     }
 
-    return { artifacts, engineUsage: { rust: rustCount, typescript: typescriptCount } };
+    timing.shardWallMs = performance.now() - shardStartedAt;
+    timing.cache = subtractCacheCounters(getServerBatchDatasetCacheStats(), cacheBefore);
+    return {
+        artifacts,
+        engineUsage: { rust: rustCount, typescript: typescriptCount },
+        performance: timing,
+    };
 }
 
 if (!isMainThread && parentPort) {
@@ -242,6 +311,7 @@ if (!isMainThread && parentPort) {
                     shardIndex: (workerData as TopMeanWorkerTaskData).shardIndex,
                     artifacts: result.artifacts,
                     engineUsage: result.engineUsage,
+                    performance: result.performance,
                 } as TopMeanWorkerMessage);
             })
             .catch((err) => {
@@ -261,6 +331,7 @@ if (!isMainThread && parentPort) {
                     shardIndex: msg.shardIndex,
                     artifacts: result.artifacts,
                     engineUsage: result.engineUsage,
+                    performance: result.performance,
                 } as TopMeanWorkerMessage);
             })
             .catch((err) => {

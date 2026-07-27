@@ -1,5 +1,6 @@
 import { availableParallelism } from "node:os";
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
@@ -8,8 +9,14 @@ import type { CapitalSettings } from "../types/backtest";
 import type { TopMeanRunManifest } from "./compact-pair-artifact";
 import { saveManifest, writeShardArtifacts } from "./sp500-top-mean-artifact-store";
 import type { TopMeanWorkerMessage, TopMeanWorkerTaskData } from "./sp500-top-mean-worker";
+import type {
+    TopMeanCacheCounters,
+    TopMeanWorkerPoolPerformance,
+    TopMeanWorkerTiming,
+} from "./sp500-top-mean-performance";
 
 export const TOP_MEAN_DEFAULT_SHARD_SIZE = 250;
+export const TOP_MEAN_TARGET_SHARDS_PER_WORKER = 4;
 
 function moduleThisFileDir(): string {
     try {
@@ -85,7 +92,57 @@ export function resolveTopMeanWorkerCount(explicit?: number): number {
     return Math.max(1, Math.min(24, cores - 4));
 }
 
+export function resolveTopMeanShardSize(
+    totalPairs: number,
+    workerCount: number,
+    explicit?: number,
+): number {
+    if (typeof explicit === "number" && Number.isFinite(explicit) && explicit > 0) {
+        return Math.max(1, Math.floor(explicit));
+    }
+    if (totalPairs <= 0) return 1;
+    const targetShards = Math.max(1, workerCount) * TOP_MEAN_TARGET_SHARDS_PER_WORKER;
+    return Math.max(
+        1,
+        Math.min(TOP_MEAN_DEFAULT_SHARD_SIZE, Math.ceil(totalPairs / targetShards)),
+    );
+}
+
 export type TopMeanEngineUsage = { rust: number; typescript: number };
+export type TopMeanWorkerPoolExecutionResult = TopMeanEngineUsage & {
+    performance: TopMeanWorkerPoolPerformance;
+};
+
+function emptyCacheCounters(): TopMeanCacheCounters {
+    return {
+        legHits: 0,
+        legMisses: 0,
+        pairHits: 0,
+        pairMisses: 0,
+        diskHits: 0,
+        diskMisses: 0,
+        diskWrites: 0,
+    };
+}
+
+function addWorkerTiming(target: TopMeanWorkerTiming, source: TopMeanWorkerTiming): void {
+    target.attemptedPairs += source.attemptedPairs;
+    target.completedPairs += source.completedPairs;
+    target.failedPairs += source.failedPairs;
+    target.loadMs += source.loadMs;
+    target.prepareMs += source.prepareMs;
+    target.backtestMs += source.backtestMs;
+    target.artifactMs += source.artifactMs;
+    target.pairWallMs += source.pairWallMs;
+    target.shardWallMs += source.shardWallMs;
+    target.cache.legHits += source.cache.legHits;
+    target.cache.legMisses += source.cache.legMisses;
+    target.cache.pairHits += source.cache.pairHits;
+    target.cache.pairMisses += source.cache.pairMisses;
+    target.cache.diskHits += source.cache.diskHits;
+    target.cache.diskMisses += source.cache.diskMisses;
+    target.cache.diskWrites += source.cache.diskWrites;
+}
 
 export interface WorkerPoolRunOptions {
     runId: string;
@@ -178,12 +235,38 @@ export class TopMeanWorkerPool {
         this.reusableWorkers = [];
     }
 
-    public async execute(options: WorkerPoolRunOptions): Promise<TopMeanEngineUsage> {
+    public async execute(options: WorkerPoolRunOptions): Promise<TopMeanWorkerPoolExecutionResult> {
+        const poolStartedAt = performance.now();
         const workerCount = resolveTopMeanWorkerCount(options.workerCount);
-        const shardSize = options.shardSize || TOP_MEAN_DEFAULT_SHARD_SIZE;
         const totalPairs = options.canonicalPairs.length;
+        // Completed shard indexes are meaningful only under the size that
+        // created them. A resumed run must preserve that persisted partition;
+        // new runs are free to use the dynamic worker-fed size.
+        const resumedShardSize = (
+            options.manifest.completedShards.length > 0
+            || options.manifest.failedShards.length > 0
+        )
+            ? options.manifest.shardSize
+            : undefined;
+        const shardSize = resolveTopMeanShardSize(
+            totalPairs,
+            workerCount,
+            options.shardSize ?? resumedShardSize,
+        );
         options.manifest.shardSize = shardSize;
         const engineUsage: TopMeanEngineUsage = { rust: 0, typescript: 0 };
+        const workerTiming: TopMeanWorkerTiming = {
+            attemptedPairs: 0,
+            completedPairs: 0,
+            failedPairs: 0,
+            loadMs: 0,
+            prepareMs: 0,
+            backtestMs: 0,
+            artifactMs: 0,
+            pairWallMs: 0,
+            shardWallMs: 0,
+            cache: emptyCacheCounters(),
+        };
 
         // Debounced manifest persistence. The prior code called `saveManifest`
         // (a synchronous multi-KB atomic write with a Windows EPERM retry loop)
@@ -233,7 +316,9 @@ export class TopMeanWorkerPool {
         const pendingShards = shardTasks.filter((task) => !completedSet.has(task.shardIndex));
 
         let completedPairsCount = options.manifest.completedPairsCount || 0;
+        const workerBundleStartedAt = performance.now();
         const workerScriptPath = await resolveTopMeanWorkerPath();
+        const workerBundleMs = performance.now() - workerBundleStartedAt;
 
         // ---- Persistent worker pool (F3+F7) ---------------------------------
         // The prior implementation spawned a fresh `new Worker(...)` per shard
@@ -306,6 +391,7 @@ export class TopMeanWorkerPool {
                 if (!inflight || inflight.settled) return;
 
                 if (msg.type === "shard_complete") {
+                    addWorkerTiming(workerTiming, msg.performance);
                     writeShardArtifacts(options.runId, msg.shardIndex, msg.artifacts, options.baseDir, options.windowKey);
                     if (!options.manifest.completedShards.includes(msg.shardIndex)) {
                         options.manifest.completedShards.push(msg.shardIndex);
@@ -472,6 +558,9 @@ export class TopMeanWorkerPool {
         // their in-memory dataset LRU caches come with them, eliminating the
         // disk JSON re-parse cost across windows in stability mode.
         const spawned: Worker[] = [];
+        let reusedWorkerCount = 0;
+        let spawnedWorkerCount = 0;
+        const workerStartupStartedAt = performance.now();
         try {
             // First absorb any reusable workers from a prior execute() call.
             // The activeWorkers Set is preserved so cancel() / error handling
@@ -491,6 +580,7 @@ export class TopMeanWorkerPool {
                 attachWorkerHandlers(w);
                 freeWorkers.push(w);
                 spawned.push(w);
+                reusedWorkerCount += 1;
             }
             // Spawn any additional workers needed to reach workerCount.
             for (let i = freeWorkers.length; i < workerCount; i++) {
@@ -499,6 +589,7 @@ export class TopMeanWorkerPool {
                 attachWorkerHandlers(worker);
                 freeWorkers.push(worker);
                 spawned.push(worker);
+                spawnedWorkerCount += 1;
             }
         } catch (err) {
             // If spawn failed mid-loop, terminate what we got and rethrow.
@@ -508,6 +599,7 @@ export class TopMeanWorkerPool {
             }
             throw err;
         }
+        const workerStartupMs = performance.now() - workerStartupStartedAt;
 
         // If the pool couldn't spawn any workers (e.g. script resolution
         // issue), surface that explicitly rather than hanging.
@@ -586,6 +678,20 @@ export class TopMeanWorkerPool {
             // Terminate the persistent workers now that the run is done.
             this.cancel();
         }
-        return engineUsage;
+        return {
+            ...engineUsage,
+            performance: {
+                ...workerTiming,
+                workers: spawned.length,
+                spawnedWorkers: spawnedWorkerCount,
+                reusedWorkers: reusedWorkerCount,
+                shards: shardTasks.length,
+                pendingShards: pendingShards.length,
+                shardSize,
+                workerBundleMs,
+                workerStartupMs,
+                wallMs: performance.now() - poolStartedAt,
+            },
+        };
     }
 }

@@ -64,6 +64,7 @@ import type { TopMeanCurrentSnapshot, TopMeanStreamEvent } from "./sp500-top-mea
 import type { CoverageCounts } from "./sp500-pair-enumerator";
 import type { TopMeanResultSummary, TopMeanStatusResponse } from "./sp500-top-mean-coordinator-engine";
 import type { StabilityComparison } from "./sp500-top-mean-stability-compare";
+import { formatTopMeanPerformanceLines } from "./sp500-top-mean-performance";
 import type { OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
 import type { OpenScoreUsdReplayStreamEvent } from "./batch-open-score-usd-replay-stream-types";
 import type { StrategyParams, BacktestSettings } from "../types/strategies";
@@ -2730,6 +2731,14 @@ class BatchBacktestService {
             html += this.renderCurrentTopMeanBanner(summary.currentSnapshot);
         }
 
+        if (summary.performance) {
+            const performanceLines = formatTopMeanPerformanceLines(summary.performance);
+            html += `<div style="background: var(--surface-2, #1e222d); border: 1px solid var(--border-color, #2a2e39); border-radius: 6px; padding: 12px; margin-bottom: 16px;">`;
+            html += `<div style="font-weight: bold; font-size: 14px; margin-bottom: 8px; color: var(--accent-color, #2962ff);">Coordinator Performance</div>`;
+            html += `<pre style="margin:0; white-space:pre-wrap; font-size:11px; color:var(--text-color, #d1d4dc);">${escapeHtml(performanceLines.join("\n"))}</pre>`;
+            html += `</div>`;
+        }
+
         // 1. Leaderboard Banner: Executive summary of top asset per horizon
         html += `<div style="background: var(--surface-2, #1e222d); border: 1px solid var(--border-color, #2a2e39); border-radius: 6px; padding: 12px; margin-bottom: 16px;">`;
         html += `<div style="font-weight: bold; font-size: 14px; margin-bottom: 8px; color: var(--accent-color, #2962ff);">🏆 TOP_MEAN Asset Leaderboard</div>`;
@@ -2981,6 +2990,9 @@ class BatchBacktestService {
 
         if (res.currentSnapshot) {
             lines.push(...this.formatCurrentTopMeanLines(res.currentSnapshot));
+        }
+        if (res.performance) {
+            lines.push(...formatTopMeanPerformanceLines(res.performance), "");
         }
 
         if (Array.isArray(res.horizons)) {
