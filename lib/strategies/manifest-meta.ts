@@ -2913,4 +2913,220 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "dema_confirmation",
+        name: "DEMA Confirmation",
+        description: "Confirms direction relative to a double exponential moving average with reduced lag.",
+        defaultParams: {
+        lookback: 200,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "donchian_midpoint_confirmation",
+        name: "Donchian Midpoint Confirmation",
+        description: "Confirms direction relative to the midpoint of the trailing high-low price channel.",
+        defaultParams: {
+        lookback: 200,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "hull_ma_confirmation",
+        name: "Hull MA Confirmation",
+        description: "Confirms direction relative to a Hull moving average whose subperiods derive from one lookback.",
+        defaultParams: {
+        lookback: 200,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "kama_confirmation",
+        name: "KAMA Confirmation",
+        description: "Confirms direction relative to Kaufman's efficiency-adaptive moving average.",
+        defaultParams: {
+        lookback: 200,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "linear_regression_center_confirmation",
+        name: "Linear Regression Center Confirmation",
+        description: "Confirms direction relative to the endpoint of a trailing least-squares trend line.",
+        defaultParams: {
+        lookback: 200,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "mcginley_dynamic_confirmation",
+        name: "McGinley Dynamic Confirmation",
+        description: "Confirms direction relative to a dynamic average that adjusts its response to price movement.",
+        defaultParams: {
+        lookback: 200,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "n_bar_momentum_confirmation",
+        name: "N-Bar Momentum Confirmation",
+        description: "Confirms direction from the sign of the close-to-close change over one trailing lookback.",
+        defaultParams: {
+        lookback: 200,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "rolling_median_confirmation",
+        name: "Rolling Median Confirmation",
+        description: "Confirms direction relative to a trailing median that is resistant to isolated price spikes.",
+        defaultParams: {
+        lookback: 200,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_price_ema_confirmation",
+        name: "Typical Price EMA Confirmation",
+        description: "Confirms direction using an EMA of typical price so each bar's high and low inform the regime.",
+        defaultParams: {
+        lookback: 200,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_weighted_median_confirmation",
+        name: "Volume-Weighted Median Confirmation",
+        description: "Confirms direction relative to the trailing median price weighted by traded volume.",
+        defaultParams: {
+        lookback: 200,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "wilder_ma_confirmation",
+        name: "Wilder MA Confirmation",
+        description: "Confirms direction relative to Wilder's slower recursively smoothed moving average.",
+        defaultParams: {
+        lookback: 200,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "zero_lag_ema_confirmation",
+        name: "Zero-Lag EMA Confirmation",
+        description: "Confirms direction relative to a de-lagged EMA input derived from the same lookback.",
+        defaultParams: {
+        lookback: 200,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];

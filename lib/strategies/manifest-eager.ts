@@ -149,6 +149,18 @@ import { klinger_oscillator_confirmation } from "./lib/klinger_oscillator_confir
 import { linear_regression_slope_confirmation } from "./lib/linear_regression_slope_confirmation";
 import { qstick_zero_line_confirmation } from "./lib/qstick_zero_line_confirmation";
 import { relative_vigor_cross_confirmation } from "./lib/relative_vigor_cross_confirmation";
+import { dema_confirmation } from "./lib/dema_confirmation";
+import { donchian_midpoint_confirmation } from "./lib/donchian_midpoint_confirmation";
+import { hull_ma_confirmation } from "./lib/hull_ma_confirmation";
+import { kama_confirmation } from "./lib/kama_confirmation";
+import { linear_regression_center_confirmation } from "./lib/linear_regression_center_confirmation";
+import { mcginley_dynamic_confirmation } from "./lib/mcginley_dynamic_confirmation";
+import { n_bar_momentum_confirmation } from "./lib/n_bar_momentum_confirmation";
+import { rolling_median_confirmation } from "./lib/rolling_median_confirmation";
+import { typical_price_ema_confirmation } from "./lib/typical_price_ema_confirmation";
+import { volume_weighted_median_confirmation } from "./lib/volume_weighted_median_confirmation";
+import { wilder_ma_confirmation } from "./lib/wilder_ma_confirmation";
+import { zero_lag_ema_confirmation } from "./lib/zero_lag_ema_confirmation";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -303,6 +315,18 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "linear_regression_slope_confirmation", strategy: linear_regression_slope_confirmation },
     { key: "qstick_zero_line_confirmation", strategy: qstick_zero_line_confirmation },
     { key: "relative_vigor_cross_confirmation", strategy: relative_vigor_cross_confirmation },
+    { key: "dema_confirmation", strategy: dema_confirmation },
+    { key: "donchian_midpoint_confirmation", strategy: donchian_midpoint_confirmation },
+    { key: "hull_ma_confirmation", strategy: hull_ma_confirmation },
+    { key: "kama_confirmation", strategy: kama_confirmation },
+    { key: "linear_regression_center_confirmation", strategy: linear_regression_center_confirmation },
+    { key: "mcginley_dynamic_confirmation", strategy: mcginley_dynamic_confirmation },
+    { key: "n_bar_momentum_confirmation", strategy: n_bar_momentum_confirmation },
+    { key: "rolling_median_confirmation", strategy: rolling_median_confirmation },
+    { key: "typical_price_ema_confirmation", strategy: typical_price_ema_confirmation },
+    { key: "volume_weighted_median_confirmation", strategy: volume_weighted_median_confirmation },
+    { key: "wilder_ma_confirmation", strategy: wilder_ma_confirmation },
+    { key: "zero_lag_ema_confirmation", strategy: zero_lag_ema_confirmation },
 ];
 
 export function createStrategiesRecordFromManifest(
