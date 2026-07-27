@@ -16,6 +16,7 @@ import {
     selectPreferredResolvedContract,
     resolveFromCatalog,
     resolveIbkrHistoryPageStartTime,
+    replaceFileWithRetry,
     runIbkrKeepAliveCycle,
     shouldUseIncrementalIbkrSync,
     type SyncRunState,
@@ -24,6 +25,95 @@ import type { IbkrSyncRunSnapshot } from "../lib/ibkr-data/ibkr-data-stream-type
 import { isAllowedLocalRequest } from "../lib/local-route-authorization";
 import { beginNdjsonStream, HttpStatusError } from "../lib/vite-http-utils";
 import type { OHLCVData } from "../lib/types/strategies";
+import { appendUniqueIbkrSymbols, findStaleIbkrSymbols } from "../lib/ibkr-data/ibkr-stale-symbols";
+
+describe("ibkr atomic file replacement", () => {
+    it("retries transient Windows destination locks before succeeding", () => {
+        let renameCalls = 0;
+        const waits: number[] = [];
+
+        replaceFileWithRetry("UBER.csv.tmp", "UBER.csv", {
+            platform: "win32",
+            rename: () => {
+                renameCalls += 1;
+                if (renameCalls < 3) {
+                    throw Object.assign(new Error("temporarily locked"), {
+                        code: renameCalls === 1 ? "EPERM" : "EBUSY",
+                    });
+                }
+            },
+            wait: (delayMs) => waits.push(delayMs),
+        });
+
+        assert.equal(renameCalls, 3);
+        assert.deepEqual(waits, [25, 50]);
+    });
+
+    it("allows a backup-backed CSV overwrite only after persistent Windows lock retries are exhausted", () => {
+        let renameCalls = 0;
+        let fallbackCalls = 0;
+
+        replaceFileWithRetry("UBER.csv.tmp", "UBER.csv", {
+            platform: "win32",
+            rename: () => {
+                renameCalls += 1;
+                throw Object.assign(new Error("persistently locked"), { code: "EPERM" });
+            },
+            wait: () => undefined,
+            fallback: (_sourcePath, _targetPath, error) => {
+                fallbackCalls += 1;
+                assert.equal((error as NodeJS.ErrnoException).code, "EPERM");
+                return true;
+            },
+        });
+
+        assert.equal(renameCalls, 20);
+        assert.equal(fallbackCalls, 1);
+    });
+});
+
+describe("ibkr stale symbol detection", () => {
+    const assets = [
+        {
+            symbol: "AAPL\u2022",
+            name: "AAPL",
+            intervals: ["30m", "1d"],
+            lastTimes: {
+                "30m": "2026-07-27T15:00:00.000Z",
+                "1d": "2026-07-25T00:00:00.000Z",
+            },
+        },
+        {
+            symbol: "MSFT\u2022",
+            name: "MSFT",
+            intervals: ["30m", "1d"],
+            lastTimes: {
+                "30m": "2026-07-27T14:30:00.000Z",
+                "1d": "2026-07-26T00:00:00.000Z",
+            },
+        },
+        {
+            symbol: "NVDA\u2022",
+            name: "NVDA",
+            intervals: ["1d"],
+            lastTimes: { "1d": "2026-07-26T00:00:00.000Z" },
+        },
+    ];
+
+    it("uses the selected interval and compares against its freshest catalog price", () => {
+        const result = findStaleIbkrSymbols(assets, "30m");
+
+        assert.equal(result.freshestTime, "2026-07-27T15:00:00.000Z");
+        assert.deepEqual(result.symbols, ["MSFT"]);
+    });
+
+    it("appends stale symbols without replacing or duplicating the current list", () => {
+        const result = appendUniqueIbkrSymbols("NVDA\nMSFT\u2022", ["AAPL", "MSFT", "AAPL"]);
+
+        assert.equal(result.value, "NVDA\nMSFT\u2022\nAAPL");
+        assert.deepEqual(result.appended, ["AAPL"]);
+    });
+});
 
 describe("ibkr describeIbkrMarketDataReadiness", () => {
     it("keeps the HMDS bridge tickle error as a warning", () => {

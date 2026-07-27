@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import type { Plugin } from "vite";
@@ -10,6 +10,7 @@ import { beginNdjsonStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, 
 import { isAllowedLocalRequest } from "../local-route-authorization";
 import { createFetchTimeoutSignal, isAbortError } from "../dataProviders/fetch-helpers";
 import type { IbkrIntervalMeta, IbkrStreamEvent, IbkrSyncRunSnapshot } from "./ibkr-data-stream-types";
+import type { IbkrCatalogAsset } from "./ibkr-stale-symbols";
 import {
     ALPACA_SUPPORTED_INTERVAL,
     ALPACA_TIMEFRAME_BY_INTERVAL,
@@ -665,7 +666,52 @@ function writeCatalog(catalog: IbkrCatalog): void {
     mkdirSync(dirname(IBKR_CATALOG_PATH), { recursive: true });
     const tempPath = `${IBKR_CATALOG_PATH}.tmp`;
     writeFileSync(tempPath, JSON.stringify(catalog, null, 2));
-    renameSync(tempPath, IBKR_CATALOG_PATH);
+    replaceFileWithRetry(tempPath, IBKR_CATALOG_PATH);
+}
+
+type FileReplaceDependencies = {
+    platform?: NodeJS.Platform;
+    rename?: (sourcePath: string, targetPath: string) => void;
+    wait?: (delayMs: number) => void;
+    fallback?: (sourcePath: string, targetPath: string, error: unknown) => boolean;
+};
+
+/**
+ * Keeps same-directory temp-file replacement atomic while tolerating the
+ * brief destination locks Windows antivirus scanners and file watchers can
+ * create. Non-Windows failures still surface immediately.
+ */
+export function replaceFileWithRetry(
+    sourcePath: string,
+    targetPath: string,
+    dependencies: FileReplaceDependencies = {},
+): void {
+    const platform = dependencies.platform ?? process.platform;
+    const rename = dependencies.rename ?? renameSync;
+    const wait = dependencies.wait ?? ((delayMs: number) => {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+    });
+    const attempts = platform === "win32" ? 20 : 1;
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+        try {
+            rename(sourcePath, targetPath);
+            return;
+        } catch (error) {
+            lastError = error;
+            const code = (error as NodeJS.ErrnoException).code;
+            const retryable = platform === "win32"
+                && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
+            if (!retryable || attempt === attempts - 1) break;
+            wait(Math.min(25 * (attempt + 1), 100));
+        }
+    }
+
+    if (dependencies.fallback?.(sourcePath, targetPath, lastError)) {
+        return;
+    }
+    throw lastError;
 }
 
 function summarizeCandles(
@@ -915,7 +961,28 @@ export function writeCsv(symbol: string, interval: string, candles: OHLCVData[])
     if (existsSync(filePath)) {
         copyFileSync(filePath, `${filePath}.bak`);
     }
-    renameSync(tempPath, filePath);
+    replaceFileWithRetry(tempPath, filePath, {
+        // Some Windows programs keep a long-lived handle without delete
+        // sharing. Rename cannot ever succeed while that handle is open, but
+        // overwriting is still permitted. Only take this non-atomic fallback
+        // after the prior CSV has been captured in `.bak`, so an interrupted
+        // overwrite remains recoverable.
+        fallback: (sourcePath, targetPath, error) => {
+            const code = (error as NodeJS.ErrnoException | null)?.code;
+            const isWindowsLock = process.platform === "win32"
+                && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
+            if (!isWindowsLock || !existsSync(`${targetPath}.bak`)) return false;
+            copyFileSync(sourcePath, targetPath);
+            try {
+                rmSync(sourcePath, { force: true });
+            } catch {
+                // The destination is complete; a leftover temp file is safe
+                // and will be replaced by the next write.
+            }
+            debugLogger.warn("ibkr.csv.atomic_replace_fallback", { targetPath, code });
+            return true;
+        },
+    });
 }
 
 export function parseResolvedContracts(symbol: string, payload: unknown): IbkrResolvedContract[] {
@@ -1533,14 +1600,17 @@ function describeIncompleteStopReason(stopReason: IbkrIntervalMeta["stopReason"]
     }
 }
 
-function readCatalogAssets(): Array<{ symbol: string; name: string; sector?: string; intervals?: string[] }> {
+function readCatalogAssets(): IbkrCatalogAsset[] {
     const catalog = readCatalog();
-    const bySymbol = new Map<string, { symbol: string; name: string; sector?: string; intervals?: string[] }>();
+    const bySymbol = new Map<string, IbkrCatalogAsset>();
     for (const entry of catalog.entries) {
         bySymbol.set(entry.markedSymbol, {
             symbol: entry.markedSymbol,
             name: entry.symbol,
             intervals: Object.keys(entry.intervals ?? {}).sort(),
+            lastTimes: Object.fromEntries(
+                Object.entries(entry.intervals ?? {}).map(([interval, meta]) => [interval, meta.lastTime]),
+            ),
         });
     }
 

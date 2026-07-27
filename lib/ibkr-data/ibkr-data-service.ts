@@ -6,6 +6,11 @@ import { clearBatchDatasetCaches } from "../batch-backtest/batch-backtest-loader
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { createIbkrDataDom, type IbkrDataDom } from "./ibkr-data-dom";
 import type { IbkrStreamEvent, IbkrSyncRunSnapshot } from "./ibkr-data-stream-types";
+import {
+    appendUniqueIbkrSymbols,
+    findStaleIbkrSymbols,
+    type IbkrCatalogAsset,
+} from "./ibkr-stale-symbols";
 
 // Re-export the shared wire types so existing imports of them from this module
 // keep resolving — the source of truth now lives in the leaf
@@ -30,6 +35,7 @@ class IbkrDataService {
         dom.ibkrDataSyncBtn.addEventListener("click", () => void this.runAction("/api/ibkr/sync", true));
         dom.ibkrDataStopBtn.addEventListener("click", () => void this.stopSync());
         dom.ibkrDataCopyBtn.addEventListener("click", () => void this.copySymbols());
+        dom.ibkrDataAppendStaleBtn.addEventListener("click", () => void this.appendStaleSymbols());
         // Stop is intentionally left enabled at startup so it can recover a
         // stuck server-side sync lock without a server restart.
         // Reattach to any sync that was already running before page reload.
@@ -188,6 +194,7 @@ class IbkrDataService {
         dom.ibkrDataResolveBtn.disabled = busy;
         dom.ibkrDataDownloadBtn.disabled = busy;
         dom.ibkrDataSyncBtn.disabled = busy;
+        dom.ibkrDataAppendStaleBtn.disabled = busy;
         // Stop is always enabled so a stuck server-side sync lock can be
         // force-reset without a server restart. (See /api/ibkr/stop.)
         dom.ibkrDataStopBtn.disabled = false;
@@ -220,6 +227,52 @@ class IbkrDataService {
         } catch (error) {
             this.writeOutput(error instanceof Error ? error.message : String(error));
             this.setStatus("Gateway check failed");
+        } finally {
+            this.setBusy(false);
+        }
+    }
+
+    private async appendStaleSymbols(): Promise<void> {
+        const dom = this.getDom();
+        const interval = dom.ibkrDataInterval.value;
+        this.setBusy(true);
+        this.setStatus(`Checking stale ${interval} prices...`);
+        try {
+            const response = await fetch("/api/local-price-data/ibkr/catalog", { cache: "no-store" });
+            const payload = await response.json() as {
+                ok?: boolean;
+                assets?: IbkrCatalogAsset[];
+                error?: string;
+            };
+            if (!response.ok || payload.ok === false) {
+                throw new Error(payload.error ?? `Catalog request failed (${response.status}).`);
+            }
+
+            const stale = findStaleIbkrSymbols(payload.assets ?? [], interval);
+            if (!stale.freshestTime) {
+                this.writeOutput({ interval, staleSymbols: [], reason: "No catalog prices found for the selected timeframe." });
+                this.setStatus(`No ${interval} catalog prices found.`);
+                return;
+            }
+
+            const appended = appendUniqueIbkrSymbols(dom.ibkrDataSymbols.value, stale.symbols);
+            dom.ibkrDataSymbols.value = appended.value;
+            this.writeOutput({
+                interval,
+                freshestTime: stale.freshestTime,
+                staleSymbols: stale.symbols,
+                appendedSymbols: appended.appended,
+            });
+
+            const alreadyListed = stale.symbols.length - appended.appended.length;
+            const existingLabel = alreadyListed > 0 ? `; ${alreadyListed} already listed` : "";
+            this.setStatus(
+                `Appended ${appended.appended.length} of ${stale.symbols.length} stale ${interval} symbol${stale.symbols.length === 1 ? "" : "s"}${existingLabel}.`,
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.writeOutput(message);
+            this.setStatus(`Stale-price check failed: ${message}`);
         } finally {
             this.setBusy(false);
         }

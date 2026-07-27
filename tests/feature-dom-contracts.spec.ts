@@ -24,6 +24,7 @@ import { CHART_MANAGER_REQUIRED_IDS } from "../lib/chart-manager-dom";
 import { STRATEGY_PANEL_REQUIRED_IDS } from "../lib/strategy-panel-dom";
 import { LAZY_STRATEGY_PANEL_TAB_IDS } from "../lib/strategy-panel-tab-markup";
 import { BACKTEST_DOM_SETTING_IDS } from "../lib/backtest-settings-dom-contract";
+import { IBKR_DATA_REQUIRED_IDS } from "../lib/ibkr-data/ibkr-data-dom";
 
 const PARTIALS_DIR = path.join(process.cwd(), "html-partials");
 
@@ -93,6 +94,7 @@ describe("Feature DOM contracts", () => {
         crossSymbol: [...CROSS_SYMBOL_REQUIRED_IDS],
         chartManager: [...CHART_MANAGER_REQUIRED_IDS],
         strategyPanel: [...STRATEGY_PANEL_REQUIRED_IDS],
+        ibkrData: [...IBKR_DATA_REQUIRED_IDS],
     } as const;
 
     for (const [groupName, ids] of Object.entries(contractGroups)) {
