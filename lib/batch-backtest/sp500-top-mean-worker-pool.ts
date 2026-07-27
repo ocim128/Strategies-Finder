@@ -7,8 +7,9 @@ import { Worker } from "node:worker_threads";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import type { TopMeanRunManifest } from "./compact-pair-artifact";
-import { saveManifest, writeShardArtifacts } from "./sp500-top-mean-artifact-store";
+import { saveManifest, writeShardArtifactsAsync } from "./sp500-top-mean-artifact-store";
 import type { TopMeanWorkerMessage, TopMeanWorkerTaskData } from "./sp500-top-mean-worker";
+import { debugLogger } from "../debug-logger";
 import type {
     TopMeanCacheCounters,
     TopMeanWorkerPoolPerformance,
@@ -281,6 +282,18 @@ export class TopMeanWorkerPool {
         let shardsSinceFlush = 0;
         let lastFlushAt = Date.now();
         let manifestDirty = false;
+        // Per-shard artifact writes are now async (see `shard_complete`
+        // handler) so the message handler does not block the event loop on a
+        // multi-hundred-KB write. Track every fired write here; the terminal
+        // paths `await settleInFlightShardWrites()` before the final manifest
+        // flush so the on-disk state is durable before the manifest claims it.
+        const inFlightShardWrites = new Set<Promise<void>>();
+        const settleInFlightShardWrites = async (): Promise<void> => {
+            if (inFlightShardWrites.size === 0) return;
+            const pending = [...inFlightShardWrites];
+            inFlightShardWrites.clear();
+            await Promise.allSettled(pending);
+        };
         const flushManifest = (force: boolean): void => {
             if (!manifestDirty && !force) return;
             const due = force
@@ -397,15 +410,45 @@ export class TopMeanWorkerPool {
 
                 if (msg.type === "shard_complete") {
                     addWorkerTiming(workerTiming, msg.performance);
-                    writeShardArtifacts(options.runId, msg.shardIndex, msg.artifacts, options.baseDir, options.windowKey);
+                    // Fire the artifact write asynchronously and track it.
+                    // The shard artifact is multi-hundred-KB; writing it
+                    // synchronously here blocked the message handler (and
+                    // therefore the rest of the event loop) for the duration
+                    // of `writeFileSync` + the Windows EPERM retry loop. The
+                    // worker has already moved on; we only need the artifact
+                    // on disk before the terminal manifest flush, which
+                    // `settleInFlightShardWrites()` guarantees.
+                    const writePromise = writeShardArtifactsAsync(
+                        options.runId,
+                        msg.shardIndex,
+                        msg.artifacts,
+                        options.baseDir,
+                        options.windowKey,
+                    ).catch((err: unknown) => {
+                        // Best-effort: a failed artifact write is not fatal to
+                        // the run, but the shard will be missing on resume.
+                        // Surface via debug so the operator can see it without
+                        // taking down the whole batch.
+                        debugLogger.warn("sp500_top_mean.shard_write_failed", {
+                            runId: options.runId,
+                            shardIndex: msg.shardIndex,
+                            error: err instanceof Error ? err.message : String(err),
+                        });
+                    }).finally(() => {
+                        inFlightShardWrites.delete(writePromise);
+                    });
+                    inFlightShardWrites.add(writePromise);
                     if (!completedSet.has(msg.shardIndex)) {
                         completedSet.add(msg.shardIndex);
                         options.manifest.completedShards.push(msg.shardIndex);
                     }
-                    // Debounced flush: the shard ARTIFACTS are already on
-                    // disk (above); the manifest only matters for resume
+                    // Debounced flush: the shard ARTIFACTS are queued to land
+                    // on disk (above); the manifest only matters for resume
                     // reattach, which tolerates a small lag (startup
-                    // reconcile covers the gap).
+                    // reconcile covers the gap). The terminal-path
+                    // flushManifest(true) calls await the in-flight writes
+                    // first so the manifest never claims a shard that has
+                    // not yet been written.
                     shardsSinceFlush += 1;
                     manifestDirty = true;
                     flushManifest(false);
@@ -655,7 +698,10 @@ export class TopMeanWorkerPool {
         } catch (error) {
             // Force-flush whatever we have before propagating so the
             // interrupted/cancel state on disk reflects progress through the
-            // last completed shard (resume reattach reads from this).
+            // last completed shard (resume reattach reads from this). Await
+            // any in-flight async shard writes first so the manifest cannot
+            // claim a shard whose artifacts have not landed yet.
+            await settleInFlightShardWrites();
             flushManifest(true);
             dispatchHalted = true;
             this.cancel();
@@ -663,7 +709,9 @@ export class TopMeanWorkerPool {
             throw error;
         }
         // Final force-flush so the terminal manifest reflects every completed
-        // shard, not the most recent debounced snapshot.
+        // shard, not the most recent debounced snapshot. Await in-flight
+        // shard writes first so the manifest cannot precede the artifacts.
+        await settleInFlightShardWrites();
         flushManifest(true);
         dispatchHalted = true;
         if (options.keepWorkersAlive) {

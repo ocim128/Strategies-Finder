@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
 import type { CompactPairArtifact, TopMeanRunManifest, BatchSyntheticPairArtifactAdapter } from "./compact-pair-artifact";
@@ -136,10 +137,66 @@ export function atomicWriteJsonSync(targetPath: string, data: unknown): void {
     throw lastError;
 }
 
+/**
+ * Async twin of `atomicWriteJsonSync`. Same atomic-write semantics (temp file
+ * in the same dir, then rename) and the same Windows retry policy, but uses
+ * `fs/promises` so callers on the main thread of a hot server path do not
+ * block the event loop on multi-hundred-KB shard artifacts. The retry wait
+ * uses real `setTimeout` (no `Atomics.wait`) so other microtasks can run.
+ */
+export async function atomicWriteJson(targetPath: string, data: unknown): Promise<void> {
+    const dir = dirname(targetPath);
+    // Avoid an `existsSync` syscall roundtrip — `mkdir({ recursive: true })`
+    // is a no-op when the dir already exists and is cheaper than a separate
+    // existence check + mkdir in the common case.
+    await mkdir(dir, { recursive: true });
+    const tempPath = `${targetPath}.${Date.now()}.${Math.random().toString(36).substring(2, 8)}.tmp`;
+    await writeFile(tempPath, JSON.stringify(data), "utf8");
+
+    const attempts = process.platform === "win32" ? 10 : 1;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+        try {
+            await rename(tempPath, targetPath);
+            return;
+        } catch (error) {
+            lastError = error;
+            const code = (error as NodeJS.ErrnoException).code;
+            const retryable = process.platform === "win32"
+                && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
+            if (!retryable || attempt === attempts - 1) break;
+            const delayMs = Math.min(25 * (attempt + 1), 100);
+            await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        }
+    }
+
+    try {
+        await rm(tempPath, { force: true });
+    } catch {
+        // Preserve the original rename failure; cleanup is best effort.
+    }
+    throw lastError;
+}
+
 export function saveManifest(manifest: TopMeanRunManifest, baseDir?: string, windowKey?: string): void {
     manifest.updatedAt = Date.now();
     const manifestPath = getManifestPath(manifest.runId, baseDir, windowKey);
     atomicWriteJsonSync(manifestPath, manifest);
+}
+
+/**
+ * Async twin of `saveManifest` for hot paths. Stamps `updatedAt` and uses
+ * `atomicWriteJson` so a per-shard-complete flush on the dev server main
+ * thread does not block the event loop on the multi-KB write + rename.
+ */
+export async function saveManifestAsync(
+    manifest: TopMeanRunManifest,
+    baseDir?: string,
+    windowKey?: string,
+): Promise<void> {
+    manifest.updatedAt = Date.now();
+    const manifestPath = getManifestPath(manifest.runId, baseDir, windowKey);
+    await atomicWriteJson(manifestPath, manifest);
 }
 
 export function loadManifest(runId: string, baseDir?: string, windowKey?: string): TopMeanRunManifest | null {
@@ -162,6 +219,26 @@ export function writeShardArtifacts(
 ): void {
     const shardPath = getShardPath(runId, shardIndex, baseDir, windowKey);
     atomicWriteJsonSync(shardPath, artifacts);
+}
+
+/**
+ * Async twin of `writeShardArtifacts` for the worker-pool per-shard path.
+ * Multi-hundred-KB artifact writes happening on every `shard_complete` were
+ * the dominant main-thread blocker during 400-shard TOP_MEAN runs; this
+ * version lets the message handler return immediately while the write lands.
+ * The caller is responsible for awaiting in-flight writes before forcing a
+ * terminal manifest flush (or before resolving the run) to preserve
+ * resume-from-disk safety.
+ */
+export async function writeShardArtifactsAsync(
+    runId: string,
+    shardIndex: number,
+    artifacts: CompactPairArtifact[],
+    baseDir?: string,
+    windowKey?: string,
+): Promise<void> {
+    const shardPath = getShardPath(runId, shardIndex, baseDir, windowKey);
+    await atomicWriteJson(shardPath, artifacts);
 }
 
 export function readShardArtifacts(
