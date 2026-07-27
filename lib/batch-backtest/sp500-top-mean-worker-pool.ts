@@ -512,6 +512,15 @@ export class TopMeanWorkerPool {
 
             const onError = (err: Error): void => {
                 failInFlight(worker, err instanceof Error ? err : new Error(String(err)));
+                // Surface the failure: this path previously swallowed the
+                // error object after routing it to the in-flight reject, so a
+                // worker that OOM'd or hit a script-load error produced zero
+                // diagnostic output even though the run kept going (or hung).
+                debugLogger.warn("sp500_top_mean.worker_error", {
+                    runId: options.runId,
+                    error: err instanceof Error ? err.message : String(err),
+                    activeWorkersBefore: this.activeWorkers.size,
+                });
                 // A worker that errored cannot be safely reused; drop it. The
                 // free-list may have already absorbed it — remove if present.
                 const freeIdx = freeWorkers.indexOf(worker);
@@ -536,6 +545,13 @@ export class TopMeanWorkerPool {
                 if (inflight && !inflight.settled && code !== 0) {
                     inflight.settled = true;
                     inflight.reject(new Error(`Worker stopped with exit code ${code}`));
+                }
+                if (code !== 0) {
+                    debugLogger.warn("sp500_top_mean.worker_unexpected_exit", {
+                        runId: options.runId,
+                        exitCode: code,
+                        activeWorkersBefore: this.activeWorkers.size,
+                    });
                 }
                 const freeIdx = freeWorkers.indexOf(worker);
                 if (freeIdx >= 0) freeWorkers.splice(freeIdx, 1);
@@ -727,6 +743,44 @@ export class TopMeanWorkerPool {
 
                 if (activePromises.size > 0) {
                     await Promise.race(activePromises);
+                }
+
+                // All-workers-dead guard (B5). If every spawned worker has
+                // died (OOM, script-load error, etc.) there is nothing left
+                // to call `releaseWorker`, which means any task sitting in
+                // `pendingTasks` and any retry whose `runShardOnWorker`
+                // chained into `pendingTasks` will NEVER settle. Without
+                // this guard `Promise.race(activePromises)` hangs forever
+                // and the only recovery is a Stop. Surface the fatal
+                // condition so the run terminates with a diagnostic.
+                //
+                // The check fires when no worker is left alive AND no worker
+                // is idle (freeWorkers empty) AND there is still work to do.
+                // The caught throw's `Promise.allSettled(activePromises)`
+                // lets any in-flight retry settle defensively via the
+                // callback's "No worker available" branch.
+                if (
+                    this.activeWorkers.size === 0
+                    && freeWorkers.length === 0
+                    && (pendingTasks.length > 0 || queueIndex < pendingShards.length)
+                    && !this.isCancelled
+                ) {
+                    debugLogger.warn("sp500_top_mean.all_workers_died", {
+                        runId: options.runId,
+                        pendingTaskCount: pendingTasks.length,
+                        unqueuedShardCount: Math.max(0, pendingShards.length - queueIndex),
+                        activePromiseCount: activePromises.size,
+                    });
+                    // Reject the queued callbacks so their inflight promises
+                    // settle defensively (each callback's "No worker
+                    // available" branch handles the empty free-list).
+                    const stuck = pendingTasks.splice(0);
+                    for (const cb of stuck) cb();
+                    throw new Error(
+                        `All TOP_MEAN workers died mid-run (runId=${options.runId}); `
+                            + `${stuck.length} queued task(s) and `
+                            + `${Math.max(0, pendingShards.length - queueIndex)} unqueued shard(s) left unprocessed.`,
+                    );
                 }
             }
         } catch (error) {
