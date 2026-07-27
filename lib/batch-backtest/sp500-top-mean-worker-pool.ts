@@ -43,6 +43,16 @@ export async function resolveTopMeanWorkerPath(): Promise<string> {
     }
 }
 
+/**
+ * Per-process cache of the last resolved worker bundle, keyed by the source
+ * file's `mtimeMs` + `size`. esbuild is invoked on every `execute()` call
+ * (once per stability window), and a single esbuild.build() is 50-150ms —
+ * the bundle bytes hash identically across invocations until the source
+ * changes, so a cheap stat before the bundle call cuts per-window latency
+ * back to one filesystem stat.
+ */
+let cachedWorkerBundle: { sourcePath: string; mtimeMs: number; size: number; outfile: string } | null = null;
+
 async function bundleWorkerWithEsbuild(sourcePath: string): Promise<string> {
     const fs = await import("node:fs/promises");
     const os = await import("node:os");
@@ -51,6 +61,23 @@ async function bundleWorkerWithEsbuild(sourcePath: string): Promise<string> {
     };
     const tmp = os.tmpdir();
     const root = join(tmp, "sp500-top-mean-workers");
+
+    // Cheap cache check: if the source file's mtime + size match the last
+    // successful bundle, reuse its outfile without re-running esbuild.
+    try {
+        const stat = await fs.stat(sourcePath);
+        if (
+            cachedWorkerBundle
+            && cachedWorkerBundle.sourcePath === sourcePath
+            && cachedWorkerBundle.mtimeMs === stat.mtimeMs
+            && cachedWorkerBundle.size === stat.size
+            && await fs.access(cachedWorkerBundle.outfile).then(() => true).catch(() => false)
+        ) {
+            return cachedWorkerBundle.outfile;
+        }
+    } catch {
+        // Stat failure: fall through to the full bundle path.
+    }
 
     const result = await esbuild.build({
         entryPoints: [sourcePath],
@@ -76,6 +103,13 @@ async function bundleWorkerWithEsbuild(sourcePath: string): Promise<string> {
         const temporary = join(dir, `worker.${process.pid}.${Date.now()}.tmp`);
         await fs.writeFile(temporary, contents);
         await fs.rename(temporary, outfile);
+    }
+    // Refresh the cache key from the freshest stat available.
+    try {
+        const stat = await fs.stat(sourcePath);
+        cachedWorkerBundle = { sourcePath, mtimeMs: stat.mtimeMs, size: stat.size, outfile };
+    } catch {
+        // Best-effort: leave the previous cache entry in place.
     }
     return outfile;
 }

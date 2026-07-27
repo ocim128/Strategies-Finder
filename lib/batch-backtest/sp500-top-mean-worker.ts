@@ -1,4 +1,4 @@
-import { parentPort, workerData, isMainThread } from "node:worker_threads";
+import { parentPort, isMainThread } from "node:worker_threads";
 import { performance } from "node:perf_hooks";
 import { executeBacktest, prepareClosedCandleData, resolveExecutorBacktestSettings } from "../backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
@@ -63,13 +63,37 @@ export type TopMeanWorkerMessage =
  * Trim a loaded pair dataset to the stability simulation window. Keeping this
  * as a small pure seam makes the ordering explicit and testable: the slice
  * happens before the worker's minimum-candle guard and before execution.
+ *
+ * OHLCV candle arrays are time-sorted by the data-loader contract, so we can
+ * binary-search the cutoff and `slice` instead of `.filter`-parsing every
+ * candle. The hot path is the per-pair per-window stability mode run; a
+ * 100k-bar dataset previously parsed all 100k timestamps per pair. If a
+ * non-parseable timestamp is encountered (defensive backstop for malformed
+ * data), fall back to the original filter behavior so a single bad bar does
+ * not crash the worker.
  */
 export function sliceTopMeanCandlesFromSec(candles: OHLCVData[], fromSec?: number): OHLCVData[] {
     if (fromSec === undefined) return candles;
-    return candles.filter((candle) => {
-        const timestamp = parseTimeToUnixSeconds(candle.time);
-        return timestamp !== null && timestamp >= fromSec;
-    });
+    const n = candles.length;
+    if (n === 0) return candles;
+    // Binary search for the first index whose timestamp >= fromSec.
+    let lo = 0;
+    let hi = n;
+    while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        const t = parseTimeToUnixSeconds(candles[mid]!.time);
+        if (t === null) {
+            // Malformed timestamp: fall back to the per-element filter so we
+            // never silently include a bar the previous implementation dropped.
+            return candles.filter((candle) => {
+                const timestamp = parseTimeToUnixSeconds(candle.time);
+                return timestamp !== null && timestamp >= fromSec;
+            });
+        }
+        if (t < fromSec) lo = mid + 1;
+        else hi = mid;
+    }
+    return candles.slice(lo);
 }
 
 function subtractCacheCounters(
@@ -303,43 +327,32 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
 }
 
 if (!isMainThread && parentPort) {
-    if (workerData) {
-        processTopMeanShard(workerData as TopMeanWorkerTaskData)
-            .then((result) => {
-                parentPort?.postMessage({
-                    type: "shard_complete",
-                    shardIndex: (workerData as TopMeanWorkerTaskData).shardIndex,
-                    artifacts: result.artifacts,
-                    engineUsage: result.engineUsage,
-                    performance: result.performance,
-                } as TopMeanWorkerMessage);
-            })
-            .catch((err) => {
-                parentPort?.postMessage({
-                    type: "error",
-                    shardIndex: (workerData as TopMeanWorkerTaskData).shardIndex,
-                    error: err instanceof Error ? err.message : String(err),
-                } as TopMeanWorkerMessage);
-            });
-    }
+    // Worker pool spawn contract: workers are spawned WITHOUT `workerData`
+    // (see sp500-top-mean-worker-pool.ts "Persistent worker pool" comment) so
+    // the one-shot branch that previously lived here was dead code — every
+    // task arrives via the message listener. The single helper below replaces
+    // the byte-identical then/catch bodies the two branches used to share.
+    const postResult = (msg: TopMeanWorkerTaskData, result: Awaited<ReturnType<typeof processTopMeanShard>>): void => {
+        parentPort?.postMessage({
+            type: "shard_complete",
+            shardIndex: msg.shardIndex,
+            artifacts: result.artifacts,
+            engineUsage: result.engineUsage,
+            performance: result.performance,
+        } as TopMeanWorkerMessage);
+    };
+    const postError = (msg: TopMeanWorkerTaskData, err: unknown): void => {
+        parentPort?.postMessage({
+            type: "error",
+            shardIndex: msg.shardIndex,
+            error: err instanceof Error ? err.message : String(err),
+        } as TopMeanWorkerMessage);
+    };
 
     parentPort.on("message", (msg: TopMeanWorkerTaskData) => {
-        processTopMeanShard(msg)
-            .then((result) => {
-                parentPort?.postMessage({
-                    type: "shard_complete",
-                    shardIndex: msg.shardIndex,
-                    artifacts: result.artifacts,
-                    engineUsage: result.engineUsage,
-                    performance: result.performance,
-                } as TopMeanWorkerMessage);
-            })
-            .catch((err) => {
-                parentPort?.postMessage({
-                    type: "error",
-                    shardIndex: msg.shardIndex,
-                    error: err instanceof Error ? err.message : String(err),
-                } as TopMeanWorkerMessage);
-            });
+        processTopMeanShard(msg).then(
+            (result) => postResult(msg, result),
+            (err) => postError(msg, err),
+        );
     });
 }
