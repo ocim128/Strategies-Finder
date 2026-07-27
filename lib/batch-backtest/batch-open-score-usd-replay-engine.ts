@@ -299,6 +299,44 @@ export interface OpenScoreUsdReplayResult {
          * with < 2 accelerating candidates contribute 0 events to this arm.
          */
         accelerating: ReplayComparison;
+        /**
+         * Conditional-split arms: TOP_RAW's pick routed into one of two
+         * sub-series based on a per-event feature computed in Phase 3. Each
+         * split uses the same selection and `randomMeanOf` baseline as TOP_RAW;
+         * only the *accumulator* the selected return is appended to varies.
+         * Comparison-only (no per-asset breakdown / EX_dominant) per the
+         * ACCELERATING precedent — these are event filters, not asset pickers.
+         */
+        /**
+         * Rank freshness split: TOP_RAW's pick is FRESH when it differs from
+         * the previous view's TOP_RAW leader, STALE when it is the same.
+         */
+        topRawFresh: ReplayComparison;
+        topRawStale: ReplayComparison;
+        /**
+         * Streak-length refinement of STALE. A view's streak is the count of
+         * consecutive views (ending at this one) in which the same asset led
+         * TOP_RAW; STALE events are streak ≥ 2. STALE_SHORT and STALE_LONG
+         * partition STALE events at the median streak length across all STALE
+         * views — SHORT = `[2, median]`, LONG = `> median`. Tests whether the
+         * STALE edge grows with streak (continuation) or fades (crowding).
+         */
+        topRawStaleShort: ReplayComparison;
+        topRawStaleLong: ReplayComparison;
+        /**
+         * Concentration split: events where the cross-sectional HHI of
+         * positive scores is above the median (DOMINANT — one signal leads) vs
+         * at/below (SPREAD — scores dispersed).
+         */
+        topRawDominant: ReplayComparison;
+        topRawSpread: ReplayComparison;
+        /**
+         * Active-pair regime split: events where maxActivePairs across
+         * positive candidates is above (HI_PAIRS) or at/below (LO_PAIRS) the
+         * median across all views.
+         */
+        topRawHiPairs: ReplayComparison;
+        topRawLoPairs: ReplayComparison;
         /** Active pair count at decision events (coverage at the event). */
         candidateDegree: DegreeSummary;
         /** Static pair degree of the selected TOP_RAW asset across events. */
@@ -373,6 +411,95 @@ function meanOrNull(values: readonly number[]): number | null {
     let s = 0;
     for (const v of values) s += v;
     return finiteOrNull(s / values.length);
+}
+
+/**
+ * Shape of a per-selector sample map (returns + deltas accumulated per asset
+ * across the events the selector chose that asset). Used by both the per-asset
+ * breakdown builder and the dominant-asset exclusion helper below.
+ */
+export type SelectorSamplesByAsset = Map<string, { returns: number[]; deltas: number[] }>;
+
+/**
+ * Shape of a per-selector event series consumed by the dominant-asset
+ * exclusion helper: parallel arrays of (delta, selectedReturn, timeSec,
+ * assetName) per eligible event.
+ */
+export interface SelectorExclusionSeries {
+    readonly deltas: readonly number[];
+    readonly returns: readonly number[];
+    readonly times: readonly number[];
+    readonly assets: readonly string[];
+}
+
+/**
+ * Build the per-asset selection breakdown that every asset-picking arm
+ * (TOP_RAW / TOP_MEAN / MAX_ACTIVE / MAX_ACTIVE_REVERSION / BOTTOM_MEAN, plus
+ * future arms) emits for the `<ARM> selected assets` report block. Returns
+ * the sorted summary plus the totals used in the report header.
+ *
+ * Sort order: events desc, then asset name asc — same rule the six prior
+ * copy-pasted blocks used. `maxSelected` is computed by iterating the
+ * values directly instead of `Math.max(0, ...map.values())`, which would
+ * risk `Maximum call stack size exceeded` on the documented 124k-pair scale.
+ */
+export function buildAssetSelectionBreakdown(
+    selectedByAsset: Map<string, number>,
+    samplesByAsset: SelectorSamplesByAsset,
+): {
+    byAsset: AssetSelectionSummary[];
+    totalSelected: number;
+    maxSelected: number;
+} {
+    let totalSelected = 0;
+    let maxSelected = 0;
+    for (const v of selectedByAsset.values()) {
+        totalSelected += v;
+        if (v > maxSelected) maxSelected = v;
+    }
+    const byAsset: AssetSelectionSummary[] = [...selectedByAsset.entries()]
+        .map(([asset, events]) => {
+            const samples = samplesByAsset.get(asset)!;
+            const selectedMean = meanOrNull(samples.returns);
+            const delta = meanOrNull(samples.deltas);
+            return {
+                asset,
+                events,
+                share: totalSelected > 0 ? events / totalSelected : 0,
+                topMean: selectedMean,
+                randomMean: selectedMean !== null && delta !== null ? finiteOrNull(selectedMean - delta) : null,
+                delta,
+            };
+        })
+        .sort((a, b) => b.events - a.events || a.asset.localeCompare(b.asset));
+    return { byAsset, totalSelected, maxSelected };
+}
+
+/**
+ * Compute the `<ARM>_EX_<dominant>` comparison: drop events whose selected
+ * asset equals `dominantAsset`, then build a `ReplayComparison` over the
+ * surviving series. This is the concentration-vs-broad-based diagnostic every
+ * asset-picking arm ships alongside its `selected assets` breakdown.
+ *
+ * Module-level so the breakdown/exclusion logic is unit-testable; previously
+ * it was inlined six times inside a 1300-line function. The `buildComparison`
+ * callback is injected because it closes over per-horizon `blockCount` and
+ * `bootstrapSamples` parameters.
+ */
+export function buildExDominantComparison(
+    series: SelectorExclusionSeries,
+    dominantAsset: string | null,
+    buildComparison: (deltas: number[], returns: number[], times: number[]) => ReplayComparison,
+): ReplayComparison {
+    const nonDominantIndexes: number[] = [];
+    for (let i = 0; i < series.assets.length; i += 1) {
+        if (series.assets[i] !== dominantAsset) nonDominantIndexes.push(i);
+    }
+    return buildComparison(
+        nonDominantIndexes.map((i) => series.deltas[i]!),
+        nonDominantIndexes.map((i) => series.returns[i]!),
+        nonDominantIndexes.map((i) => series.times[i]!),
+    );
 }
 
 /**
@@ -830,10 +957,35 @@ export async function runOpenScoreUsdReplay(
         acceleratingPool: Candidate[];
         /** Highest-acceleration candidate, or -1 when pool has < 2 members. */
         accelerating: number;
+        /**
+         * Cross-sectional concentration of positive raw scores, measured as the
+         * Herfindahl–Hirschman index of each positive's share of total raw
+         * (Σ (raw_i / Σraw)²). High HHI = one dominant signal; low = spread.
+         */
+        hhi: number;
+        /**
+         * Freshness: true when TOP_RAW's leader differs from the previous
+         * view's TOP_RAW leader. The first view is always fresh.
+         */
+        fresh: boolean;
+        /**
+         * TOP_RAW leader streak length at this view: count of consecutive
+         * views (ending here) with the same leader. Always 1 for FRESH views;
+         * ≥ 2 for STALE views. Used by the STALE_SHORT / STALE_LONG split.
+         */
+        streak: number;
         /** Per-selector tie counts at this event (Phase 3 MAX_ACTIVE). */
         ties: Record<SelectorName, number>;
     }
     const views: EventView[] = [];
+    // Rank Freshness: previous view's TOP_RAW leader (assetIndex). Updated
+    // only when a view is actually pushed, so it tracks the previous *view's*
+    // leader, not the previous *event's* (events without ≥2 positives do not
+    // form a view and do not affect freshness).
+    let lastTopRawLeaderIdx = -1;
+    // Length of the current TOP_RAW leader streak (consecutive views with the
+    // same leader). Reset to 1 on a fresh leader; incremented on a repeat.
+    let currentStreakLength = 0;
     for (let e = 0; e < events.length; e += 1) {
         const ev = events[e]!;
         const positives: Candidate[] = [];
@@ -980,9 +1132,28 @@ export async function runOpenScoreUsdReplay(
             // not suppress a valid ACCELERATING event.
             const acceleratingPool = positives.filter((c) => c.acceleration > 0);
             const accelerating = acceleratingPool.length >= 2 ? pickMax(acceleratingPool, "acceleration") : null;
+            // --- Conditional-split features (Phase 3) -------------------------
+            const topRawIdx = topRaw.winner.assetIndex;
+            // Cross-sectional HHI of positive raw scores. raw > 0 is guaranteed
+            // for every positive, so rawSum > 0 and shares are well-defined.
+            let rawSum = 0;
+            for (const c of positives) rawSum += c.raw;
+            let hhi = 0;
+            for (const c of positives) {
+                const share = c.raw / rawSum;
+                hhi += share * share;
+            }
+            // Rank freshness: leader differs from previous view's leader. The
+            // first view (lastTopRawLeaderIdx === -1) is always fresh.
+            const fresh = topRawIdx !== lastTopRawLeaderIdx;
+            // Streak length: 1 on a fresh leader (including the first view),
+            // otherwise previous streak + 1. Computed BEFORE updating
+            // lastTopRawLeaderIdx below so the streak recorded on this view
+            // includes itself.
+            currentStreakLength = fresh ? 1 : currentStreakLength + 1;
             views.push({
                 timeSec: ev.timeSec, positives, negatives,
-                topRaw: topRaw.winner.assetIndex,
+                topRaw: topRawIdx,
                 topAdjusted: topAdjusted.winner.assetIndex,
                 topMean: topMean.winner.assetIndex,
                 topMeanRank2: meanRanked[1]!.assetIndex,
@@ -994,6 +1165,9 @@ export async function runOpenScoreUsdReplay(
                 bottomMean: bottomMean?.winner.assetIndex ?? -1,
                 acceleratingPool,
                 accelerating: accelerating?.winner.assetIndex ?? -1,
+                hhi,
+                fresh,
+                streak: currentStreakLength,
                 ties: {
                     RAW: topRaw.tiedCount >= 2 ? 1 : 0,
                     ADJUSTED: topAdjusted.tiedCount >= 2 ? 1 : 0,
@@ -1005,12 +1179,28 @@ export async function runOpenScoreUsdReplay(
                     BOTTOM: bottomMean && bottomMean.tiedCount >= 2 ? 1 : 0,
                 },
             });
+            lastTopRawLeaderIdx = topRawIdx;
         }
         if (e % 1000 === 0) {
             onPhase("targets", `formed candidates for ${e}/${totalEvents} events`, e, totalEvents);
             await yieldLoop();
         }
     }
+
+    // Conditional-split thresholds: medians of the per-view features. Computed
+    // once across ALL views (horizon-independent) so every horizon splits at
+    // the same cut. median() requires a sorted input; the source arrays are
+    // untouched, so a sorted copy is made for each. With < 2 views the median
+    // is NaN and every `> NaN` check is false — all events fall into the
+    // SPREAD/LO_PAIRS branch, which is the documented behaviour. The streak
+    // median is computed over STALE views only (streak >= 2); with < 2 STALE
+    // views every STALE event falls into STALE_SHORT.
+    const splitThresholds = (() => {
+        const hhis = views.map((v) => v.hhi).sort((a, b) => a - b);
+        const pairs = views.map((v) => v.maxActivePairs).sort((a, b) => a - b);
+        const streaks = views.filter((v) => v.streak >= 2).map((v) => v.streak).sort((a, b) => a - b);
+        return { hhi: median(hhis), pairs: median(pairs), streak: median(streaks) };
+    })();
 
     // Group requested event indexes by asset so each target dataset is loaded
     // once, consumed, and released.
@@ -1026,7 +1216,13 @@ export async function runOpenScoreUsdReplay(
         for (const c of views[v]!.negatives) {
             let list = requestsByAsset.get(c.assetIndex);
             if (!list) { list = []; requestsByAsset.set(c.assetIndex, list); }
-            if (!list.includes(v)) list.push(v);
+            // No dedupe needed: each `v` is unique (outer loop counter) and
+            // each candidate's `assetIndex` is unique within a view's
+            // negatives array (the candidate loop above iterates each
+            // assetIndex exactly once). The previous `list.includes(v)` was
+            // O(N²) defensiveness over a uniqueness invariant that already
+            // holds — the positives branch never needed it for the same reason.
+            list.push(v);
         }
     }
 
@@ -1159,6 +1355,21 @@ export async function runOpenScoreUsdReplay(
         const activeVsRetained = createSeries();
         const activeVsRaw = createSeries();
         const activeVsMean = createSeries();
+        // Conditional-split sub-series: TOP_RAW's pick routed into one of two
+        // accumulators per feature. Reuse the same `appendSelection` closure
+        // (defined per view below) so the selection / randomMean baseline is
+        // identical to TOP_RAW's — only the destination series varies.
+        const topRawFresh = createSeries();
+        const topRawStale = createSeries();
+        // Streak-length refinement of STALE: SHORT (streak ∈ [2, median]) vs
+        // LONG (streak > median). Only STALE events are routed here, so the
+        // two counts sum to topRawStale.events.
+        const topRawStaleShort = createSeries();
+        const topRawStaleLong = createSeries();
+        const topRawDominant = createSeries();
+        const topRawSpread = createSeries();
+        const topRawHiPairs = createSeries();
+        const topRawLoPairs = createSeries();
         // Phase 3 MAX_ACTIVE tie counters per selector.
         const tieCounts: Record<SelectorName, number> = { RAW: 0, ADJUSTED: 0, MEAN: 0, ACTIVE: 0, SUBMITTED: 0, RETAINED: 0, REVERSION: 0, BOTTOM: 0 };
         const selectedDegree: number[] = [];
@@ -1280,6 +1491,25 @@ export async function runOpenScoreUsdReplay(
             appendSelection(maxActive, view.maxActive);
             appendSelection(maxStatic, view.maxStatic);
             appendSelection(maxSubmitted, view.maxSubmitted);
+            // Conditional-split routing: TOP_RAW's selected return into one of
+            // two sub-series per feature. The split threshold comes from the
+            // horizon-independent `splitThresholds` computed after Phase 3.
+            // `> threshold` (strict) on DOMINANT/HI_PAIRS so equal-to-median
+            // events fall into the SPREAD/LO_PAIRS branch, matching the field
+            // docstrings.
+            if (view.fresh) appendSelection(topRawFresh, view.topRaw);
+            else {
+                appendSelection(topRawStale, view.topRaw);
+                // Streak-length refinement of STALE. `>` (strict) on LONG so
+                // streak-equal-to-median events fall into SHORT, matching the
+                // field docstring (`[2, median]` vs `> median`).
+                if (view.streak > splitThresholds.streak) appendSelection(topRawStaleLong, view.topRaw);
+                else appendSelection(topRawStaleShort, view.topRaw);
+            }
+            if (view.hhi > splitThresholds.hhi) appendSelection(topRawDominant, view.topRaw);
+            else appendSelection(topRawSpread, view.topRaw);
+            if (view.maxActivePairs > splitThresholds.pairs) appendSelection(topRawHiPairs, view.topRaw);
+            else appendSelection(topRawLoPairs, view.topRaw);
             // Pairwise: MAX_ACTIVE vs each control, only on differing-selection events.
             appendPairwise(activeVsSubmitted, view.maxActive, view.maxSubmitted);
             appendPairwise(activeVsRetained, view.maxActive, view.maxStatic);
@@ -1451,108 +1681,38 @@ export async function runOpenScoreUsdReplay(
             };
         };
 
-        const totalSelected = [...selectedByAsset.values()].reduce((s, x) => s + x, 0);
-        const maxSelected = Math.max(0, ...selectedByAsset.values());
-        const topRawByAsset: AssetSelectionSummary[] = [...selectedByAsset.entries()]
-            .map(([asset, events]) => {
-                const samples = topRawSamplesByAsset.get(asset)!;
-                const selectedMean = meanOrNull(samples.returns);
-                const delta = meanOrNull(samples.deltas);
-                return {
-                    asset,
-                    events,
-                    share: totalSelected > 0 ? events / totalSelected : 0,
-                    topMean: selectedMean,
-                    randomMean: selectedMean !== null && delta !== null ? finiteOrNull(selectedMean - delta) : null,
-                    delta,
-                };
-            })
-            .sort((a, b) => b.events - a.events || a.asset.localeCompare(b.asset));
+        // ---- Phase 5 horizon aggregation: per-asset breakdowns + dominant
+        // exclusions for every asset-picking arm. Each arm produces:
+        //   * `<ARM> selected assets` — per-asset events/mean/delta table
+        //   * `<ARM>_EX_<dominant>` — same series minus the most-selected
+        //     asset, to separate concentration-driven edges from broad-based
+        // both flow through `buildAssetSelectionBreakdown` +
+        // `buildExDominantComparison` so a new arm adds one helper call, not a
+        // 30-line copy-paste block. TOP_RAW's maxSelected is read off the
+        // breakdown result instead of `Math.max(...spread)`.
+        const topRawBreakdown = buildAssetSelectionBreakdown(selectedByAsset, topRawSamplesByAsset);
+        const totalSelected = topRawBreakdown.totalSelected;
+        const maxSelected = topRawBreakdown.maxSelected;
+        const topRawByAsset = topRawBreakdown.byAsset;
         const dominantAsset = topRawByAsset[0]?.asset ?? null;
-        const nonDominantIndexes: number[] = [];
-        for (let i = 0; i < topRaw.assets.length; i += 1) {
-            if (topRaw.assets[i] !== dominantAsset) nonDominantIndexes.push(i);
-        }
-        const topRawExDominant = buildComparison(
-            nonDominantIndexes.map((i) => topRaw.deltas[i]!),
-            nonDominantIndexes.map((i) => topRaw.returns[i]!),
-            nonDominantIndexes.map((i) => topRaw.times[i]!),
-        );
+        const topRawExDominant = buildExDominantComparison(topRaw, dominantAsset, buildComparison);
         // Phase 3 MAX_ACTIVE: dominant-asset exclusion measures MAX_ACTIVE
         // (the research hypothesis), NOT TOP_RAW. The most-frequently-selected
         // MAX_ACTIVE asset (ties by FNV-1a digest) is dropped; the remaining
         // events form the `maxActiveExDominant` comparison.
-        const totalActiveSelected = [...activeSelectedByAsset.values()].reduce((s, x) => s + x, 0);
-        const maxActiveByAsset: AssetSelectionSummary[] = [...activeSelectedByAsset.entries()]
-            .map(([asset, events]) => {
-                const samples = maxActiveSamplesByAsset.get(asset)!;
-                const selectedMean = meanOrNull(samples.returns);
-                const delta = meanOrNull(samples.deltas);
-                return {
-                    asset,
-                    events,
-                    share: totalActiveSelected > 0 ? events / totalActiveSelected : 0,
-                    topMean: selectedMean,
-                    randomMean: selectedMean !== null && delta !== null ? finiteOrNull(selectedMean - delta) : null,
-                    delta,
-                };
-            })
-            .sort((a, b) => b.events - a.events || a.asset.localeCompare(b.asset));
-        const totalReversionSelected = [...reversionSelectedByAsset.values()].reduce((s, x) => s + x, 0);
-        const maxActiveReversionByAsset: AssetSelectionSummary[] = [...reversionSelectedByAsset.entries()]
-            .map(([asset, events]) => {
-                const samples = maxActiveReversionSamplesByAsset.get(asset)!;
-                const selectedMean = meanOrNull(samples.returns);
-                const delta = meanOrNull(samples.deltas);
-                return {
-                    asset,
-                    events,
-                    share: totalReversionSelected > 0 ? events / totalReversionSelected : 0,
-                    topMean: selectedMean,
-                    randomMean: selectedMean !== null && delta !== null ? finiteOrNull(selectedMean - delta) : null,
-                    delta,
-                };
-            })
-            .sort((a, b) => b.events - a.events || a.asset.localeCompare(b.asset));
+        const maxActiveByAsset = buildAssetSelectionBreakdown(activeSelectedByAsset, maxActiveSamplesByAsset).byAsset;
+        const maxActiveReversionByAsset = buildAssetSelectionBreakdown(
+            reversionSelectedByAsset,
+            maxActiveReversionSamplesByAsset,
+        ).byAsset;
         const maxActiveDominantAsset = maxActiveByAsset[0]?.asset ?? null;
-        const nonActiveDominantIndexes: number[] = [];
-        for (let i = 0; i < maxActive.assets.length; i += 1) {
-            if (maxActive.assets[i] !== maxActiveDominantAsset) nonActiveDominantIndexes.push(i);
-        }
-        const maxActiveExDominant = buildComparison(
-            nonActiveDominantIndexes.map((i) => maxActive.deltas[i]!),
-            nonActiveDominantIndexes.map((i) => maxActive.returns[i]!),
-            nonActiveDominantIndexes.map((i) => maxActive.times[i]!),
-        );
+        const maxActiveExDominant = buildExDominantComparison(maxActive, maxActiveDominantAsset, buildComparison);
         // TOP_MEAN dominant-asset exclusion: mirrors maxActiveExDominant for
         // the coverage-adjusted arm. The most-frequently-selected TOP_MEAN
         // asset is dropped; the remaining events form the comparison.
-        const totalMeanSelected = [...topMeanSelectedByAsset.values()].reduce((s, x) => s + x, 0);
-        const topMeanByAsset: AssetSelectionSummary[] = [...topMeanSelectedByAsset.entries()]
-            .map(([asset, events]) => {
-                const samples = topMeanSamplesByAsset.get(asset)!;
-                const selectedMean = meanOrNull(samples.returns);
-                const delta = meanOrNull(samples.deltas);
-                return {
-                    asset,
-                    events,
-                    share: totalMeanSelected > 0 ? events / totalMeanSelected : 0,
-                    topMean: selectedMean,
-                    randomMean: selectedMean !== null && delta !== null ? finiteOrNull(selectedMean - delta) : null,
-                    delta,
-                };
-            })
-            .sort((a, b) => b.events - a.events || a.asset.localeCompare(b.asset));
+        const topMeanByAsset = buildAssetSelectionBreakdown(topMeanSelectedByAsset, topMeanSamplesByAsset).byAsset;
         const topMeanDominantAsset = topMeanByAsset[0]?.asset ?? null;
-        const nonMeanDominantIndexes: number[] = [];
-        for (let i = 0; i < topMean.assets.length; i += 1) {
-            if (topMean.assets[i] !== topMeanDominantAsset) nonMeanDominantIndexes.push(i);
-        }
-        const topMeanExDominant = buildComparison(
-            nonMeanDominantIndexes.map((i) => topMean.deltas[i]!),
-            nonMeanDominantIndexes.map((i) => topMean.returns[i]!),
-            nonMeanDominantIndexes.map((i) => topMean.times[i]!),
-        );
+        const topMeanExDominant = buildExDominantComparison(topMean, topMeanDominantAsset, buildComparison);
         // TOP_MEAN top-contribution exclusion: drop events selecting the asset
         // with the largest Σ per-event delta (events × mean delta), NOT the most
         // frequent. A low-frequency / high-per-pick asset (e.g. SNDK in the
@@ -1570,60 +1730,25 @@ export async function runOpenScoreUsdReplay(
                 topMeanTopContribAsset = asset;
             }
         }
-        const nonTopContribIndexes: number[] = [];
-        for (let i = 0; i < topMean.assets.length; i += 1) {
-            if (topMean.assets[i] !== topMeanTopContribAsset) nonTopContribIndexes.push(i);
-        }
-        const topMeanExTopContrib = buildComparison(
-            nonTopContribIndexes.map((i) => topMean.deltas[i]!),
-            nonTopContribIndexes.map((i) => topMean.returns[i]!),
-            nonTopContribIndexes.map((i) => topMean.times[i]!),
-        );
+        const topMeanExTopContrib = buildExDominantComparison(topMean, topMeanTopContribAsset, buildComparison);
         // Reversion dominant-asset exclusion: mirrors maxActiveExDominant for
         // the short side. The most-frequently-selected MAX_ACTIVE_REVERSION
         // asset (ties already resolved by FNV-1a digest in pickMax) is dropped;
         // the remaining events form the comparison. Reads the same
         // maxActiveReversion series the long side reads for maxActive.
         const maxActiveReversionDominantAsset = maxActiveReversionByAsset[0]?.asset ?? null;
-        const nonReversionDominantIndexes: number[] = [];
-        for (let i = 0; i < maxActiveReversion.assets.length; i += 1) {
-            if (maxActiveReversion.assets[i] !== maxActiveReversionDominantAsset) nonReversionDominantIndexes.push(i);
-        }
-        const maxActiveReversionExDominant = buildComparison(
-            nonReversionDominantIndexes.map((i) => maxActiveReversion.deltas[i]!),
-            nonReversionDominantIndexes.map((i) => maxActiveReversion.returns[i]!),
-            nonReversionDominantIndexes.map((i) => maxActiveReversion.times[i]!),
+        const maxActiveReversionExDominant = buildExDominantComparison(
+            maxActiveReversion,
+            maxActiveReversionDominantAsset,
+            buildComparison,
         );
         // BOTTOM_MEAN byAsset + dominant-asset exclusion: mirror the
         // maxActiveReversion block for the lowest-mean selector. Same short
         // side, same eligibility, same per-asset breakdown shape — the only
         // difference is the selection rule (lowest mean vs most open pairs).
-        const totalBottomSelected = [...bottomSelectedByAsset.values()].reduce((s, x) => s + x, 0);
-        const bottomMeanByAsset: AssetSelectionSummary[] = [...bottomSelectedByAsset.entries()]
-            .map(([asset, events]) => {
-                const samples = bottomMeanSamplesByAsset.get(asset)!;
-                const selectedMean = meanOrNull(samples.returns);
-                const delta = meanOrNull(samples.deltas);
-                return {
-                    asset,
-                    events,
-                    share: totalBottomSelected > 0 ? events / totalBottomSelected : 0,
-                    topMean: selectedMean,
-                    randomMean: selectedMean !== null && delta !== null ? finiteOrNull(selectedMean - delta) : null,
-                    delta,
-                };
-            })
-            .sort((a, b) => b.events - a.events || a.asset.localeCompare(b.asset));
+        const bottomMeanByAsset = buildAssetSelectionBreakdown(bottomSelectedByAsset, bottomMeanSamplesByAsset).byAsset;
         const bottomMeanDominantAsset = bottomMeanByAsset[0]?.asset ?? null;
-        const nonBottomDominantIndexes: number[] = [];
-        for (let i = 0; i < bottomMean.assets.length; i += 1) {
-            if (bottomMean.assets[i] !== bottomMeanDominantAsset) nonBottomDominantIndexes.push(i);
-        }
-        const bottomMeanExDominant = buildComparison(
-            nonBottomDominantIndexes.map((i) => bottomMean.deltas[i]!),
-            nonBottomDominantIndexes.map((i) => bottomMean.returns[i]!),
-            nonBottomDominantIndexes.map((i) => bottomMean.times[i]!),
-        );
+        const bottomMeanExDominant = buildExDominantComparison(bottomMean, bottomMeanDominantAsset, buildComparison);
         // `maxRetained` is a documented backwards-compat alias for `maxStatic`
         // (identical selector on identical arrays). Compute the 10k-sample block
         // bootstrap ONCE and reuse the result for both fields — the prior
@@ -1691,6 +1816,16 @@ export async function runOpenScoreUsdReplay(
                 acceleratingRandom: acceleratingRandomPnl,
             },
             accelerating: acceleratingComparison,
+            // Conditional-split comparisons: TOP_RAW's pick on each subset of
+            // events defined by the per-view feature split.
+            topRawFresh: buildComparison(topRawFresh.deltas, topRawFresh.returns, topRawFresh.times),
+            topRawStale: buildComparison(topRawStale.deltas, topRawStale.returns, topRawStale.times),
+            topRawStaleShort: buildComparison(topRawStaleShort.deltas, topRawStaleShort.returns, topRawStaleShort.times),
+            topRawStaleLong: buildComparison(topRawStaleLong.deltas, topRawStaleLong.returns, topRawStaleLong.times),
+            topRawDominant: buildComparison(topRawDominant.deltas, topRawDominant.returns, topRawDominant.times),
+            topRawSpread: buildComparison(topRawSpread.deltas, topRawSpread.returns, topRawSpread.times),
+            topRawHiPairs: buildComparison(topRawHiPairs.deltas, topRawHiPairs.returns, topRawHiPairs.times),
+            topRawLoPairs: buildComparison(topRawLoPairs.deltas, topRawLoPairs.returns, topRawLoPairs.times),
             candidateDegree: degreeSummary(activeCountsAtEvents, totalSelected > 0 ? maxSelected / totalSelected : null),
             selectedDegree: degreeSummary(selectedDegree, totalSelected > 0 ? maxSelected / totalSelected : null),
             tieRates: {
@@ -1993,6 +2128,16 @@ function buildReportLines(args: {
         if (h.maxRetained.events !== h.maxSubmitted.events || h.maxRetained.delta !== h.maxSubmitted.delta) {
             lines.push(comparisonLine("MAX_RETAINED", h.maxRetained));
         }
+        // Conditional-split arms (event filters on TOP_RAW's pick).
+        // Each split is TOP_RAW's pick restricted to a per-event-feature subset.
+        lines.push(comparisonLine("RAW_FRESH", h.topRawFresh));
+        lines.push(comparisonLine("RAW_STALE", h.topRawStale));
+        lines.push(comparisonLine("RAW_STALE_SHORT", h.topRawStaleShort));
+        lines.push(comparisonLine("RAW_STALE_LONG", h.topRawStaleLong));
+        lines.push(comparisonLine("RAW_DOMINANT", h.topRawDominant));
+        lines.push(comparisonLine("RAW_SPREAD", h.topRawSpread));
+        lines.push(comparisonLine("RAW_HI_PAIRS", h.topRawHiPairs));
+        lines.push(comparisonLine("RAW_LO_PAIRS", h.topRawLoPairs));
         lines.push(comparisonLine(`RAW_EX_${h.dominantAsset ?? "NONE"}`, h.topRawExDominant));
         lines.push(comparisonLine(`MEAN_EX_${h.topMeanDominantAsset ?? "NONE"}`, h.topMeanExDominant));
         lines.push(comparisonLine(`MEAN_EX_TOPCONTRIB_${h.topMeanTopContribAsset ?? "NONE"}`, h.topMeanExTopContrib));

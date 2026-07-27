@@ -311,8 +311,13 @@ export class TopMeanWorkerPool {
         options.manifest.totalShards = shardTasks.length;
         saveManifest(options.manifest, options.baseDir, options.windowKey);
 
-        // Filter out already completed shards (for resume support)
-        const completedSet = new Set(options.manifest.completedShards);
+        // Filter out already completed shards (for resume support). The two
+        // Sets below are maintained INCREMENTALLY for the duration of this
+        // execute() call so the per-shard message handler can dedupe in O(1)
+        // instead of O(N) per shard — completing 400 shards previously cost
+        // ~80k comparisons via Array.includes.
+        const completedSet = new Set<number>(options.manifest.completedShards);
+        const failedSet = new Set<number>(options.manifest.failedShards);
         const pendingShards = shardTasks.filter((task) => !completedSet.has(task.shardIndex));
 
         let completedPairsCount = options.manifest.completedPairsCount || 0;
@@ -393,7 +398,8 @@ export class TopMeanWorkerPool {
                 if (msg.type === "shard_complete") {
                     addWorkerTiming(workerTiming, msg.performance);
                     writeShardArtifacts(options.runId, msg.shardIndex, msg.artifacts, options.baseDir, options.windowKey);
-                    if (!options.manifest.completedShards.includes(msg.shardIndex)) {
+                    if (!completedSet.has(msg.shardIndex)) {
+                        completedSet.add(msg.shardIndex);
                         options.manifest.completedShards.push(msg.shardIndex);
                     }
                     // Debounced flush: the shard ARTIFACTS are already on
@@ -411,7 +417,8 @@ export class TopMeanWorkerPool {
                     // WHICH worker handled this task.
                     releaseWorker(worker);
                 } else if (msg.type === "error") {
-                    if (!options.manifest.failedShards.includes(msg.shardIndex)) {
+                    if (!failedSet.has(msg.shardIndex)) {
+                        failedSet.add(msg.shardIndex);
                         options.manifest.failedShards.push(msg.shardIndex);
                     }
                     // Force-flush on errors so the failedShards list is

@@ -282,6 +282,13 @@ class BatchBacktestService {
     private topMeanDiagnosticRunId: string | null = null;
     private topMeanDiagnosticEntries: Array<{ at: string; type: string; data?: unknown }> = [];
     private topMeanDiagnosticProgressSeen = 0;
+    // The diagnostic panel is a debugging surface — the per-event DOM rewrite
+    // previously ran `JSON.stringify` over the ENTIRE accumulated entries
+    // array on every NDJSON event, turning a multi-hour run into O(N²) string
+    // work. Bound the retained history and coalesce the DOM updates.
+    private static readonly TOP_MEAN_DIAGNOSTIC_MAX_ENTRIES = 500;
+    private static readonly TOP_MEAN_DIAGNOSTIC_RENDER_DEBOUNCE_MS = 250;
+    private topMeanDiagnosticRenderScheduled = false;
 
     private getDom(): BatchBacktestDom {
         return this.dom ??= createBatchBacktestDom();
@@ -3065,11 +3072,27 @@ class BatchBacktestService {
 
     private recordTopMeanDiagnostic(type: string, data?: unknown): void {
         this.topMeanDiagnosticEntries.push({ at: new Date().toISOString(), type, data });
+        // Bound the retained history so a multi-hour run does not accumulate
+        // unbounded entries (each reattach poll previously appended a full
+        // /status payload). Ring-buffer: drop the oldest once over cap.
+        if (this.topMeanDiagnosticEntries.length > BatchBacktestService.TOP_MEAN_DIAGNOSTIC_MAX_ENTRIES) {
+            this.topMeanDiagnosticEntries.shift();
+        }
         const dom = this.dom;
         if (!dom) return;
         dom.batchBacktestSp500TopMeanCopyDiagnosticBtn.disabled = false;
         dom.batchBacktestSp500TopMeanDiagnostic.hidden = false;
-        dom.batchBacktestSp500TopMeanDiagnostic.textContent = this.buildTopMeanDiagnosticText();
+        // Coalesce rapid bursts (progress + per-window + reattach polls) into
+        // one DOM write per debounce window. The Copy button always reads the
+        // current array via `buildTopMeanDiagnosticText()`, so no data is lost.
+        if (this.topMeanDiagnosticRenderScheduled) return;
+        this.topMeanDiagnosticRenderScheduled = true;
+        setTimeout(() => {
+            this.topMeanDiagnosticRenderScheduled = false;
+            const currentDom = this.dom;
+            if (!currentDom) return;
+            currentDom.batchBacktestSp500TopMeanDiagnostic.textContent = this.buildTopMeanDiagnosticText();
+        }, BatchBacktestService.TOP_MEAN_DIAGNOSTIC_RENDER_DEBOUNCE_MS);
     }
 
     public downloadSp500TopMeanResults(): void {

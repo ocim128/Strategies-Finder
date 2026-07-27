@@ -467,7 +467,14 @@ export class ArtifactStore {
     }
 
     hasStored(): boolean {
-        return this.collectMetas().length > 0;
+        // Status polling hits this every ~2s during reattach. `collectMetas`
+        // filters `metas` (which can be sparse after a failed write); reuse
+        // the same defined-ness test but short-circuit on the first hit so a
+        // 1000-pair run does not allocate a 1000-entry array per poll.
+        for (let i = 0; i < this.metas.length; i += 1) {
+            if (this.metas[i]) return true;
+        }
+        return false;
     }
 
     async flush(): Promise<void> {
