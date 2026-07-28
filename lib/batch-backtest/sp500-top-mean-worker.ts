@@ -14,6 +14,13 @@ import type { CapitalSettings } from "../types/backtest";
 import { strategies } from "../strategies/library";
 import type { TopMeanCacheCounters, TopMeanWorkerTiming } from "./sp500-top-mean-performance";
 
+export const TOP_MEAN_BACKTEST_RUN_OPTIONS = Object.freeze({
+    includeAdvancedAnalytics: false,
+    omitEquityCurve: true,
+    skipDrawdown: true,
+    skipResultPostProcessing: true,
+});
+
 export interface TopMeanWorkerTaskData {
     shardIndex: number;
     pairs: Array<{
@@ -242,12 +249,7 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                     useRustEnginePreference: data.useRustEnginePreference,
                     nowSec,
                 },
-                backtestRunOptions: {
-                    includeAdvancedAnalytics: false,
-                    omitEquityCurve: true,
-                    skipDrawdown: false,
-                    skipResultPostProcessing: true,
-                },
+                backtestRunOptions: TOP_MEAN_BACKTEST_RUN_OPTIONS,
             });
             timing.backtestMs += performance.now() - backtestStartedAt;
 

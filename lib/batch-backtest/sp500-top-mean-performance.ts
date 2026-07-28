@@ -43,6 +43,11 @@ export interface TopMeanPerformanceDiagnostic {
     failedPairs: number;
     workerCount: number;
     pairsPerSecond: number;
+    engine?: {
+        requested: "rust" | "typescript";
+        actual: string;
+        typescriptRequirementReasons: string[];
+    };
     phases: {
         preflightMs: number;
         backtestingMs: number;
@@ -75,9 +80,19 @@ export function formatTopMeanPerformanceLines(performance: TopMeanPerformanceDia
     const p = performance;
     const lines = [
         `PERFORMANCE | total=${fixed(p.totalMs)}ms | pairs=${p.completedPairs}/${p.pairCount} | failed=${p.failedPairs} | workers=${p.workerCount} | throughput=${fixed(p.pairsPerSecond)} pairs/s`,
+    ];
+    if (p.engine) {
+        const fallback = p.engine.requested === "rust" && p.engine.actual !== "rust"
+            ? p.engine.typescriptRequirementReasons.join("; ") || "Rust execution failed or was unavailable"
+            : "none";
+        lines.push(
+            `PERFORMANCE ENGINE | requested=${p.engine.requested} | actual=${p.engine.actual} | fallback=${fallback}`,
+        );
+    }
+    lines.push(
         `PERFORMANCE PHASES | preflight=${fixed(p.phases.preflightMs)}ms | backtesting=${fixed(p.phases.backtestingMs)}ms | snapshot=${fixed(p.phases.snapshotMs)}ms | replay=${fixed(p.phases.replayMs)}ms | resultWrite=${fixed(p.phases.resultWriteMs)}ms`,
         `PERFORMANCE REPLAY | scan=${fixed(p.replay.scanMs)}ms | events=${fixed(p.replay.eventsMs)}ms | targets=${fixed(p.replay.targetsMs)}ms | outcomes=${fixed(p.replay.outcomesMs)}ms | aggregate=${fixed(p.replay.aggregateMs)}ms | targetLoad=${fixed(p.replay.targetLoadMs)}ms/${p.replay.targetDatasets}`,
-    ];
+    );
 
     const worker = p.worker;
     if (!worker) return lines;

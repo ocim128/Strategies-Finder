@@ -1,7 +1,13 @@
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
-import type { CapitalSettings } from "../types/backtest";
+import { isSmartTradeSizingMode, type CapitalSettings } from "../types/backtest";
+import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
+import {
+    EFFECTIVE_BACKTEST_DEFAULTS,
+    resolveBacktestSettingsFromRaw,
+} from "../backtest-settings-resolver";
+import { getTypescriptEngineRequirementReasons } from "../rust-settings-sanitizer";
 import type { BatchSyntheticPairArtifact } from "./batch-synthetic-artifact";
 import {
     atomicWriteJsonSync,
@@ -228,6 +234,15 @@ export class TopMeanCoordinatorEngine {
                 : diagnostic.totalMs,
             phases: { ...diagnostic.phases },
             replay: { ...diagnostic.replay },
+            ...(diagnostic.engine
+                ? {
+                    engine: {
+                        ...diagnostic.engine,
+                        actual: this.resolveActualEngineMode(),
+                        typescriptRequirementReasons: [...diagnostic.engine.typescriptRequirementReasons],
+                    },
+                }
+                : {}),
             ...(diagnostic.worker
                 ? {
                     worker: {
@@ -251,6 +266,29 @@ export class TopMeanCoordinatorEngine {
         if (!usage) return;
         this.engineUsage.rust += usage.rust;
         this.engineUsage.typescript += usage.typescript;
+        if (this.performanceDiagnostic?.engine) {
+            this.performanceDiagnostic.engine.actual = this.resolveActualEngineMode();
+        }
+    }
+
+    private resolveTypescriptRequirementReasons(): string[] {
+        const settings = resolveBacktestSettingsFromRaw(
+            {
+                ...(this._request.backtestSettings as Record<string, unknown>),
+                interval: this._request.interval,
+            } as BacktestSettings,
+            { coerceWithoutUiToggles: true },
+        );
+        settings.tradeDirection = settings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
+        settings.executionModel = settings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
+        const reasons = getTypescriptEngineRequirementReasons(settings);
+        const capital = resolveCapitalSettingsFromRaw(
+            this._request.capitalSettings as unknown as Record<string, unknown>,
+        );
+        if (isSmartTradeSizingMode(capital.sizingMode)) {
+            reasons.push(`${capital.sizingMode} sizing is not supported by Rust`);
+        }
+        return reasons;
     }
 
     private updateManifestEngineTelemetry(manifest: TopMeanRunManifest): void {
@@ -286,6 +324,11 @@ export class TopMeanCoordinatorEngine {
             failedPairs: 0,
             workerCount: resolveTopMeanWorkerCount(this._request.workerCount),
             pairsPerSecond: 0,
+            engine: {
+                requested: this._request.useRustEnginePreference ? "rust" : "typescript",
+                actual: this._request.useRustEnginePreference ? "rust" : "typescript",
+                typescriptRequirementReasons: this.resolveTypescriptRequirementReasons(),
+            },
             phases: {
                 preflightMs: 0,
                 backtestingMs: 0,

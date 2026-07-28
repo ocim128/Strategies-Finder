@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
-import { processTopMeanShard, sliceTopMeanCandlesFromSec, type TopMeanWorkerTaskData } from "../lib/batch-backtest/sp500-top-mean-worker";
+import {
+    processTopMeanShard,
+    sliceTopMeanCandlesFromSec,
+    TOP_MEAN_BACKTEST_RUN_OPTIONS,
+    type TopMeanWorkerTaskData,
+} from "../lib/batch-backtest/sp500-top-mean-worker";
 import { prepareClosedCandleData } from "../lib/backtest-executor";
 import { selectClosedCandleWindow } from "../lib/alert-evaluation-window";
 import type { OHLCVData, Time } from "../lib/types/strategies";
@@ -14,6 +19,17 @@ function testStabilitySliceIsAppliedBeforeExecutionWindow(): void {
     assert.deepEqual(sliced.map((candle) => Number(candle.time)), [200, 300]);
     assert.strictEqual(sliceTopMeanCandlesFromSec(candles), candles);
     console.log("PASS: stability start-date slice is applied before the worker guard");
+}
+
+function testDiscardedDrawdownIsSkippedWithoutSelectingCompactResults(): void {
+    assert.equal(TOP_MEAN_BACKTEST_RUN_OPTIONS.skipDrawdown, true);
+    assert.equal(TOP_MEAN_BACKTEST_RUN_OPTIONS.omitEquityCurve, true);
+    assert.equal(
+        "includeSharpeRatio" in TOP_MEAN_BACKTEST_RUN_OPTIONS,
+        false,
+        "TOP_MEAN requires full trade history; setting includeSharpeRatio would select scalar-only compact results",
+    );
+    console.log("PASS: TOP_MEAN skips discarded drawdown while retaining full trade history");
 }
 
 async function runWorkerParityTest(): Promise<void> {
@@ -114,6 +130,7 @@ function testDataEndTimeFromClosedCandleArray(): void {
 
 async function main(): Promise<void> {
     testStabilitySliceIsAppliedBeforeExecutionWindow();
+    testDiscardedDrawdownIsSkippedWithoutSelectingCompactResults();
     await runWorkerParityTest();
     testDataEndTimeFromClosedCandleArray();
     console.log("PASS: sp500-top-mean-worker.spec.ts");

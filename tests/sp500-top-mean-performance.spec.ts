@@ -14,6 +14,15 @@ const diagnostic: TopMeanPerformanceDiagnostic = {
     failedPairs: 2,
     workerCount: 4,
     pairsPerSecond: 98,
+    engine: {
+        requested: "rust",
+        actual: "typescript",
+        typescriptRequirementReasons: [
+            "execution model is not signal_close",
+            "slippage is enabled",
+            "same-bar exits are disabled",
+        ],
+    },
     phases: {
         preflightMs: 10,
         backtestingMs: 600,
@@ -62,12 +71,16 @@ const diagnostic: TopMeanPerformanceDiagnostic = {
 };
 
 const lines = formatTopMeanPerformanceLines(diagnostic);
-assert.equal(lines.length, 6);
+assert.equal(lines.length, 7);
 assert.match(lines[0]!, /total=1000\.0ms/);
 assert.match(lines[0]!, /throughput=98\.0 pairs\/s/);
-assert.match(lines[2]!, /targetLoad=400\.0ms\/96/);
-assert.match(lines[3]!, /shards=15\/15/);
-assert.match(lines[4]!, /load=300\.0ms/);
-assert.match(lines[5]!, /disk=80 hit\/20 miss\/20 write/);
+assert.equal(
+    lines[1],
+    "PERFORMANCE ENGINE | requested=rust | actual=typescript | fallback=execution model is not signal_close; slippage is enabled; same-bar exits are disabled",
+);
+assert.match(lines[3]!, /targetLoad=400\.0ms\/96/);
+assert.match(lines[4]!, /shards=15\/15/);
+assert.match(lines[5]!, /load=300\.0ms/);
+assert.match(lines[6]!, /disk=80 hit\/20 miss\/20 write/);
 
 console.log("PASS: sp500-top-mean-performance.spec.ts");
