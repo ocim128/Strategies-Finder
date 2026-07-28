@@ -257,6 +257,52 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(dom.batchBacktestSp500TopMeanDownloadBtn.disabled).to.equal(false);
     });
 
+    it("renders the algorithmic trade decision and single-configuration assumption", () => {
+        const dom = setupForAnalysis();
+        const result = topMeanResultFixture();
+        result.currentSnapshot = {
+            snapshot: {
+                asOf: 1_700_000_000,
+                artifacts: 10,
+                openPositions: 4,
+                candidates: [{ asset: "AAA", score: 3, activePairs: 4, mean: 0.75 }],
+                winners: [{ asset: "AAA", score: 3, activePairs: 4, mean: 0.75 }],
+                reason: "ok",
+            },
+            stats: {
+                artifactsProcessed: 10,
+                openPositions: 4,
+                positiveCandidates: 1,
+                staleEndpoints: 0,
+                missingEndpoints: 0,
+                malformedArtifacts: 0,
+                tieCount: 0,
+                durationMs: 1,
+            },
+            decision: {
+                status: "LONG_NEXT_BAR",
+                reason: "latest_decision_event",
+                asset: "AAA",
+                decisionTime: 1_700_000_000,
+                candidates: [{ asset: "AAA", score: 3, activePairs: 4, mean: 0.75 }],
+                winners: [{ asset: "AAA", score: 3, activePairs: 4, mean: 0.75 }],
+                entryPairs: 2,
+                entryRule: "first_target_bar_strictly_after_decision",
+                researchNotionalUsd: 1000,
+                researchHoldBars: 24,
+                researchExitRule: "24th_bar_close",
+                verification: "algorithmic_endpoint_check",
+                configurationAssumption: "one_strategy_configuration",
+            },
+        };
+
+        svc().renderTopMeanResults(dom, result);
+
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("ALGORITHMIC TRADE DECISION");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("LONG AAA");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("one selected strategy configuration only");
+    });
+
     it("keeps ownership after a rejected Stop and clears it after an accepted Stop", async () => {
         setupForAnalysis();
         svc().activeServerRunId = "batch-owned";

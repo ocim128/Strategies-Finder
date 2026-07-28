@@ -78,19 +78,20 @@ export interface CurrentTopMeanStats {
 }
 
 export type CurrentTopMeanDecisionStatus =
-    | "VERIFY_ENTRY_WINDOW"
+    | "LONG_NEXT_BAR"
     | "NO_TRADE";
 
 export type CurrentTopMeanDecisionReason =
     | CurrentTopMeanReason
     | "latest_decision_event"
+    | "entry_window_expired"
     | "no_decision_event";
 
 export interface CurrentTopMeanDecision {
     /**
-     * This is deliberately not an order instruction. The historical replay
-     * provides a decision event, but the current snapshot does not know whether
-     * the target asset's next eligible bar has already opened.
+     * Deterministic decision derived from the latest reconstructed entry event
+     * and the common closed-candle endpoint. This is a research decision, not
+     * an order submission.
      */
     status: CurrentTopMeanDecisionStatus;
     reason: CurrentTopMeanDecisionReason;
@@ -108,7 +109,9 @@ export interface CurrentTopMeanDecision {
     researchNotionalUsd: 1000;
     researchHoldBars: 24;
     researchExitRule: "24th_bar_close";
-    verification: "manual_entry_window_check";
+    verification: "algorithmic_endpoint_check";
+    /** Explicit scope limitation requested by the Batch decision surface. */
+    configurationAssumption: "one_strategy_configuration";
 }
 
 export interface CurrentTopMeanResult {
@@ -122,22 +125,34 @@ function buildCurrentTopMeanDecision(
     decisionTime: number | null,
     candidates: CurrentTopMeanCandidate[],
     entryPairs: number,
+    snapshotAsOf: number | null,
 ): CurrentTopMeanDecision | undefined {
     if (decisionTime === null) return undefined;
 
     const winners = candidates.length > 0
         ? candidates.filter((candidate) => candidate.mean === candidates[0]!.mean)
         : [];
+    const hasUniqueWinner = winners.length === 1;
+    // A target entry is still actionable only when the latest reconstructed
+    // pair-entry event is not older than the latest common closed candle. If it
+    // is older, at least one newer common bar is already represented by the
+    // artifacts, so entering now would be a late chase rather than the replayed
+    // first-bar-after-decision rule.
+    const entryWindowOpen = hasUniqueWinner
+        && snapshotAsOf !== null
+        && decisionTime >= snapshotAsOf;
     const reason: CurrentTopMeanDecisionReason = candidates.length === 0
         ? "no_positive_candidates"
         : winners.length > 1
             ? "tied"
-            : "latest_decision_event";
+            : entryWindowOpen
+                ? "latest_decision_event"
+                : "entry_window_expired";
 
     return {
-        status: winners.length === 1 ? "VERIFY_ENTRY_WINDOW" : "NO_TRADE",
+        status: entryWindowOpen ? "LONG_NEXT_BAR" : "NO_TRADE",
         reason,
-        asset: winners.length === 1 ? winners[0]!.asset : null,
+        asset: hasUniqueWinner ? winners[0]!.asset : null,
         decisionTime,
         candidates,
         winners,
@@ -146,7 +161,8 @@ function buildCurrentTopMeanDecision(
         researchNotionalUsd: 1000,
         researchHoldBars: 24,
         researchExitRule: "24th_bar_close",
-        verification: "manual_entry_window_check",
+        verification: "algorithmic_endpoint_check",
+        configurationAssumption: "one_strategy_configuration",
     };
 }
 
@@ -548,6 +564,7 @@ export async function reduceCurrentTopMeanSnapshot(
                 options.latestDecisionTime ?? null,
                 buildCandidates(decisionScoreByAsset, decisionActivePairsByAsset),
                 options.latestDecisionEntryPairs ?? 0,
+                endpoint,
             ),
         );
     }
@@ -573,6 +590,7 @@ export async function reduceCurrentTopMeanSnapshot(
                 options.latestDecisionTime ?? null,
                 buildCandidates(decisionScoreByAsset, decisionActivePairsByAsset),
                 options.latestDecisionEntryPairs ?? 0,
+                endpoint,
             ),
         );
     }
@@ -610,6 +628,7 @@ export async function reduceCurrentTopMeanSnapshot(
             options.latestDecisionTime ?? null,
             buildCandidates(decisionScoreByAsset, decisionActivePairsByAsset),
             options.latestDecisionEntryPairs ?? 0,
+            endpoint,
         ),
     };
 }

@@ -1054,3 +1054,140 @@ describe("batch-open-score-usd-replay-engine Phase 3 batch-run-contract provenan
         if (!v.ok) expect(v.reason).to.match(/hash mismatch/i);
     });
 });
+
+describe("batch-open-score-usd-replay-engine conditional-split arms", () => {
+    // Helper: stretch a single asset's target dataset to N bars at a flat price.
+    const flat = (n: number, p: number) => (i: number) => { void i; return p; };
+
+    it("RAW_FRESH / RAW_STALE splits on whether the TOP_RAW leader changed", async () => {
+        // Two events. T1: AAA is leader (5 longs), lastTopRawLeaderIdx=-1 → fresh.
+        // T2: AAA is leader again (T1 pairs closed, new AAA pairs opened) → stale.
+        const pairs = [
+            ...Array.from({ length: 5 }, (_, i) => makePair("AAA", `X${i}`, [makeTrade("long", T0 + 1000, T0 + 2000)])),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, T0 + 2000)]),
+            ...Array.from({ length: 5 }, (_, i) => makePair("AAA", `Z${i}`, [makeTrade("long", T0 + 3000, T0 + 4000)])),
+            makePair("BBB", "W1", [makeTrade("long", T0 + 3000, T0 + 4000)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, flat(10, 100)),
+            makeTarget("BBB", 10, flat(10, 100)),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        const h = result.horizons[0]!;
+        // First view (T1) is always fresh; second view (T2) has the same leader.
+        expect(h.topRawFresh.events).to.equal(1);
+        expect(h.topRawStale.events).to.equal(1);
+    });
+
+    it("RAW_STALE_SHORT / RAW_STALE_LONG splits STALE events at the median streak length", async () => {
+        // Six views, all led by AAA, with AAA pairs spanning the whole window
+        // (entry T1, exit after T6) plus a fresh BBB pair at each event so the
+        // positive-pool gate (>= 2 positives) is satisfied every time.
+        //
+        // Streak per view: T1=1 (fresh), T2=2, T3=3, T4=4, T5=5, T6=6 (stale).
+        // STALE streaks = [2,3,4,5,6], median = 4. STALE_SHORT (streak ∈ [2,4])
+        // → T2,T3,T4 = 3 events. STALE_LONG (streak > 4) → T5,T6 = 2 events.
+        // The two counts must sum to topRawStale.events (5).
+        const pairs = [
+            // AAA: 5 longs that stay open across all 6 events (entry T1, exit
+            // after T6) so AAA is a positive candidate throughout.
+            ...Array.from({ length: 5 }, (_, i) => makePair("AAA", `AL${i}`, [makeTrade("long", T0 + 1000, T0 + 7000)])),
+            // One fresh BBB pair per event so positives = {AAA, BBB} each time
+            // and AAA (raw 5) is the TOP_RAW leader.
+            ...Array.from({ length: 6 }, (_, k) => makePair("BBB", `B${k}`, [makeTrade("long", T0 + 1000 + k * 1000, T0 + 2000 + k * 1000)])),
+        ];
+        const targets = [
+            makeTarget("AAA", 12, flat(12, 100)),
+            makeTarget("BBB", 12, flat(12, 100)),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        const h = result.horizons[0]!;
+        expect(h.topRawStale.events).to.equal(5);
+        expect(h.topRawStaleShort.events).to.equal(3);
+        expect(h.topRawStaleLong.events).to.equal(2);
+        // SHORT + LONG partition STALE.
+        expect(h.topRawStaleShort.events + h.topRawStaleLong.events).to.equal(h.topRawStale.events);
+        const report = result.reportLines.join("\n");
+        expect(report).to.include("RAW_STALE_SHORT");
+        expect(report).to.include("RAW_STALE_LONG");
+    });
+
+    it("RAW_DOMINANT / RAW_SPREAD splits on cross-sectional HHI of positive scores", async () => {
+        // T1: AAA=raw10, BBB=raw1 → shares 10/11, 1/11 → HHI ≈ 0.84 (DOMINANT).
+        // T2: AAA=raw5,  BBB=raw4 → shares 5/9, 4/9   → HHI ≈ 0.51 (SPREAD).
+        // Median ≈ 0.67; T1 above, T2 at-or-below.
+        const pairsT1 = [
+            ...Array.from({ length: 10 }, (_, i) => makePair("AAA", `X${i}`, [makeTrade("long", T0 + 1000, T0 + 2000)])),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, T0 + 2000)]),
+        ];
+        const pairsT2 = [
+            ...Array.from({ length: 5 }, (_, i) => makePair("AAA", `P${i}`, [makeTrade("long", T0 + 3000, T0 + 4000)])),
+            ...Array.from({ length: 4 }, (_, i) => makePair("BBB", `Q${i}`, [makeTrade("long", T0 + 3000, T0 + 4000)])),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, flat(10, 100)),
+            makeTarget("BBB", 10, flat(10, 100)),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray([...pairsT1, ...pairsT2]),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        const h = result.horizons[0]!;
+        expect(h.topRawDominant.events).to.equal(1);
+        expect(h.topRawSpread.events).to.equal(1);
+    });
+
+    it("RAW_HI_PAIRS / RAW_LO_PAIRS splits on maxActivePairs across positive candidates", async () => {
+        // T1 (HI_PAIRS): AAA has 6 long pairs → maxActivePairs=6.
+        // T2 (LO_PAIRS): AAA has 2 long pairs → maxActivePairs=2.
+        // Median of [6,2]=4 → T1 above, T2 at/below.
+        const pairsT1 = [
+            ...Array.from({ length: 6 }, (_, i) => makePair("AAA", `X${i}`, [makeTrade("long", T0 + 1000, T0 + 2000)])),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, T0 + 2000)]),
+        ];
+        const pairsT2 = [
+            ...Array.from({ length: 2 }, (_, i) => makePair("AAA", `P${i}`, [makeTrade("long", T0 + 3000, T0 + 4000)])),
+            makePair("BBB", "Q1", [makeTrade("long", T0 + 3000, T0 + 4000)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, flat(10, 100)),
+            makeTarget("BBB", 10, flat(10, 100)),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray([...pairsT1, ...pairsT2]),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        const h = result.horizons[0]!;
+        expect(h.topRawHiPairs.events).to.equal(1);
+        expect(h.topRawLoPairs.events).to.equal(1);
+    });
+
+    it("conditional-split arms are deterministic across runs", async () => {
+        const pairs = [
+            ...Array.from({ length: 5 }, (_, i) => makePair("AAA", `X${i}`, [makeTrade("long", T0 + 1000, T0 + 2000)])),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, T0 + 2000)]),
+            ...Array.from({ length: 3 }, (_, i) => makePair("AAA", `P${i}`, [makeTrade("long", T0 + 3000, T0 + 4000)])),
+            makePair("BBB", "Q1", [makeTrade("long", T0 + 3000, T0 + 4000)]),
+        ];
+        const targets = [makeTarget("AAA", 10, flat(10, 100)), makeTarget("BBB", 10, flat(10, 100))];
+        const opts = { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 };
+        const r1 = await runOpenScoreUsdReplay(() => fromArray(pairs), () => fromArray(targets), opts);
+        const r2 = await runOpenScoreUsdReplay(() => fromArray(pairs), () => fromArray(targets), opts);
+        expect(r1.reportLines).to.deep.equal(r2.reportLines);
+        // Spot-check determinism on each surviving conditional-split arm.
+        expect(r1.horizons[0]!.topRawFresh).to.deep.equal(r2.horizons[0]!.topRawFresh);
+        expect(r1.horizons[0]!.topRawStaleLong).to.deep.equal(r2.horizons[0]!.topRawStaleLong);
+        expect(r1.horizons[0]!.topRawDominant).to.deep.equal(r2.horizons[0]!.topRawDominant);
+        expect(r1.horizons[0]!.topRawHiPairs).to.deep.equal(r2.horizons[0]!.topRawHiPairs);
+    });
+});

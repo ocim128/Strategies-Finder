@@ -392,7 +392,7 @@ describe("reduceCurrentTopMeanSnapshot", () => {
             })),
         );
         expect(computed.decision).to.deep.include({
-            status: "VERIFY_ENTRY_WINDOW",
+            status: "LONG_NEXT_BAR",
             reason: "latest_decision_event",
             asset: "AAA",
             decisionTime: ENDPOINT + 14_400,
@@ -401,7 +401,26 @@ describe("reduceCurrentTopMeanSnapshot", () => {
             researchNotionalUsd: 1000,
             researchHoldBars: 24,
             researchExitRule: "24th_bar_close",
-            verification: "manual_entry_window_check",
+            verification: "algorithmic_endpoint_check",
+            configurationAssumption: "one_strategy_configuration",
+        });
+    });
+
+    it("returns NO_TRADE instead of chasing an expired decision event", async () => {
+        const computed = await computeCurrentTopMeanSnapshot(
+            () => asyncFrom(openPair("AAA+BBB", "long", {
+                dataEndTime: ENDPOINT,
+                entryTime: ENDPOINT - 14_400,
+            })),
+        );
+
+        expect(computed.decision).to.deep.include({
+            status: "NO_TRADE",
+            reason: "entry_window_expired",
+            asset: "AAA",
+            decisionTime: ENDPOINT - 14_400,
+            verification: "algorithmic_endpoint_check",
+            configurationAssumption: "one_strategy_configuration",
         });
     });
 

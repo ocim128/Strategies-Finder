@@ -369,6 +369,7 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
                 researchHoldBars: number;
                 researchExitRule: string;
                 verification: string;
+                configurationAssumption: string;
             };
         };
         const snap = persistedCurrent.snapshot;
@@ -400,7 +401,8 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
             researchNotionalUsd: 1000,
             researchHoldBars: 24,
             researchExitRule: "24th_bar_close",
-            verification: "manual_entry_window_check",
+            verification: "algorithmic_endpoint_check",
+            configurationAssumption: "one_strategy_configuration",
         });
 
         console.log("PASS: run() integrates reducer, emits snapshot, persists before replay (F1+F4)");
