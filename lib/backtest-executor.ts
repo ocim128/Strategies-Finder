@@ -93,6 +93,7 @@ export interface BacktestExecutorRequest {
         includeSharpeRatio?: boolean;
         collectDiagnostics?: boolean;
         collectExecutorTimings?: boolean;
+        useCompactBacktest?: boolean;
         omitEquityCurve?: boolean;
         skipDrawdown?: boolean;
         skipResultPostProcessing?: boolean;
@@ -497,6 +498,9 @@ function shouldSkipResultPostProcessing(req: BacktestExecutorRequest): boolean {
 }
 
 function shouldUseCompactBacktest(req: BacktestExecutorRequest): boolean {
+    if (typeof req.backtestRunOptions?.useCompactBacktest === "boolean") {
+        return req.backtestRunOptions.useCompactBacktest;
+    }
     return shouldSkipResultPostProcessing(req)
         && req.backtestRunOptions?.omitEquityCurve === true
         && typeof req.backtestRunOptions.includeSharpeRatio === "boolean";

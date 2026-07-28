@@ -16,7 +16,9 @@ import type { TopMeanCacheCounters, TopMeanWorkerTiming } from "./sp500-top-mean
 
 export const TOP_MEAN_BACKTEST_RUN_OPTIONS = Object.freeze({
     includeAdvancedAnalytics: false,
+    includeSharpeRatio: false,
     collectExecutorTimings: true,
+    useCompactBacktest: false,
     omitEquityCurve: true,
     skipDrawdown: true,
     skipResultPostProcessing: true,

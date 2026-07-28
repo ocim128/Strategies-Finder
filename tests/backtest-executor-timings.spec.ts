@@ -59,8 +59,10 @@ async function main(): Promise<void> {
         ...commonRequest,
         backtestRunOptions: {
             includeAdvancedAnalytics: false,
+            includeSharpeRatio: false,
             collectDiagnostics: true,
             collectExecutorTimings: true,
+            useCompactBacktest: false,
             omitEquityCurve: true,
             skipDrawdown: true,
             skipResultPostProcessing: true,
@@ -72,6 +74,11 @@ async function main(): Promise<void> {
         baseline.result.trades,
         "timing collection must not change the TOP_MEAN trade artifacts",
     );
+    assert.ok(measured.result.trades.length > 0, "explicit full execution must retain trade artifacts");
+    assert.equal(measured.result.totalTrades, baseline.result.totalTrades);
+    assert.equal(measured.result.netProfit, baseline.result.netProfit);
+    assert.equal(measured.result.sharpeRatio, 0);
+    assert.equal(measured.result.maxDrawdown, 0);
     assert.ok(measured.executorTimings);
     assert.ok(measured.executorTimings.signalGenerationMs >= 0);
     assert.ok(measured.executorTimings.exitProcessingMs >= 0);

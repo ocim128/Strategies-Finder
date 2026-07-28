@@ -24,12 +24,9 @@ function testStabilitySliceIsAppliedBeforeExecutionWindow(): void {
 function testDiscardedDrawdownIsSkippedWithoutSelectingCompactResults(): void {
     assert.equal(TOP_MEAN_BACKTEST_RUN_OPTIONS.skipDrawdown, true);
     assert.equal(TOP_MEAN_BACKTEST_RUN_OPTIONS.omitEquityCurve, true);
+    assert.equal(TOP_MEAN_BACKTEST_RUN_OPTIONS.includeSharpeRatio, false);
+    assert.equal(TOP_MEAN_BACKTEST_RUN_OPTIONS.useCompactBacktest, false);
     assert.equal(TOP_MEAN_BACKTEST_RUN_OPTIONS.collectExecutorTimings, true);
-    assert.equal(
-        "includeSharpeRatio" in TOP_MEAN_BACKTEST_RUN_OPTIONS,
-        false,
-        "TOP_MEAN requires full trade history; setting includeSharpeRatio would select scalar-only compact results",
-    );
     console.log("PASS: TOP_MEAN skips discarded drawdown while retaining full trade history");
 }
 
