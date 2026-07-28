@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
 import type { CompactPairArtifact, TopMeanRunManifest, BatchSyntheticPairArtifactAdapter } from "./compact-pair-artifact";
@@ -257,6 +257,21 @@ export function readShardArtifacts(
     }
 }
 
+export async function readShardArtifactsAsync(
+    runId: string,
+    shardIndex: number,
+    baseDir?: string,
+    windowKey?: string,
+): Promise<CompactPairArtifact[] | null> {
+    const shardPath = getShardPath(runId, shardIndex, baseDir, windowKey);
+    try {
+        const content = await readFile(shardPath, "utf8");
+        return JSON.parse(content) as CompactPairArtifact[];
+    } catch {
+        return null;
+    }
+}
+
 export async function* iterateRunCompactArtifacts(
     runId: string,
     baseDir?: string,
@@ -266,7 +281,7 @@ export async function* iterateRunCompactArtifacts(
     if (!manifest) return;
 
     for (const shardIndex of manifest.completedShards) {
-        const shardArtifacts = readShardArtifacts(runId, shardIndex, baseDir, windowKey);
+        const shardArtifacts = await readShardArtifactsAsync(runId, shardIndex, baseDir, windowKey);
         if (!shardArtifacts) continue;
         for (const artifact of shardArtifacts) {
             yield toBatchSyntheticPairAdapter(artifact);
@@ -289,7 +304,7 @@ export async function* iterateRunRawCompactArtifacts(
     if (!manifest) return;
 
     for (const shardIndex of manifest.completedShards) {
-        const shardArtifacts = readShardArtifacts(runId, shardIndex, baseDir, windowKey);
+        const shardArtifacts = await readShardArtifactsAsync(runId, shardIndex, baseDir, windowKey);
         if (!shardArtifacts) continue;
         for (const artifact of shardArtifacts) {
             yield artifact;

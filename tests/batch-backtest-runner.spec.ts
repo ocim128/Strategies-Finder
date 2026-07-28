@@ -5,6 +5,7 @@ import {
     parseBatchSymbols,
     runBatchBacktest,
 } from "../lib/batch-backtest/batch-backtest-runner";
+import { validateBatchSymbolToken } from "../lib/batch-backtest/batch-run-contract";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
 
@@ -78,6 +79,14 @@ describe("parseBatchSymbols", () => {
 
     it("drops empty tokens", () => {
         expect(parseBatchSymbols("\n  \n,\n")).to.deep.equal([]);
+    });
+
+    it("rejects path syntax before symbols reach server-side caches", () => {
+        expect(validateBatchSymbolToken("../BTC+ETH")).to.match(/forbidden/);
+        expect(validateBatchSymbolToken("C:\\TEMP+ETH")).to.match(/forbidden/);
+        expect(validateBatchSymbolToken("BTC\u0000+ETH")).to.match(/forbidden/);
+        expect(validateBatchSymbolToken("BTC+ETH")).to.equal(null);
+        expect(validateBatchSymbolToken("NVDA\u2022+AAPL\u2022")).to.equal(null);
     });
 });
 

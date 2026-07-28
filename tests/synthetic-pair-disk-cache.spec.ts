@@ -28,6 +28,7 @@ import {
     __setSeedDirForTests,
     __setSeriesMetaFetcherForTests,
     __setSyntheticPairCacheDirForTests,
+    createSeedFingerprintMemo,
     computeSeedFingerprint,
     getSyntheticPairCacheSize,
     loadCachedSyntheticPair,
@@ -380,6 +381,45 @@ test("cache file path encodes the pair key without pipe characters", () => {
     assert.ok(filePath.endsWith(".bin"), "v2 cache files use the .bin extension");
     assert.ok(!filePath.includes("|"), "pipe must be replaced for shell-safety");
     assert.ok(filePath.includes(cacheDir), `file should live under ${cacheDir}`);
+});
+
+test("cache file path cannot escape the configured cache root", () => {
+    const args = makeArgs({ pairKey: "../../outside-cache" });
+    assert.throws(
+        () => __cacheFilePathForTests(args),
+        /escapes cache root/,
+    );
+});
+
+test("caller-supplied fingerprint avoids duplicate metadata lookups on load/store", async () => {
+    let fetches = 0;
+    __setSeriesMetaFetcherForTests(async () => {
+        fetches += 1;
+        return { ok: true, lastTime: 1782914400, barsCount: 65003, updatedAt: 1 };
+    });
+    const args = makeCryptoArgs();
+    const fingerprint = await computeSeedFingerprint(args.baseSymbol, args.quoteSymbol, args.sourceInterval);
+    assert.equal(fetches, 2, "one lookup per leg");
+    assert.equal(await storeSyntheticPair(args, makeBars(2), fingerprint), true);
+    assert.ok(await loadCachedSyntheticPair(args, fingerprint));
+    assert.equal(fetches, 2, "store/load reuse the caller-supplied fingerprint");
+});
+
+test("fingerprint memo reuses shared leg metadata across pairs", async () => {
+    let fetches = 0;
+    __setSeriesMetaFetcherForTests(async () => {
+        fetches += 1;
+        return { ok: true, lastTime: 1782914400, barsCount: 65003, updatedAt: 1 };
+    });
+    const memo = createSeedFingerprintMemo();
+
+    assert.ok(await memo.compute("BTCUSDT", "PAXGUSDT", "1h"));
+    assert.ok(await memo.compute("BTCUSDT", "ETHUSDT", "1h"));
+    assert.equal(fetches, 3, "shared BTC leg should be fingerprinted once");
+
+    memo.clear();
+    assert.ok(await memo.compute("BTCUSDT", "ETHUSDT", "1h"));
+    assert.equal(fetches, 5, "clearing the run cache should refresh both legs");
 });
 
 // --------------------------------------------------------------------------

@@ -111,7 +111,12 @@ export type BatchStreamEvent =
         ok: boolean;
         cancelled: boolean;
         interval: string;
-        totals: { loadedSymbols: number; failedSymbols: number };
+        totals: {
+            loadedSymbols: number;
+            failedSymbols: number;
+            attemptedSymbols?: number;
+            cancelledSymbols?: number;
+        };
         summary: string;
         /** True when the server retains per-row artifacts (data/signals/trades) for OPEN_SCORE USD Replay. */
         serverHasArtifacts: boolean;
@@ -119,6 +124,12 @@ export type BatchStreamEvent =
         fingerprint: string | null;
         /** Server-side loader cache counters captured at run completion. */
         cacheStats?: BatchDatasetCacheStats;
+        performance?: {
+            datasetWaitMs: number;
+            executeMs: number;
+            resultProjectionMs: number;
+            completionCallbackMs: number;
+        };
         /** Browser-generated run id (audit Finding 5). Optional for backward
          *  compat with stale browser bundles that predate the runId contract;
          *  the server still scopes Stop by runId once the browser sends one. */

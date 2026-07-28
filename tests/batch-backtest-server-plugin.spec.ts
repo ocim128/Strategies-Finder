@@ -653,6 +653,38 @@ describe("batch-backtest server plugin processRunBatch", () => {
         // Snapshot is left in place; a new run will replace it.
         expect(getRunStateForTests()).to.equal(null);
     });
+
+    it("does not stream unattempted cancelled-tail rows", async () => {
+        const owner = 9016;
+        setRunOwnerForTests(owner);
+        const events: BatchStreamEvent[] = [];
+        await processRunBatch(
+            {
+                interval: "5m",
+                strategyKey: STRATEGY_KEY,
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["ONE", "TWO", "THREE"],
+                loadDataset: async () => makeCandles([100, 105, 110, 115, 120]),
+                minUsableBars: 1,
+            },
+            (event) => {
+                events.push(event);
+                if (event.type === "symbol") setRunOwnerForTests(0);
+            },
+            owner,
+        );
+
+        const symbolEvents = events.filter((event) => event.type === "symbol");
+        const done = events.find((event): event is Extract<BatchStreamEvent, { type: "done" }> => event.type === "done");
+        expect(symbolEvents).to.have.length(1);
+        expect(done?.totals.attemptedSymbols).to.equal(1);
+        expect(done?.totals.cancelledSymbols).to.equal(2);
+        expect(done?.summary).to.include("attempted 1/3");
+        await releaseLastResults("test_end");
+    });
 });
 
 describe("batch-backtest server plugin releaseLastResults", () => {

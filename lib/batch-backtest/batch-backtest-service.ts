@@ -154,7 +154,7 @@ function readTopMeanActiveRun(): TopMeanPersistedActiveRun | null {
  */
 const LIVE_RENDER_MAX_BATCH = 50;
 
-class BatchBacktestService {
+export class BatchBacktestService {
     private dom: BatchBacktestDom | null = null;
     private initialized = false;
     private cancelled = false;
@@ -272,6 +272,13 @@ class BatchBacktestService {
     // completed in this session.
     private lastBenchmark: BatchBenchmarkSnapshot | null = null;
     private pendingServerRunCacheStats: BatchBenchmarkCacheStats | null = null;
+    private pendingServerRunCounts: { attempted: number; cancelled: number; failed: number } | null = null;
+    private pendingServerRunPerformance: {
+        datasetWaitMs: number;
+        executeMs: number;
+        resultProjectionMs: number;
+        completionCallbackMs: number;
+    } | null = null;
 
     // Audit Finding 2: typed (was `any`) so a shape drift between the
     // coordinator engine emissions and the UI renderers is a compile failure.
@@ -289,6 +296,7 @@ class BatchBacktestService {
     private static readonly TOP_MEAN_DIAGNOSTIC_MAX_ENTRIES = 500;
     private static readonly TOP_MEAN_DIAGNOSTIC_RENDER_DEBOUNCE_MS = 250;
     private topMeanDiagnosticRenderScheduled = false;
+    private topMeanDiagnosticRenderTimer: ReturnType<typeof setTimeout> | null = null;
 
     private getDom(): BatchBacktestDom {
         return this.dom ??= createBatchBacktestDom();
@@ -517,6 +525,8 @@ class BatchBacktestService {
         // crash). `recordRunBenchmark` re-populates this from the `done` event
         // or the recovery/reattach path.
         this.pendingServerRunCacheStats = null;
+        this.pendingServerRunCounts = null;
+        this.pendingServerRunPerformance = null;
         const runStartedAt = performance.now();
         // Audit benchmark-rows finding: the benchmark records ONLY after a
         // known terminal outcome. A run that threw before any terminal event
@@ -679,6 +689,12 @@ class BatchBacktestService {
                     this.pendingServerRunCacheStats = event.cacheStats
                         ? buildCacheStatsFromLoader(event.cacheStats)
                         : null;
+                    this.pendingServerRunCounts = {
+                        attempted: event.totals.attemptedSymbols ?? this.lastResults.length,
+                        cancelled: event.totals.cancelledSymbols ?? 0,
+                        failed: event.totals.failedSymbols,
+                    };
+                    this.pendingServerRunPerformance = event.performance ?? null;
                     doneSummary = event.summary;
                     // Audit benchmark-rows finding: surface a partial-artifact
                     // warning in the status line when the server retained some
@@ -1009,9 +1025,16 @@ class BatchBacktestService {
         // reason it did before: those rows have a non-failure status. The new
         // `completed`/`cancelled` split is the accurate breakdown.
         const loaded = this.lastResults.filter((r) => r.status !== "load_failed" && r.status !== "run_failed").length;
-        const attempted = this.lastResults.length;
+        const serverCounts = mode === "server" ? this.pendingServerRunCounts : null;
+        const attempted = serverCounts?.attempted ?? this.lastResults.length;
+        if (serverCounts) {
+            failed = serverCounts.failed;
+            cancelled = serverCounts.cancelled;
+            completed = Math.max(0, attempted - failed);
+        }
         const phase: BatchBenchmarkRunPhase = {
             totalMs,
+            ...(this.pendingServerRunPerformance ?? {}),
             loaded,
             failed,
             synthetic,
@@ -3087,7 +3110,8 @@ class BatchBacktestService {
         // current array via `buildTopMeanDiagnosticText()`, so no data is lost.
         if (this.topMeanDiagnosticRenderScheduled) return;
         this.topMeanDiagnosticRenderScheduled = true;
-        setTimeout(() => {
+        this.topMeanDiagnosticRenderTimer = setTimeout(() => {
+            this.topMeanDiagnosticRenderTimer = null;
             this.topMeanDiagnosticRenderScheduled = false;
             const currentDom = this.dom;
             if (!currentDom) return;
@@ -3264,6 +3288,21 @@ class BatchBacktestService {
             this.topMeanReattachTimerResolve = null;
         }
     }
+
+    public dispose(): void {
+        // Detach this instance from server-owned work before resolving its
+        // polling delays. Otherwise the TOP_MEAN loop wakes, still sees the
+        // same run id, and immediately schedules another timer.
+        this.activeTopMeanRunId = null;
+        this.stopReattachPoll();
+        this.stopTopMeanReattachPoll();
+        this.cancelLiveRenderRaf();
+        if (this.topMeanDiagnosticRenderTimer) {
+            clearTimeout(this.topMeanDiagnosticRenderTimer);
+            this.topMeanDiagnosticRenderTimer = null;
+        }
+        this.topMeanDiagnosticRenderScheduled = false;
+    }
 }
 
 function formatSignedPercent(value: number | null | undefined): string {
@@ -3320,4 +3359,8 @@ function formatBalancedPairListReportLines(result: BalancedPairListResult): stri
     return lines;
 }
 
-export const batchBacktestService = new BatchBacktestService();
+export function createBatchBacktestService(): BatchBacktestService {
+    return new BatchBacktestService();
+}
+
+export const batchBacktestService = createBatchBacktestService();

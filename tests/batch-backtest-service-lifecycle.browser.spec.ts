@@ -1,7 +1,7 @@
 /** Browser-visible analysis lifecycle regressions not covered by plugin specs. */
 import { expect } from "chai";
-import { describe, it, before, after } from "node:test";
-import { batchBacktestService } from "../lib/batch-backtest/batch-backtest-service";
+import { describe, it, before, after, beforeEach } from "node:test";
+import { createBatchBacktestService, type BatchBacktestService } from "../lib/batch-backtest/batch-backtest-service";
 import type { BatchBacktestDom } from "../lib/batch-backtest/batch-backtest-dom";
 import { BATCH_BACKTEST_REQUIRED_IDS } from "../lib/batch-backtest/batch-backtest-dom";
 import { state } from "../lib/state";
@@ -53,6 +53,7 @@ before(() => {
 });
 
 after(() => {
+    currentService.dispose();
     if (savedDocument === undefined) delete (globalThis as any).document;
     else (globalThis as any).document = savedDocument;
     if (savedLocalStorage === undefined) delete (globalThis as any).localStorage;
@@ -60,7 +61,14 @@ after(() => {
     (globalThis as any).fetch = savedFetch;
 });
 
-function svc(): any { return batchBacktestService as any; }
+let currentService: BatchBacktestService = createBatchBacktestService();
+
+beforeEach(() => {
+    currentService.dispose();
+    currentService = createBatchBacktestService();
+});
+
+function svc(): any { return currentService as any; }
 
 function topMeanResultFixture(): any {
     return {

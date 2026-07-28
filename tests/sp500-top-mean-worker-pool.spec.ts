@@ -303,6 +303,52 @@ async function testRetryDrainsAcrossWorkerRelease(): Promise<void> {
     assert.ok(executeReturned || executeThrew, "execute() terminated (success or failure) rather than hanging");
 }
 
+async function testShardCompletesOnlyAfterDurableWrite(): Promise<void> {
+    const pairs = ["FAKE_Aâ€¢+FAKE_Bâ€¢"];
+    const manifest: TopMeanRunManifest = {
+        schema: "top_mean_run_manifest.v1",
+        runId: "smoke_test_durable_shard",
+        status: "running",
+        fingerprint: "smoke",
+        strategyKey: "close_location_median_alignment",
+        interval: "4h",
+        pairCount: 1,
+        shardSize: 1,
+        totalShards: 1,
+        completedShards: [],
+        failedShards: [],
+        completedPairsCount: 0,
+        failedPairsCount: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+    };
+    let writes = 0;
+    const pool = new TopMeanWorkerPool();
+    try {
+        await pool.execute({
+            runId: manifest.runId,
+            manifest,
+            canonicalPairs: pairs,
+            strategyKey: manifest.strategyKey,
+            strategyParams: { lookback: 20, threshold: 0.5 },
+            backtestSettings: { direction: "long", slippage: 0, commission: 0 } as any,
+            capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 } as any,
+            interval: "4h",
+            workerCount: 1,
+            shardSize: 1,
+            useRustEnginePreference: false,
+            writeShardArtifacts: async () => {
+                writes += 1;
+                if (writes === 1) throw new Error("simulated disk failure");
+            },
+        });
+    } finally {
+        pool.cancel();
+    }
+    assert.equal(writes, 2, "failed durable write uses the existing one-retry path");
+    assert.deepEqual(manifest.completedShards, [0], "manifest acknowledges the shard only after the successful retry");
+}
+
 async function main(): Promise<void> {
     testWorkerCountResolution();
     testShardSizeFeedsEveryWorker();
@@ -311,6 +357,7 @@ async function main(): Promise<void> {
     await testPersistentWorkerPoolEndToEnd();
     await testKeepWorkersAliveAcrossExecutes();
     await testRetryDrainsAcrossWorkerRelease();
+    await testShardCompletesOnlyAfterDurableWrite();
     console.log("PASS: sp500-top-mean-worker-pool.spec.ts");
 }
 

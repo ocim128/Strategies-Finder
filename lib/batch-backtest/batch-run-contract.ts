@@ -22,6 +22,30 @@ export interface BatchRunFingerprintInput {
 
 /** Shared intake and snapshot ceiling for one Batch run. */
 export const BATCH_MAX_SYMBOLS = 2_000;
+export const BATCH_MAX_SYMBOL_LENGTH = 128;
+
+/**
+ * Batch symbols eventually participate in server-side cache paths and local
+ * data lookups. Keep the existing permissive symbol grammar, but reject path
+ * syntax and control characters at the server boundary.
+ */
+export function validateBatchSymbolToken(symbol: string): string | null {
+    if (!symbol || symbol.length > BATCH_MAX_SYMBOL_LENGTH) {
+        return `symbol must be 1-${BATCH_MAX_SYMBOL_LENGTH} characters`;
+    }
+    if (/[\/\\:\u0000-\u001f\u007f]/.test(symbol) || symbol.includes("..")) {
+        return "symbol contains a forbidden path/control sequence";
+    }
+    return null;
+}
+
+export function validateBatchSymbols(symbols: readonly string[]): string | null {
+    for (const symbol of symbols) {
+        const error = validateBatchSymbolToken(symbol);
+        if (error) return `${symbol}: ${error}`;
+    }
+    return null;
+}
 
 export function parseBatchSymbols(raw: string): string[] {
     return normalizeBatchSymbols(raw.split(/[\s,]+/));

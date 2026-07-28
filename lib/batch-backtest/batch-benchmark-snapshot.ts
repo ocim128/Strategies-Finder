@@ -35,6 +35,10 @@ export type BatchBenchmarkCacheSource = "browser_loader" | "server_stream" | "un
 
 export interface BatchBenchmarkRunPhase {
     totalMs: number;
+    datasetWaitMs?: number;
+    executeMs?: number;
+    resultProjectionMs?: number;
+    completionCallbackMs?: number;
     loaded: number;
     failed: number;
     synthetic: number;
@@ -154,7 +158,24 @@ export function buildBatchBenchmarkBottlenecks(
     // Dominant phase. With only the run phase present, surface it when it
     // exceeded a meaningful duration.
     if (phases.run && phases.run.totalMs > 0) {
-        notes.push(`run phase ${phases.run.totalMs.toFixed(0)} ms`);
+        const run = phases.run;
+        const timedParts = [
+            ["dataset wait", run.datasetWaitMs],
+            ["execution", run.executeMs],
+            ["result projection", run.resultProjectionMs],
+            ["completion callback", run.completionCallbackMs],
+        ] as const;
+        let dominant: { label: string; ms: number } | null = null;
+        for (const [label, ms] of timedParts) {
+            if (typeof ms === "number" && (!dominant || ms > dominant.ms)) {
+                dominant = { label, ms };
+            }
+        }
+        if (dominant && dominant.ms / run.totalMs >= 0.4) {
+            notes.push(`${dominant.label} dominates at ${dominant.ms.toFixed(0)} ms (${(dominant.ms / run.totalMs * 100).toFixed(1)}%)`);
+        } else {
+            notes.push(`run phase ${run.totalMs.toFixed(0)} ms`);
+        }
     }
 
     if (notes.length === 0) {

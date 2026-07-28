@@ -40,6 +40,31 @@ describe("batch benchmark bottlenecks", () => {
         expect(notes.some((note) => note.includes("run phase"))).to.equal(true);
     });
 
+    it("identifies the dominant measured Batch phase", () => {
+        const phases: BatchBenchmarkSnapshot["phases"] = {
+            run: {
+                totalMs: 10_000,
+                datasetWaitMs: 7_000,
+                executeMs: 2_000,
+                resultProjectionMs: 100,
+                completionCallbackMs: 500,
+                loaded: 100,
+                failed: 0,
+                synthetic: 100,
+                real: 0,
+                avgMsPerLoaded: 100,
+                attempted: 100,
+                completed: 100,
+                cancelled: 0,
+                skipped: 0,
+                outcome: "done",
+            },
+        };
+
+        const notes = buildBatchBenchmarkBottlenecks(phases, emptyCache(), "server_stream");
+        expect(notes).to.include("dataset wait dominates at 7000 ms (70.0%)");
+    });
+
     it("schema is bumped to v2 to flag the new run-phase fields (audit benchmark-rows finding)", () => {
         // Intent being locked (AGENTS.md rule 8): the v2 bump is the explicit
         // marker that the run-phase shape gained `attempted`/`completed`/

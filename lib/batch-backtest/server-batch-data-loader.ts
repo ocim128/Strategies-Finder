@@ -11,6 +11,7 @@ import { isIbkrSymbol } from "../local-daily-datasets";
 import type { OHLCVData } from "../types/strategies";
 import { createBatchDatasetLoaderCore, type BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import {
+    createSeedFingerprintMemo,
     loadCachedSyntheticPair,
     storeSyntheticPair,
 } from "./synthetic-pair-disk-cache";
@@ -18,6 +19,7 @@ import { clearServerDataCache, createServerDataFetcher } from "../data/server-da
 
 // Reuse a single long-lived DataFetcher for the whole server loader (Finding 8).
 const serverDataFetcher = createServerDataFetcher();
+const fingerprintMemo = createSeedFingerprintMemo();
 
 // The bounded-cache startup prune is triggered lazily by the disk-cache module
 // on the first write (see `storeSyntheticPair` → `maybePruneAfterWrite`), NOT at
@@ -49,8 +51,10 @@ const loader = createBatchDatasetLoaderCore({
     fetchHistorical: fetchServerHistoricalData,
     // Server-side disk cache. File-backed legs use seed CSV mtimes; Binance
     // legs use SQLite series metadata as the fingerprint.
-    loadCachedSyntheticPair: (args) => loadCachedSyntheticPair(args),
-    storeSyntheticPair: (args, bars) => storeSyntheticPair(args, bars),
+    computeSyntheticPairFingerprint: (args) =>
+        fingerprintMemo.compute(args.baseSymbol, args.quoteSymbol, args.sourceInterval),
+    loadCachedSyntheticPair: (args, fingerprint) => loadCachedSyntheticPair(args, fingerprint),
+    storeSyntheticPair: (args, bars, fingerprint) => storeSyntheticPair(args, bars, fingerprint),
 });
 
 export async function loadServerBatchDataset(
@@ -63,6 +67,7 @@ export async function loadServerBatchDataset(
 
 export function clearServerBatchDatasetCaches(): void {
     loader.clearCaches();
+    fingerprintMemo.clear();
     // Crypto/IBKR sync can update SQLite between Batch runs. The shared
     // DataCache otherwise keeps serving the pre-sync target timeframe even
     // after the synthetic leg/pair LRUs are cleared, which makes Stability

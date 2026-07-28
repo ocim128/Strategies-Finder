@@ -45,7 +45,7 @@ import type { CapitalSettings } from "../types/backtest";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { toScalarRow, type BatchStatusResponse, type BatchStreamEvent } from "./batch-backtest-stream-types";
 import { rememberLoopbackOriginFromRequest } from "../local-api-transport";
-import { buildBatchRunFingerprint, normalizeBatchSymbols, BATCH_MAX_SYMBOLS, verifyPairListProvenance, type BatchRunPairListProvenanceMeta, type BatchUniverseCounts } from "./batch-run-contract";
+import { buildBatchRunFingerprint, normalizeBatchSymbols, BATCH_MAX_SYMBOLS, validateBatchSymbols, verifyPairListProvenance, type BatchRunPairListProvenanceMeta, type BatchUniverseCounts } from "./batch-run-contract";
 import { fnv1a64Hex, type MaxActiveResearchRegistrationV1 } from "./max-active-research-contract";
 import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
@@ -1049,11 +1049,24 @@ export async function processRunBatch(
 
     const lostOwnership = () => runOwner !== owner;
     let cancelled = false;
+    let lastProgressAt = 0;
+    let lastProgressPercent = -1;
     // setProgress already carries the status; do not emit it twice per symbol.
     try {
         const output = await runBatchBacktest({ ...input, pruneResultArtifacts: true }, {
             setProgress: (percent, text) => {
                 if (lostOwnership()) return;
+                const now = Date.now();
+                if (
+                    percent !== 100
+                    && lastProgressPercent >= 0
+                    && percent - lastProgressPercent < 1
+                    && now - lastProgressAt < 150
+                ) {
+                    return;
+                }
+                lastProgressAt = now;
+                lastProgressPercent = percent;
                 writer({ type: "progress", percent, text, status: text });
             },
             setStatus: () => {},
@@ -1078,6 +1091,7 @@ export async function processRunBatch(
                 await storeMineArtifact(index, result, store);
                 if (store.isDetached()) return;
                 writer({ type: "symbol", index, total, row: scalarRow });
+                await new Promise<void>((resolve) => setImmediate(resolve));
             },
             isCancelled: () => {
                 if (lostOwnership()) {
@@ -1093,17 +1107,21 @@ export async function processRunBatch(
             if (runState === snapshot) snapshot.cancelled = true;
         }
 
-        // Fill any rows the runner back-filled (cancelled tail); push them on
-        // the wire so the browser sees the full row list.
+        // Keep the shared runner's dense result contract, but do not transport
+        // unattempted cancelled-tail rows. The browser should render work that
+        // actually ran, not thousands of synthetic placeholders after Stop.
+        let attemptedSymbols = 0;
         for (let i = 0; i < output.results.length; i += 1) {
             const row = output.results[i]!;
-            if (runState === snapshot && snapshot.rows[i] === undefined) {
+            if (row.status === "skipped") continue;
+            attemptedSymbols += 1;
+            if (runState === snapshot && snapshot.rows.length < attemptedSymbols) {
                 snapshot.rows.push(toScalarRow(row));
             }
         }
 
         if (runState === snapshot) {
-            snapshot.completed = output.results.length;
+            snapshot.completed = attemptedSymbols;
             snapshot.failed = output.failedSymbols.length;
             snapshot.currentSymbol = null;
             snapshot.cancelled = cancelled;
@@ -1133,7 +1151,13 @@ export async function processRunBatch(
         }
         const cacheStats = getServerBatchDatasetCacheStats();
         lastRunCacheStats = cacheStats;
-        let terminalSummary = `Done — ${output.results.length} pairs${output.failedSymbols.length > 0 ? `, ${output.failedSymbols.length} failed` : ""}${cancelled ? ", cancelled" : ""}`;
+        const cancelledSymbols = Math.max(0, output.results.length - attemptedSymbols);
+        let terminalSummary = cancelled
+            ? `Stopped — attempted ${attemptedSymbols}/${output.results.length} pairs`
+            : `Done — ${attemptedSymbols} pairs`;
+        if (output.failedSymbols.length > 0) {
+            terminalSummary += `, ${output.failedSymbols.length} failed`;
+        }
         // Audit artifact-stats finding: when a run retains some but not all
         // Mine artifacts (disk pressure on a 1000-pair run), surface the
         // partial-failure count in the summary so Mine-analyzing fewer pairs
@@ -1171,11 +1195,17 @@ export async function processRunBatch(
             ok: output.failedSymbols.length === 0 && !cancelled,
             cancelled,
             interval: input.interval,
-            totals: { loadedSymbols: output.loadedSymbols, failedSymbols: output.failedSymbols.length },
+            totals: {
+                loadedSymbols: output.loadedSymbols,
+                failedSymbols: output.failedSymbols.length,
+                attemptedSymbols,
+                cancelledSymbols,
+            },
             summary: terminalSummary,
             serverHasArtifacts: artifactsAvailable,
             fingerprint,
             cacheStats,
+            performance: output.timings,
             runId,
             artifactStats,
             parsedCacheStats,
@@ -1266,6 +1296,10 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
             400,
             `Batch size ${symbols.length} exceeds the ${BATCH_MAX_SYMBOLS}-symbol limit. Split the run into chunks of ${BATCH_MAX_SYMBOLS} or fewer.`,
         );
+    }
+    const symbolValidationError = validateBatchSymbols(symbols);
+    if (symbolValidationError) {
+        throw new HttpStatusError(400, `Invalid Batch symbol: ${symbolValidationError}`);
     }
     const heapWarning = resolveServerBatchHeapWarning(symbols.length);
     if (heapWarning) {

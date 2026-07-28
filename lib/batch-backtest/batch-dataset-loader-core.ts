@@ -55,12 +55,13 @@ interface BatchDatasetLoaderCoreOptions {
      * miss / invalid fingerprint / browser mode (no hook supplied). Async
      * because fingerprint computation may query the SQLite plugin.
      */
-    loadCachedSyntheticPair?(args: SyntheticPairDiskCacheArgs): Promise<{ bars: OHLCVData[] } | null>;
+    computeSyntheticPairFingerprint?(args: SyntheticPairDiskCacheArgs): Promise<string | null>;
+    loadCachedSyntheticPair?(args: SyntheticPairDiskCacheArgs, fingerprint?: string | null): Promise<{ bars: OHLCVData[] } | null>;
     /**
      * Optional server-side disk cache write hook. Called after a fresh
      * in-memory build succeeds. Returns true only when a file was written.
      */
-    storeSyntheticPair?(args: SyntheticPairDiskCacheArgs, bars: OHLCVData[]): Promise<boolean>;
+    storeSyntheticPair?(args: SyntheticPairDiskCacheArgs, bars: OHLCVData[], fingerprint?: string | null): Promise<boolean>;
 }
 
 export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOptions): BatchDatasetLoaderCore {
@@ -169,9 +170,12 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         const diskArgs: SyntheticPairDiskCacheArgs = {
             pairKey, syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
         };
+        const fingerprint = options.computeSyntheticPairFingerprint
+            ? await options.computeSyntheticPairFingerprint(diskArgs)
+            : undefined;
         if (options.loadCachedSyntheticPair) {
             try {
-                const cached = await options.loadCachedSyntheticPair(diskArgs);
+                const cached = await options.loadCachedSyntheticPair(diskArgs, fingerprint);
                 if (cached) {
                     diskStats.hits += 1;
                     debugLogger.event(`${options.logPrefix}.synthetic_pair_disk_cache_hit`, {
@@ -207,7 +211,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
             // not on every consumer awaiting the same deduped promise.
             if (options.storeSyntheticPair && result.bars.length > 0) {
                 try {
-                    if (await options.storeSyntheticPair(diskArgs, result.bars)) {
+                    if (await options.storeSyntheticPair(diskArgs, result.bars, fingerprint)) {
                         diskStats.writes += 1;
                     }
                 } catch (error) {

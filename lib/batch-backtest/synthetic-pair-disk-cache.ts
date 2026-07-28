@@ -34,7 +34,7 @@
 
 import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { mkdir, readFile, rename, stat, unlink, utimes, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { serialize as v8Serialize, deserialize as v8Deserialize } from "node:v8";
 import type { OHLCVData } from "../types/strategies";
 import {
@@ -94,6 +94,7 @@ let cacheDirForTests: string | null = null;
 let seedDirForTests: string | null = null;
 let lastPruneAt = 0;
 let startupPruneDone = false;
+const lastLruTouchByPath = new Map<string, number>();
 
 interface CachedSyntheticPairFile {
     version: number;
@@ -156,6 +157,42 @@ export async function computeSeedFingerprint(
     if (baseSegment === null || quoteSegment === null) return null;
 
     return `v${SYNTHETIC_PAIR_CACHE_VERSION}|${baseSegment}|${quoteSegment}`;
+}
+
+export interface SeedFingerprintMemo {
+    compute(baseSymbol: string, quoteSymbol: string, sourceInterval: string): Promise<string | null>;
+    clear(): void;
+}
+
+export function createSeedFingerprintMemo(): SeedFingerprintMemo {
+    const segmentCache = new Map<string, Promise<string | null>>();
+
+    const getSegment = (symbol: string, sourceInterval: string): Promise<string | null> => {
+        const key = `${symbol}|${sourceInterval}`;
+        const existing = segmentCache.get(key);
+        if (existing) return existing;
+
+        const pending = legFingerprintSegment(symbol, sourceInterval).catch((error) => {
+            segmentCache.delete(key);
+            throw error;
+        });
+        segmentCache.set(key, pending);
+        return pending;
+    };
+
+    return {
+        async compute(baseSymbol, quoteSymbol, sourceInterval) {
+            const [baseSegment, quoteSegment] = await Promise.all([
+                getSegment(baseSymbol, sourceInterval),
+                getSegment(quoteSymbol, sourceInterval),
+            ]);
+            if (baseSegment === null || quoteSegment === null) return null;
+            return `v${SYNTHETIC_PAIR_CACHE_VERSION}|${baseSegment}|${quoteSegment}`;
+        },
+        clear() {
+            segmentCache.clear();
+        },
+    };
 }
 
 async function legFingerprintSegment(symbol: string, sourceInterval: string): Promise<string | null> {
@@ -265,7 +302,12 @@ async function seedCsvMtimeMs(bareSymbol: string, interval: string): Promise<num
  */
 function cacheFileBasePath(args: SyntheticPairDiskCacheArgs): string {
     const sanitized = args.pairKey.replace(/\|/g, "-");
-    return resolve(cacheDir(), sanitized);
+    const root = resolve(cacheDir());
+    const candidate = resolve(root, sanitized);
+    if (candidate !== root && !candidate.startsWith(`${root}${sep}`)) {
+        throw new Error("Synthetic cache key escapes cache root");
+    }
+    return candidate;
 }
 
 function cacheFilePath(args: SyntheticPairDiskCacheArgs): string {
@@ -294,16 +336,19 @@ function cacheDir(): string {
  */
 export async function loadCachedSyntheticPair(
     args: SyntheticPairDiskCacheArgs,
+    fingerprint?: string | null,
 ): Promise<{ bars: OHLCVData[] } | null> {
-    const fingerprint = await computeSeedFingerprint(args.baseSymbol, args.quoteSymbol, args.sourceInterval);
-    if (fingerprint === null) return null;
+    const effectiveFingerprint = fingerprint === undefined
+        ? await computeSeedFingerprint(args.baseSymbol, args.quoteSymbol, args.sourceInterval)
+        : fingerprint;
+    if (effectiveFingerprint === null) return null;
 
     const entry = await readCacheFile(args);
     if (entry === null) return null;
     const parsed = entry.data;
 
     if (parsed.version !== SYNTHETIC_PAIR_CACHE_VERSION) return null;
-    if (parsed.fingerprint !== fingerprint) return null;
+    if (parsed.fingerprint !== effectiveFingerprint) return null;
     if (!Array.isArray(parsed.data)) return null;
 
     // Refresh the file's mtime (throttled) so the oldest-mtime-first prune
@@ -337,10 +382,18 @@ export async function loadCachedSyntheticPair(
 async function touchCacheFileForLru(filePath: string): Promise<void> {
     try {
         const now = Date.now();
+        const lastKnownTouch = lastLruTouchByPath.get(filePath);
+        if (lastKnownTouch !== undefined && now - lastKnownTouch < LRU_TOUCH_THROTTLE_MS) {
+            return;
+        }
         const mtimeMs = (await stat(filePath)).mtimeMs;
-        if (now - mtimeMs < LRU_TOUCH_THROTTLE_MS) return;
+        if (now - mtimeMs < LRU_TOUCH_THROTTLE_MS) {
+            lastLruTouchByPath.set(filePath, mtimeMs);
+            return;
+        }
         const nowSec = now / 1000;
         await utimes(filePath, nowSec, nowSec);
+        lastLruTouchByPath.set(filePath, now);
     } catch {
         // Locked file, vanished between read and touch, permission error —
         // leave the mtime alone. Pruning will still work; it just won't see
@@ -405,9 +458,15 @@ function decodeV2(buffer: Buffer): CachedSyntheticPairFile | null {
  *
  * Returns true only when a cache file was written.
  */
-export async function storeSyntheticPair(args: SyntheticPairDiskCacheArgs, bars: OHLCVData[]): Promise<boolean> {
-    const fingerprint = await computeSeedFingerprint(args.baseSymbol, args.quoteSymbol, args.sourceInterval);
-    if (fingerprint === null) return false;
+export async function storeSyntheticPair(
+    args: SyntheticPairDiskCacheArgs,
+    bars: OHLCVData[],
+    fingerprint?: string | null,
+): Promise<boolean> {
+    const effectiveFingerprint = fingerprint === undefined
+        ? await computeSeedFingerprint(args.baseSymbol, args.quoteSymbol, args.sourceInterval)
+        : fingerprint;
+    if (effectiveFingerprint === null) return false;
 
     const filePath = cacheFilePath(args);
     // The `.map(...)` here is a type-level coercion, not a redundant copy:
@@ -421,7 +480,7 @@ export async function storeSyntheticPair(args: SyntheticPairDiskCacheArgs, bars:
     // is preserved here.)
     const payload: CachedSyntheticPairFile = {
         version: SYNTHETIC_PAIR_CACHE_VERSION,
-        fingerprint,
+        fingerprint: effectiveFingerprint,
         generatedAt: new Date().toISOString(),
         sourceInterval: args.sourceInterval,
         bars: bars.length,
@@ -474,6 +533,7 @@ export function __setSyntheticPairCacheDirForTests(dir: string | null): void {
     cacheDirForTests = dir;
     lastPruneAt = 0;
     startupPruneDone = false;
+    lastLruTouchByPath.clear();
 }
 
 /**

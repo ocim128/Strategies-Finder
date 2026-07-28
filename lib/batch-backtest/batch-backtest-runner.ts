@@ -159,6 +159,12 @@ export interface BatchBacktestRunOutput {
     results: BatchBacktestSymbolResult[];
     loadedSymbols: number;
     failedSymbols: string[];
+    timings: {
+        datasetWaitMs: number;
+        executeMs: number;
+        resultProjectionMs: number;
+        completionCallbackMs: number;
+    };
 }
 
 // ============================================================================
@@ -174,6 +180,17 @@ export async function runBatchBacktest(
     const results: BatchBacktestSymbolResult[] = new Array(symbols.length);
     const failedSymbols: string[] = [];
     let loadedSymbols = 0;
+    const timings = {
+        datasetWaitMs: 0,
+        executeMs: 0,
+        resultProjectionMs: 0,
+        completionCallbackMs: 0,
+    };
+    const notifyComplete = async (index: number, row: BatchBacktestSymbolResult): Promise<void> => {
+        const startedAt = performance.now();
+        await callbacks.onSymbolComplete?.(index, row);
+        timings.completionCallbackMs += performance.now() - startedAt;
+    };
 
     const abort = new AbortController();
     const nowSec = Math.floor(Date.now() / 1000);
@@ -229,7 +246,10 @@ export async function runBatchBacktest(
 
         let data: OHLCVData[] = [];
         try {
-            data = await loadPromise;
+            const loadStartedAt = performance.now();
+            data = await loadPromise.finally(() => {
+                timings.datasetWaitMs += performance.now() - loadStartedAt;
+            });
             if (cancelCheck() || abort.signal.aborted) break;
             if (!Array.isArray(data) || data.length === 0) {
                 const failure: BatchBacktestSymbolResult = {
@@ -240,7 +260,7 @@ export async function runBatchBacktest(
                 };
                 results[i] = failure;
                 failedSymbols.push(symbol);
-                await callbacks.onSymbolComplete?.(i, failure);
+                await notifyComplete(i, failure);
                 // Refill the prefetch window before continuing.
                 const nextIdx = i + PREFETCH_AHEAD;
                 if (nextIdx < symbols.length) startPrefetch(nextIdx);
@@ -262,7 +282,7 @@ export async function runBatchBacktest(
                 };
                 results[i] = failure;
                 failedSymbols.push(symbol);
-                await callbacks.onSymbolComplete?.(i, failure);
+                await notifyComplete(i, failure);
                 const nextIdx = i + PREFETCH_AHEAD;
                 if (nextIdx < symbols.length) startPrefetch(nextIdx);
                 continue;
@@ -282,7 +302,7 @@ export async function runBatchBacktest(
             };
             results[i] = failure;
             failedSymbols.push(symbol);
-            await callbacks.onSymbolComplete?.(i, failure);
+            await notifyComplete(i, failure);
             const nextIdx = i + PREFETCH_AHEAD;
             if (nextIdx < symbols.length) startPrefetch(nextIdx);
             continue;
@@ -294,6 +314,7 @@ export async function runBatchBacktest(
         if (nextIdx < symbols.length) startPrefetch(nextIdx);
 
         try {
+            const executeStartedAt = performance.now();
             const output = await executeBacktest({
                 ohlcvData: data,
                 interval: input.interval,
@@ -318,10 +339,14 @@ export async function runBatchBacktest(
                     skipDrawdown: false,
                     skipResultPostProcessing: true,
                 },
+            }).finally(() => {
+                timings.executeMs += performance.now() - executeStartedAt;
             });
             if (cancelCheck()) break;
+            const projectionStartedAt = performance.now();
             const result = buildSymbolResult(symbol, data, output.result, output.signals);
-            await callbacks.onSymbolComplete?.(i, result);
+            timings.resultProjectionMs += performance.now() - projectionStartedAt;
+            await notifyComplete(i, result);
             results[i] = input.pruneResultArtifacts ? pruneResultArtifacts(result) : result;
         } catch (error) {
             if (cancelCheck()) break;
@@ -336,7 +361,7 @@ export async function runBatchBacktest(
             };
             results[i] = failure;
             failedSymbols.push(symbol);
-            await callbacks.onSymbolComplete?.(i, failure);
+            await notifyComplete(i, failure);
         }
     }
 
@@ -361,6 +386,7 @@ export async function runBatchBacktest(
         results,
         loadedSymbols,
         failedSymbols,
+        timings,
     };
 }
 

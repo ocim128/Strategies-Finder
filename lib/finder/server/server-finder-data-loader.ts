@@ -26,6 +26,7 @@ import {
     type BatchDatasetCacheStats,
 } from "../../batch-backtest/batch-dataset-loader-core";
 import {
+    createSeedFingerprintMemo,
     loadCachedSyntheticPair,
     storeSyntheticPair,
 } from "../../batch-backtest/synthetic-pair-disk-cache";
@@ -33,6 +34,7 @@ import { createServerDataFetcher } from "../../data/server-data-fetcher-factory"
 
 // Reuse a single long-lived DataFetcher for the whole server loader (Finding 8).
 const serverDataFetcher = createServerDataFetcher();
+const fingerprintMemo = createSeedFingerprintMemo();
 
 // The bounded-cache startup prune is triggered lazily by the disk-cache module
 // on the first write (see `storeSyntheticPair` → `maybePruneAfterWrite`), NOT at
@@ -52,8 +54,10 @@ const loader = createBatchDatasetLoaderCore({
     // disk-backed cache (file fingerprints) is shared, on a cache miss the
     // in-memory core rebuilds. This is acceptable duplication; consolidating
     // the two loaders is a follow-up.
-    loadCachedSyntheticPair: (args) => loadCachedSyntheticPair(args),
-    storeSyntheticPair: (args, bars) => storeSyntheticPair(args, bars),
+    computeSyntheticPairFingerprint: (args) =>
+        fingerprintMemo.compute(args.baseSymbol, args.quoteSymbol, args.sourceInterval),
+    loadCachedSyntheticPair: (args, fingerprint) => loadCachedSyntheticPair(args, fingerprint),
+    storeSyntheticPair: (args, bars, fingerprint) => storeSyntheticPair(args, bars, fingerprint),
 });
 
 /**
@@ -81,6 +85,7 @@ export async function loadServerFinderDataset(
 
 export function clearServerFinderDatasetCaches(): void {
     loader.clearCaches();
+    fingerprintMemo.clear();
 }
 
 export function getServerFinderDatasetCacheStats(): BatchDatasetCacheStats {
