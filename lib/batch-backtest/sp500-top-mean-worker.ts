@@ -16,6 +16,7 @@ import type { TopMeanCacheCounters, TopMeanWorkerTiming } from "./sp500-top-mean
 
 export const TOP_MEAN_BACKTEST_RUN_OPTIONS = Object.freeze({
     includeAdvancedAnalytics: false,
+    collectExecutorTimings: true,
     omitEquityCurve: true,
     skipDrawdown: true,
     skipResultPostProcessing: true,
@@ -144,6 +145,22 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
         loadMs: 0,
         prepareMs: 0,
         backtestMs: 0,
+        signalGenerationMs: 0,
+        exitProcessingMs: 0,
+        engineMs: 0,
+        engineDiagnosticPairs: 0,
+        engineDiagnostics: {
+            total: 0,
+            dataClean: 0,
+            indicatorResolution: 0,
+            signalPreparation: 0,
+            signalIndexing: 0,
+            entryEvaluation: 0,
+            tradeSimulation: 0,
+            forcedClose: 0,
+            drawdown: 0,
+            metrics: 0,
+        },
         artifactMs: 0,
         pairWallMs: 0,
         shardWallMs: 0,
@@ -230,6 +247,7 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
             timing.prepareMs += performance.now() - prepareStartedAt;
 
             const backtestStartedAt = performance.now();
+            const collectEngineDiagnostics = timing.engineDiagnosticPairs === 0;
             const output = await executeBacktest({
                 ohlcvData: candles,
                 closedCandleDataOverride: closedCandleData,
@@ -249,9 +267,23 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                     useRustEnginePreference: data.useRustEnginePreference,
                     nowSec,
                 },
-                backtestRunOptions: TOP_MEAN_BACKTEST_RUN_OPTIONS,
+                backtestRunOptions: collectEngineDiagnostics
+                    ? { ...TOP_MEAN_BACKTEST_RUN_OPTIONS, collectDiagnostics: true }
+                    : TOP_MEAN_BACKTEST_RUN_OPTIONS,
             });
             timing.backtestMs += performance.now() - backtestStartedAt;
+            if (output.executorTimings) {
+                timing.signalGenerationMs += output.executorTimings.signalGenerationMs;
+                timing.exitProcessingMs += output.executorTimings.exitProcessingMs;
+                timing.engineMs += output.executorTimings.engineMs;
+            }
+            const engineDiagnostics = output.result.diagnostics?.timingsMs;
+            if (engineDiagnostics) {
+                timing.engineDiagnosticPairs += 1;
+                for (const key of Object.keys(engineDiagnostics) as Array<keyof typeof engineDiagnostics>) {
+                    timing.engineDiagnostics[key] += engineDiagnostics[key];
+                }
+            }
 
             const artifactStartedAt = performance.now();
             const compactTrades: CompactTrade[] = (output.result?.trades || []).map((t) => ({

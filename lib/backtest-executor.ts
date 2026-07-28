@@ -92,6 +92,7 @@ export interface BacktestExecutorRequest {
         includeAdvancedAnalytics?: boolean;
         includeSharpeRatio?: boolean;
         collectDiagnostics?: boolean;
+        collectExecutorTimings?: boolean;
         omitEquityCurve?: boolean;
         skipDrawdown?: boolean;
         skipResultPostProcessing?: boolean;
@@ -109,10 +110,17 @@ export interface BacktestExecutorRequest {
     preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
 }
 
+export interface BacktestExecutorTimings {
+    signalGenerationMs: number;
+    exitProcessingMs: number;
+    engineMs: number;
+}
+
 export interface BacktestExecutorResult {
     result: BacktestResult;
     engineUsed: "rust" | "typescript";
     signals: Signal[];
+    executorTimings?: BacktestExecutorTimings;
 }
 
 interface ExitStrategyOverrideSignalResolution {
@@ -147,6 +155,19 @@ function mergeStrategyExecutionContext(
  * shortcut, post-processing) flows through shared helpers.
  */
 export async function executeBacktest(req: BacktestExecutorRequest): Promise<BacktestExecutorResult> {
+    const executorTimings = req.backtestRunOptions?.collectExecutorTimings === true
+        ? { signalGenerationMs: 0, exitProcessingMs: 0, engineMs: 0 }
+        : undefined;
+    const finish = (
+        result: BacktestResult,
+        engineUsed: "rust" | "typescript",
+        signals: Signal[],
+    ): BacktestExecutorResult => ({
+        result,
+        engineUsed,
+        signals,
+        ...(executorTimings ? { executorTimings: { ...executorTimings } } : {}),
+    });
     const { ohlcvData, interval, strategyKey, strategyParams, backtestSettings, capitalSettings } = req;
     const nowSec = req.context.nowSec ?? Math.floor(Date.now() / 1000);
     const blockRange = req.context.blockRange ?? null;
@@ -256,6 +277,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         contextMode: req.polymarket1sContextMode ?? "auto",
     });
 
+    const signalGenerationStartedAt = executorTimings ? performance.now() : 0;
     const signals = resolveBacktestSignalsForData({
         data: backtestData,
         interval,
@@ -265,7 +287,11 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         blockRange,
         executionContext,
     });
+    if (executorTimings) {
+        executorTimings.signalGenerationMs += performance.now() - signalGenerationStartedAt;
+    }
 
+    const exitProcessingStartedAt = executorTimings ? performance.now() : 0;
     const exitOverrideResolution = await resolveExitStrategyOverrideSignals({
         data: backtestData,
         interval,
@@ -285,12 +311,17 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         exitStrategyLoaded: exitOverrideResolution.strategyLoaded,
         skippedReason: exitOverrideResolution.skippedReason,
     });
+    if (executorTimings) {
+        executorTimings.exitProcessingMs += performance.now() - exitProcessingStartedAt;
+    }
 
     const evaluation = strategy.evaluate?.(backtestData, normalizedParams, signals);
     const entryStats = evaluation?.entryStats;
 
     if (strategy.metadata?.role === "entry" && entryStats) {
+        const engineStartedAt = executorTimings ? performance.now() : 0;
         let result = buildEntryBacktestResult(entryStats);
+        if (executorTimings) executorTimings.engineMs += performance.now() - engineStartedAt;
         result.exitControlDiagnostics = exitControlDiagnostics;
         if (!shouldSkipResultPostProcessing(req)) {
             finalizeResult(result, backtestData, interval, settingsWithMeta);
@@ -302,21 +333,25 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             result = annotatedResult;
         }
         registerBacktestEdgeAnalysisInput(result, backtestData);
-        return { result, engineUsed: "typescript", signals };
+        return finish(result, "typescript", signals);
     }
 
     if (signals.length === 0 && mergedSignals.length === 0 && shouldSkipResultPostProcessing(req)) {
+        const engineStartedAt = executorTimings ? performance.now() : 0;
         const result = createEmptyBacktestResult();
+        if (executorTimings) executorTimings.engineMs += performance.now() - engineStartedAt;
         result.exitControlDiagnostics = exitControlDiagnostics;
         registerBacktestEdgeAnalysisInput(result, backtestData);
-        return { result, engineUsed: "typescript", signals };
+        return finish(result, "typescript", signals);
     }
 
     const resolvedCapital = req.preResolvedCapital ?? resolveCapitalSettingsFromRaw(capitalSettings as Record<string, unknown>);
 
     const requireTs = requiresTypescriptEngine(resolvedSettings) || isSmartTradeSizingMode(resolvedCapital.sizingMode);
     if (shouldAttemptRust(req.context.engineMode ?? "auto", requireTs, req.context.useRustEnginePreference)) {
+        const engineStartedAt = executorTimings ? performance.now() : 0;
         const rustResult = await tryRustBacktest(backtestData, mergedSignals, resolvedCapital, resolvedSettings);
+        if (executorTimings) executorTimings.engineMs += performance.now() - engineStartedAt;
         if (rustResult && isResultConsistent(rustResult)) {
             let result = rustResult;
             result.exitControlDiagnostics = exitControlDiagnostics;
@@ -329,13 +364,14 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
                 result = annotatedResult;
             }
             registerBacktestEdgeAnalysisInput(result, backtestData);
-            return { result, engineUsed: "rust", signals };
+            return finish(result, "rust", signals);
         }
     }
 
     const runBacktestImpl = shouldUseCompactBacktest(req)
         ? runBacktestCompact
         : runBacktest;
+    const engineStartedAt = executorTimings ? performance.now() : 0;
     let result = runBacktestImpl(
         backtestData,
         mergedSignals,
@@ -351,6 +387,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         undefined,
         req.backtestRunOptions
     );
+    if (executorTimings) executorTimings.engineMs += performance.now() - engineStartedAt;
     if (!shouldSkipResultPostProcessing(req)) {
         finalizeResult(result, backtestData, interval, settingsWithMeta);
     }
@@ -362,7 +399,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         result = annotatedResult;
     }
     registerBacktestEdgeAnalysisInput(result, backtestData);
-    return { result, engineUsed: "typescript", signals };
+    return finish(result, "typescript", signals);
 }
 
 /**

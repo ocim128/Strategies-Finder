@@ -24,6 +24,7 @@ function testStabilitySliceIsAppliedBeforeExecutionWindow(): void {
 function testDiscardedDrawdownIsSkippedWithoutSelectingCompactResults(): void {
     assert.equal(TOP_MEAN_BACKTEST_RUN_OPTIONS.skipDrawdown, true);
     assert.equal(TOP_MEAN_BACKTEST_RUN_OPTIONS.omitEquityCurve, true);
+    assert.equal(TOP_MEAN_BACKTEST_RUN_OPTIONS.collectExecutorTimings, true);
     assert.equal(
         "includeSharpeRatio" in TOP_MEAN_BACKTEST_RUN_OPTIONS,
         false,
@@ -52,6 +53,10 @@ async function runWorkerParityTest(): Promise<void> {
     assert.ok(shardResult.engineUsage, "engineUsage must be reported");
     assert.equal(typeof shardResult.engineUsage.rust, "number");
     assert.equal(typeof shardResult.engineUsage.typescript, "number");
+    assert.ok(shardResult.performance.signalGenerationMs >= 0);
+    assert.ok(shardResult.performance.exitProcessingMs >= 0);
+    assert.ok(shardResult.performance.engineMs >= 0);
+    assert.ok(shardResult.performance.engineDiagnosticPairs <= 1);
     if (artifacts.length > 0) {
         assert.equal(artifacts[0].schema, "compact_pair_artifact.v1");
         assert.equal(artifacts[0].symbol, "AAPL•+MSFT•");
@@ -66,6 +71,7 @@ async function runWorkerParityTest(): Promise<void> {
         // Preference was false => completed pairs must count as typescript.
         assert.equal(shardResult.engineUsage.typescript, artifacts.length);
         assert.equal(shardResult.engineUsage.rust, 0);
+        assert.equal(shardResult.performance.engineDiagnosticPairs, 1);
     }
     console.log("PASS: sp500-top-mean-worker.spec.ts (dataEndTime present)");
 }

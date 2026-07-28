@@ -167,6 +167,13 @@ function addWorkerTiming(target: TopMeanWorkerTiming, source: TopMeanWorkerTimin
     target.loadMs += source.loadMs;
     target.prepareMs += source.prepareMs;
     target.backtestMs += source.backtestMs;
+    target.signalGenerationMs += source.signalGenerationMs;
+    target.exitProcessingMs += source.exitProcessingMs;
+    target.engineMs += source.engineMs;
+    target.engineDiagnosticPairs += source.engineDiagnosticPairs;
+    for (const key of Object.keys(source.engineDiagnostics) as Array<keyof typeof source.engineDiagnostics>) {
+        target.engineDiagnostics[key] += source.engineDiagnostics[key];
+    }
     target.artifactMs += source.artifactMs;
     target.pairWallMs += source.pairWallMs;
     target.shardWallMs += source.shardWallMs;
@@ -297,6 +304,22 @@ export class TopMeanWorkerPool {
             loadMs: 0,
             prepareMs: 0,
             backtestMs: 0,
+            signalGenerationMs: 0,
+            exitProcessingMs: 0,
+            engineMs: 0,
+            engineDiagnosticPairs: 0,
+            engineDiagnostics: {
+                total: 0,
+                dataClean: 0,
+                indicatorResolution: 0,
+                signalPreparation: 0,
+                signalIndexing: 0,
+                entryEvaluation: 0,
+                tradeSimulation: 0,
+                forcedClose: 0,
+                drawdown: 0,
+                metrics: 0,
+            },
             artifactMs: 0,
             pairWallMs: 0,
             shardWallMs: 0,
