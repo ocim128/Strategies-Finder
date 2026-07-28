@@ -1,6 +1,38 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseSp500CompanyInfoCsv, enumerateSp500Pairs } from "../lib/batch-backtest/sp500-pair-enumerator";
 import { stripIbkrMarker } from "../lib/local-daily-datasets";
+
+const FIXTURE_TICKERS = ["AAPL", "AMGN", "CVX", "GOOGL", "KO", "MSFT", "PANW"];
+
+function createPriceDataFixture(): string {
+    const baseDir = mkdtempSync(join(tmpdir(), "sp500-pair-enumerator-"));
+    const companyInfoDir = join(
+        baseDir,
+        "price-data",
+        "sp500_comprehensive_dataset",
+        "sp500_comprehensive",
+    );
+    const ibkrDir = join(baseDir, "price-data", "ibkr");
+    const seedDir = join(ibkrDir, "csv", "30m");
+    mkdirSync(companyInfoDir, { recursive: true });
+    mkdirSync(seedDir, { recursive: true });
+
+    writeFileSync(
+        join(companyInfoDir, "sp500_company_info.csv"),
+        `Ticker,Name\n${FIXTURE_TICKERS.map((ticker) => `${ticker},${ticker} Inc.`).join("\n")}\n`,
+    );
+    writeFileSync(
+        join(ibkrDir, "catalog.json"),
+        JSON.stringify({ entries: FIXTURE_TICKERS.map((symbol) => ({ symbol })) }),
+    );
+    for (const ticker of FIXTURE_TICKERS) {
+        writeFileSync(join(seedDir, `${ticker}.csv`), "time,open,high,low,close,volume\n");
+    }
+    return baseDir;
+}
 
 function testParseCsv(): void {
     const csvContent = `Ticker,Name,Sector,Industry,MarketCap,Country,Website,Employees
@@ -12,8 +44,8 @@ GOOGL,Alphabet Inc.,Communication Services,Internet Content & Information,381031
     assert.deepEqual(tickers, ["AAPL", "MSFT", "GOOGL"]);
 }
 
-function testEnumerationOrderingAndExclusion(): void {
-    const res = enumerateSp500Pairs({ interval: "4h" });
+function testEnumerationOrderingAndExclusion(baseDir: string): void {
+    const res = enumerateSp500Pairs({ interval: "4h", baseDir });
     assert.ok(res.counts.sp500AssetsCount > 0, "Should detect S&P 500 assets");
     assert.ok(res.counts.catalogAssetsCount >= 0, "Catalog count >= 0");
     assert.ok(res.eligibleAssets.length >= 0, "Eligible assets array exists");
@@ -29,15 +61,15 @@ function testEnumerationOrderingAndExclusion(): void {
 
     // Verify maxPairs cap
     if (res.canonicalPairs.length > 5) {
-        const capped = enumerateSp500Pairs({ maxPairs: 5 });
+        const capped = enumerateSp500Pairs({ baseDir, maxPairs: 5 });
         assert.equal(capped.canonicalPairs.length, 5);
         assert.equal(capped.counts.pairCount, 5);
     }
 }
 
-function testCustomPairListText(): void {
+function testCustomPairListText(baseDir: string): void {
     const customText = `CVX•+AMGN•\nPANW•+CVX•\nKO•+PANW•`;
-    const res = enumerateSp500Pairs({ interval: "4h", pairListText: customText });
+    const res = enumerateSp500Pairs({ interval: "4h", baseDir, pairListText: customText });
     assert.ok(res.counts.pairCount <= 3, "Should parse custom pair list lines");
     assert.ok(res.canonicalPairs.length > 0, "Should extract canonical pairs from custom list");
 }
@@ -66,11 +98,16 @@ function testCustomCryptoMarkets(): void {
 }
 
 function main(): void {
-    testParseCsv();
-    testEnumerationOrderingAndExclusion();
-    testCustomPairListText();
-    testCustomCryptoMarkets();
-    console.log("PASS: sp500-pair-enumerator.spec.ts");
+    const baseDir = createPriceDataFixture();
+    try {
+        testParseCsv();
+        testEnumerationOrderingAndExclusion(baseDir);
+        testCustomPairListText(baseDir);
+        testCustomCryptoMarkets();
+        console.log("PASS: sp500-pair-enumerator.spec.ts");
+    } finally {
+        rmSync(baseDir, { recursive: true, force: true });
+    }
 }
 
 main();

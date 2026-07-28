@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { Readable } from "node:stream";
 import type { OHLCVData, Time } from "../lib/types/strategies";
 import { backtestEndpointPlugin } from "../lib/backtest-endpoint-plugin";
+import { strategies as builtInStrategies } from "../lib/strategies/library";
 import { strategyManifest } from "../lib/strategies/manifest-eager";
 
 const defaultStrategyEntry = strategyManifest.find((entry) => !entry.strategy.crossSymbolConfig);
@@ -16,10 +17,22 @@ const randomizableStrategyEntry = strategyManifest.find((entry) =>
 assert.ok(randomizableStrategyEntry, "Expected at least one non-cross-symbol strategy with numeric defaults");
 const randomizableStrategyKey = randomizableStrategyEntry!.key;
 const randomizableStrategyParams = { ...randomizableStrategyEntry!.strategy.defaultParams };
-const crossSymbolStrategyEntry = strategyManifest.find((entry) => entry.strategy.crossSymbolConfig);
-assert.ok(crossSymbolStrategyEntry, "Expected at least one cross-symbol strategy in manifest");
-const crossSymbolStrategyKey = crossSymbolStrategyEntry!.key;
-const crossSymbolStrategyParams = { ...crossSymbolStrategyEntry!.strategy.defaultParams };
+const crossSymbolStrategyKey = "__test_cross_symbol_endpoint";
+const crossSymbolStrategyParams = {};
+builtInStrategies[crossSymbolStrategyKey] = {
+    name: "Test Cross-Symbol Endpoint",
+    description: "Verifies explicit secondary-dataset endpoint wiring.",
+    defaultParams: {},
+    paramLabels: {},
+    crossSymbolConfig: {
+        defaultSymbol: "DOGEUSDT",
+        minBars: 2,
+    },
+    execute: (_data, _params, context) => {
+        assert.ok(context?.crossSymbol, "Expected cross-symbol execution context");
+        return [];
+    },
+};
 
 type MockRequest = NodeJS.ReadableStream & {
     method?: string;

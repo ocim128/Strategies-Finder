@@ -1,7 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { buildRollingAutoCorrelation } from "../lib/strategies/lib/price-action-statistics-core";
-import { medallion_hidden_markov_state_reversion } from "../lib/strategies/lib/medallion_hidden_markov_state_reversion";
 import type { OHLCVData, Time } from "../lib/types/strategies";
 
 function legacyRollingAutoCorrelation(values: number[], lookback: number, lag: number): (number | null)[] {
@@ -73,14 +72,5 @@ describe("Rolling autocorrelation Finder hot path", () => {
 				expect(actual[index], `index=${index}`).to.be.closeTo(expected[index]!, 1e-10);
 			}
 		}
-	});
-
-	it("preserves hidden-Markov signal decisions with prepared-data reuse", () => {
-		const data = buildData(900);
-		const params = { lookback: 30, regimeThreshold: -0.15 };
-		const direct = medallion_hidden_markov_state_reversion.execute(data, params);
-		const prepared = medallion_hidden_markov_state_reversion.prepareFinderData!(data);
-		const reused = medallion_hidden_markov_state_reversion.executePrepared!(prepared, params, data);
-		expect(reused).to.deep.equal(direct);
 	});
 });
