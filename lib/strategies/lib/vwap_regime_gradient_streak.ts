@@ -43,7 +43,11 @@ export const vwap_regime_gradient_streak: Strategy = {
 
         const vwap = calculateVWAP(highs, lows, closes, volumes, lookback);
         const signals: Signal[] = [];
-        let previousCloseLocation = 0.5;
+        const firstBar = cleanData[0];
+        const firstRange = Math.max(0, firstBar.high - firstBar.low);
+        let previousCloseLocation = firstRange <= 0
+            ? 0.5
+            : Math.max(0, Math.min(1, (firstBar.close - firstBar.low) / firstRange));
         let streak = 0;
         for (let i = 1; i < cleanData.length; i++) {
             const bar = cleanData[i];
