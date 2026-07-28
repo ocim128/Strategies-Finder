@@ -82,6 +82,9 @@ async function main(): Promise<void> {
     assert.ok(measured.executorTimings);
     assert.ok(measured.executorTimings.signalGenerationMs >= 0);
     assert.ok(measured.executorTimings.exitProcessingMs >= 0);
+    assert.ok(measured.executorTimings.exitStrategyLoadMs >= 0);
+    assert.ok(measured.executorTimings.exitStrategyNormalizeMs >= 0);
+    assert.ok(measured.executorTimings.exitSignalGenerationMs >= 0);
     assert.ok(measured.executorTimings.exitStrategyMs >= 0);
     assert.ok(measured.executorTimings.exitMergeMs >= 0);
     assert.ok(measured.executorTimings.exitBookkeepingMs >= 0);

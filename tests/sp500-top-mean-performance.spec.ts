@@ -58,6 +58,9 @@ const diagnostic: TopMeanPerformanceDiagnostic = {
         signalGenerationMs: 40,
         exitProcessingMs: 10,
         exitStrategyMs: 6,
+        exitStrategyLoadMs: 0.5,
+        exitStrategyNormalizeMs: 0.5,
+        exitSignalGenerationMs: 5,
         exitMergeMs: 3,
         exitBookkeepingMs: 1,
         exitOverrideSignals: 0,
@@ -107,7 +110,7 @@ assert.equal(
 );
 assert.equal(
     lines[7],
-    "PERFORMANCE EXITS | strategy=6.0ms | merge=3.0ms | bookkeeping=1.0ms | overrideSignals=0",
+    "PERFORMANCE EXITS | strategy=6.0ms | load=0.5ms | normalize=0.5ms | signalGeneration=5.0ms | merge=3.0ms | bookkeeping=1.0ms | overrideSignals=0",
 );
 assert.match(lines[8]!, /sampled=4/);
 assert.match(lines[8]!, /simulation=70\.0ms/);

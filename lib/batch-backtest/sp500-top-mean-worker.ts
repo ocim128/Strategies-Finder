@@ -150,6 +150,9 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
         signalGenerationMs: 0,
         exitProcessingMs: 0,
         exitStrategyMs: 0,
+        exitStrategyLoadMs: 0,
+        exitStrategyNormalizeMs: 0,
+        exitSignalGenerationMs: 0,
         exitMergeMs: 0,
         exitBookkeepingMs: 0,
         exitOverrideSignals: 0,
@@ -282,6 +285,9 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                 timing.signalGenerationMs += output.executorTimings.signalGenerationMs;
                 timing.exitProcessingMs += output.executorTimings.exitProcessingMs;
                 timing.exitStrategyMs += output.executorTimings.exitStrategyMs;
+                timing.exitStrategyLoadMs += output.executorTimings.exitStrategyLoadMs;
+                timing.exitStrategyNormalizeMs += output.executorTimings.exitStrategyNormalizeMs;
+                timing.exitSignalGenerationMs += output.executorTimings.exitSignalGenerationMs;
                 timing.exitMergeMs += output.executorTimings.exitMergeMs;
                 timing.exitBookkeepingMs += output.executorTimings.exitBookkeepingMs;
                 timing.exitOverrideSignals += output.executorTimings.exitOverrideSignals;

@@ -115,6 +115,9 @@ export interface BacktestExecutorTimings {
     signalGenerationMs: number;
     exitProcessingMs: number;
     exitStrategyMs: number;
+    exitStrategyLoadMs: number;
+    exitStrategyNormalizeMs: number;
+    exitSignalGenerationMs: number;
     exitMergeMs: number;
     exitBookkeepingMs: number;
     exitOverrideSignals: number;
@@ -132,6 +135,11 @@ interface ExitStrategyOverrideSignalResolution {
     signals: Signal[];
     strategyLoaded: boolean;
     skippedReason?: string;
+    timings: {
+        loadMs: number;
+        normalizeMs: number;
+        signalGenerationMs: number;
+    };
 }
 
 function mergeStrategyExecutionContext(
@@ -165,6 +173,9 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             signalGenerationMs: 0,
             exitProcessingMs: 0,
             exitStrategyMs: 0,
+            exitStrategyLoadMs: 0,
+            exitStrategyNormalizeMs: 0,
+            exitSignalGenerationMs: 0,
             exitMergeMs: 0,
             exitBookkeepingMs: 0,
             exitOverrideSignals: 0,
@@ -311,11 +322,15 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         settings: resolvedSettings,
         blockRange,
         executionContext,
+        collectTimings: executorTimings !== undefined,
     });
     if (executorTimings) {
         const elapsed = performance.now() - exitStrategyStartedAt;
         executorTimings.exitStrategyMs += elapsed;
         executorTimings.exitProcessingMs += elapsed;
+        executorTimings.exitStrategyLoadMs += exitOverrideResolution.timings.loadMs;
+        executorTimings.exitStrategyNormalizeMs += exitOverrideResolution.timings.normalizeMs;
+        executorTimings.exitSignalGenerationMs += exitOverrideResolution.timings.signalGenerationMs;
     }
     const exitOverrideSignals = exitOverrideResolution.signals;
     if (executorTimings) {
@@ -615,30 +630,41 @@ async function resolveExitStrategyOverrideSignals(args: {
     settings: BacktestSettings;
     blockRange: { from: number; to: number } | null;
     executionContext?: StrategyExecutionContext;
+    collectTimings?: boolean;
 }): Promise<ExitStrategyOverrideSignalResolution> {
+    const timings = {
+        loadMs: 0,
+        normalizeMs: 0,
+        signalGenerationMs: 0,
+    };
     if (!args.settings.exitStrategyOverrideEnabled) {
-        return { signals: [], strategyLoaded: false, skippedReason: "override_disabled" };
+        return { signals: [], strategyLoaded: false, skippedReason: "override_disabled", timings };
     }
     if (!args.settings.disableSignalExits) {
-        return { signals: [], strategyLoaded: false, skippedReason: "disable_signal_exits_off" };
+        return { signals: [], strategyLoaded: false, skippedReason: "disable_signal_exits_off", timings };
     }
     const exitKey = typeof args.settings.exitStrategyKey === "string"
         ? args.settings.exitStrategyKey.trim()
         : "";
     if (!exitKey) {
-        return { signals: [], strategyLoaded: false, skippedReason: "missing_exit_strategy_key" };
+        return { signals: [], strategyLoaded: false, skippedReason: "missing_exit_strategy_key", timings };
     }
 
+    const loadStartedAt = args.collectTimings ? performance.now() : 0;
     const exitStrategy = await ensureBuiltInStrategyLoaded(exitKey);
+    if (args.collectTimings) timings.loadMs += performance.now() - loadStartedAt;
     if (!exitStrategy) {
-        return { signals: [], strategyLoaded: false, skippedReason: "exit_strategy_not_loaded" };
+        return { signals: [], strategyLoaded: false, skippedReason: "exit_strategy_not_loaded", timings };
     }
 
     const exitParams = args.settings.exitStrategyParams ?? {};
+    const normalizeStartedAt = args.collectTimings ? performance.now() : 0;
     const normalizedExitParams = exitStrategy.normalizeParams
         ? exitStrategy.normalizeParams(exitParams)
         : exitParams;
+    if (args.collectTimings) timings.normalizeMs += performance.now() - normalizeStartedAt;
 
+    const signalGenerationStartedAt = args.collectTimings ? performance.now() : 0;
     const signals = resolveBacktestSignalsForData({
         data: args.data,
         interval: args.interval,
@@ -648,10 +674,12 @@ async function resolveExitStrategyOverrideSignals(args: {
         blockRange: args.blockRange,
         executionContext: args.executionContext,
     });
+    if (args.collectTimings) timings.signalGenerationMs += performance.now() - signalGenerationStartedAt;
     return {
         signals,
         strategyLoaded: true,
         skippedReason: signals.length === 0 ? "exit_strategy_zero_signals" : undefined,
+        timings,
     };
 }
 

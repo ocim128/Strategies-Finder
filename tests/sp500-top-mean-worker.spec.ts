@@ -53,6 +53,9 @@ async function runWorkerParityTest(): Promise<void> {
     assert.ok(shardResult.performance.signalGenerationMs >= 0);
     assert.ok(shardResult.performance.exitProcessingMs >= 0);
     assert.ok(shardResult.performance.exitStrategyMs >= 0);
+    assert.ok(shardResult.performance.exitStrategyLoadMs >= 0);
+    assert.ok(shardResult.performance.exitStrategyNormalizeMs >= 0);
+    assert.ok(shardResult.performance.exitSignalGenerationMs >= 0);
     assert.ok(shardResult.performance.exitMergeMs >= 0);
     assert.ok(shardResult.performance.exitBookkeepingMs >= 0);
     assert.ok(shardResult.performance.exitOverrideSignals >= 0);

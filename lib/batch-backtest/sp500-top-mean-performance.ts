@@ -20,6 +20,9 @@ export interface TopMeanWorkerTiming {
     signalGenerationMs: number;
     exitProcessingMs: number;
     exitStrategyMs: number;
+    exitStrategyLoadMs: number;
+    exitStrategyNormalizeMs: number;
+    exitSignalGenerationMs: number;
     exitMergeMs: number;
     exitBookkeepingMs: number;
     exitOverrideSignals: number;
@@ -118,7 +121,7 @@ export function formatTopMeanPerformanceLines(performance: TopMeanPerformanceDia
         `PERFORMANCE WORKERS | wall=${fixed(worker.wallMs)}ms | shards=${worker.pendingShards}/${worker.shards} | shardSize=${worker.shardSize} | spawned=${worker.spawnedWorkers} | reused=${worker.reusedWorkers} | bundle=${fixed(worker.workerBundleMs)}ms | startup=${fixed(worker.workerStartupMs)}ms`,
         `PERFORMANCE WORKER COST | load=${fixed(worker.loadMs)}ms (${percent(worker.loadMs, measuredWorkerMs)}) | prepare=${fixed(worker.prepareMs)}ms (${percent(worker.prepareMs, measuredWorkerMs)}) | backtest=${fixed(worker.backtestMs)}ms (${percent(worker.backtestMs, measuredWorkerMs)}) | artifact=${fixed(worker.artifactMs)}ms (${percent(worker.artifactMs, measuredWorkerMs)}) | summedPair=${fixed(worker.pairWallMs)}ms`,
         `PERFORMANCE BACKTEST | signals=${fixed(worker.signalGenerationMs)}ms | exits=${fixed(worker.exitProcessingMs)}ms | engine=${fixed(worker.engineMs)}ms | other=${fixed(otherBacktestMs)}ms`,
-        `PERFORMANCE EXITS | strategy=${fixed(worker.exitStrategyMs)}ms | merge=${fixed(worker.exitMergeMs)}ms | bookkeeping=${fixed(worker.exitBookkeepingMs)}ms | overrideSignals=${worker.exitOverrideSignals}`,
+        `PERFORMANCE EXITS | strategy=${fixed(worker.exitStrategyMs)}ms | load=${fixed(worker.exitStrategyLoadMs)}ms | normalize=${fixed(worker.exitStrategyNormalizeMs)}ms | signalGeneration=${fixed(worker.exitSignalGenerationMs)}ms | merge=${fixed(worker.exitMergeMs)}ms | bookkeeping=${fixed(worker.exitBookkeepingMs)}ms | overrideSignals=${worker.exitOverrideSignals}`,
         `PERFORMANCE ENGINE PHASES | sampled=${worker.engineDiagnosticPairs} | total=${fixed(enginePhases.total)}ms | clean=${fixed(enginePhases.dataClean)}ms | indicators=${fixed(enginePhases.indicatorResolution)}ms | signalPrep=${fixed(enginePhases.signalPreparation)}ms | indexing=${fixed(enginePhases.signalIndexing)}ms | entry=${fixed(enginePhases.entryEvaluation)}ms | simulation=${fixed(enginePhases.tradeSimulation)}ms | forcedClose=${fixed(enginePhases.forcedClose)}ms | drawdown=${fixed(enginePhases.drawdown)}ms | metrics=${fixed(enginePhases.metrics)}ms`,
         `PERFORMANCE CACHE | leg=${worker.cache.legHits} hit/${worker.cache.legMisses} miss | pair=${worker.cache.pairHits} hit/${worker.cache.pairMisses} miss | disk=${worker.cache.diskHits} hit/${worker.cache.diskMisses} miss/${worker.cache.diskWrites} write`,
     );

@@ -170,6 +170,9 @@ function addWorkerTiming(target: TopMeanWorkerTiming, source: TopMeanWorkerTimin
     target.signalGenerationMs += source.signalGenerationMs;
     target.exitProcessingMs += source.exitProcessingMs;
     target.exitStrategyMs += source.exitStrategyMs;
+    target.exitStrategyLoadMs += source.exitStrategyLoadMs;
+    target.exitStrategyNormalizeMs += source.exitStrategyNormalizeMs;
+    target.exitSignalGenerationMs += source.exitSignalGenerationMs;
     target.exitMergeMs += source.exitMergeMs;
     target.exitBookkeepingMs += source.exitBookkeepingMs;
     target.exitOverrideSignals += source.exitOverrideSignals;
@@ -311,6 +314,9 @@ export class TopMeanWorkerPool {
             signalGenerationMs: 0,
             exitProcessingMs: 0,
             exitStrategyMs: 0,
+            exitStrategyLoadMs: 0,
+            exitStrategyNormalizeMs: 0,
+            exitSignalGenerationMs: 0,
             exitMergeMs: 0,
             exitBookkeepingMs: 0,
             exitOverrideSignals: 0,
