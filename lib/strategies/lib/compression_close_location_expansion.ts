@@ -1,7 +1,17 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
-import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
-import { buildCloseLocationSeries, buildRangeSeries } from "./price-action-frequency-core";
-import { buildRateOfChange, buildRollingStdDev, buildPercentileRank } from "./price-action-statistics-core";
+import { Strategy, OHLCVData, Signal, StrategyParams } from "../../types/strategies";
+import { createBuySignal, createSellSignal, ensureCleanData, getCloses } from "../strategy-helpers";
+import { buildRateOfChange, buildRollingStdDev } from "./price-action-statistics-core";
+
+function lowerBound(sorted: number[], value: number): number {
+    let low = 0;
+    let high = sorted.length;
+    while (low < high) {
+        const mid = (low + high) >> 1;
+        if (sorted[mid] < value) low = mid + 1;
+        else high = mid;
+    }
+    return low;
+}
 
 function normalizeParams(params: StrategyParams): StrategyParams {
     return {
@@ -33,36 +43,66 @@ export const compression_close_location_expansion: Strategy = {
         if (cleanData.length < lookback + 2) return [];
 
         const closes = getCloses(cleanData);
-        const closeLocation = buildCloseLocationSeries(cleanData);
 
         // Return volatility
         const returns = buildRateOfChange(closes, 1);
         const returnsClean = returns.map(v => v ?? 0);
         const volStdDev = buildRollingStdDev(returnsClean, lookback);
-        const volPctl = buildPercentileRank(volStdDev.map(v => v ?? 0), lookback);
+        const volValues = volStdDev.map(v => v ?? 0);
+        const ranges = cleanData.map(bar => Math.max(0, bar.high - bar.low));
+        const volWindow: number[] = [];
+        const rangeWindow: number[] = [];
+        const signals: Signal[] = [];
+        const volPercentileMax = p.volPercentileMax as number;
+        const rangePercentileMin = p.rangePercentileMin as number;
 
-        // Range percentile
-        const ranges = buildRangeSeries(cleanData);
-        const rangePctl = buildPercentileRank(ranges, lookback);
+        for (let i = 0; i < cleanData.length; i++) {
+            const volatility = volValues[i];
+            const range = ranges[i];
+            if (Number.isFinite(volatility)) {
+                volWindow.splice(lowerBound(volWindow, volatility), 0, volatility);
+            }
+            if (Number.isFinite(range)) {
+                rangeWindow.splice(lowerBound(rangeWindow, range), 0, range);
+            }
 
-        return createSignalLoop(cleanData, [volPctl, rangePctl], (i) => {
-            const vp = volPctl[i];
-            const rp = rangePctl[i];
-            if (vp === null || rp === null) return null;
-            if (vp >= (p.volPercentileMax as number)) return null;
-            if (rp < (p.rangePercentileMin as number)) return null;
+            if (i >= lookback) {
+                const removedVolatility = volValues[i - lookback];
+                const removedRange = ranges[i - lookback];
+                if (Number.isFinite(removedVolatility)) {
+                    volWindow.splice(lowerBound(volWindow, removedVolatility), 1);
+                }
+                if (Number.isFinite(removedRange)) {
+                    rangeWindow.splice(lowerBound(rangeWindow, removedRange), 1);
+                }
+            }
+            if (
+                i < lookback - 1
+                || !Number.isFinite(volatility)
+                || !Number.isFinite(range)
+                || volWindow.length < 2
+                || rangeWindow.length < 2
+            ) continue;
 
-            const cl = closeLocation[i];
+            const vp = lowerBound(volWindow, volatility) / (volWindow.length - 1);
+            const rp = lowerBound(rangeWindow, range) / (rangeWindow.length - 1);
+            if (vp >= volPercentileMax || rp < rangePercentileMin) continue;
+
+            const bar = cleanData[i];
+            const cl = range <= 0
+                ? 0.5
+                : Math.max(0, Math.min(1, (bar.close - bar.low) / range));
             // Buy: compression + range expansion + bullish close location
             if (cl > 0.60) {
-                return createBuySignal(cleanData, i, `Compression break vol pctl ${vp.toFixed(2)} range pctl ${rp.toFixed(2)} bullish CL ${cl.toFixed(2)}`);
+                signals.push(createBuySignal(cleanData, i, `Compression break vol pctl ${vp.toFixed(2)} range pctl ${rp.toFixed(2)} bullish CL ${cl.toFixed(2)}`));
+                continue;
             }
             // Sell: compression + range expansion + bearish close location
             if (cl < 0.40) {
-                return createSellSignal(cleanData, i, `Compression break vol pctl ${vp.toFixed(2)} range pctl ${rp.toFixed(2)} bearish CL ${cl.toFixed(2)}`);
+                signals.push(createSellSignal(cleanData, i, `Compression break vol pctl ${vp.toFixed(2)} range pctl ${rp.toFixed(2)} bearish CL ${cl.toFixed(2)}`));
             }
-            return null;
-        });
+        }
+        return signals;
     },
     metadata: {
         role: "entry",
