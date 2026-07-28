@@ -52,6 +52,10 @@ async function runWorkerParityTest(): Promise<void> {
     assert.equal(typeof shardResult.engineUsage.typescript, "number");
     assert.ok(shardResult.performance.signalGenerationMs >= 0);
     assert.ok(shardResult.performance.exitProcessingMs >= 0);
+    assert.ok(shardResult.performance.exitStrategyMs >= 0);
+    assert.ok(shardResult.performance.exitMergeMs >= 0);
+    assert.ok(shardResult.performance.exitBookkeepingMs >= 0);
+    assert.ok(shardResult.performance.exitOverrideSignals >= 0);
     assert.ok(shardResult.performance.engineMs >= 0);
     assert.ok(shardResult.performance.engineDiagnosticPairs <= 1);
     if (artifacts.length > 0) {

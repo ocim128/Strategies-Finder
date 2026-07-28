@@ -114,6 +114,10 @@ export interface BacktestExecutorRequest {
 export interface BacktestExecutorTimings {
     signalGenerationMs: number;
     exitProcessingMs: number;
+    exitStrategyMs: number;
+    exitMergeMs: number;
+    exitBookkeepingMs: number;
+    exitOverrideSignals: number;
     engineMs: number;
 }
 
@@ -157,7 +161,15 @@ function mergeStrategyExecutionContext(
  */
 export async function executeBacktest(req: BacktestExecutorRequest): Promise<BacktestExecutorResult> {
     const executorTimings = req.backtestRunOptions?.collectExecutorTimings === true
-        ? { signalGenerationMs: 0, exitProcessingMs: 0, engineMs: 0 }
+        ? {
+            signalGenerationMs: 0,
+            exitProcessingMs: 0,
+            exitStrategyMs: 0,
+            exitMergeMs: 0,
+            exitBookkeepingMs: 0,
+            exitOverrideSignals: 0,
+            engineMs: 0,
+        }
         : undefined;
     const finish = (
         result: BacktestResult,
@@ -292,7 +304,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         executorTimings.signalGenerationMs += performance.now() - signalGenerationStartedAt;
     }
 
-    const exitProcessingStartedAt = executorTimings ? performance.now() : 0;
+    const exitStrategyStartedAt = executorTimings ? performance.now() : 0;
     const exitOverrideResolution = await resolveExitStrategyOverrideSignals({
         data: backtestData,
         interval,
@@ -300,8 +312,23 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         blockRange,
         executionContext,
     });
+    if (executorTimings) {
+        const elapsed = performance.now() - exitStrategyStartedAt;
+        executorTimings.exitStrategyMs += elapsed;
+        executorTimings.exitProcessingMs += elapsed;
+    }
     const exitOverrideSignals = exitOverrideResolution.signals;
+    if (executorTimings) {
+        executorTimings.exitOverrideSignals += exitOverrideSignals.length;
+    }
+    const exitMergeStartedAt = executorTimings ? performance.now() : 0;
     const mergedSignals = mergeExitStrategySignals(signals, exitOverrideSignals);
+    if (executorTimings) {
+        const elapsed = performance.now() - exitMergeStartedAt;
+        executorTimings.exitMergeMs += elapsed;
+        executorTimings.exitProcessingMs += elapsed;
+    }
+    const exitBookkeepingStartedAt = executorTimings ? performance.now() : 0;
     const exitControlDiagnostics = buildExitControlDiagnostics({
         requestedSettings: backtestSettings as Record<string, unknown>,
         resolvedSettings,
@@ -313,7 +340,9 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         skippedReason: exitOverrideResolution.skippedReason,
     });
     if (executorTimings) {
-        executorTimings.exitProcessingMs += performance.now() - exitProcessingStartedAt;
+        const elapsed = performance.now() - exitBookkeepingStartedAt;
+        executorTimings.exitBookkeepingMs += elapsed;
+        executorTimings.exitProcessingMs += elapsed;
     }
 
     const evaluation = strategy.evaluate?.(backtestData, normalizedParams, signals);

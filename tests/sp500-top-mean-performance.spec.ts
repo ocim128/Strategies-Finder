@@ -57,6 +57,10 @@ const diagnostic: TopMeanPerformanceDiagnostic = {
         backtestMs: 200,
         signalGenerationMs: 40,
         exitProcessingMs: 10,
+        exitStrategyMs: 6,
+        exitMergeMs: 3,
+        exitBookkeepingMs: 1,
+        exitOverrideSignals: 0,
         engineMs: 130,
         engineDiagnosticPairs: 4,
         engineDiagnostics: {
@@ -87,7 +91,7 @@ const diagnostic: TopMeanPerformanceDiagnostic = {
 };
 
 const lines = formatTopMeanPerformanceLines(diagnostic);
-assert.equal(lines.length, 9);
+assert.equal(lines.length, 10);
 assert.match(lines[0]!, /total=1000\.0ms/);
 assert.match(lines[0]!, /throughput=98\.0 pairs\/s/);
 assert.equal(
@@ -101,8 +105,12 @@ assert.equal(
     lines[6],
     "PERFORMANCE BACKTEST | signals=40.0ms | exits=10.0ms | engine=130.0ms | other=20.0ms",
 );
-assert.match(lines[7]!, /sampled=4/);
-assert.match(lines[7]!, /simulation=70\.0ms/);
-assert.match(lines[8]!, /disk=80 hit\/20 miss\/20 write/);
+assert.equal(
+    lines[7],
+    "PERFORMANCE EXITS | strategy=6.0ms | merge=3.0ms | bookkeeping=1.0ms | overrideSignals=0",
+);
+assert.match(lines[8]!, /sampled=4/);
+assert.match(lines[8]!, /simulation=70\.0ms/);
+assert.match(lines[9]!, /disk=80 hit\/20 miss\/20 write/);
 
 console.log("PASS: sp500-top-mean-performance.spec.ts");

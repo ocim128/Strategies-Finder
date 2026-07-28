@@ -82,6 +82,19 @@ async function main(): Promise<void> {
     assert.ok(measured.executorTimings);
     assert.ok(measured.executorTimings.signalGenerationMs >= 0);
     assert.ok(measured.executorTimings.exitProcessingMs >= 0);
+    assert.ok(measured.executorTimings.exitStrategyMs >= 0);
+    assert.ok(measured.executorTimings.exitMergeMs >= 0);
+    assert.ok(measured.executorTimings.exitBookkeepingMs >= 0);
+    assert.equal(measured.executorTimings.exitOverrideSignals, 0);
+    assert.ok(
+        Math.abs(
+            measured.executorTimings.exitProcessingMs
+            - measured.executorTimings.exitStrategyMs
+            - measured.executorTimings.exitMergeMs
+            - measured.executorTimings.exitBookkeepingMs,
+        ) < 0.001,
+        "exit subphase timings must add up to the existing exit total",
+    );
     assert.ok(measured.executorTimings.engineMs >= 0);
     assert.ok(measured.result.diagnostics);
     assert.ok(measured.result.diagnostics.timingsMs.total >= 0);

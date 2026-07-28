@@ -149,6 +149,10 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
         backtestMs: 0,
         signalGenerationMs: 0,
         exitProcessingMs: 0,
+        exitStrategyMs: 0,
+        exitMergeMs: 0,
+        exitBookkeepingMs: 0,
+        exitOverrideSignals: 0,
         engineMs: 0,
         engineDiagnosticPairs: 0,
         engineDiagnostics: {
@@ -277,6 +281,10 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
             if (output.executorTimings) {
                 timing.signalGenerationMs += output.executorTimings.signalGenerationMs;
                 timing.exitProcessingMs += output.executorTimings.exitProcessingMs;
+                timing.exitStrategyMs += output.executorTimings.exitStrategyMs;
+                timing.exitMergeMs += output.executorTimings.exitMergeMs;
+                timing.exitBookkeepingMs += output.executorTimings.exitBookkeepingMs;
+                timing.exitOverrideSignals += output.executorTimings.exitOverrideSignals;
                 timing.engineMs += output.executorTimings.engineMs;
             }
             const engineDiagnostics = output.result.diagnostics?.timingsMs;

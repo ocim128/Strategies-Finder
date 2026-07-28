@@ -169,6 +169,10 @@ function addWorkerTiming(target: TopMeanWorkerTiming, source: TopMeanWorkerTimin
     target.backtestMs += source.backtestMs;
     target.signalGenerationMs += source.signalGenerationMs;
     target.exitProcessingMs += source.exitProcessingMs;
+    target.exitStrategyMs += source.exitStrategyMs;
+    target.exitMergeMs += source.exitMergeMs;
+    target.exitBookkeepingMs += source.exitBookkeepingMs;
+    target.exitOverrideSignals += source.exitOverrideSignals;
     target.engineMs += source.engineMs;
     target.engineDiagnosticPairs += source.engineDiagnosticPairs;
     for (const key of Object.keys(source.engineDiagnostics) as Array<keyof typeof source.engineDiagnostics>) {
@@ -306,6 +310,10 @@ export class TopMeanWorkerPool {
             backtestMs: 0,
             signalGenerationMs: 0,
             exitProcessingMs: 0,
+            exitStrategyMs: 0,
+            exitMergeMs: 0,
+            exitBookkeepingMs: 0,
+            exitOverrideSignals: 0,
             engineMs: 0,
             engineDiagnosticPairs: 0,
             engineDiagnostics: {
