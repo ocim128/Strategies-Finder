@@ -142,6 +142,37 @@ export interface AssetSelectionSummary {
     delta: number | null;
 }
 
+export type OpenScoreUsdLatestSelectorName =
+    | "TOP_RAW"
+    | "TOP_MEAN"
+    | "TOP_MEAN_TREND"
+    | "REGIME_MEAN"
+    | "MAX_ACTIVE";
+
+export interface OpenScoreUsdLatestSelection {
+    selector: OpenScoreUsdLatestSelectorName;
+    direction: "long" | "short" | "none";
+    /** Null when the selector is tied or has fewer than two eligible assets. */
+    asset: string | null;
+    /** Every asset tied at the selector boundary; empty for a unique pick. */
+    tiedAssets: string[];
+    score: number | null;
+    mean: number | null;
+    activePairs: number | null;
+    eligibleCandidates: number;
+    reason: "selected" | "tied" | "insufficient_candidates";
+}
+
+export interface OpenScoreUsdLatestSelections {
+    /** Latest replay decision event represented by these selectors. */
+    decisionTime: number;
+    ema200ObservedAssets: number;
+    ema200AssetsAbove: number;
+    ema200Breadth: number | null;
+    regime: "bullish" | "bearish" | "unavailable";
+    selections: OpenScoreUsdLatestSelection[];
+}
+
 export interface OpenScoreUsdReplayResult {
     pairs: number;
     assets: number;
@@ -379,6 +410,8 @@ export interface OpenScoreUsdReplayResult {
          */
         tieRates: Record<SelectorName, SelectorAgreement>;
     }>;
+    /** Latest-event selector picks used by the completed Batch result UI. */
+    latestSelections: OpenScoreUsdLatestSelections | null;
     degree: DegreeSummary;
     warnings: string[];
     reportLines: string[];
@@ -800,7 +833,8 @@ export async function runOpenScoreUsdReplay(
     const horizons = [...new Set(options.horizons.filter((h) => Number.isFinite(h) && h >= 1).map((h) => Math.floor(h)))].sort((a, b) => a - b);
     const emptyResult = (partial: Partial<OpenScoreUsdReplayResult>): OpenScoreUsdReplayResult => ({
         pairs: 0, assets: 0, complete: false, omittedPairs: 0, omittedAssets: 0,
-        totalEvents: 0, candidateEvents: 0, eligibleEvents: 0, horizons: [], degree: degreeSummary([], null),
+        totalEvents: 0, candidateEvents: 0, eligibleEvents: 0, horizons: [],
+        latestSelections: null, degree: degreeSummary([], null),
         warnings, reportLines: [], ...partial,
     });
     if (horizons.length === 0) {
@@ -1297,6 +1331,13 @@ export async function runOpenScoreUsdReplay(
     const missingAssets = new Set<number>();
     const censoredEvents = new Set<number>();
     const noDataEvents = new Set<number>();
+    const latestView = views[views.length - 1] ?? null;
+    const latestCandidateAssets = new Set<number>(
+        latestView
+            ? [...latestView.positives, ...latestView.negatives].map((candidate) => candidate.assetIndex)
+            : [],
+    );
+    const latestEma200SideByAsset = new Map<number, "above" | "below">();
 
     let targetsSeen = 0;
     const totalTargets = requestsByAsset.size;
@@ -1309,6 +1350,16 @@ export async function runOpenScoreUsdReplay(
         targetsSeen += 1;
         const times = target.data.map((b) => timeToNumber(b.time));
         const ema200 = buildEma200(target.data);
+        if (latestView && latestCandidateAssets.has(aIdx)) {
+            const nextBar = firstBarAfter(times, latestView.timeSec);
+            const lastKnownBar = nextBar < 0 ? target.data.length - 1 : nextBar - 1;
+            const close = lastKnownBar >= 0 ? target.data[lastKnownBar]!.close : Number.NaN;
+            const ema = lastKnownBar >= 0 ? ema200[lastKnownBar]! : Number.NaN;
+            if (Number.isFinite(close) && Number.isFinite(ema)) {
+                if (close > ema) latestEma200SideByAsset.set(aIdx, "above");
+                else if (close < ema) latestEma200SideByAsset.set(aIdx, "below");
+            }
+        }
         for (const viewIdx of requests) {
             const view = views[viewIdx]!;
             // First target bar strictly after the decision timestamp.
@@ -1383,6 +1434,116 @@ export async function runOpenScoreUsdReplay(
         await yieldLoop();
         // target OHLCV reference released here (goes out of scope next iteration).
     }
+
+    const latestSelections: OpenScoreUsdLatestSelections | null = (() => {
+        if (!latestView) return null;
+
+        let ema200AssetsAbove = 0;
+        for (const side of latestEma200SideByAsset.values()) {
+            if (side === "above") ema200AssetsAbove += 1;
+        }
+        const ema200ObservedAssets = latestEma200SideByAsset.size;
+        const ema200Breadth = ema200ObservedAssets > 0
+            ? ema200AssetsAbove / ema200ObservedAssets
+            : null;
+        const hasBreadth = ema200ObservedAssets >= 2;
+        const bullish = hasBreadth && ema200AssetsAbove / ema200ObservedAssets > 0.5;
+
+        const pick = (
+            selector: OpenScoreUsdLatestSelectorName,
+            direction: "long" | "short" | "none",
+            pool: readonly Candidate[],
+            primary: (candidate: Candidate) => number,
+            primaryOrder: "max" | "min",
+            secondary?: (candidate: Candidate) => number,
+        ): OpenScoreUsdLatestSelection => {
+            if (pool.length < 2) {
+                return {
+                    selector,
+                    direction,
+                    asset: null,
+                    tiedAssets: [],
+                    score: null,
+                    mean: null,
+                    activePairs: null,
+                    eligibleCandidates: pool.length,
+                    reason: "insufficient_candidates",
+                };
+            }
+            let bestPrimary = primary(pool[0]!);
+            for (let i = 1; i < pool.length; i += 1) {
+                const value = primary(pool[i]!);
+                if (primaryOrder === "max" ? value > bestPrimary : value < bestPrimary) {
+                    bestPrimary = value;
+                }
+            }
+            let finalists = pool.filter((candidate) => primary(candidate) === bestPrimary);
+            if (secondary && finalists.length > 1) {
+                let bestSecondary = secondary(finalists[0]!);
+                for (let i = 1; i < finalists.length; i += 1) {
+                    const value = secondary(finalists[i]!);
+                    if (value > bestSecondary) bestSecondary = value;
+                }
+                finalists = finalists.filter((candidate) => secondary(candidate) === bestSecondary);
+            }
+            if (finalists.length !== 1) {
+                return {
+                    selector,
+                    direction,
+                    asset: null,
+                    tiedAssets: finalists.map((candidate) => assetNames[candidate.assetIndex]!).sort(),
+                    score: null,
+                    mean: null,
+                    activePairs: null,
+                    eligibleCandidates: pool.length,
+                    reason: "tied",
+                };
+            }
+            const selected = finalists[0]!;
+            return {
+                selector,
+                direction,
+                asset: assetNames[selected.assetIndex]!,
+                tiedAssets: [],
+                score: selected.raw,
+                mean: selected.mean,
+                activePairs: selected.activePairs,
+                eligibleCandidates: pool.length,
+                reason: "selected",
+            };
+        };
+
+        const trendPool = bullish
+            ? latestView.positives.filter((candidate) => latestEma200SideByAsset.get(candidate.assetIndex) === "above")
+            : [];
+        const regimePool = !hasBreadth
+            ? []
+            : bullish
+                ? trendPool
+                : latestView.negatives.filter((candidate) => latestEma200SideByAsset.get(candidate.assetIndex) === "below");
+
+        return {
+            decisionTime: latestView.timeSec,
+            ema200ObservedAssets,
+            ema200AssetsAbove,
+            ema200Breadth,
+            regime: !hasBreadth ? "unavailable" : bullish ? "bullish" : "bearish",
+            selections: [
+                pick("TOP_RAW", "long", latestView.positives, (candidate) => candidate.raw, "max"),
+                pick("TOP_MEAN", "long", latestView.positives, (candidate) => candidate.mean, "max"),
+                pick("TOP_MEAN_TREND", "long", trendPool, (candidate) => candidate.mean, "max", (candidate) => candidate.activePairs),
+                pick(
+                    "REGIME_MEAN",
+                    !hasBreadth ? "none" : bullish ? "long" : "short",
+                    regimePool,
+                    (candidate) => candidate.mean,
+                    bullish ? "max" : "min",
+                    (candidate) => candidate.activePairs,
+                ),
+                pick("MAX_ACTIVE", "long", latestView.positives, (candidate) => candidate.activePairs, "max"),
+            ],
+        };
+    })();
 
     // --- Phase 5: aggregate ------------------------------------------------
     onPhase("aggregate", "aggregating statistics", 0, horizons.length);
@@ -2181,6 +2342,7 @@ export async function runOpenScoreUsdReplay(
         candidateEvents: views.length,
         eligibleEvents: eligibleEventsMax,
         horizons: horizonResults,
+        latestSelections,
         degree,
         warnings,
         reportLines,

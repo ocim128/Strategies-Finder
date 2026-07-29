@@ -30,6 +30,7 @@ import {
 import {
     runOpenScoreUsdReplay,
     type OpenScoreUsdReplayResult,
+    type OpenScoreUsdLatestSelections,
     type AssetSelectionSummary,
     type ReplayComparison,
 } from "./batch-open-score-usd-replay-engine";
@@ -109,6 +110,8 @@ export interface TopMeanResultSummary {
     annualReports?: TopMeanAnnualReplaySummary[];
     warnings: string[];
     reportLines: string[];
+    /** Latest-event picks for the useful OPEN_SCORE selector arms. */
+    latestSelections?: OpenScoreUsdLatestSelections | null;
     /** Server-measured wall time, worker cost, throughput, and cache counters. */
     performance?: TopMeanPerformanceDiagnostic;
     /**
@@ -725,6 +728,7 @@ export class TopMeanCoordinatorEngine {
                 annualReports,
                 warnings: replayResult.warnings,
                 reportLines: [...replayResult.reportLines, ...annualReportLines, "", ...performanceLines],
+                latestSelections: replayResult.latestSelections,
                 performance: this.performanceDiagnostic,
                 currentSnapshot: currentSnapshotResult,
             };

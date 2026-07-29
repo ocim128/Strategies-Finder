@@ -65,7 +65,10 @@ import type { CoverageCounts } from "./sp500-pair-enumerator";
 import type { TopMeanResultSummary, TopMeanStatusResponse } from "./sp500-top-mean-coordinator-engine";
 import type { StabilityComparison } from "./sp500-top-mean-stability-compare";
 import { formatTopMeanPerformanceLines } from "./sp500-top-mean-performance";
-import type { OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
+import type {
+    OpenScoreUsdLatestSelections,
+    OpenScoreUsdReplayResult,
+} from "./batch-open-score-usd-replay-engine";
 import type { OpenScoreUsdReplayStreamEvent } from "./batch-open-score-usd-replay-stream-types";
 import type { StrategyParams, BacktestSettings } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
@@ -2765,6 +2768,67 @@ export class BatchBacktestService {
         }
     }
 
+    private renderLatestOpenScoreSelections(latest: OpenScoreUsdLatestSelections): string {
+        const decisionLabel = new Date(latest.decisionTime * 1000)
+            .toISOString()
+            .slice(0, 19)
+            .replace("T", " ") + " UTC";
+        const breadth = latest.ema200Breadth === null
+            ? "n/a"
+            : `${(latest.ema200Breadth * 100).toFixed(1)}%`;
+        let html = `<div style="background: var(--surface-2, #1e222d); border: 1px solid var(--border-color, #2a2e39); border-radius: 6px; padding: 12px; margin-bottom: 16px;">`;
+        html += `<div style="font-weight:bold; font-size:14px; margin-bottom:6px; color:var(--accent-color, #2962ff);">Latest OPEN_SCORE Selector Picks</div>`;
+        html += `<div style="font-size:11px; color:var(--text-dim, #787b86); margin-bottom:8px;">decision event: ${escapeHtml(decisionLabel)} | EMA200 breadth ${escapeHtml(breadth)} (${escapeHtml(latest.ema200AssetsAbove)}/${escapeHtml(latest.ema200ObservedAssets)}) | regime ${escapeHtml(latest.regime.toUpperCase())}</div>`;
+        html += `<table class="finder-table" style="width:100%; font-size:12px;"><thead><tr><th>Selector</th><th>Direction</th><th>Selection</th><th>Mean</th><th>Score</th><th>Active Pairs</th><th>Pool</th></tr></thead><tbody>`;
+        for (const selection of latest.selections) {
+            const selectedText = selection.reason === "selected"
+                ? selection.asset ?? "NO SELECTION"
+                : selection.reason === "tied"
+                    ? `TIE / SKIP: ${selection.tiedAssets.join(", ")}`
+                    : "NO SELECTION";
+            const mean = selection.mean === null
+                ? "--"
+                : `${selection.mean >= 0 ? "+" : ""}${selection.mean.toFixed(3)}`;
+            const score = selection.score === null
+                ? "--"
+                : `${selection.score >= 0 ? "+" : ""}${selection.score}`;
+            const color = selection.reason === "selected"
+                ? selection.direction === "long" ? "#26a69a" : "#ef5350"
+                : "var(--text-dim, #787b86)";
+            html += `<tr><td><strong>${escapeHtml(selection.selector)}</strong></td><td style="color:${color}; font-weight:600;">${escapeHtml(selection.direction.toUpperCase())}</td><td>${escapeHtml(selectedText)}</td><td>${escapeHtml(mean)}</td><td>${escapeHtml(score)}</td><td>${escapeHtml(selection.activePairs ?? "--")}</td><td>${escapeHtml(selection.eligibleCandidates)}</td></tr>`;
+        }
+        html += `</tbody></table>`;
+        html += `<div style="font-size:11px; color:var(--text-dim, #787b86); margin-top:7px;">Research selectors only. Tied rows are explicitly skipped; TOP_MEAN_TREND and REGIME_MEAN use target prices known by this decision event.</div>`;
+        html += `</div>`;
+        return html;
+    }
+
+    private formatLatestOpenScoreSelectionLines(latest: OpenScoreUsdLatestSelections): string[] {
+        const breadth = latest.ema200Breadth === null
+            ? "n/a"
+            : `${(latest.ema200Breadth * 100).toFixed(1)}%`;
+        const lines = [
+            "----------------------------------------------------------------------",
+            "LATEST OPEN_SCORE SELECTOR PICKS",
+            "----------------------------------------------------------------------",
+            `decisionTime=${latest.decisionTime} | EMA200 breadth=${breadth} (${latest.ema200AssetsAbove}/${latest.ema200ObservedAssets}) | regime=${latest.regime.toUpperCase()}`,
+        ];
+        for (const selection of latest.selections) {
+            const asset = selection.reason === "selected"
+                ? selection.asset ?? "NONE"
+                : selection.reason === "tied"
+                    ? `TIE_SKIP[${selection.tiedAssets.join(",")}]`
+                    : "NONE";
+            lines.push(
+                `${selection.selector} NOW | direction=${selection.direction.toUpperCase()} | asset=${asset} | ` +
+                `mean=${selection.mean ?? "n/a"} | score=${selection.score ?? "n/a"} | ` +
+                `activePairs=${selection.activePairs ?? "n/a"} | pool=${selection.eligibleCandidates} | reason=${selection.reason}`,
+            );
+        }
+        lines.push("");
+        return lines;
+    }
+
     private renderTopMeanResults(dom: BatchBacktestDom, summary: TopMeanResultSummary): void {
         if (!summary || !Array.isArray(summary.horizons)) return;
 
@@ -2776,6 +2840,9 @@ export class BatchBacktestService {
         // questions (cross-sectional "now" vs per-event historical edge).
         if (summary.currentSnapshot) {
             html += this.renderCurrentTopMeanBanner(summary.currentSnapshot);
+        }
+        if (summary.latestSelections) {
+            html += this.renderLatestOpenScoreSelections(summary.latestSelections);
         }
 
         if (summary.performance) {
@@ -3064,6 +3131,9 @@ export class BatchBacktestService {
 
         if (res.currentSnapshot) {
             lines.push(...this.formatCurrentTopMeanLines(res.currentSnapshot));
+        }
+        if (res.latestSelections) {
+            lines.push(...this.formatLatestOpenScoreSelectionLines(res.latestSelections));
         }
         if (res.performance) {
             lines.push(...formatTopMeanPerformanceLines(res.performance), "");

@@ -431,6 +431,51 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(h.topMeanTrendByAsset.map((x) => x.asset)).to.deep.equal(["BBB"]);
         expect(h.pnl.topMeanTrendPortfolio.trades).to.equal(1);
         expect(result.reportLines.join("\n")).to.include("TOP_MEAN_TREND selected assets");
+        expect(result.latestSelections?.regime).to.equal("bullish");
+        expect(result.latestSelections?.ema200Breadth).to.be.closeTo(2 / 3, 1e-9);
+        const latest = new Map(result.latestSelections?.selections.map((selection) => [
+            selection.selector,
+            selection,
+        ]));
+        expect(latest.get("TOP_RAW")?.asset).to.equal("AAA");
+        expect(latest.get("TOP_MEAN")?.reason).to.equal("tied");
+        expect(latest.get("TOP_MEAN")?.tiedAssets).to.deep.equal(["AAA", "BBB", "CCC"]);
+        expect(latest.get("TOP_MEAN_TREND")?.asset).to.equal("BBB");
+        expect(latest.get("REGIME_MEAN")?.asset).to.equal("BBB");
+        expect(latest.get("MAX_ACTIVE")?.asset).to.equal("AAA");
+    });
+
+    it("latest REGIME_MEAN selects a below-EMA negative asset in a bearish regime", async () => {
+        const decision = T0 + 200_000;
+        const pairs = [
+            makePair("AAA", "AX0", [makeTrade("short", decision, null)]),
+            makePair("AAA", "AX1", [makeTrade("short", decision, null)]),
+            makePair("BBB", "BX0", [makeTrade("short", decision, null)]),
+        ];
+        const declining = (i: number) => i <= 201 ? 200 - i * 0.5 : 90;
+        const targets = [
+            makeTarget("AAA", 205, declining),
+            makeTarget("BBB", 205, declining),
+            makeTarget("AX0", 205, () => 100),
+            makeTarget("AX1", 205, () => 100),
+            makeTarget("BX0", 205, () => 100),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        expect(result.latestSelections?.regime).to.equal("bearish");
+        const regime = result.latestSelections?.selections.find(
+            (selection) => selection.selector === "REGIME_MEAN",
+        );
+        expect(regime?.direction).to.equal("short");
+        expect(regime?.asset).to.equal("AAA");
+        expect(regime?.reason).to.equal("selected");
+        const trend = result.latestSelections?.selections.find(
+            (selection) => selection.selector === "TOP_MEAN_TREND",
+        );
+        expect(trend?.reason).to.equal("insufficient_candidates");
     });
 
     it("controls legend documents the MAX_ACTIVE_REVERSION short-side arm", async () => {

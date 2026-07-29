@@ -314,12 +314,50 @@ describe("BatchBacktestService analysis lifecycle", () => {
                 configurationAssumption: "one_strategy_configuration",
             },
         };
+        result.latestSelections = {
+            decisionTime: 1_700_000_000,
+            ema200ObservedAssets: 3,
+            ema200AssetsAbove: 2,
+            ema200Breadth: 2 / 3,
+            regime: "bullish",
+            selections: [
+                {
+                    selector: "TOP_RAW",
+                    direction: "long",
+                    asset: "BBB",
+                    tiedAssets: [],
+                    score: 4,
+                    mean: 0.5,
+                    activePairs: 8,
+                    eligibleCandidates: 3,
+                    reason: "selected",
+                },
+                {
+                    selector: "REGIME_MEAN",
+                    direction: "long",
+                    asset: null,
+                    tiedAssets: ["AAA", "CCC"],
+                    score: null,
+                    mean: null,
+                    activePairs: null,
+                    eligibleCandidates: 2,
+                    reason: "tied",
+                },
+            ],
+        };
 
         svc().renderTopMeanResults(dom, result);
 
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("ALGORITHMIC TRADE DECISION");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("LONG AAA");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("one selected strategy configuration only");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("Latest OPEN_SCORE Selector Picks");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TOP_RAW");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TIE / SKIP: AAA, CCC");
+        const copiedLines = svc().formatLatestOpenScoreSelectionLines(result.latestSelections);
+        expect(copiedLines).to.include(
+            "REGIME_MEAN NOW | direction=LONG | asset=TIE_SKIP[AAA,CCC] | mean=n/a | score=n/a | activePairs=n/a | pool=2 | reason=tied",
+        );
     });
 
     it("keeps ownership after a rejected Stop and clears it after an accepted Stop", async () => {
