@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+    buildTopMeanAnnualReplayWindows,
     TopMeanCoordinatorEngine,
     type TopMeanResultSummary,
 } from "../lib/batch-backtest/sp500-top-mean-coordinator-engine";
@@ -54,6 +55,59 @@ async function testEngineValidationAndConflict(): Promise<void> {
     assert.equal(stoppedStatus.phase, "interrupted");
 
     console.log("PASS: engine validation/stop contract unchanged");
+}
+
+function testAnnualReplayWindowsFollowSelectedRange(): void {
+    const sec = (value: string): number => Math.floor(Date.parse(value) / 1000);
+    const windows = buildTopMeanAnnualReplayWindows(
+        sec("2020-04-15T00:00:00.000Z"),
+        sec("2022-07-20T23:59:59.000Z"),
+        sec("2026-07-29T12:00:00.000Z"),
+    );
+
+    assert.deepEqual(windows, [
+        {
+            year: 2020,
+            sampleFromSec: sec("2020-04-15T00:00:00.000Z"),
+            sampleToSec: sec("2020-12-31T23:59:59.000Z"),
+        },
+        {
+            year: 2021,
+            sampleFromSec: sec("2021-01-01T00:00:00.000Z"),
+            sampleToSec: sec("2021-12-31T23:59:59.000Z"),
+        },
+        {
+            year: 2022,
+            sampleFromSec: sec("2022-01-01T00:00:00.000Z"),
+            sampleToSec: sec("2022-07-20T23:59:59.000Z"),
+        },
+    ]);
+
+    const throughToday = buildTopMeanAnnualReplayWindows(
+        sec("2025-01-01T00:00:00.000Z"),
+        undefined,
+        sec("2026-07-29T12:00:00.000Z"),
+    );
+    assert.deepEqual(throughToday, [
+        {
+            year: 2025,
+            sampleFromSec: sec("2025-01-01T00:00:00.000Z"),
+            sampleToSec: sec("2025-12-31T23:59:59.000Z"),
+        },
+        {
+            year: 2026,
+            sampleFromSec: sec("2026-01-01T00:00:00.000Z"),
+            sampleToSec: sec("2026-07-29T12:00:00.000Z"),
+        },
+    ]);
+
+    assert.deepEqual(
+        buildTopMeanAnnualReplayWindows(undefined, undefined, sec("2026-07-29T12:00:00.000Z")),
+        [],
+        "annual reports require an explicit selected From date",
+    );
+
+    console.log("PASS: annual replay windows partition and clip the selected range");
 }
 
 /**
@@ -553,6 +607,7 @@ function openArtifact(
 }
 
 async function main(): Promise<void> {
+    testAnnualReplayWindowsFollowSelectedRange();
     await testEngineValidationAndConflict();
     await testSnapshotDerivedFromArtifacts();
     await testResultJsonAugmentationIsAdditive();

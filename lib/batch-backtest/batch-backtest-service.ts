@@ -354,6 +354,9 @@ export class BatchBacktestService {
         dom.batchBacktestSp500TopMeanCopyBtn.addEventListener("click", () => {
             void this.copySp500TopMeanResults();
         });
+        dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.addEventListener("click", () => {
+            void this.copySp500TopMeanOpenScoreResults();
+        });
         dom.batchBacktestSp500TopMeanDownloadBtn.addEventListener("click", () => {
             void this.downloadSp500TopMeanResults();
         });
@@ -2314,6 +2317,7 @@ export class BatchBacktestService {
         setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, false);
         setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
         dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
+        dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
 
         dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML = "";
@@ -2400,6 +2404,7 @@ export class BatchBacktestService {
                         if ("interrupted" in event) {
                             this.latestTopMeanResult = null;
                             dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
+                            dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
                             dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
                             dom.batchBacktestSp500TopMeanProgressText.textContent = "TOP_MEAN run stopped.";
                             this.activeTopMeanRunId = null;
@@ -2411,6 +2416,8 @@ export class BatchBacktestService {
                         this.persistLatestTopMeanResult(event.result);
                         this.renderTopMeanResults(dom, event.result);
                         dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
+                        dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled =
+                            !Array.isArray(event.result.reportLines) || event.result.reportLines.length === 0;
                         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
                         dom.batchBacktestSp500TopMeanProgressText.textContent = "TOP_MEAN run completed successfully.";
                         this.activeTopMeanRunId = null;
@@ -2529,6 +2536,7 @@ export class BatchBacktestService {
         setVisible(dom.batchBacktestSp500TopMeanRunBtn, false);
         setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
         dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
+        dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
         this.latestTopMeanResult = null;
         this.latestTopMeanStabilityResult = null;
@@ -2608,6 +2616,7 @@ export class BatchBacktestService {
                         this.latestTopMeanResult = null;
                         this.renderStabilityResults(dom, event.comparison);
                         dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
+                        dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
                         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
                         const verdict = event.comparison?.parityAssumptionHolds ? "PASS" : "BLOCKED";
                         const agreement = Number(event.comparison?.agreementPct ?? 0).toFixed(1);
@@ -2823,6 +2832,19 @@ export class BatchBacktestService {
             }
             html += `</tbody></table>`;
         }
+
+        const annualReports = Array.isArray(summary.annualReports) ? summary.annualReports : [];
+        if (annualReports.length > 0) {
+            html += `<div style="margin-top: 20px; font-weight: bold; font-size: 14px; color: var(--accent-color, #2962ff);">OPEN_SCORE USD Calendar-Year Reports</div>`;
+            for (const annual of annualReports) {
+                const fromLabel = new Date(annual.sampleFromSec * 1000).toISOString().slice(0, 10);
+                const toLabel = new Date(annual.sampleToSec * 1000).toISOString().slice(0, 10);
+                html += `<details style="margin-top: 8px; background: var(--surface-2, #1e222d); border: 1px solid var(--border-color, #2a2e39); border-radius: 6px; padding: 8px 10px;">`;
+                html += `<summary style="cursor:pointer; font-weight:600;">${escapeHtml(annual.year)} | ${escapeHtml(fromLabel)}..${escapeHtml(toLabel)}</summary>`;
+                html += `<pre style="margin:8px 0 0; white-space:pre-wrap; font-size:11px; color:var(--text-color, #d1d4dc);">${escapeHtml(annual.reportLines.join("\n"))}</pre>`;
+                html += `</details>`;
+            }
+        }
         dom.batchBacktestSp500TopMeanResults.innerHTML = html;
     }
 
@@ -2874,6 +2896,8 @@ export class BatchBacktestService {
         this.latestTopMeanStabilityResult = null;
         this.renderTopMeanResults(dom, result);
         dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
+        dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled =
+            !Array.isArray(result.reportLines) || result.reportLines.length === 0;
         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
         dom.batchBacktestSp500TopMeanProgressText.textContent = "Restored completed TOP_MEAN result.";
     }
@@ -3068,6 +3092,21 @@ export class BatchBacktestService {
         dom.batchBacktestSp500TopMeanProgressText.textContent = "Copied TOP_MEAN leaderboard summary to clipboard.";
     }
 
+    public async copySp500TopMeanOpenScoreResults(): Promise<void> {
+        const text = this.buildTopMeanOpenScoreText();
+        if (!text) return;
+        const copied = await copyToClipboard(text);
+        const dom = this.getDom();
+        dom.batchBacktestSp500TopMeanProgressText.textContent = copied
+            ? "Copied TOP_MEAN OPEN_SCORE report to clipboard."
+            : "Copy OPEN_SCORE failed.";
+    }
+
+    private buildTopMeanOpenScoreText(): string {
+        const lines = this.latestTopMeanResult?.reportLines;
+        return Array.isArray(lines) ? lines.join("\n") : "";
+    }
+
     public async copySp500TopMeanDiagnostic(): Promise<void> {
         const text = this.buildTopMeanDiagnosticText();
         await copyToClipboard(text);
@@ -3167,6 +3206,7 @@ export class BatchBacktestService {
         setVisible(dom.batchBacktestSp500TopMeanRunBtn, false);
         if (isStabilityReattach) {
             setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, false);
+            dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
         }
         setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
 
@@ -3226,6 +3266,7 @@ export class BatchBacktestService {
                             this.latestTopMeanResult = null;
                             this.renderStabilityResults(dom, status.stabilityResult);
                             dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
+                            dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
                             dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
                         } else if (status.result) {
                             this.latestTopMeanResult = status.result;
@@ -3233,6 +3274,8 @@ export class BatchBacktestService {
                             this.persistLatestTopMeanResult(status.result);
                             this.renderTopMeanResults(dom, status.result);
                             dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
+                            dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled =
+                                !Array.isArray(status.result.reportLines) || status.result.reportLines.length === 0;
                             dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
                         }
                         clearTopMeanActiveRun();

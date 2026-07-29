@@ -81,16 +81,32 @@ export interface TopMeanCoordinatorRunRequest {
     stabilityStartDates?: number[];
 }
 
+export interface TopMeanHorizonSummary {
+    horizon: number;
+    events: number;
+    topMean: ReplayComparison;
+    topAssets: AssetSelectionSummary[];
+}
+
+export interface TopMeanAnnualReplayWindow {
+    year: number;
+    sampleFromSec: number;
+    sampleToSec: number;
+}
+
+export interface TopMeanAnnualReplaySummary extends TopMeanAnnualReplayWindow {
+    horizons: TopMeanHorizonSummary[];
+    warnings: string[];
+    reportLines: string[];
+}
+
 export interface TopMeanResultSummary {
     runId: string;
     completed: boolean;
     counts: CoverageCounts;
-    horizons: Array<{
-        horizon: number;
-        events: number;
-        topMean: ReplayComparison;
-        topAssets: AssetSelectionSummary[];
-    }>;
+    horizons: TopMeanHorizonSummary[];
+    /** Calendar-year OPEN_SCORE USD reports clipped to the selected From/To range. */
+    annualReports?: TopMeanAnnualReplaySummary[];
     warnings: string[];
     reportLines: string[];
     /** Server-measured wall time, worker cost, throughput, and cache counters. */
@@ -102,6 +118,38 @@ export interface TopMeanResultSummary {
      * Optional for backward compatibility with older payloads.
      */
     currentSnapshot?: CurrentTopMeanResult;
+}
+
+export function buildTopMeanAnnualReplayWindows(
+    sampleFromSec: number | undefined,
+    sampleToSec: number | undefined,
+    nowSec = Math.floor(Date.now() / 1000),
+): TopMeanAnnualReplayWindow[] {
+    if (typeof sampleFromSec !== "number" || !Number.isFinite(sampleFromSec)) {
+        return [];
+    }
+
+    const requestedEndSec = typeof sampleToSec === "number" && Number.isFinite(sampleToSec)
+        ? sampleToSec
+        : nowSec;
+    const endSec = Math.min(requestedEndSec, nowSec);
+    if (sampleFromSec > endSec) {
+        return [];
+    }
+
+    const firstYear = new Date(sampleFromSec * 1000).getUTCFullYear();
+    const lastYear = new Date(endSec * 1000).getUTCFullYear();
+    const windows: TopMeanAnnualReplayWindow[] = [];
+    for (let year = firstYear; year <= lastYear; year += 1) {
+        const yearFromSec = Math.floor(Date.UTC(year, 0, 1) / 1000);
+        const yearToSec = Math.floor(Date.UTC(year + 1, 0, 1) / 1000) - 1;
+        windows.push({
+            year,
+            sampleFromSec: Math.max(sampleFromSec, yearFromSec),
+            sampleToSec: Math.min(endSec, yearToSec),
+        });
+    }
+    return windows;
 }
 
 export interface TopMeanStatusResponse {
@@ -539,6 +587,7 @@ export class TopMeanCoordinatorEngine {
                 else if (activeReplayPhase === "targets") this.performanceDiagnostic!.replay.targetsMs += elapsedMs;
                 else if (activeReplayPhase === "outcomes") this.performanceDiagnostic!.replay.outcomesMs += elapsedMs;
                 else this.performanceDiagnostic!.replay.aggregateMs += elapsedMs;
+                activeReplayPhase = null;
             };
 
             const eligibleTargets = enumRes.eligibleTargets;
@@ -566,7 +615,10 @@ export class TopMeanCoordinatorEngine {
             const slippageRate = slippageBps / 10000;
             const commissionRate = commissionPct / 100;
 
-            const replayResult: OpenScoreUsdReplayResult = await runOpenScoreUsdReplay(
+            const runReplayForWindow = (
+                sampleFromSec: number | undefined,
+                sampleToSec: number | undefined,
+            ): Promise<OpenScoreUsdReplayResult> => runOpenScoreUsdReplay(
                 () => iterateRunCompactArtifacts(this._request.runId, this.baseDir) as unknown as AsyncIterable<BatchSyntheticPairArtifact>,
                 targetLoader,
                 {
@@ -581,17 +633,60 @@ export class TopMeanCoordinatorEngine {
                         activeReplayPhase = phase;
                         activeReplayPhaseStartedAt = performance.now();
                     },
-                    ...(this._request.sampleFromSec !== undefined ? { sampleFromSec: this._request.sampleFromSec } : {}),
-                    ...(this._request.sampleToSec !== undefined ? { sampleToSec: this._request.sampleToSec } : {}),
+                    ...(sampleFromSec !== undefined ? { sampleFromSec } : {}),
+                    ...(sampleToSec !== undefined ? { sampleToSec } : {}),
                 },
             );
+
+            const replayResult = await runReplayForWindow(
+                this._request.sampleFromSec,
+                this._request.sampleToSec,
+            );
             finishActiveReplayPhase();
-            this.performanceDiagnostic.phases.replayMs = performance.now() - replayStartedAt;
 
             if (this.isStopped) {
                 this.emitInterrupted(emitNdjson);
                 return;
             }
+
+            const buildHorizonSummaries = (result: OpenScoreUsdReplayResult): TopMeanHorizonSummary[] =>
+                result.horizons.map((h) => {
+                    const topAssets = (h.topMeanByAsset || []).sort((a, b) => {
+                        if (b.events !== a.events) return b.events - a.events;
+                        return a.asset.localeCompare(b.asset);
+                    });
+
+                    return {
+                        horizon: h.bars,
+                        events: h.topMean.events,
+                        topMean: h.topMean,
+                        topAssets,
+                    };
+                });
+
+            const annualReports: TopMeanAnnualReplaySummary[] = [];
+            const annualWindows = buildTopMeanAnnualReplayWindows(
+                this._request.sampleFromSec,
+                this._request.sampleToSec,
+            );
+            for (let index = 0; index < annualWindows.length; index += 1) {
+                const window = annualWindows[index]!;
+                this.progressText = `Running OPEN_SCORE USD replay for ${window.year} (${index + 1}/${annualWindows.length})...`;
+                emitNdjson({ type: "progress", phase: "replay", text: this.progressText });
+                const annualResult = await runReplayForWindow(window.sampleFromSec, window.sampleToSec);
+                finishActiveReplayPhase();
+                if (this.isStopped) {
+                    this.emitInterrupted(emitNdjson);
+                    return;
+                }
+                annualReports.push({
+                    ...window,
+                    horizons: buildHorizonSummaries(annualResult),
+                    warnings: annualResult.warnings,
+                    reportLines: annualResult.reportLines,
+                });
+            }
+            this.performanceDiagnostic.phases.replayMs = performance.now() - replayStartedAt;
 
             // Save replay output json. Merges the historical replay fields
             // into the same result.json that already carries the snapshot
@@ -605,6 +700,7 @@ export class TopMeanCoordinatorEngine {
             const finalWriteStartedAt = performance.now();
             atomicWriteJsonSync(resultJsonPath, {
                 ...replayResult,
+                annualReports,
                 currentSnapshot: currentSnapshotResult,
                 performance: this.performanceSnapshot(),
             });
@@ -614,27 +710,21 @@ export class TopMeanCoordinatorEngine {
             const performanceLines = formatTopMeanPerformanceLines(this.performanceDiagnostic);
 
             // Build result summary
-            const horizonSummaries = replayResult.horizons.map((h) => {
-                const topAssets = (h.topMeanByAsset || []).sort((a, b) => {
-                    if (b.events !== a.events) return b.events - a.events;
-                    return a.asset.localeCompare(b.asset);
-                });
-
-                return {
-                    horizon: h.bars,
-                    events: h.topMean.events,
-                    topMean: h.topMean,
-                    topAssets,
-                };
-            });
+            const horizonSummaries = buildHorizonSummaries(replayResult);
+            const annualReportLines = annualReports.flatMap((annual) => [
+                "",
+                `================ OPEN_SCORE USD | CALENDAR YEAR ${annual.year} ================`,
+                ...annual.reportLines,
+            ]);
 
             this.resultSummary = {
                 runId: this._request.runId,
                 completed: true,
                 counts: this.counts,
                 horizons: horizonSummaries,
+                annualReports,
                 warnings: replayResult.warnings,
-                reportLines: [...replayResult.reportLines, "", ...performanceLines],
+                reportLines: [...replayResult.reportLines, ...annualReportLines, "", ...performanceLines],
                 performance: this.performanceDiagnostic,
                 currentSnapshot: currentSnapshotResult,
             };

@@ -162,6 +162,23 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(() => s.bindEvents(dom)).to.not.throw();
         expect(dom.batchBacktestSp500TopMeanRunBtn, "TOP_MEAN run button present").to.not.equal(undefined);
         expect(dom.batchBacktestSp500TopMeanStabilityRunBtn, "stability run button present").to.not.equal(undefined);
+        expect(dom.batchBacktestSp500TopMeanCopyOpenScoreBtn, "TOP_MEAN Copy OPEN_SCORE button present").to.not.equal(undefined);
+    });
+
+    it("keeps TOP_MEAN OPEN_SCORE copy output separate from diagnostics", () => {
+        setupForAnalysis();
+        const result = topMeanResultFixture();
+        result.reportLines = [
+            "OPEN_SCORE USD | DATA_COMPLETE",
+            "================ OPEN_SCORE USD | CALENDAR YEAR 2025 ================",
+            "config | window=2025-01-01..2025-12-31",
+        ];
+        svc().latestTopMeanResult = result;
+        svc().recordTopMeanDiagnostic("run.start", { workerCount: 4 });
+
+        expect(svc().buildTopMeanOpenScoreText()).to.equal(result.reportLines.join("\n"));
+        expect(svc().buildTopMeanOpenScoreText()).to.not.include("workerCount");
+        expect(svc().buildTopMeanDiagnosticText()).to.include("workerCount");
     });
 
     it("rejects TOP_MEAN coordinator while another Batch action is in flight", async () => {
@@ -247,6 +264,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         svc().latestTopMeanResult = null;
         dom.batchBacktestSp500TopMeanResults.innerHTML = "";
         dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
+        dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
 
         svc().loadPersistedLatestTopMeanResult(dom);
@@ -254,6 +272,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(svc().latestTopMeanResult).to.deep.equal(result);
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("AAA");
         expect(dom.batchBacktestSp500TopMeanCopyBtn.disabled).to.equal(false);
+        expect(dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled).to.equal(false);
         expect(dom.batchBacktestSp500TopMeanDownloadBtn.disabled).to.equal(false);
     });
 
