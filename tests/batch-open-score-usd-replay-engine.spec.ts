@@ -401,6 +401,38 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(result.reportLines.join("\n")).to.include("TOP_MEAN_VS_RAW_WF deltaByBlock=[-5.00%]");
     });
 
+    it("TOP_MEAN_TREND uses the prior target close and active-pair tie-break", async () => {
+        const decision = T0 + 200_000;
+        const pairs = [
+            ...Array.from({ length: 3 }, (_, i) =>
+                makePair("AAA", `AX${i}`, [makeTrade("long", decision, null)])),
+            ...Array.from({ length: 2 }, (_, i) =>
+                makePair("BBB", `BX${i}`, [makeTrade("long", decision, null)])),
+            makePair("CCC", "CX0", [makeTrade("long", decision, null)]),
+        ];
+        const targets = [
+            // AAA is below EMA200 on the last known bar, then gaps sharply on
+            // the entry bar. It must remain excluded despite the future jump.
+            makeTarget("AAA", 205, (i) => i <= 200 ? 200 - i * 0.5 : i === 201 ? 300 : 600),
+            // BBB and CCC are both above EMA200 and have equal TOP_MEAN=1.
+            // BBB has more active pairs, so it must win the first tie-break.
+            makeTarget("BBB", 205, (i) => i <= 200 ? 100 + i * 0.1 : i === 201 ? 120 : 132),
+            makeTarget("CCC", 205, (i) => i <= 201 ? 100 + i * 0.1 : 120.1),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        const h = result.horizons[0]!;
+        expect(h.topMeanTrend.events).to.equal(1);
+        expect(h.topMeanTrend.topMean).to.be.closeTo(0.10, 1e-9);
+        expect(h.topMeanTrend.randomMean).to.be.closeTo(0, 1e-9);
+        expect(h.topMeanTrendByAsset.map((x) => x.asset)).to.deep.equal(["BBB"]);
+        expect(h.pnl.topMeanTrendPortfolio.trades).to.equal(1);
+        expect(result.reportLines.join("\n")).to.include("TOP_MEAN_TREND selected assets");
+    });
+
     it("controls legend documents the MAX_ACTIVE_REVERSION short-side arm", async () => {
         // Any runnable scenario produces the legend line; the body of the
         // run is irrelevant. We just need to lock the legend wording so a

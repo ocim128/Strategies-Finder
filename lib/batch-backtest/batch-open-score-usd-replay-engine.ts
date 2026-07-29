@@ -158,6 +158,29 @@ export interface OpenScoreUsdReplayResult {
         topAdjusted: ReplayComparison;
         /** Highest rawScore / activePairCount (mean signed vote). */
         topMean: ReplayComparison;
+        /**
+         * Long-side trend filter: require target-universe EMA200 breadth above
+         * 50%, keep positive-score assets above their own target EMA200, then
+         * maximize TOP_MEAN and use active-pair count as the first tie-break.
+         */
+        topMeanTrend: ReplayComparison;
+        /** Per-asset breakdown for TOP_MEAN_TREND. */
+        topMeanTrendByAsset: AssetSelectionSummary[];
+        /** TOP_MEAN_TREND after removing its most-frequently-selected asset. */
+        topMeanTrendExDominant: ReplayComparison;
+        /** Asset excluded from {@link topMeanTrendExDominant}. */
+        topMeanTrendDominantAsset: string | null;
+        /**
+         * Direction-switching selector: TOP_MEAN_TREND long when EMA200
+         * breadth is above 50%; BOTTOM_MEAN short below that threshold.
+         */
+        regimeMean: ReplayComparison;
+        /** Per-direction/asset breakdown for REGIME_MEAN. */
+        regimeMeanByAsset: AssetSelectionSummary[];
+        /** REGIME_MEAN after removing its dominant direction/asset selection. */
+        regimeMeanExDominant: ReplayComparison;
+        /** Direction/asset excluded from {@link regimeMeanExDominant}. */
+        regimeMeanDominantAsset: string | null;
         /** Same-event return difference: TOP_MEAN versus TOP_RAW. */
         topMeanVsRaw: ReplayComparison;
         /** TOP_MEAN rank 1 versus rank 2 among positive candidates. */
@@ -284,6 +307,14 @@ export interface OpenScoreUsdReplayResult {
             topMeanHedge: SelectorPnlSummary;
             /** Fixed-$1,000 TOP_MEAN trades, skipping ties and same-asset overlap. */
             topMeanPortfolio: TopMeanPortfolioSummary;
+            /** Overlapping event-basket P&L for TOP_MEAN_TREND. */
+            topMeanTrend: SelectorPnlSummary;
+            /** Fixed-$1,000 executable portfolio for TOP_MEAN_TREND. */
+            topMeanTrendPortfolio: TopMeanPortfolioSummary;
+            /** Overlapping event-basket P&L for REGIME_MEAN. */
+            regimeMean: SelectorPnlSummary;
+            /** Fixed-$1,000 executable portfolio for REGIME_MEAN. */
+            regimeMeanPortfolio: TopMeanPortfolioSummary;
             /**
              * ACCELERATING overlapping-basket PNL: equal 1-unit notional on
              * every ACCELERATING-eligible event's selected asset. Non-compounding.
@@ -411,6 +442,32 @@ function meanOrNull(values: readonly number[]): number | null {
     let s = 0;
     for (const v of values) s += v;
     return finiteOrNull(s / values.length);
+}
+
+const TOP_MEAN_TREND_EMA_PERIOD = 200;
+
+/**
+ * Causal target-asset EMA used by TOP_MEAN_TREND. Values before the SMA seed
+ * are NaN, so a candidate cannot qualify without 200 fully known closes.
+ */
+function buildEma200(data: readonly OHLCVData[]): number[] {
+    const ema = new Array<number>(data.length).fill(Number.NaN);
+    if (data.length < TOP_MEAN_TREND_EMA_PERIOD) return ema;
+    let seed = 0;
+    for (let i = 0; i < TOP_MEAN_TREND_EMA_PERIOD; i += 1) {
+        const close = data[i]!.close;
+        if (!Number.isFinite(close) || close <= 0) return ema;
+        seed += close;
+    }
+    const seedIndex = TOP_MEAN_TREND_EMA_PERIOD - 1;
+    ema[seedIndex] = seed / TOP_MEAN_TREND_EMA_PERIOD;
+    const alpha = 2 / (TOP_MEAN_TREND_EMA_PERIOD + 1);
+    for (let i = TOP_MEAN_TREND_EMA_PERIOD; i < data.length; i += 1) {
+        const close = data[i]!.close;
+        if (!Number.isFinite(close) || close <= 0) continue;
+        ema[i] = close * alpha + ema[i - 1]! * (1 - alpha);
+    }
+    return ema;
 }
 
 /**
@@ -1234,6 +1291,8 @@ export async function runOpenScoreUsdReplay(
         short: number[];
         entryTimes: number[];
         exitTimes: number[];
+        aboveEma200: boolean;
+        belowEma200: boolean;
     }> | null> = new Array(views.length).fill(null);
     const missingAssets = new Set<number>();
     const censoredEvents = new Set<number>();
@@ -1249,6 +1308,7 @@ export async function runOpenScoreUsdReplay(
         if (aIdx === undefined || !requests || requests.length === 0) continue;
         targetsSeen += 1;
         const times = target.data.map((b) => timeToNumber(b.time));
+        const ema200 = buildEma200(target.data);
         for (const viewIdx of requests) {
             const view = views[viewIdx]!;
             // First target bar strictly after the decision timestamp.
@@ -1263,6 +1323,15 @@ export async function runOpenScoreUsdReplay(
             const shortReturns: number[] = [];
             const entryTimes: number[] = [];
             const exitTimes: number[] = [];
+            const trendBar = entryBar - 1;
+            const trendClose = trendBar >= 0 ? target.data[trendBar]!.close : Number.NaN;
+            const trendEma = trendBar >= 0 ? ema200[trendBar]! : Number.NaN;
+            const aboveEma200 = Number.isFinite(trendClose)
+                && Number.isFinite(trendEma)
+                && trendClose > trendEma;
+            const belowEma200 = Number.isFinite(trendClose)
+                && Number.isFinite(trendEma)
+                && trendClose < trendEma;
             for (const h of horizons) {
                 const exitBar = entryBar + h - 1; // h bars forward, close of that bar
                 if (exitBar >= target.data.length) {
@@ -1300,7 +1369,14 @@ export async function runOpenScoreUsdReplay(
                 const shortReturn = (shortEntryPrice - shortExitPrice - shortFees) / shortEntryPrice;
                 shortReturns.push(Number.isFinite(shortReturn) ? shortReturn : Number.NaN);
             }
-            perAsset.set(aIdx, { long: longReturns, short: shortReturns, entryTimes, exitTimes });
+            perAsset.set(aIdx, {
+                long: longReturns,
+                short: shortReturns,
+                entryTimes,
+                exitTimes,
+                aboveEma200,
+                belowEma200,
+            });
             if (longReturns.some((r) => !Number.isFinite(r))) censoredEvents.add(viewIdx);
         }
         onPhase("outcomes", `evaluated ${target.asset} (${targetsSeen}/${totalTargets})`, targetsSeen, totalTargets);
@@ -1328,10 +1404,14 @@ export async function runOpenScoreUsdReplay(
         const topRaw = createSeries();
         const topAdjusted = createSeries();
         const topMean = createSeries();
+        const topMeanTrend = createSeries();
+        const regimeMean = createSeries();
         const topMeanVsRaw = createSeries();
         const topMeanVsRank2 = createSeries();
         const topMeanHedge = createSeries();
         const topMeanPortfolioOpportunities: TopMeanPortfolioOpportunity[] = [];
+        const topMeanTrendPortfolioOpportunities: TopMeanPortfolioOpportunity[] = [];
+        const regimeMeanPortfolioOpportunities: TopMeanPortfolioOpportunity[] = [];
         const maxActiveReversion = createSeries();
         const bottomMean = createSeries();
         const maxActive = createSeries();
@@ -1381,6 +1461,10 @@ export async function runOpenScoreUsdReplay(
         // computed the same way as TOP_RAW's.
         const topMeanSelectedByAsset = new Map<string, number>();
         const topMeanSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const topMeanTrendSelectedByAsset = new Map<string, number>();
+        const topMeanTrendSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const regimeMeanSelectedByAsset = new Map<string, number>();
+        const regimeMeanSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
         // Phase 3 MAX_ACTIVE: parallel per-asset selection map for MAX_ACTIVE.
         const activeSelectedByAsset = new Map<string, number>();
         const maxActiveSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
@@ -1397,6 +1481,130 @@ export async function runOpenScoreUsdReplay(
             const view = views[v]!;
             const perAsset = returnsByView[v];
             if (!perAsset) { noDataEvents.add(v); continue; }
+
+            // Independent gate: require a broad target uptrend, then let only
+            // candidates above their own causal EMA200 enter this selector and
+            // its same-pool random control.
+            const trendPool = view.positives.filter((c) => perAsset.get(c.assetIndex)?.aboveEma200 === true);
+            let assetsAboveEma200 = 0;
+            let assetsWithEma200 = 0;
+            for (const outcome of perAsset.values()) {
+                if (outcome.aboveEma200 || outcome.belowEma200) assetsWithEma200 += 1;
+                if (outcome.aboveEma200) assetsAboveEma200 += 1;
+            }
+            const broadUptrend = assetsWithEma200 >= 2 && assetsAboveEma200 / assetsWithEma200 > 0.5;
+            const regimePool = broadUptrend
+                ? trendPool
+                : view.negatives.filter((c) => perAsset.get(c.assetIndex)?.belowEma200 === true);
+            if (regimePool.length >= 2) {
+                const regimeRetByAsset = new Map<number, number>();
+                let regimeValid = true;
+                for (const c of regimePool) {
+                    const outcome = perAsset.get(c.assetIndex);
+                    const r = broadUptrend ? outcome?.long[hIdx] : outcome?.short[hIdx];
+                    if (r === undefined || !Number.isFinite(r)) { regimeValid = false; break; }
+                    regimeRetByAsset.set(c.assetIndex, r);
+                }
+                if (regimeValid) {
+                    const ranked = [...regimePool].sort((a, b) => {
+                        if (a.mean !== b.mean) return broadUptrend ? b.mean - a.mean : a.mean - b.mean;
+                        if (a.activePairs !== b.activePairs) return b.activePairs - a.activePairs;
+                        const aDigest = tieBreakDigest(view.timeSec, assetNames[a.assetIndex]!);
+                        const bDigest = tieBreakDigest(view.timeSec, assetNames[b.assetIndex]!);
+                        return aDigest < bDigest
+                            ? -1
+                            : aDigest > bDigest
+                                ? 1
+                                : assetNames[a.assetIndex]!.localeCompare(assetNames[b.assetIndex]!);
+                    });
+                    const selected = ranked[0]!;
+                    const selectedReturn = regimeRetByAsset.get(selected.assetIndex)!;
+                    let regimeTotal = 0;
+                    for (const r of regimeRetByAsset.values()) regimeTotal += r;
+                    const randomReturn = (regimeTotal - selectedReturn) / (regimeRetByAsset.size - 1);
+                    const delta = selectedReturn - randomReturn;
+                    const asset = assetNames[selected.assetIndex]!;
+                    const selection = `${broadUptrend ? "LONG" : "SHORT"} ${asset}`;
+                    regimeMean.returns.push(selectedReturn);
+                    regimeMean.deltas.push(delta);
+                    regimeMean.times.push(view.timeSec);
+                    regimeMean.assets.push(selection);
+                    regimeMeanSelectedByAsset.set(selection, (regimeMeanSelectedByAsset.get(selection) ?? 0) + 1);
+                    let samples = regimeMeanSamplesByAsset.get(selection);
+                    if (!samples) {
+                        samples = { returns: [], deltas: [] };
+                        regimeMeanSamplesByAsset.set(selection, samples);
+                    }
+                    samples.returns.push(selectedReturn);
+                    samples.deltas.push(delta);
+                    const outcome = perAsset.get(selected.assetIndex)!;
+                    const tied = ranked.length > 1
+                        && ranked[1]!.mean === selected.mean
+                        && ranked[1]!.activePairs === selected.activePairs;
+                    regimeMeanPortfolioOpportunities.push({
+                        asset,
+                        decisionTime: view.timeSec,
+                        entryTime: outcome.entryTimes[hIdx]!,
+                        exitTime: outcome.exitTimes[hIdx]!,
+                        netReturn: selectedReturn,
+                        tied,
+                    });
+                }
+            }
+            if (broadUptrend && trendPool.length >= 2) {
+                const trendRetByAsset = new Map<number, number>();
+                let trendValid = true;
+                for (const c of trendPool) {
+                    const outcome = perAsset.get(c.assetIndex);
+                    const r = outcome?.long[hIdx];
+                    if (r === undefined || !Number.isFinite(r)) { trendValid = false; break; }
+                    trendRetByAsset.set(c.assetIndex, r);
+                }
+                if (trendValid) {
+                    const ranked = [...trendPool].sort((a, b) => {
+                        if (a.mean !== b.mean) return b.mean - a.mean;
+                        if (a.activePairs !== b.activePairs) return b.activePairs - a.activePairs;
+                        const aDigest = tieBreakDigest(view.timeSec, assetNames[a.assetIndex]!);
+                        const bDigest = tieBreakDigest(view.timeSec, assetNames[b.assetIndex]!);
+                        return aDigest < bDigest
+                            ? -1
+                            : aDigest > bDigest
+                                ? 1
+                                : assetNames[a.assetIndex]!.localeCompare(assetNames[b.assetIndex]!);
+                    });
+                    const selected = ranked[0]!;
+                    const selectedReturn = trendRetByAsset.get(selected.assetIndex)!;
+                    let trendTotal = 0;
+                    for (const r of trendRetByAsset.values()) trendTotal += r;
+                    const randomReturn = (trendTotal - selectedReturn) / (trendRetByAsset.size - 1);
+                    const delta = selectedReturn - randomReturn;
+                    const asset = assetNames[selected.assetIndex]!;
+                    topMeanTrend.returns.push(selectedReturn);
+                    topMeanTrend.deltas.push(delta);
+                    topMeanTrend.times.push(view.timeSec);
+                    topMeanTrend.assets.push(asset);
+                    topMeanTrendSelectedByAsset.set(asset, (topMeanTrendSelectedByAsset.get(asset) ?? 0) + 1);
+                    let samples = topMeanTrendSamplesByAsset.get(asset);
+                    if (!samples) {
+                        samples = { returns: [], deltas: [] };
+                        topMeanTrendSamplesByAsset.set(asset, samples);
+                    }
+                    samples.returns.push(selectedReturn);
+                    samples.deltas.push(delta);
+                    const outcome = perAsset.get(selected.assetIndex)!;
+                    const tied = ranked.length > 1
+                        && ranked[1]!.mean === selected.mean
+                        && ranked[1]!.activePairs === selected.activePairs;
+                    topMeanTrendPortfolioOpportunities.push({
+                        asset,
+                        decisionTime: view.timeSec,
+                        entryTime: outcome.entryTimes[hIdx]!,
+                        exitTime: outcome.exitTimes[hIdx]!,
+                        netReturn: selectedReturn,
+                        tied,
+                    });
+                }
+            }
 
             // ACCELERATING aggregation — INDEPENDENT eligibility gate (plan risk
             // #4). Resolved BEFORE the shared positive-side `allValid` check so
@@ -1713,6 +1921,26 @@ export async function runOpenScoreUsdReplay(
         const topMeanByAsset = buildAssetSelectionBreakdown(topMeanSelectedByAsset, topMeanSamplesByAsset).byAsset;
         const topMeanDominantAsset = topMeanByAsset[0]?.asset ?? null;
         const topMeanExDominant = buildExDominantComparison(topMean, topMeanDominantAsset, buildComparison);
+        const topMeanTrendByAsset = buildAssetSelectionBreakdown(
+            topMeanTrendSelectedByAsset,
+            topMeanTrendSamplesByAsset,
+        ).byAsset;
+        const topMeanTrendDominantAsset = topMeanTrendByAsset[0]?.asset ?? null;
+        const topMeanTrendExDominant = buildExDominantComparison(
+            topMeanTrend,
+            topMeanTrendDominantAsset,
+            buildComparison,
+        );
+        const regimeMeanByAsset = buildAssetSelectionBreakdown(
+            regimeMeanSelectedByAsset,
+            regimeMeanSamplesByAsset,
+        ).byAsset;
+        const regimeMeanDominantAsset = regimeMeanByAsset[0]?.asset ?? null;
+        const regimeMeanExDominant = buildExDominantComparison(
+            regimeMean,
+            regimeMeanDominantAsset,
+            buildComparison,
+        );
         // TOP_MEAN top-contribution exclusion: drop events selecting the asset
         // with the largest Σ per-event delta (events × mean delta), NOT the most
         // frequent. A low-frequency / high-per-pick asset (e.g. SNDK in the
@@ -1765,6 +1993,10 @@ export async function runOpenScoreUsdReplay(
         const randomPnl = computeSelectorPnl(randomPnlReturns, topMean.times);
         const topMeanHedgePnl = computeSelectorPnl(topMeanHedge.returns, topMeanHedge.times);
         const topMeanPortfolio = simulateTopMeanPortfolio(topMeanPortfolioOpportunities);
+        const topMeanTrendPnl = computeSelectorPnl(topMeanTrend.returns, topMeanTrend.times);
+        const topMeanTrendPortfolio = simulateTopMeanPortfolio(topMeanTrendPortfolioOpportunities);
+        const regimeMeanPnl = computeSelectorPnl(regimeMean.returns, regimeMean.times);
+        const regimeMeanPortfolio = simulateTopMeanPortfolio(regimeMeanPortfolioOpportunities);
         const acceleratingComparison = buildComparison(accelerating.deltas, accelerating.returns, accelerating.times);
         const acceleratingPnl = computeSelectorPnl(accelerating.returns, accelerating.times);
         const acceleratingRandomPnl = computeSelectorPnl(acceleratingRandom.returns, acceleratingRandom.times);
@@ -1773,6 +2005,14 @@ export async function runOpenScoreUsdReplay(
             topRaw: buildComparison(topRaw.deltas, topRaw.returns, topRaw.times),
             topAdjusted: buildComparison(topAdjusted.deltas, topAdjusted.returns, topAdjusted.times),
             topMean: buildComparison(topMean.deltas, topMean.returns, topMean.times),
+            topMeanTrend: buildComparison(topMeanTrend.deltas, topMeanTrend.returns, topMeanTrend.times),
+            topMeanTrendByAsset,
+            topMeanTrendExDominant,
+            topMeanTrendDominantAsset,
+            regimeMean: buildComparison(regimeMean.deltas, regimeMean.returns, regimeMean.times),
+            regimeMeanByAsset,
+            regimeMeanExDominant,
+            regimeMeanDominantAsset,
             topMeanVsRaw: buildComparison(topMeanVsRaw.deltas, topMeanVsRaw.returns, topMeanVsRaw.times),
             topMeanVsRank2: buildComparison(topMeanVsRank2.deltas, topMeanVsRank2.returns, topMeanVsRank2.times),
             maxActiveReversion: buildComparison(maxActiveReversion.deltas, maxActiveReversion.returns, maxActiveReversion.times),
@@ -1812,6 +2052,10 @@ export async function runOpenScoreUsdReplay(
                 random: randomPnl,
                 topMeanHedge: topMeanHedgePnl,
                 topMeanPortfolio,
+                topMeanTrend: topMeanTrendPnl,
+                topMeanTrendPortfolio,
+                regimeMean: regimeMeanPnl,
+                regimeMeanPortfolio,
                 accelerating: acceleratingPnl,
                 acceleratingRandom: acceleratingRandomPnl,
             },
@@ -1898,9 +2142,20 @@ export async function runOpenScoreUsdReplay(
             warnings.push("Accelerating selector contributed 0 events across all horizons; no decision event had >= 2 positive-score assets with fresh positive entry flow.");
         }
     }
+    if (totalEvents > 0 && horizonResults.length > 0) {
+        const anyTrendEvents = horizonResults.some((h) => h.topMeanTrend.events > 0);
+        if (!anyTrendEvents) {
+            warnings.push("TOP_MEAN_TREND contributed 0 events across all horizons; no decision event had at least two positive-score assets above their causal target EMA200.");
+        }
+        const anyRegimeEvents = horizonResults.some((h) => h.regimeMean.events > 0);
+        if (!anyRegimeEvents) {
+            warnings.push("REGIME_MEAN contributed 0 events across all horizons; neither market-breadth direction produced at least two EMA200-qualified candidates.");
+        }
+    }
     warnings.push("Stock/marked-leg datasets may carry split/corporate-action discontinuities; verify adjustment before treating this as a tradeable verdict.");
     warnings.push("P&L experiments use equal 1-unit event notional; overlapping entries are summed without compounding and are not live account returns.");
     warnings.push("TOP_MEAN_1K_PORTFOLIO uses fixed $1,000 entries, skips TOP_MEAN ties and same-asset overlap, and reports realized-only drawdown; no global bankroll cap or mark-to-market equity is assumed.");
+    warnings.push("TOP_MEAN_TREND and REGIME_MEAN use only target closes known before entry; the entry bar and all later prices are excluded from EMA200 qualification and breadth.");
 
     const complete = omittedPairs === 0 && omittedAssets === 0;
     const staticDegrees = assetNames.map((n) => staticDegree.get(n) ?? 0);
@@ -2084,8 +2339,8 @@ function buildReportLines(args: {
         return `${label.padEnd(20)} trades=${summary.trades} avg/trade=${fmtPct(average)} ` +
             `sharpe=${fmtNum(summary.sharpe)} winRate=${summary.winRate === null ? "n/a" : (summary.winRate * 100).toFixed(1) + "%"}`;
     };
-    const portfolioLine = (summary: TopMeanPortfolioSummary): string =>
-        `TOP_MEAN_1K_PORTFOLIO trades=${summary.trades}/${summary.eligibleSignals} ` +
+    const portfolioLine = (label: string, summary: TopMeanPortfolioSummary): string =>
+        `${label}_1K_PORTFOLIO trades=${summary.trades}/${summary.eligibleSignals} ` +
         `pnl=${fmtUsd(summary.netPnl)} avg=${fmtUsd(summary.averagePnl)} ` +
         `winRate=${summary.winRate === null ? "n/a" : (summary.winRate * 100).toFixed(1) + "%"} ` +
         `realizedMaxDD=${fmtUsd(summary.maxRealizedDrawdown)} peakPos=${summary.peakConcurrentPositions} ` +
@@ -2094,8 +2349,8 @@ function buildReportLines(args: {
     lines.push(`OPEN_SCORE USD | ${status} | pairs=${args.pairs} assets=${args.assets} events=${args.totalEvents} comparable=${args.candidateEvents} eligible=${args.eligibleEvents}`);
     lines.push(`config | interval=${args.interval ?? "n/a"} window=${args.sampleFromSec === null ? "start" : new Date(args.sampleFromSec * 1000).toISOString().slice(0, 10)}..${args.sampleToSec === null ? "end" : new Date(args.sampleToSec * 1000).toISOString().slice(0, 10)} horizons=[${args.horizonsList.join(",")}] slippageRate=${args.slippageRate} commissionRate=${args.commissionRate}`);
     lines.push(`retained pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
-    lines.push("controls | TOP_MEAN=raw/activePairs MAX_ACTIVE=most open pairs MAX_ACTIVE_REVERSION=most open pairs among negative-score assets, shorted vs USD MAX_SUBMITTED=most submitted pairs MAX_RETAINED=most loaded artifacts");
-    lines.push("pnl model | OVERLAP=long TOP_MEAN vs random positive, every eligible event; HEDGE=long rank1 + short rank2; TOP_MEAN_1K=$1000/trade, ties skipped, one open trade per asset; ACCELERATING=positive entry flow per active pair, exit-only changes excluded");
+    lines.push("controls | TOP_MEAN=raw/activePairs TOP_MEAN_TREND=target EMA200 breadth>50%, then prior close>EMA200, TOP_MEAN, activePairs tie-break REGIME_MEAN=TOP_MEAN_TREND long above 50% breadth, BOTTOM_MEAN short below MAX_ACTIVE=most open pairs MAX_ACTIVE_REVERSION=most open pairs among negative-score assets, shorted vs USD MAX_SUBMITTED=most submitted pairs MAX_RETAINED=most loaded artifacts");
+    lines.push("pnl model | OVERLAP=long selector vs same-pool random positive, every eligible event; HEDGE=long TOP_MEAN rank1 + short rank2; *_1K=$1000/trade, exact selector ties skipped, one open trade per asset; ACCELERATING=positive entry flow per active pair, exit-only changes excluded");
     for (const h of args.horizons) {
         const coverageRate = args.candidateEvents > 0 ? h.topRaw.events / args.candidateEvents : 0;
         const coverageStatus = h.topRaw.events === 0
@@ -2107,13 +2362,21 @@ function buildReportLines(args: {
         lines.push(comparisonLine("TOP_RAW", h.topRaw));
         lines.push(comparisonLine("TOP_ADJUSTED", h.topAdjusted));
         lines.push(comparisonLine("TOP_MEAN", h.topMean));
+        lines.push(comparisonLine("TOP_MEAN_TREND", h.topMeanTrend));
+        lines.push(pnlLine("TOP_MEAN_TREND_PNL", h.pnl.topMeanTrend));
+        lines.push(portfolioLine("TOP_MEAN_TREND", h.pnl.topMeanTrendPortfolio));
+        lines.push(comparisonLine(`TREND_EX_${h.topMeanTrendDominantAsset ?? "NONE"}`, h.topMeanTrendExDominant));
+        lines.push(comparisonLine("REGIME_MEAN", h.regimeMean));
+        lines.push(pnlLine("REGIME_MEAN_PNL", h.pnl.regimeMean));
+        lines.push(portfolioLine("REGIME_MEAN", h.pnl.regimeMeanPortfolio));
+        lines.push(comparisonLine(`REGIME_EX_${h.regimeMeanDominantAsset ?? "NONE"}`, h.regimeMeanExDominant));
         lines.push(comparisonLine("TOP_MEAN_VS_RAW", h.topMeanVsRaw));
         lines.push(`TOP_MEAN_VS_RAW_WF deltaByBlock=[${h.topMeanVsRaw.blockMeans.map(fmtPct).join(",")}]`);
         lines.push(comparisonLine("TOP_MEAN_VS_RANK2", h.topMeanVsRank2));
         lines.push(pnlLine("TOP_MEAN_PNL", h.pnl.topMean));
         lines.push(pnlLine("RANDOM_PNL", h.pnl.random));
         lines.push(pnlLine("TOP_MEAN_HEDGE_PNL", h.pnl.topMeanHedge));
-        lines.push(portfolioLine(h.pnl.topMeanPortfolio));
+        lines.push(portfolioLine("TOP_MEAN", h.pnl.topMeanPortfolio));
         // ACCELERATING arm: comparison + overlapping PNL + matching random
         // control. All three are unconditional so they ride both Copy paths.
         lines.push(comparisonLine("ACCELERATING", h.accelerating));
@@ -2174,6 +2437,14 @@ function buildReportLines(args: {
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");
         lines.push(`TOP_MEAN selected assets = ${topMeanBreakdown || "n/a"}${h.topMeanByAsset.length > 5 ? ` | other=${h.topMeanByAsset.length - 5} assets` : ""}`);
+        const topMeanTrendBreakdown = h.topMeanTrendByAsset.slice(0, 5).map((x) =>
+            `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
+        ).join(" | ");
+        lines.push(`TOP_MEAN_TREND selected assets = ${topMeanTrendBreakdown || "n/a"}${h.topMeanTrendByAsset.length > 5 ? ` | other=${h.topMeanTrendByAsset.length - 5} assets` : ""}`);
+        const regimeMeanBreakdown = h.regimeMeanByAsset.slice(0, 5).map((x) =>
+            `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
+        ).join(" | ");
+        lines.push(`REGIME_MEAN selected assets = ${regimeMeanBreakdown || "n/a"}${h.regimeMeanByAsset.length > 5 ? ` | other=${h.regimeMeanByAsset.length - 5} assets` : ""}`);
         const maxActiveBreakdown = h.maxActiveByAsset.slice(0, 5).map((x) =>
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");
