@@ -235,22 +235,6 @@ export interface OpenScoreUsdReplayResult {
         maxActiveReversionDominantAsset: string | null;
         /** Control: positive candidate covered by the most currently-open pairs. */
         maxActive: ReplayComparison;
-        /** Positive candidate with the highest active/submitted pair ratio. */
-        activeRate: ReplayComparison;
-        /** Per-asset breakdown for ACTIVE_RATE. */
-        activeRateByAsset: AssetSelectionSummary[];
-        /** ACTIVE_RATE after removing its most-frequently-selected asset. */
-        activeRateExDominant: ReplayComparison;
-        /** Asset excluded from {@link activeRateExDominant}. */
-        activeRateDominantAsset: string | null;
-        /**
-         * ACTIVE_RATE leader-margin quintiles. Each comparison uses the
-         * ACTIVE_RATE winner on events whose winner-minus-runner-up rate margin
-         * falls in that quintile.
-         */
-        activeMarginBuckets: ReplayComparison[];
-        /** Upper boundaries for ACTIVE_MARGIN quintiles Q1-Q4. */
-        activeMarginThresholds: number[];
         /** Control: positive candidate with the highest submitted pair-list degree. */
         maxStatic: ReplayComparison;
         /**
@@ -435,7 +419,7 @@ export interface OpenScoreUsdReplayResult {
 }
 
 /** Phase 3 MAX_ACTIVE selector labels for tie/agreement diagnostics. */
-export type SelectorName = "RAW" | "ADJUSTED" | "MEAN" | "ACTIVE" | "ACTIVE_RATE" | "SUBMITTED" | "RETAINED" | "REVERSION" | "BOTTOM";
+export type SelectorName = "RAW" | "ADJUSTED" | "MEAN" | "ACTIVE" | "SUBMITTED" | "RETAINED" | "REVERSION" | "BOTTOM";
 
 export interface OpenScoreUsdTarget {
     asset: string;
@@ -1032,8 +1016,6 @@ export async function runOpenScoreUsdReplay(
         activePairs: number;
         staticPairs: number;     // RETAINED artifact degree (legacy name; counts every loaded artifact leg).
         submittedPairs: number;  // SUBMITTED degree from the canonical Batch request.
-        /** Currently-open pairs divided by submitted pair-list degree. */
-        activeRate: number;
         /**
          * ACCELERATING: fresh signed entry flow this timestamp divided by
          * max(1, activePairs). Positive only when the asset received net
@@ -1050,9 +1032,6 @@ export async function runOpenScoreUsdReplay(
         topMean: number;     // assetIndex
         topMeanRank2: number; // assetIndex
         maxActive: number;   // assetIndex
-        maxActiveRate: number; // assetIndex
-        /** ACTIVE_RATE winner's lead over the second-highest active rate. */
-        activeRateMargin: number;
         maxStatic: number;   // assetIndex (alias for maxRetained — legacy)
         maxSubmitted: number; // assetIndex (Phase 3: from server's submittedDegreeByAsset)
         /** Max active-pair count across positive candidates at this event. */
@@ -1112,10 +1091,6 @@ export async function runOpenScoreUsdReplay(
             // means the asset received net positive entry flow at this event.
             const flow = ev.entryFlow[a]!;
             const acceleration = flow / (cnt > 0 ? cnt : 1);
-            const submittedPairs = submittedDegree.size > 0
-                ? (submittedDegree.get(assetNames[a]!) ?? 0)
-                : (retainedDegree.get(assetNames[a]!) ?? 0);
-            const activeRate = submittedPairs > 0 ? cnt / submittedPairs : 0;
             if (raw > 0) {
                 if (cnt > maxActivePairs) maxActivePairs = cnt;
                 const adjusted = cnt > 0 ? raw / Math.sqrt(cnt) : raw;
@@ -1126,8 +1101,9 @@ export async function runOpenScoreUsdReplay(
                     mean: cnt > 0 ? raw / cnt : raw,
                     activePairs: cnt,
                     staticPairs: retainedDegree.get(assetNames[a]!) ?? 0,
-                    submittedPairs,
-                    activeRate,
+                    submittedPairs: submittedDegree.size > 0
+                        ? (submittedDegree.get(assetNames[a]!) ?? 0)
+                        : (retainedDegree.get(assetNames[a]!) ?? 0),
                     acceleration,
                 });
             } else if (raw < 0) {
@@ -1139,8 +1115,9 @@ export async function runOpenScoreUsdReplay(
                     mean: cnt > 0 ? raw / cnt : raw,
                     activePairs: cnt,
                     staticPairs: retainedDegree.get(assetNames[a]!) ?? 0,
-                    submittedPairs,
-                    activeRate,
+                    submittedPairs: submittedDegree.size > 0
+                        ? (submittedDegree.get(assetNames[a]!) ?? 0)
+                        : (retainedDegree.get(assetNames[a]!) ?? 0),
                     acceleration,
                 });
             }
@@ -1154,7 +1131,7 @@ export async function runOpenScoreUsdReplay(
             // asset-name order keeps execution deterministic.
             const eventTimeSec = ev.timeSec;
             const digestFor = (c: Candidate): string => tieBreakDigest(eventTimeSec, assetNames[c.assetIndex]!);
-            const pickMax = (candidates: readonly Candidate[], key: "raw" | "adjusted" | "mean" | "activePairs" | "activeRate" | "staticPairs" | "submittedPairs" | "acceleration"): { winner: Candidate; tiedCount: number } => {
+            const pickMax = (candidates: readonly Candidate[], key: "raw" | "adjusted" | "mean" | "activePairs" | "staticPairs" | "submittedPairs" | "acceleration"): { winner: Candidate; tiedCount: number } => {
                 // First pass: find the max value.
                 let maxValue = candidates[0]![key]!;
                 for (let i = 1; i < candidates.length; i += 1) {
@@ -1232,14 +1209,6 @@ export async function runOpenScoreUsdReplay(
                 return aDigest < bDigest ? -1 : aDigest > bDigest ? 1 : assetNames[a.assetIndex]!.localeCompare(assetNames[b.assetIndex]!);
             });
             const maxActive = pickMax(positives, "activePairs");
-            const maxActiveRate = pickMax(positives, "activeRate");
-            let secondActiveRate = -Infinity;
-            for (const candidate of positives) {
-                if (candidate.assetIndex !== maxActiveRate.winner.assetIndex && candidate.activeRate > secondActiveRate) {
-                    secondActiveRate = candidate.activeRate;
-                }
-            }
-            const activeRateMargin = maxActiveRate.winner.activeRate - secondActiveRate;
             const maxStatic = pickMax(positives, "staticPairs");
             const maxSubmitted = pickMax(positives, "submittedPairs");
             const maxActiveReversion = negatives.length >= 2 ? pickMax(negatives, "activePairs") : null;
@@ -1281,8 +1250,6 @@ export async function runOpenScoreUsdReplay(
                 topMean: topMean.winner.assetIndex,
                 topMeanRank2: meanRanked[1]!.assetIndex,
                 maxActive: maxActive.winner.assetIndex,
-                maxActiveRate: maxActiveRate.winner.assetIndex,
-                activeRateMargin,
                 maxStatic: maxStatic.winner.assetIndex,
                 maxSubmitted: maxSubmitted.winner.assetIndex,
                 maxActivePairs,
@@ -1298,7 +1265,6 @@ export async function runOpenScoreUsdReplay(
                     ADJUSTED: topAdjusted.tiedCount >= 2 ? 1 : 0,
                     MEAN: topMean.tiedCount >= 2 ? 1 : 0,
                     ACTIVE: maxActive.tiedCount >= 2 ? 1 : 0,
-                    ACTIVE_RATE: maxActiveRate.tiedCount >= 2 ? 1 : 0,
                     SUBMITTED: maxSubmitted.tiedCount >= 2 ? 1 : 0,
                     RETAINED: maxStatic.tiedCount >= 2 ? 1 : 0,
                     REVERSION: maxActiveReversion && maxActiveReversion.tiedCount >= 2 ? 1 : 0,
@@ -1327,14 +1293,6 @@ export async function runOpenScoreUsdReplay(
         const streaks = views.filter((v) => v.streak >= 2).map((v) => v.streak).sort((a, b) => a - b);
         return { hhi: median(hhis), pairs: median(pairs), streak: median(streaks) };
     })();
-    const activeMarginThresholds = (() => {
-        const margins = views.map((view) => view.activeRateMargin).sort((a, b) => a - b);
-        if (margins.length === 0) return [];
-        return [0.2, 0.4, 0.6, 0.8].map((quantile) =>
-            margins[Math.max(0, Math.ceil(margins.length * quantile) - 1)]!,
-        );
-    })();
-
     // Group requested event indexes by asset so each target dataset is loaded
     // once, consumed, and released.
     const requestsByAsset = new Map<number, number[]>();
@@ -1619,8 +1577,6 @@ export async function runOpenScoreUsdReplay(
         const maxActiveReversion = createSeries();
         const bottomMean = createSeries();
         const maxActive = createSeries();
-        const activeRate = createSeries();
-        const activeMarginBuckets = Array.from({ length: 5 }, () => createSeries());
         const maxStatic = createSeries();
         const maxSubmitted = createSeries();
         // ACCELERATING: highest-acceleration candidate vs the mean of the OTHER
@@ -1657,7 +1613,7 @@ export async function runOpenScoreUsdReplay(
         const topRawHiPairs = createSeries();
         const topRawLoPairs = createSeries();
         // Phase 3 MAX_ACTIVE tie counters per selector.
-        const tieCounts: Record<SelectorName, number> = { RAW: 0, ADJUSTED: 0, MEAN: 0, ACTIVE: 0, ACTIVE_RATE: 0, SUBMITTED: 0, RETAINED: 0, REVERSION: 0, BOTTOM: 0 };
+        const tieCounts: Record<SelectorName, number> = { RAW: 0, ADJUSTED: 0, MEAN: 0, ACTIVE: 0, SUBMITTED: 0, RETAINED: 0, REVERSION: 0, BOTTOM: 0 };
         const selectedDegree: number[] = [];
         const activeCountsAtEvents: number[] = [];
         const selectedByAsset = new Map<string, number>();
@@ -1674,8 +1630,6 @@ export async function runOpenScoreUsdReplay(
         // Phase 3 MAX_ACTIVE: parallel per-asset selection map for MAX_ACTIVE.
         const activeSelectedByAsset = new Map<string, number>();
         const maxActiveSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
-        const activeRateSelectedByAsset = new Map<string, number>();
-        const activeRateSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
         const reversionSelectedByAsset = new Map<string, number>();
         const maxActiveReversionSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
         // BOTTOM_MEAN per-asset selection (short side). Mirrors
@@ -1905,15 +1859,6 @@ export async function runOpenScoreUsdReplay(
             topMeanVsRaw.assets.push(assetNames[view.topMean]!);
             appendPairwise(topMeanVsRank2, view.topMean, view.topMeanRank2);
             appendSelection(maxActive, view.maxActive);
-            appendSelection(activeRate, view.maxActiveRate);
-            let activeMarginBucket = 0;
-            while (
-                activeMarginBucket < activeMarginThresholds.length
-                && view.activeRateMargin > activeMarginThresholds[activeMarginBucket]!
-            ) {
-                activeMarginBucket += 1;
-            }
-            appendSelection(activeMarginBuckets[activeMarginBucket]!, view.maxActiveRate);
             appendSelection(maxStatic, view.maxStatic);
             appendSelection(maxSubmitted, view.maxSubmitted);
             // Conditional-split routing: TOP_RAW's selected return into one of
@@ -1985,15 +1930,6 @@ export async function runOpenScoreUsdReplay(
             }
             activeSamples.returns.push(maxActive.returns[maxActive.returns.length - 1]!);
             activeSamples.deltas.push(maxActive.deltas[maxActive.deltas.length - 1]!);
-            const activeRateSelName = assetNames[view.maxActiveRate]!;
-            activeRateSelectedByAsset.set(activeRateSelName, (activeRateSelectedByAsset.get(activeRateSelName) ?? 0) + 1);
-            let activeRateSamples = activeRateSamplesByAsset.get(activeRateSelName);
-            if (!activeRateSamples) {
-                activeRateSamples = { returns: [], deltas: [] };
-                activeRateSamplesByAsset.set(activeRateSelName, activeRateSamples);
-            }
-            activeRateSamples.returns.push(activeRate.returns[activeRate.returns.length - 1]!);
-            activeRateSamples.deltas.push(activeRate.deltas[activeRate.deltas.length - 1]!);
             // TOP_MEAN per-asset samples (mirrors TOP_RAW and MAX_ACTIVE
             // accumulation). Lets the report surface which assets TOP_MEAN
             // actually picks and whether its edge survives dropping the
@@ -2141,16 +2077,6 @@ export async function runOpenScoreUsdReplay(
         ).byAsset;
         const maxActiveDominantAsset = maxActiveByAsset[0]?.asset ?? null;
         const maxActiveExDominant = buildExDominantComparison(maxActive, maxActiveDominantAsset, buildComparison);
-        const activeRateByAsset = buildAssetSelectionBreakdown(
-            activeRateSelectedByAsset,
-            activeRateSamplesByAsset,
-        ).byAsset;
-        const activeRateDominantAsset = activeRateByAsset[0]?.asset ?? null;
-        const activeRateExDominant = buildExDominantComparison(
-            activeRate,
-            activeRateDominantAsset,
-            buildComparison,
-        );
         // TOP_MEAN dominant-asset exclusion: mirrors maxActiveExDominant for
         // the coverage-adjusted arm. The most-frequently-selected TOP_MEAN
         // asset is dropped; the remaining events form the comparison.
@@ -2256,14 +2182,6 @@ export async function runOpenScoreUsdReplay(
             maxActiveReversionExDominant,
             maxActiveReversionDominantAsset,
             maxActive: buildComparison(maxActive.deltas, maxActive.returns, maxActive.times),
-            activeRate: buildComparison(activeRate.deltas, activeRate.returns, activeRate.times),
-            activeRateByAsset,
-            activeRateExDominant,
-            activeRateDominantAsset,
-            activeMarginBuckets: activeMarginBuckets.map((series) =>
-                buildComparison(series.deltas, series.returns, series.times),
-            ),
-            activeMarginThresholds,
             maxStatic: maxStaticComparison,
             maxSubmitted: buildComparison(maxSubmitted.deltas, maxSubmitted.returns, maxSubmitted.times),
             maxRetained: maxStaticComparison,
@@ -2321,7 +2239,6 @@ export async function runOpenScoreUsdReplay(
                 ADJUSTED: { events: n, sameSelection: tieCounts.ADJUSTED, rate: n > 0 ? tieCounts.ADJUSTED / n : null },
                 MEAN: { events: n, sameSelection: tieCounts.MEAN, rate: n > 0 ? tieCounts.MEAN / n : null },
                 ACTIVE: { events: n, sameSelection: tieCounts.ACTIVE, rate: n > 0 ? tieCounts.ACTIVE / n : null },
-                ACTIVE_RATE: { events: n, sameSelection: tieCounts.ACTIVE_RATE, rate: n > 0 ? tieCounts.ACTIVE_RATE / n : null },
                 SUBMITTED: { events: n, sameSelection: tieCounts.SUBMITTED, rate: n > 0 ? tieCounts.SUBMITTED / n : null },
                 RETAINED: { events: n, sameSelection: tieCounts.RETAINED, rate: n > 0 ? tieCounts.RETAINED / n : null },
                 // Reversion's denominator is the reversion-eligible event count
@@ -2595,7 +2512,7 @@ function buildReportLines(args: {
     lines.push(`OPEN_SCORE USD | ${status} | pairs=${args.pairs} assets=${args.assets} events=${args.totalEvents} comparable=${args.candidateEvents} eligible=${args.eligibleEvents}`);
     lines.push(`config | interval=${args.interval ?? "n/a"} window=${args.sampleFromSec === null ? "start" : new Date(args.sampleFromSec * 1000).toISOString().slice(0, 10)}..${args.sampleToSec === null ? "end" : new Date(args.sampleToSec * 1000).toISOString().slice(0, 10)} horizons=[${args.horizonsList.join(",")}] slippageRate=${args.slippageRate} commissionRate=${args.commissionRate}`);
     lines.push(`retained pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
-    lines.push("controls | TOP_MEAN=raw/activePairs TOP_MEAN_TREND=target EMA200 breadth>50%, then prior close>EMA200, TOP_MEAN, activePairs tie-break REGIME_MEAN=TOP_MEAN_TREND long above 50% breadth, BOTTOM_MEAN short below MAX_ACTIVE=most open pairs ACTIVE_RATE=max(activePairs/submittedPairs) ACTIVE_MARGIN=ACTIVE_RATE leader gap quintiles MAX_ACTIVE_REVERSION=most open pairs among negative-score assets, shorted vs USD MAX_SUBMITTED=most submitted pairs MAX_RETAINED=most loaded artifacts");
+    lines.push("controls | TOP_MEAN=raw/activePairs TOP_MEAN_TREND=target EMA200 breadth>50%, then prior close>EMA200, TOP_MEAN, activePairs tie-break REGIME_MEAN=TOP_MEAN_TREND long above 50% breadth, BOTTOM_MEAN short below MAX_ACTIVE=most open pairs MAX_ACTIVE_REVERSION=most open pairs among negative-score assets, shorted vs USD MAX_SUBMITTED=most submitted pairs MAX_RETAINED=most loaded artifacts");
     lines.push("pnl model | OVERLAP=long selector vs same-pool random positive, every eligible event; HEDGE=long TOP_MEAN rank1 + short rank2; *_1K=$1000/trade, exact selector ties skipped, one open trade per asset; ACCELERATING=positive entry flow per active pair, exit-only changes excluded");
     for (const h of args.horizons) {
         const coverageRate = args.candidateEvents > 0 ? h.topRaw.events / args.candidateEvents : 0;
@@ -2629,15 +2546,6 @@ function buildReportLines(args: {
         lines.push(pnlLine("ACCELERATING_PNL", h.pnl.accelerating));
         lines.push(pnlLine("ACCELERATING_RANDOM_PNL", h.pnl.acceleratingRandom));
         lines.push(comparisonLine("MAX_ACTIVE", h.maxActive));
-        lines.push(comparisonLine("ACTIVE_RATE", h.activeRate));
-        lines.push(comparisonLine(`ACTIVE_RATE_EX_${h.activeRateDominantAsset ?? "NONE"}`, h.activeRateExDominant));
-        const marginThresholdText = h.activeMarginThresholds.length === 4
-            ? `Q1<=${fmtPct(h.activeMarginThresholds[0]!)} Q2<=${fmtPct(h.activeMarginThresholds[1]!)} Q3<=${fmtPct(h.activeMarginThresholds[2]!)} Q4<=${fmtPct(h.activeMarginThresholds[3]!)} Q5>Q4`
-            : "n/a";
-        lines.push(`ACTIVE_MARGIN quintiles | ${marginThresholdText}`);
-        h.activeMarginBuckets.forEach((bucket, index) => {
-            lines.push(comparisonLine(`ACTIVE_MARGIN_Q${index + 1}`, bucket));
-        });
         lines.push(comparisonLine("MAX_ACTIVE_REVERSION", h.maxActiveReversion));
         lines.push(comparisonLine(`REVERSION_EX_${h.maxActiveReversionDominantAsset ?? "NONE"}`, h.maxActiveReversionExDominant));
         lines.push(comparisonLine("BOTTOM_MEAN", h.bottomMean));
@@ -2676,7 +2584,6 @@ function buildReportLines(args: {
             tieLine("ADJ", "ADJUSTED"),
             tieLine("MEAN", "MEAN"),
             tieLine("ACTIVE", "ACTIVE"),
-            tieLine("RATE", "ACTIVE_RATE"),
             tieLine("SUB", "SUBMITTED"),
         ];
         if (h.tieRates.RETAINED.sameSelection !== h.tieRates.SUBMITTED.sameSelection || h.tieRates.RETAINED.events !== h.tieRates.SUBMITTED.events) {
@@ -2705,10 +2612,6 @@ function buildReportLines(args: {
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");
         lines.push(`MAX_ACTIVE selected assets = ${maxActiveBreakdown || "n/a"}${h.maxActiveByAsset.length > 5 ? ` | other=${h.maxActiveByAsset.length - 5} assets` : ""}`);
-        const activeRateBreakdown = h.activeRateByAsset.slice(0, 5).map((x) =>
-            `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
-        ).join(" | ");
-        lines.push(`ACTIVE_RATE selected assets = ${activeRateBreakdown || "n/a"}${h.activeRateByAsset.length > 5 ? ` | other=${h.activeRateByAsset.length - 5} assets` : ""}`);
         const maxActiveReversionBreakdown = h.maxActiveReversionByAsset.slice(0, 5).map((x) =>
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");
