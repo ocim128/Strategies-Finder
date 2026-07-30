@@ -162,64 +162,59 @@ export async function saveLatestRankPairsResultSnapshot<T>(
     const previous = await readStoredSnapshot(db);
     const runId = createRunId();
     const chunkCount = Math.ceil(input.results.length / RANK_PAIRS_RESULT_CHUNK_SIZE);
-    let committed = false;
 
-    try {
-        for (let index = 0; index < chunkCount; index += 1) {
-            const start = index * RANK_PAIRS_RESULT_CHUNK_SIZE;
-            const end = Math.min(input.results.length, start + RANK_PAIRS_RESULT_CHUNK_SIZE);
-            const lines = new Array<string>(end - start);
-            for (let rowIndex = start; rowIndex < end; rowIndex += 1) {
-                lines[rowIndex - start] = input.serializeCopyRow(input.results[rowIndex]!);
-            }
-            const chunk: RankPairsCopyLineChunk = {
-                key: chunkKey(runId, index),
-                runId,
-                index,
-                lines,
-            };
-            const transaction = db.transaction(CHUNK_STORE, "readwrite");
-            transaction.objectStore(CHUNK_STORE).put(chunk);
-            await transactionDone(transaction);
+    // One atomic readwrite transaction across both stores. Queuing every chunk
+    // put + the meta put in a single transaction pays one commit barrier
+    // instead of `chunkCount + 1`, and the cross-store atomicity means the
+    // meta pointer can never commit pointing at a partially-written chunk set
+    // (strictly stronger than the prior chunk-by-chunk commit sequence). On
+    // abort, IDB discards all queued puts in the transaction automatically, so
+    // no manual rollback pass is required.
+    const chunks: RankPairsCopyLineChunk[] = new Array(chunkCount);
+    for (let index = 0; index < chunkCount; index += 1) {
+        const start = index * RANK_PAIRS_RESULT_CHUNK_SIZE;
+        const end = Math.min(input.results.length, start + RANK_PAIRS_RESULT_CHUNK_SIZE);
+        const lines = new Array<string>(end - start);
+        for (let rowIndex = start; rowIndex < end; rowIndex += 1) {
+            lines[rowIndex - start] = input.serializeCopyRow(input.results[rowIndex]!);
         }
-
-        const snapshot: StoredRankPairsSnapshot<T> = {
-            key: LATEST_KEY,
-            schemaVersion: RANK_PAIRS_RESULT_SCHEMA_VERSION,
-            runId,
-            mode: input.mode,
-            interval: input.interval,
-            completedAt: Date.now(),
-            resultCount: input.results.length,
-            chunkCount,
-            preview: Array.from(input.preview),
-            summaryText: input.summaryText,
-            diagnosticsText: input.diagnosticsText,
-            copyPreamble: Array.from(input.copyPreamble),
-        };
-        const transaction = db.transaction(META_STORE, "readwrite");
-        transaction.objectStore(META_STORE).put(snapshot);
-        await transactionDone(transaction);
-        committed = true;
-
-        if (previous && previous.runId !== runId) {
-            try {
-                await deleteChunks(db, previous.runId, previous.chunkCount);
-            } catch (error) {
-                debugLogger.warn("rank_pairs.snapshot_cleanup_failed", {
-                    error: error instanceof Error ? error.message : String(error),
-                });
-            }
-        }
-
-        const { key: _key, ...publicSnapshot } = snapshot;
-        return publicSnapshot;
-    } catch (error) {
-        if (!committed) {
-            await deleteChunks(db, runId, chunkCount).catch(() => undefined);
-        }
-        throw error;
+        chunks[index] = { key: chunkKey(runId, index), runId, index, lines };
     }
+
+    const snapshot: StoredRankPairsSnapshot<T> = {
+        key: LATEST_KEY,
+        schemaVersion: RANK_PAIRS_RESULT_SCHEMA_VERSION,
+        runId,
+        mode: input.mode,
+        interval: input.interval,
+        completedAt: Date.now(),
+        resultCount: input.results.length,
+        chunkCount,
+        preview: Array.from(input.preview),
+        summaryText: input.summaryText,
+        diagnosticsText: input.diagnosticsText,
+        copyPreamble: Array.from(input.copyPreamble),
+    };
+
+    const transaction = db.transaction([CHUNK_STORE, META_STORE], "readwrite");
+    const chunkStore = transaction.objectStore(CHUNK_STORE);
+    for (const chunk of chunks) chunkStore.put(chunk);
+    // Meta queued last — visible only when every chunk put has been queued.
+    transaction.objectStore(META_STORE).put(snapshot);
+    await transactionDone(transaction);
+
+    if (previous && previous.runId !== runId) {
+        try {
+            await deleteChunks(db, previous.runId, previous.chunkCount);
+        } catch (error) {
+            debugLogger.warn("rank_pairs.snapshot_cleanup_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+
+    const { key: _key, ...publicSnapshot } = snapshot;
+    return publicSnapshot;
 }
 
 export async function loadLatestRankPairsResultSnapshot<T>(): Promise<RankPairsResultSnapshot<T> | null> {
@@ -237,11 +232,23 @@ export async function loadRankPairsSnapshotCopyText<T>(
     const sections = [...snapshot.copyPreamble];
     let rowCount = 0;
 
+    // One readonly transaction for every chunk — issuing all gets inside a
+    // single tx pays one commit barrier instead of `chunkCount`. All requests
+    // are fired synchronously up front so the transaction stays active (an
+    // await between gets would let IDB auto-commit with no pending request and
+    // raise TransactionInactiveError on the next get).
+    const transaction = db.transaction(CHUNK_STORE, "readonly");
+    const chunkStore = transaction.objectStore(CHUNK_STORE);
+    const requests = new Array<Promise<RankPairsCopyLineChunk | undefined>>(
+        snapshot.chunkCount,
+    );
     for (let index = 0; index < snapshot.chunkCount; index += 1) {
-        const transaction = db.transaction(CHUNK_STORE, "readonly");
-        const value = await requestResult(
-            transaction.objectStore(CHUNK_STORE).get(chunkKey(snapshot.runId, index)),
-        ) as RankPairsCopyLineChunk | undefined;
+        requests[index] = requestResult(
+            chunkStore.get(chunkKey(snapshot.runId, index)),
+        ) as Promise<RankPairsCopyLineChunk | undefined>;
+    }
+    for (let index = 0; index < snapshot.chunkCount; index += 1) {
+        const value = await requests[index];
         if (
             !value
             || value.runId !== snapshot.runId

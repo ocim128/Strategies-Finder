@@ -16,6 +16,7 @@ function result(
     status: RecentRankResult["status"] = "ok",
 ): RecentRankResult {
     return {
+        kind: "recent",
         symbol,
         status,
         error: status === "failed" ? "load failed" : undefined,

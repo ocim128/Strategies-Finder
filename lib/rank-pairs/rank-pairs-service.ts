@@ -31,6 +31,7 @@ import {
     formatRankPairsPerformanceDiagnostics,
     nowRankPairsMs,
     type RankPairsPerformanceDiagnostics,
+    type RankPairsPerformanceTimings,
 } from "./rank-pairs-performance";
 import {
     getRankPairsRecentLoaderStats,
@@ -63,9 +64,17 @@ import {
 
 export type RankPairsMode = "history" | "recent200";
 export const RANK_PAIRS_RENDER_LIMIT = 2_000;
+/**
+ * Max concurrent pair loads. Synthetic legs are promise-deduped by the shared
+ * leg caches, so concurrent dispatch of pairs that share a leg pays one fetch;
+ * this bounds the in-flight request count without changing cache semantics.
+ */
+const RANK_PAIRS_CONCURRENCY = 12;
 
 /** A ranked pair row. Exported for service-level copy/summary tests. */
 export interface RankResult {
+    /** Discriminant. Always "history" — set by the service on construction. */
+    kind: "history";
     symbol: string;
     regime: PairRegimeResult;
     status: "ok" | "no_data" | "failed";
@@ -74,6 +83,8 @@ export interface RankResult {
 
 /** A latest-200 chart-shape row. */
 export interface RecentRankResult {
+    /** Discriminant. Always "recent" — set by the service on construction. */
+    kind: "recent";
     symbol: string;
     recent: RecentPairResult;
     status: "ok" | "no_data" | "failed";
@@ -354,7 +365,7 @@ export function formatRecentCopyText(results: RecentRankResult[]): string {
 }
 
 function isRecentRankResult(result: AnyRankResult): result is RecentRankResult {
-    return "recent" in result;
+    return result.kind === "recent";
 }
 
 function recentBadgeCssFor(result: RecentRankResult): string {
@@ -414,6 +425,10 @@ class RankPairsService {
     private lastDiagnostics: RankPairsPerformanceDiagnostics | null = null;
     private lastSnapshot: RankPairsResultSnapshot<AnyRankResult> | null = null;
     private resultViewVersion = 0;
+    // Debounce timer for the textarea summary update — parseBatchSymbols is
+    // O(n) over the full textarea and must not run on every keystroke when a
+    // user is editing a large pair list. clearStaleResults stays immediate.
+    private summaryDebounceTimer: ReturnType<typeof setTimeout> | null = null;
     // Monotonic run token — see BatchBacktestService for the rationale:
     // a stale run that resumes after a newer run started sees its token as
     // stale and stops writing DOM/state.
@@ -466,7 +481,14 @@ class RankPairsService {
         });
         dom.rankPairsSymbols.addEventListener("input", () => {
             this.clearStaleResults(dom);
-            this.updateSummary(dom);
+            // Debounce the O(n) summary recompute so typing into a large pair
+            // list stays smooth. clearStaleResults above is already O(1) when
+            // nothing is cached, so it does not need the debounce.
+            if (this.summaryDebounceTimer) clearTimeout(this.summaryDebounceTimer);
+            this.summaryDebounceTimer = setTimeout(() => {
+                this.summaryDebounceTimer = null;
+                this.updateSummary(dom);
+            }, 120);
         });
         dom.rankPairsMode.addEventListener("change", () => {
             this.clearStaleResults(dom);
@@ -529,106 +551,81 @@ class RankPairsService {
             "Measuring load, classification, rendering, and yield time…";
 
         try {
-            for (let i = 0; i < symbols.length; i += 1) {
-                if (token !== this.runToken || this.cancelled) break;
-                const symbol = symbols[i];
+            // Bounded concurrency: synthetic pairs share legs through the
+            // promise-deduping leg caches (SyntheticLegCache / recent-loader
+            // legCache), so concurrent dispatch is safe — two pairs sharing a
+            // leg share a single fetch. Results are written into a preallocated
+            // array at their INPUT index so the final sort's stable tie-break
+            // (compareAnyResultsForDisplay) sees the original order regardless
+            // of completion order. The live stream renders in completion order;
+            // the deterministic final render re-orders everything on success.
+            const indexedResults = new Array<AnyRankResult>(symbols.length);
+            let nextIndex = 0;
+            let completedCount = 0;
+            const workerCount = Math.max(1, Math.min(RANK_PAIRS_CONCURRENCY, symbols.length));
 
-                let result: AnyRankResult;
-                try {
-                    let bars: OHLCVData[];
-                    const loadStartedAt = nowRankPairsMs();
-                    try {
-                        const recentBars = mode === "recent200"
-                            ? await loadRecentRankPairDataset(symbol, interval, signal)
-                            : null;
-                        bars = recentBars ?? await loadBatchDataset(symbol, interval, signal);
-                    } finally {
-                        timingsMs.load += nowRankPairsMs() - loadStartedAt;
-                    }
+            const runWorker = async (): Promise<void> => {
+                while (true) {
+                    if (token !== this.runToken || this.cancelled) return;
+                    const i = nextIndex;
+                    nextIndex += 1;
+                    if (i >= symbols.length) return;
+                    const symbol = symbols[i];
+
+                    const { result, barCount } = await this.processPair(
+                        symbol,
+                        mode,
+                        interval,
+                        signal,
+                        token,
+                        timingsMs,
+                    );
                     if (token !== this.runToken) return;
-                    totalBars += bars.length;
-                    if (!signal.aborted && bars.length > 0) {
-                        const classifyStartedAt = nowRankPairsMs();
-                        if (mode === "recent200") {
-                            const recent = classifyRecentPair(bars);
-                            recent.symbol = symbol;
-                            result = {
-                                symbol,
-                                recent,
-                                status: recent.type === "J" ? "no_data" : "ok",
-                            };
-                        } else {
-                            const regime = classifyPairRegime(bars);
-                            regime.symbol = symbol;
-                            // The classifier returns THIN with an INSUFFICIENT_*
-                            // reason when coverage fails; surface those as no_data
-                            // rows distinct from genuine classifications.
-                            const isThin =
-                                regime.direction === "THIN" && regime.reason !== "OK";
-                            result = { symbol, regime, status: isThin ? "no_data" : "ok" };
-                        }
-                        timingsMs.classify += nowRankPairsMs() - classifyStartedAt;
-                    } else {
-                        result = mode === "recent200"
-                            ? {
-                                symbol,
-                                recent: emptyThinRecent(symbol),
-                                status: "no_data",
-                            }
-                            : {
-                                symbol,
-                                regime: emptyThinRegime(symbol),
-                                status: "no_data",
-                            };
+                    indexedResults[i] = result;
+                    totalBars += barCount;
+
+                    this.lastResults.push(result);
+                    if (this.lastResults.length <= RANK_PAIRS_RENDER_LIMIT) {
+                        const liveRenderStartedAt = nowRankPairsMs();
+                        this.appendResultRow(dom, result);
+                        timingsMs.liveRender += nowRankPairsMs() - liveRenderStartedAt;
                     }
-                } catch (error) {
-                    if (token !== this.runToken) return;
-                    const message = error instanceof Error ? error.message : String(error);
-                    debugLogger.warn("rank_pairs.pair_failed", { symbol, error: message });
-                    result = mode === "recent200"
-                        ? {
-                            symbol,
-                            recent: emptyThinRecent(symbol),
-                            status: "failed",
-                            error: message,
-                        }
-                        : {
-                            symbol,
-                            regime: emptyThinRegime(symbol),
-                            status: "failed",
-                            error: message,
-                        };
-                }
 
-                this.lastResults.push(result);
-                if (this.lastResults.length <= RANK_PAIRS_RENDER_LIMIT) {
-                    const liveRenderStartedAt = nowRankPairsMs();
-                    this.appendResultRow(dom, result);
-                    timingsMs.liveRender += nowRankPairsMs() - liveRenderStartedAt;
-                }
+                    completedCount += 1;
+                    const percent = (completedCount / symbols.length) * 100;
+                    const progressStartedAt = nowRankPairsMs();
+                    this.setProgress(dom, percent, `${completedCount}/${symbols.length} (${symbol})`);
+                    timingsMs.progress += nowRankPairsMs() - progressStartedAt;
 
-                const percent = ((i + 1) / symbols.length) * 100;
-                const progressStartedAt = nowRankPairsMs();
-                this.setProgress(dom, percent, `${i + 1}/${symbols.length} (${symbol})`);
-                timingsMs.progress += nowRankPairsMs() - progressStartedAt;
-
-                // Yield periodically so long cached runs stay responsive without
-                // paying one timer task per pair.
-                if ((i + 1) % 128 === 0) {
-                    const yieldStartedAt = nowRankPairsMs();
-                    await taskYielder.yieldControl();
-                    timingsMs.yield += nowRankPairsMs() - yieldStartedAt;
+                    if (completedCount % 128 === 0) {
+                        const yieldStartedAt = nowRankPairsMs();
+                        await taskYielder.yieldControl();
+                        timingsMs.yield += nowRankPairsMs() - yieldStartedAt;
+                    }
                 }
-            }
+            };
+
+            await Promise.all(Array.from({ length: workerCount }, runWorker));
 
             if (token !== this.runToken) return;
 
+            // Reconstruct lastResults in INPUT order from the indexed slots.
+            // Workers wrote each result at its input index, but pushed to
+            // lastResults in completion order; for a deterministic copy/sort
+            // (and a stable cancel-path snapshot) we restore input order. On
+            // cancel, slots for pairs that never finished are simply absent.
+            this.lastResults = indexedResults.filter(
+                (r): r is AnyRankResult => r !== undefined,
+            );
+
             // On completion, re-render the list in the deterministic display
             // order in a single DocumentFragment so we pay one reflow, not N.
-            // Skip on cancel — the streamed input-order rows stay as-is.
+            // `indexedResults` holds results at their INPUT position, so the
+            // stable tie-break (input idx) is deterministic regardless of the
+            // completion order the concurrent workers happened to produce.
             if (!this.cancelled) {
                 const sortStartedAt = nowRankPairsMs();
-                const indexed = this.lastResults
+                const indexed = indexedResults
                     .map((r, idx) => ({ r, idx }))
                     .sort((a, b) =>
                         compareAnyResultsForDisplay(a.r, b.r, a.idx, b.idx, mode)
@@ -747,6 +744,83 @@ class RankPairsService {
         }
     }
 
+    /**
+     * Load + classify a single pair. Pure I/O + CPU work, no DOM/state writes
+     * — extracted from the run loop so the bounded-concurrency pool can dispatch
+     * it without re-plumbing the streaming invariants. `barCount` returned
+     * alongside the result is the raw loaded-bar count (pre-dedup), matching
+     * the prior loop's `totalBars += bars.length` accounting.
+     */
+    private async processPair(
+        symbol: string,
+        mode: RankPairsMode,
+        interval: string,
+        signal: AbortSignal,
+        token: number,
+        timingsMs: RankPairsPerformanceTimings,
+    ): Promise<{ result: AnyRankResult; barCount: number }> {
+        try {
+            let bars: OHLCVData[];
+            const loadStartedAt = nowRankPairsMs();
+            try {
+                const recentBars = mode === "recent200"
+                    ? await loadRecentRankPairDataset(symbol, interval, signal)
+                    : null;
+                bars = recentBars ?? await loadBatchDataset(symbol, interval, signal);
+            } finally {
+                timingsMs.load += nowRankPairsMs() - loadStartedAt;
+            }
+            if (token !== this.runToken) return { result: emptyResultForMode(symbol, mode), barCount: 0 };
+            const barCount = bars.length;
+            if (!signal.aborted && bars.length > 0) {
+                const classifyStartedAt = nowRankPairsMs();
+                let result: AnyRankResult;
+                if (mode === "recent200") {
+                    const recent = classifyRecentPair(bars);
+                    recent.symbol = symbol;
+                    result = {
+                        kind: "recent",
+                        symbol,
+                        recent,
+                        status: recent.type === "J" ? "no_data" : "ok",
+                    };
+                } else {
+                    const regime = classifyPairRegime(bars);
+                    regime.symbol = symbol;
+                    // The classifier returns THIN with an INSUFFICIENT_* reason
+                    // when coverage fails; surface those as no_data rows
+                    // distinct from genuine classifications.
+                    const isThin =
+                        regime.direction === "THIN" && regime.reason !== "OK";
+                    result = { kind: "history", symbol, regime, status: isThin ? "no_data" : "ok" };
+                }
+                timingsMs.classify += nowRankPairsMs() - classifyStartedAt;
+                return { result, barCount };
+            }
+            return { result: emptyResultForMode(symbol, mode), barCount };
+        } catch (error) {
+            if (token !== this.runToken) return { result: emptyResultForMode(symbol, mode), barCount: 0 };
+            const message = error instanceof Error ? error.message : String(error);
+            debugLogger.warn("rank_pairs.pair_failed", { symbol, error: message });
+            const result: AnyRankResult = mode === "recent200"
+                ? {
+                    kind: "recent",
+                    symbol,
+                    recent: emptyThinRecent(symbol),
+                    status: "failed",
+                    error: message,
+                }
+                : {
+                    kind: "history",
+                    symbol,
+                    regime: emptyThinRegime(symbol),
+                    status: "failed",
+                    error: message,
+                };
+            return { result, barCount: 0 };
+        }
+    }
+
     private emitRunComplete(
         interval: string,
         _symbolCount: number,
@@ -846,7 +920,18 @@ class RankPairsService {
             }
 
             this.lastSnapshot = snapshot;
-            this.lastResults = snapshot.preview;
+            // `kind` is the runtime discriminant but is NOT persisted (the
+            // snapshot schema is keyed on `mode`, which already disambiguates).
+            // Stamp it back onto each restored row so the narrowed render /
+            // copy paths branch on a field read instead of a structural probe.
+            // Every row in a snapshot shares the snapshot's mode, but the
+            // persisted preview is typed as the full AnyRankResult union; the
+            // runtime guarantees one variant, so the cast is sound.
+            const restoredKind = snapshot.mode === "recent200" ? "recent" : "history";
+            this.lastResults = snapshot.preview.map((result) => ({
+                ...result,
+                kind: restoredKind,
+            })) as AnyRankResult[];
             this.lastResultCount = snapshot.resultCount;
             this.lastSummaryText = snapshot.summaryText;
             this.lastMode = snapshot.mode;
@@ -934,6 +1019,13 @@ function emptyThinRecent(symbol: string): RecentPairResult {
     const recent = classifyRecentPair([]);
     recent.symbol = symbol;
     return recent;
+}
+
+/** Build a no_data row of the right discriminated kind for the active mode. */
+function emptyResultForMode(symbol: string, mode: RankPairsMode): AnyRankResult {
+    return mode === "recent200"
+        ? { kind: "recent", symbol, recent: emptyThinRecent(symbol), status: "no_data" }
+        : { kind: "history", symbol, regime: emptyThinRegime(symbol), status: "no_data" };
 }
 
 export const rankPairsService = new RankPairsService();

@@ -3,6 +3,7 @@ import { dataManager } from "../data-manager";
 import { finderManager } from "../finder-manager";
 import { uiManager } from "../ui-manager";
 import { clearBatchDatasetCaches } from "../batch-backtest/batch-backtest-loader";
+import { clearRankPairsRecentLoaderCache } from "../rank-pairs/rank-pairs-recent-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { createIbkrDataDom, type IbkrDataDom } from "./ibkr-data-dom";
 import type { IbkrStreamEvent, IbkrSyncRunSnapshot } from "./ibkr-data-stream-types";
@@ -454,6 +455,7 @@ class IbkrDataService {
         dataManager.invalidateLocalSeries(symbols, normalizedInterval ? [normalizedInterval] : undefined);
         finderManager.invalidateLocalDataCaches();
         clearBatchDatasetCaches();
+        clearRankPairsRecentLoaderCache();
     }
 
     private async copySymbols(): Promise<void> {

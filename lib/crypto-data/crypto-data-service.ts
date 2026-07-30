@@ -17,6 +17,7 @@ import { dataManager } from "../data-manager";
 import { finderManager } from "../finder-manager";
 import { uiManager } from "../ui-manager";
 import { clearBatchDatasetCaches } from "../batch-backtest/batch-backtest-loader";
+import { clearRankPairsRecentLoaderCache } from "../rank-pairs/rank-pairs-recent-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { createCryptoDataDom, type CryptoDataDom } from "./crypto-data-dom";
 import type { CryptoCompletedTarget, CryptoStreamEvent, CryptoSyncRunSnapshot } from "./crypto-data-stream-types";
@@ -273,6 +274,7 @@ class CryptoDataService {
         dataManager.invalidateLocalSeries(symbols, normalizedInterval ? [normalizedInterval] : undefined);
         finderManager.invalidateLocalDataCaches();
         clearBatchDatasetCaches();
+        clearRankPairsRecentLoaderCache();
     }
 
     private async stopSync(): Promise<void> {

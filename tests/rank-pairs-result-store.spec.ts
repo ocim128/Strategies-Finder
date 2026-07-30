@@ -41,12 +41,14 @@ class FakeTransaction {
     public onerror: null | (() => void) = null;
     public onabort: null | (() => void) = null;
 
-    constructor(private readonly records: Map<string, StoredRecord>) {
+    constructor(private readonly stores: Map<string, Map<string, StoredRecord>>) {
         queueMicrotask(() => this.oncomplete?.());
     }
 
-    objectStore() {
-        return new FakeObjectStore(this.records);
+    objectStore(name: string) {
+        const records = this.stores.get(name);
+        if (!records) throw new Error(`Missing fake object store ${name}`);
+        return new FakeObjectStore(records);
     }
 }
 
@@ -64,10 +66,17 @@ class FakeDb {
     }
 
     transaction(name: string | string[]) {
-        const storeName = Array.isArray(name) ? name[0]! : name;
-        const records = this.stores.get(storeName);
-        if (!records) throw new Error(`Missing fake object store ${storeName}`);
-        return new FakeTransaction(records);
+        const storeNames = Array.isArray(name) ? name : [name];
+        // A transaction spans every named store; objectStore(name) resolves the
+        // right one. Model the real IndexedDB multi-store contract so production
+        // code that puts to several stores in one tx writes to the right place.
+        const txStores = new Map<string, Map<string, StoredRecord>>();
+        for (const storeName of storeNames) {
+            const records = this.stores.get(storeName);
+            if (!records) throw new Error(`Missing fake object store ${storeName}`);
+            txStores.set(storeName, records);
+        }
+        return new FakeTransaction(txStores);
     }
 
     clear(): void {

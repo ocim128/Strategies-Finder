@@ -47,20 +47,20 @@ function okTrendResult(symbol: string): RankResult {
     }
     const regime = classifyPairRegime(bars);
     regime.symbol = symbol;
-    return { symbol, regime, status: "ok" };
+    return { kind: "history", symbol, regime, status: "ok" };
 }
 
 function noDataResult(symbol: string, reason: PairRegimeResult["reason"] = "INSUFFICIENT_ANCHORS"): RankResult {
     const regime = classifyPairRegime([]);
     regime.reason = reason;
     regime.symbol = symbol;
-    return { symbol, regime, status: "no_data" };
+    return { kind: "history", symbol, regime, status: "no_data" };
 }
 
 function failedResult(symbol: string, error: string): RankResult {
     const regime = classifyPairRegime([]);
     regime.symbol = symbol;
-    return { symbol, regime, status: "failed", error };
+    return { kind: "history", symbol, regime, status: "failed", error };
 }
 
 // ---------------------------------------------------------------------------
