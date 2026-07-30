@@ -31,10 +31,14 @@ import {
     storeSyntheticPair,
 } from "../../batch-backtest/synthetic-pair-disk-cache";
 import { createServerDataFetcher } from "../../data/server-data-fetcher-factory";
+import { isIbkrSymbol } from "../../local-daily-datasets";
+import { resolveServerBatchCacheBudget } from "../../batch-backtest/server-batch-cache-budget";
+import { loadFreshIbkrCandlesFromDisk } from "../../batch-backtest/server-ibkr-csv-loader";
 
 // Reuse a single long-lived DataFetcher for the whole server loader (Finding 8).
 const serverDataFetcher = createServerDataFetcher();
 const fingerprintMemo = createSeedFingerprintMemo();
+const cacheBudget = resolveServerBatchCacheBudget();
 
 // The bounded-cache startup prune is triggered lazily by the disk-cache module
 // on the first write (see `storeSyntheticPair` → `maybePruneAfterWrite`), NOT at
@@ -43,10 +47,18 @@ const fingerprintMemo = createSeedFingerprintMemo();
 
 const loader = createBatchDatasetLoaderCore({
     logPrefix: "finder.server",
+    legCacheMaxEntries: cacheBudget.legCacheMaxEntries,
+    pairCacheMaxEntries: cacheBudget.pairCacheMaxEntries,
     fetchDetached: (symbol, interval, options) =>
         serverDataFetcher.fetchDataDetached(symbol, interval, options),
-    fetchHistorical: (symbol, interval, limit, options) =>
-        serverDataFetcher.fetchHistoricalData(symbol, interval, limit, options),
+    fetchHistorical: async (symbol, interval, limit, options) => {
+        if (isIbkrSymbol(symbol)) {
+            const candles = await loadFreshIbkrCandlesFromDisk(symbol, interval, options?.signal);
+            if (!candles) return [];
+            return candles.length > limit ? candles.slice(-limit) : candles;
+        }
+        return serverDataFetcher.fetchHistoricalData(symbol, interval, limit, options);
+    },
     // Server-side disk cache. Same hooks as the Batch server loader so a
     // synthetic pair built once is reused across FINDER runs. NOTE: the Finder
     // and Batch loaders construct SEPARATE in-memory `loader` cores, so a pair

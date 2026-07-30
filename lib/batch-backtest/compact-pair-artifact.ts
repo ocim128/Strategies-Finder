@@ -37,6 +37,11 @@ export interface TopMeanRunManifest {
     pairCount: number;
     shardSize: number;
     totalShards: number;
+    /**
+     * Optional for backward compatibility. Manifests written before affinity
+     * scheduling used contiguous input-order shards.
+     */
+    shardOrder?: "input" | "leg_affinity_v1";
     completedShards: number[];
     failedShards: number[];
     completedPairsCount: number;

@@ -1,20 +1,31 @@
 import assert from "node:assert/strict";
+import { availableParallelism } from "node:os";
 import {
+    buildTopMeanShardTasks,
     resolveTopMeanShardSize,
     resolveTopMeanWorkerCount,
     TopMeanWorkerPool,
 } from "../lib/batch-backtest/sp500-top-mean-worker-pool";
 import type { TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
+import { TOP_MEAN_WORKER_COUNT_MAX } from "../lib/batch-backtest/sp500-top-mean-request-limits";
 
 function testWorkerCountResolution(): void {
     const defaultCount = resolveTopMeanWorkerCount();
-    assert.ok(defaultCount >= 1 && defaultCount <= 24, "Default worker count must be within [1, 24]");
+    assert.equal(
+        defaultCount,
+        Math.max(1, Math.min(TOP_MEAN_WORKER_COUNT_MAX, availableParallelism())),
+        "Auto worker count should use every available logical core up to the request cap",
+    );
 
     const explicitCount = resolveTopMeanWorkerCount(12);
     assert.equal(explicitCount, 12, "Explicit worker count 12 must be respected");
 
-    const clampedHigh = resolveTopMeanWorkerCount(32);
-    assert.equal(clampedHigh, 24, "Worker count above max must be clamped to 24");
+    const clampedHigh = resolveTopMeanWorkerCount(TOP_MEAN_WORKER_COUNT_MAX + 8);
+    assert.equal(
+        clampedHigh,
+        TOP_MEAN_WORKER_COUNT_MAX,
+        "Worker count above max must be clamped to the request cap",
+    );
 }
 
 function testShardSizeFeedsEveryWorker(): void {
@@ -32,6 +43,40 @@ function testShardSizeFeedsEveryWorker(): void {
         resolveTopMeanShardSize(100, 4, 20),
         20,
         "an explicit shard size remains authoritative",
+    );
+}
+
+function testCacheAwareShardPlanning(): void {
+    const pairs = [
+        "Câ€¢+Dâ€¢",
+        "Aâ€¢+Dâ€¢",
+        "Bâ€¢+Câ€¢",
+        "Aâ€¢+Bâ€¢",
+        "Câ€¢+Eâ€¢",
+        "Bâ€¢+Dâ€¢",
+        "Aâ€¢+Câ€¢",
+        "Dâ€¢+Eâ€¢",
+    ];
+
+    const grouped = buildTopMeanShardTasks(pairs, 3);
+    assert.deepEqual(
+        grouped[0]!.pairs.map((pair) => pair.pairIndex),
+        [1, 3, 6],
+        "a cold-cache shard groups the three pairs sharing canonical leg A",
+    );
+    assert.deepEqual(
+        grouped.flatMap((task) => task.pairs)
+            .sort((a, b) => a.pairIndex - b.pairIndex)
+            .map((pair) => pair.symbol),
+        pairs,
+        "cache-aware scheduling retains every symbol and its original pair index",
+    );
+
+    const resumed = buildTopMeanShardTasks(pairs, 3, true);
+    assert.deepEqual(
+        resumed.flatMap((task) => task.pairs).map((pair) => pair.pairIndex),
+        pairs.map((_, index) => index),
+        "resumed manifests retain the legacy contiguous shard partition",
     );
 }
 
@@ -125,6 +170,11 @@ async function testPersistentWorkerPoolEndToEnd(): Promise<void> {
     // even though every pair inside failed to load — the worker's per-pair
     // failure path still allows the shard to complete with empty artifacts).
     assert.equal(manifest.completedShards.length, 5, "All 5 shards must complete even when pairs fail to load");
+    assert.equal(
+        manifest.shardOrder,
+        "leg_affinity_v1",
+        "new manifests persist the affinity partition so an interrupted run resumes identically",
+    );
     // Pair-level failures are recorded. Each fake pair yields < 200 candles,
     // so each contributes one failedPairsCount increment.
     assert.ok(
@@ -352,6 +402,7 @@ async function testShardCompletesOnlyAfterDurableWrite(): Promise<void> {
 async function main(): Promise<void> {
     testWorkerCountResolution();
     testShardSizeFeedsEveryWorker();
+    testCacheAwareShardPlanning();
     testWorkerPoolCancel();
     await testWorkerPathResolution();
     await testPersistentWorkerPoolEndToEnd();

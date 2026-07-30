@@ -11,6 +11,8 @@ const SERVER_LOADER = path.join(APP_ROOT, "lib", "batch-backtest", "server-batch
 const SHARED_CORE = path.join(APP_ROOT, "lib", "batch-backtest", "batch-dataset-loader-core.ts");
 const STREAM_TYPES = path.join(APP_ROOT, "lib", "batch-backtest", "batch-backtest-stream-types.ts");
 const ROW_SCALARS = path.join(APP_ROOT, "lib", "batch-backtest", "batch-row-scalars.ts");
+const SERVER_IBKR_LOADER = path.join(APP_ROOT, "lib", "batch-backtest", "server-ibkr-csv-loader.ts");
+const SERVER_CACHE_BUDGET = path.join(APP_ROOT, "lib", "batch-backtest", "server-batch-cache-budget.ts");
 
 function readSource(filePath: string): string {
     if (!existsSync(filePath)) {
@@ -76,8 +78,8 @@ describe("batch-backtest server loader parity", () => {
         }
         expect(core).to.include("STALE_FRAGMENT_MAX_THRESHOLD = 10_000");
         expect(core).to.include("STALE_FRAGMENT_MIN_THRESHOLD = 200");
-        expect(core).to.include("new SyntheticLegCache<OHLCVData[]>(24)");
-        expect(core).to.include("new SyntheticLegCache<OHLCVData[]>(16)");
+        expect(core).to.include("options.legCacheMaxEntries ?? 24");
+        expect(core).to.include("options.pairCacheMaxEntries ?? 16");
     });
 
     it("server loader bypasses browser-bound modules", () => {
@@ -99,7 +101,9 @@ describe("batch-backtest server loader parity", () => {
         // The shared data cache is cleared through the factory helper.
         expect(server).to.include("clearServerDataCache()");
         expect(server).to.include("clearLocalDailyCsvCachesForSymbols()");
-        expect(server).to.include("loadFreshIbkrCandlesFromPriceData");
+        expect(server).to.include("loadFreshIbkrCandlesFromDisk");
+        expect(readSource(SERVER_IBKR_LOADER)).to.include('from "node:fs/promises"');
+        expect(readSource(SERVER_CACHE_BUDGET)).to.include("HIGH_MEMORY_THRESHOLD_BYTES");
         // The factory helper owns the actual dataCache.clear() call.
         const factory = readSource(path.join(APP_ROOT, "lib", "data", "server-data-fetcher-factory.ts"));
         expect(factory).to.include("dataCache.clear()");

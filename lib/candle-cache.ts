@@ -262,7 +262,7 @@ function normalizeCsvDate(raw: string): string {
     return trimmed;
 }
 
-function extractCandlesFromCsvPayload(payload: string): OHLCVData[] {
+export function extractCandlesFromCsvPayload(payload: string): OHLCVData[] {
     const lines = payload
         .split(/\r?\n/)
         .map((line) => line.trim())

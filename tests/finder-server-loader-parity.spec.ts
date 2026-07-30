@@ -81,8 +81,10 @@ describe("finder server loader parity", () => {
             expect(core, `shared core must use ${symbol}`).to.include(symbol);
         }
         // Caps must match the documented budget (AGENTS.md §"Memory budget").
-        expect(core).to.include("new SyntheticLegCache<OHLCVData[]>(24)");
-        expect(core).to.include("new SyntheticLegCache<OHLCVData[]>(16)");
+        expect(core).to.include("options.legCacheMaxEntries ?? 24");
+        expect(core).to.include("options.pairCacheMaxEntries ?? 16");
+        expect(readSource(SERVER_BATCH_LOADER)).to.include("resolveServerBatchCacheBudget");
+        expect(readSource(SERVER_FINDER_LOADER)).to.include("resolveServerBatchCacheBudget");
     });
 
     it("finder stream types enforce the scalar-only wire contract", () => {

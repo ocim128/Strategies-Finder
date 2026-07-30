@@ -32,10 +32,19 @@
  * only causes a rebuild (see AGENTS.md §"synthetic-pair disk cache").
  */
 
-import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    renameSync,
+    statSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { mkdir, readFile, rename, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { serialize as v8Serialize, deserialize as v8Deserialize } from "node:v8";
+import { isMainThread } from "node:worker_threads";
 import type { OHLCVData } from "../types/strategies";
 import {
     isIbkrSymbol,
@@ -494,12 +503,22 @@ export async function storeSyntheticPair(
         })),
     };
     try {
-        await mkdir(dirname(filePath), { recursive: true });
         const buffer = v8Serialize(payload);
-        await writeAtomic(filePath, buffer);
-        // Remove a stale v1 `.json` for the same key so a subsequent read
-        // can't resurrect a pre-v2 payload after the v2 file is written.
-        try { await unlink(legacyJsonPath(args)); } catch { /* may not exist */ }
+        if (isMainThread) {
+            await mkdir(dirname(filePath), { recursive: true });
+            await writeAtomic(filePath, buffer);
+            // Remove a stale v1 `.json` for the same key so a subsequent read
+            // can't resurrect a pre-v2 payload after the v2 file is written.
+            try { await unlink(legacyJsonPath(args)); } catch { /* may not exist */ }
+        } else {
+            // TOP_MEAN workers are already isolated blocking boundaries.
+            // Synchronous writes avoid funneling all workers through Node's
+            // process-wide four-thread fs pool while preserving the existing
+            // write-before-return cache durability contract.
+            mkdirSync(dirname(filePath), { recursive: true });
+            writeAtomicSync(filePath, buffer);
+            try { unlinkSync(legacyJsonPath(args)); } catch { /* may not exist */ }
+        }
         maybePruneAfterWrite();
         return true;
     } catch {
@@ -522,6 +541,12 @@ async function writeAtomic(filePath: string, buffer: Buffer): Promise<void> {
     const tmp = `${filePath}.${process.pid}.tmp`;
     await writeFile(tmp, buffer);
     await rename(tmp, filePath);
+}
+
+function writeAtomicSync(filePath: string, buffer: Buffer): void {
+    const tmp = `${filePath}.${process.pid}.tmp`;
+    writeFileSync(tmp, buffer);
+    renameSync(tmp, filePath);
 }
 
 /** Exposed for tests so they can inspect path resolution without re-deriving. */

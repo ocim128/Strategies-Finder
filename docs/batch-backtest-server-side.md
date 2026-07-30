@@ -195,6 +195,15 @@ Worker cost is summed across parallel workers and can exceed coordinator wall
 time. Use wall time for before/after latency and summed worker cost to identify
 the bottleneck.
 
+For IBKR cold runs, worker threads read seed CSVs directly from disk rather
+than routing local files through the Vite HTTP server. Worker-thread reads and
+synthetic-cache writes use their thread as the blocking boundary, avoiding
+Node's shared filesystem thread-pool bottleneck. Hosts with at least 48 GiB of
+RAM automatically raise each server loader's leg/pair LRUs from the 24/16
+defaults to 128/32; lower-memory hosts retain the defaults. An empty Workers
+field uses every available logical core up to the tuned 24-worker cap. Enter a lower
+value only when the machine must reserve capacity for another workload.
+
 ### API Endpoints
 
 - `POST /api/batch-backtest/sp500-top-mean/run`

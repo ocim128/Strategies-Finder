@@ -47,6 +47,8 @@ export interface SyntheticPairDiskCacheArgs {
 
 interface BatchDatasetLoaderCoreOptions {
     logPrefix: string;
+    legCacheMaxEntries?: number;
+    pairCacheMaxEntries?: number;
     fetchDetached(symbol: string, interval: string, options?: { signal?: AbortSignal; offline?: boolean }): Promise<OHLCVData[]>;
     fetchHistorical(symbol: string, interval: string, limit: number, options?: { signal?: AbortSignal; offline?: boolean }): Promise<OHLCVData[]>;
     /**
@@ -65,8 +67,10 @@ interface BatchDatasetLoaderCoreOptions {
 }
 
 export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOptions): BatchDatasetLoaderCore {
-    const legCache = new SyntheticLegCache<OHLCVData[]>(24);
-    const pairCache = new SyntheticLegCache<OHLCVData[]>(16);
+    const legCacheMaxEntries = Math.max(1, Math.floor(options.legCacheMaxEntries ?? 24));
+    const pairCacheMaxEntries = Math.max(1, Math.floor(options.pairCacheMaxEntries ?? 16));
+    const legCache = new SyntheticLegCache<OHLCVData[]>(legCacheMaxEntries);
+    const pairCache = new SyntheticLegCache<OHLCVData[]>(pairCacheMaxEntries);
     const diskStats = { hits: 0, misses: 0, writes: 0 };
 
     async function load(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
@@ -273,8 +277,8 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         },
         getCacheStats(): BatchDatasetCacheStats {
             return {
-                leg: { hits: legCache.hitCount(), misses: legCache.missCount(), size: legCache.size, max: 24 },
-                pair: { hits: pairCache.hitCount(), misses: pairCache.missCount(), size: pairCache.size, max: 16 },
+                leg: { hits: legCache.hitCount(), misses: legCache.missCount(), size: legCache.size, max: legCacheMaxEntries },
+                pair: { hits: pairCache.hitCount(), misses: pairCache.missCount(), size: pairCache.size, max: pairCacheMaxEntries },
                 disk: { ...diskStats },
             };
         },

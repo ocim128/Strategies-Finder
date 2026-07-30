@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
     buildTopMeanAnnualReplayWindows,
+    orderTopMeanReplayTargets,
     TopMeanCoordinatorEngine,
     type TopMeanResultSummary,
 } from "../lib/batch-backtest/sp500-top-mean-coordinator-engine";
@@ -55,6 +56,69 @@ async function testEngineValidationAndConflict(): Promise<void> {
     assert.equal(stoppedStatus.phase, "interrupted");
 
     console.log("PASS: engine validation/stop contract unchanged");
+}
+
+function testReplayTargetOrderAvoidsLruThrash(): void {
+    const targets = ["A", "B", "C"];
+    assert.deepEqual(orderTopMeanReplayTargets(targets, 0), ["A", "B", "C"]);
+    assert.deepEqual(orderTopMeanReplayTargets(targets, 1), ["C", "B", "A"]);
+    assert.deepEqual(orderTopMeanReplayTargets(targets, 2), ["A", "B", "C"]);
+    assert.deepEqual(targets, ["A", "B", "C"], "alternating a replay pass must not mutate enumeration order");
+
+    const countHits = (passes: readonly (readonly string[])[], capacity: number): number => {
+        const lru: string[] = [];
+        let hits = 0;
+        for (const pass of passes) {
+            for (const target of pass) {
+                const existing = lru.indexOf(target);
+                if (existing >= 0) {
+                    hits += 1;
+                    lru.splice(existing, 1);
+                }
+                lru.push(target);
+                if (lru.length > capacity) lru.shift();
+            }
+        }
+        return hits;
+    };
+
+    assert.equal(
+        countHits([
+            orderTopMeanReplayTargets(targets, 0),
+            orderTopMeanReplayTargets(targets, 1),
+        ], 2),
+        2,
+        "reverse traversal reuses the prior pass tail when the target universe exceeds the LRU cap",
+    );
+    assert.equal(
+        countHits([targets, targets], 2),
+        0,
+        "repeating forward traversal would evict the entire useful tail before reaching it",
+    );
+}
+
+async function testReplayTargetCacheDeduplicatesLoads(): Promise<void> {
+    const cache = new Map<string, number[]>();
+    let loads = 0;
+    const load = async (symbol: string): Promise<number[]> => {
+        const cached = cache.get(symbol);
+        if (cached !== undefined) return cached;
+        loads += 1;
+        const data = [loads];
+        cache.set(symbol, data);
+        return data;
+    };
+
+    const firstPass = orderTopMeanReplayTargets(["AAA", "BBB", "CCC"], 0);
+    const secondPass = orderTopMeanReplayTargets(["AAA", "BBB", "CCC"], 1);
+    for (const symbol of [...firstPass, ...secondPass]) {
+        await load(symbol);
+    }
+
+    assert.equal(loads, 3, "each replay target is loaded once across full-range and annual passes");
+    assert.deepEqual(cache.get("AAA"), [1]);
+    assert.deepEqual(cache.get("BBB"), [2]);
+    assert.deepEqual(cache.get("CCC"), [3]);
 }
 
 function testAnnualReplayWindowsFollowSelectedRange(): void {
@@ -608,6 +672,8 @@ function openArtifact(
 
 async function main(): Promise<void> {
     testAnnualReplayWindowsFollowSelectedRange();
+    testReplayTargetOrderAvoidsLruThrash();
+    await testReplayTargetCacheDeduplicatesLoads();
     await testEngineValidationAndConflict();
     await testSnapshotDerivedFromArtifacts();
     await testResultJsonAugmentationIsAdditive();

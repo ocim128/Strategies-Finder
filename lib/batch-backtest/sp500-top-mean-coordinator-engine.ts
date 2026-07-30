@@ -155,6 +155,18 @@ export function buildTopMeanAnnualReplayWindows(
     return windows;
 }
 
+/**
+ * Alternate replay target traversal so a bounded LRU retains the tail of one
+ * pass as the head of the next. Result aggregation is asset-keyed and
+ * deterministic, so traversal direction does not change selector semantics.
+ */
+export function orderTopMeanReplayTargets<T>(
+    targets: readonly T[],
+    passIndex: number,
+): readonly T[] {
+    return passIndex % 2 === 0 ? targets : targets.slice().reverse();
+}
+
 export interface TopMeanStatusResponse {
     runId: string;
     status: "running" | "completed" | "interrupted" | "failed";
@@ -597,18 +609,29 @@ export class TopMeanCoordinatorEngine {
             const requestInterval = this._request.interval;
 
             const targetPerformance = this.performanceDiagnostic;
-            const targetLoader = () => (async function* () {
-                for (let i = 0; i < eligibleTargets.length; i++) {
-                    const { asset, symbol } = eligibleTargets[i]!;
-                    const targetLoadStartedAt = performance.now();
-                    let data: Awaited<ReturnType<typeof loadServerBatchDataset>>;
-                    try {
-                        data = await loadServerBatchDataset(symbol, requestInterval);
-                    } finally {
-                        const completedAt = performance.now();
-                        targetPerformance.replay.targetLoadMs += completedAt - targetLoadStartedAt;
-                        targetPerformance.replay.targetDatasets += 1;
+            // A large custom universe can exceed the shared 64-entry data LRU.
+            // Keep this cache scoped to one coordinator replay so annual
+            // windows reuse parsed OHLCV without changing process-wide cache
+            // caps or retaining datasets after the run completes.
+            const replayTargetCache = new Map<
+                string,
+                Awaited<ReturnType<typeof loadServerBatchDataset>>
+            >();
+            const targetLoader = (targets: readonly typeof eligibleTargets[number][]) => () => (async function* () {
+                for (let i = 0; i < targets.length; i++) {
+                    const { asset, symbol } = targets[i]!;
+                    let data = replayTargetCache.get(symbol);
+                    if (data === undefined) {
+                        const targetLoadStartedAt = performance.now();
+                        try {
+                            data = await loadServerBatchDataset(symbol, requestInterval);
+                        } finally {
+                            const completedAt = performance.now();
+                            targetPerformance.replay.targetLoadMs += completedAt - targetLoadStartedAt;
+                        }
+                        replayTargetCache.set(symbol, data);
                     }
+                    targetPerformance.replay.targetDatasets += 1;
                     yield { asset, symbol, data };
                 }
             })();
@@ -618,28 +641,33 @@ export class TopMeanCoordinatorEngine {
             const slippageRate = slippageBps / 10000;
             const commissionRate = commissionPct / 100;
 
+            let replayPassIndex = 0;
             const runReplayForWindow = (
                 sampleFromSec: number | undefined,
                 sampleToSec: number | undefined,
-            ): Promise<OpenScoreUsdReplayResult> => runOpenScoreUsdReplay(
-                () => iterateRunCompactArtifacts(this._request.runId, this.baseDir) as unknown as AsyncIterable<BatchSyntheticPairArtifact>,
-                targetLoader,
-                {
-                    horizons: this._request.horizons && this._request.horizons.length > 0 ? this._request.horizons : [12, 24, 48],
-                    interval: this._request.interval,
-                    slippageRate,
-                    commissionRate,
-                    shouldStop: () => this.isStopped,
-                    onPhase: (phase) => {
-                        if (phase === activeReplayPhase) return;
-                        finishActiveReplayPhase();
-                        activeReplayPhase = phase;
-                        activeReplayPhaseStartedAt = performance.now();
+            ): Promise<OpenScoreUsdReplayResult> => {
+                const targets = orderTopMeanReplayTargets(eligibleTargets, replayPassIndex);
+                replayPassIndex += 1;
+                return runOpenScoreUsdReplay(
+                    () => iterateRunCompactArtifacts(this._request.runId, this.baseDir) as unknown as AsyncIterable<BatchSyntheticPairArtifact>,
+                    targetLoader(targets),
+                    {
+                        horizons: this._request.horizons && this._request.horizons.length > 0 ? this._request.horizons : [12, 24, 48],
+                        interval: this._request.interval,
+                        slippageRate,
+                        commissionRate,
+                        shouldStop: () => this.isStopped,
+                        onPhase: (phase) => {
+                            if (phase === activeReplayPhase) return;
+                            finishActiveReplayPhase();
+                            activeReplayPhase = phase;
+                            activeReplayPhaseStartedAt = performance.now();
+                        },
+                        ...(sampleFromSec !== undefined ? { sampleFromSec } : {}),
+                        ...(sampleToSec !== undefined ? { sampleToSec } : {}),
                     },
-                    ...(sampleFromSec !== undefined ? { sampleFromSec } : {}),
-                    ...(sampleToSec !== undefined ? { sampleToSec } : {}),
-                },
-            );
+                );
+            };
 
             const replayResult = await runReplayForWindow(
                 this._request.sampleFromSec,

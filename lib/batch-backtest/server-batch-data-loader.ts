@@ -6,7 +6,7 @@
  * imported by the Vite plugin is bundled into the dev-server config path.
  */
 
-import { clearLocalDailyCsvCachesForSymbols, loadFreshIbkrCandlesFromPriceData } from "../candle-cache";
+import { clearLocalDailyCsvCachesForSymbols } from "../candle-cache";
 import { isIbkrSymbol } from "../local-daily-datasets";
 import type { OHLCVData } from "../types/strategies";
 import { createBatchDatasetLoaderCore, type BatchDatasetCacheStats } from "./batch-dataset-loader-core";
@@ -16,10 +16,13 @@ import {
     storeSyntheticPair,
 } from "./synthetic-pair-disk-cache";
 import { clearServerDataCache, createServerDataFetcher } from "../data/server-data-fetcher-factory";
+import { resolveServerBatchCacheBudget } from "./server-batch-cache-budget";
+import { loadFreshIbkrCandlesFromDisk } from "./server-ibkr-csv-loader";
 
 // Reuse a single long-lived DataFetcher for the whole server loader (Finding 8).
 const serverDataFetcher = createServerDataFetcher();
 const fingerprintMemo = createSeedFingerprintMemo();
+const cacheBudget = resolveServerBatchCacheBudget();
 
 // The bounded-cache startup prune is triggered lazily by the disk-cache module
 // on the first write (see `storeSyntheticPair` → `maybePruneAfterWrite`), NOT at
@@ -37,7 +40,7 @@ async function fetchServerHistoricalData(
         // IBKR CSV. Large batches exceed the 24-leg LRU, so a once-per-run or
         // DataCache fallback can reintroduce a pre-sync leg after eviction.
         // Warm pair-disk hits never reach this path.
-        const candles = await loadFreshIbkrCandlesFromPriceData(symbol, interval, options?.signal);
+        const candles = await loadFreshIbkrCandlesFromDisk(symbol, interval, options?.signal);
         if (!candles) return [];
         return candles.length > limit ? candles.slice(-limit) : candles;
     }
@@ -46,6 +49,8 @@ async function fetchServerHistoricalData(
 
 const loader = createBatchDatasetLoaderCore({
     logPrefix: "batch.server",
+    legCacheMaxEntries: cacheBudget.legCacheMaxEntries,
+    pairCacheMaxEntries: cacheBudget.pairCacheMaxEntries,
     fetchDetached: (symbol, interval, options) =>
         serverDataFetcher.fetchDataDetached(symbol, interval, options),
     fetchHistorical: fetchServerHistoricalData,

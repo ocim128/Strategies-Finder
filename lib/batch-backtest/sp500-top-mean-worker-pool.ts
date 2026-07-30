@@ -15,6 +15,7 @@ import type {
     TopMeanWorkerPoolPerformance,
     TopMeanWorkerTiming,
 } from "./sp500-top-mean-performance";
+import { TOP_MEAN_WORKER_COUNT_MAX } from "./sp500-top-mean-request-limits";
 
 export const TOP_MEAN_DEFAULT_SHARD_SIZE = 250;
 export const TOP_MEAN_TARGET_SHARDS_PER_WORKER = 4;
@@ -116,7 +117,7 @@ async function bundleWorkerWithEsbuild(sourcePath: string): Promise<string> {
 
 export function resolveTopMeanWorkerCount(explicit?: number): number {
     if (typeof explicit === "number" && Number.isFinite(explicit) && explicit > 0) {
-        return Math.max(1, Math.min(24, Math.floor(explicit)));
+        return Math.max(1, Math.min(TOP_MEAN_WORKER_COUNT_MAX, Math.floor(explicit)));
     }
     let cores = 8;
     try {
@@ -124,7 +125,11 @@ export function resolveTopMeanWorkerCount(explicit?: number): number {
     } catch {
         // Fallback for older Node versions
     }
-    return Math.max(1, Math.min(24, cores - 4));
+    // Cold-run benchmarking on a 24-logical-core / 64 GiB host showed that
+    // using all 24 workers improved 2,271-pair throughput by ~26% versus
+    // reserving four cores. The coordinator runs server-side, so an explicit
+    // UI value can still reserve capacity when desired.
+    return Math.max(1, Math.min(TOP_MEAN_WORKER_COUNT_MAX, cores));
 }
 
 export function resolveTopMeanShardSize(
@@ -244,6 +249,52 @@ export interface ShardTask {
     pairs: Array<{ pairIndex: number; symbol: string }>;
 }
 
+function pairAffinityKey(symbol: string): string {
+    const separator = symbol.indexOf("+");
+    if (separator < 1 || separator === symbol.length - 1) {
+        return `1:${symbol.trim().toUpperCase()}`;
+    }
+    const left = symbol.slice(0, separator).trim().toUpperCase();
+    const right = symbol.slice(separator + 1).trim().toUpperCase();
+    return `0:${left < right ? left : right}`;
+}
+
+/**
+ * Group synthetic pairs that share a leg into the same shards. TOP_MEAN
+ * workers keep a deliberately bounded 24-leg LRU; shuffled custom pair lists
+ * otherwise evict both legs between nearly every pair and repeatedly parse the
+ * same seed CSVs on a cold disk-cache run.
+ *
+ * `pairIndex` always refers to the caller's original order, so artifacts and
+ * replay semantics stay unchanged. Resumed runs can request the legacy input
+ * order because their persisted completed-shard indexes predate this planner.
+ */
+export function buildTopMeanShardTasks(
+    canonicalPairs: string[],
+    shardSize: number,
+    preserveInputOrder = false,
+): ShardTask[] {
+    const orderedPairs = canonicalPairs.map((symbol, pairIndex) => ({ pairIndex, symbol }));
+    if (!preserveInputOrder) {
+        orderedPairs.sort((a, b) => {
+            const left = pairAffinityKey(a.symbol);
+            const right = pairAffinityKey(b.symbol);
+            if (left < right) return -1;
+            if (left > right) return 1;
+            return a.pairIndex - b.pairIndex;
+        });
+    }
+
+    const tasks: ShardTask[] = [];
+    for (let i = 0; i < orderedPairs.length; i += shardSize) {
+        tasks.push({
+            shardIndex: tasks.length,
+            pairs: orderedPairs.slice(i, i + shardSize),
+        });
+    }
+    return tasks;
+}
+
 export class TopMeanWorkerPool {
     private activeWorkers = new Set<Worker>();
     private isCancelled = false;
@@ -293,10 +344,15 @@ export class TopMeanWorkerPool {
         // Completed shard indexes are meaningful only under the size that
         // created them. A resumed run must preserve that persisted partition;
         // new runs are free to use the dynamic worker-fed size.
-        const resumedShardSize = (
+        const hasPersistedShardPartition = (
             options.manifest.completedShards.length > 0
             || options.manifest.failedShards.length > 0
-        )
+        );
+        if (!options.manifest.shardOrder && !hasPersistedShardPartition) {
+            options.manifest.shardOrder = "leg_affinity_v1";
+        }
+        const preserveInputShardOrder = options.manifest.shardOrder !== "leg_affinity_v1";
+        const resumedShardSize = hasPersistedShardPartition
             ? options.manifest.shardSize
             : undefined;
         const shardSize = resolveTopMeanShardSize(
@@ -398,20 +454,14 @@ export class TopMeanWorkerPool {
             if (manifestFlushError) throw manifestFlushError;
         };
 
-        // Partition pairs into shards
-        const shardTasks: ShardTask[] = [];
-        let shardIndex = 0;
-        for (let i = 0; i < totalPairs; i += shardSize) {
-            const pairSlice = options.canonicalPairs.slice(i, i + shardSize).map((symbol, idx) => ({
-                pairIndex: i + idx,
-                symbol,
-            }));
-            shardTasks.push({
-                shardIndex,
-                pairs: pairSlice,
-            });
-            shardIndex++;
-        }
+        // Existing completed shard indexes refer to the legacy contiguous
+        // input partition. Preserve it on resume; new runs use cache-aware
+        // grouping while retaining every pair's original pairIndex.
+        const shardTasks = buildTopMeanShardTasks(
+            options.canonicalPairs,
+            shardSize,
+            preserveInputShardOrder,
+        );
 
         options.manifest.totalShards = shardTasks.length;
         saveManifest(options.manifest, options.baseDir, options.windowKey);
