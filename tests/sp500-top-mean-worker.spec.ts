@@ -1,25 +1,12 @@
 import assert from "node:assert/strict";
 import {
     processTopMeanShard,
-    sliceTopMeanCandlesFromSec,
     TOP_MEAN_BACKTEST_RUN_OPTIONS,
     type TopMeanWorkerTaskData,
 } from "../lib/batch-backtest/sp500-top-mean-worker";
 import { prepareClosedCandleData } from "../lib/backtest-executor";
 import { selectClosedCandleWindow } from "../lib/alert-evaluation-window";
 import type { OHLCVData, Time } from "../lib/types/strategies";
-
-function testStabilitySliceIsAppliedBeforeExecutionWindow(): void {
-    const candles: OHLCVData[] = [
-        { time: 100 as Time, open: 1, high: 1, low: 1, close: 1, volume: 1 },
-        { time: 200 as Time, open: 1, high: 1, low: 1, close: 1, volume: 1 },
-        { time: 300 as Time, open: 1, high: 1, low: 1, close: 1, volume: 1 },
-    ];
-    const sliced = sliceTopMeanCandlesFromSec(candles, 200);
-    assert.deepEqual(sliced.map((candle) => Number(candle.time)), [200, 300]);
-    assert.strictEqual(sliceTopMeanCandlesFromSec(candles), candles);
-    console.log("PASS: stability start-date slice is applied before the worker guard");
-}
 
 function testDiscardedDrawdownIsSkippedWithoutSelectingCompactResults(): void {
     assert.equal(TOP_MEAN_BACKTEST_RUN_OPTIONS.skipDrawdown, true);
@@ -139,7 +126,6 @@ function testDataEndTimeFromClosedCandleArray(): void {
 }
 
 async function main(): Promise<void> {
-    testStabilitySliceIsAppliedBeforeExecutionWindow();
     testDiscardedDrawdownIsSkippedWithoutSelectingCompactResults();
     await runWorkerParityTest();
     testDataEndTimeFromClosedCandleArray();

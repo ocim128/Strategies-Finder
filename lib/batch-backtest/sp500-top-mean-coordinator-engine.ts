@@ -40,12 +40,6 @@ import {
     type CurrentTopMeanResult,
 } from "./sp500-top-mean-current-snapshot";
 import {
-    compareStabilitySnapshots,
-    formatStartDateLabel,
-    type StabilityComparison,
-    type StabilityWindowResult,
-} from "./sp500-top-mean-stability-compare";
-import {
     formatTopMeanPerformanceLines,
     type TopMeanPerformanceDiagnostic,
 } from "./sp500-top-mean-performance";
@@ -71,15 +65,6 @@ export interface TopMeanCoordinatorRunRequest {
      */
     sampleFromSec?: number;
     sampleToSec?: number;
-    /**
-     * Stability mode: when this is a non-empty array, the engine runs the
-     * current snapshot across each of these start dates (plus an implicit
-     * full-history window) and emits a terminal `stability_done` event with
-     * the comparison. Each entry is a unix-second simulation start date. The
-     * historical replay phase is SKIPPED in stability mode. When undefined
-     * (or empty), the engine runs the normal single-snapshot + replay path.
-     */
-    stabilityStartDates?: number[];
 }
 
 export interface TopMeanHorizonSummary {
@@ -190,21 +175,6 @@ export interface TopMeanStatusResponse {
     performance?: TopMeanPerformanceDiagnostic;
     error?: string;
     result?: TopMeanResultSummary;
-    /**
-     * Stability-mode progress (only present mid-run in stability mode). Lets
-     * the /status reattach path show which window is running and what has
-     * completed so far. Absent in the normal single-snapshot path.
-     */
-    stabilityProgress?: {
-        currentWindow: number;
-        totalWindows: number;
-        completedWindows: StabilityWindowResult[];
-    };
-    /**
-     * Terminal stability comparison (only present after a stability run
-     * completes). Absent in the normal path and during a run.
-     */
-    stabilityResult?: StabilityComparison;
 }
 
 let activeEngineInstance: TopMeanCoordinatorEngine | null = null;
@@ -228,15 +198,6 @@ export class TopMeanCoordinatorEngine {
      * the snapshot even if the replay throws.
      */
     private currentSnapshotResult: CurrentTopMeanResult | null = null;
-    /**
-     * Stability-mode state: the per-window results accumulated so far, the
-     * total window count, and the terminal comparison. Null/empty in the
-     * normal single-snapshot path.
-     */
-    private stabilityCompletedWindows: StabilityWindowResult[] = [];
-    private stabilityTotalWindows = 0;
-    private stabilityCurrentWindow = 0;
-    private stabilityResult: StabilityComparison | null = null;
     /** Aggregated actual engine usage across completed pair backtests. */
     private engineUsage: { rust: number; typescript: number } = { rust: 0, typescript: 0 };
     private performanceStartedAtMs = 0;
@@ -271,16 +232,6 @@ export class TopMeanCoordinatorEngine {
                 : {}),
             error: this.manifest?.error,
             result: this.resultSummary || undefined,
-            ...(this.stabilityTotalWindows > 0 && !this.stabilityResult
-                ? {
-                    stabilityProgress: {
-                        currentWindow: this.stabilityCurrentWindow,
-                        totalWindows: this.stabilityTotalWindows,
-                        completedWindows: this.stabilityCompletedWindows,
-                    },
-                }
-                : {}),
-            ...(this.stabilityResult ? { stabilityResult: this.stabilityResult } : {}),
         };
     }
 
@@ -489,16 +440,6 @@ export class TopMeanCoordinatorEngine {
 
             if (this.isStopped) {
                 this.emitInterrupted(emitNdjson);
-                return;
-            }
-
-            // Stability mode: run the current snapshot across N start dates
-            // and emit a terminal comparison. Skips the worker+snapshot+replay
-            // single-run path entirely. Branches here so the normal path below
-            // is unchanged when stabilityStartDates is absent/empty.
-            const stabilityDates = this._request.stabilityStartDates;
-            if (stabilityDates && stabilityDates.length > 0) {
-                await this.runStabilityMode(emitNdjson, enumRes, fingerprint);
                 return;
             }
 
@@ -807,238 +748,6 @@ export class TopMeanCoordinatorEngine {
         } finally {
             if (activeEngineInstance === this) {
                 activeEngineInstance = null;
-            }
-        }
-    }
-
-    /**
-     * Stability mode: run the current snapshot across N start-date windows
-     * (plus an implicit full-history window) and emit a terminal comparison.
-     *
-     * Each window gets its own window-scoped artifact subdir so concurrent
-     * windows cannot overwrite each other. Windows run SEQUENTIALLY inside
-     * this one owner-lock acquisition (the global mutex forbids parallel
-     * coordinator runs by design). The historical replay phase is skipped —
-     * it is irrelevant to the stability question and would multiply cost.
-     *
-     * The owner-lock is held by the caller (`run()`); this method does not
-     * touch it. Cancellation is honored between windows and mid-worker via
-     * the existing `isStopped` / `pool.cancel()` seam.
-     */
-    private async runStabilityMode(
-        emitNdjson: (event: unknown) => void,
-        enumRes: ReturnType<typeof enumerateSp500Pairs>,
-        fingerprint: string,
-    ): Promise<void> {
-        // Build the window list: full-history first, then each user start date.
-        // Deduplicate by startDateSec so a user listing "full" twice (or
-        // repeated dates) does not double-count.
-        const requested = this._request.stabilityStartDates ?? [];
-        const windowDefs: Array<{ startDateSec: number | null; label: string; windowKey: string }> = [];
-        const seenKeys = new Set<string>();
-        const pushWindow = (startDateSec: number | null): void => {
-            const windowKey = startDateSec === null ? "full" : `from_${startDateSec}`;
-            if (seenKeys.has(windowKey)) return;
-            seenKeys.add(windowKey);
-            windowDefs.push({ startDateSec, label: formatStartDateLabel(startDateSec), windowKey });
-        };
-        pushWindow(null); // implicit full-history window
-        for (const d of requested) pushWindow(d);
-
-        this.stabilityTotalWindows = windowDefs.length;
-        this.stabilityCurrentWindow = 0;
-        this.stabilityCompletedWindows = [];
-
-        this.currentPhase = "backtesting";
-        emitNdjson({
-            type: "progress",
-            phase: "stability",
-            text: `Stability mode: ${windowDefs.length} windows (full + ${requested.length} start date${requested.length === 1 ? "" : "s"})`,
-            totalWindows: windowDefs.length,
-            currentWindow: 0,
-        });
-
-        // F2: hoist the worker pool OUTSIDE the window loop so workers
-        // persist across windows. Each window's pairs are the SAME (only the
-        // backtestFromSec slice differs), so the workers' in-memory dataset
-        // LRU caches (legCache:24 + pairCache:16 inside
-        // batch-dataset-loader-core) survive from window N to window N+1.
-        // Without this, every window re-loads every pair from disk/SQLite even
-        // though the synthetic-pair disk cache already wrote the bars out on
-        // window 1 — the marginal cost was disk JSON re-parse per window ×
-        // per pair. keepWorkersAlive: true tells execute() not to terminate
-        // workers at end of each window; cancel() in the finally below
-        // releases them all at the end of the stability run.
-        this.pool = new TopMeanWorkerPool();
-
-        try {
-        for (let i = 0; i < windowDefs.length; i++) {
-            const w = windowDefs[i]!;
-            this.stabilityCurrentWindow = i + 1;
-            this.progressText = `Stability window ${i + 1}/${windowDefs.length}: ${w.label}`;
-            emitNdjson({
-                type: "progress",
-                phase: "stability",
-                text: this.progressText,
-                totalWindows: windowDefs.length,
-                currentWindow: i + 1,
-                windowLabel: w.label,
-            });
-
-            if (this.isStopped) {
-                this.emitInterrupted(emitNdjson);
-                return;
-            }
-
-            // Per-window manifest in the window-scoped subdir. Resume is
-            // supported per-window: a reattach picks up where it left off if
-            // the manifest already exists with matching fingerprint.
-            const windowWorkerCount = resolveTopMeanWorkerCount(this._request.workerCount);
-            const windowShardSize = resolveTopMeanShardSize(
-                enumRes.canonicalPairs.length,
-                windowWorkerCount,
-            );
-            let windowManifest = loadManifest(this._request.runId, this.baseDir, w.windowKey);
-            if (windowManifest) {
-                if (windowManifest.fingerprint !== fingerprint) {
-                    throw new Error(`Stability window ${w.label} fingerprint mismatch: run settings or universe changed.`);
-                }
-                windowManifest.status = "running";
-            } else {
-                windowManifest = {
-                    schema: "top_mean_run_manifest.v1",
-                    runId: this._request.runId,
-                    status: "running",
-                    fingerprint,
-                    strategyKey: this._request.strategyKey,
-                    interval: this._request.interval,
-                    pairCount: enumRes.canonicalPairs.length,
-                    shardSize: windowShardSize,
-                    totalShards: Math.ceil(enumRes.canonicalPairs.length / windowShardSize),
-                    completedShards: [],
-                    failedShards: [],
-                    completedPairsCount: 0,
-                    failedPairsCount: 0,
-                    createdAt: Date.now(),
-                    updatedAt: Date.now(),
-                };
-            }
-            const priorWindowUsage = {
-                rust: windowManifest.engineUsage?.rust ?? 0,
-                typescript: windowManifest.engineUsage?.typescript ?? 0,
-            };
-            windowManifest.requestedEngineMode = this._request.useRustEnginePreference ? "rust" : "typescript";
-            windowManifest.workerCount = windowWorkerCount;
-            saveManifest(windowManifest, this.baseDir, w.windowKey);
-
-            const usage = await this.pool.execute({
-                runId: this._request.runId,
-                manifest: windowManifest,
-                canonicalPairs: enumRes.canonicalPairs,
-                strategyKey: this._request.strategyKey,
-                strategyParams: this._request.strategyParams,
-                backtestSettings: this._request.backtestSettings,
-                capitalSettings: this._request.capitalSettings,
-                interval: this._request.interval,
-                workerCount: this._request.workerCount,
-                useRustEnginePreference: this._request.useRustEnginePreference,
-                baseDir: this.baseDir,
-                ...(w.startDateSec !== null ? { backtestFromSec: w.startDateSec } : {}),
-                windowKey: w.windowKey,
-                // Workers persist across windows via keepWorkersAlive: their
-                // in-memory dataset LRU caches survive and the same pairs
-                // loaded in window N are cache hits in window N+1.
-                keepWorkersAlive: true,
-                onProgress: (completed, total, text) => {
-                    this.progressText = `[${w.label}] ${text}`;
-                    emitNdjson({
-                        type: "progress",
-                        phase: "backtesting",
-                        windowLabel: w.label,
-                        windowIndex: i,
-                        totalWindows: windowDefs.length,
-                        completed,
-                        total,
-                        text: this.progressText,
-                    });
-                },
-            });
-            this.absorbEngineUsage(usage);
-            windowManifest.engineUsage = {
-                rust: priorWindowUsage.rust + usage.rust,
-                typescript: priorWindowUsage.typescript + usage.typescript,
-            };
-            windowManifest.actualEngineMode = this.resolveEngineMode(windowManifest.engineUsage);
-            saveManifest(windowManifest, this.baseDir, w.windowKey);
-
-            if (this.isStopped) {
-                this.emitInterrupted(emitNdjson);
-                return;
-            }
-
-            // Snapshot for this window from its window-scoped artifacts.
-            const snapshotResult = await computeCurrentTopMeanSnapshot(
-                () => iterateRunRawCompactArtifacts(this._request.runId, this.baseDir, w.windowKey),
-                { shouldStop: () => this.isStopped },
-            );
-
-            if (this.isStopped) {
-                this.emitInterrupted(emitNdjson);
-                return;
-            }
-
-            const windowResult: StabilityWindowResult = {
-                startDateSec: w.startDateSec,
-                label: w.label,
-                snapshot: snapshotResult.snapshot,
-                stats: snapshotResult.stats,
-            };
-            this.stabilityCompletedWindows.push(windowResult);
-            windowManifest.status = "completed";
-            windowManifest.updatedAt = Date.now();
-            saveManifest(windowManifest, this.baseDir, w.windowKey);
-
-            emitNdjson({
-                type: "current_snapshot",
-                currentSnapshot: snapshotResult,
-                windowLabel: w.label,
-                windowIndex: i,
-                totalWindows: windowDefs.length,
-            });
-        }
-
-        // All windows complete: compute the comparison and emit the terminal
-        // stability_done event. This is the Phase-2 gate verdict.
-        const comparison = compareStabilitySnapshots(this.stabilityCompletedWindows);
-        this.stabilityResult = comparison;
-
-        // Persist the comparison so the /status reattach path can return it
-        // after the engine instance is gone (browser reload post-completion).
-        // Mirrors how the single-snapshot path persists to result.json.
-        const stabilityResultPath = join(getRunDir(this._request.runId, this.baseDir), "stability_result.json");
-        atomicWriteJsonSync(stabilityResultPath, comparison);
-
-        this.currentPhase = "completed";
-        this.progressText = `Stability check complete: gate ${comparison.parityAssumptionHolds ? "PASS" : "BLOCKED"} (agreement ${comparison.agreementPct.toFixed(1)}%)`;
-        if (this.manifest) {
-            this.manifest.status = "completed";
-            this.updateManifestEngineTelemetry(this.manifest);
-            this.manifest.updatedAt = Date.now();
-            saveManifest(this.manifest, this.baseDir);
-        }
-
-        emitNdjson({
-            type: "stability_done",
-            comparison,
-        });
-        } finally {
-            // F2: tear down the workers that were kept alive across windows.
-            // cancel() also handles a Stop mid-window (the Stop path's
-            // isCancelled flag will have already terminated them; this is
-            // idempotent). Without this, a process leak of N long-lived
-            // worker threads would persist after the stability run ends.
-            if (this.pool) {
-                this.pool.cancel();
             }
         }
     }

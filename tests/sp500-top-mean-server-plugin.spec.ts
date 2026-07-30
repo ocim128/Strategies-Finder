@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -534,122 +534,6 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
     }
 }
 
-/**
- * Phase-2 gate integration: pre-seed the full-history and one start-date
- * window, then drive the real coordinator stability branch. This isolates the
- * orchestration contract from worker/data loading while still exercising the
- * real window manifests, raw-artifact reducer, comparison, and persistence.
- */
-async function testStabilityModeRunsWindowsAndSkipsReplay(): Promise<void> {
-    const baseDir = mkdtempSync(join(tmpdir(), "sp500-stability-"));
-    const runId = `spec_stability_${Date.now()}`;
-    const endpoint = 1_700_000_000;
-    const startDateSec = 1_672_531_200; // 2023-01-01 UTC
-    const pairListText = "AAPL\u2022+MSFT\u2022\nAAPL\u2022+NVDA\u2022";
-    const request = {
-        runId,
-        strategyKey: "close_location_median_alignment",
-        strategyParams: { lookback: 20, threshold: 0.5 },
-        backtestSettings: { direction: "long", slippage: 0, commission: 0 },
-        capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 },
-        interval: "4h",
-        horizons: [12],
-        pairListText,
-        resume: true,
-        stabilityStartDates: [startDateSec],
-        useRustEnginePreference: false,
-    };
-    const seedDir = join(baseDir, "price-data", "ibkr", "csv", "30m");
-    mkdirSync(seedDir, { recursive: true });
-    writeFileSync(
-        join(baseDir, "price-data", "ibkr", "catalog.json"),
-        JSON.stringify({ entries: [{ symbol: "AAPL" }, { symbol: "MSFT" }, { symbol: "NVDA" }] }),
-        "utf8",
-    );
-    for (const asset of ["AAPL", "MSFT", "NVDA"]) {
-        writeFileSync(join(seedDir, `${asset}.csv`), "", "utf8");
-    }
-
-    const enumRes = enumerateSp500Pairs({ interval: "4h", pairListText, baseDir });
-    if (enumRes.canonicalPairs.length === 0) {
-        rmSync(baseDir, { recursive: true, force: true });
-        throw new Error("Stability integration fixture failed to enumerate its synthetic catalog pairs");
-    }
-
-    const fingerprint = computeRunFingerprint({
-        strategyKey: request.strategyKey,
-        strategyParams: request.strategyParams,
-        backtestSettings: request.backtestSettings,
-        capitalSettings: request.capitalSettings,
-        interval: request.interval,
-        useRustEnginePreference: false,
-        canonicalAssets: enumRes.eligibleAssets,
-    });
-
-    const writeWindow = (windowKey: string, winner: string): void => {
-        writeShardArtifacts(
-            runId,
-            0,
-            [openArtifact(0, `${winner}+Q1`, "long", endpoint)],
-            baseDir,
-            windowKey,
-        );
-        const manifest: TopMeanRunManifest = {
-            schema: "top_mean_run_manifest.v1",
-            runId,
-            status: "completed",
-            fingerprint,
-            strategyKey: request.strategyKey,
-            interval: request.interval,
-            pairCount: enumRes.canonicalPairs.length,
-            shardSize: 250,
-            totalShards: 1,
-            completedShards: [0],
-            failedShards: [],
-            completedPairsCount: 1,
-            failedPairsCount: 0,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-        };
-        saveManifest(manifest, baseDir, windowKey);
-    };
-
-    // The full-history window picks AAA; the 2023 window picks BBB. The real
-    // comparison must report divergence, proving the gate blocks Phase 2.
-    writeWindow("full", "AAA");
-    writeWindow(`from_${startDateSec}`, "BBB");
-
-    const events: Array<{ type: string; [key: string]: unknown }> = [];
-    try {
-        const engine = new TopMeanCoordinatorEngine(request as any, baseDir);
-        await engine.run((event: unknown) => {
-            events.push(event as { type: string; [key: string]: unknown });
-        });
-
-        const stabilityDone = events.find((event) => event.type === "stability_done") as { comparison?: any } | undefined;
-        assert.ok(stabilityDone, "stability mode must emit stability_done");
-        assert.equal(events.some((event) => event.type === "done"), false, "stability mode must skip normal replay done");
-        assert.equal(stabilityDone.comparison.divergentWindows, true);
-        assert.equal(stabilityDone.comparison.parityAssumptionHolds, false);
-        assert.deepEqual(
-            stabilityDone.comparison.windows.map((window: any) => window.snapshot.winners.map((winner: any) => winner.asset)),
-            [["AAA"], ["BBB"]],
-        );
-
-        const persistedPath = join(getRunDir(runId, baseDir), "stability_result.json");
-        assert.ok(existsSync(persistedPath), "stability comparison must be persisted for reattach");
-        const persisted = JSON.parse(readFileSync(persistedPath, "utf8")) as { parityAssumptionHolds: boolean };
-        assert.equal(persisted.parityAssumptionHolds, false);
-        console.log("PASS: stability mode runs window snapshots, skips replay, and persists the gate result");
-    } finally {
-        try {
-            rmSync(baseDir, { recursive: true, force: true });
-        } catch {
-            // Best-effort cleanup for this test's isolated run directory.
-        }
-    }
-}
-
 function openArtifact(
     pairIndex: number,
     symbol: string,
@@ -679,7 +563,6 @@ async function main(): Promise<void> {
     await testResultJsonAugmentationIsAdditive();
     await testResultSummaryFieldIsOptional();
     await testRunIntegratesSnapshotAndPersistsBeforeReplay();
-    await testStabilityModeRunsWindowsAndSkipsReplay();
     console.log("PASS: sp500-top-mean-server-plugin.spec.ts");
 }
 

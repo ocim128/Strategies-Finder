@@ -182,7 +182,6 @@ async function handleSp500TopMeanRunRequest(
         horizons: req.horizons,
         workerCount: req.workerCount,
         maxPairs: req.maxPairs,
-        stabilityStartDates: req.stabilityStartDates,
     });
     if (!limitCheck.ok) {
         throw new HttpStatusError(400, limitCheck.error);
@@ -193,9 +192,6 @@ async function handleSp500TopMeanRunRequest(
     }
     if (limitCheck.value.maxPairs !== undefined) {
         req.maxPairs = limitCheck.value.maxPairs;
-    }
-    if (limitCheck.value.stabilityStartDates !== undefined) {
-        req.stabilityStartDates = limitCheck.value.stabilityStartDates;
     }
 
     const strategy = strategies[req.strategyKey];
@@ -270,27 +266,15 @@ async function handleSp500TopMeanStatusRequest(runId?: string): Promise<TopMeanS
             // Audit: read multi-MB result files ASYNC. The prior
             // `existsSync` + `readFileSync` blocked the Vite event loop on
             // every reattach poll (this route is hit every ~2s during a
-            // TOP_MEAN stability run). A single multi-MB read stalled every
-            // concurrent request. Mirrors the plugin's own audit comments
-            // that moved artifact I/O to fs/promises for the same reason.
+            // TOP_MEAN run). A single multi-MB read stalled every concurrent
+            // request. Mirrors the plugin's own audit comments that moved
+            // artifact I/O to fs/promises for the same reason.
             // Drop `existsSync` (TOCTOU); distinguish missing via ENOENT.
             let result: unknown = undefined;
             const resultPath = join(getRunDir(runId), "result.json");
             try {
                 const txt = await readFile(resultPath, "utf8");
                 try { result = JSON.parse(txt); } catch { /* malformed JSON */ }
-            } catch (err: unknown) {
-                const code = (err as { code?: string })?.code;
-                if (code !== "ENOENT") { /* unexpected I/O — surface elsewhere */ }
-            }
-            // Stability runs persist the comparison to stability_result.json
-            // (no top-level result.json). Surface it as stabilityResult so the
-            // browser reattach path renders the comparison table.
-            let stabilityResult: unknown = undefined;
-            const stabilityResultPath = join(getRunDir(runId), "stability_result.json");
-            try {
-                const txt = await readFile(stabilityResultPath, "utf8");
-                try { stabilityResult = JSON.parse(txt); } catch { /* malformed JSON */ }
             } catch (err: unknown) {
                 const code = (err as { code?: string })?.code;
                 if (code !== "ENOENT") { /* unexpected I/O — surface elsewhere */ }
@@ -313,12 +297,11 @@ async function handleSp500TopMeanStatusRequest(runId?: string): Promise<TopMeanS
                 actualEngineMode: manifest.actualEngineMode ?? "auto",
                 engineUsage: manifest.engineUsage ?? { rust: 0, typescript: 0 },
                 error: manifest.error,
-                // `result` / `stabilityResult` are untrusted JSON read from
-                // disk; cast at the boundary rather than widening the parsed
-                // locals, so the disk-read stays `unknown` and the response
-                // shape stays the typed contract.
+                // `result` is untrusted JSON read from disk; cast at the
+                // boundary rather than widening the parsed local, so the
+                // disk-read stays `unknown` and the response shape stays the
+                // typed contract.
                 result: result as TopMeanStatusResponse["result"],
-                ...(stabilityResult !== undefined ? { stabilityResult: stabilityResult as NonNullable<TopMeanStatusResponse["stabilityResult"]> } : {}),
             };
         }
     }

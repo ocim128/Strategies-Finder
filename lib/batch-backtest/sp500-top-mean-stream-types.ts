@@ -6,33 +6,29 @@
  * `(event: any)` handlers and stored results in `any` fields, so every
  * TOP_MEAN UI bug was a silent shape drift (event.result vs status.result,
  * missing interrupted, winners field renames). The typed contracts
- * (`TopMeanResultSummary`, `TopMeanStatusResponse`, `StabilityComparison`)
- * already existed in the engine/compare modules; this union gives the consumer
- * the same compile-time coverage the OPEN_SCORE USD path already had via
+ * (`TopMeanResultSummary`, `TopMeanStatusResponse`) already existed in the
+ * engine modules; this union gives the consumer the same compile-time
+ * coverage the OPEN_SCORE USD path already had via
  * `OpenScoreUsdReplayStreamEvent`.
  *
- * The consumer (`BatchBacktestService.runSp500TopMeanCoordinatorInner` /
- * `runSp500TopMeanStabilityCheckInner`) reads this via
- * `postBatchNdjson<TopMeanStreamEvent>`. Dispatch is by `event.type` ->
- * camelCase handler key and is non-exhaustive, so this union exists for
+ * The consumer (`BatchBacktestService.runSp500TopMeanCoordinatorInner`) reads
+ * this via `postBatchNdjson<TopMeanStreamEvent>`. Dispatch is by `event.type`
+ * -> camelCase handler key and is non-exhaustive, so this union exists for
  * compiler coverage at the consumer, not runtime enforcement.
  *
  * Event shapes mirror the coordinator engine's actual emissions
  * (sp500-top-mean-coordinator-engine.ts):
- *   - `preflight`:  emitted once after pair enumeration.
- *   - `progress`:   emitted per phase / window; the stability variant adds
- *                   `totalWindows` / `currentWindow`.
+ *   - `preflight`:        emitted once after pair enumeration.
+ *   - `progress`:         emitted per phase.
  *   - `current_snapshot`: emitted once the phase-1 snapshot is computed.
- *   - `done`:       terminal. Carries `result` on success, or `interrupted: true`
- *                   on a Stop (see `emitInterrupted`).
- *   - `stability_done`: terminal for stability runs; carries the comparison.
- *   - `fatal`:      terminal failure; optionally carries the phase-1 snapshot
- *                   computed before the replay failure.
+ *   - `done`:             terminal. Carries `result` on success, or
+ *                         `interrupted: true` on a Stop (see `emitInterrupted`).
+ *   - `fatal`:            terminal failure; optionally carries the phase-1
+ *                         snapshot computed before the replay failure.
  */
 import type { CoverageCounts } from "./sp500-pair-enumerator";
 import type { CurrentTopMeanResult } from "./sp500-top-mean-current-snapshot";
 import type { TopMeanResultSummary } from "./sp500-top-mean-coordinator-engine";
-import type { StabilityComparison } from "./sp500-top-mean-stability-compare";
 import type { TopMeanPerformanceDiagnostic } from "./sp500-top-mean-performance";
 
 /** Shared shape of the phase-1 current snapshot carried on several events. */
@@ -47,24 +43,13 @@ export type TopMeanStreamEvent =
         /** Present on the backtesting progress variant. */
         completed?: number;
         total?: number;
-        /** Present on the stability-window progress variant. */
-        totalWindows?: number;
-        currentWindow?: number;
-        /** Present on per-window stability backtesting progress. */
-        windowLabel?: string;
-        windowIndex?: number;
     }
     | {
         type: "current_snapshot";
         currentSnapshot: TopMeanCurrentSnapshot;
-        /** Present on per-window stability snapshots (not the single-snapshot path). */
-        windowLabel?: string;
-        windowIndex?: number;
-        totalWindows?: number;
     }
     | { type: "done"; result: TopMeanResultSummary }
     | { type: "done"; interrupted: true; performance?: TopMeanPerformanceDiagnostic }
-    | { type: "stability_done"; comparison: StabilityComparison }
     | {
         type: "fatal";
         error: string;

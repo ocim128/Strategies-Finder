@@ -212,33 +212,12 @@ export interface WorkerPoolRunOptions {
     useRustEnginePreference?: boolean;
     baseDir?: string;
     /**
-     * Optional start-date slice (unix seconds) for the stability mode. When
-     * set, each worker trims its loaded candles to [backtestFromSec, inf)
-     * BEFORE executeBacktest, so the open position reflects a simulation that
-     * started at this date. Undefined = full history (existing behavior).
-     */
-    backtestFromSec?: number;
-    /**
      * Optional window key for per-start-date artifact partitioning. When set,
      * shards + manifest land in <runDir>/windows/<windowKey>/ so concurrent
-     * stability windows do not overwrite each other. Undefined = top-level
+     * windows do not overwrite each other. Undefined = top-level
      * <runDir>/shards (existing behavior).
      */
     windowKey?: string;
-    /**
-     * When true, `execute()` does NOT terminate its workers at the end of the
-     * run — they stay spawned and ready for the next `execute()` call on the
-     * SAME pool instance. Used by stability mode so the workers' in-memory
-     * pair/leg LRU caches survive across windows (the synthetic-pair disk
-     * cache already eliminates the 30m-aggregation cost across windows; this
-     * layer additionally eliminates the disk JSON re-parse per window).
-     *
-     * Contract: the caller MUST eventually call {@link cancel} on the pool
-     * (typically in a `finally`) to terminate the workers; otherwise they
-     * will outlive the run. The coordinator's existing `stop()` / `finally`
-     * paths already do this.
-     */
-    keepWorkersAlive?: boolean;
     /** Test seam; production uses the atomic async artifact writer. */
     writeShardArtifacts?: typeof writeShardArtifactsAsync;
     onProgress?: (completedPairs: number, totalPairs: number, text: string) => void;
@@ -299,12 +278,10 @@ export class TopMeanWorkerPool {
     private activeWorkers = new Set<Worker>();
     private isCancelled = false;
     /**
-     * Workers that survived the previous `execute()` call (because
-     * `keepWorkersAlive` was true) and are ready for reuse. Persisted at the
-     * instance level so a coordinator that creates ONE pool and calls
-     * `execute()` N times (e.g. stability mode's per-window calls) gets
-     * worker reuse + the workers' in-memory dataset caches for free.
-     * Cleared by {@link cancel}.
+     * Workers retained for reuse across `execute()` calls on this same pool
+     * instance. Currently always empty — no caller requests worker reuse
+     * since stability mode was removed. Retained (dormant) so the spawn /
+     * error / cancel lifecycle stays uniform; cleared by {@link cancel}.
      */
     private reusableWorkers: Worker[] = [];
     /**
@@ -500,7 +477,6 @@ export class TopMeanWorkerPool {
             capitalSettings: options.capitalSettings,
             interval: options.interval,
             useRustEnginePreference: options.useRustEnginePreference,
-            ...(options.backtestFromSec !== undefined ? { backtestFromSec: options.backtestFromSec } : {}),
         });
 
         type InFlight = {
@@ -745,11 +721,10 @@ export class TopMeanWorkerPool {
 
         // Spawn or reuse the persistent worker pool. No workerData → the
         // worker's one-shot branch is skipped and the message listener handles
-        // every task, which is what makes them reusable. When this same pool
-        // instance ran a previous `execute({ keepWorkersAlive: true })`, those
-        // workers survive in `this.reusableWorkers` and are reabsorbed here —
-        // their in-memory dataset LRU caches come with them, eliminating the
-        // disk JSON re-parse cost across windows in stability mode.
+        // every task, which is what makes them reusable. `this.reusableWorkers`
+        // is currently always empty (no caller requests reuse since stability
+        // mode was removed), so the absorb loop below is a no-op and every
+        // worker is freshly spawned.
         const spawned: Worker[] = [];
         let reusedWorkerCount = 0;
         let spawnedWorkerCount = 0;
@@ -895,25 +870,8 @@ export class TopMeanWorkerPool {
         await settleInFlightShardWrites();
         await requireManifestFlush();
         dispatchHalted = true;
-        if (options.keepWorkersAlive) {
-            // Preserve workers for the next execute() call on this same pool
-            // instance. Their in-memory dataset LRU caches survive with them.
-            // Listeners stay attached; they will be removeAllListeners()'d on
-            // the next absorb (or cleared by cancel()).
-            for (const w of spawned) {
-                // A worker may still be in activeWorkers if it crashed during
-                // the run; only retain live ones.
-                if (this.activeWorkers.has(w)) {
-                    this.reusableWorkers.push(w);
-                }
-            }
-            // Do NOT clear this.activeWorkers here — the next execute() will
-            // re-add the same workers via attachWorkerHandlers, and cancel()
-            // (the cleanup path) iterates both sets.
-        } else {
-            // Terminate the persistent workers now that the run is done.
-            this.cancel();
-        }
+        // Terminate the persistent workers now that the run is done.
+        this.cancel();
         return {
             ...engineUsage,
             performance: {

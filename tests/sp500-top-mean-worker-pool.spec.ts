@@ -191,88 +191,6 @@ async function testPersistentWorkerPoolEndToEnd(): Promise<void> {
 }
 
 /**
- * F2 contract test: workers persist across execute() calls when
- * `keepWorkersAlive: true`. Stability mode relies on this — the workers'
- * in-memory dataset LRU caches survive across windows, eliminating the disk
- * JSON re-parse cost per window per pair.
- *
- * The observable contract we lock here is lifecycle correctness, not the
- * cache hit rate (which would require real data and be flaky):
- *   - Two sequential execute() calls on the same pool both complete
- *   - After the final execute() returns with keepWorkersAlive, cancel()
- *     cleanly terminates all workers (no leak)
- *   - The pool can be reused: manifest state from each call is independent
- */
-async function testKeepWorkersAliveAcrossExecutes(): Promise<void> {
-    const makeManifest = (runId: string, pairs: string[]): TopMeanRunManifest => ({
-        schema: "top_mean_run_manifest.v1",
-        runId,
-        status: "running",
-        fingerprint: "smoke",
-        strategyKey: "close_location_median_alignment",
-        interval: "4h",
-        pairCount: pairs.length,
-        shardSize: 2,
-        totalShards: Math.ceil(pairs.length / 2),
-        completedShards: [],
-        failedShards: [],
-        completedPairsCount: 0,
-        failedPairsCount: 0,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-    });
-
-    const pairs1 = ["FAKE_A•+FAKE_B•", "FAKE_C•+FAKE_D•", "FAKE_E•+FAKE_F•"];
-    const pairs2 = ["FAKE_G•+FAKE_H•", "FAKE_I•+FAKE_J•", "FAKE_K•+FAKE_L•", "FAKE_M•+FAKE_N•"];
-    const manifest1 = makeManifest("f2_window_1", pairs1);
-    const manifest2 = makeManifest("f2_window_2", pairs2);
-
-    const baseExecute = {
-        strategyKey: "close_location_median_alignment",
-        strategyParams: { lookback: 20, threshold: 0.5 },
-        backtestSettings: { direction: "long", slippage: 0, commission: 0 } as any,
-        capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 } as any,
-        interval: "4h",
-        workerCount: 2,
-        shardSize: 2,
-        useRustEnginePreference: false,
-    };
-
-    const pool = new TopMeanWorkerPool();
-    try {
-        // Window 1: keep alive
-        const usage1 = await pool.execute({
-            ...baseExecute,
-            runId: manifest1.runId,
-            manifest: manifest1,
-            canonicalPairs: pairs1,
-            keepWorkersAlive: true,
-        });
-        assert.equal(manifest1.completedShards.length, 2, "Window 1: both shards complete");
-
-        // Window 2: SAME pool, keepWorkersAlive absorbed the workers from
-        // window 1. Without the absorb path, this would either spawn fresh
-        // workers (correctness OK but slower) or — if the lifecycle regressed —
-        // try to use stale listeners and hang/fail.
-        const usage2 = await pool.execute({
-            ...baseExecute,
-            runId: manifest2.runId,
-            manifest: manifest2,
-            canonicalPairs: pairs2,
-            keepWorkersAlive: true,
-        });
-        assert.equal(manifest2.completedShards.length, 2, "Window 2: both shards complete");
-        assert.equal(typeof usage1.rust, "number");
-        assert.equal(typeof usage2.rust, "number");
-    } finally {
-        // Critical: cancel() must release all workers — both those kept alive
-        // from window 1 AND any in-flight from window 2. A leak here would
-        // hang the test process.
-        pool.cancel();
-    }
-}
-
-/**
  * Retry-path termination smoke test.
  *
  * Forces every shard to fail (unknown strategy key) so the pool's retry path
@@ -406,7 +324,6 @@ async function main(): Promise<void> {
     testWorkerPoolCancel();
     await testWorkerPathResolution();
     await testPersistentWorkerPoolEndToEnd();
-    await testKeepWorkersAliveAcrossExecutes();
     await testRetryDrainsAcrossWorkerRelease();
     await testShardCompletesOnlyAfterDurableWrite();
     console.log("PASS: sp500-top-mean-worker-pool.spec.ts");

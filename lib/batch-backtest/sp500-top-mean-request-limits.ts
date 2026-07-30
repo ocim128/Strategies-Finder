@@ -9,7 +9,6 @@ export const TOP_MEAN_HORIZONS_MAX_LENGTH = 8;
 export const TOP_MEAN_HORIZONS_MAX_VALUE = 1000;
 export const TOP_MEAN_WORKER_COUNT_MIN = 1;
 export const TOP_MEAN_WORKER_COUNT_MAX = 24;
-export const TOP_MEAN_STABILITY_DATES_MAX = 12;
 /** Matches the Balanced Generator UI clamp (1..1_000_000). */
 export const TOP_MEAN_MAX_PAIRS_MAX = 1_000_000;
 
@@ -17,7 +16,6 @@ export type TopMeanValidatedLimits = {
     horizons: number[];
     workerCount?: number;
     maxPairs?: number;
-    stabilityStartDates?: number[];
 };
 
 export type TopMeanLimitValidationResult =
@@ -33,7 +31,6 @@ export function validateTopMeanRequestLimits(input: {
     horizons: unknown;
     workerCount?: unknown;
     maxPairs?: unknown;
-    stabilityStartDates?: unknown;
 }): TopMeanLimitValidationResult {
     if (!Array.isArray(input.horizons) || input.horizons.length === 0) {
         return { ok: false, error: "Missing required non-empty array: horizons." };
@@ -101,32 +98,12 @@ export function validateTopMeanRequestLimits(input: {
         maxPairs = input.maxPairs;
     }
 
-    let stabilityStartDates: number[] | undefined;
-    if (input.stabilityStartDates !== undefined) {
-        if (!Array.isArray(input.stabilityStartDates)) {
-            return { ok: false, error: "stabilityStartDates must be an array of finite unix-second numbers." };
-        }
-        if (input.stabilityStartDates.length > TOP_MEAN_STABILITY_DATES_MAX) {
-            return {
-                ok: false,
-                error: `Too many stabilityStartDates (${input.stabilityStartDates.length}); limit is ${TOP_MEAN_STABILITY_DATES_MAX}.`,
-            };
-        }
-        for (const d of input.stabilityStartDates) {
-            if (typeof d !== "number" || !Number.isFinite(d)) {
-                return { ok: false, error: "stabilityStartDates must be an array of finite unix-second numbers." };
-            }
-        }
-        stabilityStartDates = input.stabilityStartDates.map((d) => Math.floor(d as number));
-    }
-
     return {
         ok: true,
         value: {
             horizons,
             ...(workerCount !== undefined ? { workerCount } : {}),
             ...(maxPairs !== undefined ? { maxPairs } : {}),
-            ...(stabilityStartDates !== undefined ? { stabilityStartDates } : {}),
         },
     };
 }

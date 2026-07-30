@@ -62,7 +62,6 @@ const DEFAULT_VALUES: Partial<Record<(typeof BATCH_BACKTEST_REQUIRED_IDS)[number
     batchBacktestSp500TopMeanHorizons: "12,24,48",
     batchBacktestSp500TopMeanWorkers: "4",
     batchBacktestSp500TopMeanMaxPairs: "",
-    batchBacktestSp500TopMeanStabilityDates: "",
 };
 
 /**

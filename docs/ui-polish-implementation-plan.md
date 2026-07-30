@@ -778,11 +778,11 @@ regression observed.
   brittle.
 - Phase 9 layout choice (a) vs. (b): must read the
   `data-shared-tp-field` handler in `lib/` before deciding.
-- Stability check UI in `tab-batch-backtest.html:168-180` — out of scope
-  for this plan. Per `AGENTS.md`, "Stability Mine — removed" but the UI
-  is still wired to live JS. Confirm with the user whether this is a
-  retained feature with a confusing name or a leftover to remove in a
-  separate change.
+- Stability check UI — removed from `tab-batch-backtest.html` (the
+  checkbox, dates input, and "Run Stability Check" button) along with the
+  coordinator stability mode, the `stability_done` stream event, the
+  `sp500-top-mean-stability-compare` engine, and the worker start-date
+  slice. The normal TOP_MEAN run is unaffected.
 
 ## Sequencing summary
 

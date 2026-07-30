@@ -7,7 +7,6 @@ import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import { stripIbkrMarker } from "../local-daily-datasets";
 import { selectClosedCandleWindow } from "../alert-evaluation-window";
-import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { CompactPairArtifact, CompactTrade } from "./compact-pair-artifact";
 import type { BacktestSettings, OHLCVData, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
@@ -36,13 +35,6 @@ export interface TopMeanWorkerTaskData {
     capitalSettings: CapitalSettings;
     interval: string;
     useRustEnginePreference?: boolean;
-    /**
-     * Optional start-date slice (unix seconds) for the stability mode. When
-     * set, the worker trims its loaded candles to [backtestFromSec, inf)
-     * BEFORE executeBacktest so the open position reflects a simulation that
-     * started at this date. Undefined = full history.
-     */
-    backtestFromSec?: number;
 }
 
 export type TopMeanWorkerMessage =
@@ -68,43 +60,6 @@ export type TopMeanWorkerMessage =
           shardIndex: number;
           error: string;
       };
-
-/**
- * Trim a loaded pair dataset to the stability simulation window. Keeping this
- * as a small pure seam makes the ordering explicit and testable: the slice
- * happens before the worker's minimum-candle guard and before execution.
- *
- * OHLCV candle arrays are time-sorted by the data-loader contract, so we can
- * binary-search the cutoff and `slice` instead of `.filter`-parsing every
- * candle. The hot path is the per-pair per-window stability mode run; a
- * 100k-bar dataset previously parsed all 100k timestamps per pair. If a
- * non-parseable timestamp is encountered (defensive backstop for malformed
- * data), fall back to the original filter behavior so a single bad bar does
- * not crash the worker.
- */
-export function sliceTopMeanCandlesFromSec(candles: OHLCVData[], fromSec?: number): OHLCVData[] {
-    if (fromSec === undefined) return candles;
-    const n = candles.length;
-    if (n === 0) return candles;
-    // Binary search for the first index whose timestamp >= fromSec.
-    let lo = 0;
-    let hi = n;
-    while (lo < hi) {
-        const mid = (lo + hi) >>> 1;
-        const t = parseTimeToUnixSeconds(candles[mid]!.time);
-        if (t === null) {
-            // Malformed timestamp: fall back to the per-element filter so we
-            // never silently include a bar the previous implementation dropped.
-            return candles.filter((candle) => {
-                const timestamp = parseTimeToUnixSeconds(candle.time);
-                return timestamp !== null && timestamp >= fromSec;
-            });
-        }
-        if (t < fromSec) lo = mid + 1;
-        else hi = mid;
-    }
-    return candles.slice(lo);
-}
 
 function subtractCacheCounters(
     after: ReturnType<typeof getServerBatchDatasetCacheStats>,
@@ -203,16 +158,6 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                 candles = await loadServerBatchDataset(pairSymbol, data.interval);
             } finally {
                 timing.loadMs += performance.now() - loadStartedAt;
-            }
-
-            // Stability mode: trim loaded candles to [backtestFromSec, inf) so
-            // the open position reflects a simulation that started at this
-            // date. The slice is applied BEFORE the < 200 guard, so a window
-            // that yields too few candles is skipped per-pair rather than
-            // crashing. dataEndTime then naturally reflects the trimmed
-            // window's last closed candle.
-            if (candles && candles.length > 0) {
-                candles = sliceTopMeanCandlesFromSec(candles, data.backtestFromSec);
             }
 
             if (!candles || candles.length < 200) {

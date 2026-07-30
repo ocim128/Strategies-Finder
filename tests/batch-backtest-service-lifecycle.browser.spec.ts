@@ -161,7 +161,6 @@ describe("BatchBacktestService analysis lifecycle", () => {
         s.dom = dom;
         expect(() => s.bindEvents(dom)).to.not.throw();
         expect(dom.batchBacktestSp500TopMeanRunBtn, "TOP_MEAN run button present").to.not.equal(undefined);
-        expect(dom.batchBacktestSp500TopMeanStabilityRunBtn, "stability run button present").to.not.equal(undefined);
         expect(dom.batchBacktestSp500TopMeanCopyOpenScoreBtn, "TOP_MEAN Copy OPEN_SCORE button present").to.not.equal(undefined);
     });
 

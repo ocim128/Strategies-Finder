@@ -166,19 +166,6 @@
                 <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanCopyDiagnosticBtn" type="button" disabled>Copy Diagnostic</button>
             </div>
         </div>
-        <div class="batch-stability-controls" title="Phase-2 gate check. Runs the current TOP_MEAN snapshot across each start date (plus full history) and compares the winners. Skips the historical replay. If every window picks the same winner, the continuation-parity assumption holds and incremental checkpoints (Phase 2) are viable. If winners diverge, the strategy is path-dependent for this config and Phase 2 is blocked.">
-            <div class="batch-field batch-field--inline">
-                <label class="batch-field-label" for="batchBacktestSp500TopMeanStabilityEnabled">Stability check</label>
-                <input id="batchBacktestSp500TopMeanStabilityEnabled" type="checkbox">
-            </div>
-            <div class="batch-field">
-                <label class="batch-field-label" for="batchBacktestSp500TopMeanStabilityDates">Start dates (UTC, comma-separated)</label>
-                <input class="batch-field-input" id="batchBacktestSp500TopMeanStabilityDates" type="text" placeholder="2023-01-01, 2024-01-01, 2025-01-01">
-            </div>
-            <div class="batch-action-group">
-                <button class="btn btn-primary btn-compact" id="batchBacktestSp500TopMeanStabilityRunBtn" type="button">Run Stability Check</button>
-            </div>
-        </div>
         <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestSp500TopMeanCoverageSummary"></div>
         <div class="batch-miner-status" id="batchBacktestSp500TopMeanProgressText"></div>
         <div class="finder-list" id="batchBacktestSp500TopMeanResults"></div>
