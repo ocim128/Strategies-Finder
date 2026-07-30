@@ -508,6 +508,50 @@ describe("batch-open-score-usd-replay-engine Phase 3 MAX_ACTIVE extensions", () 
         expect(h.maxSubmitted.topMean).to.be.closeTo(130 / 120 - 1, 1e-9);
     });
 
+    it("ACTIVE_RATE selects active/submitted density and ACTIVE_MARGIN partitions its events", async () => {
+        // AAA has more active pairs, but BBB has the higher activation rate:
+        //   AAA = 3 / 10 submitted = 0.30
+        //   BBB = 2 / 2 submitted = 1.00
+        // ACTIVE_RATE must therefore pick BBB, with a 0.70 lead over AAA.
+        const pairs = [
+            ...Array.from({ length: 3 }, (_, i) => makePair("AAA", `X${i}`, [makeTrade("long", T0 + 1000, null)])),
+            ...Array.from({ length: 2 }, (_, i) => makePair("BBB", `Y${i}`, [makeTrade("long", T0 + 1000, null)])),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, (i) => i === 3 ? 110 : 100),
+            makeTarget("BBB", 10, (i) => i === 3 ? 125 : 100),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            {
+                horizons: [2],
+                slippageRate: 0,
+                commissionRate: 0,
+                blockCount: 1,
+                submittedDegreeByAsset: { AAA: 10, BBB: 2 },
+            },
+        );
+        const h = result.horizons[0]!;
+        expect(h.activeRate.events).to.equal(1);
+        expect(h.activeRate.topMean).to.be.closeTo(0.25, 1e-9);
+        expect(h.activeRateByAsset.map((x) => x.asset)).to.deep.equal(["BBB"]);
+        expect(h.activeRateDominantAsset).to.equal("BBB");
+        expect(h.activeRateExDominant.events).to.equal(0);
+        expect(h.activeMarginThresholds).to.have.length(4);
+        for (const threshold of h.activeMarginThresholds) {
+            expect(threshold).to.be.closeTo(0.70, 1e-9);
+        }
+        expect(h.activeMarginBuckets).to.have.length(5);
+        expect(h.activeMarginBuckets.reduce((sum, bucket) => sum + bucket.events, 0)).to.equal(1);
+        const report = result.reportLines.join("\n");
+        expect(report).to.include("ACTIVE_RATE");
+        expect(report).to.include("ACTIVE_RATE_EX_BBB");
+        expect(report).to.include("ACTIVE_RATE selected assets = BBB:");
+        expect(report).to.include("ACTIVE_MARGIN quintiles");
+        expect(report).to.include("ACTIVE_MARGIN_Q1");
+    });
+
     it("ACTIVE_VS_SUBMITTED captures same-event deltas only when the selections differ", async () => {
         // Construct an event where MAX_ACTIVE and MAX_SUBMITTED pick different
         // assets. AAA has the most active pairs (5 long pairs open) but lower
@@ -595,6 +639,9 @@ describe("batch-open-score-usd-replay-engine Phase 3 MAX_ACTIVE extensions", () 
         expect(h.tieRates.RAW.events).to.equal(1);
         expect(h.tieRates.RAW.sameSelection).to.equal(1);
         expect(h.tieRates.RAW.rate).to.equal(1);
+        expect(h.tieRates.ACTIVE_RATE.events).to.equal(1);
+        expect(h.tieRates.ACTIVE_RATE.sameSelection).to.equal(1);
+        expect(h.tieRates.ACTIVE_RATE.rate).to.equal(1);
     });
 
     it("report includes the renamed control labels (MAX_SUBMITTED, MAX_RETAINED)", async () => {
@@ -617,6 +664,9 @@ describe("batch-open-score-usd-replay-engine Phase 3 MAX_ACTIVE extensions", () 
         expect(report).to.include("ACTIVE_VS_SUB");
         expect(report).to.include("ACTIVE_EX_");
         expect(report).to.include("MAX_ACTIVE selected assets =");
+        expect(report).to.include("ACTIVE_RATE_EX_");
+        expect(report).to.include("ACTIVE_RATE selected assets =");
+        expect(report).to.include("ACTIVE_MARGIN quintiles");
         expect(report).to.include("tie rates");
         // Short-side reversion arm + its dominant-asset exclusion line are
         // unconditional report lines — they ride both Copy paths because

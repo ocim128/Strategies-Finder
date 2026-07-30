@@ -343,6 +343,17 @@ describe("BatchBacktestService analysis lifecycle", () => {
                     eligibleCandidates: 2,
                     reason: "tied",
                 },
+                {
+                    selector: "MAX_SUBMITTED",
+                    direction: "long",
+                    asset: "CCC",
+                    tiedAssets: [],
+                    score: 2,
+                    mean: 0.25,
+                    activePairs: 8,
+                    eligibleCandidates: 3,
+                    reason: "selected",
+                },
             ],
         };
 
@@ -353,10 +364,14 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("one selected strategy configuration only");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("Latest OPEN_SCORE Selector Picks");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TOP_RAW");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("MAX_SUBMITTED");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TIE / SKIP: AAA, CCC");
         const copiedLines = svc().formatLatestOpenScoreSelectionLines(result.latestSelections);
         expect(copiedLines).to.include(
             "REGIME_MEAN NOW | direction=LONG | asset=TIE_SKIP[AAA,CCC] | mean=n/a | score=n/a | activePairs=n/a | pool=2 | reason=tied",
+        );
+        expect(copiedLines).to.include(
+            "MAX_SUBMITTED NOW | direction=LONG | asset=CCC | mean=0.25 | score=2 | activePairs=8 | pool=3 | reason=selected",
         );
     });
 

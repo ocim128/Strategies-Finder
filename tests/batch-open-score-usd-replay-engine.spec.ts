@@ -422,7 +422,13 @@ describe("batch-open-score-usd-replay-engine", () => {
         const result = await runOpenScoreUsdReplay(
             () => fromArray(pairs),
             () => fromArray(targets),
-            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+            {
+                horizons: [2],
+                slippageRate: 0,
+                commissionRate: 0,
+                blockCount: 1,
+                submittedDegreeByAsset: { AAA: 3, BBB: 2, CCC: 99 },
+            },
         );
         const h = result.horizons[0]!;
         expect(h.topMeanTrend.events).to.equal(1);
@@ -443,6 +449,7 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(latest.get("TOP_MEAN_TREND")?.asset).to.equal("BBB");
         expect(latest.get("REGIME_MEAN")?.asset).to.equal("BBB");
         expect(latest.get("MAX_ACTIVE")?.asset).to.equal("AAA");
+        expect(latest.get("MAX_SUBMITTED")?.asset).to.equal("CCC");
     });
 
     it("latest REGIME_MEAN selects a below-EMA negative asset in a bearish regime", async () => {
