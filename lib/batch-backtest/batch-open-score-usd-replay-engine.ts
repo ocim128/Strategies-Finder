@@ -174,6 +174,33 @@ export interface OpenScoreUsdLatestSelections {
     selections: OpenScoreUsdLatestSelection[];
 }
 
+export type OpenScoreUsdEventDetailSelector =
+    | "TOP_RAW"
+    | "TOP_ADJUSTED"
+    | "TOP_MEAN"
+    | "TOP_MEAN_TREND"
+    | "REGIME_MEAN"
+    | "ACCELERATING"
+    | "MAX_ACTIVE"
+    | "MAX_SUBMITTED"
+    | "MAX_RETAINED"
+    | "MAX_ACTIVE_REVERSION"
+    | "BOTTOM_MEAN";
+
+export interface OpenScoreUsdEventDetail {
+    decisionTime: number;
+    entryTime: number;
+    exitTime: number;
+    horizonBars: number;
+    selector: OpenScoreUsdEventDetailSelector;
+    direction: "long" | "short";
+    asset: string;
+    selectedReturn: number;
+    controlReturn: number;
+    delta: number;
+    eligibleCandidates: number;
+}
+
 export interface OpenScoreUsdReplayResult {
     pairs: number;
     assets: number;
@@ -413,6 +440,11 @@ export interface OpenScoreUsdReplayResult {
     }>;
     /** Latest-event selector picks used by the completed Batch result UI. */
     latestSelections: OpenScoreUsdLatestSelections | null;
+    /**
+     * Optional scalar rows for the coordinator's on-demand research table.
+     * Never included in reportLines or either OPEN_SCORE copy path.
+     */
+    eventDetails?: OpenScoreUsdEventDetail[];
     degree: DegreeSummary;
     warnings: string[];
     reportLines: string[];
@@ -449,6 +481,8 @@ export interface RunOpenScoreUsdReplayOptions {
      * every artifact as submitted) so old callers keep working.
      */
     submittedDegreeByAsset?: Record<string, number>;
+    /** Include scalar per-event selector rows for the coordinator details UI. */
+    includeEventDetails?: boolean;
     /** Phase transition + bounded-chunk progress. */
     onPhase?: (phase: "scan" | "events" | "targets" | "outcomes" | "aggregate", detail: string, completed: number, total: number) => void;
     /** Polled between bounded chunks; return true to stop early (cancellation). */
@@ -1554,6 +1588,7 @@ export async function runOpenScoreUsdReplay(
     // other positives (the control). If the winner has missing data, omit the
     // event from BOTH arms — never substitute a different winner.
     const horizonResults: OpenScoreUsdReplayResult["horizons"] = [];
+    const eventDetails: OpenScoreUsdEventDetail[] = [];
     let eligibleEventsMax = 0;
     for (let hIdx = 0; hIdx < horizons.length; hIdx += 1) {
         interface SelectorSeries {
@@ -1643,6 +1678,40 @@ export async function runOpenScoreUsdReplay(
             const view = views[v]!;
             const perAsset = returnsByView[v];
             if (!perAsset) { noDataEvents.add(v); continue; }
+            const appendEventDetail = (
+                selector: OpenScoreUsdEventDetailSelector,
+                direction: "long" | "short",
+                selected: Candidate,
+                selectedReturn: number,
+                controlReturn: number,
+                eligibleCandidates: number,
+            ): void => {
+                if (!options.includeEventDetails) return;
+                const outcome = perAsset.get(selected.assetIndex);
+                const entryTime = outcome?.entryTimes[hIdx];
+                const exitTime = outcome?.exitTimes[hIdx];
+                if (
+                    entryTime === undefined
+                    || exitTime === undefined
+                    || !Number.isFinite(entryTime)
+                    || !Number.isFinite(exitTime)
+                ) {
+                    return;
+                }
+                eventDetails.push({
+                    decisionTime: view.timeSec,
+                    entryTime,
+                    exitTime,
+                    horizonBars: horizons[hIdx]!,
+                    selector,
+                    direction,
+                    asset: assetNames[selected.assetIndex]!,
+                    selectedReturn,
+                    controlReturn,
+                    delta: selectedReturn - controlReturn,
+                    eligibleCandidates,
+                });
+            };
 
             // Independent gate: require a broad target uptrend, then let only
             // candidates above their own causal EMA200 enter this selector and
@@ -1691,6 +1760,14 @@ export async function runOpenScoreUsdReplay(
                     regimeMean.deltas.push(delta);
                     regimeMean.times.push(view.timeSec);
                     regimeMean.assets.push(selection);
+                    appendEventDetail(
+                        "REGIME_MEAN",
+                        broadUptrend ? "long" : "short",
+                        selected,
+                        selectedReturn,
+                        randomReturn,
+                        regimeRetByAsset.size,
+                    );
                     regimeMeanSelectedByAsset.set(selection, (regimeMeanSelectedByAsset.get(selection) ?? 0) + 1);
                     let samples = regimeMeanSamplesByAsset.get(selection);
                     if (!samples) {
@@ -1745,6 +1822,14 @@ export async function runOpenScoreUsdReplay(
                     topMeanTrend.deltas.push(delta);
                     topMeanTrend.times.push(view.timeSec);
                     topMeanTrend.assets.push(asset);
+                    appendEventDetail(
+                        "TOP_MEAN_TREND",
+                        "long",
+                        selected,
+                        selectedReturn,
+                        randomReturn,
+                        trendRetByAsset.size,
+                    );
                     topMeanTrendSelectedByAsset.set(asset, (topMeanTrendSelectedByAsset.get(asset) ?? 0) + 1);
                     let samples = topMeanTrendSamplesByAsset.get(asset);
                     if (!samples) {
@@ -1797,6 +1882,17 @@ export async function runOpenScoreUsdReplay(
                     acceleratingRandom.deltas.push(0); // control has no delta-vs-self
                     acceleratingRandom.times.push(view.timeSec);
                     acceleratingRandom.assets.push("ACCEL_RANDOM");
+                    const selected = view.acceleratingPool.find(
+                        (candidate) => candidate.assetIndex === view.accelerating,
+                    )!;
+                    appendEventDetail(
+                        "ACCELERATING",
+                        "long",
+                        selected,
+                        accSelected,
+                        accRandomMean,
+                        accRetByAsset.size,
+                    );
                 }
             }
 
@@ -1851,6 +1947,30 @@ export async function runOpenScoreUsdReplay(
             appendSelection(topRaw, view.topRaw);
             appendSelection(topAdjusted, view.topAdjusted);
             appendSelection(topMean, view.topMean);
+            appendEventDetail(
+                "TOP_RAW",
+                "long",
+                view.positives.find((candidate) => candidate.assetIndex === view.topRaw)!,
+                retByAsset.get(view.topRaw)!,
+                randomMeanOf(view.topRaw),
+                retByAsset.size,
+            );
+            appendEventDetail(
+                "TOP_ADJUSTED",
+                "long",
+                view.positives.find((candidate) => candidate.assetIndex === view.topAdjusted)!,
+                retByAsset.get(view.topAdjusted)!,
+                randomMeanOf(view.topAdjusted),
+                retByAsset.size,
+            );
+            appendEventDetail(
+                "TOP_MEAN",
+                "long",
+                view.positives.find((candidate) => candidate.assetIndex === view.topMean)!,
+                retByAsset.get(view.topMean)!,
+                randomMeanOf(view.topMean),
+                retByAsset.size,
+            );
             const rawReturn = retByAsset.get(view.topRaw)!;
             const meanReturn = retByAsset.get(view.topMean)!;
             topMeanVsRaw.returns.push(meanReturn);
@@ -1861,6 +1981,30 @@ export async function runOpenScoreUsdReplay(
             appendSelection(maxActive, view.maxActive);
             appendSelection(maxStatic, view.maxStatic);
             appendSelection(maxSubmitted, view.maxSubmitted);
+            appendEventDetail(
+                "MAX_ACTIVE",
+                "long",
+                view.positives.find((candidate) => candidate.assetIndex === view.maxActive)!,
+                retByAsset.get(view.maxActive)!,
+                randomMeanOf(view.maxActive),
+                retByAsset.size,
+            );
+            appendEventDetail(
+                "MAX_RETAINED",
+                "long",
+                view.positives.find((candidate) => candidate.assetIndex === view.maxStatic)!,
+                retByAsset.get(view.maxStatic)!,
+                randomMeanOf(view.maxStatic),
+                retByAsset.size,
+            );
+            appendEventDetail(
+                "MAX_SUBMITTED",
+                "long",
+                view.positives.find((candidate) => candidate.assetIndex === view.maxSubmitted)!,
+                retByAsset.get(view.maxSubmitted)!,
+                randomMeanOf(view.maxSubmitted),
+                retByAsset.size,
+            );
             // Conditional-split routing: TOP_RAW's selected return into one of
             // two sub-series per feature. The split threshold comes from the
             // horizon-independent `splitThresholds` computed after Phase 3.
@@ -1971,6 +2115,14 @@ export async function runOpenScoreUsdReplay(
                     maxActiveReversion.deltas.push(delta);
                     maxActiveReversion.times.push(view.timeSec);
                     maxActiveReversion.assets.push(assetNames[view.maxActiveReversion]!);
+                    appendEventDetail(
+                        "MAX_ACTIVE_REVERSION",
+                        "short",
+                        view.negatives.find((candidate) => candidate.assetIndex === view.maxActiveReversion)!,
+                        selectedReturn,
+                        randomReturn,
+                        shortByAsset.size,
+                    );
                     const asset = assetNames[view.maxActiveReversion]!;
                     reversionSelectedByAsset.set(asset, (reversionSelectedByAsset.get(asset) ?? 0) + 1);
                     let samples = maxActiveReversionSamplesByAsset.get(asset);
@@ -2006,6 +2158,14 @@ export async function runOpenScoreUsdReplay(
                     bottomMean.deltas.push(delta);
                     bottomMean.times.push(view.timeSec);
                     bottomMean.assets.push(assetNames[view.bottomMean]!);
+                    appendEventDetail(
+                        "BOTTOM_MEAN",
+                        "short",
+                        view.negatives.find((candidate) => candidate.assetIndex === view.bottomMean)!,
+                        selectedReturn,
+                        randomReturn,
+                        shortByAsset.size,
+                    );
                     const asset = assetNames[view.bottomMean]!;
                     bottomSelectedByAsset.set(asset, (bottomSelectedByAsset.get(asset) ?? 0) + 1);
                     let samples = bottomMeanSamplesByAsset.get(asset);
@@ -2259,6 +2419,10 @@ export async function runOpenScoreUsdReplay(
         onPhase("aggregate", `aggregated horizon ${horizons[hIdx]}`, hIdx + 1, horizons.length);
         await yieldLoop();
     }
+    eventDetails.sort((a, b) =>
+        a.decisionTime - b.decisionTime
+        || a.horizonBars - b.horizonBars
+        || a.selector.localeCompare(b.selector));
 
     // Count omitted assets (requested but with no usable dataset at all).
     const assetsWithData = new Set<number>();
@@ -2344,6 +2508,7 @@ export async function runOpenScoreUsdReplay(
         eligibleEvents: eligibleEventsMax,
         horizons: horizonResults,
         latestSelections,
+        ...(options.includeEventDetails ? { eventDetails } : {}),
         degree,
         warnings,
         reportLines,

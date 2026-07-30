@@ -162,12 +162,27 @@
                 <button class="btn btn-danger btn-compact" id="batchBacktestSp500TopMeanStopBtn" type="button" style="display:none">Stop</button>
                 <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanCopyBtn" type="button" disabled>Copy Result</button>
                 <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanCopyOpenScoreBtn" type="button" title="Copy the full-range and calendar-year OPEN_SCORE reports" disabled>Copy OPEN_SCORE</button>
+                <select class="param-input batch-open-score-details-selector" id="batchBacktestSp500TopMeanDetailsSelector" aria-label="OPEN_SCORE detail selector" disabled>
+                    <option value="TOP_MEAN" selected>TOP_MEAN</option>
+                    <option value="MAX_ACTIVE">MAX_ACTIVE</option>
+                    <option value="TOP_RAW">TOP_RAW</option>
+                    <option value="TOP_ADJUSTED">TOP_ADJUSTED</option>
+                    <option value="TOP_MEAN_TREND">TOP_MEAN_TREND</option>
+                    <option value="REGIME_MEAN">REGIME_MEAN</option>
+                    <option value="MAX_SUBMITTED">MAX_SUBMITTED</option>
+                    <option value="MAX_RETAINED">MAX_RETAINED</option>
+                    <option value="ACCELERATING">ACCELERATING</option>
+                    <option value="MAX_ACTIVE_REVERSION">MAX_ACTIVE_REVERSION</option>
+                    <option value="BOTTOM_MEAN">BOTTOM_MEAN</option>
+                </select>
+                <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanDetailsBtn" type="button" title="Show every OPEN_SCORE decision, selected asset, and realized selector performance. Details are excluded from Copy OPEN_SCORE." disabled>Show OPEN_SCORE Details</button>
                 <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanDownloadBtn" type="button" disabled>Download Result</button>
                 <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanCopyDiagnosticBtn" type="button" disabled>Copy Diagnostic</button>
             </div>
         </div>
         <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestSp500TopMeanCoverageSummary"></div>
         <div class="batch-miner-status" id="batchBacktestSp500TopMeanProgressText"></div>
+        <div class="batch-open-score-details" id="batchBacktestSp500TopMeanDetails" hidden></div>
         <div class="finder-list" id="batchBacktestSp500TopMeanResults"></div>
         <pre id="batchBacktestSp500TopMeanDiagnostic" hidden style="max-height:240px; overflow:auto; white-space:pre-wrap; font-size:11px; margin-top:8px;"></pre>
     </section>

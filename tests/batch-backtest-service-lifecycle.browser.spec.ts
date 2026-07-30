@@ -162,6 +162,8 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(() => s.bindEvents(dom)).to.not.throw();
         expect(dom.batchBacktestSp500TopMeanRunBtn, "TOP_MEAN run button present").to.not.equal(undefined);
         expect(dom.batchBacktestSp500TopMeanCopyOpenScoreBtn, "TOP_MEAN Copy OPEN_SCORE button present").to.not.equal(undefined);
+        expect(dom.batchBacktestSp500TopMeanDetailsSelector, "TOP_MEAN details selector present").to.not.equal(undefined);
+        expect(dom.batchBacktestSp500TopMeanDetailsBtn, "TOP_MEAN details button present").to.not.equal(undefined);
     });
 
     it("keeps TOP_MEAN OPEN_SCORE copy output separate from diagnostics", () => {
@@ -178,6 +180,96 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(svc().buildTopMeanOpenScoreText()).to.equal(result.reportLines.join("\n"));
         expect(svc().buildTopMeanOpenScoreText()).to.not.include("workerCount");
         expect(svc().buildTopMeanDiagnosticText()).to.include("workerCount");
+    });
+
+    it("shows per-event OPEN_SCORE details without adding them to copied reports", () => {
+        const dom = setupForAnalysis();
+        const result = topMeanResultFixture();
+        result.reportLines = ["OPEN_SCORE USD | SUMMARY ONLY"];
+        result.openScoreEventDetails = [
+            {
+                decisionTime: 1_700_000_000,
+                entryTime: 1_700_003_600,
+                exitTime: 1_700_176_400,
+                horizonBars: 48,
+                selector: "TOP_MEAN",
+                direction: "long",
+                asset: "TOP_MEAN_ONLY_ASSET",
+                selectedReturn: -0.2239,
+                controlReturn: -0.0162,
+                delta: -0.2077,
+                eligibleCandidates: 12,
+            },
+            {
+                decisionTime: 1_700_000_000,
+                entryTime: 1_700_003_600,
+                exitTime: 1_700_176_400,
+                horizonBars: 48,
+                selector: "MAX_ACTIVE",
+                direction: "long",
+                asset: "MAX_ACTIVE_ONLY_ASSET",
+                selectedReturn: 0.1455,
+                controlReturn: 0.0392,
+                delta: 0.1063,
+                eligibleCandidates: 12,
+            },
+        ];
+        svc().latestTopMeanResult = result;
+        svc().renderTopMeanResults(dom, result);
+
+        expect(dom.batchBacktestSp500TopMeanDetailsSelector.value).to.equal("TOP_MEAN");
+        expect(dom.batchBacktestSp500TopMeanDetailsSelector.disabled).to.equal(false);
+        expect(dom.batchBacktestSp500TopMeanDetailsBtn.disabled).to.equal(false);
+        expect(dom.batchBacktestSp500TopMeanDetails.hidden).to.equal(true);
+        svc().toggleSp500TopMeanOpenScoreDetails();
+        expect(dom.batchBacktestSp500TopMeanDetails.hidden).to.equal(false);
+        expect(dom.batchBacktestSp500TopMeanDetailsBtn.textContent).to.equal("Hide OPEN_SCORE Details");
+        expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.include("TOP_MEAN");
+        expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.include("TOP_MEAN_ONLY_ASSET");
+        expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.not.include("MAX_ACTIVE_ONLY_ASSET");
+        expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.include("-22.39%");
+        expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.include("-20.77%");
+        expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.include("2023-11-14 22:13:20");
+
+        dom.batchBacktestSp500TopMeanDetailsSelector.value = "MAX_ACTIVE";
+        dom.batchBacktestSp500TopMeanDetailsSelector.dispatchEvent({ type: "change" });
+        expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.include("MAX_ACTIVE_ONLY_ASSET");
+        expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.include("+14.55%");
+        expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.not.include("TOP_MEAN_ONLY_ASSET");
+
+        const copied = svc().buildTopMeanOpenScoreText();
+        expect(copied).to.equal("OPEN_SCORE USD | SUMMARY ONLY");
+        expect(copied).to.not.include("TOP_MEAN_ONLY_ASSET");
+        expect(copied).to.not.include("MAX_ACTIVE_ONLY_ASSET");
+        expect(copied).to.not.include("2023-11-14");
+    });
+
+    it("does not persist large OPEN_SCORE detail rows in localStorage", () => {
+        setupForAnalysis();
+        const result = topMeanResultFixture();
+        result.openScoreEventDetails = [{
+            selector: "TOP_MEAN",
+            asset: "DETAIL_ONLY_ASSET",
+        }];
+        result.annualReports = [{
+            year: 2026,
+            sampleFromSec: 1,
+            sampleToSec: 2,
+            horizons: [],
+            warnings: [],
+            reportLines: ["annual"],
+            eventDetails: [{
+                selector: "MAX_ACTIVE",
+                asset: "ANNUAL_DETAIL_ONLY",
+            }],
+        }];
+
+        svc().persistLatestTopMeanResult(result);
+
+        const stored = [...(globalThis as any).localStorage._store.values()].join("\n");
+        expect(stored).to.not.include("DETAIL_ONLY_ASSET");
+        expect(stored).to.not.include("ANNUAL_DETAIL_ONLY");
+        expect(stored).to.include("annual");
     });
 
     it("rejects TOP_MEAN coordinator while another Batch action is in flight", async () => {

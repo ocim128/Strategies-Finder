@@ -330,6 +330,82 @@
     white-space: nowrap;
 }
 
+.batch-open-score-details {
+    margin-top: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    background: hsl(var(--hsl-surface-3) / 0.45);
+}
+
+.batch-open-score-details-selector {
+    width: auto;
+    min-width: 13rem;
+    font-family: var(--font-family-mono);
+}
+
+.batch-open-score-details-heading {
+    color: var(--accent-color);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+}
+
+.batch-open-score-details-note {
+    margin-top: var(--space-1);
+    color: var(--text-tertiary);
+    font-size: var(--font-size-2xs);
+    line-height: 1.5;
+}
+
+.batch-open-score-details-empty {
+    margin-top: var(--space-3);
+    color: var(--text-tertiary);
+    font-size: var(--font-size-xs);
+}
+
+.batch-open-score-details-section {
+    margin-top: var(--space-3);
+}
+
+.batch-open-score-details-section > summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+}
+
+.batch-open-score-details-scroll {
+    max-height: 60vh;
+    margin-top: var(--space-2);
+    overflow: auto;
+}
+
+.batch-open-score-details-table {
+    width: 100%;
+    min-width: 1080px;
+    font-size: var(--font-size-2xs);
+    font-variant-numeric: tabular-nums;
+}
+
+.batch-open-score-details-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--surface-2, #1e222d);
+}
+
+.batch-open-score-details-table td {
+    white-space: nowrap;
+}
+
+.batch-open-score-details-table .is-positive {
+    color: var(--green);
+}
+
+.batch-open-score-details-table .is-negative {
+    color: var(--red);
+}
+
 /* ------------------------------------------------------------------
  * Run-state region (point 7)
  * One panel: state + pair progress on top, progress bar only while

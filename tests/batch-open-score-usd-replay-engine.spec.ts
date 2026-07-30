@@ -109,6 +109,63 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(result.eligibleEvents).to.equal(0);
     });
 
+    it("emits opt-in scalar selector details with exact event times and net returns", async () => {
+        const decision = T0 + 1000;
+        const markets = [
+            makeDirectMarket("AAA", [makeTrade("long", decision, null)]),
+            makeDirectMarket("BBB", [makeTrade("long", decision, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, (i) => 100 + i),
+            makeTarget("BBB", 10, (i) => 100 - i),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            {
+                horizons: [2],
+                slippageRate: 0,
+                commissionRate: 0,
+                blockCount: 1,
+                includeEventDetails: true,
+            },
+        );
+
+        const details = result.eventDetails ?? [];
+        expect(details.map((row) => row.selector)).to.include.members([
+            "TOP_RAW",
+            "TOP_ADJUSTED",
+            "TOP_MEAN",
+            "ACCELERATING",
+            "MAX_ACTIVE",
+            "MAX_SUBMITTED",
+            "MAX_RETAINED",
+        ]);
+        const topMean = details.find((row) => row.selector === "TOP_MEAN")!;
+        expect(topMean.decisionTime).to.equal(decision);
+        expect(topMean.entryTime).to.equal(T0 + 2000);
+        expect(topMean.exitTime).to.equal(T0 + 3000);
+        expect(topMean.horizonBars).to.equal(2);
+        expect(topMean.direction).to.equal("long");
+        expect(topMean.eligibleCandidates).to.equal(2);
+        const expectedReturn = topMean.asset === "AAA"
+            ? (103 - 102) / 102
+            : (97 - 98) / 98;
+        const expectedControl = topMean.asset === "AAA"
+            ? (97 - 98) / 98
+            : (103 - 102) / 102;
+        expect(topMean.selectedReturn).to.be.closeTo(expectedReturn, 1e-12);
+        expect(topMean.controlReturn).to.be.closeTo(expectedControl, 1e-12);
+        expect(topMean.delta).to.be.closeTo(expectedReturn - expectedControl, 1e-12);
+
+        const summaryOnly = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        expect(summaryOnly.eventDetails).to.equal(undefined);
+    });
+
     it("replays direct crypto markets as one-asset signals", async () => {
         const markets = [
             makeDirectMarket("AAA", [makeTrade("long", T0 + 1000, null)]),

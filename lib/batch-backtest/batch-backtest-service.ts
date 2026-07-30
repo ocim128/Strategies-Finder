@@ -65,6 +65,8 @@ import type { CoverageCounts } from "./sp500-pair-enumerator";
 import type { TopMeanResultSummary, TopMeanStatusResponse } from "./sp500-top-mean-coordinator-engine";
 import { formatTopMeanPerformanceLines } from "./sp500-top-mean-performance";
 import type {
+    OpenScoreUsdEventDetail,
+    OpenScoreUsdEventDetailSelector,
     OpenScoreUsdLatestSelections,
     OpenScoreUsdReplayResult,
 } from "./batch-open-score-usd-replay-engine";
@@ -356,6 +358,21 @@ export class BatchBacktestService {
         });
         dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.addEventListener("click", () => {
             void this.copySp500TopMeanOpenScoreResults();
+        });
+        dom.batchBacktestSp500TopMeanDetailsBtn.addEventListener("click", () => {
+            this.toggleSp500TopMeanOpenScoreDetails();
+        });
+        dom.batchBacktestSp500TopMeanDetailsSelector.addEventListener("change", () => {
+            if (
+                this.latestTopMeanResult
+                && !dom.batchBacktestSp500TopMeanDetails.hidden
+            ) {
+                dom.batchBacktestSp500TopMeanDetails.innerHTML =
+                    this.renderTopMeanOpenScoreEventDetails(
+                        this.latestTopMeanResult,
+                        this.getTopMeanOpenScoreDetailSelector(dom),
+                    );
+            }
         });
         dom.batchBacktestSp500TopMeanDownloadBtn.addEventListener("click", () => {
             void this.downloadSp500TopMeanResults();
@@ -2313,6 +2330,7 @@ export class BatchBacktestService {
         setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
         dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
         dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
+        this.resetTopMeanOpenScoreDetails(dom);
         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
 
         dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML = "";
@@ -2400,6 +2418,7 @@ export class BatchBacktestService {
                             this.latestTopMeanResult = null;
                             dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
                             dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
+                            this.resetTopMeanOpenScoreDetails(dom);
                             dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
                             dom.batchBacktestSp500TopMeanProgressText.textContent = "TOP_MEAN run stopped.";
                             this.activeTopMeanRunId = null;
@@ -2641,12 +2660,25 @@ export class BatchBacktestService {
             }
         }
         dom.batchBacktestSp500TopMeanResults.innerHTML = html;
+        this.syncTopMeanOpenScoreDetailsControl(dom, summary);
     }
 
     private persistLatestTopMeanResult(result: TopMeanResultSummary): void {
+        const {
+            openScoreEventDetails: _openScoreEventDetails,
+            annualReports,
+            ...persistedResult
+        } = result;
+        const persistedAnnualReports = annualReports?.map((annual) => {
+            const { eventDetails: _eventDetails, ...persistedAnnual } = annual;
+            return persistedAnnual;
+        });
         writePersistedJson({
             ...TOP_MEAN_LATEST_RESULT_STORAGE,
-            data: result,
+            data: {
+                ...persistedResult,
+                ...(persistedAnnualReports ? { annualReports: persistedAnnualReports } : {}),
+            },
             onError: (error) => debugLogger.warn("sp500_top_mean.latest_result_save_failed", {
                 error: error instanceof Error ? error.message : String(error),
             }),
@@ -2694,6 +2726,123 @@ export class BatchBacktestService {
             !Array.isArray(result.reportLines) || result.reportLines.length === 0;
         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
         dom.batchBacktestSp500TopMeanProgressText.textContent = "Restored completed TOP_MEAN result.";
+    }
+
+    private resetTopMeanOpenScoreDetails(dom: BatchBacktestDom): void {
+        dom.batchBacktestSp500TopMeanDetailsSelector.disabled = true;
+        dom.batchBacktestSp500TopMeanDetailsBtn.disabled = true;
+        dom.batchBacktestSp500TopMeanDetailsBtn.textContent = "Show OPEN_SCORE Details";
+        dom.batchBacktestSp500TopMeanDetails.hidden = true;
+        dom.batchBacktestSp500TopMeanDetails.innerHTML = "";
+    }
+
+    private syncTopMeanOpenScoreDetailsControl(
+        dom: BatchBacktestDom,
+        summary: TopMeanResultSummary,
+    ): void {
+        const annualHasDetails = summary.annualReports?.some(
+            (annual) => Array.isArray(annual.eventDetails) && annual.eventDetails.length > 0,
+        ) === true;
+        const fullRangeHasDetails =
+            Array.isArray(summary.openScoreEventDetails)
+            && summary.openScoreEventDetails.length > 0;
+        dom.batchBacktestSp500TopMeanDetailsBtn.disabled =
+            !annualHasDetails && !fullRangeHasDetails;
+        dom.batchBacktestSp500TopMeanDetailsSelector.disabled =
+            !annualHasDetails && !fullRangeHasDetails;
+        dom.batchBacktestSp500TopMeanDetailsBtn.textContent = "Show OPEN_SCORE Details";
+        dom.batchBacktestSp500TopMeanDetails.hidden = true;
+        dom.batchBacktestSp500TopMeanDetails.innerHTML = "";
+    }
+
+    private toggleSp500TopMeanOpenScoreDetails(): void {
+        const dom = this.getDom();
+        if (!this.latestTopMeanResult || dom.batchBacktestSp500TopMeanDetailsBtn.disabled) {
+            return;
+        }
+        const show = dom.batchBacktestSp500TopMeanDetails.hidden;
+        dom.batchBacktestSp500TopMeanDetails.hidden = !show;
+        dom.batchBacktestSp500TopMeanDetailsBtn.textContent = show
+            ? "Hide OPEN_SCORE Details"
+            : "Show OPEN_SCORE Details";
+        if (show && !dom.batchBacktestSp500TopMeanDetails.innerHTML) {
+            dom.batchBacktestSp500TopMeanDetails.innerHTML =
+                this.renderTopMeanOpenScoreEventDetails(
+                    this.latestTopMeanResult,
+                    this.getTopMeanOpenScoreDetailSelector(dom),
+                );
+        }
+    }
+
+    private getTopMeanOpenScoreDetailSelector(
+        dom: BatchBacktestDom,
+    ): OpenScoreUsdEventDetailSelector {
+        return (dom.batchBacktestSp500TopMeanDetailsSelector.value || "TOP_MEAN") as
+            OpenScoreUsdEventDetailSelector;
+    }
+
+    private renderTopMeanOpenScoreEventDetails(
+        summary: TopMeanResultSummary,
+        selector: OpenScoreUsdEventDetailSelector,
+    ): string {
+        const annualReports = summary.annualReports ?? [];
+        const hasAnnualDetailData = annualReports.some(
+            (annual) => Array.isArray(annual.eventDetails) && annual.eventDetails.length > 0,
+        );
+        const annualSections = annualReports
+            .map((annual) => ({
+                label: `Calendar Year ${annual.year}`,
+                rows: (annual.eventDetails ?? []).filter((row) => row.selector === selector),
+            }))
+            .filter((section) => section.rows.length > 0);
+        const sections = hasAnnualDetailData
+            ? annualSections
+            : [{
+                label: "Selected Window",
+                rows: (summary.openScoreEventDetails ?? []).filter(
+                    (row) => row.selector === selector,
+                ),
+            }];
+        let html = `<div class="batch-open-score-details-heading">OPEN_SCORE Event Details — ${escapeHtml(selector)}</div>`;
+        html += `<div class="batch-open-score-details-note">Showing ${escapeHtml(selector)} only. Return is the selected asset's net USD return after configured slippage and commission; control is the mean return of the other eligible assets in that selector's pool. These rows are intentionally excluded from Copy OPEN_SCORE and Copy Result.</div>`;
+        if (sections.length === 0 || sections.every((section) => section.rows.length === 0)) {
+            html += `<div class="batch-open-score-details-empty">No eligible ${escapeHtml(selector)} events for this replay window.</div>`;
+            return html;
+        }
+        for (const section of sections) {
+            html += `<details open class="batch-open-score-details-section">`;
+            html += `<summary>${escapeHtml(section.label)} | ${escapeHtml(section.rows.length.toLocaleString())} selector rows</summary>`;
+            html += `<div class="batch-open-score-details-scroll"><table class="finder-table batch-open-score-details-table">`;
+            html += `<thead><tr><th>Decision UTC</th><th>Entry UTC</th><th>Exit UTC</th><th>Horizon</th><th>Selector</th><th>Side</th><th>Asset</th><th>Return</th><th>Control</th><th>Delta</th><th>Pool</th></tr></thead><tbody>`;
+            for (const row of section.rows) {
+                html += this.renderTopMeanOpenScoreEventDetailRow(row);
+            }
+            html += `</tbody></table></div></details>`;
+        }
+        return html;
+    }
+
+    private renderTopMeanOpenScoreEventDetailRow(row: OpenScoreUsdEventDetail): string {
+        const formatTime = (timeSec: number): string =>
+            new Date(timeSec * 1000).toISOString().slice(0, 19).replace("T", " ");
+        const formatReturn = (value: number): string =>
+            `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
+        const sideClass = row.direction === "long" ? "is-positive" : "is-negative";
+        const returnClass = row.selectedReturn >= 0 ? "is-positive" : "is-negative";
+        const deltaClass = row.delta >= 0 ? "is-positive" : "is-negative";
+        return `<tr>` +
+            `<td>${escapeHtml(formatTime(row.decisionTime))}</td>` +
+            `<td>${escapeHtml(formatTime(row.entryTime))}</td>` +
+            `<td>${escapeHtml(formatTime(row.exitTime))}</td>` +
+            `<td>${escapeHtml(row.horizonBars)}</td>` +
+            `<td><strong>${escapeHtml(row.selector)}</strong></td>` +
+            `<td class="${sideClass}">${escapeHtml(row.direction.toUpperCase())}</td>` +
+            `<td><strong>${escapeHtml(row.asset)}</strong></td>` +
+            `<td class="${returnClass}">${escapeHtml(formatReturn(row.selectedReturn))}</td>` +
+            `<td>${escapeHtml(formatReturn(row.controlReturn))}</td>` +
+            `<td class="${deltaClass}">${escapeHtml(formatReturn(row.delta))}</td>` +
+            `<td>${escapeHtml(row.eligibleCandidates)}</td>` +
+            `</tr>`;
     }
 
     /**

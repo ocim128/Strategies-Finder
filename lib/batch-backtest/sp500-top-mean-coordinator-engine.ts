@@ -30,6 +30,7 @@ import {
 import {
     runOpenScoreUsdReplay,
     type OpenScoreUsdReplayResult,
+    type OpenScoreUsdEventDetail,
     type OpenScoreUsdLatestSelections,
     type AssetSelectionSummary,
     type ReplayComparison,
@@ -82,6 +83,7 @@ export interface TopMeanAnnualReplayWindow {
 
 export interface TopMeanAnnualReplaySummary extends TopMeanAnnualReplayWindow {
     horizons: TopMeanHorizonSummary[];
+    eventDetails?: OpenScoreUsdEventDetail[];
     warnings: string[];
     reportLines: string[];
 }
@@ -93,6 +95,8 @@ export interface TopMeanResultSummary {
     horizons: TopMeanHorizonSummary[];
     /** Calendar-year OPEN_SCORE USD reports clipped to the selected From/To range. */
     annualReports?: TopMeanAnnualReplaySummary[];
+    /** Full selected-window scalar rows for the on-demand OPEN_SCORE details UI. */
+    openScoreEventDetails?: OpenScoreUsdEventDetail[];
     warnings: string[];
     reportLines: string[];
     /** Latest-event picks for the useful OPEN_SCORE selector arms. */
@@ -597,6 +601,7 @@ export class TopMeanCoordinatorEngine {
                         interval: this._request.interval,
                         slippageRate,
                         commissionRate,
+                        includeEventDetails: true,
                         shouldStop: () => this.isStopped,
                         onPhase: (phase) => {
                             if (phase === activeReplayPhase) return;
@@ -654,6 +659,7 @@ export class TopMeanCoordinatorEngine {
                 annualReports.push({
                     ...window,
                     horizons: buildHorizonSummaries(annualResult),
+                    eventDetails: annualResult.eventDetails,
                     warnings: annualResult.warnings,
                     reportLines: annualResult.reportLines,
                 });
@@ -695,6 +701,7 @@ export class TopMeanCoordinatorEngine {
                 counts: this.counts,
                 horizons: horizonSummaries,
                 annualReports,
+                openScoreEventDetails: replayResult.eventDetails,
                 warnings: replayResult.warnings,
                 reportLines: [...replayResult.reportLines, ...annualReportLines, "", ...performanceLines],
                 latestSelections: replayResult.latestSelections,
