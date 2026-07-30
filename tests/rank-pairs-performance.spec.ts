@@ -61,4 +61,38 @@ describe("rank-pairs performance diagnostics", () => {
             pairMisses: 5,
         });
     });
+
+    it("labels concurrent worker timings as totals instead of wall-time shares", () => {
+        const diagnostics: RankPairsPerformanceDiagnostics = {
+            totalPairs: 6,
+            processedPairs: 6,
+            renderedPairs: 6,
+            totalBars: 1_200,
+            elapsedMs: 1_600,
+            workerConcurrency: 6,
+            timingsMs: {
+                parseInput: 0,
+                prepareRelationships: 0,
+                load: 4_800,
+                classify: 6,
+                liveRender: 0,
+                progress: 2,
+                yield: 0,
+                sort: 1,
+                finalRender: 0,
+            },
+            cacheDelta: {
+                legHits: 0,
+                legMisses: 0,
+                pairHits: 0,
+                pairMisses: 0,
+            },
+        };
+
+        const output = formatRankPairsPerformanceDiagnostics(diagnostics);
+
+        expect(output).to.include("workers 6");
+        expect(output).to.include("load 4.80s worker total (800.0ms/pair avg)");
+        expect(output).to.not.include("load 4.80s (300.0%)");
+    });
 });

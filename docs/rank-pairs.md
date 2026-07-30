@@ -1,15 +1,17 @@
 # Rank Pairs
 
-Rank Pairs classifies the regime of each synthetic pair's ratio path. It is a
-browser-only, lazy-initialized research tab (registered in `lib/app-bootstrap.ts`).
+Rank Pairs classifies the regime of each synthetic pair's ratio path. The tab
+is lazy-initialized in the browser, while the Vite server owns each run so work
+continues through a page reload.
 
 - Markup source: `html-partials/tab-rank-pairs.html`
 - Structural DOM contract: `lib/rank-pairs/rank-pairs-dom.ts`
 - Pure classifier: `lib/rank-pairs/pair-regime-classifier.ts`
 - Latest-200 classifier: `lib/rank-pairs/recent-pair-classifier.ts`
 - UI service: `lib/rank-pairs/rank-pairs-service.ts`
-- Full History datasets load through the shared Batch loader
-  (`loadBatchDataset`). Latest 200 Bars uses a Rank-only compact leg cache and
+- Server plugin: `lib/rank-pairs/server/rank-pairs-vite-plugin.ts`
+- Full History datasets load through the shared server Batch loader.
+  Latest 200 Bars uses a Rank-only compact leg cache and
   reverse aligned-close builder that stops after 200 target buckets; if the
   shallow window cannot produce 200 aligned bars, it retries at the Batch
   loader's full source depth.
@@ -149,23 +151,39 @@ reason code (`OK`, `INSUFFICIENT_ANCHORS`, `INVALID_TIME`, `NO_VALID_CLOSES`,
 
 ### Diagnostics
 
-Each run shows a performance line and emits one `rank_pairs.run_complete` debug
-event (via `debugLogger`). Diagnostics separate dataset load/build,
-classification, live DOM, progress, task yielding, sorting, and final DOM time;
-they also include throughput, bars materialized, and cache deltas. No candles
-and no per-pair events are logged.
+Each run shows a performance line and emits one
+`rank_pairs.server.run_complete` debug event (via `debugLogger`). Diagnostics
+separate server dataset loading/building, classification, progress writing,
+sorting, and cache activity; they also include throughput and bars
+materialized. Load and classification are summed worker time with per-pair
+averages, not misleading wall-time percentages when workers overlap. No
+candles and no per-pair events cross the browser connection.
 
-For large universes, the browser renders and retains only the top 2,000 sorted
-rows. After a completed run, the full scalar Copy Results rows are formatted
-and written to IndexedDB in 1,000-line chunks; OHLCV is never stored in this
-snapshot. The in-memory 124,000+ result array is then released.
+The browser submits one run id and receives throttled NDJSON progress. The
+server retains scalar results only, sorts them at the terminal boundary, and
+sends at most the top 2,000 rows back for rendering. The full sorted Copy
+Results text is streamed to a temporary server-side file; it is fetched and
+materialized in the browser only when **Copy Results** is clicked. This keeps a
+124,000+ row result out of browser state and DOM.
 
-The latest completed snapshot survives page reload. Opening Rank Pairs restores
-its summary, performance diagnostics, mode, and bounded preview without loading
-the full result. The complete text is materialized only when **Copy Results**
-is clicked. A new snapshot replaces the previous generation only after all new
-chunks commit, so an interrupted or quota-failed save leaves the prior
-completed snapshot recoverable.
+**Stop** is scoped to the active run id. It aborts in-flight data loads, waits
+for the workers to leave their current items, then sorts and saves every fully
+classified row as a valid partial result. Copy Results therefore remains valid
+after a stopped run; an item interrupted during loading/classification is
+excluded rather than serialized incompletely.
+
+The browser persists the active run id before starting the request. After a
+reload, opening Rank Pairs polls `/api/rank-pairs/status` and reattaches to the
+same server job. A running status contains counts only; a terminal status
+restores the bounded preview, summary, diagnostics, and Copy capability.
+Completed and stopped results can also be restored without an active-run
+marker by reading the latest retained server status. Retention survives browser
+reloads while the same Vite process remains alive; restarting the Vite server
+removes that server-owned recovery boundary. A new Run replaces the prior Copy
+artifact, and startup cleanup reclaims only artifacts stamped with a provably
+dead owning process; a live sibling Vite process is never swept. Older browser
+IndexedDB snapshots remain a fallback for results created before the
+server-owned path.
 
 ## Limitations
 

@@ -1,79 +1,75 @@
 /**
- * Rank Pairs UI service.
+ * Rank Pairs browser control + rendering service.
  *
- * Lazy-initialized like the other strategy panel services (see
- * `lib/batch-backtest/batch-backtest-service.ts`). Binds the tab's buttons,
- * reads the CURRENT chart interval once per run, fetches each pair's OHLCV via
- * the shared batch loader (so shared synthetic legs are deduped), and
- * classifies each pair with either the full-history regime classifier or the
- * latest-200 chart-shape classifier selected in the tab.
- *
- * Output rows mirror Batch Backtest's `finder-symbol-row` shape with a regime
- * badge + pipe-formatted evidence, so a Rank run reads the same as a Batch run.
- *
- * ⚠ Research only: the regime label spans a multiyear historical window and has
- * lookahead bias. Surfaced in the tab's hint banner.
+ * The Vite server owns loading, classification, cancellation, sorting, and
+ * full Copy Results retention. The browser sends one run request, consumes
+ * bounded progress events, renders at most 2,000 terminal preview rows, and
+ * reattaches through /status after a page reload.
  */
 
-import { state } from "../state";
-import { setVisible } from "../dom-utils";
-import { debugLogger } from "../debug-logger";
-import { createTaskYielder } from "../task-yield";
 import { parseBatchSymbols } from "../batch-backtest/batch-backtest-runner";
+import { debugLogger } from "../debug-logger";
+import { setVisible } from "../dom-utils";
+import { consumeNdjsonStream } from "../ndjson-stream";
+import { readPersistedJson, writePersistedJson } from "../persisted-json";
+import { state } from "../state";
 import {
-    getBatchDatasetCacheStats,
-    loadBatchDataset,
-} from "../batch-backtest/batch-backtest-loader";
-import { createRankPairsDom, type RankPairsDom } from "./rank-pairs-dom";
-import {
-    buildRankPairsCacheDelta,
-    createRankPairsPerformanceTimings,
-    formatRankPairsPerformanceDiagnostics,
-    nowRankPairsMs,
-    type RankPairsPerformanceDiagnostics,
-    type RankPairsPerformanceTimings,
-} from "./rank-pairs-performance";
-import {
-    getRankPairsRecentLoaderStats,
-    loadRecentRankPairDataset,
-} from "./rank-pairs-recent-loader";
-import {
-    loadLatestRankPairsResultSnapshot,
-    loadRankPairsSnapshotCopyText,
-    saveLatestRankPairsResultSnapshot,
-    type RankPairsResultSnapshot,
-} from "./rank-pairs-result-store";
-import type { OHLCVData } from "../types/strategies";
-import {
-    classifyPairRegime,
-    comparePairRegimeResults,
     formatAsOf,
     formatFixed,
     formatPercent,
     type PairDirection,
     type PairRegimeResult,
-    type PairStructure,
 } from "./pair-regime-classifier";
+import { createRankPairsDom, type RankPairsDom } from "./rank-pairs-dom";
+import { prepareRankPairRelationships } from "./rank-pairs-input";
 import {
-    classifyRecentPair,
-    compareRecentPairResults,
+    formatRankPairsPerformanceDiagnostics,
+    type RankPairsPerformanceDiagnostics,
+} from "./rank-pairs-performance";
+import {
+    formatCopyText,
+    formatRecentCopyText,
+    isRecentRankResult,
+} from "./rank-pairs-result-format";
+import {
+    loadLatestRankPairsResultSnapshot,
+    loadRankPairsSnapshotCopyText,
+    type RankPairsResultSnapshot,
+} from "./rank-pairs-result-store";
+import {
     formatRecentPairMetrics,
     type RecentPairResult,
-    type RecentPairType,
 } from "./recent-pair-classifier";
+import type {
+    RankPairsRunStatusSnapshot,
+    RankPairsStreamEvent,
+} from "./server/rank-pairs-server-types";
+
+export {
+    COPY_COLUMNS,
+    COPY_HEADER,
+    formatCopyText,
+    formatOverallSummary,
+    formatRecentCopyText,
+    formatRecentOverallSummary,
+    RECENT_COPY_COLUMNS,
+    RECENT_COPY_HEADER,
+} from "./rank-pairs-result-format";
+export {
+    prepareRankPairRelationships,
+    type PreparedRankPairRelationships,
+} from "./rank-pairs-input";
 
 export type RankPairsMode = "history" | "recent200";
 export const RANK_PAIRS_RENDER_LIMIT = 2_000;
-/**
- * Max concurrent pair loads. Synthetic legs are promise-deduped by the shared
- * leg caches, so concurrent dispatch of pairs that share a leg pays one fetch;
- * this bounds the in-flight request count without changing cache semantics.
- */
-const RANK_PAIRS_CONCURRENCY = 12;
 
-/** A ranked pair row. Exported for service-level copy/summary tests. */
+const ACTIVE_RUN_STORAGE = {
+    key: "playground_rank_pairs_active_server_run",
+    schema: "rank_pairs.active_server_run",
+    version: 1,
+} as const;
+
 export interface RankResult {
-    /** Discriminant. Always "history" — set by the service on construction. */
     kind: "history";
     symbol: string;
     regime: PairRegimeResult;
@@ -81,9 +77,7 @@ export interface RankResult {
     error?: string;
 }
 
-/** A latest-200 chart-shape row. */
 export interface RecentRankResult {
-    /** Discriminant. Always "recent" — set by the service on construction. */
     kind: "recent";
     symbol: string;
     recent: RecentPairResult;
@@ -99,45 +93,6 @@ export function limitRankPairResultsForDisplay<T>(results: readonly T[]): readon
         : results;
 }
 
-export interface PreparedRankPairRelationships {
-    symbols: string[];
-    reciprocalDuplicates: number;
-    selfPairs: number;
-}
-
-/** Keep one orientation per relationship and discard meaningless A+A pairs. */
-export function prepareRankPairRelationships(
-    symbols: string[],
-): PreparedRankPairRelationships {
-    const seen = new Set<string>();
-    const unique: string[] = [];
-    let reciprocalDuplicates = 0;
-    let selfPairs = 0;
-    for (const symbol of symbols) {
-        const plus = symbol.indexOf("+");
-        const base = plus > 0 ? symbol.slice(0, plus).trim() : "";
-        const quote = plus > 0 ? symbol.slice(plus + 1).trim() : "";
-        if (base && quote && base.toUpperCase() === quote.toUpperCase()) {
-            selfPairs += 1;
-            continue;
-        }
-        const key = base && quote
-            ? [base.toUpperCase(), quote.toUpperCase()].sort().join("+")
-            : symbol.toUpperCase();
-        if (seen.has(key)) {
-            reciprocalDuplicates += 1;
-            continue;
-        }
-        seen.add(key);
-        unique.push(symbol);
-    }
-    return { symbols: unique, reciprocalDuplicates, selfPairs };
-}
-
-const DIRECTION_ORDER: PairDirection[] = ["BASE", "NEUTRAL", "QUOTE", "THIN"];
-
-// Reuse Batch Backtest / Finder verdict CSS classes (single hyphen) so the
-// badges pick up the existing palette without new styles.
 const DIRECTION_CSS: Record<PairDirection, string> = {
     BASE: "finder-verdict-strong",
     NEUTRAL: "finder-verdict-marginal",
@@ -152,220 +107,28 @@ function badgeCssFor(result: RankResult): string {
     return FAILED_CSS;
 }
 
-/** Badge label. Exported for service tests. */
 export function badgeLabelFor(result: RankResult): string {
     if (result.status === "ok") return result.regime.label;
-    if (result.status === "no_data") {
-        // Surface the actual reason (INSUFFICIENT_ANCHORS, ZERO_VARIANCE, …)
-        // rather than masking every no-data row as an identical THIN / THIN.
-        return `THIN (${result.regime.reason})`;
-    }
+    if (result.status === "no_data") return `THIN (${result.regime.reason})`;
     return "FAIL";
 }
 
 function formatResultRowPipe(result: RankResult): string {
     if (result.status !== "ok") {
-        // Distinguish a load failure from an insufficient-coverage no-data row.
         return result.status === "failed"
             ? `failed: ${result.error ?? "unknown"}`
             : `no data: ${result.regime.reason}`;
     }
-    const m = result.regime.metrics;
-    const recentDir = m.hasRecentWindow
-        ? formatFixed(m.recentNormalizedDrift, 2)
-        : "n/a";
-    const parts = [
-        `Slope ${formatPercent(m.annualizedSlope)}`,
-        `Vol ${formatPercent(m.annualizedVolatility)}`,
-        `Eff ${formatFixed(m.pathEfficiency, 2)}`,
-        `Rev ${formatFixed(m.reversalRate, 2)}`,
-        `Recent ${recentDir}`,
-        `Anchors ${m.anchorCount}`,
-        `asOf ${formatAsOf(m.asOf)}`,
-    ];
-    return parts.join(" | ");
-}
-
-/** Summary line. Exported for service tests. */
-export function formatOverallSummary(results: RankResult[]): string {
-    // Only genuinely-classified (status "ok") pairs contribute to direction and
-    // structure counts. no_data and failed rows are tracked separately so they
-    // are never double-counted as THIN.
-    const ok = results.filter((r) => r.status === "ok");
-    const dirCounts: Record<PairDirection, number> = { BASE: 0, NEUTRAL: 0, QUOTE: 0, THIN: 0 };
-    const structCounts: Record<PairStructure, number> = {
-        TREND: 0, OSCILLATING: 0, TRANSITION: 0, REVERSAL: 0, MIXED: 0, THIN: 0,
-    };
-    for (const r of ok) {
-        dirCounts[r.regime.direction] += 1;
-        structCounts[r.regime.structure] += 1;
-    }
-    const noData = results.filter((r) => r.status === "no_data").length;
-    const failed = results.filter((r) => r.status === "failed").length;
-    const parts = [`Pairs ${results.length}`];
-    for (const d of DIRECTION_ORDER) {
-        parts.push(`${d} ${dirCounts[d]}`);
-    }
-    // Structure counts (display order mirrors the sort group order).
-    parts.push(
-        `TREND ${structCounts.TREND}`,
-        `OSC ${structCounts.OSCILLATING}`,
-        `TRANS ${structCounts.TRANSITION}`,
-        `REV ${structCounts.REVERSAL}`,
-        `MIXED ${structCounts.MIXED}`,
-    );
-    parts.push(`NODATA ${noData}`, `FAILED ${failed}`);
-    return parts.join(" | ");
-}
-
-export const COPY_HEADER = "RANK_PAIRS_V2";
-export const COPY_COLUMNS = [
-    "PAIR",
-    "STATUS",
-    "DIRECTION",
-    "STRUCTURE",
-    "LABEL",
-    "REASON",
-    "ERROR",
-    "RATIO_RET",
-    "LOG_RET",
-    "ANN_SLOPE",
-    "ANN_VOL",
-    "NORM_DRIFT",
-    "PATH_EFF",
-    "REVERSAL_RATE",
-    "HAS_RECENT",
-    "RECENT_DRIFT",
-    "RECENT_EFF",
-    "ENDPOINT_RATIO",
-    "IN_BAND",
-    "ANCHORS",
-    "BARS",
-    "ELAPSED_DAYS",
-    "AS_OF",
-];
-
-function scalarRow(result: RankResult): string {
-    const m = result.regime.metrics;
-    const fields = [
-        result.symbol,
-        result.status,
-        result.regime.direction,
-        result.regime.structure,
-        result.regime.label,
-        result.regime.reason,
-        result.error ?? "",
-        formatPercent(m.ratioReturn),
-        formatFixed(m.logReturn, 4),
-        formatPercent(m.annualizedSlope),
-        formatPercent(m.annualizedVolatility),
-        formatFixed(m.normalizedDrift, 3),
-        formatFixed(m.pathEfficiency, 3),
-        formatFixed(m.reversalRate, 3),
-        m.hasRecentWindow ? "yes" : "no",
-        formatFixed(m.recentNormalizedDrift, 3),
-        formatFixed(m.recentPathEfficiency, 3),
-        formatFixed(m.endpointRatio, 4),
-        m.endpointInsideBand === null ? "n/a" : m.endpointInsideBand ? "yes" : "no",
-        String(m.anchorCount),
-        String(m.barCount),
-        formatFixed(m.elapsedDays, 0),
-        formatAsOf(m.asOf),
-    ];
-    return fields.join(" | ");
-}
-
-/** Copy-Results text. Exported for service tests. */
-export function formatCopyText(results: RankResult[]): string {
-    // Deterministic copy ordering mirrors the rendered list: regime group order
-    // with within-group tie-breaks, failed/no-data rows last by symbol.
-    const ranked = results
-        .map((r, idx) => ({ r, idx }))
-        .sort((a, b) => compareRankResultsForDisplay(a.r, b.r, a.idx, b.idx));
-    const lines = [COPY_HEADER, COPY_COLUMNS.join(" | ")];
-    for (const { r } of ranked) lines.push(scalarRow(r));
-    return lines.join("\n");
-}
-
-export const RECENT_COPY_HEADER = "RANK_PAIRS_RECENT_200_V1";
-export const RECENT_COPY_COLUMNS = [
-    "PAIR",
-    "STATUS",
-    "TYPE",
-    "DIRECTION",
-    "LABEL",
-    "REASON",
-    "ERROR",
-    "RATIO_RET",
-    "LOG_RET",
-    "PATH_EFF",
-    "REVERSAL_RATE",
-    "VOL_RATIO",
-    "BASELINE_TREND",
-    "RECENT_TREND",
-    "LEVEL_SHIFT_SIGMA",
-    "BARS",
-    "AS_OF",
-];
-
-const RECENT_TYPE_ORDER: RecentPairType[] = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
-
-/** Latest-200 summary line. */
-export function formatRecentOverallSummary(results: RecentRankResult[]): string {
-    const counts = Object.fromEntries(
-        RECENT_TYPE_ORDER.map((type) => [type, 0]),
-    ) as Record<RecentPairType, number>;
-    let failed = 0;
-    for (const result of results) {
-        if (result.status === "failed") failed += 1;
-        else counts[result.recent.type] += 1;
-    }
-    const parts = [`Pairs ${results.length}`];
-    for (const type of RECENT_TYPE_ORDER) parts.push(`TYPE ${type} ${counts[type]}`);
-    parts.push(`FAILED ${failed}`);
-    return parts.join(" | ");
-}
-
-function recentScalarRow(result: RecentRankResult): string {
-    const m = result.recent.metrics;
+    const metrics = result.regime.metrics;
     return [
-        result.symbol,
-        result.status,
-        result.recent.type,
-        result.recent.direction,
-        result.recent.label,
-        result.recent.reason,
-        result.error ?? "",
-        formatPercent(m.ratioReturn),
-        formatFixed(m.logReturn, 4),
-        formatFixed(m.pathEfficiency, 3),
-        formatFixed(m.reversalRate, 3),
-        formatFixed(m.volatilityRatio, 3),
-        formatFixed(m.baselineTrendStrength, 3),
-        formatFixed(m.recentTrendStrength, 3),
-        formatFixed(m.levelShiftSigma, 3),
-        String(m.barCount),
-        formatAsOf(m.asOf),
+        `Slope ${formatPercent(metrics.annualizedSlope)}`,
+        `Vol ${formatPercent(metrics.annualizedVolatility)}`,
+        `Eff ${formatFixed(metrics.pathEfficiency, 2)}`,
+        `Rev ${formatFixed(metrics.reversalRate, 2)}`,
+        `Recent ${metrics.hasRecentWindow ? formatFixed(metrics.recentNormalizedDrift, 2) : "n/a"}`,
+        `Anchors ${metrics.anchorCount}`,
+        `asOf ${formatAsOf(metrics.asOf)}`,
     ].join(" | ");
-}
-
-/** Latest-200 Copy Results contract. */
-export function formatRecentCopyText(results: RecentRankResult[]): string {
-    const ranked = results
-        .map((result, index) => ({ result, index }))
-        .sort((a, b) => {
-            const cmp = compareRecentPairResults(a.result.recent, b.result.recent);
-            return cmp !== 0 ? cmp : a.index - b.index;
-        });
-    return [
-        RECENT_COPY_HEADER,
-        RECENT_COPY_COLUMNS.join(" | "),
-        ...ranked.map(({ result }) => recentScalarRow(result)),
-    ].join("\n");
-}
-
-function isRecentRankResult(result: AnyRankResult): result is RecentRankResult {
-    return result.kind === "recent";
 }
 
 function recentBadgeCssFor(result: RecentRankResult): string {
@@ -374,102 +137,56 @@ function recentBadgeCssFor(result: RecentRankResult): string {
     return DIRECTION_CSS[result.recent.direction];
 }
 
-/** Latest-200 badge label. */
 export function recentBadgeLabelFor(result: RecentRankResult): string {
     if (result.status === "ok") return result.recent.label;
     if (result.status === "no_data") return `TYPE J — THIN (${result.recent.reason})`;
     return "FAIL";
 }
 
-/**
- * Display comparator wrapping the pure regime comparator. Failed/no-data rows
- * sort after every regime result (they fall into the THIN group), with stable
- * input order as the fallback so streaming order is preserved among ties.
- */
-function compareRankResultsForDisplay(
-    a: RankResult,
-    b: RankResult,
-    aIdx: number,
-    bIdx: number,
-): number {
-    const cmp = comparePairRegimeResults(a.regime, b.regime);
-    if (cmp !== 0) return cmp;
-    return aIdx - bIdx;
-}
-
-function compareAnyResultsForDisplay(
-    a: AnyRankResult,
-    b: AnyRankResult,
-    aIdx: number,
-    bIdx: number,
-    mode: RankPairsMode,
-): number {
-    if (mode === "recent200" && isRecentRankResult(a) && isRecentRankResult(b)) {
-        const cmp = compareRecentPairResults(a.recent, b.recent);
-        return cmp !== 0 ? cmp : aIdx - bIdx;
-    }
-    if (!isRecentRankResult(a) && !isRecentRankResult(b)) {
-        return compareRankResultsForDisplay(a, b, aIdx, bIdx);
-    }
-    return aIdx - bIdx;
-}
-
 class RankPairsService {
     private dom: RankPairsDom | null = null;
     private initialized = false;
-    private cancelled = false;
     private lastResults: AnyRankResult[] = [];
     private lastResultCount = 0;
     private lastSummaryText = "";
     private lastMode: RankPairsMode = "history";
-    private lastDiagnostics: RankPairsPerformanceDiagnostics | null = null;
     private lastSnapshot: RankPairsResultSnapshot<AnyRankResult> | null = null;
-    private resultViewVersion = 0;
-    // Debounce timer for the textarea summary update — parseBatchSymbols is
-    // O(n) over the full textarea and must not run on every keystroke when a
-    // user is editing a large pair list. clearStaleResults stays immediate.
-    private summaryDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-    // Monotonic run token — see BatchBacktestService for the rationale:
-    // a stale run that resumes after a newer run started sees its token as
-    // stale and stops writing DOM/state.
+    private serverResultRunId: string | null = null;
+    private activeServerRunId: string | null = null;
+    private serverRunActive = false;
+    private serverCopyAvailable = false;
+    private runInFlight = false;
     private runToken = 0;
-    private abortController: AbortController | null = null;
+    private resultViewVersion = 0;
+    private reattachGeneration = 0;
+    private summaryDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     private getDom(): RankPairsDom {
         return this.dom ??= createRankPairsDom();
     }
 
     public init(): void {
-        if (this.initialized) {
-            return;
-        }
+        if (this.initialized) return;
         const dom = this.getDom();
         this.bindEvents(dom);
         this.updateSummary(dom);
         this.resetProgress(dom);
         this.initialized = true;
-        const resultViewVersion = this.resultViewVersion;
-        void this.restoreLastResult(dom, resultViewVersion);
+        this.activeServerRunId = this.loadPersistedActiveServerRun();
+        this.serverRunActive = this.activeServerRunId !== null;
+        const viewVersion = this.resultViewVersion;
+        void this.restoreInitialResult(dom, viewVersion);
     }
 
     private bindEvents(dom: RankPairsDom): void {
-        dom.rankPairsRunBtn.addEventListener("click", () => {
-            void this.runRank();
-        });
-        dom.rankPairsStopBtn.addEventListener("click", () => {
-            this.cancelled = true;
-            this.abortController?.abort();
-        });
-        dom.rankPairsCopyBtn.addEventListener("click", () => {
-            void this.copyResults();
-        });
+        dom.rankPairsRunBtn.addEventListener("click", () => void this.runRank());
+        dom.rankPairsStopBtn.addEventListener("click", () => void this.requestServerStop());
+        dom.rankPairsCopyBtn.addEventListener("click", () => void this.copyResults());
         dom.rankPairsUseCurrent.addEventListener("click", () => {
             const current = state.currentSymbol?.trim().toUpperCase();
             if (current) {
-                dom.rankPairsSymbols.value = dom.rankPairsSymbols.value.trim();
-                dom.rankPairsSymbols.value = dom.rankPairsSymbols.value
-                    ? `${dom.rankPairsSymbols.value}\n${current}`
-                    : current;
+                const existing = dom.rankPairsSymbols.value.trim();
+                dom.rankPairsSymbols.value = existing ? `${existing}\n${current}` : current;
             }
             this.clearStaleResults(dom);
             this.updateSummary(dom);
@@ -481,9 +198,6 @@ class RankPairsService {
         });
         dom.rankPairsSymbols.addEventListener("input", () => {
             this.clearStaleResults(dom);
-            // Debounce the O(n) summary recompute so typing into a large pair
-            // list stays smooth. clearStaleResults above is already O(1) when
-            // nothing is cached, so it does not need the debounce.
             if (this.summaryDebounceTimer) clearTimeout(this.summaryDebounceTimer);
             this.summaryDebounceTimer = setTimeout(() => {
                 this.summaryDebounceTimer = null;
@@ -499,363 +213,290 @@ class RankPairsService {
     }
 
     private async runRank(): Promise<void> {
-        const runStartedAt = nowRankPairsMs();
-        const timingsMs = createRankPairsPerformanceTimings();
+        if (this.runInFlight || this.serverRunActive) {
+            this.getDom().rankPairsStatus.textContent = "Rank Pairs is already running.";
+            return;
+        }
         const dom = this.getDom();
-        const parseStartedAt = nowRankPairsMs();
         const inputSymbols = parseBatchSymbols(dom.rankPairsSymbols.value);
-        timingsMs.parseInput = nowRankPairsMs() - parseStartedAt;
         if (inputSymbols.length === 0) {
             dom.rankPairsStatus.textContent = "Add at least one pair.";
             return;
         }
-        const prepareStartedAt = nowRankPairsMs();
-        const prepared = prepareRankPairRelationships(inputSymbols);
-        timingsMs.prepareRelationships = nowRankPairsMs() - prepareStartedAt;
-        const symbols = prepared.symbols;
-        if (symbols.length === 0) {
+        if (prepareRankPairRelationships(inputSymbols).symbols.length === 0) {
             dom.rankPairsStatus.textContent = "Add at least one pair between different assets.";
             return;
         }
 
         const interval = state.currentInterval;
-        const mode: RankPairsMode = dom.rankPairsMode.value === "recent200"
-            ? "recent200"
-            : "history";
-        const startedAt = Date.now();
-        const cacheBefore = getBatchDatasetCacheStats();
-        const recentCacheBefore = getRankPairsRecentLoaderStats();
-        let totalBars = 0;
-
+        const mode: RankPairsMode =
+            dom.rankPairsMode.value === "recent200" ? "recent200" : "history";
+        const runId =
+            `rank-pairs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        this.runInFlight = true;
         this.runToken += 1;
         const token = this.runToken;
+        this.reattachGeneration += 1;
         this.resultViewVersion += 1;
-        this.cancelled = false;
         this.lastResults = [];
         this.lastResultCount = 0;
         this.lastSummaryText = "";
         this.lastMode = mode;
-        this.lastDiagnostics = null;
         this.lastSnapshot = null;
-        this.abortController = new AbortController();
-        const signal = this.abortController.signal;
-        const taskYielder = createTaskYielder();
-
-        dom.rankPairsRunBtn.disabled = true;
-        dom.rankPairsMode.disabled = true;
-        setVisible(dom.rankPairsStopBtn, true);
-        dom.rankPairsCopyBtn.disabled = true;
-        setVisible(dom.rankPairsEmpty, false);
+        this.serverResultRunId = runId;
+        this.activeServerRunId = runId;
+        this.serverRunActive = true;
+        this.serverCopyAvailable = false;
+        this.persistActiveServerRun(runId);
+        this.setServerBusy(dom, true);
         dom.rankPairsResults.replaceChildren();
+        setVisible(dom.rankPairsEmpty, false);
+        dom.rankPairsStatus.textContent = "Starting server-owned Rank Pairs run...";
         dom.rankPairsDiagnostics.textContent =
-            "Measuring load, classification, rendering, and yield time…";
+            "Server performance diagnostics appear after completion.";
 
         try {
-            // Bounded concurrency: synthetic pairs share legs through the
-            // promise-deduping leg caches (SyntheticLegCache / recent-loader
-            // legCache), so concurrent dispatch is safe — two pairs sharing a
-            // leg share a single fetch. Results are written into a preallocated
-            // array at their INPUT index so the final sort's stable tie-break
-            // (compareAnyResultsForDisplay) sees the original order regardless
-            // of completion order. The live stream renders in completion order;
-            // the deterministic final render re-orders everything on success.
-            const indexedResults = new Array<AnyRankResult>(symbols.length);
-            let nextIndex = 0;
-            let completedCount = 0;
-            const workerCount = Math.max(1, Math.min(RANK_PAIRS_CONCURRENCY, symbols.length));
-
-            const runWorker = async (): Promise<void> => {
-                while (true) {
-                    if (token !== this.runToken || this.cancelled) return;
-                    const i = nextIndex;
-                    nextIndex += 1;
-                    if (i >= symbols.length) return;
-                    const symbol = symbols[i];
-
-                    const { result, barCount } = await this.processPair(
-                        symbol,
-                        mode,
-                        interval,
-                        signal,
-                        token,
-                        timingsMs,
-                    );
-                    if (token !== this.runToken) return;
-                    indexedResults[i] = result;
-                    totalBars += barCount;
-
-                    this.lastResults.push(result);
-                    if (this.lastResults.length <= RANK_PAIRS_RENDER_LIMIT) {
-                        const liveRenderStartedAt = nowRankPairsMs();
-                        this.appendResultRow(dom, result);
-                        timingsMs.liveRender += nowRankPairsMs() - liveRenderStartedAt;
-                    }
-
-                    completedCount += 1;
-                    const percent = (completedCount / symbols.length) * 100;
-                    const progressStartedAt = nowRankPairsMs();
-                    this.setProgress(dom, percent, `${completedCount}/${symbols.length} (${symbol})`);
-                    timingsMs.progress += nowRankPairsMs() - progressStartedAt;
-
-                    if (completedCount % 128 === 0) {
-                        const yieldStartedAt = nowRankPairsMs();
-                        await taskYielder.yieldControl();
-                        timingsMs.yield += nowRankPairsMs() - yieldStartedAt;
-                    }
-                }
-            };
-
-            await Promise.all(Array.from({ length: workerCount }, runWorker));
-
-            if (token !== this.runToken) return;
-
-            // Reconstruct lastResults in INPUT order from the indexed slots.
-            // Workers wrote each result at its input index, but pushed to
-            // lastResults in completion order; for a deterministic copy/sort
-            // (and a stable cancel-path snapshot) we restore input order. On
-            // cancel, slots for pairs that never finished are simply absent.
-            this.lastResults = indexedResults.filter(
-                (r): r is AnyRankResult => r !== undefined,
+            const response = await fetch("/api/rank-pairs/run", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ runId, symbols: inputSymbols, interval, mode }),
+            });
+            if (!response.ok || !response.body) {
+                const payload = await response.json().catch(() => null) as { error?: string } | null;
+                throw new Error(payload?.error ?? `Server run failed (${response.status}).`);
+            }
+            await consumeNdjsonStream<RankPairsStreamEvent>(
+                response.body,
+                {
+                    onStart: (event: Extract<RankPairsStreamEvent, { type: "start" }>) => {
+                        if (token !== this.runToken) return;
+                        dom.rankPairsStatus.textContent =
+                            `Server: 0/${event.total.toLocaleString("en-US")}`
+                            + ` • ${event.total.toLocaleString("en-US")} remaining`
+                            + ` • ${event.workerConcurrency} loaders`;
+                    },
+                    onProgress: (event: Extract<RankPairsStreamEvent, { type: "progress" }>) => {
+                        if (token !== this.runToken) return;
+                        dom.rankPairsStatus.textContent = event.status;
+                        this.setProgress(dom, event.percent, `${event.completed}/${event.total}`);
+                    },
+                    onDone: (event: Extract<RankPairsStreamEvent, { type: "done" }>) => {
+                        if (token !== this.runToken) return;
+                        this.applyTerminalResult(dom, {
+                            runId: event.runId,
+                            mode: event.mode,
+                            interval: event.interval,
+                            total: event.total,
+                            resultCount: event.resultCount,
+                            preview: event.preview,
+                            summary: event.summary,
+                            diagnostics: event.diagnostics,
+                            copyAvailable: event.copyAvailable,
+                            cancelled: event.cancelled,
+                            reciprocalDuplicates: event.reciprocalDuplicates,
+                            selfPairs: event.selfPairs,
+                            statusText: event.cancelled
+                                ? `Stopped (${event.resultCount}/${event.total} pairs)`
+                                : `Done (${event.resultCount} relationships)`,
+                        });
+                    },
+                    onFatal: (event: Extract<RankPairsStreamEvent, { type: "fatal" }>) => {
+                        if (token !== this.runToken) return;
+                        this.serverRunActive = false;
+                        this.serverCopyAvailable = false;
+                        this.clearActiveServerRun(event.runId);
+                        dom.rankPairsStatus.textContent = `Server Rank Pairs failed: ${event.error}`;
+                    },
+                },
+                { requireTerminal: true, terminalTypes: ["done", "fatal"] },
             );
-
-            // On completion, re-render the list in the deterministic display
-            // order in a single DocumentFragment so we pay one reflow, not N.
-            // `indexedResults` holds results at their INPUT position, so the
-            // stable tie-break (input idx) is deterministic regardless of the
-            // completion order the concurrent workers happened to produce.
-            if (!this.cancelled) {
-                const sortStartedAt = nowRankPairsMs();
-                const indexed = indexedResults
-                    .map((r, idx) => ({ r, idx }))
-                    .sort((a, b) =>
-                        compareAnyResultsForDisplay(a.r, b.r, a.idx, b.idx, mode)
-                    );
-                this.lastResults = indexed.map(({ r }) => r);
-                timingsMs.sort += nowRankPairsMs() - sortStartedAt;
-                const finalRenderStartedAt = nowRankPairsMs();
-                const fragment = document.createDocumentFragment();
-                for (const result of limitRankPairResultsForDisplay(this.lastResults)) {
-                    fragment.appendChild(this.createResultRow(result));
-                }
-                dom.rankPairsResults.replaceChildren(fragment);
-                timingsMs.finalRender += nowRankPairsMs() - finalRenderStartedAt;
-            }
-
-            setVisible(dom.rankPairsEmpty, this.lastResults.length === 0);
-            dom.rankPairsStatus.textContent = this.cancelled
-                ? `Stopped (${this.lastResults.length}/${symbols.length} pairs)`
-                : prepared.reciprocalDuplicates > 0 || prepared.selfPairs > 0
-                    ? `Done (${this.lastResults.length} relationships; ${prepared.reciprocalDuplicates} reciprocal duplicates skipped; ${prepared.selfPairs} self-pairs skipped)`
-                    : `Done (${this.lastResults.length} relationships)`;
-            if (this.lastResults.length > RANK_PAIRS_RENDER_LIMIT) {
-                dom.rankPairsStatus.textContent +=
-                    `; showing top ${RANK_PAIRS_RENDER_LIMIT.toLocaleString("en-US")} rows (Copy Results includes all)`;
-            }
-
-            this.lastDiagnostics = {
-                totalPairs: symbols.length,
-                processedPairs: this.lastResults.length,
-                renderedPairs: Math.min(this.lastResults.length, RANK_PAIRS_RENDER_LIMIT),
-                totalBars,
-                elapsedMs: nowRankPairsMs() - runStartedAt,
-                timingsMs,
-                cacheDelta: buildRankPairsCacheDelta(
-                    cacheBefore,
-                    getBatchDatasetCacheStats(),
-                ),
-            };
-            const recentCacheAfter = getRankPairsRecentLoaderStats();
-            this.lastDiagnostics.cacheDelta.recentLegHits =
-                recentCacheAfter.legHits - recentCacheBefore.legHits;
-            this.lastDiagnostics.cacheDelta.recentLegMisses =
-                recentCacheAfter.legMisses - recentCacheBefore.legMisses;
-            dom.rankPairsDiagnostics.textContent =
-                formatRankPairsPerformanceDiagnostics(this.lastDiagnostics);
-            this.lastResultCount = this.lastResults.length;
-            this.lastSummaryText = mode === "recent200"
-                ? formatRecentOverallSummary(this.lastResults.filter(isRecentRankResult))
-                : formatOverallSummary(this.lastResults.filter(
-                    (result): result is RankResult => !isRecentRankResult(result),
-                ));
-            this.emitRunComplete(
-                interval,
-                symbols.length,
-                startedAt,
-                mode,
-                this.lastDiagnostics,
-            );
-
-            if (!this.cancelled && this.lastResults.length > 0) {
-                const completedStatusText = dom.rankPairsStatus.textContent ?? "";
-                dom.rankPairsStatus.textContent =
-                    `${completedStatusText}; saving result for reload…`;
-                const persistenceStartedAt = nowRankPairsMs();
-                try {
-                    const snapshot = await saveLatestRankPairsResultSnapshot({
-                        mode,
-                        interval,
-                        results: this.lastResults,
-                        preview: limitRankPairResultsForDisplay(this.lastResults),
-                        summaryText: this.lastSummaryText,
-                        diagnosticsText: dom.rankPairsDiagnostics.textContent ?? "",
-                        copyPreamble: mode === "recent200"
-                            ? [RECENT_COPY_HEADER, RECENT_COPY_COLUMNS.join(" | ")]
-                            : [COPY_HEADER, COPY_COLUMNS.join(" | ")],
-                        serializeCopyRow: (result) => {
-                            if (mode === "recent200" && isRecentRankResult(result)) {
-                                return recentScalarRow(result);
-                            }
-                            if (!isRecentRankResult(result)) return scalarRow(result);
-                            throw new Error("Rank Pairs result mode mismatch");
-                        },
-                    });
-                    if (token !== this.runToken) return;
-                    this.lastSnapshot = snapshot;
-                    this.lastResults = snapshot.preview;
-                    dom.rankPairsStatus.textContent =
-                        `${completedStatusText}; saved for reload`;
-                    debugLogger.event("rank_pairs.snapshot_saved", {
-                        rows: snapshot.resultCount,
-                        chunks: snapshot.chunkCount,
-                        elapsedMs: nowRankPairsMs() - persistenceStartedAt,
-                    });
-                } catch (error) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    dom.rankPairsStatus.textContent = completedStatusText +
-                        `; result persistence failed (${message}) — kept in memory`;
-                    debugLogger.warn("rank_pairs.snapshot_save_failed", { error: message });
-                }
-            }
         } catch (error) {
             if (token !== this.runToken) return;
             const message = error instanceof Error ? error.message : String(error);
-            dom.rankPairsStatus.textContent = `Error: ${message}`;
-            debugLogger.error("rank_pairs.run_failed", { error: message });
+            debugLogger.warn("rank_pairs.server.stream_interrupted", { runId, error: message });
+            dom.rankPairsStatus.textContent = "Server connection interrupted; reattaching...";
+            const recovered = await this.reattachServerRun(runId, this.resultViewVersion);
+            if (!recovered && token === this.runToken) {
+                this.serverRunActive = false;
+                this.clearActiveServerRun(runId);
+                dom.rankPairsStatus.textContent = `Server Rank Pairs failed: ${message}`;
+            }
         } finally {
             if (token === this.runToken) {
-                dom.rankPairsRunBtn.disabled = false;
-                dom.rankPairsMode.disabled = false;
-                setVisible(dom.rankPairsStopBtn, false);
-                dom.rankPairsCopyBtn.disabled = this.lastResultCount === 0;
-                this.updateSummary(dom);
-                this.setProgress(dom, 100, this.cancelled ? "Stopped" : "Done");
-                this.abortController = null;
+                this.runInFlight = false;
+                if (!this.serverRunActive) this.setServerBusy(dom, false);
             }
         }
     }
 
-    /**
-     * Load + classify a single pair. Pure I/O + CPU work, no DOM/state writes
-     * — extracted from the run loop so the bounded-concurrency pool can dispatch
-     * it without re-plumbing the streaming invariants. `barCount` returned
-     * alongside the result is the raw loaded-bar count (pre-dedup), matching
-     * the prior loop's `totalBars += bars.length` accounting.
-     */
-    private async processPair(
-        symbol: string,
-        mode: RankPairsMode,
-        interval: string,
-        signal: AbortSignal,
-        token: number,
-        timingsMs: RankPairsPerformanceTimings,
-    ): Promise<{ result: AnyRankResult; barCount: number }> {
-        try {
-            let bars: OHLCVData[];
-            const loadStartedAt = nowRankPairsMs();
-            try {
-                const recentBars = mode === "recent200"
-                    ? await loadRecentRankPairDataset(symbol, interval, signal)
-                    : null;
-                bars = recentBars ?? await loadBatchDataset(symbol, interval, signal);
-            } finally {
-                timingsMs.load += nowRankPairsMs() - loadStartedAt;
-            }
-            if (token !== this.runToken) return { result: emptyResultForMode(symbol, mode), barCount: 0 };
-            const barCount = bars.length;
-            if (!signal.aborted && bars.length > 0) {
-                const classifyStartedAt = nowRankPairsMs();
-                let result: AnyRankResult;
-                if (mode === "recent200") {
-                    const recent = classifyRecentPair(bars);
-                    recent.symbol = symbol;
-                    result = {
-                        kind: "recent",
-                        symbol,
-                        recent,
-                        status: recent.type === "J" ? "no_data" : "ok",
-                    };
-                } else {
-                    const regime = classifyPairRegime(bars);
-                    regime.symbol = symbol;
-                    // The classifier returns THIN with an INSUFFICIENT_* reason
-                    // when coverage fails; surface those as no_data rows
-                    // distinct from genuine classifications.
-                    const isThin =
-                        regime.direction === "THIN" && regime.reason !== "OK";
-                    result = { kind: "history", symbol, regime, status: isThin ? "no_data" : "ok" };
-                }
-                timingsMs.classify += nowRankPairsMs() - classifyStartedAt;
-                return { result, barCount };
-            }
-            return { result: emptyResultForMode(symbol, mode), barCount };
-        } catch (error) {
-            if (token !== this.runToken) return { result: emptyResultForMode(symbol, mode), barCount: 0 };
-            const message = error instanceof Error ? error.message : String(error);
-            debugLogger.warn("rank_pairs.pair_failed", { symbol, error: message });
-            const result: AnyRankResult = mode === "recent200"
-                ? {
-                    kind: "recent",
-                    symbol,
-                    recent: emptyThinRecent(symbol),
-                    status: "failed",
-                    error: message,
-                }
-                : {
-                    kind: "history",
-                    symbol,
-                    regime: emptyThinRegime(symbol),
-                    status: "failed",
-                    error: message,
-                };
-            return { result, barCount: 0 };
-        }
-    }
-
-    private emitRunComplete(
-        interval: string,
-        _symbolCount: number,
-        startedAt: number,
-        mode: RankPairsMode,
-        performance: RankPairsPerformanceDiagnostics,
+    private applyTerminalResult(
+        dom: RankPairsDom,
+        result: {
+            runId: string;
+            mode: RankPairsMode;
+            interval: string;
+            total: number;
+            resultCount: number;
+            preview: AnyRankResult[];
+            summary: string;
+            diagnostics: RankPairsPerformanceDiagnostics | null;
+            copyAvailable: boolean;
+            cancelled: boolean;
+            reciprocalDuplicates: number;
+            selfPairs: number;
+            statusText: string;
+        },
     ): void {
-        // One aggregate event per run — never one per pair, and never candles.
-        // Counts by label let the debug panel summarize a run without re-running
-        // the classifier.
-        const ok = this.lastResults.filter((r) => r.status === "ok");
-        const dirCounts: Record<string, number> = {};
-        const structCounts: Record<string, number> = {};
-        for (const r of ok) {
-            if (isRecentRankResult(r)) {
-                dirCounts[r.recent.direction] = (dirCounts[r.recent.direction] ?? 0) + 1;
-                structCounts[`TYPE_${r.recent.type}`] =
-                    (structCounts[`TYPE_${r.recent.type}`] ?? 0) + 1;
-            } else {
-                dirCounts[r.regime.direction] = (dirCounts[r.regime.direction] ?? 0) + 1;
-                structCounts[r.regime.structure] = (structCounts[r.regime.structure] ?? 0) + 1;
+        this.lastResults = result.preview;
+        this.lastResultCount = result.resultCount;
+        this.lastSummaryText = result.summary;
+        this.lastMode = result.mode;
+        this.lastSnapshot = null;
+        this.serverResultRunId = result.runId;
+        this.serverCopyAvailable = result.copyAvailable;
+        this.serverRunActive = false;
+        this.activeServerRunId = null;
+        this.clearActiveServerRun(result.runId);
+        dom.rankPairsMode.value = result.mode;
+        this.renderPreview(dom, result.preview, result.resultCount);
+        dom.rankPairsSummary.textContent = result.summary;
+        dom.rankPairsDiagnostics.textContent = result.diagnostics
+            ? formatRankPairsPerformanceDiagnostics(result.diagnostics)
+            : "No performance diagnostics available.";
+        dom.rankPairsStatus.textContent = result.statusText;
+        if (result.reciprocalDuplicates > 0 || result.selfPairs > 0) {
+            dom.rankPairsStatus.textContent +=
+                `; ${result.reciprocalDuplicates} reciprocal duplicates skipped; ${result.selfPairs} self-pairs skipped`;
+        }
+        if (result.resultCount > result.preview.length) {
+            dom.rankPairsStatus.textContent +=
+                `; showing top ${result.preview.length.toLocaleString("en-US")} rows (Copy Results includes all)`;
+        }
+        this.setProgress(
+            dom,
+            result.cancelled && result.total > 0
+                ? (result.resultCount / result.total) * 100
+                : 100,
+            result.cancelled ? "Stopped" : "Done",
+        );
+        this.setServerBusy(dom, false);
+    }
+
+    private async requestServerStop(): Promise<void> {
+        const runId = this.activeServerRunId;
+        if (!runId) return;
+        const dom = this.getDom();
+        dom.rankPairsStatus.textContent = "Stopping server run...";
+        try {
+            const response = await fetch("/api/rank-pairs/stop", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ runId }),
+            });
+            const payload = await response.json().catch(() => null) as
+                | { ok?: boolean; error?: string }
+                | null;
+            if (!response.ok || payload?.ok === false) {
+                throw new Error(payload?.error ?? "The active server run belongs to another tab.");
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            dom.rankPairsStatus.textContent = `Stop request failed: ${message}`;
+            debugLogger.warn("rank_pairs.server.stop_failed", { runId, error: message });
+        }
+    }
+
+    private async restoreInitialResult(dom: RankPairsDom, viewVersion: number): Promise<void> {
+        const restored = await this.reattachServerRun(this.activeServerRunId, viewVersion);
+        if (!restored && viewVersion === this.resultViewVersion) {
+            await this.restoreLocalResult(dom, viewVersion);
+        }
+    }
+
+    private async reattachServerRun(
+        requestedRunId: string | null,
+        viewVersion: number,
+    ): Promise<boolean> {
+        const generation = ++this.reattachGeneration;
+        const dom = this.getDom();
+        let failures = 0;
+        for (;;) {
+            if (
+                generation !== this.reattachGeneration
+                || viewVersion !== this.resultViewVersion
+            ) {
+                return false;
+            }
+            try {
+                const scope = requestedRunId
+                    ? `?runId=${encodeURIComponent(requestedRunId)}`
+                    : "";
+                const response = await fetch(`/api/rank-pairs/status${scope}`, {
+                    cache: "no-store",
+                });
+                if (response.status === 404) return false;
+                if (!response.ok) throw new Error(`Status failed (${response.status}).`);
+                const snapshot = await response.json() as RankPairsRunStatusSnapshot;
+                failures = 0;
+                if (
+                    generation !== this.reattachGeneration
+                    || viewVersion !== this.resultViewVersion
+                ) {
+                    return false;
+                }
+                requestedRunId = snapshot.runId;
+                this.serverResultRunId = snapshot.runId;
+                if (snapshot.terminal) {
+                    if (snapshot.phase === "fatal") {
+                        this.serverRunActive = false;
+                        this.serverCopyAvailable = false;
+                        this.clearActiveServerRun(snapshot.runId);
+                        dom.rankPairsStatus.textContent =
+                            `Server Rank Pairs failed: ${snapshot.error ?? snapshot.statusText}`;
+                        this.setServerBusy(dom, false);
+                        return true;
+                    }
+                    this.applyTerminalResult(dom, {
+                        runId: snapshot.runId,
+                        mode: snapshot.mode,
+                        interval: snapshot.interval,
+                        total: snapshot.total,
+                        resultCount: snapshot.resultCount,
+                        preview: snapshot.terminalPreview ?? [],
+                        summary: snapshot.summary ?? `Pairs ${snapshot.resultCount}`,
+                        diagnostics: snapshot.diagnostics,
+                        copyAvailable: snapshot.copyAvailable,
+                        cancelled: snapshot.cancelled,
+                        reciprocalDuplicates: snapshot.reciprocalDuplicates,
+                        selfPairs: snapshot.selfPairs,
+                        statusText: snapshot.statusText,
+                    });
+                    return true;
+                }
+
+                this.activeServerRunId = snapshot.runId;
+                this.serverRunActive = true;
+                this.persistActiveServerRun(snapshot.runId);
+                this.setServerBusy(dom, true);
+                dom.rankPairsMode.value = snapshot.mode;
+                dom.rankPairsStatus.textContent = snapshot.statusText;
+                this.setProgress(
+                    dom,
+                    snapshot.progressPercent,
+                    `${snapshot.completed}/${snapshot.total}`,
+                );
+                await new Promise<void>((resolve) => setTimeout(resolve, 500));
+            } catch (error) {
+                failures += 1;
+                debugLogger.warn("rank_pairs.server.reattach_poll_failed", {
+                    runId: requestedRunId,
+                    failures,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                if (failures >= 5) return false;
+                await new Promise<void>((resolve) => setTimeout(resolve, failures * 500));
             }
         }
-        const failed = this.lastResults.filter((r) => r.status === "failed").length;
-        debugLogger.event("rank_pairs.run_complete", {
-            interval,
-            mode,
-            classified: ok.length,
-            failed,
-            cancelled: this.cancelled,
-            elapsedMs: Date.now() - startedAt,
-            byDirection: dirCounts,
-            byStructure: structCounts,
-            performance,
-        });
     }
 
     private async copyResults(): Promise<void> {
@@ -865,13 +506,26 @@ class RankPairsService {
         dom.rankPairsStatus.textContent =
             `Preparing ${this.lastResultCount.toLocaleString("en-US")} saved rows for clipboard…`;
         try {
-            const text = this.lastSnapshot
-                ? await loadRankPairsSnapshotCopyText(this.lastSnapshot)
-                : this.lastMode === "recent200"
+            let text: string;
+            if (this.serverResultRunId && this.serverCopyAvailable) {
+                const response = await fetch(
+                    `/api/rank-pairs/copy?runId=${encodeURIComponent(this.serverResultRunId)}`,
+                    { cache: "no-store" },
+                );
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => null) as { error?: string } | null;
+                    throw new Error(payload?.error ?? `Copy download failed (${response.status}).`);
+                }
+                text = await response.text();
+            } else if (this.lastSnapshot) {
+                text = await loadRankPairsSnapshotCopyText(this.lastSnapshot);
+            } else {
+                text = this.lastMode === "recent200"
                     ? formatRecentCopyText(this.lastResults.filter(isRecentRankResult))
                     : formatCopyText(this.lastResults.filter(
                         (result): result is RankResult => !isRecentRankResult(result),
                     ));
+            }
             await navigator.clipboard.writeText(text);
             dom.rankPairsStatus.textContent =
                 `Copied ${this.lastResultCount.toLocaleString("en-US")} rows.`;
@@ -884,49 +538,32 @@ class RankPairsService {
         }
     }
 
-    // --------------------------------------------------------------------
-    // Rendering
-    // --------------------------------------------------------------------
-
-    private appendResultRow(dom: RankPairsDom, result: AnyRankResult): void {
-        dom.rankPairsResults.appendChild(this.createResultRow(result));
-    }
-
     private clearStaleResults(dom: RankPairsDom): void {
+        if (this.serverRunActive) return;
         this.resultViewVersion += 1;
+        this.reattachGeneration += 1;
         if (this.lastResultCount === 0) return;
         this.lastResults = [];
         this.lastResultCount = 0;
         this.lastSummaryText = "";
-        this.lastDiagnostics = null;
         this.lastSnapshot = null;
+        this.serverResultRunId = null;
+        this.serverCopyAvailable = false;
         dom.rankPairsCopyBtn.disabled = true;
         dom.rankPairsDiagnostics.textContent = "Performance diagnostics appear after a run.";
     }
 
-    private async restoreLastResult(
-        dom: RankPairsDom,
-        resultViewVersion: number,
-    ): Promise<void> {
+    private async restoreLocalResult(dom: RankPairsDom, viewVersion: number): Promise<void> {
         try {
-            const snapshot =
-                await loadLatestRankPairsResultSnapshot<AnyRankResult>();
+            const snapshot = await loadLatestRankPairsResultSnapshot<AnyRankResult>();
             if (
                 !snapshot
-                || resultViewVersion !== this.resultViewVersion
+                || viewVersion !== this.resultViewVersion
                 || this.lastResultCount > 0
             ) {
                 return;
             }
-
             this.lastSnapshot = snapshot;
-            // `kind` is the runtime discriminant but is NOT persisted (the
-            // snapshot schema is keyed on `mode`, which already disambiguates).
-            // Stamp it back onto each restored row so the narrowed render /
-            // copy paths branch on a field read instead of a structural probe.
-            // Every row in a snapshot shares the snapshot's mode, but the
-            // persisted preview is typed as the full AnyRankResult union; the
-            // runtime guarantees one variant, so the cast is sound.
             const restoredKind = snapshot.mode === "recent200" ? "recent" : "history";
             this.lastResults = snapshot.preview.map((result) => ({
                 ...result,
@@ -935,36 +572,38 @@ class RankPairsService {
             this.lastResultCount = snapshot.resultCount;
             this.lastSummaryText = snapshot.summaryText;
             this.lastMode = snapshot.mode;
+            this.serverResultRunId = null;
+            this.serverCopyAvailable = false;
             dom.rankPairsMode.value = snapshot.mode;
-
-            const fragment = document.createDocumentFragment();
-            for (const result of snapshot.preview) {
-                fragment.appendChild(this.createResultRow(result));
-            }
-            dom.rankPairsResults.replaceChildren(fragment);
-            setVisible(dom.rankPairsEmpty, snapshot.resultCount === 0);
-            dom.rankPairsCopyBtn.disabled = snapshot.resultCount === 0;
+            this.renderPreview(dom, this.lastResults, snapshot.resultCount);
             dom.rankPairsSummary.textContent = snapshot.summaryText;
             dom.rankPairsDiagnostics.textContent = snapshot.diagnosticsText;
-
-            const completedAt = new Date(snapshot.completedAt).toLocaleString();
             dom.rankPairsStatus.textContent =
-                `Restored ${snapshot.resultCount.toLocaleString("en-US")} rows from ${completedAt} (${snapshot.interval})`;
-            if (snapshot.resultCount > snapshot.preview.length) {
-                dom.rankPairsStatus.textContent +=
-                    `; showing top ${snapshot.preview.length.toLocaleString("en-US")} rows (Copy Results includes all)`;
-            }
+                `Restored local result from ${new Date(snapshot.completedAt).toLocaleString()} (${snapshot.interval})`;
             this.setProgress(dom, 100, "Restored");
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            debugLogger.warn("rank_pairs.snapshot_restore_failed", { error: message });
+            debugLogger.warn("rank_pairs.snapshot_restore_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
         }
+    }
+
+    private renderPreview(
+        dom: RankPairsDom,
+        preview: readonly AnyRankResult[],
+        resultCount: number,
+    ): void {
+        const fragment = document.createDocumentFragment();
+        for (const result of preview) fragment.appendChild(this.createResultRow(result));
+        dom.rankPairsResults.replaceChildren(fragment);
+        setVisible(dom.rankPairsEmpty, resultCount === 0);
+        dom.rankPairsCopyBtn.disabled =
+            resultCount === 0 || (!this.serverCopyAvailable && !this.lastSnapshot);
     }
 
     private createResultRow(result: AnyRankResult): HTMLDivElement {
         const line = document.createElement("div");
         line.className = "finder-sub finder-symbol-row";
-
         const badge = document.createElement("span");
         badge.className = `finder-verdict ${
             isRecentRankResult(result) ? recentBadgeCssFor(result) : badgeCssFor(result)
@@ -973,7 +612,6 @@ class RankPairsService {
             ? recentBadgeLabelFor(result)
             : badgeLabelFor(result);
         line.appendChild(badge);
-
         const evidence = isRecentRankResult(result)
             ? result.status === "ok"
                 ? formatRecentPairMetrics(result.recent)
@@ -985,9 +623,13 @@ class RankPairsService {
         return line;
     }
 
-    // --------------------------------------------------------------------
-    // Progress / summary helpers
-    // --------------------------------------------------------------------
+    private setServerBusy(dom: RankPairsDom, busy: boolean): void {
+        dom.rankPairsRunBtn.disabled = busy;
+        dom.rankPairsMode.disabled = busy;
+        setVisible(dom.rankPairsStopBtn, busy);
+        dom.rankPairsCopyBtn.disabled =
+            busy || this.lastResultCount === 0 || (!this.serverCopyAvailable && !this.lastSnapshot);
+    }
 
     private setProgress(dom: RankPairsDom, percent: number, text: string): void {
         dom.rankPairsProgressFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
@@ -1007,25 +649,40 @@ class RankPairsService {
         const count = parseBatchSymbols(dom.rankPairsSymbols.value).length;
         dom.rankPairsSummary.textContent = `${count} pair${count === 1 ? "" : "s"}`;
     }
-}
 
-function emptyThinRegime(symbol: string): PairRegimeResult {
-    const regime = classifyPairRegime([]);
-    regime.symbol = symbol;
-    return regime;
-}
+    private persistActiveServerRun(runId: string): void {
+        writePersistedJson({
+            ...ACTIVE_RUN_STORAGE,
+            data: { runId, startedAt: Date.now() },
+            onError: (error) => debugLogger.warn("rank_pairs.active_run_save_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            }),
+        });
+    }
 
-function emptyThinRecent(symbol: string): RecentPairResult {
-    const recent = classifyRecentPair([]);
-    recent.symbol = symbol;
-    return recent;
-}
+    private loadPersistedActiveServerRun(): string | null {
+        return readPersistedJson<string | null>({
+            ...ACTIVE_RUN_STORAGE,
+            fallback: null,
+            migrate: ({ data }) => {
+                if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+                const runId = (data as { runId?: unknown }).runId;
+                return typeof runId === "string" && runId.trim() ? runId.trim() : null;
+            },
+        });
+    }
 
-/** Build a no_data row of the right discriminated kind for the active mode. */
-function emptyResultForMode(symbol: string, mode: RankPairsMode): AnyRankResult {
-    return mode === "recent200"
-        ? { kind: "recent", symbol, recent: emptyThinRecent(symbol), status: "no_data" }
-        : { kind: "history", symbol, regime: emptyThinRegime(symbol), status: "no_data" };
+    private clearActiveServerRun(expectedRunId: string): void {
+        if (this.activeServerRunId && this.activeServerRunId !== expectedRunId) return;
+        this.activeServerRunId = null;
+        writePersistedJson({
+            ...ACTIVE_RUN_STORAGE,
+            data: null,
+            onError: (error) => debugLogger.warn("rank_pairs.active_run_clear_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            }),
+        });
+    }
 }
 
 export const rankPairsService = new RankPairsService();

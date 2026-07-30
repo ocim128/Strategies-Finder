@@ -29,7 +29,7 @@ const cacheBudget = resolveServerBatchCacheBudget();
 // import time. Running it at import time would prune the real cache directory
 // as a side-effect of importing this module in tests.
 
-async function fetchServerHistoricalData(
+export async function fetchServerHistoricalData(
     symbol: string,
     interval: string,
     limit: number,

@@ -19,6 +19,12 @@ export interface RankPairsCacheDelta {
     pairMisses: number;
     recentLegHits?: number;
     recentLegMisses?: number;
+    recentLegEvictions?: number;
+    recentLegUpgrades?: number;
+    recentNetworkFallbacks?: number;
+    recentDeepPairFallbacks?: number;
+    recentLegCacheSize?: number;
+    recentLegCacheMaxEntries?: number;
 }
 
 export interface RankPairsPerformanceDiagnostics {
@@ -27,6 +33,8 @@ export interface RankPairsPerformanceDiagnostics {
     renderedPairs: number;
     totalBars: number;
     elapsedMs: number;
+    /** Present when load/classify timings are summed across concurrent workers. */
+    workerConcurrency?: number;
     timingsMs: RankPairsPerformanceTimings;
     cacheDelta: RankPairsCacheDelta;
 }
@@ -71,10 +79,36 @@ function formatPhase(label: string, ms: number, elapsedMs: number): string {
     return `${label} ${formatDuration(ms)} (${percent.toFixed(1)}%)`;
 }
 
+function formatWorkerPhase(label: string, ms: number, processedPairs: number): string {
+    const averageMs = processedPairs > 0 ? ms / processedPairs : 0;
+    return `${label} ${formatDuration(ms)} worker total (${formatDuration(averageMs)}/pair avg)`;
+}
+
 export function formatRankPairsPerformanceDiagnostics(
     diagnostics: RankPairsPerformanceDiagnostics,
 ): string {
     const { elapsedMs, timingsMs, cacheDelta } = diagnostics;
+    if (diagnostics.workerConcurrency !== undefined) {
+        const pairsPerSecond = elapsedMs > 0
+            ? diagnostics.processedPairs / (elapsedMs / 1_000)
+            : 0;
+        return [
+            `Perf ${formatDuration(elapsedMs)}`,
+            `${pairsPerSecond.toFixed(1)} pairs/s`,
+            `workers ${diagnostics.workerConcurrency}`,
+            `shown ${diagnostics.renderedPairs.toLocaleString("en-US")}/${diagnostics.processedPairs.toLocaleString("en-US")}`,
+            `${diagnostics.totalBars.toLocaleString("en-US")} bars`,
+            formatWorkerPhase("load", timingsMs.load, diagnostics.processedPairs),
+            formatWorkerPhase("classify", timingsMs.classify, diagnostics.processedPairs),
+            formatPhase("progress", timingsMs.progress, elapsedMs),
+            formatPhase("sort", timingsMs.sort, elapsedMs),
+            `cache leg ${cacheDelta.legHits}H/${cacheDelta.legMisses}M`,
+            `pair ${cacheDelta.pairHits}H/${cacheDelta.pairMisses}M`,
+            `recent leg ${cacheDelta.recentLegHits ?? 0}H/${cacheDelta.recentLegMisses ?? 0}M/${cacheDelta.recentLegEvictions ?? 0}E/${cacheDelta.recentLegUpgrades ?? 0}U`,
+            `recent fallback ${cacheDelta.recentNetworkFallbacks ?? 0} network/${cacheDelta.recentDeepPairFallbacks ?? 0} deep`,
+            `recent cache ${cacheDelta.recentLegCacheSize ?? 0}/${cacheDelta.recentLegCacheMaxEntries ?? 0}`,
+        ].join(" | ");
+    }
     const measuredMs = Object.values(timingsMs).reduce((sum, ms) => sum + ms, 0);
     const otherMs = Math.max(0, elapsedMs - measuredMs);
     const pairsPerSecond = elapsedMs > 0
@@ -97,6 +131,8 @@ export function formatRankPairsPerformanceDiagnostics(
         formatPhase("other", otherMs, elapsedMs),
         `cache leg ${cacheDelta.legHits}H/${cacheDelta.legMisses}M`,
         `pair ${cacheDelta.pairHits}H/${cacheDelta.pairMisses}M`,
-        `recent leg ${cacheDelta.recentLegHits ?? 0}H/${cacheDelta.recentLegMisses ?? 0}M`,
+        `recent leg ${cacheDelta.recentLegHits ?? 0}H/${cacheDelta.recentLegMisses ?? 0}M/${cacheDelta.recentLegEvictions ?? 0}E/${cacheDelta.recentLegUpgrades ?? 0}U`,
+        `recent fallback ${cacheDelta.recentNetworkFallbacks ?? 0} network/${cacheDelta.recentDeepPairFallbacks ?? 0} deep`,
+        `recent cache ${cacheDelta.recentLegCacheSize ?? 0}/${cacheDelta.recentLegCacheMaxEntries ?? 0}`,
     ].join(" | ");
 }
