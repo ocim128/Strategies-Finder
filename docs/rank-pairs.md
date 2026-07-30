@@ -6,6 +6,7 @@ browser-only, lazy-initialized research tab (registered in `lib/app-bootstrap.ts
 - Markup source: `html-partials/tab-rank-pairs.html`
 - Structural DOM contract: `lib/rank-pairs/rank-pairs-dom.ts`
 - Pure classifier: `lib/rank-pairs/pair-regime-classifier.ts`
+- Latest-200 classifier: `lib/rank-pairs/recent-pair-classifier.ts`
 - UI service: `lib/rank-pairs/rank-pairs-service.ts`
 - Datasets: loaded through the shared Batch loader (`loadBatchDataset`) — the
   loader is the source of truth for synthetic-pair construction, aligned
@@ -199,8 +200,38 @@ The previous Rank Pairs scorer (`relative-strength-score.ts`, removed) produced
 first-to-last return with continuous-market annualization. **Those V1 labels
 are not equivalent to V2 regimes** — V1 encoded only directional magnitude over
 the fetched window, while V2 separates direction from structure with
-calendar-anchored metrics. There is no V1↔V2 mapping and no selectable mode;
-the V2 classifier is the only production path.
+calendar-anchored metrics. There is no V1↔V2 mapping; V2 remains the Full
+History production path.
+
+## Latest 200 Bars mode
+
+The selectable **Latest 200 Bars** mode is a separate descriptive chart-shape
+classifier. It normalizes timestamps and closes, deduplicates timestamps,
+sorts chronologically, and uses exactly the latest 200 valid ratio bars. It
+does not reuse or change the Full History calendar anchors or thresholds.
+
+Its mutually exclusive groups are:
+
+- `TYPE A` Stable Range
+- `TYPE B` Expanding Range
+- `TYPE C` Compressing Range
+- `TYPE D` Base Trend
+- `TYPE E` Quote Trend
+- `TYPE F` Base/Quote Breakout
+- `TYPE G` Base/Quote Reversal
+- `TYPE H` Level Shift
+- `TYPE I` Mixed/Noisy
+- `TYPE J` Thin
+
+The first 150 bars form the baseline and the latest 50 bars describe the
+recent segment for breakout/reversal decisions. The first and last 50-bar
+segments provide range-width and level-shift evidence. This remains
+classification only: it emits no opportunity, quality, entry, or profitability
+score.
+
+Recent Copy Results uses its own versioned scalar contract,
+`RANK_PAIRS_RECENT_200_V1`, so the existing `RANK_PAIRS_V2` Full History
+contract remains unchanged.
 
 ## What Rank Pairs does NOT change
 

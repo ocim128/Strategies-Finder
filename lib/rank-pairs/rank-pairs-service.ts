@@ -5,7 +5,8 @@
  * `lib/batch-backtest/batch-backtest-service.ts`). Binds the tab's buttons,
  * reads the CURRENT chart interval once per run, fetches each pair's OHLCV via
  * the shared batch loader (so shared synthetic legs are deduped), and
- * classifies each pair with the pure `classifyPairRegime` helper.
+ * classifies each pair with either the full-history regime classifier or the
+ * latest-200 chart-shape classifier selected in the tab.
  *
  * Output rows mirror Batch Backtest's `finder-symbol-row` shape with a regime
  * badge + pipe-formatted evidence, so a Rank run reads the same as a Batch run.
@@ -30,6 +31,15 @@ import {
     type PairRegimeResult,
     type PairStructure,
 } from "./pair-regime-classifier";
+import {
+    classifyRecentPair,
+    compareRecentPairResults,
+    formatRecentPairMetrics,
+    type RecentPairResult,
+    type RecentPairType,
+} from "./recent-pair-classifier";
+
+export type RankPairsMode = "history" | "recent200";
 
 /** A ranked pair row. Exported for service-level copy/summary tests. */
 export interface RankResult {
@@ -38,6 +48,16 @@ export interface RankResult {
     status: "ok" | "no_data" | "failed";
     error?: string;
 }
+
+/** A latest-200 chart-shape row. */
+export interface RecentRankResult {
+    symbol: string;
+    recent: RecentPairResult;
+    status: "ok" | "no_data" | "failed";
+    error?: string;
+}
+
+type AnyRankResult = RankResult | RecentRankResult;
 
 export interface PreparedRankPairRelationships {
     symbols: string[];
@@ -227,6 +247,100 @@ export function formatCopyText(results: RankResult[]): string {
     return lines.join("\n");
 }
 
+export const RECENT_COPY_HEADER = "RANK_PAIRS_RECENT_200_V1";
+export const RECENT_COPY_COLUMNS = [
+    "PAIR",
+    "STATUS",
+    "TYPE",
+    "DIRECTION",
+    "LABEL",
+    "REASON",
+    "ERROR",
+    "RATIO_RET",
+    "LOG_RET",
+    "PATH_EFF",
+    "REVERSAL_RATE",
+    "VOL_RATIO",
+    "BASELINE_TREND",
+    "RECENT_TREND",
+    "LEVEL_SHIFT_SIGMA",
+    "BARS",
+    "AS_OF",
+];
+
+const RECENT_TYPE_ORDER: RecentPairType[] = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
+
+/** Latest-200 summary line. */
+export function formatRecentOverallSummary(results: RecentRankResult[]): string {
+    const counts = Object.fromEntries(
+        RECENT_TYPE_ORDER.map((type) => [type, 0]),
+    ) as Record<RecentPairType, number>;
+    let failed = 0;
+    for (const result of results) {
+        if (result.status === "failed") failed += 1;
+        else counts[result.recent.type] += 1;
+    }
+    const parts = [`Pairs ${results.length}`];
+    for (const type of RECENT_TYPE_ORDER) parts.push(`TYPE ${type} ${counts[type]}`);
+    parts.push(`FAILED ${failed}`);
+    return parts.join(" | ");
+}
+
+function recentScalarRow(result: RecentRankResult): string {
+    const m = result.recent.metrics;
+    return [
+        result.symbol,
+        result.status,
+        result.recent.type,
+        result.recent.direction,
+        result.recent.label,
+        result.recent.reason,
+        result.error ?? "",
+        formatPercent(m.ratioReturn),
+        formatFixed(m.logReturn, 4),
+        formatFixed(m.pathEfficiency, 3),
+        formatFixed(m.reversalRate, 3),
+        formatFixed(m.volatilityRatio, 3),
+        formatFixed(m.baselineTrendStrength, 3),
+        formatFixed(m.recentTrendStrength, 3),
+        formatFixed(m.levelShiftSigma, 3),
+        String(m.barCount),
+        formatAsOf(m.asOf),
+    ].join(" | ");
+}
+
+/** Latest-200 Copy Results contract. */
+export function formatRecentCopyText(results: RecentRankResult[]): string {
+    const ranked = results
+        .map((result, index) => ({ result, index }))
+        .sort((a, b) => {
+            const cmp = compareRecentPairResults(a.result.recent, b.result.recent);
+            return cmp !== 0 ? cmp : a.index - b.index;
+        });
+    return [
+        RECENT_COPY_HEADER,
+        RECENT_COPY_COLUMNS.join(" | "),
+        ...ranked.map(({ result }) => recentScalarRow(result)),
+    ].join("\n");
+}
+
+function isRecentRankResult(result: AnyRankResult): result is RecentRankResult {
+    return "recent" in result;
+}
+
+function recentBadgeCssFor(result: RecentRankResult): string {
+    if (result.status === "failed") return FAILED_CSS;
+    if (result.status === "no_data") return DIRECTION_CSS.THIN;
+    return DIRECTION_CSS[result.recent.direction];
+}
+
+/** Latest-200 badge label. */
+export function recentBadgeLabelFor(result: RecentRankResult): string {
+    if (result.status === "ok") return result.recent.label;
+    if (result.status === "no_data") return `TYPE J — THIN (${result.recent.reason})`;
+    return "FAIL";
+}
+
 /**
  * Display comparator wrapping the pure regime comparator. Failed/no-data rows
  * sort after every regime result (they fall into the THIN group), with stable
@@ -243,11 +357,29 @@ function compareRankResultsForDisplay(
     return aIdx - bIdx;
 }
 
+function compareAnyResultsForDisplay(
+    a: AnyRankResult,
+    b: AnyRankResult,
+    aIdx: number,
+    bIdx: number,
+    mode: RankPairsMode,
+): number {
+    if (mode === "recent200" && isRecentRankResult(a) && isRecentRankResult(b)) {
+        const cmp = compareRecentPairResults(a.recent, b.recent);
+        return cmp !== 0 ? cmp : aIdx - bIdx;
+    }
+    if (!isRecentRankResult(a) && !isRecentRankResult(b)) {
+        return compareRankResultsForDisplay(a, b, aIdx, bIdx);
+    }
+    return aIdx - bIdx;
+}
+
 class RankPairsService {
     private dom: RankPairsDom | null = null;
     private initialized = false;
     private cancelled = false;
-    private lastResults: RankResult[] = [];
+    private lastResults: AnyRankResult[] = [];
+    private lastMode: RankPairsMode = "history";
     // Monotonic run token — see BatchBacktestService for the rationale:
     // a stale run that resumes after a newer run started sees its token as
     // stale and stops writing DOM/state.
@@ -300,6 +432,12 @@ class RankPairsService {
             this.clearStaleResults(dom);
             this.updateSummary(dom);
         });
+        dom.rankPairsMode.addEventListener("change", () => {
+            this.clearStaleResults(dom);
+            dom.rankPairsResults.replaceChildren();
+            setVisible(dom.rankPairsEmpty, true);
+            this.updateSummary(dom);
+        });
     }
 
     private async runRank(): Promise<void> {
@@ -317,16 +455,21 @@ class RankPairsService {
         }
 
         const interval = state.currentInterval;
+        const mode: RankPairsMode = dom.rankPairsMode.value === "recent200"
+            ? "recent200"
+            : "history";
         const startedAt = Date.now();
 
         this.runToken += 1;
         const token = this.runToken;
         this.cancelled = false;
         this.lastResults = [];
+        this.lastMode = mode;
         this.abortController = new AbortController();
         const signal = this.abortController.signal;
 
         dom.rankPairsRunBtn.disabled = true;
+        dom.rankPairsMode.disabled = true;
         setVisible(dom.rankPairsStopBtn, true);
         dom.rankPairsCopyBtn.disabled = true;
         setVisible(dom.rankPairsEmpty, false);
@@ -337,36 +480,59 @@ class RankPairsService {
                 if (token !== this.runToken || this.cancelled) break;
                 const symbol = symbols[i];
 
-                let result: RankResult;
+                let result: AnyRankResult;
                 try {
                     const bars = await loadBatchDataset(symbol, interval, signal);
                     if (token !== this.runToken) return;
                     if (!signal.aborted && bars.length > 0) {
-                        const regime = classifyPairRegime(bars);
-                        regime.symbol = symbol;
-                        // The classifier returns THIN with an INSUFFICIENT_*
-                        // reason when coverage fails; surface those as no_data
-                        // rows distinct from genuine classifications.
-                        const isThin =
-                            regime.direction === "THIN" && regime.reason !== "OK";
-                        result = { symbol, regime, status: isThin ? "no_data" : "ok" };
+                        if (mode === "recent200") {
+                            const recent = classifyRecentPair(bars);
+                            recent.symbol = symbol;
+                            result = {
+                                symbol,
+                                recent,
+                                status: recent.type === "J" ? "no_data" : "ok",
+                            };
+                        } else {
+                            const regime = classifyPairRegime(bars);
+                            regime.symbol = symbol;
+                            // The classifier returns THIN with an INSUFFICIENT_*
+                            // reason when coverage fails; surface those as no_data
+                            // rows distinct from genuine classifications.
+                            const isThin =
+                                regime.direction === "THIN" && regime.reason !== "OK";
+                            result = { symbol, regime, status: isThin ? "no_data" : "ok" };
+                        }
                     } else {
-                        result = {
-                            symbol,
-                            regime: emptyThinRegime(symbol),
-                            status: "no_data",
-                        };
+                        result = mode === "recent200"
+                            ? {
+                                symbol,
+                                recent: emptyThinRecent(symbol),
+                                status: "no_data",
+                            }
+                            : {
+                                symbol,
+                                regime: emptyThinRegime(symbol),
+                                status: "no_data",
+                            };
                     }
                 } catch (error) {
                     if (token !== this.runToken) return;
                     const message = error instanceof Error ? error.message : String(error);
                     debugLogger.warn("rank_pairs.pair_failed", { symbol, error: message });
-                    result = {
-                        symbol,
-                        regime: emptyThinRegime(symbol),
-                        status: "failed",
-                        error: message,
-                    };
+                    result = mode === "recent200"
+                        ? {
+                            symbol,
+                            recent: emptyThinRecent(symbol),
+                            status: "failed",
+                            error: message,
+                        }
+                        : {
+                            symbol,
+                            regime: emptyThinRegime(symbol),
+                            status: "failed",
+                            error: message,
+                        };
                 }
 
                 this.lastResults.push(result);
@@ -388,7 +554,9 @@ class RankPairsService {
             if (!this.cancelled) {
                 const indexed = this.lastResults
                     .map((r, idx) => ({ r, idx }))
-                    .sort((a, b) => compareRankResultsForDisplay(a.r, b.r, a.idx, b.idx));
+                    .sort((a, b) =>
+                        compareAnyResultsForDisplay(a.r, b.r, a.idx, b.idx, mode)
+                    );
                 this.lastResults = indexed.map(({ r }) => r);
                 const fragment = document.createDocumentFragment();
                 for (const result of this.lastResults) {
@@ -404,7 +572,7 @@ class RankPairsService {
                     ? `Done (${this.lastResults.length} relationships; ${prepared.reciprocalDuplicates} reciprocal duplicates skipped; ${prepared.selfPairs} self-pairs skipped)`
                     : `Done (${this.lastResults.length} relationships)`;
 
-            this.emitRunComplete(interval, symbols.length, startedAt);
+            this.emitRunComplete(interval, symbols.length, startedAt, mode);
         } catch (error) {
             if (token !== this.runToken) return;
             const message = error instanceof Error ? error.message : String(error);
@@ -413,6 +581,7 @@ class RankPairsService {
         } finally {
             if (token === this.runToken) {
                 dom.rankPairsRunBtn.disabled = false;
+                dom.rankPairsMode.disabled = false;
                 setVisible(dom.rankPairsStopBtn, false);
                 dom.rankPairsCopyBtn.disabled = this.lastResults.length === 0;
                 this.updateSummary(dom);
@@ -426,6 +595,7 @@ class RankPairsService {
         interval: string,
         _symbolCount: number,
         startedAt: number,
+        mode: RankPairsMode,
     ): void {
         // One aggregate event per run — never one per pair, and never candles.
         // Counts by label let the debug panel summarize a run without re-running
@@ -434,12 +604,19 @@ class RankPairsService {
         const dirCounts: Record<string, number> = {};
         const structCounts: Record<string, number> = {};
         for (const r of ok) {
-            dirCounts[r.regime.direction] = (dirCounts[r.regime.direction] ?? 0) + 1;
-            structCounts[r.regime.structure] = (structCounts[r.regime.structure] ?? 0) + 1;
+            if (isRecentRankResult(r)) {
+                dirCounts[r.recent.direction] = (dirCounts[r.recent.direction] ?? 0) + 1;
+                structCounts[`TYPE_${r.recent.type}`] =
+                    (structCounts[`TYPE_${r.recent.type}`] ?? 0) + 1;
+            } else {
+                dirCounts[r.regime.direction] = (dirCounts[r.regime.direction] ?? 0) + 1;
+                structCounts[r.regime.structure] = (structCounts[r.regime.structure] ?? 0) + 1;
+            }
         }
         const failed = this.lastResults.filter((r) => r.status === "failed").length;
         debugLogger.event("rank_pairs.run_complete", {
             interval,
+            mode,
             classified: ok.length,
             failed,
             cancelled: this.cancelled,
@@ -451,7 +628,11 @@ class RankPairsService {
 
     private async copyResults(): Promise<void> {
         if (this.lastResults.length === 0) return;
-        const text = formatCopyText(this.lastResults);
+        const text = this.lastMode === "recent200"
+            ? formatRecentCopyText(this.lastResults.filter(isRecentRankResult))
+            : formatCopyText(this.lastResults.filter(
+                (result): result is RankResult => !isRecentRankResult(result),
+            ));
         try {
             await navigator.clipboard.writeText(text);
         } catch {
@@ -463,7 +644,7 @@ class RankPairsService {
     // Rendering
     // --------------------------------------------------------------------
 
-    private appendResultRow(dom: RankPairsDom, result: RankResult): void {
+    private appendResultRow(dom: RankPairsDom, result: AnyRankResult): void {
         dom.rankPairsResults.appendChild(this.createResultRow(result));
     }
 
@@ -473,16 +654,27 @@ class RankPairsService {
         dom.rankPairsCopyBtn.disabled = true;
     }
 
-    private createResultRow(result: RankResult): HTMLDivElement {
+    private createResultRow(result: AnyRankResult): HTMLDivElement {
         const line = document.createElement("div");
         line.className = "finder-sub finder-symbol-row";
 
         const badge = document.createElement("span");
-        badge.className = `finder-verdict ${badgeCssFor(result)}`;
-        badge.textContent = badgeLabelFor(result);
+        badge.className = `finder-verdict ${
+            isRecentRankResult(result) ? recentBadgeCssFor(result) : badgeCssFor(result)
+        }`;
+        badge.textContent = isRecentRankResult(result)
+            ? recentBadgeLabelFor(result)
+            : badgeLabelFor(result);
         line.appendChild(badge);
 
-        line.appendChild(document.createTextNode(` ${result.symbol} | ${formatResultRowPipe(result)}`));
+        const evidence = isRecentRankResult(result)
+            ? result.status === "ok"
+                ? formatRecentPairMetrics(result.recent)
+                : result.status === "failed"
+                    ? `failed: ${result.error ?? "unknown"}`
+                    : `no data: ${result.recent.reason}`
+            : formatResultRowPipe(result);
+        line.appendChild(document.createTextNode(` ${result.symbol} | ${evidence}`));
         return line;
     }
 
@@ -502,7 +694,11 @@ class RankPairsService {
 
     private updateSummary(dom: RankPairsDom): void {
         if (this.lastResults.length > 0) {
-            dom.rankPairsSummary.textContent = formatOverallSummary(this.lastResults);
+            dom.rankPairsSummary.textContent = this.lastMode === "recent200"
+                ? formatRecentOverallSummary(this.lastResults.filter(isRecentRankResult))
+                : formatOverallSummary(this.lastResults.filter(
+                    (result): result is RankResult => !isRecentRankResult(result),
+                ));
             return;
         }
         const count = parseBatchSymbols(dom.rankPairsSymbols.value).length;
@@ -514,6 +710,12 @@ function emptyThinRegime(symbol: string): PairRegimeResult {
     const regime = classifyPairRegime([]);
     regime.symbol = symbol;
     return regime;
+}
+
+function emptyThinRecent(symbol: string): RecentPairResult {
+    const recent = classifyRecentPair([]);
+    recent.symbol = symbol;
+    return recent;
 }
 
 export const rankPairsService = new RankPairsService();

@@ -11,6 +11,7 @@ import { getRequiredElement } from "../dom-utils";
  */
 export const RANK_PAIRS_REQUIRED_IDS = [
     "rankpairsTab",
+    "rankPairsMode",
     "rankPairsSymbols",
     "rankPairsUseCurrent",
     "rankPairsClear",
@@ -29,6 +30,7 @@ export const RANK_PAIRS_REQUIRED_IDS = [
 export function createRankPairsDom() {
     return {
         rankpairsTab: getRequiredElement("rankpairsTab"),
+        rankPairsMode: getRequiredElement<HTMLSelectElement>("rankPairsMode"),
         rankPairsSymbols: getRequiredElement<HTMLTextAreaElement>("rankPairsSymbols"),
         rankPairsUseCurrent: getRequiredElement<HTMLButtonElement>("rankPairsUseCurrent"),
         rankPairsClear: getRequiredElement<HTMLButtonElement>("rankPairsClear"),

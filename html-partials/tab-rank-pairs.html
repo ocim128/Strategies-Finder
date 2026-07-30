@@ -2,23 +2,30 @@
 <div id="rankpairsTab">
     <div class="section-title">Rank Pairs</div>
     <div class="param-hint">
-        Classify each synthetic pair (<code>BASE+QUOTE</code>) by the regime of
-        its ratio path (base.close / quote.close). Each pair is sampled at fixed
-        30-calendar-day anchors over roughly three years, then labelled with an
-        independent direction (<code>BASE</code> / <code>NEUTRAL</code> /
-        <code>QUOTE</code>) and structure (<code>TREND</code> /
-        <code>OSCILLATING</code> / <code>TRANSITION</code> /
-        <code>REVERSAL</code> / <code>MIXED</code>). Calendar anchoring makes
-        <code>30m</code>, <code>4h</code>, and <code>1d</code> paths comparable
-        across continuous and stock sessions.
+        Classify each synthetic pair (<code>BASE+QUOTE</code>) by the shape of
+        its ratio path (base.close / quote.close). Full History uses fixed
+        calendar anchors; Latest 200 Bars groups charts into descriptive
+        <code>TYPE A</code> through <code>TYPE J</code>.
     </div>
     <div class="param-hint" style="margin-top: 4px; color: var(--color-warning, #b8860b);">
-        ⚠ Research only &mdash; a regime label is measured over a multiyear
-        historical window and is not a persistence claim. Ranking pairs by a
-        label and then backtesting over the same period is lookahead-biased.
+        ⚠ Research only &mdash; labels describe the selected historical window
+        and are not persistence, quality, or opportunity claims. Backtesting
+        over the same classified window is lookahead-biased.
     </div>
 
     <div class="section-body">
+        <div class="param-group">
+            <label class="param-label" for="rankPairsMode">Classification</label>
+            <select class="param-input" id="rankPairsMode">
+                <option value="history">Full History Regime</option>
+                <option value="recent200">Latest 200 Bars (TYPE A–J)</option>
+            </select>
+        </div>
+        <div class="param-hint">
+            Recent types: A Stable Range, B Expanding Range, C Compressing
+            Range, D Base Trend, E Quote Trend, F Breakout, G Reversal,
+            H Level Shift, I Mixed/Noisy, J Thin.
+        </div>
         <div class="finder-strategy-actions" role="group" aria-label="Rank pairs helpers">
             <button class="btn btn-secondary btn-compact" id="rankPairsUseCurrent" type="button">Use Current</button>
             <button class="btn btn-secondary btn-compact" id="rankPairsClear" type="button">Clear</button>
