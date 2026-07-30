@@ -23,7 +23,9 @@
  *  - URLs in logs omit query-string secrets (Alpaca's auth is header-based,
  *    but we keep the discipline anyway).
  */
+import dns from "node:dns";
 import { createRequire } from "node:module";
+import { isIP } from "node:net";
 import { debugLogger } from "../debug-logger";
 import { createFetchTimeoutSignal, isAbortError } from "../dataProviders/fetch-helpers";
 import { HttpStatusError } from "../vite-http-utils";
@@ -52,20 +54,81 @@ const ALPACA_REQUEST_TIMEOUT_MS = 30_000;
 const ALPACA_RETRY_DELAYS_MS = [1_000, 3_000, 8_000] as const;
 /** Hard ceiling on pages per symbol so a misbehaving API cannot loop forever. */
 const ALPACA_MAX_PAGES_PER_SYMBOL = 200;
+const ADGUARD_DOH_RESOLVE_URL = "https://dns.adguard-dns.com/resolve";
+const ALPACA_DNS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /** HTTP statuses that are NOT retried. Everything else is considered transient. */
 const ALPACA_NON_RETRYABLE_STATUSES = new Set([400, 401, 403, 404, 422]);
-type UndiciAgent = new (options: { connect: { family: 4 } }) => unknown;
+type LookupCallback = (
+    error: NodeJS.ErrnoException | null,
+    address: string | dns.LookupAddress[],
+    family?: number,
+) => void;
+type LookupOptions = dns.LookupOptions & { all?: boolean };
+type ConnectLookup = (hostname: string, options: LookupOptions, callback: LookupCallback) => void;
+type UndiciAgent = new (options: { connect: { family: 4; lookup: ConnectLookup } }) => unknown;
+type DnsJsonResponse = {
+    Answer?: Array<{ type?: number; TTL?: number; data?: string }>;
+};
 const requireFromAlpacaFetcher = createRequire(import.meta.url);
 let alpacaIpv4Dispatcher: unknown | undefined;
 let undiciUnavailable = false;
+const alpacaDnsCache = new Map<string, { address: string; expiresAtMs: number }>();
+
+export async function resolveAlpacaIpv4(hostname: string): Promise<string> {
+    const cached = alpacaDnsCache.get(hostname);
+    if (cached && cached.expiresAtMs > Date.now()) return cached.address;
+
+    const url = new URL(ADGUARD_DOH_RESOLVE_URL);
+    url.searchParams.set("name", hostname);
+    url.searchParams.set("type", "A");
+    const response = await fetch(url, {
+        headers: { Accept: "application/dns-json" },
+        signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) {
+        throw new Error(`AdGuard DNS lookup failed for ${hostname}: HTTP ${response.status}`);
+    }
+
+    const payload = await response.json() as DnsJsonResponse;
+    const answers = Array.isArray(payload.Answer) ? payload.Answer : [];
+    const answer = answers.find((candidate) => candidate.type === 1 && isIP(candidate.data ?? "") === 4);
+    if (!answer?.data) {
+        throw new Error(`AdGuard DNS returned no A record for ${hostname}`);
+    }
+
+    const ttlSeconds = Number(answer.TTL);
+    const ttlMs = Math.max(
+        30_000,
+        Math.min(ALPACA_DNS_CACHE_TTL_MS, Number.isFinite(ttlSeconds) ? ttlSeconds * 1000 : ALPACA_DNS_CACHE_TTL_MS),
+    );
+    alpacaDnsCache.set(hostname, {
+        address: answer.data,
+        expiresAtMs: Date.now() + ttlMs,
+    });
+    return answer.data;
+}
+
+const alpacaLookup: ConnectLookup = (hostname, options, callback) => {
+    void resolveAlpacaIpv4(hostname)
+        .then((address) => {
+            if (options.all) {
+                callback(null, [{ address, family: 4 }]);
+                return;
+            }
+            callback(null, address, 4);
+        })
+        .catch(() => {
+            (dns.lookup as unknown as ConnectLookup)(hostname, { ...options, family: 4 }, callback);
+        });
+};
 
 function getAlpacaIpv4Dispatcher(url: string): unknown | undefined {
     if (new URL(url).origin !== ALPACA_DATA_HOST || undiciUnavailable) return undefined;
     if (alpacaIpv4Dispatcher) return alpacaIpv4Dispatcher;
     try {
         const { Agent } = requireFromAlpacaFetcher("undici") as { Agent: UndiciAgent };
-        alpacaIpv4Dispatcher = new Agent({ connect: { family: 4 } });
+        alpacaIpv4Dispatcher = new Agent({ connect: { family: 4, lookup: alpacaLookup } });
         return alpacaIpv4Dispatcher;
     } catch {
         undiciUnavailable = true;

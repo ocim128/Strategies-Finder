@@ -418,9 +418,8 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
     // existing IBKR-sourced interval must now MERGE (preserve the IBKR
     // history) AND honestly label the catalog `source: "mixed"` so the file
     // is never silently passed off as single-source. The "mixed" label makes
-    // the interval ineligible for future Alpaca sync (the source guard still
-    // requires "alpaca"), so the user consciously decides whether to keep
-    // mixing. Uses sentinel SYMBOLS at the real 30m interval (the only one
+    // subsequent Alpaca syncs preserve both the rows and the honest "mixed"
+    // label. Uses sentinel SYMBOLS at the real 30m interval (the only one
     // Alpaca supports) and cleans them up in afterEach. The symbols are
     // obviously-test names that will never collide with real tickers.
     const originalFetch = globalThis.fetch;
@@ -481,6 +480,13 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
         assert.ok(merged.length >= 3, `expected >=3 lines (header + 2 bars), got ${merged.length}`);
         assert.ok(merged.some((l: string) => l.startsWith("2020-01-01")), "old IBKR bar preserved (no data loss)");
         assert.ok(merged.some((l: string) => l.startsWith("2026-07-23")), "new Alpaca bar merged");
+
+        // A mixed interval already contains Alpaca rows, so it must support
+        // later incremental Alpaca updates instead of trapping the user in a
+        // "Download first" loop. The catalog stays honestly marked mixed.
+        const syncResult = await syncOneAlpacaSymbol(catalog as never, SEED_SYMBOL, "30m", "1w", true, undefined, config as never);
+        assert.equal(syncResult.source, "mixed");
+        assert.equal(catalog.entries[0].intervals["30m"].source, "mixed");
     });
 
     it("records source:alpaca (NOT mixed) when the interval is fresh (no prior bars)", async () => {

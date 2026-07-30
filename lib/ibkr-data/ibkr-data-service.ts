@@ -91,7 +91,8 @@ class IbkrDataService {
                         if (completed.length > 0) {
                             this.invalidateSyncedData(completed, lastRunningSnapshot?.interval);
                         }
-                        this.setStatus("IBKR sync finished (reattached).");
+                        const provider = lastRunningSnapshot?.source === "alpaca" ? "Alpaca" : "IBKR";
+                        this.setStatus(`${provider} sync finished (reattached).`);
                     }
                     return;
                 }
@@ -156,8 +157,8 @@ class IbkrDataService {
         const current = run.currentSymbol ? ` — syncing ${run.currentSymbol}` : "";
         const failLabel = run.failed > 0 ? `, ${run.failed} failed` : "";
         const cancelLabel = run.cancelled ? " (stopping)" : "";
-        const sourceLabel = run.source === "alpaca" ? "Alpaca " : "";
-        this.setStatus(`IBKR ${sourceLabel}${run.mode} ${seen}/${run.total}${failLabel}${cancelLabel}${current}`);
+        const provider = run.source === "alpaca" ? "Alpaca" : "IBKR";
+        this.setStatus(`${provider} ${run.mode} ${seen}/${run.total}${failLabel}${cancelLabel}${current}`);
     }
 
     private getDom(): IbkrDataDom {
@@ -287,7 +288,8 @@ class IbkrDataService {
         }
 
         this.setBusy(true);
-        this.setStatus("Running IBKR request...");
+        const requestedProvider = body.source === "alpaca" ? "Alpaca" : "IBKR";
+        this.setStatus(`Running ${requestedProvider} request...`);
         // Aggregated view of the streamed events. `results` / `failed` are
         // filled in by the terminal `done` event; per-symbol events update
         // the status line incrementally so the UI doesn't feel frozen during
@@ -307,7 +309,7 @@ class IbkrDataService {
         // Typed as `string` because the closure assignment inside `onStart`
         // is not visible to the control-flow narrowing at the comparison
         // site below, which would otherwise narrow the union away.
-        let runSource: string = "ibkr";
+        let runSource: string = body.source === "alpaca" ? "alpaca" : "ibkr";
         // Whether the streaming POST succeeded (opened a stream). Used by the
         // finally block to decide whether to invalidate partial results.
         let streamOpened = false;
@@ -322,7 +324,7 @@ class IbkrDataService {
                 const text = await response.text();
                 let payload: { error?: string } = {};
                 try { payload = JSON.parse(text); } catch { /* ignore parse error */ }
-                aggregated.error = payload.error ?? `IBKR request failed (${response.status}).`;
+                aggregated.error = payload.error ?? `${requestedProvider} request failed (${response.status}).`;
                 this.writeOutput(text);
                 this.setStatus(aggregated.error);
                 return;
@@ -333,8 +335,8 @@ class IbkrDataService {
                 onStart: (event: Extract<IbkrStreamEvent, { type: "start" }>) => {
                     total = event.total;
                     if (event.source === "alpaca") runSource = "alpaca";
-                    const sourceLabel = event.source === "alpaca" ? "Alpaca " : "";
-                    this.setStatus(`IBKR ${sourceLabel}${event.mode ?? "request"}: 0/${total}`);
+                    const provider = runSource === "alpaca" ? "Alpaca" : "IBKR";
+                    this.setStatus(`${provider} ${event.mode ?? "request"}: 0/${total}`);
                 },
                 onSymbol: (event: Extract<IbkrStreamEvent, { type: "symbol" }>) => {
                     seen = event.index + 1;
@@ -345,11 +347,13 @@ class IbkrDataService {
                     }
                     const delta = event.fetchedBars ?? 0;
                     const deltaLabel = delta > 0 ? ` +${delta} bar${delta === 1 ? "" : "s"}` : "";
-                    this.setStatus(`IBKR ${seen}/${total}: ${event.symbol}${deltaLabel}`);
+                    const provider = runSource === "alpaca" ? "Alpaca" : "IBKR";
+                    this.setStatus(`${provider} ${seen}/${total}: ${event.symbol}${deltaLabel}`);
                 },
                 onSymbolFailed: (event: Extract<IbkrStreamEvent, { type: "symbol_failed" }>) => {
                     seen = event.index + 1;
-                    this.setStatus(`IBKR ${seen}/${total}: ${event.symbol} failed — ${event.error}`);
+                    const provider = runSource === "alpaca" ? "Alpaca" : "IBKR";
+                    this.setStatus(`${provider} ${seen}/${total}: ${event.symbol} failed — ${event.error}`);
                 },
                 onSymbolWarning: (event: Extract<IbkrStreamEvent, { type: "symbol_warning" }>) => {
                     hadWarning = true;
@@ -360,7 +364,8 @@ class IbkrDataService {
                     if (!markedSymbolsAcc.includes(marked)) {
                         markedSymbolsAcc.push(marked);
                     }
-                    this.setStatus(`IBKR ${seen}/${total}: ${event.symbol} incomplete — ${event.reason}`);
+                    const provider = runSource === "alpaca" ? "Alpaca" : "IBKR";
+                    this.setStatus(`${provider} ${seen}/${total}: ${event.symbol} incomplete — ${event.reason}`);
                 },
                 onDone: (event: Extract<IbkrStreamEvent, { type: "done" }>) => {
                     aggregated.ok = event.ok;
@@ -379,21 +384,24 @@ class IbkrDataService {
                 return;
             }
             if (!aggregated.ok) {
-                this.setStatus("IBKR request completed with failures.");
+                const provider = runSource === "alpaca" ? "Alpaca" : "IBKR";
+                this.setStatus(`${provider} request completed with failures.`);
                 return;
             }
             if (hadWarning) {
-                this.setStatus(`IBKR request complete with warnings — ${seen}/${total} symbol${total === 1 ? "" : "s"} (some partial).`);
+                const provider = runSource === "alpaca" ? "Alpaca" : "IBKR";
+                this.setStatus(`${provider} request complete with warnings — ${seen}/${total} symbol${total === 1 ? "" : "s"} (some partial).`);
                 return;
             }
-            const sourceLabel = runSource === "alpaca" ? "Alpaca " : "";
+            const provider = runSource === "alpaca" ? "Alpaca" : "IBKR";
             const aggregateHint = runSource === "alpaca"
                 ? " Run `npm run ibkr:aggregate -- --from 30m --interval 4h` to derive 4h."
                 : "";
-            this.setStatus(`IBKR ${sourceLabel}request complete — ${seen}/${total} symbol${total === 1 ? "" : "s"}.${aggregateHint}`);
+            this.setStatus(`${provider} request complete — ${seen}/${total} symbol${total === 1 ? "" : "s"}.${aggregateHint}`);
         } catch (error) {
             this.writeOutput(error instanceof Error ? error.message : String(error));
-            this.setStatus("IBKR request failed.");
+            const provider = runSource === "alpaca" ? "Alpaca" : "IBKR";
+            this.setStatus(`${provider} request failed.`);
         } finally {
             // Invalidate in `finally` so a mid-stream network failure (which
             // throws out of consumeNdjsonStream) still invalidates the symbols

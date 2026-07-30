@@ -1725,10 +1725,11 @@ export function resolveAlpacaWindow(
 /**
  * Alpaca per-symbol worker — mirrors `syncOneSymbol`'s return shape so
  * `processSyncBatch` can treat both sources uniformly. Source guard:
- *  - Download replaces the target interval's dataset and records `source: "alpaca"`.
- *  - Sync requires the catalog interval to already be `source === "alpaca"`;
- *    otherwise the user must run Alpaca Download first. Never merge Alpaca
- *    rows into an IBKR/unknown interval.
+ *  - Download merges safely into the target interval and records `source:
+ *    "alpaca"` for fresh data or `"mixed"` when another source already exists.
+ *  - Sync requires the catalog interval to already contain Alpaca data
+ *    (`source === "alpaca"` or `"mixed"`). Never merge Alpaca rows into an
+ *    IBKR-only/unknown interval during incremental sync.
  *
  * Credentials are read inside `resolveAlpacaConfig` and never flow into the
  * returned result, the catalog, the CSV, or stream events.
@@ -1764,9 +1765,10 @@ export async function syncOneAlpacaSymbol(
     const existingInterval = existingEntry?.intervals[interval];
     const existingSource = existingInterval?.source;
 
-    // Source guard for sync: an unknown or IBKR interval must NOT be merged
-    // with Alpaca rows. Instruct the user to run Alpaca Download first.
-    if (syncOnly && existingSource !== "alpaca") {
+    // Source guard for sync: an unknown or IBKR-only interval must NOT be
+    // merged with Alpaca rows. A mixed interval already contains Alpaca data,
+    // so incremental updates are safe and remain labelled mixed below.
+    if (syncOnly && existingSource !== "alpaca" && existingSource !== "mixed") {
         const sourceLabel = existingSource ?? "unknown (pre-Alpaca catalog entry)";
         throw new HttpStatusError(
             409,

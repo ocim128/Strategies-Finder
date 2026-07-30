@@ -20,6 +20,7 @@ import {
     isRetryableAlpacaStatus,
     normalizeAlpacaBars,
     parseAlpacaBarsResponse,
+    resolveAlpacaIpv4,
     resolveAlpacaConfig,
 } from "../lib/ibkr-data/alpaca-fetcher";
 import { HttpStatusError } from "../lib/vite-http-utils";
@@ -44,6 +45,26 @@ function pushResponse(body: unknown, init: { status?: number; headers?: Record<s
 }
 
 const originalFetch = globalThis.fetch;
+
+describe("alpaca DNS-over-HTTPS resolution", () => {
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+    });
+
+    it("uses the clean A record returned by DoH instead of the system resolver", async () => {
+        globalThis.fetch = (async () => ({
+            ok: true,
+            json: async () => ({
+                Answer: [
+                    { type: 5, TTL: 60, data: "example.cdn.test." },
+                    { type: 1, TTL: 60, data: "34.86.145.125" },
+                ],
+            }),
+        }) as unknown as Response) as typeof fetch;
+
+        assert.equal(await resolveAlpacaIpv4("unit-test.data.alpaca.markets"), "34.86.145.125");
+    });
+});
 
 describe("alpaca buildAlpacaBarsUrl", () => {
     const config = { host: ALPACA_DATA_HOST, feed: ALPACA_DEFAULT_FEED, adjustment: ALPACA_DEFAULT_ADJUSTMENT };
@@ -267,15 +288,14 @@ describe("alpaca fetchAlpacaBars (stubbed fetch)", () => {
         assert.equal(headers["APCA-API-SECRET-KEY"], "testsecret");
     });
 
-    it("uses an IPv4-only dispatcher for the public Alpaca host", async () => {
-        // Some ISP DNS resolvers return an unreachable NAT64/block-page AAAA
-        // record for data.alpaca.markets alongside its working A record. Keep
-        // this request host-scoped so one bad IPv6 route cannot make downloads
-        // intermittently fail while unrelated server fetches stay untouched.
+    it("uses a host-scoped IPv4/DoH dispatcher for the public Alpaca host", async () => {
+        // Some ISP DNS resolvers return a block-page address for
+        // data.alpaca.markets. Keep the clean lookup host-scoped so poisoned
+        // system DNS cannot break Alpaca while unrelated fetches are untouched.
         pushResponse({ bars: [{ t: "2026-01-01T00:00:00Z", o: 1, h: 2, l: 0.5, c: 1.5, v: 10 }] });
         await fetchAlpacaBars(config, { symbol: "AAPL", timeframe: "30Min", start: "2026-01-01T00:00:00Z", end: "2026-02-01T00:00:00Z" });
         const init = fetchCalls[0]!.init as RequestInit & { dispatcher?: unknown };
-        assert.ok(init.dispatcher, "public Alpaca requests should carry the IPv4-only dispatcher");
+        assert.ok(init.dispatcher, "public Alpaca requests should carry the IPv4/DoH dispatcher");
     });
 
     it("follows next_page_token until exhausted and dedups overlapping timestamps", async () => {
