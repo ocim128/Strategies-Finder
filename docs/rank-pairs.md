@@ -8,9 +8,11 @@ browser-only, lazy-initialized research tab (registered in `lib/app-bootstrap.ts
 - Pure classifier: `lib/rank-pairs/pair-regime-classifier.ts`
 - Latest-200 classifier: `lib/rank-pairs/recent-pair-classifier.ts`
 - UI service: `lib/rank-pairs/rank-pairs-service.ts`
-- Datasets: loaded through the shared Batch loader (`loadBatchDataset`) — the
-  loader is the source of truth for synthetic-pair construction, aligned
-  candles, interval aggregation, and caches. Rank Pairs changes none of that.
+- Full History datasets load through the shared Batch loader
+  (`loadBatchDataset`). Latest 200 Bars uses a Rank-only compact leg cache and
+  reverse aligned-close builder that stops after 200 target buckets; if the
+  shallow window cannot produce 200 aligned bars, it retries at the Batch
+  loader's full source depth.
 
 ## What the classifier measures
 
@@ -147,10 +149,23 @@ reason code (`OK`, `INSUFFICIENT_ANCHORS`, `INVALID_TIME`, `NO_VALID_CLOSES`,
 
 ### Diagnostics
 
-Each run emits one `rank_pairs.run_complete` debug event (via `debugLogger`)
-with: `interval`, `classified` count, `failed` count, `cancelled` flag,
-`elapsedMs`, `byDirection`, and `byStructure` count maps. No candles and no
-per-pair events are logged.
+Each run shows a performance line and emits one `rank_pairs.run_complete` debug
+event (via `debugLogger`). Diagnostics separate dataset load/build,
+classification, live DOM, progress, task yielding, sorting, and final DOM time;
+they also include throughput, bars materialized, and cache deltas. No candles
+and no per-pair events are logged.
+
+For large universes, the browser renders and retains only the top 2,000 sorted
+rows. After a completed run, the full scalar Copy Results rows are formatted
+and written to IndexedDB in 1,000-line chunks; OHLCV is never stored in this
+snapshot. The in-memory 124,000+ result array is then released.
+
+The latest completed snapshot survives page reload. Opening Rank Pairs restores
+its summary, performance diagnostics, mode, and bounded preview without loading
+the full result. The complete text is materialized only when **Copy Results**
+is clicked. A new snapshot replaces the previous generation only after all new
+chunks commit, so an interrupted or quota-failed save leaves the prior
+completed snapshot recoverable.
 
 ## Limitations
 
@@ -181,8 +196,6 @@ correctness, blocking for production trust):**
   This is a prerequisite the plan calls out (§Phase 2 dependencies) and cannot
   be settled by synthetic fixtures, which are built around the thresholds by
   construction.
-- **Warm-cache profiling** (100 / 400 / 1,000-pair runs, loader time separated
-  from classifier time) requires a running dev server with local data.
 - **Manual smoke matrix** — crypto ratios at `30m`/`4h`/`1d`, IBKR stock ratios
   at `4h`/`1d`, a pair and its reciprocal, and known regime examples — requires
   the same live environment.
@@ -235,8 +248,9 @@ contract remains unchanged.
 
 ## What Rank Pairs does NOT change
 
-- Synthetic candle or Batch loader behavior, caches, or limits.
+- Full History synthetic candle or Batch loader behavior, caches, or limits.
 - Finder, Batch Backtest, Stability Mine, strategies, or saved Batch templates.
-- Server routes, databases, workers, persistence, or persisted settings.
+- Server routes, workers, or persisted settings. Rank Pairs uses its own
+  browser IndexedDB solely for the latest completed scalar result snapshot.
 - No OHLCV array crosses a network boundary or remains in Rank Pairs results —
   only scalar classification results are retained after each pair is processed.

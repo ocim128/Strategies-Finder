@@ -17,7 +17,9 @@ import {
     COPY_HEADER,
     formatCopyText,
     formatOverallSummary,
+    limitRankPairResultsForDisplay,
     prepareRankPairRelationships,
+    RANK_PAIRS_RENDER_LIMIT,
     type RankResult,
 } from "../lib/rank-pairs/rank-pairs-service";
 import { classifyPairRegime, type PairRegimeResult } from "../lib/rank-pairs/pair-regime-classifier";
@@ -98,6 +100,18 @@ describe("rank-pairs-service — reciprocal relationships", () => {
         expect(prepared.symbols).to.deep.equal(["ETH+BTC"]);
         expect(prepared.reciprocalDuplicates).to.equal(1);
         expect(prepared.selfPairs).to.equal(2);
+    });
+});
+
+describe("rank-pairs-service — bounded rendering", () => {
+    it("keeps the complete result array unless it exceeds the visible-row limit", () => {
+        const small = [1, 2, 3];
+        expect(limitRankPairResultsForDisplay(small)).to.equal(small);
+
+        const large = Array.from({ length: RANK_PAIRS_RENDER_LIMIT + 10 }, (_, index) => index);
+        const visible = limitRankPairResultsForDisplay(large);
+        expect(visible).to.have.length(RANK_PAIRS_RENDER_LIMIT);
+        expect(large).to.have.length(RANK_PAIRS_RENDER_LIMIT + 10);
     });
 });
 

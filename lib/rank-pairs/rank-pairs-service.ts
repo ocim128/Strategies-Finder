@@ -18,9 +18,31 @@
 import { state } from "../state";
 import { setVisible } from "../dom-utils";
 import { debugLogger } from "../debug-logger";
+import { createTaskYielder } from "../task-yield";
 import { parseBatchSymbols } from "../batch-backtest/batch-backtest-runner";
-import { loadBatchDataset } from "../batch-backtest/batch-backtest-loader";
+import {
+    getBatchDatasetCacheStats,
+    loadBatchDataset,
+} from "../batch-backtest/batch-backtest-loader";
 import { createRankPairsDom, type RankPairsDom } from "./rank-pairs-dom";
+import {
+    buildRankPairsCacheDelta,
+    createRankPairsPerformanceTimings,
+    formatRankPairsPerformanceDiagnostics,
+    nowRankPairsMs,
+    type RankPairsPerformanceDiagnostics,
+} from "./rank-pairs-performance";
+import {
+    getRankPairsRecentLoaderStats,
+    loadRecentRankPairDataset,
+} from "./rank-pairs-recent-loader";
+import {
+    loadLatestRankPairsResultSnapshot,
+    loadRankPairsSnapshotCopyText,
+    saveLatestRankPairsResultSnapshot,
+    type RankPairsResultSnapshot,
+} from "./rank-pairs-result-store";
+import type { OHLCVData } from "../types/strategies";
 import {
     classifyPairRegime,
     comparePairRegimeResults,
@@ -40,6 +62,7 @@ import {
 } from "./recent-pair-classifier";
 
 export type RankPairsMode = "history" | "recent200";
+export const RANK_PAIRS_RENDER_LIMIT = 2_000;
 
 /** A ranked pair row. Exported for service-level copy/summary tests. */
 export interface RankResult {
@@ -58,6 +81,12 @@ export interface RecentRankResult {
 }
 
 type AnyRankResult = RankResult | RecentRankResult;
+
+export function limitRankPairResultsForDisplay<T>(results: readonly T[]): readonly T[] {
+    return results.length > RANK_PAIRS_RENDER_LIMIT
+        ? results.slice(0, RANK_PAIRS_RENDER_LIMIT)
+        : results;
+}
 
 export interface PreparedRankPairRelationships {
     symbols: string[];
@@ -379,7 +408,12 @@ class RankPairsService {
     private initialized = false;
     private cancelled = false;
     private lastResults: AnyRankResult[] = [];
+    private lastResultCount = 0;
+    private lastSummaryText = "";
     private lastMode: RankPairsMode = "history";
+    private lastDiagnostics: RankPairsPerformanceDiagnostics | null = null;
+    private lastSnapshot: RankPairsResultSnapshot<AnyRankResult> | null = null;
+    private resultViewVersion = 0;
     // Monotonic run token — see BatchBacktestService for the rationale:
     // a stale run that resumes after a newer run started sees its token as
     // stale and stops writing DOM/state.
@@ -399,6 +433,8 @@ class RankPairsService {
         this.updateSummary(dom);
         this.resetProgress(dom);
         this.initialized = true;
+        const resultViewVersion = this.resultViewVersion;
+        void this.restoreLastResult(dom, resultViewVersion);
     }
 
     private bindEvents(dom: RankPairsDom): void {
@@ -441,13 +477,19 @@ class RankPairsService {
     }
 
     private async runRank(): Promise<void> {
+        const runStartedAt = nowRankPairsMs();
+        const timingsMs = createRankPairsPerformanceTimings();
         const dom = this.getDom();
+        const parseStartedAt = nowRankPairsMs();
         const inputSymbols = parseBatchSymbols(dom.rankPairsSymbols.value);
+        timingsMs.parseInput = nowRankPairsMs() - parseStartedAt;
         if (inputSymbols.length === 0) {
             dom.rankPairsStatus.textContent = "Add at least one pair.";
             return;
         }
+        const prepareStartedAt = nowRankPairsMs();
         const prepared = prepareRankPairRelationships(inputSymbols);
+        timingsMs.prepareRelationships = nowRankPairsMs() - prepareStartedAt;
         const symbols = prepared.symbols;
         if (symbols.length === 0) {
             dom.rankPairsStatus.textContent = "Add at least one pair between different assets.";
@@ -459,14 +501,23 @@ class RankPairsService {
             ? "recent200"
             : "history";
         const startedAt = Date.now();
+        const cacheBefore = getBatchDatasetCacheStats();
+        const recentCacheBefore = getRankPairsRecentLoaderStats();
+        let totalBars = 0;
 
         this.runToken += 1;
         const token = this.runToken;
+        this.resultViewVersion += 1;
         this.cancelled = false;
         this.lastResults = [];
+        this.lastResultCount = 0;
+        this.lastSummaryText = "";
         this.lastMode = mode;
+        this.lastDiagnostics = null;
+        this.lastSnapshot = null;
         this.abortController = new AbortController();
         const signal = this.abortController.signal;
+        const taskYielder = createTaskYielder();
 
         dom.rankPairsRunBtn.disabled = true;
         dom.rankPairsMode.disabled = true;
@@ -474,6 +525,8 @@ class RankPairsService {
         dom.rankPairsCopyBtn.disabled = true;
         setVisible(dom.rankPairsEmpty, false);
         dom.rankPairsResults.replaceChildren();
+        dom.rankPairsDiagnostics.textContent =
+            "Measuring load, classification, rendering, and yield time…";
 
         try {
             for (let i = 0; i < symbols.length; i += 1) {
@@ -482,9 +535,20 @@ class RankPairsService {
 
                 let result: AnyRankResult;
                 try {
-                    const bars = await loadBatchDataset(symbol, interval, signal);
+                    let bars: OHLCVData[];
+                    const loadStartedAt = nowRankPairsMs();
+                    try {
+                        const recentBars = mode === "recent200"
+                            ? await loadRecentRankPairDataset(symbol, interval, signal)
+                            : null;
+                        bars = recentBars ?? await loadBatchDataset(symbol, interval, signal);
+                    } finally {
+                        timingsMs.load += nowRankPairsMs() - loadStartedAt;
+                    }
                     if (token !== this.runToken) return;
+                    totalBars += bars.length;
                     if (!signal.aborted && bars.length > 0) {
+                        const classifyStartedAt = nowRankPairsMs();
                         if (mode === "recent200") {
                             const recent = classifyRecentPair(bars);
                             recent.symbol = symbol;
@@ -503,6 +567,7 @@ class RankPairsService {
                                 regime.direction === "THIN" && regime.reason !== "OK";
                             result = { symbol, regime, status: isThin ? "no_data" : "ok" };
                         }
+                        timingsMs.classify += nowRankPairsMs() - classifyStartedAt;
                     } else {
                         result = mode === "recent200"
                             ? {
@@ -536,14 +601,24 @@ class RankPairsService {
                 }
 
                 this.lastResults.push(result);
-                this.appendResultRow(dom, result);
+                if (this.lastResults.length <= RANK_PAIRS_RENDER_LIMIT) {
+                    const liveRenderStartedAt = nowRankPairsMs();
+                    this.appendResultRow(dom, result);
+                    timingsMs.liveRender += nowRankPairsMs() - liveRenderStartedAt;
+                }
 
                 const percent = ((i + 1) / symbols.length) * 100;
+                const progressStartedAt = nowRankPairsMs();
                 this.setProgress(dom, percent, `${i + 1}/${symbols.length} (${symbol})`);
+                timingsMs.progress += nowRankPairsMs() - progressStartedAt;
 
-                // Yield to the event loop between pairs so the UI stays
-                // responsive during long lists, matching the batch runner.
-                await new Promise<void>((resolve) => setTimeout(resolve, 0));
+                // Yield periodically so long cached runs stay responsive without
+                // paying one timer task per pair.
+                if ((i + 1) % 128 === 0) {
+                    const yieldStartedAt = nowRankPairsMs();
+                    await taskYielder.yieldControl();
+                    timingsMs.yield += nowRankPairsMs() - yieldStartedAt;
+                }
             }
 
             if (token !== this.runToken) return;
@@ -552,17 +627,21 @@ class RankPairsService {
             // order in a single DocumentFragment so we pay one reflow, not N.
             // Skip on cancel — the streamed input-order rows stay as-is.
             if (!this.cancelled) {
+                const sortStartedAt = nowRankPairsMs();
                 const indexed = this.lastResults
                     .map((r, idx) => ({ r, idx }))
                     .sort((a, b) =>
                         compareAnyResultsForDisplay(a.r, b.r, a.idx, b.idx, mode)
                     );
                 this.lastResults = indexed.map(({ r }) => r);
+                timingsMs.sort += nowRankPairsMs() - sortStartedAt;
+                const finalRenderStartedAt = nowRankPairsMs();
                 const fragment = document.createDocumentFragment();
-                for (const result of this.lastResults) {
+                for (const result of limitRankPairResultsForDisplay(this.lastResults)) {
                     fragment.appendChild(this.createResultRow(result));
                 }
                 dom.rankPairsResults.replaceChildren(fragment);
+                timingsMs.finalRender += nowRankPairsMs() - finalRenderStartedAt;
             }
 
             setVisible(dom.rankPairsEmpty, this.lastResults.length === 0);
@@ -571,8 +650,85 @@ class RankPairsService {
                 : prepared.reciprocalDuplicates > 0 || prepared.selfPairs > 0
                     ? `Done (${this.lastResults.length} relationships; ${prepared.reciprocalDuplicates} reciprocal duplicates skipped; ${prepared.selfPairs} self-pairs skipped)`
                     : `Done (${this.lastResults.length} relationships)`;
+            if (this.lastResults.length > RANK_PAIRS_RENDER_LIMIT) {
+                dom.rankPairsStatus.textContent +=
+                    `; showing top ${RANK_PAIRS_RENDER_LIMIT.toLocaleString("en-US")} rows (Copy Results includes all)`;
+            }
 
-            this.emitRunComplete(interval, symbols.length, startedAt, mode);
+            this.lastDiagnostics = {
+                totalPairs: symbols.length,
+                processedPairs: this.lastResults.length,
+                renderedPairs: Math.min(this.lastResults.length, RANK_PAIRS_RENDER_LIMIT),
+                totalBars,
+                elapsedMs: nowRankPairsMs() - runStartedAt,
+                timingsMs,
+                cacheDelta: buildRankPairsCacheDelta(
+                    cacheBefore,
+                    getBatchDatasetCacheStats(),
+                ),
+            };
+            const recentCacheAfter = getRankPairsRecentLoaderStats();
+            this.lastDiagnostics.cacheDelta.recentLegHits =
+                recentCacheAfter.legHits - recentCacheBefore.legHits;
+            this.lastDiagnostics.cacheDelta.recentLegMisses =
+                recentCacheAfter.legMisses - recentCacheBefore.legMisses;
+            dom.rankPairsDiagnostics.textContent =
+                formatRankPairsPerformanceDiagnostics(this.lastDiagnostics);
+            this.lastResultCount = this.lastResults.length;
+            this.lastSummaryText = mode === "recent200"
+                ? formatRecentOverallSummary(this.lastResults.filter(isRecentRankResult))
+                : formatOverallSummary(this.lastResults.filter(
+                    (result): result is RankResult => !isRecentRankResult(result),
+                ));
+            this.emitRunComplete(
+                interval,
+                symbols.length,
+                startedAt,
+                mode,
+                this.lastDiagnostics,
+            );
+
+            if (!this.cancelled && this.lastResults.length > 0) {
+                const completedStatusText = dom.rankPairsStatus.textContent ?? "";
+                dom.rankPairsStatus.textContent =
+                    `${completedStatusText}; saving result for reload…`;
+                const persistenceStartedAt = nowRankPairsMs();
+                try {
+                    const snapshot = await saveLatestRankPairsResultSnapshot({
+                        mode,
+                        interval,
+                        results: this.lastResults,
+                        preview: limitRankPairResultsForDisplay(this.lastResults),
+                        summaryText: this.lastSummaryText,
+                        diagnosticsText: dom.rankPairsDiagnostics.textContent ?? "",
+                        copyPreamble: mode === "recent200"
+                            ? [RECENT_COPY_HEADER, RECENT_COPY_COLUMNS.join(" | ")]
+                            : [COPY_HEADER, COPY_COLUMNS.join(" | ")],
+                        serializeCopyRow: (result) => {
+                            if (mode === "recent200" && isRecentRankResult(result)) {
+                                return recentScalarRow(result);
+                            }
+                            if (!isRecentRankResult(result)) return scalarRow(result);
+                            throw new Error("Rank Pairs result mode mismatch");
+                        },
+                    });
+                    if (token !== this.runToken) return;
+                    this.lastSnapshot = snapshot;
+                    this.lastResults = snapshot.preview;
+                    dom.rankPairsStatus.textContent =
+                        `${completedStatusText}; saved for reload`;
+                    debugLogger.event("rank_pairs.snapshot_saved", {
+                        rows: snapshot.resultCount,
+                        chunks: snapshot.chunkCount,
+                        elapsedMs: nowRankPairsMs() - persistenceStartedAt,
+                    });
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    dom.rankPairsStatus.textContent = completedStatusText +
+                        `; result persistence failed (${message}) — kept in memory`;
+                    debugLogger.warn("rank_pairs.snapshot_save_failed", { error: message });
+                }
+            }
         } catch (error) {
             if (token !== this.runToken) return;
             const message = error instanceof Error ? error.message : String(error);
@@ -583,7 +739,7 @@ class RankPairsService {
                 dom.rankPairsRunBtn.disabled = false;
                 dom.rankPairsMode.disabled = false;
                 setVisible(dom.rankPairsStopBtn, false);
-                dom.rankPairsCopyBtn.disabled = this.lastResults.length === 0;
+                dom.rankPairsCopyBtn.disabled = this.lastResultCount === 0;
                 this.updateSummary(dom);
                 this.setProgress(dom, 100, this.cancelled ? "Stopped" : "Done");
                 this.abortController = null;
@@ -596,6 +752,7 @@ class RankPairsService {
         _symbolCount: number,
         startedAt: number,
         mode: RankPairsMode,
+        performance: RankPairsPerformanceDiagnostics,
     ): void {
         // One aggregate event per run — never one per pair, and never candles.
         // Counts by label let the debug panel summarize a run without re-running
@@ -623,20 +780,33 @@ class RankPairsService {
             elapsedMs: Date.now() - startedAt,
             byDirection: dirCounts,
             byStructure: structCounts,
+            performance,
         });
     }
 
     private async copyResults(): Promise<void> {
-        if (this.lastResults.length === 0) return;
-        const text = this.lastMode === "recent200"
-            ? formatRecentCopyText(this.lastResults.filter(isRecentRankResult))
-            : formatCopyText(this.lastResults.filter(
-                (result): result is RankResult => !isRecentRankResult(result),
-            ));
+        if (this.lastResultCount === 0) return;
+        const dom = this.getDom();
+        dom.rankPairsCopyBtn.disabled = true;
+        dom.rankPairsStatus.textContent =
+            `Preparing ${this.lastResultCount.toLocaleString("en-US")} saved rows for clipboard…`;
         try {
+            const text = this.lastSnapshot
+                ? await loadRankPairsSnapshotCopyText(this.lastSnapshot)
+                : this.lastMode === "recent200"
+                    ? formatRecentCopyText(this.lastResults.filter(isRecentRankResult))
+                    : formatCopyText(this.lastResults.filter(
+                        (result): result is RankResult => !isRecentRankResult(result),
+                    ));
             await navigator.clipboard.writeText(text);
-        } catch {
-            // Clipboard can fail in non-secure contexts; fall back silently.
+            dom.rankPairsStatus.textContent =
+                `Copied ${this.lastResultCount.toLocaleString("en-US")} rows.`;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            dom.rankPairsStatus.textContent = `Copy failed: ${message}`;
+            debugLogger.warn("rank_pairs.copy_failed", { error: message });
+        } finally {
+            dom.rankPairsCopyBtn.disabled = this.lastResultCount === 0;
         }
     }
 
@@ -649,9 +819,61 @@ class RankPairsService {
     }
 
     private clearStaleResults(dom: RankPairsDom): void {
-        if (this.lastResults.length === 0) return;
+        this.resultViewVersion += 1;
+        if (this.lastResultCount === 0) return;
         this.lastResults = [];
+        this.lastResultCount = 0;
+        this.lastSummaryText = "";
+        this.lastDiagnostics = null;
+        this.lastSnapshot = null;
         dom.rankPairsCopyBtn.disabled = true;
+        dom.rankPairsDiagnostics.textContent = "Performance diagnostics appear after a run.";
+    }
+
+    private async restoreLastResult(
+        dom: RankPairsDom,
+        resultViewVersion: number,
+    ): Promise<void> {
+        try {
+            const snapshot =
+                await loadLatestRankPairsResultSnapshot<AnyRankResult>();
+            if (
+                !snapshot
+                || resultViewVersion !== this.resultViewVersion
+                || this.lastResultCount > 0
+            ) {
+                return;
+            }
+
+            this.lastSnapshot = snapshot;
+            this.lastResults = snapshot.preview;
+            this.lastResultCount = snapshot.resultCount;
+            this.lastSummaryText = snapshot.summaryText;
+            this.lastMode = snapshot.mode;
+            dom.rankPairsMode.value = snapshot.mode;
+
+            const fragment = document.createDocumentFragment();
+            for (const result of snapshot.preview) {
+                fragment.appendChild(this.createResultRow(result));
+            }
+            dom.rankPairsResults.replaceChildren(fragment);
+            setVisible(dom.rankPairsEmpty, snapshot.resultCount === 0);
+            dom.rankPairsCopyBtn.disabled = snapshot.resultCount === 0;
+            dom.rankPairsSummary.textContent = snapshot.summaryText;
+            dom.rankPairsDiagnostics.textContent = snapshot.diagnosticsText;
+
+            const completedAt = new Date(snapshot.completedAt).toLocaleString();
+            dom.rankPairsStatus.textContent =
+                `Restored ${snapshot.resultCount.toLocaleString("en-US")} rows from ${completedAt} (${snapshot.interval})`;
+            if (snapshot.resultCount > snapshot.preview.length) {
+                dom.rankPairsStatus.textContent +=
+                    `; showing top ${snapshot.preview.length.toLocaleString("en-US")} rows (Copy Results includes all)`;
+            }
+            this.setProgress(dom, 100, "Restored");
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            debugLogger.warn("rank_pairs.snapshot_restore_failed", { error: message });
+        }
     }
 
     private createResultRow(result: AnyRankResult): HTMLDivElement {
@@ -693,12 +915,8 @@ class RankPairsService {
     }
 
     private updateSummary(dom: RankPairsDom): void {
-        if (this.lastResults.length > 0) {
-            dom.rankPairsSummary.textContent = this.lastMode === "recent200"
-                ? formatRecentOverallSummary(this.lastResults.filter(isRecentRankResult))
-                : formatOverallSummary(this.lastResults.filter(
-                    (result): result is RankResult => !isRecentRankResult(result),
-                ));
+        if (this.lastResultCount > 0) {
+            dom.rankPairsSummary.textContent = this.lastSummaryText;
             return;
         }
         const count = parseBatchSymbols(dom.rankPairsSymbols.value).length;
