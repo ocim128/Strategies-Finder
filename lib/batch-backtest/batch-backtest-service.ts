@@ -32,9 +32,9 @@ import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import { buildBatchRunFingerprint, parseBatchSymbols, BATCH_MAX_SYMBOLS } from "./batch-run-contract";
 import { BALANCED_PAIR_LIST_MAX_PAIRS, generateBalancedPairList, type BalancedPairListResult, type PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import { fnv1a64Hex } from "./max-active-research-contract";
-// Type-only import: the ~13KB BATCH_SYMBOL_TEMPLATES blob is loaded lazily in
-// the dropdown `change` handler below so it stays out of the main app graph.
-import type { BatchSymbolTemplateKey } from "./batch-symbol-templates";
+// The template blob lives in the lazy-loaded batch feature chunk (via ?raw),
+// so it never lands in the cold-start bundle.
+import { getBatchSymbolTemplate, type BatchSymbolTemplateKey } from "./batch-symbol-templates";
 import {
     formatBatchOverallSummary,
     buildBatchSummaryCells,
@@ -380,13 +380,10 @@ export class BatchBacktestService {
         dom.batchBacktestSp500TopMeanCopyDiagnosticBtn.addEventListener("click", () => {
             void this.copySp500TopMeanDiagnostic();
         });
-        dom.batchBacktestSymbolTemplate.addEventListener("change", async () => {
+        dom.batchBacktestSymbolTemplate.addEventListener("change", () => {
             const key = dom.batchBacktestSymbolTemplate.value as BatchSymbolTemplateKey;
             if (!key) return;
-            // Lazy-load the ~13KB pair-list blob only when a template is
-            // actually picked, keeping it out of the cold-start bundle.
-            const { BATCH_SYMBOL_TEMPLATES } = await import("./batch-symbol-templates");
-            const template = BATCH_SYMBOL_TEMPLATES[key];
+            const template = getBatchSymbolTemplate(key);
             if (!template) return;
             dom.batchBacktestSymbols.value = template;
             dom.batchBacktestSymbolTemplate.value = "";
