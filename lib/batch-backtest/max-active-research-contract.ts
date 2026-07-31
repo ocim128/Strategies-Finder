@@ -1,16 +1,15 @@
 /**
- * MAX_ACTIVE research contract — frozen tie/bootstrap/threshold versions,
- * committed holdout registration, and verdict helpers.
+ * MAX_ACTIVE research contract — frozen tie/bootstrap versions and the
+ * holdout registration shape.
  *
  * Pure leaf: no DOM, no lightweight-charts, no Batch artifact I/O. Safe to
  * import from both the cjs-bundled vite config path and the browser service.
  *
  * Research boundary: this module freezes the *rules* (tie-break, block split,
- * bootstrap seed, holdout thresholds) so a forward MAX_ACTIVE run cannot be
- * rescued by an untracked default after the fact. The committed holdout
- * registration is absent until Phase 4 commits concrete UTC dates + hashes
- * into {@link MAX_ACTIVE_HOLDOUT_REGISTRATION}; while it is `null`, every
- * report is `EXPLORATORY`.
+ * bootstrap seed) so a forward MAX_ACTIVE run cannot be rescued by an
+ * untracked default after the fact. The holdout registration itself is
+ * threaded through the run payload as `maxActiveResearchRegistration`; while
+ * that field is null, every report is `EXPLORATORY`.
  */
 
 // ---------------------------------------------------------------------------
@@ -19,10 +18,6 @@
 
 /** Selector tie-break rule: smallest unsigned FNV-1a 64-bit digest wins. */
 export const MAX_ACTIVE_TIE_VERSION = "max_active_tie_v1" as const;
-/** Block bootstrap rule: 10 chronological blocks, 10_000 seeded resamples. */
-export const MAX_ACTIVE_BOOTSTRAP_VERSION = "max_active_bootstrap_v1" as const;
-/** Sufficiency/pass threshold set (see {@link MaxActiveThresholds}). */
-export const MAX_ACTIVE_THRESHOLDS_VERSION = "max_active_thresholds_v1" as const;
 
 /** Fixed tie seed — every selector and event uses this. */
 export const MAX_ACTIVE_TIE_SEED = 1;
@@ -31,11 +26,6 @@ export const MAX_ACTIVE_TIE_SEED = 1;
 export const MAX_ACTIVE_BLOCK_COUNT = 10;
 export const MAX_ACTIVE_BOOTSTRAP_SAMPLES = 10_000;
 export const MAX_ACTIVE_BOOTSTRAP_SEED = 1;
-
-/** Primary research horizon (bars). 36 and 96 are secondary robustness horizons. */
-export const MAX_ACTIVE_PRIMARY_HORIZON = 72;
-export const MAX_ACTIVE_SECONDARY_HORIZONS: readonly number[] = [36, 96];
-export const MAX_ACTIVE_HORIZONS: readonly [number, number, number] = [36, 72, 96];
 
 // ---------------------------------------------------------------------------
 // FNV-1a 64-bit hash (deterministic; two uint32 halves)
@@ -106,22 +96,6 @@ export function tieBreakDigest(truncatedEventTimeSec: number, scoringAsset: stri
     return fnv1a64Hex(`${MAX_ACTIVE_TIE_VERSION}|${MAX_ACTIVE_TIE_SEED}|${Math.trunc(truncatedEventTimeSec)}|${scoringAsset}`);
 }
 
-/**
- * Compare two tied assets by tie-break digest, then by scoring-asset name as
- * a deterministic fallback (the caller surfaces a collision; the formal
- * verdict is INSUFFICIENT_DATA when one happens).
- */
-export function compareByTieBreak(
-    _truncatedEventTimeSec: number,
-    aAsset: string,
-    aDigest: string,
-    bAsset: string,
-    bDigest: string,
-): number {
-    if (aDigest !== bDigest) return aDigest < bDigest ? -1 : 1;
-    return aAsset < bAsset ? -1 : aAsset > bAsset ? 1 : 0;
-}
-
 // ---------------------------------------------------------------------------
 // Holdout registration (committed only at Phase 4)
 // ---------------------------------------------------------------------------
@@ -143,99 +117,4 @@ export interface MaxActiveResearchRegistrationV1 {
     tieVersion: "max_active_tie_v1";
     bootstrapVersion: "max_active_bootstrap_v1";
     thresholdVersion: "max_active_thresholds_v1";
-}
-
-/**
- * Committed holdout registration. `null` until Phase 4 commits concrete
- * UTC dates + implementation commit + pair-list hash + Batch fingerprint.
- * While this is `null`, every MAX_ACTIVE report is `EXPLORATORY`.
- */
-export const MAX_ACTIVE_HOLDOUT_REGISTRATION: MaxActiveResearchRegistrationV1 | null = null;
-
-// ---------------------------------------------------------------------------
-// Thresholds (Phase 0 + Phase 4 freeze)
-// ---------------------------------------------------------------------------
-
-export interface MaxActiveThresholds {
-    /** Artifact-eligible relationships at least this share of submitted canonical. */
-    artifactEligibleShareMin: number;
-    /** Hard-zero requirements for artifact-write and artifact-read failures. */
-    artifactWriteFailuresMax: number;
-    artifactReadFailuresMax: number;
-    /** Replay-accepted pairs at least this share of submitted canonical. */
-    replayAcceptedShareMin: number;
-    /** Per-asset retained/submitted degree minimum. */
-    perAssetRetentionShareMin: number;
-    /** Max minus min asset retention ratio (percentage points). */
-    assetRetentionSpreadPpMax: number;
-    /** Horizon coverage minimum. */
-    horizonCoverageShareMin: number;
-    /** Primary (72-bar) eligible events minimum. */
-    primaryEligibleEventsMin: number;
-    /** ACTIVE_VS_SUBMITTED differing-selection events minimum. */
-    activeVsSubmittedDiffEventsMin: number;
-    /** Shared-mask non-overlap events minimum. */
-    sharedMaskNonOverlapEventsMin: number;
-    /** Primary events remaining after dominant-asset exclusion minimum. */
-    dominantExcludedEventsMin: number;
-    /** CI block count requirement (formal CI needs exactly this many blocks). */
-    formalBlockCount: number;
-    /** Minimum positive-block count for both primary comparisons. */
-    primaryPositiveBlocksMin: number;
-}
-
-export const MAX_ACTIVE_THRESHOLDS: MaxActiveThresholds = {
-    artifactEligibleShareMin: 0.95,
-    artifactWriteFailuresMax: 0,
-    artifactReadFailuresMax: 0,
-    replayAcceptedShareMin: 0.95,
-    perAssetRetentionShareMin: 0.9,
-    assetRetentionSpreadPpMax: 10,
-    horizonCoverageShareMin: 0.95,
-    primaryEligibleEventsMin: 1_000,
-    activeVsSubmittedDiffEventsMin: 200,
-    sharedMaskNonOverlapEventsMin: 100,
-    dominantExcludedEventsMin: 500,
-    formalBlockCount: MAX_ACTIVE_BLOCK_COUNT,
-    primaryPositiveBlocksMin: 7,
-};
-
-// ---------------------------------------------------------------------------
-// Verdict helpers
-// ---------------------------------------------------------------------------
-
-export type ResearchMode = "EXPLORATORY" | "HOLDOUT";
-export type ResearchVerdict = "NOT_EVALUATED" | "PASS" | "FAIL" | "INSUFFICIENT_DATA";
-
-/**
- * Decide whether a report is `HOLDOUT` (verified provenance + exact
- * registered window + interval/costs/horizons match + evaluation time
- * reached). Otherwise it is `EXPLORATORY`.
- *
- * `batchFingerprintWithoutRegistration` MUST be the fingerprint computed
- * WITHOUT the registration itself (otherwise the registration would hash
- * itself recursively).
- */
-export function resolveResearchMode(args: {
-    registration: MaxActiveResearchRegistrationV1 | null;
-    pairListHash: string | null;
-    batchFingerprintWithoutRegistration: string | null;
-    interval: string | null;
-    decisionStartSec: number | null;
-    decisionEndSec: number | null;
-    slippageBps: number | null;
-    commissionPercent: number | null;
-    nowSec: number;
-}): ResearchMode {
-    const { registration, nowSec } = args;
-    if (!registration) return "EXPLORATORY";
-    if (nowSec < registration.evaluateNotBeforeSec) return "EXPLORATORY";
-    if (args.pairListHash !== registration.expectedPairListHash) return "EXPLORATORY";
-    if (args.batchFingerprintWithoutRegistration !== registration.expectedBatchFingerprint) return "EXPLORATORY";
-    if (args.interval !== registration.interval) return "EXPLORATORY";
-    if (registration.slippageBps !== args.slippageBps) return "EXPLORATORY";
-    if (registration.commissionPercent !== args.commissionPercent) return "EXPLORATORY";
-    if (args.decisionStartSec !== registration.decisionStartSec) return "EXPLORATORY";
-    if (args.decisionEndSec !== registration.decisionEndSec) return "EXPLORATORY";
-    return "HOLDOUT";
 }
