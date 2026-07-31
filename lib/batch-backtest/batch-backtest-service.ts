@@ -2500,19 +2500,45 @@ export class BatchBacktestService {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ runId }),
             });
+            const body = await response.text().catch(() => "");
             this.recordTopMeanDiagnostic("stop.response", {
                 runId,
                 status: response.status,
                 ok: response.ok,
-                body: await response.text().catch(() => "<unreadable>"),
+                body,
             });
+            let stopped: boolean | null = null;
+            try {
+                const parsed = JSON.parse(body) as { stopped?: unknown };
+                stopped = typeof parsed.stopped === "boolean" ? parsed.stopped : null;
+            } catch {
+                // A non-JSON response is treated as a failed stop response.
+            }
+            if (!response.ok || stopped !== true) {
+                this.clearTopMeanRunAfterServerLoss(
+                    this.getDom(),
+                    "TOP_MEAN run is no longer active; local run state cleared.",
+                );
+            }
         } catch (err) {
             this.recordTopMeanDiagnostic("stop.error", {
                 runId,
                 name: err instanceof Error ? err.name : typeof err,
                 message: err instanceof Error ? err.message : String(err),
             });
+            this.clearTopMeanRunAfterServerLoss(
+                this.getDom(),
+                "TOP_MEAN server is unavailable; local run state cleared.",
+            );
         }
+    }
+
+    private clearTopMeanRunAfterServerLoss(dom: BatchBacktestDom, message: string): void {
+        this.activeTopMeanRunId = null;
+        clearTopMeanActiveRun();
+        setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
+        setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
+        dom.batchBacktestSp500TopMeanProgressText.textContent = message;
     }
 
     private renderLatestOpenScoreSelections(latest: OpenScoreUsdLatestSelections): string {
@@ -3175,6 +3201,13 @@ export class BatchBacktestService {
                         status: res.status,
                         ok: res.ok,
                     });
+                    if (res.status === 404) {
+                        this.clearTopMeanRunAfterServerLoss(
+                            dom,
+                            "TOP_MEAN run was lost when the server restarted; local run state cleared.",
+                        );
+                        return;
+                    }
                     // Audit: a non-2xx status is a transient failure, not a
                     // reason to abandon the reattach. Treat it like a thrown
                     // fetch so the backoff path engages; the prior behavior

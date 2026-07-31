@@ -125,6 +125,17 @@ function setupForAnalysis(fingerprint = "fp-test"): BatchBacktestDom {
     return dom;
 }
 
+function persistTopMeanRunForTest(runId: string): void {
+    (globalThis as any).localStorage.setItem(
+        "sp500_top_mean_active_run_id",
+        JSON.stringify({
+            schema: "sp500_top_mean_active_run_id.v1",
+            version: 1,
+            data: { runId },
+        }),
+    );
+}
+
 async function withMockFetch(responder: FetchResponder, fn: () => Promise<void>): Promise<void> {
     const prev = (globalThis as any).fetch;
     (globalThis as any).fetch = async (url: string, init?: any) => {
@@ -365,6 +376,49 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(dom.batchBacktestSp500TopMeanCopyBtn.disabled).to.equal(false);
         expect(dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled).to.equal(false);
         expect(dom.batchBacktestSp500TopMeanDownloadBtn.disabled).to.equal(false);
+    });
+
+    it("clears the stale TOP_MEAN Stop state immediately after a server restart", async () => {
+        const dom = setupForAnalysis();
+        svc().activeTopMeanRunId = "lost-after-restart";
+        persistTopMeanRunForTest("lost-after-restart");
+        dom.batchBacktestSp500TopMeanRunBtn.style.display = "none";
+        dom.batchBacktestSp500TopMeanStopBtn.style.display = "block";
+
+        await withMockFetch(() => ({
+            ok: false,
+            status: 404,
+            text: JSON.stringify({ ok: false, error: "Run not found" }),
+        }), async () => {
+            await svc().reattachToInProgressTopMeanRun();
+        });
+
+        expect(svc().activeTopMeanRunId).to.equal(null);
+        expect(JSON.parse((globalThis as any).localStorage.getItem("sp500_top_mean_active_run_id")).data).to.equal(null);
+        expect(dom.batchBacktestSp500TopMeanRunBtn.style.display).to.equal("block");
+        expect(dom.batchBacktestSp500TopMeanStopBtn.style.display).to.equal("none");
+        expect(dom.batchBacktestSp500TopMeanProgressText.textContent).to.include("server restarted");
+    });
+
+    it("clears local TOP_MEAN state when Stop confirms no matching server run", async () => {
+        const dom = setupForAnalysis();
+        svc().activeTopMeanRunId = "stale-stop-run";
+        persistTopMeanRunForTest("stale-stop-run");
+        dom.batchBacktestSp500TopMeanRunBtn.style.display = "none";
+        dom.batchBacktestSp500TopMeanStopBtn.style.display = "block";
+
+        await withMockFetch(() => ({
+            ok: true,
+            status: 200,
+            text: JSON.stringify({ ok: true, stopped: false }),
+        }), async () => {
+            await svc().stopSp500TopMeanCoordinator();
+        });
+
+        expect(svc().activeTopMeanRunId).to.equal(null);
+        expect(JSON.parse((globalThis as any).localStorage.getItem("sp500_top_mean_active_run_id")).data).to.equal(null);
+        expect(dom.batchBacktestSp500TopMeanRunBtn.style.display).to.equal("block");
+        expect(dom.batchBacktestSp500TopMeanStopBtn.style.display).to.equal("none");
     });
 
     it("renders the algorithmic trade decision and single-configuration assumption", () => {
