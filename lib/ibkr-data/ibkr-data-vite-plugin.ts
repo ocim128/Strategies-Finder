@@ -12,7 +12,7 @@ import { createFetchTimeoutSignal, isAbortError } from "../dataProviders/fetch-h
 import type { IbkrIntervalMeta, IbkrStreamEvent, IbkrSyncRunSnapshot } from "./ibkr-data-stream-types";
 import type { IbkrCatalogAsset } from "./ibkr-stale-symbols";
 import {
-    ALPACA_SUPPORTED_INTERVAL,
+    ALPACA_SUPPORTED_INTERVALS,
     ALPACA_TIMEFRAME_BY_INTERVAL,
     fetchAlpacaBars,
     resolveAlpacaConfig,
@@ -1672,7 +1672,7 @@ export function normalizeDataSource(value: unknown): IbkrDataSource {
  * Validates source-specific constraints that the request body alone cannot
  * enforce. Throws `HttpStatusError` (surfaced in the existing UI failure
  * path) for:
- *  - Alpaca + `interval !== "30m"` (initial scope is 30m bars only)
+ *  - Alpaca intervals are limited to the explicitly mapped 30m and 1d bars
  *  - Alpaca supports `max`/`all` by translating the app-level period into a
  *    full-range `start`/`end` request; Alpaca itself has no `period` query
  *    parameter
@@ -1684,10 +1684,10 @@ export function assertSourceConstraints(
     _period: string,
 ): void {
     if (source !== "alpaca") return;
-    if (interval !== ALPACA_SUPPORTED_INTERVAL) {
+    if (!ALPACA_SUPPORTED_INTERVALS.includes(interval as typeof ALPACA_SUPPORTED_INTERVALS[number])) {
         throw new HttpStatusError(
             400,
-            `Alpaca source only supports the ${ALPACA_SUPPORTED_INTERVAL} interval in this release. Use IBKR for ${interval}.`,
+            `Alpaca source only supports the ${ALPACA_SUPPORTED_INTERVALS.join(" and ")} intervals in this release. Use IBKR for ${interval}.`,
         );
     }
 }
@@ -1787,7 +1787,7 @@ export async function syncOneAlpacaSymbol(
         ? Date.parse(existingInterval.lastTime)
         : NaN;
     const startOverrideMs = syncOnly && Number.isFinite(existingLastMs)
-        ? existingLastMs - ALPACA_SYNC_OVERLAP_MS
+        ? existingLastMs - (ALPACA_SYNC_OVERLAP_MS_BY_INTERVAL[interval] ?? 2 * 24 * 60 * 60 * 1000)
         : undefined;
     const window = resolveAlpacaWindow(period, Date.now(), startOverrideMs);
 
@@ -1940,8 +1940,11 @@ export function mapAlpacaStopReason(stopReason: "covered" | "cancelled" | "page_
 }
 
 // Back up by ~2 bars of overlap so late corrections to the previous bar are
-// re-fetched during an Alpaca incremental sync. 30m bars → 2 * 30min.
-const ALPACA_SYNC_OVERLAP_MS = 2 * 30 * 60 * 1000;
+// re-fetched during an Alpaca incremental sync.
+const ALPACA_SYNC_OVERLAP_MS_BY_INTERVAL: Record<string, number> = {
+    "30m": 2 * 30 * 60 * 1000,
+    "1d": 2 * 24 * 60 * 60 * 1000,
+};
 
 type ProcessSyncBatchOptions = {
     /** Override the per-symbol worker (test seam — mirrors crypto's fetcher). */

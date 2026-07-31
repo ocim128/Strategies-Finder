@@ -36,11 +36,12 @@ import type { OHLCVData } from "../types/strategies";
 export const ALPACA_DATA_HOST = "https://data.alpaca.markets";
 /** Stock bars endpoint (the market-data API, NOT the paper-trading API). */
 const ALPACA_STOCK_BARS_PATH = "/v2/stocks/{symbol}/bars";
-/** Only 30m bars are in scope for the initial Alpaca path. */
-export const ALPACA_SUPPORTED_INTERVAL = "30m";
-/** Alpaca `timeframe` token for a 30-minute bar. */
+/** Intervals supported by the Alpaca path in the IBKR data menu. */
+export const ALPACA_SUPPORTED_INTERVALS = ["30m", "1d"] as const;
+/** Alpaca `timeframe` tokens for the supported app intervals. */
 export const ALPACA_TIMEFRAME_BY_INTERVAL: Record<string, string> = {
     "30m": "30Min",
+    "1d": "1Day",
 };
 /** Default feed + adjustment. Overridable by server env, never by request body. */
 export const ALPACA_DEFAULT_FEED = "iex";

@@ -25,9 +25,9 @@
                 <label class="param-label" for="ibkrDataSource">Source</label>
                 <select class="param-input" id="ibkrDataSource">
                     <option value="ibkr" selected>IBKR Gateway</option>
-                    <option value="alpaca">Alpaca (30m, IEX)</option>
+                    <option value="alpaca">Alpaca (30m/1d, IEX)</option>
                 </select>
-                <div class="param-hint" id="ibkrDataSourceHint">Alpaca writes 30m CSVs only; run <code>npm run ibkr:aggregate -- --from 30m --interval 4h</code> afterwards to derive 4h. Alpaca credentials are read server-side.</div>
+                <div class="param-hint" id="ibkrDataSourceHint">Alpaca writes 30m and 1d CSVs; run <code>npm run ibkr:aggregate -- --from 30m --interval 4h</code> afterwards to derive 4h. Alpaca credentials are read server-side.</div>
             </div>
             <div class="param-group">
                 <label class="param-label" for="ibkrDataInterval">Timeframe</label>
@@ -44,7 +44,7 @@
             <div class="param-group">
                 <label class="param-label" for="ibkrDataPeriod">Data Period</label>
                 <input class="param-input" id="ibkrDataPeriod" type="text" placeholder="1d default: max">
-                <div class="param-hint">Examples: max, 1w, 1m, 6m, 1y, 5y. Alpaca <code>max</code> fetches all available 30m history.</div>
+                <div class="param-hint">Examples: max, 1w, 1m, 6m, 1y, 5y. Alpaca <code>max</code> fetches all available history for the selected interval.</div>
             </div>
         </div>
     </div>

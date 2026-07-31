@@ -13,7 +13,7 @@ import {
     ALPACA_DEFAULT_ADJUSTMENT,
     ALPACA_DEFAULT_FEED,
     ALPACA_DATA_HOST,
-    ALPACA_SUPPORTED_INTERVAL,
+    ALPACA_SUPPORTED_INTERVALS,
     ALPACA_TIMEFRAME_BY_INTERVAL,
     buildAlpacaBarsUrl,
     fetchAlpacaBars,
@@ -486,11 +486,15 @@ describe("alpaca fetchAlpacaBars (stubbed fetch)", () => {
 });
 
 describe("alpaca constants and interval mapping", () => {
-    it("the only supported Alpaca interval in this release is 30m", () => {
-        assert.equal(ALPACA_SUPPORTED_INTERVAL, "30m");
+    it("supports the IBKR menu's 30m and 1d intervals", () => {
+        assert.deepEqual(ALPACA_SUPPORTED_INTERVALS, ["30m", "1d"]);
     });
 
     it("maps 30m to Alpaca's 30Min timeframe token", () => {
         assert.equal(ALPACA_TIMEFRAME_BY_INTERVAL["30m"], "30Min");
+    });
+
+    it("maps 1d to Alpaca's 1Day timeframe token", () => {
+        assert.equal(ALPACA_TIMEFRAME_BY_INTERVAL["1d"], "1Day");
     });
 });

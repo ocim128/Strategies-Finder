@@ -4,7 +4,8 @@
  * Locks the Phase 1 source contract:
  *  - Existing IBKR requests (no `source`) remain unchanged → ibkr fetcher.
  *  - `source: "alpaca"` selects the Alpaca worker.
- *  - Alpaca + interval != 30m is rejected (Phase 1 scope).
+ *  - Alpaca supports the IBKR menu's 30m and 1d intervals, while other
+ *    intervals are rejected.
  *  - Alpaca + period=max maps to a full historical window.
  *  - Alpaca sync against an unknown/IBKR interval is rejected (source guard).
  *  - Alpaca download establishes `source: "alpaca"` in the catalog.
@@ -107,16 +108,14 @@ describe("alpaca assertSourceConstraints", () => {
         assertSourceConstraints("ibkr", "30m", "1y");
     });
 
-    it("rejects Alpaca + interval != 30m", () => {
-        assert.throws(
-            () => assertSourceConstraints("alpaca", "1d", "1y"),
-            (error: unknown) => error instanceof HttpStatusError
-                && error.status === 400
-                && /30m/.test(error.message),
-        );
+    it("accepts Alpaca 30m and 1d, but rejects unsupported intervals", () => {
+        assert.doesNotThrow(() => assertSourceConstraints("alpaca", "30m", "1y"));
+        assert.doesNotThrow(() => assertSourceConstraints("alpaca", "1d", "1y"));
         assert.throws(
             () => assertSourceConstraints("alpaca", "4h", "1y"),
-            (error: unknown) => error instanceof HttpStatusError && error.status === 400,
+            (error: unknown) => error instanceof HttpStatusError
+                && error.status === 400
+                && /30m and 1d/.test(error.message),
         );
     });
 
