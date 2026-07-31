@@ -44,44 +44,17 @@ export function getRunDir(runId: string, baseDir?: string): string {
     return join(root, runId);
 }
 
-/**
- * Optional window key for the stability mode's per-start-date artifact
- * partitioning. When set, path helpers resolve to
- * `<runDir>/windows/<windowKey>/...` so each stability window gets its own
- * manifest + shards and does not overwrite siblings. `windowKey` must be a
- * safe path segment (validated identically to runId: `[A-Za-z0-9_-]`).
- */
-const SAFE_WINDOW_KEY_RE = /^[A-Za-z0-9_-]{1,64}$/;
-
-export function isValidWindowKey(windowKey: string): boolean {
-    return SAFE_WINDOW_KEY_RE.test(windowKey);
+export function getManifestPath(runId: string, baseDir?: string): string {
+    return join(getRunDir(runId, baseDir), "manifest.json");
 }
 
-function resolveWindowSubdir(windowKey: string | undefined): string {
-    if (windowKey === undefined) return "";
-    if (!isValidWindowKey(windowKey)) {
-        throw new Error("windowKey must be a safe path segment ([A-Za-z0-9_-]{1,64})");
-    }
-    return join("windows", windowKey);
+export function getShardsDir(runId: string, baseDir?: string): string {
+    return join(getRunDir(runId, baseDir), "shards");
 }
 
-export function getManifestPath(runId: string, baseDir?: string, windowKey?: string): string {
-    const sub = resolveWindowSubdir(windowKey);
-    return sub
-        ? join(getRunDir(runId, baseDir), sub, "manifest.json")
-        : join(getRunDir(runId, baseDir), "manifest.json");
-}
-
-export function getShardsDir(runId: string, baseDir?: string, windowKey?: string): string {
-    const sub = resolveWindowSubdir(windowKey);
-    return sub
-        ? join(getRunDir(runId, baseDir), sub, "shards")
-        : join(getRunDir(runId, baseDir), "shards");
-}
-
-export function getShardPath(runId: string, shardIndex: number, baseDir?: string, windowKey?: string): string {
+export function getShardPath(runId: string, shardIndex: number, baseDir?: string): string {
     const shardFileName = `${String(shardIndex).padStart(6, "0")}.json`;
-    return join(getShardsDir(runId, baseDir, windowKey), shardFileName);
+    return join(getShardsDir(runId, baseDir), shardFileName);
 }
 
 export function computeRunFingerprint(payload: {
@@ -178,9 +151,9 @@ export async function atomicWriteJson(targetPath: string, data: unknown): Promis
     throw lastError;
 }
 
-export function saveManifest(manifest: TopMeanRunManifest, baseDir?: string, windowKey?: string): void {
+export function saveManifest(manifest: TopMeanRunManifest, baseDir?: string): void {
     manifest.updatedAt = Date.now();
-    const manifestPath = getManifestPath(manifest.runId, baseDir, windowKey);
+    const manifestPath = getManifestPath(manifest.runId, baseDir);
     atomicWriteJsonSync(manifestPath, manifest);
 }
 
@@ -192,15 +165,14 @@ export function saveManifest(manifest: TopMeanRunManifest, baseDir?: string, win
 export async function saveManifestAsync(
     manifest: TopMeanRunManifest,
     baseDir?: string,
-    windowKey?: string,
 ): Promise<void> {
     manifest.updatedAt = Date.now();
-    const manifestPath = getManifestPath(manifest.runId, baseDir, windowKey);
+    const manifestPath = getManifestPath(manifest.runId, baseDir);
     await atomicWriteJson(manifestPath, manifest);
 }
 
-export function loadManifest(runId: string, baseDir?: string, windowKey?: string): TopMeanRunManifest | null {
-    const manifestPath = getManifestPath(runId, baseDir, windowKey);
+export function loadManifest(runId: string, baseDir?: string): TopMeanRunManifest | null {
+    const manifestPath = getManifestPath(runId, baseDir);
     if (!existsSync(manifestPath)) return null;
     try {
         const content = readFileSync(manifestPath, "utf8");
@@ -215,9 +187,8 @@ export function writeShardArtifacts(
     shardIndex: number,
     artifacts: CompactPairArtifact[],
     baseDir?: string,
-    windowKey?: string,
 ): void {
-    const shardPath = getShardPath(runId, shardIndex, baseDir, windowKey);
+    const shardPath = getShardPath(runId, shardIndex, baseDir);
     atomicWriteJsonSync(shardPath, artifacts);
 }
 
@@ -235,9 +206,8 @@ export async function writeShardArtifactsAsync(
     shardIndex: number,
     artifacts: CompactPairArtifact[],
     baseDir?: string,
-    windowKey?: string,
 ): Promise<void> {
-    const shardPath = getShardPath(runId, shardIndex, baseDir, windowKey);
+    const shardPath = getShardPath(runId, shardIndex, baseDir);
     await atomicWriteJson(shardPath, artifacts);
 }
 
@@ -245,9 +215,8 @@ export function readShardArtifacts(
     runId: string,
     shardIndex: number,
     baseDir?: string,
-    windowKey?: string,
 ): CompactPairArtifact[] | null {
-    const shardPath = getShardPath(runId, shardIndex, baseDir, windowKey);
+    const shardPath = getShardPath(runId, shardIndex, baseDir);
     if (!existsSync(shardPath)) return null;
     try {
         const content = readFileSync(shardPath, "utf8");
@@ -261,9 +230,8 @@ export async function readShardArtifactsAsync(
     runId: string,
     shardIndex: number,
     baseDir?: string,
-    windowKey?: string,
 ): Promise<CompactPairArtifact[] | null> {
-    const shardPath = getShardPath(runId, shardIndex, baseDir, windowKey);
+    const shardPath = getShardPath(runId, shardIndex, baseDir);
     try {
         const content = await readFile(shardPath, "utf8");
         return JSON.parse(content) as CompactPairArtifact[];
@@ -275,13 +243,12 @@ export async function readShardArtifactsAsync(
 export async function* iterateRunCompactArtifacts(
     runId: string,
     baseDir?: string,
-    windowKey?: string,
 ): AsyncGenerator<BatchSyntheticPairArtifactAdapter> {
-    const manifest = loadManifest(runId, baseDir, windowKey);
+    const manifest = loadManifest(runId, baseDir);
     if (!manifest) return;
 
     for (const shardIndex of manifest.completedShards) {
-        const shardArtifacts = await readShardArtifactsAsync(runId, shardIndex, baseDir, windowKey);
+        const shardArtifacts = await readShardArtifactsAsync(runId, shardIndex, baseDir);
         if (!shardArtifacts) continue;
         for (const artifact of shardArtifacts) {
             yield toBatchSyntheticPairAdapter(artifact);
@@ -298,13 +265,12 @@ export async function* iterateRunCompactArtifacts(
 export async function* iterateRunRawCompactArtifacts(
     runId: string,
     baseDir?: string,
-    windowKey?: string,
 ): AsyncGenerator<CompactPairArtifact> {
-    const manifest = loadManifest(runId, baseDir, windowKey);
+    const manifest = loadManifest(runId, baseDir);
     if (!manifest) return;
 
     for (const shardIndex of manifest.completedShards) {
-        const shardArtifacts = await readShardArtifactsAsync(runId, shardIndex, baseDir, windowKey);
+        const shardArtifacts = await readShardArtifactsAsync(runId, shardIndex, baseDir);
         if (!shardArtifacts) continue;
         for (const artifact of shardArtifacts) {
             yield artifact;

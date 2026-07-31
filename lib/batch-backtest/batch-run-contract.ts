@@ -89,16 +89,6 @@ export function buildBatchRunFingerprint(args: BatchRunFingerprintInput): string
 }
 
 /**
- * Build the Batch run fingerprint WITHOUT the optional research registration.
- * The registration's `expectedBatchFingerprint` is computed with this helper
- * so the registration does not hash itself recursively. The pair-list
- * provenance IS included (it is a property of the run, not the registration).
- */
-export function buildBatchRunFingerprintWithoutRegistration(args: BatchRunFingerprintInput): string {
-    return buildBatchRunFingerprint(args);
-}
-
-/**
  * Verify a pair-list provenance against the canonical submitted symbols.
  * Returns `null` if the provenance is valid, or a short reason string when
  * the textarea digest does not match the recorded hash, the schema/algorithm

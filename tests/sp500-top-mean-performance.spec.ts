@@ -42,7 +42,6 @@ const diagnostic: TopMeanPerformanceDiagnostic = {
     worker: {
         workers: 4,
         spawnedWorkers: 4,
-        reusedWorkers: 0,
         shards: 15,
         pendingShards: 15,
         shardSize: 7,

@@ -13,17 +13,6 @@
 import type { BacktestResult, OHLCVData, Signal } from "../types/strategies";
 
 /**
- * A single target asset's OHLCV series, retained server-side so analysis
- * features (OPEN_SCORE USD Replay) can replay decisions against the actual
- * historical bars without the browser holding the data.
- */
-export interface BatchSyntheticTargetArtifact {
-    asset: string;
-    symbol: string;
-    data: OHLCVData[];
-}
-
-/**
  * One synthetic pair's full per-run artifact: the OHLCV legs aggregated into
  * the pair ratio series, the strategy signals emitted on it, and the resulting
  * backtest. The heavy arrays (`data`, `signals`, `result.trades`) are kept

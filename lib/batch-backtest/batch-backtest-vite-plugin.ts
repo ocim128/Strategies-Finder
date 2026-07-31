@@ -36,11 +36,10 @@ import { runBatchBacktest, type BatchBacktestRunInput, type BatchBacktestSymbolR
 import { clearServerBatchDatasetCaches, getServerBatchDatasetCacheStats, loadServerBatchDataset } from "./server-batch-data-loader";
 import type {
     BatchSyntheticPairArtifact,
-    BatchSyntheticTargetArtifact,
 } from "./batch-synthetic-artifact";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { loadBuiltInStrategyByKey } from "../../strategyRegistry";
-import type { BacktestSettings, Strategy, StrategyParams } from "../types/strategies";
+import type { BacktestSettings, OHLCVData, Strategy, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { toScalarRow, type BatchStatusResponse, type BatchStreamEvent } from "./batch-backtest-stream-types";
@@ -1607,7 +1606,7 @@ export async function processOpenScoreUsdReplay(
             if (lostOwnership()) return;
             const symbol = markedSymbolByAsset.get(asset) ?? `${asset.trim().toUpperCase()}USDT`;
             try {
-                const data = (await loadTargetDataset(symbol, runInterval, minerAbortController?.signal)) as BatchSyntheticTargetArtifact["data"] | null;
+                const data = (await loadTargetDataset(symbol, runInterval, minerAbortController?.signal)) as OHLCVData[] | null;
                 if (Array.isArray(data) && data.length > 0) {
                     yield { asset, symbol, data };
                 }

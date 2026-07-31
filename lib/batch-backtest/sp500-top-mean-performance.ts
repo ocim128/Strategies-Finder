@@ -38,7 +38,6 @@ export interface TopMeanWorkerTiming {
 export interface TopMeanWorkerPoolPerformance extends TopMeanWorkerTiming {
     workers: number;
     spawnedWorkers: number;
-    reusedWorkers: number;
     shards: number;
     pendingShards: number;
     shardSize: number;
@@ -118,7 +117,7 @@ export function formatTopMeanPerformanceLines(performance: TopMeanPerformanceDia
     );
     const enginePhases = worker.engineDiagnostics;
     lines.push(
-        `PERFORMANCE WORKERS | wall=${fixed(worker.wallMs)}ms | shards=${worker.pendingShards}/${worker.shards} | shardSize=${worker.shardSize} | spawned=${worker.spawnedWorkers} | reused=${worker.reusedWorkers} | bundle=${fixed(worker.workerBundleMs)}ms | startup=${fixed(worker.workerStartupMs)}ms`,
+        `PERFORMANCE WORKERS | wall=${fixed(worker.wallMs)}ms | shards=${worker.pendingShards}/${worker.shards} | shardSize=${worker.shardSize} | spawned=${worker.spawnedWorkers} | bundle=${fixed(worker.workerBundleMs)}ms | startup=${fixed(worker.workerStartupMs)}ms`,
         `PERFORMANCE WORKER COST | load=${fixed(worker.loadMs)}ms (${percent(worker.loadMs, measuredWorkerMs)}) | prepare=${fixed(worker.prepareMs)}ms (${percent(worker.prepareMs, measuredWorkerMs)}) | backtest=${fixed(worker.backtestMs)}ms (${percent(worker.backtestMs, measuredWorkerMs)}) | artifact=${fixed(worker.artifactMs)}ms (${percent(worker.artifactMs, measuredWorkerMs)}) | summedPair=${fixed(worker.pairWallMs)}ms`,
         `PERFORMANCE BACKTEST | signals=${fixed(worker.signalGenerationMs)}ms | exits=${fixed(worker.exitProcessingMs)}ms | engine=${fixed(worker.engineMs)}ms | other=${fixed(otherBacktestMs)}ms`,
         `PERFORMANCE EXITS | strategy=${fixed(worker.exitStrategyMs)}ms | load=${fixed(worker.exitStrategyLoadMs)}ms | normalize=${fixed(worker.exitStrategyNormalizeMs)}ms | signalGeneration=${fixed(worker.exitSignalGenerationMs)}ms | merge=${fixed(worker.exitMergeMs)}ms | bookkeeping=${fixed(worker.exitBookkeepingMs)}ms | overrideSignals=${worker.exitOverrideSignals}`,

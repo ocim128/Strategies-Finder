@@ -211,13 +211,6 @@ export interface WorkerPoolRunOptions {
     shardSize?: number;
     useRustEnginePreference?: boolean;
     baseDir?: string;
-    /**
-     * Optional window key for per-start-date artifact partitioning. When set,
-     * shards + manifest land in <runDir>/windows/<windowKey>/ so concurrent
-     * windows do not overwrite each other. Undefined = top-level
-     * <runDir>/shards (existing behavior).
-     */
-    windowKey?: string;
     /** Test seam; production uses the atomic async artifact writer. */
     writeShardArtifacts?: typeof writeShardArtifactsAsync;
     onProgress?: (completedPairs: number, totalPairs: number, text: string) => void;
@@ -277,22 +270,6 @@ export function buildTopMeanShardTasks(
 export class TopMeanWorkerPool {
     private activeWorkers = new Set<Worker>();
     private isCancelled = false;
-    /**
-     * Workers retained for reuse across `execute()` calls on this same pool
-     * instance. Currently always empty — no caller requests worker reuse
-     * since stability mode was removed. Retained (dormant) so the spawn /
-     * error / cancel lifecycle stays uniform; cleared by {@link cancel}.
-     */
-    private reusableWorkers: Worker[] = [];
-    /**
-     * Per-worker disposers returned by {@link attachWorkerHandlers}. Each
-     * entry is a list of `() => void` functions that remove ONLY the handlers
-     * the pool attached (NOT Node's internal 'exit'/'error' wiring). The
-     * absorb path calls these before re-attaching, so a worker can move from
-     * one execute() call to the next without `Worker.removeAllListeners()`
-     * (which nukes the internal message pump and silently breaks reuse).
-     */
-    private workerAttachedListeners = new WeakMap<Worker, Array<() => void>>();
 
     public cancel(): void {
         this.isCancelled = true;
@@ -304,14 +281,6 @@ export class TopMeanWorkerPool {
             }
         }
         this.activeWorkers.clear();
-        for (const worker of this.reusableWorkers) {
-            try {
-                worker.terminate();
-            } catch {
-                // Ignore worker termination error
-            }
-        }
-        this.reusableWorkers = [];
     }
 
     public async execute(options: WorkerPoolRunOptions): Promise<TopMeanWorkerPoolExecutionResult> {
@@ -413,7 +382,7 @@ export class TopMeanWorkerPool {
             shardsSinceFlush = 0;
             lastFlushAt = Date.now();
             manifestFlushChain = manifestFlushChain
-                .then(() => saveManifestAsync(snapshot, options.baseDir, options.windowKey))
+                .then(() => saveManifestAsync(snapshot, options.baseDir))
                 .then(() => {
                     manifestFlushError = null;
                 })
@@ -441,7 +410,7 @@ export class TopMeanWorkerPool {
         );
 
         options.manifest.totalShards = shardTasks.length;
-        saveManifest(options.manifest, options.baseDir, options.windowKey);
+        saveManifest(options.manifest, options.baseDir);
 
         // Filter out already completed shards (for resume support). The two
         // Sets below are maintained INCREMENTALLY for the duration of this
@@ -492,10 +461,6 @@ export class TopMeanWorkerPool {
 
         const attachWorkerHandlers = (worker: Worker): void => {
             this.activeWorkers.add(worker);
-            // Track disposers so the absorb path on the NEXT execute() call
-            // can remove ONLY these handlers without nuking Node's internal
-            // Worker wiring (removeAllListeners breaks the message pump).
-            const disposers: Array<() => void> = [];
 
             const failInFlight = (worker: Worker, error: Error): void => {
                 const inflight = workerInFlight.get(worker);
@@ -537,7 +502,6 @@ export class TopMeanWorkerPool {
                         msg.shardIndex,
                         msg.artifacts,
                         options.baseDir,
-                        options.windowKey,
                     ).then(() => {
                         if (!completedSet.has(msg.shardIndex)) {
                             completedSet.add(msg.shardIndex);
@@ -577,7 +541,6 @@ export class TopMeanWorkerPool {
                 }
             };
             worker.on("message", onMessage);
-            disposers.push(() => worker.off("message", onMessage));
 
             const onError = (err: Error): void => {
                 failInFlight(worker, err instanceof Error ? err : new Error(String(err)));
@@ -595,16 +558,9 @@ export class TopMeanWorkerPool {
                 const freeIdx = freeWorkers.indexOf(worker);
                 if (freeIdx >= 0) freeWorkers.splice(freeIdx, 1);
                 this.activeWorkers.delete(worker);
-                // Also drop from the cross-execute reusable list — a worker
-                // can die between windows (e.g. OOM while idle) and the next
-                // absorb would otherwise re-attach handlers to a dead worker
-                // and silently hang on its first postMessage.
-                const reusableIdx = this.reusableWorkers.indexOf(worker);
-                if (reusableIdx >= 0) this.reusableWorkers.splice(reusableIdx, 1);
                 try { worker.terminate(); } catch { /* best-effort */ }
             };
             worker.on("error", onError);
-            disposers.push(() => worker.off("error", onError));
 
             const onExit = (code: number): void => {
                 // Unexpected exit while a task is in flight: fail the task.
@@ -625,14 +581,8 @@ export class TopMeanWorkerPool {
                 const freeIdx = freeWorkers.indexOf(worker);
                 if (freeIdx >= 0) freeWorkers.splice(freeIdx, 1);
                 this.activeWorkers.delete(worker);
-                // Same cross-execute cleanup as onError — see comment there.
-                const reusableIdx = this.reusableWorkers.indexOf(worker);
-                if (reusableIdx >= 0) this.reusableWorkers.splice(reusableIdx, 1);
             };
             worker.on("exit", onExit);
-            disposers.push(() => worker.off("exit", onExit));
-
-            this.workerAttachedListeners.set(worker, disposers);
         };
 
         // Dispatch one task to a free worker, or queue it if all workers are
@@ -719,38 +669,12 @@ export class TopMeanWorkerPool {
             }
         };
 
-        // Spawn or reuse the persistent worker pool. No workerData → the
-        // worker's one-shot branch is skipped and the message listener handles
-        // every task, which is what makes them reusable. `this.reusableWorkers`
-        // is currently always empty (no caller requests reuse since stability
-        // mode was removed), so the absorb loop below is a no-op and every
-        // worker is freshly spawned.
+        // Spawn the worker pool. No workerData → the worker's one-shot branch
+        // is skipped and the message listener handles every task.
         const spawned: Worker[] = [];
-        let reusedWorkerCount = 0;
         let spawnedWorkerCount = 0;
         const workerStartupStartedAt = performance.now();
         try {
-            // First absorb any reusable workers from a prior execute() call.
-            // The activeWorkers Set is preserved so cancel() / error handling
-            // still tracks them.
-            while (this.reusableWorkers.length > 0 && freeWorkers.length < workerCount) {
-                const w = this.reusableWorkers.pop()!;
-                // Detach the previous execute() call's listeners. We track
-                // them via the per-worker WeakMap so we remove ONLY our own
-                // handlers — Worker.removeAllListeners() would also nuke
-                // Node's internal 'exit'/'error' wiring and silently break
-                // the worker's message pump on the next postMessage.
-                const prev = this.workerAttachedListeners.get(w);
-                if (prev) {
-                    for (const fn of prev) fn();
-                    this.workerAttachedListeners.delete(w);
-                }
-                attachWorkerHandlers(w);
-                freeWorkers.push(w);
-                spawned.push(w);
-                reusedWorkerCount += 1;
-            }
-            // Spawn any additional workers needed to reach workerCount.
             for (let i = freeWorkers.length; i < workerCount; i++) {
                 if (this.isCancelled) break;
                 const worker = new Worker(workerScriptPath, {});
@@ -878,7 +802,6 @@ export class TopMeanWorkerPool {
                 ...workerTiming,
                 workers: spawned.length,
                 spawnedWorkers: spawnedWorkerCount,
-                reusedWorkers: reusedWorkerCount,
                 shards: shardTasks.length,
                 pendingShards: pendingShards.length,
                 shardSize,
