@@ -393,6 +393,42 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(result.horizons[0]!.topRaw.topMean).to.not.equal(null);
     });
 
+    it("adds TOP_RAW_6BAR and TOP_MEAN_6BAR using only the recent score window", async () => {
+        const pairs = [
+            makeDirectMarket("AAA", [
+                makeTrade("long", T0 - 10_000, null),
+                makeTrade("long", T0 - 9_000, null),
+                makeTrade("long", T0 - 8_000, null),
+            ]),
+            makeDirectMarket("BBB", [
+                makeTrade("long", T0 + 1_000, null),
+                makeTrade("long", T0 + 1_000, null),
+            ]),
+            makeDirectMarket("CCC", [makeTrade("long", T0 + 1_000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, (i) => i === 3 ? 90 : 100),
+            makeTarget("BBB", 10, (i) => i === 3 ? 120 : 100),
+            makeTarget("CCC", 10, () => 100),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], interval: "1s", slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        const horizon = result.horizons[0]!;
+
+        // All-history TOP_RAW still sees AAA's three old votes. The six-bar
+        // arm excludes them at the T0+1s decision and selects BBB's recent
+        // two-vote score instead.
+        expect(horizon.topRaw.topMean).to.be.closeTo(-0.10, 1e-9);
+        expect(horizon.topRaw6Bar.events).to.equal(1);
+        expect(horizon.topRaw6Bar.topMean).to.be.closeTo(0.20, 1e-9);
+        expect(horizon.topMean6Bar.events).to.equal(1);
+        expect(result.reportLines.join("\n")).to.include("TOP_RAW_6BAR");
+        expect(result.reportLines.join("\n")).to.include("TOP_MEAN_6BAR");
+    });
+
     it("reports coverage controls that separate score edge from pair-degree concentration", async () => {
         // At T1 the positive candidates intentionally produce different
         // winners for every diagnostic rule:

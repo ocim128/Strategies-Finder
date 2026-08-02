@@ -56,8 +56,8 @@
 
 /* ------------------------------------------------------------------
  * Sectioned layout (point 4)
- * Markets (pair entry) and Stability analysis are distinct sections with
- * a subtle surface change, not nested glass cards.
+ * Markets (pair entry) and the TOP_MEAN coordinator are distinct
+ * sections with a subtle surface change, not nested glass cards.
  * ------------------------------------------------------------------ */
 
 .batch-section {
@@ -124,8 +124,8 @@
     margin-top: var(--space-2);
     padding: var(--space-2);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    background: var(--surface-raised);
+    border-radius: var(--radius-s);
+    background: hsl(var(--hsl-surface-2) / 0.5);
 }
 
 .batch-balanced-generator-heading {
@@ -185,13 +185,14 @@
 
 /* ------------------------------------------------------------------
  * Action groups (point 2)
- * Primary (Run/Stop) / Analysis (Mine/Stability) / Export (Copy *).
- * Keep Run as the only filled primary; exports are quiet text buttons.
+ * Primary (Run/Stop) / Analysis (OPEN_SCORE USD + its config) / Export
+ * (Copy *). Keep Run as the only filled primary; exports are quiet text
+ * buttons. Groups separate via gap — no divider elements.
  * ------------------------------------------------------------------ */
 
 .batch-actions {
     display: flex;
-    gap: var(--space-2);
+    gap: var(--space-2) var(--space-3);
     flex-wrap: wrap;
     align-items: center;
 }
@@ -212,14 +213,6 @@
 .batch-action-group--primary .stop-btn {
     flex: 1 1 auto;
     min-width: 120px;
-}
-
-.batch-action-group--divider {
-    flex: 0 0 auto;
-    width: 1px;
-    align-self: stretch;
-    background: var(--glass-border);
-    margin: 2px 0;
 }
 
 .batch-action-group--exports {
@@ -245,16 +238,28 @@
 }
 
 /* ------------------------------------------------------------------
- * Stability controls (point 1)
- * Wraps each label/input in a field group and gives numeric fields a
- * deliberate width instead of the undefined .compact-input.
+ * Coordinator controls
+ * Fields row (Horizons/Workers/Max Pairs/From/To) sits above the actions
+ * row (Run/Stop, Details + its selector, quiet exports) so the section
+ * reads inputs-then-actions instead of one wrap wall.
  * ------------------------------------------------------------------ */
 
-.batch-stability-controls {
+.batch-coordinator-fields {
     display: flex;
     gap: var(--space-2-5);
     align-items: flex-end;
     flex-wrap: wrap;
+}
+
+.batch-coordinator-actions {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.batch-coordinator-actions .batch-action-group--exports {
+    margin-left: auto;
 }
 
 .batch-field {
@@ -297,37 +302,26 @@
     box-shadow: var(--focus-ring-soft);
 }
 
-/* Inline variant: label and input on one row (used by the Mine Prediction
- * date-range inputs inside the analysis button group). */
+/* Inline variant: label and input on one row (used by date-range and
+ * free-form inputs that sit inside action groups). */
 .batch-field--inline {
     flex-direction: row;
     align-items: center;
     gap: var(--space-1-5);
 }
 
-.batch-field-input--date {
+.batch-field-input--auto {
     width: auto;
     min-width: 8rem;
 }
 
-/* OPEN_SCORE USD config row: a labeled flex row grouping all OPEN_SCORE USD
- * controls (From/To/Horizons) in one place so the analysis button row stays
- * clean. */
+/* OPEN_SCORE USD config: From/To/Horizons fields grouped directly with the
+ * analysis button they configure. */
 .batch-open-score-usd-config {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
-    padding: var(--space-1-5) 0;
-}
-
-.batch-open-score-usd-config-label {
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: var(--tracking-wide);
-    white-space: nowrap;
 }
 
 .batch-open-score-details {
@@ -340,7 +334,7 @@
 
 .batch-open-score-details-selector {
     width: auto;
-    min-width: 13rem;
+    min-width: 10rem;
     font-family: var(--font-family-mono);
 }
 
@@ -391,18 +385,21 @@
     position: sticky;
     top: 0;
     z-index: 1;
-    background: var(--surface-2, #1e222d);
+    background: var(--bg-tertiary);
 }
 
 .batch-open-score-details-table td {
     white-space: nowrap;
 }
 
-.batch-open-score-details-table .is-positive {
+/* Sign coloring for any value inside the Batch tab (report cards, details
+ * tables, pick deltas). Scoped to the tab so it cannot collide with the
+ * execution-lab classes of the same name. */
+#batchbacktestTab .is-positive {
     color: var(--green);
 }
 
-.batch-open-score-details-table .is-negative {
+#batchbacktestTab .is-negative {
     color: var(--red);
 }
 
@@ -488,10 +485,9 @@
     white-space: nowrap;
 }
 
-/* Mine/Stability status line — lives inside the run-state region once a
- * mine/stability run produces a summary. Collapses to nothing when empty so
- * the run-state region does not show a "Miner idle" strip before any mining
- * has happened (point 7). */
+/* Analysis status line — lives inside the run-state region once an
+ * analysis run produces a summary. Collapses to nothing when empty so the
+ * run-state region shows no idle strip before anything has run (point 7). */
 .batch-miner-status {
     font-size: var(--font-size-xs);
     color: var(--text-secondary);
@@ -504,10 +500,10 @@
     display: none;
 }
 
-/* Multi-line variant for diagnostic reports (e.g. Mine Prediction). The base
- * rule keeps single-line summaries on one visual line; this modifier opts
- * into pre-line wrapping so a pipe-delimited multi-line report renders
- * legibly instead of collapsing onto one line. */
+/* Multi-line variant for diagnostic reports (e.g. the OPEN_SCORE USD replay
+ * report). The base rule keeps single-line summaries on one visual line;
+ * this modifier opts into pre-line wrapping so a pipe-delimited multi-line
+ * report renders legibly instead of collapsing onto one line. */
 .batch-miner-status--multiline {
     white-space: pre-line;
     max-height: 24rem;
@@ -641,6 +637,166 @@
 }
 
 /* ------------------------------------------------------------------
+ * Coordinator report cards
+ * Token-driven surfaces for the service-rendered TOP_MEAN / OPEN_SCORE
+ * HTML (renderTopMeanResults, renderCurrentTopMeanBanner,
+ * renderLatestOpenScoreSelections). Sign colors come from the tab-scoped
+ * .is-positive / .is-negative rules above — no hex in TypeScript.
+ * ------------------------------------------------------------------ */
+
+.batch-report-card {
+    background: hsl(var(--hsl-surface-2) / 0.55);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    padding: var(--space-3);
+    margin-bottom: var(--space-3);
+}
+
+.batch-report-title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--accent-color);
+    margin-bottom: var(--space-1-5);
+}
+
+.batch-report-note {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    margin-bottom: var(--space-2);
+    line-height: var(--line-height-normal);
+}
+
+.batch-report-note--after {
+    margin: var(--space-2) 0 0;
+}
+
+.batch-report-pre {
+    margin: 0;
+    white-space: pre-wrap;
+    font-size: var(--font-size-xs);
+    font-family: var(--font-family-mono);
+    color: var(--text-primary);
+}
+
+.batch-report-subheading {
+    margin-top: var(--space-3);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+}
+
+.batch-report-subheading--accent {
+    color: var(--accent-color);
+}
+
+.batch-report-table {
+    width: 100%;
+    margin-top: var(--space-1-5);
+    font-size: var(--font-size-xs);
+}
+
+.batch-report-row-top {
+    background: hsl(var(--hsl-success) / 0.1);
+    font-weight: var(--font-weight-semibold);
+}
+
+.batch-top-badge {
+    font-size: var(--font-size-2xs);
+    background: var(--green);
+    color: var(--text-on-accent);
+    padding: 1px 4px;
+    border-radius: var(--radius-xs);
+    margin-left: var(--space-1);
+}
+
+/* Accent-edged stat cards (leaderboard horizons, current picks). */
+.batch-pick-row {
+    display: flex;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+
+.batch-pick-card {
+    flex: 1;
+    min-width: 180px;
+    background: hsl(var(--hsl-surface-1) / 0.6);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-s);
+    border-left: 3px solid var(--green);
+}
+
+.batch-pick-label {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+}
+
+.batch-pick-asset {
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-bold);
+    color: var(--text-primary);
+    margin: 2px 0;
+}
+
+.batch-pick-meta {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.batch-pick-delta {
+    font-size: var(--font-size-xs);
+    margin-top: 2px;
+}
+
+/* Trade-decision banner: long (success) vs flat/no-trade (danger). */
+.batch-report-decision {
+    padding: var(--space-2) var(--space-2-5);
+    margin-bottom: var(--space-2-5);
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height-normal);
+    border-left: 4px solid var(--green);
+    background: hsl(var(--hsl-success) / 0.1);
+}
+
+.batch-report-decision--flat {
+    border-left-color: var(--red);
+    background: hsl(var(--hsl-danger) / 0.1);
+}
+
+.batch-report-warning {
+    font-size: var(--font-size-sm);
+    color: var(--text-primary);
+}
+
+/* Collapsible per-year report blocks. */
+.batch-report-details {
+    margin-top: var(--space-2);
+    background: hsl(var(--hsl-surface-2) / 0.55);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    padding: var(--space-2) var(--space-2-5);
+}
+
+.batch-report-details > summary {
+    cursor: pointer;
+    font-weight: var(--font-weight-semibold);
+}
+
+.batch-report-details .batch-report-pre {
+    margin-top: var(--space-2);
+}
+
+/* Scrollable diagnostic dump (TOP_MEAN coordinator diagnostics). */
+.batch-diagnostic-pre {
+    max-height: 240px;
+    overflow: auto;
+    white-space: pre-wrap;
+    font-size: var(--font-size-xs);
+    margin: var(--space-2) 0 0;
+}
+
+/* ------------------------------------------------------------------
  * Responsive (points 5, 6)
  * Collapse the metric grid to a compact card on narrow panels.
  * ------------------------------------------------------------------ */
@@ -655,12 +811,17 @@
         grid-column: 1 / -1;
     }
 
-    .batch-stability-controls {
+    .batch-coordinator-fields,
+    .batch-coordinator-actions {
         flex-direction: column;
         align-items: stretch;
     }
 
-    .batch-stability-controls .btn {
+    .batch-coordinator-actions .btn {
         width: 100%;
+    }
+
+    .batch-coordinator-actions .batch-action-group--exports {
+        margin-left: 0;
     }
 }

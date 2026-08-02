@@ -2546,10 +2546,10 @@ export class BatchBacktestService {
         const breadth = latest.ema200Breadth === null
             ? "n/a"
             : `${(latest.ema200Breadth * 100).toFixed(1)}%`;
-        let html = `<div style="background: var(--surface-2, #1e222d); border: 1px solid var(--border-color, #2a2e39); border-radius: 6px; padding: 12px; margin-bottom: 16px;">`;
-        html += `<div style="font-weight:bold; font-size:14px; margin-bottom:6px; color:var(--accent-color, #2962ff);">Latest OPEN_SCORE Selector Picks</div>`;
-        html += `<div style="font-size:11px; color:var(--text-dim, #787b86); margin-bottom:8px;">decision event: ${escapeHtml(decisionLabel)} | EMA200 breadth ${escapeHtml(breadth)} (${escapeHtml(latest.ema200AssetsAbove)}/${escapeHtml(latest.ema200ObservedAssets)}) | regime ${escapeHtml(latest.regime.toUpperCase())}</div>`;
-        html += `<table class="finder-table" style="width:100%; font-size:12px;"><thead><tr><th>Selector</th><th>Direction</th><th>Selection</th><th>Mean</th><th>Score</th><th>Active Pairs</th><th>Pool</th></tr></thead><tbody>`;
+        let html = `<div class="batch-report-card">`;
+        html += `<div class="batch-report-title">Latest OPEN_SCORE Selector Picks</div>`;
+        html += `<div class="batch-report-note">decision event: ${escapeHtml(decisionLabel)} | EMA200 breadth ${escapeHtml(breadth)} (${escapeHtml(latest.ema200AssetsAbove)}/${escapeHtml(latest.ema200ObservedAssets)}) | regime ${escapeHtml(latest.regime.toUpperCase())}</div>`;
+        html += `<table class="finder-table batch-report-table"><thead><tr><th>Selector</th><th>Direction</th><th>Selection</th><th>Mean</th><th>Score</th><th>Active Pairs</th><th>Pool</th></tr></thead><tbody>`;
         for (const selection of latest.selections) {
             const selectedText = selection.reason === "selected"
                 ? selection.asset ?? "NO SELECTION"
@@ -2562,13 +2562,13 @@ export class BatchBacktestService {
             const score = selection.score === null
                 ? "--"
                 : `${selection.score >= 0 ? "+" : ""}${selection.score}`;
-            const color = selection.reason === "selected"
-                ? selection.direction === "long" ? "#26a69a" : "#ef5350"
-                : "var(--text-dim, #787b86)";
-            html += `<tr><td><strong>${escapeHtml(selection.selector)}</strong></td><td style="color:${color}; font-weight:600;">${escapeHtml(selection.direction.toUpperCase())}</td><td>${escapeHtml(selectedText)}</td><td>${escapeHtml(mean)}</td><td>${escapeHtml(score)}</td><td>${escapeHtml(selection.activePairs ?? "--")}</td><td>${escapeHtml(selection.eligibleCandidates)}</td></tr>`;
+            const directionClass = selection.reason === "selected"
+                ? selection.direction === "long" ? "is-positive" : "is-negative"
+                : "";
+            html += `<tr><td><strong>${escapeHtml(selection.selector)}</strong></td><td class="${directionClass}"><strong>${escapeHtml(selection.direction.toUpperCase())}</strong></td><td>${escapeHtml(selectedText)}</td><td>${escapeHtml(mean)}</td><td>${escapeHtml(score)}</td><td>${escapeHtml(selection.activePairs ?? "--")}</td><td>${escapeHtml(selection.eligibleCandidates)}</td></tr>`;
         }
         html += `</tbody></table>`;
-        html += `<div style="font-size:11px; color:var(--text-dim, #787b86); margin-top:7px;">Research selectors only. Tied rows are explicitly skipped; TOP_MEAN_TREND and REGIME_MEAN use target prices known by this decision event.</div>`;
+        html += `<div class="batch-report-note batch-report-note--after">Research selectors only. Tied rows are explicitly skipped; TOP_MEAN_TREND and REGIME_MEAN use target prices known by this decision event.</div>`;
         html += `</div>`;
         return html;
     }
@@ -2617,26 +2617,26 @@ export class BatchBacktestService {
 
         if (summary.performance) {
             const performanceLines = formatTopMeanPerformanceLines(summary.performance);
-            html += `<div style="background: var(--surface-2, #1e222d); border: 1px solid var(--border-color, #2a2e39); border-radius: 6px; padding: 12px; margin-bottom: 16px;">`;
-            html += `<div style="font-weight: bold; font-size: 14px; margin-bottom: 8px; color: var(--accent-color, #2962ff);">Coordinator Performance</div>`;
-            html += `<pre style="margin:0; white-space:pre-wrap; font-size:11px; color:var(--text-color, #d1d4dc);">${escapeHtml(performanceLines.join("\n"))}</pre>`;
+            html += `<div class="batch-report-card">`;
+            html += `<div class="batch-report-title">Coordinator Performance</div>`;
+            html += `<pre class="batch-report-pre">${escapeHtml(performanceLines.join("\n"))}</pre>`;
             html += `</div>`;
         }
 
         // 1. Leaderboard Banner: Executive summary of top asset per horizon
-        html += `<div style="background: var(--surface-2, #1e222d); border: 1px solid var(--border-color, #2a2e39); border-radius: 6px; padding: 12px; margin-bottom: 16px;">`;
-        html += `<div style="font-weight: bold; font-size: 14px; margin-bottom: 8px; color: var(--accent-color, #2962ff);">🏆 TOP_MEAN Asset Leaderboard</div>`;
-        html += `<div style="display: flex; gap: 16px; flex-wrap: wrap;">`;
+        html += `<div class="batch-report-card">`;
+        html += `<div class="batch-report-title">TOP_MEAN Asset Leaderboard</div>`;
+        html += `<div class="batch-pick-row">`;
 
         for (const h of summary.horizons) {
             const top = Array.isArray(h.topAssets) && h.topAssets.length > 0 ? h.topAssets[0] : null;
             if (top) {
                 const sharePct = (top.share * 100).toFixed(1) + "%";
-                html += `<div style="flex: 1; min-width: 180px; background: var(--surface-1, #131722); padding: 8px 12px; border-radius: 4px; border-left: 3px solid #26a69a;">`;
-                html += `<div style="font-size: 11px; color: var(--text-dim, #787b86); text-transform: uppercase;">Horizon ${escapeHtml(h.horizon)} Bars</div>`;
-                html += `<div style="font-size: 16px; font-weight: bold; margin: 2px 0;">${escapeHtml(top.asset)}</div>`;
-                html += `<div style="font-size: 12px; color: var(--text-color, #d1d4dc);">${escapeHtml(top.events?.toLocaleString())} events (${escapeHtml(sharePct)} share)</div>`;
-                html += `<div style="font-size: 11px; color: ${(top.delta ?? 0) >= 0 ? '#26a69a' : '#ef5350'}; margin-top: 2px;">Delta: ${escapeHtml(formatSignedPercent(top.delta))}</div>`;
+                html += `<div class="batch-pick-card">`;
+                html += `<div class="batch-pick-label">Horizon ${escapeHtml(h.horizon)} Bars</div>`;
+                html += `<div class="batch-pick-asset">${escapeHtml(top.asset)}</div>`;
+                html += `<div class="batch-pick-meta">${escapeHtml(top.events?.toLocaleString())} events (${escapeHtml(sharePct)} share)</div>`;
+                html += `<div class="batch-pick-delta ${(top.delta ?? 0) >= 0 ? "is-positive" : "is-negative"}">Delta: ${escapeHtml(formatSignedPercent(top.delta))}</div>`;
                 html += `</div>`;
             }
         }
@@ -2644,21 +2644,21 @@ export class BatchBacktestService {
 
         // 2. Detailed horizon tables with rank #1 badge
         for (const h of summary.horizons) {
-            html += `<div style="margin-top: 16px; font-weight: bold; font-size: 13px;">`;
+            html += `<div class="batch-report-subheading">`;
             html += `Horizon ${escapeHtml(h.horizon)} bars | ${escapeHtml(h.events?.toLocaleString())} decision events | `;
             html += `TOP_MEAN: top=${escapeHtml(formatSignedPercent(h.topMean?.topMean))} random=${escapeHtml(formatSignedPercent(h.topMean?.randomMean))} delta=${escapeHtml(formatSignedPercent(h.topMean?.delta))}`;
             html += `</div>`;
 
-            html += `<table class="finder-table" style="width:100%; margin-top:6px; font-size:12px;">`;
+            html += `<table class="finder-table batch-report-table">`;
             html += `<thead><tr><th>Rank</th><th>Asset</th><th>Events</th><th>Share</th><th>Selected Mean</th><th>Control Mean</th><th>Delta</th></tr></thead><tbody>`;
 
             let rank = 1;
             for (const row of h.topAssets || []) {
                 const sharePct = (row.share * 100).toFixed(1) + "%";
                 const isTop = rank === 1;
-                html += `<tr style="${isTop ? 'background: rgba(38, 166, 154, 0.1); font-weight: 600;' : ''}">`;
-                html += `<td>${isTop ? '🥇 1' : rank}</td>`;
-                html += `<td><strong>${escapeHtml(row.asset)}</strong> ${isTop ? '<span style="font-size:10px; background:#26a69a; color:#fff; padding:1px 4px; border-radius:3px; margin-left:4px;">TOP</span>' : ''}</td>`;
+                html += `<tr${isTop ? ` class="batch-report-row-top"` : ""}>`;
+                html += `<td>${rank}</td>`;
+                html += `<td><strong>${escapeHtml(row.asset)}</strong>${isTop ? `<span class="batch-top-badge">TOP</span>` : ""}</td>`;
                 html += `<td>${escapeHtml(row.events?.toLocaleString())}</td>`;
                 html += `<td>${escapeHtml(sharePct)}</td>`;
                 html += `<td>${escapeHtml(formatSignedPercent(row.topMean))}</td>`;
@@ -2672,13 +2672,13 @@ export class BatchBacktestService {
 
         const annualReports = Array.isArray(summary.annualReports) ? summary.annualReports : [];
         if (annualReports.length > 0) {
-            html += `<div style="margin-top: 20px; font-weight: bold; font-size: 14px; color: var(--accent-color, #2962ff);">OPEN_SCORE USD Calendar-Year Reports</div>`;
+            html += `<div class="batch-report-subheading batch-report-subheading--accent">OPEN_SCORE USD Calendar-Year Reports</div>`;
             for (const annual of annualReports) {
                 const fromLabel = new Date(annual.sampleFromSec * 1000).toISOString().slice(0, 10);
                 const toLabel = new Date(annual.sampleToSec * 1000).toISOString().slice(0, 10);
-                html += `<details style="margin-top: 8px; background: var(--surface-2, #1e222d); border: 1px solid var(--border-color, #2a2e39); border-radius: 6px; padding: 8px 10px;">`;
-                html += `<summary style="cursor:pointer; font-weight:600;">${escapeHtml(annual.year)} | ${escapeHtml(fromLabel)}..${escapeHtml(toLabel)}</summary>`;
-                html += `<pre style="margin:8px 0 0; white-space:pre-wrap; font-size:11px; color:var(--text-color, #d1d4dc);">${escapeHtml(annual.reportLines.join("\n"))}</pre>`;
+                html += `<details class="batch-report-details">`;
+                html += `<summary>${escapeHtml(annual.year)} | ${escapeHtml(fromLabel)}..${escapeHtml(toLabel)}</summary>`;
+                html += `<pre class="batch-report-pre">${escapeHtml(annual.reportLines.join("\n"))}</pre>`;
                 html += `</details>`;
             }
         }
@@ -2886,15 +2886,15 @@ export class BatchBacktestService {
         const decision = currentSnapshot.decision;
         const decisionStatus = (decision as { status?: string } | undefined)?.status;
 
-        let html = `<div style="background: var(--surface-2, #1e222d); border: 1px solid var(--border-color, #2a2e39); border-radius: 6px; padding: 12px; margin-bottom: 16px;">`;
-        html += `<div style="font-weight: bold; font-size: 14px; margin-bottom: 8px; color: var(--accent-color, #2962ff);">TOP_MEAN ALGORITHMIC TRADE DECISION</div>`;
-        html += `<div style="font-size: 11px; color: var(--text-dim, #787b86); margin-bottom: 8px;">as-of: ${asOfLabel} | artifacts ${snap?.artifacts ?? 0} | open positions ${snap?.openPositions ?? 0} | candidates ${snap?.candidates?.length ?? 0} | stale ${stats.staleEndpoints ?? 0} | missing ${stats.missingEndpoints ?? 0}</div>`;
+        let html = `<div class="batch-report-card">`;
+        html += `<div class="batch-report-title">TOP_MEAN ALGORITHMIC TRADE DECISION</div>`;
+        html += `<div class="batch-report-note">as-of: ${asOfLabel} | artifacts ${snap?.artifacts ?? 0} | open positions ${snap?.openPositions ?? 0} | candidates ${snap?.candidates?.length ?? 0} | stale ${stats.staleEndpoints ?? 0} | missing ${stats.missingEndpoints ?? 0}</div>`;
 
         if (decisionStatus === "LONG_NEXT_BAR" && decision?.asset) {
             const decisionLabel = typeof decision.decisionTime === "number"
                 ? new Date(decision.decisionTime * 1000).toISOString().slice(0, 19).replace("T", " ") + " UTC"
                 : "unknown";
-            html += `<div style="background: rgba(38, 166, 154, 0.10); border-left: 4px solid #26a69a; padding: 8px 10px; margin-bottom: 10px; font-size: 12px;">`;
+            html += `<div class="batch-report-decision">`;
             html += `<strong>ALGORITHMIC TRADE DECISION — LONG ${escapeHtml(decision.asset)}:</strong> enter on the first target-asset bar strictly after the ${escapeHtml(decisionLabel)} decision event. Research case: $${escapeHtml(decision.researchNotionalUsd)} notional, hold ${escapeHtml(decision.researchHoldBars)} bars, exit at ${escapeHtml(decision.researchExitRule.replaceAll("_", " "))}.`;
             html += `</div>`;
         } else {
@@ -2907,11 +2907,11 @@ export class BatchBacktestService {
                         : decisionStatus === "VERIFY_ENTRY_WINDOW"
                             ? "This is a legacy saved result. Run TOP_MEAN again to compute the algorithmic entry decision."
                             : "The latest decision event is unavailable.";
-            html += `<div style="background: rgba(239, 83, 80, 0.10); border-left: 4px solid #ef5350; padding: 8px 10px; margin-bottom: 10px; font-size: 12px;">`;
+            html += `<div class="batch-report-decision batch-report-decision--flat">`;
             html += `<strong>ALGORITHMIC TRADE DECISION — NO TRADE:</strong> ${reasonText}`;
             html += `</div>`;
         }
-        html += `<div style="font-size: 11px; color: var(--text-dim, #787b86); margin-bottom: 10px;"><strong>ASSUMPTION:</strong> This trade decision is built from one selected strategy configuration only. It does not combine or confirm multiple strategy configurations.</div>`;
+        html += `<div class="batch-report-note"><strong>ASSUMPTION:</strong> This trade decision is built from one selected strategy configuration only. It does not combine or confirm multiple strategy configurations.</div>`;
 
         if (winners.length === 0) {
             const noPickMsg = reason === "tied"
@@ -2921,34 +2921,34 @@ export class BatchBacktestService {
                     : reason === "no_open_positions"
                         ? "No open positions at the common endpoint."
                         : "No provable current snapshot (missing or mixed endpoints).";
-            html += `<div style="font-size: 13px; color: var(--text-color, #d1d4dc);">⚠️ ${noPickMsg}</div>`;
+            html += `<div class="batch-report-warning">${noPickMsg}</div>`;
             html += `</div>`;
             return html;
         }
 
-        html += `<div style="display: flex; gap: 12px; flex-wrap: wrap;">`;
+        html += `<div class="batch-pick-row">`;
         for (const w of winners) {
             const mean = Number(w.mean ?? 0);
             const meanSign = mean >= 0 ? "+" : "";
-            html += `<div style="flex: 1; min-width: 180px; background: var(--surface-1, #131722); padding: 8px 12px; border-radius: 4px; border-left: 3px solid #26a69a;">`;
-            html += `<div style="font-size: 11px; color: var(--text-dim, #787b86); text-transform: uppercase;">${winners.length > 1 ? "Tied Winner" : "Current Pick"}</div>`;
-            html += `<div style="font-size: 16px; font-weight: bold; margin: 2px 0;">${escapeHtml(w.asset)}</div>`;
-            html += `<div style="font-size: 12px; color: var(--text-color, #d1d4dc);">mean=${meanSign}${mean.toFixed(2)} | score=${escapeHtml(w.score)} | activePairs=${escapeHtml(w.activePairs)}</div>`;
+            html += `<div class="batch-pick-card">`;
+            html += `<div class="batch-pick-label">${winners.length > 1 ? "Tied Winner" : "Current Pick"}</div>`;
+            html += `<div class="batch-pick-asset">${escapeHtml(w.asset)}</div>`;
+            html += `<div class="batch-pick-meta">mean=${meanSign}${mean.toFixed(2)} | score=${escapeHtml(w.score)} | activePairs=${escapeHtml(w.activePairs)}</div>`;
             html += `</div>`;
         }
         html += `</div>`;
         if (winners.length > 1) {
-            html += `<div style="font-size: 11px; color: var(--text-dim, #787b86); margin-top: 6px;">Tie shown as-is — no arbitrary asset-name tie-break. Treat as an unresolved decision.</div>`;
+            html += `<div class="batch-report-note batch-report-note--after">Tie shown as-is — no arbitrary asset-name tie-break. Treat as an unresolved decision.</div>`;
         }
 
         const leaderboard: any[] = Array.isArray(snap?.candidates) ? snap.candidates.slice(0, 10) : [];
-        html += `<div style="margin-top: 12px; font-weight: bold; font-size: 13px;">🏆 CURRENT TOP_MEAN Leaderboard — top ${leaderboard.length}</div>`;
-        html += `<table class="finder-table" style="width:100%; margin-top:6px; font-size:12px;"><thead><tr><th>Rank</th><th>Asset</th><th>Mean</th><th>Score</th><th>Active Pairs</th></tr></thead><tbody>`;
+        html += `<div class="batch-report-subheading">CURRENT TOP_MEAN Leaderboard — top ${leaderboard.length}</div>`;
+        html += `<table class="finder-table batch-report-table"><thead><tr><th>Rank</th><th>Asset</th><th>Mean</th><th>Score</th><th>Active Pairs</th></tr></thead><tbody>`;
         leaderboard.forEach((candidate, index) => {
             const mean = Number(candidate.mean ?? 0);
             const meanSign = mean >= 0 ? "+" : "";
             const isTop = index === 0;
-            html += `<tr style="${isTop ? "background: rgba(38, 166, 154, 0.1); font-weight: 600;" : ""}"><td>${isTop ? "🥇 1" : index + 1}</td><td><strong>${escapeHtml(candidate.asset)}</strong></td><td>${meanSign}${mean.toFixed(2)}</td><td>${escapeHtml(candidate.score)}</td><td>${escapeHtml(candidate.activePairs)}</td></tr>`;
+            html += `<tr${isTop ? ` class="batch-report-row-top"` : ""}><td>${index + 1}</td><td><strong>${escapeHtml(candidate.asset)}</strong></td><td>${meanSign}${mean.toFixed(2)}</td><td>${escapeHtml(candidate.score)}</td><td>${escapeHtml(candidate.activePairs)}</td></tr>`;
         });
         html += `</tbody></table>`;
         html += `</div>`;

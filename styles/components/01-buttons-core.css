@@ -84,6 +84,21 @@
     color: var(--red);
 }
 
+/* Quiet: low-emphasis text action for neutral utility controls (copy, export,
+   template loaders) where a bordered secondary button adds chrome without
+   adding meaning. */
+.btn-quiet {
+    background: transparent;
+    color: var(--text-secondary);
+    border-color: transparent;
+    box-shadow: none;
+}
+
+.btn-quiet:hover {
+    background: hsl(var(--hsl-surface-3) / 0.5);
+    color: var(--text-primary);
+}
+
 .btn-icon {
     width: 34px;
     height: 34px;

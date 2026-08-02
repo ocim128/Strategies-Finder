@@ -47,8 +47,12 @@ class CryptoDataService {
         dom.cryptoDataStopBtn.addEventListener("click", () => void this.stopSync());
         dom.cryptoDataCopyBtn.addEventListener("click", () => void this.copySymbols());
         dom.cryptoDataLoadSymbolTemplateBtn.addEventListener("click", () => {
-            dom.cryptoDataSymbols.value = CRYPTO_SYMBOL_TEMPLATE;
-            this.setStatus("Symbol template loaded.");
+            // Append rather than clobber so an existing hand-built list is
+            // never destroyed by a single misclick.
+            const current = dom.cryptoDataSymbols.value.trim();
+            const template = CRYPTO_SYMBOL_TEMPLATE.trim();
+            dom.cryptoDataSymbols.value = current.length > 0 ? `${current}\n${template}` : template;
+            this.setStatus(current.length > 0 ? "Symbol template appended." : "Symbol template loaded.", "success");
         });
         // Stop stays enabled at startup so it can recover a stuck server-side
         // sync lock without a server restart (mirrors IBKR).
@@ -86,7 +90,7 @@ class CryptoDataService {
                             invalidatedFinal = true;
                             this.invalidateCompletedTargets(finalTargets);
                         }
-                        this.setStatus("Crypto sync finished (reattached).");
+                        this.setStatus("Crypto sync finished (reattached).", "success");
                     }
                     return;
                 }
@@ -103,7 +107,7 @@ class CryptoDataService {
                 this.reattached = false;
                 this.setBusy(false);
             }
-            this.setStatus(error instanceof Error ? `Sync reattach failed: ${error.message}` : "Sync reattach failed.");
+            this.setStatus(error instanceof Error ? `Sync reattach failed: ${error.message}` : "Sync reattach failed.", "error");
         }
     }
 
@@ -176,8 +180,10 @@ class CryptoDataService {
         dom.cryptoDataStopBtn.disabled = false;
     }
 
-    private setStatus(message: string): void {
-        this.getDom().cryptoDataStatus.textContent = message;
+    private setStatus(message: string, tone?: "success" | "error"): void {
+        const status = this.getDom().cryptoDataStatus;
+        status.textContent = message;
+        status.className = tone ? `data-mining-status ${tone}` : "data-mining-status";
     }
 
     private writeOutput(payload: unknown): void {
@@ -190,7 +196,7 @@ class CryptoDataService {
         const body = this.getRequestBody();
         const targets = Array.isArray(body.targets) ? body.targets : [];
         if (targets.length === 0) {
-            this.setStatus("Add at least one symbol.");
+            this.setStatus("Add at least one symbol.", "error");
             return;
         }
 
@@ -232,7 +238,7 @@ class CryptoDataService {
                     },
                     onSymbolFailed: (event) => {
                         seen = event.index + 1;
-                        this.setStatus(`Crypto ${seen}/${total}: ${event.symbol} ${event.interval} failed — ${event.error}`);
+                        this.setStatus(`Crypto ${seen}/${total}: ${event.symbol} ${event.interval} failed — ${event.error}`, "error");
                     },
                     onDone: (event) => {
                         aggregated.ok = event.ok;
@@ -251,17 +257,17 @@ class CryptoDataService {
             }
             this.writeOutput(aggregated);
             if (aggregated.error) {
-                this.setStatus(aggregated.error);
+                this.setStatus(aggregated.error, "error");
                 return;
             }
             if (!aggregated.ok) {
-                this.setStatus("Crypto request completed with failures.");
+                this.setStatus("Crypto request completed with failures.", "error");
                 return;
             }
-            this.setStatus(`Crypto request complete — ${seen}/${total} symbol${total === 1 ? "" : "s"}.`);
+            this.setStatus(`Crypto request complete — ${seen}/${total} symbol${total === 1 ? "" : "s"}.`, "success");
         } catch (error) {
             this.writeOutput(error instanceof Error ? error.message : String(error));
-            this.setStatus("Crypto request failed.");
+            this.setStatus("Crypto request failed.", "error");
         } finally {
             this.setBusy(false);
         }
@@ -283,7 +289,7 @@ class CryptoDataService {
             this.setStatus("Stopping crypto sync...");
         } catch (error) {
             this.writeOutput(error instanceof Error ? error.message : String(error));
-            this.setStatus("Failed to request stop.");
+            this.setStatus("Failed to request stop.", "error");
         }
     }
 
@@ -292,17 +298,17 @@ class CryptoDataService {
             ? this.lastSyncedSymbols
             : this.parseSymbols();
         if (symbols.length === 0) {
-            this.setStatus("No symbols to copy.");
+            this.setStatus("No symbols to copy.", "error");
             return;
         }
         const text = symbols.join("\n");
         try {
             await navigator.clipboard.writeText(text);
-            this.setStatus(`Copied ${symbols.length} crypto symbol${symbols.length === 1 ? "" : "s"}.`);
+            this.setStatus(`Copied ${symbols.length} crypto symbol${symbols.length === 1 ? "" : "s"}.`, "success");
             uiManager.showToast("Crypto symbols copied.", "success");
         } catch {
             this.writeOutput(text);
-            this.setStatus("Clipboard unavailable; symbols written to output.");
+            this.setStatus("Clipboard unavailable; symbols written to output.", "error");
         }
     }
 }

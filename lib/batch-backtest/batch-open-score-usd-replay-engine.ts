@@ -40,6 +40,7 @@
  */
 import type { OHLCVData } from "../types/strategies";
 import { applySlippage, timeToNumber } from "../strategies/backtest/backtest-utils";
+import { parseIntervalSeconds } from "../interval-utils";
 import type { BatchSyntheticPairArtifact } from "./batch-synthetic-artifact";
 import {
     tieBreakDigest,
@@ -217,6 +218,10 @@ export interface OpenScoreUsdReplayResult {
         topAdjusted: ReplayComparison;
         /** Highest rawScore / activePairCount (mean signed vote). */
         topMean: ReplayComparison;
+        /** TOP_RAW using only score deltas from the current and prior five bars. */
+        topRaw6Bar: ReplayComparison;
+        /** TOP_MEAN using only score deltas from the current and prior five bars. */
+        topMean6Bar: ReplayComparison;
         /**
          * Long-side trend filter: require target-universe EMA200 breadth above
          * 50%, keep positive-score assets above their own target EMA200, then
@@ -826,6 +831,8 @@ interface DecisionEvent {
     timeSec: number;
     /** Per-asset rawScore snapshot after applying all deltas at this time. */
     rawScore: number[];
+    /** Signed score changes inside the six-bar causal score window. */
+    recentRawScore: number[] | null;
     activePairCount: number[];
     /**
      * Per-asset signed ENTRY flow summed across this timestamp group only
@@ -864,6 +871,14 @@ export async function runOpenScoreUsdReplay(
     const blockCount = Math.max(1, Math.floor(options.blockCount ?? MAX_ACTIVE_BLOCK_COUNT));
     const bootstrapSamples = Math.max(200, Math.floor(options.bootstrapSamples ?? MAX_ACTIVE_BOOTSTRAP_SAMPLES));
     const warnings: string[] = [];
+    const scoreLookbackBars = 6;
+    const intervalSeconds = options.interval ? parseIntervalSeconds(options.interval) : null;
+    // Six bars ending at the current event span the current timestamp plus the
+    // five preceding bar intervals. Batch always supplies `interval`; callers
+    // without one keep the existing selectors and receive empty 6-bar arms.
+    const recentScoreWindowSeconds = intervalSeconds === null
+        ? null
+        : (scoreLookbackBars - 1) * intervalSeconds;
 
     const horizons = [...new Set(options.horizons.filter((h) => Number.isFinite(h) && h >= 1).map((h) => Math.floor(h)))].sort((a, b) => a - b);
     const emptyResult = (partial: Partial<OpenScoreUsdReplayResult>): OpenScoreUsdReplayResult => ({
@@ -983,6 +998,9 @@ export async function runOpenScoreUsdReplay(
     onPhase("events", "merging score deltas", 0, totalDeltas);
     const rawScore = new Array<number>(assetCount).fill(0);
     const activePairCount = new Array<number>(assetCount).fill(0);
+    const recentRawScore = new Array<number>(assetCount).fill(0);
+    const recentScoreGroups: Array<{ timeSec: number; deltas: Array<{ assetIndex: number; delta: number }> }> = [];
+    let recentScoreGroupOffset = 0;
     const events: DecisionEvent[] = [];
     const sampleFrom = options.sampleFromSec;
     const sampleTo = options.sampleToSec;
@@ -997,6 +1015,7 @@ export async function runOpenScoreUsdReplay(
         if (shouldStop()) return emptyResult({ pairs: pairCount, assets: assetCount, reportLines: ["OPEN_SCORE USD | cancelled during event sweep."] });
         const t = heap.peekTime();
         let hasEntry = false;
+        const groupRecentDeltas: Array<{ assetIndex: number; delta: number }> = [];
         // Reset entry-flow accumulator for this timestamp group.
         for (let a = 0; a < assetCount; a += 1) entryFlowAcc[a] = 0;
         // Apply ALL deltas at this timestamp before forming candidates.
@@ -1004,6 +1023,10 @@ export async function runOpenScoreUsdReplay(
             if (shouldStop()) return emptyResult({ pairs: pairCount, assets: assetCount, reportLines: ["OPEN_SCORE USD | cancelled during event sweep."] });
             const d = heap.pop()!;
             rawScore[d.assetIndex]! += d.delta;
+            if (recentScoreWindowSeconds !== null) {
+                recentRawScore[d.assetIndex]! += d.delta;
+                groupRecentDeltas.push({ assetIndex: d.assetIndex, delta: d.delta });
+            }
             // ACCELERATING: accumulate entry-only signed flow. Exits do NOT
             // create acceleration — an exit-only score improvement is not
             // treated as new bullish information (per the plan).
@@ -1027,10 +1050,28 @@ export async function runOpenScoreUsdReplay(
                 await yieldLoop();
             }
         }
+        if (recentScoreWindowSeconds !== null) {
+            recentScoreGroups.push({ timeSec: t, deltas: groupRecentDeltas });
+            const cutoff = t - recentScoreWindowSeconds;
+            while (
+                recentScoreGroupOffset < recentScoreGroups.length
+                && recentScoreGroups[recentScoreGroupOffset]!.timeSec < cutoff
+            ) {
+                const expired = recentScoreGroups[recentScoreGroupOffset]!;
+                for (const d of expired.deltas) recentRawScore[d.assetIndex]! -= d.delta;
+                recentScoreGroupOffset += 1;
+            }
+        }
         // Exit-only score changes do not create a decision event.
         if (hasEntry) {
             if ((sampleFrom === undefined || t >= sampleFrom) && (sampleTo === undefined || t <= sampleTo)) {
-                events.push({ timeSec: t, rawScore: [...rawScore], activePairCount: [...activePairCount], entryFlow: [...entryFlowAcc] });
+                events.push({
+                    timeSec: t,
+                    rawScore: [...rawScore],
+                    recentRawScore: recentScoreWindowSeconds === null ? null : [...recentRawScore],
+                    activePairCount: [...activePairCount],
+                    entryFlow: [...entryFlowAcc],
+                });
             }
         }
     }
@@ -1047,6 +1088,8 @@ export async function runOpenScoreUsdReplay(
         raw: number;
         adjusted: number;
         mean: number;
+        recentRaw: number;
+        recentMean: number;
         activePairs: number;
         staticPairs: number;     // RETAINED artifact degree (legacy name; counts every loaded artifact leg).
         submittedPairs: number;  // SUBMITTED degree from the canonical Batch request.
@@ -1060,10 +1103,13 @@ export async function runOpenScoreUsdReplay(
     interface EventView {
         timeSec: number;
         positives: Candidate[];
+        recentPositives: Candidate[];
         negatives: Candidate[];
         topRaw: number;      // assetIndex
         topAdjusted: number; // assetIndex
         topMean: number;     // assetIndex
+        topRaw6Bar: number;  // assetIndex
+        topMean6Bar: number; // assetIndex
         topMeanRank2: number; // assetIndex
         maxActive: number;   // assetIndex
         maxStatic: number;   // assetIndex (alias for maxRetained — legacy)
@@ -1115,46 +1161,40 @@ export async function runOpenScoreUsdReplay(
     for (let e = 0; e < events.length; e += 1) {
         const ev = events[e]!;
         const positives: Candidate[] = [];
+        const recentPositives: Candidate[] = [];
         const negatives: Candidate[] = [];
         let maxActivePairs = 0;
         for (let a = 0; a < assetCount; a += 1) {
             const raw = ev.rawScore[a]!;
             const cnt = ev.activePairCount[a]!;
+            const recentRaw = ev.recentRawScore?.[a] ?? 0;
+            const recentMean = cnt > 0 ? recentRaw / cnt : recentRaw;
             // ACCELERATING: fresh entry flow this timestamp / max(1, activePairs).
             // entryFlow is signed (long leg +1, short leg -1); acceleration > 0
             // means the asset received net positive entry flow at this event.
             const flow = ev.entryFlow[a]!;
             const acceleration = flow / (cnt > 0 ? cnt : 1);
+            const candidate: Candidate = {
+                assetIndex: a,
+                raw,
+                adjusted: cnt > 0 ? raw / Math.sqrt(cnt) : raw,
+                mean: cnt > 0 ? raw / cnt : raw,
+                recentRaw,
+                recentMean,
+                activePairs: cnt,
+                staticPairs: retainedDegree.get(assetNames[a]!) ?? 0,
+                submittedPairs: submittedDegree.size > 0
+                    ? (submittedDegree.get(assetNames[a]!) ?? 0)
+                    : (retainedDegree.get(assetNames[a]!) ?? 0),
+                acceleration,
+            };
             if (raw > 0) {
                 if (cnt > maxActivePairs) maxActivePairs = cnt;
-                const adjusted = cnt > 0 ? raw / Math.sqrt(cnt) : raw;
-                positives.push({
-                    assetIndex: a,
-                    raw,
-                    adjusted,
-                    mean: cnt > 0 ? raw / cnt : raw,
-                    activePairs: cnt,
-                    staticPairs: retainedDegree.get(assetNames[a]!) ?? 0,
-                    submittedPairs: submittedDegree.size > 0
-                        ? (submittedDegree.get(assetNames[a]!) ?? 0)
-                        : (retainedDegree.get(assetNames[a]!) ?? 0),
-                    acceleration,
-                });
+                positives.push(candidate);
             } else if (raw < 0) {
-                const adjusted = cnt > 0 ? raw / Math.sqrt(cnt) : raw;
-                negatives.push({
-                    assetIndex: a,
-                    raw,
-                    adjusted,
-                    mean: cnt > 0 ? raw / cnt : raw,
-                    activePairs: cnt,
-                    staticPairs: retainedDegree.get(assetNames[a]!) ?? 0,
-                    submittedPairs: submittedDegree.size > 0
-                        ? (submittedDegree.get(assetNames[a]!) ?? 0)
-                        : (retainedDegree.get(assetNames[a]!) ?? 0),
-                    acceleration,
-                });
+                negatives.push(candidate);
             }
+            if (recentRaw > 0) recentPositives.push(candidate);
         }
         // Need >= 2 positive candidates for a top-vs-random comparison.
         if (positives.length >= 2) {
@@ -1165,7 +1205,7 @@ export async function runOpenScoreUsdReplay(
             // asset-name order keeps execution deterministic.
             const eventTimeSec = ev.timeSec;
             const digestFor = (c: Candidate): string => tieBreakDigest(eventTimeSec, assetNames[c.assetIndex]!);
-            const pickMax = (candidates: readonly Candidate[], key: "raw" | "adjusted" | "mean" | "activePairs" | "staticPairs" | "submittedPairs" | "acceleration"): { winner: Candidate; tiedCount: number } => {
+            const pickMax = (candidates: readonly Candidate[], key: "raw" | "adjusted" | "mean" | "recentRaw" | "recentMean" | "activePairs" | "staticPairs" | "submittedPairs" | "acceleration"): { winner: Candidate; tiedCount: number } => {
                 // First pass: find the max value.
                 let maxValue = candidates[0]![key]!;
                 for (let i = 1; i < candidates.length; i += 1) {
@@ -1208,7 +1248,7 @@ export async function runOpenScoreUsdReplay(
             // (used by BOTTOM_MEAN: lowest mean = most-negative rawScore/activePairs
             // among negatives). Tie-break is the same FNV-1a digest rule so the
             // selector family stays deterministic and consistent.
-            const pickMin = (candidates: readonly Candidate[], key: "mean" | "raw" | "adjusted" | "activePairs" | "staticPairs" | "submittedPairs" | "acceleration"): { winner: Candidate; tiedCount: number } => {
+            const pickMin = (candidates: readonly Candidate[], key: "mean" | "raw" | "adjusted" | "recentRaw" | "recentMean" | "activePairs" | "staticPairs" | "submittedPairs" | "acceleration"): { winner: Candidate; tiedCount: number } => {
                 let minValue = candidates[0]![key]!;
                 for (let i = 1; i < candidates.length; i += 1) {
                     const v = candidates[i]![key]!;
@@ -1236,6 +1276,8 @@ export async function runOpenScoreUsdReplay(
             const topRaw = pickMax(positives, "raw");
             const topAdjusted = pickMax(positives, "adjusted");
             const topMean = pickMax(positives, "mean");
+            const topRaw6Bar = recentPositives.length >= 2 ? pickMax(recentPositives, "recentRaw") : null;
+            const topMean6Bar = recentPositives.length >= 2 ? pickMax(recentPositives, "recentMean") : null;
             const meanRanked = [...positives].sort((a, b) => {
                 if (a.mean !== b.mean) return b.mean - a.mean;
                 const aDigest = digestFor(a);
@@ -1279,9 +1321,12 @@ export async function runOpenScoreUsdReplay(
             currentStreakLength = fresh ? 1 : currentStreakLength + 1;
             views.push({
                 timeSec: ev.timeSec, positives, negatives,
+                recentPositives,
                 topRaw: topRawIdx,
                 topAdjusted: topAdjusted.winner.assetIndex,
                 topMean: topMean.winner.assetIndex,
+                topRaw6Bar: topRaw6Bar?.winner.assetIndex ?? -1,
+                topMean6Bar: topMean6Bar?.winner.assetIndex ?? -1,
                 topMeanRank2: meanRanked[1]!.assetIndex,
                 maxActive: maxActive.winner.assetIndex,
                 maxStatic: maxStatic.winner.assetIndex,
@@ -1348,6 +1393,14 @@ export async function runOpenScoreUsdReplay(
             // O(N²) defensiveness over a uniqueness invariant that already
             // holds — the positives branch never needed it for the same reason.
             list.push(v);
+        }
+        // A recent-score candidate may have non-positive all-history score.
+        // Add it after the normal positive/negative passes so the same view
+        // index cannot be appended twice for an asset.
+        for (const c of views[v]!.recentPositives) {
+            let list = requestsByAsset.get(c.assetIndex);
+            if (!list) { list = []; requestsByAsset.set(c.assetIndex, list); }
+            if (list[list.length - 1] !== v) list.push(v);
         }
     }
 
@@ -1601,6 +1654,8 @@ export async function runOpenScoreUsdReplay(
         const topRaw = createSeries();
         const topAdjusted = createSeries();
         const topMean = createSeries();
+        const topRaw6Bar = createSeries();
+        const topMean6Bar = createSeries();
         const topMeanTrend = createSeries();
         const regimeMean = createSeries();
         const topMeanVsRaw = createSeries();
@@ -1893,6 +1948,36 @@ export async function runOpenScoreUsdReplay(
                         accRandomMean,
                         accRetByAsset.size,
                     );
+                }
+            }
+
+            // Six-bar score arms use the same decision events but an
+            // independent target-data gate. The pool is restricted to
+            // assets with positive signed score change in the current and
+            // preceding five bars; the random control is the other members of
+            // that recent-score pool.
+            if (view.recentPositives.length >= 2 && view.topRaw6Bar >= 0 && view.topMean6Bar >= 0) {
+                const recentRetByAsset = new Map<number, number>();
+                let recentValid = true;
+                for (const c of view.recentPositives) {
+                    const r = perAsset.get(c.assetIndex)?.long[hIdx];
+                    if (r === undefined || !Number.isFinite(r)) { recentValid = false; break; }
+                    recentRetByAsset.set(c.assetIndex, r);
+                }
+                if (recentValid) {
+                    let recentTotalReturn = 0;
+                    for (const r of recentRetByAsset.values()) recentTotalReturn += r;
+                    const appendRecentSelection = (series: SelectorSeries, selectedIdx: number): void => {
+                        const selectedReturn = recentRetByAsset.get(selectedIdx);
+                        if (selectedReturn === undefined) return;
+                        const randomReturn = (recentTotalReturn - selectedReturn) / (recentRetByAsset.size - 1);
+                        series.returns.push(selectedReturn);
+                        series.deltas.push(selectedReturn - randomReturn);
+                        series.times.push(view.timeSec);
+                        series.assets.push(assetNames[selectedIdx]!);
+                    };
+                    appendRecentSelection(topRaw6Bar, view.topRaw6Bar);
+                    appendRecentSelection(topMean6Bar, view.topMean6Bar);
                 }
             }
 
@@ -2327,6 +2412,8 @@ export async function runOpenScoreUsdReplay(
             topRaw: buildComparison(topRaw.deltas, topRaw.returns, topRaw.times),
             topAdjusted: buildComparison(topAdjusted.deltas, topAdjusted.returns, topAdjusted.times),
             topMean: buildComparison(topMean.deltas, topMean.returns, topMean.times),
+            topRaw6Bar: buildComparison(topRaw6Bar.deltas, topRaw6Bar.returns, topRaw6Bar.times),
+            topMean6Bar: buildComparison(topMean6Bar.deltas, topMean6Bar.returns, topMean6Bar.times),
             topMeanTrend: buildComparison(topMeanTrend.deltas, topMeanTrend.returns, topMeanTrend.times),
             topMeanTrendByAsset,
             topMeanTrendExDominant,
@@ -2477,6 +2564,9 @@ export async function runOpenScoreUsdReplay(
         if (!anyRegimeEvents) {
             warnings.push("REGIME_MEAN contributed 0 events across all horizons; neither market-breadth direction produced at least two EMA200-qualified candidates.");
         }
+    }
+    if (recentScoreWindowSeconds === null) {
+        warnings.push("TOP_RAW_6BAR and TOP_MEAN_6BAR require a valid run interval; their report arms are empty when interval is omitted or invalid.");
     }
     warnings.push("Stock/marked-leg datasets may carry split/corporate-action discontinuities; verify adjustment before treating this as a tradeable verdict.");
     warnings.push("P&L experiments use equal 1-unit event notional; overlapping entries are summed without compounding and are not live account returns.");
@@ -2677,7 +2767,7 @@ function buildReportLines(args: {
     lines.push(`OPEN_SCORE USD | ${status} | pairs=${args.pairs} assets=${args.assets} events=${args.totalEvents} comparable=${args.candidateEvents} eligible=${args.eligibleEvents}`);
     lines.push(`config | interval=${args.interval ?? "n/a"} window=${args.sampleFromSec === null ? "start" : new Date(args.sampleFromSec * 1000).toISOString().slice(0, 10)}..${args.sampleToSec === null ? "end" : new Date(args.sampleToSec * 1000).toISOString().slice(0, 10)} horizons=[${args.horizonsList.join(",")}] slippageRate=${args.slippageRate} commissionRate=${args.commissionRate}`);
     lines.push(`retained pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
-    lines.push("controls | TOP_MEAN=raw/activePairs TOP_MEAN_TREND=target EMA200 breadth>50%, then prior close>EMA200, TOP_MEAN, activePairs tie-break REGIME_MEAN=TOP_MEAN_TREND long above 50% breadth, BOTTOM_MEAN short below MAX_ACTIVE=most open pairs MAX_ACTIVE_REVERSION=most open pairs among negative-score assets, shorted vs USD MAX_SUBMITTED=most submitted pairs MAX_RETAINED=most loaded artifacts");
+    lines.push("controls | TOP_MEAN=raw/activePairs TOP_RAW_6BAR=signed score changes in current+prior 5 bars TOP_MEAN_6BAR=TOP_RAW_6BAR/activePairs TOP_MEAN_TREND=target EMA200 breadth>50%, then prior close>EMA200, TOP_MEAN, activePairs tie-break REGIME_MEAN=TOP_MEAN_TREND long above 50% breadth, BOTTOM_MEAN short below MAX_ACTIVE=most open pairs MAX_ACTIVE_REVERSION=most open pairs among negative-score assets, shorted vs USD MAX_SUBMITTED=most submitted pairs MAX_RETAINED=most loaded artifacts");
     lines.push("pnl model | OVERLAP=long selector vs same-pool random positive, every eligible event; HEDGE=long TOP_MEAN rank1 + short rank2; *_1K=$1000/trade, exact selector ties skipped, one open trade per asset; ACCELERATING=positive entry flow per active pair, exit-only changes excluded");
     for (const h of args.horizons) {
         const coverageRate = args.candidateEvents > 0 ? h.topRaw.events / args.candidateEvents : 0;
@@ -2690,6 +2780,8 @@ function buildReportLines(args: {
         lines.push(comparisonLine("TOP_RAW", h.topRaw));
         lines.push(comparisonLine("TOP_ADJUSTED", h.topAdjusted));
         lines.push(comparisonLine("TOP_MEAN", h.topMean));
+        lines.push(comparisonLine("TOP_RAW_6BAR", h.topRaw6Bar));
+        lines.push(comparisonLine("TOP_MEAN_6BAR", h.topMean6Bar));
         lines.push(comparisonLine("TOP_MEAN_TREND", h.topMeanTrend));
         lines.push(pnlLine("TOP_MEAN_TREND_PNL", h.pnl.topMeanTrend));
         lines.push(portfolioLine("TOP_MEAN_TREND", h.pnl.topMeanTrendPortfolio));

@@ -1,14 +1,18 @@
 <!-- Crypto Data Tab -->
 <div id="cryptodataTab">
-    <div class="section-title">Crypto Data</div>
-    <p class="section-desc">Download and sync Binance candles into local SQLite + CSV under <code>price-data/crypto</code>. Synthetic pairs (<code>SOL+TRX</code>) automatically store their USDT legs at both the selected timeframe and the finer seed timeframe used by Batch and Finder.</p>
+    <header class="page-header">
+        <h2 class="page-title">Crypto Data</h2>
+        <p class="page-subtitle">Download and sync Binance candles into local SQLite + CSV under <code>price-data/crypto</code>.</p>
+    </header>
 
     <div class="data-mining-actions">
         <button class="btn btn-primary" id="cryptoDataDownloadBtn" type="button">Download CSV</button>
         <button class="btn btn-secondary" id="cryptoDataSyncBtn" type="button">Sync Latest</button>
-        <button class="btn btn-secondary" id="cryptoDataStopBtn" type="button">Stop</button>
-        <button class="btn btn-secondary" id="cryptoDataCopyBtn" type="button">Copy Symbols</button>
-        <button class="btn btn-secondary" id="cryptoDataLoadSymbolTemplateBtn" type="button">Load Symbol Template</button>
+        <button class="btn btn-quiet" id="cryptoDataLoadSymbolTemplateBtn" type="button"
+            title="Append the curated crypto symbol template to the symbol list">Load Symbol Template</button>
+        <button class="btn btn-quiet" id="cryptoDataCopyBtn" type="button">Copy Symbols</button>
+        <button class="btn btn-ghost" id="cryptoDataStopBtn" type="button"
+            title="Force-stop a stuck server-side sync. Always available so a stuck lock can be cleared without a server restart.">Stop</button>
     </div>
 
     <div class="section-body">
@@ -16,6 +20,7 @@
             <div class="param-group">
                 <label class="param-label" for="cryptoDataSymbols">Symbols</label>
                 <textarea class="param-input" id="cryptoDataSymbols" rows="6" placeholder="BTCUSDT&#10;SOLUSDT&#10;SOL+TRX"></textarea>
+                <div class="param-hint">Synthetic pairs (<code>SOL+TRX</code>) automatically store their USDT legs at the selected timeframe and the finer seed timeframe used by Batch and Finder.</div>
             </div>
         </div>
         <div class="param-row">

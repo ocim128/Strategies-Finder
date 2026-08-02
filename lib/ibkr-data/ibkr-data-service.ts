@@ -92,7 +92,7 @@ class IbkrDataService {
                             this.invalidateSyncedData(completed, lastRunningSnapshot?.interval);
                         }
                         const provider = lastRunningSnapshot?.source === "alpaca" ? "Alpaca" : "IBKR";
-                        this.setStatus(`${provider} sync finished (reattached).`);
+                        this.setStatus(`${provider} sync finished (reattached).`, "success");
                     }
                     return;
                 }
@@ -138,7 +138,7 @@ class IbkrDataService {
                 if (advanced || !stalledSlowMode) {
                     this.renderRunSnapshot(run);
                 } else {
-                    this.setStatus("IBKR sync stalled (no progress for 5 min) — slowing polls; still running. Click Stop or wait.");
+                    this.setStatus("IBKR sync stalled (no progress for 5 min) — slowing polls; still running. Click Stop or wait.", "error");
                 }
                 const delay = stalledSlowMode ? STALLED_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
                 await new Promise((resolve) => setTimeout(resolve, delay));
@@ -148,7 +148,7 @@ class IbkrDataService {
                 this.reattached = false;
                 this.setBusy(false);
             }
-            this.setStatus(error instanceof Error ? `Sync reattach failed: ${error.message}` : "Sync reattach failed.");
+            this.setStatus(error instanceof Error ? `Sync reattach failed: ${error.message}` : "Sync reattach failed.", "error");
         }
     }
 
@@ -202,8 +202,10 @@ class IbkrDataService {
         dom.ibkrDataStopBtn.disabled = false;
     }
 
-    private setStatus(message: string): void {
-        this.getDom().ibkrDataStatus.textContent = message;
+    private setStatus(message: string, tone?: "success" | "error"): void {
+        const status = this.getDom().ibkrDataStatus;
+        status.textContent = message;
+        status.className = tone ? `data-mining-status ${tone}` : "data-mining-status";
     }
 
     private writeOutput(payload: unknown): void {
@@ -220,15 +222,15 @@ class IbkrDataService {
             const payload = await response.json() as { ok?: boolean; error?: string };
             this.writeOutput(payload);
             if (response.ok && payload.ok !== false) {
-                this.setStatus("Gateway reachable");
+                this.setStatus("Gateway reachable", "success");
             } else if (response.ok && payload.error) {
-                this.setStatus(payload.error);
+                this.setStatus(payload.error, "error");
             } else {
-                this.setStatus("Gateway unavailable");
+                this.setStatus("Gateway unavailable", "error");
             }
         } catch (error) {
             this.writeOutput(error instanceof Error ? error.message : String(error));
-            this.setStatus("Gateway check failed");
+            this.setStatus("Gateway check failed", "error");
         } finally {
             this.setBusy(false);
         }
@@ -253,7 +255,7 @@ class IbkrDataService {
             const stale = findStaleIbkrSymbols(payload.assets ?? [], interval);
             if (!stale.freshestTime) {
                 this.writeOutput({ interval, staleSymbols: [], reason: "No catalog prices found for the selected timeframe." });
-                this.setStatus(`No ${interval} catalog prices found.`);
+                this.setStatus(`No ${interval} catalog prices found.`, "error");
                 return;
             }
 
@@ -270,11 +272,12 @@ class IbkrDataService {
             const existingLabel = alreadyListed > 0 ? `; ${alreadyListed} already listed` : "";
             this.setStatus(
                 `Appended ${appended.appended.length} of ${stale.symbols.length} stale ${interval} symbol${stale.symbols.length === 1 ? "" : "s"}${existingLabel}.`,
+                "success",
             );
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.writeOutput(message);
-            this.setStatus(`Stale-price check failed: ${message}`);
+            this.setStatus(`Stale-price check failed: ${message}`, "error");
         } finally {
             this.setBusy(false);
         }
@@ -283,7 +286,7 @@ class IbkrDataService {
     private async runAction(url: string, invalidate = false): Promise<void> {
         const body = this.getRequestBody();
         if (!Array.isArray(body.symbols) || body.symbols.length === 0) {
-            this.setStatus("Add at least one symbol.");
+            this.setStatus("Add at least one symbol.", "error");
             return;
         }
 
@@ -326,7 +329,7 @@ class IbkrDataService {
                 try { payload = JSON.parse(text); } catch { /* ignore parse error */ }
                 aggregated.error = payload.error ?? `${requestedProvider} request failed (${response.status}).`;
                 this.writeOutput(text);
-                this.setStatus(aggregated.error);
+                this.setStatus(aggregated.error, "error");
                 return;
             }
             streamOpened = true;
@@ -353,7 +356,7 @@ class IbkrDataService {
                 onSymbolFailed: (event: Extract<IbkrStreamEvent, { type: "symbol_failed" }>) => {
                     seen = event.index + 1;
                     const provider = runSource === "alpaca" ? "Alpaca" : "IBKR";
-                    this.setStatus(`${provider} ${seen}/${total}: ${event.symbol} failed — ${event.error}`);
+                    this.setStatus(`${provider} ${seen}/${total}: ${event.symbol} failed — ${event.error}`, "error");
                 },
                 onSymbolWarning: (event: Extract<IbkrStreamEvent, { type: "symbol_warning" }>) => {
                     hadWarning = true;
@@ -380,28 +383,28 @@ class IbkrDataService {
             });
 
             if (aggregated.error) {
-                this.setStatus(aggregated.error);
+                this.setStatus(aggregated.error, "error");
                 return;
             }
             if (!aggregated.ok) {
                 const provider = runSource === "alpaca" ? "Alpaca" : "IBKR";
-                this.setStatus(`${provider} request completed with failures.`);
+                this.setStatus(`${provider} request completed with failures.`, "error");
                 return;
             }
             if (hadWarning) {
                 const provider = runSource === "alpaca" ? "Alpaca" : "IBKR";
-                this.setStatus(`${provider} request complete with warnings — ${seen}/${total} symbol${total === 1 ? "" : "s"} (some partial).`);
+                this.setStatus(`${provider} request complete with warnings — ${seen}/${total} symbol${total === 1 ? "" : "s"} (some partial).`, "success");
                 return;
             }
             const provider = runSource === "alpaca" ? "Alpaca" : "IBKR";
             const aggregateHint = runSource === "alpaca"
                 ? " Run `npm run ibkr:aggregate -- --from 30m --interval 4h` to derive 4h."
                 : "";
-            this.setStatus(`${provider} request complete — ${seen}/${total} symbol${total === 1 ? "" : "s"}.${aggregateHint}`);
+            this.setStatus(`${provider} request complete — ${seen}/${total} symbol${total === 1 ? "" : "s"}.${aggregateHint}`, "success");
         } catch (error) {
             this.writeOutput(error instanceof Error ? error.message : String(error));
             const provider = runSource === "alpaca" ? "Alpaca" : "IBKR";
-            this.setStatus(`${provider} request failed.`);
+            this.setStatus(`${provider} request failed.`, "error");
         } finally {
             // Invalidate in `finally` so a mid-stream network failure (which
             // throws out of consumeNdjsonStream) still invalidates the symbols
@@ -433,7 +436,7 @@ class IbkrDataService {
             this.setStatus("Stop requested. Current symbol may finish first.");
         } catch (error) {
             this.writeOutput(error instanceof Error ? error.message : String(error));
-            this.setStatus("Failed to request stop.");
+            this.setStatus("Failed to request stop.", "error");
         }
     }
 
@@ -471,17 +474,17 @@ class IbkrDataService {
             ? this.lastMarkedSymbols
             : this.parseSymbols().map((symbol) => markIbkrSymbol(symbol));
         if (symbols.length === 0) {
-            this.setStatus("No symbols to copy.");
+            this.setStatus("No symbols to copy.", "error");
             return;
         }
         const text = symbols.join("\n");
         try {
             await navigator.clipboard.writeText(text);
-            this.setStatus(`Copied ${symbols.length} IBKR symbol${symbols.length === 1 ? "" : "s"}.`);
+            this.setStatus(`Copied ${symbols.length} IBKR symbol${symbols.length === 1 ? "" : "s"}.`, "success");
             uiManager.showToast("IBKR symbols copied.", "success");
         } catch {
             this.writeOutput(text);
-            this.setStatus("Clipboard unavailable; symbols written to output.");
+            this.setStatus("Clipboard unavailable; symbols written to output.", "error");
         }
     }
 }
