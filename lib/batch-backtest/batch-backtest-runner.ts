@@ -73,6 +73,12 @@ export interface BatchBacktestSymbolResult {
     signals?: Signal[];
     tradeSummary?: BatchBacktestTradeSummary;
     buyHoldPct?: number | null;
+    /**
+     * Return percentage used by the Batch B&H comparison. Fixed-dollar runs
+     * use net P&L divided by the fixed trade amount so the comparison shares
+     * the same deployed-notional denominator as buy-and-hold.
+     */
+    strategyComparisonPct?: number;
     openTradeAssetScores?: { asset: string; score: number }[];
     error?: string;
 }
@@ -344,7 +350,7 @@ export async function runBatchBacktest(
             });
             if (cancelCheck()) break;
             const projectionStartedAt = performance.now();
-            const result = buildSymbolResult(symbol, data, output.result, output.signals);
+            const result = buildSymbolResult(symbol, data, output.result, output.signals, preResolvedCapital);
             timings.resultProjectionMs += performance.now() - projectionStartedAt;
             await notifyComplete(i, result);
             results[i] = input.pruneResultArtifacts ? pruneResultArtifacts(result) : result;
@@ -408,6 +414,7 @@ function buildSymbolResult(
     data: OHLCVData[],
     result: BacktestResult,
     signals: Signal[],
+    capitalSettings: CapitalSettings,
 ): BatchBacktestSymbolResult {
     let status: BatchBacktestSymbolStatus;
     if (result.totalTrades <= 0) {
@@ -437,7 +444,18 @@ function buildSymbolResult(
         data,
         signals: isSyntheticPair ? signals : undefined,
         tradeSummary: buildTradeSummary(data, result),
+        strategyComparisonPct: resolveStrategyComparisonPct(result, capitalSettings),
     };
+}
+
+function resolveStrategyComparisonPct(
+    result: BacktestResult,
+    capitalSettings: CapitalSettings,
+): number {
+    if (capitalSettings.sizingMode === "fixed" && capitalSettings.fixedTradeAmount > 0) {
+        return (result.netProfit / capitalSettings.fixedTradeAmount) * 100;
+    }
+    return result.netProfitPercent;
 }
 
 function buildTradeSummary(

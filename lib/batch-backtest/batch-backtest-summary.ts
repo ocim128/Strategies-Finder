@@ -353,7 +353,7 @@ export function buildBuyHoldRows(rows: readonly BatchBacktestSymbolResult[]): Bu
         if (!row.result) continue;
         const bh = row.buyHoldPct ?? computeBuyAndHoldPct(row.data);
         if (bh === null) continue;
-        const strat = row.result.netProfitPercent;
+        const strat = row.strategyComparisonPct ?? row.result.netProfitPercent;
         out.push({ symbol: row.symbol, strat, bh, alpha: strat - bh });
     }
     return out;

@@ -37,6 +37,7 @@ function resultRow(
     fields: {
         netProfit?: number;
         netProfitPercent?: number;
+        strategyComparisonPct?: number;
         sharpeRatio?: number;
         totalTrades?: number;
         trades?: Trade[];
@@ -80,6 +81,9 @@ function resultRow(
             equityCurve: [],
         },
         ...(fields.data ? { data: fields.data } : {}),
+        ...(fields.strategyComparisonPct !== undefined
+            ? { strategyComparisonPct: fields.strategyComparisonPct }
+            : {}),
     } as unknown as BatchBacktestSymbolResult;
 }
 
@@ -271,6 +275,20 @@ describe("buildBuyHoldRows", () => {
         // No result -> dropped.
         expect(buildBuyHoldRows([{ ...resultRow("AAA"), result: undefined }])).to.have.length(0);
     });
+
+    it("uses the fixed-trade comparison return when provided by the runner", () => {
+        const row = resultRow("GLW", {
+            netProfit: 3963.58,
+            netProfitPercent: 39.6358,
+            data: candles([100, 1025.2]),
+        });
+        row.strategyComparisonPct = 396.358;
+
+        const rows = buildBuyHoldRows([row]);
+        expect(rows[0]!.strat).to.be.closeTo(396.358, 1e-9);
+        expect(rows[0]!.bh).to.be.closeTo(925.2, 1e-9);
+        expect(rows[0]!.alpha).to.be.closeTo(-528.842, 1e-9);
+    });
 });
 
 describe("server scalar batch rows", () => {
@@ -311,6 +329,7 @@ describe("server scalar batch rows", () => {
         const scalar = toScalarRow({
             ...openTradeRow("WLD+BTC", "long", {
                 data: candles([100, 110]),
+                strategyComparisonPct: 25,
             }),
         });
 
@@ -328,6 +347,7 @@ describe("server scalar batch rows", () => {
         const lines = formatBatchOverallSummary([scalar]);
         expect(lines.some((line) => line.startsWith("B&H Compare"))).to.equal(false);
         expect(lines.some((line) => line.startsWith("SUMMARY | B&H Compare"))).to.equal(true);
+        expect(lines).to.contain("B&H | WLD+BTC | Strat +25.0% | B&H +10.0% | Alpha +15.0%");
         expect(lines.some((line) => line.startsWith("OPEN_SCORE |"))).to.equal(true);
         expect(lines.some((line) => line.startsWith("MAX_ACTIVE NOW |"))).to.equal(true);
         // Live-snapshot parallels of the historical-replay arms. Both render

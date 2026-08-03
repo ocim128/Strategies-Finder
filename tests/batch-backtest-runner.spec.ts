@@ -147,6 +147,35 @@ describe("runBatchBacktest", () => {
         expect(statuses.get("MISSING")).to.equal("load_failed");
     });
 
+    it("emits a fixed-trade return for the B&H comparison", async () => {
+        const fixedCapitalSettings: CapitalSettings = {
+            ...capitalSettings,
+            sizingMode: "fixed",
+        };
+        const output = await runBatchBacktest(
+            {
+                interval: "5m",
+                strategyKey: "batch_test",
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings: fixedCapitalSettings,
+                symbols: ["UP"],
+                loadDataset: () => Promise.resolve(makeCandles([100, 105, 110, 115, 120])),
+                minUsableBars: 1,
+            },
+            { setProgress: () => {}, setStatus: () => {}, isCancelled: () => false },
+        );
+
+        const row = output.results[0]!;
+        expect(row.strategyComparisonPct).to.be.closeTo(
+            (row.result!.netProfit / fixedCapitalSettings.fixedTradeAmount) * 100,
+            1e-9,
+        );
+        expect(row.strategyComparisonPct).to.be.closeTo(20, 1e-9);
+        expect(row.result!.netProfitPercent).to.be.closeTo(2, 1e-9);
+    });
+
     it("preloads confirmation strategies before replaying the batch", async () => {
         const output = await runBatchBacktest(
             {
