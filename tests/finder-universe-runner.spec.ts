@@ -17,6 +17,17 @@ function makeCandles(closes: number[]): OHLCVData[] {
     }));
 }
 
+function makePositiveCandles(closes: number[]): OHLCVData[] {
+    return closes.map((close, index) => ({
+        time: (1_700_000_000 + (index * 300)) as Time,
+        open: close,
+        high: close * 1.01,
+        low: close * 0.99,
+        close,
+        volume: 1000,
+    }));
+}
+
 const testStrategy: Strategy = {
     name: "Universe Test",
     description: "Deterministic strategy for universe-runner tests.",
@@ -51,6 +62,86 @@ const capitalSettings: CapitalSettings = {
 };
 
 describe("Finder universe runner", () => {
+    it("uses pair-neutral metrics for synthetic-pair rows and keeps reciprocal direction scores aligned", async () => {
+        const pairOptions = (symbol: string): FinderOptions => ({
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 1,
+            rangePercent: 0,
+            maxRuns: 1,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols: [symbol],
+                minActiveSymbols: 1,
+                minTotalTrades: 1,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["netProfit"],
+            },
+        });
+        const longStrategy: Strategy = {
+            name: "Pair Neutral Long",
+            description: "Deterministic long pair test.",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                return [
+                    { time: data[0]!.time, type: "buy", price: data[0]!.close },
+                    { time: data[data.length - 1]!.time, type: "sell", price: data[data.length - 1]!.close },
+                ];
+            },
+        };
+        const shortStrategy: Strategy = {
+            name: "Pair Neutral Short",
+            description: "Deterministic short pair test.",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                return [
+                    { time: data[0]!.time, type: "sell", price: data[0]!.close },
+                    { time: data[data.length - 1]!.time, type: "buy", price: data[data.length - 1]!.close },
+                ];
+            },
+        };
+        const run = async (symbol: string, strategy: Strategy, settingsOverride: BacktestSettings) =>
+            runFinderUniverseExecution(
+                {
+                    interval: "5m",
+                    options: pairOptions(symbol),
+                    settings: settingsOverride,
+                    capitalSettings,
+                    selectedStrategy: { key: strategy.name, name: strategy.name, strategy },
+                    loadDataset: async () => makePositiveCandles(
+                        settingsOverride.tradeDirection === "short"
+                            ? [0.5, 0.25, 0.125, 0.0625]
+                            : [2, 4, 8, 16],
+                    ),
+                    generateParamSets: () => [{}],
+                },
+                {
+                    setProgress: () => {},
+                    setStatus: () => {},
+                    yieldControl: async () => {},
+                    isCancelled: () => false,
+                },
+            );
+
+        const longOutput = await run("NVDA•+MU•", longStrategy, { ...settings, tradeDirection: "long" });
+        const shortOutput = await run("MU•+NVDA•", shortStrategy, { ...settings, tradeDirection: "short" });
+        const longMetrics = longOutput.results[0]!.symbols[0]!.result!;
+        const shortMetrics = shortOutput.results[0]!.symbols[0]!.result!;
+
+        expect(longMetrics.metricBasis).to.equal("pair_neutral_log");
+        expect(shortMetrics.metricBasis).to.equal("pair_neutral_log");
+        expect(shortMetrics.netProfit).to.be.closeTo(longMetrics.netProfit, 1e-9);
+        expect(shortMetrics.profitFactor).to.equal(longMetrics.profitFactor);
+        expect(shortMetrics.winRate).to.equal(longMetrics.winRate);
+    });
+
     it("keeps only surviving candidates and reports symbol load failures", async () => {
         const datasets = new Map<string, OHLCVData[]>([
             ["UP", makeCandles([100, 105, 110, 115, 120])],

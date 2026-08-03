@@ -233,6 +233,10 @@ function resolveSignalExitOrder(position: PositionState, signal: Signal): {
     };
 }
 
+function resolveSignalExitPrice(position: PositionState, signal: Signal, slippageRate: number): number {
+    return applySlippage(signal.price, exitSideForDirection(position.direction), slippageRate);
+}
+
 function findSignalExitTarget(
     positions: PositionState[],
     signal: Signal,
@@ -694,7 +698,8 @@ function runSinglePositionFinderFastPath(args: {
         if (!exitOrder) return null;
 
         diagnostics && diagnostics.counts.signalExitOrders++;
-        const { fullyClosed } = recordExit(exitTarget, candle, signal.price, exitOrder.exitSize, forcedExitReason ?? "signal");
+        const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
+        const { fullyClosed } = recordExit(exitTarget, candle, exitPrice, exitOrder.exitSize, forcedExitReason ?? "signal");
         if (
             forcedExitReason === null
             && !isExitOnly
@@ -1819,9 +1824,10 @@ export function runBacktestCompact(
                     if (!exitOrder) continue;
 
                     diagnostics && diagnostics.counts.signalExitOrders++;
-                    const { fullyClosed } = recordExit(exitTarget, signal.price, exitOrder.exitSize);
+                    const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
+                    const { fullyClosed } = recordExit(exitTarget, exitPrice, exitOrder.exitSize);
                     if (fullyClosed) {
-                        finalizeClosedPosition(exitTarget, candle, signal.price, forcedExitReason ?? 'signal');
+                        finalizeClosedPosition(exitTarget, candle, exitPrice, forcedExitReason ?? 'signal');
                     }
                     if (forcedExitReason === null && !isExitOnly && canImmediatelyReenterAfterSignalExit({
                         fullyClosed,
@@ -1920,9 +1926,10 @@ export function runBacktestCompact(
                         if (!exitOrder) continue;
 
                         diagnostics && diagnostics.counts.signalExitOrders++;
-                        const { fullyClosed } = recordExit(exitTarget, signal.price, exitOrder.exitSize);
+                        const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
+                        const { fullyClosed } = recordExit(exitTarget, exitPrice, exitOrder.exitSize);
                         if (fullyClosed) {
-                            finalizeClosedPosition(exitTarget, candle, signal.price, forcedExitReason ?? 'signal');
+                            finalizeClosedPosition(exitTarget, candle, exitPrice, forcedExitReason ?? 'signal');
                         }
                         if (forcedExitReason === null && !isExitOnly && canImmediatelyReenterAfterSignalExit({
                             fullyClosed,
@@ -2400,9 +2407,10 @@ export function runBacktest(
                     if (!exitOrder) continue;
 
                     diagnostics && diagnostics.counts.signalExitOrders++;
-                    const { fullyClosed } = recordExitFull(exitTarget, candle, signal.price, exitOrder.exitSize, forcedExitReason ?? 'signal');
+                    const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
+                    const { fullyClosed } = recordExitFull(exitTarget, candle, exitPrice, exitOrder.exitSize, forcedExitReason ?? 'signal');
                     if (fullyClosed) {
-                        finalizeClosedPositionFull(exitTarget, candle, signal.price, forcedExitReason ?? 'signal');
+                        finalizeClosedPositionFull(exitTarget, candle, exitPrice, forcedExitReason ?? 'signal');
                     }
                     if (forcedExitReason === null && !isExitOnly && canImmediatelyReenterAfterSignalExit({
                         fullyClosed,
@@ -2500,9 +2508,10 @@ export function runBacktest(
                         if (!exitOrder) continue;
 
                         diagnostics && diagnostics.counts.signalExitOrders++;
-                        const { fullyClosed } = recordExitFull(exitTarget, candle, signal.price, exitOrder.exitSize, forcedExitReason ?? 'signal');
+                        const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
+                        const { fullyClosed } = recordExitFull(exitTarget, candle, exitPrice, exitOrder.exitSize, forcedExitReason ?? 'signal');
                         if (fullyClosed) {
-                            finalizeClosedPositionFull(exitTarget, candle, signal.price, forcedExitReason ?? 'signal');
+                            finalizeClosedPositionFull(exitTarget, candle, exitPrice, forcedExitReason ?? 'signal');
                         }
                         if (forcedExitReason === null && !isExitOnly && canImmediatelyReenterAfterSignalExit({
                             fullyClosed,

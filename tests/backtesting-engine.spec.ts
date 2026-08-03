@@ -505,6 +505,64 @@ describe('Backtesting Engine', () => {
         expect(result.netProfit).to.equal(200);
     });
 
+    it('applies direction-aware slippage to signal exits', () => {
+        const shortData: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 3 as Time, open: 100, high: 101, low: 89, close: 90, volume: 1000 },
+        ];
+        const shortSignals: Signal[] = [
+            { time: 1 as Time, type: 'sell', price: 100, barIndex: 0 },
+            { time: 3 as Time, type: 'buy', price: 90, barIndex: 2 },
+        ];
+        const signalExitSettings = {
+            executionModel: 'signal_close' as const,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: false,
+            takeProfitEnabled: false,
+            slippageBps: 100,
+        };
+
+        const shortFull = runBacktest(shortData, shortSignals, 1000, 100, 0, {
+            ...signalExitSettings,
+            tradeDirection: 'short' as const,
+        });
+        const shortCompact = runBacktestCompact(shortData, shortSignals, 1000, 100, 0, {
+            ...signalExitSettings,
+            tradeDirection: 'short' as const,
+        });
+
+        // A short cover is a buy, so slippage must increase the signal price.
+        expect(shortFull.trades[0].entryPrice).to.be.closeTo(99, 1e-9);
+        expect(shortFull.trades[0].exitPrice).to.be.closeTo(90.9, 1e-9);
+        expect(shortFull.netProfit).to.be.closeTo(81.81818181818181, 1e-9);
+        expect(shortCompact.netProfit).to.be.closeTo(shortFull.netProfit, 1e-9);
+
+        const longData: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 3 as Time, open: 100, high: 111, low: 99, close: 110, volume: 1000 },
+        ];
+        const longSignals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100, barIndex: 0 },
+            { time: 3 as Time, type: 'sell', price: 110, barIndex: 2 },
+        ];
+        const longFull = runBacktest(longData, longSignals, 1000, 100, 0, {
+            ...signalExitSettings,
+            tradeDirection: 'long' as const,
+        });
+        const longCompact = runBacktestCompact(longData, longSignals, 1000, 100, 0, {
+            ...signalExitSettings,
+            tradeDirection: 'long' as const,
+        });
+
+        // A long exit is a sell, so slippage must reduce the signal price.
+        expect(longFull.trades[0].entryPrice).to.be.closeTo(101, 1e-9);
+        expect(longFull.trades[0].exitPrice).to.be.closeTo(108.9, 1e-9);
+        expect(longFull.netProfit).to.be.closeTo(78.21782178217822, 1e-9);
+        expect(longCompact.netProfit).to.be.closeTo(longFull.netProfit, 1e-9);
+    });
+
     it('should close by time stop when percentage max hold cap is enabled', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },

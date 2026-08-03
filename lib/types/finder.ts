@@ -187,6 +187,8 @@ export interface FinderUniverseSymbolMetrics {
     sharpeRatioAvailable?: boolean;
     /** True when drawdown was actually computed; false means the fast universe path skipped it. */
     drawdownAvailable?: boolean;
+    /** Metrics are based on inversion-symmetric log returns for synthetic pairs. */
+    metricBasis?: 'cash' | 'pair_neutral_log';
     /**
      * Composite Edge Ratio (avg MFE/MAE across horizons). Only populated when
      * the active Finder sort requests it, since it needs per-trade OHLCV lookups.

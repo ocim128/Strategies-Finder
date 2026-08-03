@@ -53,6 +53,11 @@ import { executeBacktest, resolveExecutorBacktestSettings } from "../backtest-ex
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import { resolveOosDataSlice, sliceFinderDataWindow } from "./finder-manager-logic";
+import {
+    buildFinderPairNeutralMetrics,
+    FINDER_PAIR_NEUTRAL_METRIC_BASIS,
+    isSyntheticPairFinderSymbol,
+} from "./finder-pair-neutral";
 
 /**
  * Per-symbol trade floor for the Universe OOS pass. Mirrors the IS intent
@@ -66,7 +71,10 @@ const UNIVERSE_OOS_PER_SYMBOL_MIN_TRADES = 5;
  * shape attached to per-symbol OOS results. Lifted verbatim from the prior
  * `FinderManager.backtestResultToUniverseMetrics`.
  */
-export function backtestResultToUniverseMetrics(result: BacktestResult): FinderUniverseSymbolMetrics {
+export function backtestResultToUniverseMetrics(
+    result: BacktestResult,
+    metricBasis?: typeof FINDER_PAIR_NEUTRAL_METRIC_BASIS,
+): FinderUniverseSymbolMetrics {
     return {
         netProfit: result.netProfit,
         netProfitPercent: result.netProfitPercent,
@@ -81,6 +89,7 @@ export function backtestResultToUniverseMetrics(result: BacktestResult): FinderU
         avgWin: result.avgWin,
         avgLoss: result.avgLoss,
         sharpeRatio: result.sharpeRatio,
+        ...(metricBasis ? { metricBasis } : {}),
     };
 }
 
@@ -235,6 +244,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
             }
             const oosData = await deps.loadOosData(symbolResult.symbol, deps.interval);
             if (oosData.length === 0) continue;
+            const isSyntheticPair = isSyntheticPairFinderSymbol(symbolResult.symbol);
 
             try {
                 const output = await executeBacktest({
@@ -262,9 +272,19 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
                         omitEquityCurve: true,
                         skipDrawdown: true,
                         skipResultPostProcessing: true,
+                        ...(isSyntheticPair ? { useCompactBacktest: false } : {}),
                     },
                 });
-                const oosMetrics = backtestResultToUniverseMetrics(output.result);
+                const pairNeutralMetrics = isSyntheticPair
+                    ? buildFinderPairNeutralMetrics(output.result, preResolvedCapital)
+                    : null;
+                const metricsResult = pairNeutralMetrics
+                    ? { ...output.result, ...pairNeutralMetrics }
+                    : output.result;
+                const oosMetrics = backtestResultToUniverseMetrics(
+                    metricsResult,
+                    pairNeutralMetrics ? FINDER_PAIR_NEUTRAL_METRIC_BASIS : undefined,
+                );
                 symbolResult.oosResult = oosMetrics;
                 symbolResult.oosVerdict = computeUniverseSymbolOosVerdict({
                     oosNetProfit: oosMetrics.netProfit,

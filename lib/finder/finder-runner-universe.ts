@@ -54,6 +54,12 @@ import {
 } from "./finder-diagnostics";
 import { buildFinderUniverseCandidate, passesFinderUniverseFilters, FinderUniverseSurvivorRanker } from "./finder-universe-metrics";
 import type { FinderSelectedStrategy } from "./finder-runner";
+import {
+    buildFinderPairNeutralMetrics,
+    FINDER_PAIR_NEUTRAL_METRIC_BASIS,
+    isSyntheticPairFinderSymbol,
+    type FinderPairNeutralMetrics,
+} from "./finder-pair-neutral";
 
 const UNIVERSE_DATA_LOAD_CONCURRENCY = 12;
 const UNIVERSE_DATA_LOAD_YIELD_EVERY = 64;
@@ -250,24 +256,30 @@ function buildUniverseSymbolMetrics(
         compositeEdgeRatio?: number;
         sharpeRatioAvailable?: boolean;
         drawdownAvailable?: boolean;
+        pairNeutralMetrics?: FinderPairNeutralMetrics;
+        metricBasis?: typeof FINDER_PAIR_NEUTRAL_METRIC_BASIS;
     } = {}
 ): NonNullable<FinderUniverseSymbolResult["result"]> {
+    const metricResult = options.pairNeutralMetrics
+        ? { ...result, ...options.pairNeutralMetrics }
+        : result;
     return {
-        netProfit: result.netProfit,
-        netProfitPercent: result.netProfitPercent,
-        expectancy: result.expectancy,
-        avgTrade: result.avgTrade,
-        winRate: result.winRate,
-        profitFactor: result.profitFactor,
-        totalTrades: result.totalTrades,
-        maxDrawdownPercent: result.maxDrawdownPercent,
-        winningTrades: result.winningTrades,
-        losingTrades: result.losingTrades,
-        avgWin: result.avgWin,
-        avgLoss: result.avgLoss,
-        sharpeRatio: result.sharpeRatio,
+        netProfit: metricResult.netProfit,
+        netProfitPercent: metricResult.netProfitPercent,
+        expectancy: metricResult.expectancy,
+        avgTrade: metricResult.avgTrade,
+        winRate: metricResult.winRate,
+        profitFactor: metricResult.profitFactor,
+        totalTrades: metricResult.totalTrades,
+        maxDrawdownPercent: metricResult.maxDrawdownPercent,
+        winningTrades: metricResult.winningTrades,
+        losingTrades: metricResult.losingTrades,
+        avgWin: metricResult.avgWin,
+        avgLoss: metricResult.avgLoss,
+        sharpeRatio: metricResult.sharpeRatio,
         sharpeRatioAvailable: options.sharpeRatioAvailable === true,
         drawdownAvailable: options.drawdownAvailable === true,
+        ...(options.metricBasis ? { metricBasis: options.metricBasis } : {}),
         ...(typeof options.compositeEdgeRatio === "number" && Number.isFinite(options.compositeEdgeRatio)
             ? { compositeEdgeRatio: options.compositeEdgeRatio }
             : {}),
@@ -279,12 +291,15 @@ function buildSymbolResult(
     result: Awaited<ReturnType<typeof executeBacktest>>["result"],
     options: Parameters<typeof buildUniverseSymbolMetrics>[1] = {}
 ): FinderUniverseSymbolResult {
+    const metricResult = options.pairNeutralMetrics
+        ? { ...result, ...options.pairNeutralMetrics }
+        : result;
     let status: FinderUniverseSymbolResult["status"];
-    if (result.totalTrades <= 0) {
+    if (metricResult.totalTrades <= 0) {
         status = "no_trades";
-    } else if (result.netProfit > 0.0001) {
+    } else if (metricResult.netProfit > 0.0001) {
         status = "profitable";
-    } else if (result.netProfit < -0.0001) {
+    } else if (metricResult.netProfit < -0.0001) {
         status = "losing";
     } else {
         status = "flat";
@@ -824,6 +839,7 @@ export async function runFinderUniverseExecution(
             }
 
             const symbol = loadedSymbols[symbolIndex];
+            const isSyntheticPair = isSyntheticPairFinderSymbol(symbol.symbol);
             const progressBase = candidateIndex / Math.max(1, candidatePlans.length);
             const progressWithin = symbolIndex / Math.max(1, loadedSymbols.length);
             const progress = 15 + ((progressBase + (progressWithin / Math.max(1, candidatePlans.length))) * 85);
@@ -877,6 +893,7 @@ export async function runFinderUniverseExecution(
                         skipDrawdown: !requiresDrawdown,
                         skipResultPostProcessing: true,
                         collectDiagnostics: collectBacktestDiagnostics,
+                        ...(isSyntheticPair ? { useCompactBacktest: false } : {}),
                     },
                 });
                 if (output.result.diagnostics) {
@@ -920,10 +937,15 @@ export async function runFinderUniverseExecution(
                 const symbolEdgeRatio = requiresCompositeEdgeRatio
                     ? computeFinderCompositeEdgeRatio(output.result, closedDataBySymbol.get(symbol.symbol) ?? symbol.data)
                     : undefined;
+                const pairNeutralMetrics = isSyntheticPair
+                    ? buildFinderPairNeutralMetrics(output.result, preResolvedCapital)
+                    : null;
                 const symbolResult = buildSymbolResult(symbol, output.result, {
                     compositeEdgeRatio: symbolEdgeRatio,
                     sharpeRatioAvailable: requiresSharpeRatio,
                     drawdownAvailable: requiresDrawdown,
+                    pairNeutralMetrics: pairNeutralMetrics ?? undefined,
+                    metricBasis: pairNeutralMetrics ? FINDER_PAIR_NEUTRAL_METRIC_BASIS : undefined,
                 });
                 symbolResults.set(symbol.symbol, symbolResult);
                 accumulatePartialCounts(partialCounts, symbolResult);

@@ -278,8 +278,9 @@ export class FinderUI {
                 textParts.push(`Bars ${symbolResult.barCount}`);
                 if (symbolResult.result) {
                     const r = symbolResult.result;
-                    textParts.push(`Net ${this.formatCurrency(r.netProfit)}`);
-                    textParts.push(`Exp ${r.expectancy.toFixed(2)}`);
+                    const pairNeutral = r.metricBasis === "pair_neutral_log";
+                    textParts.push(`${pairNeutral ? "Net(log)" : "Net"} ${this.formatCurrency(r.netProfit)}`);
+                    textParts.push(`${pairNeutral ? "Exp(log)" : "Exp"} ${r.expectancy.toFixed(2)}`);
                     textParts.push(`PF ${formatProfitFactor(r.profitFactor)}`);
                     textParts.push(`WR ${r.winRate.toFixed(0)}%`);
                     textParts.push(r.sharpeRatioAvailable
