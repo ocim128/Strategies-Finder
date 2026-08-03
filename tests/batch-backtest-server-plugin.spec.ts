@@ -685,6 +685,55 @@ describe("batch-backtest server plugin processRunBatch", () => {
         expect(done?.summary).to.include("attempted 1/3");
         await releaseLastResults("test_end");
     });
+
+    it("snapshot.completed already counts failed rows so reattach must not add failed (audit F4)", async () => {
+        // The reattach progress label is built from the /status snapshot. The
+        // server sets `snapshot.completed = attemptedSymbols`, where
+        // attemptedSymbols includes every non-skipped row (successes AND
+        // failures). A reloaded tab that computes `seen = completed + failed`
+        // double-counts failures and can render impossible progress (11/10).
+        // This locks the contract: after a run with one success and one
+        // load-failure, `completed` must equal 2 (not 1), so any caller adding
+        // `failed` would overshoot the total.
+        const datasets = new Map<string, OHLCVData[]>([
+            ["OK", makeCandles([100, 105, 110, 115, 120])],
+        ]);
+        const owner = 9017;
+        setRunOwnerForTests(owner);
+        await processRunBatch(
+            {
+                interval: "5m",
+                strategyKey: STRATEGY_KEY,
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["OK", "BAD"],
+                loadDataset: (symbol) => {
+                    if (symbol === "BAD") return Promise.reject(new Error("no candles"));
+                    return Promise.resolve(datasets.get(symbol) ?? []);
+                },
+                minUsableBars: 1,
+            },
+            () => {},
+            owner,
+        );
+        completeRunForTests();
+
+        const snapshot = getRunStateForTests();
+        expect(snapshot, "terminal runState must be retained for /status").to.not.equal(null);
+        // `completed` counts BOTH the successful and the failed row.
+        expect(snapshot!.completed).to.equal(2);
+        expect(snapshot!.failed).to.equal(1);
+        expect(snapshot!.total).to.equal(2);
+        // The reattach invariant: completed must never exceed total, and adding
+        // `failed` would (3 > 2). This is the exact regression the browser fix
+        // prevents.
+        expect(snapshot!.completed).to.be.lessThanOrEqual(snapshot!.total);
+
+        setRunOwnerForTests(0);
+        await releaseLastResults("test_end");
+    });
 });
 
 describe("batch-backtest server plugin releaseLastResults", () => {
@@ -1603,6 +1652,32 @@ describe("batch-backtest server plugin open-score-usd route-level authorization"
         } finally {
             if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;
         }
+    });
+
+    it("rejects a malformed sampleFrom date with 400 instead of silently applying no filter (audit F6)", async () => {
+        // A typo'd non-empty date previously parsed to `null` (= "no filter"),
+        // silently triggering a full-window replay. It must surface as a 400 so
+        // the caller sees an actionable error. This also guards that the date
+        // validation runs BEFORE the NDJSON stream starts (a clean JSON 400,
+        // not a `fatal` stream event).
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/open-score-usd");
+        expect(handler).to.not.equal(undefined);
+        // Loopback + same-origin so the request passes authorization and
+        // reaches body validation. No artifacts are required to reach the date
+        // check (it runs before the artifacts-present guard would matter here
+        // only if ordering changed; the 400 is returned either way).
+        const req = Readable.from([JSON.stringify({ sampleFrom: "not-a-date", horizons: [12] })]) as any;
+        req.method = "POST";
+        req.url = "/api/batch-backtest/open-score-usd";
+        req.headers = { "content-type": "application/json", host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" };
+        req.socket = { remoteAddress: "127.0.0.1" };
+        const res = makeRouteResponse();
+        await handler!(req, res);
+        expect(res.statusCode).to.equal(400);
+        const parsed = JSON.parse(res.body);
+        expect(parsed.ok).to.equal(false);
+        expect(String(parsed.error)).to.include("sampleFrom");
     });
 });
 

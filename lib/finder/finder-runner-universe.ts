@@ -569,7 +569,22 @@ export async function runFinderUniverseExecution(
         if (cached) {
             return cached;
         }
-        const promise = input.loadDataset(symbol, interval, datasetAbort.signal);
+        // Evict rejected and empty loads so a transient filesystem, SQLite, or
+        // provider failure is not sticky for the remainder of this run. Mirrors
+        // the server loader's rejection eviction in `cacheSuccessfulLoad`
+        // (audit Finding 3). Successful loads remain deduplicated.
+        const promise = input.loadDataset(symbol, interval, datasetAbort.signal).then(
+            (data) => {
+                if (!Array.isArray(data) || data.length === 0) {
+                    loadCache.delete(key);
+                }
+                return data;
+            },
+            (error) => {
+                loadCache.delete(key);
+                throw error;
+            },
+        );
         loadCache.set(key, promise);
         return promise;
     };

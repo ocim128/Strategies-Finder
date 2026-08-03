@@ -1676,19 +1676,9 @@ export async function processOpenScoreUsdReplay(
 }
 
 async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<string, unknown>): Promise<void> {
-    if (minerOwner !== RUN_OWNER_NONE) {
-        throw new HttpStatusError(409, "An analysis is already running. Use Stop first.");
-    }
-    if (runOwner !== RUN_OWNER_NONE) {
-        throw new HttpStatusError(409, "A batch backtest is running. Use Stop first.");
-    }
-    if (!hasStoredMineArtifacts()) {
-        throw new HttpStatusError(400, "Run Batch before OPEN_SCORE USD; no artifacts on server.");
-    }
-    const owner = ++minerOwnerGen;
-    minerOwner = owner;
-    minerAbortController = new AbortController();
-
+    // Validate client input first — a malformed date or oversized horizons
+    // array is a 400 regardless of server state, and surfacing it before the
+    // artifacts/owner guards keeps the error actionable (audit Finding 6).
     const parseBodyDateSec = (key: string, endOfDay = false): number | null => {
         const raw = body[key];
         if (typeof raw !== "string" || raw.trim() === "") return null;
@@ -1696,9 +1686,17 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
         // "sampleTo" we add 24h-1s so the entire selected day is included
         // (otherwise most of the chosen day's events were excluded).
         const ms = Date.parse(raw);
-        if (!Number.isFinite(ms)) return null;
+        // Distinguish absent (no filter) from malformed. A typo'd non-empty
+        // date previously became `null` (= "no filter") and silently triggered
+        // a full-window replay, producing a misleading report. Reject it as a
+        // 400 so the caller sees an actionable error instead (audit Finding 6).
+        if (!Number.isFinite(ms)) {
+            throw new HttpStatusError(400, `Invalid ${key} date: "${raw}".`);
+        }
         return Math.floor(ms / 1000) + (endOfDay ? 24 * 3600 - 1 : 0);
     };
+    const sampleFromSec = parseBodyDateSec("sampleFrom", false);
+    const sampleToSec = parseBodyDateSec("sampleTo", true);
 
     // OPEN_SCORE horizons input validation. The route is reachable on the
     // documented Cloudflare-tunnel / LOCAL_PROXY_TOKEN path and accepts no
@@ -1731,6 +1729,19 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
         validatedHorizons = cleaned;
     }
 
+    if (minerOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "An analysis is already running. Use Stop first.");
+    }
+    if (runOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "A batch backtest is running. Use Stop first.");
+    }
+    if (!hasStoredMineArtifacts()) {
+        throw new HttpStatusError(400, "Run Batch before OPEN_SCORE USD; no artifacts on server.");
+    }
+    const owner = ++minerOwnerGen;
+    minerOwner = owner;
+    minerAbortController = new AbortController();
+
     let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
     try {
         stream = createDisconnectSafeStream(res, { onDisconnect: () => cancelMinerOnDisconnect(owner) });
@@ -1740,8 +1751,8 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
             (event) => stream!.write(event),
             owner,
             validatedHorizons,
-            parseBodyDateSec("sampleFrom", false),
-            parseBodyDateSec("sampleTo", true),
+            sampleFromSec,
+            sampleToSec,
         );
         stream.end();
     } catch (error) {

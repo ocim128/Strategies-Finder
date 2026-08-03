@@ -140,4 +140,23 @@ describe("finder server loader parity", () => {
         expect(plugin).to.include("useRustEnginePreference: input.useRustEnginePreference");
     });
 
+    it("finder invalidation clears the same cache layers as batch (audit F1)", () => {
+        // Crypto/IBKR sync can update SQLite between runs. If Finder only clears
+        // its leg/pair LRUs + fingerprint memo (and skips the shared DataCache +
+        // parsed CSV cache), a stale underlying candle silently rebuilds a pair.
+        // Batch already clears all four; Finder must mirror it. Each missing
+        // call is a stale-candle correctness regression.
+        const finderLoader = readSource(SERVER_FINDER_LOADER);
+        const batchLoader = readSource(SERVER_BATCH_LOADER);
+        for (const symbol of [
+            "loader.clearCaches()",
+            "fingerprintMemo.clear()",
+            "clearServerDataCache()",
+            "clearLocalDailyCsvCachesForSymbols()",
+        ]) {
+            expect(finderLoader, `finder invalidation must call ${symbol}`).to.include(symbol);
+            expect(batchLoader, `batch invalidation must call ${symbol}`).to.include(symbol);
+        }
+    });
+
 });

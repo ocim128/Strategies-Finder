@@ -20,6 +20,7 @@
  * bundle when Vite bundles `vite.config.ts`).
  */
 
+import { clearLocalDailyCsvCachesForSymbols } from "../../candle-cache";
 import type { OHLCVData } from "../../types/strategies";
 import {
     createBatchDatasetLoaderCore,
@@ -30,7 +31,7 @@ import {
     loadCachedSyntheticPair,
     storeSyntheticPair,
 } from "../../batch-backtest/synthetic-pair-disk-cache";
-import { createServerDataFetcher } from "../../data/server-data-fetcher-factory";
+import { clearServerDataCache, createServerDataFetcher } from "../../data/server-data-fetcher-factory";
 import { isIbkrSymbol } from "../../local-daily-datasets";
 import { resolveServerBatchCacheBudget } from "../../batch-backtest/server-batch-cache-budget";
 import { loadFreshIbkrCandlesFromDisk } from "../../batch-backtest/server-ibkr-csv-loader";
@@ -98,6 +99,17 @@ export async function loadServerFinderDataset(
 export function clearServerFinderDatasetCaches(): void {
     loader.clearCaches();
     fingerprintMemo.clear();
+    // Crypto/IBKR sync can update SQLite between Finder runs. The shared
+    // DataCache otherwise keeps serving the pre-sync target timeframe even
+    // after the synthetic leg/pair LRUs are cleared — a stale underlying
+    // candle silently rebuilds a synthetic pair. Mirrors
+    // `clearServerBatchDatasetCaches` so Finder/Batch invalidation clear the
+    // same cache layers (audit Finding 1).
+    clearServerDataCache();
+    // IBKR sync writes CSVs in the Vite server process; clear the Node-side
+    // parsed CSV cache before another Finder run so a fresh file mtime cannot
+    // be paired with stale in-memory candles in the disk cache.
+    clearLocalDailyCsvCachesForSymbols();
 }
 
 export function getServerFinderDatasetCacheStats(): BatchDatasetCacheStats {

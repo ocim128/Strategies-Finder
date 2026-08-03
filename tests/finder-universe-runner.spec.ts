@@ -673,6 +673,83 @@ describe("Finder universe runner", () => {
         expect(seenSecondarySymbols).to.deep.equal(new Set(["HEDGE"]));
     });
 
+    it("does not permanently memoize a failed or empty cross-symbol secondary load (audit F3)", async () => {
+        // The per-run loadCache must evict rejected and empty loads so a
+        // transient filesystem/SQLite/provider failure is retryable for the
+        // remainder of the run. Both AAA and BBB need HEDGE as their secondary;
+        // HEDGE's first fetch fails and the second succeeds. Under the old
+        // permanent-memoization contract the rejected promise stuck and both
+        // primaries failed; with eviction the retry succeeds.
+        const hedgeData = makeCandles([50, 51, 52, 53, 54]);
+        let hedgeAttempts = 0;
+        const loadDataset = async (symbol: string): Promise<OHLCVData[]> => {
+            if (symbol === "HEDGE") {
+                hedgeAttempts += 1;
+                if (hedgeAttempts === 1) throw new Error("transient provider outage");
+                return hedgeData;
+            }
+            if (symbol === "AAA") return makeCandles([100, 103, 106, 109, 112]);
+            if (symbol === "BBB") return makeCandles([80, 82, 84, 86, 88]);
+            return [];
+        };
+        const crossSymbolStrategy: Strategy = {
+            name: "Universe Cross Symbol Retry Test",
+            description: "Secondary fetched via getOrLoadDataset for both primaries.",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            crossSymbolConfig: { defaultSymbol: "HEDGE", minBars: 3 },
+            execute(data, _params, context) {
+                if (!context?.crossSymbol || context.crossSymbol.secondaryData.length !== data.length) {
+                    return [];
+                }
+                return [
+                    { time: data[0]!.time, type: "buy", price: data[0]!.close },
+                    { time: data[data.length - 1]!.time, type: "sell", price: data[data.length - 1]!.close },
+                ];
+            },
+        };
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 1,
+            rangePercent: 0,
+            maxRuns: 1,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols: ["AAA", "BBB"],
+                minActiveSymbols: 1,
+                minTotalTrades: 1,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["profitableActiveRatio"],
+            },
+        };
+
+        const output = await runFinderUniverseExecution(
+            {
+                interval: "5m",
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategy: { key: "universe_cross_retry_test", name: crossSymbolStrategy.name, strategy: crossSymbolStrategy },
+                loadDataset,
+                getProvider: () => "test",
+                generateParamSets: () => [{ threshold: 1 }],
+            },
+            { setProgress: () => {}, setStatus: () => {}, yieldControl: async () => {}, isCancelled: () => false }
+        );
+
+        // Eviction made the second HEDGE fetch retry instead of returning the
+        // sticky rejected promise. Both primaries must finish active.
+        expect(hedgeAttempts).to.be.greaterThan(1);
+        expect(output.loadedSymbols).to.equal(2);
+        expect(output.failedSymbols).to.deep.equal([]);
+    });
+
     it("skips remaining symbols after consecutive zero-signal runs (early bail)", async () => {
         const symbols = Array.from({ length: 8 }, (_, i) => `SYM${i}`);
         const datasets = new Map<string, OHLCVData[]>(

@@ -1510,13 +1510,18 @@ export class BatchBacktestService {
                     nextOffset = np.nextOffset === undefined ? null : np.nextOffset;
                     if (nextOffset === null || nextOffset === lastOffset) break;
                 }
-                const seen = run.completed + run.failed;
+                // `run.completed` already counts every attempted (non-skipped)
+                // row, including failures — adding `run.failed` double-counts
+                // them and lets progress exceed the total (e.g. 11/10). The
+                // server sets `snapshot.completed = attemptedSymbols`, where
+                // attemptedSymbols = successes + failures (audit Finding 4).
+                const seen = run.completed;
                 const current = run.currentSymbol ? ` — ${run.currentSymbol}` : "";
                 const label = `Server run ${seen}/${run.total}${current}`;
                 dom.batchBacktestStatus.textContent = label;
                 // Capture for the transient-failure branch so the
                 // "connection interrupted" message can keep the last known
-                // progress visible (audit Finding 4).
+                // progress visible.
                 lastRunLabel = label;
                 this.setProgress(dom, run.total > 0 ? (seen / run.total) * 100 : 0, `${seen}/${run.total}`);
                 const delay = poll < FAST_POLL_COUNT ? POLL_INTERVAL_MS : LONG_POLL_INTERVAL_MS;
