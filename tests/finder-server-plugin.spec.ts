@@ -512,7 +512,12 @@ describe("finder server plugin processFinderUniverseRun", () => {
         expect(done.type).to.equal("done");
         expect(done.ok).to.equal(true);
         expect(underlyingLoads.sort()).to.deep.equal(["DOWN", "UP"]);
-        expect(done.diagnostics?.universe?.jobDatasetCache).to.deep.equal({
+        const loadingProgress = events.filter((event) =>
+            event.type === "progress" && event.text.startsWith("Loading ")
+        );
+        expect(loadingProgress.length).to.be.lessThan(8);
+        const jobDatasetCache = done.diagnostics?.universe?.jobDatasetCache;
+        expect(jobDatasetCache).to.include({
             requests: 4,
             hits: 2,
             misses: 2,
@@ -521,6 +526,10 @@ describe("finder server plugin processFinderUniverseRun", () => {
             entries: 2,
             uniqueBarsLoaded: 10,
         });
+        expect(jobDatasetCache?.slowestLoads).to.have.length(2);
+        expect(jobDatasetCache?.slowestLoads?.every((load) =>
+            load.bars === 5 && load.interval === "5m" && Number.isFinite(load.ms)
+        )).to.equal(true);
         expect(done.diagnostics?.backtest?.runs).to.be.greaterThan(0);
         expect(done.diagnostics?.backtest?.fastPathRuns).to.be.greaterThanOrEqual(0);
         // Both strategies produce survivors; the merged slice must contain

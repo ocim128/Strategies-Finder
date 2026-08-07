@@ -368,6 +368,21 @@ export interface FinderUniverseDiagnostics {
         failedLoads: number;
         entries: number;
         uniqueBarsLoaded: number;
+        slowestLoads?: Array<{
+            symbol: string;
+            interval: string;
+            ms: number;
+            bars: number;
+        }>;
+    };
+    earlyStops?: {
+        candidates: number;
+        avoidedEvaluations: number;
+        reasons: Array<{
+            reason: string;
+            candidates: number;
+            avoidedEvaluations: number;
+        }>;
     };
     /** Actual executor results, independent of the requested engine preference. */
     engineUsage?: {

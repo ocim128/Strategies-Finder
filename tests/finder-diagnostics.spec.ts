@@ -256,6 +256,37 @@ describe("Finder compact diagnostics", () => {
         expect(projected?.timingsMs.total).to.equal(160);
     });
 
+    it("preserves bounded Universe load and early-stop diagnostics in compact output", () => {
+        const full = makeDiagnostics();
+        full.universe!.jobDatasetCache!.slowestLoads = [
+            { symbol: "BTCUSDT", interval: "4h", ms: 1200.5, bars: 3520 },
+        ];
+        full.universe!.earlyStops = {
+            candidates: 2,
+            avoidedEvaluations: 5,
+            reasons: [{
+                reason: "unreachable_total_trades",
+                candidates: 2,
+                avoidedEvaluations: 5,
+            }],
+        };
+
+        const compact = buildCompactFinderDiagnostics(full);
+
+        expect(compact.universe?.jobDatasetCache?.slowestLoads).to.deep.equal([
+            { symbol: "BTCUSDT", interval: "4h", ms: 1200.5, bars: 3520 },
+        ]);
+        expect(compact.universe?.earlyStops).to.deep.equal({
+            candidates: 2,
+            avoidedEvaluations: 5,
+            reasons: [{
+                reason: "unreachable_total_trades",
+                candidates: 2,
+                avoidedEvaluations: 5,
+            }],
+        });
+    });
+
     it("keeps copied diagnostics bounded while preserving improvement signals", () => {
         const full = makeDiagnostics();
         const compact = buildCompactFinderDiagnostics(full);

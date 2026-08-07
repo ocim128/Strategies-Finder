@@ -2099,6 +2099,9 @@ export function runBacktest(
     }
 
     if (fastPathBlockers.length === 0) {
+        const fastPathEquity = options?.includeSharpeRatio !== false
+            ? new Float64Array(data.length)
+            : undefined;
         const result = runSinglePositionFinderFastPath({
             data,
             preparedSignals,
@@ -2115,6 +2118,7 @@ export function runBacktest(
             indicatorSeries,
             diagnostics,
             options,
+            equityOut: fastPathEquity,
         });
         return finalizeBacktestDiagnostics(diagnostics, result, runStartedAt);
     }

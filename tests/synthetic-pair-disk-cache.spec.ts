@@ -446,6 +446,10 @@ function touchFile(path: string, mtimeSecondsAgo: number): void {
     utimesSync(path, atime, mtime);
 }
 
+function waitForImmediate(): Promise<void> {
+    return new Promise((resolve) => setImmediate(resolve));
+}
+
 test("pruneSyntheticPairDiskCache evicts oldest-mtime files first by file-count cap", () => {
     const { paths } = seedCacheFiles(5);
     // Make the order deterministic: index 0 is oldest, 4 is newest.
@@ -501,6 +505,22 @@ test("pruneOnStartup is idempotent across calls (runs at most once per process)"
     writeFileSync(resolve(cacheDir, "post-startup.bin"), Buffer.alloc(8));
     const second = pruneOnStartup();
     assert.equal(second.files, 5, "second startup-prune call must be a no-op (just measure)");
+});
+
+test("cache writes defer the directory-wide prune until after the write completes", async () => {
+    seedCacheFiles(MAX_CACHE_FILES);
+    writeSeed("AAPL", "seed");
+    writeSeed("MSFT", "seed");
+
+    assert.equal(await storeSyntheticPair(makeArgs(), makeBars(2)), true);
+    assert.equal(
+        getSyntheticPairCacheSize().files,
+        MAX_CACHE_FILES + 1,
+        "the cache write must return before the directory-wide prune runs",
+    );
+
+    await waitForImmediate();
+    assert.equal(getSyntheticPairCacheSize().files, MAX_CACHE_FILES);
 });
 
 test("pruneSyntheticPairDiskCache treats corrupt/vanished files gracefully", () => {

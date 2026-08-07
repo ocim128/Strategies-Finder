@@ -142,6 +142,58 @@ describe("Finder universe runner", () => {
         expect(shortMetrics.winRate).to.equal(longMetrics.winRate);
     });
 
+    it("excludes under-sampled pair Sharpe sentinels from the universe median", async () => {
+        const symbol = "BASE\u2022+QUOTE\u2022";
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["sharpeRatio"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 1,
+            rangePercent: 0,
+            maxRuns: 1,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols: [symbol],
+                minActiveSymbols: 1,
+                minTotalTrades: 1,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["medianSharpe"],
+            },
+        };
+
+        const output = await runFinderUniverseExecution(
+            {
+                interval: "5m",
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategy: {
+                    key: "under_sampled_pair_sharpe",
+                    name: testStrategy.name,
+                    strategy: testStrategy,
+                },
+                loadDataset: async () => makePositiveCandles([100, 102, 104, 106, 108]),
+                generateParamSets: () => [{ threshold: 1 }],
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                yieldControl: async () => {},
+                isCancelled: () => false,
+            },
+        );
+
+        const candidate = output.results[0]!;
+        expect(candidate.symbols[0]!.result!.totalTrades).to.equal(1);
+        expect(candidate.symbols[0]!.result!.sharpeRatio).to.equal(0);
+        expect(candidate.symbols[0]!.result!.sharpeRatioAvailable).to.equal(false);
+        expect(candidate.medianSharpeAvailable).to.equal(false);
+    });
+
     it("keeps only surviving candidates and reports symbol load failures", async () => {
         const datasets = new Map<string, OHLCVData[]>([
             ["UP", makeCandles([100, 105, 110, 115, 120])],
@@ -228,8 +280,17 @@ describe("Finder universe runner", () => {
             symbolEvaluations: {
                 planned: 6,
                 completed: 3,
-                avoided: 0,
+                avoided: 1,
                 passingCandidates: 1,
+            },
+            earlyStops: {
+                candidates: 1,
+                avoidedEvaluations: 1,
+                reasons: [{
+                    reason: "unreachable_active_symbols",
+                    candidates: 1,
+                    avoidedEvaluations: 1,
+                }],
             },
             engineUsage: {
                 rustRequested: false,

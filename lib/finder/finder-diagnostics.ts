@@ -56,6 +56,7 @@ export interface CompactFinderDiagnostics {
         candidatePlans?: number;
         symbolEvaluations?: NonNullable<FinderDiagnostics["universe"]>["symbolEvaluations"];
         jobDatasetCache?: NonNullable<FinderDiagnostics["universe"]>["jobDatasetCache"];
+        earlyStops?: NonNullable<FinderDiagnostics["universe"]>["earlyStops"];
         engineUsage?: NonNullable<FinderDiagnostics["universe"]>["engineUsage"];
         dataWindow?: NonNullable<FinderDiagnostics["universe"]>["dataWindow"];
     };
@@ -754,6 +755,9 @@ export function buildCompactFinderDiagnostics(diagnostics: FinderDiagnostics): C
                 : {}),
             ...(diagnostics.universe.jobDatasetCache
                 ? { jobDatasetCache: diagnostics.universe.jobDatasetCache }
+                : {}),
+            ...(diagnostics.universe.earlyStops
+                ? { earlyStops: diagnostics.universe.earlyStops }
                 : {}),
             ...(diagnostics.universe.engineUsage
                 ? { engineUsage: diagnostics.universe.engineUsage }

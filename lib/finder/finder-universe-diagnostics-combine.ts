@@ -147,6 +147,21 @@ export function combineUniverseDiagnosticsBlock(
             avoided: universeParts.reduce((sum, universe) => sum + (universe.symbolEvaluations?.avoided ?? 0), 0),
             passingCandidates: universeParts.reduce((sum, universe) => sum + (universe.symbolEvaluations?.passingCandidates ?? 0), 0),
         },
+        earlyStops: {
+            candidates: universeParts.reduce((sum, universe) => sum + (universe.earlyStops?.candidates ?? 0), 0),
+            avoidedEvaluations: universeParts.reduce((sum, universe) => sum + (universe.earlyStops?.avoidedEvaluations ?? 0), 0),
+            reasons: [...universeParts
+                .flatMap((universe) => universe.earlyStops?.reasons ?? [])
+                .reduce((counts, entry) => {
+                    const current = counts.get(entry.reason) ?? { candidates: 0, avoidedEvaluations: 0 };
+                    current.candidates += entry.candidates;
+                    current.avoidedEvaluations += entry.avoidedEvaluations;
+                    counts.set(entry.reason, current);
+                    return counts;
+                }, new Map<string, { candidates: number; avoidedEvaluations: number }>())]
+                .map(([reason, counts]) => ({ reason, ...counts }))
+                .sort((a, b) => b.avoidedEvaluations - a.avoidedEvaluations || a.reason.localeCompare(b.reason)),
+        },
         engineUsage: {
             rustRequested: universeParts.some((universe) => universe.engineUsage?.rustRequested === true),
             rustCompletedRuns: universeParts.reduce((sum, universe) => sum + (universe.engineUsage?.rustCompletedRuns ?? 0), 0),

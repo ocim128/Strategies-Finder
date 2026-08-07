@@ -103,6 +103,8 @@ let cacheDirForTests: string | null = null;
 let seedDirForTests: string | null = null;
 let lastPruneAt = 0;
 let startupPruneDone = false;
+let pruneScheduled = false;
+let cacheGeneration = 0;
 const lastLruTouchByPath = new Map<string, number>();
 
 interface CachedSyntheticPairFile {
@@ -555,9 +557,11 @@ export function __cacheFilePathForTests(args: SyntheticPairDiskCacheArgs): strin
 }
 
 export function __setSyntheticPairCacheDirForTests(dir: string | null): void {
+    cacheGeneration += 1;
     cacheDirForTests = dir;
     lastPruneAt = 0;
     startupPruneDone = false;
+    pruneScheduled = false;
     lastLruTouchByPath.clear();
 }
 
@@ -676,14 +680,27 @@ export function pruneOnStartup(): SyntheticPairCachePruneResult {
  * would prune the real cache directory when tests import the server loaders.
  */
 function maybePruneAfterWrite(): void {
-    if (!startupPruneDone) {
-        pruneOnStartup();
-        return;
-    }
+    if (pruneScheduled) return;
     const now = Date.now();
-    if (now - lastPruneAt < PRUNE_THROTTLE_MS) return;
-    lastPruneAt = now;
-    pruneSyntheticPairDiskCache();
+    if (startupPruneDone && now - lastPruneAt < PRUNE_THROTTLE_MS) return;
+
+    // Directory-wide stat/sort pruning can take seconds on a warmed multi-GB
+    // cache (especially on Windows). It is maintenance, not part of serving
+    // the freshly-built pair, so keep it off Finder/Batch's critical path.
+    const scheduledGeneration = cacheGeneration;
+    pruneScheduled = true;
+    setImmediate(() => {
+        pruneScheduled = false;
+        if (scheduledGeneration !== cacheGeneration) return;
+        if (!startupPruneDone) {
+            pruneOnStartup();
+            return;
+        }
+        const current = Date.now();
+        if (current - lastPruneAt < PRUNE_THROTTLE_MS) return;
+        lastPruneAt = current;
+        pruneSyntheticPairDiskCache();
+    });
 }
 
 interface CacheEntry {

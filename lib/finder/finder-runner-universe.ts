@@ -8,6 +8,7 @@ import {
     sanitizeBacktestSettingsForRust,
 } from "../rust-settings-sanitizer";
 import { createSeededRandom } from "../param-math-utils";
+import { SHARPE_MIN_SAMPLES } from "../strategies/performance-metrics";
 import { isSmartTradeSizingMode, type CapitalSettings } from "../types/backtest";
 import type {
     FinderOptions,
@@ -103,6 +104,13 @@ export interface FinderUniverseRunInput {
     capitalSettings: CapitalSettings;
     selectedStrategy: FinderSelectedStrategy;
     loadDataset: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
+    /**
+     * Optional server-side reuse hook. Later strategies in one Universe job
+     * evaluate the same symbols and interval, so an already-resolved dataset
+     * can bypass the loading/progress/yield path entirely. Undefined means the
+     * dataset is not ready (or failed) and must use loadDataset normally.
+     */
+    getCachedDataset?: (symbol: string, interval: string) => OHLCVData[] | undefined;
     getProvider?: (symbol: string) => string;
     generateParamSets: (defaultParams: Record<string, number>, options: FinderOptions) => Record<string, number>[];
     /** Candidate exit strategies Finder may sample for Exit Strategy Override. */
@@ -520,6 +528,7 @@ export async function runFinderUniverseExecution(
     let typescriptCompletedRuns = 0;
     let backtestRunsUntilDiagnosticSample = 0;
     const typescriptReasonCounts = new Map<string, number>();
+    const earlyStopCounts = new Map<string, { candidates: number; avoidedEvaluations: number }>();
     const measuredYield = async (): Promise<void> => {
         const startedAt = performance.now();
         await callbacks.yieldControl();
@@ -565,6 +574,10 @@ export async function runFinderUniverseExecution(
 
     const getOrLoadDataset = (symbol: string, interval = input.interval): Promise<OHLCVData[]> => {
         const key = `${symbol}|${interval}`;
+        const cachedDataset = input.getCachedDataset?.(symbol, interval);
+        if (cachedDataset && cachedDataset.length > 0) {
+            return Promise.resolve(cachedDataset);
+        }
         const cached = loadCache.get(key);
         if (cached) {
             return cached;
@@ -612,11 +625,17 @@ export async function runFinderUniverseExecution(
                 return { status: "cancelled", symbol };
             }
 
-            callbacks.setProgress((completedLoads / Math.max(1, normalizedSymbols.length)) * 15, `Loading ${symbol} (${index + 1}/${normalizedSymbols.length})...`);
-            callbacks.setStatus(`Loading ${symbol} ${input.interval}...`);
+            const cachedDataset = input.getCachedDataset?.(symbol, input.interval);
+            const reusedDataset = cachedDataset !== undefined && cachedDataset.length > 0;
+            if (!reusedDataset) {
+                callbacks.setProgress((completedLoads / Math.max(1, normalizedSymbols.length)) * 15, `Loading ${symbol} (${index + 1}/${normalizedSymbols.length})...`);
+                callbacks.setStatus(`Loading ${symbol} ${input.interval}...`);
+            }
 
             try {
-                const data = await getOrLoadDataset(symbol, input.interval);
+                const data = reusedDataset
+                    ? cachedDataset
+                    : await getOrLoadDataset(symbol, input.interval);
                 if (!Array.isArray(data) || data.length === 0) {
                     return { status: "failed", symbol, result: buildLoadFailedResult(symbol, "No candles returned.") };
                 }
@@ -644,7 +663,7 @@ export async function runFinderUniverseExecution(
             } finally {
                 completedLoads += 1;
                 callbacks.setProgress((completedLoads / Math.max(1, normalizedSymbols.length)) * 15, `Loaded ${completedLoads}/${normalizedSymbols.length} symbols...`);
-                await maybeYieldDuringLoad();
+                if (!reusedDataset) await maybeYieldDuringLoad();
             }
         }
     );
@@ -957,7 +976,12 @@ export async function runFinderUniverseExecution(
                     : null;
                 const symbolResult = buildSymbolResult(symbol, output.result, {
                     compositeEdgeRatio: symbolEdgeRatio,
-                    sharpeRatioAvailable: requiresSharpeRatio,
+                    // Pair-neutral Sharpe is calculated from completed-trade
+                    // returns. Below the metric's minimum sample count, zero is
+                    // a sentinel rather than an observed Sharpe and must not
+                    // pull the cross-symbol median toward a false 0.00.
+                    sharpeRatioAvailable: requiresSharpeRatio
+                        && (!pairNeutralMetrics || pairNeutralMetrics.totalTrades >= SHARPE_MIN_SAMPLES),
                     drawdownAvailable: requiresDrawdown,
                     pairNeutralMetrics: pairNeutralMetrics ?? undefined,
                     metricBasis: pairNeutralMetrics ? FINDER_PAIR_NEUTRAL_METRIC_BASIS : undefined,
@@ -1004,6 +1028,11 @@ export async function runFinderUniverseExecution(
             if (earlyStopReason) {
                 evaluationStoppedEarly = true;
                 stoppedReason = earlyStopReason;
+                const remainingSkipped = loadedSymbols.length - symbolIndex - 1;
+                const current = earlyStopCounts.get(earlyStopReason) ?? { candidates: 0, avoidedEvaluations: 0 };
+                current.candidates += 1;
+                current.avoidedEvaluations += remainingSkipped;
+                earlyStopCounts.set(earlyStopReason, current);
                 break;
             }
 
@@ -1109,8 +1138,18 @@ export async function runFinderUniverseExecution(
             symbolEvaluations: {
                 planned: candidatePlans.length * normalizedSymbols.length,
                 completed: processedRuns,
-                avoided: skippedRuns,
+                avoided: skippedRuns + [...earlyStopCounts.values()]
+                    .reduce((sum, entry) => sum + entry.avoidedEvaluations, 0),
                 passingCandidates: keptCandidateCount,
+            },
+            earlyStops: {
+                candidates: [...earlyStopCounts.values()]
+                    .reduce((sum, entry) => sum + entry.candidates, 0),
+                avoidedEvaluations: [...earlyStopCounts.values()]
+                    .reduce((sum, entry) => sum + entry.avoidedEvaluations, 0),
+                reasons: [...earlyStopCounts.entries()]
+                    .map(([reason, counts]) => ({ reason, ...counts }))
+                    .sort((a, b) => b.avoidedEvaluations - a.avoidedEvaluations || a.reason.localeCompare(b.reason)),
             },
             engineUsage: {
                 rustRequested: input.useRustEnginePreference === true,

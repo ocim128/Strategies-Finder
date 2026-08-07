@@ -280,6 +280,7 @@ export async function processFinderUniverseRun(
     // one real read/build per symbol+interval instead of one per strategy.
     // Failures and empty results are removed so a later strategy may retry.
     const jobDatasetCache = new Map<string, Promise<OHLCVData[]>>();
+    const jobReadyDatasetCache = new Map<string, OHLCVData[]>();
     const jobDatasetCacheStats = {
         requests: 0,
         hits: 0,
@@ -287,6 +288,22 @@ export async function processFinderUniverseRun(
         successfulLoads: 0,
         failedLoads: 0,
         uniqueBarsLoaded: 0,
+    };
+    const slowestDatasetLoads: Array<{
+        symbol: string;
+        interval: string;
+        ms: number;
+        bars: number;
+    }> = [];
+    const recordDatasetLoad = (symbol: string, interval: string, ms: number, bars: number): void => {
+        slowestDatasetLoads.push({
+            symbol,
+            interval,
+            ms: Math.round(ms * 10) / 10,
+            bars,
+        });
+        slowestDatasetLoads.sort((a, b) => b.ms - a.ms);
+        if (slowestDatasetLoads.length > 8) slowestDatasetLoads.length = 8;
     };
     const loadDatasetForJob = (
         symbol: string,
@@ -304,6 +321,7 @@ export async function processFinderUniverseRun(
 
         jobDatasetCacheStats.misses += 1;
         let promise: Promise<OHLCVData[]>;
+        const loadStartedAt = performance.now();
         promise = Promise.resolve()
             .then(() => input.loadDataset(symbol, interval, signal))
             .then((data) => {
@@ -314,6 +332,8 @@ export async function processFinderUniverseRun(
                 }
                 jobDatasetCacheStats.successfulLoads += 1;
                 jobDatasetCacheStats.uniqueBarsLoaded += data.length;
+                jobReadyDatasetCache.set(key, data);
+                recordDatasetLoad(symbol, interval, performance.now() - loadStartedAt, data.length);
                 return data;
             })
             .catch((error) => {
@@ -429,6 +449,17 @@ export async function processFinderUniverseRun(
                     capitalSettings: input.capitalSettings,
                     selectedStrategy,
                     loadDataset: loadDatasetForJob,
+                    getCachedDataset: (symbol, interval) => {
+                        const cached = jobReadyDatasetCache.get(`${symbol}|${interval}`);
+                        if (cached) {
+                            // Keep cache diagnostics comparable with the
+                            // previous path even though this hit now bypasses
+                            // the runner's async load orchestration entirely.
+                            jobDatasetCacheStats.requests += 1;
+                            jobDatasetCacheStats.hits += 1;
+                        }
+                        return cached;
+                    },
                     getProvider: input.getProvider,
                     generateParamSets: input.generateParamSets ?? (() => []),
                     exitStrategyCandidates: input.exitStrategyCandidates,
@@ -635,6 +666,7 @@ export async function processFinderUniverseRun(
             combinedDiagnostics.universe.jobDatasetCache = {
                 ...jobDatasetCacheStats,
                 entries: jobDatasetCache.size,
+                slowestLoads: slowestDatasetLoads,
             };
         }
         snapshot.diagnostics = combinedDiagnostics;
@@ -686,6 +718,7 @@ export async function processFinderUniverseRun(
             jobDatasetCache: {
                 ...jobDatasetCacheStats,
                 entries: jobDatasetCache.size,
+                slowestLoads: slowestDatasetLoads,
             },
         });
     } catch (error) {

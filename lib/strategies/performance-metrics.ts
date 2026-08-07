@@ -2,7 +2,7 @@ import type { AdvancedPerformanceAnalytics, Time } from "../types/strategies";
 import { timeToNumber } from "./backtest/backtest-utils";
 import { mean, median, percentile, sampleStdDev } from "../statistics-utils";
 
-const SHARPE_MIN_SAMPLES = 5;
+export const SHARPE_MIN_SAMPLES = 5;
 const SHARPE_MIN_STD_DEV = 1e-4;
 const SHARPE_MAX_ABS = 8;
 const MILLIS_PER_YEAR = 365.2425 * 24 * 60 * 60 * 1000;

@@ -1,6 +1,6 @@
 import type { CapitalSettings } from "../types/backtest";
 import type { BacktestResult, Trade } from "../types/strategies";
-import { calculateSharpeRatioFromReturns } from "../strategies/performance-metrics";
+import { calculateSharpeRatioFromReturns, estimatePeriodsPerYear } from "../strategies/performance-metrics";
 import { parseSyntheticPairToken } from "../synthetic-pair-token";
 
 /** Metrics used by Finder for synthetic ratios so BASE/QUOTE and QUOTE/BASE
@@ -112,6 +112,9 @@ export function buildFinderPairNeutralMetrics(
     const lossRate = totalTrades > 0 ? losingTrades / totalTrades : 0;
     const netProfit = neutralCapital - initialCapital;
 
+    const tradeTimeSamples = result.trades.map((trade) => ({ time: trade.exitTime }));
+    const periodsPerYear = estimatePeriodsPerYear(tradeTimeSamples);
+
     return {
         netProfit,
         netProfitPercent: initialCapital > 0 ? (netProfit / initialCapital) * 100 : 0,
@@ -126,6 +129,6 @@ export function buildFinderPairNeutralMetrics(
         losingTrades,
         avgWin,
         avgLoss,
-        sharpeRatio: calculateSharpeRatioFromReturns(logReturnsPct),
+        sharpeRatio: calculateSharpeRatioFromReturns(logReturnsPct, periodsPerYear),
     };
 }

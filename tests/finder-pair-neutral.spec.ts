@@ -84,4 +84,22 @@ describe("Finder synthetic-pair neutral metrics", () => {
         const expected = 10_000 * (2 - (0.01 * 3) - 1);
         expect(metrics!.netProfit).to.be.closeTo(expected, 1e-9);
     });
+
+    it("annualizes trade Sharpe using the observed trade cadence", () => {
+        const start = 1_700_000_000;
+        const month = 30 * 24 * 60 * 60;
+        const trades = [
+            makeTrade("long", 1, 1.01, start),
+            makeTrade("long", 1, 0.995, start + month),
+            makeTrade("long", 1, 1.008, start + month * 2),
+            makeTrade("long", 1, 0.997, start + month * 3),
+            makeTrade("long", 1, 1.006, start + month * 4),
+            makeTrade("long", 1, 1.009, start + month * 5),
+        ];
+
+        const metrics = buildFinderPairNeutralMetrics(makeResult(trades), capital);
+
+        expect(metrics).to.not.equal(null);
+        expect(metrics!.sharpeRatio).to.be.greaterThan(1);
+    });
 });
