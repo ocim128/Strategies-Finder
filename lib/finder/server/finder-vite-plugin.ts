@@ -63,6 +63,8 @@ import { FinderParamSpace } from "../finder-param-space";
 import { sliceFinderDataWindow } from "../finder-manager-logic";
 import type { CapitalSettings } from "../../types/backtest";
 import type {
+    FinderAssetOpportunityResult,
+    FinderAssetOpportunityDiagnostics,
     FinderDiagnostics,
     FinderDataSlice,
     FinderOptions,
@@ -98,6 +100,19 @@ import {
     resolveUniverseOosSlice,
     type UniverseOosStrategyLookup,
 } from "../finder-universe-oos";
+import {
+    runAssetOpportunitySearch,
+    assertAssetOpportunityStrategySelection,
+    type AssetIsSearch,
+} from "../finder-asset-opportunity-runner";
+import {
+    assertAssetResultIsScalar,
+    toScalarAssetResult,
+    type AnyFinderStreamEvent,
+    type FinderAssetOpportunityStreamEvent,
+} from "./finder-stream-types";
+import { sortAssetOpportunityResults } from "../finder-asset-opportunity-metrics";
+import { runServerAssetIsSearch } from "./server-asset-is-search";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -107,6 +122,10 @@ const HEAP_MB = 1024 * 1024;
 
 /** Bound on run id length (defensive; browser-generated ids are short). */
 const MAX_RUN_ID_LENGTH = 128;
+
+/** Asset Opportunity is intentionally bounded by CPU work, not just heap. */
+const ASSET_OPPORTUNITY_MAX_SYMBOLS = 1_000;
+const ASSET_OPPORTUNITY_MAX_ESTIMATED_CANDIDATE_EVALUATIONS = 250_000;
 
 // Stateless param-space generator (no constructor args, no browser deps).
 // Module-scope so it's reused across requests, mirroring FinderManager.paramSpace.
@@ -139,6 +158,8 @@ export type FinderRunSnapshot = {
     /** Set when the run reaches a terminal snapshot (done/cancelled/fatal). */
     finishedAt: number | null;
     interval: string;
+    /** Job kind discriminator; defaults to symbol_universe for legacy state. */
+    jobKind?: "symbol_universe" | "asset_opportunity";
     /** Ordered selected entry strategy keys for the whole job. */
     strategyKeys: string[];
     /** 0-based index of the strategy currently being evaluated. */
@@ -152,6 +173,8 @@ export type FinderRunSnapshot = {
     failedSymbols: number;
     /** Surviving candidates accumulated so far (scalar-only). */
     candidates: FinderUniverseCandidate[];
+    /** Asset-opportunity rows accumulated so far (scalar-only). */
+    assetResults?: FinderAssetOpportunityResult[];
     /** Terminal diagnostics once the run finishes; null while in flight. */
     diagnostics: FinderDiagnostics | null;
     cancelled: boolean;
@@ -165,6 +188,17 @@ export type FinderRunSnapshot = {
         survivors: number;
         oosRemoved: number;
     } | null;
+    assetTotals?: {
+        totalAssets: number;
+        assetsWithFreshEntry: number;
+        selectGradeAssets: number;
+        watchGradeAssets: number;
+        rejectGradeAssets: number;
+        failedAssets: number;
+        engineUsage?: FinderAssetOpportunityDiagnostics["engineUsage"];
+    } | null;
+    /** Terminal Asset Opportunity diagnostics retained for reload reattach. */
+    assetDiagnostics?: FinderAssetOpportunityDiagnostics | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -174,8 +208,8 @@ export type FinderRunSnapshot = {
 type StreamWriter = (event: FinderStreamEvent) => void;
 
 function writeStreamEventBestEffort(
-    stream: { write(event: FinderStreamEvent): void },
-    event: FinderStreamEvent,
+    stream: { write(event: AnyFinderStreamEvent): void },
+    event: AnyFinderStreamEvent,
     runId: string,
 ): boolean {
     try {
@@ -350,6 +384,7 @@ export async function processFinderUniverseRun(
         startedAt: Date.now(),
         finishedAt: null,
         interval: input.interval,
+        jobKind: "symbol_universe",
         strategyKeys: selectedStrategies.map((s) => s.key),
         strategyIndex: 0,
         strategyCount,
@@ -360,11 +395,13 @@ export async function processFinderUniverseRun(
         loadedSymbols: 0,
         failedSymbols: 0,
         candidates: [],
+        assetResults: [],
         diagnostics: null,
         cancelled: false,
         summary: null,
         error: null,
         totals: null,
+        assetTotals: null,
     };
     const snapshot = runState;
 
@@ -765,6 +802,552 @@ function estimateCandidateCount(input: FinderUniverseServerRunInput): number {
 }
 
 // ---------------------------------------------------------------------------
+// Asset Opportunity job core
+// ---------------------------------------------------------------------------
+
+interface FinderAssetOpportunityRequestBody {
+    symbols: unknown;
+    interval: unknown;
+    options: unknown;
+    settings: unknown;
+    capitalSettings: unknown;
+    /** Preferred multi-strategy selection. */
+    strategyKeys?: unknown;
+    /** Legacy single-strategy field, normalized to a one-item list. */
+    strategyKey?: unknown;
+    runId?: unknown;
+    exitStrategyKeys?: unknown;
+    useRustEnginePreference?: unknown;
+    providerBySymbol?: unknown;
+}
+
+/**
+ * Process one Asset Opportunity job. Reuses the existing owner lock, abort
+ * controller, and run state; the only difference from the universe path is the
+ * per-asset search loop and the asset-kind terminal snapshot.
+ */
+export async function processFinderAssetOpportunityRun(
+    input: {
+        runId: string;
+        interval: string;
+        symbols: string[];
+        options: FinderOptions;
+        settings: BacktestSettings;
+        capitalSettings: CapitalSettings;
+        selectedStrategies: FinderSelectedStrategy[];
+        exitStrategyCandidates?: FinderSelectedStrategy[];
+        useRustEnginePreference?: boolean;
+        abortSignal: AbortSignal;
+        loadDataset: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
+        /** Secondary cross-symbol data stays unsliced; the executor aligns it to the primary window. */
+        loadSecondaryDataset?: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
+        getProvider?: (symbol: string) => string;
+        candidatePoolSize: number;
+        minFreshSupport: number;
+    },
+    writer: (event: FinderAssetOpportunityStreamEvent) => void,
+    owner: number,
+): Promise<void> {
+    const { symbols, selectedStrategies } = input;
+    const totalAssets = symbols.length;
+    assertAssetOpportunityStrategySelection(selectedStrategies);
+
+    // Initialize run state for the asset-opportunity kind so /status reattach
+    // returns the correct terminal slice and totals.
+    runState = {
+        runId: input.runId,
+        startedAt: Date.now(),
+        finishedAt: null,
+        interval: input.interval,
+        jobKind: "asset_opportunity",
+        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
+        strategyIndex: 0,
+        strategyCount: selectedStrategies.length,
+        phase: "loading",
+        totalSymbols: totalAssets,
+        progressPercent: 0,
+        statusText: "Starting...",
+        loadedSymbols: 0,
+        failedSymbols: 0,
+        candidates: [],
+        assetResults: [],
+        diagnostics: null,
+        cancelled: false,
+        summary: null,
+        error: null,
+        totals: null,
+        assetTotals: null,
+        assetDiagnostics: null,
+    };
+    const snapshot = runState;
+
+    const estimatedCandidateEvaluations = totalAssets * selectedStrategies.length * (
+        Math.max(1, Math.floor(input.options.maxRuns)) + input.candidatePoolSize
+    );
+    debugLogger.event("finder.asset_opportunity.start", {
+        runId: input.runId,
+        interval: input.interval,
+        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
+        totalAssets,
+        maxRuns: input.options.maxRuns,
+        candidatePoolSize: input.candidatePoolSize,
+        estimatedCandidateEvaluations,
+    });
+
+    writer({
+        type: "asset_start",
+        runId: input.runId,
+        totalAssets,
+        interval: input.interval,
+        strategyKey: selectedStrategies[0]!.key,
+        strategyName: selectedStrategies[0]!.name,
+        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
+        strategyNames: selectedStrategies.map((strategy) => strategy.name),
+    });
+
+    const failedAssets: Array<{ symbol: string; reason: string }> = [];
+    let assetsWithFreshEntry = 0;
+    let assetsWithNoFreshEntry = 0;
+    let selectGradeAssets = 0;
+    let watchGradeAssets = 0;
+    let rejectGradeAssets = 0;
+    let rustCompletedRuns = 0;
+    let typescriptCompletedRuns = 0;
+    let topAssets: FinderAssetOpportunityResult[] = [];
+    const isCancelled = () => runOwner !== owner || input.abortSignal.aborted;
+    const secondaryDataCache = new Map<string, Promise<OHLCVData[]>>();
+    const assetDataFetcher = selectedStrategies.some((strategy) => strategy.strategy.crossSymbolConfig) && input.getProvider
+        ? {
+            getProvider: input.getProvider,
+            fetchDataDetached: (symbol: string, interval: string): Promise<OHLCVData[]> => {
+                const cacheKey = `${symbol}|${interval}`;
+                const cached = secondaryDataCache.get(cacheKey);
+                if (cached) return cached;
+                const promise = (input.loadSecondaryDataset ?? input.loadDataset)(
+                    symbol,
+                    interval,
+                    input.abortSignal,
+                ).then((data) => {
+                    if (!Array.isArray(data) || data.length === 0) secondaryDataCache.delete(cacheKey);
+                    return data;
+                }, (error) => {
+                    secondaryDataCache.delete(cacheKey);
+                    throw error;
+                });
+                secondaryDataCache.set(cacheKey, promise);
+                return promise;
+            },
+        }
+        : undefined;
+
+    // Server-safe IS search. The browser path uses `runFinderExecution` which
+    // pulls `lightweight-charts` transitively; the server path uses the
+    // leaf `runServerAssetIsSearch` which uses `executeBacktest` directly
+    // (same pattern as the Universe server runner).
+    const isSearch: AssetIsSearch = async (args) => {
+        const output = await runServerAssetIsSearch({
+            ohlcvData: args.ohlcvData,
+            symbol: args.symbol,
+            interval: args.interval,
+            options: args.options,
+            settings: args.settings,
+            capitalSettings: args.capitalSettings,
+            selectedStrategy: args.selectedStrategies[0]!,
+            exitStrategyCandidates: args.exitStrategyCandidates,
+            generateParamSets: args.generateParamSets,
+            useRustEnginePreference: input.useRustEnginePreference,
+            ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
+            isCancelled: args.isCancelled,
+            yieldControl: args.yieldControl,
+        });
+        rustCompletedRuns += output.engineUsage.rustCompletedRuns;
+        typescriptCompletedRuns += output.engineUsage.typescriptCompletedRuns;
+        if (output.engineUsage.typescriptCompletedRuns > 0 && input.useRustEnginePreference === true) {
+            debugLogger.event("finder.asset_opportunity.engine_fallback", {
+                runId: input.runId,
+                symbol: args.symbol,
+                typescriptRuns: output.engineUsage.typescriptCompletedRuns,
+                rustRuns: output.engineUsage.rustCompletedRuns,
+            });
+        }
+        return {
+            results: output.results,
+            totalCandidatesEvaluated: output.totalCandidatesEvaluated,
+        };
+    };
+
+    for (let assetIndex = 0; assetIndex < totalAssets; assetIndex++) {
+        if (runOwner !== owner || input.abortSignal.aborted) break;
+        const symbol = symbols[assetIndex]!;
+        const assetStartedAt = performance.now();
+        snapshot.phase = "loading";
+        snapshot.progressPercent = (assetIndex / totalAssets) * 100;
+        snapshot.statusText = `Loading ${symbol} (${assetIndex + 1}/${totalAssets})...`;
+        writer({
+            type: "asset_progress",
+            percent: snapshot.progressPercent,
+            text: snapshot.statusText,
+            status: snapshot.statusText,
+            phase: snapshot.phase,
+            assetIndex,
+            totalAssets,
+            oosActive: false,
+        });
+
+        const assetFailures: Array<{ strategyKey: string; reason: string }> = [];
+        let assetHadFreshEntry = false;
+        let assetHadNoFreshEntry = false;
+        const assetGrades = new Set<FinderAssetOpportunityResult["grade"]>();
+        try {
+            const data = await input.loadDataset(symbol, input.interval, input.abortSignal);
+            if (data.length === 0) {
+                throw new Error("no data");
+            }
+            snapshot.loadedSymbols += 1;
+            snapshot.phase = "evaluating";
+            for (let strategyIndex = 0; strategyIndex < selectedStrategies.length; strategyIndex += 1) {
+                if (isCancelled()) break;
+                const selectedStrategy = selectedStrategies[strategyIndex]!;
+                snapshot.strategyIndex = strategyIndex;
+                const runOutput = await runAssetOpportunitySearch(
+                    {
+                        interval: input.interval,
+                        options: input.options,
+                        settings: input.settings,
+                        capitalSettings: input.capitalSettings,
+                        selectedStrategy,
+                        exitStrategyCandidates: input.exitStrategyCandidates,
+                        generateParamSets: (defaultParams, finderOptions) =>
+                            paramSpace.generateParamSets(defaultParams, finderOptions),
+                        runSeed: Number.isFinite(input.options.randomSeed) ? Number(input.options.randomSeed) : 1,
+                        candidatePoolSize: input.candidatePoolSize,
+                        minFreshSupport: input.minFreshSupport,
+                        ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
+                        useRustEnginePreference: input.useRustEnginePreference,
+                        assets: [{ symbol, data }],
+                        runIsSearch: isSearch,
+                    },
+                    {
+                        setProgress: (percent, text) => {
+                            const strategyProgress = (strategyIndex + percent / 100) / selectedStrategies.length;
+                            const overall = ((assetIndex + strategyProgress) / totalAssets) * 100;
+                            snapshot.progressPercent = overall;
+                            snapshot.statusText = text;
+                            writer({
+                                type: "asset_progress",
+                                percent: overall,
+                                text,
+                                status: text,
+                                phase: snapshot.phase,
+                                assetIndex,
+                                totalAssets,
+                                oosActive: false,
+                            });
+                        },
+                        setStatus: (text) => {
+                            snapshot.statusText = `${selectedStrategy.name}: ${text}`;
+                        },
+                        yieldControl: async () => {
+                            await new Promise<void>((resolve) => setImmediate(resolve));
+                        },
+                        isCancelled,
+                        onAssetComplete: (outcome) => {
+                            if (outcome.kind === "opportunity") {
+                                assetHadFreshEntry = true;
+                                assetGrades.add(outcome.result.grade);
+                                const scalar = toScalarAssetResult(outcome.result);
+                                assertAssetResultIsScalar(scalar);
+                                topAssets = sortAssetOpportunityResults([...topAssets, scalar])
+                                    .slice(0, Math.max(1, input.options.topN));
+                                writer({
+                                    type: "asset_complete",
+                                    asset: scalar,
+                                    assetIndex,
+                                    totalAssets,
+                                });
+                            } else if (outcome.kind === "no_fresh_entry") {
+                                assetHadNoFreshEntry = true;
+                            } else {
+                                assetFailures.push({ strategyKey: selectedStrategy.key, reason: outcome.reason });
+                            }
+                            debugLogger.event("finder.asset_opportunity.asset.complete", {
+                                runId: input.runId,
+                                symbol,
+                                strategyKey: selectedStrategy.key,
+                                assetIndex,
+                                outcome: outcome.kind,
+                                grade: outcome.kind === "opportunity" ? outcome.result.grade : null,
+                                durationMs: Math.round(performance.now() - assetStartedAt),
+                            });
+                        },
+                    },
+                );
+                void runOutput;
+            }
+
+            if (assetHadFreshEntry) {
+                assetsWithFreshEntry += 1;
+                // An asset can produce multiple fresh candidates across the
+                // selected strategies, but its diagnostic grade is the best
+                // grade observed for that asset. Keep these buckets
+                // mutually exclusive so they partition fresh assets.
+                if (assetGrades.has("select")) selectGradeAssets += 1;
+                else if (assetGrades.has("watch")) watchGradeAssets += 1;
+                else if (assetGrades.has("reject")) rejectGradeAssets += 1;
+            } else if (assetFailures.length === selectedStrategies.length) {
+                failedAssets.push({
+                    symbol,
+                    reason: assetFailures.map((failure) => `${failure.strategyKey}: ${failure.reason}`).join("; "),
+                });
+                snapshot.failedSymbols += 1;
+            } else if (assetHadNoFreshEntry) {
+                assetsWithNoFreshEntry += 1;
+            }
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            failedAssets.push({ symbol, reason });
+            snapshot.failedSymbols += 1;
+            debugLogger.event("finder.asset_opportunity.asset.complete", {
+                runId: input.runId,
+                symbol,
+                assetIndex,
+                strategyKey: null,
+                outcome: "failed",
+                grade: null,
+                durationMs: Math.round(performance.now() - assetStartedAt),
+            });
+        }
+        snapshot.assetResults = topAssets;
+    }
+
+    snapshot.assetResults = topAssets;
+    snapshot.cancelled = runOwner !== owner || input.abortSignal.aborted;
+    snapshot.phase = snapshot.cancelled ? "cancelled" : "done";
+    snapshot.finishedAt = Date.now();
+    snapshot.assetTotals = {
+        totalAssets,
+        assetsWithFreshEntry,
+        selectGradeAssets,
+        watchGradeAssets,
+        rejectGradeAssets,
+        failedAssets: failedAssets.length,
+        engineUsage: {
+            rustRequested: input.useRustEnginePreference === true,
+            rustCompletedRuns,
+            typescriptCompletedRuns,
+        },
+    };
+    const assetDiagnostics: FinderAssetOpportunityDiagnostics = {
+        totalAssets,
+        assetsWithFreshEntry,
+        assetsWithNoFreshEntry,
+        selectGradeAssets,
+        watchGradeAssets,
+        rejectGradeAssets,
+        failedAssets,
+        engineUsage: snapshot.assetTotals.engineUsage,
+    };
+    snapshot.assetDiagnostics = assetDiagnostics;
+    snapshot.summary = `Asset Opportunity complete: ${topAssets.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`;
+
+    debugLogger.event(
+        snapshot.cancelled
+            ? "finder.asset_opportunity.run.cancelled"
+            : "finder.asset_opportunity.run.complete",
+        {
+            runId: input.runId,
+            interval: input.interval,
+            totalAssets,
+            assetsWithFreshEntry,
+            assetsWithNoFreshEntry,
+            selectGradeAssets,
+            watchGradeAssets,
+            rejectGradeAssets,
+            failedAssets: failedAssets.length,
+            retainedResults: topAssets.length,
+            estimatedCandidateEvaluations,
+            durationMs: Math.max(0, Date.now() - snapshot.startedAt),
+        },
+    );
+
+    writer({
+        type: "asset_done",
+        ok: !snapshot.cancelled,
+        cancelled: snapshot.cancelled,
+        runId: input.runId,
+        interval: input.interval,
+        totals: snapshot.assetTotals,
+        summary: snapshot.summary,
+        assets: topAssets,
+        diagnostics: null,
+        assetDiagnostics,
+    });
+}
+
+/**
+ * HTTP handler for the Asset Opportunity run. Mirrors `handleRunRequest` but
+ * validates the asset-opportunity-specific options, then dispatches to the
+ * per-asset multi-strategy job.
+ */
+async function handleAssetOpportunityRunRequest(
+    res: ViteHttpResponse,
+    body: FinderAssetOpportunityRequestBody,
+): Promise<void> {
+    if (runOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "A Finder run is already running. Use Stop first.");
+    }
+
+    const runId = parseRunId(body.runId);
+    if (consumePendingStopForRun(runId)) {
+        throw new HttpStatusError(409, "Finder run was stopped before it started.");
+    }
+
+    const symbols = normalizeSymbols(body.symbols);
+    if (symbols.length === 0) {
+        throw new HttpStatusError(400, "At least one symbol is required.");
+    }
+    if (symbols.length > ASSET_OPPORTUNITY_MAX_SYMBOLS) {
+        throw new HttpStatusError(
+            400,
+            `Asset Opportunity supports at most ${ASSET_OPPORTUNITY_MAX_SYMBOLS} symbols per run.`,
+        );
+    }
+    const heapWarning = resolveFinderUniverseHeapWarning(symbols.length);
+    if (heapWarning) {
+        throw new HttpStatusError(507, heapWarning);
+    }
+    const interval = parseInterval(body.interval);
+    const parsedOptions = parseOptions(body.options);
+    if (parsedOptions.scope !== "asset_opportunity") {
+        throw new HttpStatusError(400, "Asset Opportunity requires scope asset_opportunity.");
+    }
+    const options = { ...parsedOptions, scope: "asset_opportunity" as const };
+    if (options.mode !== "random") {
+        throw new HttpStatusError(400, "Asset Opportunity requires random Finder mode.");
+    }
+    const strategyKeys = parseStrategyKeys(body.strategyKeys, body.strategyKey);
+    const selectedStrategies = await resolveSelectedStrategies(strategyKeys);
+    const settings = (body.settings ?? {}) as BacktestSettings;
+    const capitalSettings = (body.capitalSettings ?? {}) as CapitalSettings;
+    const useRustEnginePreference = body.useRustEnginePreference === true;
+    const candidatePoolSize = clampCandidatePoolSize(options.assetOpportunity?.candidatePoolSize);
+    const minFreshSupport = clampMinFreshSupport(options.assetOpportunity?.minFreshSupport);
+    const estimatedCandidateEvaluations = symbols.length * selectedStrategies.length * (
+        Math.max(1, Math.floor(options.maxRuns)) + candidatePoolSize
+    );
+    if (estimatedCandidateEvaluations > ASSET_OPPORTUNITY_MAX_ESTIMATED_CANDIDATE_EVALUATIONS) {
+        throw new HttpStatusError(
+            400,
+            `Asset Opportunity estimated work is ${estimatedCandidateEvaluations.toLocaleString()} candidate evaluations; ` +
+            `reduce symbols or max runs below ${ASSET_OPPORTUNITY_MAX_ESTIMATED_CANDIDATE_EVALUATIONS.toLocaleString()}.`,
+        );
+    }
+
+    const exitStrategyCandidates = await resolveExitStrategyCandidates(body.exitStrategyKeys);
+    const providerBySymbol = parseProviderBySymbol(body.providerBySymbol);
+
+    if (consumePendingStopForRun(runId)) {
+        throw new HttpStatusError(409, "Finder run was stopped before it started.");
+    }
+
+    const owner = ++runOwnerGen;
+    runOwner = owner;
+    const runAbortController = new AbortController();
+    abortController = runAbortController;
+
+    // Asset Opportunity reserves the real latest closed candle inside the
+    // runner before applying options.dataSlice. Do not slice this loader;
+    // slicing here would make an old candle look current for half/fifth
+    // windows.
+    const loadDatasetFullClosed = (sym: string, intv: string, signal?: AbortSignal): Promise<OHLCVData[]> =>
+        loadServerFinderDataset(sym, intv, signal);
+
+    let stream: ReturnType<typeof beginNdjsonStream> | null = null;
+    let streamWritable = true;
+    try {
+        stream = beginNdjsonStream(res);
+        const responseWithEvents = res as ViteHttpResponse & {
+            on?: (event: string, listener: () => void) => void;
+        };
+        if (typeof responseWithEvents.on === "function") {
+            const markDisconnected = () => { streamWritable = false; };
+            responseWithEvents.on("close", markDisconnected);
+            responseWithEvents.on("error", markDisconnected);
+        }
+        const safeWrite = (event: FinderAssetOpportunityStreamEvent): void => {
+            if (!streamWritable) return;
+            if (!writeStreamEventBestEffort(stream!, event, runId)) {
+                streamWritable = false;
+            }
+        };
+        await processFinderAssetOpportunityRun(
+            {
+                runId,
+                interval,
+                symbols,
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategies,
+                exitStrategyCandidates,
+                useRustEnginePreference,
+                abortSignal: runAbortController.signal,
+                loadDataset: loadDatasetFullClosed,
+                loadSecondaryDataset: (sym, intv, signal) => loadServerFinderDataset(sym, intv, signal),
+                getProvider: (symbol) => resolveServerProvider(symbol, providerBySymbol),
+                candidatePoolSize,
+                minFreshSupport,
+            },
+            safeWrite,
+            owner,
+        );
+        if (streamWritable) {
+            try {
+                stream.end();
+            } catch {
+                streamWritable = false;
+            }
+        }
+    } catch (error) {
+        if (!stream) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        debugLogger.event("finder.asset_opportunity.run.failed", {
+            runId,
+            error: message,
+        });
+        try {
+            if (!streamWritable) return;
+            stream.end({ type: "asset_fatal", runId, error: message });
+        } catch {
+            /* best-effort */
+        }
+    } finally {
+        if (runOwner === owner) {
+            runOwner = RUN_OWNER_NONE;
+        }
+        if (abortController === runAbortController) {
+            abortController = null;
+        }
+    }
+}
+
+/**
+ * Clamp candidatePoolSize to the server-side bound. Default 10 per the plan.
+ */
+function clampCandidatePoolSize(raw: unknown): number {
+    if (typeof raw !== "number" || !Number.isFinite(raw)) return 10;
+    return Math.max(1, Math.min(50, Math.floor(raw)));
+}
+
+/**
+ * Clamp minFreshSupport to the server-side bound. Default 2 per the plan.
+ */
+function clampMinFreshSupport(raw: unknown): number {
+    if (typeof raw !== "number" || !Number.isFinite(raw)) return 2;
+    return Math.max(1, Math.min(50, Math.floor(raw)));
+}
+
+// ---------------------------------------------------------------------------
 // HTTP handlers
 // ---------------------------------------------------------------------------
 
@@ -981,32 +1564,40 @@ function handleStatusRequest(runIdFilter: string | null): FinderRunStatusSnapsho
 function buildStatusSnapshot(): FinderRunStatusSnapshot {
     const running = runOwner !== RUN_OWNER_NONE;
     const terminal = runState!.finishedAt !== null;
+    const state = runState!;
+    const jobKind = state.jobKind ?? "symbol_universe";
     return {
         ok: true,
         running,
         terminal,
-        runId: runState!.runId,
-        startedAt: runState!.startedAt,
-        finishedAt: runState!.finishedAt,
-        phase: runState!.phase,
-        interval: runState!.interval,
-        strategyKeys: runState!.strategyKeys,
-        strategyIndex: runState!.strategyIndex,
-        strategyCount: runState!.strategyCount,
-        totalSymbols: runState!.totalSymbols,
-        progressPercent: runState!.progressPercent,
-        statusText: runState!.statusText,
-        candidateCount: runState!.candidates.length,
-        loadedSymbols: runState!.loadedSymbols,
-        failedSymbols: runState!.failedSymbols,
-        cancelled: runState!.cancelled,
-        // The terminal candidate slice ships ONCE here. In-progress snapshots
-        // return null so polling stays small while a large universe runs.
-        terminalCandidates: terminal ? runState!.candidates : null,
-        summary: runState!.summary,
-        error: runState!.error,
-        diagnostics: runState!.diagnostics,
-        totals: runState!.totals,
+        runId: state.runId,
+        startedAt: state.startedAt,
+        finishedAt: state.finishedAt,
+        phase: state.phase,
+        interval: state.interval,
+        jobKind,
+        strategyKeys: state.strategyKeys,
+        strategyIndex: state.strategyIndex,
+        strategyCount: state.strategyCount,
+        totalSymbols: state.totalSymbols,
+        progressPercent: state.progressPercent,
+        statusText: state.statusText,
+        candidateCount: state.candidates.length,
+        loadedSymbols: state.loadedSymbols,
+        failedSymbols: state.failedSymbols,
+        cancelled: state.cancelled,
+        // The terminal candidate slice ships ONCE here, only for universe runs.
+        // In-progress snapshots return null so polling stays small while a
+        // large universe runs. Asset-opportunity terminal snapshots carry the
+        // asset slice on `terminalAssets` instead.
+        terminalCandidates: terminal && jobKind === "symbol_universe" ? state.candidates : null,
+        terminalAssets: terminal && jobKind === "asset_opportunity" ? state.assetResults ?? [] : null,
+        summary: state.summary,
+        error: state.error,
+        diagnostics: state.diagnostics,
+        totals: state.totals,
+        assetTotals: terminal && jobKind === "asset_opportunity" ? state.assetTotals ?? null : null,
+        assetDiagnostics: terminal && jobKind === "asset_opportunity" ? state.assetDiagnostics ?? null : null,
     };
 }
 
@@ -1252,6 +1843,17 @@ function registerFinderRoutes(middlewares: any): void {
         unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
         onAuthorized: async ({ res, body }) => {
             await handleRunRequest(res, body as unknown as FinderUniverseRequestBody);
+        },
+    });
+
+    registerLocalJsonRoute(middlewares, "/api/finder/asset-opportunity-run", {
+        methods: ["POST"],
+        readBody: true,
+        maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
+        onAuthorizedRequest: (req) => rememberLocalApiOriginFromRequest(req),
+        unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
+        onAuthorized: async ({ res, body }) => {
+            await handleAssetOpportunityRunRequest(res, body as unknown as FinderAssetOpportunityRequestBody);
         },
     });
 

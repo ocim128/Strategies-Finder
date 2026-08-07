@@ -18,7 +18,6 @@ import { FinderUI } from "./finder/finder-ui";
 import {
 	buildFinderOptions,
 	buildFinderUniverseOptions,
-	computeFinderOosVerdict,
 	normalizeFinderDataSlice,
 	resolveFinderPolymarketExitMode,
 	resolveOosDataSlice,
@@ -27,22 +26,12 @@ import {
 import { sortFinderResults } from "./finder/finder-engine";
 import {
 	mergeFinderRiskParamsIntoBacktestSettings,
-	normalizeFinderCandidateParams,
-	resolveFinderCandidateBacktestSettings,
-	resolveFinderRiskOverrides,
-	type FinderPreparedDataCache,
 } from "./finder/finder-runner-core";
-import {
-	generateSignalsForJob,
-	runStrategyBacktest,
-	type ParamJob,
-} from "./finder/finder-runner-shared";
-import { withExitStrategyBaseParams } from "./finder/exit-strategy-param-prefix";
-import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
-import { precomputeIndicators, runBacktest } from "./strategies/index";
+import { runCandidateOosPass } from "./finder/finder-candidate-oos";
 import {
 	sortFinderUniverseCandidates,
 } from "./finder/finder-universe-metrics";
+import { sortAssetOpportunityResults } from "./finder/finder-asset-opportunity-metrics";
 import {
 	compactFinderLatestResults,
 	normalizeFinderLatestResultsSnapshot,
@@ -74,6 +63,7 @@ import type {
 	FinderScope,
 	PolymarketFinderRankMode,
 	FinderResult,
+	FinderAssetOpportunityResult,
 	FinderUniverseCandidate,
 	FinderUniverseMetric,
 } from './types/finder';
@@ -137,6 +127,14 @@ interface ServerUniverseRunOutcome {
 	oosRemoved: number;
 }
 
+interface ServerAssetOpportunityRunOutcome {
+	results: FinderAssetOpportunityResult[];
+	diagnostics: FinderDiagnostics | null;
+	assetDiagnostics: FinderDiagnostics['assetOpportunity'] | null;
+	assetsWithFreshEntry: number;
+	failedAssets: number;
+}
+
 import { isSameEventPolymarketExitMode } from "./polymarket-exit-mode";
 import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
 import {
@@ -150,7 +148,11 @@ import { finderSortRequiresTradeTimingQuality } from "./trade-timing-quality";
 import { isSecondMarketPolymarketSupported } from "./second-market/evaluation";
 import { consumeNdjsonStream } from "./ndjson-stream";
 import { shouldUseRustEngine } from "./engine-preferences";
-import type { FinderRunStatusSnapshot, FinderStreamEvent } from "./finder/server/finder-stream-types";
+import type {
+	FinderAssetOpportunityStreamEvent,
+	FinderRunStatusSnapshot,
+	FinderStreamEvent,
+} from "./finder/server/finder-stream-types";
 
 type FinderPersistedUiState = {
 	scope: FinderScope;
@@ -186,6 +188,8 @@ type FinderPersistedUiState = {
 	universeMinProfitableActiveRatio: number;
 	universeSort: FinderUniverseMetric;
 	universeSortSecondary: FinderUniverseMetric;
+	assetOpportunityCandidatePoolSize: number;
+	assetOpportunityMinFreshSupport: number;
 };
 
 const FINDER_UI_STORAGE = {
@@ -223,7 +227,7 @@ type FinderPersistedResultsState = {
 
 type FinderPersistedActiveServerRun = {
 	runId: string;
-	scope: 'symbol_universe';
+	scope: 'symbol_universe' | 'asset_opportunity';
 	startedAt: number;
 };
 
@@ -260,6 +264,8 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	universeMinProfitableActiveRatio: 0.5,
 	universeSort: "robustUniverseScore",
 	universeSortSecondary: "windowStabilityScore",
+	assetOpportunityCandidatePoolSize: 10,
+	assetOpportunityMinFreshSupport: 2,
 };
 
 const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
@@ -303,7 +309,9 @@ function normalizeStringArray(value: unknown): string[] {
 }
 
 function normalizeFinderScope(value: unknown): FinderScope {
-	return value === "symbol_universe" ? "symbol_universe" : "current_chart";
+	return value === "symbol_universe" || value === "asset_opportunity"
+		? value
+		: "current_chart";
 }
 
 function normalizeFinderUniverseMetric(
@@ -393,6 +401,12 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 	const minProfitableActiveRatio = typeof source.universeMinProfitableActiveRatio === "number"
 		? Math.max(0, Math.min(1, source.universeMinProfitableActiveRatio))
 		: DEFAULT_FINDER_UI_STATE.universeMinProfitableActiveRatio;
+	const assetOpportunityCandidatePoolSize = typeof source.assetOpportunityCandidatePoolSize === "number"
+		? Math.max(1, Math.min(50, Math.round(source.assetOpportunityCandidatePoolSize)))
+		: DEFAULT_FINDER_UI_STATE.assetOpportunityCandidatePoolSize;
+	const assetOpportunityMinFreshSupport = typeof source.assetOpportunityMinFreshSupport === "number"
+		? Math.max(1, Math.min(50, Math.round(source.assetOpportunityMinFreshSupport)))
+		: DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport;
 
 	return {
 		scope: normalizeFinderScope(source.scope),
@@ -436,6 +450,8 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		universeMinProfitableActiveRatio: minProfitableActiveRatio,
 		universeSort: normalizeFinderUniverseMetric(source.universeSort, DEFAULT_FINDER_UI_STATE.universeSort),
 		universeSortSecondary: normalizeFinderUniverseMetric(source.universeSortSecondary, DEFAULT_FINDER_UI_STATE.universeSortSecondary),
+		assetOpportunityCandidatePoolSize,
+		assetOpportunityMinFreshSupport,
 	};
 }
 
@@ -444,6 +460,7 @@ export class FinderManager {
 	private isCancelled = false;
 	private latestResults: FinderLatestResults = { scope: "current_chart", results: [] };
 	private latestDiagnostics: FinderDiagnostics | null = null;
+	private latestAssetOpportunityDiagnostics: FinderDiagnostics['assetOpportunity'] | null = null;
 	private lastFinderRunBacktestSettings: ReturnType<typeof settingsManager.getBacktestSettings> | null = null;
 	private lastFinderOptions: FinderOptions | null = null;
 	private lastFinderEvaluationData: { interval: string; data: OHLCVData[] } | null = null;
@@ -494,6 +511,10 @@ export class FinderManager {
 
 	private isUniverseScope(): boolean {
 		return this.getScope() === "symbol_universe";
+	}
+
+	private isAssetOpportunityScope(): boolean {
+		return this.getScope() === "asset_opportunity";
 	}
 
 	private loadUiState(): void {
@@ -581,7 +602,7 @@ export class FinderManager {
 	}
 
 	/**
-	 * Generate a unique browser-side run id for a server Universe job. Used
+	 * Generate a unique browser-side run id for a server Finder job. Used
 	 * as the ownership token + persisted before fetch so a reload can
 	 * identify the same server job.
 	 */
@@ -591,10 +612,10 @@ export class FinderManager {
 	}
 
 	/** Persist the active run id BEFORE fetch so a reload can reattach. */
-	private persistActiveServerRun(runId: string, startTime: number): void {
+	private persistActiveServerRun(runId: string, startTime: number, scope: FinderScope): void {
 		writePersistedJson({
 			...FINDER_ACTIVE_SERVER_RUN_STORAGE,
-			data: { runId, scope: 'symbol_universe' as const, startedAt: startTime },
+			data: { runId, scope: scope as 'symbol_universe' | 'asset_opportunity', startedAt: startTime },
 			onError: (error) => {
 				debugLogger.warn("finder.active_server_run_save_failed", {
 					error: error instanceof Error ? error.message : String(error),
@@ -625,10 +646,10 @@ export class FinderManager {
 				if (!data || typeof data !== "object" || Array.isArray(data)) return null;
 				const source = data as Partial<FinderPersistedActiveServerRun>;
 				if (typeof source.runId !== "string" || !source.runId) return null;
-				if (source.scope !== "symbol_universe") return null;
+				if (source.scope !== "symbol_universe" && source.scope !== "asset_opportunity") return null;
 				return {
 					runId: source.runId,
-					scope: "symbol_universe",
+					scope: source.scope,
 					startedAt: typeof source.startedAt === "number" ? source.startedAt : Date.now(),
 				};
 			},
@@ -760,6 +781,8 @@ export class FinderManager {
 		dom.finderUniverseMinActiveSymbols.value = String(this.uiState.universeMinActiveSymbols);
 		dom.finderUniverseMinTotalTrades.value = String(this.uiState.universeMinTotalTrades);
 		dom.finderUniverseMinProfitableActiveRatio.value = String(this.uiState.universeMinProfitableActiveRatio);
+		dom.finderAssetCandidatePoolSize.value = String(this.uiState.assetOpportunityCandidatePoolSize);
+		dom.finderAssetMinFreshSupport.value = String(this.uiState.assetOpportunityMinFreshSupport);
 		this.updateUniverseSummary();
 	}
 
@@ -814,6 +837,13 @@ export class FinderManager {
 				const result = this.latestResults.results[index];
 				if (result) {
 					void this.applyCurrentChartResult(result);
+				}
+				return;
+			}
+			if (this.latestResults.scope === "asset_opportunity") {
+				const assetResult = this.latestResults.results[index];
+				if (assetResult) {
+					void this.applyAssetOpportunityResult(assetResult);
 				}
 				return;
 			}
@@ -1028,7 +1058,7 @@ export class FinderManager {
 		const dom = this.getDom();
 
 		dom.finderScope.addEventListener("change", () => {
-			this.uiState.scope = dom.finderScope.value === "symbol_universe" ? "symbol_universe" : "current_chart";
+			this.uiState.scope = normalizeFinderScope(dom.finderScope.value);
 			this.applyScopeUi();
 			this.syncStrategyToggleInputsFromState();
 			this.syncStrategySelectionUi();
@@ -1097,16 +1127,20 @@ export class FinderManager {
 	private applyScopeUi(): void {
 		const dom = this.getDom();
 		const universeScope = this.isUniverseScope();
+		const assetOpportunityScope = this.isAssetOpportunityScope();
+		const multiAssetScope = universeScope || assetOpportunityScope;
 		const modeInput = dom.finderMode;
 
-		dom.finderChartSortSection.style.display = universeScope ? "none" : "";
+		dom.finderChartSortSection.style.display = multiAssetScope ? "none" : "";
 		dom.finderUniverseSortSection.style.display = universeScope ? "" : "none";
-		dom.finderUniverseSectionHeader.style.display = universeScope ? "" : "none";
-		dom.finderUniverseSection.style.display = universeScope ? "" : "none";
-		dom.finderPolymarketSection.style.display = universeScope ? "none" : "";
+		dom.finderUniverseSectionHeader.style.display = multiAssetScope ? "" : "none";
+		dom.finderUniverseSection.style.display = multiAssetScope ? "" : "none";
+		dom.finderUniverseFilters.style.display = universeScope ? "" : "none";
+		dom.finderAssetOpportunitySettings.style.display = assetOpportunityScope ? "" : "none";
+		dom.finderPolymarketSection.style.display = multiAssetScope ? "none" : "";
 		dom.finderTradeFilterSection.style.display = universeScope ? "none" : "";
-		dom.finderModeRow.classList.toggle("is-disabled", universeScope);
-		dom.finderStepsRow.style.display = universeScope ? "none" : "";
+		dom.finderModeRow.classList.toggle("is-disabled", multiAssetScope);
+		dom.finderStepsRow.style.display = multiAssetScope ? "none" : "";
 		dom.finderDataSliceRow.style.display = "";
 		dom.finderStrategyActions.classList.remove("is-disabled");
 		dom.finderStrategiesToggleAll.disabled = false;
@@ -1114,11 +1148,11 @@ export class FinderManager {
 		dom.finderStrategySelectNone.disabled = false;
 		dom.finderStrategyInvertVisible.disabled = this.getVisibleStrategyKeys().length === 0;
 		dom.finderStrategySelectVisible.disabled = this.getVisibleStrategyKeys().length === 0;
-		modeInput.disabled = universeScope;
-		if (universeScope) {
+		modeInput.disabled = multiAssetScope;
+		if (multiAssetScope) {
 			modeInput.value = "random";
 		}
-		setVisible("finderBlockBadge", !universeScope && Boolean(state.blockRange));
+		setVisible("finderBlockBadge", !multiAssetScope && Boolean(state.blockRange));
 		this.setTradeFilterControlsEnabled(this.isTradeFilterControlsEnabled());
 		this.updateTimingSortControlState();
 		this.syncOosValidationControlState();
@@ -1200,6 +1234,8 @@ export class FinderManager {
 			dom.finderPolymarketLockOffset,
 			dom.finderPolymarketAfterTakeProfitOnly,
 			dom.finderOosValidationToggle,
+			dom.finderAssetCandidatePoolSize,
+			dom.finderAssetMinFreshSupport,
 		].forEach((element) => {
 			element.addEventListener("input", persist);
 			element.addEventListener("change", persist);
@@ -1239,6 +1275,16 @@ export class FinderManager {
 		this.uiState.polymarketLockOffset = dom.finderPolymarketLockOffset.checked;
 		this.uiState.polymarketAfterTakeProfitOnly = dom.finderPolymarketAfterTakeProfitOnly.checked;
 		this.uiState.oosValidationEnabled = dom.finderOosValidationToggle.checked;
+		this.uiState.assetOpportunityCandidatePoolSize = Math.max(1, Math.min(50, Math.round(this.readFinderNumberInput(
+			dom.finderAssetCandidatePoolSize,
+			DEFAULT_FINDER_UI_STATE.assetOpportunityCandidatePoolSize,
+			1,
+		))));
+		this.uiState.assetOpportunityMinFreshSupport = Math.max(1, Math.min(50, Math.round(this.readFinderNumberInput(
+			dom.finderAssetMinFreshSupport,
+			DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport,
+			1,
+		))));
 		this.saveUiState();
 	}
 
@@ -1563,7 +1609,7 @@ export class FinderManager {
 		// UI ownership so late poll updates cannot mutate the new run's state.
 		this.stopReattachPoll();
 		this.activeServerRunId = null;
-		if (!this.isUniverseScope() && state.ohlcvData.length === 0) {
+		if (!this.isUniverseScope() && !this.isAssetOpportunityScope() && state.ohlcvData.length === 0) {
 			this.setStatus('Data not loaded. Attempting to load...');
 			await dataManager.loadData();
 
@@ -1580,6 +1626,7 @@ export class FinderManager {
 		this.lastFinderOptions = null;
 		this.lastFinderEvaluationData = null;
 		this.latestDiagnostics = null;
+		this.latestAssetOpportunityDiagnostics = null;
 
 		const settingsSnapshot = this.cloneBacktestSettings(settingsManager.getBacktestSettings());
 		this.lastFinderRunBacktestSettings = this.cloneBacktestSettings(settingsSnapshot);
@@ -1610,7 +1657,9 @@ export class FinderManager {
 		this.setStatus('Running strategy finder...');
 		this.ui.renderRandomBenchmark(options.mode);
 		this.setLatestResults({
-			scope: options.scope === 'symbol_universe' ? 'symbol_universe' : 'current_chart',
+			scope: options.scope === 'symbol_universe'
+				? 'symbol_universe'
+				: options.scope === 'asset_opportunity' ? 'asset_opportunity' : 'current_chart',
 			results: [],
 		});
 		this.renderLatestResults();
@@ -1618,7 +1667,9 @@ export class FinderManager {
 		try {
 			const completed = options.scope === 'symbol_universe'
 				? await this.runUniverseFinder(options, startTime)
-				: await this.runCurrentChartFinder(options, startTime);
+				: options.scope === 'asset_opportunity'
+					? await this.runAssetOpportunityFinder(options, startTime)
+					: await this.runCurrentChartFinder(options, startTime);
 
 			if (!completed) {
 				finalizeProgress(0, '');
@@ -1776,6 +1827,9 @@ export class FinderManager {
 	 * candidate that degrades (netProfit < 0 or profitFactor < 1.0) is filtered out;
 	 * inconclusive OOS runs (too few trades) are kept and flagged. Returns null when the
 	 * gate is not applicable (toggle off, non-half window, polymarket mode, cancelled).
+	 *
+	 * Delegates to the extracted `runCandidateOosPass` leaf so the Asset Opportunity
+	 * server job reuses the identical OOS semantics.
 	 */
 	private async applyOosValidationIfNeeded(args: {
 		results: FinderResult[];
@@ -1802,83 +1856,27 @@ export class FinderManager {
 		const strategyByKey = new Map(selectedStrategies.map((item) => [item.key, item.strategy]));
 		const exitCandidatesForOos = await this.resolveExitStrategyCandidates(options, selectedStrategies);
 		const exitStrategyByKey = new Map((exitCandidatesForOos ?? []).map((item) => [item.key, item.strategy]));
-		const minTrades = options.tradeFilterEnabled ? options.minTrades : 0;
-		const precomputed = precomputeIndicators(oosData, settings);
-		const rustSettings = sanitizeBacktestSettingsForRust(settings);
-		// Reuse prepared Finder data across OOS survivors (mirrors the IS path in
-		// finder-runner-single.ts). Without this, generateSignalsForJob falls back
-		// to executeBacktestStrategySignals and re-does any strategy-internal
-		// indicator math that prepareFinderData was designed to hoist.
-		const oosPreparedDataCache: FinderPreparedDataCache = new WeakMap();
 
-		this.setProgress(true, 0, 'Validating survivors out-of-sample...');
+		const report = await runCandidateOosPass({
+			results,
+			strategyByKey,
+			exitStrategyByKey,
+			settings,
+			options,
+			capitalSettings,
+			interval: state.currentInterval,
+			oosData,
+			isCancelled: () => this.isCancelled,
+			onProgress: (percent, text) => this.setProgress(true, percent, text),
+			yieldControl: () => this.taskYielder.yieldControl(),
+		});
 
-		for (let candidateIndex = 0; candidateIndex < results.length; candidateIndex += 1) {
-			if (this.isCancelled) break;
-			const candidate = results[candidateIndex]!;
-			this.setProgress(
-				true,
-				(candidateIndex / results.length) * 100,
-				`OOS validation ${candidateIndex + 1}/${results.length}: ${candidate.name}`
-			);
-			const strategy = strategyByKey.get(candidate.key);
-			if (!strategy) {
-				candidate.oosVerdict = 'inconclusive';
-				continue;
-			}
-			try {
-				const exitStrategy = candidate.exitStrategyKey
-					? exitStrategyByKey.get(candidate.exitStrategyKey)
-					: undefined;
-				const combinedParams = withExitStrategyBaseParams(candidate.params, candidate.exitStrategyParams ?? {});
-				const normalizedParams = normalizeFinderCandidateParams(
-					strategy,
-					combinedParams,
-					exitStrategy?.normalizeParams ? { normalizeExitParams: exitStrategy.normalizeParams } : undefined
-				);
-				const { backtestSettings } = resolveFinderRiskOverrides(settings, rustSettings, normalizedParams, options);
-				const job: ParamJob = {
-					id: 0,
-					key: candidate.key,
-					name: candidate.name,
-					params: normalizedParams,
-					backtestSettings,
-					rustBacktestSettings: sanitizeBacktestSettingsForRust(backtestSettings),
-					strategy,
-					...(candidate.exitStrategyKey ? { exitStrategy, exitStrategyKey: candidate.exitStrategyKey } : {}),
-				};
-				const signals = generateSignalsForJob(job, oosData, state.currentInterval, oosPreparedDataCache, settings);
-				const oosResult = runStrategyBacktest({
-					strategy,
-					data: oosData,
-					signals,
-					params: normalizedParams,
-					capitalSettings,
-					backtestSettings: resolveFinderCandidateBacktestSettings(backtestSettings, undefined),
-					backtestFn: runBacktest,
-					precomputed,
-					...(exitStrategy ? { exitStrategy } : {}),
-				});
-				candidate.oosResult = oosResult;
-				candidate.oosVerdict = computeFinderOosVerdict({
-					oosNetProfit: oosResult.netProfit,
-					oosProfitFactor: oosResult.profitFactor,
-					oosTotalTrades: oosResult.totalTrades,
-					minTrades,
-				});
-			} catch {
-				candidate.oosResult = undefined;
-				candidate.oosVerdict = 'inconclusive';
-			}
-			await this.taskYielder.yieldControl();
-		}
-
-		const filtered = results.filter((candidate) => candidate.oosVerdict !== 'fail');
-		return { filtered, removedCount: results.length - filtered.length };
+		if (!report.applied) return null;
+		return { filtered: report.filtered, removedCount: report.removedCount };
 	}
 
 	/**
-	 * Reattach to an in-flight or terminal server-owned Universe job after a
+	 * Reattach to an in-flight or terminal server-owned Finder job after a
 	 * tab reload. Called from `init()` (Finder is lazy-loaded, so reattach
 	 * begins when Finder initializes — not at global startup). Reads the
 	 * persisted active run id; if the server still has a matching job,
@@ -1928,7 +1926,7 @@ export class FinderManager {
 		this.isCancelled = false;
 		this.reattachPollingStopped = false;
 		const dom = this.getDom();
-		// The persisted ownership record proves this is a Universe job. Restore
+		// The persisted ownership record identifies the job kind. Restore
 		// that scope before any terminal snapshot is adopted so it cannot replace
 		// a current-chart view while the UI still claims current-chart scope.
 		if (this.uiState.scope !== persisted.scope) {
@@ -1953,14 +1951,35 @@ export class FinderManager {
 		};
 
 		this.setProgress(true, initial.progressPercent, initial.statusText);
-		this.setStatus(`Reattached to Universe Finder: ${initial.statusText}`);
+		const jobLabel = persisted.scope === 'asset_opportunity' ? 'Asset Opportunity' : 'Universe Finder';
+		this.setStatus(`Reattached to ${jobLabel}: ${initial.statusText}`);
 		let clearPersistedRecord = false;
 		let terminalReached = false;
 		const applyTerminalSnapshot = (snapshot: FinderRunStatusSnapshot): void => {
 			if (!snapshot.terminal || this.activeServerRunId !== runId) return;
 			terminalReached = true;
 			clearPersistedRecord = true;
-			if (snapshot.phase === "done" && snapshot.terminalCandidates) {
+			if (persisted.scope === 'asset_opportunity' && snapshot.terminalAssets) {
+				this.setLatestResults({
+					scope: "asset_opportunity",
+					results: [...snapshot.terminalAssets],
+				});
+				this.renderLatestResults();
+				this.latestDiagnostics = snapshot.diagnostics;
+				this.latestAssetOpportunityDiagnostics = snapshot.assetDiagnostics ?? (snapshot.assetTotals
+					? {
+						totalAssets: snapshot.assetTotals.totalAssets,
+						assetsWithFreshEntry: snapshot.assetTotals.assetsWithFreshEntry,
+						assetsWithNoFreshEntry: Math.max(0, snapshot.assetTotals.totalAssets - snapshot.assetTotals.assetsWithFreshEntry - snapshot.assetTotals.failedAssets),
+						selectGradeAssets: snapshot.assetTotals.selectGradeAssets,
+						watchGradeAssets: snapshot.assetTotals.watchGradeAssets,
+						rejectGradeAssets: snapshot.assetTotals.rejectGradeAssets,
+						failedAssets: [],
+						...(snapshot.assetTotals.engineUsage ? { engineUsage: snapshot.assetTotals.engineUsage } : {}),
+					}
+					: null);
+				dom.finderCopyDiagnostics.disabled = !snapshot.diagnostics && !this.latestAssetOpportunityDiagnostics;
+			} else if (snapshot.phase === "done" && snapshot.terminalCandidates) {
 				// The server slice is already sorted and bounded with the original
 				// run options. Those options are not available after a reload.
 				this.setLatestResults({
@@ -1976,6 +1995,7 @@ export class FinderManager {
 				runId,
 				phase: snapshot.phase,
 				candidates: snapshot.terminalCandidates?.length ?? 0,
+				assets: snapshot.terminalAssets?.length ?? 0,
 			});
 		};
 		applyTerminalSnapshot(initial);
@@ -2041,7 +2061,7 @@ export class FinderManager {
 			// Update progress from the summary-only snapshot (no candidate
 			// payload while running).
 			this.setProgress(true, snapshot.progressPercent, snapshot.statusText);
-			this.setStatus(`Universe Finder: ${snapshot.statusText}`);
+			this.setStatus(`${jobLabel}: ${snapshot.statusText}`);
 
 			applyTerminalSnapshot(snapshot);
 		}
@@ -2067,7 +2087,10 @@ export class FinderManager {
 	 * endpoint instead of treating provisional streamed candidates as final or
 	 * allowing a replacement run to orphan the active server job.
 	 */
-	private async recoverActiveUniverseServerRun(runId: string): Promise<FinderRunStatusSnapshot | null> {
+	private async recoverActiveServerRun(
+		runId: string,
+		jobKind: 'symbol_universe' | 'asset_opportunity',
+	): Promise<FinderRunStatusSnapshot | null> {
 		const FAILURE_BACKOFF_MS = [2_000, 5_000, 10_000, 15_000] as const;
 		const MAX_CONSECUTIVE_FAILURES = 20;
 		let consecutiveFailures = 0;
@@ -2085,11 +2108,12 @@ export class FinderManager {
 						runId,
 						phase: snapshot.phase,
 						candidates: snapshot.terminalCandidates?.length ?? 0,
+						assets: snapshot.terminalAssets?.length ?? 0,
 					});
 					return snapshot;
 				}
 				this.setProgress(true, snapshot.progressPercent, snapshot.statusText);
-				this.setStatus(`Universe Finder: ${snapshot.statusText}`);
+				this.setStatus(`${jobKind === 'asset_opportunity' ? 'Asset Opportunity' : 'Universe Finder'}: ${snapshot.statusText}`);
 				await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
 			} catch (error) {
 				consecutiveFailures += 1;
@@ -2104,6 +2128,198 @@ export class FinderManager {
 			}
 		}
 		return null;
+	}
+
+	private async runAssetOpportunityFinder(options: FinderOptions, startTime: number): Promise<boolean> {
+		const selectedStrategies = await this.getSelectedStrategies();
+		if (selectedStrategies.length === 0) {
+			this.setStatus('Select at least one strategy for Asset Opportunity mode.');
+			return false;
+		}
+		const symbols = options.assetOpportunity?.symbols ?? [];
+		if (symbols.length === 0) {
+			this.setStatus('Add at least one symbol for Asset Opportunity mode.');
+			return false;
+		}
+
+		const exitStrategyCandidates = await this.resolveExitStrategyCandidates(options, selectedStrategies);
+		const runId = this.generateServerRunId();
+		this.activeServerRunId = runId;
+		this.persistActiveServerRun(runId, startTime, 'asset_opportunity');
+
+		const outcome = await this.runAssetOpportunityFinderServer(
+			options,
+			selectedStrategies,
+			exitStrategyCandidates,
+			runId,
+			startTime,
+		);
+
+		if (this.activeServerRunId === runId) {
+			this.activeServerRunId = null;
+			this.clearActiveServerRun();
+		}
+		this.latestDiagnostics = outcome.diagnostics;
+		this.latestAssetOpportunityDiagnostics = outcome.assetDiagnostics ?? {
+			totalAssets: symbols.length,
+			assetsWithFreshEntry: outcome.assetsWithFreshEntry,
+			assetsWithNoFreshEntry: Math.max(0, symbols.length - outcome.assetsWithFreshEntry - outcome.failedAssets),
+			selectGradeAssets: 0,
+			watchGradeAssets: 0,
+			rejectGradeAssets: 0,
+			failedAssets: [],
+		};
+		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics && !this.latestAssetOpportunityDiagnostics;
+		this.ui.renderRandomBenchmark('random');
+
+		if (!this.isCancelled && this.activeServerRunId === null) {
+			const terminalAssetDiagnostics = outcome.assetDiagnostics;
+			const totalAssets = terminalAssetDiagnostics?.totalAssets ?? symbols.length;
+			const freshAssets = terminalAssetDiagnostics?.assetsWithFreshEntry ?? outcome.assetsWithFreshEntry;
+			const failedAssets = terminalAssetDiagnostics?.failedAssets.length ?? outcome.failedAssets;
+			this.setStatus(
+				`Asset Opportunity complete. ${outcome.results.length}/${totalAssets} fresh opportunities` +
+				` | ${freshAssets} fresh assets | ${failedAssets} failed` +
+				` | ${Math.round(performance.now() - startTime)}ms`,
+			);
+		}
+		return true;
+	}
+
+	private async runAssetOpportunityFinderServer(
+		options: FinderOptions,
+		selectedStrategies: FinderSelectedStrategy[],
+		exitStrategyCandidates: FinderSelectedStrategy[] | undefined,
+		runId: string,
+		startTime: number,
+	): Promise<ServerAssetOpportunityRunOutcome> {
+		const settings = backtestService.getBacktestSettings();
+		const capitalSettings = backtestService.getCapitalSettings();
+		const symbols = options.assetOpportunity?.symbols ?? [];
+		const providerBySymbol: Record<string, string> = {};
+		for (const symbol of symbols) {
+			providerBySymbol[symbol] = dataManager.getProvider(symbol);
+		}
+		const allStrategies = [...selectedStrategies, ...(exitStrategyCandidates ?? [])];
+		for (const selected of allStrategies) {
+			const secondarySymbol = resolveCrossSymbolSecondaryForStrategy(selected.strategy, settings);
+			if (secondarySymbol) {
+				providerBySymbol[secondarySymbol] = dataManager.getProvider(secondarySymbol);
+			}
+		}
+
+		const response = await fetch('/api/finder/asset-opportunity-run', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				runId,
+				symbols,
+				interval: state.currentInterval,
+				options,
+				settings,
+				capitalSettings,
+				strategyKeys: selectedStrategies.map((candidate) => candidate.key),
+				exitStrategyKeys: exitStrategyCandidates?.map((candidate) => candidate.key),
+				useRustEnginePreference: shouldUseRustEngine(),
+				providerBySymbol,
+			}),
+		});
+		if (response.status === 404 || response.status === 405) {
+			throw new Error("Asset Opportunity requires a Vite server runtime; static-only deployments are unsupported.");
+		}
+		if (!response.ok || !response.body) {
+			const text = await response.text();
+			let payload: { error?: string } = {};
+			try { payload = JSON.parse(text); } catch { /* ignore */ }
+			throw new Error(payload.error ?? `Server Asset Opportunity run failed (${response.status}).`);
+		}
+
+		const isStillActive = (): boolean => this.activeServerRunId === runId;
+		let terminalResults: FinderAssetOpportunityResult[] | null = null;
+		let terminalDiagnostics: FinderDiagnostics | null = null;
+		let assetDiagnostics: FinderDiagnostics['assetOpportunity'] | null = null;
+		let assetsWithFreshEntry = 0;
+		let failedAssets = 0;
+		let streamError: unknown = null;
+		try {
+			await consumeNdjsonStream<FinderAssetOpportunityStreamEvent>(response.body, {
+					onAssetStart: (event) => {
+						if (isStillActive()) this.setStatus(`Asset Opportunity: ${event.strategyNames.join(', ')}, 0/${event.totalAssets} assets`);
+				},
+				onAssetProgress: (event) => {
+					if (!isStillActive()) return;
+					this.setProgress(true, event.percent, event.text);
+					this.setStatus(`Asset Opportunity: ${event.status}`);
+				},
+				onAssetComplete: (event) => {
+					if (!isStillActive()) return;
+					assetsWithFreshEntry += 1;
+					const provisionalResults = [
+						...this.getAssetOpportunityResults().filter((item) =>
+							item.symbol !== event.asset.symbol || item.strategyKey !== event.asset.strategyKey),
+						event.asset,
+					];
+					this.setLatestResults({
+						scope: 'asset_opportunity',
+						results: sortAssetOpportunityResults(provisionalResults).slice(0, Math.max(1, options.topN)),
+					});
+					this.renderLatestResults();
+				},
+				onAssetDone: (event) => {
+					terminalResults = event.assets ?? [];
+					terminalDiagnostics = event.diagnostics;
+					assetDiagnostics = event.assetDiagnostics;
+					assetsWithFreshEntry = event.totals.assetsWithFreshEntry;
+					failedAssets = event.totals.failedAssets;
+					if (isStillActive()) {
+						this.setLatestResults({ scope: 'asset_opportunity', results: [...(terminalResults ?? [])] });
+						this.renderLatestResults();
+					}
+				},
+				onAssetFatal: (event) => {
+					throw new Error(event.error);
+				},
+			}, { requireTerminal: true, terminalTypes: ['asset_done', 'asset_fatal'] });
+		} catch (error) {
+			streamError = error;
+		}
+
+		if (streamError) {
+			if (isStillActive()) {
+				const recovered = await this.recoverActiveServerRun(runId, 'asset_opportunity');
+				if (recovered?.terminalAssets) {
+					terminalResults = recovered.terminalAssets;
+					terminalDiagnostics = recovered.diagnostics;
+					assetDiagnostics = recovered.assetDiagnostics ?? (recovered.assetTotals
+						? {
+							totalAssets: recovered.assetTotals.totalAssets,
+							assetsWithFreshEntry: recovered.assetTotals.assetsWithFreshEntry,
+							assetsWithNoFreshEntry: Math.max(0, recovered.assetTotals.totalAssets - recovered.assetTotals.assetsWithFreshEntry - recovered.assetTotals.failedAssets),
+							selectGradeAssets: recovered.assetTotals.selectGradeAssets,
+							watchGradeAssets: recovered.assetTotals.watchGradeAssets,
+							rejectGradeAssets: recovered.assetTotals.rejectGradeAssets,
+							failedAssets: [],
+							...(recovered.assetTotals.engineUsage ? { engineUsage: recovered.assetTotals.engineUsage } : {}),
+						}
+						: null);
+					assetsWithFreshEntry = recovered.assetTotals?.assetsWithFreshEntry ?? terminalResults.length;
+					failedAssets = recovered.assetTotals?.failedAssets ?? 0;
+					this.setLatestResults({ scope: 'asset_opportunity', results: [...terminalResults] });
+					this.renderLatestResults();
+				} else if (!this.isCancelled) {
+					throw streamError;
+				}
+			}
+		}
+
+		const results = terminalResults ?? this.getAssetOpportunityResults();
+		if (!this.isCancelled && isStillActive()) {
+			this.setStatus(`Server Asset Opportunity: ${results.length} opportunities (${Math.round(performance.now() - startTime)}ms)`);
+		}
+		if (terminalDiagnostics && assetDiagnostics) {
+			terminalDiagnostics.assetOpportunity = assetDiagnostics;
+		}
+		return { results, diagnostics: terminalDiagnostics, assetDiagnostics, assetsWithFreshEntry, failedAssets };
 	}
 
 	private async runUniverseFinder(options: FinderOptions, startTime: number): Promise<boolean> {
@@ -2124,7 +2340,7 @@ export class FinderManager {
 		// so a tab reload can reattach to the same server job.
 		const runId = this.generateServerRunId();
 		this.activeServerRunId = runId;
-		this.persistActiveServerRun(runId, startTime);
+		this.persistActiveServerRun(runId, startTime, 'symbol_universe');
 
 		const outcome = await this.runUniverseFinderServer(
 			options,
@@ -2331,7 +2547,7 @@ export class FinderManager {
 		}
 
 		if (streamError !== null && terminalCandidates === null && isStillActive()) {
-			const recovered = await this.recoverActiveUniverseServerRun(runId);
+			const recovered = await this.recoverActiveServerRun(runId, 'symbol_universe');
 			if (recovered?.phase === "fatal") {
 				throw new Error(recovered.error ?? recovered.summary ?? recovered.statusText);
 			}
@@ -2378,7 +2594,7 @@ export class FinderManager {
 
 	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'polymarketExitMode' | 'polymarketSignalExitAllowMultipleTradesPerEvent' | 'executionModel' | 'polymarketEntryDelayBars' | 'polymarketEntryPriceFilterCents' | 'polymarketBacktestSlippageCents' | 'polymarketPostSignalLimitEntryEnabled' | 'polymarketPostSignalLimitEntryMode' | 'polymarketPostSignalLimitEntryPriceCents' | 'polymarketPostSignalLimitEntryOffsetCents' | 'polymarketPostSignalLimitExitEnabled' | 'polymarketPostSignalLimitExitMode' | 'polymarketPostSignalLimitExitPriceCents' | 'polymarketPostSignalLimitExitOffsetCents' | 'disableSignalExits' | 'exitStrategyOverrideEnabled'>): FinderOptions {
 		const dom = this.getDom();
-		const scope = this.isUniverseScope() ? 'symbol_universe' : 'current_chart';
+		const scope = this.getScope();
 		const useAdvancedSort = dom.finderAdvancedToggle.checked;
 		const sortItems = dom.finderSortList.querySelectorAll('.finder-sort-item');
 		const advancedSortValues = Array.from(sortItems)
@@ -2391,13 +2607,13 @@ export class FinderManager {
 				return item.querySelector<HTMLInputElement>(".finder-sort-enabled")?.checked === true;
 			})
 			.map(el => (el as HTMLElement).dataset.value as FinderMetric | undefined);
-		const mode = scope === 'symbol_universe' ? 'random' : dom.finderMode.value as FinderMode;
+		const mode = scope === 'current_chart' ? dom.finderMode.value as FinderMode : 'random';
 		const dataSlice = normalizeFinderDataSlice(dom.finderDataSlice.value);
 		const topN = Math.round(this.readFinderNumberInput(dom.finderTopN, DEFAULT_FINDER_UI_STATE.topN, 1));
 		const steps = Math.round(this.readFinderNumberInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2));
 		const rangePercent = this.readFinderNumberInput(dom.finderRange, DEFAULT_FINDER_UI_STATE.rangePercent, 0);
 		const maxRuns = Math.round(this.readFinderNumberInput(dom.finderMaxRuns, DEFAULT_FINDER_UI_STATE.maxRuns, 1));
-		const tradeFilterEnabled = scope === 'current_chart' && dom.finderTradesToggle.checked;
+		const tradeFilterEnabled = scope !== 'symbol_universe' && dom.finderTradesToggle.checked;
 		const minTrades = tradeFilterEnabled ? Math.round(this.readFinderNumberInput(dom.finderTradesMin, DEFAULT_FINDER_UI_STATE.minTrades, 0)) : 0;
 		const maxTrades = tradeFilterEnabled
 			? Math.round(this.readFinderNumberInput(dom.finderTradesMax, Number.POSITIVE_INFINITY, 0))
@@ -2474,6 +2690,20 @@ export class FinderManager {
 				primarySort: normalizeFinderUniverseMetric(dom.finderUniverseSort.value, DEFAULT_FINDER_UI_STATE.universeSort),
 				secondarySort: normalizeFinderUniverseMetric(dom.finderUniverseSortSecondary.value, DEFAULT_FINDER_UI_STATE.universeSortSecondary),
 			});
+		} else if (scope === 'asset_opportunity') {
+			options.assetOpportunity = {
+				symbols: this.parseUniverseSymbols(dom.finderUniverseSymbols.value),
+				candidatePoolSize: Math.max(1, Math.min(50, Math.round(this.readFinderNumberInput(
+					dom.finderAssetCandidatePoolSize,
+					DEFAULT_FINDER_UI_STATE.assetOpportunityCandidatePoolSize,
+					1,
+				)))),
+				minFreshSupport: Math.max(1, Math.min(50, Math.round(this.readFinderNumberInput(
+					dom.finderAssetMinFreshSupport,
+					DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport,
+					1,
+				)))),
+			};
 		}
 
 		// OOS gate: half-window only, not under polymarket scoring. Applies to
@@ -2528,6 +2758,10 @@ export class FinderManager {
 
 	private getUniverseResults(): FinderUniverseCandidate[] {
 		return this.latestResults.scope === 'symbol_universe' ? this.latestResults.results : [];
+	}
+
+	private getAssetOpportunityResults(): FinderAssetOpportunityResult[] {
+		return this.latestResults.scope === 'asset_opportunity' ? this.latestResults.results : [];
 	}
 
 	/**
@@ -2737,6 +2971,11 @@ export class FinderManager {
 			this.ui.renderUniverseResults(results);
 			return;
 		}
+		if (this.getScope() === 'asset_opportunity') {
+			const results = this.latestResults.scope === 'asset_opportunity' ? this.latestResults.results : [];
+			this.ui.renderAssetOpportunityResults(results);
+			return;
+		}
 		const results = this.latestResults.scope === 'current_chart' ? this.latestResults.results : [];
 		this.ui.renderResults(results);
 	}
@@ -2863,17 +3102,52 @@ export class FinderManager {
 		};
 	}
 
+	private buildAssetOpportunityMetadataPayload(result: FinderAssetOpportunityResult, rank: number) {
+		const strategy = strategyRegistry.get(result.strategyKey);
+		return {
+			scope: 'asset_opportunity' as const,
+			rank,
+			symbol: result.symbol,
+			strategyId: result.strategyKey,
+			strategyName: result.strategyName,
+			interval: state.currentInterval,
+			params: result.params,
+			metadata: strategy?.metadata ?? null,
+			direction: result.direction,
+			freshStatus: result.freshStatus,
+			latestSignalTime: result.latestSignalTime,
+			signalAgeBars: result.signalAgeBars,
+			fillTiming: result.fillTiming,
+			historicalRank: result.historicalRank,
+			totalCandidatesEvaluated: result.totalCandidatesEvaluated,
+			selectionMetrics: result.selectionResult,
+			support: result.support,
+			grade: result.grade,
+			oos: result.oosResult && result.oosVerdict
+				? { metrics: result.oosResult, verdict: result.oosVerdict }
+				: null,
+			exitStrategy: result.exitStrategyKey ? {
+				key: result.exitStrategyKey,
+				name: result.exitStrategyName ?? null,
+				params: result.exitStrategyParams ?? {},
+			} : null,
+		};
+	}
+
 	private async copyTopResultsMetadata(): Promise<void> {
 		const chartResults = this.getCurrentChartResults();
 		const universeResults = this.getUniverseResults();
-		if (chartResults.length === 0 && universeResults.length === 0) {
+		const assetResults = this.getAssetOpportunityResults();
+		if (chartResults.length === 0 && universeResults.length === 0 && assetResults.length === 0) {
 			uiManager.showToast('No results to copy', 'info');
 			return;
 		}
 
 		const payload = this.latestResults.scope === 'current_chart'
 			? chartResults.map((result, index) => this.buildCurrentChartMetadataPayload(result, index + 1))
-			: universeResults.map((result, index) => this.buildUniverseMetadataPayload(result, index + 1));
+			: this.latestResults.scope === 'asset_opportunity'
+				? assetResults.map((result, index) => this.buildAssetOpportunityMetadataPayload(result, index + 1))
+				: universeResults.map((result, index) => this.buildUniverseMetadataPayload(result, index + 1));
 
 		try {
 			await this.copyTextToClipboard(JSON.stringify(payload, null, 2));
@@ -2913,8 +3187,35 @@ export class FinderManager {
 	}
 
 	private async copyFinderDiagnostics(): Promise<void> {
+		if (this.latestResults.scope === 'asset_opportunity' && this.latestAssetOpportunityDiagnostics) {
+			try {
+				await this.copyTextToClipboard(JSON.stringify({
+					scope: 'asset_opportunity',
+					assetOpportunity: this.latestAssetOpportunityDiagnostics,
+				}, null, 2));
+				uiManager.showToast('Asset Opportunity diagnostics copied', 'success');
+			} catch (error) {
+				debugLogger.error('finder.copy_diagnostics_failed', { error: error instanceof Error ? error.message : String(error) });
+				uiManager.showToast('Copy failed - check browser permissions', 'error');
+			}
+			return;
+		}
+
 		if (!this.latestDiagnostics) {
-			uiManager.showToast('No Finder diagnostics to copy', 'info');
+			if (!this.latestAssetOpportunityDiagnostics) {
+				uiManager.showToast('No Finder diagnostics to copy', 'info');
+				return;
+			}
+			try {
+				await this.copyTextToClipboard(JSON.stringify({
+					scope: 'asset_opportunity',
+					assetOpportunity: this.latestAssetOpportunityDiagnostics,
+				}, null, 2));
+				uiManager.showToast('Asset Opportunity diagnostics copied', 'success');
+			} catch (error) {
+				debugLogger.error('finder.copy_diagnostics_failed', { error: error instanceof Error ? error.message : String(error) });
+				uiManager.showToast('Copy failed - check browser permissions', 'error');
+			}
 			return;
 		}
 
@@ -3036,6 +3337,66 @@ export class FinderManager {
 		}
 	}
 
+	/**
+	 * Apply an Asset Opportunity result. Sets the selected asset as the current
+	 * symbol, selects the winning strategy, applies its parameters through the
+	 * existing state/settings actions, and runs the normal backtest. Mirrors the
+	 * universe Apply path.
+	 */
+	private async applyAssetOpportunityResult(result: FinderAssetOpportunityResult): Promise<void> {
+		const strategy = await this.resolveFinderResultStrategy(result.strategyKey);
+		if (!strategy) {
+			uiManager.showToast(
+				`Strategy no longer available: ${result.strategyKey}. Apply aborted; current strategy unchanged.`,
+				'error',
+			);
+			debugLogger.warn('finder.apply_asset_opportunity_strategy_missing', { strategyKey: result.strategyKey });
+			return;
+		}
+		// Load the asset through the existing data-loading path so provider
+		// classification is preserved (current-chart Apply assumes the symbol is
+		// already loaded; the asset-opportunity symbol may not be).
+		try {
+			await this.loadAssetForApply(result.symbol);
+		} catch (error) {
+			debugLogger.error('finder.apply_asset_opportunity_load_failed', {
+				symbol: result.symbol,
+				error: error instanceof Error ? error.message : String(error),
+			});
+			uiManager.showToast(`Failed to load ${result.symbol} for Apply.`, 'error');
+			return;
+		}
+		setCurrentStrategyKey(result.strategyKey);
+		uiManager.updateStrategyDropdown(result.strategyKey);
+		paramManager.render(strategy);
+		paramManager.setValues(strategy, result.params);
+		this.applyFinderBacktestSettings(result.params, undefined, result.exitStrategyKey, result.exitStrategyParams);
+		strategyPanelController.switchTab('trades');
+		try {
+			await backtestService.runCurrentBacktest();
+			uiManager.showToast(
+				`Applied Asset Opportunity: ${result.symbol} (${result.grade}) — rank ${result.historicalRank}, expectancy ${result.selectionResult.expectancy.toFixed(2)}.`,
+				'success',
+			);
+		} catch (error) {
+			debugLogger.error('finder.apply_asset_opportunity_backtest_failed', {
+				symbol: result.symbol,
+				strategyKey: result.strategyKey,
+				error: error instanceof Error ? error.message : String(error),
+			});
+			uiManager.showToast('Backtest rerun failed after applying Asset Opportunity result.', 'error');
+		}
+	}
+
+	/**
+	 * Loads the given symbol through the existing data-loading path so an Asset
+	 * Opportunity Apply preserves provider classification.
+	 */
+	private async loadAssetForApply(symbol: string): Promise<void> {
+		if (symbol === state.currentSymbol) return;
+		await dataManager.loadData(symbol, state.currentInterval);
+	}
+
 	private applyFinderBacktestSettings(
 		params: StrategyParams,
 		polymarketEval?: FinderResult['polymarketEval'],
@@ -3119,7 +3480,7 @@ export class FinderManager {
 		return this.cloneBacktestSettings(this.latestResults);
 	}
 
-	public getLatestCandidate(): FinderResult | FinderUniverseCandidate | null {
+	public getLatestCandidate(): FinderResult | FinderUniverseCandidate | FinderAssetOpportunityResult | null {
 		if (this.latestResults.results.length === 0) return null;
 		return this.cloneBacktestSettings(this.latestResults.results[0]);
 	}

@@ -3,6 +3,7 @@ import { describe, it, before, after, afterEach } from "node:test";
 import { strategyRegistry } from "../strategyRegistry";
 import {
     processFinderUniverseRun,
+    processFinderAssetOpportunityRun,
     __testInternals,
 } from "../lib/finder/server/finder-vite-plugin";
 import { HttpStatusError } from "../lib/vite-http-utils";
@@ -12,6 +13,7 @@ import {
     toScalarCandidate,
     FINDER_CANDIDATE_FORBIDDEN_ARRAY_FIELDS,
     type FinderStreamEvent,
+    type FinderAssetOpportunityStreamEvent,
 } from "../lib/finder/server/finder-stream-types";
 import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metrics";
 import type { CapitalSettings } from "../lib/types/backtest";
@@ -95,6 +97,19 @@ const testStrategy2: Strategy = {
             { time: data[0]!.time, type: "buy", price: data[0]!.close },
             { time: data[data.length - 1]!.time, type: "sell", price: data[data.length - 1]!.close },
         ];
+    },
+};
+
+const assetOpportunityStrategy: Strategy = {
+    name: "Asset Opportunity Test",
+    description: "Enters on the latest available bar for multi-strategy server tests.",
+    defaultParams: { threshold: 1 },
+    paramLabels: { threshold: "Threshold" },
+    execute(data) {
+        const latest = data[data.length - 1];
+        return latest
+            ? [{ time: latest.time, type: "buy", price: latest.close }]
+            : [];
     },
 };
 
@@ -803,6 +818,73 @@ describe("finder server plugin processFinderUniverseRun", () => {
     });
 });
 
+describe("finder server plugin Asset Opportunity multi-strategy execution", () => {
+    it("evaluates every selected strategy for every asset and returns scalar rows", async () => {
+        const selectedStrategies = [
+            { key: "asset_opportunity_test_a", name: "Asset Opportunity A", strategy: assetOpportunityStrategy },
+            { key: "asset_opportunity_test_b", name: "Asset Opportunity B", strategy: assetOpportunityStrategy },
+        ];
+        const options: FinderOptions = {
+            ...makeOptions(["UP", "DOWN"]),
+            scope: "asset_opportunity",
+            topN: 10,
+            maxRuns: 2,
+            dataSlice: "half_oldest",
+            assetOpportunity: {
+                symbols: ["UP", "DOWN"],
+                candidatePoolSize: 2,
+                minFreshSupport: 1,
+            },
+        };
+        const datasets = upDownDatasets();
+        const loaded: string[] = [];
+        const events: FinderAssetOpportunityStreamEvent[] = [];
+        setRunOwnerForTests(7101);
+        await processFinderAssetOpportunityRun(
+            {
+                runId: "asset-multi-strategy",
+                interval: "5m",
+                symbols: ["UP", "DOWN"],
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategies,
+                loadDataset: async (symbol) => {
+                    loaded.push(symbol);
+                    return datasets.get(symbol) ?? [];
+                },
+                abortSignal: new AbortController().signal,
+                candidatePoolSize: 2,
+                minFreshSupport: 1,
+            },
+            (event) => events.push(event),
+            7101,
+        );
+
+        const start = events[0]!;
+        expect(start.type).to.equal("asset_start");
+        if (start.type === "asset_start") {
+            expect(start.strategyKeys).to.deep.equal(["asset_opportunity_test_a", "asset_opportunity_test_b"]);
+        }
+        const done = events[events.length - 1]!;
+        expect(done.type).to.equal("asset_done");
+        if (done.type === "asset_done") {
+            expect(done.totals.totalAssets).to.equal(2);
+            expect(done.totals.failedAssets).to.equal(0);
+            expect(
+                done.totals.selectGradeAssets
+                + done.totals.watchGradeAssets
+                + done.totals.rejectGradeAssets,
+            ).to.equal(done.totals.assetsWithFreshEntry);
+            for (const asset of done.assets) {
+                expect(asset.strategyKey).to.be.oneOf(["asset_opportunity_test_a", "asset_opportunity_test_b"]);
+                expect(asset.latestSignalTime).to.equal(datasets.get(asset.symbol)!.at(-1)!.time);
+            }
+        }
+        expect(loaded).to.deep.equal(["UP", "DOWN"]);
+    });
+});
+
 describe("finder server plugin heap guard", () => {
     it("returns null for small universes regardless of heap", () => {
         expect(resolveFinderUniverseHeapWarning(50, 4096)).to.equal(null);
@@ -949,6 +1031,7 @@ describe("finder server plugin route-level authorization (audit Finding 1)", () 
     // routes enforce.
     const ROUTES = [
         { path: "/api/finder/universe-run", method: "POST" },
+        { path: "/api/finder/asset-opportunity-run", method: "POST" },
         { path: "/api/finder/stop", method: "POST" },
         { path: "/api/finder/status", method: "GET" },
         { path: "/api/finder/invalidate-cache", method: "POST" },

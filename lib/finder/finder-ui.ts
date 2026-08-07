@@ -4,7 +4,7 @@ import {
     formatProfitFactor,
     formatSignedCompactDollar,
 } from "../ui-formatters";
-import type { FinderMode, FinderOosVerdict, FinderRandomBenchmark, FinderResult, FinderUniverseCandidate, FinderUniverseOosAggregate, FinderUniverseSymbolMetrics } from "../types/finder";
+import type { FinderAssetOpportunityResult, FinderMode, FinderOosVerdict, FinderRandomBenchmark, FinderResult, FinderUniverseCandidate, FinderUniverseOosAggregate, FinderUniverseSymbolMetrics } from "../types/finder";
 import type { BacktestResult, StrategyParams, Time } from "../types/strategies";
 import { getFinderSelectionResult } from "./finder-engine";
 import { computePerformanceVerdict, computeStrategyVerdict } from "./finder-universe-metrics";
@@ -309,6 +309,75 @@ export class FinderUI {
                 metrics,
                 details,
                 detailLines: this.formatUniverseExitStrategyDetail(item),
+            }));
+        });
+        list.appendChild(fragment);
+    }
+
+    public renderAssetOpportunityResults(results: FinderAssetOpportunityResult[]): void {
+        const list = this.getListElement();
+        const copyButton = this.getCopyButton();
+        list.innerHTML = "";
+
+        if (results.length === 0) {
+            setVisible("finderEmpty", true);
+            if (copyButton) copyButton.disabled = true;
+            return;
+        }
+
+        setVisible("finderEmpty", false);
+        if (copyButton) copyButton.disabled = false;
+
+        const fragment = document.createDocumentFragment();
+        results.forEach((item, index) => {
+            const title = document.createElement("div");
+            title.className = "finder-title";
+            const symbol = document.createElement("span");
+            symbol.textContent = item.symbol;
+            title.appendChild(symbol);
+            const grade = document.createElement("span");
+            grade.className = `finder-title-badge finder-title-badge-${item.grade}`;
+            grade.textContent = item.grade.toUpperCase();
+            title.appendChild(grade);
+
+            const metrics = document.createElement("div");
+            metrics.className = "finder-metrics";
+            const selection = item.selectionResult;
+            metrics.appendChild(this.createMetricChip(`${item.direction} ${item.freshStatus}`));
+            metrics.appendChild(this.createMetricChip(`Rank ${item.historicalRank}/${item.totalCandidatesEvaluated}`));
+            metrics.appendChild(this.createMetricChip(`Support ${item.support.freshSameDirection}/${item.support.poolSize}`));
+            metrics.appendChild(this.createMetricChip(`Agree ${(item.support.directionAgreementRatio * 100).toFixed(0)}%`));
+            metrics.appendChild(this.createMetricChip(`Exp ${selection.expectancy.toFixed(2)}`));
+            metrics.appendChild(this.createMetricChip(`PF ${formatProfitFactor(selection.profitFactor)}`));
+            metrics.appendChild(this.createMetricChip(`Net ${this.formatCurrency(selection.netProfit)}`));
+            metrics.appendChild(this.createMetricChip(`DD ${selection.maxDrawdownPercent.toFixed(2)}%`));
+            metrics.appendChild(this.createMetricChip(`Sharpe ${selection.sharpeRatio.toFixed(2)}`));
+            metrics.appendChild(this.createMetricChip(`Trades ${selection.totalTrades}`));
+            if (item.oosResult && item.oosVerdict) {
+                metrics.appendChild(this.createOosMetricChip(
+                    item.oosResult.netProfit,
+                    item.oosResult.profitFactor,
+                    item.oosResult.totalTrades,
+                    item.oosVerdict,
+                ));
+            }
+
+            const signalTime = item.latestSignalTime ? this.formatTime(item.latestSignalTime) : "none";
+            const detailLines = [
+                `Signal ${signalTime} | age ${item.signalAgeBars} bars | fill ${item.fillTiming}`,
+                `Strategy: ${item.strategyName} (${item.strategyKey})`,
+            ];
+            if (item.exitStrategyKey) {
+                detailLines.push(`Exit override: ${item.exitStrategyName ?? item.exitStrategyKey}`);
+            }
+
+            fragment.appendChild(this.createResultRow({
+                index,
+                title,
+                subText: `${item.strategyKey} | ${item.direction} entry | ${item.freshStatus}`,
+                paramsText: this.formatParams(item.params),
+                detailLines,
+                metrics,
             }));
         });
         list.appendChild(fragment);

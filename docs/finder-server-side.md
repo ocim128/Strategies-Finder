@@ -7,6 +7,29 @@ authoritative terminal candidate slice. The browser is the control and
 rendering layer and can reattach to an in-flight or completed job after a tab
 reload. Current-chart Finder remains browser-side.
 
+## Asset Opportunity
+
+Asset Opportunity uses the same server owner, run id, Stop route, and reload
+reattach path as Symbol Universe, but evaluates one symbol at a time. The
+browser receives only scalar opportunity rows; the terminal slice is bounded
+by the existing Finder `topN` control. Each asset reserves its latest closed
+candle for fresh-entry detection and searches historical candidates without
+that candle.
+
+The server caps a run at 1,000 symbols and 250,000 estimated candidate
+evaluations, where the estimate is
+`symbols × selectedStrategies × (maxRuns + candidatePoolSize)`.
+Reduce the symbol list or `maxRuns` when the request exceeds that cap. The
+server also requires random Finder mode and clamps the candidate pool to
+1–50. These are CPU/workload limits; they do not change the Current Chart or
+Symbol Universe limits.
+
+Asset runs emit bounded debug events named
+`finder.asset_opportunity.start`, `finder.asset_opportunity.asset.complete`,
+`finder.asset_opportunity.run.complete`, `finder.asset_opportunity.run.cancelled`,
+and `finder.asset_opportunity.run.failed`. Event payloads contain counts,
+grades, symbols, timings, and errors only—never candles, signals, or trades.
+
 ## Runtime contract
 
 - Start with `npm run dev` for development. `vite preview` also registers the

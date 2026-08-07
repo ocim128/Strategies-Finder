@@ -8,6 +8,7 @@
             <select class="param-input" id="finderScope">
                 <option value="current_chart" selected>Current Chart</option>
                 <option value="symbol_universe">Symbol Universe</option>
+                <option value="asset_opportunity">Asset Opportunity</option>
             </select>
         </div>
     </div>
@@ -133,8 +134,22 @@
             <label class="param-label" for="finderUniverseSymbols">Symbols</label>
             <textarea class="param-input" id="finderUniverseSymbols" rows="6" placeholder="AAPL&#10;MSFT&#10;NVDA&#10;BTCUSDT"></textarea>
         </div>
-        <div class="param-hint">One symbol per line or comma-separated. Universe mode reuses the current interval and settings. Local Seeds switches to 1d.</div>
+        <div class="param-hint">One symbol per line or comma-separated. Both multi-asset scopes reuse the current interval and settings. Local Seeds switches to 1d.</div>
         <div class="finder-strategy-summary" id="finderUniverseSummary">0 symbols</div>
+        <div id="finderAssetOpportunitySettings" style="display:none;">
+            <div class="param-row" style="margin-top: 12px;">
+                <div class="param-group">
+                    <label class="param-label" for="finderAssetCandidatePoolSize">Candidate Pool</label>
+                    <input type="number" class="param-input" id="finderAssetCandidatePoolSize" value="10" min="1" max="50">
+                </div>
+                <div class="param-group">
+                    <label class="param-label" for="finderAssetMinFreshSupport">Min Fresh Support</label>
+                    <input type="number" class="param-input" id="finderAssetMinFreshSupport" value="2" min="1" max="50">
+                </div>
+            </div>
+            <div class="param-hint">Searches each asset independently for every selected strategy; support counts only each sampled candidate pool.</div>
+        </div>
+        <div id="finderUniverseFilters">
         <div class="param-row" style="margin-top: 12px;">
             <div class="param-group">
                 <label class="param-label" for="finderUniverseMinActiveSymbols">Min Active Symbols</label>
@@ -150,6 +165,7 @@
                 <label class="param-label" for="finderUniverseMinProfitableActiveRatio">Min Profitable Ratio</label>
                 <input type="number" class="param-input" id="finderUniverseMinProfitableActiveRatio" value="0.5" min="0" max="1" step="0.05">
             </div>
+        </div>
         </div>
     </div>
 

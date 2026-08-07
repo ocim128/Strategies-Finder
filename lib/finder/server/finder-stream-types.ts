@@ -33,6 +33,8 @@
 
 import type { BatchDatasetCacheStats } from "../../batch-backtest/batch-dataset-loader-core";
 import type {
+    FinderAssetOpportunityDiagnostics,
+    FinderAssetOpportunityResult,
     FinderDiagnostics,
     FinderUniverseCandidate,
     FinderUniverseSymbolResult,
@@ -51,6 +53,15 @@ import type { StrategyParams } from "../../types/strategies";
  * runs after the merged IS survivors are finalized.
  */
 export type FinderJobPhase = "loading" | "evaluating" | "oos" | "done" | "cancelled" | "fatal";
+
+/**
+ * The kind of server-owned Finder job. `symbol_universe` evaluates strategies
+ * across a shared universe; `asset_opportunity` searches independently per
+ * asset and ranks assets by fresh-entry evidence. The discriminant is a
+ * wire-level field so the status snapshot + terminal payload can distinguish
+ * which terminal slice they carry.
+ */
+export type FinderJobKind = "symbol_universe" | "asset_opportunity";
 
 // ---------------------------------------------------------------------------
 // Stream events (NDJSON, one JSON object per line)
@@ -118,6 +129,84 @@ export type FinderStreamEvent =
     }
     | { type: "fatal"; runId: string; error: string };
 
+/**
+ * Asset Opportunity job stream events. The discriminant on the `type` field
+ * keeps them distinct from the universe events, so the same `consumeNdjsonStream`
+ * dispatch maps `asset_start`/`asset_progress`/`asset_complete`/`asset_done`
+ * onto camelCase handler keys without colliding with the universe handlers.
+ *
+ * The `asset_complete` event carries one scalar asset result (fresh entry
+ * only). Assets with no fresh entry or a failure are carried in the terminal
+ * `asset_done` payload's `diagnostics.failedAssets` / counts, not as
+ * individual events (they are not display rows).
+ */
+export type FinderAssetOpportunityStreamEvent =
+    | {
+        type: "asset_start";
+        runId: string;
+        totalAssets: number;
+        interval: string;
+        strategyKey: string;
+        strategyName: string;
+        strategyKeys: string[];
+        strategyNames: string[];
+    }
+    | {
+        type: "asset_progress";
+        percent: number;
+        text: string;
+        status: string;
+        phase: FinderJobPhase;
+        /** 0-based index of the asset currently being evaluated. */
+        assetIndex: number;
+        /** Total number of assets in the job. */
+        totalAssets: number;
+        /** True when the job is running its OOS pass over retained candidates. */
+        oosActive: boolean;
+    }
+    | {
+        type: "asset_complete";
+        /** Scalar asset opportunity row. No OHLCV / signals / trades arrays. */
+        asset: FinderAssetOpportunityResult;
+        /** 0-based index of this asset in the job. */
+        assetIndex: number;
+        /** Total number of assets in the job. */
+        totalAssets: number;
+    }
+    | {
+        type: "asset_done";
+        ok: boolean;
+        cancelled: boolean;
+        runId: string;
+        interval: string;
+        totals: {
+            totalAssets: number;
+            assetsWithFreshEntry: number;
+            selectGradeAssets: number;
+            watchGradeAssets: number;
+            rejectGradeAssets: number;
+            failedAssets: number;
+            engineUsage?: FinderAssetOpportunityDiagnostics["engineUsage"];
+        };
+        summary: string;
+        /**
+         * Terminal authoritative asset slice (already sorted + sliced to topN).
+         * Carries the same scalar-only contract as `FinderAssetOpportunityResult`.
+         */
+        assets: FinderAssetOpportunityResult[];
+        diagnostics: FinderDiagnostics | null;
+        assetDiagnostics: FinderAssetOpportunityDiagnostics | null;
+    }
+    | { type: "asset_fatal"; runId: string; error: string };
+
+/**
+ * Union of every event the Finder server can emit. The browser's
+ * `consumeNdjsonStream` dispatches by the `type` field; the asset-opportunity
+ * events share the same wire shape as the universe events but with distinct
+ * `type` discriminants so handlers don't collide.
+ */
+export type AnyFinderStreamEvent = FinderStreamEvent | FinderAssetOpportunityStreamEvent;
+
 // ---------------------------------------------------------------------------
 // Status snapshot (GET /api/finder/status?runId=...)
 // ---------------------------------------------------------------------------
@@ -147,6 +236,13 @@ export type FinderRunStatusSnapshot = {
     finishedAt: number | null;
     phase: FinderJobPhase;
     interval: string;
+    /**
+     * Job kind discriminator. The browser uses this to decide which terminal
+     * slice (`terminalCandidates` vs `terminalAssets`) to adopt and which
+     * render path to take. Older server processes that pre-date this field
+     * report `symbol_universe` by default.
+     */
+    jobKind: FinderJobKind;
     /** Ordered selected entry strategy keys. */
     strategyKeys: string[];
     /** 0-based index of the strategy currently being evaluated. */
@@ -161,8 +257,10 @@ export type FinderRunStatusSnapshot = {
     loadedSymbols: number;
     failedSymbols: number;
     cancelled: boolean;
-    /** Present and authoritative only on the terminal snapshot. */
+    /** Present and authoritative only on the terminal symbol_universe snapshot. */
     terminalCandidates: FinderUniverseCandidate[] | null;
+    /** Present and authoritative only on the terminal asset_opportunity snapshot. */
+    terminalAssets: FinderAssetOpportunityResult[] | null;
     summary: string | null;
     /** Terminal fatal error; null for running, done, and cancelled jobs. */
     error: string | null;
@@ -173,6 +271,21 @@ export type FinderRunStatusSnapshot = {
         survivors: number;
         oosRemoved: number;
     } | null;
+    /**
+     * Asset-opportunity-specific counts. Present on terminal asset-opportunity
+     * snapshots; null for symbol_universe runs.
+     */
+    assetTotals: {
+        totalAssets: number;
+        assetsWithFreshEntry: number;
+        selectGradeAssets: number;
+        watchGradeAssets: number;
+        rejectGradeAssets: number;
+        failedAssets: number;
+        engineUsage?: FinderAssetOpportunityDiagnostics["engineUsage"];
+    } | null;
+    /** Terminal Asset Opportunity diagnostics, retained for reload reattach. */
+    assetDiagnostics?: FinderAssetOpportunityDiagnostics | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -259,6 +372,93 @@ export function assertCandidateIsScalar(candidate: FinderUniverseCandidate): voi
                     "the server must strip it before streaming.",
                 );
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Asset Opportunity scalar contract enforcement
+// ---------------------------------------------------------------------------
+
+/**
+ * Defensive scalar strip for an Asset Opportunity result. The asset type is
+ * already scalar by construction (no OHLCV / signals / trades arrays on the
+ * top level); `selectionResult` and `oosResult` are BacktestResult objects
+ * whose `trades` and `equityCurve` fields must be emptied before the result
+ * reaches the wire, since those are the heavy per-bar arrays the scalar
+ * contract forbids.
+ *
+ * Mirrors the intent of `toScalarCandidate` for the Universe scope.
+ */
+export function toScalarAssetResult(asset: FinderAssetOpportunityResult): FinderAssetOpportunityResult {
+    const clone: FinderAssetOpportunityResult = {
+        ...asset,
+        params: { ...(asset.params as StrategyParams) },
+        ...(asset.exitStrategyParams ? { exitStrategyParams: { ...(asset.exitStrategyParams as StrategyParams) } } : {}),
+        selectionResult: stripHeavyBacktestResultArrays(asset.selectionResult),
+        ...(asset.oosResult ? { oosResult: stripHeavyBacktestResultArrays(asset.oosResult) } : {}),
+        support: { ...asset.support },
+    };
+    for (const key of FINDER_CANDIDATE_FORBIDDEN_ARRAY_FIELDS) {
+        if (key in clone) {
+            delete (clone as unknown as Record<string, unknown>)[key];
+        }
+    }
+    return clone;
+}
+
+/**
+ * Strip the heavy per-bar arrays from a BacktestResult so the scalar wire
+ * contract holds. Returns a shallow clone with `trades` and `equityCurve`
+ * emptied; other scalar fields pass through unchanged.
+ */
+function stripHeavyBacktestResultArrays<T extends { trades: unknown[]; equityCurve: unknown[] }>(result: T): T {
+    return {
+        ...result,
+        trades: [],
+        equityCurve: [],
+    };
+}
+
+/**
+ * Assertion that an asset result carries no forbidden array fields (top level
+ * or on its nested BacktestResult). Called in production by the server plugin
+ * before writing each `asset_complete` event (and before the terminal
+ * `asset_done.assets` slice).
+ */
+export function assertAssetResultIsScalar(asset: FinderAssetOpportunityResult): void {
+    for (const key of FINDER_CANDIDATE_FORBIDDEN_ARRAY_FIELDS) {
+        if (key in asset) {
+            throw new Error(
+                `Asset Opportunity result for ${asset.symbol} carries forbidden array field "${key}" on the wire; ` +
+                "the server must strip it before streaming. See toScalarAssetResult.",
+            );
+        }
+    }
+    if (Array.isArray(asset.selectionResult.trades) && asset.selectionResult.trades.length > 0) {
+        throw new Error(
+            `Asset Opportunity result for ${asset.symbol} carries a non-empty selectionResult.trades array; ` +
+            "the server must strip it before streaming.",
+        );
+    }
+    if (Array.isArray(asset.selectionResult.equityCurve) && asset.selectionResult.equityCurve.length > 0) {
+        throw new Error(
+            `Asset Opportunity result for ${asset.symbol} carries a non-empty selectionResult.equityCurve array; ` +
+            "the server must strip it before streaming.",
+        );
+    }
+    if (asset.oosResult) {
+        if (Array.isArray(asset.oosResult.trades) && asset.oosResult.trades.length > 0) {
+            throw new Error(
+                `Asset Opportunity result for ${asset.symbol} carries a non-empty oosResult.trades array; ` +
+                "the server must strip it before streaming.",
+            );
+        }
+        if (Array.isArray(asset.oosResult.equityCurve) && asset.oosResult.equityCurve.length > 0) {
+            throw new Error(
+                `Asset Opportunity result for ${asset.symbol} carries a non-empty oosResult.equityCurve array; ` +
+                "the server must strip it before streaming.",
+            );
         }
     }
 }

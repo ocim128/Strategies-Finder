@@ -1,11 +1,12 @@
 import type {
+    FinderAssetOpportunityResult,
     FinderLatestResults,
     FinderResult,
     FinderUniverseCandidate,
     FinderUniverseSymbolMetrics,
     FinderUniverseSymbolResult,
 } from "../types/finder";
-import type { BacktestResult } from "../types/strategies";
+import type { BacktestResult, StrategyParams } from "../types/strategies";
 
 export const FINDER_RESULT_SNAPSHOT_LIMIT = 25;
 const FINDER_UNIVERSE_SYMBOL_SNAPSHOT_LIMIT = 200;
@@ -129,6 +130,31 @@ function compactUniverseCandidate(candidate: FinderUniverseCandidate): FinderUni
     };
 }
 
+function compactAssetOpportunityResult(result: FinderAssetOpportunityResult): FinderAssetOpportunityResult {
+    return {
+        symbol: result.symbol,
+        strategyKey: result.strategyKey,
+        strategyName: result.strategyName,
+        params: { ...(result.params as StrategyParams) },
+        ...(result.exitStrategyKey ? { exitStrategyKey: result.exitStrategyKey } : {}),
+        ...(result.exitStrategyName ? { exitStrategyName: result.exitStrategyName } : {}),
+        ...(result.exitStrategyParams ? { exitStrategyParams: { ...(result.exitStrategyParams as StrategyParams) } } : {}),
+        historicalRank: result.historicalRank,
+        totalCandidatesEvaluated: result.totalCandidatesEvaluated,
+        isHistoricalBest: result.isHistoricalBest,
+        freshStatus: result.freshStatus,
+        direction: result.direction,
+        latestSignalTime: result.latestSignalTime,
+        signalAgeBars: result.signalAgeBars,
+        fillTiming: result.fillTiming,
+        selectionResult: compactBacktestResult(result.selectionResult),
+        ...(result.oosResult ? { oosResult: compactBacktestResult(result.oosResult) } : {}),
+        ...(result.oosVerdict ? { oosVerdict: result.oosVerdict } : {}),
+        support: { ...result.support },
+        grade: result.grade,
+    };
+}
+
 export function compactFinderLatestResults(results: FinderLatestResults): FinderLatestResults {
     if (results.scope === "symbol_universe") {
         return {
@@ -136,6 +162,15 @@ export function compactFinderLatestResults(results: FinderLatestResults): Finder
             results: results.results
                 .slice(0, FINDER_RESULT_SNAPSHOT_LIMIT)
                 .map(compactUniverseCandidate),
+        };
+    }
+
+    if (results.scope === "asset_opportunity") {
+        return {
+            scope: "asset_opportunity",
+            results: results.results
+                .slice(0, FINDER_RESULT_SNAPSHOT_LIMIT)
+                .map(compactAssetOpportunityResult),
         };
     }
 
@@ -152,7 +187,11 @@ export function normalizeFinderLatestResultsSnapshot(value: unknown): FinderLate
         return null;
     }
     const candidate = value as Partial<FinderLatestResults>;
-    if (candidate.scope !== "current_chart" && candidate.scope !== "symbol_universe") {
+    if (
+        candidate.scope !== "current_chart"
+        && candidate.scope !== "symbol_universe"
+        && candidate.scope !== "asset_opportunity"
+    ) {
         return null;
     }
     if (!Array.isArray(candidate.results)) {

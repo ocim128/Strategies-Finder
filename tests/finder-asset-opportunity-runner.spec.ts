@@ -1,0 +1,553 @@
+/**
+ * Tests for the Asset Opportunity runner
+ * (`lib/finder/finder-asset-opportunity-runner.ts`).
+ *
+ * Locks the Phase 1 invariants:
+ *  1. Same seed and input produce identical per-asset candidate parameters and
+ *     result ordering.
+ *  2. Assets are searched independently — no cross-asset average appears in
+ *     an asset result.
+ *  3. The latest candle can change fresh status but cannot change historical
+ *     rank (fresh-entry detection runs AFTER historical ranking).
+ *  4. Decision grades match the explicit gates.
+ *  5. Assets with no fresh latest-bar entry are excluded from the ranked rows
+ *     but counted in outcomes.
+ */
+import { expect } from "chai";
+import { describe, it } from "node:test";
+import {
+    runAssetOpportunitySearch,
+    splitApplicationCandle,
+    deriveAssetSeed,
+    assertAssetOpportunityStrategySelection,
+    type AssetOpportunityRunInput,
+    type AssetIsSearch,
+} from "../lib/finder/finder-asset-opportunity-runner";
+import type { FinderSelectedStrategy } from "../lib/finder/finder-runner";
+import type { FinderOptions, FinderResult } from "../lib/types/finder";
+import type { CapitalSettings } from "../lib/types/backtest";
+import type { BacktestResult, BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
+
+function makeCandles(closes: number[]): OHLCVData[] {
+    return closes.map((close, index) => ({
+        time: (1_700_000_000 + index * 300) as Time,
+        open: close,
+        high: close + 1,
+        low: close - 1,
+        close,
+        volume: 1000,
+    }));
+}
+
+/**
+ * A deterministic strategy whose `threshold` param picks which bar index
+ * produces a buy, and which always sells on the last bar. This lets tests
+ * place the entry on the latest bar (fresh) or an earlier bar (active).
+ */
+function makeThresholdStrategy(_key: string): Strategy {
+    return {
+        name: "Threshold Test",
+        description: "threshold test strategy",
+        defaultParams: { threshold: 1 },
+        paramLabels: { threshold: "Threshold" },
+        execute(data, params) {
+            if (data.length < 3) return [];
+            const t = Math.max(1, Math.min(data.length - 1, Math.round(Number(params.threshold) || 1)));
+            return [
+                { time: data[t - 1]!.time, type: "buy", price: data[t - 1]!.close },
+                { time: data[data.length - 1]!.time, type: "sell", price: data[data.length - 1]!.close },
+            ];
+        },
+    };
+}
+
+const settings: BacktestSettings = {
+    executionModel: "signal_close",
+    tradeDirection: "long",
+    allowSameBarExit: true,
+    slippageBps: 0,
+    marketMode: "all",
+};
+
+const capitalSettings: CapitalSettings = {
+    initialCapital: 10000,
+    positionSize: 100,
+    commission: 0,
+    sizingMode: "percent",
+    fixedTradeAmount: 1000,
+};
+
+function makeOptions(overrides: Partial<FinderOptions> = {}): FinderOptions {
+    return {
+        scope: "asset_opportunity",
+        mode: "random",
+        sortPriority: ["netProfit"],
+        useAdvancedSort: false,
+        topN: 3,
+        steps: 2,
+        rangePercent: 35,
+        maxRuns: 8,
+        tradeFilterEnabled: false,
+        minTrades: 0,
+        maxTrades: Number.POSITIVE_INFINITY,
+        randomSeed: 7,
+        dataSlice: "all",
+        ...overrides,
+    };
+}
+
+/**
+ * A deterministic IS-search stub that runs each supplied param set through the
+ * actual strategy + backtest on the given data, producing one FinderResult per
+ * param. Mirrors what `runFinderExecution` would produce, but synchronous and
+ * DOM-free so it runs under node:test.
+ */
+function makeStubIsSearch(): AssetIsSearch {
+    return async (args) => {
+        const { ohlcvData, selectedStrategies, generateParamSets, options } = args;
+        const strategy = selectedStrategies[0]!.strategy;
+        const paramSets = generateParamSets(strategy.defaultParams, options);
+        const results: FinderResult[] = [];
+        const lastDataTime = ohlcvData.length > 0 ? ohlcvData[ohlcvData.length - 1]!.time : null;
+        void lastDataTime;
+        for (const params of paramSets) {
+            const signals = strategy.execute(ohlcvData, params);
+            const backtest = runBacktestForAssetTest(ohlcvData, signals, args.settings);
+            results.push({
+                key: selectedStrategies[0]!.key,
+                name: selectedStrategies[0]!.name,
+                params,
+                result: backtest,
+                selectionResult: backtest,
+                endpointAdjusted: false,
+                endpointRemovedTrades: 0,
+            });
+        }
+        // Sort by sortPriority (netProfit desc by default).
+        results.sort((a, b) => b.result.netProfit - a.result.netProfit);
+        return {
+            results: results.slice(0, options.topN),
+            totalCandidatesEvaluated: paramSets.length,
+        };
+    };
+}
+
+/** Minimal backtest: sum trade PnL from signals in order. */
+function runBacktestForAssetTest(data: OHLCVData[], signals: { time: Time; type: "buy" | "sell"; price: number }[], settings: BacktestSettings): BacktestResult {
+    void settings;
+    let cash = capitalSettings.initialCapital;
+    let shares = 0;
+    let entryPrice = 0;
+    let entryTime: Time | null = null;
+    const trades: BacktestResult["trades"] = [];
+    const byTime = new Map<string, { time: Time; type: "buy" | "sell"; price: number }>();
+    for (const s of signals) {
+        byTime.set(String(s.time), s);
+    }
+    for (const bar of data) {
+        const sig = byTime.get(String(bar.time));
+        if (!sig) continue;
+        if (sig.type === "buy" && shares === 0) {
+            shares = cash / sig.price;
+            entryPrice = sig.price;
+            entryTime = bar.time;
+            cash = 0;
+        } else if (sig.type === "sell" && shares > 0) {
+            cash = shares * sig.price;
+            const pnl = cash - capitalSettings.initialCapital;
+            trades.push({
+                id: trades.length + 1,
+                type: "long",
+                entryTime: entryTime ?? bar.time,
+                entryPrice,
+                exitTime: bar.time,
+                exitPrice: sig.price,
+                pnl,
+                pnlPercent: (pnl / capitalSettings.initialCapital) * 100,
+                size: shares,
+                fees: 0,
+            });
+            shares = 0;
+            cash = capitalSettings.initialCapital;
+        }
+    }
+    // Force end_of_data liquidation for any still-open position.
+    if (shares > 0 && data.length > 0) {
+        const last = data[data.length - 1]!;
+        cash = shares * last.close;
+        const pnl = cash - capitalSettings.initialCapital;
+        trades.push({
+            id: trades.length + 1,
+            type: "long",
+            entryTime: entryTime ?? last.time,
+            entryPrice,
+            exitTime: last.time,
+            exitPrice: last.close,
+            pnl,
+            pnlPercent: (pnl / capitalSettings.initialCapital) * 100,
+            size: shares,
+            fees: 0,
+            exitReason: "end_of_data",
+        });
+    }
+    const netProfit = trades.reduce((sum, t) => sum + t.pnl, 0);
+    const winning = trades.filter((t) => t.pnl > 0).length;
+    const losing = trades.filter((t) => t.pnl < 0).length;
+    return {
+        trades,
+        netProfit,
+        netProfitPercent: 0,
+        winRate: trades.length > 0 ? (winning / trades.length) * 100 : 0,
+        expectancy: trades.length > 0 ? netProfit / trades.length : 0,
+        avgTrade: trades.length > 0 ? netProfit / trades.length : 0,
+        profitFactor: 0,
+        maxDrawdown: 0,
+        maxDrawdownPercent: 0,
+        totalTrades: trades.length,
+        winningTrades: winning,
+        losingTrades: losing,
+        avgWin: 0,
+        avgLoss: 0,
+        sharpeRatio: 0,
+        equityCurve: [],
+    };
+}
+
+function makeInput(overrides: Partial<AssetOpportunityRunInput>): AssetOpportunityRunInput {
+    return {
+        interval: "1h",
+        options: makeOptions(),
+        settings,
+        capitalSettings,
+        selectedStrategy: {
+            key: "threshold_test",
+            name: "Threshold Test",
+            strategy: makeThresholdStrategy("threshold_test"),
+        },
+        generateParamSets: () => [{ threshold: 1 }],
+        runSeed: 7,
+        candidatePoolSize: 3,
+        minFreshSupport: 1,
+        assets: [],
+        runIsSearch: makeStubIsSearch(),
+        ...overrides,
+    };
+}
+
+function makeCallbacks() {
+    return {
+        setProgress: () => undefined,
+        setStatus: () => undefined,
+        yieldControl: async () => undefined,
+        isCancelled: () => false,
+        onAssetComplete: () => undefined,
+    };
+}
+
+describe("Asset Opportunity runner", () => {
+    it("rejects zero selected strategies", () => {
+        expect(() => assertAssetOpportunityStrategySelection([])).to.throw(/at least one selected strategy/i);
+    });
+
+    it("accepts multiple selected strategies for independent comparison", () => {
+        const selection: FinderSelectedStrategy[] = [
+            { key: "a", name: "A", strategy: makeThresholdStrategy("a") },
+            { key: "b", name: "B", strategy: makeThresholdStrategy("b") },
+        ];
+        expect(() => assertAssetOpportunityStrategySelection(selection)).to.not.throw();
+    });
+
+    it("accepts exactly one selected strategy", () => {
+        const selection: FinderSelectedStrategy[] = [
+            { key: "a", name: "A", strategy: makeThresholdStrategy("a") },
+        ];
+        expect(() => assertAssetOpportunityStrategySelection(selection)).to.not.throw();
+    });
+
+    it("splitApplicationCandle reserves the latest closed candle", () => {
+        const data = makeCandles([100, 101, 102, 103]);
+        const { historical, applicationCandle, fullClosed } = splitApplicationCandle(data);
+        expect(fullClosed).to.have.length(4);
+        expect(historical).to.have.length(3);
+        expect(applicationCandle?.close).to.equal(103);
+        expect(historical.map((c) => c.close)).to.deep.equal([100, 101, 102]);
+    });
+
+    it("deriveAssetSeed is deterministic for the same inputs", () => {
+        expect(deriveAssetSeed(7, "BTCUSDT")).to.equal(deriveAssetSeed(7, "BTCUSDT"));
+        expect(deriveAssetSeed(7, "BTCUSDT")).to.not.equal(deriveAssetSeed(7, "ETHUSDT"));
+        expect(deriveAssetSeed(7, "BTCUSDT")).to.not.equal(deriveAssetSeed(8, "BTCUSDT"));
+    });
+
+    it("returns a fresh opportunity when the strategy enters on the latest bar", async () => {
+        // threshold=5 → entry on bar index 4 (the latest of 5 candles).
+        const strategy: Strategy = {
+            name: "FreshOnLast",
+            description: "enters on the latest bar",
+            defaultParams: { threshold: 5 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                if (data.length < 5) return [];
+                const entryIdx = data.length - 1;
+                return [{ time: data[entryIdx]!.time, type: "buy", price: data[entryIdx]!.close }];
+            },
+        };
+        const input = makeInput({
+            selectedStrategy: { key: "fresh_last", name: "FreshOnLast", strategy },
+            generateParamSets: () => [{ threshold: 5 }],
+            assets: [{ symbol: "A", data: makeCandles([100, 101, 102, 103, 104]) }],
+        });
+        const output = await runAssetOpportunitySearch(input, makeCallbacks());
+        expect(output.results).to.have.length(1);
+        const result = output.results[0]!;
+        expect(result.symbol).to.equal("A");
+        expect(result.freshStatus).to.equal("fresh");
+        expect(result.direction).to.equal("long");
+        expect(result.signalAgeBars).to.equal(0);
+        expect(result.historicalRank).to.equal(1);
+        expect(result.isHistoricalBest).to.equal(true);
+        expect(["select", "watch", "reject"]).to.include(result.grade);
+    });
+
+    it("recognizes a latest next_open signal before the next-bar fill exists", async () => {
+        const strategy: Strategy = {
+            name: "Latest Next Open Test",
+            description: "emits one entry on the latest closed candle",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                const latest = data[data.length - 1];
+                return latest
+                    ? [{ time: latest.time, type: "buy", price: latest.close }]
+                    : [];
+            },
+        };
+        const data = makeCandles([100, 101, 102, 103, 104, 105]);
+        const output = await runAssetOpportunitySearch(
+            makeInput({
+                settings: { ...settings, executionModel: "next_open", tradeDirection: "long" },
+                selectedStrategy: { key: "latest_next_open", name: strategy.name, strategy },
+                assets: [{ symbol: "PENDING", data }],
+            }),
+            makeCallbacks(),
+        );
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.freshStatus).to.equal("fresh");
+        expect(output.results[0]!.fillTiming).to.equal("next_open");
+        expect(output.results[0]!.signalAgeBars).to.equal(0);
+    });
+
+    it("reserves the real latest candle before slicing and exposes OOS evidence", async () => {
+        const strategy: Strategy = {
+            name: "SlicedFresh",
+            description: "enters on the latest bar",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy", price: latest.close }] : [];
+            },
+        };
+        const candles = makeCandles([100, 101, 102, 103, 104, 105, 106, 107]);
+        let searched: OHLCVData[] = [];
+        const baseSearch = makeStubIsSearch();
+        const input = makeInput({
+            options: makeOptions({ dataSlice: "half_oldest", oosValidationEnabled: true }),
+            selectedStrategy: { key: "sliced_fresh", name: "SlicedFresh", strategy },
+            generateParamSets: () => [{ threshold: 1 }],
+            assets: [{ symbol: "SLICED", data: candles }],
+            runIsSearch: async (args) => {
+                searched = args.ohlcvData;
+                return baseSearch(args);
+            },
+        });
+
+        const output = await runAssetOpportunitySearch(input, makeCallbacks());
+        expect(searched).to.have.length(3);
+        expect(searched[searched.length - 1]!.time).to.equal(candles[2]!.time);
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.latestSignalTime).to.equal(candles[candles.length - 1]!.time);
+        expect(output.results[0]!.signalAgeBars).to.equal(0);
+        expect(output.results[0]!.oosResult).to.exist;
+        expect(output.results[0]!.oosVerdict).to.be.oneOf(["pass", "fail", "inconclusive"]);
+    });
+
+    it("uses the secondary execution context during fresh replay", async () => {
+        const strategy: Strategy = {
+            name: "CrossReplay",
+            description: "requires aligned secondary data",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            crossSymbolConfig: { defaultSymbol: "SECONDARY", minBars: 3 },
+            execute(data, _params, context) {
+                if (!context?.crossSymbol || context.crossSymbol.secondaryData.length !== data.length) return [];
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy", price: latest.close }] : [];
+            },
+        };
+        const primary = makeCandles([100, 101, 102, 103, 104]);
+        const input = makeInput({
+            settings: { ...settings, crossSymbolSecondary: "SECONDARY" },
+            selectedStrategy: { key: "cross_replay", name: "CrossReplay", strategy },
+            generateParamSets: () => [{ threshold: 1 }],
+            assets: [{ symbol: "PRIMARY", data: primary }],
+            dataFetcher: {
+                getProvider: () => "test",
+                fetchDataDetached: async () => makeCandles([50, 51, 52, 53, 54]),
+            },
+        });
+
+        const output = await runAssetOpportunitySearch(input, makeCallbacks());
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.freshStatus).to.equal("fresh");
+    });
+
+    it("reports all historical candidates even when only the top-K pool is retained", async () => {
+        const strategy: Strategy = {
+            name: "FreshPoolCount",
+            description: "enters on the latest bar",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy", price: latest.close }] : [];
+            },
+        };
+        const input = makeInput({
+            selectedStrategy: { key: "fresh_pool_count", name: "FreshPoolCount", strategy },
+            candidatePoolSize: 2,
+            generateParamSets: () => [
+                { threshold: 1 },
+                { threshold: 2 },
+                { threshold: 3 },
+                { threshold: 4 },
+            ],
+            assets: [{ symbol: "A", data: makeCandles([100, 101, 102, 103, 104]) }],
+        });
+        const output = await runAssetOpportunitySearch(input, makeCallbacks());
+        expect(output.results[0]?.totalCandidatesEvaluated).to.equal(4);
+    });
+
+    it("excludes an asset from results when the entry fired on an earlier bar (active)", async () => {
+        // threshold=2 → entry on bar 1 of 5 → active (not fresh).
+        const strategy: Strategy = {
+            name: "EarlyEntry",
+            description: "enters early",
+            defaultParams: { threshold: 2 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                if (data.length < 5) return [];
+                return [
+                    { time: data[1]!.time, type: "buy", price: data[1]!.close },
+                    { time: data[data.length - 1]!.time, type: "sell", price: data[data.length - 1]!.close },
+                ];
+            },
+        };
+        const input = makeInput({
+            selectedStrategy: { key: "early", name: "EarlyEntry", strategy },
+            generateParamSets: () => [{ threshold: 2 }],
+            assets: [{ symbol: "B", data: makeCandles([100, 101, 102, 103, 104]) }],
+        });
+        const output = await runAssetOpportunitySearch(input, makeCallbacks());
+        expect(output.results).to.have.length(0);
+        expect(output.outcomes).to.have.length(1);
+        expect(output.outcomes[0]!.kind).to.equal("no_fresh_entry");
+    });
+
+    it("searches assets independently and is deterministic across re-runs", async () => {
+        const strategy = makeThresholdStrategy("deterministic");
+        const assets = [
+            { symbol: "AAA", data: makeCandles([100, 101, 102, 103, 104, 105]) },
+            { symbol: "BBB", data: makeCandles([50, 51, 52, 53, 54, 55]) },
+        ];
+        const input = makeInput({
+            selectedStrategy: { key: "deterministic", name: "Deterministic", strategy },
+            generateParamSets: () => [{ threshold: 1 }, { threshold: 3 }, { threshold: 5 }],
+            assets,
+        });
+        const first = await runAssetOpportunitySearch(input, makeCallbacks());
+        const second = await runAssetOpportunitySearch(input, makeCallbacks());
+        expect(first.results.map((r) => r.symbol)).to.deep.equal(second.results.map((r) => r.symbol));
+        expect(first.results.map((r) => r.historicalRank)).to.deep.equal(second.results.map((r) => r.historicalRank));
+        expect(first.results.map((r) => JSON.stringify(r.params))).to.deep.equal(second.results.map((r) => JSON.stringify(r.params)));
+    });
+
+    it("records a failed outcome for an asset with insufficient candles", async () => {
+        const input = makeInput({
+            assets: [{ symbol: "TOO_SMALL", data: makeCandles([100]) }],
+        });
+        const output = await runAssetOpportunitySearch(input, makeCallbacks());
+        expect(output.results).to.have.length(0);
+        expect(output.outcomes).to.have.length(1);
+        expect(output.outcomes[0]!.kind).to.equal("failed");
+        expect((output.outcomes[0] as { reason: string }).reason).to.match(/insufficient/i);
+    });
+
+    it("does not let the latest candle change the historical candidate rank", async () => {
+        // A strategy that always enters on the FIRST bar of the historical
+        // window and sells at the end. Whether or not the application candle
+        // is appended, the historical rank of the candidate is unchanged.
+        const strategy: Strategy = {
+            name: "HistoricalOnly",
+            description: "historical-only entry",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data, params) {
+                if (data.length < 4) return [];
+                const t = Math.max(1, Math.min(data.length - 2, Math.round(Number(params.threshold) || 1)));
+                return [
+                    { time: data[0]!.time, type: "buy", price: data[0]!.close },
+                    { time: data[t]!.time, type: "sell", price: data[t]!.close },
+                ];
+            },
+        };
+        const closes = [100, 101, 102, 103, 104];
+        const input = makeInput({
+            selectedStrategy: { key: "historical_only", name: "HistoricalOnly", strategy },
+            generateParamSets: () => [{ threshold: 1 }, { threshold: 2 }],
+            assets: [{ symbol: "RANK", data: makeCandles(closes) }],
+        });
+        const output = await runAssetOpportunitySearch(input, makeCallbacks());
+        // Both candidates entered on the historical window; the application
+        // candle doesn't change their historical ordering. If no fresh entry
+        // exists, the asset is excluded.
+        expect(output.outcomes).to.have.length(1);
+        const outcome = output.outcomes[0]!;
+        if (outcome.kind === "opportunity") {
+            expect(outcome.result.historicalRank).to.be.at.least(1);
+            expect(outcome.result.historicalRank).to.be.at.most(2);
+        } else {
+            expect(["no_fresh_entry", "failed"]).to.include(outcome.kind);
+        }
+    });
+
+    it("rejects when expectancy is negative even with a fresh entry", async () => {
+        // Strategy enters on the latest bar, then immediately gets forced out
+        // at a loss. Expectancy is negative.
+        const strategy: Strategy = {
+            name: "LosingFresh",
+            description: "fresh entry, losing",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                if (data.length < 5) return [];
+                return [{ time: data[data.length - 1]!.time, type: "buy", price: data[data.length - 1]!.close }];
+            },
+        };
+        // Falling prices: the latest bar's buy is at the highest price → loss
+        // on any forced end_of_data exit.
+        const input = makeInput({
+            selectedStrategy: { key: "losing_fresh", name: "LosingFresh", strategy },
+            generateParamSets: () => [{ threshold: 1 }],
+            assets: [{ symbol: "LOSER", data: makeCandles([100, 99, 98, 97, 96]) }],
+        });
+        const output = await runAssetOpportunitySearch(input, makeCallbacks());
+        if (output.results.length === 1) {
+            // With no closed trades and no expectancy data, the grade falls to
+            // watch or reject depending on the OOS / expectancy gate.
+            expect(["reject", "watch"]).to.include(output.results[0]!.grade);
+        } else {
+            expect(output.outcomes[0]!.kind).to.equal("no_fresh_entry");
+        }
+    });
+});

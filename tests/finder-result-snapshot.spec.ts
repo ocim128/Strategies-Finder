@@ -5,7 +5,7 @@ import {
     compactFinderLatestResults,
     normalizeFinderLatestResultsSnapshot,
 } from "../lib/finder/finder-result-snapshot";
-import type { FinderLatestResults, FinderResult, FinderUniverseCandidate } from "../lib/types/finder";
+import type { FinderAssetOpportunityResult, FinderLatestResults, FinderResult, FinderUniverseCandidate } from "../lib/types/finder";
 import type { BacktestResult, Time } from "../lib/types/strategies";
 
 function makeBacktestResult(overrides: Partial<BacktestResult> = {}): BacktestResult {
@@ -91,6 +91,33 @@ function makeUniverseCandidate(index: number): FinderUniverseCandidate {
     };
 }
 
+function makeAssetOpportunityResult(index: number): FinderAssetOpportunityResult {
+    return {
+        symbol: `ASSET${index}`,
+        strategyKey: "strategy_1",
+        strategyName: "Strategy 1",
+        params: { lookback: index },
+        historicalRank: 1,
+        totalCandidatesEvaluated: 10,
+        isHistoricalBest: true,
+        freshStatus: "fresh",
+        direction: "long",
+        latestSignalTime: 100 as Time,
+        signalAgeBars: 0,
+        fillTiming: "signal_close",
+        selectionResult: makeBacktestResult(),
+        support: {
+            freshLongCandidates: 2,
+            freshShortCandidates: 0,
+            freshSameDirection: 2,
+            poolSize: 10,
+            bestFreshRank: 1,
+            directionAgreementRatio: 1,
+        },
+        grade: "select",
+    };
+}
+
 describe("Finder result snapshots", () => {
     it("keeps current-chart snapshots bounded and strips heavy backtest arrays", () => {
         const compact = compactFinderLatestResults({
@@ -133,6 +160,19 @@ describe("Finder result snapshots", () => {
         expect(normalized.scope).to.equal("current_chart");
         if (normalized.scope !== "current_chart") throw new Error("unexpected scope");
         expect(normalized.results[0]!.result.trades).to.deep.equal([]);
+    });
+
+    it("keeps asset-opportunity snapshots scalar and bounded", () => {
+        const compact = compactFinderLatestResults({
+            scope: "asset_opportunity",
+            results: Array.from({ length: FINDER_RESULT_SNAPSHOT_LIMIT + 5 }, (_, index) => makeAssetOpportunityResult(index)),
+        });
+
+        expect(compact.scope).to.equal("asset_opportunity");
+        if (compact.scope !== "asset_opportunity") throw new Error("unexpected scope");
+        expect(compact.results).to.have.length(FINDER_RESULT_SNAPSHOT_LIMIT);
+        expect(compact.results[0]!.selectionResult.trades).to.deep.equal([]);
+        expect(compact.results[0]!.selectionResult.equityCurve).to.deep.equal([]);
     });
 
     it("defaults new drawdown aggregates when restoring an older universe snapshot", () => {

@@ -4,7 +4,14 @@ import type { PolymarketExitMode } from "../polymarket-exit-mode";
 
 export type FinderMode = 'default' | 'grid' | 'random' | 'genetic';
 export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'accuracyTrades' | 'volume' | 'expectancy' | 'expectancyTrades' | 'profitFactor' | 'profitFactorTrades' | 'sizedNet';
-export type FinderScope = 'current_chart' | 'symbol_universe';
+/**
+ * Finder execution scope.
+ * - `current_chart`: search candidates for the current chart;
+ * - `symbol_universe`: search candidates whose performance aggregates across the supplied symbols;
+ * - `asset_opportunity`: search candidates independently per symbol, then rank symbols by
+ *   current fresh-entry evidence.
+ */
+export type FinderScope = 'current_chart' | 'symbol_universe' | 'asset_opportunity';
 export type FinderDataSlice = 'all' | '1' | '2' | '3' | '4' | '5' | 'half_oldest' | 'half_newest';
 /**
  * Out-of-sample validation verdict for the complementary data window.
@@ -59,6 +66,23 @@ export interface FinderUniverseOptions {
     minTotalTrades: number;
     minProfitableActiveRatio: number;
     sortPriority: FinderUniverseMetric[];
+}
+
+/**
+ * Asset Opportunity scope options. Drives the per-asset fresh-entry search.
+ *
+ * - `symbols`: asset list to search independently.
+ * - `candidatePoolSize`: internal top-K historical candidate pool kept per asset
+ *   before fresh-entry detection. The latest bar's signal can only promote a
+ *   candidate inside this pool; the existing `topN` remains the number of final
+ *   asset rows shown to the user.
+ * - `minFreshSupport`: minimum number of same-direction fresh candidates within
+ *   the pool required for a `select` grade.
+ */
+export interface FinderAssetOpportunityOptions {
+    symbols: string[];
+    candidatePoolSize: number;
+    minFreshSupport: number;
 }
 
 export interface FinderOptions {
@@ -120,6 +144,10 @@ export interface FinderOptions {
      */
     oosValidationEnabled?: boolean;
     universe?: FinderUniverseOptions;
+    /**
+     * Asset Opportunity scope options. Honored only when `scope === 'asset_opportunity'`.
+     */
+    assetOpportunity?: FinderAssetOpportunityOptions;
 }
 
 export interface EndpointSelectionAdjustment {
@@ -281,9 +309,112 @@ export interface FinderUniverseCandidate {
     oosAggregate?: FinderUniverseOosAggregate;
 }
 
+/**
+ * Fresh-entry status of the latest closed candle for one asset candidate.
+ *
+ * - `fresh`: a NEW entry transition occurred on the latest closed candle (the
+ *   candidate was flat before and entered on the last bar; or reversed).
+ * - `active`: the candidate is in a position whose entry happened on an earlier
+ *   bar (a repeated state signal). Not a fresh opportunity.
+ * - `flat`: no position is open and no new entry fired on the latest bar.
+ *
+ * The fresh-entry detector re-runs the strategy on the full closed data
+ * (including the application candle) and inspects the latest trade + signal.
+ */
+export type FinderAssetFreshStatus = 'fresh' | 'active' | 'flat';
+
+/**
+ * Modeled entry timing of the fresh signal. Mirrors the backtest execution model.
+ */
+export type FinderAssetFillTiming = 'signal_close' | 'next_open' | 'next_close';
+
+/**
+ * Direction of the fresh/active entry, derived from the latest executed trade.
+ */
+export type FinderAssetDirection = 'long' | 'short';
+
+/**
+ * Top-K support counts within the per-asset historical candidate pool. These
+ * describe the sampled top-K parameter pool; they are NOT claims about the
+ * full strategy parameter space.
+ */
+export interface FinderAssetSupportCounts {
+    /** Fresh long candidates within the pool (latest bar produced a long entry). */
+    freshLongCandidates: number;
+    /** Fresh short candidates within the pool (latest bar produced a short entry). */
+    freshShortCandidates: number;
+    /** Fresh candidates whose direction matches the winner's direction. */
+    freshSameDirection: number;
+    /** Total candidates carried in the historical pool (=== candidatePoolSize at most). */
+    poolSize: number;
+    /** Best (lowest) historical rank among fresh candidates in the pool. 1-based. */
+    bestFreshRank: number | null;
+    /** freshSameDirection / max(1, freshLongCandidates + freshShortCandidates). */
+    directionAgreementRatio: number;
+}
+
+/**
+ * Decision grade for one asset opportunity. An evidence grade, not a probability
+ * that the next trade will win.
+ *
+ * - `reject`: fresh entry exists but historical expectancy is negative or fewer
+ *   than the configured minimum historical trades.
+ * - `watch`: fresh entry and positive historical expectancy, but insufficient
+ *   same-direction top-K support or OOS is inconclusive.
+ * - `select`: fresh entry, minimum historical trades met, positive historical
+ *   expectancy, same-direction support at least `minFreshSupport`, and OOS pass
+ *   when OOS validation is enabled.
+ */
+export type FinderAssetDecisionGrade = 'select' | 'watch' | 'reject';
+
+/**
+ * One asset opportunity result. Built independently per asset — no value is
+ * averaged across assets. Every displayed row has a fresh entry; assets with
+ * no fresh latest-bar transition are excluded from results and counted only
+ * in diagnostics.
+ *
+ * The current signal is never used to choose the historical candidate rank; it
+ * is only evaluated after historical ranking.
+ */
+export interface FinderAssetOpportunityResult {
+    symbol: string;
+    strategyKey: string;
+    strategyName: string;
+    /** Winning candidate parameters (entry params; exit params split when override is on). */
+    params: StrategyParams;
+    /** Registry key of the sampled exit-strategy lib, when Exit Strategy Override is active. */
+    exitStrategyKey?: string;
+    /** Display name of the sampled exit-strategy lib, when Exit Strategy Override is active. */
+    exitStrategyName?: string;
+    /** Sampled exit-strategy params (prefix already stripped), when Exit Strategy Override is active. */
+    exitStrategyParams?: StrategyParams;
+    /** Historical candidate rank inside the per-asset pool (1-based; 1 is best). */
+    historicalRank: number;
+    /** Total historical candidates evaluated by the random search for this asset. */
+    totalCandidatesEvaluated: number;
+    /** True when the winner is the historically-best candidate in the pool. */
+    isHistoricalBest: boolean;
+    freshStatus: FinderAssetFreshStatus;
+    direction: FinderAssetDirection;
+    /** Latest closed-candle signal time (unix seconds). Null when no signal exists. */
+    latestSignalTime: Time | null;
+    /** Signal age in bars, relative to the latest closed candle. 0 = fresh on the latest bar. */
+    signalAgeBars: number;
+    fillTiming: FinderAssetFillTiming;
+    /** Historical selection metrics (endpoint-adjusted). */
+    selectionResult: BacktestResult;
+    /** OOS metrics on the complementary window, when OOS validation is enabled. */
+    oosResult?: BacktestResult;
+    /** OOS gate verdict. Present iff oosResult is present. */
+    oosVerdict?: FinderOosVerdict;
+    support: FinderAssetSupportCounts;
+    grade: FinderAssetDecisionGrade;
+}
+
 export type FinderLatestResults =
     | { scope: 'current_chart'; results: FinderResult[] }
-    | { scope: 'symbol_universe'; results: FinderUniverseCandidate[] };
+    | { scope: 'symbol_universe'; results: FinderUniverseCandidate[] }
+    | { scope: 'asset_opportunity'; results: FinderAssetOpportunityResult[] };
 
 export interface FinderRandomBenchmark {
     pipeline: 'standard' | 'rust_native' | 'ts_funnel' | 'rust_funnel';
@@ -481,5 +612,43 @@ export interface FinderDiagnostics {
     backtest?: FinderBacktestDiagnostics;
     failureBreakdown?: FinderFailureDiagnostics[];
     universe?: FinderUniverseDiagnostics;
+    /**
+     * Asset Opportunity scope diagnostics. Tracks per-asset outcome counts and
+     * per-asset load/run failures. Independent of the `universe` diagnostics.
+     */
+    assetOpportunity?: FinderAssetOpportunityDiagnostics;
+}
+
+/**
+ * Diagnostics for one Asset Opportunity run. Reports per-asset outcomes and
+ * failures so the user can see how many assets had no fresh entry, were
+ * rejected, or failed to load.
+ */
+export interface FinderAssetOpportunityDiagnostics {
+    totalAssets: number;
+    /** Assets that produced at least one fresh candidate. */
+    assetsWithFreshEntry: number;
+    /** Assets that loaded and searched but had no fresh candidate. */
+    assetsWithNoFreshEntry: number;
+    /** Assets that produced at least one `select` grade. */
+    selectGradeAssets: number;
+    /** Assets that produced at least one `watch` grade. */
+    watchGradeAssets: number;
+    /** Assets whose best fresh candidate was rejected. */
+    rejectGradeAssets: number;
+    failedAssets: Array<{
+        symbol: string;
+        reason: string;
+    }>;
+    /** Actual executor results, independent of the requested engine preference. */
+    engineUsage?: {
+        rustRequested: boolean;
+        rustCompletedRuns: number;
+        typescriptCompletedRuns: number;
+        typescriptReasons?: Array<{
+            reason: string;
+            runs: number;
+        }>;
+    };
 }
 

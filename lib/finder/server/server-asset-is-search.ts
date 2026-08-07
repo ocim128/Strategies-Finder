@@ -1,0 +1,241 @@
+/**
+ * Server-safe in-sample candidate search for the Asset Opportunity scope.
+ *
+ * This leaf replaces the browser-bound `runFinderExecution` call in the server
+ * path. The browser path pulls `lightweight-charts` transitively via
+ * `../strategies/index` through `finder-runner.ts`, which is ESM-only and
+ * cannot be bundled into the Vite config. This leaf reaches only
+ * server-safe modules (matching `finder-runner-universe.ts`'s import hygiene):
+ * `../backtest-executor`, `./finder-runner-core`, `./exit-strategy-param-prefix`,
+ * and `./finder-manager-logic`.
+ *
+ * The function is a minimal IS search: it generates candidate params from the
+ * injected param-space generator, executes each on the supplied historical
+ * data, ranks them by the same sort priority, and returns the bounded top-K
+ * result set. OOS validation is NOT done here — it is done by the caller
+ * (Asset Opportunity server job) via the extracted candidate-OOS leaf.
+ *
+ * Determinism: the caller injects a deterministic per-asset seed through
+ * `options.randomSeed`; the param-space generator consumes it unchanged, so
+ * the same seed + same inputs produce the same candidate ordering.
+ */
+
+import type {
+    BacktestResult,
+    BacktestSettings,
+    OHLCVData,
+    StrategyParams,
+} from "../../types/strategies";
+import type { CapitalSettings } from "../../types/backtest";
+import type { FinderOptions, FinderResult } from "../../types/finder";
+import type { FinderSelectedStrategy } from "../finder-runner";
+import type { CrossSymbolDataFetcher } from "../../cross-symbol-runtime";
+import {
+    executeBacktest,
+    prepareClosedCandleData,
+    resolveExecutorBacktestSettings,
+} from "../../backtest-executor";
+import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
+import {
+    normalizeFinderCandidateParamSets,
+    resolveFinderRiskOverrides,
+} from "../finder-runner-core";
+import { withExitStrategyBaseParams, splitExitStrategyParams } from "../exit-strategy-param-prefix";
+import { sanitizeBacktestSettingsForRust } from "../../rust-settings-sanitizer";
+import { sortFinderResults } from "../finder-engine";
+import { buildSelectionResult } from "../endpoint";
+
+export interface ServerAssetIsSearchInput {
+    ohlcvData: OHLCVData[];
+    symbol: string;
+    interval: string;
+    options: FinderOptions;
+    settings: BacktestSettings;
+    capitalSettings: CapitalSettings;
+    selectedStrategy: FinderSelectedStrategy;
+    exitStrategyCandidates?: FinderSelectedStrategy[];
+    generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[];
+    useRustEnginePreference?: boolean;
+    dataFetcher?: CrossSymbolDataFetcher;
+    isCancelled: () => boolean;
+    yieldControl: () => Promise<void>;
+}
+
+export interface ServerAssetIsSearchOutput {
+    results: FinderResult[];
+    totalCandidatesEvaluated: number;
+    engineUsage: {
+        rustCompletedRuns: number;
+        typescriptCompletedRuns: number;
+    };
+}
+
+/**
+ * Run the in-sample search for one asset. Returns the top-N candidates
+ * (N = `options.topN`) sorted by `options.sortPriority`.
+ *
+ * Mirrors the browser `runFinderExecution` candidate loop but uses
+ * `executeBacktest` directly so the module stays server-safe. The caller
+ * reserves the application candle and slices the historical window BEFORE
+ * calling this function; the data passed here is the historical search data.
+ */
+export async function runServerAssetIsSearch(
+    input: ServerAssetIsSearchInput,
+): Promise<ServerAssetIsSearchOutput> {
+    const { options, settings, capitalSettings, selectedStrategy } = input;
+    if (selectedStrategy.strategy.crossSymbolConfig && !input.dataFetcher) {
+        throw new Error(
+            `Cross-symbol strategy "${selectedStrategy.name}" requires secondary asset data for Asset Opportunity.`,
+        );
+    }
+    const rustSettings = sanitizeBacktestSettingsForRust(settings);
+    const preResolvedCapital = resolveCapitalSettingsFromRaw(
+        capitalSettings as unknown as Record<string, unknown>,
+    );
+
+    // Build the same base params the current-chart path uses.
+    const entryDefaults = selectedStrategy.strategy.defaultParams;
+    const generated = input.generateParamSets(entryDefaults, options);
+    const normalized = normalizeFinderCandidateParamSets(selectedStrategy.strategy, generated);
+    const paramSets = normalized.length > 0
+        ? normalized
+        : [{ ...entryDefaults }];
+
+    const results: FinderResult[] = [];
+    let rustCompletedRuns = 0;
+    let typescriptCompletedRuns = 0;
+
+    for (let index = 0; index < paramSets.length; index++) {
+        if (input.isCancelled()) break;
+        const entryParams = paramSets[index]!;
+
+        // Exit Strategy Override: sample one exit strategy + param set per
+        // entry candidate (deterministic via the seeded random in the caller).
+        let exitStrategy: FinderSelectedStrategy | undefined;
+        let exitParams: StrategyParams | undefined;
+        if (input.exitStrategyCandidates && input.exitStrategyCandidates.length > 0) {
+            // Deterministic sampling: pick by candidate index modulo the exit
+            // candidate count. This mirrors the seeded `exitRandom` behavior of
+            // the current-chart path without requiring a random source.
+            const candidateIndex = index % input.exitStrategyCandidates.length;
+            exitStrategy = input.exitStrategyCandidates[candidateIndex];
+            const exitDefaults = exitStrategy.strategy.defaultParams;
+            const exitGenerated = input.generateParamSets(exitDefaults, options);
+            const exitNormalized = normalizeFinderCandidateParamSets(exitStrategy.strategy, exitGenerated);
+            exitParams = exitNormalized.length > 0
+                ? exitNormalized[index % exitNormalized.length]
+                : { ...exitDefaults };
+        }
+
+        const combinedParams = exitParams
+            ? withExitStrategyBaseParams(entryParams, exitParams)
+            : entryParams;
+        const { backtestSettings: riskAdjustedSettings } = resolveFinderRiskOverrides(
+            settings,
+            rustSettings,
+            combinedParams,
+            options,
+        );
+        const backtestSettings: BacktestSettings = exitStrategy
+            ? {
+                ...riskAdjustedSettings,
+                disableSignalExits: true,
+                exitStrategyOverrideEnabled: true,
+                exitStrategyKey: exitStrategy.key,
+                exitStrategyParams: { ...(exitParams ?? {}) },
+            }
+            : riskAdjustedSettings;
+
+        const preResolvedSettings = resolveExecutorBacktestSettings(
+            { ...(backtestSettings as Record<string, unknown>), interval: input.interval } as BacktestSettings,
+            input.interval,
+        );
+
+        try {
+            const output = await executeBacktest({
+                ohlcvData: input.ohlcvData,
+                interval: input.interval,
+                primarySymbol: input.symbol,
+                strategyKey: selectedStrategy.key,
+                strategy: selectedStrategy.strategy,
+                strategyParams: entryParams,
+                backtestSettings,
+                capitalSettings,
+                preResolvedSettings,
+                preResolvedCapital,
+                context: {
+                    blockRange: null,
+                    annotatePolymarket: false,
+                    engineMode: "auto",
+                    nowSec: Math.floor(Date.now() / 1000),
+                    useRustEnginePreference: input.useRustEnginePreference,
+                },
+                ...(input.dataFetcher ? { dataFetcher: input.dataFetcher } : {}),
+                backtestRunOptions: {
+                    includeAdvancedAnalytics: false,
+                    includeSharpeRatio: true,
+                    omitEquityCurve: true,
+                    skipDrawdown: false,
+                    skipResultPostProcessing: true,
+                },
+            });
+            if (output.engineUsed === "rust") rustCompletedRuns += 1;
+            else typescriptCompletedRuns += 1;
+
+            const result: BacktestResult = output.result;
+            const selection = buildSelectionResult(
+                result,
+                input.ohlcvData[input.ohlcvData.length - 1]?.time ?? null,
+                preResolvedCapital.initialCapital,
+            );
+            // The current-chart path builds a FinderResult through
+            // `enrichFinderCandidate` (endpoint adjustment + selection result).
+            // Keep the same endpoint-adjusted selection semantics here so
+            // historical ranking and grading use the same capital-aware view.
+            const candidate: FinderResult = {
+                key: selectedStrategy.key,
+                name: selectedStrategy.name,
+                params: exitStrategy
+                    ? splitExitStrategyParams(combinedParams).entryParams
+                    : entryParams,
+                ...(exitStrategy
+                    ? {
+                        exitStrategyKey: exitStrategy.key,
+                        exitStrategyParams: exitParams ?? {},
+                    }
+                    : {}),
+                result,
+                selectionResult: selection.result,
+                endpointAdjusted: selection.adjusted,
+                endpointRemovedTrades: selection.removedTrades,
+            };
+            results.push(candidate);
+        } catch {
+            // Skip failed candidates; the caller counts failures in diagnostics.
+            continue;
+        }
+
+        await input.yieldControl();
+    }
+
+    const sorted = sortFinderResults(results, options.sortPriority);
+    const topN = Math.max(1, options.topN);
+    return {
+        results: sorted.slice(0, topN),
+        totalCandidatesEvaluated: paramSets.length,
+        engineUsage: { rustCompletedRuns, typescriptCompletedRuns },
+    };
+}
+
+/**
+ * Pre-resolve the closed-candle data for one asset so the caller can split the
+ * application candle off before invoking the search. Mirrors the browser
+ * `buildFinderEvaluationData` path.
+ */
+export function prepareAssetClosedData(
+    data: OHLCVData[],
+    interval: string,
+    settings: BacktestSettings,
+): OHLCVData[] {
+    return prepareClosedCandleData(data, interval, settings);
+}
