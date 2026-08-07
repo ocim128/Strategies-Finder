@@ -103,6 +103,7 @@ import {
 import {
     runAssetOpportunitySearch,
     assertAssetOpportunityStrategySelection,
+    type AssetOpportunitySearchDiagnostics,
     type AssetIsSearch,
 } from "../finder-asset-opportunity-runner";
 import {
@@ -119,6 +120,27 @@ import { runServerAssetIsSearch } from "./server-asset-is-search";
 // ---------------------------------------------------------------------------
 
 const HEAP_MB = 1024 * 1024;
+
+function roundDiagnosticMs(value: number): number {
+    return Math.round(value);
+}
+
+function roundAssetOpportunityPassTimings(
+    timings: AssetOpportunitySearchDiagnostics["timingsMs"],
+): AssetOpportunitySearchDiagnostics["timingsMs"] {
+    return {
+        total: roundDiagnosticMs(timings.total),
+        preparation: roundDiagnosticMs(timings.preparation),
+        inSampleSearch: roundDiagnosticMs(timings.inSampleSearch),
+        parameterGeneration: roundDiagnosticMs(timings.parameterGeneration),
+        candidateBacktests: roundDiagnosticMs(timings.candidateBacktests),
+        yielding: roundDiagnosticMs(timings.yielding),
+        freshEntryRechecks: roundDiagnosticMs(timings.freshEntryRechecks),
+        oosValidation: roundDiagnosticMs(timings.oosValidation),
+        resultReduction: roundDiagnosticMs(timings.resultReduction),
+        winnerAnalytics: roundDiagnosticMs(timings.winnerAnalytics),
+    };
+}
 
 /** Bound on run id length (defensive; browser-generated ids are short). */
 const MAX_RUN_ID_LENGTH = 128;
@@ -912,7 +934,50 @@ export async function processFinderAssetOpportunityRun(
     let watchGradeAssets = 0;
     let rejectGradeAssets = 0;
     let rustCompletedRuns = 0;
+    let rustAttemptedRuns = 0;
+    let rustFallbackRuns = 0;
     let typescriptCompletedRuns = 0;
+    const typescriptReasonCounts = new Map<string, number>();
+    let dataLoadingMs = 0;
+    let dataPreparationMs = 0;
+    let inSampleSearchMs = 0;
+    let parameterGenerationMs = 0;
+    let candidateBacktestMs = 0;
+    let yieldingMs = 0;
+    let freshEntryRechecksMs = 0;
+    let oosValidationMs = 0;
+    let resultReductionMs = 0;
+    let winnerAnalyticsMs = 0;
+    let candidateEvaluationsAttempted = 0;
+    let candidateEvaluationsCompleted = 0;
+    let candidateEvaluationFailures = 0;
+    let freshEntryRechecks = 0;
+    let oosEvaluations = 0;
+    let winnerAnalyticsRecomputations = 0;
+    const loadedBarCounts: number[] = [];
+    const strategyBreakdown = new Map<string, {
+        assetsEvaluated: number;
+        candidatesEvaluated: number;
+        candidateEvaluationsAttempted: number;
+        candidateEvaluationsCompleted: number;
+        candidateEvaluationFailures: number;
+        freshEntryRechecks: number;
+        oosEvaluations: number;
+        durationMs: number;
+    }>();
+    const slowAssetPasses: Array<{
+        symbol: string;
+        strategyKey: string;
+        dataBars: number;
+        historicalBars: number;
+        slicedHistoricalBars: number;
+        oosBars: number;
+        dataLoadingMs: number;
+        candidatesEvaluated: number;
+        freshEntryRechecks: number;
+        oosEvaluations: number;
+        timingsMs: AssetOpportunitySearchDiagnostics["timingsMs"];
+    }> = [];
     let topAssets: FinderAssetOpportunityResult[] = [];
     const isCancelled = () => runOwner !== owner || input.abortSignal.aborted;
     const secondaryDataCache = new Map<string, Promise<OHLCVData[]>>();
@@ -960,8 +1025,6 @@ export async function processFinderAssetOpportunityRun(
             isCancelled: args.isCancelled,
             yieldControl: args.yieldControl,
         });
-        rustCompletedRuns += output.engineUsage.rustCompletedRuns;
-        typescriptCompletedRuns += output.engineUsage.typescriptCompletedRuns;
         if (output.engineUsage.typescriptCompletedRuns > 0 && input.useRustEnginePreference === true) {
             debugLogger.event("finder.asset_opportunity.engine_fallback", {
                 runId: input.runId,
@@ -973,6 +1036,11 @@ export async function processFinderAssetOpportunityRun(
         return {
             results: output.results,
             totalCandidatesEvaluated: output.totalCandidatesEvaluated,
+            candidateEvaluationsAttempted: output.candidateEvaluationsAttempted,
+            candidateEvaluationsCompleted: output.candidateEvaluationsCompleted,
+            candidateEvaluationFailures: output.candidateEvaluationFailures,
+            timingsMs: output.timingsMs,
+            engineUsage: output.engineUsage,
         };
     };
 
@@ -980,6 +1048,7 @@ export async function processFinderAssetOpportunityRun(
         if (runOwner !== owner || input.abortSignal.aborted) break;
         const symbol = symbols[assetIndex]!;
         const assetStartedAt = performance.now();
+        let currentAssetLoadMs = 0;
         snapshot.phase = "loading";
         snapshot.progressPercent = (assetIndex / totalAssets) * 100;
         snapshot.statusText = `Loading ${symbol} (${assetIndex + 1}/${totalAssets})...`;
@@ -999,10 +1068,14 @@ export async function processFinderAssetOpportunityRun(
         let assetHadNoFreshEntry = false;
         const assetGrades = new Set<FinderAssetOpportunityResult["grade"]>();
         try {
+            const dataLoadStartedAt = performance.now();
             const data = await input.loadDataset(symbol, input.interval, input.abortSignal);
+            currentAssetLoadMs = performance.now() - dataLoadStartedAt;
+            dataLoadingMs += currentAssetLoadMs;
             if (data.length === 0) {
                 throw new Error("no data");
             }
+            loadedBarCounts.push(data.length);
             snapshot.loadedSymbols += 1;
             snapshot.phase = "evaluating";
             for (let strategyIndex = 0; strategyIndex < selectedStrategies.length; strategyIndex += 1) {
@@ -1024,6 +1097,7 @@ export async function processFinderAssetOpportunityRun(
                         minFreshSupport: input.minFreshSupport,
                         ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
                         useRustEnginePreference: input.useRustEnginePreference,
+                        recomputeWinnerAnalytics: true,
                         assets: [{ symbol, data }],
                         runIsSearch: isSearch,
                     },
@@ -1052,6 +1126,66 @@ export async function processFinderAssetOpportunityRun(
                         },
                         isCancelled,
                         onAssetComplete: (outcome) => {
+                            const searchDiagnostics = outcome.diagnostics;
+                            if (searchDiagnostics) {
+                                dataPreparationMs += searchDiagnostics.timingsMs.preparation;
+                                inSampleSearchMs += searchDiagnostics.timingsMs.inSampleSearch;
+                                parameterGenerationMs += searchDiagnostics.timingsMs.parameterGeneration;
+                                candidateBacktestMs += searchDiagnostics.timingsMs.candidateBacktests;
+                                yieldingMs += searchDiagnostics.timingsMs.yielding;
+                                freshEntryRechecksMs += searchDiagnostics.timingsMs.freshEntryRechecks;
+                                oosValidationMs += searchDiagnostics.timingsMs.oosValidation;
+                                resultReductionMs += searchDiagnostics.timingsMs.resultReduction;
+                                winnerAnalyticsMs += searchDiagnostics.timingsMs.winnerAnalytics;
+                                candidateEvaluationsAttempted += searchDiagnostics.candidateEvaluationsAttempted;
+                                candidateEvaluationsCompleted += searchDiagnostics.candidateEvaluationsCompleted;
+                                candidateEvaluationFailures += searchDiagnostics.candidateEvaluationFailures;
+                                freshEntryRechecks += searchDiagnostics.freshEntryRechecks;
+                                oosEvaluations += searchDiagnostics.oosEvaluations;
+                                winnerAnalyticsRecomputations += searchDiagnostics.winnerAnalyticsRecomputations;
+                                rustAttemptedRuns += searchDiagnostics.engineUsage.rustAttemptedRuns;
+                                rustCompletedRuns += searchDiagnostics.engineUsage.rustCompletedRuns;
+                                rustFallbackRuns += searchDiagnostics.engineUsage.rustFallbackRuns;
+                                typescriptCompletedRuns += searchDiagnostics.engineUsage.typescriptCompletedRuns;
+                                for (const entry of searchDiagnostics.engineUsage.typescriptReasons) {
+                                    typescriptReasonCounts.set(
+                                        entry.reason,
+                                        (typescriptReasonCounts.get(entry.reason) ?? 0) + entry.runs,
+                                    );
+                                }
+                                const strategyStats = strategyBreakdown.get(selectedStrategy.key) ?? {
+                                    assetsEvaluated: 0,
+                                    candidatesEvaluated: 0,
+                                    candidateEvaluationsAttempted: 0,
+                                    candidateEvaluationsCompleted: 0,
+                                    candidateEvaluationFailures: 0,
+                                    freshEntryRechecks: 0,
+                                    oosEvaluations: 0,
+                                    durationMs: 0,
+                                };
+                                strategyStats.assetsEvaluated += 1;
+                                strategyStats.candidatesEvaluated += searchDiagnostics.candidatesEvaluated;
+                                strategyStats.candidateEvaluationsAttempted += searchDiagnostics.candidateEvaluationsAttempted;
+                                strategyStats.candidateEvaluationsCompleted += searchDiagnostics.candidateEvaluationsCompleted;
+                                strategyStats.candidateEvaluationFailures += searchDiagnostics.candidateEvaluationFailures;
+                                strategyStats.freshEntryRechecks += searchDiagnostics.freshEntryRechecks;
+                                strategyStats.oosEvaluations += searchDiagnostics.oosEvaluations;
+                                strategyStats.durationMs += searchDiagnostics.timingsMs.total;
+                                strategyBreakdown.set(selectedStrategy.key, strategyStats);
+                                slowAssetPasses.push({
+                                    symbol,
+                                    strategyKey: selectedStrategy.key,
+                                    dataBars: searchDiagnostics.dataBars,
+                                    historicalBars: searchDiagnostics.historicalBars,
+                                    slicedHistoricalBars: searchDiagnostics.slicedHistoricalBars,
+                                    oosBars: searchDiagnostics.oosBars,
+                                    dataLoadingMs: currentAssetLoadMs,
+                                    candidatesEvaluated: searchDiagnostics.candidatesEvaluated,
+                                    freshEntryRechecks: searchDiagnostics.freshEntryRechecks,
+                                    oosEvaluations: searchDiagnostics.oosEvaluations,
+                                    timingsMs: searchDiagnostics.timingsMs,
+                                });
+                            }
                             if (outcome.kind === "opportunity") {
                                 assetHadFreshEntry = true;
                                 assetGrades.add(outcome.result.grade);
@@ -1133,10 +1267,30 @@ export async function processFinderAssetOpportunityRun(
         failedAssets: failedAssets.length,
         engineUsage: {
             rustRequested: input.useRustEnginePreference === true,
+            rustAttemptedRuns,
             rustCompletedRuns,
+            rustFallbackRuns,
             typescriptCompletedRuns,
+            typescriptReasons: [...typescriptReasonCounts.entries()]
+                .map(([reason, runs]) => ({ reason, runs }))
+                .sort((a, b) => b.runs - a.runs || a.reason.localeCompare(b.reason)),
         },
     };
+    const totalDurationMs = Math.max(0, Date.now() - snapshot.startedAt);
+    const measuredPhaseMs = dataLoadingMs
+        + dataPreparationMs
+        + inSampleSearchMs
+        + freshEntryRechecksMs
+        + oosValidationMs
+        + resultReductionMs
+        + winnerAnalyticsMs;
+    const loadedBars = loadedBarCounts.length > 0
+        ? {
+            min: Math.min(...loadedBarCounts),
+            max: Math.max(...loadedBarCounts),
+            avg: Math.round(loadedBarCounts.reduce((sum, bars) => sum + bars, 0) / loadedBarCounts.length),
+        }
+        : { min: 0, max: 0, avg: 0 };
     const assetDiagnostics: FinderAssetOpportunityDiagnostics = {
         totalAssets,
         assetsWithFreshEntry,
@@ -1145,6 +1299,47 @@ export async function processFinderAssetOpportunityRun(
         watchGradeAssets,
         rejectGradeAssets,
         failedAssets,
+        work: {
+            selectedStrategies: selectedStrategies.length,
+            candidateEvaluationsEstimated: estimatedCandidateEvaluations,
+            candidateEvaluationsAttempted,
+            candidateEvaluationsCompleted,
+            candidateEvaluationFailures,
+            freshEntryRechecks,
+            oosEvaluations,
+            winnerAnalyticsRecomputations,
+            loadedBars,
+        },
+        timingsMs: {
+            total: roundDiagnosticMs(totalDurationMs),
+            dataLoading: roundDiagnosticMs(dataLoadingMs),
+            dataPreparation: roundDiagnosticMs(dataPreparationMs),
+            inSampleSearch: roundDiagnosticMs(inSampleSearchMs),
+            parameterGeneration: roundDiagnosticMs(parameterGenerationMs),
+            candidateBacktests: roundDiagnosticMs(candidateBacktestMs),
+            freshEntryRechecks: roundDiagnosticMs(freshEntryRechecksMs),
+            oosValidation: roundDiagnosticMs(oosValidationMs),
+            resultReduction: roundDiagnosticMs(resultReductionMs),
+            winnerAnalytics: roundDiagnosticMs(winnerAnalyticsMs),
+            yielding: roundDiagnosticMs(yieldingMs),
+            other: roundDiagnosticMs(Math.max(0, totalDurationMs - measuredPhaseMs)),
+        },
+        strategyBreakdown: [...strategyBreakdown.entries()]
+            .map(([strategyKey, stats]) => ({
+                strategyKey,
+                ...stats,
+                durationMs: roundDiagnosticMs(stats.durationMs),
+            }))
+            .sort((a, b) => b.durationMs - a.durationMs || a.strategyKey.localeCompare(b.strategyKey))
+            .slice(0, 10),
+        slowestAssets: slowAssetPasses
+            .sort((a, b) => b.timingsMs.total - a.timingsMs.total)
+            .slice(0, 10)
+            .map((pass) => ({
+                ...pass,
+                dataLoadingMs: roundDiagnosticMs(pass.dataLoadingMs),
+                timingsMs: roundAssetOpportunityPassTimings(pass.timingsMs),
+            })),
         engineUsage: snapshot.assetTotals.engineUsage,
     };
     snapshot.assetDiagnostics = assetDiagnostics;

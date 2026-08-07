@@ -4,6 +4,7 @@ import type {
     OHLCVData,
     Signal,
     Strategy,
+    StrategyExecutionContext,
     StrategyParams,
 } from "../strategies";
 import { computeEdgeStatistics } from "../strategies/backtest/edge-statistics";
@@ -11,6 +12,54 @@ import type { FinderMetric, FinderOptions, FinderResult } from "../types/finder"
 import { splitExitStrategyParams, withExitStrategyBaseParams } from "./exit-strategy-param-prefix";
 
 export type FinderPreparedDataCache = WeakMap<OHLCVData[], Map<string, unknown>>;
+
+/**
+ * Asset Opportunity only needs full per-bar analytics while ranking when the
+ * active sort explicitly reads them. Expectancy, profit factor, net profit,
+ * and trade counts come from the lean candidate result unchanged.
+ */
+export function finderAssetSearchRequiresFullAnalytics(
+    sortPriority: readonly FinderMetric[],
+): boolean {
+    return sortPriority.includes("sharpeRatio")
+        || sortPriority.includes("maxDrawdownPercent");
+}
+
+/**
+ * Wrap a strategy with the existing Finder prepared-data contract while
+ * preserving all of its metadata and non-signal methods.
+ */
+export function createPreparedFinderStrategy(
+    strategyKey: string,
+    strategy: Strategy,
+    cache: FinderPreparedDataCache,
+    getSettings: () => BacktestSettings,
+): Strategy {
+    if (!strategy.prepareFinderData || !strategy.executePrepared) return strategy;
+
+    const wrapped = Object.create(Object.getPrototypeOf(strategy)) as Strategy;
+    Object.defineProperties(wrapped, Object.getOwnPropertyDescriptors(strategy));
+    wrapped.execute = (
+        data: OHLCVData[],
+        params: StrategyParams,
+        executionContext?: StrategyExecutionContext,
+    ) => {
+        const settings = getSettings();
+        if (settings.strategyTimeframeEnabled === true) {
+            return strategy.execute(data, params, executionContext);
+        }
+        const prepared = getPreparedFinderData(
+            cache,
+            strategyKey,
+            strategy,
+            data,
+            settings,
+            executionContext,
+        );
+        return strategy.executePrepared!(prepared, params, data, executionContext) ?? [];
+    };
+    return wrapped;
+}
 
 type CompactSignal = {
     time: Signal["time"];

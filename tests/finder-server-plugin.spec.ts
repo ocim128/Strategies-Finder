@@ -849,6 +849,7 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
                 settings,
                 capitalSettings,
                 selectedStrategies,
+                useRustEnginePreference: true,
                 loadDataset: async (symbol) => {
                     loaded.push(symbol);
                     return datasets.get(symbol) ?? [];
@@ -880,6 +881,27 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
                 expect(asset.strategyKey).to.be.oneOf(["asset_opportunity_test_a", "asset_opportunity_test_b"]);
                 expect(asset.latestSignalTime).to.equal(datasets.get(asset.symbol)!.at(-1)!.time);
             }
+            expect(done.assetDiagnostics).to.exist;
+            expect(done.assetDiagnostics!.work).to.deep.include({
+                selectedStrategies: 2,
+                candidateEvaluationsEstimated: 16,
+                candidateEvaluationFailures: 0,
+                freshEntryRechecks: 4,
+                oosEvaluations: 0,
+                winnerAnalyticsRecomputations: 4,
+            });
+            expect(done.assetDiagnostics!.work!.candidateEvaluationsAttempted).to.be.greaterThan(0);
+            expect(done.assetDiagnostics!.work!.candidateEvaluationsCompleted).to.be.greaterThan(0);
+            expect(done.assetDiagnostics!.timingsMs!.inSampleSearch).to.be.at.least(0);
+            expect(done.assetDiagnostics!.strategyBreakdown).to.have.length(2);
+            expect(done.assetDiagnostics!.slowestAssets).to.have.length(4);
+            expect(done.assetDiagnostics!.engineUsage!.rustRequested).to.equal(true);
+            expect(done.assetDiagnostics!.engineUsage!.rustAttemptedRuns).to.equal(0);
+            expect(done.assetDiagnostics!.engineUsage!.typescriptCompletedRuns).to.equal(12);
+            expect(done.assetDiagnostics!.engineUsage!.typescriptReasons).to.deep.include({
+                reason: "same-bar exits are disabled",
+                runs: 12,
+            });
         }
         expect(loaded).to.deep.equal(["UP", "DOWN"]);
     });

@@ -44,6 +44,7 @@ type BacktestRunOptions = {
     collectDiagnostics?: boolean;
     omitEquityCurve?: boolean;
     skipDrawdown?: boolean;
+    requireTradeHistory?: boolean;
 };
 
 function createBacktestDiagnostics(inputBars: number, inputSignals: number): BacktestDiagnostics {
@@ -438,6 +439,7 @@ function getSinglePositionFinderFastPathBlockers(
     options: BacktestRunOptions | undefined
 ): string[] {
     const blockers: string[] = [];
+    if (options?.requireTradeHistory === true) blockers.push("trade_history_required");
     if (options?.omitEquityCurve !== true) blockers.push("equity_curve_required");
     if (config.maxOpenTrades !== 1) blockers.push("max_open_trades");
     if (tradeDirection !== "long" && tradeDirection !== "short" && tradeDirection !== "both") blockers.push(`trade_direction_${tradeDirection}`);

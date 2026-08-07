@@ -34,7 +34,11 @@ import {
 } from "./cross-symbol-runtime";
 import { shouldUseRustEngine } from "./engine-preferences";
 import { rustEngine } from "./rust-engine-client";
-import { sanitizeBacktestSettingsForRust, requiresTypescriptEngine } from "./rust-settings-sanitizer";
+import {
+    getTypescriptEngineRequirementReasons,
+    sanitizeBacktestSettingsForRust,
+    requiresTypescriptEngine,
+} from "./rust-settings-sanitizer";
 import { mergeExitStrategySignals } from "./exit-strategy-merge";
 import {
     buildEntryBacktestResult,
@@ -96,6 +100,9 @@ export interface BacktestExecutorRequest {
         useCompactBacktest?: boolean;
         omitEquityCurve?: boolean;
         skipDrawdown?: boolean;
+        requireTradeHistory?: boolean;
+        /** Generate signals without running trade simulation. */
+        signalsOnly?: boolean;
         skipResultPostProcessing?: boolean;
     };
     dataFetcher?: CrossSymbolDataFetcher;
@@ -128,6 +135,11 @@ export interface BacktestExecutorResult {
     result: BacktestResult;
     engineUsed: "rust" | "typescript";
     signals: Signal[];
+    /** Explains why this execution did or did not reach the Rust backend. */
+    engineDiagnostics?: {
+        rustAttempted: boolean;
+        typescriptReason?: string;
+    };
     executorTimings?: BacktestExecutorTimings;
 }
 
@@ -186,10 +198,12 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         result: BacktestResult,
         engineUsed: "rust" | "typescript",
         signals: Signal[],
+        engineDiagnostics: BacktestExecutorResult["engineDiagnostics"],
     ): BacktestExecutorResult => ({
         result,
         engineUsed,
         signals,
+        ...(engineDiagnostics ? { engineDiagnostics } : {}),
         ...(executorTimings ? { executorTimings: { ...executorTimings } } : {}),
     });
     const { ohlcvData, interval, strategyKey, strategyParams, backtestSettings, capitalSettings } = req;
@@ -360,6 +374,16 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         executorTimings.exitProcessingMs += elapsed;
     }
 
+    if (req.backtestRunOptions?.signalsOnly === true) {
+        const result = createEmptyBacktestResult();
+        result.exitControlDiagnostics = exitControlDiagnostics;
+        registerBacktestEdgeAnalysisInput(result, backtestData);
+        return finish(result, "typescript", signals, {
+            rustAttempted: false,
+            typescriptReason: "signal-only execution",
+        });
+    }
+
     const evaluation = strategy.evaluate?.(backtestData, normalizedParams, signals);
     const entryStats = evaluation?.entryStats;
 
@@ -378,7 +402,10 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             result = annotatedResult;
         }
         registerBacktestEdgeAnalysisInput(result, backtestData);
-        return finish(result, "typescript", signals);
+        return finish(result, "typescript", signals, {
+            rustAttempted: false,
+            typescriptReason: "entry strategy uses direct evaluation",
+        });
     }
 
     if (signals.length === 0 && mergedSignals.length === 0 && shouldSkipResultPostProcessing(req)) {
@@ -387,13 +414,25 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         if (executorTimings) executorTimings.engineMs += performance.now() - engineStartedAt;
         result.exitControlDiagnostics = exitControlDiagnostics;
         registerBacktestEdgeAnalysisInput(result, backtestData);
-        return finish(result, "typescript", signals);
+        return finish(result, "typescript", signals, {
+            rustAttempted: false,
+            typescriptReason: "no signals required trade simulation",
+        });
     }
 
     const resolvedCapital = req.preResolvedCapital ?? resolveCapitalSettingsFromRaw(capitalSettings as Record<string, unknown>);
 
-    const requireTs = requiresTypescriptEngine(resolvedSettings) || isSmartTradeSizingMode(resolvedCapital.sizingMode);
-    if (shouldAttemptRust(req.context.engineMode ?? "auto", requireTs, req.context.useRustEnginePreference)) {
+    const typescriptRequirementReasons = getTypescriptEngineRequirementReasons(resolvedSettings);
+    if (isSmartTradeSizingMode(resolvedCapital.sizingMode)) {
+        typescriptRequirementReasons.push(`${resolvedCapital.sizingMode} position sizing requires TypeScript`);
+    }
+    const requireTs = typescriptRequirementReasons.length > 0;
+    const rustAttempted = shouldAttemptRust(
+        req.context.engineMode ?? "auto",
+        requireTs,
+        req.context.useRustEnginePreference,
+    );
+    if (rustAttempted) {
         const engineStartedAt = executorTimings ? performance.now() : 0;
         const rustResult = await tryRustBacktest(backtestData, mergedSignals, resolvedCapital, resolvedSettings);
         if (executorTimings) executorTimings.engineMs += performance.now() - engineStartedAt;
@@ -409,7 +448,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
                 result = annotatedResult;
             }
             registerBacktestEdgeAnalysisInput(result, backtestData);
-            return finish(result, "rust", signals);
+            return finish(result, "rust", signals, { rustAttempted: true });
         }
     }
 
@@ -444,7 +483,14 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         result = annotatedResult;
     }
     registerBacktestEdgeAnalysisInput(result, backtestData);
-    return finish(result, "typescript", signals);
+    const typescriptReason = rustAttempted
+        ? "Rust backend was unavailable or rejected the result"
+        : typescriptRequirementReasons[0]
+            ?? "Rust was not requested";
+    return finish(result, "typescript", signals, {
+        rustAttempted,
+        typescriptReason,
+    });
 }
 
 /**

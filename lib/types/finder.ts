@@ -640,10 +640,80 @@ export interface FinderAssetOpportunityDiagnostics {
         symbol: string;
         reason: string;
     }>;
+    /** Aggregate work counts from the historical, fresh-entry, and OOS passes. */
+    work?: {
+        selectedStrategies: number;
+        candidateEvaluationsEstimated: number;
+        candidateEvaluationsAttempted: number;
+        candidateEvaluationsCompleted: number;
+        candidateEvaluationFailures: number;
+        freshEntryRechecks: number;
+        oosEvaluations: number;
+        winnerAnalyticsRecomputations: number;
+        loadedBars: {
+            min: number;
+            max: number;
+            avg: number;
+        };
+    };
+    /** Wall-clock phase timings. These identify where an optimization can pay off. */
+    timingsMs?: {
+        total: number;
+        dataLoading: number;
+        dataPreparation: number;
+        inSampleSearch: number;
+        parameterGeneration: number;
+        candidateBacktests: number;
+        freshEntryRechecks: number;
+        oosValidation: number;
+        resultReduction: number;
+        winnerAnalytics: number;
+        yielding: number;
+        other: number;
+    };
+    /** Top 10 per-strategy totals, sorted by duration descending. */
+    strategyBreakdown?: Array<{
+        strategyKey: string;
+        assetsEvaluated: number;
+        candidatesEvaluated: number;
+        candidateEvaluationsAttempted: number;
+        candidateEvaluationsCompleted: number;
+        candidateEvaluationFailures: number;
+        freshEntryRechecks: number;
+        oosEvaluations: number;
+        durationMs: number;
+    }>;
+    /** The slowest asset/strategy passes, retained for actionable diagnosis. */
+    slowestAssets?: Array<{
+        symbol: string;
+        strategyKey: string;
+        dataBars: number;
+        historicalBars: number;
+        slicedHistoricalBars: number;
+        oosBars: number;
+        dataLoadingMs: number;
+        candidatesEvaluated: number;
+        freshEntryRechecks: number;
+        oosEvaluations: number;
+        timingsMs: {
+            total: number;
+            preparation: number;
+            inSampleSearch: number;
+            parameterGeneration: number;
+            candidateBacktests: number;
+            yielding: number;
+            freshEntryRechecks: number;
+            oosValidation: number;
+            resultReduction: number;
+            winnerAnalytics: number;
+        };
+    }>;
     /** Actual executor results, independent of the requested engine preference. */
     engineUsage?: {
         rustRequested: boolean;
+        rustAttemptedRuns?: number;
         rustCompletedRuns: number;
+        rustFallbackRuns?: number;
         typescriptCompletedRuns: number;
         typescriptReasons?: Array<{
             reason: string;

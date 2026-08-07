@@ -68,6 +68,13 @@ async function main(): Promise<void> {
             skipResultPostProcessing: true,
         },
     });
+    const signalsOnly = await executeBacktest({
+        ...commonRequest,
+        backtestRunOptions: {
+            signalsOnly: true,
+            skipResultPostProcessing: true,
+        },
+    });
 
     assert.deepEqual(
         measured.result.trades,
@@ -79,6 +86,10 @@ async function main(): Promise<void> {
     assert.equal(measured.result.netProfit, baseline.result.netProfit);
     assert.equal(measured.result.sharpeRatio, 0);
     assert.equal(measured.result.maxDrawdown, 0);
+    assert.ok(signalsOnly.signals.length > 0, "signal-only execution must still generate strategy signals");
+    assert.equal(signalsOnly.result.trades.length, 0);
+    assert.equal(signalsOnly.result.totalTrades, 0);
+    assert.equal(signalsOnly.engineDiagnostics?.typescriptReason, "signal-only execution");
     assert.ok(measured.executorTimings);
     assert.ok(measured.executorTimings.signalGenerationMs >= 0);
     assert.ok(measured.executorTimings.exitProcessingMs >= 0);

@@ -307,6 +307,18 @@ describe("Asset Opportunity runner", () => {
         expect(result.historicalRank).to.equal(1);
         expect(result.isHistoricalBest).to.equal(true);
         expect(["select", "watch", "reject"]).to.include(result.grade);
+        const diagnostics = output.outcomes[0]!.diagnostics;
+        expect(diagnostics).to.exist;
+        expect(diagnostics!.dataBars).to.equal(5);
+        expect(diagnostics!.historicalBars).to.equal(4);
+        expect(diagnostics!.slicedHistoricalBars).to.equal(4);
+        expect(diagnostics!.candidatesEvaluated).to.equal(1);
+        expect(diagnostics!.freshEntryRechecks).to.equal(1);
+        expect(diagnostics!.timingsMs.total).to.be.at.least(0);
+        expect(diagnostics!.engineUsage.typescriptCompletedRuns).to.be.at.least(1);
+        expect(diagnostics!.engineUsage.typescriptReasons.map((entry) => entry.reason)).to.include(
+            "same-bar exits are disabled",
+        );
     });
 
     it("recognizes a latest next_open signal before the next-bar fill exists", async () => {

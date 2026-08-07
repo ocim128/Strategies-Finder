@@ -37,6 +37,9 @@ import {
 } from "../../backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
 import {
+    createPreparedFinderStrategy,
+    finderAssetSearchRequiresFullAnalytics,
+    type FinderPreparedDataCache,
     normalizeFinderCandidateParamSets,
     resolveFinderRiskOverrides,
 } from "../finder-runner-core";
@@ -44,6 +47,9 @@ import { withExitStrategyBaseParams, splitExitStrategyParams } from "../exit-str
 import { sanitizeBacktestSettingsForRust } from "../../rust-settings-sanitizer";
 import { sortFinderResults } from "../finder-engine";
 import { buildSelectionResult } from "../endpoint";
+
+const ASSET_IS_SEARCH_YIELD_EVERY_RUNS = 256;
+const ASSET_IS_SEARCH_YIELD_MIN_MS = 1000;
 
 export interface ServerAssetIsSearchInput {
     ohlcvData: OHLCVData[];
@@ -64,9 +70,21 @@ export interface ServerAssetIsSearchInput {
 export interface ServerAssetIsSearchOutput {
     results: FinderResult[];
     totalCandidatesEvaluated: number;
+    candidateEvaluationsAttempted: number;
+    candidateEvaluationsCompleted: number;
+    candidateEvaluationFailures: number;
+    timingsMs: {
+        total: number;
+        parameterGeneration: number;
+        backtest: number;
+        yielding: number;
+    };
     engineUsage: {
+        rustAttemptedRuns: number;
         rustCompletedRuns: number;
+        rustFallbackRuns: number;
         typescriptCompletedRuns: number;
+        typescriptReasons: Array<{ reason: string; runs: number }>;
     };
 }
 
@@ -83,6 +101,8 @@ export async function runServerAssetIsSearch(
     input: ServerAssetIsSearchInput,
 ): Promise<ServerAssetIsSearchOutput> {
     const { options, settings, capitalSettings, selectedStrategy } = input;
+    const totalStartedAt = performance.now();
+    const requiresFullAnalytics = finderAssetSearchRequiresFullAnalytics(options.sortPriority);
     if (selectedStrategy.strategy.crossSymbolConfig && !input.dataFetcher) {
         throw new Error(
             `Cross-symbol strategy "${selectedStrategy.name}" requires secondary asset data for Asset Opportunity.`,
@@ -92,21 +112,42 @@ export async function runServerAssetIsSearch(
     const preResolvedCapital = resolveCapitalSettingsFromRaw(
         capitalSettings as unknown as Record<string, unknown>,
     );
+    const preparedDataCache: FinderPreparedDataCache = new WeakMap();
+    let currentBacktestSettings = settings;
+    const preparedStrategy = createPreparedFinderStrategy(
+        selectedStrategy.key,
+        selectedStrategy.strategy,
+        preparedDataCache,
+        () => currentBacktestSettings,
+    );
 
     // Build the same base params the current-chart path uses.
+    const parameterGenerationStartedAt = performance.now();
     const entryDefaults = selectedStrategy.strategy.defaultParams;
     const generated = input.generateParamSets(entryDefaults, options);
     const normalized = normalizeFinderCandidateParamSets(selectedStrategy.strategy, generated);
     const paramSets = normalized.length > 0
         ? normalized
         : [{ ...entryDefaults }];
+    const parameterGenerationMs = performance.now() - parameterGenerationStartedAt;
 
     const results: FinderResult[] = [];
+    let candidateEvaluationsAttempted = 0;
+    let candidateEvaluationsCompleted = 0;
+    let candidateEvaluationFailures = 0;
+    let backtestMs = 0;
+    let yieldingMs = 0;
+    let evaluationsSinceYield = 0;
+    let lastYieldAt = performance.now();
+    let rustAttemptedRuns = 0;
     let rustCompletedRuns = 0;
+    let rustFallbackRuns = 0;
     let typescriptCompletedRuns = 0;
+    const typescriptReasonCounts = new Map<string, number>();
 
     for (let index = 0; index < paramSets.length; index++) {
         if (input.isCancelled()) break;
+        candidateEvaluationsAttempted += 1;
         const entryParams = paramSets[index]!;
 
         // Exit Strategy Override: sample one exit strategy + param set per
@@ -150,17 +191,23 @@ export async function runServerAssetIsSearch(
             { ...(backtestSettings as Record<string, unknown>), interval: input.interval } as BacktestSettings,
             input.interval,
         );
+        currentBacktestSettings = backtestSettings;
 
+        const candidateStartedAt = performance.now();
         try {
             const output = await executeBacktest({
                 ohlcvData: input.ohlcvData,
                 interval: input.interval,
                 primarySymbol: input.symbol,
                 strategyKey: selectedStrategy.key,
-                strategy: selectedStrategy.strategy,
+                strategy: preparedStrategy,
                 strategyParams: entryParams,
                 backtestSettings,
                 capitalSettings,
+                // The caller has already supplied the historical closed
+                // window. Keep its array identity stable so prepared Finder
+                // data and executor-side caches can be reused per asset.
+                closedCandleDataOverride: input.ohlcvData,
                 preResolvedSettings,
                 preResolvedCapital,
                 context: {
@@ -173,14 +220,22 @@ export async function runServerAssetIsSearch(
                 ...(input.dataFetcher ? { dataFetcher: input.dataFetcher } : {}),
                 backtestRunOptions: {
                     includeAdvancedAnalytics: false,
-                    includeSharpeRatio: true,
+                    includeSharpeRatio: requiresFullAnalytics,
                     omitEquityCurve: true,
-                    skipDrawdown: false,
+                    skipDrawdown: !requiresFullAnalytics,
                     skipResultPostProcessing: true,
                 },
             });
+            backtestMs += performance.now() - candidateStartedAt;
+            candidateEvaluationsCompleted += 1;
+            if (output.engineDiagnostics?.rustAttempted) rustAttemptedRuns += 1;
             if (output.engineUsed === "rust") rustCompletedRuns += 1;
-            else typescriptCompletedRuns += 1;
+            else {
+                typescriptCompletedRuns += 1;
+                const reason = output.engineDiagnostics?.typescriptReason ?? "TypeScript execution reason unavailable";
+                typescriptReasonCounts.set(reason, (typescriptReasonCounts.get(reason) ?? 0) + 1);
+                if (output.engineDiagnostics?.rustAttempted) rustFallbackRuns += 1;
+            }
 
             const result: BacktestResult = output.result;
             const selection = buildSelectionResult(
@@ -211,11 +266,24 @@ export async function runServerAssetIsSearch(
             };
             results.push(candidate);
         } catch {
+            backtestMs += performance.now() - candidateStartedAt;
+            candidateEvaluationFailures += 1;
             // Skip failed candidates; the caller counts failures in diagnostics.
             continue;
         }
 
-        await input.yieldControl();
+        evaluationsSinceYield += 1;
+        const now = performance.now();
+        if (
+            evaluationsSinceYield >= ASSET_IS_SEARCH_YIELD_EVERY_RUNS
+            || now - lastYieldAt >= ASSET_IS_SEARCH_YIELD_MIN_MS
+        ) {
+            evaluationsSinceYield = 0;
+            lastYieldAt = now;
+            const yieldingStartedAt = performance.now();
+            await input.yieldControl();
+            yieldingMs += performance.now() - yieldingStartedAt;
+        }
     }
 
     const sorted = sortFinderResults(results, options.sortPriority);
@@ -223,7 +291,24 @@ export async function runServerAssetIsSearch(
     return {
         results: sorted.slice(0, topN),
         totalCandidatesEvaluated: paramSets.length,
-        engineUsage: { rustCompletedRuns, typescriptCompletedRuns },
+        candidateEvaluationsAttempted,
+        candidateEvaluationsCompleted,
+        candidateEvaluationFailures,
+        timingsMs: {
+            total: performance.now() - totalStartedAt,
+            parameterGeneration: parameterGenerationMs,
+            backtest: backtestMs,
+            yielding: yieldingMs,
+        },
+        engineUsage: {
+            rustAttemptedRuns,
+            rustCompletedRuns,
+            rustFallbackRuns,
+            typescriptCompletedRuns,
+            typescriptReasons: [...typescriptReasonCounts.entries()]
+                .map(([reason, runs]) => ({ reason, runs }))
+                .sort((a, b) => b.runs - a.runs || a.reason.localeCompare(b.reason)),
+        },
     };
 }
 

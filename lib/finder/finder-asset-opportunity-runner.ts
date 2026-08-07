@@ -52,14 +52,19 @@ import type {
 import { type FinderSelectedStrategy } from "./finder-runner";
 import { buildFinderEvaluationData } from "./finder-runner-shared";
 import {
+    createPreparedFinderStrategy,
+    finderAssetSearchRequiresFullAnalytics,
+    type FinderPreparedDataCache,
     normalizeFinderCandidateParams,
     resolveFinderRiskOverrides,
 } from "./finder-runner-core";
 import { withExitStrategyBaseParams, splitExitStrategyParams } from "./exit-strategy-param-prefix";
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
+import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { executeBacktest, resolveExecutorBacktestSettings } from "../backtest-executor";
 import type { CrossSymbolDataFetcher } from "../cross-symbol-runtime";
 import { createEmptyBacktestResult } from "../strategies/index";
+import { buildSelectionResult } from "./endpoint";
 import {
     computeFinderOosVerdict,
     resolveOosDataSlice,
@@ -98,7 +103,56 @@ export type AssetIsSearch = (args: {
     results: FinderResult[];
     /** Total candidates considered before the returned top-K reduction. */
     totalCandidatesEvaluated?: number;
+    candidateEvaluationsAttempted?: number;
+    candidateEvaluationsCompleted?: number;
+    candidateEvaluationFailures?: number;
+    timingsMs?: {
+        total: number;
+        parameterGeneration: number;
+        backtest: number;
+        yielding: number;
+    };
+    engineUsage?: {
+        rustAttemptedRuns: number;
+        rustCompletedRuns: number;
+        rustFallbackRuns: number;
+        typescriptCompletedRuns: number;
+        typescriptReasons: Array<{ reason: string; runs: number }>;
+    };
 }>;
+
+export interface AssetOpportunitySearchDiagnostics {
+    dataBars: number;
+    historicalBars: number;
+    slicedHistoricalBars: number;
+    oosBars: number;
+    candidatesEvaluated: number;
+    candidateEvaluationsAttempted: number;
+    candidateEvaluationsCompleted: number;
+    candidateEvaluationFailures: number;
+    freshEntryRechecks: number;
+    oosEvaluations: number;
+    winnerAnalyticsRecomputations: number;
+    timingsMs: {
+        total: number;
+        preparation: number;
+        inSampleSearch: number;
+        parameterGeneration: number;
+        candidateBacktests: number;
+        yielding: number;
+        freshEntryRechecks: number;
+        oosValidation: number;
+        resultReduction: number;
+        winnerAnalytics: number;
+    };
+    engineUsage: {
+        rustAttemptedRuns: number;
+        rustCompletedRuns: number;
+        rustFallbackRuns: number;
+        typescriptCompletedRuns: number;
+        typescriptReasons: Array<{ reason: string; runs: number }>;
+    };
+}
 
 /**
  * One asset's input to the runner.
@@ -137,6 +191,8 @@ export interface AssetOpportunityRunInput {
     dataFetcher?: CrossSymbolDataFetcher;
     /** Matches the server's explicit Rust preference for replay execution. */
     useRustEnginePreference?: boolean;
+    /** Recompute full scalar analytics once for the selected winner. */
+    recomputeWinnerAnalytics?: boolean;
     /** Asset list (each independently searched). */
     assets: AssetOpportunityAssetInput[];
     /**
@@ -167,6 +223,7 @@ export type AssetOpportunityAssetResult =
         kind: "opportunity";
         symbol: string;
         result: FinderAssetOpportunityResult;
+        diagnostics?: AssetOpportunitySearchDiagnostics;
     }
     | {
         kind: "no_fresh_entry";
@@ -175,11 +232,13 @@ export type AssetOpportunityAssetResult =
         candidatesEvaluated: number;
         /** Best historical rank among all candidates (1-based). */
         bestHistoricalRank: number | null;
+        diagnostics?: AssetOpportunitySearchDiagnostics;
     }
     | {
         kind: "failed";
         symbol: string;
         reason: string;
+        diagnostics?: AssetOpportunitySearchDiagnostics;
     };
 
 export interface AssetOpportunityRunOutput {
@@ -259,6 +318,9 @@ export function canonicalAssetSymbol(symbol: string): string {
 export interface AssetOpportunityOosEvaluation {
     verdict: FinderOosVerdict;
     result: BacktestResult;
+    engineUsed?: "rust" | "typescript";
+    rustAttempted?: boolean;
+    typescriptReason?: string;
 }
 
 /**
@@ -454,15 +516,68 @@ async function searchOneAsset(args: {
 }): Promise<AssetOpportunityAssetResult> {
     const { asset, input, selectedStrategy, callbacks } = args;
     const symbol = asset.symbol;
+    const preparedDataCache: FinderPreparedDataCache = new WeakMap();
+    const preparedStrategy = createPreparedFinderStrategy(
+        selectedStrategy.key,
+        selectedStrategy.strategy,
+        preparedDataCache,
+        () => input.settings,
+    );
+    const startedAt = performance.now();
+    const preparationStartedAt = performance.now();
+    const diagnostics: AssetOpportunitySearchDiagnostics = {
+        dataBars: asset.data.length,
+        historicalBars: 0,
+        slicedHistoricalBars: 0,
+        oosBars: 0,
+        candidatesEvaluated: 0,
+        candidateEvaluationsAttempted: 0,
+        candidateEvaluationsCompleted: 0,
+        candidateEvaluationFailures: 0,
+        freshEntryRechecks: 0,
+        oosEvaluations: 0,
+        winnerAnalyticsRecomputations: 0,
+        timingsMs: {
+            total: 0,
+            preparation: 0,
+            inSampleSearch: 0,
+            parameterGeneration: 0,
+            candidateBacktests: 0,
+            yielding: 0,
+            freshEntryRechecks: 0,
+            oosValidation: 0,
+            resultReduction: 0,
+            winnerAnalytics: 0,
+        },
+        engineUsage: {
+            rustAttemptedRuns: 0,
+            rustCompletedRuns: 0,
+            rustFallbackRuns: 0,
+            typescriptCompletedRuns: 0,
+            typescriptReasons: [],
+        },
+    };
+    const finish = (outcome: AssetOpportunityAssetResult): AssetOpportunityAssetResult => {
+        if (diagnostics.timingsMs.preparation === 0) {
+            diagnostics.timingsMs.preparation = performance.now() - preparationStartedAt;
+        }
+        diagnostics.timingsMs.total = performance.now() - startedAt;
+        diagnostics.engineUsage.typescriptReasons.sort(
+            (a, b) => b.runs - a.runs || a.reason.localeCompare(b.reason),
+        );
+        return { ...outcome, diagnostics };
+    };
 
     const fullClosed = buildFinderEvaluationData(asset.data, input.interval, input.settings);
+    diagnostics.dataBars = fullClosed.length;
     if (fullClosed.length < 2) {
-        return { kind: "failed", symbol, reason: "insufficient closed candles" };
+        return finish({ kind: "failed", symbol, reason: "insufficient closed candles" });
     }
 
     const { historical } = splitApplicationCandle(fullClosed);
+    diagnostics.historicalBars = historical.length;
     if (historical.length === 0) {
-        return { kind: "failed", symbol, reason: "no historical candles after reserving application candle" };
+        return finish({ kind: "failed", symbol, reason: "no historical candles after reserving application candle" });
     }
 
     const assetSeed = deriveAssetSeed(input.runSeed, canonicalAssetSymbol(symbol));
@@ -478,12 +593,15 @@ async function searchOneAsset(args: {
     };
 
     const slicedHistorical = sliceHistoricalWindow(historical, assetOptions);
+    diagnostics.slicedHistoricalBars = slicedHistorical.length;
+    diagnostics.timingsMs.preparation = performance.now() - preparationStartedAt;
     if (slicedHistorical.length === 0) {
-        return { kind: "failed", symbol, reason: "historical window empty after data slice" };
+        return finish({ kind: "failed", symbol, reason: "historical window empty after data slice" });
     }
 
     // 5. Run the in-sample search on the historical window. The `runIsSearch`
     // seam decouples this leaf from the browser-bound `finder-runner` module.
+    const inSampleStartedAt = performance.now();
     const finderOutput = await input.runIsSearch({
         ohlcvData: slicedHistorical,
         symbol,
@@ -497,6 +615,19 @@ async function searchOneAsset(args: {
         isCancelled: callbacks.isCancelled,
         yieldControl: callbacks.yieldControl,
     });
+    diagnostics.timingsMs.inSampleSearch = performance.now() - inSampleStartedAt;
+    diagnostics.candidatesEvaluated = finderOutput.totalCandidatesEvaluated ?? finderOutput.results.length;
+    diagnostics.candidateEvaluationsAttempted = finderOutput.candidateEvaluationsAttempted ?? finderOutput.results.length;
+    diagnostics.candidateEvaluationsCompleted = finderOutput.candidateEvaluationsCompleted ?? finderOutput.results.length;
+    diagnostics.candidateEvaluationFailures = finderOutput.candidateEvaluationFailures ?? 0;
+    if (finderOutput.timingsMs) {
+        diagnostics.timingsMs.parameterGeneration = finderOutput.timingsMs.parameterGeneration;
+        diagnostics.timingsMs.candidateBacktests = finderOutput.timingsMs.backtest;
+        diagnostics.timingsMs.yielding = finderOutput.timingsMs.yielding;
+    }
+    if (finderOutput.engineUsage) {
+        mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, finderOutput.engineUsage);
+    }
 
     const topK = finderOutput.results;
     const totalCandidatesEvaluated = Math.max(
@@ -504,15 +635,17 @@ async function searchOneAsset(args: {
         finderOutput.totalCandidatesEvaluated ?? topK.length,
     );
     if (topK.length === 0) {
-        return { kind: "no_fresh_entry", symbol, candidatesEvaluated: totalCandidatesEvaluated, bestHistoricalRank: null };
+        diagnostics.candidatesEvaluated = totalCandidatesEvaluated;
+        return finish({ kind: "no_fresh_entry", symbol, candidatesEvaluated: totalCandidatesEvaluated, bestHistoricalRank: null });
     }
 
     // 7. Re-generate signals for each top-K candidate on the FULL closed data
     // (including the application candle). The latest closed candle's signal
     // resolves the fresh status.
-    const freshByCandidate = await Promise.all(topK.map((candidate) => regenerateSignalsAndDetectFresh({
+    const freshStartedAt = performance.now();
+    const freshEvaluations = await Promise.all(topK.map((candidate) => regenerateSignalsAndDetectFresh({
         candidate,
-        strategy: selectedStrategy.strategy,
+        strategy: preparedStrategy,
         fullClosed,
         symbol,
         interval: input.interval,
@@ -523,9 +656,30 @@ async function searchOneAsset(args: {
         dataFetcher: input.dataFetcher,
         useRustEnginePreference: input.useRustEnginePreference,
     })));
+    diagnostics.timingsMs.freshEntryRechecks = performance.now() - freshStartedAt;
+    diagnostics.freshEntryRechecks = freshEvaluations.length;
+    const freshByCandidate = freshEvaluations.map((evaluation) => {
+        mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
+            rustAttemptedRuns: evaluation.rustAttempted ? 1 : 0,
+            rustCompletedRuns: evaluation.engineUsed === "rust" ? 1 : 0,
+            rustFallbackRuns: evaluation.engineUsed === "typescript" && evaluation.rustAttempted ? 1 : 0,
+            typescriptCompletedRuns: evaluation.engineUsed === "typescript" ? 1 : 0,
+            typescriptReasons: evaluation.typescriptReason
+                ? [{ reason: evaluation.typescriptReason, runs: 1 }]
+                : [],
+        });
+        const {
+            engineUsed: _engineUsed,
+            rustAttempted: _rustAttempted,
+            typescriptReason: _typescriptReason,
+            ...fresh
+        } = evaluation;
+        return fresh;
+    });
 
     // Optional OOS validation per top-K candidate (only when enabled + half-window).
     let oosByCandidate: (AssetOpportunityOosEvaluation | undefined)[] | undefined;
+    const oosStartedAt = performance.now();
     if (input.options.oosValidationEnabled) {
         const oosSlice = resolveOosDataSlice(input.options.dataSlice ?? "all");
         if (oosSlice) {
@@ -536,11 +690,13 @@ async function searchOneAsset(args: {
                 input.interval,
                 input.settings,
             );
+            diagnostics.oosBars = oosWindowData.length;
             if (oosWindowData.length > 0) {
+                diagnostics.oosEvaluations = topK.length;
                 oosByCandidate = await Promise.all(topK.map((candidate) =>
                     runCandidateOosOnAsset({
                         candidate,
-                        strategy: selectedStrategy.strategy,
+                        strategy: preparedStrategy,
                         symbol,
                         oosData: oosWindowData,
                         interval: input.interval,
@@ -552,10 +708,24 @@ async function searchOneAsset(args: {
                         useRustEnginePreference: input.useRustEnginePreference,
                     }),
                 ));
+                for (const evaluation of oosByCandidate) {
+                    if (!evaluation) continue;
+                    mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
+                        rustAttemptedRuns: evaluation.rustAttempted ? 1 : 0,
+                        rustCompletedRuns: evaluation.engineUsed === "rust" ? 1 : 0,
+                        rustFallbackRuns: evaluation.engineUsed === "typescript" && evaluation.rustAttempted ? 1 : 0,
+                        typescriptCompletedRuns: evaluation.engineUsed === "typescript" ? 1 : 0,
+                        typescriptReasons: evaluation.typescriptReason
+                            ? [{ reason: evaluation.typescriptReason, runs: 1 }]
+                            : [],
+                    });
+                }
             }
         }
     }
+    diagnostics.timingsMs.oosValidation = performance.now() - oosStartedAt;
 
+    const reductionStartedAt = performance.now();
     const { result } = reduceAssetTopKToResult({
         symbol,
         strategyKey: selectedStrategy.key,
@@ -567,16 +737,90 @@ async function searchOneAsset(args: {
         freshByCandidate,
         ...(oosByCandidate ? { oosByCandidate } : {}),
     });
+    diagnostics.timingsMs.resultReduction = performance.now() - reductionStartedAt;
 
     if (!result) {
-        return {
+        return finish({
             kind: "no_fresh_entry",
             symbol,
             candidatesEvaluated: totalCandidatesEvaluated,
             bestHistoricalRank: 1,
-        };
+        });
     }
-    return { kind: "opportunity", symbol, result };
+
+    let finalResult = result;
+    if (
+        input.recomputeWinnerAnalytics === true
+        && !finderAssetSearchRequiresFullAnalytics(input.options.sortPriority)
+    ) {
+        const winner = topK[result.historicalRank - 1];
+        if (winner) {
+            const winnerStartedAt = performance.now();
+            const winnerEvaluation = await executeAssetCandidate({
+                candidate: winner,
+                strategy: preparedStrategy,
+                data: slicedHistorical,
+                symbol,
+                interval: input.interval,
+                settings: input.settings,
+                capitalSettings: input.capitalSettings,
+                options: assetOptions,
+                exitStrategyCandidates: input.exitStrategyCandidates,
+                dataFetcher: input.dataFetcher,
+                useRustEnginePreference: input.useRustEnginePreference,
+                fullAnalytics: true,
+            });
+            const preResolvedCapital = resolveCapitalSettingsFromRaw(
+                input.capitalSettings as unknown as Record<string, unknown>,
+            );
+            const selection = buildSelectionResult(
+                winnerEvaluation.result,
+                slicedHistorical[slicedHistorical.length - 1]?.time ?? null,
+                preResolvedCapital.initialCapital,
+            );
+            finalResult = {
+                ...result,
+                selectionResult: selection.result,
+            };
+            diagnostics.winnerAnalyticsRecomputations += 1;
+            diagnostics.timingsMs.winnerAnalytics = performance.now() - winnerStartedAt;
+            mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
+                rustAttemptedRuns: winnerEvaluation.engineDiagnostics?.rustAttempted ? 1 : 0,
+                rustCompletedRuns: winnerEvaluation.engineUsed === "rust" ? 1 : 0,
+                rustFallbackRuns: winnerEvaluation.engineUsed === "typescript"
+                    && winnerEvaluation.engineDiagnostics?.rustAttempted === true
+                    ? 1
+                    : 0,
+                typescriptCompletedRuns: winnerEvaluation.engineUsed === "typescript" ? 1 : 0,
+                typescriptReasons: winnerEvaluation.engineUsed === "typescript"
+                    && winnerEvaluation.engineDiagnostics?.typescriptReason
+                    ? [{ reason: winnerEvaluation.engineDiagnostics.typescriptReason, runs: 1 }]
+                    : [],
+            });
+        }
+    }
+    return finish({ kind: "opportunity", symbol, result: finalResult });
+}
+
+function mergeAssetOpportunityEngineUsage(
+    target: AssetOpportunitySearchDiagnostics["engineUsage"],
+    source: {
+        rustAttemptedRuns: number;
+        rustCompletedRuns: number;
+        rustFallbackRuns: number;
+        typescriptCompletedRuns: number;
+        typescriptReasons: Array<{ reason: string; runs: number }>;
+    },
+): void {
+    target.rustAttemptedRuns += source.rustAttemptedRuns;
+    target.rustCompletedRuns += source.rustCompletedRuns;
+    target.rustFallbackRuns += source.rustFallbackRuns;
+    target.typescriptCompletedRuns += source.typescriptCompletedRuns;
+    for (const entry of source.typescriptReasons) {
+        const existing = target.typescriptReasons.find((candidate) => candidate.reason === entry.reason);
+        if (existing) existing.runs += entry.runs;
+        else target.typescriptReasons.push({ ...entry });
+    }
 }
 
 /**
@@ -607,6 +851,9 @@ function regenerateSignalsAndDetectFresh(args: {
     fillTiming: "signal_close" | "next_open" | "next_close";
     isOpen: boolean;
     latestTradeEntryTime: number | null;
+    engineUsed: "rust" | "typescript";
+    rustAttempted: boolean;
+    typescriptReason?: string;
 }> {
     return executeAssetCandidate({
         candidate: args.candidate,
@@ -620,7 +867,8 @@ function regenerateSignalsAndDetectFresh(args: {
         exitStrategyCandidates: args.exitStrategyCandidates,
         dataFetcher: args.dataFetcher,
         useRustEnginePreference: args.useRustEnginePreference,
-    }).then(({ result, candles, signals }) => {
+        signalOnly: args.settings.executionModel !== "signal_close",
+    }).then(({ result, candles, signals, engineUsed, engineDiagnostics }) => {
         const detected = detectFreshEntry({ result, candles, settings: args.settings, signals });
         return {
             freshStatus: detected.freshStatus,
@@ -632,6 +880,11 @@ function regenerateSignalsAndDetectFresh(args: {
             latestTradeEntryTime: detected.latestTrade
                 ? timeToUnixSeconds(detected.latestTrade.entryTime)
                 : null,
+            engineUsed,
+            rustAttempted: engineDiagnostics?.rustAttempted === true,
+            ...(engineDiagnostics?.typescriptReason
+                ? { typescriptReason: engineDiagnostics.typescriptReason }
+                : {}),
         };
     });
 }
@@ -648,7 +901,18 @@ async function executeAssetCandidate(args: {
     exitStrategyCandidates?: FinderSelectedStrategy[];
     dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
-}): Promise<{ result: BacktestResult; candles: OHLCVData[]; signals: Signal[] }> {
+    signalOnly?: boolean;
+    fullAnalytics?: boolean;
+}): Promise<{
+    result: BacktestResult;
+    candles: OHLCVData[];
+    signals: Signal[];
+    engineUsed: "rust" | "typescript";
+    engineDiagnostics?: {
+        rustAttempted: boolean;
+        typescriptReason?: string;
+    };
+}> {
     const combinedParams = withExitStrategyBaseParams(args.candidate.params, args.candidate.exitStrategyParams ?? {});
     const exitStrategy = args.candidate.exitStrategyKey
         ? args.exitStrategyCandidates?.find((candidate) => candidate.key === args.candidate.exitStrategyKey)?.strategy
@@ -701,13 +965,25 @@ async function executeAssetCandidate(args: {
         preResolvedSettings,
         backtestRunOptions: {
             includeAdvancedAnalytics: false,
-            includeSharpeRatio: true,
-            omitEquityCurve: false,
-            skipDrawdown: false,
+            // Fresh-entry detection reads only trades + generated signals.
+            // Avoid allocating an equity curve or calculating Sharpe/drawdown
+            // for the second pass over every retained candidate.
+            includeSharpeRatio: args.fullAnalytics === true,
+            useCompactBacktest: args.fullAnalytics === true ? true : false,
+            omitEquityCurve: true,
+            skipDrawdown: args.fullAnalytics !== true,
+            requireTradeHistory: args.fullAnalytics !== true,
+            signalsOnly: args.signalOnly === true,
             skipResultPostProcessing: true,
         },
     });
-    return { result: output.result, candles: args.data, signals: output.signals };
+    return {
+        result: output.result,
+        candles: args.data,
+        signals: output.signals,
+        engineUsed: output.engineUsed,
+        engineDiagnostics: output.engineDiagnostics,
+    };
 }
 
 /**
@@ -729,7 +1005,7 @@ async function runCandidateOosOnAsset(args: {
     useRustEnginePreference?: boolean;
 }): Promise<AssetOpportunityOosEvaluation> {
     try {
-        const { result } = await executeAssetCandidate({
+        const { result, engineUsed, engineDiagnostics } = await executeAssetCandidate({
             candidate: args.candidate,
             strategy: args.strategy,
             data: args.oosData,
@@ -750,6 +1026,11 @@ async function runCandidateOosOnAsset(args: {
                 oosTotalTrades: result.totalTrades,
                 minTrades: args.options.tradeFilterEnabled ? args.options.minTrades : 0,
             }),
+            engineUsed,
+            rustAttempted: engineDiagnostics?.rustAttempted === true,
+            ...(engineDiagnostics?.typescriptReason
+                ? { typescriptReason: engineDiagnostics.typescriptReason }
+                : {}),
         };
     } catch {
         return {
