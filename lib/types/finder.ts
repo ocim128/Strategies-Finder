@@ -83,6 +83,10 @@ export interface FinderAssetOpportunityOptions {
     symbols: string[];
     candidatePoolSize: number;
     minFreshSupport: number;
+    /** Number of historical bars reserved for fixed-horizon OOS measurement. */
+    oosIgnoreLastBars?: number;
+    /** Exactly three fixed forward-PnL horizons; defaults to 1, 3, 5. */
+    oosHorizons?: number[];
 }
 
 export interface FinderOptions {
@@ -407,6 +411,8 @@ export interface FinderAssetOpportunityResult {
     oosResult?: BacktestResult;
     /** OOS gate verdict. Present iff oosResult is present. */
     oosVerdict?: FinderOosVerdict;
+    /** Fixed-horizon forward PnL measured inside the reserved OOS holdout. */
+    oosHorizonMetrics?: import('../finder/finder-asset-opportunity-oos').FinderAssetOosMetrics;
     support: FinderAssetSupportCounts;
     grade: FinderAssetDecisionGrade;
 }

@@ -150,6 +150,14 @@ function compactAssetOpportunityResult(result: FinderAssetOpportunityResult): Fi
         selectionResult: compactBacktestResult(result.selectionResult),
         ...(result.oosResult ? { oosResult: compactBacktestResult(result.oosResult) } : {}),
         ...(result.oosVerdict ? { oosVerdict: result.oosVerdict } : {}),
+        ...(result.oosHorizonMetrics
+            ? {
+                oosHorizonMetrics: {
+                    ignoreLastBars: result.oosHorizonMetrics.ignoreLastBars,
+                    horizons: result.oosHorizonMetrics.horizons.map((horizon) => ({ ...horizon })),
+                },
+            }
+            : {}),
         support: { ...result.support },
         grade: result.grade,
     };

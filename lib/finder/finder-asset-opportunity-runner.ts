@@ -6,8 +6,8 @@
  *     selector.
  *  2. Reserve the latest closed candle (the application candle) for current-
  *     signal detection only.
- *  3. Apply the existing Finder data-slice behavior to the historical search
- *     data (the closed set minus the application candle).
+ *  3. Reserve the optional last-N historical candles for fixed-horizon OOS,
+ *     then apply the existing Finder data-slice behavior to the IS window.
  *  4. Run the existing random Finder search (`runFinderExecution`) with the
  *     selected strategy library and a deterministic seed derived from
  *     `(runSeed, canonicalSymbol)`.
@@ -15,7 +15,8 @@
  *  6. Re-generate signals for only those candidates on the full closed data
  *     (including the application candle) and detect fresh entries.
  *  7. Select the highest-ranked fresh candidate within the top-K pool.
- *  8. Build one scalar asset result + decision grade.
+ *  8. Measure the selected candidate's forward OOS PnL at each configured
+ *     horizon, then build one scalar asset result + decision grade.
  *
  * Memory budget: candidates are executed via the existing Finder runner, which
  * holds per-strategy state for the duration of one asset's run. The runner
@@ -77,6 +78,11 @@ import {
     decideAssetGrade,
     type AssetPoolCandidate,
 } from "./finder-asset-opportunity-metrics";
+import {
+    calculateFinderAssetOosSignalMetrics,
+    normalizeFinderAssetOosHorizons,
+    normalizeFinderAssetOosIgnoreLastBars,
+} from "./finder-asset-opportunity-oos";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { debugLogger } from "../debug-logger";
 
@@ -591,6 +597,35 @@ async function searchOneAsset(args: {
         return finish({ kind: "failed", symbol, reason: "no historical candles after reserving application candle" });
     }
 
+    const oosIgnoreLastBars = normalizeFinderAssetOosIgnoreLastBars(
+        input.options.assetOpportunity?.oosIgnoreLastBars,
+    );
+    const oosHorizons = normalizeFinderAssetOosHorizons(input.options.assetOpportunity?.oosHorizons);
+    if (oosIgnoreLastBars > 0 && fullClosed.length - oosIgnoreLastBars < 2) {
+        return finish({
+            kind: "failed",
+            symbol,
+            reason: "not enough visible candles before the OOS holdout",
+        });
+    }
+    // In validation mode the visible chart ends at the signal boundary. The
+    // final N candles are hidden entirely, including the current/latest bar;
+    // the candidate search and boundary replay both stop before that window.
+    const visibleValidationData = oosIgnoreLastBars > 0
+        ? fullClosed.slice(0, -oosIgnoreLastBars)
+        : fullClosed;
+    const inSampleHistorical = oosIgnoreLastBars > 0
+        ? visibleValidationData
+        : historical;
+    diagnostics.historicalBars = inSampleHistorical.length;
+    const fixedOosSignalIndex = oosIgnoreLastBars > 0
+        ? visibleValidationData.length - 1
+        : -1;
+    const fixedOosBars = oosIgnoreLastBars > 0
+        ? fullClosed.slice(visibleValidationData.length)
+        : [];
+    diagnostics.oosBars = fixedOosBars.length;
+
     const assetSeed = deriveAssetSeed(input.runSeed, canonicalAssetSymbol(symbol));
     const assetOptions: FinderOptions = {
         ...input.options,
@@ -603,7 +638,7 @@ async function searchOneAsset(args: {
         ...(input.options.mode === "random" ? { randomSeed: assetSeed } : {}),
     };
 
-    const slicedHistorical = sliceHistoricalWindow(historical, assetOptions);
+    const slicedHistorical = sliceHistoricalWindow(inSampleHistorical, assetOptions);
     diagnostics.slicedHistoricalBars = slicedHistorical.length;
     diagnostics.timingsMs.preparation = performance.now() - preparationStartedAt;
     if (slicedHistorical.length === 0) {
@@ -650,14 +685,14 @@ async function searchOneAsset(args: {
         return finish({ kind: "no_fresh_entry", symbol, candidatesEvaluated: totalCandidatesEvaluated, bestHistoricalRank: null });
     }
 
-    // 7. Re-generate signals for each top-K candidate on the FULL closed data
-    // (including the application candle). The latest closed candle's signal
-    // resolves the fresh status.
+    // 7. Re-generate signals for each top-K candidate on the visible boundary
+    // data. In validation mode this ends before the hidden OOS window; with no
+    // holdout it retains the normal full-closed application-candle behavior.
     const freshStartedAt = performance.now();
     const freshEvaluations = await Promise.all(topK.map((candidate) => regenerateSignalsAndDetectFresh({
         candidate,
         strategy: preparedStrategy,
-        fullClosed,
+        fullClosed: oosIgnoreLastBars > 0 ? visibleValidationData : fullClosed,
         symbol,
         interval: input.interval,
         settings: input.settings,
@@ -688,23 +723,21 @@ async function searchOneAsset(args: {
         return fresh;
     });
 
-    // Pre-resolve the OOS window once (cheap slice + closed-candle build) so
-    // the per-winner OOS step below does not repeat it. OOS window data depends
-    // only on (historical, dataSlice, interval, settings), not on the selected
-    // strategy or the winner.
+    // Pre-resolve the legacy complementary OOS window once (cheap slice +
+    // closed-candle build) so the per-winner OOS step below does not repeat it.
+    // It must be based on the IS window when a fixed holdout is configured, so
+    // the holdout remains untouched by candidate validation.
     const oosStartedAt = performance.now();
     let oosWindowData: OHLCVData[] = [];
     if (input.options.oosValidationEnabled) {
         const oosSlice = resolveOosDataSlice(input.options.dataSlice ?? "all");
         if (oosSlice) {
-            // OOS complementary window is computed from the HISTORICAL search
-            // data, never the application candle.
             oosWindowData = buildFinderEvaluationData(
-                sliceFinderDataWindow(historical, oosSlice),
+                sliceFinderDataWindow(inSampleHistorical, oosSlice),
                 input.interval,
                 input.settings,
             );
-            diagnostics.oosBars = oosWindowData.length;
+            diagnostics.oosBars = Math.max(diagnostics.oosBars, oosWindowData.length);
         }
     }
 
@@ -739,6 +772,32 @@ async function searchOneAsset(args: {
     // the other K-1 OOS backtests were computed and discarded. The grade is
     // recomputed here with the winner's verdict attached.
     let finalResult = result;
+    if (fixedOosBars.length > 0) {
+        const winnerIndex = result.historicalRank - 1;
+        const winnerCandidate = topK[winnerIndex];
+        const winnerFresh = freshEvaluations[winnerIndex];
+        if (winnerCandidate && winnerFresh?.direction && winnerFresh.latestSignalPrice !== null) {
+            diagnostics.oosEvaluations += 1;
+            const firstHiddenBar = fixedOosBars[0];
+            const entryPrice = input.settings.executionModel === "signal_close"
+                ? winnerFresh.latestSignalPrice
+                : input.settings.executionModel === "next_open"
+                    ? firstHiddenBar?.open ?? Number.NaN
+                    : firstHiddenBar?.close ?? Number.NaN;
+            const oosHorizonMetrics = calculateFinderAssetOosSignalMetrics({
+                candles: fullClosed,
+                signalIndex: fixedOosSignalIndex,
+                entryPrice,
+                direction: winnerFresh.direction,
+                ignoreLastBars: oosIgnoreLastBars,
+                horizons: oosHorizons,
+            });
+            finalResult = {
+                ...finalResult,
+                oosHorizonMetrics,
+            };
+        }
+    }
     if (oosWindowData.length > 0) {
         const winnerIndex = result.historicalRank - 1;
         const winnerCandidate = topK[winnerIndex];
@@ -781,7 +840,7 @@ async function searchOneAsset(args: {
                 oosVerdict: winnerOos.verdict,
             });
             finalResult = {
-                ...result,
+                ...finalResult,
                 oosResult: winnerOos.result,
                 oosVerdict: winnerOos.verdict,
                 grade: regraded,
@@ -895,6 +954,7 @@ function regenerateSignalsAndDetectFresh(args: {
     fillTiming: "signal_close" | "next_open" | "next_close";
     isOpen: boolean;
     latestTradeEntryTime: number | null;
+    latestSignalPrice: number | null;
     engineUsed: "rust" | "typescript";
     rustAttempted: boolean;
     typescriptReason?: string;
@@ -924,6 +984,12 @@ function regenerateSignalsAndDetectFresh(args: {
             latestTradeEntryTime: detected.latestTrade
                 ? parseTimeToUnixSeconds(detected.latestTrade.entryTime)
                 : null,
+            latestSignalPrice: resolveLatestSignalPrice({
+                signals,
+                candle: args.fullClosed[args.fullClosed.length - 1]!,
+                direction: detected.direction,
+                fallback: detected.latestTrade?.entryPrice ?? null,
+            }),
             engineUsed,
             rustAttempted: engineDiagnostics?.rustAttempted === true,
             ...(engineDiagnostics?.typescriptReason
@@ -931,6 +997,25 @@ function regenerateSignalsAndDetectFresh(args: {
                 : {}),
         };
     });
+}
+
+function resolveLatestSignalPrice(args: {
+    signals: Signal[];
+    candle: OHLCVData;
+    direction: FinderAssetDirection | null;
+    fallback: number | null;
+}): number | null {
+    const candleTimeSec = parseTimeToUnixSeconds(args.candle.time);
+    if (args.direction) {
+        for (let index = args.signals.length - 1; index >= 0; index -= 1) {
+            const signal = args.signals[index]!;
+            const signalTimeSec = parseTimeToUnixSeconds(signal.time);
+            if (signalTimeSec === null || candleTimeSec === null || signalTimeSec !== candleTimeSec) continue;
+            if (args.direction === "long" && signal.type === "buy") return signal.price;
+            if (args.direction === "short" && signal.type === "sell") return signal.price;
+        }
+    }
+    return args.fallback;
 }
 
 async function executeAssetCandidate(args: {

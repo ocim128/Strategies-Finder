@@ -12,9 +12,19 @@ reload. Current-chart Finder remains browser-side.
 Asset Opportunity uses the same server owner, run id, Stop route, and reload
 reattach path as Symbol Universe, but evaluates one symbol at a time. The
 browser receives only scalar opportunity rows; the terminal slice is bounded
-by the existing Finder `topN` control. Each asset reserves its latest closed
-candle for fresh-entry detection and searches historical candidates without
-that candle.
+by the existing Finder `topN` control. With no fixed holdout, each asset
+reserves its latest closed candle for fresh-entry detection and searches
+historical candidates without that candle. With a fixed holdout, the visible
+prefix is used for both candidate search and the boundary signal, while the
+final N candles remain hidden for validation.
+
+Asset Opportunity can reserve the last N historical bars as a fixed OOS
+holdout. In that mode, candidate ranking and the Finder data slice use only
+the visible prefix, the signal is generated on its last visible candle, and
+the hidden bars validate that one boundary prediction. Its signed
+close-to-entry forward PnL is reported at three horizons (default `1,3,5`),
+with horizon 1 targeting the first hidden candle. The setting is disabled when
+N is `0`, which retains the normal latest-closed-candle opportunity behavior.
 
 The server caps a run at 1,000 symbols and 250,000 estimated candidate
 evaluations, where the estimate is

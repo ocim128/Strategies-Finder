@@ -165,7 +165,17 @@ describe("Finder result snapshots", () => {
     it("keeps asset-opportunity snapshots scalar and bounded", () => {
         const compact = compactFinderLatestResults({
             scope: "asset_opportunity",
-            results: Array.from({ length: FINDER_RESULT_SNAPSHOT_LIMIT + 5 }, (_, index) => makeAssetOpportunityResult(index)),
+            results: Array.from({ length: FINDER_RESULT_SNAPSHOT_LIMIT + 5 }, (_, index) => ({
+                ...makeAssetOpportunityResult(index),
+                oosHorizonMetrics: {
+                    ignoreLastBars: 20,
+                    horizons: [
+                        { bars: 1, pnlPercent: 1, averagePnlPercent: 1, winRatePercent: 100, sampleSize: 1 },
+                        { bars: 3, pnlPercent: null, averagePnlPercent: null, winRatePercent: null, sampleSize: 0 },
+                        { bars: 5, pnlPercent: -2, averagePnlPercent: -2, winRatePercent: 0, sampleSize: 1 },
+                    ],
+                },
+            })),
         });
 
         expect(compact.scope).to.equal("asset_opportunity");
@@ -173,6 +183,8 @@ describe("Finder result snapshots", () => {
         expect(compact.results).to.have.length(FINDER_RESULT_SNAPSHOT_LIMIT);
         expect(compact.results[0]!.selectionResult.trades).to.deep.equal([]);
         expect(compact.results[0]!.selectionResult.equityCurve).to.deep.equal([]);
+        expect(compact.results[0]!.oosHorizonMetrics?.ignoreLastBars).to.equal(20);
+        expect(compact.results[0]!.oosHorizonMetrics?.horizons[2]?.pnlPercent).to.equal(-2);
     });
 
     it("defaults new drawdown aggregates when restoring an older universe snapshot", () => {

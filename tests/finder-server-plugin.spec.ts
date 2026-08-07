@@ -834,6 +834,8 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
                 symbols: ["UP", "DOWN"],
                 candidatePoolSize: 2,
                 minFreshSupport: 1,
+                oosIgnoreLastBars: 2,
+                oosHorizons: [1, 3, 5],
             },
         };
         const datasets = upDownDatasets();
@@ -879,7 +881,9 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
             ).to.equal(done.totals.assetsWithFreshEntry);
             for (const asset of done.assets) {
                 expect(asset.strategyKey).to.be.oneOf(["asset_opportunity_test_a", "asset_opportunity_test_b"]);
-                expect(asset.latestSignalTime).to.equal(datasets.get(asset.symbol)!.at(-1)!.time);
+                expect(asset.latestSignalTime).to.equal(datasets.get(asset.symbol)![2]!.time);
+                expect(asset.oosHorizonMetrics?.ignoreLastBars).to.equal(2);
+                expect(asset.oosHorizonMetrics?.horizons.map((horizon) => horizon.bars)).to.deep.equal([1, 3, 5]);
             }
             expect(done.assetDiagnostics).to.exist;
             expect(done.assetDiagnostics!.work).to.deep.include({
@@ -887,7 +891,7 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
                 candidateEvaluationsEstimated: 16,
                 candidateEvaluationFailures: 0,
                 freshEntryRechecks: 4,
-                oosEvaluations: 0,
+                oosEvaluations: 4,
                 winnerAnalyticsRecomputations: 4,
             });
             expect(done.assetDiagnostics!.work!.candidateEvaluationsAttempted).to.be.greaterThan(0);

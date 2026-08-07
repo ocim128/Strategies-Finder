@@ -1070,3 +1070,183 @@
     font-family: var(--font-family-mono);
 
 }
+
+
+
+.finder-asset-metrics {
+
+    gap: 5px 14px;
+
+}
+
+
+
+.finder-asset-validation {
+
+    width: 100%;
+
+    margin-top: 6px;
+
+    padding: var(--space-2) var(--space-2-5);
+
+    border: 1px solid hsl(var(--hsl-accent) / 0.24);
+
+    border-radius: var(--radius-m);
+
+    background: hsl(var(--hsl-accent) / 0.06);
+
+}
+
+
+
+.finder-asset-validation-heading {
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+    gap: var(--space-2);
+
+    margin-bottom: var(--space-1-5);
+
+}
+
+
+
+.finder-asset-validation-title {
+
+    color: var(--text-primary);
+
+    font-size: var(--font-size-sm);
+
+    font-weight: var(--font-weight-semibold);
+
+}
+
+
+
+.finder-asset-validation-summary {
+
+    color: var(--text-tertiary);
+
+    font-size: var(--font-size-xs);
+
+    font-family: var(--font-family-mono);
+
+}
+
+
+
+.finder-asset-horizons {
+
+    display: grid;
+
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+
+    gap: var(--space-1-5);
+
+}
+
+
+
+.finder-asset-horizon {
+
+    display: grid;
+
+    grid-template-columns: auto 1fr;
+
+    align-items: baseline;
+
+    column-gap: var(--space-1-5);
+
+    padding: var(--space-1-5) var(--space-2);
+
+    border: 1px solid var(--glass-border);
+
+    border-radius: var(--radius-s);
+
+    background: hsl(var(--hsl-surface-3) / 0.42);
+
+}
+
+
+
+.finder-asset-horizon-label {
+
+    color: var(--text-tertiary);
+
+    font-size: var(--font-size-xs);
+
+}
+
+
+
+.finder-asset-horizon-value {
+
+    justify-self: end;
+
+    font-family: var(--font-family-mono);
+
+    font-size: var(--font-size-sm);
+
+}
+
+
+
+.finder-asset-horizon-sample {
+
+    grid-column: 1 / -1;
+
+    color: var(--text-tertiary);
+
+    font-size: 11px;
+
+}
+
+
+
+.finder-asset-horizon-positive .finder-asset-horizon-value {
+
+    color: var(--green);
+
+}
+
+
+
+.finder-asset-horizon-negative .finder-asset-horizon-value {
+
+    color: var(--red);
+
+}
+
+
+
+.finder-asset-horizon-unavailable .finder-asset-horizon-value {
+
+    color: var(--text-tertiary);
+
+}
+
+
+
+@media (max-width: 520px) {
+
+    .finder-asset-validation-heading {
+
+        align-items: flex-start;
+
+        flex-direction: column;
+
+    }
+
+
+
+    .finder-asset-horizons {
+
+        grid-template-columns: 1fr;
+
+    }
+
+}

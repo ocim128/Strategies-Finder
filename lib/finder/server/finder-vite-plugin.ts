@@ -107,6 +107,10 @@ import {
     type AssetIsSearch,
 } from "../finder-asset-opportunity-runner";
 import {
+    normalizeFinderAssetOosHorizons,
+    normalizeFinderAssetOosIgnoreLastBars,
+} from "../finder-asset-opportunity-oos";
+import {
     assertAssetResultIsScalar,
     toScalarAssetResult,
     type AnyFinderStreamEvent,
@@ -1443,7 +1447,23 @@ async function handleAssetOpportunityRunRequest(
     if (parsedOptions.scope !== "asset_opportunity") {
         throw new HttpStatusError(400, "Asset Opportunity requires scope asset_opportunity.");
     }
-    const options = { ...parsedOptions, scope: "asset_opportunity" as const };
+    const options = {
+        ...parsedOptions,
+        scope: "asset_opportunity" as const,
+        ...(parsedOptions.assetOpportunity
+            ? {
+                assetOpportunity: {
+                    ...parsedOptions.assetOpportunity,
+                    oosIgnoreLastBars: normalizeFinderAssetOosIgnoreLastBars(
+                        parsedOptions.assetOpportunity.oosIgnoreLastBars,
+                    ),
+                    oosHorizons: normalizeFinderAssetOosHorizons(
+                        parsedOptions.assetOpportunity.oosHorizons,
+                    ),
+                },
+            }
+            : {}),
+    };
     if (options.mode !== "random") {
         throw new HttpStatusError(400, "Asset Opportunity requires random Finder mode.");
     }

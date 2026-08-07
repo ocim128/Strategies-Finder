@@ -384,6 +384,56 @@ describe("Asset Opportunity runner", () => {
         expect(output.results[0]!.oosVerdict).to.be.oneOf(["pass", "fail", "inconclusive"]);
     });
 
+    it("hides the final bars, signals at the visible boundary, and reports forward PnL", async () => {
+        const strategy: Strategy = {
+            name: "FixedHoldout",
+            description: "creates an OOS trade before the application signal",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                const signals: Array<{ time: Time; type: "buy" | "sell"; price: number }> = [];
+                if (data[4]) signals.push({ time: data[4].time, type: "buy", price: data[4].close });
+                if (data[5]) signals.push({ time: data[5].time, type: "sell", price: data[5].close });
+                const latest = data[data.length - 1];
+                if (latest && data.length >= 8) signals.push({ time: latest.time, type: "buy", price: latest.close });
+                return signals;
+            },
+        };
+        const candles = makeCandles([100, 101, 102, 103, 100, 110, 90, 95, 96]);
+        let searched: OHLCVData[] = [];
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({
+                assetOpportunity: {
+                    symbols: ["HOLDOUT"],
+                    candidatePoolSize: 1,
+                    minFreshSupport: 1,
+                    oosIgnoreLastBars: 4,
+                    oosHorizons: [1, 3, 5],
+                },
+            }),
+            selectedStrategy: { key: "fixed_holdout", name: strategy.name, strategy },
+            assets: [{ symbol: "HOLDOUT", data: candles }],
+            runIsSearch: async (args) => {
+                searched = args.ohlcvData;
+                return makeStubIsSearch()(args);
+            },
+        }), makeCallbacks());
+
+        expect(searched.map((bar) => bar.close)).to.deep.equal([100, 101, 102, 103, 100]);
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.latestSignalTime).to.equal(candles[4]!.time);
+        expect(output.results[0]!.oosHorizonMetrics).to.deep.equal({
+            ignoreLastBars: 4,
+            horizons: [
+                { bars: 1, pnlPercent: 10, averagePnlPercent: 10, winRatePercent: 100, sampleSize: 1 },
+                { bars: 3, pnlPercent: -5, averagePnlPercent: -5, winRatePercent: 0, sampleSize: 1 },
+                { bars: 5, pnlPercent: null, averagePnlPercent: null, winRatePercent: null, sampleSize: 0 },
+            ],
+        });
+        expect(output.outcomes[0]!.diagnostics?.slicedHistoricalBars).to.equal(5);
+        expect(output.outcomes[0]!.diagnostics?.oosBars).to.equal(4);
+    });
+
     it("runs OOS only for the winner, not for every top-K candidate", async () => {
         // Intent lock: OOS is the largest CPU bucket per asset, and the
         // reducer only consumes the winner's verdict in `decideAssetGrade`.

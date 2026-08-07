@@ -53,6 +53,11 @@ import {
 	createFinderManagerDom,
 	type FinderManagerDom,
 } from "./finder/finder-manager-dom";
+import {
+	DEFAULT_FINDER_ASSET_OOS_HORIZONS,
+	normalizeFinderAssetOosHorizons,
+	normalizeFinderAssetOosIgnoreLastBars,
+} from "./finder/finder-asset-opportunity-oos";
 import type {
 	FinderLatestResults,
 	FinderDiagnostics,
@@ -190,6 +195,8 @@ type FinderPersistedUiState = {
 	universeSortSecondary: FinderUniverseMetric;
 	assetOpportunityCandidatePoolSize: number;
 	assetOpportunityMinFreshSupport: number;
+	assetOpportunityOosIgnoreLastBars: number;
+	assetOpportunityOosHorizons: string;
 };
 
 const FINDER_UI_STORAGE = {
@@ -266,6 +273,8 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	universeSortSecondary: "windowStabilityScore",
 	assetOpportunityCandidatePoolSize: 10,
 	assetOpportunityMinFreshSupport: 2,
+	assetOpportunityOosIgnoreLastBars: 0,
+	assetOpportunityOosHorizons: DEFAULT_FINDER_ASSET_OOS_HORIZONS.join(","),
 };
 
 const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
@@ -407,6 +416,12 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 	const assetOpportunityMinFreshSupport = typeof source.assetOpportunityMinFreshSupport === "number"
 		? Math.max(1, Math.min(50, Math.round(source.assetOpportunityMinFreshSupport)))
 		: DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport;
+	const assetOpportunityOosIgnoreLastBars = normalizeFinderAssetOosIgnoreLastBars(
+		source.assetOpportunityOosIgnoreLastBars,
+	);
+	const assetOpportunityOosHorizons = normalizeFinderAssetOosHorizons(
+		source.assetOpportunityOosHorizons,
+	).join(",");
 
 	return {
 		scope: normalizeFinderScope(source.scope),
@@ -452,6 +467,8 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		universeSortSecondary: normalizeFinderUniverseMetric(source.universeSortSecondary, DEFAULT_FINDER_UI_STATE.universeSortSecondary),
 		assetOpportunityCandidatePoolSize,
 		assetOpportunityMinFreshSupport,
+		assetOpportunityOosIgnoreLastBars,
+		assetOpportunityOosHorizons,
 	};
 }
 
@@ -783,6 +800,8 @@ export class FinderManager {
 		dom.finderUniverseMinProfitableActiveRatio.value = String(this.uiState.universeMinProfitableActiveRatio);
 		dom.finderAssetCandidatePoolSize.value = String(this.uiState.assetOpportunityCandidatePoolSize);
 		dom.finderAssetMinFreshSupport.value = String(this.uiState.assetOpportunityMinFreshSupport);
+		dom.finderAssetOosIgnoreLastBars.value = String(this.uiState.assetOpportunityOosIgnoreLastBars);
+		dom.finderAssetOosHorizons.value = this.uiState.assetOpportunityOosHorizons;
 		this.updateUniverseSummary();
 	}
 
@@ -1236,6 +1255,8 @@ export class FinderManager {
 			dom.finderOosValidationToggle,
 			dom.finderAssetCandidatePoolSize,
 			dom.finderAssetMinFreshSupport,
+			dom.finderAssetOosIgnoreLastBars,
+			dom.finderAssetOosHorizons,
 		].forEach((element) => {
 			element.addEventListener("input", persist);
 			element.addEventListener("change", persist);
@@ -1285,6 +1306,16 @@ export class FinderManager {
 			DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport,
 			1,
 		))));
+		this.uiState.assetOpportunityOosIgnoreLastBars = normalizeFinderAssetOosIgnoreLastBars(
+			this.readFinderNumberInput(
+				dom.finderAssetOosIgnoreLastBars,
+				DEFAULT_FINDER_UI_STATE.assetOpportunityOosIgnoreLastBars,
+				0,
+			),
+		);
+		this.uiState.assetOpportunityOosHorizons = normalizeFinderAssetOosHorizons(
+			dom.finderAssetOosHorizons.value,
+		).join(",");
 		this.saveUiState();
 	}
 
@@ -2703,6 +2734,12 @@ export class FinderManager {
 					DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport,
 					1,
 				)))),
+				oosIgnoreLastBars: normalizeFinderAssetOosIgnoreLastBars(this.readFinderNumberInput(
+					dom.finderAssetOosIgnoreLastBars,
+					DEFAULT_FINDER_UI_STATE.assetOpportunityOosIgnoreLastBars,
+					0,
+				)),
+				oosHorizons: normalizeFinderAssetOosHorizons(dom.finderAssetOosHorizons.value),
 			};
 		}
 
@@ -3126,6 +3163,7 @@ export class FinderManager {
 			oos: result.oosResult && result.oosVerdict
 				? { metrics: result.oosResult, verdict: result.oosVerdict }
 				: null,
+			oosHorizonMetrics: result.oosHorizonMetrics ?? null,
 			exitStrategy: result.exitStrategyKey ? {
 				key: result.exitStrategyKey,
 				name: result.exitStrategyName ?? null,
