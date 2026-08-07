@@ -24,9 +24,10 @@
  * the entry fill happens one bar after the signal; we walk back one bar from
  * the entry bar to find the signal bar (mirrors `getExecutionShift`).
  *
- * Leaf import hygiene: only depends on `../types/strategies` (types) and a
- * local `toUnixSeconds` helper (lifted locally to keep this leaf pure). No
- * `lightweight-charts` reach, so it is safe for the Vite config bundle.
+ * Leaf import hygiene: only depends on `../types/strategies` (types),
+ * `../strategies/backtest/backtest-utils`, and the import-free
+ * `../time-normalization` leaf. No `lightweight-charts` reach, so it is safe
+ * for the Vite config bundle.
  */
 
 import type {
@@ -43,6 +44,7 @@ import type {
     FinderAssetFreshStatus,
 } from "../types/finder";
 import { allowsSignalAsEntry, normalizeTradeDirection } from "../strategies/backtest/backtest-utils";
+import { parseTimeToUnixSeconds } from "../time-normalization";
 
 /**
  * Resolved fresh-entry status for one candidate's latest closed-candle backtest.
@@ -65,33 +67,6 @@ export interface FinderFreshEntryResult {
 }
 
 /**
- * Convert a `Time` (number | BusinessDay | string | Date) to unix seconds.
- * Lifted locally from `signal-entry-evaluator.ts` to keep this leaf pure.
- * Returns null on unparseable input.
- */
-function toUnixSeconds(value: Time): number | null {
-    if (value === null || value === undefined) return null;
-    if (typeof value === "number") {
-        // Heuristic: <10^11 == seconds, >=10^11 == milliseconds (mirrors repo convention).
-        return value >= 1e11 ? Math.floor(value / 1000) : Math.floor(value);
-    }
-    if (typeof value === "string") {
-        const parsed = Date.parse(value);
-        return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
-    }
-    // BusinessDay or Date-like object
-    const maybeDate = value as { year?: number; month?: number; day?: number; getTime?: () => number };
-    if (typeof maybeDate.getTime === "function") {
-        return Math.floor(maybeDate.getTime() / 1000);
-    }
-    if (maybeDate.year !== undefined) {
-        const ms = Date.UTC(maybeDate.year, (maybeDate.month ?? 1) - 1, maybeDate.day ?? 1);
-        return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
-    }
-    return null;
-}
-
-/**
  * Resolve the signal-bar index for a given trade entry time. Walks back one bar
  * for `next_open`/`next_close` execution models to find the source signal bar.
  */
@@ -103,7 +78,7 @@ function resolveSignalBarIndex(
     // Find the entry fill bar: last bar whose time <= entryTimeSec.
     let entryBarIndex = -1;
     for (let i = candles.length - 1; i >= 0; i--) {
-        const barSec = toUnixSeconds(candles[i]!.time);
+        const barSec = parseTimeToUnixSeconds(candles[i]!.time);
         if (barSec !== null && barSec <= entryTimeSec) {
             entryBarIndex = i;
             break;
@@ -121,7 +96,7 @@ function resolveSignalBarIndex(
 function pickLatestEntryTrade(trades: Trade[]): { trade: Trade; entryTimeSec: number } | null {
     let latest: { trade: Trade; entryTimeSec: number } | null = null;
     for (const trade of trades) {
-        const entryTimeSec = toUnixSeconds(trade.entryTime);
+        const entryTimeSec = parseTimeToUnixSeconds(trade.entryTime);
         if (entryTimeSec === null) continue;
         if (
             latest === null
@@ -158,13 +133,13 @@ function findLatestEntrySignal(args: {
     settings?: BacktestSettings;
 }): { signal: Signal; direction: FinderAssetDirection } | null {
     if (!args.signals || args.signals.length === 0) return null;
-    const latestCandleSec = toUnixSeconds(args.latestCandle.time);
+    const latestCandleSec = parseTimeToUnixSeconds(args.latestCandle.time);
     if (latestCandleSec === null) return null;
     const tradeDirection = normalizeTradeDirection(args.settings);
     let latest: { signal: Signal; direction: FinderAssetDirection } | null = null;
     for (const signal of args.signals) {
         if (!allowsSignalAsEntry(signal.type, tradeDirection)) continue;
-        if (toUnixSeconds(signal.time) !== latestCandleSec) continue;
+        if (parseTimeToUnixSeconds(signal.time) !== latestCandleSec) continue;
         latest = {
             signal,
             direction: signal.type === "sell" ? "short" : "long",
@@ -234,7 +209,7 @@ export function detectFreshEntry(args: {
     const { trade: latestTrade, entryTimeSec } = latest;
 
     const signalBarIndex = resolveSignalBarIndex(entryTimeSec, candles, executionShift);
-    const signalTimeSec = signalBarIndex >= 0 ? toUnixSeconds(candles[signalBarIndex]!.time) : null;
+    const signalTimeSec = signalBarIndex >= 0 ? parseTimeToUnixSeconds(candles[signalBarIndex]!.time) : null;
 
     const lastCandleIndex = candles.length - 1;
     const signalAgeBars = signalBarIndex >= 0 ? lastCandleIndex - signalBarIndex : Number.POSITIVE_INFINITY;
@@ -277,51 +252,3 @@ export function detectFreshEntry(args: {
     };
 }
 
-/**
- * Project the latest entry signal of a fresh/active candidate back to the
- * raw `Signal` array the strategy produced. Used to surface the trigger price
- * and reason for display. Returns null when no match is found.
- *
- * The match walks back from the entry bar by the execution shift, mirroring
- * `findSourceSignalForTradeEntry` in `signal-entry-evaluator.ts`, but is
- * simplified for the Finder display path (we do not need to attribute every
- * field of the source signal — only price/reason for UX).
- */
-export function findSourceSignalForLatestEntry(args: {
-    signals: Signal[];
-    candles: OHLCVData[];
-    entryTimeSec: number;
-    direction: FinderAssetDirection;
-    settings?: BacktestSettings;
-}): Signal | null {
-    const { signals, candles, entryTimeSec, direction, settings } = args;
-    const expectedType: Signal["type"] = direction === "short" ? "sell" : "buy";
-    const executionShift = executionShiftFromSettings(settings);
-
-    let entryBarIndex = -1;
-    for (let i = candles.length - 1; i >= 0; i--) {
-        const barSec = toUnixSeconds(candles[i]!.time);
-        if (barSec !== null && barSec <= entryTimeSec) {
-            entryBarIndex = i;
-            break;
-        }
-    }
-    if (entryBarIndex < 0) return null;
-    const sourceBarIndex = entryBarIndex - executionShift;
-    if (sourceBarIndex < 0 || sourceBarIndex >= candles.length) return null;
-    const sourceTimeSec = toUnixSeconds(candles[sourceBarIndex]!.time);
-    if (sourceTimeSec === null) return null;
-
-    let fallbackByTime: Signal | null = null;
-    for (const signal of signals) {
-        if (signal.type !== expectedType) continue;
-        const signalSec = toUnixSeconds(signal.time);
-        if (signalSec !== sourceTimeSec) continue;
-        if (fallbackByTime === null) fallbackByTime = signal;
-        // Prefer a signal whose barIndex matches the resolved source bar.
-        if (typeof signal.barIndex === "number" && signal.barIndex === sourceBarIndex) {
-            return signal;
-        }
-    }
-    return fallbackByTime;
-}

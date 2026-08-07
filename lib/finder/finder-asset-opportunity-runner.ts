@@ -77,6 +77,7 @@ import {
     decideAssetGrade,
     type AssetPoolCandidate,
 } from "./finder-asset-opportunity-metrics";
+import { parseTimeToUnixSeconds } from "../time-normalization";
 import { debugLogger } from "../debug-logger";
 
 /**
@@ -162,6 +163,15 @@ export interface AssetOpportunityAssetInput {
     symbol: string;
     /** Raw OHLCV dataset for the asset (closed-candle selection happens inside). */
     data: OHLCVData[];
+    /**
+     * Optional caller-supplied execution-aware closed-candle view of `data`.
+     * When the caller runs multiple strategies over the same asset, hoisting
+     * this build out of the per-strategy loop avoids re-walking the dataset to
+     * find the latest closed bar (`selectExecutionAwareClosedCandles`) once per
+     * strategy. Omitted by tests and the single-strategy path; the runner
+     * builds it from `data` when absent.
+     */
+    precomputedFullClosed?: OHLCVData[];
 }
 
 /**
@@ -568,7 +578,8 @@ async function searchOneAsset(args: {
         return { ...outcome, diagnostics };
     };
 
-    const fullClosed = buildFinderEvaluationData(asset.data, input.interval, input.settings);
+    const fullClosed = asset.precomputedFullClosed
+        ?? buildFinderEvaluationData(asset.data, input.interval, input.settings);
     diagnostics.dataBars = fullClosed.length;
     if (fullClosed.length < 2) {
         return finish({ kind: "failed", symbol, reason: "insufficient closed candles" });
@@ -677,54 +688,29 @@ async function searchOneAsset(args: {
         return fresh;
     });
 
-    // Optional OOS validation per top-K candidate (only when enabled + half-window).
-    let oosByCandidate: (AssetOpportunityOosEvaluation | undefined)[] | undefined;
+    // Pre-resolve the OOS window once (cheap slice + closed-candle build) so
+    // the per-winner OOS step below does not repeat it. OOS window data depends
+    // only on (historical, dataSlice, interval, settings), not on the selected
+    // strategy or the winner.
     const oosStartedAt = performance.now();
+    let oosWindowData: OHLCVData[] = [];
     if (input.options.oosValidationEnabled) {
         const oosSlice = resolveOosDataSlice(input.options.dataSlice ?? "all");
         if (oosSlice) {
             // OOS complementary window is computed from the HISTORICAL search
             // data, never the application candle.
-            const oosWindowData = buildFinderEvaluationData(
+            oosWindowData = buildFinderEvaluationData(
                 sliceFinderDataWindow(historical, oosSlice),
                 input.interval,
                 input.settings,
             );
             diagnostics.oosBars = oosWindowData.length;
-            if (oosWindowData.length > 0) {
-                diagnostics.oosEvaluations = topK.length;
-                oosByCandidate = await Promise.all(topK.map((candidate) =>
-                    runCandidateOosOnAsset({
-                        candidate,
-                        strategy: preparedStrategy,
-                        symbol,
-                        oosData: oosWindowData,
-                        interval: input.interval,
-                        settings: input.settings,
-                        capitalSettings: input.capitalSettings,
-                        options: assetOptions,
-                        exitStrategyCandidates: input.exitStrategyCandidates,
-                        dataFetcher: input.dataFetcher,
-                        useRustEnginePreference: input.useRustEnginePreference,
-                    }),
-                ));
-                for (const evaluation of oosByCandidate) {
-                    if (!evaluation) continue;
-                    mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
-                        rustAttemptedRuns: evaluation.rustAttempted ? 1 : 0,
-                        rustCompletedRuns: evaluation.engineUsed === "rust" ? 1 : 0,
-                        rustFallbackRuns: evaluation.engineUsed === "typescript" && evaluation.rustAttempted ? 1 : 0,
-                        typescriptCompletedRuns: evaluation.engineUsed === "typescript" ? 1 : 0,
-                        typescriptReasons: evaluation.typescriptReason
-                            ? [{ reason: evaluation.typescriptReason, runs: 1 }]
-                            : [],
-                    });
-                }
-            }
         }
     }
-    diagnostics.timingsMs.oosValidation = performance.now() - oosStartedAt;
 
+    // Reduce WITHOUT OOS first. The winner is chosen by fresh rank alone (OOS
+    // never changes which candidate wins — it only gates the grade), so the
+    // OOS pass can be deferred to run for the single winner below.
     const reductionStartedAt = performance.now();
     const { result } = reduceAssetTopKToResult({
         symbol,
@@ -735,11 +721,11 @@ async function searchOneAsset(args: {
         topK,
         totalCandidatesEvaluated,
         freshByCandidate,
-        ...(oosByCandidate ? { oosByCandidate } : {}),
     });
     diagnostics.timingsMs.resultReduction = performance.now() - reductionStartedAt;
 
     if (!result) {
+        diagnostics.timingsMs.oosValidation = performance.now() - oosStartedAt;
         return finish({
             kind: "no_fresh_entry",
             symbol,
@@ -748,7 +734,62 @@ async function searchOneAsset(args: {
         });
     }
 
+    // Run OOS only for the winner. The reducer previously ran OOS for all K
+    // candidates but only consumed the winner's verdict in `decideAssetGrade`;
+    // the other K-1 OOS backtests were computed and discarded. The grade is
+    // recomputed here with the winner's verdict attached.
     let finalResult = result;
+    if (oosWindowData.length > 0) {
+        const winnerIndex = result.historicalRank - 1;
+        const winnerCandidate = topK[winnerIndex];
+        if (winnerCandidate) {
+            diagnostics.oosEvaluations = 1;
+            const winnerOos = await runCandidateOosOnAsset({
+                candidate: winnerCandidate,
+                strategy: preparedStrategy,
+                symbol,
+                oosData: oosWindowData,
+                interval: input.interval,
+                settings: input.settings,
+                capitalSettings: input.capitalSettings,
+                options: assetOptions,
+                exitStrategyCandidates: input.exitStrategyCandidates,
+                dataFetcher: input.dataFetcher,
+                useRustEnginePreference: input.useRustEnginePreference,
+            });
+            mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
+                rustAttemptedRuns: winnerOos.rustAttempted ? 1 : 0,
+                rustCompletedRuns: winnerOos.engineUsed === "rust" ? 1 : 0,
+                rustFallbackRuns: winnerOos.engineUsed === "typescript" && winnerOos.rustAttempted ? 1 : 0,
+                typescriptCompletedRuns: winnerOos.engineUsed === "typescript" ? 1 : 0,
+                typescriptReasons: winnerOos.typescriptReason
+                    ? [{ reason: winnerOos.typescriptReason, runs: 1 }]
+                    : [],
+            });
+            // Recompute the grade with the OOS verdict attached. The other
+            // grade inputs are unchanged from the no-OOS reduction above.
+            const minHistoricalTrades = assetOptions.tradeFilterEnabled ? assetOptions.minTrades : 0;
+            const regraded = decideAssetGrade({
+                hasFreshEntry: true,
+                hasPositiveExpectancy: Number.isFinite(result.selectionResult.expectancy)
+                    ? result.selectionResult.expectancy > 0
+                    : false,
+                historicalTrades: result.selectionResult.totalTrades,
+                sameDirectionSupport: result.support.freshSameDirection,
+                minHistoricalTrades,
+                minFreshSupport: input.minFreshSupport,
+                oosVerdict: winnerOos.verdict,
+            });
+            finalResult = {
+                ...result,
+                oosResult: winnerOos.result,
+                oosVerdict: winnerOos.verdict,
+                grade: regraded,
+            };
+        }
+    }
+    diagnostics.timingsMs.oosValidation = performance.now() - oosStartedAt;
+
     if (
         input.recomputeWinnerAnalytics === true
         && !finderAssetSearchRequiresFullAnalytics(input.options.sortPriority)
@@ -778,8 +819,11 @@ async function searchOneAsset(args: {
                 slicedHistorical[slicedHistorical.length - 1]?.time ?? null,
                 preResolvedCapital.initialCapital,
             );
+            // Spread `finalResult` (not `result`) so the OOS overlay from the
+            // winner-only pass above is preserved when we replace the
+            // selection result here.
             finalResult = {
-                ...result,
+                ...finalResult,
                 selectionResult: selection.result,
             };
             diagnostics.winnerAnalyticsRecomputations += 1;
@@ -878,7 +922,7 @@ function regenerateSignalsAndDetectFresh(args: {
             fillTiming: detected.fillTiming ?? "signal_close",
             isOpen: detected.isOpen,
             latestTradeEntryTime: detected.latestTrade
-                ? timeToUnixSeconds(detected.latestTrade.entryTime)
+                ? parseTimeToUnixSeconds(detected.latestTrade.entryTime)
                 : null,
             engineUsed,
             rustAttempted: engineDiagnostics?.rustAttempted === true,
@@ -1038,29 +1082,4 @@ async function runCandidateOosOnAsset(args: {
             verdict: "inconclusive",
         };
     }
-}
-
-/**
- * Convert a `Time` to unix seconds (best-effort). Lifted locally to keep this
- * leaf independent of `signal-entry-evaluator` (which is not a leaf for the
- * server bundle).
- */
-function timeToUnixSeconds(value: unknown): number | null {
-    if (value === null || value === undefined) return null;
-    if (typeof value === "number") {
-        return value >= 1e11 ? Math.floor(value / 1000) : Math.floor(value);
-    }
-    if (typeof value === "string") {
-        const parsed = Date.parse(value);
-        return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
-    }
-    const maybeDate = value as { year?: number; month?: number; day?: number; getTime?: () => number };
-    if (typeof maybeDate.getTime === "function") {
-        return Math.floor(maybeDate.getTime() / 1000);
-    }
-    if (maybeDate.year !== undefined) {
-        const ms = Date.UTC(maybeDate.year, (maybeDate.month ?? 1) - 1, maybeDate.day ?? 1);
-        return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
-    }
-    return null;
 }

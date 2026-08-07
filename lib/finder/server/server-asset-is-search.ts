@@ -32,7 +32,6 @@ import type { FinderSelectedStrategy } from "../finder-runner";
 import type { CrossSymbolDataFetcher } from "../../cross-symbol-runtime";
 import {
     executeBacktest,
-    prepareClosedCandleData,
     resolveExecutorBacktestSettings,
 } from "../../backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
@@ -310,17 +309,4 @@ export async function runServerAssetIsSearch(
                 .sort((a, b) => b.runs - a.runs || a.reason.localeCompare(b.reason)),
         },
     };
-}
-
-/**
- * Pre-resolve the closed-candle data for one asset so the caller can split the
- * application candle off before invoking the search. Mirrors the browser
- * `buildFinderEvaluationData` path.
- */
-export function prepareAssetClosedData(
-    data: OHLCVData[],
-    interval: string,
-    settings: BacktestSettings,
-): OHLCVData[] {
-    return prepareClosedCandleData(data, interval, settings);
 }

@@ -114,6 +114,7 @@ import {
 } from "./finder-stream-types";
 import { sortAssetOpportunityResults } from "../finder-asset-opportunity-metrics";
 import { runServerAssetIsSearch } from "./server-asset-is-search";
+import { prepareClosedCandleData } from "../../backtest-executor";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -954,7 +955,6 @@ export async function processFinderAssetOpportunityRun(
     let freshEntryRechecks = 0;
     let oosEvaluations = 0;
     let winnerAnalyticsRecomputations = 0;
-    const loadedBarCounts: number[] = [];
     const strategyBreakdown = new Map<string, {
         assetsEvaluated: number;
         candidatesEvaluated: number;
@@ -965,6 +965,11 @@ export async function processFinderAssetOpportunityRun(
         oosEvaluations: number;
         durationMs: number;
     }>();
+    // Bounded slowest-passes buffer. Mirrors `recordDatasetLoad` in the
+    // Universe path: keep the array at <= SLOW_ASSET_PASSES_MAX across pushes so
+    // a 1000-symbol x 5-strategy run does not retain 5000 entries (with nested
+    // timingsMs) just to slice down to 10 at run end.
+    const SLOW_ASSET_PASSES_MAX = 10;
     const slowAssetPasses: Array<{
         symbol: string;
         strategyKey: string;
@@ -978,6 +983,19 @@ export async function processFinderAssetOpportunityRun(
         oosEvaluations: number;
         timingsMs: AssetOpportunitySearchDiagnostics["timingsMs"];
     }> = [];
+    const recordAssetPass = (pass: typeof slowAssetPasses[number]): void => {
+        slowAssetPasses.push(pass);
+        slowAssetPasses.sort((a, b) => b.timingsMs.total - a.timingsMs.total);
+        if (slowAssetPasses.length > SLOW_ASSET_PASSES_MAX) {
+            slowAssetPasses.length = SLOW_ASSET_PASSES_MAX;
+        }
+    };
+    // Running aggregates for loadedBars. Avoids the O(N) Math.min/Math.max
+    // spread over potentially 1000+ entries at run end.
+    let loadedBarsMin = Number.POSITIVE_INFINITY;
+    let loadedBarsMax = 0;
+    let loadedBarsSum = 0;
+    let loadedBarsCount = 0;
     let topAssets: FinderAssetOpportunityResult[] = [];
     const isCancelled = () => runOwner !== owner || input.abortSignal.aborted;
     const secondaryDataCache = new Map<string, Promise<OHLCVData[]>>();
@@ -1075,9 +1093,18 @@ export async function processFinderAssetOpportunityRun(
             if (data.length === 0) {
                 throw new Error("no data");
             }
-            loadedBarCounts.push(data.length);
+            loadedBarsMin = Math.min(loadedBarsMin, data.length);
+            loadedBarsMax = Math.max(loadedBarsMax, data.length);
+            loadedBarsSum += data.length;
+            loadedBarsCount += 1;
             snapshot.loadedSymbols += 1;
             snapshot.phase = "evaluating";
+            // Hoist the execution-aware closed-candle build out of the
+            // per-strategy loop. The closed-candle view depends only on
+            // (data, interval, settings), not on the selected strategy, so
+            // building it once per asset avoids N re-walks of the dataset to
+            // find the latest closed bar (selectExecutionAwareClosedCandles).
+            const fullClosed = prepareClosedCandleData(data, input.interval, input.settings);
             for (let strategyIndex = 0; strategyIndex < selectedStrategies.length; strategyIndex += 1) {
                 if (isCancelled()) break;
                 const selectedStrategy = selectedStrategies[strategyIndex]!;
@@ -1098,7 +1125,7 @@ export async function processFinderAssetOpportunityRun(
                         ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
                         useRustEnginePreference: input.useRustEnginePreference,
                         recomputeWinnerAnalytics: true,
-                        assets: [{ symbol, data }],
+                        assets: [{ symbol, data, precomputedFullClosed: fullClosed }],
                         runIsSearch: isSearch,
                     },
                     {
@@ -1172,7 +1199,7 @@ export async function processFinderAssetOpportunityRun(
                                 strategyStats.oosEvaluations += searchDiagnostics.oosEvaluations;
                                 strategyStats.durationMs += searchDiagnostics.timingsMs.total;
                                 strategyBreakdown.set(selectedStrategy.key, strategyStats);
-                                slowAssetPasses.push({
+                                recordAssetPass({
                                     symbol,
                                     strategyKey: selectedStrategy.key,
                                     dataBars: searchDiagnostics.dataBars,
@@ -1284,11 +1311,11 @@ export async function processFinderAssetOpportunityRun(
         + oosValidationMs
         + resultReductionMs
         + winnerAnalyticsMs;
-    const loadedBars = loadedBarCounts.length > 0
+    const loadedBars = loadedBarsCount > 0
         ? {
-            min: Math.min(...loadedBarCounts),
-            max: Math.max(...loadedBarCounts),
-            avg: Math.round(loadedBarCounts.reduce((sum, bars) => sum + bars, 0) / loadedBarCounts.length),
+            min: loadedBarsMin,
+            max: loadedBarsMax,
+            avg: Math.round(loadedBarsSum / loadedBarsCount),
         }
         : { min: 0, max: 0, avg: 0 };
     const assetDiagnostics: FinderAssetOpportunityDiagnostics = {
@@ -1332,14 +1359,14 @@ export async function processFinderAssetOpportunityRun(
             }))
             .sort((a, b) => b.durationMs - a.durationMs || a.strategyKey.localeCompare(b.strategyKey))
             .slice(0, 10),
-        slowestAssets: slowAssetPasses
-            .sort((a, b) => b.timingsMs.total - a.timingsMs.total)
-            .slice(0, 10)
-            .map((pass) => ({
-                ...pass,
-                dataLoadingMs: roundDiagnosticMs(pass.dataLoadingMs),
-                timingsMs: roundAssetOpportunityPassTimings(pass.timingsMs),
-            })),
+        // slowAssetPasses is already top-10 by timingsMs.total (kept bounded
+        // and sorted by `recordAssetPass` on every push), so just map to the
+        // rounded diagnostic shape here.
+        slowestAssets: slowAssetPasses.map((pass) => ({
+            ...pass,
+            dataLoadingMs: roundDiagnosticMs(pass.dataLoadingMs),
+            timingsMs: roundAssetOpportunityPassTimings(pass.timingsMs),
+        })),
         engineUsage: snapshot.assetTotals.engineUsage,
     };
     snapshot.assetDiagnostics = assetDiagnostics;

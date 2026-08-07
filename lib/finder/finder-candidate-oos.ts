@@ -25,9 +25,9 @@
  * `lightweight-charts`, so this module is safe for the Vite config bundle.
  */
 
-import type { OHLCVData, BacktestResult, BacktestSettings, Strategy, StrategyParams } from "../types/strategies";
+import type { OHLCVData, BacktestSettings, Strategy, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
-import type { FinderOptions, FinderResult, FinderOosVerdict } from "../types/finder";
+import type { FinderOptions, FinderResult } from "../types/finder";
 import { precomputeIndicators, runBacktest } from "../strategies/index";
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import {
@@ -45,7 +45,6 @@ import { withExitStrategyBaseParams } from "./exit-strategy-param-prefix";
 import {
     computeFinderOosVerdict,
     resolveOosDataSlice,
-    sliceFinderDataWindow,
 } from "./finder-manager-logic";
 
 /**
@@ -210,42 +209,4 @@ function injectNormalizedParams(
         combinedParams,
         exitStrategy?.normalizeParams ? { normalizeExitParams: exitStrategy.normalizeParams } : undefined,
     );
-}
-
-/**
- * Resolve the OOS window data for the current-chart candidate pass. Caller-side
- * convenience wrapper that mirrors the exact OOS data resolution the prior
- * `applyOosValidationIfNeeded` used (slice the block-sliced data, then take
- * execution-aware closed candles). Returns `null` when the OOS slice is not
- * applicable.
- */
-export function buildCandidateOosWindowData(args: {
-    blockSlicedData: OHLCVData[];
-    dataSlice: FinderOptions["dataSlice"];
-    interval: string;
-    settings: BacktestSettings;
-    buildClosedData: (windowData: OHLCVData[], interval: string, settings: BacktestSettings) => OHLCVData[];
-}): OHLCVData[] | null {
-    const { blockSlicedData, dataSlice, interval, settings, buildClosedData } = args;
-    const oosSlice = resolveOosDataSlice(dataSlice ?? "all");
-    if (!oosSlice) return null;
-    const oosWindowData = sliceFinderDataWindow(blockSlicedData, oosSlice);
-    return buildClosedData(oosWindowData, interval, settings);
-}
-
-/**
- * Convenience: derive a verdict from a raw OOS BacktestResult. Mirrors the
- * exact gate the in-loop path uses, for callers that compute their own OOS
- * result outside the per-candidate loop (Asset Opportunity server pass).
- */
-export function deriveCandidateOosVerdict(args: {
-    oosResult: BacktestResult;
-    minTrades: number;
-}): FinderOosVerdict {
-    return computeFinderOosVerdict({
-        oosNetProfit: args.oosResult.netProfit,
-        oosProfitFactor: args.oosResult.profitFactor,
-        oosTotalTrades: args.oosResult.totalTrades,
-        minTrades: args.minTrades,
-    });
 }

@@ -384,6 +384,45 @@ describe("Asset Opportunity runner", () => {
         expect(output.results[0]!.oosVerdict).to.be.oneOf(["pass", "fail", "inconclusive"]);
     });
 
+    it("runs OOS only for the winner, not for every top-K candidate", async () => {
+        // Intent lock: OOS is the largest CPU bucket per asset, and the
+        // reducer only consumes the winner's verdict in `decideAssetGrade`.
+        // The K-1 non-winner OOS backtests are pure waste. This test fixes the
+        // invariant at `oosEvaluations === 1` regardless of pool size, while
+        // `freshEntryRechecks` still equals the full pool size (those are
+        // genuinely needed for support counts).
+        const strategy: Strategy = {
+            name: "AlwaysFreshMultiParam",
+            description: "always enters on the latest bar; param only affects name",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy", price: latest.close }] : [];
+            },
+        };
+        const candles = makeCandles([100, 101, 102, 103, 104, 105, 106, 107]);
+        const poolSize = 3;
+        const input = makeInput({
+            options: makeOptions({ dataSlice: "half_oldest", oosValidationEnabled: true }),
+            selectedStrategy: { key: "always_fresh", name: "AlwaysFresh", strategy },
+            // Generate `poolSize` distinct param sets so the stub returns a
+            // full top-K pool where every candidate is fresh on the latest bar.
+            generateParamSets: () => Array.from({ length: poolSize }, (_, i) => ({ threshold: i + 1 })),
+            candidatePoolSize: poolSize,
+            assets: [{ symbol: "MULTI", data: candles }],
+        });
+
+        const output = await runAssetOpportunitySearch(input, makeCallbacks());
+        expect(output.results).to.have.length(1);
+        const diagnostics = output.outcomes[0]!.diagnostics;
+        expect(diagnostics, "diagnostics must be surfaced").to.exist;
+        expect(diagnostics!.freshEntryRechecks, "fresh rechecks still cover the full pool").to.equal(poolSize);
+        expect(diagnostics!.oosEvaluations, "OOS runs only for the winner").to.equal(1);
+        expect(output.results[0]!.oosResult).to.exist;
+        expect(output.results[0]!.oosVerdict).to.be.oneOf(["pass", "fail", "inconclusive"]);
+    });
+
     it("uses the secondary execution context during fresh replay", async () => {
         const strategy: Strategy = {
             name: "CrossReplay",
