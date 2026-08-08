@@ -9,7 +9,7 @@ import type {
     FinderUniverseOptions,
     PolymarketFinderRankMode,
 } from "../types/finder";
-import { isSameEventPolymarketExitMode, resolveEffectivePolymarketExitMode, type PolymarketExitMode } from "../polymarket-exit-mode";
+import { isSameEventPolymarketExitMode, type PolymarketExitMode } from "../polymarket-exit-mode";
 import { clampPolymarketEntryDelayBars } from "../polymarket-entry-delay";
 import { clampPolymarketEntryPriceFilterCents } from "../polymarket-entry-price-filter";
 import { clampPolymarketBacktestSlippageCents } from "../polymarket-backtest-slippage";
@@ -147,15 +147,6 @@ export function resolveFinderSortPriority(input: {
         sortPriority.push("netProfit");
     }
     return sortPriority;
-}
-
-export function resolveFinderPolymarketExitMode(input: {
-    requestedMode?: PolymarketExitMode;
-    interval: string;
-    executionModel?: string;
-    polymarketAnnotationEnabled: boolean;
-}): PolymarketExitMode {
-    return resolveEffectivePolymarketExitMode(input);
 }
 
 export function resolveFinderUniverseSortPriority(input: {

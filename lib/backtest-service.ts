@@ -1,6 +1,5 @@
 ﻿import { state } from "./state";
 import { uiManager } from "./ui-manager";
-import { clearActiveBacktestRerunContext } from "./backtest-rerun-context";
 import { dataManager } from "./data-manager";
 
 import {
@@ -106,7 +105,6 @@ export class BacktestService {
     public async runCurrentBacktest(options: RunCurrentBacktestOptions = {}) {
         const runId = this.beginInteractiveRun();
 
-        clearActiveBacktestRerunContext();
         const startedAt = Date.now();
         if (getMark("firstBacktestStart") === undefined) {
             markAppTiming("firstBacktestStart");

@@ -4,12 +4,12 @@ import {
     buildFinderOptions,
     buildFinderUniverseOptions,
     computeFinderOosVerdict,
-    resolveFinderPolymarketExitMode,
     resolveFinderSortPriority,
     resolveFinderUniverseSortPriority,
     resolveOosDataSlice,
     sliceFinderDataWindow,
 } from "../lib/finder/finder-manager-logic";
+import { resolveEffectivePolymarketExitMode } from "../lib/polymarket-exit-mode";
 
 describe("Finder manager logic", () => {
     it("slices Finder data into fifths with the fifth slice ending at the newest bar", () => {
@@ -274,7 +274,7 @@ describe("Finder manager logic", () => {
     });
 
     it("keeps finder polymarket exit mode on signal_exit_same_event when the current run snapshot supports it", () => {
-        expect(resolveFinderPolymarketExitMode({
+        expect(resolveEffectivePolymarketExitMode({
             requestedMode: "signal_exit_same_event",
             interval: "1m",
             executionModel: "next_open",
@@ -283,7 +283,7 @@ describe("Finder manager logic", () => {
     });
 
     it("keeps finder polymarket exit mode on resolve_hold for supported 1s CLOB runs", () => {
-        expect(resolveFinderPolymarketExitMode({
+        expect(resolveEffectivePolymarketExitMode({
             requestedMode: "resolve_hold",
             interval: "1s",
             executionModel: "next_open",

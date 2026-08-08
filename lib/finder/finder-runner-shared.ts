@@ -117,6 +117,49 @@ export function resolveEffectiveCapitalSettings(input: FinderRunInput): CapitalS
     return input.comboPrimaryCapital ?? input.capitalSettings;
 }
 
+/**
+ * True when the run uses alternative (non-percent) position sizing. Shared by
+ * the polymarket and second-market finder runners, which used to duplicate
+ * this one-liner verbatim.
+ */
+export function isAlternativeSizingMode(capitalSettings: CapitalSettings): boolean {
+    return capitalSettings.sizingMode !== "percent";
+}
+
+/**
+ * Backtest runner used by the polymarket-class finder runners. Forces
+ * `includeAdvancedAnalytics: false` (finder candidates don't need heavy
+ * analytics) and forwards the optional fast-path flags. Both polymarket and
+ * second-market runners duplicated this wrapper with identical behavior.
+ */
+export const runFinderCandidateBacktest: typeof runBacktest = (
+    data,
+    signals,
+    initialCapital,
+    positionSizePercent,
+    commissionPercent,
+    settings,
+    sizing,
+    precomputed,
+    options,
+) => runBacktest(
+    data,
+    signals,
+    initialCapital,
+    positionSizePercent,
+    commissionPercent,
+    settings,
+    sizing,
+    precomputed,
+    {
+        includeAdvancedAnalytics: false,
+        includeSharpeRatio: options?.includeSharpeRatio,
+        collectDiagnostics: options?.collectDiagnostics,
+        omitEquityCurve: options?.omitEquityCurve,
+        skipDrawdown: options?.skipDrawdown,
+    },
+);
+
 export function generateSignalsForJob(
     job: ParamJob,
     data: OHLCVData[],

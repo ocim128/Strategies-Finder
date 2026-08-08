@@ -65,7 +65,7 @@ export class BacktestEndpointUnavailableError extends Error {
     }
 }
 
-function cloneBlockRange(
+export function cloneBlockRange(
     blockRange: { from: number; to: number } | null
 ): { from: number; to: number } | null {
     return blockRange ? { ...blockRange } : null;

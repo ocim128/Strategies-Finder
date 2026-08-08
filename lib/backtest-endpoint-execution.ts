@@ -4,6 +4,7 @@ import {
     type EngineMode,
 } from "./backtest-endpoint-contract";
 import {
+    cloneBlockRange,
     resolveEndpointCopyEngineMode,
     resolveEndpointPolymarketAnnotation,
     type UiBacktestEndpointSnapshot,
@@ -16,12 +17,6 @@ function stripSignalExitMode(
 ): Record<string, unknown> {
     const { polymarketExitMode, ...rest } = settings;
     return rest;
-}
-
-function cloneBlockRange(
-    blockRange: { from: number; to: number } | null
-): { from: number; to: number } | null {
-    return blockRange ? { ...blockRange } : null;
 }
 
 export function buildBacktestEndpointExecutorRequest(

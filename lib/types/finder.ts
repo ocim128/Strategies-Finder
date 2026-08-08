@@ -201,20 +201,27 @@ export type FinderUniverseEarlyStopReason =
     | 'unreachable_active_symbols'
     | 'unreachable_total_trades';
 
-export interface FinderUniverseSymbolMetrics {
-    netProfit: number;
-    netProfitPercent: number;
-    expectancy: number;
-    avgTrade: number;
-    winRate: number;
-    profitFactor: number;
-    totalTrades: number;
-    maxDrawdownPercent: number;
-    winningTrades: number;
-    losingTrades: number;
-    avgWin: number;
-    avgLoss: number;
-    sharpeRatio: number;
+/**
+ * Scalar metric subset of {@link BacktestResult} used by the Finder Symbol Universe
+ * (per-symbol IS and OOS rows). Defined as a `Pick` so the field set stays in sync
+ * with `BacktestResult` automatically; the hand-written list drifted previously.
+ * Mirrors the {@link FinderPairNeutralMetrics} pattern.
+ */
+export type FinderUniverseSymbolMetrics = Pick<BacktestResult,
+    | "netProfit"
+    | "netProfitPercent"
+    | "expectancy"
+    | "avgTrade"
+    | "winRate"
+    | "profitFactor"
+    | "totalTrades"
+    | "maxDrawdownPercent"
+    | "winningTrades"
+    | "losingTrades"
+    | "avgWin"
+    | "avgLoss"
+    | "sharpeRatio"
+> & {
     /** True when Sharpe was actually computed; false means the fast universe path skipped it. */
     sharpeRatioAvailable?: boolean;
     /** True when drawdown was actually computed; false means the fast universe path skipped it. */
@@ -227,7 +234,7 @@ export interface FinderUniverseSymbolMetrics {
      * Undefined otherwise; treat as 0/missing when not requested.
      */
     compositeEdgeRatio?: number;
-}
+    };
 
 export interface FinderUniverseSymbolResult {
     symbol: string;

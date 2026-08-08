@@ -5,7 +5,6 @@ import {
     setCurrentUiBacktestEndpointSnapshot,
     type UiBacktestEndpointSnapshot,
 } from "./backtest-endpoint-copy";
-import { clearActiveBacktestRerunContext } from "./backtest-rerun-context";
 import { state, type BacktestResultSource, type ChartMode } from "./state";
 import type { BinanceMarketType } from "./binance-market";
 import type { Indicator } from "./types/index";
@@ -126,7 +125,6 @@ export function setStrategyTimeframeSettings(settings: {
 
 export function clearBacktestResults(reason?: string): void {
     debugLogger.event('state.clear.backtest_result', { reason });
-    clearActiveBacktestRerunContext();
     clearCurrentUiBacktestEndpointSnapshot();
     state.set('currentBacktestResult', null);
     state.set('currentBacktestResultSource', 'backtest');

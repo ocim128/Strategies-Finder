@@ -10,7 +10,7 @@
  * - default 5m bridge runs: 1m -> 5m offset scoring
  * - default 5m multi-interval bridge runs: 15m / 1h / 4h group 5m events by offset
  */
-import { applySignalPolarity, precomputeIndicators, runBacktest } from "../strategies/index";
+import { applySignalPolarity, precomputeIndicators } from "../strategies/index";
 import {
     applyConfirmationStrategiesToSignals,
     ensureConfirmationStrategiesLoaded,
@@ -56,6 +56,8 @@ import { FinderResultRanker } from "./finder-result-ranker";
 import {
     buildFinderEvaluationData,
     buildFinderResult,
+    isAlternativeSizingMode,
+    runFinderCandidateBacktest,
     runStrategyBacktest,
     maybeUpdateFinderProgress,
     type FinderProgressState,
@@ -143,38 +145,6 @@ function getProfitFactorFromTotals(grossProfit: number, grossLoss: number): numb
     }
     return grossProfit / grossLoss;
 }
-
-function isAlternativeSizingMode(capitalSettings: CapitalSettings): boolean {
-    return capitalSettings.sizingMode !== "percent";
-}
-
-const runFinderCandidateBacktest: typeof runBacktest = (
-    data,
-    signals,
-    initialCapital,
-    positionSizePercent,
-    commissionPercent,
-    settings,
-    sizing,
-    precomputed,
-    options
-) => runBacktest(
-    data,
-    signals,
-    initialCapital,
-    positionSizePercent,
-    commissionPercent,
-    settings,
-    sizing,
-    precomputed,
-    {
-        includeAdvancedAnalytics: false,
-        includeSharpeRatio: options?.includeSharpeRatio,
-        collectDiagnostics: options?.collectDiagnostics,
-        omitEquityCurve: options?.omitEquityCurve,
-        skipDrawdown: options?.skipDrawdown,
-    }
-);
 
 function buildMappedTradeOutcome(args: {
     trade: Trade;

@@ -1,7 +1,9 @@
 /**
  * Current-chart candidate out-of-sample gate, extracted as a leaf module so
- * both the browser `FinderManager` and the Asset Opportunity server job can
- * run the identical OOS pass without duplicating its semantics.
+ * the browser `FinderManager` can run the OOS pass without coupling to DOM,
+ * `state`, `backtestService`, or `dataManager` (all runtime dependencies are
+ * injected). The Asset Opportunity runner has its own per-asset OOS pass and
+ * does not currently call into this module.
  *
  * This is a faithful lift of the prior private
  * `FinderManager.applyOosValidationIfNeeded` body. All runtime dependencies
@@ -11,7 +13,7 @@
  * no `backtestService`, and no `dataManager`.
  *
  * Behavior preserved 1:1 from the prior method:
- *   - early-exit (returns `{ oosRemoved: 0 }`) when OOS is disabled, no OOS
+ *   - early-exit (returns `{ applied: false }`) when OOS is disabled, no OOS
  *     slice resolves, no candidates, or empty OOS window
  *   - per-candidate: resolve strategy + exit strategy, build a ParamJob, run
  *     `generateSignalsForJob` + `runStrategyBacktest` on the OOS window data,

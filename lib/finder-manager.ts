@@ -19,7 +19,6 @@ import {
 	buildFinderOptions,
 	buildFinderUniverseOptions,
 	normalizeFinderDataSlice,
-	resolveFinderPolymarketExitMode,
 	resolveOosDataSlice,
 	sliceFinderDataWindow,
 } from "./finder/finder-manager-logic";
@@ -140,7 +139,7 @@ interface ServerAssetOpportunityRunOutcome {
 	failedAssets: number;
 }
 
-import { isSameEventPolymarketExitMode } from "./polymarket-exit-mode";
+import { isSameEventPolymarketExitMode, resolveEffectivePolymarketExitMode } from "./polymarket-exit-mode";
 import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
 import {
 	clampPolymarketPostSignalLimitEntryPriceCents,
@@ -2663,7 +2662,7 @@ export class FinderManager {
 		const polymarketLockOffset = polymarketScoringEnabled && dom.finderPolymarketLockOffset.checked;
 		const polymarketAfterTakeProfitOnly = polymarketScoringEnabled && dom.finderPolymarketAfterTakeProfitOnly.checked;
 
-		const effectiveExitMode = resolveFinderPolymarketExitMode({
+		const effectiveExitMode = resolveEffectivePolymarketExitMode({
 			requestedMode: backtestSettings.polymarketExitMode,
 			interval: state.currentInterval,
 			executionModel: backtestSettings.executionModel,

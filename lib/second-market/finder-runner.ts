@@ -1,19 +1,19 @@
 import {
     applySignalPolarity,
     precomputeIndicators,
-    runBacktest,
 } from "../strategies/index";
 import {
     applyConfirmationStrategiesToSignals,
     ensureConfirmationStrategiesLoaded,
 } from "../confirmation-signal-filter";
 import type { BacktestResult, OHLCVData, StrategyExecutionContext } from "../types/strategies";
-import type { CapitalSettings } from "../types/backtest";
 import type { FinderResult } from "../types/finder";
 import type { FinderRunCallbacks, FinderRunInput, FinderRunOutput } from "../finder/finder-runner";
 import {
     buildFinderEvaluationData,
     buildFinderResult,
+    isAlternativeSizingMode,
+    runFinderCandidateBacktest,
     runStrategyBacktest,
     type StrategyPlan,
 } from "../finder/finder-runner-shared";
@@ -59,41 +59,6 @@ import {
     executeStrategyAcrossTimeGapSegments,
     getOneSecondTimeGapSegments,
 } from "../strategy-time-gap-isolation";
-
-function isAlternativeSizingMode(capitalSettings: CapitalSettings): boolean {
-    return capitalSettings.sizingMode !== "percent";
-}
-
-const runFinderCandidateBacktest: typeof runBacktest = (
-    data,
-    signals,
-    initialCapital,
-    positionSizePercent,
-    commissionPercent,
-    settings,
-    sizing,
-    precomputed,
-    options
-) => {
-    const finderOptions = {
-        includeAdvancedAnalytics: false,
-        includeSharpeRatio: options?.includeSharpeRatio,
-        collectDiagnostics: options?.collectDiagnostics,
-        omitEquityCurve: options?.omitEquityCurve,
-        skipDrawdown: options?.skipDrawdown,
-    };
-    return runBacktest(
-        data,
-        signals,
-        initialCapital,
-        positionSizePercent,
-        commissionPercent,
-        settings,
-        sizing,
-        precomputed,
-        finderOptions
-    );
-};
 
 function getDataRange(data: readonly OHLCVData[]): { startTs: number; endTs: number } | null {
     if (data.length === 0) return null;

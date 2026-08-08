@@ -56,20 +56,13 @@ function compactFinderResult(result: FinderResult): FinderResult {
 }
 
 function compactUniverseMetrics(metrics: FinderUniverseSymbolMetrics): FinderUniverseSymbolMetrics {
+    const {
+        netProfit, netProfitPercent, expectancy, avgTrade, winRate, profitFactor,
+        totalTrades, maxDrawdownPercent, winningTrades, losingTrades, avgWin, avgLoss, sharpeRatio,
+    } = metrics;
     return {
-        netProfit: metrics.netProfit,
-        netProfitPercent: metrics.netProfitPercent,
-        expectancy: metrics.expectancy,
-        avgTrade: metrics.avgTrade,
-        winRate: metrics.winRate,
-        profitFactor: metrics.profitFactor,
-        totalTrades: metrics.totalTrades,
-        maxDrawdownPercent: metrics.maxDrawdownPercent,
-        winningTrades: metrics.winningTrades,
-        losingTrades: metrics.losingTrades,
-        avgWin: metrics.avgWin,
-        avgLoss: metrics.avgLoss,
-        sharpeRatio: metrics.sharpeRatio,
+        netProfit, netProfitPercent, expectancy, avgTrade, winRate, profitFactor,
+        totalTrades, maxDrawdownPercent, winningTrades, losingTrades, avgWin, avgLoss, sharpeRatio,
         ...(metrics.sharpeRatioAvailable !== undefined ? { sharpeRatioAvailable: metrics.sharpeRatioAvailable } : {}),
         ...(metrics.drawdownAvailable !== undefined ? { drawdownAvailable: metrics.drawdownAvailable } : {}),
         ...(Number.isFinite(metrics.compositeEdgeRatio) ? { compositeEdgeRatio: metrics.compositeEdgeRatio } : {}),
