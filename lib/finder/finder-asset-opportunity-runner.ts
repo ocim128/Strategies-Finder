@@ -5,15 +5,22 @@
  *  1. Take closed candles via the caller-provided dataset + closed-data
  *     selector.
  *  2. Reserve the latest closed candle (the application candle) for current-
- *     signal detection only.
+ *     signal detection. With no fixed holdout, dataSlice "all", and a
+ *     non-`signal_close` execution model, the in-sample search includes it so
+ *     fresh detection can reuse the search run's signals; the winner's
+ *     displayed metrics still exclude it.
  *  3. Reserve the optional last-N historical candles for fixed-horizon OOS,
  *     then apply the existing Finder data-slice behavior to the IS window.
  *  4. Run the existing random Finder search (`runFinderExecution`) with the
  *     selected strategy library and a deterministic seed derived from
  *     `(runSeed, canonicalSymbol)`.
  *  5. Keep the top-K candidates (K = `candidatePoolSize`).
- *  6. Re-generate signals for only those candidates on the full closed data
- *     (including the application candle) and detect fresh entries.
+ *  6. Detect fresh entries for those candidates on the boundary data
+ *     (including the application candle). When the boundary window is
+ *     bar-for-bar identical to the in-sample window and the execution model
+ *     is not `signal_close` (whose recheck needs re-simulated trades), the
+ *     in-sample run's retained signals are reused; otherwise the candidates
+ *     are re-executed on the boundary data.
  *  7. Select the highest-ranked fresh candidate within the top-K pool.
  *  8. Measure the selected candidate's forward OOS PnL at each configured
  *     horizon, then build one scalar asset result + decision grade.
@@ -106,6 +113,14 @@ export type AssetIsSearch = (args: {
     generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[];
     isCancelled: () => boolean;
     yieldControl: () => Promise<void>;
+    /**
+     * When true, the search should retain each returned candidate's generated
+     * signals and surface them via `signalsByCandidate`, so the caller can
+     * detect fresh entries without re-executing every top-K candidate. Only
+     * requested when the caller has proven the fresh-entry recheck window is
+     * bar-for-bar identical to the in-sample window.
+     */
+    retainSignals?: boolean;
 }) => Promise<{
     results: FinderResult[];
     /** Total candidates considered before the returned top-K reduction. */
@@ -113,6 +128,13 @@ export type AssetIsSearch = (args: {
     candidateEvaluationsAttempted?: number;
     candidateEvaluationsCompleted?: number;
     candidateEvaluationFailures?: number;
+    /**
+     * Parallel to `results` (same order): the signals from each returned
+     * candidate's in-sample evaluation. Present only when `retainSignals` was
+     * requested AND the implementation supports it; callers must fall back to
+     * re-execution when absent.
+     */
+    signalsByCandidate?: Signal[][];
     timingsMs?: {
         total: number;
         parameterGeneration: number;
@@ -614,9 +636,33 @@ async function searchOneAsset(args: {
     const visibleValidationData = oosIgnoreLastBars > 0
         ? fullClosed.slice(0, -oosIgnoreLastBars)
         : fullClosed;
+    // Signal reuse for fresh-entry detection is only parity-safe for
+    // non-`signal_close` execution models: their recheck runs `signalsOnly`,
+    // so `detectFreshEntry` sees an empty-trades result that the retained
+    // in-sample signals reproduce exactly. A `signal_close` recheck instead
+    // needs the re-simulated trade list (the compact in-sample fast path
+    // drops trades), so `signal_close` keeps re-executing the recheck — and
+    // keeps the application candle out of the search window, since including
+    // it only exists to enable reuse.
+    const executionModel = input.settings.executionModel ?? "signal_close";
+    const canReuseIsSignalsForFreshModel = executionModel !== "signal_close";
+    // With no fixed holdout and no data slice, the in-sample search includes
+    // the reserved application candle so the fresh-entry check below can reuse
+    // the candidate run's retained signals instead of re-executing every top-K
+    // candidate on the same bars. The search window gains one bar out of the
+    // full dataset (ranking/grade inputs shift negligibly — the existing
+    // endpoint adjustment already strips the still-open final trade); the
+    // winner's displayed metrics are still recomputed on the historical
+    // window further below, so displayed results exclude the application
+    // candle.
+    const includeApplicationCandleInSearch = canReuseIsSignalsForFreshModel
+        && oosIgnoreLastBars === 0
+        && (input.options.dataSlice ?? "all") === "all";
     const inSampleHistorical = oosIgnoreLastBars > 0
         ? visibleValidationData
-        : historical;
+        : includeApplicationCandleInSearch
+            ? fullClosed
+            : historical;
     diagnostics.historicalBars = inSampleHistorical.length;
     const fixedOosSignalIndex = oosIgnoreLastBars > 0
         ? visibleValidationData.length - 1
@@ -645,6 +691,19 @@ async function searchOneAsset(args: {
         return finish({ kind: "failed", symbol, reason: "historical window empty after data slice" });
     }
 
+    // The fresh-entry recheck re-executes each top-K candidate only when the
+    // recheck window differs from the in-sample window. With dataSlice "all",
+    // `slicedHistorical` is a verbatim copy of `inSampleHistorical`; when that
+    // also matches the recheck window (always in fixed-holdout mode; in
+    // no-holdout mode when the application candle was included above), the
+    // retained in-sample signals are sufficient and the re-execution is
+    // skipped. Any other data slice shifts the window boundaries, so the
+    // recheck must re-run on the full boundary data.
+    const recheckData = oosIgnoreLastBars > 0 ? visibleValidationData : fullClosed;
+    const canReuseIsSignalsForFresh = canReuseIsSignalsForFreshModel
+        && (input.options.dataSlice ?? "all") === "all"
+        && recheckData.length === slicedHistorical.length;
+
     // 5. Run the in-sample search on the historical window. The `runIsSearch`
     // seam decouples this leaf from the browser-bound `finder-runner` module.
     const inSampleStartedAt = performance.now();
@@ -660,6 +719,7 @@ async function searchOneAsset(args: {
         generateParamSets: input.generateParamSets,
         isCancelled: callbacks.isCancelled,
         yieldControl: callbacks.yieldControl,
+        retainSignals: canReuseIsSignalsForFresh,
     });
     diagnostics.timingsMs.inSampleSearch = performance.now() - inSampleStartedAt;
     diagnostics.candidatesEvaluated = finderOutput.totalCandidatesEvaluated ?? finderOutput.results.length;
@@ -688,36 +748,51 @@ async function searchOneAsset(args: {
     // 7. Re-generate signals for each top-K candidate on the visible boundary
     // data. In validation mode this ends before the hidden OOS window; with no
     // holdout it retains the normal full-closed application-candle behavior.
+    // When the boundary window is identical to the in-sample window (see
+    // `canReuseIsSignalsForFresh`), the in-sample run's retained signals are
+    // reused instead of re-executing every candidate on the same bars.
     const freshStartedAt = performance.now();
-    const freshEvaluations = await Promise.all(topK.map((candidate) => regenerateSignalsAndDetectFresh({
-        candidate,
-        strategy: preparedStrategy,
-        fullClosed: oosIgnoreLastBars > 0 ? visibleValidationData : fullClosed,
-        symbol,
-        interval: input.interval,
-        settings: input.settings,
-        capitalSettings: input.capitalSettings,
-        options: assetOptions,
-        exitStrategyCandidates: input.exitStrategyCandidates,
-        dataFetcher: input.dataFetcher,
-        useRustEnginePreference: input.useRustEnginePreference,
-    })));
+    const retainedSignals = canReuseIsSignalsForFresh ? finderOutput.signalsByCandidate : undefined;
+    const freshEvaluations: AssetFreshEvaluation[] = retainedSignals
+        ? topK.map((_candidate, candidateIndex) => detectFreshFromRetainedSignals({
+            signals: retainedSignals[candidateIndex] ?? [],
+            candles: recheckData,
+            settings: input.settings,
+        }))
+        : await Promise.all(topK.map((candidate) => regenerateSignalsAndDetectFresh({
+            candidate,
+            strategy: preparedStrategy,
+            fullClosed: recheckData,
+            symbol,
+            interval: input.interval,
+            settings: input.settings,
+            capitalSettings: input.capitalSettings,
+            options: assetOptions,
+            exitStrategyCandidates: input.exitStrategyCandidates,
+            dataFetcher: input.dataFetcher,
+            useRustEnginePreference: input.useRustEnginePreference,
+        })));
     diagnostics.timingsMs.freshEntryRechecks = performance.now() - freshStartedAt;
     diagnostics.freshEntryRechecks = freshEvaluations.length;
     const freshByCandidate = freshEvaluations.map((evaluation) => {
-        mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
-            rustAttemptedRuns: evaluation.rustAttempted ? 1 : 0,
-            rustCompletedRuns: evaluation.engineUsed === "rust" ? 1 : 0,
-            rustFallbackRuns: evaluation.engineUsed === "typescript" && evaluation.rustAttempted ? 1 : 0,
-            typescriptCompletedRuns: evaluation.engineUsed === "typescript" ? 1 : 0,
-            typescriptReasons: evaluation.typescriptReason
-                ? [{ reason: evaluation.typescriptReason, runs: 1 }]
-                : [],
-        });
+        // Reused detections executed nothing; they must not inflate the
+        // engine-usage counters.
+        if (evaluation.signalsReused !== true) {
+            mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
+                rustAttemptedRuns: evaluation.rustAttempted ? 1 : 0,
+                rustCompletedRuns: evaluation.engineUsed === "rust" ? 1 : 0,
+                rustFallbackRuns: evaluation.engineUsed === "typescript" && evaluation.rustAttempted ? 1 : 0,
+                typescriptCompletedRuns: evaluation.engineUsed === "typescript" ? 1 : 0,
+                typescriptReasons: evaluation.typescriptReason
+                    ? [{ reason: evaluation.typescriptReason, runs: 1 }]
+                    : [],
+            });
+        }
         const {
             engineUsed: _engineUsed,
             rustAttempted: _rustAttempted,
             typescriptReason: _typescriptReason,
+            signalsReused: _signalsReused,
             ...fresh
         } = evaluation;
         return fresh;
@@ -855,11 +930,15 @@ async function searchOneAsset(args: {
     ) {
         const winner = topK[result.historicalRank - 1];
         if (winner) {
+            // Displayed winner metrics stay on the historical window (which
+            // excludes the reserved application candle) even when the search
+            // window included it.
+            const winnerAnalyticsData = includeApplicationCandleInSearch ? historical : slicedHistorical;
             const winnerStartedAt = performance.now();
             const winnerEvaluation = await executeAssetCandidate({
                 candidate: winner,
                 strategy: preparedStrategy,
-                data: slicedHistorical,
+                data: winnerAnalyticsData,
                 symbol,
                 interval: input.interval,
                 settings: input.settings,
@@ -875,7 +954,7 @@ async function searchOneAsset(args: {
             );
             const selection = buildSelectionResult(
                 winnerEvaluation.result,
-                slicedHistorical[slicedHistorical.length - 1]?.time ?? null,
+                winnerAnalyticsData[winnerAnalyticsData.length - 1]?.time ?? null,
                 preResolvedCapital.initialCapital,
             );
             // Spread `finalResult` (not `result`) so the OOS overlay from the
@@ -927,6 +1006,73 @@ function mergeAssetOpportunityEngineUsage(
 }
 
 /**
+ * One candidate's fresh-entry evaluation, whether produced by re-executing the
+ * candidate (`regenerateSignalsAndDetectFresh`) or by reusing the in-sample
+ * run's retained signals (`detectFreshFromRetainedSignals`).
+ */
+type AssetFreshEvaluation = {
+    freshStatus: "fresh" | "active" | "flat";
+    direction: FinderAssetDirection | null;
+    latestSignalTime: Time | null;
+    signalAgeBars: number;
+    fillTiming: "signal_close" | "next_open" | "next_close";
+    isOpen: boolean;
+    latestTradeEntryTime: number | null;
+    latestSignalPrice: number | null;
+    engineUsed: "rust" | "typescript";
+    rustAttempted: boolean;
+    typescriptReason?: string;
+    /** True when derived from retained in-sample signals — nothing executed. */
+    signalsReused?: boolean;
+};
+
+/**
+ * Detect the fresh-entry status from signals retained by the in-sample search,
+ * WITHOUT re-executing the candidate. Only valid when the in-sample window and
+ * the recheck window are bar-for-bar identical AND the execution model is not
+ * `signal_close` (both enforced by the caller via `canReuseIsSignalsForFresh`).
+ *
+ * Parity with `regenerateSignalsAndDetectFresh`: for non-`signal_close`
+ * models the recheck runs `signalsOnly`, so `detectFreshEntry` sees an
+ * empty-trades result. Reproduce that input exactly with an empty result —
+ * passing the in-sample result (which may carry trades) would take a
+ * different branch and could flip "fresh" to "active" for repeated
+ * same-direction signals.
+ */
+function detectFreshFromRetainedSignals(args: {
+    signals: Signal[];
+    candles: OHLCVData[];
+    settings: BacktestSettings;
+}): AssetFreshEvaluation {
+    const detected = detectFreshEntry({
+        result: createEmptyBacktestResult(),
+        candles: args.candles,
+        settings: args.settings,
+        signals: args.signals,
+    });
+    return {
+        freshStatus: detected.freshStatus,
+        direction: detected.direction,
+        latestSignalTime: detected.latestSignalTime,
+        signalAgeBars: detected.signalAgeBars,
+        fillTiming: detected.fillTiming ?? "signal_close",
+        isOpen: detected.isOpen,
+        latestTradeEntryTime: detected.latestTrade
+            ? parseTimeToUnixSeconds(detected.latestTrade.entryTime)
+            : null,
+        latestSignalPrice: resolveLatestSignalPrice({
+            signals: args.signals,
+            candle: args.candles[args.candles.length - 1]!,
+            direction: detected.direction,
+            fallback: detected.latestTrade?.entryPrice ?? null,
+        }),
+        engineUsed: "typescript",
+        rustAttempted: false,
+        signalsReused: true,
+    };
+}
+
+/**
  * Re-run one candidate's strategy on the full closed data and detect the
  * fresh-entry status. Mirrors the prior current-chart Apply path: signal
  * generation + backtest on the FULL closed set (including the application
@@ -946,19 +1092,7 @@ function regenerateSignalsAndDetectFresh(args: {
     exitStrategyCandidates?: FinderSelectedStrategy[];
     dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
-}): Promise<{
-    freshStatus: "fresh" | "active" | "flat";
-    direction: FinderAssetDirection | null;
-    latestSignalTime: Time | null;
-    signalAgeBars: number;
-    fillTiming: "signal_close" | "next_open" | "next_close";
-    isOpen: boolean;
-    latestTradeEntryTime: number | null;
-    latestSignalPrice: number | null;
-    engineUsed: "rust" | "typescript";
-    rustAttempted: boolean;
-    typescriptReason?: string;
-}> {
+}): Promise<AssetFreshEvaluation> {
     return executeAssetCandidate({
         candidate: args.candidate,
         strategy: args.strategy,

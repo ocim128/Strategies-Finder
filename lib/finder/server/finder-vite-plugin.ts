@@ -1046,6 +1046,7 @@ export async function processFinderAssetOpportunityRun(
             ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
             isCancelled: args.isCancelled,
             yieldControl: args.yieldControl,
+            ...(args.retainSignals === true ? { retainSignals: true } : {}),
         });
         if (output.engineUsage.typescriptCompletedRuns > 0 && input.useRustEnginePreference === true) {
             debugLogger.event("finder.asset_opportunity.engine_fallback", {
@@ -1061,6 +1062,7 @@ export async function processFinderAssetOpportunityRun(
             candidateEvaluationsAttempted: output.candidateEvaluationsAttempted,
             candidateEvaluationsCompleted: output.candidateEvaluationsCompleted,
             candidateEvaluationFailures: output.candidateEvaluationFailures,
+            ...(output.signalsByCandidate ? { signalsByCandidate: output.signalsByCandidate } : {}),
             timingsMs: output.timingsMs,
             engineUsage: output.engineUsage,
         };

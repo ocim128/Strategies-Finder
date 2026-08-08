@@ -34,7 +34,7 @@ import {
 import { clearServerDataCache, createServerDataFetcher } from "../../data/server-data-fetcher-factory";
 import { isIbkrSymbol } from "../../local-daily-datasets";
 import { resolveServerBatchCacheBudget } from "../../batch-backtest/server-batch-cache-budget";
-import { loadFreshIbkrCandlesFromDisk } from "../../batch-backtest/server-ibkr-csv-loader";
+import { clearParsedIbkrCsvCache, loadFreshIbkrCandlesFromDisk } from "../../batch-backtest/server-ibkr-csv-loader";
 
 // Reuse a single long-lived DataFetcher for the whole server loader (Finding 8).
 const serverDataFetcher = createServerDataFetcher();
@@ -107,9 +107,10 @@ export function clearServerFinderDatasetCaches(): void {
     // same cache layers (audit Finding 1).
     clearServerDataCache();
     // IBKR sync writes CSVs in the Vite server process; clear the Node-side
-    // parsed CSV cache before another Finder run so a fresh file mtime cannot
+    // parsed CSV caches before another Finder run so a fresh file mtime cannot
     // be paired with stale in-memory candles in the disk cache.
     clearLocalDailyCsvCachesForSymbols();
+    clearParsedIbkrCsvCache();
 }
 
 export function getServerFinderDatasetCacheStats(): BatchDatasetCacheStats {

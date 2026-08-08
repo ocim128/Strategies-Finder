@@ -17,7 +17,7 @@ import {
 } from "./synthetic-pair-disk-cache";
 import { clearServerDataCache, createServerDataFetcher } from "../data/server-data-fetcher-factory";
 import { resolveServerBatchCacheBudget } from "./server-batch-cache-budget";
-import { loadFreshIbkrCandlesFromDisk } from "./server-ibkr-csv-loader";
+import { clearParsedIbkrCsvCache, loadFreshIbkrCandlesFromDisk } from "./server-ibkr-csv-loader";
 
 // Reuse a single long-lived DataFetcher for the whole server loader (Finding 8).
 const serverDataFetcher = createServerDataFetcher();
@@ -80,9 +80,10 @@ export function clearServerBatchDatasetCaches(): void {
     clearServerDataCache();
     // IBKR sync writes CSVs in the Vite server process, while the browser-side
     // sync completion hook can only invalidate the browser module cache. Clear
-    // the Node-side parsed CSV cache before another Batch run so a fresh file
+    // the Node-side parsed CSV caches before another Batch run so a fresh file
     // mtime cannot be paired with stale in-memory candles in the disk cache.
     clearLocalDailyCsvCachesForSymbols();
+    clearParsedIbkrCsvCache();
 }
 
 export function getServerBatchDatasetCacheStats(): BatchDatasetCacheStats {

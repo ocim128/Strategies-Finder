@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+    clearParsedIbkrCsvCache,
     loadFreshIbkrCandlesFromDisk,
     parseIbkrCsvPayload,
 } from "../lib/batch-backtest/server-ibkr-csv-loader";
@@ -46,6 +47,48 @@ async function main(): Promise<void> {
         legCacheMaxEntries: 128,
         pairCacheMaxEntries: 32,
     });
+
+    // ---- parsed-CSV cache behavior ----
+    // Intent: a 1000-pair Asset Opportunity run touches ~500 unique IBKR legs.
+    // The in-memory SyntheticLegCache (128 entries) overflows, causing repeated
+    // CSV re-parses. The parsed-CSV cache sits below the leg cache and prevents
+    // re-parsing the same file within a run. It invalidates on mtime change
+    // (IBKR sync rewrites the seed) and is cleared by `clearParsedIbkrCsvCache`.
+    const cacheBaseDir = mkdtempSync(join(tmpdir(), "server-ibkr-csv-cache-"));
+    try {
+        const cacheCsvDir = join(cacheBaseDir, "price-data", "ibkr", "csv", "30m");
+        mkdirSync(cacheCsvDir, { recursive: true });
+        const csvPath = join(cacheCsvDir, "MSFT.csv");
+        writeFileSync(csvPath, CSV, "utf8");
+
+        clearParsedIbkrCsvCache();
+        const first = await loadFreshIbkrCandlesFromDisk("MSFT\u2022", "30m", undefined, cacheBaseDir);
+        assert.equal(first!.length, 2, "first load parses and returns candles");
+
+        // Second call with unchanged mtime → cache hit (same candle array).
+        const second = await loadFreshIbkrCandlesFromDisk("MSFT\u2022", "30m", undefined, cacheBaseDir);
+        assert.deepEqual(second, first, "cache hit returns the same candles without re-parsing");
+
+        // Bump mtime → cache miss → re-parse (simulates IBKR sync rewriting the seed).
+        const newCsv = [
+            "time,open,high,low,close,volume",
+            "2025-01-02T14:30:00.000Z,200,202,199,201,2000",
+            "",
+        ].join("\n");
+        writeFileSync(csvPath, newCsv, "utf8");
+        const futureMs = Date.now() * 2;
+        utimesSync(csvPath, futureMs / 1000, futureMs / 1000);
+        const afterSync = await loadFreshIbkrCandlesFromDisk("MSFT\u2022", "30m", undefined, cacheBaseDir);
+        assert.equal(afterSync![0]!.open, 200, "mtime change invalidates the cache and re-parses");
+
+        // Explicit clear → next call re-parses.
+        clearParsedIbkrCsvCache();
+        const afterClear = await loadFreshIbkrCandlesFromDisk("MSFT\u2022", "30m", undefined, cacheBaseDir);
+        assert.equal(afterClear![0]!.open, 200, "clear forces re-parse but content is unchanged");
+    } finally {
+        rmSync(cacheBaseDir, { recursive: true, force: true });
+    }
+
     console.log("PASS: server-ibkr-csv-loader.spec.ts");
 }
 

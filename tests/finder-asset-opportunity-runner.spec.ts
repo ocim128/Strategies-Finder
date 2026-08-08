@@ -26,7 +26,7 @@ import {
 import type { FinderSelectedStrategy } from "../lib/finder/finder-runner";
 import type { FinderOptions, FinderResult } from "../lib/types/finder";
 import type { CapitalSettings } from "../lib/types/backtest";
-import type { BacktestResult, BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
+import type { BacktestResult, BacktestSettings, OHLCVData, Signal, Strategy, Time } from "../lib/types/strategies";
 
 function makeCandles(closes: number[]): OHLCVData[] {
     return closes.map((close, index) => ({
@@ -128,6 +128,47 @@ function makeStubIsSearch(): AssetIsSearch {
         return {
             results: results.slice(0, options.topN),
             totalCandidatesEvaluated: paramSets.length,
+        };
+    };
+}
+
+/**
+ * Like `makeStubIsSearch`, but honors `retainSignals`: returns each top-K
+ * candidate's generated signals parallel to `results`, mirroring the
+ * production `runServerAssetIsSearch` retention contract.
+ */
+function makeRetainingStubIsSearch(): AssetIsSearch {
+    return async (args) => {
+        const { ohlcvData, selectedStrategies, generateParamSets, options } = args;
+        const strategy = selectedStrategies[0]!.strategy;
+        const paramSets = generateParamSets(strategy.defaultParams, options);
+        const results: FinderResult[] = [];
+        const signalsByResult = new Map<FinderResult, Signal[]>();
+        for (const params of paramSets) {
+            const signals = strategy.execute(ohlcvData, params);
+            const backtest = runBacktestForAssetTest(ohlcvData, signals, args.settings);
+            const candidate: FinderResult = {
+                key: selectedStrategies[0]!.key,
+                name: selectedStrategies[0]!.name,
+                params,
+                result: backtest,
+                selectionResult: backtest,
+                endpointAdjusted: false,
+                endpointRemovedTrades: 0,
+            };
+            results.push(candidate);
+            if (args.retainSignals === true) {
+                signalsByResult.set(candidate, signals);
+            }
+        }
+        results.sort((a, b) => b.result.netProfit - a.result.netProfit);
+        const topK = results.slice(0, options.topN);
+        return {
+            results: topK,
+            totalCandidatesEvaluated: paramSets.length,
+            ...(args.retainSignals === true
+                ? { signalsByCandidate: topK.map((candidate) => signalsByResult.get(candidate) ?? []) }
+                : {}),
         };
     };
 }
@@ -310,6 +351,9 @@ describe("Asset Opportunity runner", () => {
         const diagnostics = output.outcomes[0]!.diagnostics;
         expect(diagnostics).to.exist;
         expect(diagnostics!.dataBars).to.equal(5);
+        // signal_close keeps the reserved application candle out of the
+        // search window: its recheck needs re-simulated trades, so signal
+        // reuse is disabled and the window is unchanged.
         expect(diagnostics!.historicalBars).to.equal(4);
         expect(diagnostics!.slicedHistoricalBars).to.equal(4);
         expect(diagnostics!.candidatesEvaluated).to.equal(1);
@@ -650,5 +694,215 @@ describe("Asset Opportunity runner", () => {
         } else {
             expect(output.outcomes[0]!.kind).to.equal("no_fresh_entry");
         }
+    });
+
+    it("reuses retained in-sample signals for fresh detection in fixed-holdout mode", async () => {
+        // Intent lock: the fresh-entry recheck re-executes every top-K
+        // candidate on the boundary window. In fixed-holdout mode with
+        // dataSlice "all" that window is bar-for-bar identical to the
+        // in-sample window, so the recheck is pure waste — the search run's
+        // retained signals must produce the SAME fresh outcome without any
+        // re-execution.
+        const candles = makeCandles([100, 101, 102, 103, 104, 105, 106, 107, 108]);
+        const paramSets = [{ threshold: 1 }, { threshold: 2 }];
+        const makeCountingStrategy = () => {
+            let executeCalls = 0;
+            const strategy: Strategy = {
+                name: "ReuseHoldout",
+                description: "enters on the latest bar of any data",
+                defaultParams: { threshold: 1 },
+                paramLabels: { threshold: "Threshold" },
+                execute(data) {
+                    executeCalls += 1;
+                    const latest = data[data.length - 1];
+                    return latest ? [{ time: latest.time, type: "buy" as const, price: latest.close }] : [];
+                },
+            };
+            return { strategy, getExecuteCalls: () => executeCalls };
+        };
+        const makeHoldoutOptions = () => makeOptions({
+            assetOpportunity: {
+                symbols: ["HOLDOUT_REUSE"],
+                candidatePoolSize: 2,
+                minFreshSupport: 1,
+                oosIgnoreLastBars: 2,
+                oosHorizons: [1],
+            },
+        });
+
+        // Run 1: IS search retains signals → runner must NOT re-execute.
+        const reused = makeCountingStrategy();
+        let retainSignalsRequested = false;
+        const reusedOutput = await runAssetOpportunitySearch(makeInput({
+            options: makeHoldoutOptions(),
+            settings: { ...settings, executionModel: "next_open" },
+            selectedStrategy: { key: "reuse_holdout", name: "ReuseHoldout", strategy: reused.strategy },
+            candidatePoolSize: 2,
+            generateParamSets: () => paramSets.map((params) => ({ ...params })),
+            assets: [{ symbol: "HOLDOUT_REUSE", data: candles }],
+            runIsSearch: async (args) => {
+                if (args.retainSignals === true) retainSignalsRequested = true;
+                return makeRetainingStubIsSearch()(args);
+            },
+        }), makeCallbacks());
+
+        // Run 2: IS search does NOT retain signals → runner re-executes per
+        // top-K candidate (the pre-optimization behavior).
+        const fallback = makeCountingStrategy();
+        const fallbackOutput = await runAssetOpportunitySearch(makeInput({
+            options: makeHoldoutOptions(),
+            settings: { ...settings, executionModel: "next_open" },
+            selectedStrategy: { key: "reuse_holdout", name: "ReuseHoldout", strategy: fallback.strategy },
+            candidatePoolSize: 2,
+            generateParamSets: () => paramSets.map((params) => ({ ...params })),
+            assets: [{ symbol: "HOLDOUT_REUSE", data: candles }],
+            runIsSearch: makeStubIsSearch(),
+        }), makeCallbacks());
+
+        expect(retainSignalsRequested, "runner must request retained signals when the windows match").to.equal(true);
+        expect(reused.getExecuteCalls(), "reuse: only the IS search executes the strategy").to.equal(paramSets.length);
+        expect(fallback.getExecuteCalls(), "fallback: IS search + one recheck execution per top-K candidate")
+            .to.equal(paramSets.length + paramSets.length);
+
+        expect(reusedOutput.results).to.have.length(1);
+        expect(fallbackOutput.results).to.have.length(1);
+        // Parity: identical fresh outcomes whether or not signals are reused.
+        const pick = (r: typeof reusedOutput.results[number]) => ({
+            freshStatus: r.freshStatus,
+            direction: r.direction,
+            latestSignalTime: r.latestSignalTime,
+            signalAgeBars: r.signalAgeBars,
+            fillTiming: r.fillTiming,
+        });
+        expect(pick(reusedOutput.results[0]!)).to.deep.equal(pick(fallbackOutput.results[0]!));
+        // The signal fired on the visible boundary candle (index 6 of 9 with
+        // 2 hidden bars).
+        expect(reusedOutput.results[0]!.freshStatus).to.equal("fresh");
+        expect(reusedOutput.results[0]!.latestSignalTime).to.equal(candles[6]!.time);
+        // The recheck pool is still fully covered (support counts need it).
+        expect(reusedOutput.outcomes[0]!.diagnostics?.freshEntryRechecks).to.equal(paramSets.length);
+    });
+
+    it("includes the application candle in the no-holdout search window so signals can be reused", async () => {
+        // With no fixed holdout, dataSlice "all", and a non-`signal_close`
+        // execution model, the reserved application candle is part of the
+        // in-sample search window. Fresh detection then reuses the search
+        // run's retained signals instead of re-executing every top-K
+        // candidate on the same bars. This is the one intentional semantic
+        // change: candidate ranking sees one extra bar out of the full
+        // dataset.
+        const candles = makeCandles([100, 101, 102, 103, 104, 105]);
+        let executeCalls = 0;
+        let searchedBars = 0;
+        const strategy: Strategy = {
+            name: "ReuseNoHoldout",
+            description: "enters on the latest bar of any data",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                executeCalls += 1;
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy" as const, price: latest.close }] : [];
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            settings: { ...settings, executionModel: "next_open" },
+            selectedStrategy: { key: "reuse_no_holdout", name: "ReuseNoHoldout", strategy },
+            generateParamSets: () => [{ threshold: 1 }],
+            assets: [{ symbol: "NO_HOLDOUT", data: candles }],
+            runIsSearch: async (args) => {
+                searchedBars = args.ohlcvData.length;
+                return makeRetainingStubIsSearch()(args);
+            },
+        }), makeCallbacks());
+
+        expect(searchedBars, "search window includes the reserved application candle").to.equal(candles.length);
+        expect(executeCalls, "only the IS search executes the strategy").to.equal(1);
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.freshStatus).to.equal("fresh");
+        expect(output.results[0]!.signalAgeBars).to.equal(0);
+        expect(output.results[0]!.latestSignalTime).to.equal(candles[candles.length - 1]!.time);
+    });
+
+    it("keeps re-executing the recheck for signal_close (the in-sample fast path drops trades)", async () => {
+        // Parity guard: a `signal_close` recheck needs the re-simulated trade
+        // list, and the compact in-sample fast path drops trades — so the
+        // runner must NOT request signal retention, must keep the reserved
+        // application candle out of the in-sample window, and must re-execute
+        // the recheck exactly as before.
+        const candles = makeCandles([100, 101, 102, 103, 104, 105]);
+        let executeCalls = 0;
+        let retainSignalsRequested = false;
+        let searchedBars = 0;
+        const strategy: Strategy = {
+            name: "SignalCloseNoReuse",
+            description: "enters on the latest bar of any data",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                executeCalls += 1;
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy" as const, price: latest.close }] : [];
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            selectedStrategy: { key: "signal_close_no_reuse", name: "SignalCloseNoReuse", strategy },
+            generateParamSets: () => [{ threshold: 1 }],
+            assets: [{ symbol: "SC_NO_REUSE", data: candles }],
+            runIsSearch: async (args) => {
+                if (args.retainSignals === true) retainSignalsRequested = true;
+                searchedBars = args.ohlcvData.length;
+                return makeRetainingStubIsSearch()(args);
+            },
+        }), makeCallbacks());
+
+        expect(retainSignalsRequested, "no retention request for signal_close").to.equal(false);
+        expect(searchedBars, "search window still excludes the application candle").to.equal(candles.length - 1);
+        expect(executeCalls, "IS search + one recheck execution").to.equal(2);
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.freshStatus).to.equal("fresh");
+        expect(output.results[0]!.latestSignalTime).to.equal(candles[candles.length - 1]!.time);
+    });
+
+    it("still re-executes the recheck when a data slice shifts the window", async () => {
+        // Guard: signal reuse is only valid when the recheck window is
+        // bar-for-bar identical to the in-sample window. A non-"all" data
+        // slice shifts the window boundaries, so the runner must NOT request
+        // retained signals and must re-execute every top-K candidate on the
+        // full boundary data.
+        const candles = makeCandles([100, 101, 102, 103, 104, 105, 106, 107]);
+        const paramSets = [{ threshold: 1 }, { threshold: 2 }];
+        let executeCalls = 0;
+        let retainSignalsRequested = false;
+        const strategy: Strategy = {
+            name: "SlicedNoReuse",
+            description: "enters on the latest bar of any data",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                executeCalls += 1;
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy" as const, price: latest.close }] : [];
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({ dataSlice: "half_oldest" }),
+            selectedStrategy: { key: "sliced_no_reuse", name: "SlicedNoReuse", strategy },
+            candidatePoolSize: 2,
+            generateParamSets: () => paramSets.map((params) => ({ ...params })),
+            assets: [{ symbol: "SLICED_NO_REUSE", data: candles }],
+            runIsSearch: async (args) => {
+                if (args.retainSignals === true) retainSignalsRequested = true;
+                return makeRetainingStubIsSearch()(args);
+            },
+        }), makeCallbacks());
+
+        expect(retainSignalsRequested, "no retention request when the windows differ").to.equal(false);
+        expect(executeCalls, "IS search + one recheck execution per top-K candidate")
+            .to.equal(paramSets.length + paramSets.length);
+        // The recheck still runs on the full boundary data and finds the entry.
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.freshStatus).to.equal("fresh");
+        expect(output.results[0]!.latestSignalTime).to.equal(candles[candles.length - 1]!.time);
     });
 });
