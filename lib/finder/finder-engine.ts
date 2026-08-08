@@ -3,7 +3,12 @@ import type { FinderMetric, FinderResult } from "../types/finder";
 import type { PolymarketEvalResult } from "../types/polymarket-outcomes";
 
 function isAscendingMetric(metric: FinderMetric): boolean {
-    return metric === "maxDrawdownPercent";
+    // maxDrawdownPercent, VaR, CVaR, and Ulcer are stored as positive values
+    // where smaller is better.
+    return metric === "maxDrawdownPercent"
+        || metric === "valueAtRisk95"
+        || metric === "conditionalValueAtRisk95"
+        || metric === "ulcerIndex";
 }
 
 export function getFinderSelectionResult(item: FinderResult): BacktestResult {

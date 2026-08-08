@@ -34,6 +34,7 @@ import type {
     FinderAssetDirection,
     FinderAssetOpportunityResult,
     FinderAssetSupportCounts,
+    FinderMetric,
     FinderOosVerdict,
 } from "../types/finder";
 
@@ -201,4 +202,76 @@ export function compareAssetOpportunityResults(
 export function sortAssetOpportunityResults(results: FinderAssetOpportunityResult[]): FinderAssetOpportunityResult[] {
     results.sort(compareAssetOpportunityResults);
     return results;
+}
+
+/**
+ * Metrics the post-run re-sort can rank Asset Opportunity results by. These
+ * map directly to scalar fields on `selectionResult: BacktestResult` and are
+ * always populated for every retained result.
+ */
+const ASSET_RESORT_METRICS: readonly FinderMetric[] = [
+    "expectancy",
+    "netProfit",
+    "netProfitPercent",
+    "profitFactor",
+    "sharpeRatio",
+    "winRate",
+    "maxDrawdownPercent",
+    "averageGain",
+    "totalTrades",
+];
+
+export function getAssetOpportunityResortMetrics(): readonly FinderMetric[] {
+    return ASSET_RESORT_METRICS;
+}
+
+/**
+ * Resolve a metric value from an Asset Opportunity result's `selectionResult`.
+ * Returns `0` for missing/non-finite values so the sort never breaks on NaN.
+ * `maxDrawdownPercent` is returned as-is (smaller is better); the caller
+ * handles the ascending direction.
+ */
+function getAssetOpportunityMetricValue(
+    result: FinderAssetOpportunityResult,
+    metric: FinderMetric,
+): number {
+    const sel = result.selectionResult;
+    switch (metric) {
+        case "netProfit": return Number.isFinite(sel.netProfit) ? sel.netProfit : 0;
+        case "netProfitPercent": return Number.isFinite(sel.netProfitPercent) ? sel.netProfitPercent : 0;
+        case "profitFactor": return Number.isFinite(sel.profitFactor) ? sel.profitFactor : 0;
+        case "sharpeRatio": return Number.isFinite(sel.sharpeRatio) ? sel.sharpeRatio : 0;
+        case "winRate": return Number.isFinite(sel.winRate) ? sel.winRate : 0;
+        case "maxDrawdownPercent": return Number.isFinite(sel.maxDrawdownPercent) ? sel.maxDrawdownPercent : 0;
+        case "expectancy": return Number.isFinite(sel.expectancy) ? sel.expectancy : 0;
+        case "averageGain": return Number.isFinite(sel.avgWin) ? sel.avgWin : 0;
+        case "totalTrades": return sel.totalTrades ?? 0;
+        default: return 0;
+    }
+}
+
+/**
+ * Sort a copy of Asset Opportunity results by a single metric for the post-run
+ * re-sort dropdown. When `metric` is null, falls back to the existing
+ * grade-first lexicographic comparator (the run-time default).
+ *
+ * Returns a NEW array — does not mutate the input.
+ */
+export function sortAssetOpportunityResultsByMetric(
+    results: readonly FinderAssetOpportunityResult[],
+    metric: FinderMetric | null,
+): FinderAssetOpportunityResult[] {
+    if (metric === null) {
+        return sortAssetOpportunityResults([...results]);
+    }
+    const ascending = metric === "maxDrawdownPercent";
+    return [...results].sort((a, b) => {
+        const valA = getAssetOpportunityMetricValue(a, metric);
+        const valB = getAssetOpportunityMetricValue(b, metric);
+        if (valA !== valB) return ascending ? valA - valB : valB - valA;
+        // Deterministic tie-breaker.
+        if (a.symbol < b.symbol) return -1;
+        if (a.symbol > b.symbol) return 1;
+        return 0;
+    });
 }

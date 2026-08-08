@@ -30,7 +30,7 @@ import { runCandidateOosPass } from "./finder/finder-candidate-oos";
 import {
 	sortFinderUniverseCandidates,
 } from "./finder/finder-universe-metrics";
-import { sortAssetOpportunityResults } from "./finder/finder-asset-opportunity-metrics";
+import { sortAssetOpportunityResults, sortAssetOpportunityResultsByMetric, getAssetOpportunityResortMetrics } from "./finder/finder-asset-opportunity-metrics";
 import {
 	compactFinderLatestResults,
 	normalizeFinderLatestResultsSnapshot,
@@ -475,6 +475,12 @@ export class FinderManager {
 	private isRunning = false;
 	private isCancelled = false;
 	private latestResults: FinderLatestResults = { scope: "current_chart", results: [] };
+	/**
+	 * Snapshot of the run-time sorted results before any post-run re-sort was
+	 * applied. Used to restore the original ordering when the re-sort dropdown
+	 * is reset to "Run Sort". Set on every run completion and cleared on start.
+	 */
+	private originalLatestResults: FinderLatestResults | null = null;
 	private latestDiagnostics: FinderDiagnostics | null = null;
 	private latestAssetOpportunityDiagnostics: FinderDiagnostics['assetOpportunity'] | null = null;
 	private lastFinderRunBacktestSettings: ReturnType<typeof settingsManager.getBacktestSettings> | null = null;
@@ -881,6 +887,7 @@ export class FinderManager {
 		this.initPolymarketUI();
 		this.initFinderSettingsPersistenceUI();
 		this.initOosValidationUI();
+		this.getDom().finderResort.addEventListener("change", () => this.applyResort());
 		this.applyScopeUi();
 		this.loadPersistedLatestResults();
 		this.renderLatestResults();
@@ -1174,6 +1181,7 @@ export class FinderManager {
 		this.setTradeFilterControlsEnabled(this.isTradeFilterControlsEnabled());
 		this.updateTimingSortControlState();
 		this.syncOosValidationControlState();
+		this.populateResortOptions();
 	}
 
 	/**
@@ -1834,6 +1842,7 @@ export class FinderManager {
 			requiresTsEngine,
 		});
 		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
+		this.stashAndResetResort();
 		this.renderLatestResults();
 		this.ui.renderRandomBenchmark(options.mode, output.randomBenchmark);
 
@@ -2303,6 +2312,7 @@ export class FinderManager {
 					failedAssets = event.totals.failedAssets;
 					if (isStillActive()) {
 						this.setLatestResults({ scope: 'asset_opportunity', results: [...(terminalResults ?? [])] });
+						this.stashAndResetResort();
 						this.renderLatestResults();
 					}
 				},
@@ -2335,6 +2345,7 @@ export class FinderManager {
 					assetsWithFreshEntry = recovered.assetTotals?.assetsWithFreshEntry ?? terminalResults.length;
 					failedAssets = recovered.assetTotals?.failedAssets ?? 0;
 					this.setLatestResults({ scope: 'asset_opportunity', results: [...terminalResults] });
+					this.stashAndResetResort();
 					this.renderLatestResults();
 				} else if (!this.isCancelled) {
 					throw streamError;
@@ -2564,6 +2575,7 @@ export class FinderManager {
 						const displayed = sortFinderUniverseCandidates(terminalCandidates, sortPriority)
 							.slice(0, options.topN);
 						this.setLatestResults({ scope: 'symbol_universe', results: displayed });
+						this.stashAndResetResort();
 						this.renderLatestResults();
 					}
 					finalized = true;
@@ -2590,6 +2602,7 @@ export class FinderManager {
 				finalized = true;
 				if (isStillActive()) {
 					this.setLatestResults({ scope: "symbol_universe", results: [...terminalCandidates] });
+					this.stashAndResetResort();
 					this.renderLatestResults();
 				}
 			}
@@ -3000,6 +3013,87 @@ export class FinderManager {
 		};
 	}
 
+
+	/**
+	 * Populate the post-run re-sort dropdown options for the current scope.
+	 * Each scope offers the same metrics its pre-run sort offers. Called on
+	 * scope change and run completion.
+	 */
+	private populateResortOptions(): void {
+		const dom = this.getDom();
+		const scope = this.getScope();
+		const options: Array<{ value: string; label: string }> = [];
+		if (scope === 'symbol_universe') {
+			for (const metric of UNIVERSE_SORT_OPTIONS) {
+				options.push({ value: metric, label: UNIVERSE_METRIC_FULL_LABELS[metric] });
+			}
+		} else if (scope === 'asset_opportunity') {
+			for (const metric of getAssetOpportunityResortMetrics()) {
+				options.push({ value: metric, label: METRIC_FULL_LABELS[metric] });
+			}
+		} else {
+			for (const metric of FINDER_SORT_OPTIONS) {
+				options.push({ value: metric, label: METRIC_FULL_LABELS[metric] });
+			}
+		}
+		// Preserve the current selection if it's still valid for this scope.
+		const previousValue = dom.finderResort.value;
+		dom.finderResort.innerHTML = '<option value="">Run Sort</option>';
+		for (const opt of options) {
+			const el = document.createElement("option");
+			el.value = opt.value;
+			el.textContent = opt.label;
+			dom.finderResort.appendChild(el);
+		}
+		// Reset to default on scope change; the previous metric may not apply.
+		dom.finderResort.value = "";
+		void previousValue;
+	}
+
+	/**
+	 * Apply the selected re-sort metric to the retained results and re-render.
+	 * When the metric is empty ("Run Sort"), restore the original run-time
+	 * ordering from the stashed snapshot.
+	 */
+	private applyResort(): void {
+		const dom = this.getDom();
+		const metric = dom.finderResort.value;
+		const scope = this.latestResults.scope;
+
+		// "Run Sort" — restore original run-time ordering.
+		if (!metric) {
+			if (this.originalLatestResults && this.originalLatestResults.scope === scope) {
+				this.setLatestResults(this.originalLatestResults);
+			}
+			this.renderLatestResults();
+			return;
+		}
+
+		if (scope === 'current_chart') {
+			const results = this.latestResults.results;
+			const sorted = sortFinderResults(results, [metric as FinderMetric]);
+			this.setLatestResults({ scope: 'current_chart', results: sorted });
+		} else if (scope === 'symbol_universe') {
+			const results = this.latestResults.results;
+			const sorted = sortFinderUniverseCandidates(results, [metric as FinderUniverseMetric]);
+			this.setLatestResults({ scope: 'symbol_universe', results: sorted });
+		} else if (scope === 'asset_opportunity') {
+			const results = this.latestResults.results;
+			const sorted = sortAssetOpportunityResultsByMetric(results, metric as FinderMetric);
+			this.setLatestResults({ scope: 'asset_opportunity', results: sorted });
+		}
+		this.renderLatestResults();
+	}
+
+	/**
+	 * Reset the re-sort dropdown to "Run Sort" and stash the current results
+	 * as the run-time baseline. Called at run completion.
+	 */
+	private stashAndResetResort(): void {
+		const dom = this.getDom();
+		dom.finderResort.value = "";
+		this.originalLatestResults = this.latestResults;
+	}
 
 	private renderLatestResults(): void {
 		if (this.getScope() === 'symbol_universe') {

@@ -16,6 +16,8 @@ import {
     decideAssetGrade,
     compareAssetOpportunityResults,
     sortAssetOpportunityResults,
+    sortAssetOpportunityResultsByMetric,
+    getAssetOpportunityResortMetrics,
     type AssetPoolCandidate,
 } from "../lib/finder/finder-asset-opportunity-metrics";
 import type { FinderAssetOpportunityResult } from "../lib/types/finder";
@@ -210,5 +212,126 @@ describe("Asset Opportunity lexicographic ranking", () => {
         const b = makeResult({ symbol: "B", grade: "select", bestFreshRank: 1, freshSameDirection: 5, expectancy: 1, totalTrades: 10 });
         const sorted = sortAssetOpportunityResults([a, b]);
         expect(sorted.map((r) => r.symbol)).to.deep.equal(["B", "A"]);
+    });
+});
+
+describe("Asset Opportunity post-run re-sort", () => {
+    /**
+     * Build a result with full control over the selectionResult scalar metrics
+     * so the re-sort comparator can be exercised on any metric.
+     */
+    function makeResortResult(args: {
+        symbol: string;
+        grade?: FinderAssetOpportunityResult["grade"];
+        netProfit?: number;
+        netProfitPercent?: number;
+        profitFactor?: number;
+        sharpeRatio?: number;
+        winRate?: number;
+        maxDrawdownPercent?: number;
+        expectancy?: number;
+        avgWin?: number;
+        totalTrades?: number;
+    }): FinderAssetOpportunityResult {
+        return {
+            symbol: args.symbol,
+            strategyKey: "k",
+            strategyName: "K",
+            params: {},
+            historicalRank: 1,
+            totalCandidatesEvaluated: 10,
+            isHistoricalBest: true,
+            freshStatus: "fresh",
+            direction: "long",
+            latestSignalTime: null,
+            signalAgeBars: 0,
+            fillTiming: "signal_close",
+            selectionResult: {
+                trades: [],
+                netProfit: args.netProfit ?? 0,
+                netProfitPercent: args.netProfitPercent ?? 0,
+                winRate: args.winRate ?? 0,
+                expectancy: args.expectancy ?? 0,
+                avgTrade: 0,
+                profitFactor: args.profitFactor ?? 0,
+                maxDrawdown: 0,
+                maxDrawdownPercent: args.maxDrawdownPercent ?? 0,
+                totalTrades: args.totalTrades ?? 0,
+                winningTrades: 0,
+                losingTrades: 0,
+                avgWin: args.avgWin ?? 0,
+                avgLoss: 0,
+                sharpeRatio: args.sharpeRatio ?? 0,
+                equityCurve: [],
+            },
+            support: {
+                freshLongCandidates: 1,
+                freshShortCandidates: 0,
+                freshSameDirection: 1,
+                poolSize: 10,
+                bestFreshRank: 1,
+                directionAgreementRatio: 1,
+            },
+            grade: args.grade ?? "select",
+        };
+    }
+
+    it("metric=null falls back to the grade-first lexicographic comparator", () => {
+        const reject = makeResortResult({ symbol: "B", grade: "reject", netProfit: 9999 });
+        const select = makeResortResult({ symbol: "A", grade: "select", netProfit: 1 });
+        // Grade-first: select before reject regardless of netProfit.
+        const sorted = sortAssetOpportunityResultsByMetric([reject, select], null);
+        expect(sorted.map((r) => r.symbol)).to.deep.equal(["A", "B"]);
+    });
+
+    it("sorts by netProfit descending, overriding grade", () => {
+        // A reject with higher netProfit outranks a select with lower.
+        const low = makeResortResult({ symbol: "A", grade: "select", netProfit: 100 });
+        const high = makeResortResult({ symbol: "B", grade: "reject", netProfit: 5000 });
+        const sorted = sortAssetOpportunityResultsByMetric([low, high], "netProfit");
+        expect(sorted.map((r) => r.symbol)).to.deep.equal(["B", "A"]);
+    });
+
+    it("sorts by maxDrawdownPercent ascending (smaller drawdown is better)", () => {
+        const deep = makeResortResult({ symbol: "A", maxDrawdownPercent: 50 });
+        const shallow = makeResortResult({ symbol: "B", maxDrawdownPercent: 5 });
+        const sorted = sortAssetOpportunityResultsByMetric([deep, shallow], "maxDrawdownPercent");
+        expect(sorted.map((r) => r.symbol)).to.deep.equal(["B", "A"]);
+    });
+
+    it("uses symbol ascending as the tie-breaker when metrics are equal", () => {
+        const z = makeResortResult({ symbol: "Z", sharpeRatio: 2.0 });
+        const a = makeResortResult({ symbol: "A", sharpeRatio: 2.0 });
+        const sorted = sortAssetOpportunityResultsByMetric([z, a], "sharpeRatio");
+        expect(sorted.map((r) => r.symbol)).to.deep.equal(["A", "Z"]);
+    });
+
+    it("does not mutate the input array", () => {
+        const original = [
+            makeResortResult({ symbol: "C", netProfit: 3 }),
+            makeResortResult({ symbol: "A", netProfit: 1 }),
+            makeResortResult({ symbol: "B", netProfit: 2 }),
+        ];
+        const originalOrder = original.map((r) => r.symbol);
+        sortAssetOpportunityResultsByMetric(original, "netProfit");
+        expect(original.map((r) => r.symbol), "input array is unchanged").to.deep.equal(originalOrder);
+    });
+
+    it("handles NaN values gracefully (treated as 0)", () => {
+        const nan = makeResortResult({ symbol: "A", expectancy: Number.NaN });
+        const zero = makeResortResult({ symbol: "B", expectancy: 0 });
+        const positive = makeResortResult({ symbol: "C", expectancy: 1.5 });
+        const sorted = sortAssetOpportunityResultsByMetric([nan, zero, positive], "expectancy");
+        expect(sorted.map((r) => r.symbol)).to.deep.equal(["C", "A", "B"]);
+    });
+
+    it("getAssetOpportunityResortMetrics returns the expected metric list", () => {
+        const metrics = getAssetOpportunityResortMetrics();
+        expect(metrics).to.include("netProfit");
+        expect(metrics).to.include("sharpeRatio");
+        expect(metrics).to.include("maxDrawdownPercent");
+        expect(metrics).to.include("expectancy");
+        expect(metrics).to.include("profitFactor");
+        expect(metrics).to.include("totalTrades");
     });
 });

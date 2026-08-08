@@ -76,6 +76,14 @@ export const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
 	polyProfitFactor: 'Polymarket Profit Factor',
 	polyProfitFactorBalance: 'Polymarket Profit Factor + Trades Balance',
 	polySizedNet: 'Polymarket Sized Net',
+	sortinoRatio: 'Sortino Ratio',
+	calmarRatio: 'Calmar Ratio',
+	tailRatio: 'Tail Ratio',
+	skewness: 'Skewness',
+	ulcerIndex: 'Ulcer Index',
+	serenityIndex: 'Serenity Index',
+	valueAtRisk95: 'VaR 95%',
+	conditionalValueAtRisk95: 'CVaR 95%',
 };
 
 export const POLYMARKET_RANK_MODE_LABELS: Record<PolymarketFinderRankMode, string> = {
