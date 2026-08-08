@@ -539,7 +539,7 @@ export async function executeBacktestFromSignals(
     filteredSignals = filterSignalsByBlockRange(filteredSignals, blockRange);
 
     const requireTs = requiresTypescriptEngine(resolvedSettings) || isSmartTradeSizingMode(resolvedCapital.sizingMode);
-    if (shouldAttemptRust(context.engineMode ?? "auto", requireTs)) {
+    if (shouldAttemptRust(context.engineMode ?? "auto", requireTs, context.useRustEnginePreference)) {
         const rustResult = await tryRustBacktest(
             backtestData,
             filteredSignals,

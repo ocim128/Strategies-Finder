@@ -227,7 +227,8 @@ export function getAssetOpportunityResortMetrics(): readonly FinderMetric[] {
 
 /**
  * Resolve a metric value from an Asset Opportunity result's `selectionResult`.
- * Returns `0` for missing/non-finite values so the sort never breaks on NaN.
+ * Returns `0` for missing/NaN values and bounded sentinels for infinities so
+ * the sort never breaks on non-finite analytics.
  * `maxDrawdownPercent` is returned as-is (smaller is better); the caller
  * handles the ascending direction.
  */
@@ -236,6 +237,12 @@ function getAssetOpportunityMetricValue(
     metric: FinderMetric,
 ): number {
     const sel = result.selectionResult;
+    const analytics = sel.performanceAnalytics;
+    const analyticsValue = (value: number | undefined): number => {
+        if (value === undefined || Number.isNaN(value)) return 0;
+        if (!Number.isFinite(value)) return value > 0 ? Number.MAX_SAFE_INTEGER : -Number.MAX_SAFE_INTEGER;
+        return value;
+    };
     switch (metric) {
         case "netProfit": return Number.isFinite(sel.netProfit) ? sel.netProfit : 0;
         case "netProfitPercent": return Number.isFinite(sel.netProfitPercent) ? sel.netProfitPercent : 0;
@@ -243,6 +250,14 @@ function getAssetOpportunityMetricValue(
         case "sharpeRatio": return Number.isFinite(sel.sharpeRatio) ? sel.sharpeRatio : 0;
         case "winRate": return Number.isFinite(sel.winRate) ? sel.winRate : 0;
         case "maxDrawdownPercent": return Number.isFinite(sel.maxDrawdownPercent) ? sel.maxDrawdownPercent : 0;
+        case "sortinoRatio": return analyticsValue(analytics?.sortinoRatio);
+        case "calmarRatio": return analyticsValue(analytics?.calmarRatio);
+        case "tailRatio": return analyticsValue(analytics?.tailRatio);
+        case "skewness": return analyticsValue(analytics?.skewness);
+        case "ulcerIndex": return analyticsValue(analytics?.ulcerIndex);
+        case "serenityIndex": return analyticsValue(analytics?.serenityIndex);
+        case "valueAtRisk95": return analyticsValue(analytics?.valueAtRisk95);
+        case "conditionalValueAtRisk95": return analyticsValue(analytics?.conditionalValueAtRisk95);
         case "expectancy": return Number.isFinite(sel.expectancy) ? sel.expectancy : 0;
         case "averageGain": return Number.isFinite(sel.avgWin) ? sel.avgWin : 0;
         case "totalTrades": return sel.totalTrades ?? 0;
@@ -264,7 +279,10 @@ export function sortAssetOpportunityResultsByMetric(
     if (metric === null) {
         return sortAssetOpportunityResults([...results]);
     }
-    const ascending = metric === "maxDrawdownPercent";
+    const ascending = metric === "maxDrawdownPercent"
+        || metric === "ulcerIndex"
+        || metric === "valueAtRisk95"
+        || metric === "conditionalValueAtRisk95";
     return [...results].sort((a, b) => {
         const valA = getAssetOpportunityMetricValue(a, metric);
         const valB = getAssetOpportunityMetricValue(b, metric);

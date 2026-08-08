@@ -75,4 +75,42 @@ describe('Alert Evaluation Window', () => {
         expect(result?.[2].close).to.equal(candles[2].open);
         expect(result?.[2].volume).to.equal(0);
     });
+
+    it('normalizes ISO and millisecond candle times before deciding which candle is open', () => {
+        for (const time of [
+            new Date(1_700_000_120 * 1000).toISOString() as Time,
+            (1_700_000_120_000) as Time,
+        ]) {
+            const candles = buildCandles(3);
+            candles[2].time = time;
+            const result = selectExecutionAwareClosedCandles(
+                candles,
+                '1m',
+                { executionModel: 'signal_close' },
+                { nowSec: 1_700_000_120, minClosedCandles: 1 },
+            );
+
+            expect(result).to.have.length(2);
+        }
+    });
+
+    it('keeps the next-open bridge in the trimmed fallback path', () => {
+        const candles = buildCandles(3);
+        const result = selectExecutionAwareClosedCandles(
+            candles,
+            '1m',
+            { executionModel: 'next_open' },
+            {
+                nowSec: Number(candles[2].time),
+                minClosedCandles: 10,
+                fallbackToTrimmedClosed: true,
+            },
+        );
+
+        expect(result).to.have.length(3);
+        expect(result?.[2].open).to.equal(candles[2].open);
+        expect(result?.[2].high).to.equal(candles[2].open);
+        expect(result?.[2].low).to.equal(candles[2].open);
+        expect(result?.[2].close).to.equal(candles[2].open);
+    });
 });

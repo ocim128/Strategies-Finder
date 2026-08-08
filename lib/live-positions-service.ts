@@ -15,6 +15,7 @@ import {
 import {
     getLatestActionableAlertSignal,
     getPersistedAlertSignalEntryPrice,
+    getPersistedAlertSignalEntryTime,
 } from './alert-signal-utils';
 import { fetchBybitTradFiLatest } from './dataProviders/bybit';
 import { fetchWithTimeoutAndRetry } from './dataProviders/fetch-helpers';
@@ -87,6 +88,7 @@ interface LivePositionsState {
 interface WorkerEntrySnapshot {
     direction: 'long' | 'short';
     signalTimeSec: number;
+    entryTimeSec: number | null;
     signalPrice: number;
     entryPrice: number | null;
 }
@@ -391,7 +393,8 @@ class LivePositionsService {
         const entryPrice = workerEntryPrice
             ?? localOpen?.entryPrice
             ?? null;
-        const entryTime = workerOpenEntry?.signalTimeSec
+        const entryTime = workerOpenEntry?.entryTimeSec
+            ?? workerOpenEntry?.signalTimeSec
             ?? localOpenEntryTime
             ?? null;
 
@@ -516,6 +519,9 @@ class LivePositionsService {
                     ? {
                         direction: workerState.latestEntry.direction,
                         signalTimeSec: workerState.latestEntry.signalTimeSec,
+                        entryTimeSec: workerState.latestEntry.entryTimeSec
+                            ?? workerState.latestTrade.entryTimeSec
+                            ?? null,
                         signalPrice: workerState.latestEntry.signalPrice,
                         entryPrice: workerState.latestEntry.entryPrice ?? workerState.latestTrade?.entryPrice ?? null,
                     }
@@ -562,7 +568,8 @@ class LivePositionsService {
         if (localEntryTime !== null) {
             const intervalSec = parseIntervalSeconds(interval) ?? 60;
             const allowedDriftSec = Math.max(60, Math.floor(intervalSec * 1.5));
-            if (Math.abs(worker.latestEntry.signalTimeSec - localEntryTime) > allowedDriftSec) {
+            const workerEntryTime = worker.latestEntry.entryTimeSec ?? worker.latestEntry.signalTimeSec;
+            if (Math.abs(workerEntryTime - localEntryTime) > allowedDriftSec) {
                 return { mismatch: true, reason: 'Open trade entry time differs materially (worker vs local)' };
             }
         }
@@ -595,6 +602,7 @@ class LivePositionsService {
         return {
             direction: signal.direction,
             signalTimeSec: signal.signal_time,
+            entryTimeSec: getPersistedAlertSignalEntryTime(signal),
             signalPrice: signal.signal_price,
             entryPrice: getPersistedAlertSignalEntryPrice(signal),
         };

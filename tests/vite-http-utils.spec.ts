@@ -8,6 +8,8 @@ import {
     proxyUpstreamJson,
     readBodyBuffer,
     readJsonBody,
+    sendJson,
+    serializeJsonForTransport,
     type ViteHttpResponse,
 } from "../lib/vite-http-utils";
 import type { IncomingMessage } from "node:http";
@@ -25,6 +27,35 @@ function makeRequest(chunks: readonly Buffer[], headers: Record<string, string> 
 }
 
 describe("Vite HTTP utilities", () => {
+    it("preserves non-finite numeric results with explicit transport markers", () => {
+        const serialized = serializeJsonForTransport({
+            nan: Number.NaN,
+            positive: Number.POSITIVE_INFINITY,
+            negative: Number.NEGATIVE_INFINITY,
+        });
+
+        assert.deepEqual(JSON.parse(serialized), {
+            nan: { __type: "non-finite-number", value: "NaN" },
+            positive: { __type: "non-finite-number", value: "Infinity" },
+            negative: { __type: "non-finite-number", value: "-Infinity" },
+        });
+    });
+
+    it("uses the same non-finite representation for JSON responses", () => {
+        let body = "";
+        const res: ViteHttpResponse = {
+            statusCode: 0,
+            setHeader: () => undefined,
+            end: (value) => { body = String(value); },
+        };
+
+        sendJson(res, 200, { profitFactor: Number.POSITIVE_INFINITY });
+
+        assert.deepEqual(JSON.parse(body), {
+            profitFactor: { __type: "non-finite-number", value: "Infinity" },
+        });
+    });
+
     it("rejects oversized bodies from content-length before reading", async () => {
         const request = makeRequest([], {
             "content-length": String(DEFAULT_MAX_BODY_BYTES + 1),

@@ -22,7 +22,28 @@ export function finderAssetSearchRequiresFullAnalytics(
     sortPriority: readonly FinderMetric[],
 ): boolean {
     return sortPriority.includes("sharpeRatio")
-        || sortPriority.includes("maxDrawdownPercent");
+        || sortPriority.includes("maxDrawdownPercent")
+        || sortPriority.includes("sortinoRatio")
+        || sortPriority.includes("calmarRatio")
+        || sortPriority.includes("tailRatio")
+        || sortPriority.includes("skewness")
+        || sortPriority.includes("ulcerIndex")
+        || sortPriority.includes("serenityIndex")
+        || sortPriority.includes("valueAtRisk95")
+        || sortPriority.includes("conditionalValueAtRisk95");
+}
+
+export function finderSortRequiresAdvancedAnalytics(
+    sortPriority: readonly FinderMetric[],
+): boolean {
+    return sortPriority.includes("sortinoRatio")
+        || sortPriority.includes("calmarRatio")
+        || sortPriority.includes("tailRatio")
+        || sortPriority.includes("skewness")
+        || sortPriority.includes("ulcerIndex")
+        || sortPriority.includes("serenityIndex")
+        || sortPriority.includes("valueAtRisk95")
+        || sortPriority.includes("conditionalValueAtRisk95");
 }
 
 /**

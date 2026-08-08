@@ -39,6 +39,7 @@ import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
 import {
     createPreparedFinderStrategy,
     finderAssetSearchRequiresFullAnalytics,
+    finderSortRequiresAdvancedAnalytics,
     type FinderPreparedDataCache,
     normalizeFinderCandidateParamSets,
     resolveFinderRiskOverrides,
@@ -117,6 +118,7 @@ export async function runServerAssetIsSearch(
     const { options, settings, capitalSettings, selectedStrategy } = input;
     const totalStartedAt = performance.now();
     const requiresFullAnalytics = finderAssetSearchRequiresFullAnalytics(options.sortPriority);
+    const requiresAdvancedAnalytics = finderSortRequiresAdvancedAnalytics(options.sortPriority);
     if (selectedStrategy.strategy.crossSymbolConfig && !input.dataFetcher) {
         throw new Error(
             `Cross-symbol strategy "${selectedStrategy.name}" requires secondary asset data for Asset Opportunity.`,
@@ -236,11 +238,11 @@ export async function runServerAssetIsSearch(
                 },
                 ...(input.dataFetcher ? { dataFetcher: input.dataFetcher } : {}),
                 backtestRunOptions: {
-                    includeAdvancedAnalytics: false,
+                    includeAdvancedAnalytics: requiresAdvancedAnalytics,
                     includeSharpeRatio: requiresFullAnalytics,
-                    omitEquityCurve: true,
+                    omitEquityCurve: !requiresAdvancedAnalytics,
                     skipDrawdown: !requiresFullAnalytics,
-                    skipResultPostProcessing: true,
+                    skipResultPostProcessing: !requiresAdvancedAnalytics,
                 },
             });
             backtestMs += performance.now() - candidateStartedAt;

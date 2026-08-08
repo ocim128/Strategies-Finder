@@ -41,6 +41,14 @@ export function getPersistedAlertSignalEntryPrice(
     return entryPrice !== null && entryPrice > 0 ? entryPrice : null;
 }
 
+export function getPersistedAlertSignalEntryTime(
+    signal: AlertSignalPayloadLike | null | undefined
+): number | null {
+    const payload = parseAlertSignalPayload(signal);
+    const entryTimeSec = toFiniteNumber(payload.entryTimeSec);
+    return entryTimeSec !== null && entryTimeSec > 0 ? Math.floor(entryTimeSec) : null;
+}
+
 export function resolveAlertSignalEntryPrice(
     signal: AlertSignalPriceLike | null | undefined,
     backtestSettings?: Pick<BacktestSettings, "slippageBps">

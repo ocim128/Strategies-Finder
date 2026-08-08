@@ -1,4 +1,9 @@
-import { getLatestActionableAlertSignal, parseAlertSignalPayload, resolveAlertSignalEntryPrice } from "./alert-signal-utils";
+import {
+    getLatestActionableAlertSignal,
+    getPersistedAlertSignalEntryTime,
+    parseAlertSignalPayload,
+    resolveAlertSignalEntryPrice,
+} from "./alert-signal-utils";
 import { safeJsonParse } from "./alert-config-resolver";
 import {
     getDefaultAlertMinClosedCandles,
@@ -171,10 +176,11 @@ function createOpenTradeFromSignalRecord(
     if (entryPrice === null) {
         return null;
     }
+    const entryTimeSec = getPersistedAlertSignalEntryTime(signal) ?? signal.signal_time;
 
     const riskTargets = resolveEntryRiskTargets({
         candles,
-        entryTime: signal.signal_time as Time,
+        entryTime: entryTimeSec as Time,
         entryPrice,
         direction: signal.direction,
         settings: backtestSettings,
@@ -194,9 +200,9 @@ function createOpenTradeFromSignalRecord(
     return {
         id: Number.isFinite(signal.id) ? signal.id : 0,
         type: signal.direction === "short" ? "short" : "long",
-        entryTime: signal.signal_time as Time,
+        entryTime: entryTimeSec as Time,
         entryPrice,
-        exitTime: signal.signal_time as Time,
+        exitTime: entryTimeSec as Time,
         exitPrice: entryPrice,
         pnl: 0,
         pnlPercent: 0,

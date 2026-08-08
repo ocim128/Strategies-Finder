@@ -1057,7 +1057,7 @@ describe("batch-open-score-usd-replay-engine Phase 3 batch-run-contract provenan
 
 describe("batch-open-score-usd-replay-engine conditional-split arms", () => {
     // Helper: stretch a single asset's target dataset to N bars at a flat price.
-    const flat = (n: number, p: number) => (i: number) => { void i; return p; };
+    const flat = (_n: number, p: number) => (i: number) => { void i; return p; };
 
     it("RAW_FRESH / RAW_STALE splits on whether the TOP_RAW leader changed", async () => {
         // Two events. T1: AAA is leader (5 longs), lastTopRawLeaderIdx=-1 → fresh.

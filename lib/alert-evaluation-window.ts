@@ -1,5 +1,6 @@
 import { parseIntervalSeconds } from "./interval-utils";
 import { trimToClosedCandles } from "./closed-candle-utils";
+import { parseTimeToUnixSeconds } from "./time-normalization";
 import type { BacktestSettings, OHLCVData } from "./types/strategies";
 
 const DEFAULT_MIN_CLOSED_CANDLES = 200;
@@ -25,16 +26,16 @@ export function selectClosedCandleWindow(
     if (!intervalSeconds || intervalSeconds <= 0) return null;
 
     let closedIdx = candles.length - 1;
-    const lastOpenSec = Number(candles[closedIdx].time);
-    if (!Number.isFinite(lastOpenSec)) return null;
+    const lastOpenSec = parseTimeToUnixSeconds(candles[closedIdx].time);
+    if (lastOpenSec === null) return null;
 
     if (nowSec < lastOpenSec + intervalSeconds) {
         closedIdx -= 1;
     }
     if (closedIdx < minClosedCandles - 1) return null;
 
-    const closedTime = Number(candles[closedIdx].time);
-    if (!Number.isFinite(closedTime)) return null;
+    const closedTime = parseTimeToUnixSeconds(candles[closedIdx].time);
+    if (closedTime === null) return null;
 
     return {
         candles: candles.slice(0, closedIdx + 1),
@@ -55,14 +56,14 @@ export function buildExecutionAwareCandleWindow(
         return closedCandles;
     }
 
-    const nextTime = Number(nextOpenCandle.time);
-    const lastTime = Number(closedCandles[closedCandles.length - 1].time);
+    const nextTime = parseTimeToUnixSeconds(nextOpenCandle.time);
+    const lastTime = parseTimeToUnixSeconds(closedCandles[closedCandles.length - 1].time);
     const nextOpen = Number(nextOpenCandle.open);
 
-    if (!Number.isFinite(nextTime) || !Number.isFinite(nextOpen) || nextOpen <= 0) {
+    if (nextTime === null || !Number.isFinite(nextOpen) || nextOpen <= 0) {
         return closedCandles;
     }
-    if (Number.isFinite(lastTime) && nextTime <= lastTime) {
+    if (lastTime !== null && nextTime <= lastTime) {
         return closedCandles;
     }
 
@@ -105,7 +106,10 @@ export function selectExecutionAwareClosedCandles(
     }
 
     const closedCandles = trimToClosedCandles(candles, interval, nowSec);
-    return buildExecutionAwareCandleWindow(closedCandles, null, settings);
+    const nextOpenCandle = closedCandles.length < candles.length
+        ? candles[closedCandles.length] ?? null
+        : null;
+    return buildExecutionAwareCandleWindow(closedCandles, nextOpenCandle, settings);
 }
 
 export function countClosedCandles(
@@ -116,7 +120,7 @@ export function countClosedCandles(
     if (candles.length === 0) return 0;
     const intervalSeconds = parseIntervalSeconds(interval);
     if (!intervalSeconds || intervalSeconds <= 0) return candles.length;
-    const lastOpenSec = Number(candles[candles.length - 1].time);
-    if (!Number.isFinite(lastOpenSec)) return candles.length;
+    const lastOpenSec = parseTimeToUnixSeconds(candles[candles.length - 1].time);
+    if (lastOpenSec === null) return candles.length;
     return nowSec < lastOpenSec + intervalSeconds ? Math.max(0, candles.length - 1) : candles.length;
 }

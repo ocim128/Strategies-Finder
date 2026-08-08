@@ -104,6 +104,24 @@ describe("consumeNdjsonStream", () => {
         // No throw => pass.
     });
 
+    it("revives transported non-finite numeric metrics before dispatch", async () => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(encoder.encode('{"type":"symbol","row":{"profitFactor":{"__type":"non-finite-number","value":"Infinity"}}}\n'));
+                controller.enqueue(encoder.encode('{"type":"done"}\n'));
+                controller.close();
+            },
+        });
+
+        let profitFactor: unknown;
+        await consumeNdjsonStream<{ type: string; row?: { profitFactor?: unknown } }>(stream, {
+            onSymbol: (event) => { profitFactor = event.row?.profitFactor; },
+        });
+
+        expect(profitFactor).to.equal(Infinity);
+    });
+
     it("accepts a domain-specific terminal event", async () => {
         const encoder = new TextEncoder();
         const stream = new ReadableStream<Uint8Array>({

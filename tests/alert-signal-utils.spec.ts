@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import {
     getLatestActionableAlertSignal,
+    getPersistedAlertSignalEntryTime,
     getPersistedAlertSignalEntryPrice,
     PENDING_ENTRY_SIGNAL_REASON,
     resolveAlertSignalEntryPrice,
@@ -47,5 +48,12 @@ describe('Alert signal utilities', () => {
 
         expect(getPersistedAlertSignalEntryPrice(signal)).to.equal(null);
         expect(resolveAlertSignalEntryPrice(signal, { slippageBps: 100 })).to.equal(99);
+    });
+
+    it('reads the persisted execution time while keeping legacy records compatible', () => {
+        expect(getPersistedAlertSignalEntryTime({
+            payload_json: JSON.stringify({ entryTimeSec: 1_700_000_060 }),
+        })).to.equal(1_700_000_060);
+        expect(getPersistedAlertSignalEntryTime({ payload_json: JSON.stringify({}) })).to.equal(null);
     });
 });

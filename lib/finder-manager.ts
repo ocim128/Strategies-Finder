@@ -9,7 +9,7 @@ import { dataManager } from "./data-manager";
 import { settingsManager } from "./settings-manager";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import { getLocalDailyAssets, isMarkedLocalStockSymbol } from "./local-daily-datasets";
-import { cloneJsonCompatible } from "./json-utils";
+import { cloneJsonCompatible, parseJsonPreservingNonFinite } from "./json-utils";
 
 import { FINDER_SORT_OPTIONS, METRIC_FULL_LABELS, UNIVERSE_METRIC_FULL_LABELS } from "./finder/constants";
 import { buildFinderEvaluationData, runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
@@ -1940,7 +1940,7 @@ export class FinderManager {
 		try {
 			const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, { cache: "no-store" });
 			if (response.ok) {
-				initial = (await response.json()) as FinderRunStatusSnapshot;
+				initial = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
 			} else if (response.status === 404) {
 				confirmedMissing = true;
 			} else {
@@ -2070,7 +2070,7 @@ export class FinderManager {
 					}
 					throw new Error(`status ${response.status}`);
 				}
-				snapshot = (await response.json()) as FinderRunStatusSnapshot;
+				snapshot = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
 			} catch (error) {
 				if (this.reattachPollingStopped || this.activeServerRunId !== runId) break;
 				consecutiveFailures += 1;
@@ -2139,7 +2139,7 @@ export class FinderManager {
 				const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, { cache: "no-store" });
 				if (response.status === 404) return null;
 				if (!response.ok) throw new Error(`status ${response.status}`);
-				const snapshot = await response.json() as FinderRunStatusSnapshot;
+				const snapshot = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
 				if (!snapshot.ok) return null;
 				consecutiveFailures = 0;
 				if (snapshot.terminal) {

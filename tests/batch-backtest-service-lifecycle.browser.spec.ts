@@ -243,7 +243,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.include("2023-11-14 22:13:20");
 
         dom.batchBacktestSp500TopMeanDetailsSelector.value = "MAX_ACTIVE";
-        dom.batchBacktestSp500TopMeanDetailsSelector.dispatchEvent({ type: "change" });
+        dom.batchBacktestSp500TopMeanDetailsSelector.dispatchEvent({ type: "change" } as unknown as Event);
         expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.include("MAX_ACTIVE_ONLY_ASSET");
         expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.include("+14.55%");
         expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.not.include("TOP_MEAN_ONLY_ASSET");

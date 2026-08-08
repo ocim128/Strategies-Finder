@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import type { CapitalSettings } from "../lib/types/backtest";
-import type { BacktestResult, Trade } from "../lib/types/strategies";
+import type { BacktestResult, Time, Trade } from "../lib/types/strategies";
 import {
     buildFinderPairNeutralMetrics,
     isSyntheticPairFinderSymbol,
@@ -11,9 +11,9 @@ function makeTrade(type: Trade["type"], entryPrice: number, exitPrice: number, i
     return {
         id,
         type,
-        entryTime: id,
+        entryTime: id as Time,
         entryPrice,
-        exitTime: id + 1,
+        exitTime: (id + 1) as Time,
         exitPrice,
         pnl: 0,
         pnlPercent: 0,

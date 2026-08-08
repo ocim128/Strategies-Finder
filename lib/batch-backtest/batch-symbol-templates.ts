@@ -10,7 +10,9 @@
 
 import templatesJson from "./batch-symbol-templates.json?raw";
 
-const BATCH_SYMBOL_TEMPLATES = JSON.parse(templatesJson) as {
+const BATCH_SYMBOL_TEMPLATES = (typeof templatesJson === "string"
+    ? JSON.parse(templatesJson)
+    : templatesJson) as {
     uptrend_crypto: string;
     chop_crypto: string;
     downtrend: string;

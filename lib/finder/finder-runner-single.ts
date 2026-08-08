@@ -26,6 +26,7 @@ import {
     buildComparableFinderResult,
     compactSignalsForRust,
     computeFinderCompositeEdgeRatio,
+    finderSortRequiresAdvancedAnalytics,
     finderSortRequiresCompositeEdgeRatio,
     normalizeFinderCandidateParams,
     resolveFinderCandidateBacktestSettings,
@@ -398,18 +399,33 @@ async function resolveFinderEngineDecision(args: {
     totalRuns: number;
     closedData: OHLCVData[];
     requiresCompositeEdgeRatioSort: boolean;
+    requiresAdvancedAnalytics: boolean;
 }): Promise<FinderEngineDecision> {
-    const { input, callbacks, flags, totalRuns, closedData, requiresCompositeEdgeRatioSort } = args;
+    const {
+        input,
+        callbacks,
+        flags,
+        totalRuns,
+        closedData,
+        requiresCompositeEdgeRatioSort,
+        requiresAdvancedAnalytics,
+    } = args;
     const comboActive = Boolean(input.comboPrimarySignals);
-    const rustPreferred = !comboActive && !requiresCompositeEdgeRatioSort && !input.requiresTsEngine && shouldUseRustEngine();
+    const rustPreferred = !comboActive
+        && !requiresCompositeEdgeRatioSort
+        && !requiresAdvancedAnalytics
+        && !input.requiresTsEngine
+        && shouldUseRustEngine();
     const rustHealthy = rustPreferred && await rustEngine.checkHealth();
     const rustUnavailableReason = comboActive
         ? "combo mode requires TypeScript engine"
         : requiresCompositeEdgeRatioSort
             ? "Composite Edge Ratio sort requires full TypeScript trade paths"
-            : !rustPreferred
-                ? (input.requiresTsEngine ? "current sizing or realism settings require TypeScript" : "engine preference is TypeScript")
-                : "Rust health check failed";
+            : requiresAdvancedAnalytics
+                ? "advanced analytics sort requires full TypeScript analytics"
+                : !rustPreferred
+                    ? (input.requiresTsEngine ? "current sizing or realism settings require TypeScript" : "engine preference is TypeScript")
+                    : "Rust health check failed";
     const canTryNativeFinder = false;
 
     if (!comboActive && input.requiresTsEngine && !rustHealthy) {
@@ -562,7 +578,11 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
     const ranker = new FinderResultRanker(Math.max(input.options.topN, 50), input.options.sortPriority);
     const requiresCompositeEdgeRatioSort = finderSortRequiresCompositeEdgeRatio(input.options.sortPriority);
     const requiresTradeTimingQualitySort = finderSortRequiresTradeTimingQuality(input.options.sortPriority);
-    const usingCompactBacktest = !requiresCompositeEdgeRatioSort && !requiresTradeTimingQualitySort && flags.shouldUseCompactBacktest;
+    const requiresAdvancedAnalytics = finderSortRequiresAdvancedAnalytics(input.options.sortPriority);
+    const usingCompactBacktest = !requiresCompositeEdgeRatioSort
+        && !requiresTradeTimingQualitySort
+        && !requiresAdvancedAnalytics
+        && flags.shouldUseCompactBacktest;
     let processedCount = 0;
     let filteredCount = 0;
     let endpointAdjustedCount = 0;
@@ -621,6 +641,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             totalRuns,
             closedData,
             requiresCompositeEdgeRatioSort,
+            requiresAdvancedAnalytics,
         });
     if (requiresTradeTimingQualitySort && useRustForFinder) {
         useRustForFinder = false;
@@ -796,6 +817,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
     const useRandomFunnel =
         !requiresCompositeEdgeRatioSort &&
         !requiresTradeTimingQualitySort &&
+        !requiresAdvancedAnalytics &&
         input.options.mode === "random" &&
         (
             (!useRustForFinder && totalRuns >= 220) ||

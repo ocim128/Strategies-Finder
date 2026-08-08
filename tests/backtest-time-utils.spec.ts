@@ -35,4 +35,21 @@ describe("backtest time utilities", () => {
         assert.equal(getTimeIndexValue(index, "2024-01-02T00:00:00.000Z" as Time), 0);
         assert.equal(getTimeIndexValue(index, (unixSeconds * 1000) as Time), 0);
     });
+
+    it("rebuilds the cached index after realtime append and retention splice", () => {
+        const first = 1_700_000_000 as Time;
+        const second = 1_700_000_060 as Time;
+        const third = 1_700_000_120 as Time;
+        const data = [
+            { time: first, open: 1, high: 2, low: 1, close: 2, volume: 1 },
+        ];
+
+        assert.equal(getTimeIndex(data).get(timeKey(first)), 0);
+        data.push({ time: second, open: 2, high: 3, low: 2, close: 3, volume: 1 });
+        assert.equal(getTimeIndex(data).get(timeKey(second)), 1);
+        data.push({ time: third, open: 3, high: 4, low: 3, close: 4, volume: 1 });
+        data.splice(0, 1);
+        assert.equal(getTimeIndex(data).get(timeKey(third)), 1);
+        assert.equal(getTimeIndex(data).get(timeKey(first)), undefined);
+    });
 });

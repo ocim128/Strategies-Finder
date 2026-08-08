@@ -1,6 +1,6 @@
 import { evaluateLatestEntrySignal } from "../lib/signal-entry-evaluator";
 import "../lib/strategies/library";
-import type { BacktestSettings, OHLCVData } from "../lib/types/strategies";
+import type { BacktestSettings, OHLCVData, Time } from "../lib/types/strategies";
 import {
     intervalToSeconds,
     normalizeOhlcvCandles,
@@ -140,6 +140,8 @@ interface StoredSignalPayload {
     configName?: string;
     direction: "long" | "short";
     signalTimeSec: number;
+    /** Actual execution/fill time; absent in legacy payloads. */
+    entryTimeSec?: number;
     signalAgeBars: number;
     signalPrice: number;
     entryPrice?: number;
@@ -246,6 +248,7 @@ interface SubscriptionStateResult {
     latestEntry: {
         direction: "long" | "short";
         signalTimeSec: number;
+        entryTimeSec?: number | null;
         signalPrice: number;
         entryPrice?: number | null;
         signalAgeBars: number;
@@ -932,18 +935,15 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
 
     // Compute TP/SL target prices from backtest settings.
     const bs = payload.backtestSettings;
+    const evaluatedTrade = evaluation.latestTrade;
+    const entryTimeSec = evaluatedTrade?.entryTimeSec ?? evaluation.latestEntry.entryTimeSec;
     const riskTargets = resolveEntryRiskTargets({
         candles: payload.candles,
-        entryTime: evaluation.latestEntry.signal.time,
+        entryTime: (entryTimeSec ?? evaluation.latestEntry.signal.time) as Time,
         entryPrice: evaluatedEntryPrice,
         direction: evaluation.latestEntry.direction,
         settings: bs,
-        entryBarIndex: Number.isFinite(evaluation.latestEntry.signal.barIndex)
-            ? Math.trunc(evaluation.latestEntry.signal.barIndex as number)
-            : null,
     });
-    const evaluatedTrade = evaluation.latestTrade;
-
     const entryPayload: StoredSignalPayload = {
         streamId,
         symbol,
@@ -953,6 +953,7 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         configName: configName ?? undefined,
         direction: evaluation.latestEntry.direction,
         signalTimeSec: evaluation.latestEntry.signalTimeSec,
+        entryTimeSec: entryTimeSec ?? undefined,
         signalAgeBars: evaluation.latestEntry.signalAgeBars,
         signalPrice: evaluation.latestEntry.signal.price,
         entryPrice: evaluatedEntryPrice,
@@ -1635,6 +1636,7 @@ async function evaluateSubscriptionWithCandles(
             ? {
                 direction: evaluatedEntry.direction,
                 signalTimeSec: evaluatedEntry.signalTimeSec,
+                entryTimeSec: result.latestTrade?.entryTimeSec ?? null,
                 signalPrice: evaluatedEntry.signalPrice,
                 entryPrice: evaluatedEntry.entryPrice ?? null,
                 signalAgeBars: result.signalAgeBars ?? 0,
@@ -1939,6 +1941,7 @@ async function evaluateSubscriptionState(
         ? {
             direction: evaluation.latestEntry.direction,
             signalTimeSec: evaluation.latestEntry.signalTimeSec,
+            entryTimeSec: evaluation.latestTrade?.entryTimeSec ?? evaluation.latestEntry.entryTimeSec,
             signalPrice: evaluation.latestEntry.signal.price,
             entryPrice: evaluation.latestTrade?.entryPrice ?? evaluation.latestEntry.signal.price,
             signalAgeBars: evaluation.latestEntry.signalAgeBars,

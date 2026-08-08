@@ -60,6 +60,12 @@ function normalizeProfitFactorForSort(value: number): number {
     return Math.max(0, value);
 }
 
+function normalizeAnalyticsMetricForSort(value: number | undefined): number {
+    if (value === undefined || Number.isNaN(value)) return 0;
+    if (!Number.isFinite(value)) return value > 0 ? Number.MAX_SAFE_INTEGER : -Number.MAX_SAFE_INTEGER;
+    return value;
+}
+
 function getPolymarketProfitFactor(evalResult: PolymarketEvalResult): number {
     if (typeof evalResult.profitFactor === "number") {
         return normalizeProfitFactorForSort(evalResult.profitFactor);
@@ -146,6 +152,22 @@ export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): 
             return result.winRate;
         case "maxDrawdownPercent":
             return result.maxDrawdownPercent;
+        case "sortinoRatio":
+            return normalizeAnalyticsMetricForSort(result.performanceAnalytics?.sortinoRatio);
+        case "calmarRatio":
+            return normalizeAnalyticsMetricForSort(result.performanceAnalytics?.calmarRatio);
+        case "tailRatio":
+            return normalizeAnalyticsMetricForSort(result.performanceAnalytics?.tailRatio);
+        case "skewness":
+            return normalizeAnalyticsMetricForSort(result.performanceAnalytics?.skewness);
+        case "ulcerIndex":
+            return normalizeAnalyticsMetricForSort(result.performanceAnalytics?.ulcerIndex);
+        case "serenityIndex":
+            return normalizeAnalyticsMetricForSort(result.performanceAnalytics?.serenityIndex);
+        case "valueAtRisk95":
+            return normalizeAnalyticsMetricForSort(result.performanceAnalytics?.valueAtRisk95);
+        case "conditionalValueAtRisk95":
+            return normalizeAnalyticsMetricForSort(result.performanceAnalytics?.conditionalValueAtRisk95);
         case "expectancy":
             return result.expectancy;
         case "compositeEdgeRatio":

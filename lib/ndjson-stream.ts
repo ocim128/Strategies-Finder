@@ -1,3 +1,5 @@
+import { parseJsonPreservingNonFinite } from "./json-utils";
+
 /**
  * Helper to consume newline-delimited JSON (NDJSON) streams.
  * Maps event types to camelCase handlers, e.g. 'symbol_complete' ->
@@ -64,7 +66,7 @@ export async function consumeNdjsonStream<T extends { type: string }>(
                 if (!line) continue;
                 let event: T;
                 try {
-                    event = JSON.parse(line) as T;
+                    event = parseJsonPreservingNonFinite(line) as T;
                 } catch {
                     throw new MalformedNdjsonLineError(lineNumber);
                 }

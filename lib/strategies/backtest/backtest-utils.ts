@@ -246,16 +246,32 @@ export function allowsSignalAsEntry(signalType: Signal['type'], tradeDirection: 
 }
 
 export const timeIndexCache = new WeakMap<OHLCVData[], Map<string, number>>();
+const timeIndexCacheSignatures = new WeakMap<OHLCVData[], {
+    length: number;
+    firstKey: string | null;
+    lastKey: string | null;
+}>();
 
 export function getTimeIndex(data: OHLCVData[]): Map<string, number> {
+    const signature = {
+        length: data.length,
+        firstKey: data.length > 0 ? timeKey(data[0].time) : null,
+        lastKey: data.length > 0 ? timeKey(data[data.length - 1].time) : null,
+    };
     let cached = timeIndexCache.get(data);
-    if (!cached) {
+    const previousSignature = timeIndexCacheSignatures.get(data);
+    const cacheIsCurrent = previousSignature
+        && previousSignature.length === signature.length
+        && previousSignature.firstKey === signature.firstKey
+        && previousSignature.lastKey === signature.lastKey;
+    if (!cached || !cacheIsCurrent) {
         cached = new Map<string, number>();
         data.forEach((candle, index) => {
             cached!.set(timeKey(candle.time), index);
             cached!.set(canonicalTimeKey(candle.time), index);
         });
         timeIndexCache.set(data, cached);
+        timeIndexCacheSignatures.set(data, signature);
     }
     return cached;
 }

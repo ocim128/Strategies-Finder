@@ -1227,17 +1227,17 @@ async function executeAssetCandidate(args: {
         ...(args.strategy.crossSymbolConfig ? {} : { closedCandleDataOverride: args.data }),
         preResolvedSettings,
         backtestRunOptions: {
-            includeAdvancedAnalytics: false,
+            includeAdvancedAnalytics: args.fullAnalytics === true,
             // Fresh-entry detection reads only trades + generated signals.
             // Avoid allocating an equity curve or calculating Sharpe/drawdown
             // for the second pass over every retained candidate.
             includeSharpeRatio: args.fullAnalytics === true,
-            useCompactBacktest: args.fullAnalytics === true ? true : false,
-            omitEquityCurve: true,
+            useCompactBacktest: false,
+            omitEquityCurve: args.fullAnalytics !== true,
             skipDrawdown: args.fullAnalytics !== true,
             requireTradeHistory: args.fullAnalytics !== true,
             signalsOnly: args.signalOnly === true,
-            skipResultPostProcessing: true,
+            skipResultPostProcessing: args.fullAnalytics !== true,
         },
     });
     return {

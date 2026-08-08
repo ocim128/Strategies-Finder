@@ -118,4 +118,24 @@ describe("persisted-json", () => {
 
         expect(result).to.equal(7);
     });
+
+    it("round-trips non-finite analytics values without null coercion", () => {
+        expect(writePersistedJson({
+            key: "non-finite",
+            schema: "example",
+            version: 1,
+            data: { profitFactor: Number.POSITIVE_INFINITY, sharpe: Number.NaN },
+        })).to.equal(true);
+
+        const result = readPersistedJson<{ profitFactor: number; sharpe: number }>({
+            key: "non-finite",
+            schema: "example",
+            version: 1,
+            fallback: { profitFactor: 0, sharpe: 0 },
+            migrate: ({ data }) => data as { profitFactor: number; sharpe: number },
+        });
+
+        expect(result.profitFactor).to.equal(Number.POSITIVE_INFINITY);
+        expect(Number.isNaN(result.sharpe)).to.equal(true);
+    });
 });

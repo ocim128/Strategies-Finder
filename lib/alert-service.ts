@@ -113,6 +113,7 @@ export interface AlertEvaluatedTradeContext {
 export interface AlertEvaluatedEntrySignal {
     direction: 'long' | 'short';
     signalTimeSec: number;
+    entryTimeSec?: number | null;
     signalPrice: number;
     entryPrice?: number | null;
     signalAgeBars: number;

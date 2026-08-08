@@ -1,4 +1,5 @@
 import { debugLogger } from "./debug-logger";
+import { parseJsonPreservingNonFinite, serializeJsonPreservingNonFinite } from "./json-utils";
 
 type PersistedJsonEnvelope = {
     schema: string;
@@ -82,7 +83,7 @@ export function readPersistedJson<T>(options: ReadPersistedJsonOptions<T>): T {
             return fallback;
         }
 
-        const decoded = decodePersistedJsonEnvelope(JSON.parse(raw));
+        const decoded = decodePersistedJsonEnvelope(parseJsonPreservingNonFinite(raw));
         if (decoded.schema !== null && decoded.schema !== schema) {
             return fallback;
         }
@@ -117,7 +118,7 @@ export function writePersistedJson<T>(options: WritePersistedJsonOptions<T>): bo
         // setItem) so slow writes are identifiable by key without speculative
         // redesign. Never logs the persisted contents — only size + timings.
         const startedAt = performance.now();
-        const serialized = JSON.stringify(payload);
+        const serialized = serializeJsonPreservingNonFinite(payload);
         const serializedAt = performance.now();
         localStorage.setItem(key, serialized);
         const writeMs = performance.now() - serializedAt;

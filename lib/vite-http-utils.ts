@@ -1,6 +1,9 @@
 import type { IncomingMessage } from "node:http";
 import { createFetchTimeoutSignal, isAbortError } from "./dataProviders/fetch-helpers";
 import { isAllowedLocalRequest } from "./local-route-authorization";
+import { serializeJsonPreservingNonFinite } from "./json-utils";
+
+export { serializeJsonPreservingNonFinite as serializeJsonForTransport } from "./json-utils";
 
 export const DEFAULT_MAX_BODY_BYTES = 80 * 1024 * 1024;
 
@@ -32,6 +35,12 @@ export interface ViteHttpResponse {
     end(body: string | Buffer): void;
 }
 
+/**
+ * JSON has no numeric representation for NaN or infinities. Preserve those
+ * values explicitly at API boundaries instead of allowing JSON.stringify to
+ * silently turn them into null, which is indistinguishable from missing data
+ * to a caller ranking financial results.
+ */
 export class HttpStatusError extends Error {
     constructor(
         public readonly status: number,
@@ -46,7 +55,7 @@ export function sendJson(res: ViteHttpResponse, status: number, payload: unknown
     res.statusCode = status;
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Cache-Control", "no-store");
-    res.end(JSON.stringify(payload));
+    res.end(serializeJsonPreservingNonFinite(payload));
 }
 
 export function sendBinary(res: ViteHttpResponse, status: number, payload: Buffer): void {
@@ -86,11 +95,11 @@ export function beginNdjsonStream(res: ViteHttpResponse): {
     res.setHeader("Cache-Control", "no-store");
     return {
         write: (event: unknown) => {
-            res.write!(`${JSON.stringify(event)}\n`);
+            res.write!(`${serializeJsonPreservingNonFinite(event)}\n`);
         },
         end: (event?: unknown) => {
             if (event !== undefined) {
-                res.write!(`${JSON.stringify(event)}\n`);
+                res.write!(`${serializeJsonPreservingNonFinite(event)}\n`);
             }
             res.end("");
         },

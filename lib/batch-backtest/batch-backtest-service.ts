@@ -24,6 +24,7 @@ import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { copyToClipboard } from "../browser-transfer";
 import { readPersistedJson, writePersistedJson } from "../persisted-json";
+import { parseJsonPreservingNonFinite } from "../json-utils";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
 import { getBatchDatasetCacheStats } from "./batch-backtest-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
@@ -1265,7 +1266,7 @@ export class BatchBacktestService {
                     if (!response.ok) {
                         throw new Error(`status ${response.status}`);
                     }
-                    payload = await response.json() as typeof payload;
+                    payload = parseJsonPreservingNonFinite(await response.text()) as typeof payload;
                 } catch (error) {
                     if (this.reattachPollingStopped) return;
                     const outcome = this.reattachBackoff.recordFailure();
@@ -1390,7 +1391,7 @@ export class BatchBacktestService {
                                 { cache: "no-store" },
                             );
                             if (!pageResponse.ok) break;
-                            const pagePayload = await pageResponse.json() as {
+                            const pagePayload = parseJsonPreservingNonFinite(await pageResponse.text()) as {
                                 runMismatch?: boolean;
                                 lastRun?: {
                                     rows?: BatchBacktestSymbolResult[];
@@ -1496,7 +1497,7 @@ export class BatchBacktestService {
                         : "";
                     const nextResponse = await fetch(`/api/batch-backtest/status?after=${nextOffset}&limit=250${scopeQs}`, { cache: "no-store" });
                     if (!nextResponse.ok) break;
-                    const nextPayload = await nextResponse.json() as {
+                        const nextPayload = parseJsonPreservingNonFinite(await nextResponse.text()) as {
                         runMismatch?: boolean;
                         run?: { rows: BatchBacktestSymbolResult[]; rowOffset?: number; nextOffset?: number | null } | null;
                     };

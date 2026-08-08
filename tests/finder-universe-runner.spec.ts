@@ -80,7 +80,7 @@ describe("Finder universe runner", () => {
                 minActiveSymbols: 1,
                 minTotalTrades: 1,
                 minProfitableActiveRatio: 0,
-                sortPriority: ["netProfit"],
+                sortPriority: ["medianExpectancy"],
             },
         });
         const longStrategy: Strategy = {
