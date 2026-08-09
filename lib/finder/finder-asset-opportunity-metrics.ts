@@ -7,7 +7,7 @@
  * implementation plan, computes the support counts, the decision grade, and a
  * deterministic lexicographic rank.
  *
- * Decision rules (from docs/finder-cross-asset-opportunity-implementation-plan.md):
+ * Decision rules (see docs/finder-server-side.md):
  *
  * - `reject`: fresh entry exists but historical expectancy is negative or fewer
  *   than the configured minimum historical trades;

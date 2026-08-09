@@ -202,8 +202,8 @@ export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolR
             // MAX_ACTIVE winners) — re-derive the full positive list with
             // the same scoring, then pick by the arm's key. All tied winners
             // are surfaced (mirrors MAX_ACTIVE NOW's no-arbitrary-tiebreak
-            // rule). See docs/open-score-usd-replay-implementation-plan.md
-            // for the arm semantics.
+            // rule). See docs/batch-backtest-server-side.md for the arm
+            // semantics and current-snapshot context.
             const positivesWithCoverage = computeOpenScorePositivesWithCoverage(stats.resultRows, scores);
             const topRawNow = pickTopPositive(positivesWithCoverage, (c) => c.score);
             if (topRawNow.length > 0) {

@@ -5,7 +5,7 @@
  * Pure helper. No network, no storage, no settings persistence. The browser
  * service applies the emitted pair list to the existing Batch textarea.
  *
- * Contract (see docs/max-active-validation-pair-list-generator-implementation-plan.md):
+ * Contract (see docs/mine-timing-validation-findings.md):
  *   - One asset token per input line (incl. marked stock/IBKR tokens).
  *   - Each non-self relationship is emitted once (no `A+B` and `B+A`).
  *   - Effective `maxPairs` is clamped to `1..BALANCED_PAIR_LIST_MAX_PAIRS`.

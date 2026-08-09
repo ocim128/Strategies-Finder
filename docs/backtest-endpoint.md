@@ -24,7 +24,7 @@ or:
 
 ```bash
 npm run build
-npm run preview
+npx vite preview
 ```
 
 Default local base URL:

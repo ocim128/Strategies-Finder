@@ -18,7 +18,6 @@
     "hunt:quality": "esno scripts/quality-hunt.ts",
     "signal:tower": "esno scripts/signal-tower.ts",
     "signal:export": "esno scripts/export-latest-entry-signal.ts",
-    "signal:export:ensemble": "esno scripts/export-latest-ensemble-entry-signal.ts",
     "paper:trade": "esno scripts/paper-trader.ts",
     "poly:integrity": "esno scripts/polymarket-universe-integrity.ts",
     "poly:sync-outcomes": "esno scripts/polymarket-sync-outcomes.ts",

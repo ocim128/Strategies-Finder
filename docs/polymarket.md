@@ -52,9 +52,9 @@ If you want bridge files for `external_signal`:
 - stay on a supported `5m` chart
 - bridge export does not consume `polymarketExitMode`; it stays an entry-signal bundle contract
 
-If you want endpoint Preview / Copy or Strategy Ensemble parity:
+If you want endpoint Preview / Copy parity:
 
-- both stay on `resolve_hold`
+- endpoint Preview / Copy stays on `resolve_hold`
 - `signal_exit_same_event` is explicitly fenced out there
 
 If you want Execution Lab live trading:
@@ -181,7 +181,6 @@ Core files:
 - `html-partials/tab-polymarket.html`
 - `lib/polymarket-panel-service.ts`
 - `scripts/export-latest-entry-signal.ts`
-- `scripts/export-latest-ensemble-entry-signal.ts`
 
 ### 5. Execution Lab live trade
 
@@ -376,7 +375,7 @@ If you add another target, update:
 - `lib/polymarket-btc5m.ts`
 - `scripts/polymarket-sync-outcomes.ts`
 - `html-partials/tab-settings-section-execution.html`
-- support messages in Finder / panel / ensemble paths
+- support messages in Finder and panel paths
 - focused Polymarket tests
 
 ## Support Matrix
@@ -390,14 +389,13 @@ If you add another target, update:
 | Hunt | same as Finder | same as Finder | same as Finder | preserves Polymarket mode settings in profiles |
 | Quick View / Trades / Polymarket diagnostics reload | can reuse stored summary broadly; native `15m` / `1h` show summary and payout cards; supported `1s` spot/futures resolve-hold summaries rebuild with CLOB entry pricing when needed | `1m` when price points are available or can be ensured; supported `1s` spot/futures + `signal_close`, `next_open`, or `next_close` uses exact-second CLOB rows | reloads `1m` price points or `1s` CLOB quotes for `5m` limit attempts | active consumers, not passive renderers |
 | Endpoint Preview / Copy / HTTP execution | `resolve_hold` only | not supported | not supported | exit mode and limit-entry settings are stripped |
-| Strategy Ensemble Polymarket | `resolve_hold` only | not supported | not supported | explicit fence in the ensemble path |
 | Bridge export | separate contract | separate contract | separate contract | ignores scoring-mode settings; still chart-symbol `5m` entry-signal export |
 | Execution Lab Paper/Live Trade | not a scoring surface | supported `1s` BTCUSDT/XRPUSDT `signal_close`, `next_open`, or `next_close` CLOB decision path | entry filter applies through the paper decision path | browser intent plus local executor; no browser secrets |
 
 Two important nuances:
 
 - `signal_exit_same_event` is intentionally signal-only; use `chart_exit_same_event` when TP/SL/time-stop chart closes should price the Polymarket exit.
-- endpoint and ensemble surfaces still expose Polymarket annotation, but only in `resolve_hold`.
+- endpoint surfaces still expose Polymarket annotation, but only in `resolve_hold`.
 - post-signal limit entry is intentionally limited to the native `5m` outcome session because it depends on intra-event price-point replay.
 
 ## Outcome And Price Data Model
@@ -651,7 +649,7 @@ Resolver and compatibility files:
 - `lib/handlers/state-subscriptions.ts`
 - `lib/rust-settings-sanitizer.ts`
 
-## Endpoint, Ensemble, And Bridge Fences
+## Endpoint And Bridge Fences
 
 These fences are intentional. Do not assume shared helper growth means parity everywhere.
 
@@ -669,15 +667,6 @@ Relevant files:
 - `lib/backtest-endpoint-execution.ts`
 - `lib/backtest-endpoint-settings.ts`
 - `docs/backtest-endpoint.md`
-
-Strategy Ensemble behavior:
-
-- Strategy Ensemble Polymarket remains `resolve_hold` only
-- signal-exit support is intentionally not wired there yet
-
-Relevant file:
-
-- `lib/strategy-ensemble-service.ts`
 
 Bridge export behavior:
 
@@ -787,7 +776,6 @@ Keep aligned:
 
 - `lib/polymarket-panel-service.ts`
 - `scripts/export-latest-entry-signal.ts`
-- `scripts/export-latest-ensemble-entry-signal.ts`
 - `workers/README.md`
 
 ## Validation Targets

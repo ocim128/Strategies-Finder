@@ -267,7 +267,7 @@ contract remains unchanged.
 ## What Rank Pairs does NOT change
 
 - Full History synthetic candle or Batch loader behavior, caches, or limits.
-- Finder, Batch Backtest, Stability Mine, strategies, or saved Batch templates.
+- Finder, Batch Backtest, strategies, or saved Batch templates.
 - Server routes, workers, or persisted settings. Rank Pairs uses its own
   browser IndexedDB solely for the latest completed scalar result snapshot.
 - No OHLCV array crosses a network boundary or remains in Rank Pairs results —

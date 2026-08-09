@@ -121,10 +121,6 @@ Do not assume the first resolved pair from `cross-symbol-runtime.ts` is the fina
 |---|---|---|
 | Worker alerts / subscriptions | Not supported | `lib/alert-subscription-utils.ts` excludes cross-symbol strategies from worker support |
 | Scanner | Skips cross-symbol strategies | `lib/scanner/scanner-engine.ts` |
-| Portfolio Lab | Throws user-facing error | `lib/portfolio-lab-service.ts` |
-| Strategy Ensemble Lab | Warns and skips strategy | `lib/strategy-ensemble-engine.ts` |
-| Ensemble recipes | Throws user-facing error | `lib/ensemble-signal-recipes.ts` |
-| Combined Strategy Backtest | Blocks both primary and secondary cross-symbol strategies | `lib/backtest-service.ts` |
 | Polymarket bridge export | Not supported | `lib/polymarket-panel-service.ts` |
 
 If you add support to one of these surfaces, do not bypass the guard first. Add full runtime resolution and context threading, then remove or narrow the guard.
@@ -184,9 +180,9 @@ If you change endpoint behavior, keep [`docs/backtest-endpoint.md`](./backtest-e
 
 ## Strategy Authoring Notes
 
-The current built-in example is:
-
-- `lib/strategies/lib/relative_strength_mean_reversion.ts`
+There is no current built-in cross-symbol strategy example in
+`lib/strategies/lib/*`; the contract is exercised by the shared helper/runtime
+tests.
 
 Preferred helper file:
 
@@ -215,13 +211,10 @@ If you add a built-in cross-symbol strategy, still run `npm run strategies:sync-
 
 ### Registry wrapper gotcha
 
-If you wrap strategies centrally, always preserve `context`.
-
-The current regression test for this is:
-
-- `tests/strategy-registry-cross-symbol.spec.ts`
-
-That test exists because a previous registry wrapper forwarded `(data, params)` but dropped `context`, which caused valid cross-symbol strategies to produce `0` signals in registry-backed/UI paths.
+If you wrap strategies centrally, always preserve `context`. The current
+cross-symbol runtime and helper tests are `tests/cross-symbol-runtime.spec.ts`
+and `tests/cross-symbol-helpers.spec.ts`; add a regression test beside the
+caller if a wrapper or execution surface changes.
 
 ## Change Map
 
@@ -286,14 +279,12 @@ Useful commands:
 
 - `npm run typecheck`
 - `npm run test -- cross-symbol`
-- `npm run test -- strategy-registry-cross-symbol`
 - `npm run test -- backtest-endpoint`
 
 Useful specs:
 
 - `tests/cross-symbol-runtime.spec.ts`
 - `tests/cross-symbol-helpers.spec.ts`
-- `tests/strategy-registry-cross-symbol.spec.ts`
 - `tests/settings-compat.spec.ts`
 - `tests/worker-strategy-support.spec.ts`
 - `tests/backtest-endpoint-copy.spec.ts`

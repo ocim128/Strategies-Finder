@@ -199,8 +199,8 @@ See `README.md` under `Architecture Map` for the canonical subsystem and file ma
 - Check UI load/save path in `lib/settings-manager.ts`
 - If persisted JSON shape changes, add a migration in the relevant `readPersistedJson(...)` callsite instead of silently breaking old payloads
 - Check any resolver/sanitizer path that mirrors those settings
-- If you change the Polymarket bridge `external_signal` payload or `polymarketEntryOffset` contract, keep `scripts/export-latest-entry-signal.ts` and `scripts/export-latest-ensemble-entry-signal.ts` aligned
-- If you change `polymarketExitMode`, keep `docs/polymarket.md`, endpoint fences, Strategy Ensemble fences, and Finder/Hunt apply-result behavior aligned
+- If you change the Polymarket bridge `external_signal` payload or `polymarketEntryOffset` contract, keep `scripts/export-latest-entry-signal.ts` and the bridge export code in `lib/polymarket-panel-service.ts` aligned
+- If you change `polymarketExitMode`, keep `docs/polymarket.md`, endpoint fences, and Finder/Hunt apply-result behavior aligned
 
 ### Any worker-facing change
 - Check `lib/alert-service.ts`
@@ -369,7 +369,7 @@ Nine audit findings landed across the Batch and Finder server plugins. The contr
 - Preserve `Signal.exitOnly` through signal preparation and every TS engine signal loop; exit-only signals close opposite positions but never open new positions
 - Register new settings ids in `BACKTEST_SETTINGS_DOM_CONTRACTS` in `lib/backtest-settings-dom-contract.ts`. `BACKTEST_DOM_SETTING_IDS` is derived from that contract and used by `backtestService.getBacktestSettings()`; `tests/feature-dom-contracts.spec.ts` verifies the matching HTML id exists.
 - `applyDerivedBacktestSettingGuards` in `lib/backtest-settings-resolver.ts` must preserve `disableSignalExits` when `exitStrategyOverrideEnabled` is on, even before a strategy key is picked. Without this guard exemption, the resolver strips `disableSignalExits` before the user can finish configuring the override (chicken-and-egg)
-- Finder support covers current-chart and Symbol Universe; do not silently expand to Hunt, Walk Forward, Scanner, Portfolio Lab, genetic mode, or Polymarket Finder
+- Finder currently has browser-owned current-chart, Strategy Quality, genetic, and Polymarket paths plus server-owned Symbol Universe and Asset Opportunity paths. Keep any unsupported cross-symbol or Worker/Scanner surface explicitly guarded; do not infer support from shared Finder result types alone.
 - In Symbol Universe, each entry param set samples one exit strategy lib + param set, and the survivor row exposes `exitStrategyKey`/`exitStrategyName`/`exitStrategyParams` so the chosen lib is visible; Apply writes the override settings (`exitStrategyKey`, `exitStrategyParams`, `disableSignalExits`, `exitStrategyOverrideEnabled`)
 - Finder exit params use the `_exit__` prefix internally and must split before entry-strategy normalization, result display, and Apply
 - Apply must write both `exitStrategyKey` and `exitStrategyParams`, and force `disableSignalExits` plus `exitStrategyOverrideEnabled`
@@ -396,7 +396,7 @@ Nine audit findings landed across the Batch and Finder server plugins. The contr
   - `vite.config.ts`
   - `docs/polymarket.md`
 - Finder and Hunt signal-exit mode must not fan out by `polymarketEntryOffset`; applying results should preserve `polymarketExitMode` and only write offset data in `resolve_hold`
-- endpoint Preview / Copy / HTTP execution and Strategy Ensemble intentionally stay on `resolve_hold`; do not silently broaden those callers
+- endpoint Preview / Copy / HTTP execution intentionally stay on `resolve_hold`; do not silently broaden those callers
 - Execution Lab live trade is not bridge export: browser code sends non-secret order intent to a local executor, private keys stay in `.env`, and live entry/exit semantics live in `lib/execution-lab/live-trade-request.ts`, `lib/execution-lab/live-executor-adapter.ts`, and the side-repo one-shot executor docs
 - Validation habit after Polymarket changes:
   - `npm run typecheck`
@@ -466,45 +466,6 @@ Nine audit findings landed across the Batch and Finder server plugins. The contr
 - Prefer semantic CSS classes and theme-aware variables over inline styles
 - If a styling change introduces or depends on a structural id, update the DOM contract and partial together
 
-### Modify Portfolio Lab
-- Treat `Portfolio Lab` as two features in one:
-  - execution decision support for the target symbol
-  - descriptive diagnostics for the whole basket
-- High-value sections are:
-  - `Current Context`
-  - `Execution Filters`
-  - `Pair Ranking`
-  - `Sizing Scenarios`
-- Lower-value sections are diagnostics only:
-  - aggregate agreement buckets
-  - correlation matrix
-  - full per-pair table
-
-When touching Portfolio Lab, check these contracts:
-- `html-partials/tab-portfolio.html`
-- `lib/portfolio-lab-dom.ts`
-- `lib/portfolio-lab-service.ts`
-- `lib/backtest-service.ts` if custom-signal or custom-data backtests change
-
-Behavior expectations:
-- use the current selected strategy and current UI backtest/capital settings
-- keep context calculations causal; only same-bar or backward-looking lag windows are valid
-- keep `Current Context` one-shot only unless a separate live mode is intentionally introduced
-- preserve the distinction between:
-  - target-symbol filter sweeps
-  - basket-level descriptive bucket summaries
-- if the benchmark/target is outside the ranked pair rows, target-specific sections must still render
-
-Validation habit after Portfolio Lab changes:
-- `npm run typecheck`
-- `npm run test`
-- `..\..\..\node_modules\.bin\esno feature-dom-contracts.spec.ts`
-- if a UI regression is suspected, manually verify:
-  - `Current Context`
-  - `Execution Filters`
-  - `Sizing Scenarios`
-  - collapsed diagnostics state
-
 ## Validation Commands
 
 Run from this directory.
@@ -527,29 +488,18 @@ Useful extras:
 - `..\\..\\..\\node_modules\\.bin\\esno tests\\feature-dom-contracts.spec.ts`
 - `..\\..\\..\\node_modules\\.bin\\esno tests\\pairCombiner.spec.ts`
 
-## Current Baseline
-
-Observed baseline as of `2026-03-08`:
-- `npm run typecheck`: expected to pass
-- `npm run test`: expected to pass
-- `npm run test:e2e`: may still be environment-sensitive because of browser timing
-
-Treat unrelated pre-existing failures carefully. Do not assume your change caused them without checking.
-
 ## Common Failure Modes
 - Renamed UI id in `html-partials/*` but forgot handler or contract update
 - Added a strategy file but forgot to run `npm run strategies:sync-manifest`
 - Added params in `defaultParams` but forgot matching `paramLabels` or `metadata.walkForwardParams`
 - Added a new setting but forgot Rust sanitization or finder parity
 - Added a backtest setting id to only one of `BACKTEST_DOM_SETTING_IDS` or `BACKTEST_SETTINGS_DOM_CONTRACTS` (the reader silently drops it; symptom: "DOM checked, settings false")
-- Changed `polymarketExitMode` semantics without keeping endpoint / ensemble fences explicit
+- Changed `polymarketExitMode` semantics without keeping the endpoint fences explicit
 - Added signal-exit price logic in one Polymarket surface but not the shared evaluator, causing manual backtest / Finder / Quick View drift
 - Changed price-point loading to raw timestamp ranges and missed same-event exit quotes that occur after the latest trade entry timestamp
 - Used raw `document.getElementById(...)` for structural UI instead of a typed contract
 - Broke time handling by coercing `BusinessDay` like a number
 - Changed signal timing semantics without rechecking entry snapshots / execution model behavior
-- Treated basket-level consensus tables as if they were already validated target-symbol filters
-- Broke benchmark-only target handling in Portfolio Lab, causing sizing or current-context sections to go empty
 - Added a new Finder server route but forgot the `isAllowedLocalRequest` gate (audit F1) — remote compute amplification on a `--host`ed dev server
 - Made `onSymbolComplete` synchronous again or removed the `ArtifactSubmissionGate` (audit F2) — unbounded artifact closures retain GBs on large runs
 - Moved the `releaseLastResults` detach below its first `await` (audit F3) — a concurrent new Run's dir gets clobbered by the old cleanup

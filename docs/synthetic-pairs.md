@@ -79,7 +79,7 @@ Once synthetic data is loaded as the active chart, these features work normally:
 | Finder (single/random/genetic) | Works | Operates on active chart data |
 | Batch Backtest | Works | Replays the current strategy/settings across pasted real or synthetic pairs |
 | OPEN_SCORE USD (Batch) | Works | Historical open-position score replay over Batch synthetic/real pair artifacts |
-| S&P 500 TOP_MEAN (Batch) | Works | IBKR 4h synthetic-pair coordinator + optional multi-window stability gate |
+| S&P 500 TOP_MEAN (Batch) | Works | IBKR 4h synthetic-pair coordinator with historical replay and current snapshot output |
 | Walk Forward | Works | Operates on active chart data |
 | Monte Carlo | Works | Uses backtest results |
 | Data Mining export | Works | Export CSV/JSON from loaded synthetic data |
@@ -104,7 +104,6 @@ This works because the `isSecondMarketPolymarketSupported` gate checks the outco
 |---|---|---|
 | Worker alerts | Not applicable | Synthetic symbols don't map to real markets |
 | Scanner | Skips | Scanner uses provider-backed symbols |
-| Portfolio Lab | Not tested | Requires multi-symbol provider resolution |
 | Polymarket bridge | Not applicable | No CLOB orderbook for synthetic pairs |
 | Live streaming | Not applicable | No exchange to stream from |
 
@@ -162,13 +161,11 @@ Synthetic bar count is limited by the overlap between the two input series. If o
 
 ### Pipeline helper
 
-The shared fetch → align → aggregate pipeline lives in `buildSyntheticPairFromLegs()` in `scripts/lib/synthetic-pair.ts`. All five runtime callsites (Data Mining, Finder universe loader, Portfolio Lab, Worker, CLI) route through it so any change to source-interval resolution, source-bar accounting, or aggregation applies uniformly. Two options encode the per-callsite variations that previously drifted:
+The shared fetch → align → aggregate pipeline lives in `buildSyntheticPairFromLegs()` in `scripts/lib/synthetic-pair.ts`. Data Mining and the shared Batch/Finder loaders route through it, so changes to source-interval resolution, source-bar accounting, or aggregation apply across those consumers. Two options encode the per-callsite variations that previously drifted:
 
 - `sourceBarsCap` — Finder passes `DATA_CHART_TOTAL_LIMIT` to keep remote gap-fill bounded.
-- `tailSliceBars` — Worker trims the final bars to `targetLimit`.
+- `tailSliceBars` — a caller can trim the final bars to a target limit.
 - `allowEmptyLegs` — Data Mining uses this to emit its own per-leg diagnostics before failing.
-
-The Signal Committee sync path (`lib/signal-committee-service.ts`) intentionally bypasses the helper: it builds once and aggregates per-member inside a loop to avoid refetching shared legs.
 
 ### S&P 500 IBKR Synthetic Pairs & 4H Aggregation
 

@@ -22,8 +22,8 @@ If a strategy silently clamps, rounds, or flips a parameter inside `execute(...)
 2. Start from a nearby example:
    - `lib/strategies/lib/close_location_median_alignment.ts` for a small direct `execute(...)` pattern
    - `lib/strategies/lib/rolling_vwap_center.ts` for normalized thresholds and Finder precompute
-   - `lib/strategies/lib/relative_strength_mean_reversion.ts` for cross-symbol prepared execution
-   - `lib/strategies/lib/polymarket_fair_value_mispricing.ts` for 1s Polymarket helper context
+   - `lib/strategies/lib/cross-symbol-helpers.ts` for cross-symbol alignment helpers
+   - `lib/strategies/lib/polymarket-1s-helpers.ts` for supported 1s Polymarket context
 3. Write the raw signal idea first with `ensureCleanData(...)` and `createSignalLoop(...)`.
 4. Add a named parameter normalizer before wiring `metadata.walkForwardParams`.
 5. Run `npm run strategies:sync-manifest`.
@@ -164,7 +164,10 @@ Rules:
 - pass the same context through `prepareFinderData(...)` and `executePrepared(...)`
 - do not combine cross-symbol execution with strategy-timeframe resampling
 
-Use `lib/strategies/lib/relative_strength_mean_reversion.ts` as the main example. See [cross-symbol.md](cross-symbol.md) for the full runtime support matrix.
+There is no current built-in cross-symbol strategy example in the manifest.
+Use `tests/strategies-lib/prepared-execution-parity.spec.ts` with
+`lib/strategies/lib/cross-symbol-helpers.ts` when validating a new one. See
+[cross-symbol.md](cross-symbol.md) for the full runtime support matrix.
 
 ## 1s Polymarket Strategies
 

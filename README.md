@@ -6,7 +6,7 @@ It combines:
 - a browser UI assembled from HTML partials at runtime
 - a TypeScript backtest engine with optional Rust acceleration
 - a multi-source data pipeline with local caching
-- research tools such as Finder, Exit Strategy Override, Hunt, Walk Forward, Monte Carlo, Scanner, Portfolio Lab, and Strategy Ensemble Lab
+- research tools such as Finder, Exit Strategy Override, Hunt, Walk Forward, Monte Carlo, Scanner, Data Mining, Rank Pairs, and Batch Backtest
 - optional Cloudflare Worker alerting and subscription execution
 
 ## What You Can Do Here
@@ -20,7 +20,6 @@ It combines:
 - Stress trade-path robustness with Monte Carlo sequence randomization, bootstrap resampling, and Polymarket bankroll survivability on annotated runs
 - Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics, including native `15m` / `1h` session summaries, same-event signal-exit metrics on supported `1m` runs, and exact-second CLOB metrics on supported `1s` runs
 - Paper trade selected `1s` candidates in Execution Lab with live Binance candles, live Polymarket CLOB quotes, chart overlays, and JSONL logs; optionally live-trade through a local secret-bearing Polymarket executor after dry-run preflight
-- Run Portfolio Lab across multiple pairs for context, ranking, and sizing decisions
 - Run Batch Backtest post-analysis with OPEN_SCORE USD Replay (a research-only diagnostic; see [`docs/mine-timing-validation-findings.md`](docs/mine-timing-validation-findings.md) for the validation status of removed surfaces)
 - Build live or scheduled alert subscriptions through the Worker API
 
@@ -87,11 +86,9 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Hunt: `lib/hunt/*`
 - Walk Forward: `lib/walk-forward-service.ts`
 - Monte Carlo: `lib/monte-carlo-service.ts`, `lib/strategies/monte-carlo/*`
-- Portfolio Lab: `lib/portfolio-lab-service.ts`
 - Execution Lab: `lib/execution-lab/*`
 - Scanner: `lib/scanner/*`
-- Data Mining / feature export: `lib/data-mining-manager.ts`, `lib/featureLab/*`
-- Strategy Ensemble Lab: `lib/strategy-ensemble-service.ts`
+- Data Mining: `lib/data-mining-manager.ts`, `lib/data-mining-dom.ts`
 - Batch Backtest: `lib/batch-backtest/batch-backtest-service.ts` (browser orchestration), `lib/batch-backtest/batch-backtest-vite-plugin.ts` (server execution; see [docs/batch-backtest-server-side.md](docs/batch-backtest-server-side.md))
 - Polymarket research / scoring: `lib/polymarket-outcome-evaluator.ts`, `lib/polymarket-signal-exit-evaluator.ts`, `lib/polymarket-price-points-ingest.ts`, `scripts/polymarket-sync-outcomes.ts`
 
@@ -127,8 +124,6 @@ flowchart LR
     F --> M[Finder]
     F --> N[Hunt]
     F --> O[Walk Forward]
-    F --> P[Portfolio Lab]
-
     M --> J
     N --> J
     O --> J
@@ -240,33 +235,6 @@ Dev note:
 
 For strategy-idea generation via [`archive/prompt.txt`](archive/prompt.txt), keep the allowed helper surface aligned with real exported strategy-layer utilities. Favor low-complexity price, bar-geometry, crossover, pivot, and timeframe-alignment helpers before heavier transforms, and keep prompt-specific quality filters inside the prompt file rather than expanding the repo-level README.
 
-### Use Portfolio Lab effectively
-Portfolio Lab is most useful when you separate decision outputs from diagnostics.
-
-High-signal outputs:
-- `Current Context`
-- `Open Trade Forecast`
-- `Execution Filters`
-- `Pair Ranking`
-- `Sizing Scenarios`
-
-Lower-signal diagnostics:
-- aggregate agreement-bucket tables
-- raw correlation matrices
-- full per-pair diagnostics tables
-
-Recommended workflow:
-1. Run Portfolio Lab in `Common Overlap` mode when fair pair comparison matters.
-2. Start from `Current Context`, then `Open Trade Forecast`, then `Execution Filters`.
-3. Compare expectancy, net, and drawdown separately instead of chasing only win rate.
-4. Use diagnostics to confirm diversification only after you already have a decision.
-
-### Use Strategy Ensemble Lab carefully
-- context votes come from entry-capable signals, not raw signal spam
-- agreement and opposition are aggregated by strategy family, not by every near-duplicate saved config
-- target filtering preserves target exits and only gates target entries
-- if no validation survivor exists, the UI explicitly labels the fallback as `In-Sample Candidate`
-
 ### Evaluate Polymarket Outcomes
 Automate the inspection of executed chart trades against historical Polymarket crypto event resolution and locally cached CLOB quotes.
 Implementation notes live in [`docs/polymarket.md`](docs/polymarket.md).
@@ -281,7 +249,7 @@ Implementation notes live in [`docs/polymarket.md`](docs/polymarket.md).
 7. Use `npm run poly:sync-outcomes:all` to backfill every supported 5m outcome series, or `..\..\..\node_modules\.bin\esno scripts\polymarket-sync-outcomes.ts --symbol <BTCUSDT|ETHUSDT|SOLUSDT|XRPUSDT>` for a single series.
 8. `1m` signal-exit runs ensure local Polymarket price points on demand through the SQLite/Vite path; outcome rows still need the normal sync step above.
 9. Use the `Polymarket` strategy-panel tab to inspect scored-run diagnostics. The same panel also has the separate bridge export workflow for `external_signal`.
-10. Endpoint Preview / Copy and Strategy Ensemble still stay on `resolve_hold`; the new signal-exit mode is a backtest, Finder, Hunt, Quick View, Trades, and Polymarket diagnostics feature.
+10. Endpoint Preview / Copy stays on `resolve_hold`; the new signal-exit mode is a backtest, Finder, Hunt, Quick View, Trades, and Polymarket diagnostics feature.
 11. The symbol search accepts custom Polymarket event URLs or slugs. Append `:yes` or `:no`, or use the URL `outcome` / `side` query param, to choose the side.
 12. The `PM` control in the timeframe bar prompts for a Polymarket slug or URL when needed, then opens the market at the supported `1m` chart resolution.
 
@@ -394,13 +362,14 @@ These are intentionally narrower than the repo itself:
 - `docs/backtest-endpoint.md`: local backtest endpoint usage and request contract
 - `docs/polymarket.md`: Polymarket scoring, signal-exit, diagnostics, bridge, and Execution Lab live-trade contracts
 - `docs/execution-lab-live-trading.md`: Execution Lab live-trade executor boundary, request/response schema, and safety rules
-- `docs/batch-backtest-server-side.md`: server-side Batch Backtest, artifact retention, Mine/Stability acceleration, OPEN_SCORE USD Replay, and memory budget
+- `docs/batch-backtest-server-side.md`: server-side Batch Backtest, artifact retention, OPEN_SCORE USD Replay, S&P 500 TOP_MEAN, and memory budget
 - `docs/finder-server-side.md`: server-owned Finder Symbol Universe (one server job owns all strategies + OOS), heap budget, scalar-only wire contract, Stop scoped by run id, and tab-reload reattach via `/api/finder/status`
+- `docs/alpaca-ibkr-sync.md`: Alpaca-backed IBKR Data workflow, source guards, and aggregation
 - `docs/cross-symbol.md`: cross-symbol strategy runtime and support matrix
 - `docs/synthetic-pairs.md`: synthetic pair generation and supported surfaces
 - `docs/rank-pairs.md`: Rank Pairs regime classification contract
 - `docs/path-dependent-exits.md`: path-dependent Risk Management exits
 - `docs/strategy-authoring.md`: built-in strategy authoring guide
-- `docs/mine-timing-validation-findings.md`: validation status of removed Mine Timing / Portfolio Fit / Mine Prediction surfaces
+- `docs/mine-timing-validation-findings.md`: historical negative findings behind the removal of Mine/selection diagnostic surfaces
 - `workers/README.md`: Worker endpoints, cron behavior, D1 setup, Telegram
 - `DEPLOY_TO_VERCEL.md`: deployment notes

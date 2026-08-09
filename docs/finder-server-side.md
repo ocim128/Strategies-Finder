@@ -1,4 +1,4 @@
-# Server-Owned Finder Symbol Universe
+# Server-Owned Finder Jobs
 
 Finder Symbol Universe is a **server-owned job**: the Vite server process owns
 the complete lifecycle for every selected entry strategy — IS evaluation,
@@ -37,6 +37,13 @@ Asset runs emit bounded debug events named
 `finder.asset_opportunity.run.complete`, `finder.asset_opportunity.run.cancelled`,
 and `finder.asset_opportunity.run.failed`. Event payloads contain counts,
 grades, symbols, timings, and errors only—never candles, signals, or trades.
+
+## Browser-owned Finder modes
+
+Current-chart Finder and Strategy Quality remain in the browser. Genetic and
+Polymarket Finder use their dedicated in-tab runners. This document covers
+only the server-owned Symbol Universe and Asset Opportunity routes; do not
+infer server ownership for another Finder mode from the shared result types.
 
 ## Runtime contract
 
