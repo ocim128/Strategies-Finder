@@ -4,7 +4,7 @@ import {
     formatProfitFactor,
     formatSignedCompactDollar,
 } from "../ui-formatters";
-import type { FinderAssetOpportunityResult, FinderMode, FinderOosVerdict, FinderRandomBenchmark, FinderResult, FinderUniverseCandidate, FinderUniverseOosAggregate, FinderUniverseSymbolMetrics } from "../types/finder";
+import type { FinderAssetOpportunityResult, FinderMode, FinderOosVerdict, FinderRandomBenchmark, FinderResult, FinderStrategyQualityResult, FinderUniverseCandidate, FinderUniverseOosAggregate, FinderUniverseSymbolMetrics } from "../types/finder";
 import type { BacktestResult, StrategyParams, Time } from "../types/strategies";
 import { getFinderSelectionResult } from "./finder-engine";
 import { computePerformanceVerdict, computeStrategyVerdict } from "./finder-universe-metrics";
@@ -383,6 +383,102 @@ export class FinderUI {
         list.appendChild(fragment);
     }
 
+    public renderStrategyQualityResults(results: FinderStrategyQualityResult[]): void {
+        const list = this.getListElement();
+        const copyButton = this.getCopyButton();
+        list.innerHTML = "";
+
+        if (results.length === 0) {
+            setVisible("finderEmpty", true);
+            if (copyButton) copyButton.disabled = true;
+            return;
+        }
+
+        setVisible("finderEmpty", false);
+        if (copyButton) copyButton.disabled = false;
+
+        const fragment = document.createDocumentFragment();
+        results.forEach((item, index) => {
+            const title = document.createElement("div");
+            title.className = "finder-title";
+            const titleText = document.createElement("span");
+            titleText.textContent = item.strategyName;
+            title.appendChild(titleText);
+            const badge = document.createElement("span");
+            badge.className = "finder-title-badge";
+            badge.textContent = "BASELINE";
+            title.appendChild(badge);
+
+            const metrics = document.createElement("div");
+            metrics.className = "finder-metrics";
+            metrics.appendChild(this.createMetricChip(`Avg Exp ${item.averageExpectancy.toFixed(2)}`));
+            metrics.appendChild(this.createMetricChip(`Med Exp ${item.medianExpectancy.toFixed(2)}`));
+            metrics.appendChild(this.createMetricChip(`PF ${formatProfitFactor(item.profitFactor)}`));
+            metrics.appendChild(this.createMetricChip(`Avg PF ${formatProfitFactor(item.averageProfitFactor)}`));
+            metrics.appendChild(this.createMetricChip(item.sharpeAvailableSymbols > 0
+                ? `Sharpe ${item.averageSharpe.toFixed(2)}`
+                : "Sharpe --"));
+            metrics.appendChild(this.createMetricChip(`PnL ${this.formatCurrency(item.totalNetProfit)}`));
+            metrics.appendChild(this.createMetricChip(`Trades ${item.totalTrades}`));
+            metrics.appendChild(this.createMetricChip(`WR ${item.weightedWinRate.toFixed(1)}%`));
+            metrics.appendChild(this.createMetricChip(`Active ${item.activeSymbols}/${item.requestedSymbols}`));
+            metrics.appendChild(this.createMetricChip(`Prof ${item.profitableSymbols}`));
+            metrics.appendChild(this.createMetricChip(`No Trade ${item.noTradeSymbols}`));
+            metrics.appendChild(this.createMetricChip(`Worst DD ${item.worstMaxDrawdownPercent.toFixed(2)}%`));
+            if (item.oos) {
+                metrics.appendChild(this.createMetricChip(`OOS PnL ${this.formatCurrency(item.oos.totalNetProfit)}`));
+                metrics.appendChild(this.createMetricChip(`OOS PF ${formatProfitFactor(item.oos.profitFactor)}`));
+                metrics.appendChild(this.createMetricChip(`OOS Trades ${item.oos.totalTrades}`));
+            }
+
+            const details = document.createElement("details");
+            const summary = document.createElement("summary");
+            summary.textContent = `Symbol Breakdown (${item.symbols.length})`;
+            details.appendChild(summary);
+            for (const symbolResult of item.symbols) {
+                const line = document.createElement("div");
+                line.className = "finder-sub finder-symbol-row";
+                const badge = document.createElement("span");
+                badge.className = `finder-verdict finder-verdict-${symbolResult.status}`;
+                badge.textContent = this.formatUniverseStatus(symbolResult.status);
+                line.appendChild(badge);
+
+                const textParts = [symbolResult.symbol, `Bars ${symbolResult.barCount}`];
+                if (symbolResult.result) {
+                    const result = symbolResult.result;
+                    textParts.push(`PnL ${this.formatCurrency(result.netProfit)}`);
+                    textParts.push(`Exp ${result.expectancy.toFixed(2)}`);
+                    textParts.push(`PF ${formatProfitFactor(result.profitFactor)}`);
+                    textParts.push(`Sharpe ${result.totalTrades >= 5 ? result.sharpeRatio.toFixed(2) : "--"}`);
+                    textParts.push(`Trades ${result.totalTrades}`);
+                }
+                if (symbolResult.oosResult) {
+                    textParts.push(`OOS PnL ${this.formatCurrency(symbolResult.oosResult.netProfit)}`);
+                    textParts.push(`OOS PF ${formatProfitFactor(symbolResult.oosResult.profitFactor)}`);
+                }
+                if (symbolResult.error) textParts.push(symbolResult.error);
+                const textSpan = document.createElement("span");
+                textSpan.textContent = textParts.join(" | ");
+                line.appendChild(textSpan);
+                details.appendChild(line);
+            }
+
+            fragment.appendChild(this.createResultRow({
+                index,
+                title,
+                subText: `${item.strategyKey} | defaults across ${item.requestedSymbols} symbol${item.requestedSymbols === 1 ? "" : "s"}`,
+                paramsText: this.formatParams(item.params),
+                detailLines: [
+                    `${item.loadedSymbols}/${item.requestedSymbols} symbols loaded | ${item.failedSymbols} failed`,
+                ],
+                metrics,
+                details,
+                showApply: false,
+            }));
+        });
+        list.appendChild(fragment);
+    }
+
     /**
      * Renders the sampled Exit Strategy Override descriptor for a universe survivor
      * row, mirroring the current-chart `formatDetailLines` shape. Returns an empty
@@ -558,9 +654,13 @@ export class FinderUI {
         metrics: HTMLElement;
         detailLines?: string[];
         details?: HTMLElement;
+        showApply?: boolean;
     }): HTMLDivElement {
         const row = document.createElement("div");
         row.className = "finder-row";
+        if (options.showApply === false) {
+            row.classList.add("finder-row-readonly");
+        }
 
         const rank = document.createElement("div");
         rank.className = "finder-rank";
@@ -591,14 +691,15 @@ export class FinderUI {
             main.appendChild(options.details);
         }
 
-        const button = document.createElement("button");
-        button.className = "btn btn-secondary finder-apply";
-        button.textContent = "Apply";
-        button.dataset.index = options.index.toString();
-
         row.appendChild(rank);
         row.appendChild(main);
-        row.appendChild(button);
+        if (options.showApply !== false) {
+            const button = document.createElement("button");
+            button.className = "btn btn-secondary finder-apply";
+            button.textContent = "Apply";
+            button.dataset.index = options.index.toString();
+            row.appendChild(button);
+        }
         return row;
     }
 

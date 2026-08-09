@@ -10,8 +10,10 @@ export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'accuracyTrades
  * - `symbol_universe`: search candidates whose performance aggregates across the supplied symbols;
  * - `asset_opportunity`: search candidates independently per symbol, then rank symbols by
  *   current fresh-entry evidence.
+ * - `strategy_quality`: run each selected library once at its normalized default parameters
+ *   across the supplied symbols for baseline library-quality review.
  */
-export type FinderScope = 'current_chart' | 'symbol_universe' | 'asset_opportunity';
+export type FinderScope = 'current_chart' | 'symbol_universe' | 'asset_opportunity' | 'strategy_quality';
 export type FinderDataSlice = 'all' | '1' | '2' | '3' | '4' | '5' | 'half_oldest' | 'half_newest';
 /**
  * Out-of-sample validation verdict for the complementary data window.
@@ -424,10 +426,84 @@ export interface FinderAssetOpportunityResult {
     grade: FinderAssetDecisionGrade;
 }
 
+export type FinderStrategyQualityStatus =
+    | 'profitable'
+    | 'losing'
+    | 'flat'
+    | 'no_trades'
+    | 'load_failed'
+    | 'run_failed';
+
+/** Scalar metrics retained for one strategy-library / symbol quality-audit run. */
+export interface FinderStrategyQualitySymbolMetrics {
+    netProfit: number;
+    netProfitPercent: number;
+    expectancy: number;
+    winRate: number;
+    profitFactor: number;
+    totalTrades: number;
+    winningTrades: number;
+    losingTrades: number;
+    avgWin: number;
+    avgLoss: number;
+    sharpeRatio: number;
+    maxDrawdownPercent: number;
+}
+
+export interface FinderStrategyQualitySymbolResult {
+    symbol: string;
+    status: FinderStrategyQualityStatus;
+    barCount: number;
+    result?: FinderStrategyQualitySymbolMetrics;
+    error?: string;
+    oosResult?: FinderStrategyQualitySymbolMetrics;
+}
+
+/**
+ * Baseline quality report for one selected strategy library. These metrics are
+ * deliberately based on default parameters, not the best parameter set found
+ * by Finder, so the report can support library pruning.
+ */
+export interface FinderStrategyQualityResult {
+    strategyKey: string;
+    strategyName: string;
+    params: StrategyParams;
+    symbols: FinderStrategyQualitySymbolResult[];
+    requestedSymbols: number;
+    loadedSymbols: number;
+    failedSymbols: number;
+    activeSymbols: number;
+    profitableSymbols: number;
+    losingSymbols: number;
+    noTradeSymbols: number;
+    totalTrades: number;
+    totalNetProfit: number;
+    averageNetProfit: number;
+    averageExpectancy: number;
+    medianExpectancy: number;
+    averageProfitFactor: number;
+    profitFactor: number;
+    averageSharpe: number;
+    sharpeAvailableSymbols: number;
+    weightedWinRate: number;
+    worstMaxDrawdownPercent: number;
+    oos?: {
+        activeSymbols: number;
+        profitableSymbols: number;
+        totalTrades: number;
+        totalNetProfit: number;
+        averageExpectancy: number;
+        profitFactor: number;
+        averageSharpe: number;
+        weightedWinRate: number;
+    };
+}
+
 export type FinderLatestResults =
     | { scope: 'current_chart'; results: FinderResult[] }
     | { scope: 'symbol_universe'; results: FinderUniverseCandidate[] }
-    | { scope: 'asset_opportunity'; results: FinderAssetOpportunityResult[] };
+    | { scope: 'asset_opportunity'; results: FinderAssetOpportunityResult[] }
+    | { scope: 'strategy_quality'; results: FinderStrategyQualityResult[] };
 
 export interface FinderRandomBenchmark {
     pipeline: 'standard' | 'rust_native' | 'ts_funnel' | 'rust_funnel';
@@ -630,6 +706,8 @@ export interface FinderDiagnostics {
      * per-asset load/run failures. Independent of the `universe` diagnostics.
      */
     assetOpportunity?: FinderAssetOpportunityDiagnostics;
+    /** Performance diagnostics for one Strategy Quality Audit run. */
+    strategyQuality?: FinderStrategyQualityDiagnostics;
 }
 
 /**
@@ -732,6 +810,59 @@ export interface FinderAssetOpportunityDiagnostics {
             reason: string;
             runs: number;
         }>;
+    };
+}
+
+/** Performance diagnostics for one Strategy Quality Audit run. */
+export interface FinderStrategyQualityDiagnostics {
+    requestedSymbols: number;
+    loadedSymbols: number;
+    failedSymbols: number;
+    selectedStrategies: number;
+    runs: {
+        planned: number;
+        completed: number;
+        failed: number;
+        noTrade: number;
+    };
+    timingsMs: {
+        total: number;
+        providerResolution: number;
+        dataLoading: number;
+        dataPreparation: number;
+        strategyExecution: number;
+        oosExecution: number;
+        yielding: number;
+        resultReduction: number;
+    };
+    data: {
+        totalBars: number;
+        minBars: number;
+        maxBars: number;
+        averageBars: number;
+    };
+    strategyBreakdown: Array<{
+        strategyKey: string;
+        strategyName: string;
+        runs: number;
+        failedRuns: number;
+        noTradeRuns: number;
+        totalMs: number;
+        averageMs: number;
+        signalGenerationMs: number;
+        engineMs: number;
+        rustRuns: number;
+        typescriptRuns: number;
+    }>;
+    slowestLoads: Array<{
+        symbol: string;
+        ms: number;
+        bars: number;
+    }>;
+    datasetCache?: {
+        leg: { hits: number; misses: number; size: number; max: number };
+        pair: { hits: number; misses: number; size: number; max: number };
+        disk: { hits: number; misses: number; writes: number };
     };
 }
 

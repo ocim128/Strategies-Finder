@@ -27,6 +27,8 @@ import {
 	mergeFinderRiskParamsIntoBacktestSettings,
 } from "./finder/finder-runner-core";
 import { runCandidateOosPass } from "./finder/finder-candidate-oos";
+import { runStrategyQualityAudit } from "./finder/finder-strategy-quality";
+import { getBatchDatasetCacheStats, loadBatchDataset } from "./batch-backtest/batch-backtest-loader";
 import {
 	sortFinderUniverseCandidates,
 } from "./finder/finder-universe-metrics";
@@ -73,6 +75,8 @@ import type {
 	PolymarketFinderRankMode,
 	FinderResult,
 	FinderAssetOpportunityResult,
+	FinderStrategyQualityDiagnostics,
+	FinderStrategyQualityResult,
 	FinderUniverseCandidate,
 	FinderUniverseMetric,
 } from './types/finder';
@@ -322,7 +326,7 @@ function normalizeStringArray(value: unknown): string[] {
 }
 
 function normalizeFinderScope(value: unknown): FinderScope {
-	return value === "symbol_universe" || value === "asset_opportunity"
+	return value === "symbol_universe" || value === "asset_opportunity" || value === "strategy_quality"
 		? value
 		: "current_chart";
 }
@@ -546,6 +550,14 @@ export class FinderManager {
 
 	private isAssetOpportunityScope(): boolean {
 		return this.getScope() === "asset_opportunity";
+	}
+
+	private isStrategyQualityScope(): boolean {
+		return this.getScope() === "strategy_quality";
+	}
+
+	private usesUniverseStrategySelection(): boolean {
+		return this.isUniverseScope() || this.isStrategyQualityScope();
 	}
 
 	private loadUiState(): void {
@@ -896,6 +908,9 @@ export class FinderManager {
 				}
 				return;
 			}
+			if (this.latestResults.scope === "strategy_quality") {
+				return;
+			}
 			const candidate = this.latestResults.results[index];
 			if (candidate) {
 				void this.applyUniverseCandidate(candidate);
@@ -1178,7 +1193,8 @@ export class FinderManager {
 		const dom = this.getDom();
 		const universeScope = this.isUniverseScope();
 		const assetOpportunityScope = this.isAssetOpportunityScope();
-		const multiAssetScope = universeScope || assetOpportunityScope;
+		const qualityScope = this.isStrategyQualityScope();
+		const multiAssetScope = universeScope || assetOpportunityScope || qualityScope;
 		const modeInput = dom.finderMode;
 
 		dom.finderChartSortSection.style.display = multiAssetScope ? "none" : "";
@@ -1187,6 +1203,7 @@ export class FinderManager {
 		dom.finderUniverseSection.style.display = multiAssetScope ? "" : "none";
 		dom.finderUniverseFilters.style.display = universeScope ? "" : "none";
 		dom.finderAssetOpportunitySettings.style.display = assetOpportunityScope ? "" : "none";
+		dom.finderQualitySettings.style.display = qualityScope ? "" : "none";
 		dom.finderPolymarketSection.style.display = multiAssetScope ? "none" : "";
 		dom.finderTradeFilterSection.style.display = universeScope ? "none" : "";
 		dom.finderModeRow.classList.toggle("is-disabled", multiAssetScope);
@@ -1236,7 +1253,7 @@ export class FinderManager {
 
 	private isTradeFilterControlsEnabled(): boolean {
 		const dom = this.getDom();
-		return !this.isUniverseScope() && dom.finderTradesToggle.checked;
+		return !this.isUniverseScope() && !this.isStrategyQualityScope() && dom.finderTradesToggle.checked;
 	}
 
 	private setTradeFilterControlsEnabled(enabled: boolean): void {
@@ -1389,6 +1406,7 @@ export class FinderManager {
 	private updateTimingSortControlState(): void {
 		const dom = this.getDom();
 		const timingSortDisabled = this.isUniverseScope()
+			|| this.isStrategyQualityScope()
 			|| dom.finderPolymarketToggle.checked
 			|| dom.finderMode.value === "genetic";
 
@@ -1428,7 +1446,7 @@ export class FinderManager {
 	}
 
 	private isStrategySelected(key: string): boolean {
-		return this.isUniverseScope()
+		return this.usesUniverseStrategySelection()
 			? this.getUniverseSelectedStrategyKeys().has(key)
 			: this.getCurrentChartSelectedStrategyKeys().has(key);
 	}
@@ -1511,7 +1529,7 @@ export class FinderManager {
 			return;
 		}
 
-		const selected = this.isUniverseScope()
+		const selected = this.usesUniverseStrategySelection()
 			? this.getUniverseSelectedStrategyKeys()
 			: this.getCurrentChartSelectedStrategyKeys();
 		if (checkbox.checked) {
@@ -1519,7 +1537,7 @@ export class FinderManager {
 		} else {
 			selected.delete(strategyKey);
 		}
-		if (this.isUniverseScope()) {
+		if (this.usesUniverseStrategySelection()) {
 			this.uiState.universeSelectedStrategyKeys = [...selected];
 		} else {
 			this.uiState.currentChartSelectedStrategyKeys = [...selected];
@@ -1541,7 +1559,7 @@ export class FinderManager {
 	}
 
 	private setStrategySelection(strategyKeys: Iterable<string>, checked: boolean, syncUi = true): void {
-		const selected = this.isUniverseScope()
+		const selected = this.usesUniverseStrategySelection()
 			? this.getUniverseSelectedStrategyKeys()
 			: this.getCurrentChartSelectedStrategyKeys();
 		for (const key of strategyKeys) {
@@ -1555,7 +1573,7 @@ export class FinderManager {
 				}
 			}
 		}
-		if (this.isUniverseScope()) {
+		if (this.usesUniverseStrategySelection()) {
 			this.uiState.universeSelectedStrategyKeys = [...selected];
 		} else {
 			this.uiState.currentChartSelectedStrategyKeys = [...selected];
@@ -1574,7 +1592,7 @@ export class FinderManager {
 	}
 
 	private invertStrategySelection(strategyKeys: Iterable<string>): void {
-		const selected = this.isUniverseScope()
+		const selected = this.usesUniverseStrategySelection()
 			? this.getUniverseSelectedStrategyKeys()
 			: this.getCurrentChartSelectedStrategyKeys();
 		for (const key of strategyKeys) {
@@ -1588,7 +1606,7 @@ export class FinderManager {
 				}
 			}
 		}
-		if (this.isUniverseScope()) {
+		if (this.usesUniverseStrategySelection()) {
 			this.uiState.universeSelectedStrategyKeys = [...selected];
 		} else {
 			this.uiState.currentChartSelectedStrategyKeys = [...selected];
@@ -1672,7 +1690,7 @@ export class FinderManager {
 		// UI ownership so late poll updates cannot mutate the new run's state.
 		this.stopReattachPoll();
 		this.activeServerRunId = null;
-		if (!this.isUniverseScope() && !this.isAssetOpportunityScope() && state.ohlcvData.length === 0) {
+		if (!this.isUniverseScope() && !this.isAssetOpportunityScope() && !this.isStrategyQualityScope() && state.ohlcvData.length === 0) {
 			this.setStatus('Data not loaded. Attempting to load...');
 			await dataManager.loadData();
 
@@ -1726,7 +1744,9 @@ export class FinderManager {
 		this.setLatestResults({
 			scope: options.scope === 'symbol_universe'
 				? 'symbol_universe'
-				: options.scope === 'asset_opportunity' ? 'asset_opportunity' : 'current_chart',
+				: options.scope === 'asset_opportunity'
+					? 'asset_opportunity'
+					: options.scope === 'strategy_quality' ? 'strategy_quality' : 'current_chart',
 			results: [],
 		});
 		this.renderLatestResults();
@@ -1736,7 +1756,9 @@ export class FinderManager {
 				? await this.runUniverseFinder(options, startTime)
 				: options.scope === 'asset_opportunity'
 					? await this.runAssetOpportunityFinder(options, startTime)
-					: await this.runCurrentChartFinder(options, startTime);
+					: options.scope === 'strategy_quality'
+						? await this.runStrategyQualityFinder(options, startTime)
+						: await this.runCurrentChartFinder(options, startTime);
 
 			if (!completed) {
 				finalizeProgress(0, '');
@@ -2714,6 +2736,137 @@ export class FinderManager {
 		};
 	}
 
+	private async runStrategyQualityFinder(options: FinderOptions, startTime: number): Promise<boolean> {
+		const selectedStrategies = await this.getUniverseSelectedStrategies();
+		if (selectedStrategies.length === 0) {
+			this.setStatus('Select at least one strategy for Strategy Quality Audit mode.');
+			return false;
+		}
+		const symbols = options.universe?.symbols ?? [];
+		if (symbols.length === 0) {
+			this.setStatus('Add at least one symbol for Strategy Quality Audit mode.');
+			return false;
+		}
+		this.setStatus('Resolving local dataset providers...');
+		const providerResolutionStartedAt = performance.now();
+		const localAssets = await getLocalDailyAssets();
+		const universeSymbols = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()));
+		for (const asset of localAssets) {
+			if (universeSymbols.has(asset.symbol)) {
+				dataManager.setProviderOverride(asset.symbol, asset.provider);
+			}
+		}
+		const providerResolutionMs = performance.now() - providerResolutionStartedAt;
+
+		const qualitySettings = {
+			...backtestService.getBacktestSettings(),
+			exitStrategyOverrideEnabled: false,
+			exitStrategyKey: undefined,
+			exitStrategyParams: undefined,
+		};
+		const output = await runStrategyQualityAudit({
+			selectedStrategies,
+			symbols,
+			interval: state.currentInterval,
+			dataSlice: options.dataSlice ?? 'all',
+			oosValidationEnabled: options.oosValidationEnabled === true,
+			settings: qualitySettings,
+			capitalSettings: backtestService.getCapitalSettings(),
+			loadDataset: (symbol, interval) => loadBatchDataset(symbol, interval),
+			getProvider: (symbol) => dataManager.getProvider(symbol),
+			getDatasetCacheStats: () => getBatchDatasetCacheStats(),
+			yieldControl: () => this.taskYielder.yieldControl(),
+			isCancelled: () => this.isCancelled,
+			setProgress: (percent, text) => this.setProgress(true, percent, text),
+			setStatus: (text) => this.setStatus(text),
+		});
+
+		const results = [...output.results].sort((a, b) =>
+			b.averageExpectancy - a.averageExpectancy
+			|| b.profitFactor - a.profitFactor
+			|| b.activeSymbols - a.activeSymbols
+			|| a.strategyName.localeCompare(b.strategyName),
+		);
+		this.setLatestResults({ scope: 'strategy_quality', results });
+		output.performance.timingsMs.providerResolution = Number(providerResolutionMs.toFixed(2));
+		this.latestDiagnostics = this.buildStrategyQualityDiagnostics({
+			options,
+			results,
+			performance: output.performance,
+			failedSymbolDetails: output.failedSymbolDetails,
+			elapsedMs: performance.now() - startTime,
+		});
+		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
+		this.stashAndResetResort();
+		this.renderLatestResults();
+
+		if (!this.isCancelled) {
+			const oosLabel = options.oosValidationEnabled && (options.dataSlice === 'half_oldest' || options.dataSlice === 'half_newest')
+				? ' | OOS included'
+				: '';
+			const statusPrefix = output.loadedSymbols === 0 ? 'Quality Audit failed.' : 'Quality Audit complete.';
+			const diagnosticSuffix = output.failedSymbols > 0
+				? ' Copy Diagnostics for load details and performance.'
+				: ' Copy Diagnostics for performance.';
+			this.setStatus(
+				`${statusPrefix} ${results.length} strateg${results.length === 1 ? 'y' : 'ies'}, `
+				+ `${output.loadedSymbols}/${symbols.length} symbols loaded${oosLabel} `
+				+ `in ${Math.round(performance.now() - startTime)}ms.${diagnosticSuffix}`,
+			);
+		}
+		return true;
+	}
+
+	private buildStrategyQualityDiagnostics(args: {
+		options: FinderOptions;
+		results: FinderStrategyQualityResult[];
+		performance: FinderStrategyQualityDiagnostics;
+		failedSymbolDetails: Array<{ symbol: string; error: string }>;
+		elapsedMs: number;
+	}): FinderDiagnostics {
+		const quality = args.performance;
+		const timings = createEmptyFinderDiagnosticsTimings();
+		timings.total = args.elapsedMs;
+		timings.dataLoading = quality.timingsMs.providerResolution + quality.timingsMs.dataLoading;
+		timings.preparedData = quality.timingsMs.dataPreparation;
+		timings.backtest = quality.timingsMs.strategyExecution + quality.timingsMs.oosExecution;
+		timings.resultRanking = quality.timingsMs.resultReduction;
+		timings.yielding = quality.timingsMs.yielding;
+		const diagnostics = buildFinderDiagnostics({
+			runId: createFinderRunId('finder-strategy-quality'),
+			symbol: state.currentSymbol,
+			interval: state.currentInterval,
+			mode: args.options.mode,
+			engineMode: 'auto',
+			inputBars: quality.data.averageBars,
+			evaluationBars: quality.data.averageBars,
+			selectedStrategies: quality.selectedStrategies,
+			totalParamRuns: quality.runs.planned,
+			batchSize: 1,
+			processedRuns: quality.runs.completed,
+			filteredRuns: 0,
+			shownResults: args.results.length,
+			endpointAdjusted: 0,
+			failedRuns: quality.runs.failed,
+			skippedRuns: quality.runs.noTrade,
+			timings,
+			strategyBreakdown: [],
+			universeDiagnostics: {
+				totalSymbols: quality.requestedSymbols,
+				loadedSymbols: quality.loadedSymbols,
+				failedSymbols: args.failedSymbolDetails.map(({ symbol, error }) => ({ symbol, reason: error })),
+			},
+		});
+		diagnostics.strategyQuality = {
+			...quality,
+			timingsMs: {
+				...quality.timingsMs,
+				total: args.elapsedMs,
+			},
+		};
+		return diagnostics;
+	}
+
 	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'polymarketExitMode' | 'polymarketSignalExitAllowMultipleTradesPerEvent' | 'executionModel' | 'polymarketEntryDelayBars' | 'polymarketEntryPriceFilterCents' | 'polymarketBacktestSlippageCents' | 'polymarketPostSignalLimitEntryEnabled' | 'polymarketPostSignalLimitEntryMode' | 'polymarketPostSignalLimitEntryPriceCents' | 'polymarketPostSignalLimitEntryOffsetCents' | 'polymarketPostSignalLimitExitEnabled' | 'polymarketPostSignalLimitExitMode' | 'polymarketPostSignalLimitExitPriceCents' | 'polymarketPostSignalLimitExitOffsetCents' | 'disableSignalExits' | 'exitStrategyOverrideEnabled'>): FinderOptions {
 		const dom = this.getDom();
 		const scope = this.getScope();
@@ -2735,7 +2888,9 @@ export class FinderManager {
 		const steps = Math.round(this.readFinderNumberInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2));
 		const rangePercent = this.readFinderNumberInput(dom.finderRange, DEFAULT_FINDER_UI_STATE.rangePercent, 0);
 		const maxRuns = Math.round(this.readFinderNumberInput(dom.finderMaxRuns, DEFAULT_FINDER_UI_STATE.maxRuns, 1));
-		const tradeFilterEnabled = scope !== 'symbol_universe' && dom.finderTradesToggle.checked;
+		const tradeFilterEnabled = scope !== 'symbol_universe'
+			&& scope !== 'strategy_quality'
+			&& dom.finderTradesToggle.checked;
 		const minTrades = tradeFilterEnabled ? Math.round(this.readFinderNumberInput(dom.finderTradesMin, DEFAULT_FINDER_UI_STATE.minTrades, 0)) : 0;
 		const maxTrades = tradeFilterEnabled
 			? Math.round(this.readFinderNumberInput(dom.finderTradesMax, Number.POSITIVE_INFINITY, 0))
@@ -2799,7 +2954,7 @@ export class FinderManager {
 		});
 
 		options.scope = scope;
-		if (scope === 'symbol_universe') {
+		if (scope === 'symbol_universe' || scope === 'strategy_quality') {
 			options.universe = buildFinderUniverseOptions({
 				symbols: this.parseUniverseSymbols(dom.finderUniverseSymbols.value),
 				minActiveSymbols: Math.round(this.readFinderNumberInput(dom.finderUniverseMinActiveSymbols, DEFAULT_FINDER_UI_STATE.universeMinActiveSymbols, 1)),
@@ -2892,6 +3047,10 @@ export class FinderManager {
 		return this.latestResults.scope === 'asset_opportunity' ? this.latestResults.results : [];
 	}
 
+	private getStrategyQualityResults(): FinderStrategyQualityResult[] {
+		return this.latestResults.scope === 'strategy_quality' ? this.latestResults.results : [];
+	}
+
 	/**
 	 * Minimal diagnostics for the "No universe symbols could be loaded" path.
 	 * The full diagnostics builder lives deep inside the runner and never runs
@@ -2904,6 +3063,8 @@ export class FinderManager {
 		options: FinderOptions;
 		elapsedMs: number;
 		loadFailures: Map<string, { error?: string }>;
+		totalSymbols?: number;
+		loadedSymbols?: number;
 	}): FinderDiagnostics {
 		const failedSymbols = [...args.loadFailures.entries()].map(([symbol, result]) => ({
 			symbol,
@@ -2937,8 +3098,8 @@ export class FinderManager {
 			timings,
 			strategyBreakdown: [],
 			universeDiagnostics: {
-				totalSymbols: failedSymbols.length,
-				loadedSymbols: 0,
+				totalSymbols: args.totalSymbols ?? failedSymbols.length,
+				loadedSymbols: args.loadedSymbols ?? 0,
 				failedSymbols,
 			},
 		});
@@ -2964,7 +3125,7 @@ export class FinderManager {
 				? 'genetic'
 				: 'typescript';
 		const truncatedError = args.error.length > 220 ? `${args.error.slice(0, 217)}...` : args.error;
-		const universeDiagnostics = args.options.scope === 'symbol_universe' && args.options.universe
+		const universeDiagnostics = (args.options.scope === 'symbol_universe' || args.options.scope === 'strategy_quality') && args.options.universe
 			? {
 				totalSymbols: args.options.universe.symbols.length,
 				loadedSymbols: 0,
@@ -3197,6 +3358,11 @@ export class FinderManager {
 			this.ui.renderAssetOpportunityResults(results);
 			return;
 		}
+		if (this.getScope() === 'strategy_quality') {
+			const results = this.latestResults.scope === 'strategy_quality' ? this.latestResults.results : [];
+			this.ui.renderStrategyQualityResults(results);
+			return;
+		}
 		const results = this.latestResults.scope === 'current_chart' ? this.latestResults.results : [];
 		this.ui.renderResults(results);
 	}
@@ -3360,7 +3526,8 @@ export class FinderManager {
 		const chartResults = this.getCurrentChartResults();
 		const universeResults = this.getUniverseResults();
 		const assetResults = this.getAssetOpportunityResults();
-		if (chartResults.length === 0 && universeResults.length === 0 && assetResults.length === 0) {
+		const qualityResults = this.getStrategyQualityResults();
+		if (chartResults.length === 0 && universeResults.length === 0 && assetResults.length === 0 && qualityResults.length === 0) {
 			uiManager.showToast('No results to copy', 'info');
 			return;
 		}
@@ -3369,7 +3536,29 @@ export class FinderManager {
 			? chartResults.map((result, index) => this.buildCurrentChartMetadataPayload(result, index + 1))
 			: this.latestResults.scope === 'asset_opportunity'
 				? assetResults.map((result, index) => this.buildAssetOpportunityMetadataPayload(result, index + 1))
-				: universeResults.map((result, index) => this.buildUniverseMetadataPayload(result, index + 1));
+				: this.latestResults.scope === 'strategy_quality'
+					? qualityResults.map((result, index) => ({
+						scope: 'strategy_quality' as const,
+						rank: index + 1,
+						strategyId: result.strategyKey,
+						strategyName: result.strategyName,
+						interval: state.currentInterval,
+						params: result.params,
+						metrics: {
+							averageExpectancy: result.averageExpectancy,
+							medianExpectancy: result.medianExpectancy,
+							profitFactor: result.profitFactor,
+							averageProfitFactor: result.averageProfitFactor,
+							averageSharpe: result.averageSharpe,
+							totalNetProfit: result.totalNetProfit,
+							totalTrades: result.totalTrades,
+							weightedWinRate: result.weightedWinRate,
+							activeSymbols: result.activeSymbols,
+							profitableSymbols: result.profitableSymbols,
+						},
+						oos: result.oos ?? null,
+					}))
+					: universeResults.map((result, index) => this.buildUniverseMetadataPayload(result, index + 1));
 
 		try {
 			await this.copyTextToClipboard(JSON.stringify(payload, null, 2));
@@ -3702,7 +3891,7 @@ export class FinderManager {
 		return this.cloneBacktestSettings(this.latestResults);
 	}
 
-	public getLatestCandidate(): FinderResult | FinderUniverseCandidate | FinderAssetOpportunityResult | null {
+	public getLatestCandidate(): FinderResult | FinderUniverseCandidate | FinderAssetOpportunityResult | FinderStrategyQualityResult | null {
 		if (this.latestResults.results.length === 0) return null;
 		return this.cloneBacktestSettings(this.latestResults.results[0]);
 	}

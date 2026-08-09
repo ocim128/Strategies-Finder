@@ -9,6 +9,7 @@
                 <option value="current_chart" selected>Current Chart</option>
                 <option value="symbol_universe">Symbol Universe</option>
                 <option value="asset_opportunity">Asset Opportunity</option>
+                <option value="strategy_quality">Strategy Quality Audit</option>
             </select>
         </div>
     </div>
@@ -158,6 +159,9 @@
                 </div>
             </div>
             <div class="param-hint">Searches each asset independently for every selected strategy; support counts only each sampled candidate pool. Reserve the last N historical bars for forward OOS PnL at the three listed horizons.</div>
+        </div>
+        <div id="finderQualitySettings" style="display:none;">
+            <div class="param-hint">Runs each selected strategy library once per symbol using its normalized default parameters. Results are for baseline quality review, not parameter discovery; OOS is informational and never filters a library.</div>
         </div>
         <div id="finderUniverseFilters">
         <div class="param-row" style="margin-top: 12px;">

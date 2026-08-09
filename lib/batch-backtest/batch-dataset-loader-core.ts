@@ -206,6 +206,10 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                 interval,
                 targetBars: SYNTHETIC_TARGET_BARS,
                 sourceBarsCap: DATA_CHART_TOTAL_LIMIT,
+                // DataFetcher/CSV loaders already return canonical sorted,
+                // deduplicated candles. Keep the expensive generic parser for
+                // other callers, but use the normalized pair hot path here.
+                assumeNormalizedLegs: true,
                 fetchLeg: (legSymbol, legInterval, legBars) =>
                     getSourceSeries(legSymbol, legInterval, legBars, signal),
             });

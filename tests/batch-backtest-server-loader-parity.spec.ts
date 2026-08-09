@@ -60,6 +60,16 @@ describe("batch-backtest server loader parity", () => {
         expect(readSource(SERVER_LOADER)).to.include("createBatchDatasetLoaderCore");
     });
 
+    it("lets browser IBKR batches bypass redundant cache reads", () => {
+        const browser = readSource(BROWSER_LOADER);
+        expect(browser).to.include("isIbkrSymbol");
+        expect(browser).to.include("loadSeedCandlesFromPriceData");
+        expect(browser).to.include('"ibkr-local"');
+        // The browser wrapper should use the same authoritative-seed boundary
+        // as the server wrapper before falling back to DataManager history.
+        expect(browser).to.include("return dataManager.fetchHistoricalData");
+    });
+
     it("keeps synthetic-pair and cache behavior in the shared core", () => {
         const core = readSource(SHARED_CORE);
         for (const symbol of [

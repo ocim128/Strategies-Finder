@@ -6,14 +6,27 @@
  * fetch functions so Batch can load datasets without touching the live chart.
  */
 
+import { loadSeedCandlesFromPriceData } from "../candle-cache";
 import { dataManager } from "../data-manager";
+import { isIbkrSymbol } from "../local-daily-datasets";
 import type { OHLCVData } from "../types/strategies";
 import { createBatchDatasetLoaderCore, type BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 
 const loader = createBatchDatasetLoaderCore({
     logPrefix: "batch",
     fetchDetached: (symbol, interval, options) => dataManager.fetchDataDetached(symbol, interval, options),
-    fetchHistorical: (symbol, interval, limit, options) => dataManager.fetchHistoricalData(symbol, interval, limit, options),
+    fetchHistorical: async (symbol, interval, limit, options) => {
+        if (isIbkrSymbol(symbol)) {
+            // IBKR synthetic pairs must use the authoritative local CSV seed
+            // (4h pairs resolve to their 30m seed interval). Avoid reading
+            // SQLite and IndexedDB for the same leg before reaching that CSV.
+            const seed = await loadSeedCandlesFromPriceData(symbol, interval, options?.signal, "ibkr-local");
+            if (seed && seed.length > 0) {
+                return seed.length > limit ? seed.slice(-limit) : seed;
+            }
+        }
+        return dataManager.fetchHistoricalData(symbol, interval, limit, options);
+    },
 });
 
 export async function loadBatchDataset(

@@ -370,6 +370,7 @@ describe('buildSyntheticPairFromLegs', () => {
                 quoteSymbol: 'MSFT\u2022',
                 interval,
                 targetBars: 2,
+                assumeNormalizedLegs: true,
                 fetchLeg: async (_symbol, sourceInterval) => {
                     calls.push(sourceInterval);
                     return sourceBars;

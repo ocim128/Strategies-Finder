@@ -98,6 +98,7 @@ export interface CompactFinderDiagnostics {
         strategyKeys: string[];
         omittedStrategyKeys: number;
     }>;
+    strategyQuality?: FinderDiagnostics["strategyQuality"];
 }
 
 const COMPACT_FINDER_PHASE_LIMIT = 4;
@@ -764,6 +765,10 @@ export function buildCompactFinderDiagnostics(diagnostics: FinderDiagnostics): C
                 : {}),
             dataWindow: diagnostics.universe.dataWindow,
         };
+    }
+
+    if (diagnostics.strategyQuality) {
+        compact.strategyQuality = diagnostics.strategyQuality;
     }
 
     if (diagnostics.failureBreakdown?.length) {

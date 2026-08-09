@@ -2,6 +2,7 @@ import type {
     FinderAssetOpportunityResult,
     FinderLatestResults,
     FinderResult,
+    FinderStrategyQualityResult,
     FinderUniverseCandidate,
     FinderUniverseSymbolMetrics,
     FinderUniverseSymbolResult,
@@ -156,6 +157,19 @@ function compactAssetOpportunityResult(result: FinderAssetOpportunityResult): Fi
     };
 }
 
+function compactStrategyQualityResult(result: FinderStrategyQualityResult): FinderStrategyQualityResult {
+    return {
+        ...result,
+        params: { ...result.params },
+        symbols: result.symbols.slice(0, FINDER_UNIVERSE_SYMBOL_SNAPSHOT_LIMIT).map((symbol) => ({
+            ...symbol,
+            ...(symbol.result ? { result: { ...symbol.result } } : {}),
+            ...(symbol.oosResult ? { oosResult: { ...symbol.oosResult } } : {}),
+        })),
+        ...(result.oos ? { oos: { ...result.oos } } : {}),
+    };
+}
+
 export function compactFinderLatestResults(results: FinderLatestResults): FinderLatestResults {
     if (results.scope === "symbol_universe") {
         return {
@@ -172,6 +186,15 @@ export function compactFinderLatestResults(results: FinderLatestResults): Finder
             results: results.results
                 .slice(0, FINDER_RESULT_SNAPSHOT_LIMIT)
                 .map(compactAssetOpportunityResult),
+        };
+    }
+
+    if (results.scope === "strategy_quality") {
+        return {
+            scope: "strategy_quality",
+            results: results.results
+                .slice(0, FINDER_RESULT_SNAPSHOT_LIMIT)
+                .map(compactStrategyQualityResult),
         };
     }
 
@@ -192,6 +215,7 @@ export function normalizeFinderLatestResultsSnapshot(value: unknown): FinderLate
         candidate.scope !== "current_chart"
         && candidate.scope !== "symbol_universe"
         && candidate.scope !== "asset_opportunity"
+        && candidate.scope !== "strategy_quality"
     ) {
         return null;
     }

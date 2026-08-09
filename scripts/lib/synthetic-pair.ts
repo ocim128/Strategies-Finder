@@ -104,52 +104,68 @@ export function buildSyntheticPairDataset(
 ): SyntheticPairDataset {
     const { base, quote, minBars = 1 } = options;
 
-    const baseBars = parseOhlcvBars(base);
-    const quoteBars = parseOhlcvBars(quote);
+    return buildSyntheticPairDatasetFromNormalizedCandles({
+        base: parseOhlcvBars(base),
+        quote: parseOhlcvBars(quote),
+        minBars,
+    });
+}
+
+/**
+ * Fast path for callers whose legs already came from the canonical OHLCV
+ * loaders. Those loaders return ascending, deduplicated candles, so a
+ * two-pointer merge avoids reparsing, indexing, temporary alignment objects,
+ * and a second sort for every synthetic pair.
+ */
+export function buildSyntheticPairDatasetFromNormalizedCandles(options: {
+    base: readonly OHLCVData[];
+    quote: readonly OHLCVData[];
+    minBars?: number;
+}): SyntheticPairDataset {
+    const { base: baseBars, quote: quoteBars, minBars = 1 } = options;
 
     if (quoteBars.length === 0) {
         throw new SyntheticQuoteError('Quote bars must contain at least one aligned candle.');
     }
 
-    const quoteIndex = new Map<number, OHLCVData>();
-
     if (baseBars.length === 0) {
         throw new SyntheticAlignmentError('Base bars must contain at least one aligned bar.');
     }
 
-    for (const bar of quoteBars) {
-        const time = Number(bar.time);
-        if (Number.isFinite(time)) {
-            quoteIndex.set(time, bar);
-        }
-    }
-
-    const aligned: Array<{ base: OHLCVData; quote: OHLCVData }> = [];
-
-    // Dedup happens upstream in parseOhlcvBars (last-write-wins); here we only align.
-    for (const baseBar of baseBars) {
-        const time = Number(baseBar.time);
-        if (!Number.isFinite(time)) {
-            continue;
-        }
-
-        const quoteBar = quoteIndex.get(time);
-        if (!quoteBar) {
-            continue;
-        }
-
-        aligned.push({ base: baseBar, quote: quoteBar });
-    }
-
-    aligned.sort((left, right) => Number(left.base.time) - Number(right.base.time));
-
     const syntheticBars: OHLCVData[] = [];
+    let baseIndex = 0;
+    let quoteIndex = 0;
+    let matchedBars = 0;
+    while (baseIndex < baseBars.length && quoteIndex < quoteBars.length) {
+        const baseBar = baseBars[baseIndex]!;
+        const quoteBar = quoteBars[quoteIndex]!;
+        const baseTime = Number(baseBar.time);
+        const quoteTime = Number(quoteBar.time);
 
-    for (const { base: baseBar, quote: quoteBar } of aligned) {
+        if (!Number.isFinite(baseTime)) {
+            baseIndex += 1;
+            continue;
+        }
+        if (!Number.isFinite(quoteTime)) {
+            quoteIndex += 1;
+            continue;
+        }
+        if (baseTime < quoteTime) {
+            baseIndex += 1;
+            continue;
+        }
+        if (baseTime > quoteTime) {
+            quoteIndex += 1;
+            continue;
+        }
+
+        matchedBars += 1;
         const open = safeDiv(baseBar.open, quoteBar.open);
         const close = safeDiv(baseBar.close, quoteBar.close);
 
         if (!Number.isFinite(open) || !Number.isFinite(close)) {
+            baseIndex += 1;
+            quoteIndex += 1;
             continue;
         }
 
@@ -159,10 +175,16 @@ export function buildSyntheticPairDataset(
         // legs and creating phantom TP/SL fills in backtests.
         const rHigh = safeDiv(baseBar.high, quoteBar.high);
         const rLow = safeDiv(baseBar.low, quoteBar.low);
-        const finiteRatios = [open, close, rHigh, rLow].filter(Number.isFinite);
-
-        const high = Math.max(...finiteRatios);
-        const low = Math.min(...finiteRatios);
+        let high = Math.max(open, close);
+        let low = Math.min(open, close);
+        if (Number.isFinite(rHigh)) {
+            high = Math.max(high, rHigh);
+            low = Math.min(low, rHigh);
+        }
+        if (Number.isFinite(rLow)) {
+            high = Math.max(high, rLow);
+            low = Math.min(low, rLow);
+        }
 
         const volume = Math.min(
             Number.isFinite(baseBar.volume) ? baseBar.volume : 0,
@@ -177,10 +199,12 @@ export function buildSyntheticPairDataset(
             close,
             volume: Math.max(0, volume),
         });
+        baseIndex += 1;
+        quoteIndex += 1;
     }
 
     if (syntheticBars.length < Math.max(1, minBars)) {
-        if (aligned.length === 0) {
+        if (matchedBars === 0) {
             throw new SyntheticAlignmentError('No overlapping bars between base and quote symbol data.');
         }
 
@@ -355,6 +379,8 @@ export interface SyntheticPairFromLegsResult {
  * that previously caused contract drift collapse to two options:
  *   - `sourceBarsCap` (finder caps at DATA_CHART_TOTAL_LIMIT; others don't)
  *   - `tailSliceBars` (worker slices to targetLimit; others don't)
+ *   - `assumeNormalizedLegs` (batch loaders already return sorted,
+ *     deduplicated OHLCV arrays)
  *
  * Note: signal-entry-evaluator intentionally builds once and aggregates
  * per-member inside a loop; it does not use this helper.
@@ -368,6 +394,7 @@ export async function buildSyntheticPairFromLegs(args: {
     sourceBarsCap?: number;
     tailSliceBars?: number;
     minBars?: number;
+    assumeNormalizedLegs?: boolean;
     /**
      * When true, an empty base or quote leg yields an empty `bars` array
      * instead of throwing SyntheticAlignmentError / SyntheticQuoteError.
@@ -434,9 +461,11 @@ export async function buildSyntheticPairFromLegs(args: {
     }
 
     const effectiveInterval = subdivided ? sourceInterval : interval;
-    const dataset = buildSyntheticPairDataset({ base, quote, interval: effectiveInterval, minBars });
+    const dataset = args.assumeNormalizedLegs
+        ? buildSyntheticPairDatasetFromNormalizedCandles({ base, quote, minBars })
+        : buildSyntheticPairDataset({ base, quote, interval: effectiveInterval, minBars });
     const bars = subdivided
-        ? aggregateSyntheticBars(dataset.bars, interval)
+        ? aggregateSortedSyntheticBars(dataset.bars, interval)
         : dataset.bars;
 
     return {
@@ -446,6 +475,44 @@ export async function buildSyntheticPairFromLegs(args: {
         base,
         quote,
     };
+}
+
+function aggregateSortedSyntheticBars(
+    bars: readonly OHLCVData[],
+    targetInterval: string,
+): OHLCVData[] {
+    const targetSecs = parseIntervalSeconds(targetInterval);
+    if (!targetSecs || targetSecs <= 0 || bars.length <= 1) return [...bars];
+
+    const result: OHLCVData[] = [];
+    let currentBucket: number | null = null;
+    let current: OHLCVData | null = null;
+    for (const bar of bars) {
+        const epoch = Number(bar.time);
+        if (!Number.isFinite(epoch)) continue;
+        const bucketStart = Math.floor(epoch / targetSecs) * targetSecs;
+        if (currentBucket !== bucketStart) {
+            if (current) result.push(current);
+            currentBucket = bucketStart;
+            current = {
+                time: bucketStart as Time,
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                volume: Number.isFinite(bar.volume) ? bar.volume : 0,
+            };
+            continue;
+        }
+
+        if (!current) continue;
+        if (bar.high > current.high) current.high = bar.high;
+        if (bar.low < current.low) current.low = bar.low;
+        current.close = bar.close;
+        if (Number.isFinite(bar.volume)) current.volume += bar.volume;
+    }
+    if (current) result.push(current);
+    return result;
 }
 
 export function aggregateSyntheticBars(

@@ -613,6 +613,10 @@
 
 }
 
+.finder-row-readonly {
+    grid-template-columns: 52px 1fr;
+}
+
 
 
 .finder-row:hover {
