@@ -2,7 +2,6 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import { compareFinderResults, sortFinderResults } from "../lib/finder/finder-engine";
 import { FinderResultRanker } from "../lib/finder/finder-result-ranker";
-import { finderSortRequiresAdvancedAnalytics } from "../lib/finder/finder-runner-core";
 import type { FinderMetric, FinderResult } from "../lib/types/finder";
 import type { BacktestResult, TradeTimingQuality } from "../lib/types/strategies";
 
@@ -124,40 +123,6 @@ function makeBacktestResult(overrides: Partial<BacktestResult> = {}): BacktestRe
     };
 }
 
-function makeAdvancedFinderResult(
-    key: string,
-    analytics: Partial<NonNullable<BacktestResult["performanceAnalytics"]>>,
-): FinderResult {
-    const result = makeBacktestResult({
-        performanceAnalytics: {
-            sortinoRatio: 0,
-            calmarRatio: 0,
-            sterlingRatio: 0,
-            tailRatio: 0,
-            skewness: 0,
-            kurtosis: 0,
-            valueAtRisk95: 0,
-            conditionalValueAtRisk95: 0,
-            ulcerIndex: 0,
-            serenityIndex: 0,
-            cagr: 0,
-            confidenceLevelPct: 95,
-            riskFreeRateAnnual: 0,
-            sampleCount: 10,
-            ...analytics,
-        },
-    });
-    return {
-        key,
-        name: key,
-        params: {},
-        result,
-        selectionResult: result,
-        endpointAdjusted: false,
-        endpointRemovedTrades: 0,
-    };
-}
-
 function makeTimingResult(
     key: string,
     rawTimingQuality: TradeTimingQuality,
@@ -200,14 +165,6 @@ describe("Finder timing-quality sorting", () => {
             "stronger",
             "weaker",
         ]);
-    });
-});
-
-describe("Finder advanced analytics execution contract", () => {
-    it("requires full analytics only when an advanced analytics metric is selected", () => {
-        expect(finderSortRequiresAdvancedAnalytics(["netProfit", "sharpeRatio"])).to.equal(false);
-        expect(finderSortRequiresAdvancedAnalytics(["sortinoRatio"])).to.equal(true);
-        expect(finderSortRequiresAdvancedAnalytics(["conditionalValueAtRisk95"])).to.equal(true);
     });
 });
 
@@ -302,23 +259,5 @@ describe("Finder Polymarket sorting", () => {
 
         expect(sortFinderResults([missingSizedNet, losingSizedNet], sortPriority).map((result) => result.key))
             .to.deep.equal(["losing_sized_net", "missing_sized_net"]);
-    });
-});
-
-describe("Finder advanced analytics sorting", () => {
-    it("ranks advanced performance metrics and applies lower-is-better risk direction", () => {
-        const stronger = makeAdvancedFinderResult("stronger", {
-            sortinoRatio: 1.8,
-            valueAtRisk95: 4,
-        });
-        const weaker = makeAdvancedFinderResult("weaker", {
-            sortinoRatio: 0.4,
-            valueAtRisk95: 12,
-        });
-
-        expect(sortFinderResults([weaker, stronger], ["sortinoRatio"]).map((item) => item.key))
-            .to.deep.equal(["stronger", "weaker"]);
-        expect(sortFinderResults([weaker, stronger], ["valueAtRisk95"]).map((item) => item.key))
-            .to.deep.equal(["stronger", "weaker"]);
     });
 });

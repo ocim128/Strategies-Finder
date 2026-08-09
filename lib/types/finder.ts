@@ -42,17 +42,7 @@ export type FinderMetric =
     | 'polyExpectancyBalance'
     | 'polyProfitFactor'
     | 'polyProfitFactorBalance'
-    | 'polySizedNet'
-    // Advanced performance analytics (require equity curve; only populated
-    // on results whose run computed them — e.g. Asset Opportunity winner).
-    | 'sortinoRatio'
-    | 'calmarRatio'
-    | 'tailRatio'
-    | 'skewness'
-    | 'ulcerIndex'
-    | 'serenityIndex'
-    | 'valueAtRisk95'
-    | 'conditionalValueAtRisk95';
+    | 'polySizedNet';
 export type FinderUniverseMetric =
     | 'robustUniverseScore'
     | 'windowStabilityScore'

@@ -29,7 +29,6 @@ function compactBacktestResult(result: BacktestResult): BacktestResult {
         avgLoss: result.avgLoss,
         sharpeRatio: result.sharpeRatio,
         equityCurve: [],
-        ...(result.performanceAnalytics ? { performanceAnalytics: { ...result.performanceAnalytics } } : {}),
         ...(result.tradeTimingQuality ? { tradeTimingQuality: result.tradeTimingQuality } : {}),
         ...(result.polymarketTradeSummary ? { polymarketTradeSummary: result.polymarketTradeSummary } : {}),
     };
