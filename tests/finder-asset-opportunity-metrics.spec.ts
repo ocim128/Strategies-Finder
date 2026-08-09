@@ -18,9 +18,14 @@ import {
     sortAssetOpportunityResults,
     sortAssetOpportunityResultsByMetric,
     getAssetOpportunityResortMetrics,
+    retainAssetOpportunityResultsForSymbols,
     type AssetPoolCandidate,
 } from "../lib/finder/finder-asset-opportunity-metrics";
 import type { FinderAssetOpportunityResult } from "../lib/types/finder";
+
+function assetResultForSymbol(symbol: string): FinderAssetOpportunityResult {
+    return { symbol } as FinderAssetOpportunityResult;
+}
 
 function poolCandidate(args: {
     rank: number;
@@ -71,6 +76,17 @@ describe("Asset Opportunity support counts", () => {
             ],
         });
         expect(counts.freshSameDirection).to.equal(0);
+    });
+});
+
+describe("Asset Opportunity result universe", () => {
+    it("drops stale rows that are not in the submitted asset list", () => {
+        const retained = retainAssetOpportunityResultsForSymbols(
+            [assetResultForSymbol("GEV•+AMD•"), assetResultForSymbol("GEV•+SNDK•")],
+            ["gev•+sndk•"],
+        );
+
+        expect(retained.map((result) => result.symbol)).to.deep.equal(["GEV•+SNDK•"]);
     });
 });
 

@@ -30,7 +30,12 @@ import { runCandidateOosPass } from "./finder/finder-candidate-oos";
 import {
 	sortFinderUniverseCandidates,
 } from "./finder/finder-universe-metrics";
-import { sortAssetOpportunityResults, sortAssetOpportunityResultsByMetric, getAssetOpportunityResortMetrics } from "./finder/finder-asset-opportunity-metrics";
+import {
+	sortAssetOpportunityResults,
+	sortAssetOpportunityResultsByMetric,
+	getAssetOpportunityResortMetrics,
+	retainAssetOpportunityResultsForSymbols,
+} from "./finder/finder-asset-opportunity-metrics";
 import {
 	compactFinderLatestResults,
 	normalizeFinderLatestResultsSnapshot,
@@ -617,6 +622,18 @@ export class FinderManager {
 			data: snapshot,
 			onError: (error) => {
 				debugLogger.error("finder.latest_results_save_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			},
+		});
+	}
+
+	private clearLatestResultsSnapshot(): void {
+		writePersistedJson({
+			...FINDER_RESULTS_STORAGE,
+			data: null,
+			onError: (error) => {
+				debugLogger.error("finder.latest_results_clear_failed", {
 					error: error instanceof Error ? error.message : String(error),
 				});
 			},
@@ -1665,6 +1682,8 @@ export class FinderManager {
 		this.lastFinderEvaluationData = null;
 		this.latestDiagnostics = null;
 		this.latestAssetOpportunityDiagnostics = null;
+		this.originalLatestResults = null;
+		this.clearLatestResultsSnapshot();
 
 		const settingsSnapshot = this.cloneBacktestSettings(settingsManager.getBacktestSettings());
 		this.lastFinderRunBacktestSettings = this.cloneBacktestSettings(settingsSnapshot);
@@ -1976,6 +1995,16 @@ export class FinderManager {
 		}
 		dom.runFinder.disabled = true;
 		dom.stopFinder.style.display = "";
+		// The persisted result snapshot belongs to the previous completed view,
+		// not to this server job. Clear it before showing reattach progress so a
+		// reload cannot display stale asset rows while the job is still running.
+		this.originalLatestResults = null;
+		this.clearLatestResultsSnapshot();
+		this.setLatestResults({
+			scope: persisted.scope,
+			results: [],
+		});
+		this.renderLatestResults();
 		debugLogger.event("finder.server.reattach_started", {
 			runId,
 			phase: initial.phase,
@@ -2274,6 +2303,24 @@ export class FinderManager {
 		}
 
 		const isStillActive = (): boolean => this.activeServerRunId === runId;
+		const submittedAssetSymbols = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean));
+		const provisionalAssetResults = new Map<string, FinderAssetOpportunityResult>();
+		const assetResultKey = (result: FinderAssetOpportunityResult): string =>
+			`${result.symbol.trim().toUpperCase()}\u0000${result.strategyKey}`;
+		const retainSubmittedAssetResults = (
+			results: readonly FinderAssetOpportunityResult[],
+		): FinderAssetOpportunityResult[] => {
+			const retained = retainAssetOpportunityResultsForSymbols(results, submittedAssetSymbols);
+			if (retained.length !== results.length) {
+				debugLogger.warn("finder.asset_opportunity.stale_result_ignored", {
+					runId,
+					ignoredSymbols: results
+						.filter((result) => !submittedAssetSymbols.has(result.symbol.trim().toUpperCase()))
+						.map((result) => result.symbol),
+				});
+			}
+			return retained;
+		};
 		let terminalResults: FinderAssetOpportunityResult[] | null = null;
 		let terminalDiagnostics: FinderDiagnostics | null = null;
 		let assetDiagnostics: FinderDiagnostics['assetOpportunity'] | null = null;
@@ -2292,20 +2339,25 @@ export class FinderManager {
 				},
 				onAssetComplete: (event) => {
 					if (!isStillActive()) return;
+					if (!submittedAssetSymbols.has(event.asset.symbol.trim().toUpperCase())) {
+						debugLogger.warn("finder.asset_opportunity.stale_result_ignored", {
+							runId,
+							ignoredSymbols: [event.asset.symbol],
+						});
+						return;
+					}
 					assetsWithFreshEntry += 1;
-					const provisionalResults = [
-						...this.getAssetOpportunityResults().filter((item) =>
-							item.symbol !== event.asset.symbol || item.strategyKey !== event.asset.strategyKey),
-						event.asset,
-					];
+					provisionalAssetResults.set(assetResultKey(event.asset), event.asset);
 					this.setLatestResults({
 						scope: 'asset_opportunity',
-						results: sortAssetOpportunityResults(provisionalResults).slice(0, Math.max(1, options.topN)),
+						results: sortAssetOpportunityResults([...provisionalAssetResults.values()])
+							.slice(0, Math.max(1, options.topN)),
 					});
 					this.renderLatestResults();
 				},
 				onAssetDone: (event) => {
-					terminalResults = event.assets ?? [];
+					if (event.runId !== runId) return;
+					terminalResults = retainSubmittedAssetResults(event.assets ?? []);
 					terminalDiagnostics = event.diagnostics;
 					assetDiagnostics = event.assetDiagnostics;
 					assetsWithFreshEntry = event.totals.assetsWithFreshEntry;
@@ -2328,7 +2380,7 @@ export class FinderManager {
 			if (isStillActive()) {
 				const recovered = await this.recoverActiveServerRun(runId, 'asset_opportunity');
 				if (recovered?.terminalAssets) {
-					terminalResults = recovered.terminalAssets;
+					terminalResults = retainSubmittedAssetResults(recovered.terminalAssets);
 					terminalDiagnostics = recovered.diagnostics;
 					assetDiagnostics = recovered.assetDiagnostics ?? (recovered.assetTotals
 						? {

@@ -39,6 +39,24 @@ import type {
 } from "../types/finder";
 
 /**
+ * Keep displayed Asset Opportunity rows bounded to the submitted asset
+ * universe. This is also used when adopting a terminal server snapshot after
+ * a stream reconnect, where an older browser result must never leak into the
+ * new run.
+ */
+export function retainAssetOpportunityResultsForSymbols(
+    results: readonly FinderAssetOpportunityResult[],
+    symbols: Iterable<string>,
+): FinderAssetOpportunityResult[] {
+    const allowed = new Set<string>();
+    for (const symbol of symbols) {
+        const normalized = symbol.trim().toUpperCase();
+        if (normalized) allowed.add(normalized);
+    }
+    return results.filter((result) => allowed.has(result.symbol.trim().toUpperCase()));
+}
+
+/**
  * A single per-asset candidate carried in the bounded top-K pool. The pool is
  * the input to the support + decision computation. `rank` is the historical
  * rank inside the per-asset pool (1-based; 1 is best).

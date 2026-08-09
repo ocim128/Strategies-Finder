@@ -878,8 +878,9 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
                 done.totals.selectGradeAssets
                 + done.totals.watchGradeAssets
                 + done.totals.rejectGradeAssets,
-            ).to.equal(done.totals.assetsWithFreshEntry);
+                ).to.equal(done.totals.assetsWithFreshEntry);
             for (const asset of done.assets) {
+                expect(["UP", "DOWN"]).to.include(asset.symbol);
                 expect(asset.strategyKey).to.be.oneOf(["asset_opportunity_test_a", "asset_opportunity_test_b"]);
                 expect(asset.latestSignalTime).to.equal(datasets.get(asset.symbol)![2]!.time);
                 expect(asset.oosHorizonMetrics?.ignoreLastBars).to.equal(2);
