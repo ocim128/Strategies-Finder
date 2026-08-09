@@ -200,7 +200,7 @@ export type FinderRunSnapshot = {
     failedSymbols: number;
     /** Surviving candidates accumulated so far (scalar-only). */
     candidates: FinderUniverseCandidate[];
-    /** Asset-opportunity rows accumulated so far (scalar-only). */
+    /** All Asset Opportunity rows accumulated so far (scalar-only). */
     assetResults?: FinderAssetOpportunityResult[];
     /** Terminal diagnostics once the run finishes; null while in flight. */
     diagnostics: FinderDiagnostics | null;
@@ -1000,7 +1000,7 @@ export async function processFinderAssetOpportunityRun(
     let loadedBarsMax = 0;
     let loadedBarsSum = 0;
     let loadedBarsCount = 0;
-    let topAssets: FinderAssetOpportunityResult[] = [];
+    let assetResults: FinderAssetOpportunityResult[] = [];
     const isCancelled = () => runOwner !== owner || input.abortSignal.aborted;
     const secondaryDataCache = new Map<string, Promise<OHLCVData[]>>();
     const assetDataFetcher = selectedStrategies.some((strategy) => strategy.strategy.crossSymbolConfig) && input.getProvider
@@ -1224,8 +1224,7 @@ export async function processFinderAssetOpportunityRun(
                                 assetGrades.add(outcome.result.grade);
                                 const scalar = toScalarAssetResult(outcome.result);
                                 assertAssetResultIsScalar(scalar);
-                                topAssets = sortAssetOpportunityResults([...topAssets, scalar])
-                                    .slice(0, Math.max(1, input.options.topN));
+                                assetResults.push(scalar);
                                 writer({
                                     type: "asset_complete",
                                     asset: scalar,
@@ -1284,10 +1283,11 @@ export async function processFinderAssetOpportunityRun(
                 durationMs: Math.round(performance.now() - assetStartedAt),
             });
         }
-        snapshot.assetResults = topAssets;
+        snapshot.assetResults = assetResults;
     }
 
-    snapshot.assetResults = topAssets;
+    const sortedAssetResults = sortAssetOpportunityResults(assetResults);
+    snapshot.assetResults = sortedAssetResults;
     snapshot.cancelled = runOwner !== owner || input.abortSignal.aborted;
     snapshot.phase = snapshot.cancelled ? "cancelled" : "done";
     snapshot.finishedAt = Date.now();
@@ -1376,7 +1376,7 @@ export async function processFinderAssetOpportunityRun(
         engineUsage: snapshot.assetTotals.engineUsage,
     };
     snapshot.assetDiagnostics = assetDiagnostics;
-    snapshot.summary = `Asset Opportunity complete: ${topAssets.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`;
+    snapshot.summary = `Asset Opportunity complete: ${sortedAssetResults.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`;
 
     debugLogger.event(
         snapshot.cancelled
@@ -1392,7 +1392,7 @@ export async function processFinderAssetOpportunityRun(
             watchGradeAssets,
             rejectGradeAssets,
             failedAssets: failedAssets.length,
-            retainedResults: topAssets.length,
+            retainedResults: sortedAssetResults.length,
             estimatedCandidateEvaluations,
             durationMs: Math.max(0, Date.now() - snapshot.startedAt),
         },
@@ -1406,7 +1406,9 @@ export async function processFinderAssetOpportunityRun(
         interval: input.interval,
         totals: snapshot.assetTotals,
         summary: snapshot.summary,
-        assets: topAssets,
+        // Keep the full scalar run result set. The browser applies topN only
+        // to the visible list so post-run re-sort can rank every opportunity.
+        assets: sortedAssetResults,
         diagnostics: null,
         assetDiagnostics,
     });
@@ -1833,7 +1835,7 @@ function buildStatusSnapshot(): FinderRunStatusSnapshot {
         // The terminal candidate slice ships ONCE here, only for universe runs.
         // In-progress snapshots return null so polling stays small while a
         // large universe runs. Asset-opportunity terminal snapshots carry the
-        // asset slice on `terminalAssets` instead.
+        // full scalar asset result set on `terminalAssets` instead.
         terminalCandidates: terminal && jobKind === "symbol_universe" ? state.candidates : null,
         terminalAssets: terminal && jobKind === "asset_opportunity" ? state.assetResults ?? [] : null,
         summary: state.summary,

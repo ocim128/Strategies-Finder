@@ -827,7 +827,10 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
         const options: FinderOptions = {
             ...makeOptions(["UP", "DOWN"]),
             scope: "asset_opportunity",
-            topN: 10,
+            // Terminal Asset Opportunity results must retain the whole run;
+            // topN is a browser display limit so post-run re-sort can inspect
+            // rows that default sorting would exclude.
+            topN: 1,
             maxRuns: 2,
             dataSlice: "half_oldest",
             assetOpportunity: {
@@ -874,6 +877,7 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
         if (done.type === "asset_done") {
             expect(done.totals.totalAssets).to.equal(2);
             expect(done.totals.failedAssets).to.equal(0);
+            expect(done.assets.length).to.be.greaterThan(1);
             expect(
                 done.totals.selectGradeAssets
                 + done.totals.watchGradeAssets

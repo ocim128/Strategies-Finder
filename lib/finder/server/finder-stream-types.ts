@@ -190,8 +190,9 @@ export type FinderAssetOpportunityStreamEvent =
         };
         summary: string;
         /**
-         * Terminal authoritative asset slice (already sorted + sliced to topN).
-         * Carries the same scalar-only contract as `FinderAssetOpportunityResult`.
+         * Terminal authoritative full Asset Opportunity result set, sorted by
+         * the default run ordering. The browser applies topN only for display;
+         * post-run re-sort must be able to rank every scalar row.
          */
         assets: FinderAssetOpportunityResult[];
         diagnostics: FinderDiagnostics | null;

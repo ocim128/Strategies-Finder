@@ -480,6 +480,10 @@ export class FinderManager {
 	private isRunning = false;
 	private isCancelled = false;
 	private latestResults: FinderLatestResults = { scope: "current_chart", results: [] };
+	/** Full scalar Asset Opportunity rows for the current run. */
+	private assetOpportunityRunResults: FinderAssetOpportunityResult[] = [];
+	/** Default-order full rows used when the re-sort control is reset. */
+	private assetOpportunityDefaultResults: FinderAssetOpportunityResult[] = [];
 	/**
 	 * Snapshot of the run-time sorted results before any post-run re-sort was
 	 * applied. Used to restore the original ordering when the re-sort dropdown
@@ -598,6 +602,10 @@ export class FinderManager {
 		if (!snapshot) return;
 
 		this.latestResults = snapshot.results;
+		if (snapshot.results.scope === 'asset_opportunity') {
+			this.assetOpportunityRunResults = [...snapshot.results.results];
+			this.assetOpportunityDefaultResults = [...snapshot.results.results];
+		}
 		debugLogger.event("finder.latest_results_restored", {
 			scope: snapshot.results.scope,
 			count: snapshot.results.results.length,
@@ -1683,6 +1691,8 @@ export class FinderManager {
 		this.latestDiagnostics = null;
 		this.latestAssetOpportunityDiagnostics = null;
 		this.originalLatestResults = null;
+		this.assetOpportunityRunResults = [];
+		this.assetOpportunityDefaultResults = [];
 		this.clearLatestResultsSnapshot();
 
 		const settingsSnapshot = this.cloneBacktestSettings(settingsManager.getBacktestSettings());
@@ -1999,6 +2009,8 @@ export class FinderManager {
 		// not to this server job. Clear it before showing reattach progress so a
 		// reload cannot display stale asset rows while the job is still running.
 		this.originalLatestResults = null;
+		this.assetOpportunityRunResults = [];
+		this.assetOpportunityDefaultResults = [];
 		this.clearLatestResultsSnapshot();
 		this.setLatestResults({
 			scope: persisted.scope,
@@ -2028,10 +2040,13 @@ export class FinderManager {
 			terminalReached = true;
 			clearPersistedRecord = true;
 			if (persisted.scope === 'asset_opportunity' && snapshot.terminalAssets) {
+				this.assetOpportunityRunResults = sortAssetOpportunityResults([...snapshot.terminalAssets]);
+				this.assetOpportunityDefaultResults = [...this.assetOpportunityRunResults];
 				this.setLatestResults({
 					scope: "asset_opportunity",
-					results: [...snapshot.terminalAssets],
+					results: this.assetOpportunityRunResults.slice(0, Math.max(1, this.uiState.topN)),
 				});
+				this.stashAndResetResort();
 				this.renderLatestResults();
 				this.latestDiagnostics = snapshot.diagnostics;
 				this.latestAssetOpportunityDiagnostics = snapshot.assetDiagnostics ?? (snapshot.assetTotals
@@ -2348,10 +2363,12 @@ export class FinderManager {
 					}
 					assetsWithFreshEntry += 1;
 					provisionalAssetResults.set(assetResultKey(event.asset), event.asset);
+					this.assetOpportunityRunResults = sortAssetOpportunityResults([
+						...provisionalAssetResults.values(),
+					]);
 					this.setLatestResults({
 						scope: 'asset_opportunity',
-						results: sortAssetOpportunityResults([...provisionalAssetResults.values()])
-							.slice(0, Math.max(1, options.topN)),
+						results: this.assetOpportunityRunResults.slice(0, Math.max(1, options.topN)),
 					});
 					this.renderLatestResults();
 				},
@@ -2363,7 +2380,12 @@ export class FinderManager {
 					assetsWithFreshEntry = event.totals.assetsWithFreshEntry;
 					failedAssets = event.totals.failedAssets;
 					if (isStillActive()) {
-						this.setLatestResults({ scope: 'asset_opportunity', results: [...(terminalResults ?? [])] });
+						this.assetOpportunityRunResults = sortAssetOpportunityResults([...(terminalResults ?? [])]);
+						this.assetOpportunityDefaultResults = [...this.assetOpportunityRunResults];
+						this.setLatestResults({
+							scope: 'asset_opportunity',
+							results: this.assetOpportunityRunResults.slice(0, Math.max(1, options.topN)),
+						});
 						this.stashAndResetResort();
 						this.renderLatestResults();
 					}
@@ -2396,7 +2418,12 @@ export class FinderManager {
 						: null);
 					assetsWithFreshEntry = recovered.assetTotals?.assetsWithFreshEntry ?? terminalResults.length;
 					failedAssets = recovered.assetTotals?.failedAssets ?? 0;
-					this.setLatestResults({ scope: 'asset_opportunity', results: [...terminalResults] });
+					this.assetOpportunityRunResults = sortAssetOpportunityResults([...terminalResults]);
+					this.assetOpportunityDefaultResults = [...this.assetOpportunityRunResults];
+					this.setLatestResults({
+						scope: 'asset_opportunity',
+						results: this.assetOpportunityRunResults.slice(0, Math.max(1, options.topN)),
+					});
 					this.stashAndResetResort();
 					this.renderLatestResults();
 				} else if (!this.isCancelled) {
@@ -3114,7 +3141,13 @@ export class FinderManager {
 
 		// "Run Sort" — restore original run-time ordering.
 		if (!metric) {
-			if (this.originalLatestResults && this.originalLatestResults.scope === scope) {
+			if (scope === 'asset_opportunity' && this.assetOpportunityDefaultResults.length > 0) {
+				this.assetOpportunityRunResults = [...this.assetOpportunityDefaultResults];
+				this.setLatestResults({
+					scope: 'asset_opportunity',
+					results: this.assetOpportunityRunResults.slice(0, Math.max(1, this.uiState.topN)),
+				});
+			} else if (this.originalLatestResults && this.originalLatestResults.scope === scope) {
 				this.setLatestResults(this.originalLatestResults);
 			}
 			this.renderLatestResults();
@@ -3130,9 +3163,15 @@ export class FinderManager {
 			const sorted = sortFinderUniverseCandidates(results, [metric as FinderUniverseMetric]);
 			this.setLatestResults({ scope: 'symbol_universe', results: sorted });
 		} else if (scope === 'asset_opportunity') {
-			const results = this.latestResults.results;
+			const results = this.assetOpportunityRunResults.length > 0
+				? this.assetOpportunityRunResults
+				: this.latestResults.results;
 			const sorted = sortAssetOpportunityResultsByMetric(results, metric as FinderMetric);
-			this.setLatestResults({ scope: 'asset_opportunity', results: sorted });
+			this.assetOpportunityRunResults = sorted;
+			this.setLatestResults({
+				scope: 'asset_opportunity',
+				results: sorted.slice(0, Math.max(1, this.uiState.topN)),
+			});
 		}
 		this.renderLatestResults();
 	}
