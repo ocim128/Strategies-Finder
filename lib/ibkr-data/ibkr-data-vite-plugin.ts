@@ -1019,18 +1019,34 @@ function isDerivativeExchange(value: string | undefined): boolean {
 export function selectPreferredResolvedContract(
     contracts: readonly IbkrResolvedContract[],
 ): IbkrResolvedContract | null {
-    if (contracts.length === 0) return null;
-    const scored = contracts.map((contract, index) => {
+    // The search endpoint can return a derivative/index contract for a stock
+    // ticker (STX is one example). The caller requested `sectype=STK`, so a
+    // derivative-only response must fail instead of poisoning the CSV with a
+    // different instrument that happens to share the ticker.
+    const stockContracts = contracts.filter((contract) => {
+        return !isDerivativeExchange(contract.primaryExchange) && !isDerivativeExchange(contract.exchange);
+    });
+    if (stockContracts.length === 0) return null;
+    const scored = stockContracts.map((contract, index) => {
         const primary = normalizeExchange(contract.primaryExchange);
         const exchange = normalizeExchange(contract.exchange);
         const score = (PREFERRED_US_STOCK_EXCHANGES.has(primary) ? 100 : 0)
             + (PREFERRED_US_STOCK_EXCHANGES.has(exchange) ? 50 : 0)
-            + (normalizeExchange(contract.currency) === "USD" ? 10 : 0)
-            - (isDerivativeExchange(primary) || isDerivativeExchange(exchange) ? 1_000 : 0);
+            + (normalizeExchange(contract.currency) === "USD" ? 10 : 0);
         return { contract, index, score };
     });
     scored.sort((a, b) => b.score - a.score || a.index - b.index);
     return scored[0]?.contract ?? null;
+}
+
+export function shouldReplaceExistingIbkrData(
+    existingConid: string | undefined,
+    resolvedConid: string,
+    syncOnly: boolean,
+): boolean {
+    return !syncOnly
+        && Boolean(existingConid)
+        && existingConid !== resolvedConid;
 }
 
 async function resolveSymbol(symbol: string): Promise<IbkrResolvedContract> {
@@ -1547,7 +1563,12 @@ async function syncOneSymbol(
     // `syncOnly` still controls the fetch window (incremental sync narrows
     // it via `incrementalFromTime`); it just no longer controls whether we
     // keep the old file.
-    const existing = readCsvCandles(symbol, interval);
+    const replaceExistingContractData = shouldReplaceExistingIbkrData(
+        existingEntry?.conid,
+        resolved.conid,
+        syncOnly,
+    );
+    const existing = replaceExistingContractData ? [] : readCsvCandles(symbol, interval);
     const merged = adjustIntradayCandlesFromDailyCsv(symbol, interval, mergeCandlesByTime([...existing, ...fetched]));
     writeCsv(symbol, interval, merged);
     const catalogEntry = upsertCatalogEntry(catalog, {

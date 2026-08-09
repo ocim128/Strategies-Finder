@@ -14,6 +14,7 @@ import {
     parseResolvedContracts,
     isStaleIbkrSyncWithoutAdvance,
     selectPreferredResolvedContract,
+    shouldReplaceExistingIbkrData,
     resolveFromCatalog,
     resolveIbkrHistoryPageStartTime,
     replaceFileWithRetry,
@@ -308,6 +309,28 @@ describe("ibkr selectPreferredResolvedContract", () => {
             { symbol: "ABC", conid: "second", name: "ABC", exchange: "TSE", primaryExchange: "", currency: "JPY" },
         ]);
         assert.equal(selected?.conid, "first");
+    });
+
+    it("rejects a derivative-only response instead of saving the wrong instrument", () => {
+        const selected = selectPreferredResolvedContract([
+            { symbol: "STX", conid: "wrong", name: "STX", exchange: "EUREX", primaryExchange: "", currency: "USD" },
+        ]);
+        assert.equal(selected, null);
+    });
+});
+
+describe("ibkr contract replacement", () => {
+    it("replaces old CSV data when Download resolves a different contract", () => {
+        assert.equal(shouldReplaceExistingIbkrData("wrong", "right", false), true);
+    });
+
+    it("does not replace data during an incremental Sync", () => {
+        assert.equal(shouldReplaceExistingIbkrData("wrong", "right", true), false);
+    });
+
+    it("keeps merging when the contract identity is unchanged or unknown", () => {
+        assert.equal(shouldReplaceExistingIbkrData("same", "same", false), false);
+        assert.equal(shouldReplaceExistingIbkrData(undefined, "new", false), false);
     });
 });
 

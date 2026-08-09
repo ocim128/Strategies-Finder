@@ -26,13 +26,11 @@ close-to-entry forward PnL is reported at three horizons (default `1,3,5`),
 with horizon 1 targeting the first hidden candle. The setting is disabled when
 N is `0`, which retains the normal latest-closed-candle opportunity behavior.
 
-The server caps a run at 1,000 symbols and 250,000 estimated candidate
-evaluations, where the estimate is
-`symbols × selectedStrategies × (maxRuns + candidatePoolSize)`.
-Reduce the symbol list or `maxRuns` when the request exceeds that cap. The
-server also requires random Finder mode and clamps the candidate pool to
-1–50. These are CPU/workload limits; they do not change the Current Chart or
-Symbol Universe limits.
+The server caps a run at 1,000 symbols. It records an estimated candidate-work
+count as a diagnostic, but does not reject a run based on that estimate. The
+server requires random Finder mode and clamps the candidate pool to
+1–50. The symbol and heap guards protect process stability; they do not
+change the Current Chart or Symbol Universe limits.
 
 Asset runs emit bounded debug events named
 `finder.asset_opportunity.start`, `finder.asset_opportunity.asset.complete`,

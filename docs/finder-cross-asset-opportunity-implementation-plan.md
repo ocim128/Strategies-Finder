@@ -300,7 +300,7 @@ loader, owner, and status utilities.
 #### Risks or blockers
 
 - Work is approximately `asset count × random parameter runs`; enforce symbol,
-  max-run, top-K, and estimated-work limits before ownership.
+  max-run and top-K limits before ownership.
 - CPU evaluation is initially bounded to one active asset. Dataset loading may
   use the existing bounded prefetch pattern only if profiling confirms benefit.
 - Static-only deployments cannot run this scope; return the same explicit
@@ -420,7 +420,7 @@ historical selector check. No new production service or worker architecture.
   `.run.cancelled`, `.run.failed`, and engine-fallback events with bounded
   scalars only.
 - Surface warnings for stale data, thin samples, no fresh assets, all-failed
-  loads, OOS inconclusive results, and estimated work above the configured cap.
+  loads, and OOS inconclusive results.
 - Document server heap and runtime expectations near the existing Finder
   server-side documentation.
 
@@ -477,7 +477,7 @@ unambiguous, and its server runtime is bounded.
 
 - Use `registerLocalJsonRoute` and the existing loopback/bearer authorization.
 - Enforce existing request body limits plus bounded symbols, max runs, top-K,
-  support count, and estimated work.
+  and support count.
 - Accept strategy registry keys only; never accept module paths from the client.
 - Persist only UI state, active run id, and compact scalar results through
   `persisted-json`. No database migration is needed.

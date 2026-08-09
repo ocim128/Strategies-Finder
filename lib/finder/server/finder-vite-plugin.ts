@@ -150,9 +150,8 @@ function roundAssetOpportunityPassTimings(
 /** Bound on run id length (defensive; browser-generated ids are short). */
 const MAX_RUN_ID_LENGTH = 128;
 
-/** Asset Opportunity is intentionally bounded by CPU work, not just heap. */
+/** Asset Opportunity keeps symbol-count and heap guards; candidate work is not preflight-capped. */
 const ASSET_OPPORTUNITY_MAX_SYMBOLS = 1_000;
-const ASSET_OPPORTUNITY_MAX_ESTIMATED_CANDIDATE_EVALUATIONS = 250_000;
 
 // Stateless param-space generator (no constructor args, no browser deps).
 // Module-scope so it's reused across requests, mirroring FinderManager.paramSpace.
@@ -1478,16 +1477,6 @@ async function handleAssetOpportunityRunRequest(
     const useRustEnginePreference = body.useRustEnginePreference === true;
     const candidatePoolSize = clampCandidatePoolSize(options.assetOpportunity?.candidatePoolSize);
     const minFreshSupport = clampMinFreshSupport(options.assetOpportunity?.minFreshSupport);
-    const estimatedCandidateEvaluations = symbols.length * selectedStrategies.length * (
-        Math.max(1, Math.floor(options.maxRuns)) + candidatePoolSize
-    );
-    if (estimatedCandidateEvaluations > ASSET_OPPORTUNITY_MAX_ESTIMATED_CANDIDATE_EVALUATIONS) {
-        throw new HttpStatusError(
-            400,
-            `Asset Opportunity estimated work is ${estimatedCandidateEvaluations.toLocaleString()} candidate evaluations; ` +
-            `reduce symbols or max runs below ${ASSET_OPPORTUNITY_MAX_ESTIMATED_CANDIDATE_EVALUATIONS.toLocaleString()}.`,
-        );
-    }
 
     const exitStrategyCandidates = await resolveExitStrategyCandidates(body.exitStrategyKeys);
     const providerBySymbol = parseProviderBySymbol(body.providerBySymbol);
