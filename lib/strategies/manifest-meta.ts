@@ -90,25 +90,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "poly_5m_pivot_breakout_entry",
-        name: "Poly 5m Pivot Breakout Entry",
-        description: "When price breaks through a recent pivot level with momentum, enter in breakout direction. Uses pivot detection with consecutive bar confirmation and rate of change filter.",
-        defaultParams: {
-		pivotLookback: 12,
-		breakoutBars: 2,
-		minRoc: 0.15 } as Record<string, number>,
-        paramLabels: {
-		pivotLookback: "Pivot Lookback",
-		breakoutBars: "Breakout Bars",
-		minRoc: "Min ROC" } as Record<string, string>,
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["pivotLookback", "breakoutBars", "minRoc"] },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "true_range_ratio_pop_chase",
         name: "True Range Ratio Pop Chase",
         description: "When the current bar's true range is more than a multiple of the prior bar's true range, enter in the close direction.",
@@ -307,26 +288,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "midpoint_gravity_fade",
-        name: "Midpoint Gravity Fade",
-        description: "Extreme deviations of the close from the midpoint on high volume quickly revert.",
-        defaultParams: {
-        dev_z_threshold: 2.0,
-        vol_z_min: 1.0
-    } as Record<string, number>,
-        paramLabels: {
-        dev_z_threshold: "Midpoint Deviation Z-Score Threshold",
-        vol_z_min: "Minimum Volume Z-Score"
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["dev_z_threshold", "vol_z_min"]
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "volume_exhaustion_decay",
         name: "Volume Exhaustion Decay",
         description: "By comparing a fast rolling volume sum to a slow sum, we can mathematically pinpoint the exact bar where a frenzied buying/selling surge completely runs out of participants.",
@@ -349,72 +310,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "limit_wall_liquidity_vacuum",
-        name: "Limit Wall Liquidity Vacuum",
-        description: "An abnormally high volume bar with a historically tight true range means a massive limit wall absorbed everything. The resultant liquidity vacuum causes an immediate snapback.",
-        defaultParams: {
-        z_lookback: 30,
-        vol_z_min: 2.0,
-        tr_z_max: -1.0
-    } as Record<string, number>,
-        paramLabels: {
-        z_lookback: "Z-Score Lookback",
-        vol_z_min: "Minimum Volume Z-Score",
-        tr_z_max: "Maximum TR Z-Score (Compression)"
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["z_lookback", "vol_z_min", "tr_z_max"]
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "autocorrelation_momentum_divergence",
-        name: "Autocorrelation Momentum Divergence",
-        description: "If return autocorrelation remains dangerously high (retail perceives a perfect trend), but the raw rate-of-change crosses zero against them, the trend is an illusion running on fumes.",
-        defaultParams: {
-        auto_lookback: 20,
-        auto_min: 0.6,
-        roc_lookback: 5
-    } as Record<string, number>,
-        paramLabels: {
-        auto_lookback: "Autocorrelation Lookback",
-        auto_min: "Min Autocorrelation",
-        roc_lookback: "ROC Lookback"
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["auto_lookback", "auto_min", "roc_lookback"]
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "velocity_reversal_shock",
-        name: "Velocity Reversal Shock",
-        description: "Retail buys short-dated options at peak price velocity. A sudden 5m flip from an extreme momentum Z-score to the opposite direction instantly triggers stop-losses.",
-        defaultParams: {
-        roc_lookback: 5,
-        z_lookback: 30,
-        roc_z_extreme: 2.5
-    } as Record<string, number>,
-        paramLabels: {
-        roc_lookback: "ROC Lookback",
-        z_lookback: "Z-Score Lookback",
-        roc_z_extreme: "ROC Z Extreme"
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["roc_lookback", "z_lookback", "roc_z_extreme"]
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "true_range_skewness_initiation",
         name: "True Range Skewness Initiation",
         description: "A sudden spike in the skewness of True Range indicates unilateral directional panic or euphoria initiating a new auction. Volatility asymmetry signals a structural break.",
@@ -430,26 +325,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["skew_window", "zscore_trigger"],
-	},
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "body_proportion_entropy_ignition",
-        name: "Body Proportion Entropy Ignition",
-        description: "A sudden collapse in body percentage entropy means algorithmic execution is printing mechanically identical bars. This ignition signals a systematic move.",
-        defaultParams: {
-		entropy_window: 10,
-		implosion_threshold: -0.4,
-	} as Record<string, number>,
-        paramLabels: {
-		entropy_window: "Entropy Window",
-		implosion_threshold: "Implosion Threshold",
-	} as Record<string, string>,
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["entropy_window", "implosion_threshold"],
 	},
         crossSymbolConfig: false,
         polymarket1sConfig: false,
@@ -1964,26 +1839,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "atr_normalized_streak_reversal",
-        name: "ATR-Normalized Streak Reversal",
-        description: "Mean reversion after extreme streak of returns exceeding rolling ATR.",
-        defaultParams: {
-        lookback: 30,
-        minStreak: 4,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback Window",
-        minStreak: "Min Streak Count",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "minStreak"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "autocorrelation_regime_compression_break",
         name: "Autocorrelation Regime Compression Break",
         description: "Transitions from a compressed, low-range state to an expanded, highly persistent trending state.",
@@ -2019,46 +1874,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback", "decay"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "efficiency_gated_volatility_autocorrelation",
-        name: "Efficiency-Gated Volatility Autocorrelation",
-        description: "Trend following strategy combining Kaufman Efficiency Ratio and return autocorrelation gating.",
-        defaultParams: {
-        lookback: 30,
-        minEfficiency: 0.6,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback Window",
-        minEfficiency: "Min Efficiency Ratio",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "minEfficiency"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "entropy_autocorrelation_momentum_gate",
-        name: "Entropy Autocorrelation Momentum Gate",
-        description: "Enters the direction of momentum when low return entropy signals structure and return autocorrelation confirms persistence.",
-        defaultParams: {
-        lookback: 30,
-        maxEntropy: 0.45,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback Window",
-        maxEntropy: "Max Entropy Limit",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "maxEntropy"],
     },
         crossSymbolConfig: false,
         polymarket1sConfig: false,
@@ -2184,26 +1999,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "vwap_gradient_efficiency_trend",
-        name: "VWAP Gradient Efficiency Trend",
-        description: "Follows trends away from the VWAP center only if the move is efficient (low noise) and backed by steady close location gradient values.",
-        defaultParams: {
-        lookback: 30,
-        minEfficiency: 0.6,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback Window",
-        minEfficiency: "Min Efficiency",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "minEfficiency"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "vwap_regime_gradient_streak",
         name: "VWAP Regime Gradient Streak",
         description: "Trend entry triggered by a streak of consecutive close location gradients away from the rolling VWAP center.",
@@ -2240,26 +2035,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["lookback", "minSkew"],
     },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "acceptance_asymmetry_streak_exhaustion",
-        name: "Acceptance Asymmetry Streak Exhaustion",
-        description: "Fades consecutive close acceptance streaks that show poor efficiency ratio displacement.",
-        defaultParams: {
-		acceptanceThreshold: 0.75,
-		streakThreshold: 3,
-	} as Record<string, number>,
-        paramLabels: {
-		acceptanceThreshold: "Acceptance Threshold",
-		streakThreshold: "Streak Threshold",
-	} as Record<string, string>,
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["acceptanceThreshold", "streakThreshold"],
-	},
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
@@ -2405,26 +2180,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["lookback", "streakThreshold", "reversionZScore"],
-	},
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "wick_imbalance_streak_fade",
-        name: "Wick Imbalance Streak Fade",
-        description: "Fades consecutive bars with high wick asymmetry pointing in one direction.",
-        defaultParams: {
-		imbalanceThreshold: 0.7,
-		streakThreshold: 3,
-	} as Record<string, number>,
-        paramLabels: {
-		imbalanceThreshold: "Imbalance Threshold",
-		streakThreshold: "Streak Threshold",
-	} as Record<string, string>,
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["imbalanceThreshold", "streakThreshold"],
 	},
         crossSymbolConfig: false,
         polymarket1sConfig: false,

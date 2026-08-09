@@ -7,7 +7,6 @@ import { entropy_ratio_regime_alignment } from "./lib/entropy_ratio_regime_align
 import { adx_skewness_drift } from "./lib/adx_skewness_drift";
 import { wick_responsive_boundary } from "./lib/wick_responsive_boundary";
 import { wick_responsive_boundary_retest } from "./lib/wick_responsive_boundary_retest";
-import { poly_5m_pivot_breakout_entry } from "./lib/poly_5m_pivot_breakout_entry";
 import { true_range_ratio_pop_chase } from "./lib/true_range_ratio_pop_chase";
 import { probability_boundary_eigen_shift } from "./lib/probability_boundary_eigen_shift";
 import { volume_divergent_roc_reversion } from "./lib/volume_divergent_roc_reversion";
@@ -20,13 +19,8 @@ import { close_acceptance_volume_conviction } from "./lib/close_acceptance_volum
 import { initiative_autocorrelation_phi_fade } from "./lib/initiative_autocorrelation_phi_fade";
 import { pivot_midpoint_anchor_fade } from "./lib/pivot_midpoint_anchor_fade";
 import { volatility_percentile_reversal } from "./lib/volatility_percentile_reversal";
-import { midpoint_gravity_fade } from "./lib/midpoint_gravity_fade";
 import { volume_exhaustion_decay } from "./lib/volume_exhaustion_decay";
-import { limit_wall_liquidity_vacuum } from "./lib/limit_wall_liquidity_vacuum";
-import { autocorrelation_momentum_divergence } from "./lib/autocorrelation_momentum_divergence";
-import { velocity_reversal_shock } from "./lib/velocity_reversal_shock";
 import { true_range_skewness_initiation } from "./lib/true_range_skewness_initiation";
-import { body_proportion_entropy_ignition } from "./lib/body_proportion_entropy_ignition";
 import { return_skewness_exhaustion_fade } from "./lib/return_skewness_exhaustion_fade";
 import { volume_weighted_entropy_ignition } from "./lib/volume_weighted_entropy_ignition";
 import { initiative_crossing_frequency_chop } from "./lib/initiative_crossing_frequency_chop";
@@ -100,21 +94,16 @@ import { typical_price_momentum_divergence } from "./lib/typical_price_momentum_
 import { return_autocorrelation_close_acceptance } from "./lib/return_autocorrelation_close_acceptance";
 import { price_volume_flow_divergence } from "./lib/price_volume_flow_divergence";
 import { ema_confirmation } from "./lib/ema_confirmation";
-import { atr_normalized_streak_reversal } from "./lib/atr_normalized_streak_reversal";
 import { autocorrelation_regime_compression_break } from "./lib/autocorrelation_regime_compression_break";
 import { decay_weighted_streak_momentum } from "./lib/decay_weighted_streak_momentum";
-import { efficiency_gated_volatility_autocorrelation } from "./lib/efficiency_gated_volatility_autocorrelation";
-import { entropy_autocorrelation_momentum_gate } from "./lib/entropy_autocorrelation_momentum_gate";
 import { vwap_band_gradient_thrust } from "./lib/vwap_band_gradient_thrust";
 import { vwap_volatility_gradient_alignment } from "./lib/vwap_volatility_gradient_alignment";
 import { typical_autocorrelation_divergence_break } from "./lib/typical_autocorrelation_divergence_break";
 import { typical_close_skewness_acceptance } from "./lib/typical_close_skewness_acceptance";
 import { typical_momentum_efficiency_alignment } from "./lib/typical_momentum_efficiency_alignment";
 import { vwap_gradient_autocorrelation_reversion } from "./lib/vwap_gradient_autocorrelation_reversion";
-import { vwap_gradient_efficiency_trend } from "./lib/vwap_gradient_efficiency_trend";
 import { vwap_regime_gradient_streak } from "./lib/vwap_regime_gradient_streak";
 import { vwap_skew_gradient_exhaustion } from "./lib/vwap_skew_gradient_exhaustion";
-import { acceptance_asymmetry_streak_exhaustion } from "./lib/acceptance_asymmetry_streak_exhaustion";
 import { body_dominance_streak_fade } from "./lib/body_dominance_streak_fade";
 import { close_location_deviation_streak_reversion } from "./lib/close_location_deviation_streak_reversion";
 import { entropy_regime_streak_exhaustion } from "./lib/entropy_regime_streak_exhaustion";
@@ -122,7 +111,6 @@ import { initiative_pressure_streak_fade } from "./lib/initiative_pressure_strea
 import { relative_volume_thrust_streak_reversion } from "./lib/relative_volume_thrust_streak_reversion";
 import { rolling_median_deviation_streak_reversion } from "./lib/rolling_median_deviation_streak_reversion";
 import { true_range_expansion_streak_exhaustion } from "./lib/true_range_expansion_streak_exhaustion";
-import { wick_imbalance_streak_fade } from "./lib/wick_imbalance_streak_fade";
 import { zscore_deviation_streak_reversion } from "./lib/zscore_deviation_streak_reversion";
 import { simons_non_parametric_distribution_fade } from "./lib/simons_non_parametric_distribution_fade";
 import { markov_streak_length_exhaustion } from "./lib/markov_streak_length_exhaustion";
@@ -173,7 +161,6 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "adx_skewness_drift", strategy: adx_skewness_drift },
     { key: "wick_responsive_boundary", strategy: wick_responsive_boundary },
     { key: "wick_responsive_boundary_retest", strategy: wick_responsive_boundary_retest },
-    { key: "poly_5m_pivot_breakout_entry", strategy: poly_5m_pivot_breakout_entry },
     { key: "true_range_ratio_pop_chase", strategy: true_range_ratio_pop_chase },
     { key: "probability_boundary_eigen_shift", strategy: probability_boundary_eigen_shift },
     { key: "volume_divergent_roc_reversion", strategy: volume_divergent_roc_reversion },
@@ -186,13 +173,8 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "initiative_autocorrelation_phi_fade", strategy: initiative_autocorrelation_phi_fade },
     { key: "pivot_midpoint_anchor_fade", strategy: pivot_midpoint_anchor_fade },
     { key: "volatility_percentile_reversal", strategy: volatility_percentile_reversal },
-    { key: "midpoint_gravity_fade", strategy: midpoint_gravity_fade },
     { key: "volume_exhaustion_decay", strategy: volume_exhaustion_decay },
-    { key: "limit_wall_liquidity_vacuum", strategy: limit_wall_liquidity_vacuum },
-    { key: "autocorrelation_momentum_divergence", strategy: autocorrelation_momentum_divergence },
-    { key: "velocity_reversal_shock", strategy: velocity_reversal_shock },
     { key: "true_range_skewness_initiation", strategy: true_range_skewness_initiation },
-    { key: "body_proportion_entropy_ignition", strategy: body_proportion_entropy_ignition },
     { key: "return_skewness_exhaustion_fade", strategy: return_skewness_exhaustion_fade },
     { key: "volume_weighted_entropy_ignition", strategy: volume_weighted_entropy_ignition },
     { key: "initiative_crossing_frequency_chop", strategy: initiative_crossing_frequency_chop },
@@ -266,21 +248,16 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "return_autocorrelation_close_acceptance", strategy: return_autocorrelation_close_acceptance },
     { key: "price_volume_flow_divergence", strategy: price_volume_flow_divergence },
     { key: "ema_confirmation", strategy: ema_confirmation },
-    { key: "atr_normalized_streak_reversal", strategy: atr_normalized_streak_reversal },
     { key: "autocorrelation_regime_compression_break", strategy: autocorrelation_regime_compression_break },
     { key: "decay_weighted_streak_momentum", strategy: decay_weighted_streak_momentum },
-    { key: "efficiency_gated_volatility_autocorrelation", strategy: efficiency_gated_volatility_autocorrelation },
-    { key: "entropy_autocorrelation_momentum_gate", strategy: entropy_autocorrelation_momentum_gate },
     { key: "vwap_band_gradient_thrust", strategy: vwap_band_gradient_thrust },
     { key: "vwap_volatility_gradient_alignment", strategy: vwap_volatility_gradient_alignment },
     { key: "typical_autocorrelation_divergence_break", strategy: typical_autocorrelation_divergence_break },
     { key: "typical_close_skewness_acceptance", strategy: typical_close_skewness_acceptance },
     { key: "typical_momentum_efficiency_alignment", strategy: typical_momentum_efficiency_alignment },
     { key: "vwap_gradient_autocorrelation_reversion", strategy: vwap_gradient_autocorrelation_reversion },
-    { key: "vwap_gradient_efficiency_trend", strategy: vwap_gradient_efficiency_trend },
     { key: "vwap_regime_gradient_streak", strategy: vwap_regime_gradient_streak },
     { key: "vwap_skew_gradient_exhaustion", strategy: vwap_skew_gradient_exhaustion },
-    { key: "acceptance_asymmetry_streak_exhaustion", strategy: acceptance_asymmetry_streak_exhaustion },
     { key: "body_dominance_streak_fade", strategy: body_dominance_streak_fade },
     { key: "close_location_deviation_streak_reversion", strategy: close_location_deviation_streak_reversion },
     { key: "entropy_regime_streak_exhaustion", strategy: entropy_regime_streak_exhaustion },
@@ -288,7 +265,6 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "relative_volume_thrust_streak_reversion", strategy: relative_volume_thrust_streak_reversion },
     { key: "rolling_median_deviation_streak_reversion", strategy: rolling_median_deviation_streak_reversion },
     { key: "true_range_expansion_streak_exhaustion", strategy: true_range_expansion_streak_exhaustion },
-    { key: "wick_imbalance_streak_fade", strategy: wick_imbalance_streak_fade },
     { key: "zscore_deviation_streak_reversion", strategy: zscore_deviation_streak_reversion },
     { key: "simons_non_parametric_distribution_fade", strategy: simons_non_parametric_distribution_fade },
     { key: "markov_streak_length_exhaustion", strategy: markov_streak_length_exhaustion },

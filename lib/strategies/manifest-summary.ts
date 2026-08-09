@@ -60,17 +60,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "poly_5m_pivot_breakout_entry",
-        name: "Poly 5m Pivot Breakout Entry",
-        description: "When price breaks through a recent pivot level with momentum, enter in breakout direction. Uses pivot detection with consecutive bar confirmation and rate of change filter.",
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["pivotLookback", "breakoutBars", "minRoc"] },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "true_range_ratio_pop_chase",
         name: "True Range Ratio Pop Chase",
         description: "When the current bar's true range is more than a multiple of the prior bar's true range, enter in the close direction.",
@@ -199,18 +188,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "midpoint_gravity_fade",
-        name: "Midpoint Gravity Fade",
-        description: "Extreme deviations of the close from the midpoint on high volume quickly revert.",
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["dev_z_threshold", "vol_z_min"]
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "volume_exhaustion_decay",
         name: "Volume Exhaustion Decay",
         description: "By comparing a fast rolling volume sum to a slow sum, we can mathematically pinpoint the exact bar where a frenzied buying/selling surge completely runs out of participants.",
@@ -223,42 +200,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "limit_wall_liquidity_vacuum",
-        name: "Limit Wall Liquidity Vacuum",
-        description: "An abnormally high volume bar with a historically tight true range means a massive limit wall absorbed everything. The resultant liquidity vacuum causes an immediate snapback.",
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["z_lookback", "vol_z_min", "tr_z_max"]
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "autocorrelation_momentum_divergence",
-        name: "Autocorrelation Momentum Divergence",
-        description: "If return autocorrelation remains dangerously high (retail perceives a perfect trend), but the raw rate-of-change crosses zero against them, the trend is an illusion running on fumes.",
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["auto_lookback", "auto_min", "roc_lookback"]
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "velocity_reversal_shock",
-        name: "Velocity Reversal Shock",
-        description: "Retail buys short-dated options at peak price velocity. A sudden 5m flip from an extreme momentum Z-score to the opposite direction instantly triggers stop-losses.",
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["roc_lookback", "z_lookback", "roc_z_extreme"]
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "true_range_skewness_initiation",
         name: "True Range Skewness Initiation",
         description: "A sudden spike in the skewness of True Range indicates unilateral directional panic or euphoria initiating a new auction. Volatility asymmetry signals a structural break.",
@@ -266,18 +207,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["skew_window", "zscore_trigger"],
-	},
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "body_proportion_entropy_ignition",
-        name: "Body Proportion Entropy Ignition",
-        description: "A sudden collapse in body percentage entropy means algorithmic execution is printing mechanically identical bars. This ignition signals a systematic move.",
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["entropy_window", "implosion_threshold"],
 	},
         crossSymbolConfig: false,
         polymarket1sConfig: false,
@@ -1158,18 +1087,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "atr_normalized_streak_reversal",
-        name: "ATR-Normalized Streak Reversal",
-        description: "Mean reversion after extreme streak of returns exceeding rolling ATR.",
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "minStreak"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "autocorrelation_regime_compression_break",
         name: "Autocorrelation Regime Compression Break",
         description: "Transitions from a compressed, low-range state to an expanded, highly persistent trending state.",
@@ -1189,30 +1106,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback", "decay"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "efficiency_gated_volatility_autocorrelation",
-        name: "Efficiency-Gated Volatility Autocorrelation",
-        description: "Trend following strategy combining Kaufman Efficiency Ratio and return autocorrelation gating.",
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "minEfficiency"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "entropy_autocorrelation_momentum_gate",
-        name: "Entropy Autocorrelation Momentum Gate",
-        description: "Enters the direction of momentum when low return entropy signals structure and return autocorrelation confirms persistence.",
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "maxEntropy"],
     },
         crossSymbolConfig: false,
         polymarket1sConfig: false,
@@ -1290,18 +1183,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "vwap_gradient_efficiency_trend",
-        name: "VWAP Gradient Efficiency Trend",
-        description: "Follows trends away from the VWAP center only if the move is efficient (low noise) and backed by steady close location gradient values.",
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "minEfficiency"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "vwap_regime_gradient_streak",
         name: "VWAP Regime Gradient Streak",
         description: "Trend entry triggered by a streak of consecutive close location gradients away from the rolling VWAP center.",
@@ -1322,18 +1203,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback", "minSkew"],
     },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "acceptance_asymmetry_streak_exhaustion",
-        name: "Acceptance Asymmetry Streak Exhaustion",
-        description: "Fades consecutive close acceptance streaks that show poor efficiency ratio displacement.",
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["acceptanceThreshold", "streakThreshold"],
-	},
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
@@ -1417,18 +1286,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["lookback", "streakThreshold", "reversionZScore"],
-	},
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "wick_imbalance_streak_fade",
-        name: "Wick Imbalance Streak Fade",
-        description: "Fades consecutive bars with high wick asymmetry pointing in one direction.",
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["imbalanceThreshold", "streakThreshold"],
 	},
         crossSymbolConfig: false,
         polymarket1sConfig: false,
