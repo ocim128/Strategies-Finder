@@ -7,7 +7,6 @@ import { donchian_midpoint_confirmation } from "../lib/strategies/lib/donchian_m
 import { hull_ma_confirmation } from "../lib/strategies/lib/hull_ma_confirmation";
 import { kama_confirmation } from "../lib/strategies/lib/kama_confirmation";
 import { linear_regression_center_confirmation } from "../lib/strategies/lib/linear_regression_center_confirmation";
-import { linear_regression_slope_confirmation } from "../lib/strategies/lib/linear_regression_slope_confirmation";
 import { mcginley_dynamic_confirmation } from "../lib/strategies/lib/mcginley_dynamic_confirmation";
 import { n_bar_momentum_confirmation } from "../lib/strategies/lib/n_bar_momentum_confirmation";
 import { rolling_median_confirmation } from "../lib/strategies/lib/rolling_median_confirmation";
@@ -33,11 +32,6 @@ const candidates: Candidate[] = [
     { key: "donchian_midpoint_confirmation", paramKey: "lookback", strategy: donchian_midpoint_confirmation },
     { key: "zero_lag_ema_confirmation", paramKey: "lookback", strategy: zero_lag_ema_confirmation },
     { key: "hull_ma_confirmation", paramKey: "lookback", strategy: hull_ma_confirmation },
-    {
-        key: "linear_regression_slope_confirmation",
-        paramKey: "period",
-        strategy: linear_regression_slope_confirmation,
-    },
     { key: "wilder_ma_confirmation", paramKey: "lookback", strategy: wilder_ma_confirmation },
     { key: "dema_confirmation", paramKey: "lookback", strategy: dema_confirmation },
     { key: "n_bar_momentum_confirmation", paramKey: "lookback", strategy: n_bar_momentum_confirmation },
@@ -80,7 +74,7 @@ function paramsFor(candidate: Candidate, value: number): StrategyParams {
 
 describe("EMA-200 alternative confirmation strategies", () => {
     it("keeps every candidate entry-capable with exactly one optimizable parameter", () => {
-        expect(candidates).to.have.length(13);
+        expect(candidates).to.have.length(12);
         const manifestKeys = new Set(strategyManifest.map(({ key }) => key));
 
         for (const candidate of candidates) {
