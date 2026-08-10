@@ -1,0 +1,366 @@
+you are working in this repo: C:\Users\user\Documents\Repo\Experimental\lightweight-charts\debug\playground\Strategies-Finder
+You are an expert quantitative strategy researcher working inside an existing TypeScript trading strategy library.
+
+TASK
+Generate exactly 10 NEW built-in strategy ideas as structured JSON.
+
+These ideas are for 1H or 2H chart data produced from a synthetic pair.
+The data menu and server loaders can accept a `BASE+QUOTE` token. The generated chart symbol is not guaranteed to retain that spelling: crypto pairs may use a derived symbol such as `BNBPAXG`, while marked local-stock pairs retain an explicit leg-join form. For this task, treat the strategy input as ONE merged OHLCV series; do not require or infer separate leg data at strategy runtime.
+
+DATA-CONSTRUCTION FACTS (read before generating anything)
+The synthetic series is a RATIO, not a sum or average. For each aligned source-time bar:
+- open  = base.open  / quote.open
+- close = base.close / quote.close
+- high  = max(open, close, base.high/quote.high, base.low/quote.low)
+- low   = min(open, close, base.high/quote.high, base.low/quote.low)
+- volume = min(base.volume, quote.volume)   // a constructed proxy, not an identified leg's liquidity
+
+The loader may build the ratio from a finer divisible source interval and aggregate it to 1H/2H. In that path, target-bar high/low are extrema of the generated ratio sub-bars and target-bar volume is the sum of their synthetic volumes. Timestamp alignment and data availability can also vary by source.
+
+Design consequences:
+1. The ratio's absolute level depends on the two leg price scales. Do not use fixed raw-price thresholds; express portable triggers with returns, relative ranges, rolling ranks, or normalized deviations.
+2. Do not assume that a ratio is inherently mean-reverting or trend-following. Treat reversion, continuation, and coupling as hypotheses to test on the generated series.
+3. Bar range is the range of the derived ratio. It may reflect movement in either leg and, because the OHLC values are combined from same-time leg extrema, it is not a direct measurement of either leg's volatility or of leg disagreement.
+4. Synthetic volume is a constructed `min(base.volume, quote.volume)` proxy at the source interval. It does not identify either leg's liquidity and is not tradable volume. Use it only through a normalized relative transformation, and do not interpret it as absolute effort, size, or capital capacity.
+5. A ratio breakout is an observation, not proof of persistence. Require an explicitly defined hold or acceptance condition only when the proposed mechanism and data support it; validate that condition empirically.
+6. No additional rebase should be assumed. Any strategy that needs a fixed price level or a familiar price range is not portable across generated pairs.
+
+OUTPUT RULES
+- Return valid JSON only.
+- No markdown fences.
+- No prose outside the JSON.
+- Use this exact top-level shape:
+{
+  "ideas": [
+    {
+      "key": "snake_case_key",
+      "name": "Title Case Name",
+      "lens": "One lens from the diversity rule",
+      "core_thesis": "1-2 sentence explanation of the single dominant mechanism.",
+      "market_data_signal": "Causal summary of the chart-data-only raw signal. Must be scale-invariant.",
+      "ratio_mechanism": "One of: reversion_to_center | compression_expansion | leg_dislocation | persistent_coupling | proxy_volume_confirmed",
+      "horizon_fit": "Why this ratio relationship should persist over a multi-bar 1H/2H horizon, not just the entry bar. Reference which leg behavior or coupling state makes the edge durable.",
+      "helpers": ["buildRollingZScore"],
+      "indicators": [],
+      "params": [
+        { "name": "lookback", "default": 30, "description": "What it controls" }
+      ],
+      "buy_logic": "Causal long-entry summary.",
+      "sell_logic": "Causal short-entry summary.",
+      "why_test_this": "Why this is worth brute-force testing across many X+ZEC pairs.",
+      "closest_existing_keys": ["close_location_median_alignment"],
+      "implementation_notes": "Short practical note about helper usage, scale-invariance, proxy-volume gating, and Finder-friendly implementation."
+    }
+  ]
+}
+
+NON-NEGOTIABLE RULES
+1. Generate exactly 10 ideas.
+2. Every idea must use a distinct primary signal and rationale; broad mechanism labels may be reused only when the measured signal is materially different.
+3. Entry logic only. No stop loss, take profit, trailing stop, scaling, or position-management logic.
+4. Logic must be causal and non-repainting: bar `i` may only know `data[0..i]`.
+5. Define symmetric or closely analogous logic for Buy and Sell signals.
+6. Use only the allowed helpers and indicators listed below.
+7. Expose exactly 2 to 3 numeric params per strategy. Prefer 2. Use 3 only when the third controls a distinct quality rule.
+8. Every param must materially change entries.
+9. Do not duplicate or trivially rename any existing key listed below.
+10. Every idea must be implementable from OHLCV chart data only.
+11. SCALE-INVARIANCE IS MANDATORY. Every trigger must use scale-invariant or scale-equivariant quantities such as returns, range ratios, normalized bar geometry, close location/acceptance, rolling z-score, percentile rank, rolling median, rolling min/max, or efficiency ratio. ABSOLUTE PRICE THRESHOLDS AND RAW-LEVEL COMPARISONS ARE BANNED. A rule should preserve its decision logic under ordinary positive rescaling of the ratio, subject to numerical precision.
+12. NO ABSOLUTE VOLUME. Raw volume, volume sums, and absolute volume thresholds are banned as triggers. Volume may appear only through a normalized relative transformation, such as `buildPercentileRank(volumes, lookback)`, `buildRollingZScore(volumes, lookback)`, or `buildInitiativePressureSeries`; do not describe it as a known leg's health or liquidity.
+
+QUALITY BAR
+Keep only ideas that are:
+- Built on one dominant ratio-native raw-signal mechanism
+- Compact enough for Finder sweeps
+- Robust to moderate parameter movement
+- Explainable without candle-pattern jargon
+- Simple enough that a senior engineer would describe the full rule in 1 to 3 sentences
+- Plausibly connected to a durable ratio relationship on a 1H/2H horizon, not only the entry bar
+
+Reject any idea that is mainly:
+- "buy the pattern"
+- "trade the breakout" without a hold/quality rule
+- "buy pullback in trend" as a vague discretionary template
+- "wait for confirmation"
+- "trade support and resistance"
+
+REJECT THESE IDEA TYPES
+- Retail candle or pattern setups: pin bar, engulfing, doji, hammer, shooting star, morning star, evening star, inside bar breakout
+- Weak visual-pattern ideas: naive breakout, blind range fade, double top/bottom, head and shoulders, channel trading, wick rejection by itself
+- Generic trend logic with no explicit ratio-native anchor: HH/HL trend following, generic pullback, break-and-retest, multi-timeframe confirmation template
+- Overcrowded indicator-first ideas: MACD crossover, moving-average crossover, Bollinger touch/fade, RSI 70/30, stochastic, CCI, ATR by itself, Fibonacci, Ichimoku retail template
+- Indicator-state ideas that only repackage MA/EMA/ADX/momentum direction
+- Pivot, swing-high/swing-low, support/resistance, or chart-pattern logic
+- Overfit logic: magic-number thresholds, exact wick/body geometry, narrow trigger windows, stacked filters whose real purpose is removing losing trades, one-off bar sequences, exact level-touch logic
+- ABSOLUTE-THRESHOLD logic of any kind: "ratio above 1.5" or "price crosses a fixed raw level". Normalized thresholds such as a z-score or percentile are allowed when the underlying series is normalized correctly.
+- ABSOLUTE-VOLUME logic: raw volume thresholds, volume surge in absolute units, CMF as a primary trigger on the proxy volume
+
+TARGET BEHAVIOR FAMILY
+
+Prefer ideas whose real behavior is close to the `True Range Skew Acceptance` / `Range Expansion Follow Through` family:
+- true-range imbalance in the derived ratio
+- range expansion versus the prior derived-ratio range state
+- asymmetric range/return pressure in the derived ratio
+- close acceptance confirming the direction of dislocation
+- directional follow-through after a ratio range shock
+- rejection/fade only when the expansion clearly fails
+
+Do NOT generate generic ratio reversion ideas unless the reversion is explicitly caused by a failed range expansion or failed directional acceptance event.
+
+DIVERSITY RULE
+- Pick the 10 ideas from at least 5 different lenses.
+- Do not place more than 2 ideas under the same lens.
+- Vary the raw signal across the 10 ideas: rolling center distance, return distribution position, derived-ratio range state, volatility-regime transition, close-location pressure, persistence, proxy-volume-confirmed direction.
+- At least 6 of the 10 ideas must be follow-through or accepted-expansion strategies, not center-reversion strategies.
+- At most 2 ideas may be pure reversion/fade ideas, and they must be failed-expansion fades rather than generic overbought/oversold fades.
+
+Useful lenses:
+- Rolling center reversion
+- Return distribution stretch
+- Derived-ratio compression / expansion regime (range-based)
+- Volatility compression-to-expansion
+- Close-location pressure on the ratio
+- Acceptance pressure on the ratio
+- Proxy-volume-confirmed direction
+- Persistence / autocorrelation-gated direction
+- Efficiency-gated direction
+
+HORIZON FIT (1H/2H synthetic pair)
+
+These ideas run on 1H or 2H bars across many generated pairs. If the research objective is a multi-bar swing, evaluate the direction over multiple bars rather than assuming the edge is a next-bar effect.
+
+Therefore:
+- Reject ideas whose thesis is only a next-bar scalp or transient ratio twitch.
+- Prefer ideas whose proposed edge depends on a multi-bar derived-ratio range state or stretch; do not claim that the 1H/2H relationship persists without testing it.
+- Keep only ideas where the ratio relationship plausibly persists for several bars after entry.
+- Each `horizon_fit` must explain which observable ratio behavior or constructed-volume regime could make the edge durable on a 1H/2H horizon. Do not assert unobserved leg behavior from the merged series alone.
+- Do not introduce a second symbol, external index, or cross-symbol helper. Pair construction and leg identity are handled upstream.
+
+EXPLOIT ARCHETYPE RULE
+
+Each idea must choose exactly one exploit archetype and reflect it in `core_thesis` or `horizon_fit`:
+- regime-shift continuation: a derived-ratio compression/expansion regime change persists across multiple bars
+- failed-dislocation: an attempted ratio breakout fails and reverts
+- persistent-coupling break: a long tight derived-ratio range window ends and the ratio continues away from that state
+- proxy-volume-confirmed drift: a ratio drift backed by a healthy relative reading of the constructed volume proxy persists
+- accepted true-range skew: asymmetric true-range pressure persists when the close accepts the skew direction
+- accepted range expansion: high-percentile range expansion persists when momentum and close acceptance agree
+
+Reject ideas that do not clearly fit one archetype.
+
+PARAMETER DISCIPLINE
+
+- Do not expose both a threshold and a nearly equivalent sensitivity parameter.
+- Do not add a parameter only to let Finder carve away losing trades.
+- Prefer lookback plus one meaningful trigger/quality threshold.
+- If a third param exists, it must control a separate causal quality rule, not cosmetic strictness.
+- Every threshold param must be on a scale-invariant scale (z-score, percentile, efficiency in 0..1, entropy). Never a raw price or raw volume level.
+
+ALLOWED HELPER SURFACE
+
+Signal construction:
+- createSignalLoop, createBuySignal, createSellSignal
+- hasNullValues, checkCrossover
+
+Data extraction:
+- getHighs, getLows, getOpens, getCloses, getVolumes
+- getTypicalPrices, getWeightedClosePrices
+- ensureCleanData, isValidDataArray
+
+Bar geometry (`price-action-frequency-core`):
+- computePriceActionBarMetrics
+- buildRangeSeries, buildBodyPctSeries
+- buildCloseLocationSeries, buildCloseAcceptanceSeries(data)
+- extractBarMetricSeries(data, metric)
+  Valid metric keys:
+  "gapPct", "closeReturn", "bodyDirection", "bodyPct",
+  "wickImbalance", "bodyMidDelta", "closeMidpointDev", "trueRange"
+  `trueRange` and the frequency-core `bodyMidDelta` are raw-scale series; normalize or ratio them before using them as triggers.
+
+Microstructure / auction behavior from OHLCV:
+- buildInitiativePressureSeries(data, lookback)   // remember: built on proxy volume, use as relative signal only
+
+Rolling statistics (use these to build normalized or relative triggers):
+- buildRollingAverage, buildRollingStdDev, buildRollingZScore
+- buildRollingMedian, buildRollingSkewness
+- buildPercentileRank, buildRateOfChange
+- buildRollingAutoCorrelation, buildRollingEntropy
+- buildRollingCorrelation(series1, series2, lookback)
+- buildEfficiencyRatio(data, lookback)
+- buildStreakCount(flags)
+- buildCumulativeDecaySum(scores, decay)
+- buildThresholdCrossingCount(values, lookback, threshold)
+
+Trailing window:
+- buildRollingMinMax(values, lookback) -> { min: (number|null)[], max: (number|null)[] }
+  Access as `minMax.min[i]`, not `minMax[i].min`
+- buildTrailingHighLow(data, lookback)
+
+ALLOWED INDICATOR SURFACE
+Use sparingly. Prefer helper series over indicator-first ideas.
+
+Flat-array returns `(number|null)[]`:
+- calculateATR only for volatility normalization, not as a standalone entry signal
+- calculateVWAP, calculateCMF   // remember: on synthetic pairs these read proxy volume; prefer them as relative/normalized signals, not absolute-effort triggers
+
+Do not use Bollinger, MACD, RSI, stochastic, CCI, Ichimoku, or overbought/oversold framing.
+
+IMPLEMENTATION NOTES FOR GENERATED IDEAS
+- Built-in file path should be lib/strategies/lib/<strategy-key>.ts.
+- Export const name must equal the strategy key.
+- Include normalizeParams when params are rounded, clamped, or made positive.
+- defaultParams must already be valid after normalizeParams.
+- metadata should include role: "entry", direction: "both", and walkForwardParams only for real params.
+- execute(data, params) should call ensureCleanData(data), normalize params, build the raw signal, then generate signals.
+- Every trigger must be scale-invariant or scale-equivariant. If you find yourself writing `close > X` where X is a raw number, rewrite using returns, normalized bar geometry, rolling z-score, percentile rank, rolling median, or rolling min/max.
+- Volume-derived logic may enter only through a normalized relative transformation such as `buildPercentileRank(volumes, lookback)`, `buildRollingZScore(volumes, lookback)`, or the relative output of `buildInitiativePressureSeries`. Never use raw volume or an absolute volume threshold.
+- Do not use any cross-symbol helper, crossSymbolConfig, or StrategyExecutionContext.crossSymbol. Treat the pair as the merged input for this task and keep the strategy implementable from that OHLCV series.
+- If using prepareFinderData, keep executePrepared identical to execute.
+
+INTERNAL WORKFLOW
+1. Draft more than 10 candidate ideas internally.
+2. For each candidate, identify:
+   - the single ratio-native raw-signal mechanism
+   - the single quality rule
+3. Reject anything that violates the quality, robustness, scale-invariance, proxy-volume, anti-overfitting, or diversity rules.
+4. Keep only the 10 clearest ideas with the simplest param surface and materially different primary signals.
+5. Before finalizing each idea, verify:
+   - It is not a textbook chart pattern.
+   - It does not rely on discretionary drawing.
+   - It does not use an absolute price or absolute volume threshold.
+   - The trigger is scale-invariant (would fire identically on a ratio at 0.02 and at 250).
+   - The horizon_fit connects the signal to a multi-bar ratio relationship, not a single-bar twitch.
+    - The idea fits exactly one exploit archetype.
+   - The params tune mechanism scale or sensitivity, not cosmetic pattern matching.
+   - The idea is meaningfully different from the existing keys.
+
+EXISTING KEYS
+entropy_ratio_regime_alignment
+adx_skewness_drift
+wick_responsive_boundary
+wick_responsive_boundary_retest
+true_range_ratio_pop_chase
+probability_boundary_eigen_shift
+volume_divergent_roc_reversion
+wick_imbalance_decay_fade
+ichimoku_conversion_base_cross
+close_acceptance_streak_reversion
+entropy_acceleration_transition
+body_concentration_entropy_squeeze
+close_acceptance_volume_conviction
+initiative_autocorrelation_phi_fade
+pivot_midpoint_anchor_fade
+volatility_percentile_reversal
+volume_exhaustion_decay
+true_range_skewness_initiation
+return_skewness_exhaustion_fade
+volume_weighted_entropy_ignition
+initiative_crossing_frequency_chop
+rolling_vwap_center
+initiative_pressure_side
+decay_momentum_alignment
+initiative_pressure_gated_median
+roc_percentile_regime
+accumulation_persistence_streak_gate
+keltner_halfband_acceptance
+close_location_median_alignment
+typical_price_percentile_alignment
+volatility_regime_median_alignment
+trailing_boundary_composite
+true_range_skew_acceptance
+volume_roc_regime_router
+atr_range_conviction_follow
+golden_conjugate_initiative_trend
+golden_initiative_quorum
+golden_squeeze_rotation_composite
+width_compression_golden_breakout
+acceptance_sourced_momentum_quorum
+structural_rotation_shock
+width_expansion_zscore_router
+efficiency_keltner_router
+close_acceptance_streak_ignition
+rolling_distribution_asymmetry_alignment
+cumulative_return_zscore_reversion
+range_expansion_exhaustion_reversion
+acceptance_deviation_median_reversion
+negative_autocorrelation_median_reversion
+cumulative_return_percentile_reversion
+decay_pressure_percentile_reversion
+volatility_breakout_follow
+initiative_pressure_acceleration_follow
+atr_adjusted_streak_momentum
+atr_normalized_range_reversion
+body_proportion_percentile_fade
+close_location_streak_mean_reversion
+compression_ratio_expansion_reversion
+entropy_decay_momentum_acceleration
+range_efficiency_regime_ignition
+return_reversal_count_reversion
+return_sign_streak_fade
+return_zscore_extreme_reversion
+skewness_reversal_momentum_ignite
+volume_correlation_trend_follow
+wick_imbalance_thrust_continuation
+entropy_drop_momentum_breakout
+rolling_min_max_breakout
+efficiency_ratio_range_expansion
+price_channel_breakout_chase
+range_expansion_streak_reversal
+range_expansion_wick_rejection_fade
+range_zscore_acceptance_reversal
+short_term_autocorrelation_reversal
+typical_price_zscore_reversion
+volume_percentile_trend_follow
+atr_regime_shift_confirmation
+base_quote_momentum_divergence
+directional_body_acceptance
+range_expansion_follow_through
+relative_acceptance_breakout
+autocorrelation_break_reversal
+compression_close_location_expansion
+naive_compression_breakout_follow
+close_location_gradient_acceleration
+close_position_vs_typical_follow
+modern_arbitrage_speed_reversion
+typical_price_momentum_divergence
+return_autocorrelation_close_acceptance
+price_volume_flow_divergence
+ema_confirmation
+autocorrelation_regime_compression_break
+decay_weighted_streak_momentum
+vwap_band_gradient_thrust
+vwap_volatility_gradient_alignment
+typical_autocorrelation_divergence_break
+typical_close_skewness_acceptance
+typical_momentum_efficiency_alignment
+vwap_gradient_autocorrelation_reversion
+vwap_regime_gradient_streak
+vwap_skew_gradient_exhaustion
+body_dominance_streak_fade
+close_location_deviation_streak_reversion
+entropy_regime_streak_exhaustion
+initiative_pressure_streak_fade
+relative_volume_thrust_streak_reversion
+rolling_median_deviation_streak_reversion
+true_range_expansion_streak_exhaustion
+zscore_deviation_streak_reversion
+simons_non_parametric_distribution_fade
+markov_streak_length_exhaustion
+markov_value_area_rejection_reversion
+quarter_kelly_dislocation_friction_reversion
+quarter_kelly_volatility_adjusted_reversion
+kelly_streak_exhaustion_reversion
+dmi_direction_confirmation
+parabolic_sar_confirmation
+dema_confirmation
+donchian_midpoint_confirmation
+hull_ma_confirmation
+kama_confirmation
+linear_regression_center_confirmation
+mcginley_dynamic_confirmation
+n_bar_momentum_confirmation
+rolling_median_confirmation
+typical_price_ema_confirmation
+volume_weighted_median_confirmation
+wilder_ma_confirmation
+zero_lag_ema_confirmation

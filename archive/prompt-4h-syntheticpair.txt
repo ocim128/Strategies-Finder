@@ -1,0 +1,149 @@
+You are working in this repository:
+C:\Users\user\Documents\Repo\Experimental\lightweight-charts\debug\playground\Strategies-Finder
+
+You are an expert quantitative strategy researcher working inside the existing TypeScript strategy library.
+
+TASK
+Generate exactly 10 NEW built-in strategy ideas as structured JSON.
+
+The ideas are for 4H chart data generated from synthetic pairs. The ideas are research candidates, not claims of profitability. Overfitting risk is not a rejection criterion for this task. Do not add broad robustness, walk-forward, or anti-overfitting filters merely to make the ideas safer.
+
+NON-NEGOTIABLE OUTPUT RULES
+- Return valid JSON only.
+- Do not use markdown fences.
+- Do not write prose outside the JSON.
+- The top-level object must be:
+{
+  "ideas": [
+    {
+      "key": "snake_case_key",
+      "name": "Title Case Name",
+      "lens": "Short description of the signal lens",
+      "core_thesis": "One or two sentences describing the proposed mechanism.",
+      "market_data_signal": "The OHLCV-derived signal used for entry.",
+      "ratio_mechanism": "The dominant mechanism in this idea.",
+      "horizon_fit": "Why the mechanism is worth testing on a 4H multi-bar horizon.",
+      "helpers": ["buildRollingZScore"],
+      "indicators": [],
+      "params": [
+        { "name": "lookback", "default": 30, "description": "What the one parameter controls" }
+      ],
+      "buy_logic": "Causal long-entry rule.",
+      "sell_logic": "Causal short-entry rule.",
+      "why_test_this": "Why this candidate is worth testing.",
+      "closest_existing_keys": ["existing_key"],
+      "implementation_notes": "Short note for implementation in the strategy library."
+    }
+  ]
+}
+
+ONE-PARAMETER RULE
+1. Every idea must expose exactly ONE numeric parameter in its `params` array.
+2. The parameter must materially change the entry signal. Do not add a dummy parameter.
+3. The parameter may be a lookback, window, decay, percentile, normalized threshold, or another single mechanism control.
+4. Do not expose a second numeric parameter for confirmation, smoothing, minimum bars, or a nearly equivalent threshold.
+5. All other constants must remain fixed inside the described rule and must not be presented as parameters.
+6. The `default` value must be numeric and valid for the proposed rule.
+
+SYNTHETIC-PAIR DATA CONTRACT
+- The upstream data menu and loaders can accept a `BASE+QUOTE` token.
+- The generated chart symbol is not guaranteed to retain the plus sign. Crypto pairs may use a derived symbol such as `BNBPAXG`; marked local-stock or IBKR pairs may retain an explicit leg-join form.
+- For this task, the strategy receives one merged OHLCV series. Do not require separate base and quote arrays, a second symbol, or a cross-symbol runtime context.
+- The synthetic series is a ratio, not a sum or average. For each aligned source-time bar:
+  - open  = base.open / quote.open
+  - close = base.close / quote.close
+  - high  = max(open, close, base.high / quote.high, base.low / quote.low)
+  - low   = min(open, close, base.high / quote.high, base.low / quote.low)
+  - volume = min(base.volume, quote.volume)
+- When a finer divisible source interval is used, the ratio is built at that source interval first and then aggregated to 4H. Target-bar highs/lows are extrema of the generated ratio sub-bars, and target-bar volume is summed from the synthetic source bars.
+- The volume field is a constructed proxy. It does not identify which leg is less liquid, is not tradable volume, and must not be interpreted as absolute effort, position size, or capital capacity.
+- Do not assume that synthetic ratios are inherently mean-reverting, trending, noisy, or stable. Treat those as hypotheses to test.
+- Do not use fixed raw-price or raw-volume levels. Portable rules should use returns, ratios, normalized bar geometry, close location, percentile rank, z-score, rolling median, rolling min/max, efficiency, or another explicitly relative quantity.
+
+4H RESEARCH SCOPE
+- The target timeframe is 4H. Prefer mechanisms that can be evaluated over several 4H bars, but do not claim that the relationship persists without testing it.
+- The signal may be a continuation, failed expansion, compression release, range acceptance, distribution stretch, relative-volume condition, or another OHLCV-derived hypothesis.
+- Entry logic only. Do not include stop loss, take profit, trailing stop, scaling, position sizing, exits, or portfolio management.
+- Define both buy and sell logic. They should be symmetric or clearly analogous unless the thesis explicitly requires directional asymmetry.
+- The ideas may be experimental, narrow, or potentially overfit. Do not reject them solely for that reason. They must still be coherent, implementable, and free of future-data leakage.
+
+NO LOOK-AHEAD BIAS
+The strategy must be causal and non-repainting.
+
+- At bar index `i`, the rule may use only the completed bar and `data[0..i]`.
+- A signal at `i` may be acted on at a later execution point such as the next bar open. Do not use the later fill price or any future bar to decide whether the signal exists.
+- Rolling calculations must use only the current and prior observations. Never use centered windows, future bars, or full-series statistics that include observations after `i`.
+- Do not use pivot, swing, future-confirmed, fractal, or chart-pattern logic. Do not use `buildPivotFlags`.
+- Do not scan from the end of the dataset to define a signal threshold or regime.
+- Do not use `data[data.length - 1]`, future labels, future returns, later trade outcomes, or the final dataset range inside entry logic.
+- Do not sort or reorder data inside the strategy. Preserve the supplied chronological order.
+- A current-bar helper is allowed when its output uses only the current and previous bars. A rolling breakout must compare the current value with a prior-only window when that distinction matters.
+- `normalizeParams` must depend only on the parameter object, not on the dataset or future observations.
+- The `horizon_fit` is an explanation, not permission to use future bars in the signal.
+
+SCALE AND VOLUME RULES
+- A synthetic ratio's absolute level varies by the selected legs. Do not write rules such as `close > 1.5`, `close < 0.02`, or any other fixed raw-price condition.
+- Raw ranges and raw true ranges are scale-dependent. Use them only through a relative ratio, percentile, z-score, or another normalized comparison.
+- Raw volume, volume sums, and absolute volume thresholds are prohibited as triggers.
+- Volume may be used only through a relative transformation such as `buildPercentileRank(volumes, lookback)`, `buildRollingZScore(volumes, lookback)`, or the relative output of `buildInitiativePressureSeries`.
+- Fixed thresholds on normalized series are allowed. For example, a z-score or percentile threshold may be fixed while the single exposed parameter controls the lookback.
+
+ALLOWED STRATEGY SURFACE
+Use only these existing strategy-layer helpers and indicators unless the repository clearly exposes a required equivalent.
+
+Signal construction and extraction:
+- `createSignalLoop`, `createCurrentBarSignalLoop`
+- `createBuySignal`, `createSellSignal`
+- `hasNullValues`, `checkCrossover`
+- `ensureCleanData`, `isValidDataArray`
+- `getHighs`, `getLows`, `getOpens`, `getCloses`, `getVolumes`
+- `getTypicalPrices`, `getWeightedClosePrices`
+
+Bar geometry from `price-action-frequency-core`:
+- `computePriceActionBarMetrics`
+- `buildRangeSeries`, `buildBodyPctSeries`
+- `buildCloseLocationSeries`, `buildCloseAcceptanceSeries`
+- `extractBarMetricSeries`
+- `buildInitiativePressureSeries`
+- `buildTrailingHighLow`
+
+Rolling statistics from `price-action-statistics-core`:
+- `buildRollingAverage`, `buildRollingStdDev`, `buildRollingZScore`
+- `buildRollingRobustZScore`
+- `buildRollingMedian`, `buildRollingSkewness`, `buildRollingMinMax`
+- `buildPercentileRank`, `buildRateOfChange`
+- `buildRollingAutoCorrelation`, `buildRollingCorrelation`, `buildRollingEntropy`
+- `buildEfficiencyRatio`, `buildStreakCount`
+- `buildCumulativeDecaySum`, `buildThresholdCrossingCount`
+
+Indicators, used sparingly:
+- `calculateATR` for volatility normalization only
+- `calculateVWAP` or `calculateCMF` only with the constructed volume treated as a relative proxy
+
+Do not use Bollinger Bands, MACD, RSI, stochastic, CCI, Ichimoku, pivots, future-confirmed patterns, or cross-symbol helpers.
+
+IMPLEMENTATION CONTRACT
+- New built-in source should normally be `lib/strategies/lib/<strategy-key>.ts`.
+- The exported strategy constant must equal the key.
+- Include `name`, `description`, `defaultParams`, `paramLabels`, `execute(data, params)`, and metadata with `role: "entry"` and `direction: "both"` when appropriate.
+- Add `normalizeParams` when the one parameter is rounded, clamped, or coerced positive. The default must already be valid after normalization.
+- `execute` should clean the input, normalize the parameter, build causal series, and emit entry signals.
+- If `prepareFinderData` and `executePrepared` are proposed, their output must match the direct `execute` path without changing timing or signal semantics.
+- Do not use `crossSymbolConfig`, `StrategyExecutionContext.crossSymbol`, or a second dataset.
+
+KEY AND NOVELTY CHECK
+- Before generating ideas, read `lib/strategies/manifest-keys.ts` and avoid every key currently registered there.
+- Do not duplicate or trivially rename an existing strategy.
+- `closest_existing_keys` must contain real registered keys, not invented names.
+- The ten ideas do not need ten unrelated indicator families. Prefer clear differences in the primary mechanism, but do not add arbitrary diversity constraints.
+
+FINAL CHECK BEFORE OUTPUT
+- There are exactly 10 ideas.
+- Every idea has exactly one numeric parameter.
+- Every parameter materially changes entries.
+- Every buy and sell rule is causal at bar `i`.
+- No rule requires a second symbol or future data.
+- No raw-price or absolute-volume trigger is used.
+- No position-management logic is included.
+- Every key is new relative to the current manifest.
+- The response is valid JSON only.
