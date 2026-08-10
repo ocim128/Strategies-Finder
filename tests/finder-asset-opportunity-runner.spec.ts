@@ -573,6 +573,50 @@ describe("Asset Opportunity runner", () => {
         expect(output.results[0]?.totalCandidatesEvaluated).to.equal(4);
     });
 
+    it("filters Asset Opportunity candidates by the inclusive trade-count range before fresh-entry selection", async () => {
+        const strategy: Strategy = {
+            name: "TradeCountFilter",
+            description: "enters on the latest bar",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy", price: latest.close }] : [];
+            },
+        };
+        const input = makeInput({
+            options: makeOptions({
+                tradeFilterEnabled: true,
+                minTrades: 2,
+                maxTrades: 4,
+            }),
+            selectedStrategy: { key: "trade_count_filter", name: strategy.name, strategy },
+            candidatePoolSize: 3,
+            generateParamSets: () => [{ threshold: 1 }, { threshold: 2 }, { threshold: 3 }],
+            assets: [{ symbol: "FILTERED", data: makeCandles([100, 101, 102, 103, 104, 105]) }],
+            runIsSearch: async (args) => {
+                const base = runBacktestForAssetTest(args.ohlcvData, [], args.settings);
+                const candidates = [1, 3, 5].map((totalTrades) => ({
+                    key: "trade_count_filter",
+                    name: strategy.name,
+                    params: { threshold: totalTrades },
+                    result: { ...base, totalTrades },
+                    selectionResult: { ...base, totalTrades },
+                    endpointAdjusted: false,
+                    endpointRemovedTrades: 0,
+                }));
+                return {
+                    results: candidates,
+                    totalCandidatesEvaluated: candidates.length,
+                };
+            },
+        });
+
+        const output = await runAssetOpportunitySearch(input, makeCallbacks());
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.selectionResult.totalTrades).to.equal(3);
+    });
+
     it("excludes an asset from results when the entry fired on an earlier bar (active)", async () => {
         // threshold=2 → entry on bar 1 of 5 → active (not fresh).
         const strategy: Strategy = {

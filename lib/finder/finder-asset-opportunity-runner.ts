@@ -77,6 +77,7 @@ import {
     computeFinderOosVerdict,
     resolveOosDataSlice,
     sliceFinderDataWindow,
+    matchesFinderTradeCountFilter,
 } from "./finder-manager-logic";
 import { deriveStrategySeed } from "./finder-runner-shared";
 import { detectFreshEntry } from "./finder-fresh-entry";
@@ -735,7 +736,10 @@ async function searchOneAsset(args: {
         mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, finderOutput.engineUsage);
     }
 
-    const topK = finderOutput.results;
+    const eligibleCandidateIndexes = finderOutput.results
+        .map((candidate, index) => matchesFinderTradeCountFilter(candidate.selectionResult.totalTrades, assetOptions) ? index : -1)
+        .filter((index): index is number => index >= 0);
+    const topK = eligibleCandidateIndexes.map((index) => finderOutput.results[index]!);
     const totalCandidatesEvaluated = Math.max(
         topK.length,
         finderOutput.totalCandidatesEvaluated ?? topK.length,
@@ -752,7 +756,9 @@ async function searchOneAsset(args: {
     // `canReuseIsSignalsForFresh`), the in-sample run's retained signals are
     // reused instead of re-executing every candidate on the same bars.
     const freshStartedAt = performance.now();
-    const retainedSignals = canReuseIsSignalsForFresh ? finderOutput.signalsByCandidate : undefined;
+    const retainedSignals = canReuseIsSignalsForFresh && finderOutput.signalsByCandidate
+        ? eligibleCandidateIndexes.map((index) => finderOutput.signalsByCandidate![index] ?? [])
+        : undefined;
     const freshEvaluations: AssetFreshEvaluation[] = retainedSignals
         ? topK.map((_candidate, candidateIndex) => detectFreshFromRetainedSignals({
             signals: retainedSignals[candidateIndex] ?? [],

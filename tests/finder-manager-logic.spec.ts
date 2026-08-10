@@ -4,6 +4,7 @@ import {
     buildFinderOptions,
     buildFinderUniverseOptions,
     computeFinderOosVerdict,
+    matchesFinderTradeCountFilter,
     resolveFinderSortPriority,
     resolveFinderUniverseSortPriority,
     resolveOosDataSlice,
@@ -12,6 +13,27 @@ import {
 import { resolveEffectivePolymarketExitMode } from "../lib/polymarket-exit-mode";
 
 describe("Finder manager logic", () => {
+    it("matches Asset Opportunity trade counts inclusively and treats a missing max as unbounded", () => {
+        const filter = {
+            tradeFilterEnabled: true,
+            minTrades: 2,
+            maxTrades: 4,
+        };
+
+        expect(matchesFinderTradeCountFilter(1, filter)).to.equal(false);
+        expect(matchesFinderTradeCountFilter(2, filter)).to.equal(true);
+        expect(matchesFinderTradeCountFilter(4, filter)).to.equal(true);
+        expect(matchesFinderTradeCountFilter(5, filter)).to.equal(false);
+        expect(matchesFinderTradeCountFilter(100, {
+            ...filter,
+            maxTrades: null as unknown as number,
+        })).to.equal(true);
+        expect(matchesFinderTradeCountFilter(1, {
+            ...filter,
+            tradeFilterEnabled: false,
+        })).to.equal(true);
+    });
+
     it("slices Finder data into fifths with the fifth slice ending at the newest bar", () => {
         const data = Array.from({ length: 50_000 }, (_, index) => index);
 

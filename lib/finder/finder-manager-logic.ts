@@ -229,3 +229,25 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
         exitStrategyBaseParams: input.exitStrategyOverrideEnabled === true ? input.exitStrategyBaseParams : undefined,
     };
 }
+
+/**
+ * Apply the Finder trade-count eligibility gate to one completed result.
+ *
+ * `Infinity` is serialized as `null` in the Asset Opportunity request body,
+ * so a non-finite max is the wire representation of an unbounded maximum.
+ */
+export function matchesFinderTradeCountFilter(
+    totalTrades: number,
+    filter: Pick<FinderOptions, "tradeFilterEnabled" | "minTrades" | "maxTrades">,
+): boolean {
+    if (!filter.tradeFilterEnabled) return true;
+    if (!Number.isFinite(totalTrades)) return false;
+
+    const minTrades = Number.isFinite(filter.minTrades)
+        ? Math.max(0, filter.minTrades)
+        : 0;
+    const maxTrades = Number.isFinite(filter.maxTrades)
+        ? Math.max(minTrades, filter.maxTrades)
+        : Number.POSITIVE_INFINITY;
+    return totalTrades >= minTrades && totalTrades <= maxTrades;
+}

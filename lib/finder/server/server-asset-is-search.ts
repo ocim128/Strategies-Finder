@@ -47,6 +47,7 @@ import { withExitStrategyBaseParams, splitExitStrategyParams } from "../exit-str
 import { sanitizeBacktestSettingsForRust } from "../../rust-settings-sanitizer";
 import { sortFinderResults } from "../finder-engine";
 import { buildSelectionResult } from "../endpoint";
+import { matchesFinderTradeCountFilter } from "../finder-manager-logic";
 
 const ASSET_IS_SEARCH_YIELD_EVERY_RUNS = 256;
 const ASSET_IS_SEARCH_YIELD_MIN_MS = 1000;
@@ -281,6 +282,9 @@ export async function runServerAssetIsSearch(
                 endpointAdjusted: selection.adjusted,
                 endpointRemovedTrades: selection.removedTrades,
             };
+            if (!matchesFinderTradeCountFilter(candidate.selectionResult.totalTrades, options)) {
+                continue;
+            }
             results.push(candidate);
             if (input.retainSignals === true) {
                 signalsByResult.set(candidate, output.signals);

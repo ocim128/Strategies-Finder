@@ -16,6 +16,7 @@ import {
     type FinderAssetOpportunityStreamEvent,
 } from "../lib/finder/server/finder-stream-types";
 import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metrics";
+import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions, FinderUniverseCandidate } from "../lib/types/finder";
 import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
@@ -913,6 +914,56 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
             });
         }
         expect(loaded).to.deep.equal(["UP", "DOWN"]);
+    });
+
+    it("filters trade counts before applying the Asset Opportunity top-K limit", async () => {
+        const strategy: Strategy = {
+            name: "Asset Trade Filter",
+            description: "Produces a parameter-selected number of completed trades.",
+            defaultParams: { tradeCount: 1 },
+            paramLabels: { tradeCount: "Trade count" },
+            execute(data, params) {
+                const tradeCount = Math.max(1, Math.round(Number(params.tradeCount)));
+                const signals: Array<{ time: Time; type: "buy" | "sell"; price: number }> = [];
+                for (let index = 0; index < tradeCount; index += 1) {
+                    const entry = data[index * 2];
+                    const exit = data[index * 2 + 1];
+                    if (!entry || !exit) return [];
+                    signals.push(
+                        { time: entry.time, type: "buy", price: entry.close },
+                        { time: exit.time, type: "sell", price: exit.close },
+                    );
+                }
+                return signals;
+            },
+        };
+        const options: FinderOptions = {
+            ...makeOptions(["FILTER"]),
+            scope: "asset_opportunity",
+            topN: 1,
+            tradeFilterEnabled: true,
+            minTrades: 2,
+            maxTrades: 4,
+        };
+        const output = await runServerAssetIsSearch({
+            ohlcvData: makeCandles([100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]),
+            symbol: "FILTER",
+            interval: "5m",
+            options,
+            settings,
+            capitalSettings,
+            selectedStrategy: { key: "asset_trade_filter", name: strategy.name, strategy },
+            generateParamSets: () => [
+                { tradeCount: 1 },
+                { tradeCount: 3 },
+                { tradeCount: 5 },
+            ],
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+        });
+
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.selectionResult.totalTrades).to.equal(3);
     });
 });
 
