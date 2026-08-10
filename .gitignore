@@ -126,6 +126,7 @@ test_e2e_output.txt
 
 # Data files
 price-data/
+.freebuff/
 
 # Generated run artifacts (batch runs, seed logs, hunt outputs)
 batch-runs/
