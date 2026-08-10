@@ -5,6 +5,7 @@ type NullableSeries = (number | null)[];
 
 const rollingStdDevCache = new WeakMap<number[], Map<number, NullableSeries>>();
 const rollingZScoreCache = new WeakMap<number[], Map<string, NullableSeries>>();
+const rollingRobustZScoreCache = new WeakMap<number[], Map<number, NullableSeries>>();
 const rollingMedianCache = new WeakMap<number[], Map<number, NullableSeries>>();
 const rollingSkewnessCache = new WeakMap<number[], Map<number, NullableSeries>>();
 const rollingMinMaxCache = new WeakMap<number[], Map<string, { min: NullableSeries; max: NullableSeries }>>();
@@ -130,6 +131,77 @@ export function buildRollingZScore(
 			const variance = Math.max(0, (sumSquares / lookback) - (mean * mean));
 			const stddev = Math.max(Math.sqrt(variance), stdDevFloor);
 			result[i] = (value - mean) / stddev;
+		}
+
+		return result;
+	});
+}
+
+/**
+ * Rolling robust z-score using the trailing median and median absolute deviation.
+ * The score is 0.6744897501960817 * (value - median) / MAD, where the
+ * normalization factor makes the score comparable to a standard z-score for
+ * normally distributed values. Returns null until the window is full or when
+ * the window's MAD is zero.
+ */
+export function buildRollingRobustZScore(
+	values: number[],
+	lookbackInput: number
+): (number | null)[] {
+	const lookback = Math.max(2, Math.round(lookbackInput));
+	return getCachedSeries(rollingRobustZScoreCache, values, lookback, () => {
+		const result: NullableSeries = new Array(values.length).fill(null);
+		const window: number[] = [];
+		const lowerBound = (value: number): number => {
+			let low = 0;
+			let high = window.length;
+			while (low < high) {
+				const mid = (low + high) >> 1;
+				if (window[mid] < value) low = mid + 1;
+				else high = mid;
+			}
+			return low;
+		};
+		const selectAbsoluteDeviation = (center: number, rank: number): number => {
+			let left = window.length - 1;
+			while (left >= 0 && window[left] > center) left--;
+			let right = left + 1;
+			let selected = 0;
+
+			for (let count = 0; count <= rank; count++) {
+				const leftDistance = left >= 0 ? center - window[left] : Infinity;
+				const rightDistance = right < window.length ? window[right] - center : Infinity;
+				if (leftDistance <= rightDistance) {
+					selected = leftDistance;
+					left--;
+				} else {
+					selected = rightDistance;
+					right++;
+				}
+			}
+
+			return selected;
+		};
+
+		for (let i = 0; i < values.length; i++) {
+			const value = values[i];
+			window.splice(lowerBound(value), 0, value);
+			if (i >= lookback) {
+				const removed = values[i - lookback];
+				window.splice(lowerBound(removed), 1);
+			}
+			if (i < lookback - 1) continue;
+
+			const middle = lookback >> 1;
+			const center = (lookback & 1)
+				? window[middle]
+				: (window[middle - 1] + window[middle]) / 2;
+			const mad = (lookback & 1)
+				? selectAbsoluteDeviation(center, middle)
+				: (selectAbsoluteDeviation(center, middle - 1) + selectAbsoluteDeviation(center, middle)) / 2;
+			if (!Number.isFinite(mad) || mad <= 0) continue;
+
+			result[i] = 0.6744897501960817 * (value - center) / mad;
 		}
 
 		return result;

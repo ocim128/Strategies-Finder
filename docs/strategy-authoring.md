@@ -9,9 +9,11 @@ For repo-level orientation, read [`README.md`](../README.md) first. For operatio
 Finder, Walk Forward, the base UI, and the worker-facing library must all observe the same strategy semantics.
 
 That means:
-- the file lives in `lib/strategies/lib/<strategy-key>.ts`
-- the exported const is the strategy key
-- generated strategy catalog files under `lib/strategies/manifest*.ts` are regenerated from the strategy files
+- the source file lives under `lib/strategies/lib/*.ts`
+- the file contains exactly one `export const <strategy-key>: Strategy = ...`; the exported key is the registry identity
+- a new strategy should normally keep its file name and exported key aligned, even though the generator uses the exported key and actual file name independently
+- `npm run strategies:sync-manifest` regenerates `manifest.ts`, `manifest-eager.ts`, `manifest-meta.ts`, `manifest-summary.ts`, `manifest-loaders.ts`, and `manifest-keys.ts`
+- built-in runtime discovery uses the generated catalog; do not manually wire a built-in into a separate registry
 - `normalizeParams(...)` exposes the same canonical parameter semantics that `execute(...)` actually uses
 
 If a strategy silently clamps, rounds, or flips a parameter inside `execute(...)` but does not expose that through `normalizeParams(...)`, the UI and optimization layers drift.
@@ -26,8 +28,8 @@ If a strategy silently clamps, rounds, or flips a parameter inside `execute(...)
    - `lib/strategies/lib/polymarket-1s-helpers.ts` for supported 1s Polymarket context
 3. Write the raw signal idea first with `ensureCleanData(...)` and `createSignalLoop(...)`.
 4. Add a named parameter normalizer before wiring `metadata.walkForwardParams`.
-5. Run `npm run strategies:sync-manifest`.
-6. Default to `prepareFinderData(...)` when the strategy builds reusable rolling, VWAP, percentile, entropy, skewness, or cross-symbol arrays. Skip it only for cheap one-pass logic where the extra seam would not reduce Finder cost.
+5. Run `npm run strategies:sync-manifest`; do not manually edit the generated manifest files.
+6. Add `prepareFinderData(...)` when dataset-derived precomputation materially reduces repeated Finder work. This is useful for expensive rolling, VWAP, percentile, entropy, skewness, or cross-symbol state, but is unnecessary for cheap one-pass logic.
 
 ## Minimal Template
 
@@ -107,6 +109,17 @@ Return `Signal | null | undefined`, not numeric flags. Use `createBuySignal(...)
 
 Keep signal reason strings stable and descriptive. They are used by diagnostics and debugging output.
 
+## Causal Signal Rules
+
+Signal generation must be non-repainting:
+
+- At bar index `i`, entry logic may read only the completed current bar and `data[0..i]`.
+- Rolling windows must be trailing. Do not use centered windows, future-confirmed pivots, swing points, fractals, or future labels.
+- A current-bar calculation is allowed when it uses only the current and previous bars. A signal generated at `i` may be filled later according to the selected execution model; the later fill must not influence signal creation.
+- Do not use `data[data.length - 1]`, full-series statistics that include future observations, or later trade outcomes inside `execute(...)`.
+- `normalizeParams(...)` must depend only on the parameter object, not on the dataset.
+- When a helper offers an inclusive/current-bar option, use the prior-only form for breakout boundaries when including the current value would make the comparison tautological.
+
 ## Required Fields
 
 Every built-in strategy should include:
@@ -124,16 +137,17 @@ Add `normalizeParams(...)` when execution rounds, clamps, coerces sign, snaps to
 - `lib/strategies/strategy-helpers.ts`
   Core signal creation, loop helpers, clean-data guards, and base OHLCV extractors.
 - `lib/strategies/lib/price-action-frequency-core.ts`
-  Candle geometry helpers plus microstructure-oriented primitives such as close acceptance, initiative pressure, and sweep-reclaim scoring.
+  Candle geometry helpers plus microstructure-oriented primitives such as close acceptance and initiative pressure.
 - `lib/strategies/lib/price-action-statistics-core.ts`
-  Rolling entropy, efficiency ratio, rolling medians, z-scores, and streak counters.
+  Rolling entropy, efficiency ratio, rolling medians, standard and robust z-scores, percentile ranks, and streak counters.
 - `lib/strategies/lib/polymarket-1s-helpers.ts`
   For supported 1s Polymarket strategies only. Declare `polymarket1sConfig: { required: true }`, use causal runtime context, and fail closed when helper frames are unavailable. Executable-edge strategies should prefer ask-side edge plus actionability/persistence over mid-price-only pressure.
 
 ## Type Rules That Matter
 
 - Match array shapes carefully.
-  `buildRollingZScore(...)` expects `number[]`, while some helpers like `buildEfficiencyRatio(...)` intentionally work from `OHLCVData[]`.
+  `buildRollingZScore(...)` and `buildRollingRobustZScore(...)` expect `number[]`, while helpers like `buildEfficiencyRatio(...)` intentionally work from `OHLCVData[]`.
+  `buildRollingRobustZScore(...)` uses trailing median/MAD normalization and returns `null` during warm-up or when the rolling MAD is zero.
 - Guard padded indicator arrays.
   Use checks like `if (i < lookback || indicator[i] === null) return null;`.
 - Track indicator output shape precisely.
@@ -148,7 +162,7 @@ Add `normalizeParams(...)` when execution rounds, clamps, coerces sign, snaps to
   - `metadata.walkForwardParams`
   - the execution logic
 - If you add `prepareFinderData(...)`, keep `executePrepared(...)` behavior identical to `execute(...)`.
-- For heavy strategies, treat prepared execution as the default path rather than an optional extra.
+- Use prepared execution for heavy repeated calculations when it reduces Finder cost; keep direct `execute(...)` as the canonical fallback path.
 - Keep the prepared payload small and cache reusable arrays by the real param dimension, usually lookback.
 - Do not add Finder precompute to cheap strategies just for symmetry.
 
@@ -192,8 +206,8 @@ Rules:
 
 - use scale-invariant thresholds such as z-score, percentile, rolling median distance, efficiency ratio, or return/range ratios
 - do not use absolute price levels
-- do not use raw volume as tradable flow; synthetic volume is the less-liquid leg's volume proxy
-- treat wide high/low ranges as possible leg disagreement, not ordinary volatility
+- do not use raw volume as tradable flow; synthetic volume is a constructed `min(base.volume, quote.volume)` proxy and does not identify either leg's liquidity
+- treat high/low range as the range of the derived ratio; it may reflect movement in either leg and is not a direct measurement of leg disagreement or either leg's volatility
 
 See [synthetic-pairs.md](synthetic-pairs.md) for generation and support details.
 
@@ -206,7 +220,7 @@ See [synthetic-pairs.md](synthetic-pairs.md) for generation and support details.
 - `metadata.walkForwardParams` references only real params
 - `execute(...)` uses normalized params when behavior depends on normalized values
 - `npm run strategies:sync-manifest` was run
-- `npm run strategies:audit-prepared` was run if the strategy uses rolling statistics, VWAP, or cross-symbol state
+- `npm run strategies:audit-prepared` was run when adding or changing a prepared-execution path, or when a heavy repeated calculation needs parity/performance review
 - `npm run typecheck` passes
 - `tests/new-strategy-lib-smoke.spec.ts` passes (smoke-tests every manifest strategy), and a focused strategy spec was added/updated if normalization, Finder, or WFA behavior is non-trivial
 - the strategy appears in the UI dropdown

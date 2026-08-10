@@ -6,7 +6,12 @@ import {
     buildInitiativePressureSeries,
     buildTrailingHighLow,
 } from '../lib/strategies/lib/price-action-frequency-core';
-import { buildEfficiencyRatio, buildPercentileRank, buildRollingEntropy } from '../lib/strategies/lib/price-action-statistics-core';
+import {
+    buildEfficiencyRatio,
+    buildPercentileRank,
+    buildRollingEntropy,
+    buildRollingRobustZScore,
+} from '../lib/strategies/lib/price-action-statistics-core';
 
 describe('Price Action Microstructure Helpers', () => {
     it('should score close acceptance by settlement quality', () => {
@@ -85,6 +90,33 @@ describe('Price Action Microstructure Helpers', () => {
         expect(entropy[2]).to.be.closeTo(0.918295834, 1e-9);
         expect(entropy[3]).to.be.closeTo(0.918295834, 1e-9);
         expect(entropy[4]).to.be.closeTo(0.918295834, 1e-9);
+    });
+
+    it('should calculate a causal rolling robust z-score with cached scale-invariant output', () => {
+        const values = [1, 2, 3, 4, 5, 100, 6];
+        const robustZ = buildRollingRobustZScore(values, 5);
+        const scaled = buildRollingRobustZScore(values.map((value) => value * 250), 5);
+        const withFutureValue = buildRollingRobustZScore([...values, 100000], 5);
+
+        expect(buildRollingRobustZScore(values, 5)).to.equal(robustZ);
+        expect(robustZ.slice(0, 4)).to.deep.equal([null, null, null, null]);
+        expect(robustZ[4]).to.be.closeTo(1.3489795003921634, 1e-12);
+        expect(robustZ[5]).to.be.closeTo(64.75101601882384, 1e-10);
+        expect(robustZ[6]).to.be.closeTo(0.6744897501960817, 1e-12);
+
+        for (let index = 0; index < values.length; index++) {
+            if (robustZ[index] === null) {
+                expect(scaled[index]).to.equal(null);
+                expect(withFutureValue[index]).to.equal(null);
+            } else {
+                expect(scaled[index]).to.be.closeTo(robustZ[index]!, 1e-12);
+                expect(withFutureValue[index]).to.be.closeTo(robustZ[index]!, 1e-12);
+            }
+        }
+
+        const zeroMad = buildRollingRobustZScore([7, 7, 7, 7, 7, 9], 5);
+        expect(zeroMad[4]).to.equal(null);
+        expect(zeroMad[5]).to.equal(null);
     });
 
     it('should build trailing high and low windows without leaking the current bar by default', () => {
