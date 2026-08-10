@@ -844,6 +844,8 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
         };
         const datasets = upDownDatasets();
         const loaded: string[] = [];
+        let inFlightLoads = 0;
+        let maxInFlightLoads = 0;
         const events: FinderAssetOpportunityStreamEvent[] = [];
         setRunOwnerForTests(7101);
         await processFinderAssetOpportunityRun(
@@ -858,6 +860,10 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
                 useRustEnginePreference: true,
                 loadDataset: async (symbol) => {
                     loaded.push(symbol);
+                    inFlightLoads += 1;
+                    maxInFlightLoads = Math.max(maxInFlightLoads, inFlightLoads);
+                    await Promise.resolve();
+                    inFlightLoads -= 1;
                     return datasets.get(symbol) ?? [];
                 },
                 abortSignal: new AbortController().signal,
@@ -914,6 +920,7 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
             });
         }
         expect(loaded).to.deep.equal(["UP", "DOWN"]);
+        expect(maxInFlightLoads).to.be.greaterThan(1);
     });
 
     it("filters trade counts before applying the Asset Opportunity top-K limit", async () => {

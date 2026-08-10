@@ -1,6 +1,7 @@
 import type { BacktestDiagnosticsCounts, BacktestDiagnosticsTimings, BacktestResult, StrategyParams, Time } from "../types/strategies";
 import type { PolymarketEvalResult } from "../types/polymarket-outcomes";
 import type { PolymarketExitMode } from "../polymarket-exit-mode";
+import type { BatchDatasetLoadDiagnostics } from "../batch-backtest/batch-dataset-loader-core";
 
 export type FinderMode = 'default' | 'grid' | 'random' | 'genetic';
 export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'accuracyTrades' | 'volume' | 'expectancy' | 'expectancyTrades' | 'profitFactor' | 'profitFactorTrades' | 'sizedNet';
@@ -780,6 +781,8 @@ export interface FinderAssetOpportunityDiagnostics {
         yielding: number;
         other: number;
     };
+    /** Detailed synthetic/data-loader counters for server-side runs. */
+    loader?: BatchDatasetLoadDiagnostics;
     /** Top 10 per-strategy totals, sorted by duration descending. */
     strategyBreakdown?: Array<{
         strategyKey: string;

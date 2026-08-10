@@ -2,7 +2,11 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { createBatchDatasetLoaderCore } from "../lib/batch-backtest/batch-dataset-loader-core";
+import {
+    createBatchDatasetLoadDiagnostics,
+    createBatchDatasetLoaderCore,
+} from "../lib/batch-backtest/batch-dataset-loader-core";
+import { SyntheticLegCache } from "../lib/batch-backtest/synthetic-leg-cache";
 import type { OHLCVData, Time } from "../lib/types/strategies";
 
 const APP_ROOT = process.cwd();
@@ -51,6 +55,95 @@ describe("batch-backtest server loader parity", () => {
         expect(twoHour).to.have.length(1);
     });
 
+    it("shares a bounded run leg cache across concurrent synthetic pairs", async () => {
+        const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
+            time: time as Time,
+            open: 100,
+            high: 102,
+            low: 99,
+            close: 101,
+            volume: 10,
+        }));
+        const fetches = new Map<string, number>();
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async (symbol, interval) => {
+                const key = `${symbol}|${interval}`;
+                fetches.set(key, (fetches.get(key) ?? 0) + 1);
+                return source;
+            },
+        });
+        const context = {
+            legCache: new SyntheticLegCache<OHLCVData[]>(8),
+            diagnostics: createBatchDatasetLoadDiagnostics(),
+        };
+
+        await Promise.all([
+            loader.load("BASE\u2022+QUOTE\u2022", "4h", undefined, context),
+            loader.load("BASE\u2022+THIRD\u2022", "4h", undefined, context),
+        ]);
+
+        expect(fetches).to.deep.equal(new Map([
+            ["BASE\u2022|30m", 1],
+            ["QUOTE\u2022|30m", 1],
+            ["THIRD\u2022|30m", 1],
+        ]));
+        expect(context.diagnostics.syntheticPairRequests).to.equal(2);
+        expect(context.diagnostics.pairBuilds).to.equal(2);
+        expect(context.diagnostics.legCacheMisses).to.equal(3);
+        expect(context.diagnostics.legCacheHits).to.equal(1);
+    });
+
+    it("measures resolved disk-cache hits and can bypass them for a scoped run", async () => {
+        const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
+            time: time as Time,
+            open: 100,
+            high: 102,
+            low: 99,
+            close: 101,
+            volume: 10,
+        }));
+        let fingerprintCalls = 0;
+        let diskReads = 0;
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => source,
+            computeSyntheticPairFingerprint: async () => {
+                fingerprintCalls += 1;
+                return "test-fingerprint";
+            },
+            loadCachedSyntheticPair: async () => {
+                diskReads += 1;
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                return { bars: source };
+            },
+        });
+        const diskContext = { diagnostics: createBatchDatasetLoadDiagnostics() };
+
+        await loader.load("BASE\u2022+QUOTE\u2022", "4h", undefined, diskContext);
+
+        expect(fingerprintCalls).to.equal(1);
+        expect(diskReads).to.equal(1);
+        expect(diskContext.diagnostics.diskCacheHits).to.equal(1);
+        expect(diskContext.diagnostics.timingsMs.diskLookup).to.be.greaterThan(0);
+        expect(diskContext.diagnostics.timingsMs.total).to.be.greaterThan(0);
+
+        const bypassContext = {
+            preferInMemorySyntheticPairs: true,
+            legCache: new SyntheticLegCache<OHLCVData[]>(8),
+            diagnostics: createBatchDatasetLoadDiagnostics(),
+        };
+        await loader.load("BASE\u2022+THIRD\u2022", "4h", undefined, bypassContext);
+
+        expect(fingerprintCalls).to.equal(1);
+        expect(diskReads).to.equal(1);
+        expect(bypassContext.diagnostics.diskCacheBypasses).to.equal(1);
+        expect(bypassContext.diagnostics.pairBuilds).to.equal(1);
+        expect(bypassContext.diagnostics.sourceLoads).to.equal(2);
+    });
+
     it("keeps browser and server loaders as wrappers around the shared core", () => {
         expect(existsSync(BROWSER_LOADER)).to.equal(true);
         expect(existsSync(SERVER_LOADER)).to.equal(true);
@@ -90,6 +183,7 @@ describe("batch-backtest server loader parity", () => {
         expect(core).to.include("STALE_FRAGMENT_MIN_THRESHOLD = 200");
         expect(core).to.include("options.legCacheMaxEntries ?? 24");
         expect(core).to.include("options.pairCacheMaxEntries ?? 16");
+        expect(core).to.include("preferInMemorySyntheticPairs");
     });
 
     it("server loader bypasses browser-bound modules", () => {

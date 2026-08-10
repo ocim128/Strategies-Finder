@@ -71,9 +71,11 @@ import type {
     FinderUniverseCandidate,
 } from "../../types/finder";
 import type { BacktestSettings, OHLCVData, Strategy, StrategyParams } from "../../types/strategies";
+import type { BatchDatasetLoadContext } from "../../batch-backtest/batch-dataset-loader-core";
 import { loadBuiltInStrategyByKey } from "../../../strategyRegistry";
 import {
     clearServerFinderDatasetCaches,
+    createServerFinderAssetOpportunityLoadContext,
     getServerFinderDatasetCacheStats,
     loadServerFinderDataset,
 } from "./server-finder-data-loader";
@@ -125,6 +127,26 @@ import { prepareClosedCandleData } from "../../backtest-executor";
 // ---------------------------------------------------------------------------
 
 const HEAP_MB = 1024 * 1024;
+const ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY = 12;
+
+function mergeTimingIntervals(intervals: Array<readonly [number, number]>): number {
+    if (intervals.length === 0) return 0;
+    const sorted = [...intervals].sort((a, b) => a[0] - b[0]);
+    let total = 0;
+    let start = sorted[0]![0];
+    let end = sorted[0]![1];
+    for (let index = 1; index < sorted.length; index += 1) {
+        const next = sorted[index]!;
+        if (next[0] <= end) {
+            end = Math.max(end, next[1]);
+            continue;
+        }
+        total += Math.max(0, end - start);
+        start = next[0];
+        end = next[1];
+    }
+    return total + Math.max(0, end - start);
+}
 
 function roundDiagnosticMs(value: number): number {
     return Math.round(value);
@@ -864,9 +886,19 @@ export async function processFinderAssetOpportunityRun(
         exitStrategyCandidates?: FinderSelectedStrategy[];
         useRustEnginePreference?: boolean;
         abortSignal: AbortSignal;
-        loadDataset: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
+        loadDataset: (
+            symbol: string,
+            interval: string,
+            signal?: AbortSignal,
+            context?: BatchDatasetLoadContext,
+        ) => Promise<OHLCVData[]>;
         /** Secondary cross-symbol data stays unsliced; the executor aligns it to the primary window. */
-        loadSecondaryDataset?: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
+        loadSecondaryDataset?: (
+            symbol: string,
+            interval: string,
+            signal?: AbortSignal,
+            context?: BatchDatasetLoadContext,
+        ) => Promise<OHLCVData[]>;
         getProvider?: (symbol: string) => string;
         candidatePoolSize: number;
         minFreshSupport: number;
@@ -906,6 +938,7 @@ export async function processFinderAssetOpportunityRun(
         assetDiagnostics: null,
     };
     const snapshot = runState;
+    const assetLoadContext = createServerFinderAssetOpportunityLoadContext();
 
     const estimatedCandidateEvaluations = totalAssets * selectedStrategies.length * (
         Math.max(1, Math.floor(input.options.maxRuns)) + input.candidatePoolSize
@@ -1013,6 +1046,7 @@ export async function processFinderAssetOpportunityRun(
                     symbol,
                     interval,
                     input.abortSignal,
+                    assetLoadContext,
                 ).then((data) => {
                     if (!Array.isArray(data) || data.length === 0) secondaryDataCache.delete(cacheKey);
                     return data;
@@ -1067,11 +1101,48 @@ export async function processFinderAssetOpportunityRun(
         };
     };
 
+    type AssetLoadOutcome = {
+        data?: OHLCVData[];
+        error?: unknown;
+        startedAt: number;
+        finishedAt: number;
+        durationMs: number;
+    };
+    const pendingAssetLoads = new Map<number, Promise<AssetLoadOutcome>>();
+    const completedAssetLoadIntervals: Array<readonly [number, number]> = [];
+    const scheduleAssetLoad = (assetIndex: number): void => {
+        if (assetIndex >= totalAssets || isCancelled()) return;
+        const symbol = symbols[assetIndex]!;
+        const startedAt = performance.now();
+        const promise = Promise.resolve()
+            .then(() => input.loadDataset(symbol, input.interval, input.abortSignal, assetLoadContext))
+            .then(
+                (data) => {
+                    const finishedAt = performance.now();
+                    return { data, startedAt, finishedAt, durationMs: finishedAt - startedAt };
+                },
+                (error) => {
+                    const finishedAt = performance.now();
+                    return { error, startedAt, finishedAt, durationMs: finishedAt - startedAt };
+                },
+            );
+        pendingAssetLoads.set(assetIndex, promise);
+    };
+    for (let index = 0; index < Math.min(totalAssets, ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY); index += 1) {
+        scheduleAssetLoad(index);
+    }
+
     for (let assetIndex = 0; assetIndex < totalAssets; assetIndex++) {
         if (runOwner !== owner || input.abortSignal.aborted) break;
+        const loadPromise = pendingAssetLoads.get(assetIndex);
+        if (!loadPromise) break;
+        const loadedAsset = await loadPromise;
+        pendingAssetLoads.delete(assetIndex);
+        completedAssetLoadIntervals.push([loadedAsset.startedAt, loadedAsset.finishedAt]);
+        if (!isCancelled()) scheduleAssetLoad(assetIndex + ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY);
         const symbol = symbols[assetIndex]!;
         const assetStartedAt = performance.now();
-        let currentAssetLoadMs = 0;
+        const currentAssetLoadMs = loadedAsset.durationMs;
         snapshot.phase = "loading";
         snapshot.progressPercent = (assetIndex / totalAssets) * 100;
         snapshot.statusText = `Loading ${symbol} (${assetIndex + 1}/${totalAssets})...`;
@@ -1091,10 +1162,8 @@ export async function processFinderAssetOpportunityRun(
         let assetHadNoFreshEntry = false;
         const assetGrades = new Set<FinderAssetOpportunityResult["grade"]>();
         try {
-            const dataLoadStartedAt = performance.now();
-            const data = await input.loadDataset(symbol, input.interval, input.abortSignal);
-            currentAssetLoadMs = performance.now() - dataLoadStartedAt;
-            dataLoadingMs += currentAssetLoadMs;
+            if (loadedAsset.error) throw loadedAsset.error;
+            const data = loadedAsset.data ?? [];
             if (data.length === 0) {
                 throw new Error("no data");
             }
@@ -1285,6 +1354,7 @@ export async function processFinderAssetOpportunityRun(
         snapshot.assetResults = assetResults;
     }
 
+    dataLoadingMs = mergeTimingIntervals(completedAssetLoadIntervals);
     const sortedAssetResults = sortAssetOpportunityResults(assetResults);
     snapshot.assetResults = sortedAssetResults;
     snapshot.cancelled = runOwner !== owner || input.abortSignal.aborted;
@@ -1323,6 +1393,12 @@ export async function processFinderAssetOpportunityRun(
             avg: Math.round(loadedBarsSum / loadedBarsCount),
         }
         : { min: 0, max: 0, avg: 0 };
+    const loaderDiagnostics = assetLoadContext.diagnostics
+        ? {
+            ...assetLoadContext.diagnostics,
+            timingsMs: { ...assetLoadContext.diagnostics.timingsMs },
+        }
+        : undefined;
     const assetDiagnostics: FinderAssetOpportunityDiagnostics = {
         totalAssets,
         assetsWithFreshEntry,
@@ -1356,6 +1432,7 @@ export async function processFinderAssetOpportunityRun(
             yielding: roundDiagnosticMs(yieldingMs),
             other: roundDiagnosticMs(Math.max(0, totalDurationMs - measuredPhaseMs)),
         },
+        ...(loaderDiagnostics ? { loader: loaderDiagnostics } : {}),
         strategyBreakdown: [...strategyBreakdown.entries()]
             .map(([strategyKey, stats]) => ({
                 strategyKey,
@@ -1494,8 +1571,12 @@ async function handleAssetOpportunityRunRequest(
     // runner before applying options.dataSlice. Do not slice this loader;
     // slicing here would make an old candle look current for half/fifth
     // windows.
-    const loadDatasetFullClosed = (sym: string, intv: string, signal?: AbortSignal): Promise<OHLCVData[]> =>
-        loadServerFinderDataset(sym, intv, signal);
+    const loadDatasetFullClosed = (
+        sym: string,
+        intv: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context);
 
     let stream: ReturnType<typeof beginNdjsonStream> | null = null;
     let streamWritable = true;
@@ -1528,7 +1609,8 @@ async function handleAssetOpportunityRunRequest(
                 useRustEnginePreference,
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
-                loadSecondaryDataset: (sym, intv, signal) => loadServerFinderDataset(sym, intv, signal),
+                loadSecondaryDataset: (sym, intv, signal, context) =>
+                    loadServerFinderDataset(sym, intv, signal, context),
                 getProvider: (symbol) => resolveServerProvider(symbol, providerBySymbol),
                 candidatePoolSize,
                 minFreshSupport,

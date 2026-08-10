@@ -22,7 +22,12 @@ const STALE_FRAGMENT_MAX_THRESHOLD = 10_000;
 const STALE_FRAGMENT_MIN_THRESHOLD = 200;
 
 export interface BatchDatasetLoaderCore {
-    load(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]>;
+    load(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ): Promise<OHLCVData[]>;
     clearCaches(): void;
     /** Snapshot of in-memory + disk cache counters for benchmark diagnostics. */
     getCacheStats(): BatchDatasetCacheStats;
@@ -32,6 +37,66 @@ export interface BatchDatasetCacheStats {
     leg: { hits: number; misses: number; size: number; max: number };
     pair: { hits: number; misses: number; size: number; max: number };
     disk: { hits: number; misses: number; writes: number };
+}
+
+/** Per-run load counters used to split the Asset Opportunity data path. */
+export interface BatchDatasetLoadDiagnostics {
+    requests: number;
+    syntheticPairRequests: number;
+    pairCacheHits: number;
+    pairCacheMisses: number;
+    diskCacheHits: number;
+    diskCacheMisses: number;
+    legCacheHits: number;
+    legCacheMisses: number;
+    sourceLoads: number;
+    sourceBarsRequested: number;
+    sourceBarsLoaded: number;
+    pairBuilds: number;
+    diskCacheBypasses: number;
+    timingsMs: {
+        total: number;
+        fingerprint: number;
+        diskLookup: number;
+        sourceLoads: number;
+        pairBuild: number;
+        pairWrite: number;
+    };
+}
+
+/** Optional run-scoped state shared by concurrent dataset requests. */
+export interface BatchDatasetLoadContext {
+    /** Bounded external leg cache; useful when one run touches many pairs. */
+    legCache?: SyntheticLegCache<OHLCVData[]>;
+    /** Build synthetic pairs from the shared leg cache instead of disk I/O. */
+    preferInMemorySyntheticPairs?: boolean;
+    diagnostics?: BatchDatasetLoadDiagnostics;
+}
+
+export function createBatchDatasetLoadDiagnostics(): BatchDatasetLoadDiagnostics {
+    return {
+        requests: 0,
+        syntheticPairRequests: 0,
+        pairCacheHits: 0,
+        pairCacheMisses: 0,
+        diskCacheHits: 0,
+        diskCacheMisses: 0,
+        legCacheHits: 0,
+        legCacheMisses: 0,
+        sourceLoads: 0,
+        sourceBarsRequested: 0,
+        sourceBarsLoaded: 0,
+        pairBuilds: 0,
+        diskCacheBypasses: 0,
+        timingsMs: {
+            total: 0,
+            fingerprint: 0,
+            diskLookup: 0,
+            sourceLoads: 0,
+            pairBuild: 0,
+            pairWrite: 0,
+        },
+    };
 }
 
 /** Args passed to disk-cache hooks; mirror the in-memory pairCache key inputs. */
@@ -73,69 +138,82 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
     const pairCache = new SyntheticLegCache<OHLCVData[]>(pairCacheMaxEntries);
     const diskStats = { hits: 0, misses: 0, writes: 0 };
 
-    async function load(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
-        const synthParts = parseSyntheticPairToken(symbol);
-        const effectiveInterval = resolveEffectiveIntervalForSynthetic(
-            symbol,
-            synthParts?.baseSymbol ?? null,
-            synthParts?.quoteSymbol ?? null,
-            interval,
-        );
-        if (synthParts) {
-            return loadSyntheticPair(
-                synthParts.baseSymbol,
-                synthParts.quoteSymbol,
-                effectiveInterval,
-                signal,
+    async function load(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ): Promise<OHLCVData[]> {
+        const diagnostics = context?.diagnostics;
+        const startedAt = performance.now();
+        if (diagnostics) diagnostics.requests += 1;
+        try {
+            const synthParts = parseSyntheticPairToken(symbol);
+            const effectiveInterval = resolveEffectiveIntervalForSynthetic(
+                symbol,
+                synthParts?.baseSymbol ?? null,
+                synthParts?.quoteSymbol ?? null,
+                interval,
             );
-        }
-
-        // Mine/Stability load each synthetic leg again as a standalone target.
-        // Keep those targets on the same canonical source as the pair build:
-        // ratio pairs use 30m legs and 1h/2h target series are aggregated from
-        // those same 30m candles. Otherwise Batch succeeds while the miner
-        // asks for absent 1h/2h CSVs and reports zero target assets.
-        if (isIbkrSymbol(symbol) && (effectiveInterval === "1h" || effectiveInterval === "2h")) {
-            const source = await options.fetchHistorical(symbol, "30m", DATA_CHART_TOTAL_LIMIT, {
-                signal,
-                offline: true,
-            });
-            if (signal?.aborted) return [];
-            if (source.length > 0) {
-                return resampleOHLCV(source, effectiveInterval);
+            if (synthParts) {
+                return await loadSyntheticPair(
+                    synthParts.baseSymbol,
+                    synthParts.quoteSymbol,
+                    effectiveInterval,
+                    signal,
+                    context,
+                );
             }
-        }
 
-        const data = await options.fetchDetached(symbol, effectiveInterval, { signal, offline: true });
-        if (signal?.aborted) return [];
-        if (data.length === 0 && isIbkrSymbol(symbol)) {
-            throw new Error(
-                `No IBKR local candles found for ${symbol} ${effectiveInterval}. Batch uses the current chart interval; download that IBKR timeframe first or switch the chart interval to one that exists.`
-            );
-        }
-
-        const staleFragmentThreshold = resolveStaleFragmentBarThreshold(effectiveInterval);
-        if (data.length > 0 && data.length < staleFragmentThreshold) {
-            debugLogger.warn(`${options.logPrefix}.stale_fragment_refetch`, {
-                symbol, interval: effectiveInterval, cachedBars: data.length, threshold: staleFragmentThreshold,
-            });
-            const targetBars = DATA_CHART_TOTAL_LIMIT;
-            const offlineDeep = await options.fetchHistorical(symbol, effectiveInterval, targetBars, {
-                signal,
-                offline: true,
-            });
-            if (signal?.aborted) return [];
-            if (offlineDeep.length >= staleFragmentThreshold) {
-                return offlineDeep;
+            // Mine/Stability load each synthetic leg again as a standalone target.
+            // Keep those targets on the same canonical source as the pair build:
+            // ratio pairs use 30m legs and 1h/2h target series are aggregated from
+            // those same 30m candles. Otherwise Batch succeeds while the miner
+            // asks for absent 1h/2h CSVs and reports zero target assets.
+            if (isIbkrSymbol(symbol) && (effectiveInterval === "1h" || effectiveInterval === "2h")) {
+                const source = await options.fetchHistorical(symbol, "30m", DATA_CHART_TOTAL_LIMIT, {
+                    signal,
+                    offline: true,
+                });
+                if (signal?.aborted) return [];
+                if (source.length > 0) {
+                    return resampleOHLCV(source, effectiveInterval);
+                }
             }
-            const refetched = await options.fetchHistorical(symbol, effectiveInterval, targetBars, { signal });
-            if (signal?.aborted) return [];
-            return Math.max(refetched.length, offlineDeep.length) === refetched.length
-                ? refetched
-                : offlineDeep;
-        }
 
-        return data;
+            const data = await options.fetchDetached(symbol, effectiveInterval, { signal, offline: true });
+            if (signal?.aborted) return [];
+            if (data.length === 0 && isIbkrSymbol(symbol)) {
+                throw new Error(
+                    `No IBKR local candles found for ${symbol} ${effectiveInterval}. Batch uses the current chart interval; download that IBKR timeframe first or switch the chart interval to one that exists.`
+                );
+            }
+
+            const staleFragmentThreshold = resolveStaleFragmentBarThreshold(effectiveInterval);
+            if (data.length > 0 && data.length < staleFragmentThreshold) {
+                debugLogger.warn(`${options.logPrefix}.stale_fragment_refetch`, {
+                    symbol, interval: effectiveInterval, cachedBars: data.length, threshold: staleFragmentThreshold,
+                });
+                const targetBars = DATA_CHART_TOTAL_LIMIT;
+                const offlineDeep = await options.fetchHistorical(symbol, effectiveInterval, targetBars, {
+                    signal,
+                    offline: true,
+                });
+                if (signal?.aborted) return [];
+                if (offlineDeep.length >= staleFragmentThreshold) {
+                    return offlineDeep;
+                }
+                const refetched = await options.fetchHistorical(symbol, effectiveInterval, targetBars, { signal });
+                if (signal?.aborted) return [];
+                return Math.max(refetched.length, offlineDeep.length) === refetched.length
+                    ? refetched
+                    : offlineDeep;
+            }
+
+            return data;
+        } finally {
+            if (diagnostics) diagnostics.timingsMs.total += performance.now() - startedAt;
+        }
     }
 
     async function loadSyntheticPair(
@@ -143,8 +221,11 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         quoteSymbol: string,
         interval: string,
         signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
     ): Promise<OHLCVData[]> {
         if (signal?.aborted) return [];
+        const diagnostics = context?.diagnostics;
+        if (diagnostics) diagnostics.syntheticPairRequests += 1;
 
         const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
         const diamondLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
@@ -163,43 +244,60 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
 
         const cachedPair = pairCache.get(pairKey);
         if (cachedPair) {
+            if (diagnostics) diagnostics.pairCacheHits += 1;
             debugLogger.event(`${options.logPrefix}.synthetic_pair_cache_hit`, {
                 syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
             });
             return cachedPair;
         }
+        if (diagnostics) diagnostics.pairCacheMisses += 1;
 
         // Server-side disk cache (optional). Skipped in browser mode (no hook).
         // On hit, seed the in-memory pairCache so subsequent calls dedupe normally.
         const diskArgs: SyntheticPairDiskCacheArgs = {
             pairKey, syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
         };
-        const fingerprint = options.computeSyntheticPairFingerprint
-            ? await options.computeSyntheticPairFingerprint(diskArgs)
-            : undefined;
-        if (options.loadCachedSyntheticPair) {
-            try {
-                const cached = await options.loadCachedSyntheticPair(diskArgs, fingerprint);
-                if (cached) {
-                    diskStats.hits += 1;
-                    debugLogger.event(`${options.logPrefix}.synthetic_pair_disk_cache_hit`, {
-                        syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
+        const bypassDiskCache = context?.preferInMemorySyntheticPairs === true;
+        let fingerprint: string | null | undefined;
+        if (bypassDiskCache) {
+            if (diagnostics) diagnostics.diskCacheBypasses += 1;
+        } else {
+            const fingerprintStartedAt = performance.now();
+            fingerprint = options.computeSyntheticPairFingerprint
+                ? await options.computeSyntheticPairFingerprint(diskArgs)
+                : undefined;
+            if (diagnostics) diagnostics.timingsMs.fingerprint += performance.now() - fingerprintStartedAt;
+            if (options.loadCachedSyntheticPair) {
+                const diskLookupStartedAt = performance.now();
+                try {
+                    const cached = await options.loadCachedSyntheticPair(diskArgs, fingerprint);
+                    if (cached) {
+                        diskStats.hits += 1;
+                        if (diagnostics) diagnostics.diskCacheHits += 1;
+                        debugLogger.event(`${options.logPrefix}.synthetic_pair_disk_cache_hit`, {
+                            syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
+                        });
+                        const diskPromise = Promise.resolve(cached.bars);
+                        pairCache.set(pairKey, diskPromise);
+                        return await diskPromise;
+                    }
+                    diskStats.misses += 1;
+                    if (diagnostics) diagnostics.diskCacheMisses += 1;
+                } catch (error) {
+                    debugLogger.warn(`${options.logPrefix}.synthetic_pair_disk_cache_read_failed`, {
+                        syntheticSymbol, error: error instanceof Error ? error.message : String(error),
                     });
-                    const diskPromise = Promise.resolve(cached.bars);
-                    pairCache.set(pairKey, diskPromise);
-                    return diskPromise;
+                    diskStats.misses += 1;
+                    if (diagnostics) diagnostics.diskCacheMisses += 1;
+                } finally {
+                    if (diagnostics) diagnostics.timingsMs.diskLookup += performance.now() - diskLookupStartedAt;
                 }
-                diskStats.misses += 1;
-            } catch (error) {
-                debugLogger.warn(`${options.logPrefix}.synthetic_pair_disk_cache_read_failed`, {
-                    syntheticSymbol, error: error instanceof Error ? error.message : String(error),
-                });
-                diskStats.misses += 1;
             }
         }
 
         const promise = (async (): Promise<OHLCVData[]> => {
             if (signal?.aborted) return [];
+            const pairBuildStartedAt = performance.now();
             const result = await buildSyntheticPairFromLegs({
                 baseSymbol,
                 quoteSymbol,
@@ -211,13 +309,18 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                 // other callers, but use the normalized pair hot path here.
                 assumeNormalizedLegs: true,
                 fetchLeg: (legSymbol, legInterval, legBars) =>
-                    getSourceSeries(legSymbol, legInterval, legBars, signal),
+                    getSourceSeries(legSymbol, legInterval, legBars, signal, context),
             });
+            if (diagnostics) {
+                diagnostics.pairBuilds += 1;
+                diagnostics.timingsMs.pairBuild += performance.now() - pairBuildStartedAt;
+            }
             if (signal?.aborted) return [];
             // Write to disk cache (fire-and-forget; failures logged, never thrown).
             // Done here inside the producer so the write happens once per true miss,
             // not on every consumer awaiting the same deduped promise.
-            if (options.storeSyntheticPair && result.bars.length > 0) {
+            if (!bypassDiskCache && options.storeSyntheticPair && result.bars.length > 0) {
+                const pairWriteStartedAt = performance.now();
                 try {
                     if (await options.storeSyntheticPair(diskArgs, result.bars, fingerprint)) {
                         diskStats.writes += 1;
@@ -227,6 +330,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                         syntheticSymbol, error: error instanceof Error ? error.message : String(error),
                     });
                 }
+                if (diagnostics) diagnostics.timingsMs.pairWrite += performance.now() - pairWriteStartedAt;
             }
             return result.bars;
         })();
@@ -239,21 +343,38 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         sourceInterval: string,
         sourceBars: number,
         signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
     ): Promise<OHLCVData[]> {
         const legKey = buildLegCacheKey(sourceSymbol, sourceInterval, sourceBars);
-        const cached = legCache.get(legKey);
+        const activeLegCache = context?.legCache ?? legCache;
+        const diagnostics = context?.diagnostics;
+        const cached = activeLegCache.get(legKey);
         if (cached) {
+            if (diagnostics) diagnostics.legCacheHits += 1;
             debugLogger.event(`${options.logPrefix}.synthetic_leg_cache_hit`, { sourceSymbol, sourceInterval, sourceBars });
             return cached;
         }
+        if (diagnostics) diagnostics.legCacheMisses += 1;
 
         const markedLeg = isMarkedLocalStockSymbol(sourceSymbol);
         const minHealthyLegBars = Math.max(1_000, Math.floor(sourceBars * 0.25));
-        const fetchLeg = (offline: boolean): Promise<OHLCVData[]> =>
-            options.fetchHistorical(sourceSymbol, sourceInterval, sourceBars, {
+        const fetchLeg = (offline: boolean): Promise<OHLCVData[]> => {
+            if (diagnostics) {
+                diagnostics.sourceLoads += 1;
+                diagnostics.sourceBarsRequested += sourceBars;
+            }
+            const sourceStartedAt = performance.now();
+            return options.fetchHistorical(sourceSymbol, sourceInterval, sourceBars, {
                 signal,
                 ...(offline ? { offline: true } : {}),
+            }).then((data) => {
+                if (diagnostics) {
+                    diagnostics.sourceBarsLoaded += data.length;
+                    diagnostics.timingsMs.sourceLoads += performance.now() - sourceStartedAt;
+                }
+                return data;
             });
+        };
         const promise = markedLeg
             ? fetchLeg(true)
             : fetchLeg(true).then((data) =>
@@ -267,7 +388,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                             }),
                             fetchLeg(false)),
                 );
-        return cacheSuccessfulLoad(legCache, legKey, promise, signal);
+        return cacheSuccessfulLoad(activeLegCache, legKey, promise, signal);
     }
 
     return {

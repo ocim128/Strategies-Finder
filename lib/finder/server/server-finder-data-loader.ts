@@ -24,8 +24,11 @@ import { clearLocalDailyCsvCachesForSymbols } from "../../candle-cache";
 import type { OHLCVData } from "../../types/strategies";
 import {
     createBatchDatasetLoaderCore,
+    createBatchDatasetLoadDiagnostics,
     type BatchDatasetCacheStats,
+    type BatchDatasetLoadContext,
 } from "../../batch-backtest/batch-dataset-loader-core";
+import { SyntheticLegCache } from "../../batch-backtest/synthetic-leg-cache";
 import {
     createSeedFingerprintMemo,
     loadCachedSyntheticPair,
@@ -40,6 +43,9 @@ import { clearParsedIbkrCsvCache, loadFreshIbkrCandlesFromDisk } from "../../bat
 const serverDataFetcher = createServerDataFetcher();
 const fingerprintMemo = createSeedFingerprintMemo();
 const cacheBudget = resolveServerBatchCacheBudget();
+const ASSET_OPPORTUNITY_RUN_LEG_CACHE_MAX_ENTRIES = cacheBudget.legCacheMaxEntries >= 128
+    ? 512
+    : cacheBudget.legCacheMaxEntries;
 
 // The bounded-cache startup prune is triggered lazily by the disk-cache module
 // on the first write (see `storeSyntheticPair` → `maybePruneAfterWrite`), NOT at
@@ -92,8 +98,22 @@ export async function loadServerFinderDataset(
     symbol: string,
     interval: string,
     signal?: AbortSignal,
+    context?: BatchDatasetLoadContext,
 ): Promise<OHLCVData[]> {
-    return loader.load(symbol, interval, signal);
+    return loader.load(symbol, interval, signal, context);
+}
+
+/**
+ * Create bounded state for one Asset Opportunity run. The regular loader LRU
+ * is intentionally small for long-lived server usage; a single 1,000-pair run
+ * can safely retain the full unique IBKR leg set on high-memory machines.
+ */
+export function createServerFinderAssetOpportunityLoadContext(): BatchDatasetLoadContext {
+    return {
+        legCache: new SyntheticLegCache(ASSET_OPPORTUNITY_RUN_LEG_CACHE_MAX_ENTRIES),
+        preferInMemorySyntheticPairs: true,
+        diagnostics: createBatchDatasetLoadDiagnostics(),
+    };
 }
 
 export function clearServerFinderDatasetCaches(): void {
