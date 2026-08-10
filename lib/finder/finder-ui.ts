@@ -343,6 +343,9 @@ export class FinderUI {
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics finder-asset-metrics";
             const selection = item.selectionResult;
+            if (item.freshSignalLibraryCount !== undefined) {
+                metrics.appendChild(this.createMetricChip(`Signals ${item.freshSignalLibraryCount}`));
+            }
             metrics.appendChild(this.createMetricChip(`Rank ${item.historicalRank}/${item.totalCandidatesEvaluated}`));
             metrics.appendChild(this.createMetricChip(`Support ${item.support.freshSameDirection}/${item.support.poolSize}`));
             metrics.appendChild(this.createMetricChip(`Agree ${(item.support.directionAgreementRatio * 100).toFixed(0)}%`));

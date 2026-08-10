@@ -45,7 +45,9 @@ import {
 	sortAssetOpportunityResults,
 	sortAssetOpportunityResultsByMetric,
 	getAssetOpportunityResortMetrics,
+	FRESH_SIGNAL_LIBRARIES_METRIC,
 	retainAssetOpportunityResultsForSymbols,
+	type FinderAssetOpportunityResortMetric,
 } from "./finder/finder-asset-opportunity-metrics";
 import {
 	compactFinderLatestResults,
@@ -3279,7 +3281,12 @@ export class FinderManager {
 			}
 		} else if (scope === 'asset_opportunity') {
 			for (const metric of getAssetOpportunityResortMetrics()) {
-				options.push({ value: metric, label: METRIC_FULL_LABELS[metric] });
+				options.push({
+					value: metric,
+					label: metric === FRESH_SIGNAL_LIBRARIES_METRIC
+						? "Fresh Signals (Libraries)"
+						: METRIC_FULL_LABELS[metric],
+				});
 			}
 		} else if (scope === 'strategy_quality') {
 			for (const metric of STRATEGY_QUALITY_SORT_OPTIONS) {
@@ -3338,11 +3345,21 @@ export class FinderManager {
 			const sorted = sortFinderUniverseCandidates(results, [metric as FinderUniverseMetric]);
 			this.setLatestResults({ scope: 'symbol_universe', results: sorted });
 		} else if (scope === 'asset_opportunity') {
-			const results = this.assetOpportunityRunResults.length > 0
-				? this.assetOpportunityRunResults
-				: this.latestResults.results;
-			const sorted = sortAssetOpportunityResultsByMetric(results, metric as FinderMetric);
-			this.assetOpportunityRunResults = sorted;
+			const results = metric === FRESH_SIGNAL_LIBRARIES_METRIC && this.assetOpportunityDefaultResults.length > 0
+				? this.assetOpportunityDefaultResults
+				: this.assetOpportunityRunResults.length > 0
+					? this.assetOpportunityRunResults
+					: this.latestResults.results;
+			const sorted = sortAssetOpportunityResultsByMetric(
+				results,
+				metric as FinderAssetOpportunityResortMetric,
+			);
+			// Consensus mode returns one representative row per symbol. Keep the
+			// full strategy-level result set intact so another re-sort can still
+			// inspect every strategy row.
+			if (metric !== FRESH_SIGNAL_LIBRARIES_METRIC) {
+				this.assetOpportunityRunResults = sorted;
+			}
 			this.setLatestResults({
 				scope: 'asset_opportunity',
 				results: sorted.slice(0, Math.max(1, this.uiState.topN)),

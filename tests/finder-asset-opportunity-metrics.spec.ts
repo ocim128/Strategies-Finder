@@ -349,5 +349,27 @@ describe("Asset Opportunity post-run re-sort", () => {
         expect(metrics).to.include("expectancy");
         expect(metrics).to.include("profitFactor");
         expect(metrics).to.include("totalTrades");
+        expect(metrics).to.include("freshSignalLibraries");
+    });
+
+    it("groups the consensus resort by symbol and counts each strategy library once", () => {
+        const makeConsensusResult = (symbol: string, strategyKey: string): FinderAssetOpportunityResult => ({
+            ...makeResortResult({ symbol }),
+            strategyKey,
+        });
+        const sorted = sortAssetOpportunityResultsByMetric([
+            makeConsensusResult("AAPL•+NVDA•", "strategy_a"),
+            makeConsensusResult("AAPL•+NVDA•", "strategy_a"),
+            makeConsensusResult("AAPL•+NVDA•", "strategy_b"),
+            makeConsensusResult("MSFT•+AMD•", "strategy_a"),
+            makeConsensusResult("MSFT•+AMD•", "strategy_b"),
+            makeConsensusResult("MSFT•+AMD•", "strategy_c"),
+        ], "freshSignalLibraries");
+
+        expect(sorted.map((result) => result.symbol)).to.deep.equal([
+            "MSFT•+AMD•",
+            "AAPL•+NVDA•",
+        ]);
+        expect(sorted.map((result) => result.freshSignalLibraryCount)).to.deep.equal([3, 2]);
     });
 });

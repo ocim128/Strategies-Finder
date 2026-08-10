@@ -223,11 +223,14 @@ export function sortAssetOpportunityResults(results: FinderAssetOpportunityResul
 }
 
 /**
- * Metrics the post-run re-sort can rank Asset Opportunity results by. These
- * map directly to scalar fields on `selectionResult: BacktestResult` and are
- * always populated for every retained result.
+ * Metrics the post-run re-sort can rank Asset Opportunity results by. Most
+ * map directly to scalar fields on `selectionResult: BacktestResult`; the
+ * consensus metric is derived across strategy-level rows for each symbol.
  */
-const ASSET_RESORT_METRICS: readonly FinderMetric[] = [
+export const FRESH_SIGNAL_LIBRARIES_METRIC = "freshSignalLibraries" as const;
+export type FinderAssetOpportunityResortMetric = FinderMetric | typeof FRESH_SIGNAL_LIBRARIES_METRIC;
+
+const ASSET_RESORT_METRICS: readonly FinderAssetOpportunityResortMetric[] = [
     "expectancy",
     "netProfit",
     "netProfitPercent",
@@ -237,10 +240,27 @@ const ASSET_RESORT_METRICS: readonly FinderMetric[] = [
     "maxDrawdownPercent",
     "averageGain",
     "totalTrades",
+    FRESH_SIGNAL_LIBRARIES_METRIC,
 ];
 
-export function getAssetOpportunityResortMetrics(): readonly FinderMetric[] {
+export function getAssetOpportunityResortMetrics(): readonly FinderAssetOpportunityResortMetric[] {
     return ASSET_RESORT_METRICS;
+}
+
+function getFreshSignalLibraryCounts(
+    results: readonly FinderAssetOpportunityResult[],
+): Map<string, number> {
+    const librariesBySymbol = new Map<string, Set<string>>();
+    for (const result of results) {
+        if (result.freshStatus !== "fresh") continue;
+        const symbol = result.symbol.trim().toUpperCase();
+        const strategyKey = result.strategyKey.trim();
+        if (!symbol || !strategyKey) continue;
+        const libraries = librariesBySymbol.get(symbol) ?? new Set<string>();
+        libraries.add(strategyKey);
+        librariesBySymbol.set(symbol, libraries);
+    }
+    return new Map([...librariesBySymbol.entries()].map(([symbol, libraries]) => [symbol, libraries.size]));
 }
 
 /**
@@ -277,10 +297,35 @@ function getAssetOpportunityMetricValue(
  */
 export function sortAssetOpportunityResultsByMetric(
     results: readonly FinderAssetOpportunityResult[],
-    metric: FinderMetric | null,
+    metric: FinderAssetOpportunityResortMetric | null,
 ): FinderAssetOpportunityResult[] {
     if (metric === null) {
         return sortAssetOpportunityResults([...results]);
+    }
+    if (metric === FRESH_SIGNAL_LIBRARIES_METRIC) {
+        const counts = getFreshSignalLibraryCounts(results);
+        const representatives = new Map<string, FinderAssetOpportunityResult>();
+        for (const result of results) {
+            const symbol = result.symbol.trim().toUpperCase();
+            if (!symbol) continue;
+            const current = representatives.get(symbol);
+            if (!current || compareAssetOpportunityResults(result, current) < 0) {
+                representatives.set(symbol, result);
+            }
+        }
+        return [...representatives.values()]
+            .map((result) => ({
+                ...result,
+                freshSignalLibraryCount: counts.get(result.symbol.trim().toUpperCase()) ?? 0,
+            }))
+            .sort((a, b) => {
+                const countA = a.freshSignalLibraryCount ?? 0;
+                const countB = b.freshSignalLibraryCount ?? 0;
+                if (countA !== countB) return countB - countA;
+                const comparison = compareAssetOpportunityResults(a, b);
+                if (comparison !== 0) return comparison;
+                return a.symbol.localeCompare(b.symbol);
+            });
     }
     const ascending = metric === "maxDrawdownPercent";
     return [...results].sort((a, b) => {

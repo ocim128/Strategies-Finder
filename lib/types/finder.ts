@@ -422,6 +422,8 @@ export interface FinderAssetOpportunityResult {
     oosVerdict?: FinderOosVerdict;
     /** Fixed-horizon forward PnL measured inside the reserved OOS holdout. */
     oosHorizonMetrics?: import('../finder/finder-asset-opportunity-oos').FinderAssetOosMetrics;
+    /** Distinct selected strategy libraries with a fresh entry for this symbol. */
+    freshSignalLibraryCount?: number;
     support: FinderAssetSupportCounts;
     grade: FinderAssetDecisionGrade;
 }
