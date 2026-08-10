@@ -356,4 +356,52 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "median_deviation_fade_chop",
+        name: "Median Deviation Fade Chop",
+        description: "Fades closes deviating more than 1.5 standard deviations from the rolling central value, catching chop-range edges that revert to center.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "short_return_streak_fade_chop",
+        name: "Short Return Streak Fade Chop",
+        description: "Fades 3-bar same-sign return streaks, tuned for choppy markets where directional moves exhaust faster than the 5-bar threshold.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: [],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "short_term_overextension_fade",
+        name: "Short Term Overextension Fade",
+        description: "Fades 5-bar average moves more than 1.2 standard deviations from the rolling average, reverting short-term overshoot of the medium-term center.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "open_location_zscore_reversion",
+        name: "Open Location Z-Score Reversion",
+        description: "Fades extreme open locations within the prior bar's range when the close reverses across the current bar's midpoint, catching failed breakouts.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];

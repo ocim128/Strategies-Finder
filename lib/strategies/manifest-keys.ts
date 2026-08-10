@@ -31,4 +31,8 @@ export const builtInStrategyKeys: readonly string[] = [
     "zero_lag_ema_confirmation",
     "body_direction_placement_coherence",
     "nested_bar_oscillation_fade",
+    "median_deviation_fade_chop",
+    "short_return_streak_fade_chop",
+    "short_term_overextension_fade",
+    "open_location_zscore_reversion",
 ];

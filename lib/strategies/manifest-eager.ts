@@ -32,6 +32,10 @@ import { wilder_ma_confirmation } from "./lib/wilder_ma_confirmation";
 import { zero_lag_ema_confirmation } from "./lib/zero_lag_ema_confirmation";
 import { body_direction_placement_coherence } from "./lib/body_direction_placement_coherence";
 import { nested_bar_oscillation_fade } from "./lib/nested_bar_oscillation_fade";
+import { median_deviation_fade_chop } from "./lib/median_deviation_fade_chop";
+import { short_return_streak_fade_chop } from "./lib/short_return_streak_fade_chop";
+import { short_term_overextension_fade } from "./lib/short_term_overextension_fade";
+import { open_location_zscore_reversion } from "./lib/open_location_zscore_reversion";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -69,6 +73,10 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "zero_lag_ema_confirmation", strategy: zero_lag_ema_confirmation },
     { key: "body_direction_placement_coherence", strategy: body_direction_placement_coherence },
     { key: "nested_bar_oscillation_fade", strategy: nested_bar_oscillation_fade },
+    { key: "median_deviation_fade_chop", strategy: median_deviation_fade_chop },
+    { key: "short_return_streak_fade_chop", strategy: short_return_streak_fade_chop },
+    { key: "short_term_overextension_fade", strategy: short_term_overextension_fade },
+    { key: "open_location_zscore_reversion", strategy: open_location_zscore_reversion },
 ];
 
 export function createStrategiesRecordFromManifest(

@@ -39,4 +39,8 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     builtInStrategyMetaByKey["zero_lag_ema_confirmation"],
     builtInStrategyMetaByKey["body_direction_placement_coherence"],
     builtInStrategyMetaByKey["nested_bar_oscillation_fade"],
+    builtInStrategyMetaByKey["median_deviation_fade_chop"],
+    builtInStrategyMetaByKey["short_return_streak_fade_chop"],
+    builtInStrategyMetaByKey["short_term_overextension_fade"],
+    builtInStrategyMetaByKey["open_location_zscore_reversion"],
 ];

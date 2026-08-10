@@ -33,4 +33,8 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "zero_lag_ema_confirmation": () => import("./lib/zero_lag_ema_confirmation").then(m => m.zero_lag_ema_confirmation),
     "body_direction_placement_coherence": () => import("./lib/body_direction_placement_coherence").then(m => m.body_direction_placement_coherence),
     "nested_bar_oscillation_fade": () => import("./lib/nested_bar_oscillation_fade").then(m => m.nested_bar_oscillation_fade),
+    "median_deviation_fade_chop": () => import("./lib/median_deviation_fade_chop").then(m => m.median_deviation_fade_chop),
+    "short_return_streak_fade_chop": () => import("./lib/short_return_streak_fade_chop").then(m => m.short_return_streak_fade_chop),
+    "short_term_overextension_fade": () => import("./lib/short_term_overextension_fade").then(m => m.short_term_overextension_fade),
+    "open_location_zscore_reversion": () => import("./lib/open_location_zscore_reversion").then(m => m.open_location_zscore_reversion),
 };
