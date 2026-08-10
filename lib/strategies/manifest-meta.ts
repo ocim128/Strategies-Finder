@@ -2578,4 +2578,904 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "body_drift_close_divergence_reversion",
+        name: "Body Drift Close Divergence Reversion",
+        description: "Reverses when the wick-robust body-mid drift disagrees with the close-to-close return at extreme percentile levels.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "gap_absorption_reversion",
+        name: "Gap Absorption Reversion",
+        description: "Fades extreme percentile gaps that are reclaimed back inside the prior bar's range on the same bar.",
+        defaultParams: {
+        gapLookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        gapLookback: "Gap Percentile Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["gapLookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "gap_momentum_ignition",
+        name: "Gap Momentum Ignition",
+        description: "Follows accelerating gap opens as directional initiation when the gap rate of change is at an extreme percentile.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "placement_channel_compression_release",
+        name: "Placement Channel Compression Release",
+        description: "Follows the first close-location break of a compressed prior-only placement channel as the placement regime releases.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "placement_skew_alignment",
+        name: "Placement Skew Alignment",
+        description: "Aligns with the dominant intra-bar close placement when the rolling skewness of close location is extreme.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "robust_return_dislocation_reversion",
+        name: "Robust Return Dislocation Reversion",
+        description: "Fades MAD-robust return dislocations that close back inside their own bar against the extreme move.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "sigma_excursion_ignition",
+        name: "Sigma Excursion Ignition",
+        description: "Follows the first fresh crossing of a fixed return z-score band after a quiet stretch of few band excursions.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_placement_correlation_alignment",
+        name: "Volume Placement Correlation Alignment",
+        description: "Aligns with the side where heavy proxy-volume bars close when close location and volume percentile correlate strongly.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_proxy_robust_z_exhaustion",
+        name: "Volume Proxy Robust Z Exhaustion",
+        description: "Fades extreme MAD-robust volume-proxy spikes that close against their own bar direction.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "wick_imbalance_skew_continuation",
+        name: "Wick Imbalance Skew Continuation",
+        description: "Continues the routine rejection side identified by extreme skewness of the wick-imbalance distribution.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "body_mid_drift_streak_continuation",
+        name: "Body Mid Drift Streak Continuation",
+        description: "Follows consecutive bars whose wick-robust body midpoints drift the same way as a persistent directional state.",
+        defaultParams: {
+        streakReq: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        streakReq: "Min Drift Streak",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["streakReq"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "channel_pierce_reclaim_fade",
+        name: "Channel Pierce Reclaim Fade",
+        description: "Fades bars that pierce the prior-only trailing channel edge but close back inside the channel.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "consecutive_placement_commitment",
+        name: "Consecutive Placement Commitment",
+        description: "Follows two consecutive bars closing in the same extreme band of their own ranges as a committed placement regime.",
+        defaultParams: {
+        placementBand: 0.75,
+    } as Record<string, number>,
+        paramLabels: {
+        placementBand: "Placement Band",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["placementBand"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "doji_resolution_continuation",
+        name: "Doji Resolution Continuation",
+        description: "Follows the first high-conviction bar that resolves a prior indecision doji.",
+        defaultParams: {
+        dojiThreshold: 0.15,
+    } as Record<string, number>,
+        paramLabels: {
+        dojiThreshold: "Doji Body Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["dojiThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "intrabar_move_share_durability",
+        name: "Intrabar Move Share Durability",
+        description: "Follows bars whose move was made by the body rather than the open gap, on the thesis that body-made moves persist.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "marubozu_dominance_continuation",
+        name: "Marubozu Dominance Continuation",
+        description: "Follows extreme body-share bars as one-sided control that tends to persist.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "open_location_persistence_alignment",
+        name: "Open Location Persistence Alignment",
+        description: "Aligns with sustained demand or supply when the rolling median open location and the current close location agree.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "participation_surge_after_quiet",
+        name: "Participation Surge After Quiet",
+        description: "Follows the directional bar that takes proxy volume from a quiet percentile straight to an active percentile.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "recovery_bar_after_weak_close",
+        name: "Recovery Bar After Weak Close",
+        description: "Follows a strong opposite-placement bar that recovers immediately after a percentile-extreme weak close.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "streak_break_regime_change",
+        name: "Streak Break Regime Change",
+        description: "Follows the first counter-direction close that breaks a long same-direction close streak as a regime change.",
+        defaultParams: {
+        streakReq: 5,
+    } as Record<string, number>,
+        paramLabels: {
+        streakReq: "Min Prior Streak",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["streakReq"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "acceptance_conviction_gate",
+        name: "Acceptance Conviction Gate",
+        description: "Follows bars whose close acceptance exceeds a magic threshold as conviction bars.",
+        defaultParams: {
+        convictionThreshold: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        convictionThreshold: "Conviction Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["convictionThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "bar_conversion_efficiency_gate",
+        name: "Bar Conversion Efficiency Gate",
+        description: "Follows bars whose net close-to-close move consumes a magic share of their own range as real work.",
+        defaultParams: {
+        conversionThreshold: 0.6,
+    } as Record<string, number>,
+        paramLabels: {
+        conversionThreshold: "Conversion Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["conversionThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "body_direction_placement_coherence",
+        name: "Body Direction Placement Coherence",
+        description: "Follows the current bar's direction when the rolling correlation between body direction and close placement exceeds a magic threshold.",
+        defaultParams: {
+        coherenceThreshold: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        coherenceThreshold: "Coherence Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["coherenceThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "body_mid_thrust_gate",
+        name: "Body Mid Thrust Gate",
+        description: "Follows wick-robust body-mid displacements beyond a magic fraction of the average range as thrusts.",
+        defaultParams: {
+        thrustThreshold: 0.3,
+    } as Record<string, number>,
+        paramLabels: {
+        thrustThreshold: "Thrust Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["thrustThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "clean_directional_bar",
+        name: "Clean Directional Bar",
+        description: "Follows directional bars whose losing-side wick stays within a magic share of the range, marking unopposed moves.",
+        defaultParams: {
+        wickShareThreshold: 0.25,
+    } as Record<string, number>,
+        paramLabels: {
+        wickShareThreshold: "Wick Share Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["wickShareThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "full_range_flip_bar",
+        name: "Full Range Flip Bar",
+        description: "Follows bars that open near one extreme of their range and close beyond the magic band on the opposite side.",
+        defaultParams: {
+        flipBand: 0.8,
+    } as Record<string, number>,
+        paramLabels: {
+        flipBand: "Flip Band",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["flipBand"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "gap_repricing_threshold",
+        name: "Gap Repricing Threshold",
+        description: "Follows opens that reprice beyond a magic return threshold as information events.",
+        defaultParams: {
+        gapThreshold: 0.02,
+    } as Record<string, number>,
+        paramLabels: {
+        gapThreshold: "Gap Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["gapThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "hard_rejection_wick_gate",
+        name: "Hard Rejection Wick Gate",
+        description: "Follows bars whose wick imbalance exceeds a magic threshold as hard single-side rejection events.",
+        defaultParams: {
+        rejectionThreshold: 0.5,
+    } as Record<string, number>,
+        paramLabels: {
+        rejectionThreshold: "Rejection Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["rejectionThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "return_autocorrelation_regime_gate",
+        name: "Return Autocorrelation Regime Gate",
+        description: "Routes between continuation and reversion using a magic threshold on rolling return autocorrelation.",
+        defaultParams: {
+        acThreshold: 0.3,
+    } as Record<string, number>,
+        paramLabels: {
+        acThreshold: "Autocorrelation Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["acThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "return_entropy_structure_gate",
+        name: "Return Entropy Structure Gate",
+        description: "Follows close placement direction when rolling return entropy is below a magic threshold marking a structured regime.",
+        defaultParams: {
+        entropyThreshold: 1.3,
+    } as Record<string, number>,
+        paramLabels: {
+        entropyThreshold: "Entropy Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["entropyThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "calm_regime_persistence",
+        name: "Calm Regime Persistence",
+        description: "Trades the mild drift of close placement while return volatility sits at a low percentile.",
+        defaultParams: {
+        calmPercentile: 0.2,
+    } as Record<string, number>,
+        paramLabels: {
+        calmPercentile: "Calm Vol Percentile",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["calmPercentile"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "long_band_coil_reversion",
+        name: "Long Band Coil Reversion",
+        description: "Fades placement extremes back to center when the prior-only trailing band is coiled at an extreme tightness percentile.",
+        defaultParams: {
+        bandLookback: 120,
+    } as Record<string, number>,
+        paramLabels: {
+        bandLookback: "Band Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["bandLookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "long_lag_return_echo",
+        name: "Long Lag Return Echo",
+        description: "Follows returns that repeat their own sign at a long fixed lag, treating the echo as periodic structure.",
+        defaultParams: {
+        acThreshold: 0.25,
+    } as Record<string, number>,
+        paramLabels: {
+        acThreshold: "Echo Autocorrelation Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["acThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "long_skew_negative_drift",
+        name: "Long Skew Drift Fade",
+        description: "Fades placement extremes according to the long-window skew regime of the return distribution.",
+        defaultParams: {
+        skewLookback: 150,
+    } as Record<string, number>,
+        paramLabels: {
+        skewLookback: "Skew Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["skewLookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "long_window_efficiency_gate",
+        name: "Long Window Efficiency Gate",
+        description: "Follows the direction of long-window net change when Kaufman efficiency stays above a magic threshold.",
+        defaultParams: {
+        efficiencyThreshold: 0.4,
+    } as Record<string, number>,
+        paramLabels: {
+        efficiencyThreshold: "Efficiency Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["efficiencyThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "majority_occupation_momentum",
+        name: "Majority Occupation Momentum",
+        description: "Follows the side on which most recent bars closed relative to the rolling median.",
+        defaultParams: {
+        lookback: 60,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "participation_persistence_flow",
+        name: "Participation Persistence Flow",
+        description: "Trades close placement direction when a sustained majority of recent bars show above-median proxy volume.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "placement_orderliness_follow",
+        name: "Placement Orderliness Follow",
+        description: "Follows the dominant placement side when close-location volatility sits at a low percentile.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "slow_anchor_ratio_reversion",
+        name: "Slow Anchor Ratio Reversion",
+        description: "Fades extreme close percentiles against a very long equilibrium anchor window.",
+        defaultParams: {
+        anchorLookback: 200,
+    } as Record<string, number>,
+        paramLabels: {
+        anchorLookback: "Anchor Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["anchorLookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "slow_drift_alignment",
+        name: "Slow Drift Alignment",
+        description: "Aligns with a long-window close drift at an extreme percentile, confirmed by same-bar body direction.",
+        defaultParams: {
+        driftLookback: 100,
+    } as Record<string, number>,
+        paramLabels: {
+        driftLookback: "Drift Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["driftLookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "body_flip_whipsaw_fade",
+        name: "Body Flip Whipsaw Fade",
+        description: "Fades placement extremes when body direction flips so often the market is clearly whipsawing.",
+        defaultParams: {
+        flipCountMin: 10,
+    } as Record<string, number>,
+        paramLabels: {
+        flipCountMin: "Min Direction Flips",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["flipCountMin"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "compressed_bar_placement_fade",
+        name: "Compressed Bar Placement Fade",
+        description: "Fades edge placement on compressed-range bars as moves made without room to continue.",
+        defaultParams: {
+        chopRangePercentile: 0.5,
+    } as Record<string, number>,
+        paramLabels: {
+        chopRangePercentile: "Compressed Range Percentile",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["chopRangePercentile"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "doji_density_chop_fade",
+        name: "Doji Density Chop Fade",
+        description: "Fades placement edges when most recent bars are dojis, marking an undecided oscillating regime.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "low_conviction_drift_fade",
+        name: "Low Conviction Drift Fade",
+        description: "Fades directional streaks built entirely from small, convictionless bodies.",
+        defaultParams: {
+        streakReq: 4,
+    } as Record<string, number>,
+        paramLabels: {
+        streakReq: "Min Small-Body Streak",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["streakReq"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "nested_bar_oscillation_fade",
+        name: "Nested Bar Oscillation Fade",
+        description: "Fades the edge of a bar fully nested inside the previous bar while the market coils at a low range percentile.",
+        defaultParams: {
+        rangePctThreshold: 0.5,
+    } as Record<string, number>,
+        paramLabels: {
+        rangePctThreshold: "Coil Range Percentile",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["rangePctThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "quiet_volume_move_fade",
+        name: "Quiet Volume Move Fade",
+        description: "Fades return z-score extremes only when participation is quiet, keeping the fade out of high-effort trends.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "return_window_extreme_fade",
+        name: "Return Window Extreme Fade",
+        description: "Fades returns that set a fresh window minimum or maximum in an oscillating market.",
+        defaultParams: {
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "symmetric_placement_fade",
+        name: "Symmetric Placement Fade",
+        description: "Fades placement edges when close-location skewness is near zero, marking a symmetric oscillating market.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "trailing_band_edge_fade",
+        name: "Trailing Band Edge Fade",
+        description: "Fades closes that touch the prior-only trailing band edge while the bar also closes at its own edge.",
+        defaultParams: {
+        bandLookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        bandLookback: "Band Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["bandLookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "trendless_expansion_fade",
+        name: "Trendless Expansion Fade",
+        description: "Fades high-range-percentile bars when efficiency is low, treating the expansion as chop climax rather than ignition.",
+        defaultParams: {
+        chopEfficiency: 0.3,
+    } as Record<string, number>,
+        paramLabels: {
+        chopEfficiency: "Chop Efficiency Ceiling",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["chopEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];

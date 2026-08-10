@@ -132,6 +132,56 @@ import { typical_price_ema_confirmation } from "./lib/typical_price_ema_confirma
 import { volume_weighted_median_confirmation } from "./lib/volume_weighted_median_confirmation";
 import { wilder_ma_confirmation } from "./lib/wilder_ma_confirmation";
 import { zero_lag_ema_confirmation } from "./lib/zero_lag_ema_confirmation";
+import { body_drift_close_divergence_reversion } from "./lib/body_drift_close_divergence_reversion";
+import { gap_absorption_reversion } from "./lib/gap_absorption_reversion";
+import { gap_momentum_ignition } from "./lib/gap_momentum_ignition";
+import { placement_channel_compression_release } from "./lib/placement_channel_compression_release";
+import { placement_skew_alignment } from "./lib/placement_skew_alignment";
+import { robust_return_dislocation_reversion } from "./lib/robust_return_dislocation_reversion";
+import { sigma_excursion_ignition } from "./lib/sigma_excursion_ignition";
+import { volume_placement_correlation_alignment } from "./lib/volume_placement_correlation_alignment";
+import { volume_proxy_robust_z_exhaustion } from "./lib/volume_proxy_robust_z_exhaustion";
+import { wick_imbalance_skew_continuation } from "./lib/wick_imbalance_skew_continuation";
+import { body_mid_drift_streak_continuation } from "./lib/body_mid_drift_streak_continuation";
+import { channel_pierce_reclaim_fade } from "./lib/channel_pierce_reclaim_fade";
+import { consecutive_placement_commitment } from "./lib/consecutive_placement_commitment";
+import { doji_resolution_continuation } from "./lib/doji_resolution_continuation";
+import { intrabar_move_share_durability } from "./lib/intrabar_move_share_durability";
+import { marubozu_dominance_continuation } from "./lib/marubozu_dominance_continuation";
+import { open_location_persistence_alignment } from "./lib/open_location_persistence_alignment";
+import { participation_surge_after_quiet } from "./lib/participation_surge_after_quiet";
+import { recovery_bar_after_weak_close } from "./lib/recovery_bar_after_weak_close";
+import { streak_break_regime_change } from "./lib/streak_break_regime_change";
+import { acceptance_conviction_gate } from "./lib/acceptance_conviction_gate";
+import { bar_conversion_efficiency_gate } from "./lib/bar_conversion_efficiency_gate";
+import { body_direction_placement_coherence } from "./lib/body_direction_placement_coherence";
+import { body_mid_thrust_gate } from "./lib/body_mid_thrust_gate";
+import { clean_directional_bar } from "./lib/clean_directional_bar";
+import { full_range_flip_bar } from "./lib/full_range_flip_bar";
+import { gap_repricing_threshold } from "./lib/gap_repricing_threshold";
+import { hard_rejection_wick_gate } from "./lib/hard_rejection_wick_gate";
+import { return_autocorrelation_regime_gate } from "./lib/return_autocorrelation_regime_gate";
+import { return_entropy_structure_gate } from "./lib/return_entropy_structure_gate";
+import { calm_regime_persistence } from "./lib/calm_regime_persistence";
+import { long_band_coil_reversion } from "./lib/long_band_coil_reversion";
+import { long_lag_return_echo } from "./lib/long_lag_return_echo";
+import { long_skew_negative_drift } from "./lib/long_skew_negative_drift";
+import { long_window_efficiency_gate } from "./lib/long_window_efficiency_gate";
+import { majority_occupation_momentum } from "./lib/majority_occupation_momentum";
+import { participation_persistence_flow } from "./lib/participation_persistence_flow";
+import { placement_orderliness_follow } from "./lib/placement_orderliness_follow";
+import { slow_anchor_ratio_reversion } from "./lib/slow_anchor_ratio_reversion";
+import { slow_drift_alignment } from "./lib/slow_drift_alignment";
+import { body_flip_whipsaw_fade } from "./lib/body_flip_whipsaw_fade";
+import { compressed_bar_placement_fade } from "./lib/compressed_bar_placement_fade";
+import { doji_density_chop_fade } from "./lib/doji_density_chop_fade";
+import { low_conviction_drift_fade } from "./lib/low_conviction_drift_fade";
+import { nested_bar_oscillation_fade } from "./lib/nested_bar_oscillation_fade";
+import { quiet_volume_move_fade } from "./lib/quiet_volume_move_fade";
+import { return_window_extreme_fade } from "./lib/return_window_extreme_fade";
+import { symmetric_placement_fade } from "./lib/symmetric_placement_fade";
+import { trailing_band_edge_fade } from "./lib/trailing_band_edge_fade";
+import { trendless_expansion_fade } from "./lib/trendless_expansion_fade";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -269,6 +319,56 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "volume_weighted_median_confirmation", strategy: volume_weighted_median_confirmation },
     { key: "wilder_ma_confirmation", strategy: wilder_ma_confirmation },
     { key: "zero_lag_ema_confirmation", strategy: zero_lag_ema_confirmation },
+    { key: "body_drift_close_divergence_reversion", strategy: body_drift_close_divergence_reversion },
+    { key: "gap_absorption_reversion", strategy: gap_absorption_reversion },
+    { key: "gap_momentum_ignition", strategy: gap_momentum_ignition },
+    { key: "placement_channel_compression_release", strategy: placement_channel_compression_release },
+    { key: "placement_skew_alignment", strategy: placement_skew_alignment },
+    { key: "robust_return_dislocation_reversion", strategy: robust_return_dislocation_reversion },
+    { key: "sigma_excursion_ignition", strategy: sigma_excursion_ignition },
+    { key: "volume_placement_correlation_alignment", strategy: volume_placement_correlation_alignment },
+    { key: "volume_proxy_robust_z_exhaustion", strategy: volume_proxy_robust_z_exhaustion },
+    { key: "wick_imbalance_skew_continuation", strategy: wick_imbalance_skew_continuation },
+    { key: "body_mid_drift_streak_continuation", strategy: body_mid_drift_streak_continuation },
+    { key: "channel_pierce_reclaim_fade", strategy: channel_pierce_reclaim_fade },
+    { key: "consecutive_placement_commitment", strategy: consecutive_placement_commitment },
+    { key: "doji_resolution_continuation", strategy: doji_resolution_continuation },
+    { key: "intrabar_move_share_durability", strategy: intrabar_move_share_durability },
+    { key: "marubozu_dominance_continuation", strategy: marubozu_dominance_continuation },
+    { key: "open_location_persistence_alignment", strategy: open_location_persistence_alignment },
+    { key: "participation_surge_after_quiet", strategy: participation_surge_after_quiet },
+    { key: "recovery_bar_after_weak_close", strategy: recovery_bar_after_weak_close },
+    { key: "streak_break_regime_change", strategy: streak_break_regime_change },
+    { key: "acceptance_conviction_gate", strategy: acceptance_conviction_gate },
+    { key: "bar_conversion_efficiency_gate", strategy: bar_conversion_efficiency_gate },
+    { key: "body_direction_placement_coherence", strategy: body_direction_placement_coherence },
+    { key: "body_mid_thrust_gate", strategy: body_mid_thrust_gate },
+    { key: "clean_directional_bar", strategy: clean_directional_bar },
+    { key: "full_range_flip_bar", strategy: full_range_flip_bar },
+    { key: "gap_repricing_threshold", strategy: gap_repricing_threshold },
+    { key: "hard_rejection_wick_gate", strategy: hard_rejection_wick_gate },
+    { key: "return_autocorrelation_regime_gate", strategy: return_autocorrelation_regime_gate },
+    { key: "return_entropy_structure_gate", strategy: return_entropy_structure_gate },
+    { key: "calm_regime_persistence", strategy: calm_regime_persistence },
+    { key: "long_band_coil_reversion", strategy: long_band_coil_reversion },
+    { key: "long_lag_return_echo", strategy: long_lag_return_echo },
+    { key: "long_skew_negative_drift", strategy: long_skew_negative_drift },
+    { key: "long_window_efficiency_gate", strategy: long_window_efficiency_gate },
+    { key: "majority_occupation_momentum", strategy: majority_occupation_momentum },
+    { key: "participation_persistence_flow", strategy: participation_persistence_flow },
+    { key: "placement_orderliness_follow", strategy: placement_orderliness_follow },
+    { key: "slow_anchor_ratio_reversion", strategy: slow_anchor_ratio_reversion },
+    { key: "slow_drift_alignment", strategy: slow_drift_alignment },
+    { key: "body_flip_whipsaw_fade", strategy: body_flip_whipsaw_fade },
+    { key: "compressed_bar_placement_fade", strategy: compressed_bar_placement_fade },
+    { key: "doji_density_chop_fade", strategy: doji_density_chop_fade },
+    { key: "low_conviction_drift_fade", strategy: low_conviction_drift_fade },
+    { key: "nested_bar_oscillation_fade", strategy: nested_bar_oscillation_fade },
+    { key: "quiet_volume_move_fade", strategy: quiet_volume_move_fade },
+    { key: "return_window_extreme_fade", strategy: return_window_extreme_fade },
+    { key: "symmetric_placement_fade", strategy: symmetric_placement_fade },
+    { key: "trailing_band_edge_fade", strategy: trailing_band_edge_fade },
+    { key: "trendless_expansion_fade", strategy: trendless_expansion_fade },
 ];
 
 export function createStrategiesRecordFromManifest(
