@@ -4,21 +4,22 @@ import {
     buildStrategyQualityResult,
     optimizeQualitySymbolOrder,
     runStrategyQualityAudit,
+    sortStrategyQualityResultsByMetric,
 } from "../lib/finder/finder-strategy-quality";
 import type { FinderSelectedStrategy } from "../lib/finder/finder-runner";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderStrategyQualitySymbolResult } from "../lib/types/finder";
 import type { BacktestSettings, Strategy } from "../lib/types/strategies";
 
-function makeStrategy(): FinderSelectedStrategy {
+function makeStrategy(key = "quality_test", name = "Quality Test Strategy"): FinderSelectedStrategy {
     const strategy: Strategy = {
-        name: "Quality Test Strategy",
+        name,
         description: "test",
         defaultParams: { lookback: 10 },
         paramLabels: { lookback: "Lookback" },
         execute: () => [],
     };
-    return { key: "quality_test", name: strategy.name, strategy };
+    return { key, name: strategy.name, strategy };
 }
 
 function makeSymbol(
@@ -38,7 +39,7 @@ function makeSymbol(
         winningTrades: 2,
         losingTrades: 1,
         avgWin: 30,
-        avgLoss: -30,
+        avgLoss: 30,
         sharpeRatio: 1.2,
         maxDrawdownPercent: 4,
         ...result,
@@ -79,7 +80,7 @@ describe("Finder Strategy Quality aggregation", () => {
                     winningTrades: 2,
                     losingTrades: 1,
                     avgWin: 30,
-                    avgLoss: -30,
+                    avgLoss: 30,
                     sharpeRatio: 1.2,
                     maxDrawdownPercent: 4,
                 }),
@@ -90,7 +91,7 @@ describe("Finder Strategy Quality aggregation", () => {
                     winningTrades: 1,
                     losingTrades: 1,
                     avgWin: 20,
-                    avgLoss: -30,
+                    avgLoss: 30,
                     sharpeRatio: -0.4,
                     maxDrawdownPercent: 8,
                 }),
@@ -111,6 +112,28 @@ describe("Finder Strategy Quality aggregation", () => {
         expect(result.profitFactor).to.equal(80 / 60);
         expect(result.weightedWinRate).to.equal(60);
         expect(result.worstMaxDrawdownPercent).to.equal(8);
+    });
+
+    it("re-sorts quality results by robust aggregate metrics without mutating the input", () => {
+        const low = buildStrategyQualityResult(
+            makeStrategy("low", "Low Quality"),
+            [makeSymbol("AAA", { expectancy: 1, maxDrawdownPercent: 20 })],
+            1,
+            false,
+        );
+        const high = buildStrategyQualityResult(
+            makeStrategy("high", "High Quality"),
+            [makeSymbol("AAA", { expectancy: 5, maxDrawdownPercent: 10 })],
+            1,
+            false,
+        );
+        const original = [low, high];
+
+        expect(sortStrategyQualityResultsByMetric(original, "medianExpectancy").map((item) => item.strategyKey))
+            .to.deep.equal(["high", "low"]);
+        expect(sortStrategyQualityResultsByMetric(original, "worstMaxDrawdownPercent").map((item) => item.strategyKey))
+            .to.deep.equal(["high", "low"]);
+        expect(original.map((item) => item.strategyKey)).to.deep.equal(["low", "high"]);
     });
 
     it("retains normalized default parameters as the audit identity", () => {

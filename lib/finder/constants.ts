@@ -1,4 +1,9 @@
-import type { FinderMetric, FinderUniverseMetric, PolymarketFinderRankMode } from '../types/index';
+import type {
+    FinderMetric,
+    FinderStrategyQualityMetric,
+    FinderUniverseMetric,
+    PolymarketFinderRankMode,
+} from '../types/index';
 
 export const DEFAULT_SORT_PRIORITY: FinderMetric[] = [
 	'expectancy',
@@ -106,6 +111,40 @@ export const UNIVERSE_METRIC_FULL_LABELS: Record<FinderUniverseMetric, string> =
     medianReturnDrawdownRatio: 'Median Return / Drawdown Ratio',
     worstNetProfit: 'Worst Net Profit',
     totalTrades: 'Total Trades',
+};
+
+export const STRATEGY_QUALITY_SORT_OPTIONS: FinderStrategyQualityMetric[] = [
+    'medianExpectancy',
+    'averageExpectancy',
+    'averageProfitFactor',
+    'profitFactor',
+    'averageSharpe',
+    'profitableActiveRatio',
+    'weightedWinRate',
+    'totalNetProfit',
+    'totalTrades',
+    'activeRatio',
+    'activeSymbols',
+    'profitableSymbols',
+    'noTradeSymbols',
+    'worstMaxDrawdownPercent',
+];
+
+export const STRATEGY_QUALITY_METRIC_FULL_LABELS: Record<FinderStrategyQualityMetric, string> = {
+    averageExpectancy: 'Average Expectancy',
+    medianExpectancy: 'Median Expectancy',
+    profitFactor: 'Profit Factor',
+    averageProfitFactor: 'Average Profit Factor',
+    averageSharpe: 'Average Sharpe Ratio',
+    weightedWinRate: 'Weighted Win Rate',
+    totalNetProfit: 'Total Net Profit',
+    totalTrades: 'Total Trades',
+    activeSymbols: 'Active Symbols',
+    activeRatio: 'Active Symbol Ratio',
+    profitableSymbols: 'Profitable Symbols',
+    profitableActiveRatio: 'Profitable Active Ratio',
+    noTradeSymbols: 'No-Trade Symbols',
+    worstMaxDrawdownPercent: 'Worst Max Drawdown',
 };
 
 export function getPolymarketSortPriority(mode: PolymarketFinderRankMode = 'balanced'): FinderMetric[] {

@@ -11,7 +11,13 @@ import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import { getLocalDailyAssets, isMarkedLocalStockSymbol } from "./local-daily-datasets";
 import { cloneJsonCompatible, parseJsonPreservingNonFinite } from "./json-utils";
 
-import { FINDER_SORT_OPTIONS, METRIC_FULL_LABELS, UNIVERSE_METRIC_FULL_LABELS } from "./finder/constants";
+import {
+	FINDER_SORT_OPTIONS,
+	METRIC_FULL_LABELS,
+	STRATEGY_QUALITY_METRIC_FULL_LABELS,
+	STRATEGY_QUALITY_SORT_OPTIONS,
+	UNIVERSE_METRIC_FULL_LABELS,
+} from "./finder/constants";
 import { buildFinderEvaluationData, runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderUI } from "./finder/finder-ui";
@@ -27,7 +33,10 @@ import {
 	mergeFinderRiskParamsIntoBacktestSettings,
 } from "./finder/finder-runner-core";
 import { runCandidateOosPass } from "./finder/finder-candidate-oos";
-import { runStrategyQualityAudit } from "./finder/finder-strategy-quality";
+import {
+	runStrategyQualityAudit,
+	sortStrategyQualityResultsByMetric,
+} from "./finder/finder-strategy-quality";
 import { getBatchDatasetCacheStats, loadBatchDataset } from "./batch-backtest/batch-backtest-loader";
 import {
 	sortFinderUniverseCandidates,
@@ -76,6 +85,7 @@ import type {
 	FinderResult,
 	FinderAssetOpportunityResult,
 	FinderStrategyQualityDiagnostics,
+	FinderStrategyQualityMetric,
 	FinderStrategyQualityResult,
 	FinderUniverseCandidate,
 	FinderUniverseMetric,
@@ -3271,6 +3281,10 @@ export class FinderManager {
 			for (const metric of getAssetOpportunityResortMetrics()) {
 				options.push({ value: metric, label: METRIC_FULL_LABELS[metric] });
 			}
+		} else if (scope === 'strategy_quality') {
+			for (const metric of STRATEGY_QUALITY_SORT_OPTIONS) {
+				options.push({ value: metric, label: STRATEGY_QUALITY_METRIC_FULL_LABELS[metric] });
+			}
 		} else {
 			for (const metric of FINDER_SORT_OPTIONS) {
 				options.push({ value: metric, label: METRIC_FULL_LABELS[metric] });
@@ -3333,6 +3347,10 @@ export class FinderManager {
 				scope: 'asset_opportunity',
 				results: sorted.slice(0, Math.max(1, this.uiState.topN)),
 			});
+		} else if (scope === 'strategy_quality') {
+			const results = this.latestResults.results;
+			const sorted = sortStrategyQualityResultsByMetric(results, metric as FinderStrategyQualityMetric);
+			this.setLatestResults({ scope: 'strategy_quality', results: sorted });
 		}
 		this.renderLatestResults();
 	}

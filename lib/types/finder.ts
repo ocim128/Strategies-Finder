@@ -459,6 +459,22 @@ export interface FinderStrategyQualitySymbolResult {
     oosResult?: FinderStrategyQualitySymbolMetrics;
 }
 
+export type FinderStrategyQualityMetric =
+    | 'averageExpectancy'
+    | 'medianExpectancy'
+    | 'profitFactor'
+    | 'averageProfitFactor'
+    | 'averageSharpe'
+    | 'weightedWinRate'
+    | 'totalNetProfit'
+    | 'totalTrades'
+    | 'activeSymbols'
+    | 'activeRatio'
+    | 'profitableSymbols'
+    | 'profitableActiveRatio'
+    | 'noTradeSymbols'
+    | 'worstMaxDrawdownPercent';
+
 /**
  * Baseline quality report for one selected strategy library. These metrics are
  * deliberately based on default parameters, not the best parameter set found

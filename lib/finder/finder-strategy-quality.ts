@@ -16,6 +16,7 @@ import type {
 import type {
     FinderDataSlice,
     FinderStrategyQualityDiagnostics,
+    FinderStrategyQualityMetric,
     FinderStrategyQualityResult,
     FinderStrategyQualitySymbolMetrics,
     FinderStrategyQualitySymbolResult,
@@ -209,7 +210,7 @@ function aggregateMetrics(
         0,
     );
     const grossLoss = active.reduce(
-        (sum, result) => sum + Math.abs(Math.min(0, result.avgLoss)) * result.losingTrades,
+        (sum, result) => sum + Math.max(0, result.avgLoss) * result.losingTrades,
         0,
     );
     const totalTrades = active.reduce((sum, result) => sum + result.totalTrades, 0);
@@ -249,7 +250,7 @@ export function buildStrategyQualityResult(
         0,
     );
     const grossLoss = active.reduce(
-        (sum, result) => sum + Math.abs(Math.min(0, result.avgLoss)) * result.losingTrades,
+        (sum, result) => sum + Math.max(0, result.avgLoss) * result.losingTrades,
         0,
     );
     const totalTrades = active.reduce((sum, result) => sum + result.totalTrades, 0);
@@ -293,6 +294,49 @@ export function buildStrategyQualityResult(
         quality.oos = oos;
     }
     return quality;
+}
+
+function getStrategyQualityMetricValue(
+    result: FinderStrategyQualityResult,
+    metric: FinderStrategyQualityMetric,
+): number {
+    switch (metric) {
+        case 'averageExpectancy': return result.averageExpectancy;
+        case 'medianExpectancy': return result.medianExpectancy;
+        case 'profitFactor': return result.profitFactor;
+        case 'averageProfitFactor': return result.averageProfitFactor;
+        case 'averageSharpe': return result.averageSharpe;
+        case 'weightedWinRate': return result.weightedWinRate;
+        case 'totalNetProfit': return result.totalNetProfit;
+        case 'totalTrades': return result.totalTrades;
+        case 'activeSymbols': return result.activeSymbols;
+        case 'activeRatio': return result.requestedSymbols > 0
+            ? result.activeSymbols / result.requestedSymbols
+            : 0;
+        case 'profitableSymbols': return result.profitableSymbols;
+        case 'profitableActiveRatio': return result.activeSymbols > 0
+            ? result.profitableSymbols / result.activeSymbols
+            : 0;
+        case 'noTradeSymbols': return result.noTradeSymbols;
+        case 'worstMaxDrawdownPercent': return result.worstMaxDrawdownPercent;
+    }
+}
+
+export function sortStrategyQualityResultsByMetric(
+    results: readonly FinderStrategyQualityResult[],
+    metric: FinderStrategyQualityMetric,
+): FinderStrategyQualityResult[] {
+    const ascending = metric === 'noTradeSymbols' || metric === 'worstMaxDrawdownPercent';
+    return [...results].sort((left, right) => {
+        const leftValue = getStrategyQualityMetricValue(left, metric);
+        const rightValue = getStrategyQualityMetricValue(right, metric);
+        const safeLeft = Number.isNaN(leftValue) ? 0 : leftValue;
+        const safeRight = Number.isNaN(rightValue) ? 0 : rightValue;
+        if (safeLeft !== safeRight) {
+            return ascending ? safeLeft - safeRight : safeRight - safeLeft;
+        }
+        return left.strategyName.localeCompare(right.strategyName);
+    });
 }
 
 function appendRunFailure(
