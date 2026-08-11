@@ -1,7 +1,10 @@
 import type { OHLCVData } from "../types/strategies";
 
 export const DEFAULT_FINDER_ASSET_OOS_HORIZONS = [1, 3, 5] as const;
-const MAX_FINDER_ASSET_OOS_VALUE = 100_000;
+export const MAX_FINDER_ASSET_OOS_VALUE = 100_000;
+
+/** Inclusive batch range cap; larger sweeps must be split into smaller runs. */
+export const MAX_FINDER_ASSET_OOS_BATCH_VALUES = 100;
 
 export interface FinderAssetOosHorizonMetric {
     /** Forward close-to-entry PnL, summed across eligible OOS entries. */
@@ -85,6 +88,68 @@ export function normalizeFinderAssetOosIgnoreLastBars(value: unknown): number {
         : Number.NaN;
     if (!Number.isFinite(numeric)) return 0;
     return Math.min(MAX_FINDER_ASSET_OOS_VALUE, Math.max(0, Math.round(numeric)));
+}
+
+/**
+ * Result of validating an inclusive batch holdout range. `error === null`
+ * means the range is valid and `start`/`end` are ordered positive integers
+ * with `end - start + 1` within {@link MAX_FINDER_ASSET_OOS_BATCH_VALUES}.
+ */
+export interface FinderAssetOosBatchHoldoutRange {
+    start: number;
+    end: number;
+    error: string | null;
+}
+
+/**
+ * Validate an inclusive holdout range for Asset Opportunity batch mode.
+ * Positive integers only (no `0`, which is the single-run "no holdout"
+ * sentinel), ascending order, per-value cap at
+ * {@link MAX_FINDER_ASSET_OOS_VALUE}, and an at-most-100-value range cap so a
+ * batch cannot accidentally schedule runaway work. Returns the ordered range
+ * or a validation error; never throws.
+ */
+export function normalizeFinderAssetOosBatchHoldoutRange(
+    startValue: unknown,
+    endValue: unknown,
+): FinderAssetOosBatchHoldoutRange {
+    const parseInteger = (value: unknown): number => {
+        const numeric = typeof value === "number" || typeof value === "string"
+            ? Number(value)
+            : Number.NaN;
+        return Number.isInteger(numeric) ? numeric : Number.NaN;
+    };
+    const start = parseInteger(startValue);
+    const end = parseInteger(endValue);
+    if (!Number.isFinite(start) || start <= 0 || start > MAX_FINDER_ASSET_OOS_VALUE) {
+        return {
+            start: 0,
+            end: 0,
+            error: `Batch OOS start must be a positive integer at most ${MAX_FINDER_ASSET_OOS_VALUE}.`,
+        };
+    }
+    if (!Number.isFinite(end) || end <= 0 || end > MAX_FINDER_ASSET_OOS_VALUE) {
+        return {
+            start: 0,
+            end: 0,
+            error: `Batch OOS end must be a positive integer at most ${MAX_FINDER_ASSET_OOS_VALUE}.`,
+        };
+    }
+    if (start > end) {
+        return {
+            start: 0,
+            end: 0,
+            error: "Batch OOS start must not exceed the end value.",
+        };
+    }
+    if (end - start + 1 > MAX_FINDER_ASSET_OOS_BATCH_VALUES) {
+        return {
+            start: 0,
+            end: 0,
+            error: `Batch OOS range must contain at most ${MAX_FINDER_ASSET_OOS_BATCH_VALUES} holdout values.`,
+        };
+    }
+    return { start, end, error: null };
 }
 
 /**

@@ -4,6 +4,9 @@ import {
     calculateFinderAssetOosAverageHorizonMetrics,
     calculateFinderAssetOosSignalMetrics,
     DEFAULT_FINDER_ASSET_OOS_HORIZONS,
+    MAX_FINDER_ASSET_OOS_BATCH_VALUES,
+    MAX_FINDER_ASSET_OOS_VALUE,
+    normalizeFinderAssetOosBatchHoldoutRange,
     normalizeFinderAssetOosHorizons,
 } from "../lib/finder/finder-asset-opportunity-oos";
 import type { OHLCVData, Time } from "../lib/types/strategies";
@@ -18,6 +21,42 @@ function makeCandles(closes: number[]): OHLCVData[] {
         volume: 1,
     }));
 }
+
+describe("Asset Opportunity batch holdout range", () => {
+    it("accepts an inclusive ordered range of positive integers", () => {
+        expect(normalizeFinderAssetOosBatchHoldoutRange(2, 4)).to.deep.equal({ start: 2, end: 4, error: null });
+        expect(normalizeFinderAssetOosBatchHoldoutRange("2", "4")).to.deep.equal({ start: 2, end: 4, error: null });
+        expect(normalizeFinderAssetOosBatchHoldoutRange(7, 7)).to.deep.equal({ start: 7, end: 7, error: null });
+    });
+
+    it("rejects a one-value range when disabled-style sentinel 0 is used", () => {
+        // 0 is the single-run "no holdout" sentinel and must not become a
+        // batch iteration value.
+        expect(normalizeFinderAssetOosBatchHoldoutRange(0, 5).error).to.match(/positive integer/);
+        expect(normalizeFinderAssetOosBatchHoldoutRange(1, 0).error).to.match(/positive integer/);
+    });
+
+    it("rejects non-integers, negatives, and over-cap values", () => {
+        expect(normalizeFinderAssetOosBatchHoldoutRange("abc", 5).error).to.match(/positive integer/);
+        expect(normalizeFinderAssetOosBatchHoldoutRange(1.5, 5).error).to.match(/positive integer/);
+        expect(normalizeFinderAssetOosBatchHoldoutRange(-3, 5).error).to.match(/positive integer/);
+        expect(normalizeFinderAssetOosBatchHoldoutRange(1, MAX_FINDER_ASSET_OOS_VALUE + 1).error).to.match(/positive integer/);
+        expect(normalizeFinderAssetOosBatchHoldoutRange(undefined, undefined).error).to.match(/positive integer/);
+    });
+
+    it("rejects a reversed range (start > end)", () => {
+        expect(normalizeFinderAssetOosBatchHoldoutRange(5, 2).error).to.match(/must not exceed/);
+    });
+
+    it("caps the inclusive range at the batch value limit", () => {
+        const capped = normalizeFinderAssetOosBatchHoldoutRange(1, MAX_FINDER_ASSET_OOS_BATCH_VALUES + 1);
+        expect(capped.error).to.match(/at most 100 holdout values/);
+        const exact = normalizeFinderAssetOosBatchHoldoutRange(1, MAX_FINDER_ASSET_OOS_BATCH_VALUES);
+        expect(exact.error).to.equal(null);
+        expect(exact.start).to.equal(1);
+        expect(exact.end).to.equal(MAX_FINDER_ASSET_OOS_BATCH_VALUES);
+    });
+});
 
 describe("Asset Opportunity fixed-horizon OOS metrics", () => {
     it("averages each forward-validation horizon across the displayed results", () => {

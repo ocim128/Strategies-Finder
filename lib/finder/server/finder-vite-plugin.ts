@@ -48,6 +48,7 @@
 
 import type { Plugin } from "vite";
 import { getHeapStatistics } from "node:v8";
+import path from "node:path";
 import { debugLogger } from "../../debug-logger";
 import {
     beginNdjsonStream,
@@ -109,14 +110,23 @@ import {
     type AssetIsSearch,
 } from "../finder-asset-opportunity-runner";
 import {
+    normalizeFinderAssetOosBatchHoldoutRange,
     normalizeFinderAssetOosHorizons,
     normalizeFinderAssetOosIgnoreLastBars,
 } from "../finder-asset-opportunity-oos";
+import { buildAssetOpportunityMetadataPayload } from "../finder-asset-opportunity-metadata";
+import {
+    appendAssetOpportunityArchiveBlock,
+    type AssetOpportunityArchiveAppend,
+} from "./finder-asset-opportunity-archive";
 import {
     assertAssetResultIsScalar,
     toScalarAssetResult,
     type AnyFinderStreamEvent,
+    type FinderAssetOpportunityBatchStreamEvent,
     type FinderAssetOpportunityStreamEvent,
+    type FinderAssetOpportunityTotals,
+    type FinderBatchStatus,
 } from "./finder-stream-types";
 import { sortAssetOpportunityResults } from "../finder-asset-opportunity-metrics";
 import { runServerAssetIsSearch } from "./server-asset-is-search";
@@ -242,7 +252,7 @@ export type FinderRunSnapshot = {
     finishedAt: number | null;
     interval: string;
     /** Job kind discriminator; defaults to symbol_universe for legacy state. */
-    jobKind?: "symbol_universe" | "asset_opportunity";
+    jobKind?: "symbol_universe" | "asset_opportunity" | "asset_opportunity_batch";
     /** Ordered selected entry strategy keys for the whole job. */
     strategyKeys: string[];
     /** 0-based index of the strategy currently being evaluated. */
@@ -282,6 +292,8 @@ export type FinderRunSnapshot = {
     } | null;
     /** Terminal Asset Opportunity diagnostics retained for reload reattach. */
     assetDiagnostics?: FinderAssetOpportunityDiagnostics | null;
+    /** Bounded batch counts for asset_opportunity_batch jobs; undefined otherwise. */
+    batch?: FinderBatchStatus;
 };
 
 // ---------------------------------------------------------------------------
@@ -905,99 +917,102 @@ interface FinderAssetOpportunityRequestBody {
 }
 
 /**
- * Process one Asset Opportunity job. Reuses the existing owner lock, abort
- * controller, and run state; the only difference from the universe path is the
- * per-asset search loop and the asset-kind terminal snapshot.
+ * Input for ONE Asset Opportunity iteration (single run or one batch holdout).
+ * Batch orchestration clones this with `options.assetOpportunity.oosIgnoreLastBars`
+ * set to the current holdout value; everything else stays identical so the
+ * per-iteration algorithm is the unchanged per-asset search.
  */
-export async function processFinderAssetOpportunityRun(
-    input: {
-        runId: string;
-        interval: string;
-        symbols: string[];
-        options: FinderOptions;
-        settings: BacktestSettings;
-        capitalSettings: CapitalSettings;
-        selectedStrategies: FinderSelectedStrategy[];
-        exitStrategyCandidates?: FinderSelectedStrategy[];
-        useRustEnginePreference?: boolean;
-        abortSignal: AbortSignal;
-        loadDataset: (
-            symbol: string,
-            interval: string,
-            signal?: AbortSignal,
-            context?: BatchDatasetLoadContext,
-        ) => Promise<OHLCVData[]>;
-        /** Secondary cross-symbol data stays unsliced; the executor aligns it to the primary window. */
-        loadSecondaryDataset?: (
-            symbol: string,
-            interval: string,
-            signal?: AbortSignal,
-            context?: BatchDatasetLoadContext,
-        ) => Promise<OHLCVData[]>;
-        getProvider?: (symbol: string) => string;
-        candidatePoolSize: number;
-        minFreshSupport: number;
-    },
-    writer: (event: FinderAssetOpportunityStreamEvent) => void,
-    owner: number,
-): Promise<void> {
+export interface FinderAssetOpportunityRunInput {
+    runId: string;
+    interval: string;
+    symbols: string[];
+    options: FinderOptions;
+    settings: BacktestSettings;
+    capitalSettings: CapitalSettings;
+    selectedStrategies: FinderSelectedStrategy[];
+    exitStrategyCandidates?: FinderSelectedStrategy[];
+    useRustEnginePreference?: boolean;
+    abortSignal: AbortSignal;
+    loadDataset: (
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ) => Promise<OHLCVData[]>;
+    /** Secondary cross-symbol data stays unsliced; the executor aligns it to the primary window. */
+    loadSecondaryDataset?: (
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ) => Promise<OHLCVData[]>;
+    getProvider?: (symbol: string) => string;
+    candidatePoolSize: number;
+    minFreshSupport: number;
+}
+
+/** Progress snapshot of one iteration, mirroring the single-run fields. */
+export interface AssetOpportunityIterationProgress {
+    percent: number;
+    text: string;
+    status: string;
+    phase: FinderJobPhase;
+    oosActive: boolean;
+    assetIndex: number;
+    totalAssets: number;
+    strategyIndex: number;
+    loadedSymbols: number;
+    failedSymbols: number;
+}
+
+/** One completed scalar asset row of the current iteration. */
+export interface AssetOpportunityIterationAssetResult {
+    result: FinderAssetOpportunityResult;
+    assetIndex: number;
+    totalAssets: number;
+    /** Full accumulated (unsorted) results array after this asset. */
+    results: FinderAssetOpportunityResult[];
+}
+
+export interface AssetOpportunityIterationCallbacks {
+    onProgress: (progress: AssetOpportunityIterationProgress) => void;
+    onAssetResult: (asset: AssetOpportunityIterationAssetResult) => void;
+    /** Status text updates that in single mode only mutate the snapshot. */
+    onStatus?: (status: string) => void;
+}
+
+export interface AssetOpportunityIterationResult {
+    /** Full scalar result set, sorted by the default run ordering. */
+    results: FinderAssetOpportunityResult[];
+    cancelled: boolean;
+    assetDiagnostics: FinderAssetOpportunityDiagnostics;
+    totals: FinderAssetOpportunityTotals;
+    summary: string;
+}
+
+/**
+ * Evaluate ONE Asset Opportunity iteration: loads every asset, runs the
+ * unchanged per-asset multi-strategy search, and aggregates diagnostics.
+ * This is the seam shared by the single-run route (called once) and the batch
+ * route (called once per holdout value). It owns NO run state and emits NO
+ * stream events — the caller owns the snapshot and writer, so a batch can
+ * reuse the identical algorithm under one run id while keeping per-iteration
+ * rows bounded.
+ */
+export async function runAssetOpportunityIteration(
+    input: FinderAssetOpportunityRunInput,
+    callbacks: AssetOpportunityIterationCallbacks,
+    isCancelled: () => boolean,
+): Promise<AssetOpportunityIterationResult> {
     const { symbols, selectedStrategies } = input;
     const totalAssets = symbols.length;
+    const iterationStartedAt = Date.now();
     assertAssetOpportunityStrategySelection(selectedStrategies);
 
-    // Initialize run state for the asset-opportunity kind so /status reattach
-    // returns the correct terminal slice and totals.
-    runState = {
-        runId: input.runId,
-        startedAt: Date.now(),
-        finishedAt: null,
-        interval: input.interval,
-        jobKind: "asset_opportunity",
-        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
-        strategyIndex: 0,
-        strategyCount: selectedStrategies.length,
-        phase: "loading",
-        totalSymbols: totalAssets,
-        progressPercent: 0,
-        statusText: "Starting...",
-        loadedSymbols: 0,
-        failedSymbols: 0,
-        candidates: [],
-        assetResults: [],
-        diagnostics: null,
-        cancelled: false,
-        summary: null,
-        error: null,
-        totals: null,
-        assetTotals: null,
-        assetDiagnostics: null,
-    };
-    const snapshot = runState;
     const assetLoadContext = createServerFinderAssetOpportunityLoadContext();
-
     const estimatedCandidateEvaluations = totalAssets * selectedStrategies.length * (
         Math.max(1, Math.floor(input.options.maxRuns)) + input.candidatePoolSize
     );
-    debugLogger.event("finder.asset_opportunity.start", {
-        runId: input.runId,
-        interval: input.interval,
-        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
-        totalAssets,
-        maxRuns: input.options.maxRuns,
-        candidatePoolSize: input.candidatePoolSize,
-        estimatedCandidateEvaluations,
-    });
-
-    writer({
-        type: "asset_start",
-        runId: input.runId,
-        totalAssets,
-        interval: input.interval,
-        strategyKey: selectedStrategies[0]!.key,
-        strategyName: selectedStrategies[0]!.name,
-        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
-        strategyNames: selectedStrategies.map((strategy) => strategy.name),
-    });
 
     const failedAssets: Array<{ symbol: string; reason: string }> = [];
     let assetsWithFreshEntry = 0;
@@ -1068,7 +1083,10 @@ export async function processFinderAssetOpportunityRun(
     let loadedBarsSum = 0;
     let loadedBarsCount = 0;
     let assetResults: FinderAssetOpportunityResult[] = [];
-    const isCancelled = () => runOwner !== owner || input.abortSignal.aborted;
+    let loadedSymbols = 0;
+    let failedSymbols = 0;
+    let currentPhase: FinderJobPhase = "loading";
+    let currentStrategyIndex = 0;
     const secondaryDataCache = new Map<string, Promise<OHLCVData[]>>();
     const assetDataFetcher = selectedStrategies.some((strategy) => strategy.strategy.crossSymbolConfig) && input.getProvider
         ? {
@@ -1168,7 +1186,7 @@ export async function processFinderAssetOpportunityRun(
     }
 
     for (let assetIndex = 0; assetIndex < totalAssets; assetIndex++) {
-        if (runOwner !== owner || input.abortSignal.aborted) break;
+        if (isCancelled()) break;
         const loadPromise = pendingAssetLoads.get(assetIndex);
         if (!loadPromise) break;
         const loadedAsset = await loadPromise;
@@ -1178,18 +1196,19 @@ export async function processFinderAssetOpportunityRun(
         const symbol = symbols[assetIndex]!;
         const assetStartedAt = performance.now();
         const currentAssetLoadMs = loadedAsset.durationMs;
-        snapshot.phase = "loading";
-        snapshot.progressPercent = (assetIndex / totalAssets) * 100;
-        snapshot.statusText = `Loading ${symbol} (${assetIndex + 1}/${totalAssets})...`;
-        writer({
-            type: "asset_progress",
-            percent: snapshot.progressPercent,
-            text: snapshot.statusText,
-            status: snapshot.statusText,
-            phase: snapshot.phase,
+        currentPhase = "loading";
+        const loadingText = `Loading ${symbol} (${assetIndex + 1}/${totalAssets})...`;
+        callbacks.onProgress({
+            percent: (assetIndex / totalAssets) * 100,
+            text: loadingText,
+            status: loadingText,
+            phase: currentPhase,
+            oosActive: false,
             assetIndex,
             totalAssets,
-            oosActive: false,
+            strategyIndex: currentStrategyIndex,
+            loadedSymbols,
+            failedSymbols,
         });
 
         const assetFailures: Array<{ strategyKey: string; reason: string }> = [];
@@ -1206,8 +1225,8 @@ export async function processFinderAssetOpportunityRun(
             loadedBarsMax = Math.max(loadedBarsMax, data.length);
             loadedBarsSum += data.length;
             loadedBarsCount += 1;
-            snapshot.loadedSymbols += 1;
-            snapshot.phase = "evaluating";
+            loadedSymbols += 1;
+            currentPhase = "evaluating";
             // Hoist the execution-aware closed-candle build out of the
             // per-strategy loop. The closed-candle view depends only on
             // (data, interval, settings), not on the selected strategy, so
@@ -1217,7 +1236,7 @@ export async function processFinderAssetOpportunityRun(
             for (let strategyIndex = 0; strategyIndex < selectedStrategies.length; strategyIndex += 1) {
                 if (isCancelled()) break;
                 const selectedStrategy = selectedStrategies[strategyIndex]!;
-                snapshot.strategyIndex = strategyIndex;
+                currentStrategyIndex = strategyIndex;
                 const runOutput = await runAssetOpportunitySearch(
                     {
                         interval: input.interval,
@@ -1241,21 +1260,21 @@ export async function processFinderAssetOpportunityRun(
                         setProgress: (percent, text) => {
                             const strategyProgress = (strategyIndex + percent / 100) / selectedStrategies.length;
                             const overall = ((assetIndex + strategyProgress) / totalAssets) * 100;
-                            snapshot.progressPercent = overall;
-                            snapshot.statusText = text;
-                            writer({
-                                type: "asset_progress",
+                            callbacks.onProgress({
                                 percent: overall,
                                 text,
                                 status: text,
-                                phase: snapshot.phase,
+                                phase: currentPhase,
+                                oosActive: false,
                                 assetIndex,
                                 totalAssets,
-                                oosActive: false,
+                                strategyIndex,
+                                loadedSymbols,
+                                failedSymbols,
                             });
                         },
                         setStatus: (text) => {
-                            snapshot.statusText = `${selectedStrategy.name}: ${text}`;
+                            callbacks.onStatus?.(`${selectedStrategy.name}: ${text}`);
                         },
                         yieldControl: async () => {
                             await new Promise<void>((resolve) => setImmediate(resolve));
@@ -1328,11 +1347,11 @@ export async function processFinderAssetOpportunityRun(
                                 const scalar = toScalarAssetResult(outcome.result);
                                 assertAssetResultIsScalar(scalar);
                                 assetResults.push(scalar);
-                                writer({
-                                    type: "asset_complete",
-                                    asset: scalar,
+                                callbacks.onAssetResult({
+                                    result: scalar,
                                     assetIndex,
                                     totalAssets,
+                                    results: assetResults,
                                 });
                             } else if (outcome.kind === "no_fresh_entry") {
                                 assetHadNoFreshEntry = true;
@@ -1368,14 +1387,14 @@ export async function processFinderAssetOpportunityRun(
                     symbol,
                     reason: assetFailures.map((failure) => `${failure.strategyKey}: ${failure.reason}`).join("; "),
                 });
-                snapshot.failedSymbols += 1;
+                failedSymbols += 1;
             } else if (assetHadNoFreshEntry) {
                 assetsWithNoFreshEntry += 1;
             }
         } catch (error) {
             const reason = error instanceof Error ? error.message : String(error);
             failedAssets.push({ symbol, reason });
-            snapshot.failedSymbols += 1;
+            failedSymbols += 1;
             debugLogger.event("finder.asset_opportunity.asset.complete", {
                 runId: input.runId,
                 symbol,
@@ -1386,16 +1405,12 @@ export async function processFinderAssetOpportunityRun(
                 durationMs: Math.round(performance.now() - assetStartedAt),
             });
         }
-        snapshot.assetResults = assetResults;
     }
 
     dataLoadingMs = mergeTimingIntervals(completedAssetLoadIntervals);
     const sortedAssetResults = sortAssetOpportunityResults(assetResults);
-    snapshot.assetResults = sortedAssetResults;
-    snapshot.cancelled = runOwner !== owner || input.abortSignal.aborted;
-    snapshot.phase = snapshot.cancelled ? "cancelled" : "done";
-    snapshot.finishedAt = Date.now();
-    snapshot.assetTotals = {
+    const cancelled = isCancelled();
+    const totals: FinderAssetOpportunityTotals = {
         totalAssets,
         assetsWithFreshEntry,
         selectGradeAssets,
@@ -1413,7 +1428,7 @@ export async function processFinderAssetOpportunityRun(
                 .sort((a, b) => b.runs - a.runs || a.reason.localeCompare(b.reason)),
         },
     };
-    const totalDurationMs = Math.max(0, Date.now() - snapshot.startedAt);
+    const totalDurationMs = Math.max(0, Date.now() - iterationStartedAt);
     const measuredPhaseMs = dataLoadingMs
         + dataPreparationMs
         + inSampleSearchMs
@@ -1484,26 +1499,163 @@ export async function processFinderAssetOpportunityRun(
             dataLoadingMs: roundDiagnosticMs(pass.dataLoadingMs),
             timingsMs: roundAssetOpportunityPassTimings(pass.timingsMs),
         })),
-        engineUsage: snapshot.assetTotals.engineUsage,
+        engineUsage: totals.engineUsage,
     };
-    snapshot.assetDiagnostics = assetDiagnostics;
-    snapshot.summary = `Asset Opportunity complete: ${sortedAssetResults.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`;
+    const summary = `Asset Opportunity complete: ${sortedAssetResults.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`;
+
+    return {
+        results: sortedAssetResults,
+        cancelled,
+        assetDiagnostics,
+        totals,
+        summary,
+    };
+}
+
+/**
+ * Ascending holdout values for a validated inclusive batch range. The range
+ * is validated before ownership is acquired; this helper only enumerates.
+ */
+export function buildAssetOpportunityBatchHoldoutValues(
+    startHoldoutBars: number,
+    endHoldoutBars: number,
+): number[] {
+    const values: number[] = [];
+    for (let value = startHoldoutBars; value <= endHoldoutBars; value += 1) {
+        values.push(value);
+    }
+    return values;
+}
+
+/**
+ * Process ONE Asset Opportunity job (single run). Preserves the existing
+ * events and status behavior exactly: initializes the asset-opportunity
+ * snapshot, emits `asset_start`, runs the shared iteration seam once,
+ * mirrors progress onto the snapshot + `asset_progress` events, streams each
+ * scalar asset via `asset_complete`, and terminates with `asset_done`.
+ */
+export async function processFinderAssetOpportunityRun(
+    input: FinderAssetOpportunityRunInput,
+    writer: (event: FinderAssetOpportunityStreamEvent) => void,
+    owner: number,
+): Promise<void> {
+    const { symbols, selectedStrategies } = input;
+    const totalAssets = symbols.length;
+    assertAssetOpportunityStrategySelection(selectedStrategies);
+
+    // Initialize run state for the asset-opportunity kind so /status reattach
+    // returns the correct terminal slice and totals.
+    runState = {
+        runId: input.runId,
+        startedAt: Date.now(),
+        finishedAt: null,
+        interval: input.interval,
+        jobKind: "asset_opportunity",
+        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
+        strategyIndex: 0,
+        strategyCount: selectedStrategies.length,
+        phase: "loading",
+        totalSymbols: totalAssets,
+        progressPercent: 0,
+        statusText: "Starting...",
+        loadedSymbols: 0,
+        failedSymbols: 0,
+        candidates: [],
+        assetResults: [],
+        diagnostics: null,
+        cancelled: false,
+        summary: null,
+        error: null,
+        totals: null,
+        assetTotals: null,
+        assetDiagnostics: null,
+    };
+    const snapshot = runState;
+
+    const estimatedCandidateEvaluations = totalAssets * selectedStrategies.length * (
+        Math.max(1, Math.floor(input.options.maxRuns)) + input.candidatePoolSize
+    );
+    debugLogger.event("finder.asset_opportunity.start", {
+        runId: input.runId,
+        interval: input.interval,
+        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
+        totalAssets,
+        maxRuns: input.options.maxRuns,
+        candidatePoolSize: input.candidatePoolSize,
+        estimatedCandidateEvaluations,
+    });
+
+    writer({
+        type: "asset_start",
+        runId: input.runId,
+        totalAssets,
+        interval: input.interval,
+        strategyKey: selectedStrategies[0]!.key,
+        strategyName: selectedStrategies[0]!.name,
+        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
+        strategyNames: selectedStrategies.map((strategy) => strategy.name),
+    });
+
+    const iteration = await runAssetOpportunityIteration(
+        input,
+        {
+            onProgress: (progress) => {
+                snapshot.phase = progress.phase;
+                snapshot.progressPercent = progress.percent;
+                snapshot.statusText = progress.status;
+                snapshot.loadedSymbols = progress.loadedSymbols;
+                snapshot.failedSymbols = progress.failedSymbols;
+                snapshot.strategyIndex = progress.strategyIndex;
+                writer({
+                    type: "asset_progress",
+                    percent: progress.percent,
+                    text: progress.status,
+                    status: progress.status,
+                    phase: progress.phase,
+                    assetIndex: progress.assetIndex,
+                    totalAssets: progress.totalAssets,
+                    oosActive: progress.oosActive,
+                });
+            },
+            onAssetResult: (asset) => {
+                snapshot.assetResults = asset.results;
+                writer({
+                    type: "asset_complete",
+                    asset: asset.result,
+                    assetIndex: asset.assetIndex,
+                    totalAssets: asset.totalAssets,
+                });
+            },
+            onStatus: (status) => {
+                snapshot.statusText = status;
+            },
+        },
+        () => runOwner !== owner || input.abortSignal.aborted,
+    );
+
+    snapshot.assetResults = iteration.results;
+    snapshot.cancelled = iteration.cancelled;
+    snapshot.phase = iteration.cancelled ? "cancelled" : "done";
+    snapshot.finishedAt = Date.now();
+    snapshot.assetTotals = iteration.totals;
+    snapshot.assetDiagnostics = iteration.assetDiagnostics;
+    snapshot.summary = iteration.summary;
 
     debugLogger.event(
-        snapshot.cancelled
+        iteration.cancelled
             ? "finder.asset_opportunity.run.cancelled"
             : "finder.asset_opportunity.run.complete",
         {
             runId: input.runId,
             interval: input.interval,
             totalAssets,
-            assetsWithFreshEntry,
-            assetsWithNoFreshEntry,
-            selectGradeAssets,
-            watchGradeAssets,
-            rejectGradeAssets,
-            failedAssets: failedAssets.length,
-            retainedResults: sortedAssetResults.length,
+            assetsWithFreshEntry: iteration.totals.assetsWithFreshEntry,
+            assetsWithNoFreshEntry: iteration.assetDiagnostics.assetsWithNoFreshEntry,
+            selectGradeAssets: iteration.totals.selectGradeAssets,
+            watchGradeAssets: iteration.totals.watchGradeAssets,
+            rejectGradeAssets: iteration.totals.rejectGradeAssets,
+            failedAssets: iteration.totals.failedAssets,
+            retainedResults: iteration.results.length,
             estimatedCandidateEvaluations,
             durationMs: Math.max(0, Date.now() - snapshot.startedAt),
         },
@@ -1511,17 +1663,344 @@ export async function processFinderAssetOpportunityRun(
 
     writer({
         type: "asset_done",
+        ok: !iteration.cancelled,
+        cancelled: iteration.cancelled,
+        runId: input.runId,
+        interval: input.interval,
+        totals: iteration.totals,
+        summary: iteration.summary,
+        // Keep the full scalar run result set. The browser applies topN only
+        // to the visible list so post-run re-sort can rank every opportunity.
+        assets: iteration.results,
+        diagnostics: null,
+        assetDiagnostics: iteration.assetDiagnostics,
+    });
+}
+
+/**
+ * Process one Asset Opportunity BATCH job: runs the validated holdout sweep
+ * (ascending) under ONE owner/run id. Each iteration clones the options with
+ * the current holdout value (keeping the same random seed so differences come
+ * from the holdout boundary, not a new sample), archives the top-N payload to
+ * `archive/asset opportunity/oos-holdout-<N>-bars.txt`, and reports the
+ * iteration's full scalar rows on `asset_batch_iteration_done`. Only the
+ * current iteration's rows are retained; the terminal view carries the LAST
+ * completed iteration. An archive failure stops the batch with a visible
+ * fatal; completed blocks stay intact. Stream disconnect does not cancel the
+ * server job — Stop and reload reattach use the same owner/status machinery.
+ */
+export async function processFinderAssetOpportunityBatchRun(
+    input: FinderAssetOpportunityRunInput & {
+        batch: { startHoldoutBars: number; endHoldoutBars: number };
+    },
+    writer: (event: FinderAssetOpportunityBatchStreamEvent) => void,
+    owner: number,
+    archiveRoot: string,
+    archiveAppend?: AssetOpportunityArchiveAppend,
+): Promise<void> {
+    const { symbols, selectedStrategies, batch } = input;
+    const totalAssets = symbols.length;
+    const holdoutValues = buildAssetOpportunityBatchHoldoutValues(
+        batch.startHoldoutBars,
+        batch.endHoldoutBars,
+    );
+    const totalIterations = holdoutValues.length;
+    assertAssetOpportunityStrategySelection(selectedStrategies);
+
+    runState = {
+        runId: input.runId,
+        startedAt: Date.now(),
+        finishedAt: null,
+        interval: input.interval,
+        jobKind: "asset_opportunity_batch",
+        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
+        strategyIndex: 0,
+        strategyCount: selectedStrategies.length,
+        phase: "loading",
+        totalSymbols: totalAssets,
+        progressPercent: 0,
+        statusText: "Starting...",
+        loadedSymbols: 0,
+        failedSymbols: 0,
+        candidates: [],
+        assetResults: [],
+        diagnostics: null,
+        cancelled: false,
+        summary: null,
+        error: null,
+        totals: null,
+        assetTotals: null,
+        assetDiagnostics: null,
+        batch: {
+            startHoldoutBars: batch.startHoldoutBars,
+            endHoldoutBars: batch.endHoldoutBars,
+            currentHoldoutBars: null,
+            currentIteration: 0,
+            totalIterations,
+            completedIterations: 0,
+            failedIterations: 0,
+        },
+    };
+    const snapshot = runState;
+
+    const strategyMetadataByKey = new Map<string, unknown>(
+        selectedStrategies.map((selected) => [selected.key, selected.strategy.metadata ?? null]),
+    );
+    debugLogger.event("finder.asset_opportunity_batch.start", {
+        runId: input.runId,
+        interval: input.interval,
+        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
+        totalAssets,
+        startHoldoutBars: batch.startHoldoutBars,
+        endHoldoutBars: batch.endHoldoutBars,
+        totalIterations,
+    });
+
+    writer({
+        type: "asset_batch_start",
+        runId: input.runId,
+        startHoldoutBars: batch.startHoldoutBars,
+        endHoldoutBars: batch.endHoldoutBars,
+        totalIterations,
+        totalAssets,
+        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
+        strategyNames: selectedStrategies.map((strategy) => strategy.name),
+    });
+
+    const isCancelled = () => runOwner !== owner || input.abortSignal.aborted;
+    const lastIteration: {
+        results: FinderAssetOpportunityResult[];
+        assetDiagnostics: FinderAssetOpportunityDiagnostics | null;
+        totals: FinderAssetOpportunityTotals | null;
+        holdoutBars: number | null;
+    } = { results: [], assetDiagnostics: null, totals: null, holdoutBars: null };
+
+    for (let iterationIndex = 0; iterationIndex < totalIterations; iterationIndex += 1) {
+        if (isCancelled()) break;
+        const holdoutBars = holdoutValues[iterationIndex]!;
+        snapshot.batch = {
+            ...snapshot.batch!,
+            currentHoldoutBars: holdoutBars,
+            currentIteration: iterationIndex + 1,
+        };
+        snapshot.phase = "loading";
+        snapshot.statusText = `Batch OOS holdout ${holdoutBars} bars (iteration ${iterationIndex + 1}/${totalIterations})...`;
+        snapshot.progressPercent = (iterationIndex / totalIterations) * 100;
+        writer({
+            type: "asset_batch_progress",
+            runId: input.runId,
+            holdoutBars,
+            iterationIndex,
+            totalIterations,
+            percent: snapshot.progressPercent,
+            phase: "loading",
+            statusText: snapshot.statusText,
+            assetProgress: 0,
+        });
+
+        // Clone options for the current N; keep the same random seed so the
+        // only difference between iterations is the holdout boundary.
+        const iterationOptions: FinderOptions = {
+            ...input.options,
+            assetOpportunity: {
+                symbols: input.options.assetOpportunity?.symbols ?? [],
+                candidatePoolSize: input.candidatePoolSize,
+                minFreshSupport: input.minFreshSupport,
+                oosHorizons: input.options.assetOpportunity?.oosHorizons,
+                oosIgnoreLastBars: holdoutBars,
+            },
+        };
+
+        let iteration: AssetOpportunityIterationResult;
+        try {
+            iteration = await runAssetOpportunityIteration(
+                { ...input, options: iterationOptions },
+                {
+                    onProgress: (progress) => {
+                        snapshot.phase = progress.phase;
+                        snapshot.statusText = progress.status;
+                        snapshot.loadedSymbols = progress.loadedSymbols;
+                        snapshot.failedSymbols = progress.failedSymbols;
+                        snapshot.strategyIndex = progress.strategyIndex;
+                        snapshot.progressPercent =
+                            ((iterationIndex + progress.percent / 100) / totalIterations) * 100;
+                        writer({
+                            type: "asset_batch_progress",
+                            runId: input.runId,
+                            holdoutBars,
+                            iterationIndex,
+                            totalIterations,
+                            percent: snapshot.progressPercent,
+                            phase: progress.phase,
+                            statusText: progress.status,
+                            assetProgress: progress.percent,
+                        });
+                    },
+                    onAssetResult: () => {
+                        // The iteration accumulates the full scalar set
+                        // internally; batch renders only the iteration_done
+                        // rows, so per-asset callbacks are ignored.
+                    },
+                    onStatus: (status) => {
+                        snapshot.statusText = status;
+                    },
+                },
+                isCancelled,
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            snapshot.batch = {
+                ...snapshot.batch!,
+                failedIterations: snapshot.batch!.failedIterations + 1,
+            };
+            snapshot.phase = "fatal";
+            snapshot.finishedAt = Date.now();
+            snapshot.statusText = `Asset Opportunity batch failed at holdout ${holdoutBars}: ${message}`;
+            snapshot.summary = snapshot.statusText;
+            snapshot.error = message;
+            debugLogger.warn("finder.asset_opportunity_batch.iteration_failed", {
+                runId: input.runId,
+                holdoutBars,
+                error: message,
+            });
+            writer({
+                type: "asset_batch_fatal",
+                runId: input.runId,
+                error: message,
+                holdoutBars,
+                completedIterations: snapshot.batch.completedIterations,
+            });
+            return;
+        }
+
+        if (iteration.cancelled) {
+            snapshot.cancelled = true;
+            break;
+        }
+
+        // Retain ONLY the current iteration's rows for re-sort + terminal view.
+        snapshot.assetResults = iteration.results;
+        lastIteration.results = iteration.results;
+        lastIteration.assetDiagnostics = iteration.assetDiagnostics;
+        lastIteration.totals = iteration.totals;
+        lastIteration.holdoutBars = holdoutBars;
+
+        // Archive the same top-N payload the Copy Top Results button produces.
+        const topResults = iteration.results
+            .slice(0, Math.max(1, input.options.topN))
+            .map((result, index) => buildAssetOpportunityMetadataPayload({
+                result,
+                rank: index + 1,
+                interval: input.interval,
+                strategyMetadata: strategyMetadataByKey.get(result.strategyKey) ?? null,
+            }));
+
+        let archiveFilename: string | null = null;
+        try {
+            if (topResults.length > 0) {
+                const appended = await appendAssetOpportunityArchiveBlock({
+                    root: archiveRoot,
+                    batchRunId: input.runId,
+                    holdoutBars,
+                    topResults,
+                    ...(archiveAppend ? { append: archiveAppend } : {}),
+                });
+                archiveFilename = path.basename(appended.path);
+                debugLogger.event("finder.asset_opportunity_batch.iteration.complete", {
+                    runId: input.runId,
+                    holdoutBars,
+                    iterationIndex,
+                    totalIterations,
+                    archiveFilename,
+                    bytes: appended.bytes,
+                    assets: iteration.results.length,
+                    durationMs: Math.max(0, Date.now() - snapshot.startedAt),
+                });
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            snapshot.batch = {
+                ...snapshot.batch!,
+                completedIterations: snapshot.batch!.completedIterations + 1,
+            };
+            snapshot.phase = "fatal";
+            snapshot.finishedAt = Date.now();
+            snapshot.statusText = `Asset Opportunity batch archive failed at holdout ${holdoutBars}: ${message}`;
+            snapshot.summary = snapshot.statusText;
+            snapshot.error = message;
+            debugLogger.warn("finder.asset_opportunity_batch.archive_failed", {
+                runId: input.runId,
+                holdoutBars,
+                error: message,
+            });
+            writer({
+                type: "asset_batch_fatal",
+                runId: input.runId,
+                error: `Archive write failed for holdout ${holdoutBars}: ${message}`,
+                holdoutBars,
+                completedIterations: snapshot.batch.completedIterations,
+            });
+            return;
+        }
+
+        snapshot.batch = {
+            ...snapshot.batch!,
+            completedIterations: snapshot.batch!.completedIterations + 1,
+        };
+
+        writer({
+            type: "asset_batch_iteration_done",
+            runId: input.runId,
+            holdoutBars,
+            iterationIndex,
+            totalIterations,
+            assets: iteration.results,
+            totals: iteration.totals,
+            diagnostics: null,
+            assetDiagnostics: iteration.assetDiagnostics,
+            archiveFilename,
+        });
+    }
+
+    // Terminal: last completed iteration's rows + bounded batch counts.
+    snapshot.cancelled = snapshot.cancelled || isCancelled();
+    snapshot.phase = snapshot.cancelled ? "cancelled" : "done";
+    snapshot.finishedAt = Date.now();
+    snapshot.assetResults = lastIteration.results;
+    snapshot.assetTotals = lastIteration.totals;
+    snapshot.assetDiagnostics = lastIteration.assetDiagnostics;
+    const completedIterations = snapshot.batch!.completedIterations;
+    const failedIterations = snapshot.batch!.failedIterations;
+    snapshot.summary = snapshot.cancelled
+        ? `Asset Opportunity batch cancelled — ${completedIterations}/${totalIterations} holdout values completed (${failedIterations} failed).`
+        : `Asset Opportunity batch complete — ${completedIterations}/${totalIterations} holdout values appended (${failedIterations} failed).`;
+
+    debugLogger.event(
+        snapshot.cancelled
+            ? "finder.asset_opportunity_batch.cancelled"
+            : "finder.asset_opportunity_batch.complete",
+        {
+            runId: input.runId,
+            startHoldoutBars: batch.startHoldoutBars,
+            endHoldoutBars: batch.endHoldoutBars,
+            totalIterations,
+            completedIterations,
+            failedIterations,
+            lastHoldout: lastIteration.holdoutBars,
+            retainedResults: lastIteration.results.length,
+            durationMs: Math.max(0, Date.now() - snapshot.startedAt),
+        },
+    );
+
+    writer({
+        type: "asset_batch_done",
         ok: !snapshot.cancelled,
         cancelled: snapshot.cancelled,
         runId: input.runId,
-        interval: input.interval,
-        totals: snapshot.assetTotals,
+        completedIterations,
+        failedIterations,
+        assets: lastIteration.results,
         summary: snapshot.summary,
-        // Keep the full scalar run result set. The browser applies topN only
-        // to the visible list so post-run re-sort can rank every opportunity.
-        assets: sortedAssetResults,
-        diagnostics: null,
-        assetDiagnostics,
     });
 }
 
@@ -1677,6 +2156,183 @@ async function handleAssetOpportunityRunRequest(
             // The owning run released (terminal or stopped while still
             // owning): flush a deferred invalidation now that no newer owner
             // exists whose datasets could be clobbered.
+            flushPendingDatasetCacheInvalidation();
+            runOwner = RUN_OWNER_NONE;
+        }
+        if (abortController === runAbortController) {
+            abortController = null;
+        }
+    }
+}
+
+interface FinderAssetOpportunityBatchRequestBody extends FinderAssetOpportunityRequestBody {
+    /** Orchestration-only range; each iteration passes only its own holdout. */
+    batch?: unknown;
+}
+
+/**
+ * HTTP handler for the Asset Opportunity BATCH run. Mirrors
+ * `handleAssetOpportunityRunRequest` but additionally validates the inclusive
+ * holdout range BEFORE acquiring ownership, then dispatches one sequential
+ * server job over every holdout value under the same run id.
+ */
+async function handleAssetOpportunityBatchRunRequest(
+    res: ViteHttpResponse,
+    body: FinderAssetOpportunityBatchRequestBody,
+    archiveRoot: string,
+): Promise<void> {
+    if (runOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "A Finder run is already running. Use Stop first.");
+    }
+
+    const runId = parseRunId(body.runId);
+    if (consumePendingStopForRun(runId)) {
+        throw new HttpStatusError(409, "Finder run was stopped before it started.");
+    }
+
+    const symbols = normalizeSymbols(body.symbols);
+    if (symbols.length === 0) {
+        throw new HttpStatusError(400, "At least one symbol is required.");
+    }
+    if (symbols.length > ASSET_OPPORTUNITY_MAX_SYMBOLS) {
+        throw new HttpStatusError(
+            400,
+            `Asset Opportunity supports at most ${ASSET_OPPORTUNITY_MAX_SYMBOLS} symbols per run.`,
+        );
+    }
+    const heapWarning = resolveFinderUniverseHeapWarning(symbols.length);
+    if (heapWarning) {
+        throw new HttpStatusError(507, heapWarning);
+    }
+    const interval = parseInterval(body.interval);
+    const parsedOptions = parseOptions(body.options);
+    if (parsedOptions.scope !== "asset_opportunity") {
+        throw new HttpStatusError(400, "Asset Opportunity requires scope asset_opportunity.");
+    }
+    const options = {
+        ...parsedOptions,
+        scope: "asset_opportunity" as const,
+        ...(parsedOptions.assetOpportunity
+            ? {
+                assetOpportunity: {
+                    ...parsedOptions.assetOpportunity,
+                    oosIgnoreLastBars: normalizeFinderAssetOosIgnoreLastBars(
+                        parsedOptions.assetOpportunity.oosIgnoreLastBars,
+                    ),
+                    oosHorizons: normalizeFinderAssetOosHorizons(
+                        parsedOptions.assetOpportunity.oosHorizons,
+                    ),
+                },
+            }
+            : {}),
+    };
+    if (options.mode !== "random") {
+        throw new HttpStatusError(400, "Asset Opportunity requires random Finder mode.");
+    }
+
+    // Validate + normalize the inclusive range BEFORE acquiring ownership so a
+    // malformed range can never start heavy work.
+    const batchSource = body.batch && typeof body.batch === "object" && !Array.isArray(body.batch)
+        ? body.batch as Record<string, unknown>
+        : {};
+    const batchRange = normalizeFinderAssetOosBatchHoldoutRange(
+        batchSource.startHoldoutBars,
+        batchSource.endHoldoutBars,
+    );
+    if (batchRange.error !== null) {
+        throw new HttpStatusError(400, batchRange.error);
+    }
+
+    const strategyKeys = parseStrategyKeys(body.strategyKeys, body.strategyKey);
+    const selectedStrategies = await resolveSelectedStrategies(strategyKeys);
+    const settings = (body.settings ?? {}) as BacktestSettings;
+    const capitalSettings = (body.capitalSettings ?? {}) as CapitalSettings;
+    const useRustEnginePreference = body.useRustEnginePreference === true;
+    const candidatePoolSize = clampCandidatePoolSize(options.assetOpportunity?.candidatePoolSize);
+    const minFreshSupport = clampMinFreshSupport(options.assetOpportunity?.minFreshSupport);
+
+    const exitStrategyCandidates = await resolveExitStrategyCandidates(body.exitStrategyKeys);
+    const providerBySymbol = parseProviderBySymbol(body.providerBySymbol);
+
+    if (consumePendingStopForRun(runId)) {
+        throw new HttpStatusError(409, "Finder run was stopped before it started.");
+    }
+
+    const owner = acquireRunOwnership();
+    const runAbortController = new AbortController();
+    abortController = runAbortController;
+
+    const loadDatasetFullClosed = (
+        sym: string,
+        intv: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context);
+
+    let stream: ReturnType<typeof beginNdjsonStream> | null = null;
+    let streamWritable = true;
+    try {
+        stream = beginNdjsonStream(res);
+        const responseWithEvents = res as ViteHttpResponse & {
+            on?: (event: string, listener: () => void) => void;
+        };
+        if (typeof responseWithEvents.on === "function") {
+            const markDisconnected = () => { streamWritable = false; };
+            responseWithEvents.on("close", markDisconnected);
+            responseWithEvents.on("error", markDisconnected);
+        }
+        const safeWrite = (event: FinderAssetOpportunityBatchStreamEvent): void => {
+            if (!streamWritable) return;
+            if (!writeStreamEventBestEffort(stream!, event, runId)) {
+                streamWritable = false;
+            }
+        };
+        await processFinderAssetOpportunityBatchRun(
+            {
+                runId,
+                interval,
+                symbols,
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategies,
+                exitStrategyCandidates,
+                useRustEnginePreference,
+                abortSignal: runAbortController.signal,
+                loadDataset: loadDatasetFullClosed,
+                loadSecondaryDataset: (sym, intv, signal, context) =>
+                    loadServerFinderDataset(sym, intv, signal, context),
+                getProvider: (symbol) => resolveServerProvider(symbol, providerBySymbol),
+                candidatePoolSize,
+                minFreshSupport,
+                batch: { startHoldoutBars: batchRange.start, endHoldoutBars: batchRange.end },
+            },
+            safeWrite,
+            owner,
+            archiveRoot,
+        );
+        if (streamWritable) {
+            try {
+                stream.end();
+            } catch {
+                streamWritable = false;
+            }
+        }
+    } catch (error) {
+        if (!stream) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        debugLogger.event("finder.asset_opportunity_batch.run.failed", {
+            runId,
+            error: message,
+        });
+        try {
+            if (!streamWritable) return;
+            stream.end({ type: "asset_batch_fatal", runId, error: message, holdoutBars: null, completedIterations: 0 });
+        } catch {
+            /* best-effort */
+        }
+    } finally {
+        if (runOwner === owner) {
             flushPendingDatasetCacheInvalidation();
             runOwner = RUN_OWNER_NONE;
         }
@@ -1924,6 +2580,7 @@ function buildStatusSnapshot(): FinderRunStatusSnapshot {
     const terminal = runState!.finishedAt !== null;
     const state = runState!;
     const jobKind = state.jobKind ?? "symbol_universe";
+    const assetOpportunityKind = jobKind === "asset_opportunity" || jobKind === "asset_opportunity_batch";
     return {
         ok: true,
         running,
@@ -1946,16 +2603,18 @@ function buildStatusSnapshot(): FinderRunStatusSnapshot {
         cancelled: state.cancelled,
         // The terminal candidate slice ships ONCE here, only for universe runs.
         // In-progress snapshots return null so polling stays small while a
-        // large universe runs. Asset-opportunity terminal snapshots carry the
-        // full scalar asset result set on `terminalAssets` instead.
+        // large universe runs. Asset-opportunity terminal snapshots (single
+        // and batch) carry the full scalar asset result set of the run / last
+        // completed iteration on `terminalAssets` instead.
         terminalCandidates: terminal && jobKind === "symbol_universe" ? state.candidates : null,
-        terminalAssets: terminal && jobKind === "asset_opportunity" ? state.assetResults ?? [] : null,
+        terminalAssets: terminal && assetOpportunityKind ? state.assetResults ?? [] : null,
         summary: state.summary,
         error: state.error,
         diagnostics: state.diagnostics,
         totals: state.totals,
-        assetTotals: terminal && jobKind === "asset_opportunity" ? state.assetTotals ?? null : null,
-        assetDiagnostics: terminal && jobKind === "asset_opportunity" ? state.assetDiagnostics ?? null : null,
+        assetTotals: terminal && assetOpportunityKind ? state.assetTotals ?? null : null,
+        assetDiagnostics: terminal && assetOpportunityKind ? state.assetDiagnostics ?? null : null,
+        batch: state.batch ?? null,
     };
 }
 
@@ -2166,10 +2825,10 @@ export function finderVitePlugin(): Plugin {
     return {
         name: "finder-universe-server",
         configureServer(server) {
-            registerFinderRoutes(server.middlewares);
+            registerFinderRoutes(server.middlewares, server.config.root);
         },
         configurePreviewServer(server) {
-            registerFinderRoutes(server.middlewares);
+            registerFinderRoutes(server.middlewares, server.config.root);
         },
     };
 }
@@ -2186,7 +2845,12 @@ export function finderVitePlugin(): Plugin {
  * CPU-heavy Finder runs or have results/diagnostics disclosed to a remote
  * caller.
  */
-function registerFinderRoutes(middlewares: any): void {
+function registerFinderRoutes(middlewares: any, serverRoot?: string): void {
+    // The batch archive dir resolves from Vite's configured project root so
+    // launching Vite from another working directory cannot write to the wrong
+    // archive. Tests call the registration seam without a root and fall back
+    // to the process working directory.
+    const archiveRoot = serverRoot ?? process.cwd();
     // Audit Finding 1 (+ audit Finding 8 helper): every Finder route gates on
     // the same loopback/bearer policy as the Batch, IBKR, and strategy-admin
     // routes — a Vite dev server exposed via --host, tunnel, or reverse proxy
@@ -2212,6 +2876,21 @@ function registerFinderRoutes(middlewares: any): void {
         unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
         onAuthorized: async ({ res, body }) => {
             await handleAssetOpportunityRunRequest(res, body as unknown as FinderAssetOpportunityRequestBody);
+        },
+    });
+
+    registerLocalJsonRoute(middlewares, "/api/finder/asset-opportunity-batch-run", {
+        methods: ["POST"],
+        readBody: true,
+        maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
+        onAuthorizedRequest: (req) => rememberLocalApiOriginFromRequest(req),
+        unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
+        onAuthorized: async ({ res, body }) => {
+            await handleAssetOpportunityBatchRunRequest(
+                res,
+                body as unknown as FinderAssetOpportunityBatchRequestBody,
+                archiveRoot,
+            );
         },
     });
 

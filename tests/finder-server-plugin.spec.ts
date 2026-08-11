@@ -1,18 +1,23 @@
 import { expect } from "chai";
 import { describe, it, before, after, afterEach } from "node:test";
+import { Readable } from "node:stream";
 import { strategyRegistry } from "../strategyRegistry";
 import {
     processFinderUniverseRun,
     processFinderAssetOpportunityRun,
+    processFinderAssetOpportunityBatchRun,
+    buildAssetOpportunityBatchHoldoutValues,
     __testInternals,
 } from "../lib/finder/server/finder-vite-plugin";
 import { HttpStatusError } from "../lib/vite-http-utils";
 import { resolveFinderUniverseHeapWarning } from "../lib/finder/server/finder-server-heap-guard";
 import {
+    assertAssetResultIsScalar,
     assertCandidateIsScalar,
     toScalarCandidate,
     FINDER_CANDIDATE_FORBIDDEN_ARRAY_FIELDS,
     type FinderStreamEvent,
+    type FinderAssetOpportunityBatchStreamEvent,
     type FinderAssetOpportunityStreamEvent,
 } from "../lib/finder/server/finder-stream-types";
 import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metrics";
@@ -977,6 +982,278 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
     });
 });
 
+describe("finder server plugin Asset Opportunity batch execution", () => {
+    const batchStrategy = {
+        key: "asset_batch_test",
+        name: "Asset Batch Test",
+        strategy: assetOpportunityStrategy,
+    };
+
+    function makeBatchOptions(symbols: string[], _start: number, _end: number): FinderOptions {
+        return {
+            ...makeOptions(symbols),
+            scope: "asset_opportunity",
+            topN: 2,
+            maxRuns: 2,
+            assetOpportunity: {
+                symbols,
+                candidatePoolSize: 2,
+                minFreshSupport: 1,
+                oosHorizons: [1, 3, 5],
+            },
+        };
+    }
+
+    // The batch sweep reserves up to N trailing bars; the 5-candle fixture is
+    // too short for holdouts >= 4, so batch tests use a longer series.
+    const longUpDownDatasets = () => new Map<string, OHLCVData[]>([
+        ["UP", makeCandles(Array.from({ length: 40 }, (_, i) => 100 + i))],
+        ["DOWN", makeCandles(Array.from({ length: 40 }, (_, i) => 100 - i))],
+    ]);
+
+    function runAssetBatch(args: {
+        runId?: string;
+        owner: number;
+        start: number;
+        end: number;
+        datasets?: Map<string, OHLCVData[]>;
+        append?: (dir: string, filename: string, content: string) => Promise<void>;
+    }): Promise<{ events: FinderAssetOpportunityBatchStreamEvent[]; appended: string[] }> {
+        const datasets = args.datasets ?? longUpDownDatasets();
+        const events: FinderAssetOpportunityBatchStreamEvent[] = [];
+        const appended: string[] = [];
+        setRunOwnerForTests(args.owner);
+        const run = (async () => {
+            await processFinderAssetOpportunityBatchRun(
+                {
+                    runId: args.runId ?? "batch-run",
+                    interval: "5m",
+                    symbols: ["UP", "DOWN"],
+                    options: makeBatchOptions(["UP", "DOWN"], args.start, args.end),
+                    settings,
+                    capitalSettings,
+                    selectedStrategies: [batchStrategy],
+                    useRustEnginePreference: true,
+                    loadDataset: async (symbol) => datasets.get(symbol) ?? [],
+                    abortSignal: new AbortController().signal,
+                    candidatePoolSize: 2,
+                    minFreshSupport: 1,
+                    batch: { startHoldoutBars: args.start, endHoldoutBars: args.end },
+                },
+                (event) => events.push(event),
+                args.owner,
+                "/virtual/archive-root",
+                async (dir, filename, content) => {
+                    appended.push(filename);
+                    if (args.append) await args.append(dir, filename, content);
+                },
+            );
+        })();
+        return run.then(() => ({ events, appended }));
+    }
+
+    it("builds ascending holdout values for a validated range", () => {
+        expect(buildAssetOpportunityBatchHoldoutValues(2, 4)).to.deep.equal([2, 3, 4]);
+        expect(buildAssetOpportunityBatchHoldoutValues(7, 7)).to.deep.equal([7]);
+    });
+
+    it("runs every holdout once in ascending order, archives per-N files, and emits scalar rows", async () => {
+        const { events, appended } = await runAssetBatch({ owner: 7301, start: 2, end: 4, runId: "batch-order" });
+
+        const start = events[0]!;
+        expect(start.type).to.equal("asset_batch_start");
+        if (start.type === "asset_batch_start") {
+            expect(start.runId).to.equal("batch-order");
+            expect(start.startHoldoutBars).to.equal(2);
+            expect(start.endHoldoutBars).to.equal(4);
+            expect(start.totalIterations).to.equal(3);
+            expect(start.totalAssets).to.equal(2);
+            expect(start.strategyKeys).to.deep.equal(["asset_batch_test"]);
+        }
+
+        const done = events[events.length - 1]!;
+        expect(done.type).to.equal("asset_batch_done");
+        if (done.type === "asset_batch_done") {
+            expect(done.completedIterations).to.equal(3);
+            expect(done.failedIterations).to.equal(0);
+            expect(done.assets.length).to.be.greaterThan(0);
+        }
+
+        const iterations = events.filter(
+            (event) => event.type === "asset_batch_iteration_done",
+        ) as Array<Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_iteration_done" }>>;
+        expect(iterations.map((event) => event.holdoutBars)).to.deep.equal([2, 3, 4]);
+        expect(iterations.map((event) => event.iterationIndex)).to.deep.equal([0, 1, 2]);
+        // Every iteration carries ONLY its own full scalar rows; the batch
+        // contract forbids prior iterations' arrays.
+        for (const iteration of iterations) {
+            expect(iteration.assets.length).to.be.greaterThan(0);
+            for (const asset of iteration.assets) {
+                assertAssetResultIsScalar(asset);
+                expect(asset.oosHorizonMetrics?.ignoreLastBars).to.equal(iteration.holdoutBars);
+            }
+        }
+        // One append per N, in ascending order, filename derived only from N.
+        expect(appended).to.deep.equal(["oos-holdout-2-bars.txt", "oos-holdout-3-bars.txt", "oos-holdout-4-bars.txt"]);
+
+        // Terminal status carries the batch counts and the LAST iteration rows.
+        const status = handleStatusRequest("batch-order");
+        if (!status.ok) throw new Error(status.error);
+        expect(status.jobKind).to.equal("asset_opportunity_batch");
+        expect(status.batch).to.deep.equal({
+            startHoldoutBars: 2,
+            endHoldoutBars: 4,
+            currentHoldoutBars: 4,
+            currentIteration: 3,
+            totalIterations: 3,
+            completedIterations: 3,
+            failedIterations: 0,
+        });
+        expect(status.terminalAssets?.length).to.equal(iterations[2]!.assets.length);
+        expect(status.assetTotals).to.not.equal(null);
+        expect(status.assetDiagnostics).to.not.equal(null);
+    });
+
+    it("stops after the current iteration when ownership is lost mid-batch", async () => {
+        // The injected append runs AFTER the first iteration completes; losing
+        // ownership there must prevent the next iteration from starting and
+        // report partial completion.
+        const { events, appended } = await runAssetBatch({
+            owner: 7302,
+            start: 1,
+            end: 3,
+            runId: "batch-stop",
+            append: async () => {
+                setRunOwnerForTests(0);
+            },
+        });
+        const iterations = events.filter(
+            (event) => event.type === "asset_batch_iteration_done",
+        ) as Array<Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_iteration_done" }>>;
+        expect(iterations.map((event) => event.holdoutBars)).to.deep.equal([1]);
+        expect(appended).to.deep.equal(["oos-holdout-1-bars.txt"]);
+        const done = events[events.length - 1]!;
+        expect(done.type).to.equal("asset_batch_done");
+        if (done.type === "asset_batch_done") {
+            expect(done.cancelled).to.equal(true);
+            expect(done.completedIterations).to.equal(1);
+            expect(done.failedIterations).to.equal(0);
+        }
+        const status = handleStatusRequest("batch-stop");
+        if (!status.ok) throw new Error(status.error);
+        expect(status.phase).to.equal("cancelled");
+        expect(status.batch?.completedIterations).to.equal(1);
+        // The terminal view still adopts the last completed iteration.
+        expect(status.terminalAssets?.length).to.be.greaterThan(0);
+    });
+
+    it("stops the batch with a visible fatal when the archive append fails, leaving prior files intact", async () => {
+        const { events, appended } = await runAssetBatch({
+            owner: 7303,
+            start: 1,
+            end: 2,
+            runId: "batch-archive-fail",
+            append: async () => {
+                throw new Error("disk full");
+            },
+        });
+        // The first iteration's append throws; the batch must not start the
+        // second iteration and must emit asset_batch_fatal.
+        expect(appended).to.deep.equal(["oos-holdout-1-bars.txt"]);
+        const fatal = events.find((event) => event.type === "asset_batch_fatal") as
+            Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_fatal" }> | undefined;
+        expect(fatal).to.not.equal(undefined);
+        expect(fatal!.error).to.contain("disk full");
+        expect(fatal!.holdoutBars).to.equal(1);
+        const done = events[events.length - 1]!;
+        expect(done.type).to.equal("asset_batch_fatal");
+    });
+
+    it("single-value ranges execute exactly one iteration", async () => {
+        const { events, appended } = await runAssetBatch({ owner: 7304, start: 5, end: 5 });
+        const iterations = events.filter(
+            (event) => event.type === "asset_batch_iteration_done",
+        ) as Array<Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_iteration_done" }>>;
+        expect(iterations).to.have.length(1);
+        expect(iterations[0]!.holdoutBars).to.equal(5);
+        expect(appended).to.deep.equal(["oos-holdout-5-bars.txt"]);
+    });
+
+    function makeBatchRouteRequest(body: Record<string, unknown>): any {
+        const req = Readable.from([JSON.stringify(body)]) as any;
+        req.method = "POST";
+        req.url = "/api/finder/asset-opportunity-batch-run";
+        req.headers = { host: "localhost:5173", "content-type": "application/json" };
+        req.socket = { remoteAddress: "127.0.0.1", localAddress: "127.0.0.1", localPort: 5173 };
+        return req;
+    }
+
+    it("route rejects an invalid range with 400 BEFORE acquiring ownership", async () => {
+        const routes = captureFinderRoutes();
+        const handler = routes.get("/api/finder/asset-opportunity-batch-run")!;
+        const req = makeBatchRouteRequest({
+            runId: "batch-route-range",
+            symbols: ["UP"],
+            interval: "5m",
+            options: {
+                scope: "asset_opportunity",
+                mode: "random",
+                sortPriority: ["netProfit"],
+                useAdvancedSort: false,
+                topN: 5,
+                steps: 3,
+                rangePercent: 35,
+                maxRuns: 20,
+                tradeFilterEnabled: false,
+                minTrades: 0,
+                maxTrades: Number.POSITIVE_INFINITY,
+                assetOpportunity: { symbols: ["UP"], candidatePoolSize: 2, minFreshSupport: 1 },
+            },
+            strategyKeys: ["asset_batch_test"],
+            batch: { startHoldoutBars: 5, endHoldoutBars: 2 },
+        });
+        const res = makeRouteResponse();
+        await handler(req, res);
+        expect(res.statusCode).to.equal(400);
+        const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
+        expect(payload.error).to.match(/must not exceed/);
+        // Ownership was never acquired, so no run is running.
+        expect(__testInternals.getRunStateForTests()).to.equal(null);
+    });
+
+    it("route returns 409 when another run already owns the server", async () => {
+        const routes = captureFinderRoutes();
+        const handler = routes.get("/api/finder/asset-opportunity-batch-run")!;
+        setRunOwnerForTests(9305);
+        const req = makeBatchRouteRequest({
+            runId: "batch-route-conflict",
+            symbols: ["UP"],
+            interval: "5m",
+            options: {
+                scope: "asset_opportunity",
+                mode: "random",
+                sortPriority: ["netProfit"],
+                useAdvancedSort: false,
+                topN: 5,
+                steps: 3,
+                rangePercent: 35,
+                maxRuns: 20,
+                tradeFilterEnabled: false,
+                minTrades: 0,
+                maxTrades: Number.POSITIVE_INFINITY,
+                assetOpportunity: { symbols: ["UP"], candidatePoolSize: 2, minFreshSupport: 1 },
+            },
+            strategyKeys: ["asset_batch_test"],
+            batch: { startHoldoutBars: 1, endHoldoutBars: 3 },
+        });
+        const res = makeRouteResponse();
+        await handler(req, res);
+        expect(res.statusCode).to.equal(409);
+        const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
+        expect(payload.error).to.include("already running");
+    });
+});
+
 describe("finder server plugin heap guard", () => {
     it("returns null for small universes regardless of heap", () => {
         expect(resolveFinderUniverseHeapWarning(50, 4096)).to.equal(null);
@@ -1124,6 +1401,7 @@ describe("finder server plugin route-level authorization (audit Finding 1)", () 
     const ROUTES = [
         { path: "/api/finder/universe-run", method: "POST" },
         { path: "/api/finder/asset-opportunity-run", method: "POST" },
+        { path: "/api/finder/asset-opportunity-batch-run", method: "POST" },
         { path: "/api/finder/stop", method: "POST" },
         { path: "/api/finder/status", method: "GET" },
         { path: "/api/finder/invalidate-cache", method: "POST" },

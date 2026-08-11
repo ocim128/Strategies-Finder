@@ -61,11 +61,25 @@ export type FinderJobPhase = "loading" | "evaluating" | "oos" | "done" | "cancel
  * wire-level field so the status snapshot + terminal payload can distinguish
  * which terminal slice they carry.
  */
-export type FinderJobKind = "symbol_universe" | "asset_opportunity";
+export type FinderJobKind = "symbol_universe" | "asset_opportunity" | "asset_opportunity_batch";
 
 // ---------------------------------------------------------------------------
 // Stream events (NDJSON, one JSON object per line)
 // ---------------------------------------------------------------------------
+
+/**
+ * Asset Opportunity terminal totals, shared by the single `asset_done` event
+ * and each `asset_batch_iteration_done` event.
+ */
+export interface FinderAssetOpportunityTotals {
+    totalAssets: number;
+    assetsWithFreshEntry: number;
+    selectGradeAssets: number;
+    watchGradeAssets: number;
+    rejectGradeAssets: number;
+    failedAssets: number;
+    engineUsage?: FinderAssetOpportunityDiagnostics["engineUsage"];
+}
 
 export type FinderStreamEvent =
     | {
@@ -179,15 +193,7 @@ export type FinderAssetOpportunityStreamEvent =
         cancelled: boolean;
         runId: string;
         interval: string;
-        totals: {
-            totalAssets: number;
-            assetsWithFreshEntry: number;
-            selectGradeAssets: number;
-            watchGradeAssets: number;
-            rejectGradeAssets: number;
-            failedAssets: number;
-            engineUsage?: FinderAssetOpportunityDiagnostics["engineUsage"];
-        };
+        totals: FinderAssetOpportunityTotals;
         summary: string;
         /**
          * Terminal authoritative full Asset Opportunity result set, sorted by
@@ -201,12 +207,100 @@ export type FinderAssetOpportunityStreamEvent =
     | { type: "asset_fatal"; runId: string; error: string };
 
 /**
+ * Asset Opportunity batch stream events. One server job owns the whole
+ * holdout sweep; each iteration reuses the unchanged per-asset algorithm and
+ * reports its full scalar rows on `asset_batch_iteration_done`. No event
+ * carries prior iterations' rows — the browser retains only the current
+ * iteration for re-sort and Apply.
+ */
+export type FinderAssetOpportunityBatchStreamEvent =
+    | {
+        type: "asset_batch_start";
+        runId: string;
+        startHoldoutBars: number;
+        endHoldoutBars: number;
+        totalIterations: number;
+        totalAssets: number;
+        strategyKeys: string[];
+        strategyNames: string[];
+    }
+    | {
+        type: "asset_batch_progress";
+        runId: string;
+        /** Current holdout value being evaluated. */
+        holdoutBars: number;
+        /** 0-based index of the current iteration. */
+        iterationIndex: number;
+        totalIterations: number;
+        /** Overall job progress 0-100 (iteration + in-iteration asset progress). */
+        percent: number;
+        phase: FinderJobPhase;
+        statusText: string;
+        /** 0-100 progress within the current iteration. */
+        assetProgress: number;
+    }
+    | {
+        type: "asset_batch_iteration_done";
+        runId: string;
+        holdoutBars: number;
+        /** 0-based index of the completed iteration. */
+        iterationIndex: number;
+        totalIterations: number;
+        /** Full scalar Asset Opportunity rows for THIS holdout only (no prior iterations). */
+        assets: FinderAssetOpportunityResult[];
+        totals: FinderAssetOpportunityTotals;
+        diagnostics: FinderDiagnostics | null;
+        assetDiagnostics: FinderAssetOpportunityDiagnostics | null;
+        /** Basename of the appended archive file, or null when no top results were written. */
+        archiveFilename: string | null;
+    }
+    | {
+        type: "asset_batch_done";
+        ok: boolean;
+        cancelled: boolean;
+        runId: string;
+        completedIterations: number;
+        failedIterations: number;
+        /** Full scalar rows of the LAST completed iteration only. */
+        assets: FinderAssetOpportunityResult[];
+        summary: string;
+    }
+    | {
+        type: "asset_batch_fatal";
+        runId: string;
+        error: string;
+        /** Holdout that was running when the batch failed, or null. */
+        holdoutBars: number | null;
+        completedIterations: number;
+    };
+
+/**
+ * Bounded batch status carried on the run snapshot while an
+ * `asset_opportunity_batch` job is running (and retained at terminal). Counts
+ * only — never per-iteration rows. The terminal view uses the existing
+ * `terminalAssets` field for the last completed iteration.
+ */
+export interface FinderBatchStatus {
+    startHoldoutBars: number;
+    endHoldoutBars: number;
+    currentHoldoutBars: number | null;
+    /** 1-based index of the current iteration; 0 before the first. */
+    currentIteration: number;
+    totalIterations: number;
+    completedIterations: number;
+    failedIterations: number;
+}
+
+/**
  * Union of every event the Finder server can emit. The browser's
  * `consumeNdjsonStream` dispatches by the `type` field; the asset-opportunity
  * events share the same wire shape as the universe events but with distinct
  * `type` discriminants so handlers don't collide.
  */
-export type AnyFinderStreamEvent = FinderStreamEvent | FinderAssetOpportunityStreamEvent;
+export type AnyFinderStreamEvent =
+    | FinderStreamEvent
+    | FinderAssetOpportunityStreamEvent
+    | FinderAssetOpportunityBatchStreamEvent;
 
 // ---------------------------------------------------------------------------
 // Status snapshot (GET /api/finder/status?runId=...)
@@ -276,17 +370,16 @@ export type FinderRunStatusSnapshot = {
      * Asset-opportunity-specific counts. Present on terminal asset-opportunity
      * snapshots; null for symbol_universe runs.
      */
-    assetTotals: {
-        totalAssets: number;
-        assetsWithFreshEntry: number;
-        selectGradeAssets: number;
-        watchGradeAssets: number;
-        rejectGradeAssets: number;
-        failedAssets: number;
-        engineUsage?: FinderAssetOpportunityDiagnostics["engineUsage"];
-    } | null;
+    assetTotals: FinderAssetOpportunityTotals | null;
     /** Terminal Asset Opportunity diagnostics, retained for reload reattach. */
     assetDiagnostics?: FinderAssetOpportunityDiagnostics | null;
+    /**
+     * Bounded batch counts for `asset_opportunity_batch` jobs; null for other
+     * kinds. Counts only, so polling stays small while the sweep runs.
+     * Optional so older snapshot literals (and pre-batch servers) stay valid;
+     * the server always sends it explicitly.
+     */
+    batch?: FinderBatchStatus | null;
 };
 
 // ---------------------------------------------------------------------------

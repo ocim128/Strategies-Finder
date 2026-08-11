@@ -38,6 +38,73 @@ Asset runs emit bounded debug events named
 and `finder.asset_opportunity.run.failed`. Event payloads contain counts,
 grades, symbols, timings, and errors only—never candles, signals, or trades.
 
+## Asset Opportunity Batch
+
+Batch mode sweeps an inclusive holdout range in **one server-owned job** under
+a single `runId`. The browser enables it with the `Batch OOS Holdout` toggle
+in the Asset Opportunity settings (which hides and disables the single
+`OOS Holdout Bars` input) and sends
+`POST /api/finder/asset-opportunity-batch-run` with the same fields as the
+single route plus `batch: { startHoldoutBars, endHoldoutBars }`. The server
+validates the range **before acquiring ownership**: positive integers,
+ascending (`start <= end`), each at most 100,000, and at most 100 values
+(`normalizeFinderAssetOosBatchHoldoutRange` in
+`lib/finder/finder-asset-opportunity-oos.ts`).
+
+The batch coordinator (`processFinderAssetOpportunityBatchRun` in
+`lib/finder/server/finder-vite-plugin.ts`) loops the range in ascending order
+and calls the same per-asset iteration seam as the single route
+(`runAssetOpportunityIteration`, extracted unchanged), cloning the options
+with `oosIgnoreLastBars` set to the current N. The random seed is preserved
+across iterations so differences come from the holdout boundary, not a new
+sample. After each iteration it appends the same top-N payload the Copy Top
+Results button produces (shared serializer
+`buildAssetOpportunityMetadataPayload` in
+`lib/finder/finder-asset-opportunity-metadata.ts`) to
+`<server.config.root>/archive/asset opportunity/oos-holdout-<N>-bars.txt`
+(`appendAssetOpportunityArchiveBlock` in
+`lib/finder/server/finder-asset-opportunity-archive.ts`). Re-running the same
+N appends a new delimited block; it never overwrites or deduplicates prior
+research. The filename is derived only from the validated integer N — a
+request can never supply a filesystem path.
+
+Only the current iteration's full scalar rows are retained (for re-sort and
+the terminal view); prior iterations' rows are never held in memory or sent
+again. The terminal status snapshot carries the LAST completed iteration's
+rows on `terminalAssets` plus bounded batch counts on `batch`:
+
+```text
+batch: {
+  startHoldoutBars, endHoldoutBars, currentHoldoutBars,
+  currentIteration, totalIterations, completedIterations, failedIterations
+}
+```
+
+Batch stream events (`FinderAssetOpportunityBatchStreamEvent`):
+
+| Event | Purpose |
+| --- | --- |
+| `asset_batch_start` | Declares the validated range, iteration/asset totals, and strategy names. |
+| `asset_batch_progress` | Overall job percent plus in-iteration asset progress, current holdout, phase, and status text. |
+| `asset_batch_iteration_done` | Full scalar rows for THIS holdout only, current diagnostics/totals, and the archive filename. |
+| `asset_batch_done` | Completed/failed holdout counts, last iteration rows, summary. |
+| `asset_batch_fatal` | Terminal error, current holdout, completed count — also used for archive write failures. |
+
+Stop aborts the active iteration and prevents the next from starting; a
+stopped batch reports partial completion and keeps already-appended blocks
+intact. If the archive append fails, the batch stops with a visible fatal
+(error prefixed `Archive write failed for holdout N`). Stream disconnect does
+not cancel the job; reload reattach polls the same scoped status endpoint and
+recovers the batch counts plus the last completed iteration.
+
+Batch debug events: `finder.asset_opportunity_batch.start`,
+`finder.asset_opportunity_batch.iteration.complete`,
+`finder.asset_opportunity_batch.iteration_failed`,
+`finder.asset_opportunity_batch.archive_failed`,
+`finder.asset_opportunity_batch.cancelled`, and
+`finder.asset_opportunity_batch.complete` — counts, N, filenames, byte
+counts, timings, and errors only.
+
 ## Browser-owned Finder modes
 
 Current-chart Finder and Strategy Quality remain in the browser. Genetic and
@@ -54,7 +121,8 @@ infer server ownership for another Finder mode from the shared result types.
   browser-generated `runId`. The server sequences strategies, merges scalar
   survivors, runs OOS (when enabled), and publishes one terminal snapshot.
   The browser no longer sequences per-strategy requests or loads OHLCV for
-  the OOS pass.
+  the OOS pass. Asset Opportunity batch mode uses the analogous
+  `POST /api/finder/asset-opportunity-batch-run` route (see above).
 - Polymarket scoring remains unsupported in Symbol Universe scope.
 - **Stop is scoped by `runId`** — `POST /api/finder/stop` carries the active
   run id so a stale tab cannot cancel a newer run. Stop aborts in-flight
@@ -174,8 +242,14 @@ cancelled instead of starting heavy work. A newer run with a different
 - `..\..\..\node_modules\.bin\esno tests\finder-universe-metrics.spec.ts`
 - `..\..\..\node_modules\.bin\esno tests\finder-universe-oos.spec.ts`
 - `..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts`
+- `..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-oos.spec.ts`
+- `..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-metadata.spec.ts`
+- `..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-archive.spec.ts`
 
 Manual smoke: run one and multiple strategies over 50 symbols, then 400
 symbols with the larger heap. Confirm progress scaling, server-side OOS
 filtering, Stop (scoped by run id), diagnostics merging, reload reattach
-during IS and OOS phases, and Apply.
+during IS and OOS phases, and Apply. For batch mode, enable the toggle, enter
+a small range such as 2–4 with at least two symbols, and verify one file per
+N under `archive/asset opportunity/`, append-on-repeat, empty-result blocks,
+Stop partial completion, and reload reattach mid-sweep.
