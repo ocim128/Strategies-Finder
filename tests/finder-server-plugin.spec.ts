@@ -35,6 +35,9 @@ const {
     consumePendingStopForRun,
     writeStreamEventBestEffort,
     withCanonicalUniverseSymbols,
+    getPendingDatasetCacheInvalidation,
+    flushPendingDatasetCacheInvalidation,
+    acquireRunOwnershipForTests,
 } = __testInternals;
 
 type FinderRouteHandler = (req: any, res: any) => Promise<void>;
@@ -1210,5 +1213,76 @@ describe("finder server plugin route-level authorization (audit Finding 1)", () 
         } finally {
             if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;
         }
+    });
+});
+
+describe("finder server plugin deferred dataset-cache invalidation (audit Finding 3)", () => {
+    const postInvalidateCache = async (): Promise<{ ok: boolean; deferred?: boolean }> => {
+        const routes = captureFinderRoutes();
+        const handler = routes.get("/api/finder/invalidate-cache");
+        expect(handler).to.not.equal(undefined);
+        const res = makeRouteResponse();
+        await handler!(
+            {
+                method: "POST",
+                socket: { remoteAddress: "127.0.0.1" },
+                headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+            },
+            res,
+        );
+        expect(res.statusCode).to.equal(200);
+        return JSON.parse(res.body) as { ok: boolean; deferred?: boolean };
+    };
+
+    it("defers invalidation while a run owns the server instead of clearing mid-run caches", async () => {
+        setRunOwnerForTests(1);
+        const payload = await postInvalidateCache();
+        expect(payload.ok).to.equal(true);
+        expect(payload.deferred).to.equal(true);
+        // A bounded boolean, not a queue: the flag is set, not a counter.
+        expect(getPendingDatasetCacheInvalidation()).to.equal(true);
+    });
+
+    it("keeps the bounded boolean collapsed across repeated deferred requests", async () => {
+        setRunOwnerForTests(1);
+        await postInvalidateCache();
+        await postInvalidateCache();
+        expect(getPendingDatasetCacheInvalidation()).to.equal(true);
+        // One flush clears it completely.
+        flushPendingDatasetCacheInvalidation();
+        expect(getPendingDatasetCacheInvalidation()).to.equal(false);
+    });
+
+    it("flushes immediately when no run owns the server", async () => {
+        // resetRunStateForTests in afterEach guarantees runOwner === RUN_OWNER_NONE.
+        const payload = await postInvalidateCache();
+        expect(payload.ok).to.equal(true);
+        expect(payload.deferred).to.equal(undefined);
+        expect(getPendingDatasetCacheInvalidation()).to.equal(false);
+    });
+
+    it("flushes a deferred invalidation at ownership acquisition (Stop → new run boundary)", async () => {
+        // Sync completes mid-run: deferred.
+        setRunOwnerForTests(1);
+        await postInvalidateCache();
+        expect(getPendingDatasetCacheInvalidation()).to.equal(true);
+
+        // The old run releases (Stop / terminal), then a NEW run acquires
+        // ownership: the deferred clear must flush BEFORE the new run loads
+        // any dataset so it cannot read pre-sync data.
+        setRunOwnerForTests(0);
+        const owner = acquireRunOwnershipForTests();
+        expect(owner).to.be.greaterThan(0);
+        expect(getPendingDatasetCacheInvalidation(), "deferred clear flushed at acquisition").to.equal(false);
+    });
+
+    it("resetRunStateForTests clears a pending deferred invalidation", async () => {
+        setRunOwnerForTests(1);
+        const payload = await postInvalidateCache();
+        expect(payload.deferred).to.equal(true);
+        expect(getPendingDatasetCacheInvalidation()).to.equal(true);
+        resetRunStateForTests();
+        expect(getPendingDatasetCacheInvalidation()).to.equal(false);
+        expect(acquireRunOwnershipForTests()).to.be.greaterThan(0);
     });
 });

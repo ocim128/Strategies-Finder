@@ -1007,6 +1007,12 @@ export async function runFinderUniverseExecution(
             if (zeroSignals) {
                 consecutiveZeroSignalSymbols += 1;
                 if (consecutiveZeroSignalSymbols >= UNIVERSE_ZERO_SIGNAL_BAIL_THRESHOLD) {
+                    // The bailout is an early stop like the unreachable-filter
+                    // reasons: the candidate was only partially evaluated, so it
+                    // must NOT continue through candidate construction and
+                    // survivor ranking (permissive universe thresholds would
+                    // otherwise rank it from the symbols seen before the bail).
+                    evaluationStoppedEarly = true;
                     const remainingSkipped = loadedSymbols.length - symbolIndex - 1;
                     skippedRuns += remainingSkipped;
                     recordFinderStrategySkipped(strategyStats, remainingSkipped);

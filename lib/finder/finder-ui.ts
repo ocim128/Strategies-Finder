@@ -237,17 +237,10 @@ export class FinderUI {
             summary.textContent = `Symbol Breakdown (${item.symbols.length})`;
             details.appendChild(summary);
 
-            // Sort symbols: best performers first so hidden green surfaces
-            const sortedSymbols = [...item.symbols].sort((a, b) => {
-                const va = computePerformanceVerdict(a.result, a.status);
-                const vb = computePerformanceVerdict(b.result, b.status);
-                if (va.tier !== vb.tier) return va.tier - vb.tier;
-                return (b.result?.expectancy ?? -Infinity) - (a.result?.expectancy ?? -Infinity);
-            });
-
-            // Verdict distribution summary
+            // Verdict distribution summary stays lightweight (counts only, no
+            // DOM rows) so the closed summary always shows it.
             const verdictCounts = new Map<string, number>();
-            for (const s of sortedSymbols) {
+            for (const s of item.symbols) {
                 const v = computePerformanceVerdict(s.result, s.status);
                 verdictCounts.set(v.label, (verdictCounts.get(v.label) ?? 0) + 1);
             }
@@ -261,45 +254,62 @@ export class FinderUI {
             summaryLine.textContent = summaryParts.join(" • ");
             details.appendChild(summaryLine);
 
-            for (const symbolResult of sortedSymbols) {
-                const line = document.createElement("div");
-                line.className = "finder-sub finder-symbol-row";
-                const verdict = computePerformanceVerdict(symbolResult.result, symbolResult.status);
-                const badge = document.createElement("span");
-                badge.className = `finder-verdict ${verdict.cssClass}`;
-                badge.textContent = verdict.label;
-                line.appendChild(badge);
-                if (symbolResult.oosVerdict && symbolResult.oosResult) {
-                    line.appendChild(this.createUniverseSymbolOosBadge(symbolResult.oosVerdict, symbolResult.oosResult));
-                }
+            // Symbol rows are hidden inside the closed <details>, so defer the
+            // sort + per-row DOM construction until the breakdown is actually
+            // opened. The common case (inspecting only the top-level summary)
+            // no longer builds thousands of hidden rows on every render.
+            let populated = false;
+            details.addEventListener("toggle", () => {
+                if (!details.open || populated) return;
+                populated = true;
+                // Sort symbols: best performers first so hidden green surfaces
+                const sortedSymbols = [...item.symbols].sort((a, b) => {
+                    const va = computePerformanceVerdict(a.result, a.status);
+                    const vb = computePerformanceVerdict(b.result, b.status);
+                    if (va.tier !== vb.tier) return va.tier - vb.tier;
+                    return (b.result?.expectancy ?? -Infinity) - (a.result?.expectancy ?? -Infinity);
+                });
 
-                const textParts: string[] = [symbolResult.symbol];
-                textParts.push(this.formatUniverseStatus(symbolResult.status));
-                textParts.push(`Bars ${symbolResult.barCount}`);
-                if (symbolResult.result) {
-                    const r = symbolResult.result;
-                    const pairNeutral = r.metricBasis === "pair_neutral_log";
-                    textParts.push(`${pairNeutral ? "Net(log)" : "Net"} ${this.formatCurrency(r.netProfit)}`);
-                    textParts.push(`${pairNeutral ? "Exp(log)" : "Exp"} ${r.expectancy.toFixed(2)}`);
-                    textParts.push(`PF ${formatProfitFactor(r.profitFactor)}`);
-                    textParts.push(`WR ${r.winRate.toFixed(0)}%`);
-                    textParts.push(r.sharpeRatioAvailable
-                        ? `Sharpe ${r.sharpeRatio.toFixed(2)}`
-                        : "Sharpe --");
-                    textParts.push(r.drawdownAvailable
-                        ? `DD ${r.maxDrawdownPercent.toFixed(2)}%`
-                        : "DD --");
-                    textParts.push(`Trades ${r.totalTrades}`);
-                }
-                if (symbolResult.error) textParts.push(symbolResult.error);
-                const timeRange = this.formatUniverseTimeRange(symbolResult.firstTime, symbolResult.lastTime);
-                if (timeRange) textParts.push(timeRange.replace(/^ \| /, ""));
+                for (const symbolResult of sortedSymbols) {
+                    const line = document.createElement("div");
+                    line.className = "finder-sub finder-symbol-row";
+                    const verdict = computePerformanceVerdict(symbolResult.result, symbolResult.status);
+                    const badge = document.createElement("span");
+                    badge.className = `finder-verdict ${verdict.cssClass}`;
+                    badge.textContent = verdict.label;
+                    line.appendChild(badge);
+                    if (symbolResult.oosVerdict && symbolResult.oosResult) {
+                        line.appendChild(this.createUniverseSymbolOosBadge(symbolResult.oosVerdict, symbolResult.oosResult));
+                    }
 
-                const textSpan = document.createElement("span");
-                textSpan.textContent = textParts.join(" | ");
-                line.appendChild(textSpan);
-                details.appendChild(line);
-            }
+                    const textParts: string[] = [symbolResult.symbol];
+                    textParts.push(this.formatUniverseStatus(symbolResult.status));
+                    textParts.push(`Bars ${symbolResult.barCount}`);
+                    if (symbolResult.result) {
+                        const r = symbolResult.result;
+                        const pairNeutral = r.metricBasis === "pair_neutral_log";
+                        textParts.push(`${pairNeutral ? "Net(log)" : "Net"} ${this.formatCurrency(r.netProfit)}`);
+                        textParts.push(`${pairNeutral ? "Exp(log)" : "Exp"} ${r.expectancy.toFixed(2)}`);
+                        textParts.push(`PF ${formatProfitFactor(r.profitFactor)}`);
+                        textParts.push(`WR ${r.winRate.toFixed(0)}%`);
+                        textParts.push(r.sharpeRatioAvailable
+                            ? `Sharpe ${r.sharpeRatio.toFixed(2)}`
+                            : "Sharpe --");
+                        textParts.push(r.drawdownAvailable
+                            ? `DD ${r.maxDrawdownPercent.toFixed(2)}%`
+                            : "DD --");
+                        textParts.push(`Trades ${r.totalTrades}`);
+                    }
+                    if (symbolResult.error) textParts.push(symbolResult.error);
+                    const timeRange = this.formatUniverseTimeRange(symbolResult.firstTime, symbolResult.lastTime);
+                    if (timeRange) textParts.push(timeRange.replace(/^ \| /, ""));
+
+                    const textSpan = document.createElement("span");
+                    textSpan.textContent = textParts.join(" | ");
+                    line.appendChild(textSpan);
+                    details.appendChild(line);
+                }
+            });
 
             fragment.appendChild(this.createResultRow({
                 index,

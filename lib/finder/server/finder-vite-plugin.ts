@@ -200,6 +200,41 @@ let abortController: AbortController | null = null;
  */
 let pendingStopRunId: string | null = null;
 
+/**
+ * Deferred dataset-cache invalidation (bounded boolean, not a queue). Data
+ * sync completion POSTs /api/finder/invalidate-cache; while a run owns the
+ * server, clearing shared data caches mid-run would mix pre-sync and post-sync
+ * datasets inside one job. The request is acknowledged as deferred and flushed
+ * at a generation-safe run boundary (before the next run begins, or when the
+ * owning run releases normally).
+ */
+let pendingDatasetCacheInvalidation = false;
+
+/**
+ * Apply a deferred dataset-cache invalidation at a generation-safe run
+ * boundary. No-op when nothing was deferred. Must only be called when no
+ * run can be mid-flight on the datasets being cleared: at ownership
+ * acquisition (before the new run loads anything) or when the owning run
+ * releases normally (no newer owner exists).
+ */
+function flushPendingDatasetCacheInvalidation(): void {
+    if (!pendingDatasetCacheInvalidation) return;
+    pendingDatasetCacheInvalidation = false;
+    clearServerFinderDatasetCaches();
+    debugLogger.event("finder.server.dataset_cache_invalidation_flushed");
+}
+
+/**
+ * Acquire single-owner run ownership. Flushes any deferred dataset-cache
+ * invalidation first so the new run cannot load pre-sync datasets.
+ */
+function acquireRunOwnership(): number {
+    flushPendingDatasetCacheInvalidation();
+    const owner = ++runOwnerGen;
+    runOwner = owner;
+    return owner;
+}
+
 export type FinderRunSnapshot = {
     runId: string;
     startedAt: number;
@@ -1562,8 +1597,7 @@ async function handleAssetOpportunityRunRequest(
         throw new HttpStatusError(409, "Finder run was stopped before it started.");
     }
 
-    const owner = ++runOwnerGen;
-    runOwner = owner;
+    const owner = acquireRunOwnership();
     const runAbortController = new AbortController();
     abortController = runAbortController;
 
@@ -1640,6 +1674,10 @@ async function handleAssetOpportunityRunRequest(
         }
     } finally {
         if (runOwner === owner) {
+            // The owning run released (terminal or stopped while still
+            // owning): flush a deferred invalidation now that no newer owner
+            // exists whose datasets could be clobbered.
+            flushPendingDatasetCacheInvalidation();
             runOwner = RUN_OWNER_NONE;
         }
         if (abortController === runAbortController) {
@@ -1734,8 +1772,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
         throw new HttpStatusError(409, "Finder run was stopped before it started.");
     }
 
-    const owner = ++runOwnerGen;
-    runOwner = owner;
+    const owner = acquireRunOwnership();
     const runAbortController = new AbortController();
     abortController = runAbortController;
 
@@ -1809,6 +1846,10 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
         }
     } finally {
         if (runOwner === owner) {
+            // The owning run released (terminal or stopped while still
+            // owning): flush a deferred invalidation now that no newer owner
+            // exists whose datasets could be clobbered.
+            flushPendingDatasetCacheInvalidation();
             runOwner = RUN_OWNER_NONE;
         }
         // A stopped run releases ownership immediately so another run can
@@ -2210,9 +2251,16 @@ function registerFinderRoutes(middlewares: any): void {
         methods: ["POST"],
         unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
         onAuthorized: ({ res }) => {
-            // cache invalidation thrashes the server dataset cache.
-            clearServerFinderDatasetCaches();
-            debugLogger.event("finder.server.dataset_cache_invalidated");
+            // While a run owns the server, defer the clear to the next
+            // generation-safe run boundary so an active job never mixes
+            // pre-sync and post-sync dataset versions (audit Finding 3).
+            if (runOwner !== RUN_OWNER_NONE) {
+                pendingDatasetCacheInvalidation = true;
+                debugLogger.event("finder.server.dataset_cache_invalidation_deferred");
+                sendJson(res, 200, { ok: true, deferred: true });
+                return;
+            }
+            flushPendingDatasetCacheInvalidation();
             sendJson(res, 200, { ok: true });
         },
     });
@@ -2234,6 +2282,13 @@ export const __testInternals = {
     setRunOwnerForTests(owner: number): void {
         runOwner = owner;
     },
+    getPendingDatasetCacheInvalidation(): boolean {
+        return pendingDatasetCacheInvalidation;
+    },
+    flushPendingDatasetCacheInvalidation,
+    acquireRunOwnershipForTests(): number {
+        return acquireRunOwnership();
+    },
     setRunStateForTests(snapshot: FinderRunSnapshot | null): void {
         runState = snapshot;
     },
@@ -2245,5 +2300,6 @@ export const __testInternals = {
         runState = null;
         abortController = null;
         pendingStopRunId = null;
+        pendingDatasetCacheInvalidation = false;
     },
 };

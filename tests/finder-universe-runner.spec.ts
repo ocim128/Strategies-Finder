@@ -870,6 +870,69 @@ describe("Finder universe runner", () => {
         expect(output.diagnostics?.counts.skippedRuns).to.equal(3);
     });
 
+    it("excludes the zero-signal-bailed candidate from results under permissive filters (audit F1)", async () => {
+        // Regression: the zero-signal bailout used to break the symbol loop
+        // without setting evaluationStoppedEarly, so a PARTIALLY evaluated
+        // candidate still passed `passesUniverseFiltersFromCounts` (all
+        // thresholds are 0 = permissive) and entered the survivor ranking with
+        // only the symbols seen before the bail. It must now be treated like
+        // any other early stop: skipped entirely, never ranked.
+        const symbols = Array.from({ length: 8 }, (_, i) => `SYM${i}`);
+        const datasets = new Map<string, OHLCVData[]>(
+            symbols.map((sym, i) => [sym, makeCandles([100 + i * 10, 105 + i * 10, 110 + i * 10, 115 + i * 10, 120 + i * 10])]),
+        );
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 3,
+            rangePercent: 35,
+            maxRuns: 20,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols,
+                minActiveSymbols: 0,
+                minTotalTrades: 0,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["profitableActiveRatio", "medianExpectancy", "worstNetProfit"],
+            },
+        };
+
+        const output = await runFinderUniverseExecution(
+            {
+                interval: "5m",
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategy: {
+                    key: "universe_test",
+                    name: testStrategy.name,
+                    strategy: testStrategy,
+                },
+                loadDataset: async (symbol) => datasets.get(symbol) ?? [],
+                generateParamSets: () => [{ threshold: 1 }, { threshold: 10 }],
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                yieldControl: async () => {},
+                isCancelled: () => false,
+            }
+        );
+
+        // Only the fully-evaluated threshold=1 candidate may survive; the
+        // bailed threshold=10 candidate must be ABSENT even though the
+        // permissive filters would have accepted its partial counts.
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.params.threshold).to.equal(1);
+        expect(output.results.some((candidate) => candidate.params.threshold === 10)).to.equal(false);
+        expect(output.results[0]!.activeSymbols).to.equal(8);
+    });
+
     it("samples an exit strategy lib per candidate and surfaces it on the survivor row", async () => {
         const datasets = new Map<string, OHLCVData[]>([
             ["UP", makeCandles([100, 105, 110, 115, 120])],

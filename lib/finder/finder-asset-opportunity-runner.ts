@@ -40,6 +40,7 @@
  * server path).
  */
 
+import { mapWithConcurrencyLimit } from "../async-pool";
 import type {
     BacktestResult,
     BacktestSettings,
@@ -93,6 +94,14 @@ import {
 } from "./finder-asset-opportunity-oos";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { debugLogger } from "../debug-logger";
+
+/**
+ * Bounded concurrency for fresh-entry signal regeneration. The server clamps
+ * the candidate pool to 50, so unbounded `Promise.all` would launch up to 50
+ * simultaneous signal regenerations + backtests per asset — a transient CPU /
+ * Rust-worker / heap spike. Indexed results keep output order identical.
+ */
+const ASSET_FRESH_RECHECK_CONCURRENCY = 6;
 
 /**
  * The in-sample search seam. Production wires the existing browser
@@ -528,6 +537,9 @@ export async function runAssetOpportunitySearch(
                 callbacks.onAssetComplete?.(outcome);
             }
         } catch (error) {
+            if (callbacks.isCancelled()) {
+                break;
+            }
             const reason = error instanceof Error ? error.message : String(error);
             debugLogger.warn("finder.asset_opportunity.asset_failed", { symbol, reason });
             const failed: AssetOpportunityAssetResult = { kind: "failed", symbol, reason };
@@ -765,19 +777,32 @@ async function searchOneAsset(args: {
             candles: recheckData,
             settings: input.settings,
         }))
-        : await Promise.all(topK.map((candidate) => regenerateSignalsAndDetectFresh({
-            candidate,
-            strategy: preparedStrategy,
-            fullClosed: recheckData,
-            symbol,
-            interval: input.interval,
-            settings: input.settings,
-            capitalSettings: input.capitalSettings,
-            options: assetOptions,
-            exitStrategyCandidates: input.exitStrategyCandidates,
-            dataFetcher: input.dataFetcher,
-            useRustEnginePreference: input.useRustEnginePreference,
-        })));
+        // Bounded concurrency: up to 6 simultaneous regenerations instead of
+        // one per pool candidate (50). Indexed result storage keeps the
+        // output order identical to the old Promise.all path. Cancellation is
+        // checked between tasks so Stop does not drain the whole pool.
+        : await mapWithConcurrencyLimit(
+            topK,
+            ASSET_FRESH_RECHECK_CONCURRENCY,
+            (candidate) => {
+                if (callbacks.isCancelled()) {
+                    throw new Error("Finder stopped.");
+                }
+                return regenerateSignalsAndDetectFresh({
+                    candidate,
+                    strategy: preparedStrategy,
+                    fullClosed: recheckData,
+                    symbol,
+                    interval: input.interval,
+                    settings: input.settings,
+                    capitalSettings: input.capitalSettings,
+                    options: assetOptions,
+                    exitStrategyCandidates: input.exitStrategyCandidates,
+                    dataFetcher: input.dataFetcher,
+                    useRustEnginePreference: input.useRustEnginePreference,
+                });
+            },
+        );
     diagnostics.timingsMs.freshEntryRechecks = performance.now() - freshStartedAt;
     diagnostics.freshEntryRechecks = freshEvaluations.length;
     const freshByCandidate = freshEvaluations.map((evaluation) => {

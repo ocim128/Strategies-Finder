@@ -114,6 +114,29 @@ const FINDER_REVERSION_STRATEGY_KEYS = [
 	"probability_boundary_eigen_shift",
 ] as const;
 
+const FINDER_STATUS_REQUEST_TIMEOUT_MS = 15_000;
+
+function createFinderStatusRequestSignal(parentSignal: AbortSignal): {
+	signal: AbortSignal;
+	cleanup: () => void;
+} {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), FINDER_STATUS_REQUEST_TIMEOUT_MS);
+	const abortFromParent = () => controller.abort();
+	if (parentSignal.aborted) {
+		abortFromParent();
+	} else {
+		parentSignal.addEventListener("abort", abortFromParent, { once: true });
+	}
+	return {
+		signal: controller.signal,
+		cleanup: () => {
+			clearTimeout(timer);
+			parentSignal.removeEventListener("abort", abortFromParent);
+		},
+	};
+}
+
 function resolveToBinanceSymbol(token: string): string {
 	const upper = token.toUpperCase();
 	if (QUOTE_SUFFIXES.some((s) => upper.endsWith(s) && upper.length > s.length)) {
@@ -530,11 +553,20 @@ export class FinderManager {
 	/**
 	 * Reattach poller state. `reattachPollingStopped` is the cancel token;
 	 * `reattachTimerResolve` lets Stop / a new Run unblock a pending poll
-	 * sleep immediately.
+	 * sleep immediately. `reattachAbortController` aborts any in-flight
+	 * `/api/finder/status` fetch so Stop / a new Run cannot leave a hung
+	 * status request pending (and its late response adopting stale run state).
 	 */
 	private reattachPollingStopped = false;
 	private reattachTimer: ReturnType<typeof setTimeout> | null = null;
 	private reattachTimerResolve: (() => void) | null = null;
+	private reattachAbortController: AbortController | null = null;
+
+	private releaseReattachAbortController(controller: AbortController): void {
+		if (this.reattachAbortController === controller) {
+			this.reattachAbortController = null;
+		}
+	}
 
 	private getDom(): FinderManagerDom {
 		return this.dom ??= createFinderManagerDom();
@@ -734,6 +766,10 @@ export class FinderManager {
 	/** Cancel any in-flight reattach poll loop immediately. */
 	private stopReattachPoll(): void {
 		this.reattachPollingStopped = true;
+		// Abort a hung status fetch so the reattach/recovery loop cannot wait
+		// on a request that will never resolve while the UI is being stopped.
+		this.reattachAbortController?.abort();
+		this.reattachAbortController = null;
 		if (this.reattachTimer) {
 			clearTimeout(this.reattachTimer);
 			this.reattachTimer = null;
@@ -1753,6 +1789,8 @@ export class FinderManager {
 		this.setProgress(true, 0, 'Preparing...');
 		this.setStatus('Running strategy finder...');
 		this.ui.renderRandomBenchmark(options.mode);
+		// Run-start clear is a volatile UI reset; the previous snapshot was
+		// already cleared explicitly via clearLatestResultsSnapshot().
 		this.setLatestResults({
 			scope: options.scope === 'symbol_universe'
 				? 'symbol_universe'
@@ -1760,7 +1798,7 @@ export class FinderManager {
 					? 'asset_opportunity'
 					: options.scope === 'strategy_quality' ? 'strategy_quality' : 'current_chart',
 			results: [],
-		});
+		}, false);
 		this.renderLatestResults();
 
 		try {
@@ -1853,9 +1891,14 @@ export class FinderManager {
 			this.setStatus('No candles available for finder run.');
 			return false;
 		}
+		// Retain the evaluation reference WITHOUT cloning: Finder execution
+		// treats the OHLCV input as read-only (enforced by the frozen-input
+		// test), so the upfront clone only duplicated ~5-10MB per 100k-bar
+		// run. The defensive copy is made at the Apply boundary instead, where
+		// the backtest actually consumes the data.
 		this.lastFinderEvaluationData = {
 			interval: state.currentInterval,
-			data: this.cloneOhlcvData(ohlcvData),
+			data: ohlcvData,
 		};
 
 		const output = await runFinderExecution(
@@ -1878,7 +1921,9 @@ export class FinderManager {
 				isCancelled: () => this.isCancelled,
 				onResultsUpdate: (results: FinderResult[]) => {
 					const sorted = sortFinderResults(results, options.sortPriority);
-					this.setLatestResults({ scope: 'current_chart', results: sorted });
+					// Provisional mid-run render — no persistence until the final
+					// adoption below.
+					this.setLatestResults({ scope: 'current_chart', results: sorted }, false);
 					this.renderLatestResults();
 				},
 			}
@@ -1997,27 +2042,48 @@ export class FinderManager {
 		if (!persisted) return;
 		const runId = persisted.runId;
 
-		// Probe whether the server still has this job.
+		// Probe whether the server still has this job. The controller is
+		// shared with stopReattachPoll so Stop can abort a hung probe.
+		const abortController = new AbortController();
+		this.reattachAbortController = abortController;
+		const initialRequest = createFinderStatusRequestSignal(abortController.signal);
 		let initial: FinderRunStatusSnapshot | null = null;
 		let confirmedMissing = false;
 		try {
-			const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, { cache: "no-store" });
+			const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, {
+				cache: "no-store",
+				signal: initialRequest.signal,
+			});
 			if (response.ok) {
 				initial = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
 			} else if (response.status === 404) {
 				confirmedMissing = true;
 			} else {
+				this.releaseReattachAbortController(abortController);
 				return;
 			}
 		} catch {
-			// Transient network error on the probe — leave the persisted record
-			// intact; the user can reload again. Do not claim completion.
+			// Transient network error (or an abort from Stop) on the probe —
+			// leave the persisted record intact; the user can reload again.
+			// Do not claim completion.
+			this.releaseReattachAbortController(abortController);
+			return;
+		} finally {
+			initialRequest.cleanup();
+		}
+		// Ownership check after the probe's await: a delayed response must not
+		// adopt an old run after a new Run has started (or Stop was pressed)
+		// while the probe was in flight — that would clobber the new run's
+		// activeServerRunId and make every later callback mis-scope.
+		if (this.reattachPollingStopped || this.activeServerRunId !== null) {
+			this.releaseReattachAbortController(abortController);
 			return;
 		}
 		if (confirmedMissing || !initial || !initial.ok) {
 			// Server has no matching job (Vite restart, or a different run
 			// already completed). Clear the stale record so reattach doesn't
 			// loop forever.
+			this.releaseReattachAbortController(abortController);
 			this.clearActiveServerRun();
 			return;
 		}
@@ -2046,10 +2112,12 @@ export class FinderManager {
 		this.assetOpportunityRunResults = [];
 		this.assetOpportunityDefaultResults = [];
 		this.clearLatestResultsSnapshot();
+		// Volatile reattach progress view — the snapshot was cleared above and
+		// is only re-persisted at a terminal snapshot.
 		this.setLatestResults({
 			scope: persisted.scope,
 			results: [],
-		});
+		}, false);
 		this.renderLatestResults();
 		debugLogger.event("finder.server.reattach_started", {
 			runId,
@@ -2136,8 +2204,12 @@ export class FinderManager {
 			if (this.reattachPollingStopped || this.activeServerRunId !== runId) break;
 
 			let snapshot: FinderRunStatusSnapshot | null = null;
+			const statusRequest = createFinderStatusRequestSignal(abortController.signal);
 			try {
-				const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, { cache: "no-store" });
+				const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, {
+					cache: "no-store",
+					signal: statusRequest.signal,
+				});
 				if (!response.ok) {
 					// 404 means the server job is gone (restart). Stop polling
 					// and clear the record; don't claim completion.
@@ -2165,6 +2237,8 @@ export class FinderManager {
 				poll -= 1; // don't advance into long-poll step-down due to retries
 				await sleep(FAILURE_BACKOFF_MS[backoffIndex]!);
 				continue;
+			} finally {
+				statusRequest.cleanup();
 			}
 
 			consecutiveFailures = 0;
@@ -2192,6 +2266,7 @@ export class FinderManager {
 		}
 		this.reattachTimer = null;
 		this.reattachTimerResolve = null;
+		this.releaseReattachAbortController(abortController);
 		this.isRunning = false;
 		this.isCancelled = false;
 		setRunningUI(false);
@@ -2212,39 +2287,58 @@ export class FinderManager {
 		const MAX_CONSECUTIVE_FAILURES = 20;
 		let consecutiveFailures = 0;
 
-		while (this.activeServerRunId === runId) {
-			try {
-				const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, { cache: "no-store" });
-				if (response.status === 404) return null;
-				if (!response.ok) throw new Error(`status ${response.status}`);
-				const snapshot = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
-				if (!snapshot.ok) return null;
-				consecutiveFailures = 0;
-				if (snapshot.terminal) {
-					debugLogger.warn("finder.server.stream_recovered_via_status", {
-						runId,
-						phase: snapshot.phase,
-						candidates: snapshot.terminalCandidates?.length ?? 0,
-						assets: snapshot.terminalAssets?.length ?? 0,
+		const abortController = new AbortController();
+		this.reattachAbortController = abortController;
+		try {
+			while (this.activeServerRunId === runId) {
+				const statusRequest = createFinderStatusRequestSignal(abortController.signal);
+				try {
+					const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, {
+						cache: "no-store",
+						signal: statusRequest.signal,
 					});
-					return snapshot;
+					if (response.status === 404) return null;
+					if (!response.ok) throw new Error(`status ${response.status}`);
+					const snapshot = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
+					// Ownership check after the await: a stale response that lands
+					// after a new run (or Stop) changed activeServerRunId must be
+					// discarded, never adopted.
+					if (this.activeServerRunId !== runId) return null;
+					if (!snapshot.ok) return null;
+					consecutiveFailures = 0;
+					if (snapshot.terminal) {
+						debugLogger.warn("finder.server.stream_recovered_via_status", {
+							runId,
+							phase: snapshot.phase,
+							candidates: snapshot.terminalCandidates?.length ?? 0,
+							assets: snapshot.terminalAssets?.length ?? 0,
+						});
+						return snapshot;
+					}
+					this.setProgress(true, snapshot.progressPercent, snapshot.statusText);
+					this.setStatus(`${jobKind === 'asset_opportunity' ? 'Asset Opportunity' : 'Universe Finder'}: ${snapshot.statusText}`);
+					await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
+				} catch (error) {
+					// An abort (Stop / new run) is not a transient failure — bail
+					// out without counting it against the backoff budget.
+					if (this.activeServerRunId !== runId) return null;
+					consecutiveFailures += 1;
+					debugLogger.warn("finder.server.stream_recovery_poll_failed", {
+						runId,
+						consecutive: consecutiveFailures,
+						error: error instanceof Error ? error.message : String(error),
+					});
+					if (consecutiveFailures > MAX_CONSECUTIVE_FAILURES) return null;
+					const backoffIndex = Math.min(consecutiveFailures - 1, FAILURE_BACKOFF_MS.length - 1);
+					await new Promise<void>((resolve) => setTimeout(resolve, FAILURE_BACKOFF_MS[backoffIndex]!));
+				} finally {
+					statusRequest.cleanup();
 				}
-				this.setProgress(true, snapshot.progressPercent, snapshot.statusText);
-				this.setStatus(`${jobKind === 'asset_opportunity' ? 'Asset Opportunity' : 'Universe Finder'}: ${snapshot.statusText}`);
-				await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
-			} catch (error) {
-				consecutiveFailures += 1;
-				debugLogger.warn("finder.server.stream_recovery_poll_failed", {
-					runId,
-					consecutive: consecutiveFailures,
-					error: error instanceof Error ? error.message : String(error),
-				});
-				if (consecutiveFailures > MAX_CONSECUTIVE_FAILURES) return null;
-				const backoffIndex = Math.min(consecutiveFailures - 1, FAILURE_BACKOFF_MS.length - 1);
-				await new Promise<void>((resolve) => setTimeout(resolve, FAILURE_BACKOFF_MS[backoffIndex]!));
 			}
+			return null;
+		} finally {
+			this.releaseReattachAbortController(abortController);
 		}
-		return null;
 	}
 
 	private async runAssetOpportunityFinder(options: FinderOptions, startTime: number): Promise<boolean> {
@@ -2400,10 +2494,12 @@ export class FinderManager {
 					this.assetOpportunityRunResults = sortAssetOpportunityResults([
 						...provisionalAssetResults.values(),
 					]);
+					// Provisional streamed asset — no persistence until terminal
+					// asset_done adoption.
 					this.setLatestResults({
 						scope: 'asset_opportunity',
 						results: this.assetOpportunityRunResults.slice(0, Math.max(1, options.topN)),
-					});
+					}, false);
 					this.renderLatestResults();
 				},
 				onAssetDone: (event) => {
@@ -2626,7 +2722,9 @@ export class FinderManager {
 			for (const candidate of merged) {
 				survivorByKey.set(identityKey(candidate), candidate);
 			}
-			this.setLatestResults({ scope: 'symbol_universe', results: merged });
+			// Provisional candidate merge — no persistence until the terminal
+			// slice is adopted in onDone.
+			this.setLatestResults({ scope: 'symbol_universe', results: merged }, false);
 			this.renderLatestResults();
 		};
 		// Coalesce candidate arrivals into one render per animation frame. The
@@ -3042,9 +3140,20 @@ export class FinderManager {
 		return candidates.length > 0 ? candidates : undefined;
 	}
 
-	private setLatestResults(results: FinderLatestResults): void {
+	/**
+	 * Adopt a result set for the UI. `persist` controls whether the snapshot
+	 * is written to localStorage: provisional render callbacks (streamed
+	 * candidates, mid-run current-chart updates) must pass `false` so
+	 * hundreds-of-KB serialization + synchronous writes don't run on the
+	 * render hot path. Persistence is reserved for semantic checkpoints:
+	 * terminal adoption, completed current-chart results, and user-initiated
+	 * re-sorts.
+	 */
+	private setLatestResults(results: FinderLatestResults, persist = true): void {
 		this.latestResults = results;
-		this.saveLatestResultsSnapshot(results);
+		if (persist) {
+			this.saveLatestResultsSnapshot(results);
+		}
 	}
 
 	private getCurrentChartResults(): FinderResult[] {
