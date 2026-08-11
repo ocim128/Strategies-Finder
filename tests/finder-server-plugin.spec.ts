@@ -21,6 +21,12 @@ import {
     type FinderAssetOpportunityStreamEvent,
 } from "../lib/finder/server/finder-stream-types";
 import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metrics";
+import {
+    ASSET_OPPORTUNITY_ALL_SORTS,
+    getAssetOpportunityResortMetrics,
+    sortAssetOpportunityResultsByMetric,
+    type FinderAssetOpportunityArchiveSort,
+} from "../lib/finder/finder-asset-opportunity-metrics";
 import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions, FinderUniverseCandidate } from "../lib/types/finder";
@@ -1016,12 +1022,14 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         owner: number;
         start: number;
         end: number;
+        archiveSort?: FinderAssetOpportunityArchiveSort | null;
         datasets?: Map<string, OHLCVData[]>;
         append?: (dir: string, filename: string, content: string) => Promise<void>;
-    }): Promise<{ events: FinderAssetOpportunityBatchStreamEvent[]; appended: string[] }> {
+    }): Promise<{ events: FinderAssetOpportunityBatchStreamEvent[]; appended: string[]; contents: string[] }> {
         const datasets = args.datasets ?? longUpDownDatasets();
         const events: FinderAssetOpportunityBatchStreamEvent[] = [];
         const appended: string[] = [];
+        const contents: string[] = [];
         setRunOwnerForTests(args.owner);
         const run = (async () => {
             await processFinderAssetOpportunityBatchRun(
@@ -1038,6 +1046,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                     abortSignal: new AbortController().signal,
                     candidatePoolSize: 2,
                     minFreshSupport: 1,
+                    archiveSort: args.archiveSort ?? null,
                     batch: { startHoldoutBars: args.start, endHoldoutBars: args.end },
                 },
                 (event) => events.push(event),
@@ -1045,11 +1054,12 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                 "/virtual/archive-root",
                 async (dir, filename, content) => {
                     appended.push(filename);
+                    contents.push(content);
                     if (args.append) await args.append(dir, filename, content);
                 },
             );
         })();
-        return run.then(() => ({ events, appended }));
+        return run.then(() => ({ events, appended, contents }));
     }
 
     it("builds ascending holdout values for a validated range", () => {
@@ -1069,6 +1079,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
             expect(start.totalIterations).to.equal(3);
             expect(start.totalAssets).to.equal(2);
             expect(start.strategyKeys).to.deep.equal(["asset_batch_test"]);
+            expect(start.archiveSort).to.equal(null);
         }
 
         const done = events[events.length - 1]!;
@@ -1077,6 +1088,9 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
             expect(done.completedIterations).to.equal(3);
             expect(done.failedIterations).to.equal(0);
             expect(done.assets.length).to.be.greaterThan(0);
+            expect(done.holdoutBars).to.equal(4);
+            expect(done.totals).to.not.equal(null);
+            expect(done.assetDiagnostics).to.not.equal(null);
         }
 
         const iterations = events.filter(
@@ -1112,6 +1126,62 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         expect(status.terminalAssets?.length).to.equal(iterations[2]!.assets.length);
         expect(status.assetTotals).to.not.equal(null);
         expect(status.assetDiagnostics).to.not.equal(null);
+    });
+
+    it("uses the selected resort metric for every automatic archive block", async () => {
+        const { events, contents } = await runAssetBatch({
+            owner: 7306,
+            start: 2,
+            end: 3,
+            runId: "batch-selected-sort",
+            archiveSort: "netProfit",
+        });
+
+        const start = events[0]!;
+        expect(start.type).to.equal("asset_batch_start");
+        if (start.type === "asset_batch_start") {
+            expect(start.archiveSort).to.equal("netProfit");
+        }
+        expect(contents).to.have.length(2);
+        expect(contents.every((content) => content.includes("Archive sort: netProfit"))).to.equal(true);
+        expect(contents.every((content) => !content.includes("equityCurve"))).to.equal(true);
+        expect(contents.every((content) => !content.includes("selectionMetrics"))).to.equal(true);
+        const iterations = events.filter(
+            (event) => event.type === "asset_batch_iteration_done",
+        ) as Array<Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_iteration_done" }>>;
+        for (let index = 0; index < iterations.length; index += 1) {
+            const jsonStart = contents[index]!.indexOf("[");
+            const archived = JSON.parse(contents[index]!.slice(jsonStart)) as Array<{ symbol: string }>;
+            const expected = sortAssetOpportunityResultsByMetric(
+                iterations[index]!.assets,
+                "netProfit",
+            ).slice(0, 2).map((result) => result.symbol);
+            expect(archived.map((result) => result.symbol)).to.deep.equal(expected);
+        }
+    });
+
+    it("appends the default and every resort metric when All Sorts is selected", async () => {
+        const { events, contents } = await runAssetBatch({
+            owner: 7307,
+            start: 2,
+            end: 3,
+            runId: "batch-all-sorts",
+            archiveSort: ASSET_OPPORTUNITY_ALL_SORTS,
+        });
+
+        const expectedSortLabels = [
+            "run_default",
+            ...getAssetOpportunityResortMetrics(),
+        ];
+        expect(contents).to.have.length(2 * expectedSortLabels.length);
+        for (const sortLabel of expectedSortLabels) {
+            expect(contents.filter((content) => content.includes(`Archive sort: ${sortLabel}\n`))).to.have.length(2);
+        }
+        const start = events[0]!;
+        expect(start.type).to.equal("asset_batch_start");
+        if (start.type === "asset_batch_start") {
+            expect(start.archiveSort).to.equal(ASSET_OPPORTUNITY_ALL_SORTS);
+        }
     });
 
     it("stops after the current iteration when ownership is lost mid-batch", async () => {
@@ -1165,8 +1235,46 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         expect(fatal).to.not.equal(undefined);
         expect(fatal!.error).to.contain("disk full");
         expect(fatal!.holdoutBars).to.equal(1);
+        expect(fatal!.completedIterations).to.equal(0);
+        const status = handleStatusRequest("batch-archive-fail");
+        if (!status.ok) throw new Error(status.error);
+        expect(status.phase).to.equal("fatal");
+        expect(status.batch?.completedIterations).to.equal(0);
+        expect(status.batch?.failedIterations).to.equal(1);
+        expect(status.terminalAssets).to.deep.equal([]);
+    });
+
+    it("archives an empty result block for every holdout value", async () => {
+        const { events, appended, contents } = await runAssetBatch({
+            owner: 7305,
+            start: 2,
+            end: 3,
+            datasets: new Map([["UP", []], ["DOWN", []]]),
+            runId: "batch-empty-results",
+        });
+
+        expect(appended).to.deep.equal([
+            "oos-holdout-2-bars.txt",
+            "oos-holdout-3-bars.txt",
+        ]);
+        expect(contents).to.have.length(2);
+        expect(contents.every((content) => content.includes("\n[]\n"))).to.equal(true);
+
+        const iterations = events.filter(
+            (event) => event.type === "asset_batch_iteration_done",
+        ) as Array<Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_iteration_done" }>>;
+        expect(iterations).to.have.length(2);
+        expect(iterations.every((event) => event.assets.length === 0)).to.equal(true);
+        expect(iterations.every((event) => typeof event.archiveFilename === "string")).to.equal(true);
+
         const done = events[events.length - 1]!;
-        expect(done.type).to.equal("asset_batch_fatal");
+        expect(done.type).to.equal("asset_batch_done");
+        if (done.type === "asset_batch_done") {
+            expect(done.completedIterations).to.equal(2);
+            expect(done.failedIterations).to.equal(0);
+            expect(done.assets).to.deep.equal([]);
+            expect(done.assetDiagnostics).to.not.equal(null);
+        }
     });
 
     it("single-value ranges execute exactly one iteration", async () => {
@@ -1218,6 +1326,39 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
         expect(payload.error).to.match(/must not exceed/);
         // Ownership was never acquired, so no run is running.
+        expect(__testInternals.getRunStateForTests()).to.equal(null);
+    });
+
+    it("route rejects an invalid archive sort with 400 BEFORE acquiring ownership", async () => {
+        const routes = captureFinderRoutes();
+        const handler = routes.get("/api/finder/asset-opportunity-batch-run")!;
+        const req = makeBatchRouteRequest({
+            runId: "batch-route-sort",
+            symbols: ["UP"],
+            interval: "5m",
+            options: {
+                scope: "asset_opportunity",
+                mode: "random",
+                sortPriority: ["netProfit"],
+                useAdvancedSort: false,
+                topN: 5,
+                steps: 3,
+                rangePercent: 35,
+                maxRuns: 20,
+                tradeFilterEnabled: false,
+                minTrades: 0,
+                maxTrades: Number.POSITIVE_INFINITY,
+                assetOpportunity: { symbols: ["UP"], candidatePoolSize: 2, minFreshSupport: 1 },
+            },
+            strategyKeys: ["asset_batch_test"],
+            archiveSort: "not-a-real-metric",
+            batch: { startHoldoutBars: 1, endHoldoutBars: 1 },
+        });
+        const res = makeRouteResponse();
+        await handler(req, res);
+        expect(res.statusCode).to.equal(400);
+        const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
+        expect(payload.error).to.match(/archive sort metric/);
         expect(__testInternals.getRunStateForTests()).to.equal(null);
     });
 

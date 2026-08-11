@@ -32,6 +32,7 @@
  */
 
 import type { BatchDatasetCacheStats } from "../../batch-backtest/batch-dataset-loader-core";
+import type { FinderAssetOpportunityArchiveSort } from "../finder-asset-opportunity-metrics";
 import type {
     FinderAssetOpportunityDiagnostics,
     FinderAssetOpportunityResult,
@@ -223,6 +224,8 @@ export type FinderAssetOpportunityBatchStreamEvent =
         totalAssets: number;
         strategyKeys: string[];
         strategyNames: string[];
+        /** Sort metric used for the automatically archived top-N payload. */
+        archiveSort: FinderAssetOpportunityArchiveSort | null;
     }
     | {
         type: "asset_batch_progress";
@@ -251,8 +254,8 @@ export type FinderAssetOpportunityBatchStreamEvent =
         totals: FinderAssetOpportunityTotals;
         diagnostics: FinderDiagnostics | null;
         assetDiagnostics: FinderAssetOpportunityDiagnostics | null;
-        /** Basename of the appended archive file, or null when no top results were written. */
-        archiveFilename: string | null;
+        /** Basename of the appended archive file. Empty results still write a block. */
+        archiveFilename: string;
     }
     | {
         type: "asset_batch_done";
@@ -263,6 +266,11 @@ export type FinderAssetOpportunityBatchStreamEvent =
         failedIterations: number;
         /** Full scalar rows of the LAST completed iteration only. */
         assets: FinderAssetOpportunityResult[];
+        /** Last completed iteration's holdout and aggregate diagnostics. */
+        holdoutBars: number | null;
+        totals: FinderAssetOpportunityTotals | null;
+        diagnostics: FinderDiagnostics | null;
+        assetDiagnostics: FinderAssetOpportunityDiagnostics | null;
         summary: string;
     }
     | {

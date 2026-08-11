@@ -1,6 +1,9 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { buildAssetOpportunityMetadataPayload } from "../lib/finder/finder-asset-opportunity-metadata";
+import {
+    buildAssetOpportunityMetadataPayload,
+    buildAssetOpportunityPerformancePayload,
+} from "../lib/finder/finder-asset-opportunity-metadata";
 import type { FinderAssetOpportunityResult } from "../lib/types/finder";
 import type { Time } from "../lib/types/strategies";
 
@@ -166,6 +169,64 @@ describe("Asset Opportunity metadata payload serializer", () => {
         expect(payload.oos).to.equal(null);
         expect(payload.oosHorizonMetrics).to.equal(null);
         expect(payload.exitStrategy).to.equal(null);
+    });
+
+    it("builds a compact performance-only archive row", () => {
+        const payload = buildAssetOpportunityPerformancePayload({
+            result: makeAssetResult(),
+            rank: 1,
+        });
+        expect(payload).to.deep.equal({
+            scope: "asset_opportunity",
+            rank: 1,
+            symbol: "BTCUSDT",
+            strategyId: "momentum",
+            strategyName: "Momentum",
+            selectionPerformance: {
+                netProfit: 10,
+                netProfitPercent: 1,
+                winRate: 50,
+                expectancy: 1,
+                avgTrade: 1,
+                profitFactor: 1.2,
+                maxDrawdown: 2,
+                maxDrawdownPercent: 1,
+                totalTrades: 2,
+                winningTrades: 1,
+                losingTrades: 1,
+                avgWin: 2,
+                avgLoss: 1,
+                sharpeRatio: 0.5,
+            },
+            oosPerformance: {
+                verdict: "pass",
+                metrics: {
+                    netProfit: 10,
+                    netProfitPercent: 1,
+                    winRate: 50,
+                    expectancy: 1,
+                    avgTrade: 1,
+                    profitFactor: 1.2,
+                    maxDrawdown: 2,
+                    maxDrawdownPercent: 1,
+                    totalTrades: 1,
+                    winningTrades: 1,
+                    losingTrades: 1,
+                    avgWin: 2,
+                    avgLoss: 1,
+                    sharpeRatio: 0.5,
+                },
+            },
+            forwardOosPerformance: {
+                ignoreLastBars: 5,
+                horizons: [
+                    { bars: 1, pnlPercent: 1, averagePnlPercent: 1, winRatePercent: 100, sampleSize: 1 },
+                ],
+            },
+        });
+        expect(JSON.stringify(payload)).to.not.contain("lookback");
+        expect(JSON.stringify(payload)).to.not.contain("trades");
+        expect(JSON.stringify(payload)).to.not.contain("equityCurve");
     });
 
     it("ranks are passed through 1-based per displayed row", () => {

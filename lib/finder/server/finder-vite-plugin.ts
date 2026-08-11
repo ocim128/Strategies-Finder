@@ -114,7 +114,7 @@ import {
     normalizeFinderAssetOosHorizons,
     normalizeFinderAssetOosIgnoreLastBars,
 } from "../finder-asset-opportunity-oos";
-import { buildAssetOpportunityMetadataPayload } from "../finder-asset-opportunity-metadata";
+import { buildAssetOpportunityPerformancePayload } from "../finder-asset-opportunity-metadata";
 import {
     appendAssetOpportunityArchiveBlock,
     type AssetOpportunityArchiveAppend,
@@ -128,7 +128,14 @@ import {
     type FinderAssetOpportunityTotals,
     type FinderBatchStatus,
 } from "./finder-stream-types";
-import { sortAssetOpportunityResults } from "../finder-asset-opportunity-metrics";
+import {
+    ASSET_OPPORTUNITY_ALL_SORTS,
+    getAssetOpportunityResortMetrics,
+    sortAssetOpportunityResults,
+    sortAssetOpportunityResultsByMetric,
+    type FinderAssetOpportunityArchiveSort,
+    type FinderAssetOpportunityResortMetric,
+} from "../finder-asset-opportunity-metrics";
 import { runServerAssetIsSearch } from "./server-asset-is-search";
 import { prepareClosedCandleData } from "../../backtest-executor";
 
@@ -914,6 +921,8 @@ interface FinderAssetOpportunityRequestBody {
     exitStrategyKeys?: unknown;
     useRustEnginePreference?: unknown;
     providerBySymbol?: unknown;
+    /** Asset Opportunity batch archive ranking; empty/omitted means run default. */
+    archiveSort?: unknown;
 }
 
 /**
@@ -949,6 +958,8 @@ export interface FinderAssetOpportunityRunInput {
     getProvider?: (symbol: string) => string;
     candidatePoolSize: number;
     minFreshSupport: number;
+    /** Sort metric used only for automatic batch archive payloads. */
+    archiveSort?: FinderAssetOpportunityArchiveSort | null;
 }
 
 /** Progress snapshot of one iteration, mirroring the single-run fields. */
@@ -1743,9 +1754,6 @@ export async function processFinderAssetOpportunityBatchRun(
     };
     const snapshot = runState;
 
-    const strategyMetadataByKey = new Map<string, unknown>(
-        selectedStrategies.map((selected) => [selected.key, selected.strategy.metadata ?? null]),
-    );
     debugLogger.event("finder.asset_opportunity_batch.start", {
         runId: input.runId,
         interval: input.interval,
@@ -1754,6 +1762,7 @@ export async function processFinderAssetOpportunityBatchRun(
         startHoldoutBars: batch.startHoldoutBars,
         endHoldoutBars: batch.endHoldoutBars,
         totalIterations,
+        archiveSort: input.archiveSort ?? null,
     });
 
     writer({
@@ -1765,6 +1774,7 @@ export async function processFinderAssetOpportunityBatchRun(
         totalAssets,
         strategyKeys: selectedStrategies.map((strategy) => strategy.key),
         strategyNames: selectedStrategies.map((strategy) => strategy.name),
+        archiveSort: input.archiveSort ?? null,
     });
 
     const isCancelled = () => runOwner !== owner || input.abortSignal.aborted;
@@ -1878,30 +1888,24 @@ export async function processFinderAssetOpportunityBatchRun(
             break;
         }
 
-        // Retain ONLY the current iteration's rows for re-sort + terminal view.
-        snapshot.assetResults = iteration.results;
-        lastIteration.results = iteration.results;
-        lastIteration.assetDiagnostics = iteration.assetDiagnostics;
-        lastIteration.totals = iteration.totals;
-        lastIteration.holdoutBars = holdoutBars;
-
-        // Archive the same top-N payload the Copy Top Results button produces.
-        const topResults = iteration.results
-            .slice(0, Math.max(1, input.options.topN))
-            .map((result, index) => buildAssetOpportunityMetadataPayload({
-                result,
-                rank: index + 1,
-                interval: input.interval,
-                strategyMetadata: strategyMetadataByKey.get(result.strategyKey) ?? null,
-            }));
-
-        let archiveFilename: string | null = null;
+        // Archive compact performance-only top-N rows using the metric captured
+        // before the batch started. All Sorts emits one delimited block per
+        // ranking into this same per-N file.
+        let archiveFilename = "";
         try {
-            if (topResults.length > 0) {
+            for (const sortMetric of resolveAssetOpportunityArchiveSorts(input.archiveSort ?? null)) {
+                const archiveResults = sortAssetOpportunityResultsByMetric(iteration.results, sortMetric);
+                const topResults = archiveResults
+                    .slice(0, Math.max(1, input.options.topN))
+                    .map((result, index) => buildAssetOpportunityPerformancePayload({
+                        result,
+                        rank: index + 1,
+                    }));
                 const appended = await appendAssetOpportunityArchiveBlock({
                     root: archiveRoot,
                     batchRunId: input.runId,
                     holdoutBars,
+                    sortMetric,
                     topResults,
                     ...(archiveAppend ? { append: archiveAppend } : {}),
                 });
@@ -1912,6 +1916,7 @@ export async function processFinderAssetOpportunityBatchRun(
                     iterationIndex,
                     totalIterations,
                     archiveFilename,
+                    sortMetric: sortMetric ?? "run_default",
                     bytes: appended.bytes,
                     assets: iteration.results.length,
                     durationMs: Math.max(0, Date.now() - snapshot.startedAt),
@@ -1921,7 +1926,7 @@ export async function processFinderAssetOpportunityBatchRun(
             const message = error instanceof Error ? error.message : String(error);
             snapshot.batch = {
                 ...snapshot.batch!,
-                completedIterations: snapshot.batch!.completedIterations + 1,
+                failedIterations: snapshot.batch!.failedIterations + 1,
             };
             snapshot.phase = "fatal";
             snapshot.finishedAt = Date.now();
@@ -1942,6 +1947,15 @@ export async function processFinderAssetOpportunityBatchRun(
             });
             return;
         }
+
+        // Retain ONLY a successfully archived iteration for re-sort + terminal
+        // view. A failed archive must not expose rows that have no durable
+        // archive block.
+        snapshot.assetResults = iteration.results;
+        lastIteration.results = iteration.results;
+        lastIteration.assetDiagnostics = iteration.assetDiagnostics;
+        lastIteration.totals = iteration.totals;
+        lastIteration.holdoutBars = holdoutBars;
 
         snapshot.batch = {
             ...snapshot.batch!,
@@ -2000,6 +2014,10 @@ export async function processFinderAssetOpportunityBatchRun(
         completedIterations,
         failedIterations,
         assets: lastIteration.results,
+        holdoutBars: lastIteration.holdoutBars,
+        totals: lastIteration.totals,
+        diagnostics: null,
+        assetDiagnostics: lastIteration.assetDiagnostics,
         summary: snapshot.summary,
     });
 }
@@ -2242,6 +2260,7 @@ async function handleAssetOpportunityBatchRunRequest(
     if (batchRange.error !== null) {
         throw new HttpStatusError(400, batchRange.error);
     }
+    const archiveSort = normalizeAssetOpportunityArchiveSort(body.archiveSort);
 
     const strategyKeys = parseStrategyKeys(body.strategyKeys, body.strategyKey);
     const selectedStrategies = await resolveSelectedStrategies(strategyKeys);
@@ -2305,6 +2324,7 @@ async function handleAssetOpportunityBatchRunRequest(
                 getProvider: (symbol) => resolveServerProvider(symbol, providerBySymbol),
                 candidatePoolSize,
                 minFreshSupport,
+                archiveSort,
                 batch: { startHoldoutBars: batchRange.start, endHoldoutBars: batchRange.end },
             },
             safeWrite,
@@ -2356,6 +2376,30 @@ function clampCandidatePoolSize(raw: unknown): number {
 function clampMinFreshSupport(raw: unknown): number {
     if (typeof raw !== "number" || !Number.isFinite(raw)) return 2;
     return Math.max(1, Math.min(50, Math.floor(raw)));
+}
+
+/** Normalize the browser's Asset Opportunity archive sort selection. */
+function normalizeAssetOpportunityArchiveSort(
+    raw: unknown,
+): FinderAssetOpportunityArchiveSort | null {
+    if (raw === undefined || raw === null || raw === "") return null;
+    if (raw === ASSET_OPPORTUNITY_ALL_SORTS) return ASSET_OPPORTUNITY_ALL_SORTS;
+    if (
+        typeof raw !== "string" ||
+        !getAssetOpportunityResortMetrics().includes(raw as FinderAssetOpportunityResortMetric)
+    ) {
+        throw new HttpStatusError(400, "Invalid Asset Opportunity archive sort metric.");
+    }
+    return raw as FinderAssetOpportunityResortMetric;
+}
+
+function resolveAssetOpportunityArchiveSorts(
+    selection: FinderAssetOpportunityArchiveSort | null,
+): Array<FinderAssetOpportunityResortMetric | null> {
+    if (selection === ASSET_OPPORTUNITY_ALL_SORTS) {
+        return [null, ...getAssetOpportunityResortMetrics()];
+    }
+    return [selection];
 }
 
 // ---------------------------------------------------------------------------

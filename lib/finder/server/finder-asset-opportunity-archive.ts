@@ -1,5 +1,6 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
+import type { FinderAssetOpportunityResortMetric } from "../finder-asset-opportunity-metrics";
 
 /**
  * Server-side archive leaf for Asset Opportunity batch iterations.
@@ -7,9 +8,9 @@ import path from "node:path";
  * The archive directory is always `<configured root>/archive/asset opportunity`
  * and the filename is derived ONLY from the validated integer holdout N
  * (`oos-holdout-<N>-bars.txt`), so a request can never influence the
- * filesystem path. One block is appended per iteration; re-running the same N
- * appends a new delimited block and never overwrites or deduplicates prior
- * research.
+ * filesystem path. One or more blocks are appended per iteration; re-running
+ * the same N appends new delimited blocks and never overwrites or deduplicates
+ * prior research.
  *
  * Node-only (imports `node:fs/promises` + `node:path`): must never be
  * imported from browser-bound modules. The append leaf is injectable so tests
@@ -41,7 +42,9 @@ export interface AssetOpportunityArchiveBlock {
     /** The batch run id that produced this block. */
     batchRunId: string;
     holdoutBars: number;
-    /** The pretty-printed Copy Top Results payload (array of per-row objects). */
+    /** Re-sort metric used for this payload; null means the run default. */
+    sortMetric?: FinderAssetOpportunityResortMetric | null;
+    /** Compact performance-only rows (array of per-row objects). */
     topResults: unknown;
 }
 
@@ -52,8 +55,9 @@ export function buildAssetOpportunityArchiveBlockText(block: AssetOpportunityArc
         `Timestamp: ${block.timestamp}`,
         `Batch run id: ${block.batchRunId}`,
         `OOS holdout: ${block.holdoutBars} bars`,
+        `Archive sort: ${block.sortMetric ?? "run_default"}`,
         separator,
-        JSON.stringify(block.topResults, null, 2),
+        JSON.stringify(block.topResults),
         "",
     ].join("\n");
 }
@@ -70,6 +74,8 @@ export interface AppendAssetOpportunityArchiveBlockArgs {
     root: string;
     batchRunId: string;
     holdoutBars: number;
+    /** Re-sort metric used for this payload; null means the run default. */
+    sortMetric?: FinderAssetOpportunityResortMetric | null;
     topResults: unknown;
     /** Optional deterministic timestamp for tests. */
     timestamp?: string;
@@ -93,6 +99,7 @@ export async function appendAssetOpportunityArchiveBlock(
         timestamp: args.timestamp ?? new Date().toISOString(),
         batchRunId: args.batchRunId,
         holdoutBars: args.holdoutBars,
+        sortMetric: args.sortMetric ?? null,
         topResults: args.topResults,
     });
     const append = args.append ?? (async (dirPath, fileName, fileContent) => {

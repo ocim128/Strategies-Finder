@@ -69,7 +69,12 @@ function makeFakeLocalStorage() {
 
 type PendingRequest = {
     url: string;
-    init?: { signal?: AbortSignal };
+    init?: {
+        signal?: AbortSignal;
+        method?: string;
+        headers?: Record<string, string>;
+        body?: string;
+    };
     resolve: (value: unknown) => void;
     reject: (error: unknown) => void;
 };
@@ -77,7 +82,7 @@ type PendingRequest = {
 class MockFetch {
     requests: PendingRequest[] = [];
 
-    fetch = (url: string, init?: { signal?: AbortSignal }): Promise<unknown> =>
+    fetch = (url: string, init?: PendingRequest["init"]): Promise<unknown> =>
         new Promise((resolve, reject) => {
             const request: PendingRequest = { url: String(url), init, resolve, reject };
             this.requests.push(request);
@@ -99,7 +104,10 @@ class MockFetch {
     resolveFirst(payload: unknown, status = 200): void {
         const request = this.requests.shift();
         if (!request) throw new Error("No pending fetch request to resolve");
-        request.resolve(makeResponse(payload, status));
+        const response = payload && typeof payload === "object" && "ok" in payload && "body" in payload
+            ? payload
+            : makeResponse(payload, status);
+        request.resolve(response);
     }
 }
 
@@ -116,6 +124,19 @@ function makeResponse(payload: unknown, status = 200) {
         body: null,
         text: async () => JSON.stringify(payload),
         json: async () => payload,
+    };
+}
+
+function makeNdjsonResponse(events: readonly unknown[]) {
+    const encoder = new TextEncoder();
+    return {
+        ...makeResponse(null),
+        body: new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(encoder.encode(events.map((event) => JSON.stringify(event)).join("\n") + "\n"));
+                controller.close();
+            },
+        }),
     };
 }
 
@@ -249,13 +270,22 @@ function terminalFatalSnapshot(runId: string, error: string): FinderRunStatusSna
 let savedDocument: any;
 let savedLocalStorage: any;
 let savedFetch: any;
+let savedHtmlInputElement: any;
+let savedHtmlSelectElement: any;
+let savedHtmlTextAreaElement: any;
 
 before(() => {
     savedDocument = (globalThis as any).document;
     savedLocalStorage = (globalThis as any).localStorage;
     savedFetch = (globalThis as any).fetch;
+    savedHtmlInputElement = (globalThis as any).HTMLInputElement;
+    savedHtmlSelectElement = (globalThis as any).HTMLSelectElement;
+    savedHtmlTextAreaElement = (globalThis as any).HTMLTextAreaElement;
     installFakeDocument();
     (globalThis as any).localStorage = makeFakeLocalStorage();
+    (globalThis as any).HTMLInputElement = class {};
+    (globalThis as any).HTMLSelectElement = class {};
+    (globalThis as any).HTMLTextAreaElement = class {};
 });
 
 after(() => {
@@ -265,6 +295,12 @@ after(() => {
     else (globalThis as any).localStorage = savedLocalStorage;
     if (savedFetch === undefined) delete (globalThis as any).fetch;
     else (globalThis as any).fetch = savedFetch;
+    if (savedHtmlInputElement === undefined) delete (globalThis as any).HTMLInputElement;
+    else (globalThis as any).HTMLInputElement = savedHtmlInputElement;
+    if (savedHtmlSelectElement === undefined) delete (globalThis as any).HTMLSelectElement;
+    else (globalThis as any).HTMLSelectElement = savedHtmlSelectElement;
+    if (savedHtmlTextAreaElement === undefined) delete (globalThis as any).HTMLTextAreaElement;
+    else (globalThis as any).HTMLTextAreaElement = savedHtmlTextAreaElement;
     clearDomElementCache();
 });
 
@@ -374,6 +410,133 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
         expect(manager().activeServerRunId).to.equal(null);
         const stored = JSON.parse((globalThis as any).localStorage.getItem("playground_finder_active_server_run"));
         expect(stored.data).to.equal(null);
+    });
+});
+
+describe("FinderManager Asset Opportunity batch stream contracts", () => {
+    it("does not turn a recovered batch fatal into a successful outcome", async () => {
+        const runId = "batch-fatal-recovery";
+        manager().activeServerRunId = runId;
+        manager().isRunning = true;
+        const options: any = {
+            mode: "random",
+            scope: "asset_opportunity",
+            topN: 1,
+            assetOpportunity: { symbols: ["AAA"] },
+        };
+        const request = manager().runAssetOpportunityBatchFinderServer(
+            options,
+            [],
+            undefined,
+            runId,
+            performance.now(),
+            { start: 1, end: 1 },
+        );
+
+        mockFetch.resolveFirst(makeNdjsonResponse([{
+            type: "asset_batch_fatal",
+            runId,
+            error: "Archive write failed",
+            holdoutBars: 1,
+            completedIterations: 0,
+        }]));
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        mockFetch.resolveFirst(makeResponse({
+            ...runningSnapshot(runId),
+            running: false,
+            terminal: true,
+            finishedAt: Date.now(),
+            phase: "fatal",
+            jobKind: "asset_opportunity_batch",
+            terminalAssets: [],
+            assetTotals: null,
+            assetDiagnostics: null,
+            error: "Archive write failed",
+        }));
+
+        let caught: unknown = null;
+        try {
+            await request;
+        } catch (error) {
+            caught = error;
+        }
+        expect(caught).to.be.instanceOf(Error);
+        expect((caught as Error).message).to.include("Archive write failed");
+    });
+
+    it("retains the latest batch diagnostics and asset counts from terminal events", async () => {
+        const runId = "batch-diagnostics";
+        manager().activeServerRunId = runId;
+        manager().isRunning = true;
+        const assetDiagnostics: any = {
+            totalAssets: 2,
+            assetsWithFreshEntry: 1,
+            assetsWithNoFreshEntry: 0,
+            selectGradeAssets: 1,
+            watchGradeAssets: 0,
+            rejectGradeAssets: 0,
+            failedAssets: [{ symbol: "BBB", reason: "No candles" }],
+        };
+        const totals: any = {
+            totalAssets: 2,
+            assetsWithFreshEntry: 1,
+            failedAssets: 1,
+            selectGradeAssets: 1,
+            watchGradeAssets: 0,
+            rejectGradeAssets: 0,
+        };
+        const options: any = {
+            mode: "random",
+            scope: "asset_opportunity",
+            topN: 1,
+            assetOpportunity: { symbols: ["AAA", "BBB"] },
+        };
+        const request = manager().runAssetOpportunityBatchFinderServer(
+            options,
+            [],
+            undefined,
+            runId,
+            performance.now(),
+            { start: 1, end: 1 },
+            "freshSignalLibraries",
+        );
+
+        const submittedBody = JSON.parse(String(mockFetch.requests[0]?.init?.body));
+        expect(submittedBody.archiveSort).to.equal("freshSignalLibraries");
+
+        mockFetch.resolveFirst(makeNdjsonResponse([
+            {
+                type: "asset_batch_iteration_done",
+                runId,
+                holdoutBars: 1,
+                iterationIndex: 0,
+                totalIterations: 1,
+                assets: [],
+                totals,
+                diagnostics: null,
+                assetDiagnostics,
+                archiveFilename: "oos-holdout-1-bars.txt",
+            },
+            {
+                type: "asset_batch_done",
+                ok: true,
+                cancelled: false,
+                runId,
+                completedIterations: 1,
+                failedIterations: 0,
+                assets: [],
+                holdoutBars: 1,
+                totals,
+                diagnostics: null,
+                assetDiagnostics,
+                summary: "done",
+            },
+        ]));
+
+        const outcome = await request;
+        expect(outcome.assetDiagnostics).to.deep.equal(assetDiagnostics);
+        expect(outcome.assetsWithFreshEntry).to.equal(1);
+        expect(outcome.failedAssets).to.equal(1);
     });
 });
 

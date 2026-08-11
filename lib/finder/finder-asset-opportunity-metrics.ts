@@ -229,6 +229,11 @@ export function sortAssetOpportunityResults(results: FinderAssetOpportunityResul
  */
 export const FRESH_SIGNAL_LIBRARIES_METRIC = "freshSignalLibraries" as const;
 export type FinderAssetOpportunityResortMetric = FinderMetric | typeof FRESH_SIGNAL_LIBRARIES_METRIC;
+/** Special batch-only choice that archives the default order plus every metric. */
+export const ASSET_OPPORTUNITY_ALL_SORTS = "allAssetOpportunitySorts" as const;
+export type FinderAssetOpportunityArchiveSort =
+    | FinderAssetOpportunityResortMetric
+    | typeof ASSET_OPPORTUNITY_ALL_SORTS;
 
 const ASSET_RESORT_METRICS: readonly FinderAssetOpportunityResortMetric[] = [
     "expectancy",

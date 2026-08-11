@@ -42,11 +42,13 @@ import {
 	sortFinderUniverseCandidates,
 } from "./finder/finder-universe-metrics";
 import {
+	ASSET_OPPORTUNITY_ALL_SORTS,
 	sortAssetOpportunityResults,
 	sortAssetOpportunityResultsByMetric,
 	getAssetOpportunityResortMetrics,
 	FRESH_SIGNAL_LIBRARIES_METRIC,
 	retainAssetOpportunityResultsForSymbols,
+	type FinderAssetOpportunityArchiveSort,
 	type FinderAssetOpportunityResortMetric,
 } from "./finder/finder-asset-opportunity-metrics";
 import {
@@ -2673,6 +2675,14 @@ export class FinderManager {
 			uiManager.showToast(range.error, 'error');
 			return false;
 		}
+		const selectedArchiveSort = dom.finderResort.value;
+		const archiveSort = selectedArchiveSort === ASSET_OPPORTUNITY_ALL_SORTS
+			? ASSET_OPPORTUNITY_ALL_SORTS
+			: selectedArchiveSort && getAssetOpportunityResortMetrics().includes(
+				selectedArchiveSort as FinderAssetOpportunityResortMetric,
+			)
+				? selectedArchiveSort as FinderAssetOpportunityResortMetric
+				: null;
 
 		const exitStrategyCandidates = await this.resolveExitStrategyCandidates(options, selectedStrategies);
 		const runId = this.generateServerRunId();
@@ -2686,6 +2696,7 @@ export class FinderManager {
 			runId,
 			startTime,
 			range,
+			archiveSort,
 		);
 
 		if (this.activeServerRunId === runId) {
@@ -2726,6 +2737,7 @@ export class FinderManager {
 		runId: string,
 		startTime: number,
 		range: { start: number; end: number },
+		archiveSort: FinderAssetOpportunityArchiveSort | null = null,
 	): Promise<ServerAssetOpportunityRunOutcome> {
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
@@ -2756,6 +2768,7 @@ export class FinderManager {
 				exitStrategyKeys: exitStrategyCandidates?.map((candidate) => candidate.key),
 				useRustEnginePreference: shouldUseRustEngine(),
 				providerBySymbol,
+				archiveSort,
 				batch: {
 					startHoldoutBars: range.start,
 					endHoldoutBars: range.end,
@@ -2823,6 +2836,10 @@ export class FinderManager {
 				},
 				onAssetBatchIterationDone: (event) => {
 					if (!isStillActive()) return;
+					terminalDiagnostics = event.diagnostics;
+					assetDiagnostics = event.assetDiagnostics;
+					assetsWithFreshEntry = event.assetDiagnostics?.assetsWithFreshEntry ?? event.totals.assetsWithFreshEntry;
+					failedAssets = event.assetDiagnostics?.failedAssets.length ?? event.totals.failedAssets;
 					// Render the latest completed iteration only; the archive file
 					// name is surfaced in the status so the operator knows where
 					// the top-N payload landed.
@@ -2844,8 +2861,14 @@ export class FinderManager {
 				onAssetBatchDone: (event) => {
 					if (event.runId !== runId) return;
 					terminalResults = retainSubmittedAssetResults(event.assets ?? []);
-					assetsWithFreshEntry = terminalResults.length;
-					failedAssets = 0;
+					terminalDiagnostics = event.diagnostics;
+					assetDiagnostics = event.assetDiagnostics;
+					assetsWithFreshEntry = event.assetDiagnostics?.assetsWithFreshEntry
+						?? event.totals?.assetsWithFreshEntry
+						?? terminalResults.length;
+					failedAssets = event.assetDiagnostics?.failedAssets.length
+						?? event.totals?.failedAssets
+						?? 0;
 					if (isStillActive()) {
 						adoptIterationRows(terminalResults, true);
 						this.setStatus(`Asset Opportunity batch ${event.summary}`);
@@ -2868,12 +2891,19 @@ export class FinderManager {
 		if (streamError) {
 			if (isStillActive()) {
 				const recovered = await this.recoverActiveServerRun(runId, 'asset_opportunity_batch');
+				if (recovered?.phase === 'fatal') {
+					throw new Error(recovered.error ?? recovered.summary ?? 'Asset Opportunity batch failed.');
+				}
 				if (recovered?.terminalAssets) {
 					terminalResults = retainSubmittedAssetResults(recovered.terminalAssets);
 					terminalDiagnostics = recovered.diagnostics;
 					assetDiagnostics = recovered.assetDiagnostics ?? null;
-					assetsWithFreshEntry = terminalResults.length;
-					failedAssets = recovered.assetTotals?.failedAssets ?? 0;
+					assetsWithFreshEntry = recovered.assetDiagnostics?.assetsWithFreshEntry
+						?? recovered.assetTotals?.assetsWithFreshEntry
+						?? terminalResults.length;
+					failedAssets = recovered.assetDiagnostics?.failedAssets.length
+						?? recovered.assetTotals?.failedAssets
+						?? 0;
 					adoptIterationRows(terminalResults, true);
 				} else if (!this.isCancelled) {
 					throw streamError;
@@ -3708,6 +3738,7 @@ export class FinderManager {
 				options.push({ value: metric, label: UNIVERSE_METRIC_FULL_LABELS[metric] });
 			}
 		} else if (scope === 'asset_opportunity') {
+			options.push({ value: ASSET_OPPORTUNITY_ALL_SORTS, label: "All Sorts (Archive)" });
 			for (const metric of getAssetOpportunityResortMetrics()) {
 				options.push({
 					value: metric,
@@ -3773,6 +3804,10 @@ export class FinderManager {
 			const sorted = sortFinderUniverseCandidates(results, [metric as FinderUniverseMetric]);
 			this.setLatestResults({ scope: 'symbol_universe', results: sorted });
 		} else if (scope === 'asset_opportunity') {
+			if (metric === ASSET_OPPORTUNITY_ALL_SORTS) {
+				this.setStatus('All Sorts is for batch archive output; choose a specific metric to re-sort displayed results.');
+				return;
+			}
 			const results = metric === FRESH_SIGNAL_LIBRARIES_METRIC && this.assetOpportunityDefaultResults.length > 0
 				? this.assetOpportunityDefaultResults
 				: this.assetOpportunityRunResults.length > 0

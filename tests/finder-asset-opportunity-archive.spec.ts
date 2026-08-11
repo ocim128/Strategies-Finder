@@ -26,7 +26,7 @@ describe("Asset Opportunity archive writer", () => {
         expect(() => buildAssetOpportunityArchiveFilename(Number.NaN)).to.throw();
     });
 
-    it("writes one delimited block containing timestamp, run id, holdout, and pretty JSON", async () => {
+    it("writes one delimited block containing timestamp, run id, holdout, and compact JSON", async () => {
         const root = mkdtempSync(path.join(tmpdir(), "finder-archive-"));
         try {
             const topResults = [{ scope: "asset_opportunity", rank: 1, symbol: "BTCUSDT" }];
@@ -45,7 +45,8 @@ describe("Asset Opportunity archive writer", () => {
             expect(content).to.contain("Timestamp: 2026-01-01T00:00:00.000Z");
             expect(content).to.contain("Batch run id: batch-1");
             expect(content).to.contain("OOS holdout: 4 bars");
-            expect(content).to.contain(JSON.stringify(topResults, null, 2));
+            expect(content).to.contain("Archive sort: run_default");
+            expect(content).to.contain(JSON.stringify(topResults));
             expect(content).to.match(/\n$/);
         } finally {
             rmSync(root, { recursive: true, force: true });
@@ -107,6 +108,7 @@ describe("Asset Opportunity archive writer", () => {
             timestamp: "t",
             batchRunId: "b",
             holdoutBars: 1,
+            sortMetric: "freshSignalLibraries",
             topResults: [{ rank: 1 }],
         });
         expect(text.startsWith("=".repeat(80))).to.equal(true);

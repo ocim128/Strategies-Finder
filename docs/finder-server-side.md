@@ -51,22 +51,39 @@ ascending (`start <= end`), each at most 100,000, and at most 100 values
 (`normalizeFinderAssetOosBatchHoldoutRange` in
 `lib/finder/finder-asset-opportunity-oos.ts`).
 
+Before starting a batch, the browser captures the existing Asset Opportunity
+`finderResort` selection and sends it as `archiveSort`. An empty selection uses
+the normal run ordering; otherwise the server validates and applies the same
+`sortAssetOpportunityResultsByMetric` comparator used by the post-run Re-Sort
+control. The choice is fixed for the batch, so changing Re-Sort after the run
+starts does not change blocks that have already been appended.
+
+The `All Sorts (Archive)` choice expands to the default run order plus every
+Asset Opportunity Re-Sort metric. For each holdout N, those rankings are
+appended as separate delimited blocks in the same `oos-holdout-<N>-bars.txt`
+file.
+
 The batch coordinator (`processFinderAssetOpportunityBatchRun` in
 `lib/finder/server/finder-vite-plugin.ts`) loops the range in ascending order
 and calls the same per-asset iteration seam as the single route
 (`runAssetOpportunityIteration`, extracted unchanged), cloning the options
 with `oosIgnoreLastBars` set to the current N. The random seed is preserved
 across iterations so differences come from the holdout boundary, not a new
-sample. After each iteration it appends the same top-N payload the Copy Top
-Results button produces (shared serializer
-`buildAssetOpportunityMetadataPayload` in
+sample. After each iteration it appends a compact performance-only top-N
+payload (built by `buildAssetOpportunityPerformancePayload` in
 `lib/finder/finder-asset-opportunity-metadata.ts`) to
 `<server.config.root>/archive/asset opportunity/oos-holdout-<N>-bars.txt`
 (`appendAssetOpportunityArchiveBlock` in
 `lib/finder/server/finder-asset-opportunity-archive.ts`). Re-running the same
 N appends a new delimited block; it never overwrites or deduplicates prior
 research. The filename is derived only from the validated integer N — a
-request can never supply a filesystem path.
+request can never supply a filesystem path. Each block records the selected
+metric as `Archive sort: <metric>` (`run_default` for the normal run order),
+which makes repeated appends with different rankings auditable. The archive
+JSON is compact and contains only row identity plus selection/OOS performance
+metrics and forward OOS performance. Manual Copy
+Top Results remains the full metadata payload; automatic archives omit params,
+strategy metadata, support, trades, equity curves, and exit details.
 
 Only the current iteration's full scalar rows are retained (for re-sort and
 the terminal view); prior iterations' rows are never held in memory or sent
@@ -84,10 +101,10 @@ Batch stream events (`FinderAssetOpportunityBatchStreamEvent`):
 
 | Event | Purpose |
 | --- | --- |
-| `asset_batch_start` | Declares the validated range, iteration/asset totals, and strategy names. |
+| `asset_batch_start` | Declares the validated range, iteration/asset totals, strategy names, and the fixed archive sort (`archiveSort`), including `All Sorts (Archive)`. |
 | `asset_batch_progress` | Overall job percent plus in-iteration asset progress, current holdout, phase, and status text. |
-| `asset_batch_iteration_done` | Full scalar rows for THIS holdout only, current diagnostics/totals, and the archive filename. |
-| `asset_batch_done` | Completed/failed holdout counts, last iteration rows, summary. |
+| `asset_batch_iteration_done` | Full scalar rows for THIS holdout only, current diagnostics/totals, and the archive filename (including empty-result blocks). |
+| `asset_batch_done` | Completed/failed holdout counts, last successfully archived iteration rows, holdout, totals, diagnostics, and summary. |
 | `asset_batch_fatal` | Terminal error, current holdout, completed count — also used for archive write failures. |
 
 Stop aborts the active iteration and prevents the next from starting; a
