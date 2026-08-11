@@ -18,6 +18,41 @@ export interface FinderAssetOosMetrics {
     horizons: FinderAssetOosHorizonMetric[];
 }
 
+export interface FinderAssetOosAverageHorizonMetric {
+    bars: number;
+    averagePnlPercent: number | null;
+    sampleSize: number;
+}
+
+/**
+ * Average each forward-validation horizon across the currently displayed
+ * Asset Opportunity results. Horizons remain separate so a 5-bar result is
+ * never averaged together with a 12- or 15-bar result.
+ */
+export function calculateFinderAssetOosAverageHorizonMetrics(
+    metrics: readonly (FinderAssetOosMetrics | null | undefined)[],
+): FinderAssetOosAverageHorizonMetric[] {
+    const totals = new Map<number, { total: number; sampleSize: number }>();
+    for (const resultMetrics of metrics) {
+        for (const horizon of resultMetrics?.horizons ?? []) {
+            const value = horizon.averagePnlPercent;
+            if (value === null || !Number.isFinite(value)) continue;
+            const current = totals.get(horizon.bars) ?? { total: 0, sampleSize: 0 };
+            current.total += value;
+            current.sampleSize += 1;
+            totals.set(horizon.bars, current);
+        }
+    }
+
+    return [...totals.entries()].map(([bars, aggregate]) => ({
+        bars,
+        averagePnlPercent: aggregate.sampleSize > 0
+            ? aggregate.total / aggregate.sampleSize
+            : null,
+        sampleSize: aggregate.sampleSize,
+    }));
+}
+
 function buildHorizonMetrics(args: {
     candles: readonly OHLCVData[];
     signalIndex: number;

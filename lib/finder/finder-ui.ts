@@ -7,6 +7,7 @@ import {
 import type { FinderAssetOpportunityResult, FinderMode, FinderOosVerdict, FinderRandomBenchmark, FinderResult, FinderStrategyQualityResult, FinderUniverseCandidate, FinderUniverseOosAggregate, FinderUniverseSymbolMetrics } from "../types/finder";
 import type { BacktestResult, StrategyParams, Time } from "../types/strategies";
 import { getFinderSelectionResult } from "./finder-engine";
+import { calculateFinderAssetOosAverageHorizonMetrics } from "./finder-asset-opportunity-oos";
 import { computePerformanceVerdict, computeStrategyVerdict } from "./finder-universe-metrics";
 
 export function getFinderDisplayResult(item: FinderResult): BacktestResult {
@@ -339,6 +340,60 @@ export class FinderUI {
         if (copyButton) copyButton.disabled = false;
 
         const fragment = document.createDocumentFragment();
+        const averageForwardValidation = calculateFinderAssetOosAverageHorizonMetrics(
+            results.map((result) => result.oosHorizonMetrics),
+        );
+        if (averageForwardValidation.length > 0) {
+            const summary = document.createElement("div");
+            summary.className = "finder-asset-validation finder-asset-validation-overview";
+
+            const heading = document.createElement("div");
+            heading.className = "finder-asset-validation-heading";
+
+            const title = document.createElement("span");
+            title.className = "finder-asset-validation-title";
+            title.textContent = "Average Forward validation";
+            heading.appendChild(title);
+
+            const source = document.createElement("span");
+            source.className = "finder-asset-validation-summary";
+            source.textContent = `Across ${results.length} displayed results`;
+            heading.appendChild(source);
+            summary.appendChild(heading);
+
+            const horizons = document.createElement("div");
+            horizons.className = "finder-asset-horizons";
+            for (const horizon of averageForwardValidation) {
+                const status = horizon.averagePnlPercent === null
+                    ? "unavailable"
+                    : horizon.averagePnlPercent > 0
+                        ? "positive"
+                        : horizon.averagePnlPercent < 0
+                            ? "negative"
+                            : "neutral";
+                const cell = document.createElement("div");
+                cell.className = `finder-asset-horizon finder-asset-horizon-${status}`;
+
+                const label = document.createElement("span");
+                label.className = "finder-asset-horizon-label";
+                label.textContent = `${horizon.bars} bar${horizon.bars === 1 ? "" : "s"}`;
+                cell.appendChild(label);
+
+                const value = document.createElement("strong");
+                value.className = "finder-asset-horizon-value";
+                value.textContent = this.formatSignedPercent(horizon.averagePnlPercent);
+                cell.appendChild(value);
+
+                const sample = document.createElement("span");
+                sample.className = "finder-asset-horizon-sample";
+                sample.textContent = `n=${horizon.sampleSize}`;
+                cell.appendChild(sample);
+                horizons.appendChild(cell);
+            }
+            summary.appendChild(horizons);
+            fragment.appendChild(summary);
+        }
+
         results.forEach((item, index) => {
             const title = document.createElement("div");
             title.className = "finder-title";

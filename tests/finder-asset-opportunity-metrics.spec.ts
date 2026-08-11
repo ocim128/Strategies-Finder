@@ -21,6 +21,7 @@ import {
     retainAssetOpportunityResultsForSymbols,
     type AssetPoolCandidate,
 } from "../lib/finder/finder-asset-opportunity-metrics";
+import { calculateFinderAssetOosAverageHorizonMetrics } from "../lib/finder/finder-asset-opportunity-oos";
 import type { FinderAssetOpportunityResult } from "../lib/types/finder";
 
 function assetResultForSymbol(symbol: string): FinderAssetOpportunityResult {
@@ -313,6 +314,58 @@ describe("Asset Opportunity post-run re-sort", () => {
         const shallow = makeResortResult({ symbol: "B", maxDrawdownPercent: 5 });
         const sorted = sortAssetOpportunityResultsByMetric([deep, shallow], "maxDrawdownPercent");
         expect(sorted.map((r) => r.symbol)).to.deep.equal(["B", "A"]);
+    });
+
+    it("recomputes each horizon average from the displayed result set after re-sort", () => {
+        const withForwardValidation = (
+            result: FinderAssetOpportunityResult,
+            horizonValues: [number, number],
+        ): FinderAssetOpportunityResult => ({
+            ...result,
+            oosHorizonMetrics: {
+                ignoreLastBars: 2,
+                horizons: [
+                    { bars: 5, pnlPercent: horizonValues[0], averagePnlPercent: horizonValues[0], winRatePercent: 50, sampleSize: 2 },
+                    { bars: 12, pnlPercent: horizonValues[1], averagePnlPercent: horizonValues[1], winRatePercent: 50, sampleSize: 2 },
+                ],
+            },
+        });
+        const netProfitLeader = withForwardValidation(
+            makeResortResult({ symbol: "A", netProfit: 100, expectancy: 1 }),
+            [10, 20],
+        );
+        const middle = withForwardValidation(
+            makeResortResult({ symbol: "B", netProfit: 90, expectancy: 2 }),
+            [0, 10],
+        );
+        const expectancyLeader = withForwardValidation(
+            makeResortResult({ symbol: "C", netProfit: 80, expectancy: 3 }),
+            [-10, -20],
+        );
+
+        const byNetProfit = sortAssetOpportunityResultsByMetric(
+            [netProfitLeader, middle, expectancyLeader],
+            "netProfit",
+        );
+        const byExpectancy = sortAssetOpportunityResultsByMetric(
+            [netProfitLeader, middle, expectancyLeader],
+            "expectancy",
+        );
+
+        expect(byNetProfit[0]?.symbol).to.equal("A");
+        expect(byExpectancy[0]?.symbol).to.equal("C");
+        expect(calculateFinderAssetOosAverageHorizonMetrics(
+            byNetProfit.slice(0, 2).map((result) => result.oosHorizonMetrics),
+        )).to.deep.equal([
+            { bars: 5, averagePnlPercent: 5, sampleSize: 2 },
+            { bars: 12, averagePnlPercent: 15, sampleSize: 2 },
+        ]);
+        expect(calculateFinderAssetOosAverageHorizonMetrics(
+            byExpectancy.slice(0, 2).map((result) => result.oosHorizonMetrics),
+        )).to.deep.equal([
+            { bars: 5, averagePnlPercent: -5, sampleSize: 2 },
+            { bars: 12, averagePnlPercent: -5, sampleSize: 2 },
+        ]);
     });
 
     it("uses symbol ascending as the tie-breaker when metrics are equal", () => {

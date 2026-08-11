@@ -1127,6 +1127,22 @@
 
 
 
+.finder-asset-validation-overview {
+
+    display: block;
+
+    margin-bottom: var(--space-2);
+
+}
+
+
+
+.finder-asset-validation-overview .finder-asset-validation-heading {
+
+    margin-bottom: var(--space-1-5);
+
+}
+
 .finder-asset-validation-heading {
 
     display: flex;
