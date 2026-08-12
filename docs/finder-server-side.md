@@ -81,9 +81,22 @@ request can never supply a filesystem path. Each block records the selected
 metric as `Archive sort: <metric>` (`run_default` for the normal run order),
 which makes repeated appends with different rankings auditable. The archive
 JSON is compact and contains only row identity plus selection/OOS performance
-metrics and forward OOS performance. Manual Copy
-Top Results remains the full metadata payload; automatic archives omit params,
-strategy metadata, support, trades, equity curves, and exit details.
+metrics and forward OOS performance. New blocks also include a stable
+`candidateFingerprint`, the latest signal-candle hour in UTC and Asia/Jakarta,
+and an all-candidate forward-OOS baseline captured before the top-N slice.
+Older blocks remain readable but cannot answer fingerprint, baseline, or
+signal-hour questions. Manual Copy Top Results remains the full metadata
+payload; automatic archives omit params, strategy metadata, support, trades,
+equity curves, and exit details.
+
+The archive can be analyzed with
+`archive/asset opportunity/analyze-asset-opportunity-holdouts.bat` (or
+`scripts/analyze-asset-opportunity-holdouts.ts`). The analyzer reads only
+matching files directly inside the selected archive directory, never nested
+subfolders. It reports strategy-library contribution, a descriptive
+worst-strategy removal counterfactual across forward horizons, and best/worst
+signal-candle hours. The removal section excludes archived rows; it does not
+rerun Finder or simulate capital, position sizing, or trade overlap.
 
 Only the current iteration's full scalar rows are retained (for re-sort and
 the terminal view); prior iterations' rows are never held in memory or sent

@@ -150,6 +150,11 @@ matrix-summary-*.json
 
 # Archive directory
 archive/
+!/archive/
+/archive/*
+!/archive/asset opportunity/
+/archive/asset opportunity/*
+!/archive/asset opportunity/analyze-asset-opportunity-holdouts.bat
 .vercel
 .wrangler/
 signals/

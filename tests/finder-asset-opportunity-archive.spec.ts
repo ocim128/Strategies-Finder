@@ -116,6 +116,30 @@ describe("Asset Opportunity archive writer", () => {
         expect(JSON.parse(text.slice(jsonStart))).to.deep.equal([{ rank: 1 }]);
     });
 
+    it("serializes the optional all-candidate baseline before the top results", () => {
+        const baseline = {
+            eligibleCandidateCount: 12,
+            horizons: [{
+                bars: 12,
+                averagePnlPercent: 0.5,
+                sampleWeightedAveragePnlPercent: 0.5,
+                positiveResults: 7,
+                observedResults: 12,
+                totalSamples: 12,
+            }],
+        };
+        const text = buildAssetOpportunityArchiveBlockText({
+            timestamp: "t",
+            batchRunId: "b",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            baseline,
+            topResults: [{ rank: 1 }],
+        });
+        expect(text).to.contain(`Archive baseline: ${JSON.stringify(baseline)}`);
+        expect(text.lastIndexOf("\n[")).to.be.greaterThan(text.indexOf("Archive baseline:"));
+    });
+
     it("does not accept an arbitrary path from a caller", () => {
         // The filename function is the only entry point to a file name; a
         // string path argument is a type error, so simulate the closest

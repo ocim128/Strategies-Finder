@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { FinderAssetOpportunityResortMetric } from "../finder-asset-opportunity-metrics";
+import type { AssetOpportunityForwardOosBaseline } from "../finder-asset-opportunity-metadata";
 
 /**
  * Server-side archive leaf for Asset Opportunity batch iterations.
@@ -46,6 +47,8 @@ export interface AssetOpportunityArchiveBlock {
     sortMetric?: FinderAssetOpportunityResortMetric | null;
     /** Compact performance-only rows (array of per-row objects). */
     topResults: unknown;
+    /** All-result baseline captured before the top-N slice, when available. */
+    baseline?: AssetOpportunityForwardOosBaseline | null;
 }
 
 export function buildAssetOpportunityArchiveBlockText(block: AssetOpportunityArchiveBlock): string {
@@ -56,6 +59,7 @@ export function buildAssetOpportunityArchiveBlockText(block: AssetOpportunityArc
         `Batch run id: ${block.batchRunId}`,
         `OOS holdout: ${block.holdoutBars} bars`,
         `Archive sort: ${block.sortMetric ?? "run_default"}`,
+        ...(block.baseline ? [`Archive baseline: ${JSON.stringify(block.baseline)}`] : []),
         separator,
         JSON.stringify(block.topResults),
         "",
@@ -77,6 +81,7 @@ export interface AppendAssetOpportunityArchiveBlockArgs {
     /** Re-sort metric used for this payload; null means the run default. */
     sortMetric?: FinderAssetOpportunityResortMetric | null;
     topResults: unknown;
+    baseline?: AssetOpportunityForwardOosBaseline | null;
     /** Optional deterministic timestamp for tests. */
     timestamp?: string;
     /** Optional injected append leaf for tests. */
@@ -101,6 +106,7 @@ export async function appendAssetOpportunityArchiveBlock(
         holdoutBars: args.holdoutBars,
         sortMetric: args.sortMetric ?? null,
         topResults: args.topResults,
+        baseline: args.baseline,
     });
     const append = args.append ?? (async (dirPath, fileName, fileContent) => {
         await mkdir(dirPath, { recursive: true });

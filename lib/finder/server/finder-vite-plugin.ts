@@ -114,7 +114,10 @@ import {
     normalizeFinderAssetOosHorizons,
     normalizeFinderAssetOosIgnoreLastBars,
 } from "../finder-asset-opportunity-oos";
-import { buildAssetOpportunityPerformancePayload } from "../finder-asset-opportunity-metadata";
+import {
+    buildAssetOpportunityForwardOosBaseline,
+    buildAssetOpportunityPerformancePayload,
+} from "../finder-asset-opportunity-metadata";
 import {
     appendAssetOpportunityArchiveBlock,
     type AssetOpportunityArchiveAppend,
@@ -1907,6 +1910,7 @@ export async function processFinderAssetOpportunityBatchRun(
                     holdoutBars,
                     sortMetric,
                     topResults,
+                    baseline: buildAssetOpportunityForwardOosBaseline(iteration.results),
                     ...(archiveAppend ? { append: archiveAppend } : {}),
                 });
                 archiveFilename = path.basename(appended.path);

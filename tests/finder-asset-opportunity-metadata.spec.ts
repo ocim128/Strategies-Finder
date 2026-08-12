@@ -1,6 +1,8 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
+    buildAssetOpportunityCandidateFingerprint,
+    buildAssetOpportunityForwardOosBaseline,
     buildAssetOpportunityMetadataPayload,
     buildAssetOpportunityPerformancePayload,
 } from "../lib/finder/finder-asset-opportunity-metadata";
@@ -182,6 +184,9 @@ describe("Asset Opportunity metadata payload serializer", () => {
             symbol: "BTCUSDT",
             strategyId: "momentum",
             strategyName: "Momentum",
+            candidateFingerprint: buildAssetOpportunityCandidateFingerprint(makeAssetResult()),
+            signalCandleHourUtc: 22,
+            signalCandleHourJakarta: 5,
             selectionPerformance: {
                 netProfit: 10,
                 netProfitPercent: 1,
@@ -238,5 +243,29 @@ describe("Asset Opportunity metadata payload serializer", () => {
             strategyMetadata: null,
         }));
         expect(payloads.map((payload) => payload.rank)).to.deep.equal([1, 2]);
+    });
+
+    it("builds a baseline from all available result rows before top-N slicing", () => {
+        const baseline = buildAssetOpportunityForwardOosBaseline([
+            makeAssetResult(),
+            makeAssetResult({
+                symbol: "ETHUSDT",
+                oosHorizonMetrics: {
+                    ignoreLastBars: 5,
+                    horizons: [
+                        { bars: 1, pnlPercent: -2, averagePnlPercent: -2, winRatePercent: 0, sampleSize: 1 },
+                    ],
+                },
+            }),
+        ]);
+        expect(baseline.eligibleCandidateCount).to.equal(2);
+        expect(baseline.horizons).to.deep.equal([{
+            bars: 1,
+            averagePnlPercent: -0.5,
+            sampleWeightedAveragePnlPercent: -0.5,
+            positiveResults: 1,
+            observedResults: 2,
+            totalSamples: 2,
+        }]);
     });
 });

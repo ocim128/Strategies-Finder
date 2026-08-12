@@ -1150,7 +1150,9 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
             (event) => event.type === "asset_batch_iteration_done",
         ) as Array<Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_iteration_done" }>>;
         for (let index = 0; index < iterations.length; index += 1) {
-            const jsonStart = contents[index]!.indexOf("[");
+            // The archive block now also contains a JSON baseline object whose
+            // horizons array appears before the top-results array.
+            const jsonStart = contents[index]!.lastIndexOf("\n[") + 1;
             const archived = JSON.parse(contents[index]!.slice(jsonStart)) as Array<{ symbol: string }>;
             const expected = sortAssetOpportunityResultsByMetric(
                 iterations[index]!.assets,
