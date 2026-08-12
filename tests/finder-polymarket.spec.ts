@@ -143,8 +143,6 @@ function makeOptions(overrides: Partial<FinderOptions> = {}): FinderOptions {
         mode: 'grid',
         sortPriority: ['polyScore', 'polyWinRate', 'polyPredictions'],
         useAdvancedSort: false,
-        multiTimeframeEnabled: false,
-        timeframes: [],
         topN: 10,
         steps: 3,
         rangePercent: 35,
@@ -153,7 +151,6 @@ function makeOptions(overrides: Partial<FinderOptions> = {}): FinderOptions {
         minTrades: 0,
         maxTrades: Number.POSITIVE_INFINITY,
         freezeRiskManagement: true,
-        comboEnabled: false,
         polymarketScoringEnabled: true,
         polymarketRankMode: 'balanced',
         polymarketMinScoredPredictions: 0,
@@ -1022,28 +1019,6 @@ describe('Finder Polymarket runner', () => {
         }
 
         expect(seenModes).to.deep.equal(['default', 'genetic']);
-    });
-
-    it('rejects multi-timeframe and combo Polymarket runs', async () => {
-        globalThis.fetch = (async () => {
-            throw new Error('fetch should not be called for blocked Polymarket modes');
-        }) as typeof fetch;
-
-        const multi = makeCallbacks();
-        const multiOutput = await runPolymarketFinder(
-            makeInput(makeBars(4), [{ variant: 1 }], { multiTimeframeEnabled: true }),
-            multi.callbacks
-        );
-        expect(multiOutput.results).to.have.length(0);
-        expect(multi.statuses.at(-1)).to.equal('Multi-timeframe is not supported in Polymarket mode.');
-
-        const combo = makeCallbacks();
-        const comboOutput = await runPolymarketFinder(
-            makeInput(makeBars(4), [{ variant: 1 }], { comboEnabled: true }),
-            combo.callbacks
-        );
-        expect(comboOutput.results).to.have.length(0);
-        expect(combo.statuses.at(-1)).to.equal('Combo mode is not supported in Polymarket mode.');
     });
 
     it('accepts 1m interval and scores trades using the 1m -> 5m bridge', async () => {

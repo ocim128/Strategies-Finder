@@ -34,7 +34,6 @@ import { precomputeIndicators, runBacktest } from "../strategies/index";
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import {
     resolveFinderRiskOverrides,
-    resolveFinderCandidateBacktestSettings,
     normalizeFinderCandidateParams,
     type FinderPreparedDataCache,
 } from "./finder-runner-core";
@@ -170,7 +169,7 @@ export async function runCandidateOosPass(deps: CandidateOosDeps): Promise<Candi
                 signals,
                 params: normalizedParams,
                 capitalSettings: deps.capitalSettings,
-                backtestSettings: resolveFinderCandidateBacktestSettings(backtestSettings, undefined),
+                backtestSettings,
                 backtestFn: runBacktest,
                 precomputed,
                 ...(exitStrategy ? { exitStrategy } : {}),

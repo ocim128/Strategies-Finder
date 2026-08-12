@@ -56,7 +56,6 @@ import { FinderResultRanker } from "./finder-result-ranker";
 import {
     buildFinderEvaluationData,
     buildFinderResult,
-    isAlternativeSizingMode,
     runFinderCandidateBacktest,
     runStrategyBacktest,
     maybeUpdateFinderProgress,
@@ -667,16 +666,6 @@ export async function runPolymarketFinder(
         return { results: [] };
     }
 
-    if (options.multiTimeframeEnabled) {
-        callbacks.setStatus("Multi-timeframe is not supported in Polymarket mode.");
-        return { results: [] };
-    }
-
-    if (options.comboEnabled) {
-        callbacks.setStatus("Combo mode is not supported in Polymarket mode.");
-        return { results: [] };
-    }
-
     if (options.mode !== "grid" && options.mode !== "random") {
         callbacks.setStatus(`"${options.mode}" mode is not supported in Polymarket mode. Use grid or random.`);
         return { results: [] };
@@ -695,7 +684,7 @@ export async function runPolymarketFinder(
     const requiresSizedNetRank = options.sortPriority.includes("polySizedNet");
     const requiresSharpeRatio = options.sortPriority.includes("sharpeRatio");
     const requiresDrawdown = options.sortPriority.includes("maxDrawdownPercent");
-    if (requiresSizedNetRank && !isAlternativeSizingMode(input.capitalSettings)) {
+    if (requiresSizedNetRank && input.capitalSettings.sizingMode === "percent") {
         callbacks.setStatus("Sized Net rank mode requires Alternative Sizing mode other than percent.");
         return { results: [] };
     }

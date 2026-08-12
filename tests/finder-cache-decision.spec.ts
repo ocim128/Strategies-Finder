@@ -9,7 +9,6 @@ import { FinderParamSpace } from '../lib/finder/finder-param-space';
 import { calculateSharpeRatioFromEquityCurve } from '../lib/strategies/performance-metrics';
 import {
     buildFinderEvaluationData,
-    resolveFinderCandidateBacktestSettings,
     shouldUseRustCachedMode,
 } from '../lib/finder/finder-runner';
 import {
@@ -86,47 +85,6 @@ describe('Finder adaptive cache mode decision', () => {
         const result = shouldUseRustCachedMode(100_000, 1, 0);
         expect(result.useCache).to.equal(false);
         expect(result.reason).to.equal('none');
-    });
-});
-
-describe('Finder candidate backtest settings resolution', () => {
-    it('uses candidate-specific risk settings for normal finder runs', () => {
-        const candidateSettings: BacktestSettings = {
-            riskMode: 'percentage',
-            stopLossEnabled: true,
-            stopLossPercent: 2,
-            takeProfitEnabled: true,
-            takeProfitPercent: 6,
-            riskMaxHoldEnabled: true,
-            riskMaxHoldBars: 4,
-        };
-
-        const resolved = resolveFinderCandidateBacktestSettings(candidateSettings);
-
-        expect(resolved).to.equal(candidateSettings);
-        expect(resolved.stopLossPercent).to.equal(2);
-        expect(resolved.takeProfitPercent).to.equal(6);
-        expect(resolved.riskMaxHoldBars).to.equal(4);
-    });
-
-    it('prefers combo primary settings when finder runs in combo mode', () => {
-        const candidateSettings: BacktestSettings = {
-            riskMode: 'percentage',
-            stopLossPercent: 2,
-            takeProfitPercent: 6,
-        };
-        const primarySettings: BacktestSettings = {
-            riskMode: 'simple',
-            executionModel: 'next_close',
-            stopLossPercent: 9,
-            takeProfitPercent: 12,
-        };
-
-        const resolved = resolveFinderCandidateBacktestSettings(candidateSettings, primarySettings);
-
-        expect(resolved).to.equal(primarySettings);
-        expect(resolved.executionModel).to.equal('next_close');
-        expect(resolved.stopLossPercent).to.equal(9);
     });
 });
 
@@ -245,8 +203,6 @@ describe('Finder ATR risk randomization support', () => {
                 mode: 'random',
                 sortPriority: ['netProfit'],
                 useAdvancedSort: false,
-                multiTimeframeEnabled: false,
-                timeframes: [],
                 topN: 10,
                 steps: 3,
                 rangePercent: 35,
@@ -254,7 +210,6 @@ describe('Finder ATR risk randomization support', () => {
                 tradeFilterEnabled: false,
                 minTrades: 0,
                 maxTrades: Number.POSITIVE_INFINITY,
-                comboEnabled: false,
                 randomSeed: 42,
             }
         );
@@ -420,8 +375,6 @@ describe('Finder ATR risk randomization support', () => {
                 mode: 'random',
                 sortPriority: ['netProfit'],
                 useAdvancedSort: false,
-                multiTimeframeEnabled: false,
-                timeframes: [],
                 topN: 10,
                 steps: 3,
                 rangePercent: 35,
@@ -429,7 +382,6 @@ describe('Finder ATR risk randomization support', () => {
                 tradeFilterEnabled: false,
                 minTrades: 0,
                 maxTrades: Number.POSITIVE_INFINITY,
-                comboEnabled: false,
                 randomSeed: 42,
             }
         );
@@ -657,8 +609,6 @@ describe('Finder ATR risk randomization support', () => {
                 mode: 'random',
                 sortPriority: ['netProfit'],
                 useAdvancedSort: false,
-                multiTimeframeEnabled: false,
-                timeframes: [],
                 topN: 10,
                 steps: 3,
                 rangePercent: 50,
@@ -666,7 +616,6 @@ describe('Finder ATR risk randomization support', () => {
                 tradeFilterEnabled: false,
                 minTrades: 0,
                 maxTrades: Number.POSITIVE_INFINITY,
-                comboEnabled: false,
                 randomSeed: 42,
                 randomizePathExitParams: true,
             }

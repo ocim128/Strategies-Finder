@@ -100,14 +100,7 @@ export class FinderUI {
             const titleText = document.createElement("span");
             titleText.textContent = item.name;
             title.appendChild(titleText);
-            if (item.comboMode) {
-                const comboBadge = document.createElement("span");
-                comboBadge.className = "finder-title-badge finder-title-badge-combo";
-                comboBadge.textContent = "COMBO";
-                title.appendChild(comboBadge);
-            }
 
-            const timeframeLabel = item.timeframes && item.timeframes.length === 1 ? ` @ ${item.timeframes[0]}` : "";
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
             const result = getFinderDisplayResult(item);
@@ -173,7 +166,7 @@ export class FinderUI {
             fragment.appendChild(this.createResultRow({
                 index,
                 title,
-                subText: `${item.key}${timeframeLabel}`,
+                subText: item.key,
                 paramsText: this.formatParams(item.params),
                 detailLines: this.formatDetailLines(item),
                 metrics,

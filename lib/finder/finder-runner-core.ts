@@ -642,13 +642,6 @@ export function mergeFinderRiskParamsIntoBacktestSettings<
     return merged;
 }
 
-export function resolveFinderCandidateBacktestSettings(
-    candidateBacktestSettings: BacktestSettings,
-    comboPrimarySettings?: BacktestSettings
-): BacktestSettings {
-    return comboPrimarySettings ?? candidateBacktestSettings;
-}
-
 function isFiniteNumber(value: unknown): value is number {
     return typeof value === "number" && Number.isFinite(value);
 }
@@ -726,14 +719,6 @@ export function extractRustFinderCandidates(
     }
 
     return candidates;
-}
-
-export function buildRustFinderBaseParams(
-    strategy: Strategy,
-    settings: BacktestSettings,
-    options?: Pick<FinderOptions, "freezeRiskManagement" | "randomizePathExitParams">
-): StrategyParams {
-    return buildFinderSearchBaseParams(strategy, settings, options);
 }
 
 export function selectPrescreenDataSlice(data: OHLCVData[]): OHLCVData[] {

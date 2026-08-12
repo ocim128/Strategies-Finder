@@ -2,9 +2,9 @@ import { trimToClosedCandles } from "../closed-candle-utils";
 import { debugLogger } from "../debug-logger";
 import { FinderResultRanker } from "./finder-result-ranker";
 import { runGeneticOptimization } from "./genetic-optimizer";
+import { buildSelectionResult } from "./endpoint";
 import {
     buildFinderResult,
-    buildSelection,
     deriveStrategySeed,
     normalizeResultSharpe,
 } from "./finder-runner-shared";
@@ -35,11 +35,6 @@ export interface GeneticFinderRunParams {
 export async function runGeneticFinder(params: GeneticFinderRunParams): Promise<FinderRunOutput> {
     const { input, callbacks, capitalSettings } = params;
     const { initialCapital } = capitalSettings;
-
-    if (input.comboPrimarySignals) {
-        callbacks.setStatus("Genetic search is currently unavailable in combo mode.");
-        return { results: [] };
-    }
 
     const closedData = trimToClosedCandles(input.ohlcvData, input.interval);
     if (closedData.length === 0) {
@@ -136,7 +131,7 @@ export async function runGeneticFinder(params: GeneticFinderRunParams): Promise<
         }
 
         const normalizedResult = normalizeResultSharpe(optimization.bestGenome.result);
-        const adjustment = buildSelection(normalizedResult, lastDataTime, initialCapital);
+        const adjustment = buildSelectionResult(normalizedResult, lastDataTime, initialCapital);
         const candidate: FinderResult = buildFinderResult({
             key: selection.key,
             name: selection.name,

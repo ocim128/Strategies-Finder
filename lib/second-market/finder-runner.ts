@@ -12,7 +12,6 @@ import type { FinderRunCallbacks, FinderRunInput, FinderRunOutput } from "../fin
 import {
     buildFinderEvaluationData,
     buildFinderResult,
-    isAlternativeSizingMode,
     runFinderCandidateBacktest,
     runStrategyBacktest,
     type StrategyPlan,
@@ -140,16 +139,6 @@ export async function runSecondMarketFinder(
     await ensureConfirmationStrategiesLoaded(settings);
     const rustSettings = sanitizeBacktestSettingsForRust(settings);
 
-    if (options.multiTimeframeEnabled) {
-        callbacks.setStatus("1s CLOB Polymarket Finder does not support multi-timeframe mode.");
-        return { results: [] };
-    }
-
-    if (options.comboEnabled) {
-        callbacks.setStatus("1s CLOB Polymarket Finder does not support combo mode.");
-        return { results: [] };
-    }
-
     if (options.mode !== "grid" && options.mode !== "random") {
         callbacks.setStatus(`1s CLOB Polymarket Finder supports grid or random mode, not "${options.mode}".`);
         return { results: [] };
@@ -167,7 +156,7 @@ export async function runSecondMarketFinder(
     const requiresSizedNetRank = options.sortPriority.includes("polySizedNet");
     const requiresSharpeRatio = options.sortPriority.includes("sharpeRatio");
     const requiresDrawdown = options.sortPriority.includes("maxDrawdownPercent");
-    if (requiresSizedNetRank && !isAlternativeSizingMode(input.capitalSettings)) {
+    if (requiresSizedNetRank && input.capitalSettings.sizingMode === "percent") {
         callbacks.setStatus("Sized Net rank mode requires Alternative Sizing mode other than percent.");
         return { results: [] };
     }

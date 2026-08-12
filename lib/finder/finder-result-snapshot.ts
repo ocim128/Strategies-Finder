@@ -39,9 +39,6 @@ function compactFinderResult(result: FinderResult): FinderResult {
     return {
         key: result.key,
         name: result.name,
-        ...(result.comboMode ? { comboMode: result.comboMode } : {}),
-        ...(result.comboPrimaryConfigName ? { comboPrimaryConfigName: result.comboPrimaryConfigName } : {}),
-        ...(result.timeframes ? { timeframes: [...result.timeframes] } : {}),
         params: { ...result.params },
         ...(result.exitStrategyKey ? { exitStrategyKey: result.exitStrategyKey } : {}),
         ...(result.exitStrategyParams ? { exitStrategyParams: { ...result.exitStrategyParams } } : {}),

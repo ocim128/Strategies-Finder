@@ -484,12 +484,6 @@ function assertUniverseRunSupported(input: FinderUniverseRunInput): FinderUniver
     if (input.selectedStrategy.strategy.polymarket1sConfig) {
         throw new Error("Symbol Universe mode does not support 1s Polymarket context strategies in v1.");
     }
-    if (input.options.comboEnabled) {
-        throw new Error("Symbol Universe mode does not support combo mode in v1.");
-    }
-    if (input.options.multiTimeframeEnabled) {
-        throw new Error("Symbol Universe mode does not support multi-timeframe runs in v1.");
-    }
     if (input.settings.strategyTimeframeEnabled) {
         throw new Error("Symbol Universe mode does not support strategy timeframe resampling in v1.");
     }

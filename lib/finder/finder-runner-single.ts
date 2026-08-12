@@ -28,7 +28,6 @@ import {
     computeFinderCompositeEdgeRatio,
     finderSortRequiresCompositeEdgeRatio,
     normalizeFinderCandidateParams,
-    resolveFinderCandidateBacktestSettings,
     resolveFinderRiskOverrides,
     resolveQuickFunnelShortlistCount,
     selectPrescreenDataSlice,
@@ -39,14 +38,11 @@ import {
     type RandomBenchmarkMeta,
 } from "./finder-runner-core";
 import {
-    applyComboMerge,
     buildFinderEvaluationData,
     buildFinderResult,
-    buildSelection,
     generateSignalsForJob,
     isBacktestResultConsistent,
     normalizeResultSharpe,
-    resolveEffectiveCapitalSettings,
     runBacktestAndInsert,
     runStrategyBacktest,
     type FinderBacktestFn,
@@ -71,11 +67,12 @@ import {
     type FinderDiagnosticsTimings,
     type FinderStrategyDiagnosticsStats,
 } from "./finder-diagnostics";
+import { buildSelectionResult } from "./endpoint";
 import { withExitStrategyBaseParams } from "./exit-strategy-param-prefix";
 import type { FinderRunCallbacks, FinderRunInput, FinderRunOutput } from "./finder-runner";
 
 export { buildFinderEvaluationData } from "./finder-runner-shared";
-export { resolveFinderCandidateBacktestSettings, shouldUseRustCachedMode } from "./finder-runner-core";
+export { shouldUseRustCachedMode } from "./finder-runner-core";
 
 let dataManagerModulePromise: Promise<typeof import("../data-manager")> | null = null;
 
@@ -85,7 +82,7 @@ async function getDataManager() {
 }
 
 type FinderCandidateForEnrichment = Pick<FinderResult, "key" | "name" | "params" | "result">
-    & Partial<Pick<FinderResult, "comboMode" | "comboPrimaryConfigName" | "compositeEdgeRatio" | "exitStrategyKey" | "polymarketEval">>;
+    & Partial<Pick<FinderResult, "compositeEdgeRatio" | "exitStrategyKey" | "polymarketEval">>;
 
 function enrichFinderCandidate(args: {
     candidate: FinderCandidateForEnrichment;
@@ -95,8 +92,6 @@ function enrichFinderCandidate(args: {
     requiresCompositeEdgeRatioSort: boolean;
     requiresTradeTimingQualitySort: boolean;
     exitStrategyKey?: string;
-    comboMode?: boolean;
-    comboPrimaryConfigName?: string;
 }): FinderResult {
     const {
         candidate,
@@ -110,15 +105,13 @@ function enrichFinderCandidate(args: {
     if (requiresTradeTimingQualitySort) {
         attachTradeTimingQuality(normalizedResult, candidateData);
     }
-    const adjustment = buildSelection(normalizedResult, lastDataTime, initialCapital);
+    const adjustment = buildSelectionResult(normalizedResult, lastDataTime, initialCapital);
     if (requiresTradeTimingQualitySort) {
         attachTradeTimingQuality(adjustment.result, candidateData);
     }
 
     return buildFinderResult({
         ...candidate,
-        comboMode: args.comboMode ?? candidate.comboMode,
-        comboPrimaryConfigName: args.comboPrimaryConfigName ?? candidate.comboPrimaryConfigName,
         result: normalizedResult,
         selectionResult: adjustment.result,
         exitStrategyKey: candidate.exitStrategyKey ?? args.exitStrategyKey,
@@ -175,7 +168,6 @@ type BacktestFallbackRunnerOptions = {
     closedData: OHLCVData[];
     backtestFn: FinderBacktestFn;
     capitalSettings: CapitalSettings;
-    resolveBacktestSettings: (job: ParamJob) => BacktestSettings;
     getJobData: (job: ParamJob, defaultData: OHLCVData[]) => OHLCVData[];
     getJobPrecomputed: (job: ParamJob, defaultPrecomputed: ReturnType<typeof precomputeIndicators>) => ReturnType<typeof precomputeIndicators>;
     defaultPrecomputed: ReturnType<typeof precomputeIndicators>;
@@ -195,7 +187,7 @@ function createBacktestFallbackRunner(options: BacktestFallbackRunnerOptions): (
             run.job,
             options.backtestFn,
             options.capitalSettings,
-            options.resolveBacktestSettings(run.job),
+            run.job.backtestSettings,
             options.getJobPrecomputed(run.job, options.defaultPrecomputed),
             options.insertResult,
             (result) => options.onBacktestResult?.(run.job, result),
@@ -216,7 +208,6 @@ type RustRunPreparationOptions = {
     insertResult: (candidate: CandidateResult) => void;
     timing: FinderDiagnosticsTimings;
     idForJob: (job: ParamJob) => string;
-    mergeComboSignals: boolean;
     failureContext: string;
     onSignalTiming?: (job: ParamJob, timing: FinderSignalTiming) => void;
     onJobFailure?: (job: ParamJob, error?: unknown) => void;
@@ -239,10 +230,6 @@ function prepareRustBatchRuns(options: RustRunPreparationOptions): PreparedRun[]
                 options.getJobCtx(job),
                 (timing) => options.onSignalTiming?.(job, timing)
             );
-            if (options.mergeComboSignals) {
-                signals = applyComboMerge(signals, options.input);
-            }
-
             const evaluation = job.strategy.evaluate?.(jobData, job.params, signals);
             const entryStats = evaluation?.entryStats;
             if (job.strategy.metadata?.role === "entry" && entryStats) {
@@ -400,25 +387,22 @@ async function resolveFinderEngineDecision(args: {
     requiresCompositeEdgeRatioSort: boolean;
 }): Promise<FinderEngineDecision> {
     const { input, callbacks, flags, totalRuns, closedData, requiresCompositeEdgeRatioSort } = args;
-    const comboActive = Boolean(input.comboPrimarySignals);
-    const rustPreferred = !comboActive && !requiresCompositeEdgeRatioSort && !input.requiresTsEngine && shouldUseRustEngine();
+    const rustPreferred = !requiresCompositeEdgeRatioSort && !input.requiresTsEngine && shouldUseRustEngine();
     const rustHealthy = rustPreferred && await rustEngine.checkHealth();
-    const rustUnavailableReason = comboActive
-        ? "combo mode requires TypeScript engine"
-        : requiresCompositeEdgeRatioSort
-            ? "Composite Edge Ratio sort requires full TypeScript trade paths"
-            : !rustPreferred
-                ? (input.requiresTsEngine ? "current sizing or realism settings require TypeScript" : "engine preference is TypeScript")
-                : "Rust health check failed";
+    const rustUnavailableReason = requiresCompositeEdgeRatioSort
+        ? "Composite Edge Ratio sort requires full TypeScript trade paths"
+        : !rustPreferred
+            ? (input.requiresTsEngine ? "current sizing or realism settings require TypeScript" : "engine preference is TypeScript")
+            : "Rust health check failed";
     const canTryNativeFinder = false;
 
-    if (!comboActive && input.requiresTsEngine && !rustHealthy) {
+    if (input.requiresTsEngine && !rustHealthy) {
         debugLogger.info("[Finder] TypeScript-only sizing or realism settings enabled - forcing TypeScript engine.");
     }
 
     const cacheDecision = shouldUseRustCachedMode(flags.dataSize, totalRuns, flags.batchSize);
     let cacheId: string | null = null;
-    const useCachedMode = comboActive || canTryNativeFinder ? false : cacheDecision.useCache;
+    const useCachedMode = canTryNativeFinder ? false : cacheDecision.useCache;
     if (useCachedMode && rustHealthy) {
         const cacheReasonText = cacheDecision.reason === "large_dataset"
             ? `large dataset (${flags.dataSize} bars)`
@@ -435,7 +419,7 @@ async function resolveFinderEngineDecision(args: {
 
     const useRustCached = useCachedMode && cacheId !== null;
     const useRustDirect = rustHealthy && (!useCachedMode || cacheId === null);
-    const useRustForFinder = (useRustCached || useRustDirect) && !comboActive;
+    const useRustForFinder = useRustCached || useRustDirect;
 
     let statusMessage: string;
     if (flags.isExtremeDataset) {
@@ -456,10 +440,6 @@ async function resolveFinderEngineDecision(args: {
     } else {
         debugLogger.warn(`[Finder] Using TypeScript for ${flags.dataSize} bars (${rustUnavailableReason})${useCachedMode ? "" : "."}`);
         statusMessage = `Using TypeScript engine (${rustUnavailableReason})...`;
-    }
-
-    if (comboActive) {
-        statusMessage = `Combo mode: TS engine (${input.comboPrimarySignals!.length} primary signals)...`;
     }
 
     callbacks.setStatus(statusMessage);
@@ -487,13 +467,11 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         rustSettings,
         paramGenerationMs = 0,
     } = params;
-    const effectiveCapitalSettings = resolveEffectiveCapitalSettings(input);
+    const effectiveCapitalSettings = input.capitalSettings;
     const {
         initialCapital: effectiveInitialCapital,
     } = effectiveCapitalSettings;
-    const effectiveBacktestSettings = input.comboPrimarySettings ?? input.settings;
-    const resolveCandidateBacktestSettings = (job: ParamJob) =>
-        resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings);
+    const effectiveBacktestSettings = input.settings;
 
     const timing = createEmptyFinderDiagnosticsTimings();
     timing.paramGeneration = paramGenerationMs;
@@ -647,8 +625,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             requiresCompositeEdgeRatioSort,
             requiresTradeTimingQualitySort,
             exitStrategyKey: input.options.exitStrategyOverrideEnabled ? input.options.exitStrategyKey : undefined,
-            comboMode: Boolean(input.comboPrimarySignals),
-            comboPrimaryConfigName: input.options.comboPrimaryConfigName,
         });
         timing.resultEnrichment += performance.now() - enrichmentStartedAt;
 
@@ -844,7 +820,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     (signalTiming) => recordSignalTiming(job, signalTiming)
                 );
                 timing.signalGeneration += performance.now() - tSignalStart;
-                signals = applyComboMerge(signals, input);
 
                 const tQuickStart = performance.now();
                 if (job.strategy.metadata?.role !== "entry" && signals.length === 0) {
@@ -857,7 +832,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     signals,
                     params: job.params,
                     capitalSettings: effectiveCapitalSettings,
-                    backtestSettings: resolveCandidateBacktestSettings(job),
+                    backtestSettings: job.backtestSettings,
                     backtestFn: quickBacktestFn,
                     precomputed: getJobPrecomputed(job, shortPrecomputed),
                     backtestOptions: { collectDiagnostics: true },
@@ -911,7 +886,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 closedData,
                 backtestFn,
                 capitalSettings: effectiveCapitalSettings,
-                resolveBacktestSettings: resolveCandidateBacktestSettings,
                 getJobData,
                 getJobPrecomputed,
                 defaultPrecomputed: singleTfPrecomputed,
@@ -938,7 +912,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                         (signalTiming) => recordSignalTiming(job, signalTiming)
                     );
                     timing.signalGeneration += performance.now() - tSignalStart;
-                    signals = applyComboMerge(signals, input);
 
                     const backtestStartedAt = performance.now();
                     runBacktestFallback({
@@ -986,7 +959,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             closedData,
             backtestFn,
             capitalSettings: effectiveCapitalSettings,
-            resolveBacktestSettings: resolveCandidateBacktestSettings,
             getJobData,
             getJobPrecomputed,
             defaultPrecomputed: singleTfPrecomputed,
@@ -1010,7 +982,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 insertResult,
                 timing,
                 idForJob: (job) => `${job.key}-funnel-${job.id}`,
-                mergeComboSignals: true,
                 failureContext: "Random funnel signal generation",
                 onSignalTiming: recordSignalTiming,
                 onJobFailure: recordFailure,
@@ -1062,7 +1033,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         closedData,
         backtestFn,
         capitalSettings: effectiveCapitalSettings,
-        resolveBacktestSettings: resolveCandidateBacktestSettings,
         getJobData,
         getJobPrecomputed,
         defaultPrecomputed: singleTfPrecomputed,
@@ -1075,7 +1045,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         closedData,
         backtestFn,
         capitalSettings,
-        resolveBacktestSettings: (job) => job.backtestSettings,
         getJobData,
         getJobPrecomputed,
         defaultPrecomputed: singleTfPrecomputed,
@@ -1119,7 +1088,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     tsRunBacktestFallback({
                         id: `${job.key}-${job.id}`,
                         job,
-                        signals: applyComboMerge(signals, input),
+                        signals,
                     });
                     recordBacktestTiming(job, performance.now() - backtestStartedAt);
                 } catch (error) {
@@ -1165,7 +1134,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             insertResult,
             timing,
             idForJob: (job) => `${job.key}-${job.id}`,
-            mergeComboSignals: false,
             failureContext: "Signal generation",
             onSignalTiming: recordSignalTiming,
             onJobFailure: recordFailure,
@@ -1255,9 +1223,7 @@ async function reconcileSingleTimeframeTopResults(
     const requiresTradeTimingQualitySort = finderSortRequiresTradeTimingQuality(input.options.sortPriority);
     const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
     const rustSettings = sanitizeBacktestSettingsForRust(input.settings);
-    const comboActive = Boolean(input.comboPrimarySignals);
-    const comboBacktestSettings = input.comboPrimarySettings ?? input.settings;
-    const precomputed = existingPrecomputed ?? precomputeIndicators(closedData, comboBacktestSettings);
+    const precomputed = existingPrecomputed ?? precomputeIndicators(closedData, input.settings);
     const preparedDataCache = existingPreparedDataCache ?? new WeakMap();
     const reconciled: FinderResult[] = [];
 
@@ -1296,15 +1262,14 @@ async function reconcileSingleTimeframeTopResults(
                 strategy,
                 exitStrategy,
                 exitStrategyKey: candidate.exitStrategyKey,
-            }, jobData, input.interval, preparedDataCache, comboBacktestSettings, jobCtx);
-            const mergedSignals = comboActive ? applyComboMerge(signals, input) : signals;
+            }, jobData, input.interval, preparedDataCache, input.settings, jobCtx);
             const rawResult = runStrategyBacktest({
                 strategy,
                 data: jobData,
-                signals: mergedSignals,
+                signals,
                 params: normalizedParams,
                 capitalSettings,
-                backtestSettings: resolveFinderCandidateBacktestSettings(backtestSettings, input.comboPrimarySettings),
+                backtestSettings,
                 backtestFn: runBacktest,
                 precomputed: jobPrecomputed,
                 exitStrategy,

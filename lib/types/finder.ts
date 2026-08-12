@@ -99,8 +99,6 @@ export interface FinderOptions {
     scope?: FinderScope;
     dataSlice?: FinderDataSlice;
     randomSeed?: number;
-    multiTimeframeEnabled?: boolean;
-    timeframes?: string[];
     topN: number;
     steps: number;
     rangePercent: number;
@@ -110,8 +108,6 @@ export interface FinderOptions {
     maxTrades: number;
     freezeRiskManagement?: boolean;
     randomizePathExitParams?: boolean;
-    comboEnabled?: boolean;
-    comboPrimaryConfigName?: string;
     polymarketScoringEnabled?: boolean;
     polymarketRankMode?: PolymarketFinderRankMode;
     polymarketMinScoredPredictions?: number;
@@ -166,9 +162,6 @@ export interface EndpointSelectionAdjustment {
 export interface FinderResult {
     key: string;
     name: string;
-    comboMode?: boolean;
-    comboPrimaryConfigName?: string;
-    timeframes?: string[];
     params: StrategyParams;
     exitStrategyKey?: string;
     exitStrategyParams?: StrategyParams;

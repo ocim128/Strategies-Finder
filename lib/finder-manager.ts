@@ -1907,13 +1907,15 @@ export class FinderManager {
 					// a bottleneck line.
 					const loadFailures = (error as Error & { loadFailures?: Map<string, { error?: string }> }).loadFailures;
 					if (loadFailures && loadFailures.size > 0) {
-						this.latestDiagnostics = this.buildLoadFailureDiagnostics({
+						this.latestDiagnostics = this.buildFailureDiagnostics({
+							kind: 'load',
 							options,
 							elapsedMs: performance.now() - startTime,
 							loadFailures,
 						});
 					} else {
-						this.latestDiagnostics = this.buildRunFailureDiagnostics({
+						this.latestDiagnostics = this.buildFailureDiagnostics({
+							kind: 'run',
 							options,
 							elapsedMs: performance.now() - startTime,
 							error: message,
@@ -3529,85 +3531,65 @@ export class FinderManager {
 	 * failed. Populates `universe.failedSymbols` from the thrown error's
 	 * attached loadFailures map.
 	 */
-	private buildLoadFailureDiagnostics(args: {
-		options: FinderOptions;
-		elapsedMs: number;
-		loadFailures: Map<string, { error?: string }>;
-		totalSymbols?: number;
-		loadedSymbols?: number;
-	}): FinderDiagnostics {
-		const failedSymbols = [...args.loadFailures.entries()].map(([symbol, result]) => ({
-			symbol,
-			reason: result.error ?? 'unknown error',
-		}));
-		const timings = createEmptyFinderDiagnosticsTimings();
-		timings.total = args.elapsedMs;
-		timings.dataLoading = args.elapsedMs;
-		const engineMode = args.options.polymarketScoringEnabled
+	/**
+	 * Resolve the engine-mode label used by the diagnostics builders.
+	 */
+	private resolveDiagnosticsEngineMode(options: FinderOptions): string {
+		return options.polymarketScoringEnabled
 			? (isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval) ? 'second_market_polymarket' : 'polymarket')
-			: args.options.mode === 'genetic'
+			: options.mode === 'genetic'
 				? 'genetic'
 				: 'typescript';
-		return buildFinderDiagnostics({
-			runId: createFinderRunId('finder-load-failure'),
-			symbol: state.currentSymbol,
-			interval: state.currentInterval,
-			mode: args.options.mode,
-			engineMode,
-			inputBars: 0,
-			evaluationBars: 0,
-			selectedStrategies: 0,
-			totalParamRuns: 0,
-			batchSize: 0,
-			processedRuns: 0,
-			filteredRuns: 0,
-			shownResults: 0,
-			endpointAdjusted: 0,
-			failedRuns: 0,
-			skippedRuns: 0,
-			timings,
-			strategyBreakdown: [],
-			universeDiagnostics: {
-				totalSymbols: args.totalSymbols ?? failedSymbols.length,
-				loadedSymbols: args.loadedSymbols ?? 0,
-				failedSymbols,
-			},
-		});
 	}
 
 	/**
-	 * Minimal diagnostics for any non-load failure path (engine throw, OOS
+	 * Minimal diagnostics for failure paths. `kind: 'load'` is used when the
+	 * universe symbols failed to load (richer per-symbol failure detail);
+	 * `kind: 'run'` covers any other mid-run failure (engine throw, OOS
 	 * re-load error, etc.). Without this, latestDiagnostics stays null on a
 	 * mid-run failure and the Copy Diagnostics button is silently disabled.
 	 * The error reason is surfaced as the first bottleneck line so the user
 	 * can copy and share why the run failed.
 	 */
-	private buildRunFailureDiagnostics(args: {
+	private buildFailureDiagnostics(args: {
+		kind: 'load' | 'run';
 		options: FinderOptions;
 		elapsedMs: number;
-		error: string;
+		error?: string;
+		loadFailures?: Map<string, { error?: string }>;
+		totalSymbols?: number;
+		loadedSymbols?: number;
 	}): FinderDiagnostics {
+		const failedSymbols = args.loadFailures
+			? [...args.loadFailures.entries()].map(([symbol, result]) => ({
+				symbol,
+				reason: result.error ?? 'unknown error',
+			}))
+			: [];
 		const timings = createEmptyFinderDiagnosticsTimings();
 		timings.total = args.elapsedMs;
-		const engineMode = args.options.polymarketScoringEnabled
-			? (isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval) ? 'second_market_polymarket' : 'polymarket')
-			: args.options.mode === 'genetic'
-				? 'genetic'
-				: 'typescript';
-		const truncatedError = args.error.length > 220 ? `${args.error.slice(0, 217)}...` : args.error;
-		const universeDiagnostics = (args.options.scope === 'symbol_universe' || args.options.scope === 'strategy_quality') && args.options.universe
+		if (args.kind === 'load') {
+			timings.dataLoading = args.elapsedMs;
+		}
+		const universeDiagnostics = args.kind === 'load'
 			? {
-				totalSymbols: args.options.universe.symbols.length,
-				loadedSymbols: 0,
-				failedSymbols: [] as Array<{ symbol: string; reason: string }>,
+				totalSymbols: args.totalSymbols ?? failedSymbols.length,
+				loadedSymbols: args.loadedSymbols ?? 0,
+				failedSymbols,
 			}
-			: undefined;
+			: (args.options.scope === 'symbol_universe' || args.options.scope === 'strategy_quality') && args.options.universe
+				? {
+					totalSymbols: args.options.universe.symbols.length,
+					loadedSymbols: 0,
+					failedSymbols: [] as Array<{ symbol: string; reason: string }>,
+				}
+				: undefined;
 		const base = buildFinderDiagnostics({
-			runId: createFinderRunId('finder-run-failure'),
+			runId: createFinderRunId(args.kind === 'load' ? 'finder-load-failure' : 'finder-run-failure'),
 			symbol: state.currentSymbol,
 			interval: state.currentInterval,
 			mode: args.options.mode,
-			engineMode,
+			engineMode: this.resolveDiagnosticsEngineMode(args.options),
 			inputBars: 0,
 			evaluationBars: 0,
 			selectedStrategies: 0,
@@ -3623,9 +3605,12 @@ export class FinderManager {
 			strategyBreakdown: [],
 			universeDiagnostics,
 		});
-		// buildFinderDiagnostics already emits a fallback bottleneck line; prepend
-		// the error reason so it is the first thing the user sees when copying.
-		base.bottlenecks = [`Finder run failed: ${truncatedError}`, ...base.bottlenecks];
+		if (args.error) {
+			// buildFinderDiagnostics already emits a fallback bottleneck line; prepend
+			// the error reason so it is the first thing the user sees when copying.
+			const truncatedError = args.error.length > 220 ? `${args.error.slice(0, 217)}...` : args.error;
+			base.bottlenecks = [`Finder run failed: ${truncatedError}`, ...base.bottlenecks];
+		}
 		return base;
 	}
 
@@ -3637,13 +3622,11 @@ export class FinderManager {
 		elapsedMs: number;
 		requiresTsEngine: boolean;
 	}): FinderDiagnostics {
-		const engineMode = args.options.polymarketScoringEnabled
-			? (isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval) ? 'second_market_polymarket' : 'polymarket')
-			: args.options.mode === 'genetic'
-				? 'genetic'
-				: args.requiresTsEngine
-					? 'typescript'
-					: 'unknown';
+		const engineMode = (args.options.polymarketScoringEnabled || args.options.mode === 'genetic')
+			? this.resolveDiagnosticsEngineMode(args.options)
+			: args.requiresTsEngine
+				? 'typescript'
+				: 'unknown';
 		return {
 			runId: `finder-fallback-${Date.now().toString(36)}`,
 			symbol: state.currentSymbol,
@@ -3873,7 +3856,6 @@ export class FinderManager {
 			rank,
 			strategyId: result.key,
 			strategyName: result.name,
-			timeframes: result.timeframes ?? [state.currentInterval],
 			params: result.params,
 			metadata: strategy?.metadata ?? null,
 			metrics: {

@@ -1,7 +1,6 @@
 import {
     BacktestSettings,
     OHLCVData,
-    Signal,
     Strategy,
     StrategyParams,
 } from "../strategies/index";
@@ -15,7 +14,6 @@ import {
 import {
     buildFinderSearchBaseParams,
     normalizeFinderCandidateParamSets,
-    resolveFinderCandidateBacktestSettings,
     shouldUseRustCachedMode,
     resolveFinderRiskOverrides,
 } from "./finder-runner-core";
@@ -30,7 +28,7 @@ import {
     readConfirmationStrategyKeys,
 } from "../confirmation-signal-filter";
 
-export { buildFinderEvaluationData, resolveFinderCandidateBacktestSettings, shouldUseRustCachedMode };
+export { buildFinderEvaluationData, shouldUseRustCachedMode };
 
 export interface FinderSelectedStrategy {
     key: string;
@@ -48,9 +46,6 @@ export interface FinderRunInput {
     selectedStrategies: FinderSelectedStrategy[];
     capitalSettings: CapitalSettings;
     generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[];
-    comboPrimarySignals?: Signal[];
-    comboPrimarySettings?: BacktestSettings;
-    comboPrimaryCapital?: CapitalSettings;
     /** Pre-loaded exit strategy for Exit Strategy Override; undefined when override is off. */
     exitStrategy?: Strategy;
     /** Candidate exit strategies Finder may sample for Exit Strategy Override. */
@@ -99,12 +94,6 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
 
     if (hasPolymarket1sStrategy) {
         callbacks.setStatus("1s Polymarket context strategies require Polymarket scoring on a supported 1s chart.");
-        return { results: [] };
-    }
-
-    if (options.multiTimeframeEnabled) {
-        callbacks.setStatus("Multi-timeframe Finder is no longer supported.");
-        callbacks.setProgress(100, "Unsupported configuration");
         return { results: [] };
     }
 

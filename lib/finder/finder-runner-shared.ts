@@ -5,7 +5,6 @@ import {
     Signal,
     Strategy,
     StrategyParams,
-    Time,
     buildEntryBacktestDiagnostics,
     buildEntryBacktestResult,
     precomputeIndicators,
@@ -13,10 +12,9 @@ import {
     applySignalPolarity,
 } from "../strategies/index";
 import { calculateSharpeRatioFromEquityCurve, calculateSharpeRatioFromReturns } from "../strategies/performance-metrics";
-import { buildSelectionResult } from "./endpoint";
+
 import { hasNonZeroSnapshotFilter } from "../rust-settings-sanitizer";
 import { selectExecutionAwareClosedCandles } from "../alert-evaluation-window";
-import { mergeStrategySignals } from "../signal-merge";
 import { debugLogger } from "../debug-logger";
 import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
 import {
@@ -28,9 +26,8 @@ import { mergeExitStrategySignals } from "../exit-strategy-merge";
 import { splitExitStrategyParams } from "./exit-strategy-param-prefix";
 import { executeBacktestStrategySignals } from "../strategy-signal-execution";
 import type { CapitalSettings } from "../types/backtest";
-import type { EndpointSelectionAdjustment, FinderOptions, FinderResult } from "../types/finder";
+import type { FinderOptions, FinderResult } from "../types/finder";
 import type { StrategyExecutionContext } from "../types/strategies";
-import type { FinderRunInput } from "./finder-runner";
 
 export function buildFinderEvaluationData(
     data: OHLCVData[],
@@ -112,19 +109,6 @@ export type FinderSignalTiming = {
     signalCount: number;
     usedPreparedData: boolean;
 };
-
-export function resolveEffectiveCapitalSettings(input: FinderRunInput): CapitalSettings {
-    return input.comboPrimaryCapital ?? input.capitalSettings;
-}
-
-/**
- * True when the run uses alternative (non-percent) position sizing. Shared by
- * the polymarket and second-market finder runners, which used to duplicate
- * this one-liner verbatim.
- */
-export function isAlternativeSizingMode(capitalSettings: CapitalSettings): boolean {
-    return capitalSettings.sizingMode !== "percent";
-}
 
 /**
  * Backtest runner used by the polymarket-class finder runners. Forces
@@ -223,14 +207,6 @@ export function generateSignalsForJob(
         usedPreparedData: canUsePreparedData,
     });
     return signals;
-}
-
-export function applyComboMerge(
-    signals: Signal[],
-    input: FinderRunInput
-): Signal[] {
-    if (!input.comboPrimarySignals) return signals;
-    return mergeStrategySignals(input.comboPrimarySignals, signals, "and") as Signal[];
 }
 
 export function runStrategyBacktest(args: {
@@ -333,9 +309,6 @@ export function buildFinderResult(args: {
     params: StrategyParams;
     result: BacktestResult;
     exitStrategyKey?: string;
-    comboMode?: boolean;
-    comboPrimaryConfigName?: string;
-    timeframes?: string[];
     selectionResult?: BacktestResult;
     compositeEdgeRatio?: number;
     endpointAdjusted?: boolean;
@@ -347,9 +320,6 @@ export function buildFinderResult(args: {
         params,
         result,
         exitStrategyKey,
-        comboMode,
-        comboPrimaryConfigName,
-        timeframes,
         selectionResult,
         compositeEdgeRatio,
         endpointAdjusted,
@@ -361,9 +331,6 @@ export function buildFinderResult(args: {
     return {
         key,
         name,
-        comboMode,
-        comboPrimaryConfigName,
-        timeframes,
         params: entryParams,
         ...(exitStrategyKey ? { exitStrategyKey, exitStrategyParams: exitParams } : {}),
         result,
@@ -487,14 +454,6 @@ export function isBacktestResultConsistent(result: BacktestResult): boolean {
     if (Math.abs(result.sharpeRatio) > 8) return false;
 
     return true;
-}
-
-export function buildSelection(
-    raw: BacktestResult,
-    lastDataTime: Time | null,
-    initialCapital: number
-): EndpointSelectionAdjustment {
-    return buildSelectionResult(raw, lastDataTime, initialCapital);
 }
 
 export function normalizeSeed(seed: number | undefined): number {
