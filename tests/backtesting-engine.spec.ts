@@ -10,6 +10,7 @@ import { getOpenPositionForScanner } from '../lib/strategies/backtest/signal-pre
 import { resolveScannerBacktestSettings } from '../lib/scanner/scanner-engine';
 import { resolveBacktestSettingsFromRaw } from '../lib/backtest-settings-resolver';
 import { resolveEntryRiskTargets } from '../lib/entry-risk-targets';
+import { buildSelectionResult } from '../lib/finder/endpoint';
 describe('Backtesting Engine', () => {
     it('should execute trades and calculate profit correctly', () => {
         const data: OHLCVData[] = [
@@ -203,6 +204,50 @@ describe('Backtesting Engine', () => {
         expect(fast.diagnostics?.fastPath?.used).to.equal(true);
     });
 
+    it('computes endpoint selection metrics without retaining compact trade objects', () => {
+        const data: OHLCVData[] = Array.from({ length: 6 }, (_, index) => ({
+            time: (index + 1) as Time,
+            open: 100 + index,
+            high: 102 + index,
+            low: 99 + index,
+            close: 100 + index,
+            volume: 1000,
+        }));
+        const signals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100 },
+            { time: 3 as Time, type: 'sell', price: 102 },
+            { time: 4 as Time, type: 'buy', price: 103 },
+        ];
+        const settings = {
+            tradeDirection: 'long' as const,
+            executionModel: 'signal_close' as const,
+            riskMode: 'percentage' as const,
+            takeProfitEnabled: false,
+        };
+
+        const raw = runBacktest(data, signals, 1000, 100, 0, settings, undefined, undefined, {
+            includeSharpeRatio: false,
+        });
+        const expected = buildSelectionResult(raw, data[data.length - 1]!.time, 1000);
+        const compact = runBacktestCompact(data, signals, 1000, 100, 0, settings, undefined, undefined, {
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+            skipDrawdown: true,
+            endpointSelectionLastDataTime: data[data.length - 1]!.time,
+            endpointSelectionInitialCapital: 1000,
+        });
+
+        expect(compact.trades).to.deep.equal([]);
+        expect(compact.endpointSelection?.adjusted).to.equal(expected.adjusted);
+        expect(compact.endpointSelection?.removedTrades).to.equal(expected.removedTrades);
+        expect(compact.endpointSelection?.result.netProfit).to.be.closeTo(expected.result.netProfit, 1e-9);
+        expect(compact.endpointSelection?.result.totalTrades).to.equal(expected.result.totalTrades);
+        expect(compact.endpointSelection?.result.winningTrades).to.equal(expected.result.winningTrades);
+        expect(compact.endpointSelection?.result.losingTrades).to.equal(expected.result.losingTrades);
+        expect(compact.endpointSelection?.result.expectancy).to.be.closeTo(expected.result.expectancy, 1e-9);
+        expect(compact.endpointSelection?.result.sharpeRatio).to.be.closeTo(expected.result.sharpeRatio, 1e-9);
+    });
+
     it('can skip held-bar drawdown scans for Symbol Universe compact runs', () => {
         const data: OHLCVData[] = Array.from({ length: 120 }, (_, index) => ({
             time: (index + 1) as Time,
@@ -279,6 +324,64 @@ describe('Backtesting Engine', () => {
         expect(fast.diagnostics?.counts.fastPathRuns).to.equal(1);
         expect(fast.diagnostics?.fastPath?.used).to.equal(true);
         expect(fast.diagnostics?.timingsMs.tradeSimulation).to.be.greaterThan(0);
+    });
+
+    it('retains trades when compact Finder analytics explicitly requests history', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 103, low: 99, close: 102, volume: 1000 },
+            { time: 3 as Time, open: 102, high: 104, low: 100, close: 101, volume: 1000 },
+            { time: 4 as Time, open: 101, high: 105, low: 100, close: 104, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100 },
+            { time: 3 as Time, type: 'sell', price: 101 },
+        ];
+
+        const result = runBacktestCompact(data, signals, 10000, 100, 0.1, {
+            executionModel: 'signal_close',
+            tradeDirection: 'long',
+        }, undefined, undefined, {
+            includeAdvancedAnalytics: false,
+            includeSharpeRatio: true,
+            omitEquityCurve: true,
+            skipDrawdown: false,
+            requireTradeHistory: true,
+            collectDiagnostics: true,
+        });
+
+        expect(result.trades).to.have.length(1);
+        expect(result.equityCurve).to.deep.equal([]);
+        expect(result.diagnostics?.fastPath?.used).to.equal(true);
+    });
+
+    it('retains trade history in the compact fallback when history is requested', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 103, low: 99, close: 102, volume: 1000 },
+            { time: 3 as Time, open: 102, high: 104, low: 100, close: 101, volume: 1000 },
+            { time: 4 as Time, open: 101, high: 105, low: 100, close: 104, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100 },
+            { time: 3 as Time, type: 'sell', price: 101 },
+        ];
+
+        const result = runBacktestCompact(data, signals, 10000, 100, 0.1, {
+            executionModel: 'signal_close',
+            tradeDirection: 'long',
+            maxOpenTrades: 2,
+        }, undefined, undefined, {
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+            skipDrawdown: true,
+            requireTradeHistory: true,
+            collectDiagnostics: true,
+        });
+
+        expect(result.trades).to.have.length(1);
+        expect(result.trades[0]?.exitReason).to.equal('signal');
+        expect(result.diagnostics?.fastPath?.used).to.equal(false);
     });
 
     it('preserves next-open entry-bar stop behavior on the Finder fast path', () => {

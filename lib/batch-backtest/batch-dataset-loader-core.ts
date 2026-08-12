@@ -68,6 +68,8 @@ export interface BatchDatasetLoadDiagnostics {
 export interface BatchDatasetLoadContext {
     /** Bounded external leg cache; useful when one run touches many pairs. */
     legCache?: SyntheticLegCache<OHLCVData[]>;
+    /** Optional bounded pair cache; useful when a batch repeats the same assets. */
+    pairCache?: SyntheticLegCache<OHLCVData[]>;
     /** Build synthetic pairs from the shared leg cache instead of disk I/O. */
     preferInMemorySyntheticPairs?: boolean;
     diagnostics?: BatchDatasetLoadDiagnostics;
@@ -242,7 +244,8 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
             sourceBars,
         });
 
-        const cachedPair = pairCache.get(pairKey);
+        const activePairCache = context?.pairCache ?? pairCache;
+        const cachedPair = activePairCache.get(pairKey);
         if (cachedPair) {
             if (diagnostics) diagnostics.pairCacheHits += 1;
             debugLogger.event(`${options.logPrefix}.synthetic_pair_cache_hit`, {
@@ -278,7 +281,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                             syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
                         });
                         const diskPromise = Promise.resolve(cached.bars);
-                        pairCache.set(pairKey, diskPromise);
+                        activePairCache.set(pairKey, diskPromise);
                         return await diskPromise;
                     }
                     diskStats.misses += 1;
@@ -335,7 +338,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
             return result.bars;
         })();
 
-        return cacheSuccessfulLoad(pairCache, pairKey, promise, signal);
+        return cacheSuccessfulLoad(activePairCache, pairKey, promise, signal);
     }
 
     function getSourceSeries(

@@ -1258,17 +1258,21 @@ async function executeAssetCandidate(args: {
         ...(args.strategy.crossSymbolConfig ? {} : { closedCandleDataOverride: args.data }),
         preResolvedSettings,
         backtestRunOptions: {
-            includeAdvancedAnalytics: args.fullAnalytics === true,
+            // Asset Opportunity retains scalar winner metrics plus trades for
+            // endpoint adjustment. The compact engine avoids constructing the
+            // full equity-curve result and post-processing analytics that are
+            // not consumed by this result surface.
+            includeAdvancedAnalytics: false,
             // Fresh-entry detection reads only trades + generated signals.
             // Avoid allocating an equity curve or calculating Sharpe/drawdown
             // for the second pass over every retained candidate.
             includeSharpeRatio: args.fullAnalytics === true,
-            useCompactBacktest: false,
-            omitEquityCurve: args.fullAnalytics !== true,
+            useCompactBacktest: args.fullAnalytics === true,
+            omitEquityCurve: true,
             skipDrawdown: args.fullAnalytics !== true,
-            requireTradeHistory: args.fullAnalytics !== true,
+            requireTradeHistory: true,
             signalsOnly: args.signalOnly === true,
-            skipResultPostProcessing: args.fullAnalytics !== true,
+            skipResultPostProcessing: true,
         },
     });
     return {

@@ -46,6 +46,9 @@ const cacheBudget = resolveServerBatchCacheBudget();
 const ASSET_OPPORTUNITY_RUN_LEG_CACHE_MAX_ENTRIES = cacheBudget.legCacheMaxEntries >= 128
     ? 512
     : cacheBudget.legCacheMaxEntries;
+const ASSET_OPPORTUNITY_RUN_PAIR_CACHE_MAX_ENTRIES = cacheBudget.pairCacheMaxEntries >= 32
+    ? 512
+    : 256;
 
 // The bounded-cache startup prune is triggered lazily by the disk-cache module
 // on the first write (see `storeSyntheticPair` → `maybePruneAfterWrite`), NOT at
@@ -111,6 +114,7 @@ export async function loadServerFinderDataset(
 export function createServerFinderAssetOpportunityLoadContext(): BatchDatasetLoadContext {
     return {
         legCache: new SyntheticLegCache(ASSET_OPPORTUNITY_RUN_LEG_CACHE_MAX_ENTRIES),
+        pairCache: new SyntheticLegCache(ASSET_OPPORTUNITY_RUN_PAIR_CACHE_MAX_ENTRIES),
         preferInMemorySyntheticPairs: true,
         diagnostics: createBatchDatasetLoadDiagnostics(),
     };

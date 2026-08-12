@@ -72,7 +72,10 @@ import type {
     FinderUniverseCandidate,
 } from "../../types/finder";
 import type { BacktestSettings, OHLCVData, Strategy, StrategyParams } from "../../types/strategies";
-import type { BatchDatasetLoadContext } from "../../batch-backtest/batch-dataset-loader-core";
+import {
+    createBatchDatasetLoadDiagnostics,
+    type BatchDatasetLoadContext,
+} from "../../batch-backtest/batch-dataset-loader-core";
 import { loadBuiltInStrategyByKey } from "../../../strategyRegistry";
 import {
     clearServerFinderDatasetCaches,
@@ -961,6 +964,8 @@ export interface FinderAssetOpportunityRunInput {
     getProvider?: (symbol: string) => string;
     candidatePoolSize: number;
     minFreshSupport: number;
+    /** Reusable caches for a multi-iteration Asset Opportunity batch. */
+    assetLoadContext?: BatchDatasetLoadContext;
     /** Sort metric used only for automatic batch archive payloads. */
     archiveSort?: FinderAssetOpportunityArchiveSort | null;
 }
@@ -1023,7 +1028,14 @@ export async function runAssetOpportunityIteration(
     const iterationStartedAt = Date.now();
     assertAssetOpportunityStrategySelection(selectedStrategies);
 
-    const assetLoadContext = createServerFinderAssetOpportunityLoadContext();
+    const assetLoadContext = input.assetLoadContext
+        ? {
+            ...input.assetLoadContext,
+            // Cache entries are reusable across holdout iterations, while
+            // diagnostics must describe this iteration only.
+            diagnostics: createBatchDatasetLoadDiagnostics(),
+        }
+        : createServerFinderAssetOpportunityLoadContext();
     const estimatedCandidateEvaluations = totalAssets * selectedStrategies.length * (
         Math.max(1, Math.floor(input.options.maxRuns)) + input.candidatePoolSize
     );
@@ -1266,7 +1278,10 @@ export async function runAssetOpportunityIteration(
                         minFreshSupport: input.minFreshSupport,
                         ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
                         useRustEnginePreference: input.useRustEnginePreference,
-                        recomputeWinnerAnalytics: true,
+                        // The server IS pass retains compact trade history and
+                        // builds the endpoint-adjusted selection result for
+                        // every candidate, so a full winner rerun is redundant.
+                        recomputeWinnerAnalytics: false,
                         assets: [{ symbol, data, precomputedFullClosed: fullClosed }],
                         runIsSearch: isSearch,
                     },
@@ -1787,6 +1802,11 @@ export async function processFinderAssetOpportunityBatchRun(
         totals: FinderAssetOpportunityTotals | null;
         holdoutBars: number | null;
     } = { results: [], assetDiagnostics: null, totals: null, holdoutBars: null };
+    // The holdout boundary changes the evaluation window, not the source
+    // candles. Keep the large synthetic-leg/pair caches alive across all batch
+    // iterations and reset only per-iteration diagnostics in the iteration
+    // runner above.
+    const assetLoadContext = createServerFinderAssetOpportunityLoadContext();
 
     for (let iterationIndex = 0; iterationIndex < totalIterations; iterationIndex += 1) {
         if (isCancelled()) break;
@@ -1827,7 +1847,7 @@ export async function processFinderAssetOpportunityBatchRun(
         let iteration: AssetOpportunityIterationResult;
         try {
             iteration = await runAssetOpportunityIteration(
-                { ...input, options: iterationOptions },
+                { ...input, options: iterationOptions, assetLoadContext },
                 {
                     onProgress: (progress) => {
                         snapshot.phase = progress.phase;

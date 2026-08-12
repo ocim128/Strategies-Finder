@@ -95,6 +95,42 @@ describe("batch-backtest server loader parity", () => {
         expect(context.diagnostics.legCacheHits).to.equal(1);
     });
 
+    it("shares a supplied pair cache across repeated batch iterations", async () => {
+        const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
+            time: time as Time,
+            open: 100,
+            high: 102,
+            low: 99,
+            close: 101,
+            volume: 10,
+        }));
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => source,
+        });
+        const pairCache = new SyntheticLegCache<OHLCVData[]>(8);
+        const firstContext = {
+            legCache: new SyntheticLegCache<OHLCVData[]>(8),
+            pairCache,
+            preferInMemorySyntheticPairs: true,
+            diagnostics: createBatchDatasetLoadDiagnostics(),
+        };
+        await loader.load("BASE\u2022+QUOTE\u2022", "4h", undefined, firstContext);
+
+        const secondContext = {
+            legCache: new SyntheticLegCache<OHLCVData[]>(8),
+            pairCache,
+            preferInMemorySyntheticPairs: true,
+            diagnostics: createBatchDatasetLoadDiagnostics(),
+        };
+        await loader.load("BASE\u2022+QUOTE\u2022", "4h", undefined, secondContext);
+
+        expect(firstContext.diagnostics.pairBuilds).to.equal(1);
+        expect(secondContext.diagnostics.pairCacheHits).to.equal(1);
+        expect(secondContext.diagnostics.pairBuilds).to.equal(0);
+    });
+
     it("measures resolved disk-cache hits and can bypass them for a scoped run", async () => {
         const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
             time: time as Time,

@@ -209,6 +209,7 @@ export async function runServerAssetIsSearch(
             { ...(backtestSettings as Record<string, unknown>), interval: input.interval } as BacktestSettings,
             input.interval,
         );
+        const canUseCompactEndpointSelection = preResolvedSettings.tradeDirection !== "combined";
         currentBacktestSettings = backtestSettings;
 
         const candidateStartedAt = performance.now();
@@ -240,6 +241,15 @@ export async function runServerAssetIsSearch(
                     includeAdvancedAnalytics: false,
                     includeSharpeRatio: requiresFullAnalytics,
                     omitEquityCurve: true,
+                    // Asset Opportunity selection removes trades that exit on
+                    // the endpoint. The compact engine tracks those scalar
+                    // metrics directly, avoiding a Trade allocation per exit.
+                    ...(canUseCompactEndpointSelection
+                        ? {
+                            endpointSelectionLastDataTime: input.ohlcvData[input.ohlcvData.length - 1]?.time ?? null,
+                            endpointSelectionInitialCapital: preResolvedCapital.initialCapital,
+                        }
+                        : { requireTradeHistory: true }),
                     skipDrawdown: !requiresFullAnalytics,
                     skipResultPostProcessing: true,
                 },
@@ -256,7 +266,7 @@ export async function runServerAssetIsSearch(
             }
 
             const result: BacktestResult = output.result;
-            const selection = buildSelectionResult(
+            const selection = output.endpointSelection ?? buildSelectionResult(
                 result,
                 input.ohlcvData[input.ohlcvData.length - 1]?.time ?? null,
                 preResolvedCapital.initialCapital,

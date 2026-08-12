@@ -918,7 +918,7 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
                 candidateEvaluationFailures: 0,
                 freshEntryRechecks: 4,
                 oosEvaluations: 4,
-                winnerAnalyticsRecomputations: 4,
+                winnerAnalyticsRecomputations: 0,
             });
             expect(done.assetDiagnostics!.work!.candidateEvaluationsAttempted).to.be.greaterThan(0);
             expect(done.assetDiagnostics!.work!.candidateEvaluationsCompleted).to.be.greaterThan(0);
@@ -927,10 +927,10 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
             expect(done.assetDiagnostics!.slowestAssets).to.have.length(4);
             expect(done.assetDiagnostics!.engineUsage!.rustRequested).to.equal(true);
             expect(done.assetDiagnostics!.engineUsage!.rustAttemptedRuns).to.equal(0);
-            expect(done.assetDiagnostics!.engineUsage!.typescriptCompletedRuns).to.equal(12);
+            expect(done.assetDiagnostics!.engineUsage!.typescriptCompletedRuns).to.equal(8);
             expect(done.assetDiagnostics!.engineUsage!.typescriptReasons).to.deep.include({
                 reason: "same-bar exits are disabled",
-                runs: 12,
+                runs: 8,
             });
         }
         expect(loaded).to.deep.equal(["UP", "DOWN"]);
@@ -985,6 +985,31 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
 
         expect(output.results).to.have.length(1);
         expect(output.results[0]!.selectionResult.totalTrades).to.equal(3);
+    });
+
+    it("retains endpoint-adjusted selection metrics in the candidate pass", async () => {
+        const output = await runServerAssetIsSearch({
+            ohlcvData: makeCandles([100, 101, 102, 103]),
+            symbol: "ENDPOINT",
+            interval: "5m",
+            options: {
+                ...makeOptions(["ENDPOINT"]),
+                scope: "asset_opportunity",
+                topN: 1,
+            },
+            settings,
+            capitalSettings,
+            selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
+            generateParamSets: () => [{ threshold: 1 }],
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+        });
+
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.result.totalTrades).to.equal(1);
+        expect(output.results[0]!.selectionResult.totalTrades).to.equal(0);
+        expect(output.results[0]!.endpointAdjusted).to.equal(true);
+        expect(output.results[0]!.endpointRemovedTrades).to.equal(1);
     });
 });
 

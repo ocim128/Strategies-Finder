@@ -3,7 +3,10 @@ import { BacktestDiagnostics, BacktestResult, BacktestSettings, OHLCVData, Signa
 import { ensureCleanData } from '../strategy-helpers';
 import { IndicatorSeries, NormalizedSettings, PositionState, PrecomputedIndicators, TradeSizingConfig, TradeSizingMode } from '../../types/backtest';
 import { applySlippage, compareTime, directionFactorFor, exitSideForDirection, getExecutionShift, getTimeIndex, getTimeIndexValue, isLossStreakFlipTradeDirection, normalizeBacktestSettings, normalizeTradeDirection, resolveExecutionPrice, signalToPositionDirection, timeKey } from './backtest-utils';
-import { calculateSharpeRatioFromEquitySamples } from '../performance-metrics';
+import {
+    calculateSharpeRatioFromEquitySamples,
+    calculateSharpeRatioFromReturns,
+} from '../performance-metrics';
 
 import { prepareSignals } from './signal-preparation';
 import { calculateTradeExitDetails, createEmptyBacktestResult, finalizeBacktestMetrics, calculateBacktestStats, calculateMaxDrawdown } from './position-stats';
@@ -45,6 +48,19 @@ type BacktestRunOptions = {
     omitEquityCurve?: boolean;
     skipDrawdown?: boolean;
     requireTradeHistory?: boolean;
+    /** Build endpoint-adjusted selection metrics without allocating Trade objects. */
+    endpointSelectionLastDataTime?: Time | null;
+    endpointSelectionInitialCapital?: number;
+};
+
+export interface BacktestEndpointSelection {
+    result: BacktestResult;
+    adjusted: boolean;
+    removedTrades: number;
+}
+
+export type BacktestResultWithEndpointSelection = BacktestResult & {
+    endpointSelection?: BacktestEndpointSelection;
 };
 
 function createBacktestDiagnostics(inputBars: number, inputSignals: number): BacktestDiagnostics {
@@ -439,7 +455,6 @@ function getSinglePositionFinderFastPathBlockers(
     options: BacktestRunOptions | undefined
 ): string[] {
     const blockers: string[] = [];
-    if (options?.requireTradeHistory === true) blockers.push("trade_history_required");
     if (options?.omitEquityCurve !== true) blockers.push("equity_curve_required");
     if (config.maxOpenTrades !== 1) blockers.push("max_open_trades");
     if (tradeDirection !== "long" && tradeDirection !== "short" && tradeDirection !== "both") blockers.push(`trade_direction_${tradeDirection}`);
@@ -487,6 +502,93 @@ function canUseSignalOnlyFinderFastPath(
         && !hasBarBasedExitRules(config);
 }
 
+type EndpointSelectionAccumulator = {
+    totalTrades: number;
+    winningTrades: number;
+    totalProfit: number;
+    totalLoss: number;
+    netProfit: number;
+    removedTrades: number;
+    finitePnlExitTimes: Time[];
+    finitePnl: number[];
+    pnlPercent: number[];
+};
+
+function createEndpointSelectionAccumulator(): EndpointSelectionAccumulator {
+    return {
+        totalTrades: 0,
+        winningTrades: 0,
+        totalProfit: 0,
+        totalLoss: 0,
+        netProfit: 0,
+        removedTrades: 0,
+        finitePnlExitTimes: [],
+        finitePnl: [],
+        pnlPercent: [],
+    };
+}
+
+function buildEndpointSelection(
+    raw: BacktestResult,
+    accumulator: EndpointSelectionAccumulator,
+    initialCapital: number,
+    endpointEnabled: boolean,
+): BacktestEndpointSelection | undefined {
+    if (!endpointEnabled) return undefined;
+
+    if (accumulator.removedTrades <= 0) {
+        return { result: raw, adjusted: false, removedTrades: 0 };
+    }
+
+    const { totalTrades, winningTrades, totalProfit, totalLoss, netProfit } = accumulator;
+    const losingTrades = totalTrades - winningTrades;
+    const winRate = totalTrades > 0 ? winningTrades / totalTrades : 0;
+    const lossRate = totalTrades > 0 ? losingTrades / totalTrades : 0;
+    const avgWin = winningTrades > 0 ? totalProfit / winningTrades : 0;
+    const avgLoss = losingTrades > 0 ? totalLoss / losingTrades : 0;
+    const finitePnlCount = accumulator.finitePnl.length;
+    let sharpeRatio: number;
+
+    if (finitePnlCount > 1) {
+        const equityValues = new Float64Array(finitePnlCount);
+        let equity = initialCapital;
+        for (let i = 0; i < finitePnlCount; i += 1) {
+            equity += accumulator.finitePnl[i]!;
+            equityValues[i] = equity;
+        }
+        sharpeRatio = calculateSharpeRatioFromEquitySamples(
+            accumulator.finitePnlExitTimes,
+            equityValues,
+            finitePnlCount,
+        );
+    } else {
+        sharpeRatio = calculateSharpeRatioFromReturns(accumulator.pnlPercent);
+    }
+
+    return {
+        result: {
+            ...raw,
+            // Server-side Asset Opportunity consumes scalar selection metrics;
+            // avoid rebuilding filtered Trade objects after the compact pass.
+            trades: [],
+            netProfit,
+            netProfitPercent: initialCapital > 0 ? (netProfit / initialCapital) * 100 : 0,
+            winRate: winRate * 100,
+            expectancy: (winRate * avgWin) - (lossRate * avgLoss),
+            avgTrade: totalTrades > 0 ? netProfit / totalTrades : 0,
+            profitFactor: totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0,
+            totalTrades,
+            winningTrades,
+            losingTrades,
+            avgWin,
+            avgLoss,
+            sharpeRatio,
+        },
+        adjusted: true,
+        removedTrades: accumulator.removedTrades,
+    };
+}
+
 function runSinglePositionFinderFastPath(args: {
     data: OHLCVData[];
     preparedSignals: Signal[];
@@ -504,7 +606,7 @@ function runSinglePositionFinderFastPath(args: {
     diagnostics?: BacktestDiagnostics;
     options?: BacktestRunOptions;
     equityOut?: Float64Array;
-}): BacktestResult {
+}): BacktestResultWithEndpointSelection {
     const {
         data,
         preparedSignals,
@@ -525,6 +627,10 @@ function runSinglePositionFinderFastPath(args: {
     } = args;
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
+    const retainTradeHistory = options?.requireTradeHistory === true;
+    const endpointEnabled = options?.endpointSelectionLastDataTime !== undefined;
+    const endpointLastDataTime = options?.endpointSelectionLastDataTime ?? null;
+    const endpointAccumulator = endpointEnabled ? createEndpointSelectionAccumulator() : undefined;
     const trades: Trade[] = [];
     const learningState: PathExitLearningState = {
         hazardSamples: new Map(),
@@ -536,6 +642,10 @@ function runSinglePositionFinderFastPath(args: {
     let maxDrawdown = 0;
     let maxDrawdownPercent = 0;
     let tradeId = 0;
+    let totalTrades = 0;
+    let winningTrades = 0;
+    let totalProfit = 0;
+    let totalLoss = 0;
     let signalIdx = 0;
     let position = null as PositionState | null;
     let positionEntryBarIndex = -1;
@@ -579,21 +689,51 @@ function runSinglePositionFinderFastPath(args: {
     ): { fullyClosed: boolean } => {
         const d = calculateTradeExitDetails(pos, exitPrice, exitSize, commissionRate);
         capital += d.rawPnl - d.commission;
-        trades.push({
-            id: ++tradeId,
-            type: pos.direction,
-            entryTime: pos.entryTime,
-            entryPrice: pos.entryPrice,
-            exitTime: candle.time,
-            exitPrice,
-            pnl: d.totalPnl,
-            pnlPercent: d.pnlPercent,
-            size: d.size,
-            fees: d.fees,
-            exitReason: reason,
-            stopLossPrice: pos.stopLossPrice,
-            takeProfitPrice: pos.takeProfitPrice,
-        });
+        totalTrades += 1;
+        if (d.totalPnl > 0) {
+            winningTrades += 1;
+            totalProfit += d.totalPnl;
+        } else {
+            totalLoss += Math.abs(d.totalPnl);
+        }
+        if (retainTradeHistory) {
+            trades.push({
+                id: ++tradeId,
+                type: pos.direction,
+                entryTime: pos.entryTime,
+                entryPrice: pos.entryPrice,
+                exitTime: candle.time,
+                exitPrice,
+                pnl: d.totalPnl,
+                pnlPercent: d.pnlPercent,
+                size: d.size,
+                fees: d.fees,
+                exitReason: reason,
+                stopLossPrice: pos.stopLossPrice,
+                takeProfitPrice: pos.takeProfitPrice,
+            });
+        }
+        if (endpointAccumulator) {
+            const beforeEndpoint = endpointLastDataTime === null
+                || compareTime(candle.time, endpointLastDataTime) < 0;
+            if (beforeEndpoint) {
+                endpointAccumulator.totalTrades += 1;
+                endpointAccumulator.netProfit += d.totalPnl;
+                endpointAccumulator.pnlPercent.push(d.pnlPercent);
+                if (d.totalPnl > 0) {
+                    endpointAccumulator.winningTrades += 1;
+                    endpointAccumulator.totalProfit += d.totalPnl;
+                } else {
+                    endpointAccumulator.totalLoss += Math.abs(d.totalPnl);
+                }
+                if (Number.isFinite(d.totalPnl)) {
+                    endpointAccumulator.finitePnlExitTimes.push(candle.time);
+                    endpointAccumulator.finitePnl.push(d.totalPnl);
+                }
+            } else {
+                endpointAccumulator.removedTrades += 1;
+            }
+        }
         diagnostics && diagnostics.counts.tradesClosed++;
         pos.realizedPnl += d.totalPnl;
         pos.size -= d.size;
@@ -774,7 +914,28 @@ function runSinglePositionFinderFastPath(args: {
         addBacktestDiagnosticElapsed(diagnostics, "forcedClose", forcedCloseStartedAt);
 
         const metricsStartedAt = performance.now();
-        const result = calculateBacktestStats(trades, [], initialCapital, capital, 0, 0, options);
+        const result = (retainTradeHistory
+            ? calculateBacktestStats(trades, [], initialCapital, capital, 0, 0, options)
+            : finalizeBacktestMetrics(
+                initialCapital,
+                capital,
+                totalTrades,
+                winningTrades,
+                totalProfit,
+                totalLoss,
+                0,
+                0,
+                0,
+            ) as BacktestResult) as BacktestResultWithEndpointSelection;
+        const endpointAdjustment = buildEndpointSelection(
+            result,
+            endpointAccumulator ?? createEndpointSelectionAccumulator(),
+            options?.endpointSelectionInitialCapital ?? initialCapital,
+            endpointEnabled,
+        );
+        if (endpointAdjustment) {
+            result.endpointSelection = endpointAdjustment;
+        }
         addBacktestDiagnosticElapsed(diagnostics, "metrics", metricsStartedAt);
         return result;
     }
@@ -867,17 +1028,38 @@ function runSinglePositionFinderFastPath(args: {
     const statsOptions = options?.includeSharpeRatio === false
         ? options
         : { ...options, includeSharpeRatio: false };
-    const result = calculateBacktestStats(
-        trades,
-        [],
-        initialCapital,
-        capital,
-        skipDrawdown ? 0 : maxDrawdown,
-        skipDrawdown ? 0 : maxDrawdownPercent,
-        statsOptions
-    );
+    const result = (retainTradeHistory
+        ? calculateBacktestStats(
+            trades,
+            [],
+            initialCapital,
+            capital,
+            skipDrawdown ? 0 : maxDrawdown,
+            skipDrawdown ? 0 : maxDrawdownPercent,
+            statsOptions
+        )
+        : finalizeBacktestMetrics(
+            initialCapital,
+            capital,
+            totalTrades,
+            winningTrades,
+            totalProfit,
+            totalLoss,
+            0,
+            skipDrawdown ? 0 : maxDrawdown,
+            skipDrawdown ? 0 : maxDrawdownPercent,
+        ) as BacktestResult) as BacktestResultWithEndpointSelection;
     if (options?.includeSharpeRatio !== false && equityOut) {
         result.sharpeRatio = calculateSharpeRatioFromEquitySamples(data, equityOut, data.length);
+    }
+    const endpointAdjustment = buildEndpointSelection(
+        result,
+        endpointAccumulator ?? createEndpointSelectionAccumulator(),
+        options?.endpointSelectionInitialCapital ?? initialCapital,
+        endpointEnabled,
+    );
+    if (endpointAdjustment) {
+        result.endpointSelection = endpointAdjustment;
     }
     addBacktestDiagnosticElapsed(diagnostics, "metrics", metricsStartedAt);
     return result;
@@ -1211,8 +1393,14 @@ function combineCompactResults(
         ? 0
         : calculateSharpeRatioFromEquitySamples(data, combinedEquity, len);
 
+    const trades = options?.requireTradeHistory === true
+        ? [...longResult.trades, ...shortResult.trades]
+            .sort((a, b) => compareTime(a.exitTime, b.exitTime) || compareTime(a.entryTime, b.entryTime))
+            .map((trade, index) => ({ ...trade, id: index + 1 }))
+        : [];
+
     return {
-        trades: [],
+        trades,
         netProfit,
         netProfitPercent,
         winRate,
@@ -1453,7 +1641,7 @@ export function runBacktestCompact(
     precomputed?: PrecomputedIndicators,
     optionsOrEquityOut?: BacktestRunOptions | Float64Array,
     maybeOptions?: BacktestRunOptions,
-): BacktestResult {
+): BacktestResultWithEndpointSelection {
     const equityOut = optionsOrEquityOut instanceof Float64Array ? optionsOrEquityOut : undefined;
     const options = optionsOrEquityOut instanceof Float64Array ? maybeOptions : optionsOrEquityOut;
     const runStartedAt = performance.now();
@@ -1543,7 +1731,9 @@ export function runBacktestCompact(
             options,
             equityOut: fastPathEquity,
         });
-        result.trades = [];
+        if (options?.requireTradeHistory !== true) {
+            result.trades = [];
+        }
         return finalizeBacktestDiagnostics(diagnostics, result, runStartedAt);
     }
 
@@ -1581,6 +1771,8 @@ export function runBacktestCompact(
     };
     const pendingAdaptiveTakeProfitUpdates: AdaptiveTakeProfitHistoryUpdate[] = [];
     const pendingAdaptiveTakeProfitExits = new Map<PositionState, NonNullable<Trade['exitReason']>>();
+    const trades: Trade[] = [];
+    let tradeId = 0;
 
     const queueAdaptiveTakeProfitUpdate = (
         position: PositionState,
@@ -1649,17 +1841,39 @@ export function runBacktestCompact(
         }
 
         const exitPrice = applySlippage(adaptiveExit.exitPrice, exitSideForDirection(pos.direction), slippageRate);
-        const { fullyClosed } = recordExit(pos, exitPrice, pos.size);
+        const { fullyClosed } = recordExit(pos, exitPrice, pos.size, adaptiveExit.exitReason);
         if (fullyClosed) {
             finalizeClosedPosition(pos, candle, exitPrice, adaptiveExit.exitReason);
         }
     };
 
-    const recordExit = (pos: PositionState, exitPrice: number, exitSize: number) => {
+    const recordExit = (
+        pos: PositionState,
+        exitPrice: number,
+        exitSize: number,
+        exitReason: Trade['exitReason'] = 'signal',
+    ) => {
         const details = calculateTradeExitDetails(pos, exitPrice, exitSize, commissionRate);
         capital += details.rawPnl - details.commission;
         totalTrades++;
         if (details.totalPnl > 0) { winningTrades++; totalProfit += details.totalPnl; } else { totalLoss += Math.abs(details.totalPnl); }
+        if (options?.requireTradeHistory === true) {
+            trades.push({
+                id: ++tradeId,
+                type: pos.direction,
+                entryTime: pos.entryTime,
+                entryPrice: pos.entryPrice,
+                exitTime: data[currentBarIndex]?.time ?? pos.entryTime,
+                exitPrice,
+                pnl: details.totalPnl,
+                pnlPercent: details.pnlPercent,
+                size: details.size,
+                fees: details.fees,
+                exitReason,
+                stopLossPrice: pos.stopLossPrice,
+                takeProfitPrice: pos.takeProfitPrice,
+            });
+        }
         pos.realizedPnl += details.totalPnl;
         pos.size -= details.size;
         let fullyClosed = false;
@@ -1686,7 +1900,7 @@ export function runBacktestCompact(
         const exitTrigger = processPositionExits(candle, pos, config, slippageRate, undefined, pathExitContext);
         let fullyClosed = false;
         if (exitTrigger) {
-            ({ fullyClosed } = recordExit(pos, exitTrigger.exitPrice, exitTrigger.exitSize));
+            ({ fullyClosed } = recordExit(pos, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason));
             if (fullyClosed) {
                 finalizeClosedPosition(pos, candle, exitTrigger.exitPrice, exitTrigger.exitReason);
             }
@@ -1706,7 +1920,7 @@ export function runBacktestCompact(
 
         const stopLossTrigger = processPositionExits(candle, pos, config, slippageRate, STOP_LOSS_ONLY_POSITION_EXIT_OPTIONS);
         if (stopLossTrigger) {
-            const { fullyClosed } = recordExit(pos, stopLossTrigger.exitPrice, stopLossTrigger.exitSize);
+            const { fullyClosed } = recordExit(pos, stopLossTrigger.exitPrice, stopLossTrigger.exitSize, stopLossTrigger.exitReason);
             if (fullyClosed) {
                 finalizeClosedPosition(pos, candle, stopLossTrigger.exitPrice, stopLossTrigger.exitReason);
             }
@@ -1771,7 +1985,7 @@ export function runBacktestCompact(
 
             pendingAdaptiveTakeProfitExits.delete(pos);
             const exitPrice = applySlippage(candle.open, exitSideForDirection(pos.direction), slippageRate);
-            const { fullyClosed } = recordExit(pos, exitPrice, pos.size);
+            const { fullyClosed } = recordExit(pos, exitPrice, pos.size, pendingReason);
             if (fullyClosed) {
                 finalizeClosedPosition(pos, candle, exitPrice, pendingReason);
             }
@@ -1785,7 +1999,7 @@ export function runBacktestCompact(
                     continue;
                 }
 
-                const { fullyClosed } = recordExit(pos, openExitTrigger.exitPrice, openExitTrigger.exitSize);
+                const { fullyClosed } = recordExit(pos, openExitTrigger.exitPrice, openExitTrigger.exitSize, openExitTrigger.exitReason);
                 if (fullyClosed) {
                     finalizeClosedPosition(pos, candle, openExitTrigger.exitPrice, openExitTrigger.exitReason);
                 }
@@ -1827,7 +2041,7 @@ export function runBacktestCompact(
 
                     diagnostics && diagnostics.counts.signalExitOrders++;
                     const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
-                    const { fullyClosed } = recordExit(exitTarget, exitPrice, exitOrder.exitSize);
+                    const { fullyClosed } = recordExit(exitTarget, exitPrice, exitOrder.exitSize, forcedExitReason ?? 'signal');
                     if (fullyClosed) {
                         finalizeClosedPosition(exitTarget, candle, exitPrice, forcedExitReason ?? 'signal');
                     }
@@ -1859,7 +2073,7 @@ export function runBacktestCompact(
             if (config.executionModel === 'next_open' && openedThisBar && !config.allowSameBarExit) {
                 const stopLossTrigger = processPositionExits(candle, pos, config, slippageRate, STOP_LOSS_ONLY_POSITION_EXIT_OPTIONS);
                 if (stopLossTrigger) {
-                    const { fullyClosed } = recordExit(pos, stopLossTrigger.exitPrice, stopLossTrigger.exitSize);
+                    const { fullyClosed } = recordExit(pos, stopLossTrigger.exitPrice, stopLossTrigger.exitSize, stopLossTrigger.exitReason);
                     if (fullyClosed) {
                         finalizeClosedPosition(pos, candle, stopLossTrigger.exitPrice, stopLossTrigger.exitReason);
                     }
@@ -1877,7 +2091,7 @@ export function runBacktestCompact(
             const exitTrigger = processPositionExits(candle, pos, config, slippageRate, undefined, pathExitContext);
             let fullyClosed = false;
             if (exitTrigger) {
-                ({ fullyClosed } = recordExit(pos, exitTrigger.exitPrice, exitTrigger.exitSize));
+                ({ fullyClosed } = recordExit(pos, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason));
                 if (fullyClosed) {
                     finalizeClosedPosition(pos, candle, exitTrigger.exitPrice, exitTrigger.exitReason);
                 }
@@ -1929,7 +2143,7 @@ export function runBacktestCompact(
 
                         diagnostics && diagnostics.counts.signalExitOrders++;
                         const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
-                        const { fullyClosed } = recordExit(exitTarget, exitPrice, exitOrder.exitSize);
+                        const { fullyClosed } = recordExit(exitTarget, exitPrice, exitOrder.exitSize, forcedExitReason ?? 'signal');
                         if (fullyClosed) {
                             finalizeClosedPosition(exitTarget, candle, exitPrice, forcedExitReason ?? 'signal');
                         }
@@ -1980,7 +2194,7 @@ export function runBacktestCompact(
         const finalCandle = data[data.length - 1];
         while (positions.length > 0) {
             diagnostics && diagnostics.counts.forcedEndOfDataExits++;
-            recordExit(positions[0], finalCandle.close, positions[0].size);
+            recordExit(positions[0], finalCandle.close, positions[0].size, 'end_of_data');
         }
         if (compactEquity) {
             const finalEquity = capital;
@@ -2008,6 +2222,9 @@ export function runBacktestCompact(
         skipDrawdown ? 0 : maxDrawdown,
         skipDrawdown ? 0 : maxDrawdownPercent
     ) as BacktestResult;
+    if (options?.requireTradeHistory === true) {
+        result.trades = trades;
+    }
     diagnostics && (diagnostics.counts.tradesClosed = totalTrades);
     addBacktestDiagnosticElapsed(diagnostics, "metrics", metricsStartedAt);
     return finalizeBacktestDiagnostics(diagnostics, result, runStartedAt);
@@ -2104,6 +2321,12 @@ export function runBacktest(
         const fastPathEquity = options?.includeSharpeRatio !== false
             ? new Float64Array(data.length)
             : undefined;
+        // The standard engine's contract always includes full trade history;
+        // only compact Finder callers may opt out of those allocations.
+        const standardOptions: BacktestRunOptions = {
+            ...(options ?? {}),
+            requireTradeHistory: true,
+        };
         const result = runSinglePositionFinderFastPath({
             data,
             preparedSignals,
@@ -2119,10 +2342,10 @@ export function runBacktest(
             advancedSizing,
             indicatorSeries,
             diagnostics,
-            options,
+            options: standardOptions,
             equityOut: fastPathEquity,
         });
-        return finalizeBacktestDiagnostics(diagnostics, result, runStartedAt);
+        return finalizeBacktestDiagnostics(diagnostics, result, runStartedAt) as BacktestResultWithEndpointSelection;
     }
 
     let capital = initialCapital, tradeId = 0, signalIdx = 0;
