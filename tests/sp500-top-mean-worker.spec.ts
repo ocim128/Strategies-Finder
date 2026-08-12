@@ -23,7 +23,7 @@ async function runWorkerParityTest(): Promise<void> {
         pairs: [
             { pairIndex: 0, symbol: "AAPL•+MSFT•" }
         ],
-        strategyKey: "close_location_median_alignment",
+        strategyKey: "dema_confirmation",
         strategyParams: { lookback: 20, threshold: 0.5 },
         backtestSettings: { direction: "long", slippage: 0, commission: 0 } as any,
         capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 } as any,

@@ -30,14 +30,16 @@
  * releases the input dataset reference after each asset's reduce step so a
  * large symbol list does not retain all datasets simultaneously.
  *
- * Leaf import hygiene: this module imports `runFinderExecution` from
- * `./finder-runner`, which transitively reaches `lightweight-charts` via
- * `../strategies/index`. It is therefore browser-safe but NOT Vite-config-
- * bundle-safe; the server-side Asset Opportunity path must NOT import this
- * module from `vite.config.ts`. The server-side path uses a sibling server
- * runner that does not depend on `runFinderExecution` (it inlines the IS
- * search via the existing finder-runner core, exactly like the Universe
- * server path).
+ * Import hygiene: this module IS safe to import from the Vite config bundle.
+ * It imports `FinderSelectedStrategy` as a TYPE ONLY from `./finder-runner`
+ * (erased at compile time) and pulls `createEmptyBacktestResult` from
+ * `../strategies/index`, whose backtest-engine modules do not reach
+ * `lightweight-charts`. The server-side Asset Opportunity plugin imports this
+ * module directly. The separate `runServerAssetIsSearch` leaf exists so the
+ * server runs a lean IS loop (no browser plan/UI machinery), NOT because of a
+ * bundle constraint. `tests/vite-config-bundle.spec.ts` fails the build if a
+ * future import re-introduces the documented `lightweight-charts` ESM-only
+ * bundle error.
  */
 
 import { mapWithConcurrencyLimit } from "../async-pool";
@@ -65,13 +67,11 @@ import {
     finderAssetSearchRequiresFullAnalytics,
     type FinderPreparedDataCache,
     normalizeFinderCandidateParams,
-    resolveFinderRiskOverrides,
 } from "./finder-runner-core";
 import { withExitStrategyBaseParams, splitExitStrategyParams } from "./exit-strategy-param-prefix";
-import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
-import { executeBacktest, resolveExecutorBacktestSettings } from "../backtest-executor";
 import type { CrossSymbolDataFetcher } from "../cross-symbol-runtime";
+import { runAssetCandidateBacktest } from "./finder-asset-candidate-execution";
 import { createEmptyBacktestResult } from "../strategies/index";
 import { buildSelectionResult } from "./endpoint";
 import {
@@ -1218,61 +1218,45 @@ async function executeAssetCandidate(args: {
             ? { normalizeExitParams: exitStrategy.normalizeParams }
             : undefined,
     );
-    const rustSettings = sanitizeBacktestSettingsForRust(args.settings);
-    const { backtestSettings: riskAdjustedSettings } = resolveFinderRiskOverrides(
-        args.settings,
-        rustSettings,
-        normalizedParams,
-        args.options,
-    );
-    const backtestSettings: BacktestSettings = args.candidate.exitStrategyKey
-        ? {
-            ...riskAdjustedSettings,
-            disableSignalExits: true,
-            exitStrategyOverrideEnabled: true,
-            exitStrategyKey: args.candidate.exitStrategyKey,
-            exitStrategyParams: { ...(args.candidate.exitStrategyParams ?? {}) },
-        }
-        : riskAdjustedSettings;
-    const preResolvedSettings = resolveExecutorBacktestSettings(
-        { ...(backtestSettings as Record<string, unknown>), interval: args.interval } as BacktestSettings,
-        args.interval,
-    );
-    const output = await executeBacktest({
-        ohlcvData: args.data,
+    // Shared candidate execution (risk overrides, exit override injection,
+    // executor settings, and the compact/trade-history option matrix) lives in
+    // `finder-asset-candidate-execution.ts`, kept in parity with the server IS
+    // search's per-candidate loop (`server-asset-is-search.ts`).
+    const output = await runAssetCandidateBacktest({
+        data: args.data,
+        symbol: args.symbol,
         interval: args.interval,
-        primarySymbol: args.symbol,
-        strategyKey: args.candidate.key,
         strategy: args.strategy,
+        strategyKey: args.candidate.key,
         strategyParams: args.candidate.params,
-        backtestSettings,
+        riskOverrideParams: normalizedParams,
+        settings: args.settings,
         capitalSettings: args.capitalSettings,
-        context: {
-            blockRange: null,
-            annotatePolymarket: false,
-            engineMode: "auto",
-            nowSec: Math.floor(Date.now() / 1000),
-            useRustEnginePreference: args.useRustEnginePreference,
-        },
+        options: args.options,
+        ...(args.candidate.exitStrategyKey
+            ? {
+                exitOverride: {
+                    key: args.candidate.exitStrategyKey,
+                    params: args.candidate.exitStrategyParams ?? {},
+                },
+            }
+            : {}),
         ...(args.dataFetcher ? { dataFetcher: args.dataFetcher } : {}),
+        useRustEnginePreference: args.useRustEnginePreference,
         ...(args.strategy.crossSymbolConfig ? {} : { closedCandleDataOverride: args.data }),
-        preResolvedSettings,
-        backtestRunOptions: {
+        needs: {
             // Asset Opportunity retains scalar winner metrics plus trades for
             // endpoint adjustment. The compact engine avoids constructing the
             // full equity-curve result and post-processing analytics that are
             // not consumed by this result surface.
-            includeAdvancedAnalytics: false,
+            compact: args.fullAnalytics === true,
             // Fresh-entry detection reads only trades + generated signals.
             // Avoid allocating an equity curve or calculating Sharpe/drawdown
             // for the second pass over every retained candidate.
-            includeSharpeRatio: args.fullAnalytics === true,
-            useCompactBacktest: args.fullAnalytics === true,
-            omitEquityCurve: true,
-            skipDrawdown: args.fullAnalytics !== true,
-            requireTradeHistory: true,
-            signalsOnly: args.signalOnly === true,
-            skipResultPostProcessing: true,
+            trades: true,
+            fullAnalytics: args.fullAnalytics === true,
+            ...(args.signalOnly === true ? { signalsOnly: true } : {}),
+            endpointSelection: false,
         },
     });
     return {

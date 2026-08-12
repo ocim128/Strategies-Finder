@@ -383,9 +383,9 @@ describe("backtest executor", () => {
                 tradeDirection: "long",
                 executionModel: "signal_close",
                 confirmationStrategiesToggle: true,
-                confirmationStrategies: ["close_location_median_alignment"],
+                confirmationStrategies: ["n_bar_momentum_confirmation"],
                 confirmationStrategyParams: {
-                    close_location_median_alignment: { lookback: 2 },
+                    n_bar_momentum_confirmation: { lookback: 2 },
                 },
             },
             capitalSettings: defaultCapital,

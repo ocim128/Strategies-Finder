@@ -7,6 +7,18 @@ import { parseTimeToUnixSeconds } from "../time-normalization";
 const ASIA_JAKARTA_TIMEZONE = "Asia/Jakarta";
 
 /**
+ * Reusable hour formatter. `Intl.DateTimeFormat` construction is expensive
+ * (it loads locale data per instance); the archive path formats every top row
+ * per holdout per sort metric (up to ~110k rows on an All-Sorts batch), so a
+ * single module-level instance avoids re-creating the formatter per row.
+ */
+const JAKARTA_HOUR_FORMATTER = new Intl.DateTimeFormat("en-US", {
+    timeZone: ASIA_JAKARTA_TIMEZONE,
+    hour: "2-digit",
+    hourCycle: "h23",
+});
+
+/**
  * Pretty-print payload for one Asset Opportunity top result. Shared by the
  * browser Copy Top Results clipboard action.
  * Browser/server-safe: reads no DOM, state, or
@@ -134,11 +146,7 @@ function signalCandleHours(latestSignalTime: FinderAssetOpportunityResult["lates
     if (unixSeconds === null) return { utc: null, jakarta: null };
     const date = new Date(unixSeconds * 1000);
     if (!Number.isFinite(date.getTime())) return { utc: null, jakarta: null };
-    const jakartaHour = Number(new Intl.DateTimeFormat("en-US", {
-        timeZone: ASIA_JAKARTA_TIMEZONE,
-        hour: "2-digit",
-        hourCycle: "h23",
-    }).format(date));
+    const jakartaHour = Number(JAKARTA_HOUR_FORMATTER.format(date));
     return {
         utc: date.getUTCHours(),
         jakarta: Number.isInteger(jakartaHour) && jakartaHour >= 0 && jakartaHour <= 23 ? jakartaHour : null,

@@ -1,13 +1,18 @@
 /**
  * Server-safe in-sample candidate search for the Asset Opportunity scope.
  *
- * This leaf replaces the browser-bound `runFinderExecution` call in the server
- * path. The browser path pulls `lightweight-charts` transitively via
- * `../strategies/index` through `finder-runner.ts`, which is ESM-only and
- * cannot be bundled into the Vite config. This leaf reaches only
- * server-safe modules (matching `finder-runner-universe.ts`'s import hygiene):
- * `../backtest-executor`, `./finder-runner-core`, `./exit-strategy-param-prefix`,
- * and `./finder-manager-logic`.
+ * This leaf replaces the browser `runFinderExecution` in the server path so the
+ * server runs a lean IS loop without the browser's strategy-plan/UI-callback
+ * machinery (polymarket interception, confirmation filters, quick funnel, live
+ * UI updates). It is NOT a bundle-safety workaround: the browser runner is
+ * already safe for the Vite config bundle — its `finder-runner` import is
+ * type-only and the backtest-engine modules do not reach `lightweight-charts` —
+ * and `tests/vite-config-bundle.spec.ts` locks that invariant.
+ *
+ * This leaf reaches only server-safe modules (matching
+ * `finder-runner-universe.ts`'s import hygiene): `../backtest-executor`,
+ * `./finder-runner-core`, `./exit-strategy-param-prefix`, and
+ * `./finder-manager-logic`.
  *
  * The function is a minimal IS search: it generates candidate params from the
  * injected param-space generator, executes each on the supplied historical
@@ -31,23 +36,18 @@ import type { CapitalSettings } from "../../types/backtest";
 import type { FinderOptions, FinderResult } from "../../types/finder";
 import type { FinderSelectedStrategy } from "../finder-runner";
 import type { CrossSymbolDataFetcher } from "../../cross-symbol-runtime";
-import {
-    executeBacktest,
-    resolveExecutorBacktestSettings,
-} from "../../backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
 import {
     createPreparedFinderStrategy,
     finderAssetSearchRequiresFullAnalytics,
     type FinderPreparedDataCache,
     normalizeFinderCandidateParamSets,
-    resolveFinderRiskOverrides,
 } from "../finder-runner-core";
 import { withExitStrategyBaseParams, splitExitStrategyParams } from "../exit-strategy-param-prefix";
-import { sanitizeBacktestSettingsForRust } from "../../rust-settings-sanitizer";
-import { sortFinderResults } from "../finder-engine";
+import { FinderResultRanker } from "../finder-result-ranker";
 import { buildSelectionResult } from "../endpoint";
 import { matchesFinderTradeCountFilter } from "../finder-manager-logic";
+import { runAssetCandidateBacktest } from "../finder-asset-candidate-execution";
 
 const ASSET_IS_SEARCH_YIELD_EVERY_RUNS = 256;
 const ASSET_IS_SEARCH_YIELD_MIN_MS = 1000;
@@ -123,7 +123,6 @@ export async function runServerAssetIsSearch(
             `Cross-symbol strategy "${selectedStrategy.name}" requires secondary asset data for Asset Opportunity.`,
         );
     }
-    const rustSettings = sanitizeBacktestSettingsForRust(settings);
     const preResolvedCapital = resolveCapitalSettingsFromRaw(
         capitalSettings as unknown as Record<string, unknown>,
     );
@@ -146,9 +145,26 @@ export async function runServerAssetIsSearch(
         : [{ ...entryDefaults }];
     const parameterGenerationMs = performance.now() - parameterGenerationStartedAt;
 
-    const results: FinderResult[] = [];
+    // Bounded top-K accumulation, mirroring the browser single-timeframe path
+    // (FinderResultRanker). Keeping only the best `topN` candidates live means
+    // the retained `results` set — and, when `retainSignals` is on, the
+    // retained signal arrays — stay bounded by `topN` instead of by
+    // `maxRuns` (up to 1,000 per asset pass). The ranker's comparator is
+    // `compareFinderResults` with strict ordering, so the retained set is
+    // identical to a full sort + slice; ties keep insertion order.
+    const topKRanker = new FinderResultRanker(
+        Math.max(1, options.topN),
+        options.sortPriority,
+        // Signals are keyed by candidate object identity; drop them when the
+        // candidate falls out of the running top-K so the map cannot grow to
+        // one entry per evaluated candidate.
+        (evicted) => {
+            signalsByResult.delete(evicted);
+        },
+    );
     // Keyed by candidate object identity so the signals survive the final
-    // sort + top-N slice without an index bookkeeping pass.
+    // sort + top-N slice without an index bookkeeping pass. Bounded by the
+    // ranker's eviction hook above.
     const signalsByResult = new Map<FinderResult, Signal[]>();
     let candidateEvaluationsAttempted = 0;
     let candidateEvaluationsCompleted = 0;
@@ -189,71 +205,47 @@ export async function runServerAssetIsSearch(
         const combinedParams = exitParams
             ? withExitStrategyBaseParams(entryParams, exitParams)
             : entryParams;
-        const { backtestSettings: riskAdjustedSettings } = resolveFinderRiskOverrides(
-            settings,
-            rustSettings,
-            combinedParams,
-            options,
-        );
-        const backtestSettings: BacktestSettings = exitStrategy
-            ? {
-                ...riskAdjustedSettings,
-                disableSignalExits: true,
-                exitStrategyOverrideEnabled: true,
-                exitStrategyKey: exitStrategy.key,
-                exitStrategyParams: { ...(exitParams ?? {}) },
-            }
-            : riskAdjustedSettings;
-
-        const preResolvedSettings = resolveExecutorBacktestSettings(
-            { ...(backtestSettings as Record<string, unknown>), interval: input.interval } as BacktestSettings,
-            input.interval,
-        );
-        const canUseCompactEndpointSelection = preResolvedSettings.tradeDirection !== "combined";
-        currentBacktestSettings = backtestSettings;
-
         const candidateStartedAt = performance.now();
         try {
-            const output = await executeBacktest({
-                ohlcvData: input.ohlcvData,
+            // Shared candidate execution (risk overrides, exit override
+            // injection, executor settings, and the compact endpoint-selection
+            // / trade-history option matrix) lives in
+            // `finder-asset-candidate-execution.ts`, kept in parity with the
+            // browser runner's `executeAssetCandidate`.
+            const output = await runAssetCandidateBacktest({
+                data: input.ohlcvData,
+                symbol: input.symbol,
                 interval: input.interval,
-                primarySymbol: input.symbol,
-                strategyKey: selectedStrategy.key,
                 strategy: preparedStrategy,
+                strategyKey: selectedStrategy.key,
                 strategyParams: entryParams,
-                backtestSettings,
+                riskOverrideParams: combinedParams,
+                settings,
                 capitalSettings,
+                options,
+                ...(exitStrategy
+                    ? { exitOverride: { key: exitStrategy.key, params: exitParams ?? {} } }
+                    : {}),
+                ...(input.dataFetcher ? { dataFetcher: input.dataFetcher } : {}),
+                useRustEnginePreference: input.useRustEnginePreference,
                 // The caller has already supplied the historical closed
                 // window. Keep its array identity stable so prepared Finder
                 // data and executor-side caches can be reused per asset.
                 closedCandleDataOverride: input.ohlcvData,
-                preResolvedSettings,
-                preResolvedCapital,
-                context: {
-                    blockRange: null,
-                    annotatePolymarket: false,
-                    engineMode: "auto",
-                    nowSec: Math.floor(Date.now() / 1000),
-                    useRustEnginePreference: input.useRustEnginePreference,
-                },
-                ...(input.dataFetcher ? { dataFetcher: input.dataFetcher } : {}),
-                backtestRunOptions: {
-                    includeAdvancedAnalytics: false,
-                    includeSharpeRatio: requiresFullAnalytics,
-                    omitEquityCurve: true,
-                    // Asset Opportunity selection removes trades that exit on
-                    // the endpoint. The compact engine tracks those scalar
-                    // metrics directly, avoiding a Trade allocation per exit.
-                    ...(canUseCompactEndpointSelection
-                        ? {
-                            endpointSelectionLastDataTime: input.ohlcvData[input.ohlcvData.length - 1]?.time ?? null,
-                            endpointSelectionInitialCapital: preResolvedCapital.initialCapital,
-                        }
-                        : { requireTradeHistory: true }),
-                    skipDrawdown: !requiresFullAnalytics,
-                    skipResultPostProcessing: true,
+                needs: {
+                    compact: true,
+                    trades: false,
+                    fullAnalytics: requiresFullAnalytics,
+                    // Compact endpoint-adjusted selection scalars unless the
+                    // resolved trade direction is "combined" (which retains
+                    // trades instead) — the prior explicit branch, now
+                    // centralized in the shared helper.
+                    endpointSelection: "auto",
                 },
             });
+            // Keep the prepared-strategy settings provider aligned with the
+            // settings the run actually used (risk overrides + exit override).
+            currentBacktestSettings = output.backtestSettings;
             backtestMs += performance.now() - candidateStartedAt;
             candidateEvaluationsCompleted += 1;
             if (output.engineDiagnostics?.rustAttempted) rustAttemptedRuns += 1;
@@ -295,8 +287,11 @@ export async function runServerAssetIsSearch(
             if (!matchesFinderTradeCountFilter(candidate.selectionResult.totalTrades, options)) {
                 continue;
             }
-            results.push(candidate);
-            if (input.retainSignals === true) {
+            // Attach signals only when the candidate is actually retained:
+            // a rejected candidate's signals would otherwise linger in the
+            // map until the end of the asset pass. Evictions delete below.
+            const retained = topKRanker.offer(candidate);
+            if (input.retainSignals === true && retained) {
                 signalsByResult.set(candidate, output.signals);
             }
         } catch {
@@ -320,9 +315,8 @@ export async function runServerAssetIsSearch(
         }
     }
 
-    const sorted = sortFinderResults(results, options.sortPriority);
     const topN = Math.max(1, options.topN);
-    const topK = sorted.slice(0, topN);
+    const topK = topKRanker.toSortedArray(topN);
     return {
         results: topK,
         totalCandidatesEvaluated: paramSets.length,

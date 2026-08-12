@@ -5,26 +5,42 @@ export class FinderResultRanker {
     private readonly heap: FinderResult[] = [];
     private readonly maxSize: number;
     private readonly sortPriority: FinderMetric[];
+    private readonly onEvict: ((evicted: FinderResult) => void) | undefined;
 
-    constructor(maxSize: number, sortPriority: FinderMetric[]) {
+    constructor(
+        maxSize: number,
+        sortPriority: FinderMetric[],
+        onEvict?: (evicted: FinderResult) => void,
+    ) {
         this.maxSize = Math.max(1, maxSize);
         this.sortPriority = sortPriority;
+        this.onEvict = onEvict;
     }
 
-    public offer(candidate: FinderResult): void {
+    /**
+     * Offer a candidate. Returns true when the candidate is retained in the
+     * bounded top-K set (so callers can attach per-candidate side data only
+     * for retained candidates), false when it is rejected as worse-or-equal
+     * to the current worst. The eviction hook fires for every candidate that
+     * later leaves the retained set.
+     */
+    public offer(candidate: FinderResult): boolean {
         if (this.heap.length < this.maxSize) {
             this.heap.push(candidate);
             this.siftUpWorst(this.heap.length - 1);
-            return;
+            return true;
         }
 
-        if (this.heap.length === 0) return;
+        if (this.heap.length === 0) return false;
         if (compareFinderResults(candidate, this.heap[0], this.sortPriority) >= 0) {
-            return;
+            return false;
         }
 
+        const evicted = this.heap[0];
         this.heap[0] = candidate;
+        this.onEvict?.(evicted);
         this.siftDownWorst(0);
+        return true;
     }
 
     public toSortedArray(limit: number): FinderResult[] {

@@ -142,11 +142,11 @@ describe('Entry signal worker synthetic-pair subscriptions', () => {
 
         const subscription = {
             id: 1,
-            stream_id: 'zecapt:5m:volatility_regime_median_alignment:cfg:ZECAPT-5m',
+            stream_id: 'zecapt:5m:entropy_ratio_regime_alignment:cfg:ZECAPT-5m',
             enabled: 1,
             symbol: 'ZECAPT',
             interval: '5m',
-            strategy_key: 'volatility_regime_median_alignment',
+            strategy_key: 'entropy_ratio_regime_alignment',
             strategy_params_json: '{}',
             backtest_settings_json: JSON.stringify({
                 syntheticPair: { baseSymbol: 'ZECUSDT', quoteSymbol: 'APTUSDT' },
@@ -178,7 +178,7 @@ describe('Entry signal worker synthetic-pair subscriptions', () => {
 
         try {
             const res = await worker.fetch(
-                new Request('https://worker.test/api/subscriptions/state?streamId=zecapt%3A5m%3Avolatility_regime_median_alignment%3Acfg%3AZECAPT-5m'),
+                new Request('https://worker.test/api/subscriptions/state?streamId=zecapt%3A5m%3Aentropy_ratio_regime_alignment%3Acfg%3AZECAPT-5m'),
                 env
             );
             expect(res.status).to.equal(200);
@@ -234,11 +234,11 @@ describe('Entry signal worker local candle proxy', () => {
 
         const subscription = {
             id: 1,
-            stream_id: 'zecapt:3m:wick_imbalance_thrust_continuation:cfg:ZECAPT-3m',
+            stream_id: 'zecapt:3m:wick_responsive_boundary_retest:cfg:ZECAPT-3m',
             enabled: 1,
             symbol: 'ZECAPT',
             interval: '3m',
-            strategy_key: 'wick_imbalance_thrust_continuation',
+            strategy_key: 'wick_responsive_boundary_retest',
             strategy_params_json: '{}',
             backtest_settings_json: JSON.stringify({
                 syntheticPair: { baseSymbol: 'ZECUSDT', quoteSymbol: 'APTUSDT' },
@@ -272,7 +272,7 @@ describe('Entry signal worker local candle proxy', () => {
 
         try {
             const res = await worker.fetch(
-                new Request('https://worker.test/api/subscriptions/state?streamId=zecapt%3A3m%3Awick_imbalance_thrust_continuation%3Acfg%3AZECAPT-3m'),
+                new Request('https://worker.test/api/subscriptions/state?streamId=zecapt%3A3m%3Awick_responsive_boundary_retest%3Acfg%3AZECAPT-3m'),
                 env
             );
             expect(res.status).to.equal(200);
@@ -321,11 +321,11 @@ describe('Entry signal worker local candle proxy', () => {
 
         const subscription = {
             id: 1,
-            stream_id: 'zecapt:3m:wick_imbalance_thrust_continuation:cfg:ZECAPT-3m',
+            stream_id: 'zecapt:3m:wick_responsive_boundary_retest:cfg:ZECAPT-3m',
             enabled: 1,
             symbol: 'ZECAPT',
             interval: '3m',
-            strategy_key: 'wick_imbalance_thrust_continuation',
+            strategy_key: 'wick_responsive_boundary_retest',
             strategy_params_json: '{}',
             backtest_settings_json: JSON.stringify({
                 syntheticPair: { baseSymbol: 'ZECUSDT', quoteSymbol: 'APTUSDT' },
@@ -358,7 +358,7 @@ describe('Entry signal worker local candle proxy', () => {
 
         try {
             const res = await worker.fetch(
-                new Request('https://worker.test/api/subscriptions/state?streamId=zecapt%3A3m%3Awick_imbalance_thrust_continuation%3Acfg%3AZECAPT-3m'),
+                new Request('https://worker.test/api/subscriptions/state?streamId=zecapt%3A3m%3Awick_responsive_boundary_retest%3Acfg%3AZECAPT-3m'),
                 env
             );
             expect(res.status).to.equal(200);
@@ -409,11 +409,11 @@ describe('Entry signal worker run-now staleness', () => {
         // indefinitely. See the isSyntheticMember gate in runSubscription.
         const subscription = {
             id: 1,
-            stream_id: 'btcusdt:3m:wick_imbalance_thrust_continuation:cfg:BTCUSDT-3m',
+            stream_id: 'btcusdt:3m:wick_responsive_boundary_retest:cfg:BTCUSDT-3m',
             enabled: 1,
             symbol: 'BTCUSDT',
             interval: '3m',
-            strategy_key: 'wick_imbalance_thrust_continuation',
+            strategy_key: 'wick_responsive_boundary_retest',
             strategy_params_json: '{}',
             backtest_settings_json: JSON.stringify({}),
             freshness_bars: 1,
@@ -470,7 +470,7 @@ describe('Entry signal worker run-now staleness', () => {
                 new Request('https://worker.test/api/subscriptions/run-now', {
                     method: 'POST',
                     body: JSON.stringify({
-                        streamId: 'btcusdt:3m:wick_imbalance_thrust_continuation:cfg:BTCUSDT-3m',
+                        streamId: 'btcusdt:3m:wick_responsive_boundary_retest:cfg:BTCUSDT-3m',
                     }),
                 }),
                 env
@@ -512,11 +512,11 @@ describe('Entry signal worker run-now staleness', () => {
         };
         const subscription = {
             id: 1,
-            stream_id: 'zecapt:5m:volatility_regime_median_alignment:cfg:ZECAPT-5m',
+            stream_id: 'zecapt:5m:entropy_ratio_regime_alignment:cfg:ZECAPT-5m',
             enabled: 1,
             symbol: 'ZECAPT',
             interval: '5m',
-            strategy_key: 'volatility_regime_median_alignment',
+            strategy_key: 'entropy_ratio_regime_alignment',
             strategy_params_json: '{}',
             backtest_settings_json: JSON.stringify({
                 syntheticPair: { baseSymbol: 'ZECUSDT', quoteSymbol: 'APTUSDT' },
@@ -557,7 +557,7 @@ describe('Entry signal worker run-now staleness', () => {
                 new Request('https://worker.test/api/subscriptions/run-now', {
                     method: 'POST',
                     body: JSON.stringify({
-                        streamId: 'zecapt:5m:volatility_regime_median_alignment:cfg:ZECAPT-5m',
+                        streamId: 'zecapt:5m:entropy_ratio_regime_alignment:cfg:ZECAPT-5m',
                     }),
                 }),
                 env

@@ -83,7 +83,7 @@ describe("Strategy registry loading", () => {
     });
 
     it("preloads confirmation strategies for synchronous signal filters", async () => {
-        const confirmationKey = "close_location_median_alignment";
+        const confirmationKey = "dema_confirmation";
 
         await ensureConfirmationStrategiesLoaded({ confirmationStrategies: [confirmationKey] });
 

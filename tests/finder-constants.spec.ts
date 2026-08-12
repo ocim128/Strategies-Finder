@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { FINDER_SORT_OPTIONS, METRIC_FULL_LABELS, METRIC_LABELS } from "../lib/finder/constants";
+import { DEFAULT_SORT_PRIORITY, FINDER_SORT_OPTIONS, METRIC_FULL_LABELS, METRIC_LABELS } from "../lib/finder/constants";
 
 describe("Finder metric labels", () => {
     it("keeps a compact label for every selectable metric", () => {
@@ -9,16 +9,7 @@ describe("Finder metric labels", () => {
         }
     });
 
-    it("exposes advanced analytics metrics to Finder sorting", () => {
-        expect(FINDER_SORT_OPTIONS).to.include.members([
-            "sortinoRatio",
-            "calmarRatio",
-            "tailRatio",
-            "skewness",
-            "ulcerIndex",
-            "serenityIndex",
-            "valueAtRisk95",
-            "conditionalValueAtRisk95",
-        ]);
+    it("offers every default sort-priority metric as a selectable option", () => {
+        expect(FINDER_SORT_OPTIONS).to.include.members(DEFAULT_SORT_PRIORITY);
     });
 });

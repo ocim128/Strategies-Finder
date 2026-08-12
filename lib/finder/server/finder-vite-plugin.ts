@@ -126,6 +126,11 @@ import {
     type AssetOpportunityArchiveAppend,
 } from "./finder-asset-opportunity-archive";
 import {
+    appendFinderRunLogEvent,
+    resolveFinderRunLogDir,
+    type FinderRunLogSink,
+} from "./finder-run-log";
+import {
     assertAssetResultIsScalar,
     toScalarAssetResult,
     type AnyFinderStreamEvent,
@@ -968,6 +973,12 @@ export interface FinderAssetOpportunityRunInput {
     assetLoadContext?: BatchDatasetLoadContext;
     /** Sort metric used only for automatic batch archive payloads. */
     archiveSort?: FinderAssetOpportunityArchiveSort | null;
+    /**
+     * Optional fire-and-forget per-run diagnostics sink (JSONL run log). The
+     * HTTP handlers build it from the resolved run-log root + run id; direct
+     * callers (tests) may inject a capture sink or omit it to disable logging.
+     */
+    runLog?: FinderRunLogSink | null;
 }
 
 /** Progress snapshot of one iteration, mirroring the single-run fields. */
@@ -1027,6 +1038,15 @@ export async function runAssetOpportunityIteration(
     const totalAssets = symbols.length;
     const iterationStartedAt = Date.now();
     assertAssetOpportunityStrategySelection(selectedStrategies);
+
+    input.runLog?.("iteration_start", {
+        interval: input.interval,
+        symbols: totalAssets,
+        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
+        holdoutBars: input.options.assetOpportunity?.oosIgnoreLastBars ?? 0,
+        maxRuns: input.options.maxRuns,
+        candidatePoolSize: input.candidatePoolSize,
+    });
 
     const assetLoadContext = input.assetLoadContext
         ? {
@@ -1396,6 +1416,15 @@ export async function runAssetOpportunityIteration(
                                 grade: outcome.kind === "opportunity" ? outcome.result.grade : null,
                                 durationMs: Math.round(performance.now() - assetStartedAt),
                             });
+                            // Durable JSONL trace (survives a Vite-process crash).
+                            input.runLog?.("asset_complete", {
+                                symbol,
+                                strategyKey: selectedStrategy.key,
+                                assetIndex,
+                                outcome: outcome.kind,
+                                grade: outcome.kind === "opportunity" ? outcome.result.grade : null,
+                                durationMs: Math.round(performance.now() - assetStartedAt),
+                            });
                         },
                     },
                 );
@@ -1431,6 +1460,12 @@ export async function runAssetOpportunityIteration(
                 strategyKey: null,
                 outcome: "failed",
                 grade: null,
+                durationMs: Math.round(performance.now() - assetStartedAt),
+            });
+            input.runLog?.("asset_failed", {
+                symbol,
+                assetIndex,
+                reason,
                 durationMs: Math.round(performance.now() - assetStartedAt),
             });
         }
@@ -1531,6 +1566,20 @@ export async function runAssetOpportunityIteration(
         engineUsage: totals.engineUsage,
     };
     const summary = `Asset Opportunity complete: ${sortedAssetResults.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`;
+
+    input.runLog?.("iteration_complete", {
+        totalAssets,
+        assetsWithFreshEntry,
+        assetsWithNoFreshEntry,
+        selectGradeAssets,
+        watchGradeAssets,
+        rejectGradeAssets,
+        failedAssets: failedAssets.length,
+        retainedResults: sortedAssetResults.length,
+        cancelled,
+        durationMs: totalDurationMs,
+        summary,
+    });
 
     return {
         results: sortedAssetResults,
@@ -2047,14 +2096,36 @@ export async function processFinderAssetOpportunityBatchRun(
 }
 
 /**
- * HTTP handler for the Asset Opportunity run. Mirrors `handleRunRequest` but
- * validates the asset-opportunity-specific options, then dispatches to the
- * per-asset multi-strategy job.
+ * Validation shared by the Asset Opportunity single and batch routes.
+ *
+ * Everything that can reject a request WITHOUT starting heavy work lives here
+ * (ownership, run id, pending Stop, symbol cap, heap guard, scope + mode,
+ * option normalization, strategy resolution, provider map, and the second
+ * pending-Stop check at the ownership boundary). The batch route then adds its
+ * holdout-range validation and archive-sort normalization BEFORE acquiring
+ * ownership, so a malformed range can never start heavy work.
  */
-async function handleAssetOpportunityRunRequest(
-    res: ViteHttpResponse,
-    body: FinderAssetOpportunityRequestBody,
-): Promise<void> {
+async function prepareAssetOpportunityRunPayload(
+    body: FinderAssetOpportunityRequestBody & { batch?: unknown },
+    batch?: { validate: true },
+): Promise<{
+    runId: string;
+    symbols: string[];
+    interval: string;
+    options: FinderOptions;
+    settings: BacktestSettings;
+    capitalSettings: CapitalSettings;
+    selectedStrategies: FinderSelectedStrategy[];
+    exitStrategyCandidates?: FinderSelectedStrategy[];
+    useRustEnginePreference: boolean;
+    providerBySymbol: Map<string, string>;
+    candidatePoolSize: number;
+    minFreshSupport: number;
+    /** Present only for the batch route: validated holdout range. */
+    batchRange?: { start: number; end: number };
+    /** Present only for the batch route: normalized archive sort selection. */
+    archiveSort?: FinderAssetOpportunityArchiveSort | null;
+}> {
     if (runOwner !== RUN_OWNER_NONE) {
         throw new HttpStatusError(409, "A Finder run is already running. Use Stop first.");
     }
@@ -2103,6 +2174,27 @@ async function handleAssetOpportunityRunRequest(
     if (options.mode !== "random") {
         throw new HttpStatusError(400, "Asset Opportunity requires random Finder mode.");
     }
+
+    // Batch-only validation runs BEFORE strategy resolution so a malformed
+    // range or archive sort surfaces its own 400 first (locked by the route
+    // tests) and can never start heavy work.
+    let batchRange: { start: number; end: number } | undefined;
+    let archiveSort: FinderAssetOpportunityArchiveSort | null | undefined;
+    if (batch) {
+        const batchSource = body.batch && typeof body.batch === "object" && !Array.isArray(body.batch)
+            ? body.batch as Record<string, unknown>
+            : {};
+        const range = normalizeFinderAssetOosBatchHoldoutRange(
+            batchSource.startHoldoutBars,
+            batchSource.endHoldoutBars,
+        );
+        if (range.error !== null) {
+            throw new HttpStatusError(400, range.error);
+        }
+        batchRange = { start: range.start, end: range.end };
+        archiveSort = normalizeAssetOpportunityArchiveSort(body.archiveSort);
+    }
+
     const strategyKeys = parseStrategyKeys(body.strategyKeys, body.strategyKey);
     const selectedStrategies = await resolveSelectedStrategies(strategyKeys);
     const settings = (body.settings ?? {}) as BacktestSettings;
@@ -2117,6 +2209,108 @@ async function handleAssetOpportunityRunRequest(
     if (consumePendingStopForRun(runId)) {
         throw new HttpStatusError(409, "Finder run was stopped before it started.");
     }
+
+    return {
+        runId,
+        symbols,
+        interval,
+        options,
+        settings,
+        capitalSettings,
+        selectedStrategies,
+        exitStrategyCandidates,
+        useRustEnginePreference,
+        providerBySymbol,
+        candidatePoolSize,
+        minFreshSupport,
+        ...(batch ? { batchRange, archiveSort } : {}),
+    };
+}
+
+/**
+ * Shared NDJSON stream lifecycle for every Finder route: begin the stream,
+ * install the disconnect guard, run the job with a best-effort writer, end the
+ * stream on success, emit a route-specific fatal event on failure, and release
+ * run ownership + flush deferred dataset invalidation in `finally`. A
+ * disconnected stream never cancels the server job (reload reattach can
+ * recover it via `/status`); the wrapper only stops writing.
+ */
+async function withFinderRunStream<TEvent extends AnyFinderStreamEvent>(args: {
+    res: ViteHttpResponse;
+    runId: string;
+    owner: number;
+    abortController: AbortController;
+    /** Debug event name for terminal failures (route-specific). */
+    debugEvent?: string;
+    buildFatal: (message: string) => TEvent;
+    run: (safeWrite: (event: TEvent) => void) => Promise<void>;
+}): Promise<void> {
+    let stream: ReturnType<typeof beginNdjsonStream> | null = null;
+    let streamWritable = true;
+    try {
+        stream = beginNdjsonStream(args.res);
+        const responseWithEvents = args.res as ViteHttpResponse & {
+            on?: (event: string, listener: () => void) => void;
+        };
+        if (typeof responseWithEvents.on === "function") {
+            const markDisconnected = () => { streamWritable = false; };
+            responseWithEvents.on("close", markDisconnected);
+            responseWithEvents.on("error", markDisconnected);
+        }
+        const safeWrite = (event: TEvent): void => {
+            if (!streamWritable) return;
+            if (!writeStreamEventBestEffort(stream!, event, args.runId)) {
+                streamWritable = false;
+            }
+        };
+        await args.run(safeWrite);
+        if (streamWritable) {
+            try {
+                stream.end();
+            } catch {
+                streamWritable = false;
+            }
+        }
+    } catch (error) {
+        if (!stream) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        if (args.debugEvent) {
+            debugLogger.event(args.debugEvent, {
+                runId: args.runId,
+                error: message,
+            });
+        }
+        try {
+            if (!streamWritable) return;
+            stream.end(args.buildFatal(message));
+        } catch {
+            /* best-effort */
+        }
+    } finally {
+        if (runOwner === args.owner) {
+            // The owning run released (terminal or stopped while still
+            // owning): flush a deferred invalidation now that no newer owner
+            // exists whose datasets could be clobbered.
+            flushPendingDatasetCacheInvalidation();
+            runOwner = RUN_OWNER_NONE;
+        }
+        if (abortController === args.abortController) {
+            abortController = null;
+        }
+    }
+}
+
+/**
+ * HTTP handler for the Asset Opportunity run. Mirrors `handleRunRequest` but
+ * validates the asset-opportunity-specific options, then dispatches to the
+ * per-asset multi-strategy job.
+ */
+async function handleAssetOpportunityRunRequest(
+    res: ViteHttpResponse,
+    body: FinderAssetOpportunityRequestBody,
+    runLogRoot: string,
+): Promise<void> {
+    const prepared = await prepareAssetOpportunityRunPayload(body);
 
     const owner = acquireRunOwnership();
     const runAbortController = new AbortController();
@@ -2133,78 +2327,41 @@ async function handleAssetOpportunityRunRequest(
         context?: BatchDatasetLoadContext,
     ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context);
 
-    let stream: ReturnType<typeof beginNdjsonStream> | null = null;
-    let streamWritable = true;
-    try {
-        stream = beginNdjsonStream(res);
-        const responseWithEvents = res as ViteHttpResponse & {
-            on?: (event: string, listener: () => void) => void;
-        };
-        if (typeof responseWithEvents.on === "function") {
-            const markDisconnected = () => { streamWritable = false; };
-            responseWithEvents.on("close", markDisconnected);
-            responseWithEvents.on("error", markDisconnected);
-        }
-        const safeWrite = (event: FinderAssetOpportunityStreamEvent): void => {
-            if (!streamWritable) return;
-            if (!writeStreamEventBestEffort(stream!, event, runId)) {
-                streamWritable = false;
-            }
-        };
-        await processFinderAssetOpportunityRun(
+    await withFinderRunStream({
+        res,
+        runId: prepared.runId,
+        owner,
+        abortController: runAbortController,
+        debugEvent: "finder.asset_opportunity.run.failed",
+        buildFatal: (message): FinderAssetOpportunityStreamEvent => ({
+            type: "asset_fatal",
+            runId: prepared.runId,
+            error: message,
+        }),
+        run: (safeWrite) => processFinderAssetOpportunityRun(
             {
-                runId,
-                interval,
-                symbols,
-                options,
-                settings,
-                capitalSettings,
-                selectedStrategies,
-                exitStrategyCandidates,
-                useRustEnginePreference,
+                runId: prepared.runId,
+                interval: prepared.interval,
+                symbols: prepared.symbols,
+                options: prepared.options,
+                settings: prepared.settings,
+                capitalSettings: prepared.capitalSettings,
+                selectedStrategies: prepared.selectedStrategies,
+                exitStrategyCandidates: prepared.exitStrategyCandidates,
+                useRustEnginePreference: prepared.useRustEnginePreference,
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
                 loadSecondaryDataset: (sym, intv, signal, context) =>
                     loadServerFinderDataset(sym, intv, signal, context),
-                getProvider: (symbol) => resolveServerProvider(symbol, providerBySymbol),
-                candidatePoolSize,
-                minFreshSupport,
+                getProvider: (symbol) => resolveServerProvider(symbol, prepared.providerBySymbol),
+                candidatePoolSize: prepared.candidatePoolSize,
+                minFreshSupport: prepared.minFreshSupport,
+                runLog: buildFinderRunLogSink(runLogRoot, prepared.runId),
             },
             safeWrite,
             owner,
-        );
-        if (streamWritable) {
-            try {
-                stream.end();
-            } catch {
-                streamWritable = false;
-            }
-        }
-    } catch (error) {
-        if (!stream) throw error;
-        const message = error instanceof Error ? error.message : String(error);
-        debugLogger.event("finder.asset_opportunity.run.failed", {
-            runId,
-            error: message,
-        });
-        try {
-            if (!streamWritable) return;
-            stream.end({ type: "asset_fatal", runId, error: message });
-        } catch {
-            /* best-effort */
-        }
-    } finally {
-        if (runOwner === owner) {
-            // The owning run released (terminal or stopped while still
-            // owning): flush a deferred invalidation now that no newer owner
-            // exists whose datasets could be clobbered.
-            flushPendingDatasetCacheInvalidation();
-            runOwner = RUN_OWNER_NONE;
-        }
-        if (abortController === runAbortController) {
-            abortController = null;
-        }
-    }
+        ),
+    });
 }
 
 interface FinderAssetOpportunityBatchRequestBody extends FinderAssetOpportunityRequestBody {
@@ -2222,84 +2379,14 @@ async function handleAssetOpportunityBatchRunRequest(
     res: ViteHttpResponse,
     body: FinderAssetOpportunityBatchRequestBody,
     archiveRoot: string,
+    runLogRoot: string,
 ): Promise<void> {
-    if (runOwner !== RUN_OWNER_NONE) {
-        throw new HttpStatusError(409, "A Finder run is already running. Use Stop first.");
-    }
-
-    const runId = parseRunId(body.runId);
-    if (consumePendingStopForRun(runId)) {
-        throw new HttpStatusError(409, "Finder run was stopped before it started.");
-    }
-
-    const symbols = normalizeSymbols(body.symbols);
-    if (symbols.length === 0) {
-        throw new HttpStatusError(400, "At least one symbol is required.");
-    }
-    if (symbols.length > ASSET_OPPORTUNITY_MAX_SYMBOLS) {
-        throw new HttpStatusError(
-            400,
-            `Asset Opportunity supports at most ${ASSET_OPPORTUNITY_MAX_SYMBOLS} symbols per run.`,
-        );
-    }
-    const heapWarning = resolveFinderUniverseHeapWarning(symbols.length);
-    if (heapWarning) {
-        throw new HttpStatusError(507, heapWarning);
-    }
-    const interval = parseInterval(body.interval);
-    const parsedOptions = parseOptions(body.options);
-    if (parsedOptions.scope !== "asset_opportunity") {
-        throw new HttpStatusError(400, "Asset Opportunity requires scope asset_opportunity.");
-    }
-    const options = {
-        ...parsedOptions,
-        scope: "asset_opportunity" as const,
-        ...(parsedOptions.assetOpportunity
-            ? {
-                assetOpportunity: {
-                    ...parsedOptions.assetOpportunity,
-                    oosIgnoreLastBars: normalizeFinderAssetOosIgnoreLastBars(
-                        parsedOptions.assetOpportunity.oosIgnoreLastBars,
-                    ),
-                    oosHorizons: normalizeFinderAssetOosHorizons(
-                        parsedOptions.assetOpportunity.oosHorizons,
-                    ),
-                },
-            }
-            : {}),
-    };
-    if (options.mode !== "random") {
-        throw new HttpStatusError(400, "Asset Opportunity requires random Finder mode.");
-    }
-
-    // Validate + normalize the inclusive range BEFORE acquiring ownership so a
-    // malformed range can never start heavy work.
-    const batchSource = body.batch && typeof body.batch === "object" && !Array.isArray(body.batch)
-        ? body.batch as Record<string, unknown>
-        : {};
-    const batchRange = normalizeFinderAssetOosBatchHoldoutRange(
-        batchSource.startHoldoutBars,
-        batchSource.endHoldoutBars,
-    );
-    if (batchRange.error !== null) {
-        throw new HttpStatusError(400, batchRange.error);
-    }
-    const archiveSort = normalizeAssetOpportunityArchiveSort(body.archiveSort);
-
-    const strategyKeys = parseStrategyKeys(body.strategyKeys, body.strategyKey);
-    const selectedStrategies = await resolveSelectedStrategies(strategyKeys);
-    const settings = (body.settings ?? {}) as BacktestSettings;
-    const capitalSettings = (body.capitalSettings ?? {}) as CapitalSettings;
-    const useRustEnginePreference = body.useRustEnginePreference === true;
-    const candidatePoolSize = clampCandidatePoolSize(options.assetOpportunity?.candidatePoolSize);
-    const minFreshSupport = clampMinFreshSupport(options.assetOpportunity?.minFreshSupport);
-
-    const exitStrategyCandidates = await resolveExitStrategyCandidates(body.exitStrategyKeys);
-    const providerBySymbol = parseProviderBySymbol(body.providerBySymbol);
-
-    if (consumePendingStopForRun(runId)) {
-        throw new HttpStatusError(409, "Finder run was stopped before it started.");
-    }
+    // Validates the inclusive holdout range + archive sort BEFORE acquiring
+    // ownership (inside the shared payload prep) so a malformed range can never
+    // start heavy work.
+    const prepared = await prepareAssetOpportunityRunPayload(body, { validate: true });
+    const batchRange = prepared.batchRange!;
+    const archiveSort = prepared.archiveSort ?? null;
 
     const owner = acquireRunOwnership();
     const runAbortController = new AbortController();
@@ -2312,78 +2399,46 @@ async function handleAssetOpportunityBatchRunRequest(
         context?: BatchDatasetLoadContext,
     ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context);
 
-    let stream: ReturnType<typeof beginNdjsonStream> | null = null;
-    let streamWritable = true;
-    try {
-        stream = beginNdjsonStream(res);
-        const responseWithEvents = res as ViteHttpResponse & {
-            on?: (event: string, listener: () => void) => void;
-        };
-        if (typeof responseWithEvents.on === "function") {
-            const markDisconnected = () => { streamWritable = false; };
-            responseWithEvents.on("close", markDisconnected);
-            responseWithEvents.on("error", markDisconnected);
-        }
-        const safeWrite = (event: FinderAssetOpportunityBatchStreamEvent): void => {
-            if (!streamWritable) return;
-            if (!writeStreamEventBestEffort(stream!, event, runId)) {
-                streamWritable = false;
-            }
-        };
-        await processFinderAssetOpportunityBatchRun(
+    await withFinderRunStream({
+        res,
+        runId: prepared.runId,
+        owner,
+        abortController: runAbortController,
+        debugEvent: "finder.asset_opportunity_batch.run.failed",
+        buildFatal: (message): FinderAssetOpportunityBatchStreamEvent => ({
+            type: "asset_batch_fatal",
+            runId: prepared.runId,
+            error: message,
+            holdoutBars: null,
+            completedIterations: 0,
+        }),
+        run: (safeWrite) => processFinderAssetOpportunityBatchRun(
             {
-                runId,
-                interval,
-                symbols,
-                options,
-                settings,
-                capitalSettings,
-                selectedStrategies,
-                exitStrategyCandidates,
-                useRustEnginePreference,
+                runId: prepared.runId,
+                interval: prepared.interval,
+                symbols: prepared.symbols,
+                options: prepared.options,
+                settings: prepared.settings,
+                capitalSettings: prepared.capitalSettings,
+                selectedStrategies: prepared.selectedStrategies,
+                exitStrategyCandidates: prepared.exitStrategyCandidates,
+                useRustEnginePreference: prepared.useRustEnginePreference,
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
                 loadSecondaryDataset: (sym, intv, signal, context) =>
                     loadServerFinderDataset(sym, intv, signal, context),
-                getProvider: (symbol) => resolveServerProvider(symbol, providerBySymbol),
-                candidatePoolSize,
-                minFreshSupport,
+                getProvider: (symbol) => resolveServerProvider(symbol, prepared.providerBySymbol),
+                candidatePoolSize: prepared.candidatePoolSize,
+                minFreshSupport: prepared.minFreshSupport,
                 archiveSort,
+                runLog: buildFinderRunLogSink(runLogRoot, prepared.runId),
                 batch: { startHoldoutBars: batchRange.start, endHoldoutBars: batchRange.end },
             },
             safeWrite,
             owner,
             archiveRoot,
-        );
-        if (streamWritable) {
-            try {
-                stream.end();
-            } catch {
-                streamWritable = false;
-            }
-        }
-    } catch (error) {
-        if (!stream) throw error;
-        const message = error instanceof Error ? error.message : String(error);
-        debugLogger.event("finder.asset_opportunity_batch.run.failed", {
-            runId,
-            error: message,
-        });
-        try {
-            if (!streamWritable) return;
-            stream.end({ type: "asset_batch_fatal", runId, error: message, holdoutBars: null, completedIterations: 0 });
-        } catch {
-            /* best-effort */
-        }
-    } finally {
-        if (runOwner === owner) {
-            flushPendingDatasetCacheInvalidation();
-            runOwner = RUN_OWNER_NONE;
-        }
-        if (abortController === runAbortController) {
-            abortController = null;
-        }
-    }
+        ),
+    });
 }
 
 /**
@@ -2510,25 +2565,13 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
     const loadDatasetWithSlice = (sym: string, intv: string, signal?: AbortSignal): Promise<OHLCVData[]> =>
         loadServerFinderDataset(sym, intv, signal).then((data) => sliceFinderDataWindow(data, dataSlice));
 
-    let stream: ReturnType<typeof beginNdjsonStream> | null = null;
-    let streamWritable = true;
-    try {
-        stream = beginNdjsonStream(res);
-        const responseWithEvents = res as ViteHttpResponse & {
-            on?: (event: string, listener: () => void) => void;
-        };
-        if (typeof responseWithEvents.on === "function") {
-            const markDisconnected = () => { streamWritable = false; };
-            responseWithEvents.on("close", markDisconnected);
-            responseWithEvents.on("error", markDisconnected);
-        }
-        const safeWrite = (event: FinderStreamEvent): void => {
-            if (!streamWritable) return;
-            if (!writeStreamEventBestEffort(stream!, event, runId)) {
-                streamWritable = false;
-            }
-        };
-        await processFinderUniverseRun(
+    await withFinderRunStream({
+        res,
+        runId,
+        owner,
+        abortController: runAbortController,
+        buildFatal: (message): FinderStreamEvent => ({ type: "fatal", runId, error: message }),
+        run: (safeWrite) => processFinderUniverseRun(
             {
                 runId,
                 interval,
@@ -2551,38 +2594,8 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
             },
             safeWrite,
             owner,
-        );
-        if (streamWritable) {
-            try {
-                stream.end();
-            } catch {
-                streamWritable = false;
-            }
-        }
-    } catch (error) {
-        if (!stream) throw error;
-        const message = error instanceof Error ? error.message : String(error);
-        try {
-            if (!streamWritable) return;
-            stream.end({ type: "fatal", runId, error: message });
-        } catch {
-            /* best-effort */
-        }
-    } finally {
-        if (runOwner === owner) {
-            // The owning run released (terminal or stopped while still
-            // owning): flush a deferred invalidation now that no newer owner
-            // exists whose datasets could be clobbered.
-            flushPendingDatasetCacheInvalidation();
-            runOwner = RUN_OWNER_NONE;
-        }
-        // A stopped run releases ownership immediately so another run can
-        // begin while the old handler unwinds. Do not let old cleanup erase
-        // the new run's controller.
-        if (abortController === runAbortController) {
-            abortController = null;
-        }
-    }
+        ),
+    });
 }
 
 function rememberLocalApiOriginFromRequest(req: { headers?: Record<string, unknown>; socket?: { localAddress?: string; localPort?: number } | null }): void {
@@ -2885,6 +2898,23 @@ function resolveServerProvider(symbol: string, providerBySymbol: Map<string, str
     return providerBySymbol.get(normalized) ?? "binance";
 }
 
+/**
+ * Build the fire-and-forget JSONL run-log sink for one run. Write failures
+ * are logged to the debug logger and never propagate, so a disk hiccup can
+ * never fail a Finder run.
+ */
+function buildFinderRunLogSink(root: string, runId: string): FinderRunLogSink {
+    return (event, data) => {
+        void appendFinderRunLogEvent({ root, runId, event, data }).catch((error) => {
+            debugLogger.warn("finder.run_log.append_failed", {
+                runId,
+                event,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        });
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
@@ -2919,6 +2949,9 @@ function registerFinderRoutes(middlewares: any, serverRoot?: string): void {
     // archive. Tests call the registration seam without a root and fall back
     // to the process working directory.
     const archiveRoot = serverRoot ?? process.cwd();
+    // Per-run JSONL diagnostics log, env-overridable via FINDER_RUN_LOG_DIR
+    // (see lib/finder/server/finder-run-log.ts).
+    const runLogRoot = resolveFinderRunLogDir(archiveRoot);
     // Audit Finding 1 (+ audit Finding 8 helper): every Finder route gates on
     // the same loopback/bearer policy as the Batch, IBKR, and strategy-admin
     // routes — a Vite dev server exposed via --host, tunnel, or reverse proxy
@@ -2943,7 +2976,7 @@ function registerFinderRoutes(middlewares: any, serverRoot?: string): void {
         onAuthorizedRequest: (req) => rememberLocalApiOriginFromRequest(req),
         unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
         onAuthorized: async ({ res, body }) => {
-            await handleAssetOpportunityRunRequest(res, body as unknown as FinderAssetOpportunityRequestBody);
+            await handleAssetOpportunityRunRequest(res, body as unknown as FinderAssetOpportunityRequestBody, runLogRoot);
         },
     });
 
@@ -2958,6 +2991,7 @@ function registerFinderRoutes(middlewares: any, serverRoot?: string): void {
                 res,
                 body as unknown as FinderAssetOpportunityBatchRequestBody,
                 archiveRoot,
+                runLogRoot,
             );
         },
     });
