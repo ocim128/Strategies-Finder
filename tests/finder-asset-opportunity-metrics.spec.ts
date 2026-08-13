@@ -483,4 +483,31 @@ describe("Asset Opportunity post-run re-sort", () => {
         ]);
         expect(sorted.map((result) => result.freshSignalLibraryCount)).to.deep.equal([3, 2]);
     });
+
+    it("freshSignalLibrariesByTrades breaks count ties by totalTrades, not expectancy", () => {
+        // AAA and ZZZ both have freshSignalLibraryCount = 2. AAA's winner has
+        // higher expectancy but fewer trades; ZZZ's has lower expectancy but more
+        // trades. By-Trades must rank ZZZ first (totalTrades), even though the
+        // plain freshSignalLibraries order (grade-first comparator) would put AAA
+        // first on expectancy.
+        const mk = (symbol: string, strategyKey: string, expectancy: number, totalTrades: number): FinderAssetOpportunityResult => ({
+            ...makeResortResult({ symbol, grade: "select", expectancy, totalTrades }),
+            strategyKey,
+        });
+        const results: FinderAssetOpportunityResult[] = [
+            mk("AAA•+SPY•", "lib_a1", 5, 10),
+            mk("AAA•+SPY•", "lib_a2", 5, 10),
+            mk("ZZZ•+SPY•", "lib_b1", 1, 50),
+            mk("ZZZ•+SPY•", "lib_b2", 1, 50),
+            mk("MMM•+SPY•", "lib_c1", 9, 1),
+        ];
+        const byTrades = sortAssetOpportunityResultsByMetric(results, "freshSignalLibrariesByTrades");
+        expect(byTrades.map((r) => r.symbol)).to.deep.equal(["ZZZ•+SPY•", "AAA•+SPY•", "MMM•+SPY•"]);
+        expect(byTrades.map((r) => r.freshSignalLibraryCount)).to.deep.equal([2, 2, 1]);
+
+        // Sanity: plain freshSignalLibraries orders the count-2 tie by expectancy
+        // (AAA 5 > ZZZ 1), so AAA first — the opposite ordering.
+        const plain = sortAssetOpportunityResultsByMetric(results, "freshSignalLibraries");
+        expect(plain.map((r) => r.symbol)).to.deep.equal(["AAA•+SPY•", "ZZZ•+SPY•", "MMM•+SPY•"]);
+    });
 });

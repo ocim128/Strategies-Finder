@@ -200,6 +200,22 @@ export interface OosStrategyRemovalAnalysis {
     after: HoldoutHorizonAnalysis[];
 }
 
+/**
+ * Per-sort variant of `OosStrategyRemovalAnalysis`: for each archive sort,
+ * identifies the worst strategy WITHIN that sort's selected rows (by primary
+ * horizon) and reports the before/after of excluding it. The pooled
+ * `oosWithoutWorstStrategy` hides per-sort variation — a strategy can be the
+ * global worst while a different strategy drags each individual sort.
+ */
+export interface OosStrategyRemovalPerSortItem {
+    sortMetric: string;
+    removedStrategyId: string;
+    removedStrategyName: string;
+    selectionHorizonBars: number;
+    before: HoldoutHorizonAnalysis[];
+    after: HoldoutHorizonAnalysis[];
+}
+
 export interface SignalCandleHourAnalysis {
     hour: number;
     occurrences: number;
@@ -248,6 +264,7 @@ export interface AssetOpportunityHoldoutAnalysisReport {
     parameterVariants: ParameterVariantAnalysis[];
     strategyPerformance: StrategyPerformanceAnalysis[];
     oosWithoutWorstStrategy: OosStrategyRemovalAnalysis | null;
+    oosWithoutWorstStrategyPerSort: OosStrategyRemovalPerSortItem[];
     signalCandleHoursAvailable: boolean;
     signalCandleHourPerformance: {
         utc: SignalCandleHourAnalysis[];
@@ -1101,6 +1118,43 @@ function buildOosWithoutWorstStrategy(
     };
 }
 
+/**
+ * Per-sort worst-strategy counterfactual. For each archive sort, find the worst
+ * strategy WITHIN that sort's selected rows (by primary horizon) and report the
+ * before/after of excluding it. Reuses the same horizon-analysis and strategy-
+ * performance builders as the pooled version, scoped to one sortMetric at a time.
+ */
+function buildOosWithoutWorstStrategyPerSort(
+    records: AssetOpportunityArchiveRecord[],
+    topK: number,
+    horizonBars: number[],
+): OosStrategyRemovalPerSortItem[] {
+    const primaryHorizon = horizonBars.includes(12) ? 12 : horizonBars[0] ?? 0;
+    const sortMetrics = [...new Set(records.map((record) => record.sortMetric))].sort();
+    const items: OosStrategyRemovalPerSortItem[] = [];
+    for (const sortMetric of sortMetrics) {
+        const sortRecords = records.filter((record) => record.sortMetric === sortMetric);
+        const strategyPerformance = buildStrategyPerformance(sortRecords, topK, horizonBars);
+        const candidates = strategyPerformance
+            .map((strategy) => ({
+                strategy,
+                average: strategy.horizons.find((horizon) => horizon.horizonBars === primaryHorizon)?.averagePnlPercent ?? null,
+            }))
+            .filter((value): value is { strategy: StrategyPerformanceAnalysis; average: number } => value.average !== null);
+        const worst = [...candidates].sort((left, right) => left.average - right.average || left.strategy.strategyId.localeCompare(right.strategy.strategyId))[0];
+        if (!worst) continue;
+        items.push({
+            sortMetric,
+            removedStrategyId: worst.strategy.strategyId,
+            removedStrategyName: worst.strategy.strategyName,
+            selectionHorizonBars: primaryHorizon,
+            before: buildArchiveHorizonAnalyses(sortRecords, topK, horizonBars),
+            after: buildArchiveHorizonAnalyses(sortRecords, topK, horizonBars, worst.strategy.strategyId),
+        });
+    }
+    return items;
+}
+
 function buildSignalCandleHourPerformance(
     records: AssetOpportunityArchiveRecord[],
     topK: number,
@@ -1190,6 +1244,7 @@ export function analyzeAssetOpportunityArchive(
         topK,
         horizonBars,
     );
+    const oosWithoutWorstStrategyPerSort = buildOosWithoutWorstStrategyPerSort(analysisRecords, topK, horizonBars);
     const signalCandleHoursAvailable = analysisRecords.some((record) => record.topResults.some((row) => (
         row.signalCandleHourUtc !== null && row.signalCandleHourUtc !== undefined
     ) || (
@@ -1241,6 +1296,7 @@ export function analyzeAssetOpportunityArchive(
         parameterVariants,
         strategyPerformance,
         oosWithoutWorstStrategy,
+        oosWithoutWorstStrategyPerSort,
         signalCandleHoursAvailable,
         signalCandleHourPerformance: {
             utc: signalCandleHoursAvailable
@@ -1383,6 +1439,28 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
             lines.push([
                 `${before.horizonBars} bars`,
                 `${formatAnalysisHorizon(before)} (${before.observedRows} rows)`,
+                `${formatAnalysisHorizon(after)} (${after?.observedRows ?? 0} rows)`,
+                formatPercent(change),
+            ].join(" | "));
+        }
+    }
+    lines.push("", "OOS COUNTERFACTUAL — REMOVE WORST STRATEGY BY SORT (per-sort row exclusion; not a rerun)");
+    if (report.oosWithoutWorstStrategyPerSort.length === 0) {
+        lines.push("Unavailable: no sort has a finite per-strategy forward OOS average.");
+    } else {
+        const perSortHorizon = report.oosWithoutWorstStrategyPerSort[0]!.selectionHorizonBars;
+        lines.push(`Worst strategy per sort by ${perSortHorizon}-bar average (within that sort's selected rows). Change = after − before.`);
+        lines.push(`Sort | Worst strategy | ${perSortHorizon}-bar before | ${perSortHorizon}-bar after | Change`);
+        for (const item of report.oosWithoutWorstStrategyPerSort) {
+            const before = item.before.find((horizon) => horizon.horizonBars === item.selectionHorizonBars);
+            const after = item.after.find((horizon) => horizon.horizonBars === item.selectionHorizonBars);
+            const change = before?.averagePnlPercent != null && after?.averagePnlPercent != null
+                ? after.averagePnlPercent - before.averagePnlPercent
+                : null;
+            lines.push([
+                item.sortMetric,
+                item.removedStrategyId,
+                `${formatAnalysisHorizon(before)} (${before?.observedRows ?? 0} rows)`,
                 `${formatAnalysisHorizon(after)} (${after?.observedRows ?? 0} rows)`,
                 formatPercent(change),
             ].join(" | "));

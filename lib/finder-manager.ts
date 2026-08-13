@@ -48,6 +48,7 @@ import {
 	sortAssetOpportunityResultsByMetric,
 	getAssetOpportunityResortMetrics,
 	FRESH_SIGNAL_LIBRARIES_METRIC,
+	FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC,
 	retainAssetOpportunityResultsForSymbols,
 	type FinderAssetOpportunityArchiveSort,
 	type FinderAssetOpportunityResortMetric,
@@ -3720,14 +3721,16 @@ export class FinderManager {
 				options.push({ value: metric, label: UNIVERSE_METRIC_FULL_LABELS[metric] });
 			}
 		} else if (scope === 'asset_opportunity') {
-			for (const metric of getAssetOpportunityResortMetrics()) {
-				options.push({
-					value: metric,
-					label: metric === FRESH_SIGNAL_LIBRARIES_METRIC
-						? "Fresh Signals (Libraries)"
-						: METRIC_FULL_LABELS[metric],
-				});
-			}
+				for (const metric of getAssetOpportunityResortMetrics()) {
+					options.push({
+						value: metric,
+						label: metric === FRESH_SIGNAL_LIBRARIES_METRIC
+							? "Fresh Signals (Libraries)"
+							: metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
+								? "Fresh Signals (Libraries, by Trades)"
+								: METRIC_FULL_LABELS[metric],
+					});
+				}
 		} else if (scope === 'strategy_quality') {
 			for (const metric of STRATEGY_QUALITY_SORT_OPTIONS) {
 				options.push({ value: metric, label: STRATEGY_QUALITY_METRIC_FULL_LABELS[metric] });
@@ -3786,7 +3789,9 @@ export class FinderManager {
 				this.setStatus('All Sorts is for batch archive output; choose a specific metric to re-sort displayed results.');
 				return;
 			}
-			const results = metric === FRESH_SIGNAL_LIBRARIES_METRIC && this.assetOpportunityDefaultResults.length > 0
+			const isConsensusMetric = metric === FRESH_SIGNAL_LIBRARIES_METRIC
+				|| metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC;
+			const results = isConsensusMetric && this.assetOpportunityDefaultResults.length > 0
 				? this.assetOpportunityDefaultResults
 				: this.assetOpportunityRunResults.length > 0
 					? this.assetOpportunityRunResults
@@ -3798,7 +3803,7 @@ export class FinderManager {
 			// Consensus mode returns one representative row per symbol. Keep the
 			// full strategy-level result set intact so another re-sort can still
 			// inspect every strategy row.
-			if (metric !== FRESH_SIGNAL_LIBRARIES_METRIC) {
+			if (!isConsensusMetric) {
 				this.assetOpportunityRunResults = sorted;
 			}
 			this.setAssetOpportunityLatestResults(sorted);

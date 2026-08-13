@@ -246,7 +246,19 @@ export function deduplicateAssetOpportunityResultsBySymbol(
  * consensus metric is derived across strategy-level rows for each symbol.
  */
 export const FRESH_SIGNAL_LIBRARIES_METRIC = "freshSignalLibraries" as const;
-export type FinderAssetOpportunityResortMetric = FinderMetric | typeof FRESH_SIGNAL_LIBRARIES_METRIC;
+/**
+ * Consensus variant: fresh-signal-library count (same as `freshSignalLibraries`),
+ * but count ties are broken by totalTrades (highest first) instead of the
+ * grade-first lexicographic order. Surfaces the most-traded consensus names
+ * when several symbols share the same library count. The per-symbol
+ * representative is the grade-winner (as in `freshSignalLibraries`), so the
+ * totalTrades tiebreak is that winner's, not the symbol's max.
+ */
+export const FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC = "freshSignalLibrariesByTrades" as const;
+export type FinderAssetOpportunityResortMetric =
+    | FinderMetric
+    | typeof FRESH_SIGNAL_LIBRARIES_METRIC
+    | typeof FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC;
 /** Special batch-only choice that archives the default order plus every metric. */
 export const ASSET_OPPORTUNITY_ALL_SORTS = "allAssetOpportunitySorts" as const;
 export type FinderAssetOpportunityArchiveSort =
@@ -265,6 +277,7 @@ const ASSET_RESORT_METRICS: readonly FinderAssetOpportunityResortMetric[] = [
     "payoffRatio",
     "totalTrades",
     FRESH_SIGNAL_LIBRARIES_METRIC,
+    FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC,
 ];
 
 export function getAssetOpportunityResortMetrics(): readonly FinderAssetOpportunityResortMetric[] {
@@ -342,7 +355,7 @@ export function sortAssetOpportunityResultsByMetric(
     if (metric === null) {
         return sortAssetOpportunityResults([...results]);
     }
-    if (metric === FRESH_SIGNAL_LIBRARIES_METRIC) {
+    if (metric === FRESH_SIGNAL_LIBRARIES_METRIC || metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC) {
         const counts = getFreshSignalLibraryCounts(results);
         const representatives = new Map<string, FinderAssetOpportunityResult>();
         for (const result of results) {
@@ -362,8 +375,16 @@ export function sortAssetOpportunityResultsByMetric(
                 const countA = a.freshSignalLibraryCount ?? 0;
                 const countB = b.freshSignalLibraryCount ?? 0;
                 if (countA !== countB) return countB - countA;
-                const comparison = compareAssetOpportunityResults(a, b);
-                if (comparison !== 0) return comparison;
+                if (metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC) {
+                    // Count tie: prefer the symbol whose winning candidate has
+                    // the most historical trades (more statistical weight).
+                    const tradesA = a.selectionResult.totalTrades ?? 0;
+                    const tradesB = b.selectionResult.totalTrades ?? 0;
+                    if (tradesA !== tradesB) return tradesB - tradesA;
+                } else {
+                    const comparison = compareAssetOpportunityResults(a, b);
+                    if (comparison !== 0) return comparison;
+                }
                 return a.symbol.localeCompare(b.symbol);
             });
     }
