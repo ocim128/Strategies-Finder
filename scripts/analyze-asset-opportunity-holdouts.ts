@@ -52,8 +52,6 @@ export interface AssetOpportunityArchiveRow {
     candidateFingerprint?: string;
     signalCandleHourUtc?: number | null;
     signalCandleHourJakarta?: number | null;
-    /** Pair in-sample volatility (stdev of log-ratio returns). Absent on pre-field archives. */
-    pairVolatility?: number | null;
     forwardOosPerformance?: {
         ignoreLastBars?: number;
         horizons?: ArchiveHorizon[];
@@ -377,11 +375,6 @@ function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityA
             signalCandleHourJakarta: row.signalCandleHourJakarta === null
                 ? null
                 : asHour(row.signalCandleHourJakarta),
-            pairVolatility: row.pairVolatility === undefined
-                ? undefined
-                : row.pairVolatility === null
-                    ? null
-                    : asFiniteNumber(row.pairVolatility),
             forwardOosPerformance,
         };
     });

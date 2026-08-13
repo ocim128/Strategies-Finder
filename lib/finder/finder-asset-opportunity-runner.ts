@@ -92,7 +92,6 @@ import {
     normalizeFinderAssetOosHorizons,
     normalizeFinderAssetOosIgnoreLastBars,
 } from "./finder-asset-opportunity-oos";
-import { computePairLogReturnVolatility } from "./finder-asset-opportunity-metadata";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { debugLogger } from "../debug-logger";
 
@@ -873,13 +872,6 @@ async function searchOneAsset(args: {
             bestHistoricalRank: 1,
         });
     }
-
-    // Attach the pair's in-sample volatility once per asset. It is a per-symbol
-    // scalar carried through to the archive so selection edges can be analyzed
-    // against a volatility-matched control without re-loading pair data (the
-    // Finder writes no batch artifacts). `finalResult` spreads from `result`
-    // below, so this propagates to every archived row for this asset.
-    result.pairVolatility = computePairLogReturnVolatility(inSampleHistorical);
 
     // Run OOS only for the winner. The reducer previously ran OOS for all K
     // candidates but only consumed the winner's verdict in `decideAssetGrade`;

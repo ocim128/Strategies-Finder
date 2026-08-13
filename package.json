@@ -30,7 +30,6 @@
     "mine:1s:verify": "esno scripts/second-market-miner.ts --mode verify",
     "alpha:surgical": "esno scripts/surgical-optimization.ts",
     "validate:spread-quality": "esno scripts/validate-spread-quality.ts",
-    "validate:fresh-signal-vol-control": "esno scripts/validate-fresh-signal-vol-control.ts",
     "research:open-score": "esno scripts/replay-open-score-run.ts",
     "synthetic:pair": "esno scripts/build-synthetic-pair.ts",
     "ibkr:aggregate": "esno scripts/ibkr-aggregate-csv.ts",

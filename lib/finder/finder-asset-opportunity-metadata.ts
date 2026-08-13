@@ -1,5 +1,5 @@
 import type { FinderAssetOpportunityResult } from "../types/finder";
-import type { BacktestResult, OHLCVData } from "../types/strategies";
+import type { BacktestResult } from "../types/strategies";
 import { fnv1a64Hex } from "../batch-backtest/max-active-research-contract";
 import { stableStringify } from "../json-utils";
 import { parseTimeToUnixSeconds } from "../time-normalization";
@@ -131,36 +131,6 @@ export interface AssetOpportunityPerformancePayload {
         metrics: AssetOpportunityPerformanceMetrics;
     } | null;
     forwardOosPerformance: FinderAssetOpportunityResult["oosHorizonMetrics"] | null;
-    /**
-     * Pair in-sample volatility = stdev of close-to-close log returns of the
-     * pair ratio series the search ran on. Null when the series was too short.
-     * Enables volatility-matched analysis of selection edges from the durable
-     * archive (the Finder writes no batch artifacts, so this scalar is the only
-     * durable record of each pair's risk). Per-symbol, identical across a
-     * symbol's candidates.
-     */
-    pairVolatility: number | null;
-}
-
-/**
- * Standard deviation of close-to-close log returns of an OHLCV series — a
- * pair-intrinsic risk measure used for volatility-matched controls. Returns
- * null when the series has fewer than 3 valid returns. Pure leaf: shared by
- * the Asset Opportunity runner (attaches it to each result) and analysis
- * tooling so the volatility definition cannot drift between them.
- */
-export function computePairLogReturnVolatility(data: readonly OHLCVData[]): number | null {
-    if (data.length < 3) return null;
-    const logReturns: number[] = [];
-    for (let i = 1; i < data.length; i += 1) {
-        const prev = data[i - 1]!.close;
-        const cur = data[i]!.close;
-        if (prev > 0 && cur > 0) logReturns.push(Math.log(cur / prev));
-    }
-    if (logReturns.length < 3) return null;
-    const mean = logReturns.reduce((sum, value) => sum + value, 0) / logReturns.length;
-    const variance = logReturns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / logReturns.length;
-    return Math.sqrt(variance);
 }
 
 function signalCandleHours(latestSignalTime: FinderAssetOpportunityResult["latestSignalTime"]): {
@@ -259,7 +229,6 @@ export function buildAssetOpportunityPerformancePayload(args: {
             }
             : null,
         forwardOosPerformance: result.oosHorizonMetrics ?? null,
-        pairVolatility: result.pairVolatility ?? null,
     };
 }
 

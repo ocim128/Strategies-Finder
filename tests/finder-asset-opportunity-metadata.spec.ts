@@ -5,14 +5,9 @@ import {
     buildAssetOpportunityForwardOosBaseline,
     buildAssetOpportunityMetadataPayload,
     buildAssetOpportunityPerformancePayload,
-    computePairLogReturnVolatility,
 } from "../lib/finder/finder-asset-opportunity-metadata";
 import type { FinderAssetOpportunityResult } from "../lib/types/finder";
-import type { OHLCVData, Time } from "../lib/types/strategies";
-
-function candle(i: number, close: number): OHLCVData {
-    return { time: i as Time, open: 0, high: 0, low: 0, close };
-}
+import type { Time } from "../lib/types/strategies";
 
 function makeAssetResult(overrides: Partial<FinderAssetOpportunityResult> = {}): FinderAssetOpportunityResult {
     const backtest = {
@@ -233,7 +228,6 @@ describe("Asset Opportunity metadata payload serializer", () => {
                     { bars: 1, pnlPercent: 1, averagePnlPercent: 1, winRatePercent: 100, sampleSize: 1 },
                 ],
             },
-            pairVolatility: null,
         });
         expect(JSON.stringify(payload)).to.not.contain("lookback");
         expect(JSON.stringify(payload)).to.not.contain("trades");
@@ -276,38 +270,3 @@ describe("Asset Opportunity metadata payload serializer", () => {
     });
 });
 
-describe("pair in-sample volatility (computePairLogReturnVolatility)", () => {
-    it("returns null for series with fewer than 3 valid returns", () => {
-        expect(computePairLogReturnVolatility([])).to.equal(null);
-        expect(computePairLogReturnVolatility([candle(0, 100)])).to.equal(null);
-        expect(computePairLogReturnVolatility([candle(0, 100), candle(1, 101)])).to.equal(null);
-    });
-
-    it("returns 0 for a flat series (constant close → zero log returns)", () => {
-        const flat = [100, 100, 100, 100].map((c, i) => candle(i, c));
-        expect(computePairLogReturnVolatility(flat)).to.equal(0);
-    });
-
-    it("equals the stdev of the alternating log returns (+a, -a, +a, -a) = a", () => {
-        // closes 100,101,100,101,100 → returns +a,-a,+a,-a with a = ln(1.01).
-        const series = [100, 101, 100, 101, 100].map((c, i) => candle(i, c));
-        const expected = Math.log(1.01);
-        expect(computePairLogReturnVolatility(series)!).to.be.closeTo(expected, 1e-9);
-    });
-
-    it("is propagated into the archived performance payload from the result", () => {
-        const payload = buildAssetOpportunityPerformancePayload({
-            result: makeAssetResult({ pairVolatility: 0.0123 }),
-            rank: 1,
-        });
-        expect(payload.pairVolatility).to.be.closeTo(0.0123, 1e-9);
-    });
-
-    it("defaults to null in the payload when the result did not carry it", () => {
-        const payload = buildAssetOpportunityPerformancePayload({
-            result: makeAssetResult(),
-            rank: 1,
-        });
-        expect(payload.pairVolatility).to.equal(null);
-    });
-});
