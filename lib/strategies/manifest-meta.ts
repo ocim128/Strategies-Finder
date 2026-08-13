@@ -730,4 +730,904 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "atr_r_multiple_follow",
+        name: "ATR R-Multiple Follow",
+        description: "Follows single-bar moves of 2+ prior-ATR, trading impulse magnitude in volatility units.",
+        defaultParams: {
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "ATR Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "atr_regime_follow",
+        name: "ATR Regime Follow",
+        description: "Trades single-bar direction only when ATR sits at a high percentile of its own history.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "ATR / Regime Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "body_direction_autocorr_switch",
+        name: "Body Direction Autocorrelation Switch",
+        description: "Routes follow vs fade by the sign of the rolling lag-1 autocorrelation of body direction.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Autocorrelation Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "deep_wick_reversal",
+        name: "Deep Wick Reversal",
+        description: "Reverses at bars whose lower or upper wick sits at a percentile extreme of its own history.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Percentile Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "dual_median_crossover",
+        name: "Dual Median Crossover",
+        description: "Trades the crossover of a fast rolling median of closes through a slow one.",
+        defaultParams: {
+        lookback: 60,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Slow Median Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "gap_percentile_fade",
+        name: "Gap Percentile Fade",
+        description: "Fades reopen gaps whose |gap| sits at a percentile extreme of its own history.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Percentile Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "indecision_share_fade",
+        name: "Indecision Share Fade",
+        description: "Fades directional closes when most bars in the window are doji.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Indecision Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "median_extreme_envelope_breakout",
+        name: "Median Extreme Envelope Breakout",
+        description: "Enters when the close breaks the trailing median of highs or median of lows.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Envelope Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "median_side_streak_follow",
+        name: "Median Side Streak Follow",
+        description: "Follows streaks of consecutive closes on the same side of the rolling median.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Median Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "true_range_extreme_fade",
+        name: "True Range Extreme Fade",
+        description: "Fades the direction of bars whose true range sits at a percentile extreme of its own history.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Percentile Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "band_walkaway_fade",
+        name: "Band Walkaway Fade",
+        description: "Fades when the close has spent consecutive bars outside the median +/- ATR band.",
+        defaultParams: {
+        bandWidth: 2,
+    } as Record<string, number>,
+        paramLabels: {
+        bandWidth: "Band Width (ATR)",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["bandWidth"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "cmf_extreme_fade",
+        name: "CMF Extreme Fade",
+        description: "Fades the cumulative money-flow proxy when it pins at an extreme over the lookback.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "CMF Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "decay_dispersion_fade",
+        name: "Decay Dispersion Fade",
+        description: "Fades stretch measured in decay-weighted standard deviations around a decay-weighted fair center.",
+        defaultParams: {
+        decay: 0.95,
+    } as Record<string, number>,
+        paramLabels: {
+        decay: "Decay Retention",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["decay"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_extreme_follow",
+        name: "Initiative Pressure Extreme Follow",
+        description: "Follows bars whose initiative pressure sits at a percentile extreme of its own history.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Pressure Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "median_crossing_chop_fade",
+        name: "Median Crossing Chop Fade",
+        description: "Fades toward the rolling median when the close flips it often enough to signal chop.",
+        defaultParams: {
+        lookback: 24,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Median / Crossing Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "placement_forecast_slope",
+        name: "Placement Forecast Slope",
+        description: "Trades the estimated rolling correlation between close placement and the next bar's return.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Estimation Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "return_kurtosis_regime_switch",
+        name: "Return Kurtosis Regime Switch",
+        description: "Follows moves in thin-tailed return regimes and fades them in fat-tailed regimes.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Kurtosis Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "trailing_envelope_breakout",
+        name: "Trailing Envelope Breakout",
+        description: "Breaks the prior-only trailing high/low envelope only when the close earns the new territory.",
+        defaultParams: {
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Envelope Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "trend_slope_strength_follow",
+        name: "Trend Slope Strength",
+        description: "Trades the rolling correlation of closes with the bar index, the scale-free steepness of the trend line.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Trend Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vol_expansion_ratio_follow",
+        name: "Volatility Expansion Ratio",
+        description: "Follows the expansion bar when short-window return volatility jumps relative to its long baseline.",
+        defaultParams: {
+        lookback: 60,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Baseline Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "body_size_acceleration",
+        name: "Body Size Acceleration",
+        description: "Continues direction when body conviction has grown sharply over the window and the bar is still large.",
+        defaultParams: {
+        lookback: 12,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Growth Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "cmf_flow_flip_confirmation",
+        name: "CMF Flow Flip Confirmation",
+        description: "Trades the zero-crossing of the cumulative money-flow proxy when the bar confirms the flip.",
+        defaultParams: {
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "CMF Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "decayed_body_direction_balance",
+        name: "Decayed Body Direction Balance",
+        description: "Follows the current body when the decayed balance of body directions is clearly biased in its favor.",
+        defaultParams: {
+        decay: 0.9,
+    } as Record<string, number>,
+        paramLabels: {
+        decay: "Decay Retention",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["decay"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "gap_autocorrelation_persistence",
+        name: "Gap Autocorrelation Persistence",
+        description: "Follows the current gap when gap directions have been serially dependent over the window.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Autocorrelation Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_flip_continuation",
+        name: "Initiative Pressure Flip Continuation",
+        description: "Follows the bar when initiative pressure flips from rejection into acceptance or back.",
+        defaultParams: {
+        lookback: 24,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Pressure Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "open_close_sweep_momentum",
+        name: "Open Close Sweep Momentum",
+        description: "Follows rare full-range sweeps, measured as close location minus open location at a percentile extreme.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Sweep Percentile Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "placement_band_breakout",
+        name: "Placement Band Breakout",
+        description: "Breaks the prior-only trailing envelope of close acceptance, a new extreme in how bars close.",
+        defaultParams: {
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Envelope Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "positional_streak_persistence",
+        name: "Positional Streak Persistence",
+        description: "Follows streaks of closes on the same side of the rolling median when the current bar agrees.",
+        defaultParams: {
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Median Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "robust_placement_extreme_continuation",
+        name: "Robust Placement Extreme Continuation",
+        description: "Continues when close location is robustly extreme relative to its own trailing median and MAD.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Robust Z Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_cascade_streak",
+        name: "Volatility Cascade Streak",
+        description: "Follows the net direction when consecutive expanding-range bars form a volatility cascade.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Net-Change Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "acceptance_entropy_consistency",
+        name: "Acceptance Entropy Consistency",
+        description: "Follows the current bar only when close-acceptance placement has been consistent over the window.",
+        defaultParams: {
+        lookback: 24,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Entropy Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "body_mid_drift_continuation",
+        name: "Body Mid Drift Continuation",
+        description: "Continues the drift of the wick-robust body midpoint when both the smoothed and current drift agree.",
+        defaultParams: {
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Smoothing Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "efficiency_transition_momentum",
+        name: "Efficiency Transition Momentum",
+        description: "Enters on the one-bar acceleration of the efficiency ratio, the moment a path straightens.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Efficiency Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "gap_fill_intrabar_fade",
+        name: "Gap Fill Intrabar Fade",
+        description: "Fades extreme gaps that the same bar recovers intrabar back through the gap level.",
+        defaultParams: {
+        lookback: 24,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Gap Percentile Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "median_velocity_pullback",
+        name: "Median Velocity Pullback",
+        description: "Buys dips into a rising rolling median and rallies into a falling one.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Median Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "placement_regime_flip",
+        name: "Placement Regime Flip",
+        description: "Trades the zero-cross of the smoothed close-acceptance series, a flip in how bars close.",
+        defaultParams: {
+        lookback: 24,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Smoothing Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "placement_skewness_anchor",
+        name: "Placement Skewness Anchor",
+        description: "Trades with the tail of the close-location distribution when the current bar confirms it.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Skewness Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "price_flow_divergence_fade",
+        name: "Price Flow Divergence Fade",
+        description: "Fades trailing-range extremes printed without supporting money flow.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Range / Flow Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_volume_coupling_fade",
+        name: "Range Volume Coupling Fade",
+        description: "Routes by the correlation of bar size with relative volume participation.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Coupling Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "wick_imbalance_persistence_continuation",
+        name: "Wick Imbalance Persistence Continuation",
+        description: "Continues the side whose wick imbalance has been persistently defending.",
+        defaultParams: {
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Smoothing Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "adaptive_threshold_reversion",
+        name: "Adaptive Threshold Reversion",
+        description: "Fades closes stretched beyond an ATR band whose width adapts to the estimated mean-reversion speed of the deviation series.",
+        defaultParams: {
+        decay: 0.95,
+    } as Record<string, number>,
+        paramLabels: {
+        decay: "Decay Factor",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["decay"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "ar1_residual_reversion",
+        name: "AR(1) Residual Reversion",
+        description: "Fades closes that deviate at least 1.5 residual standard deviations from their own trailing-window AR(1) forecast.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "AR Fit Window",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "climax_volume_reversion",
+        name: "Climax Volume Reversion",
+        description: "Fades closes at least 1.5 ATR from the rolling median when the bar's volume ranks at or above the 90th percentile.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Median & Volume Percentile Window",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "confirmed_reversion_fade",
+        name: "Confirmed Reversion Fade",
+        description: "Fades closes still at least 1.5 ATR from the rolling median once the stretch has started collapsing over the prior 3 bars.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Median Anchor Window",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "dislocation_extreme_fade",
+        name: "Dislocation Extreme Fade",
+        description: "Fades the first bar whose median-ATR stretch becomes a new prior-only record for the lookback window.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Median & Record Window",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "double_stretch_exhaustion_fade",
+        name: "Double Stretch Exhaustion Fade",
+        description: "Fades the second consecutive bar stretched at least 1.2 ATR from the rolling median.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Median Anchor Window",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "quiet_regime_reversion",
+        name: "Quiet Regime Reversion",
+        description: "Fades closes at least 1.5 ATR from the rolling median only while ATR sits at or below the 30th percentile of its own history.",
+        defaultParams: {
+        lookback: 30,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "ATR Period & Percentile Window",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "stationary_center_fade",
+        name: "Stationary Center Fade",
+        description: "Fades closes at least 1.5 ATR from the rolling median only when the median itself has drifted less than 0.5 ATR over the window.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Median Anchor Window",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "stretch_percentile_fade",
+        name: "Stretch Percentile Fade",
+        description: "Fades closes whose median-ATR stretch ranks in the bottom 5% or top 5% of its own history.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Median & Percentile Window",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "window_open_anchor_reversion",
+        name: "Window Open Anchor Reversion",
+        description: "Fades closes stretched at least 2.5 ATR from the opening price of the bar that started the trailing window.",
+        defaultParams: {
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Window Open Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];
