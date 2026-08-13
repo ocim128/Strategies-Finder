@@ -932,7 +932,7 @@ interface FinderAssetOpportunityRequestBody {
     exitStrategyKeys?: unknown;
     useRustEnginePreference?: unknown;
     providerBySymbol?: unknown;
-    /** Asset Opportunity batch archive ranking; empty/omitted means run default. */
+    /** Legacy field accepted for compatibility; batch archives always use All Sorts. */
     archiveSort?: unknown;
 }
 
@@ -971,7 +971,7 @@ export interface FinderAssetOpportunityRunInput {
     minFreshSupport: number;
     /** Reusable caches for a multi-iteration Asset Opportunity batch. */
     assetLoadContext?: BatchDatasetLoadContext;
-    /** Sort metric used only for automatic batch archive payloads. */
+    /** Legacy compatibility field; automatic batch archives always use All Sorts. */
     archiveSort?: FinderAssetOpportunityArchiveSort | null;
     /**
      * Optional fire-and-forget per-run diagnostics sink (JSONL run log). The
@@ -1829,7 +1829,7 @@ export async function processFinderAssetOpportunityBatchRun(
         startHoldoutBars: batch.startHoldoutBars,
         endHoldoutBars: batch.endHoldoutBars,
         totalIterations,
-        archiveSort: input.archiveSort ?? null,
+        archiveSort: ASSET_OPPORTUNITY_ALL_SORTS,
     });
 
     writer({
@@ -1841,7 +1841,7 @@ export async function processFinderAssetOpportunityBatchRun(
         totalAssets,
         strategyKeys: selectedStrategies.map((strategy) => strategy.key),
         strategyNames: selectedStrategies.map((strategy) => strategy.name),
-        archiveSort: input.archiveSort ?? null,
+        archiveSort: ASSET_OPPORTUNITY_ALL_SORTS,
     });
 
     const isCancelled = () => runOwner !== owner || input.abortSignal.aborted;
@@ -1965,7 +1965,7 @@ export async function processFinderAssetOpportunityBatchRun(
         // ranking into this same per-N file.
         let archiveFilename = "";
         try {
-            for (const sortMetric of resolveAssetOpportunityArchiveSorts(input.archiveSort ?? null)) {
+            for (const sortMetric of resolveAssetOpportunityArchiveSorts()) {
                 const archiveResults = sortAssetOpportunityResultsByMetric(iteration.results, sortMetric);
                 const topResults = archiveResults
                     .slice(0, Math.max(1, input.options.topN))
@@ -2381,12 +2381,11 @@ async function handleAssetOpportunityBatchRunRequest(
     archiveRoot: string,
     runLogRoot: string,
 ): Promise<void> {
-    // Validates the inclusive holdout range + archive sort BEFORE acquiring
-    // ownership (inside the shared payload prep) so a malformed range can never
-    // start heavy work.
+    // Validates the inclusive holdout range + legacy archive-sort field BEFORE
+    // acquiring ownership so malformed input can never start heavy work.
     const prepared = await prepareAssetOpportunityRunPayload(body, { validate: true });
     const batchRange = prepared.batchRange!;
-    const archiveSort = prepared.archiveSort ?? null;
+    const archiveSort = ASSET_OPPORTUNITY_ALL_SORTS;
 
     const owner = acquireRunOwnership();
     const runAbortController = new AbortController();
@@ -2472,13 +2471,8 @@ function normalizeAssetOpportunityArchiveSort(
     return raw as FinderAssetOpportunityResortMetric;
 }
 
-function resolveAssetOpportunityArchiveSorts(
-    selection: FinderAssetOpportunityArchiveSort | null,
-): Array<FinderAssetOpportunityResortMetric | null> {
-    if (selection === ASSET_OPPORTUNITY_ALL_SORTS) {
-        return [null, ...getAssetOpportunityResortMetrics()];
-    }
-    return [selection];
+function resolveAssetOpportunityArchiveSorts(): Array<FinderAssetOpportunityResortMetric | null> {
+    return [null, ...getAssetOpportunityResortMetrics()];
 }
 
 // ---------------------------------------------------------------------------

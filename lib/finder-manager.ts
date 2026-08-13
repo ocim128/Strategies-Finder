@@ -43,6 +43,7 @@ import {
 } from "./finder/finder-universe-metrics";
 import {
 	ASSET_OPPORTUNITY_ALL_SORTS,
+	deduplicateAssetOpportunityResultsBySymbol,
 	sortAssetOpportunityResults,
 	sortAssetOpportunityResultsByMetric,
 	getAssetOpportunityResortMetrics,
@@ -680,14 +681,20 @@ export class FinderManager {
 		});
 		if (!snapshot) return;
 
-		this.latestResults = snapshot.results;
-		if (snapshot.results.scope === 'asset_opportunity') {
-			this.assetOpportunityRunResults = [...snapshot.results.results];
-			this.assetOpportunityDefaultResults = [...snapshot.results.results];
+		const restoredResults = snapshot.results.scope === 'asset_opportunity'
+			? {
+				scope: 'asset_opportunity' as const,
+				results: deduplicateAssetOpportunityResultsBySymbol(snapshot.results.results),
+			}
+			: snapshot.results;
+		this.latestResults = restoredResults;
+		if (restoredResults.scope === 'asset_opportunity') {
+			this.assetOpportunityRunResults = [...restoredResults.results];
+			this.assetOpportunityDefaultResults = [...restoredResults.results];
 		}
 		debugLogger.event("finder.latest_results_restored", {
-			scope: snapshot.results.scope,
-			count: snapshot.results.results.length,
+			scope: restoredResults.scope,
+			count: restoredResults.results.length,
 			symbol: snapshot.symbol,
 			interval: snapshot.interval,
 			savedAt: snapshot.savedAt,
@@ -2217,10 +2224,7 @@ export class FinderManager {
 				&& snapshot.terminalAssets) {
 				this.assetOpportunityRunResults = sortAssetOpportunityResults([...snapshot.terminalAssets]);
 				this.assetOpportunityDefaultResults = [...this.assetOpportunityRunResults];
-				this.setLatestResults({
-					scope: "asset_opportunity",
-					results: this.assetOpportunityRunResults.slice(0, Math.max(1, this.uiState.topN)),
-				});
+				this.setAssetOpportunityLatestResults(this.assetOpportunityRunResults);
 				this.stashAndResetResort();
 				this.renderLatestResults();
 				this.latestDiagnostics = snapshot.diagnostics;
@@ -2569,10 +2573,7 @@ export class FinderManager {
 					]);
 					// Provisional streamed asset — no persistence until terminal
 					// asset_done adoption.
-					this.setLatestResults({
-						scope: 'asset_opportunity',
-						results: this.assetOpportunityRunResults.slice(0, Math.max(1, options.topN)),
-					}, false);
+					this.setAssetOpportunityLatestResults(this.assetOpportunityRunResults, false, options.topN);
 					this.renderLatestResults();
 				},
 				onAssetDone: (event) => {
@@ -2585,10 +2586,7 @@ export class FinderManager {
 					if (isStillActive()) {
 						this.assetOpportunityRunResults = sortAssetOpportunityResults([...(terminalResults ?? [])]);
 						this.assetOpportunityDefaultResults = [...this.assetOpportunityRunResults];
-						this.setLatestResults({
-							scope: 'asset_opportunity',
-							results: this.assetOpportunityRunResults.slice(0, Math.max(1, options.topN)),
-						});
+						this.setAssetOpportunityLatestResults(this.assetOpportunityRunResults, true, options.topN);
 						this.stashAndResetResort();
 						this.renderLatestResults();
 					}
@@ -2623,10 +2621,7 @@ export class FinderManager {
 					failedAssets = recovered.assetTotals?.failedAssets ?? 0;
 					this.assetOpportunityRunResults = sortAssetOpportunityResults([...terminalResults]);
 					this.assetOpportunityDefaultResults = [...this.assetOpportunityRunResults];
-					this.setLatestResults({
-						scope: 'asset_opportunity',
-						results: this.assetOpportunityRunResults.slice(0, Math.max(1, options.topN)),
-					});
+					this.setAssetOpportunityLatestResults(this.assetOpportunityRunResults, true, options.topN);
 					this.stashAndResetResort();
 					this.renderLatestResults();
 				} else if (!this.isCancelled) {
@@ -2677,14 +2672,7 @@ export class FinderManager {
 			uiManager.showToast(range.error, 'error');
 			return false;
 		}
-		const selectedArchiveSort = dom.finderResort.value;
-		const archiveSort = selectedArchiveSort === ASSET_OPPORTUNITY_ALL_SORTS
-			? ASSET_OPPORTUNITY_ALL_SORTS
-			: selectedArchiveSort && getAssetOpportunityResortMetrics().includes(
-				selectedArchiveSort as FinderAssetOpportunityResortMetric,
-			)
-				? selectedArchiveSort as FinderAssetOpportunityResortMetric
-				: null;
+		const archiveSort = ASSET_OPPORTUNITY_ALL_SORTS;
 
 		const exitStrategyCandidates = await this.resolveExitStrategyCandidates(options, selectedStrategies);
 		const runId = this.generateServerRunId();
@@ -2741,6 +2729,7 @@ export class FinderManager {
 		range: { start: number; end: number },
 		archiveSort: FinderAssetOpportunityArchiveSort | null = null,
 	): Promise<ServerAssetOpportunityRunOutcome> {
+		archiveSort = ASSET_OPPORTUNITY_ALL_SORTS;
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
 		const symbols = options.assetOpportunity?.symbols ?? [];
@@ -2808,10 +2797,7 @@ export class FinderManager {
 		const adoptIterationRows = (rows: readonly FinderAssetOpportunityResult[], persist: boolean): void => {
 			this.assetOpportunityRunResults = sortAssetOpportunityResults([...rows]);
 			this.assetOpportunityDefaultResults = [...this.assetOpportunityRunResults];
-			this.setLatestResults({
-				scope: 'asset_opportunity',
-				results: this.assetOpportunityRunResults.slice(0, Math.max(1, options.topN)),
-			}, persist);
+			this.setAssetOpportunityLatestResults(this.assetOpportunityRunResults, persist, options.topN);
 			this.stashAndResetResort();
 			this.renderLatestResults();
 		};
@@ -3507,6 +3493,19 @@ export class FinderManager {
 		}
 	}
 
+	/** Keep displayed and copied Asset Opportunity rows unique by pair symbol. */
+	private setAssetOpportunityLatestResults(
+		results: readonly FinderAssetOpportunityResult[],
+		persist = true,
+		limit = this.uiState.topN,
+	): void {
+		this.setLatestResults({
+			scope: 'asset_opportunity',
+			results: deduplicateAssetOpportunityResultsBySymbol(results)
+				.slice(0, Math.max(1, limit)),
+		}, persist);
+	}
+
 	private getCurrentChartResults(): FinderResult[] {
 		return this.latestResults.scope === 'current_chart' ? this.latestResults.results : [];
 	}
@@ -3721,7 +3720,6 @@ export class FinderManager {
 				options.push({ value: metric, label: UNIVERSE_METRIC_FULL_LABELS[metric] });
 			}
 		} else if (scope === 'asset_opportunity') {
-			options.push({ value: ASSET_OPPORTUNITY_ALL_SORTS, label: "All Sorts (Archive)" });
 			for (const metric of getAssetOpportunityResortMetrics()) {
 				options.push({
 					value: metric,
@@ -3767,10 +3765,7 @@ export class FinderManager {
 		if (!metric) {
 			if (scope === 'asset_opportunity' && this.assetOpportunityDefaultResults.length > 0) {
 				this.assetOpportunityRunResults = [...this.assetOpportunityDefaultResults];
-				this.setLatestResults({
-					scope: 'asset_opportunity',
-					results: this.assetOpportunityRunResults.slice(0, Math.max(1, this.uiState.topN)),
-				});
+				this.setAssetOpportunityLatestResults(this.assetOpportunityRunResults);
 			} else if (this.originalLatestResults && this.originalLatestResults.scope === scope) {
 				this.setLatestResults(this.originalLatestResults);
 			}
@@ -3806,10 +3801,7 @@ export class FinderManager {
 			if (metric !== FRESH_SIGNAL_LIBRARIES_METRIC) {
 				this.assetOpportunityRunResults = sorted;
 			}
-			this.setLatestResults({
-				scope: 'asset_opportunity',
-				results: sorted.slice(0, Math.max(1, this.uiState.topN)),
-			});
+			this.setAssetOpportunityLatestResults(sorted);
 		} else if (scope === 'strategy_quality') {
 			const results = this.latestResults.results;
 			const sorted = sortStrategyQualityResultsByMetric(results, metric as FinderStrategyQualityMetric);

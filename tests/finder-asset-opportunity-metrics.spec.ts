@@ -15,6 +15,7 @@ import {
     computeAssetSupportCounts,
     decideAssetGrade,
     compareAssetOpportunityResults,
+    deduplicateAssetOpportunityResultsBySymbol,
     sortAssetOpportunityResults,
     sortAssetOpportunityResultsByMetric,
     getAssetOpportunityResortMetrics,
@@ -77,6 +78,17 @@ describe("Asset Opportunity support counts", () => {
             ],
         });
         expect(counts.freshSameDirection).to.equal(0);
+    });
+});
+
+describe("Asset Opportunity presentation rows", () => {
+    it("keeps the first row for each normalized symbol", () => {
+        const first = assetResultForSymbol("AAPL+SPY");
+        const duplicate = assetResultForSymbol(" aapl+spy ");
+        const other = assetResultForSymbol("MSFT+SPY");
+
+        expect(deduplicateAssetOpportunityResultsBySymbol([first, duplicate, other]))
+            .to.deep.equal([first, other]);
     });
 });
 
@@ -248,6 +260,7 @@ describe("Asset Opportunity post-run re-sort", () => {
         maxDrawdownPercent?: number;
         expectancy?: number;
         avgWin?: number;
+        avgLoss?: number;
         totalTrades?: number;
     }): FinderAssetOpportunityResult {
         return {
@@ -277,7 +290,7 @@ describe("Asset Opportunity post-run re-sort", () => {
                 winningTrades: 0,
                 losingTrades: 0,
                 avgWin: args.avgWin ?? 0,
-                avgLoss: 0,
+                avgLoss: args.avgLoss ?? 0,
                 sharpeRatio: args.sharpeRatio ?? 0,
                 equityCurve: [],
             },
@@ -375,6 +388,35 @@ describe("Asset Opportunity post-run re-sort", () => {
         expect(sorted.map((r) => r.symbol)).to.deep.equal(["A", "Z"]);
     });
 
+    it("breaks maxDrawdownPercent ties by expectancy, not symbol", () => {
+        // Small-maxHoldBars backtests often share maxDrawdownPercent = 0 (equity
+        // never drew down), which used to collapse the top-N into an alphabetical
+        // slice. The higher-evidenced z-symbol candidate must now outrank the
+        // a-symbol one when both tie at the ascending optimum.
+        const aName = makeResortResult({ symbol: "AAA•+SPY•", maxDrawdownPercent: 0, expectancy: 0.1, totalTrades: 5 });
+        const zName = makeResortResult({ symbol: "ZZZ•+SPY•", maxDrawdownPercent: 0, expectancy: 2.5, totalTrades: 50 });
+        const sorted = sortAssetOpportunityResultsByMetric([aName, zName], "maxDrawdownPercent");
+        expect(sorted.map((r) => r.symbol)).to.deep.equal(["ZZZ•+SPY•", "AAA•+SPY•"]);
+    });
+
+    it("breaks sharpeRatio ties by expectancy, not symbol", () => {
+        // Sharpe collapses to a common value across many short-hold candidates;
+        // ties must fall back to realized expectancy rather than the ticker letter.
+        const aName = makeResortResult({ symbol: "AAA•+SPY•", sharpeRatio: 1.2, expectancy: 0.2, totalTrades: 4 });
+        const zName = makeResortResult({ symbol: "ZZZ•+SPY•", sharpeRatio: 1.2, expectancy: 3.0, totalTrades: 40 });
+        const sorted = sortAssetOpportunityResultsByMetric([aName, zName], "sharpeRatio");
+        expect(sorted.map((r) => r.symbol)).to.deep.equal(["ZZZ•+SPY•", "AAA•+SPY•"]);
+    });
+
+    it("falls through expectancy to netProfitPercent when breaking a metric tie", () => {
+        // Locks the cascade depth: when the primary metric AND expectancy both
+        // tie, netProfitPercent decides before symbol.
+        const aName = makeResortResult({ symbol: "AAA•+SPY•", maxDrawdownPercent: 0, expectancy: 1, netProfitPercent: 5 });
+        const zName = makeResortResult({ symbol: "ZZZ•+SPY•", maxDrawdownPercent: 0, expectancy: 1, netProfitPercent: 9 });
+        const sorted = sortAssetOpportunityResultsByMetric([aName, zName], "maxDrawdownPercent");
+        expect(sorted.map((r) => r.symbol)).to.deep.equal(["ZZZ•+SPY•", "AAA•+SPY•"]);
+    });
+
     it("does not mutate the input array", () => {
         const original = [
             makeResortResult({ symbol: "C", netProfit: 3 }),
@@ -402,7 +444,23 @@ describe("Asset Opportunity post-run re-sort", () => {
         expect(metrics).to.include("expectancy");
         expect(metrics).to.include("profitFactor");
         expect(metrics).to.include("totalTrades");
+        expect(metrics).to.include("payoffRatio");
         expect(metrics).to.include("freshSignalLibraries");
+    });
+
+    it("sorts by payoffRatio descending (avgWin / avgLoss; larger is better)", () => {
+        // Orthogonal to totalTrades: measures outcome asymmetry, not activity.
+        const low = makeResortResult({ symbol: "A", avgWin: 10, avgLoss: 10 }); // payoff 1.0
+        const high = makeResortResult({ symbol: "B", avgWin: 30, avgLoss: 10 }); // payoff 3.0
+        const sorted = sortAssetOpportunityResultsByMetric([low, high], "payoffRatio");
+        expect(sorted.map((r) => r.symbol)).to.deep.equal(["B", "A"]);
+    });
+
+    it("treats an all-win candidate (avgLoss = 0) as the best payoffRatio", () => {
+        const finite = makeResortResult({ symbol: "A", avgWin: 5, avgLoss: 1 }); // payoff 5
+        const allWin = makeResortResult({ symbol: "B", avgWin: 5, avgLoss: 0 }); // +Infinity
+        const sorted = sortAssetOpportunityResultsByMetric([finite, allWin], "payoffRatio");
+        expect(sorted.map((r) => r.symbol)).to.deep.equal(["B", "A"]);
     });
 
     it("groups the consensus resort by symbol and counts each strategy library once", () => {

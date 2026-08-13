@@ -224,7 +224,7 @@ export type FinderAssetOpportunityBatchStreamEvent =
         totalAssets: number;
         strategyKeys: string[];
         strategyNames: string[];
-        /** Sort metric used for the automatically archived top-N payload. */
+        /** Always All Sorts; retained in the event for archive observability. */
         archiveSort: FinderAssetOpportunityArchiveSort | null;
     }
     | {

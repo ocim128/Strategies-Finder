@@ -35,6 +35,7 @@ export type FinderMetric =
     | 'entryScore'
     | 'exitScore'
     | 'averageGain'
+    | 'payoffRatio'
     | 'totalTrades'
     | 'polyScore'
     | 'polyWins'
@@ -418,6 +419,13 @@ export interface FinderAssetOpportunityResult {
     oosHorizonMetrics?: import('../finder/finder-asset-opportunity-oos').FinderAssetOosMetrics;
     /** Distinct selected strategy libraries with a fresh entry for this symbol. */
     freshSignalLibraryCount?: number;
+    /**
+     * Pair in-sample volatility (stdev of close-to-close log returns of the
+     * pair ratio series). Per-symbol; attached by the Asset Opportunity runner
+     * so the archive can carry it for volatility-matched analysis. The Finder
+     * writes no batch artifacts, so this scalar is the durable risk record.
+     */
+    pairVolatility?: number | null;
     support: FinderAssetSupportCounts;
     grade: FinderAssetDecisionGrade;
 }

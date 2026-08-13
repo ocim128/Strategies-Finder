@@ -16,6 +16,7 @@ import { finderManager } from "../lib/finder-manager";
 import { FinderUI } from "../lib/finder/finder-ui";
 import { clearDomElementCache } from "../lib/dom-utils";
 import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metrics";
+import { ASSET_OPPORTUNITY_ALL_SORTS } from "../lib/finder/finder-asset-opportunity-metrics";
 import { createFakeFinderElement } from "./helpers/fake-finder-manager-dom";
 import type { FinderRunStatusSnapshot } from "../lib/finder/server/finder-stream-types";
 import type { FinderUniverseCandidate, FinderUniverseSymbolResult } from "../lib/types/finder";
@@ -502,7 +503,7 @@ describe("FinderManager Asset Opportunity batch stream contracts", () => {
         );
 
         const submittedBody = JSON.parse(String(mockFetch.requests[0]?.init?.body));
-        expect(submittedBody.archiveSort).to.equal("freshSignalLibraries");
+        expect(submittedBody.archiveSort).to.equal(ASSET_OPPORTUNITY_ALL_SORTS);
 
         mockFetch.resolveFirst(makeNdjsonResponse([
             {

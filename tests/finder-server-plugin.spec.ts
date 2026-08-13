@@ -24,7 +24,6 @@ import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metr
 import {
     ASSET_OPPORTUNITY_ALL_SORTS,
     getAssetOpportunityResortMetrics,
-    sortAssetOpportunityResultsByMetric,
     type FinderAssetOpportunityArchiveSort,
 } from "../lib/finder/finder-asset-opportunity-metrics";
 import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
@@ -1104,7 +1103,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
             expect(start.totalIterations).to.equal(3);
             expect(start.totalAssets).to.equal(2);
             expect(start.strategyKeys).to.deep.equal(["asset_batch_test"]);
-            expect(start.archiveSort).to.equal(null);
+            expect(start.archiveSort).to.equal(ASSET_OPPORTUNITY_ALL_SORTS);
         }
 
         const done = events[events.length - 1]!;
@@ -1132,8 +1131,11 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                 expect(asset.oosHorizonMetrics?.ignoreLastBars).to.equal(iteration.holdoutBars);
             }
         }
-        // One append per N, in ascending order, filename derived only from N.
-        expect(appended).to.deep.equal(["oos-holdout-2-bars.txt", "oos-holdout-3-bars.txt", "oos-holdout-4-bars.txt"]);
+        // One block per archive sort for each N, in ascending N order.
+        const archiveBlockCount = 1 + getAssetOpportunityResortMetrics().length;
+        expect(appended).to.deep.equal([2, 3, 4].flatMap((holdout) =>
+            Array.from({ length: archiveBlockCount }, () => `oos-holdout-${holdout}-bars.txt`),
+        ));
 
         // Terminal status carries the batch counts and the LAST iteration rows.
         const status = handleStatusRequest("batch-order");
@@ -1153,7 +1155,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         expect(status.assetDiagnostics).to.not.equal(null);
     });
 
-    it("uses the selected resort metric for every automatic archive block", async () => {
+    it("always archives the default order and every resort metric", async () => {
         const { events, contents } = await runAssetBatch({
             owner: 7306,
             start: 2,
@@ -1165,26 +1167,21 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         const start = events[0]!;
         expect(start.type).to.equal("asset_batch_start");
         if (start.type === "asset_batch_start") {
-            expect(start.archiveSort).to.equal("netProfit");
+            expect(start.archiveSort).to.equal(ASSET_OPPORTUNITY_ALL_SORTS);
         }
-        expect(contents).to.have.length(2);
-        expect(contents.every((content) => content.includes("Archive sort: netProfit"))).to.equal(true);
+        const expectedSortLabels = [
+            "run_default",
+            ...getAssetOpportunityResortMetrics(),
+        ];
+        expect(contents).to.have.length(2 * expectedSortLabels.length);
+        for (const sortLabel of expectedSortLabels) {
+            expect(contents.filter((content) => content.includes(`Archive sort: ${sortLabel}\n`))).to.have.length(2);
+        }
         expect(contents.every((content) => !content.includes("equityCurve"))).to.equal(true);
         expect(contents.every((content) => !content.includes("selectionMetrics"))).to.equal(true);
         const iterations = events.filter(
             (event) => event.type === "asset_batch_iteration_done",
         ) as Array<Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_iteration_done" }>>;
-        for (let index = 0; index < iterations.length; index += 1) {
-            // The archive block now also contains a JSON baseline object whose
-            // horizons array appears before the top-results array.
-            const jsonStart = contents[index]!.lastIndexOf("\n[") + 1;
-            const archived = JSON.parse(contents[index]!.slice(jsonStart)) as Array<{ symbol: string }>;
-            const expected = sortAssetOpportunityResultsByMetric(
-                iterations[index]!.assets,
-                "netProfit",
-            ).slice(0, 2).map((result) => result.symbol);
-            expect(archived.map((result) => result.symbol)).to.deep.equal(expected);
-        }
     });
 
     it("appends the default and every resort metric when All Sorts is selected", async () => {
@@ -1228,7 +1225,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
             (event) => event.type === "asset_batch_iteration_done",
         ) as Array<Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_iteration_done" }>>;
         expect(iterations.map((event) => event.holdoutBars)).to.deep.equal([1]);
-        expect(appended).to.deep.equal(["oos-holdout-1-bars.txt"]);
+        expect(appended).to.deep.equal(Array.from({ length: 1 + getAssetOpportunityResortMetrics().length }, () => "oos-holdout-1-bars.txt"));
         const done = events[events.length - 1]!;
         expect(done.type).to.equal("asset_batch_done");
         if (done.type === "asset_batch_done") {
@@ -1280,11 +1277,10 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
             runId: "batch-empty-results",
         });
 
-        expect(appended).to.deep.equal([
-            "oos-holdout-2-bars.txt",
-            "oos-holdout-3-bars.txt",
-        ]);
-        expect(contents).to.have.length(2);
+        expect(appended).to.deep.equal([2, 3].flatMap((holdout) =>
+            Array.from({ length: 1 + getAssetOpportunityResortMetrics().length }, () => `oos-holdout-${holdout}-bars.txt`),
+        ));
+        expect(contents).to.have.length(2 * (1 + getAssetOpportunityResortMetrics().length));
         expect(contents.every((content) => content.includes("\n[]\n"))).to.equal(true);
 
         const iterations = events.filter(
@@ -1311,7 +1307,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         ) as Array<Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_iteration_done" }>>;
         expect(iterations).to.have.length(1);
         expect(iterations[0]!.holdoutBars).to.equal(5);
-        expect(appended).to.deep.equal(["oos-holdout-5-bars.txt"]);
+        expect(appended).to.deep.equal(Array.from({ length: 1 + getAssetOpportunityResortMetrics().length }, () => "oos-holdout-5-bars.txt"));
     });
 
     function makeBatchRouteRequest(body: Record<string, unknown>): any {

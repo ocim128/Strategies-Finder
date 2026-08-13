@@ -51,17 +51,16 @@ ascending (`start <= end`), each at most 100,000, and at most 100 values
 (`normalizeFinderAssetOosBatchHoldoutRange` in
 `lib/finder/finder-asset-opportunity-oos.ts`).
 
-Before starting a batch, the browser captures the existing Asset Opportunity
-`finderResort` selection and sends it as `archiveSort`. An empty selection uses
-the normal run ordering; otherwise the server validates and applies the same
-`sortAssetOpportunityResultsByMetric` comparator used by the post-run Re-Sort
-control. The choice is fixed for the batch, so changing Re-Sort after the run
-starts does not change blocks that have already been appended.
+The batch archive always writes the default block plus every Asset Opportunity
+Re-Sort metric. For each holdout N, those rankings are appended as separate
+delimited blocks in the same `oos-holdout-<N>-bars.txt` file. The `finderResort`
+control only changes the displayed Asset Opportunity rows after a run; it does
+not affect archive output.
 
-The `All Sorts (Archive)` choice expands to the default run order plus every
-Asset Opportunity Re-Sort metric. For each holdout N, those rankings are
-appended as separate delimited blocks in the same `oos-holdout-<N>-bars.txt`
-file.
+The browser displays and persists one representative row per normalized pair
+symbol. Server iteration results and archive blocks remain strategy-level so
+the archived evidence can still show which strategy libraries contributed to a
+pair.
 
 The batch coordinator (`processFinderAssetOpportunityBatchRun` in
 `lib/finder/server/finder-vite-plugin.ts`) loops the range in ascending order
@@ -114,7 +113,7 @@ Batch stream events (`FinderAssetOpportunityBatchStreamEvent`):
 
 | Event | Purpose |
 | --- | --- |
-| `asset_batch_start` | Declares the validated range, iteration/asset totals, strategy names, and the fixed archive sort (`archiveSort`), including `All Sorts (Archive)`. |
+| `asset_batch_start` | Declares the validated range, iteration/asset totals, strategy names, and the fixed `All Sorts` archive mode (`archiveSort`). |
 | `asset_batch_progress` | Overall job percent plus in-iteration asset progress, current holdout, phase, and status text. |
 | `asset_batch_iteration_done` | Full scalar rows for THIS holdout only, current diagnostics/totals, and the archive filename (including empty-result blocks). |
 | `asset_batch_done` | Completed/failed holdout counts, last successfully archived iteration rows, holdout, totals, diagnostics, and summary. |

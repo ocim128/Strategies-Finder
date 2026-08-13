@@ -223,6 +223,24 @@ export function sortAssetOpportunityResults(results: FinderAssetOpportunityResul
 }
 
 /**
+ * Keep the first row for each normalized pair symbol. Callers should provide
+ * rows in the desired order first, so the retained row is that pair's
+ * representative for the current ranking.
+ */
+export function deduplicateAssetOpportunityResultsBySymbol(
+    results: readonly FinderAssetOpportunityResult[],
+): FinderAssetOpportunityResult[] {
+    const seenSymbols = new Set<string>();
+    return results.filter((result) => {
+        const symbol = result.symbol.trim().toUpperCase();
+        if (!symbol) return true;
+        if (seenSymbols.has(symbol)) return false;
+        seenSymbols.add(symbol);
+        return true;
+    });
+}
+
+/**
  * Metrics the post-run re-sort can rank Asset Opportunity results by. Most
  * map directly to scalar fields on `selectionResult: BacktestResult`; the
  * consensus metric is derived across strategy-level rows for each symbol.
@@ -244,6 +262,7 @@ const ASSET_RESORT_METRICS: readonly FinderAssetOpportunityResortMetric[] = [
     "winRate",
     "maxDrawdownPercent",
     "averageGain",
+    "payoffRatio",
     "totalTrades",
     FRESH_SIGNAL_LIBRARIES_METRIC,
 ];
@@ -288,6 +307,13 @@ function getAssetOpportunityMetricValue(
         case "maxDrawdownPercent": return Number.isFinite(sel.maxDrawdownPercent) ? sel.maxDrawdownPercent : 0;
         case "expectancy": return Number.isFinite(sel.expectancy) ? sel.expectancy : 0;
         case "averageGain": return Number.isFinite(sel.avgWin) ? sel.avgWin : 0;
+        case "payoffRatio": {
+            // avgWin / avgLoss. An all-win candidate (avgLoss = 0) maps to
+            // +Infinity so it ranks above every finite payoff (the comparator
+            // never computes Inf - Inf because the !== guard short-circuits).
+            if (sel.avgLoss > 0) return sel.avgWin / sel.avgLoss;
+            return sel.avgWin > 0 ? Number.POSITIVE_INFINITY : 0;
+        }
         case "totalTrades": return sel.totalTrades ?? 0;
         default: return 0;
     }
@@ -297,6 +323,15 @@ function getAssetOpportunityMetricValue(
  * Sort a copy of Asset Opportunity results by a single metric for the post-run
  * re-sort dropdown. When `metric` is null, falls back to the existing
  * grade-first lexicographic comparator (the run-time default).
+ *
+ * Metric ties fall back to realized performance scalars (expectancy, then
+ * netProfitPercent, then totalTrades) before the deterministic symbol order.
+ * This matters when the metric saturates at its optimum across many candidates
+ * — e.g. small `maxHoldBars` producing many never-drew-down backtests that
+ * share `maxDrawdownPercent = 0`, or sharpe values that collapse to a common
+ * figure — so the top-N is a performance slice rather than an alphabetical one.
+ * Grade is intentionally NOT consulted as a tiebreak; a metric re-sort
+ * overrides grade by design.
  *
  * Returns a NEW array — does not mutate the input.
  */
@@ -332,12 +367,21 @@ export function sortAssetOpportunityResultsByMetric(
                 return a.symbol.localeCompare(b.symbol);
             });
     }
+    const SECONDARY_TIEBREAK_METRICS: readonly FinderMetric[] = ["expectancy", "netProfitPercent", "totalTrades"];
     const ascending = metric === "maxDrawdownPercent";
     return [...results].sort((a, b) => {
         const valA = getAssetOpportunityMetricValue(a, metric);
         const valB = getAssetOpportunityMetricValue(b, metric);
         if (valA !== valB) return ascending ? valA - valB : valB - valA;
-        // Deterministic tie-breaker.
+        // Metric tie: fall back to realized performance scalars (each
+        // larger-is-better) before the deterministic symbol order, so a mass
+        // tie at the metric optimum does not collapse the top-N into an
+        // alphabetical slice. See the function docstring for full rationale.
+        for (const secondary of SECONDARY_TIEBREAK_METRICS) {
+            const sA = getAssetOpportunityMetricValue(a, secondary);
+            const sB = getAssetOpportunityMetricValue(b, secondary);
+            if (sA !== sB) return sB - sA;
+        }
         if (a.symbol < b.symbol) return -1;
         if (a.symbol > b.symbol) return 1;
         return 0;
