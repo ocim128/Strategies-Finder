@@ -1,14 +1,9 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import type { OHLCVData, Time } from "../../lib/types/strategies";
 import { builtInStrategyKeys } from "../../lib/strategies/manifest-keys";
 import { decay_anchor_reversion } from "../../lib/strategies/lib/decay_anchor_reversion";
 import { defended_low_reversion } from "../../lib/strategies/lib/defended_low_reversion";
 import { lagged_value_anchor_reversion } from "../../lib/strategies/lib/lagged_value_anchor_reversion";
-
-function bar(time: number, open: number, high: number, low: number, close: number): OHLCVData {
-    return { time: time as Time, open, high, low, close, volume: 1000 };
-}
 
 const SURVIVING_REVERSION_KEYS = [
     "decay_anchor_reversion",

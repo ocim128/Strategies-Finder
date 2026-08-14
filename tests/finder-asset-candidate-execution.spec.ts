@@ -1,11 +1,11 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { resolveAssetCandidateBacktestRunOptions } from "../lib/finder/finder-asset-candidate-execution";
-import type { OHLCVData } from "../lib/types/strategies";
+import type { OHLCVData, Time } from "../lib/types/strategies";
 
 const data: OHLCVData[] = [
-    { time: 1_700_000_000, open: 10, high: 11, low: 9, close: 10.5, volume: 100 },
-    { time: 1_700_000_300, open: 10.5, high: 12, low: 10, close: 11, volume: 120 },
+    { time: 1_700_000_000 as Time, open: 10, high: 11, low: 9, close: 10.5, volume: 100 },
+    { time: 1_700_000_300 as Time, open: 10.5, high: 12, low: 10, close: 11, volume: 120 },
 ];
 
 /**

@@ -2,15 +2,11 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import { readFileSync } from "node:fs";
 import {
-    generateStrategyManifestSource,
     generateStrategyManifestEagerSource,
-    generateStrategyMetaSource,
     generateStrategySummarySource,
     generateStrategyLoadersSource,
     generateStrategyKeysSource,
-    getStrategyManifestPath,
     getStrategyManifestEagerPath,
-    getStrategyMetaPath,
     getStrategySummaryPath,
     getStrategyLoadersPath,
     getStrategyKeysPath,
@@ -27,16 +23,8 @@ function checkSynced(path: string, generator: () => string, label: string): void
 }
 
 describe("Strategy manifest sync", () => {
-    it("keeps the generated manifest aligned with strategy files", () => {
-        checkSynced(getStrategyManifestPath(), generateStrategyManifestSource, "manifest.ts");
-    });
-
     it("keeps the generated eager manifest aligned with strategy files", () => {
         checkSynced(getStrategyManifestEagerPath(), generateStrategyManifestEagerSource, "manifest-eager.ts");
-    });
-
-    it("keeps the generated meta aligned with strategy files", () => {
-        checkSynced(getStrategyMetaPath(), generateStrategyMetaSource, "manifest-meta.ts");
     });
 
     it("keeps the generated summary aligned with strategy files", () => {

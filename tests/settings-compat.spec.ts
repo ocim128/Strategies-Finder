@@ -28,7 +28,7 @@ import {
     coerceBacktestDomSettingValue,
     getBacktestDomSettingContract,
 } from '../lib/backtest-settings-dom-contract';
-import { strategyManifest } from '../lib/strategies/manifest';
+import { builtInStrategyKeys } from '../lib/strategies/manifest-keys';
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from '../lib/strategy-defaults';
 import { resolvePolymarketEntrySelectionModeForDisplay } from '../lib/polymarket-entry-selection-mode';
 import { hasActivePolymarketProtection } from '../lib/polymarket-protection-settings';
@@ -958,7 +958,7 @@ describe('Backtest settings compatibility', () => {
 
 
     it('keeps the shared default strategy key aligned with the built-in manifest', () => {
-        expect(strategyManifest.some((entry) => entry.key === DEFAULT_BUILT_IN_STRATEGY_KEY)).to.equal(true);
+        expect(builtInStrategyKeys.includes(DEFAULT_BUILT_IN_STRATEGY_KEY)).to.equal(true);
     });
 
     it('persists and normalizes crossSymbolSecondary through stored settings', () => {

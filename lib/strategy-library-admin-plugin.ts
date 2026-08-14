@@ -59,7 +59,7 @@ function getStrategyLibraryPaths(repoRoot: string) {
         repoRoot,
         strategyRootDir: path.resolve(repoRoot, "lib", "strategies"),
         strategyLibDir: path.resolve(repoRoot, "lib", "strategies", "lib"),
-        manifestPath: path.resolve(repoRoot, "lib", "strategies", "manifest.ts"),
+        manifestPath: path.resolve(repoRoot, "lib", "strategies", "manifest-eager.ts"),
         archiveDir: path.resolve(repoRoot, "archive", "strategy"),
     };
 }

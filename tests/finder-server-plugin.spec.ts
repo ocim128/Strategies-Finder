@@ -1179,9 +1179,6 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         }
         expect(contents.every((content) => !content.includes("equityCurve"))).to.equal(true);
         expect(contents.every((content) => !content.includes("selectionMetrics"))).to.equal(true);
-        const iterations = events.filter(
-            (event) => event.type === "asset_batch_iteration_done",
-        ) as Array<Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_iteration_done" }>>;
     });
 
     it("appends the default and every resort metric when All Sorts is selected", async () => {

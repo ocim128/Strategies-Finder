@@ -30,7 +30,7 @@ function block(args: {
     ].join("\n");
 }
 
-function row(rank: number, pnl: number, sampleSize: number): unknown {
+function row(rank: number, pnl: number, sampleSize: number): Record<string, unknown> {
     return {
         scope: "asset_opportunity",
         rank,

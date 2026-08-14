@@ -102,7 +102,7 @@ class StrategyLibraryAdminService {
 
         return {
             canDelete: true,
-            message: `Archive + delete ${strategyLabel}. The source file is backed up to archive/strategy and lib/strategies/manifest.ts is resynced automatically.`,
+            message: `Archive + delete ${strategyLabel}. The source file is backed up to archive/strategy and the lib/strategies manifest files are resynced automatically.`,
             tone: "ready",
         };
     }
