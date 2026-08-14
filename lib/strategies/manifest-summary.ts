@@ -407,11 +407,11 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
     {
         key: "decay_anchor_reversion",
         name: "Decay Anchor Reversion",
-        description: "Fades closes stretched at least 2 ATR from an exponentially decay-weighted fair center.",
+        description: "Fades closes stretched at least 2 ATR from a cumulative fair center.",
         metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["decay"],
+        walkForwardParams: [],
     },
         crossSymbolConfig: false,
         polymarket1sConfig: false,

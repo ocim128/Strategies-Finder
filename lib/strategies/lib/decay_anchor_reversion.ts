@@ -13,28 +13,29 @@ import { buildCumulativeDecaySum } from "./price-action-statistics-core";
 
 const ATR_PERIOD = 20;
 const ANCHOR_DISTANCE_ATR = 2;
+const FIXED_DECAY = 1;
 
 function normalizeParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
-        decay: Math.min(0.999, Math.max(0.5, Number(params.decay ?? 0.95))),
+        decay: FIXED_DECAY,
     };
 }
 
 export const decay_anchor_reversion: Strategy = {
     name: "Decay Anchor Reversion",
-    description: "Fades closes stretched at least 2 ATR from an exponentially decay-weighted fair center.",
+    description: "Fades closes stretched at least 2 ATR from a cumulative fair center.",
     defaultParams: {
-        decay: 0.95,
+        decay: 1,
     },
     paramLabels: {
         decay: "Decay Factor",
     },
+    finderFixedParams: ["decay"],
     normalizeParams,
-    execute: (data: OHLCVData[], params: StrategyParams) => {
+    execute: (data: OHLCVData[], _params: StrategyParams) => {
         const cleanData = ensureCleanData(data);
-        const p = normalizeParams(params);
-        const decay = p.decay as number;
+        const decay = FIXED_DECAY;
         if (cleanData.length < ATR_PERIOD) return [];
 
         const closes = getCloses(cleanData);
@@ -67,6 +68,6 @@ export const decay_anchor_reversion: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["decay"],
+        walkForwardParams: [],
     },
 };

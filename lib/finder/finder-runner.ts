@@ -13,6 +13,7 @@ import {
 } from "./finder-runner-shared";
 import {
     buildFinderSearchBaseParams,
+    getFinderStrategyParamDefaults,
     normalizeFinderCandidateParamSets,
     shouldUseRustCachedMode,
     resolveFinderRiskOverrides,
@@ -131,7 +132,8 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
         const cached = exitParamSetsByKey.get(selection.key);
         if (cached) return cached;
 
-        const generated = input.generateParamSets(selection.strategy.defaultParams, options);
+        const exitDefaults = getFinderStrategyParamDefaults(selection.strategy);
+        const generated = input.generateParamSets(exitDefaults, options);
         const normalized = normalizeFinderCandidateParamSets(selection.strategy, generated);
         const paramSets = normalized.length > 0
             ? normalized

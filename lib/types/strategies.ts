@@ -637,6 +637,8 @@ export interface Strategy {
     description: string;
     defaultParams: StrategyParams;
     paramLabels: { [key: string]: string };
+    /** Parameters that remain visible/available to execution but must not be searched by Finder. */
+    finderFixedParams?: readonly string[];
     /** Optional parameter sanitizer used before execution/optimization. */
     normalizeParams?: (params: StrategyParams) => StrategyParams;
     /** Optional cross-symbol configuration. When present, the runtime will provide secondary data via execution context. */

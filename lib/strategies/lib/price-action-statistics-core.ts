@@ -394,14 +394,14 @@ export function buildRollingSkewness(
 /**
  * Exponentially decaying cumulative sum.
  * Each bar: accum = accum * decayFactor + score[i].
- * decayFactor in (0, 1) controls memory â€” 0.9 = long memory, 0.5 = fast decay.
+ * decayFactor in (0, 1] controls memory â€” 1 = cumulative, 0.9 = long memory, 0.5 = fast decay.
  * Alternative to flat rolling average for score accumulation.
  */
 export function buildCumulativeDecaySum(
 	scores: number[],
 	decayFactor: number
 ): number[] {
-	const decay = Math.max(0.01, Math.min(0.999, decayFactor));
+	const decay = Math.max(0.01, Math.min(1, decayFactor));
 	let byDecay = cumulativeDecaySumCache.get(scores);
 	if (!byDecay) {
 		byDecay = new Map<number, number[]>();
@@ -908,5 +908,3 @@ export function buildRollingKurtosis(
 		return result;
 	});
 }
-
-

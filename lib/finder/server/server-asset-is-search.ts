@@ -38,8 +38,10 @@ import type { FinderSelectedStrategy } from "../finder-runner";
 import type { CrossSymbolDataFetcher } from "../../cross-symbol-runtime";
 import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
 import {
+    buildFinderSearchBaseParams,
     createPreparedFinderStrategy,
     finderAssetSearchRequiresFullAnalytics,
+    getFinderStrategyParamDefaults,
     type FinderPreparedDataCache,
     normalizeFinderCandidateParamSets,
 } from "../finder-runner-core";
@@ -137,12 +139,12 @@ export async function runServerAssetIsSearch(
 
     // Build the same base params the current-chart path uses.
     const parameterGenerationStartedAt = performance.now();
-    const entryDefaults = selectedStrategy.strategy.defaultParams;
+    const entryDefaults = buildFinderSearchBaseParams(selectedStrategy.strategy, settings, options);
     const generated = input.generateParamSets(entryDefaults, options);
     const normalized = normalizeFinderCandidateParamSets(selectedStrategy.strategy, generated);
     const paramSets = normalized.length > 0
         ? normalized
-        : [{ ...entryDefaults }];
+        : [{ ...selectedStrategy.strategy.defaultParams }];
     const parameterGenerationMs = performance.now() - parameterGenerationStartedAt;
 
     // Bounded top-K accumulation, mirroring the browser single-timeframe path
@@ -194,12 +196,12 @@ export async function runServerAssetIsSearch(
             // the current-chart path without requiring a random source.
             const candidateIndex = index % input.exitStrategyCandidates.length;
             exitStrategy = input.exitStrategyCandidates[candidateIndex];
-            const exitDefaults = exitStrategy.strategy.defaultParams;
+            const exitDefaults = getFinderStrategyParamDefaults(exitStrategy.strategy);
             const exitGenerated = input.generateParamSets(exitDefaults, options);
             const exitNormalized = normalizeFinderCandidateParamSets(exitStrategy.strategy, exitGenerated);
             exitParams = exitNormalized.length > 0
                 ? exitNormalized[index % exitNormalized.length]
-                : { ...exitDefaults };
+                : { ...exitStrategy.strategy.defaultParams };
         }
 
         const combinedParams = exitParams

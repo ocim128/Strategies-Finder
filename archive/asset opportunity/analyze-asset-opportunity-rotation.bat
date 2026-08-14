@@ -14,9 +14,25 @@ if not exist "%ESNO%" (
     set "ESNO=esno.cmd"
 )
 
-rem Defaults: --pool-k 10 --cost-bps 10 --horizon 12 --min-entries 5. Override by passing flags, e.g.
-rem   analyze-asset-opportunity-rotation.bat --pool-k 5 --cost-bps 7
-call "%ESNO%" "%REPO_ROOT%\scripts\analyze-asset-opportunity-rotation.ts" --archive-dir "%ARCHIVE_DIR%" %*
+:ask_pool_k
+set "POOL_K="
+set /p "POOL_K=Enter top rank / rotation pool depth (for example, 3 or 10): "
+if not defined POOL_K (
+    echo Please enter a positive whole number.
+    goto ask_pool_k
+)
+for /f "delims=0123456789" %%A in ("%POOL_K%") do (
+    echo Please enter a positive whole number.
+    goto ask_pool_k
+)
+set "NON_ZERO=%POOL_K:0=%"
+if not defined NON_ZERO (
+    echo Please enter a positive whole number.
+    goto ask_pool_k
+)
+
+rem Additional command-line flags can still override cost, horizon, or minimum entries.
+call "%ESNO%" "%REPO_ROOT%\scripts\analyze-asset-opportunity-rotation.ts" --archive-dir "%ARCHIVE_DIR%" --pool-k "%POOL_K%" %*
 set "EXIT_CODE=%ERRORLEVEL%"
 
 echo.

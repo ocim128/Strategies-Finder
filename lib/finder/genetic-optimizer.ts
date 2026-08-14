@@ -278,10 +278,10 @@ export async function runGeneticOptimization(input: GeneticOptimizerInput): Prom
     const cfg = input.config;
     const rand = createSeededRandom(cfg.seed);
     const defaultParams = { ...strategy.defaultParams };
-    const specs = buildParamSpecs(defaultParams, cfg.rangePercent);
-    if (specs.length === 0) {
-        throw new Error(`[Genetic] Strategy ${strategyKey} has no tunable numeric params.`);
+    for (const key of strategy.finderFixedParams ?? []) {
+        delete defaultParams[key];
     }
+    const specs = buildParamSpecs(defaultParams, cfg.rangePercent);
 
     const precomputed = precomputeIndicators(data, backtestSettings);
     const preparedFinderData = strategy.prepareFinderData?.(data, backtestSettings, executionContext);
@@ -327,6 +327,36 @@ export async function runGeneticOptimization(input: GeneticOptimizerInput): Prom
         generation,
         params,
     });
+
+    if (specs.length === 0) {
+        const params: StrategyParams = {};
+        const scored = evaluateParams(params);
+        const genome: EvaluatedGenome = {
+            id: nextGenomeId++,
+            generation: 0,
+            params,
+            fitness: scored.fitness,
+            result: scored.result,
+        };
+        const stats: GeneticGenerationStats = {
+            generation: 0,
+            bestScore: scored.fitness.score,
+            medianScore: scored.fitness.score,
+            bestNetProfitPercent: scored.fitness.netProfitPercent,
+            bestSharpeRatio: scored.fitness.sharpeRatio,
+            bestDrawdownPercent: scored.fitness.maxDrawdownPercent,
+            mutationRate: 0,
+            stagnationCount: 0,
+        };
+        onGeneration?.(stats);
+        return {
+            strategyKey,
+            config: cfg,
+            bestGenome: genome,
+            generations: [stats],
+            elapsedMs: performance.now() - startedAt,
+        };
+    }
 
     const initialPopulation: Genome[] = [];
     const initialSeen = new Set<string>();

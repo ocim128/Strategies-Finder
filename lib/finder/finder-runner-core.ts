@@ -388,12 +388,21 @@ function isRiskManagementFrozen(options?: Pick<FinderOptions, "freezeRiskManagem
     return options?.freezeRiskManagement === true;
 }
 
+export function getFinderStrategyParamDefaults(strategy: Strategy): StrategyParams {
+    const defaults: StrategyParams = { ...strategy.defaultParams };
+    for (const key of strategy.finderFixedParams ?? []) {
+        delete defaults[key];
+    }
+    return defaults;
+}
+
 export function buildFinderSearchBaseParams(
     strategy: Strategy,
     settings: BacktestSettings,
     options?: Pick<FinderOptions, "freezeRiskManagement" | "exitStrategyBaseParams" | "randomizePathExitParams">
 ): StrategyParams {
-    const baseParams: StrategyParams = { ...strategy.defaultParams };
+    const baseParams = getFinderStrategyParamDefaults(strategy);
+
     if (isRiskManagementFrozen(options)) {
         // Path-exit params are still searchable when Randomize Path Exits is on,
         // even under freeze. All other risk settings (ATR / SL / TP / max-hold)

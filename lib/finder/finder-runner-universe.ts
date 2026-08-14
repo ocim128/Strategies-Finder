@@ -30,6 +30,7 @@ import {
     buildFinderSearchBaseParams,
     computeFinderCompositeEdgeRatio,
     getPreparedFinderData,
+    getFinderStrategyParamDefaults,
     normalizeFinderCandidateParamSets,
     resolveFinderRiskOverrides,
     type FinderPreparedDataCache,
@@ -441,7 +442,8 @@ function buildUniverseCandidatePlans(args: {
     const getExitParamSets = (selection: FinderSelectedStrategy): StrategyParams[] => {
         const cached = exitParamSetsByKey.get(selection.key);
         if (cached) return cached;
-        const generated = generateParamSets(selection.strategy.defaultParams, options);
+        const exitDefaults = getFinderStrategyParamDefaults(selection.strategy);
+        const generated = generateParamSets(exitDefaults, options);
         const normalized = normalizeFinderCandidateParamSets(selection.strategy, generated);
         const paramSets = normalized.length > 0
             ? normalized
