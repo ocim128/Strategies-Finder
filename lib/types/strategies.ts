@@ -399,7 +399,7 @@ export interface BacktestSettings {
     allowSameBarExit?: boolean;
     /** Slippage in basis points (bps) applied to entry/exit fills */
     slippageBps?: number;
-    /** Maximum concurrent open positions (1 = classic single-position, 2 = allow overlap). Default 1. */
+    /** Maximum concurrent open positions (1 = classic single-position, >1 = unlimited overlap). Default 1. */
     maxOpenTrades?: number;
     /** Run strategy logic on a global higher timeframe and map signals back to chart bars */
     strategyTimeframeEnabled?: boolean;

@@ -384,6 +384,151 @@ describe('Backtesting Engine', () => {
         expect(result.diagnostics?.fastPath?.used).to.equal(false);
     });
 
+    it('allows unlimited overlap and exits every overlapping position on the opposite signal', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 },
+            { time: 3 as Time, open: 101, high: 103, low: 100, close: 102, volume: 1000 },
+            { time: 4 as Time, open: 102, high: 104, low: 101, close: 103, volume: 1000 },
+            { time: 5 as Time, open: 103, high: 105, low: 102, close: 104, volume: 1000 },
+        ];
+        const commonOptions = {
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+            skipDrawdown: true,
+            requireTradeHistory: true,
+            collectDiagnostics: true,
+        } as const;
+
+        for (const executionModel of ['signal_close', 'next_open', 'next_close'] as const) {
+            const exitIndex = executionModel === 'signal_close' ? 3 : 4;
+            for (const direction of ['long', 'short'] as const) {
+                const settings = {
+                    executionModel,
+                    tradeDirection: direction,
+                    maxOpenTrades: 2,
+                };
+                const signals: Signal[] = direction === 'long'
+                    ? [
+                        { time: data[0]!.time, type: 'buy', price: data[0]!.close },
+                        { time: data[1]!.time, type: 'buy', price: data[1]!.close },
+                        { time: data[2]!.time, type: 'buy', price: data[2]!.close },
+                        { time: data[3]!.time, type: 'sell', price: data[3]!.close },
+                    ]
+                    : [
+                        { time: data[0]!.time, type: 'sell', price: data[0]!.close },
+                        { time: data[1]!.time, type: 'sell', price: data[1]!.close },
+                        { time: data[2]!.time, type: 'sell', price: data[2]!.close },
+                        { time: data[3]!.time, type: 'buy', price: data[3]!.close },
+                    ];
+
+                const full = runBacktest(data, signals, 10000, 10, 0, settings, undefined, undefined, commonOptions);
+                const compact = runBacktestCompact(data, signals, 10000, 10, 0, settings, undefined, undefined, commonOptions);
+
+                expect(full.trades, `${executionModel} ${direction} full trade count`).to.have.length(3);
+                expect(compact.trades, `${executionModel} ${direction} compact trade count`).to.have.length(3);
+                expect(full.trades.every((trade) => trade.exitTime === data[exitIndex]!.time && trade.exitReason === 'signal')).to.equal(true);
+                expect(compact.trades.every((trade) => trade.exitTime === data[exitIndex]!.time && trade.exitReason === 'signal')).to.equal(true);
+                expect(full.diagnostics?.counts.maxOpenPositions).to.equal(3);
+                expect(compact.diagnostics?.counts.maxOpenPositions).to.equal(3);
+            }
+        }
+
+        expect(normalizeBacktestSettings({ maxOpenTrades: 2 }).maxOpenTrades).to.equal(Infinity);
+    });
+
+    it('preserves unlimited overlap in combined compact runs', () => {
+        const data: OHLCVData[] = Array.from({ length: 8 }, (_, index) => ({
+            time: index as Time,
+            open: 100 + index,
+            high: 101 + index,
+            low: 99 + index,
+            close: 100 + index,
+            volume: 1000,
+        }));
+        const signals: Signal[] = [
+            { time: data[0]!.time, type: 'buy', price: data[0]!.close },
+            { time: data[1]!.time, type: 'buy', price: data[1]!.close },
+            { time: data[2]!.time, type: 'buy', price: data[2]!.close },
+            { time: data[3]!.time, type: 'sell', price: data[3]!.close },
+        ];
+        const options = {
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+            skipDrawdown: true,
+            requireTradeHistory: true,
+            collectDiagnostics: true,
+        } as const;
+        const settings = {
+            tradeDirection: 'combined' as const,
+            executionModel: 'signal_close' as const,
+            maxOpenTrades: 2,
+        };
+
+        const full = runBacktest(data, signals, 10000, 10, 0, settings, undefined, undefined, options);
+        const compact = runBacktestCompact(data, signals, 10000, 10, 0, settings, undefined, undefined, options);
+
+        expect(full.trades.filter((trade) => trade.type === 'long')).to.have.length(3);
+        expect(compact.trades.filter((trade) => trade.type === 'long')).to.have.length(3);
+        expect(compact.trades.filter((trade) => trade.type === 'long').every((trade) =>
+            trade.exitTime === data[3]!.time && trade.exitReason === 'signal'
+        )).to.equal(true);
+        expect(compact.diagnostics?.counts.maxOpenPositions).to.equal(3);
+        expect(compact.diagnostics?.counts.tradesOpened).to.equal(full.diagnostics?.counts.tradesOpened);
+    });
+
+    it('anchors max hold to the first same-direction overlap entry', () => {
+        const data: OHLCVData[] = Array.from({ length: 16 }, (_, index) => ({
+            time: index as Time,
+            open: 100,
+            high: 101,
+            low: 99,
+            close: 100,
+            volume: 1000,
+        }));
+        const commonOptions = {
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+            skipDrawdown: true,
+            requireTradeHistory: true,
+        } as const;
+
+        for (const executionModel of ['signal_close', 'next_open', 'next_close'] as const) {
+            const firstEntryIndex = executionModel === 'signal_close' ? 0 : 1;
+            const expectedExitIndex = firstEntryIndex + 12;
+            for (const direction of ['long', 'short'] as const) {
+                const entryType = direction === 'long' ? 'buy' : 'sell';
+                const result = runBacktest(data, [
+                    { time: data[0]!.time, type: entryType, price: 100 },
+                    { time: data[1]!.time, type: entryType, price: 100 },
+                ], 10000, 10, 0, {
+                    executionModel,
+                    tradeDirection: direction,
+                    maxOpenTrades: 2,
+                    riskMaxHoldEnabled: true,
+                    riskMaxHoldBars: 12,
+                }, undefined, undefined, commonOptions);
+                const compact = runBacktestCompact(data, [
+                    { time: data[0]!.time, type: entryType, price: 100 },
+                    { time: data[1]!.time, type: entryType, price: 100 },
+                ], 10000, 10, 0, {
+                    executionModel,
+                    tradeDirection: direction,
+                    maxOpenTrades: 2,
+                    riskMaxHoldEnabled: true,
+                    riskMaxHoldBars: 12,
+                }, undefined, undefined, commonOptions);
+
+                for (const [label, backtest] of [['full', result], ['compact', compact]] as const) {
+                    expect(backtest.trades, `${executionModel} ${direction} ${label} trade count`).to.have.length(2);
+                    expect(backtest.trades.every((trade) =>
+                        trade.exitReason === 'time_stop' && trade.exitTime === data[expectedExitIndex]!.time
+                    ), `${executionModel} ${direction} ${label} max-hold timing`).to.equal(true);
+                }
+            }
+        }
+    });
+
     it('preserves next-open entry-bar stop behavior on the Finder fast path', () => {
         const data: OHLCVData[] = [
             { time: 1 as Time, open: 100, high: 100.5, low: 99.5, close: 100, volume: 1000 },

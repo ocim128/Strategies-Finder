@@ -196,6 +196,22 @@ describe("alpaca processSyncBatch source routing", () => {
         assert.equal(done.source, "alpaca");
     });
 
+    it("passes Alpaca crypto pair symbols through without routing them to IBKR", async () => {
+        let fetchedSymbol = "";
+        const alpacaFetcher = (async (_cat, symbol) => {
+            fetchedSymbol = symbol;
+            return alpacaResult(symbol);
+        }) as AlpacaFetcher;
+        await processSyncBatch(
+            { symbols: ["PAXG/USD"], interval: "1d", period: "1m", source: "alpaca" },
+            false,
+            () => {},
+            __acquireIbkrSyncOwnerForTests(),
+            { alpacaFetcher: alpacaFetcher as never },
+        );
+        assert.equal(fetchedSymbol, "PAXG/USD");
+    });
+
     it("emits symbol_warning when the Alpaca worker returns incomplete (page ceiling, audit F1)", async () => {
         // Locks the F1 end-to-end contract: when syncOneAlpacaSymbol maps a
         // fetcher page_limit onto complete:false + chunk_limit, the batch
@@ -425,6 +441,7 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
     const SEED_SYMBOL = "ZZXMIX";
     const FRESH_SYMBOL = "ZZXFRSH";
     const FALLBACK_SYMBOL = "ZZXFALL";
+    const GAP_SYMBOL = "ZZXGAP";
 
     beforeEach(() => {
         // Stub fetch to return one Alpaca-shaped bar so the worker has data
@@ -443,7 +460,7 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
         const { resolve } = require("node:path");
         const { rmSync, existsSync } = require("node:fs");
         const dir = resolve(process.cwd(), "price-data", "ibkr", "csv", "30m");
-        for (const sym of [SEED_SYMBOL, FRESH_SYMBOL, FALLBACK_SYMBOL]) {
+        for (const sym of [SEED_SYMBOL, FRESH_SYMBOL, FALLBACK_SYMBOL, GAP_SYMBOL]) {
             for (const ext of [".csv", ".csv.bak", ".csv.tmp"]) {
                 const p = resolve(dir, `${sym}${ext}`);
                 if (existsSync(p)) rmSync(p, { force: true });
@@ -504,6 +521,27 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
         assert.equal(catalog.entries[0].intervals["30m"].source, "alpaca");
         // And the new file got written.
         assert.ok(existsSync(getCsvPath(FRESH_SYMBOL, "30m")), "fresh CSV was written");
+    });
+
+    it("marks a large Alpaca source gap incomplete without fabricating bars", async () => {
+        globalThis.fetch = (async () => ({
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            json: async () => ({ bars: [
+                { t: "2023-06-19T14:30:00Z", o: 1816, h: 1817, l: 1815, c: 1816.9, v: 1 },
+                { t: "2026-02-12T12:00:00Z", o: 5070, h: 5071, l: 5069, c: 5070.815, v: 1 },
+            ] }),
+            text: async () => "",
+        }) as unknown as Response) as typeof fetch;
+        const catalog = { entries: [] as Array<{ symbol: string; intervals: Record<string, { complete?: boolean; stopReason?: string }> }> };
+        const config = { apiKey: "PK", apiSecret: "sk", host: "https://data.alpaca.markets", feed: "iex", adjustment: "split" };
+        const result = await syncOneAlpacaSymbol(catalog as never, GAP_SYMBOL, "30m", "max", false, undefined, config as never);
+        assert.equal(result.complete, false);
+        assert.equal(result.stopReason, "data_gap");
+        assert.match(String(result.warning), /missing bars were not reconstructed/);
+        assert.equal(catalog.entries[0]!.intervals["30m"]!.complete, false);
+        assert.equal(catalog.entries[0]!.intervals["30m"]!.stopReason, "data_gap");
     });
 
     it("extends a short empty download window across the prior market week", async () => {

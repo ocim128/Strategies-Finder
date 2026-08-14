@@ -104,7 +104,8 @@ export function processPositionExits(
     config: NormalizedSettings,
     slippageRate: number,
     options: PositionExitOptions = DEFAULT_POSITION_EXIT_OPTIONS,
-    pathExitContext?: PathExitEvaluationContext
+    pathExitContext?: PathExitEvaluationContext,
+    currentBarIndex?: number
 ): PositionExitTrigger | null {
     const isShortPosition = position.direction === 'short';
     const exitSide = exitSideForDirection(position.direction);
@@ -183,11 +184,15 @@ export function processPositionExits(
     }
 
     // Global max hold cap, gated by the minimum hold guard.
+    const maxHoldBarsInTrade = position.maxHoldGroupEntryBarIndex !== undefined && currentBarIndex !== undefined
+        ? Math.max(0, currentBarIndex - position.maxHoldGroupEntryBarIndex)
+        : position.barsInTrade;
+
     if (
         canExitAfterMinimumHold(position, config) &&
         config.riskMaxHoldEnabled &&
         config.riskMaxHoldBars > 0 &&
-        position.barsInTrade >= config.riskMaxHoldBars
+        maxHoldBarsInTrade >= config.riskMaxHoldBars
     ) {
         return {
             exitPrice: applySlippage(candle.close, exitSide, slippageRate),

@@ -62,7 +62,7 @@ export interface NormalizedSettings {
     allowSameBarExit: boolean;
     slippageBps: number;
 
-    /** Maximum number of concurrently open positions (1 = classic, 2 = allow overlap) */
+    /** Maximum number of concurrently open positions (1 = classic, >1 = unlimited overlap) */
     maxOpenTrades: number;
 }
 
@@ -106,6 +106,12 @@ export interface PositionState {
      * bar" by the loop, matching prior Set-based behavior.
      */
     openedBarIndex?: number;
+    /**
+     * Transient engine bookkeeping: the first bar of the current same-direction
+     * overlap group. Max-hold exits use this anchor so later entries cannot
+     * extend the group's total exposure window.
+     */
+    maxHoldGroupEntryBarIndex?: number;
 }
 
 export type KellyFraction = 'full' | 'half' | 'quarter';

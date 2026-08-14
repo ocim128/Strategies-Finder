@@ -156,7 +156,7 @@ describe('Backtesting Engine - compact vs full parity', () => {
         assertMetricsParity(full, compact, { netProfit: 1e-6 });
     });
 
-    it('matches with multi-position (maxOpenTrades=2) and ATR exits', () => {
+    it('matches with unlimited overlap and ATR exits', () => {
         const data = makeData(50);
         const signals = buyEveryNSignal(data, 3);
         const settings = {

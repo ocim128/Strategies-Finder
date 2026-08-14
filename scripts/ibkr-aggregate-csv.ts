@@ -37,6 +37,7 @@ import {
 } from "../lib/ibkr-data/ibkr-data-vite-plugin";
 import type { OHLCVData } from "../lib/types/strategies";
 import { parseIntervalSeconds } from "../lib/interval-utils";
+import { describeLargeCandleGap } from "../lib/ibkr-data/candle-gap";
 
 interface CliOptions {
     fromInterval: string;
@@ -164,6 +165,7 @@ interface AggregateOutcome {
     barsOut: number;
     bytesWritten?: number;
     reason?: string;
+    warning?: string;
 }
 
 /**
@@ -193,8 +195,9 @@ function aggregateOne(symbol: string, options: CliOptions): AggregateOutcome {
     if (aggregated.length === 0) {
         return { symbol, status: "empty", barsIn: source.length, barsOut: 0, reason: "aggregation produced 0 bars" };
     }
+    const warning = describeLargeCandleGap(source) ?? undefined;
     if (shouldSkip(symbol, options.toInterval, aggregated)) {
-        return { symbol, status: "skipped", barsIn: source.length, barsOut: aggregated.length, reason: "destination already matches" };
+        return { symbol, status: "skipped", barsIn: source.length, barsOut: aggregated.length, reason: "destination already matches", warning };
     }
     // Shrink-guard: refuse to overwrite a much larger destination unless the
     // caller passed `--force`. This is the backstop that catches a truncated
@@ -209,11 +212,18 @@ function aggregateOne(symbol: string, options: CliOptions): AggregateOutcome {
                 barsIn: source.length,
                 barsOut: aggregated.length,
                 reason: `REFUSED: aggregated ${aggregated.length} bars would overwrite ${existingCount} existing bars (<${Math.round(SHRINK_GUARD_RATIO * 100)}%). The ${options.fromInterval} source likely shrank. Restore ${options.fromInterval}/${symbol}.csv from its .bak, or re-run with --force to overwrite anyway.`,
+                warning,
             };
         }
     }
     if (options.dryRun) {
-        return { symbol, status: "no-change", barsIn: source.length, barsOut: aggregated.length };
+        return {
+            symbol,
+            status: "no-change",
+            barsIn: source.length,
+            barsOut: aggregated.length,
+            warning,
+        };
     }
     const beforeBytes = existsSync(getCsvPath(symbol, options.toInterval))
         ? statSync(getCsvPath(symbol, options.toInterval)).size
@@ -226,6 +236,7 @@ function aggregateOne(symbol: string, options: CliOptions): AggregateOutcome {
         barsIn: source.length,
         barsOut: aggregated.length,
         bytesWritten: afterBytes - beforeBytes,
+        warning,
     };
 }
 
@@ -269,16 +280,16 @@ function main(): void {
         const barsOutStr = outcome.barsOut.toLocaleString();
         switch (outcome.status) {
             case "written":
-                console.log(`  ${symbol}: ${barsInStr} -> ${barsOutStr} bars (written)`);
+                console.log(`  ${symbol}: ${barsInStr} -> ${barsOutStr} bars (written)${outcome.warning ? ` WARNING: ${outcome.warning}` : ""}`);
                 break;
             case "skipped":
-                console.log(`  ${symbol}: skipped (${outcome.reason})`);
+                console.log(`  ${symbol}: skipped (${outcome.reason})${outcome.warning ? ` WARNING: ${outcome.warning}` : ""}`);
                 break;
             case "no-change":
-                console.log(`  ${symbol}: ${barsInStr} -> ${barsOutStr} bars (dry-run, no write)`);
+                console.log(`  ${symbol}: ${barsInStr} -> ${barsOutStr} bars (dry-run, no write)${outcome.warning ? ` WARNING: ${outcome.warning}` : ""}`);
                 break;
             case "refused":
-                console.log(`  ${symbol}: ${barsInStr} -> ${barsOutStr} bars (REFUSED — ${outcome.reason})`);
+                console.log(`  ${symbol}: ${barsInStr} -> ${barsOutStr} bars (REFUSED — ${outcome.reason})${outcome.warning ? ` WARNING: ${outcome.warning}` : ""}`);
                 break;
             case "empty":
                 console.log(`  ${symbol}: empty (${outcome.reason})`);

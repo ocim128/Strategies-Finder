@@ -11,6 +11,7 @@ import { isAllowedLocalRequest } from "../local-route-authorization";
 import { createFetchTimeoutSignal, isAbortError } from "../dataProviders/fetch-helpers";
 import type { IbkrIntervalMeta, IbkrStreamEvent, IbkrSyncRunSnapshot } from "./ibkr-data-stream-types";
 import type { IbkrCatalogAsset } from "./ibkr-stale-symbols";
+import { describeLargeCandleGap } from "./candle-gap";
 import {
     ALPACA_SUPPORTED_INTERVALS,
     ALPACA_TIMEFRAME_BY_INTERVAL,
@@ -191,7 +192,20 @@ export function normalizeSymbol(value: unknown): string {
     return symbol;
 }
 
-function normalizeSymbols(value: unknown): string[] {
+/**
+ * Normalizes an Alpaca symbol while allowing crypto pairs such as PAXG/USD.
+ * The slash is safe at the request boundary and is encoded before it reaches
+ * either the Alpaca URL or the local CSV filename.
+ */
+export function normalizeAlpacaSymbol(value: unknown): string {
+    const symbol = stripIbkrMarker(String(value ?? "").trim().toUpperCase());
+    if (!symbol || !/^[A-Z0-9._-]+(?:\/[A-Z0-9._-]+)?$/.test(symbol)) {
+        throw new HttpStatusError(400, `Invalid Alpaca symbol: ${String(value ?? "")}`);
+    }
+    return symbol;
+}
+
+function normalizeSymbols(value: unknown, source: IbkrDataSource = "ibkr"): string[] {
     const raw = Array.isArray(value)
         ? value
         : String(value ?? "").split(/[\s,]+/);
@@ -200,7 +214,7 @@ function normalizeSymbols(value: unknown): string[] {
     for (const item of raw) {
         const text = String(item ?? "").trim();
         if (!text) continue;
-        const symbol = normalizeSymbol(text);
+        const symbol = source === "alpaca" ? normalizeAlpacaSymbol(text) : normalizeSymbol(text);
         if (seen.has(symbol)) continue;
         seen.add(symbol);
         symbols.push(symbol);
@@ -932,7 +946,11 @@ function adjustIntradayCandlesFromDailyCsv(symbol: string, interval: string, can
 }
 
 export function getCsvPath(symbol: string, interval: string): string {
-    return resolve(IBKR_CSV_DIR, interval, `${symbol}.csv`);
+    // The local candle loader already canonicalizes crypto pairs such as
+    // PAXG/USD to PAXGUSD when probing static CSVs. Keep the writer aligned
+    // with that convention and never let a slash create a nested path.
+    const storageSymbol = stripIbkrMarker(symbol).replace(/\//g, "");
+    return resolve(IBKR_CSV_DIR, interval, `${encodeURIComponent(storageSymbol)}.csv`);
 }
 
 export function writeCsv(symbol: string, interval: string, candles: OHLCVData[]): void {
@@ -1617,6 +1635,7 @@ function describeIncompleteStopReason(stopReason: IbkrIntervalMeta["stopReason"]
         case "retry_exhausted": return "Late retries failed after partial data was fetched.";
         case "chunk_limit": return "Hit the maximum chunk ceiling before the full history was covered.";
         case "cancelled": return "Fetch was cancelled mid-backfill.";
+        case "data_gap": return "The source contains a large missing-time gap; missing bars were not reconstructed.";
         default: return "History fetch did not complete.";
     }
 }
@@ -1642,8 +1661,13 @@ function readCatalogAssets(): IbkrCatalogAsset[] {
             const intervalDir = resolve(IBKR_CSV_DIR, intervalEntry.name);
             for (const file of readdirSync(intervalDir, { withFileTypes: true })) {
                 if (!file.isFile() || !file.name.toLowerCase().endsWith(".csv")) continue;
-                const symbol = file.name.slice(0, -4).trim().toUpperCase();
-                if (!symbol || !/^[A-Z0-9._-]+$/.test(symbol)) continue;
+                let symbol = "";
+                try {
+                    symbol = decodeURIComponent(file.name.slice(0, -4).trim()).toUpperCase();
+                } catch {
+                    continue;
+                }
+                if (!symbol || !/^[A-Z0-9._-]+(?:\/[A-Z0-9._-]+)?$/.test(symbol)) continue;
                 const marked = markIbkrSymbol(symbol);
                 const existing = bySymbol.get(marked) ?? { symbol: marked, name: symbol, intervals: [] };
                 if (!existing.intervals?.includes(interval)) {
@@ -1892,6 +1916,7 @@ export async function syncOneAlpacaSymbol(
     const existingHasBars = existing.length > 0;
     const merged = mergeCandlesByTime([...existing, ...fetched]);
     writeCsv(symbol, interval, merged);
+    const gapWarning = describeLargeCandleGap(merged);
     // Catalog source: if the interval already existed with a DIFFERENT
     // source, this is now a multi-provider file — label it `"mixed"` so the
     // catalog stays honest. A fresh interval (no prior bars, or already
@@ -1906,12 +1931,12 @@ export async function syncOneAlpacaSymbol(
     // documented equivalent is `chunk_limit` (same semantics: hit the ceiling
     // before full coverage). Keeping the catalog schema stable avoids a
     // migration and reuses the existing `describeIncompleteStopReason` case.
-    const catalogStopReason = mapAlpacaStopReason(result.stopReason);
+    const catalogStopReason = gapWarning ? "data_gap" : mapAlpacaStopReason(result.stopReason);
     const catalogEntry = upsertCatalogEntry(catalog, {
         symbol,
         interval,
         candles: merged,
-        completeness: { complete: result.complete, stopReason: catalogStopReason },
+        completeness: { complete: result.complete && !gapWarning, stopReason: catalogStopReason },
         source: catalogSource,
     });
     debugLogger.info("alpaca.sync.symbol", {
@@ -1923,8 +1948,8 @@ export async function syncOneAlpacaSymbol(
         fetchedBars: fetched.length,
         pages: result.pages,
         retries: result.retries,
-        complete: result.complete,
-        stopReason: result.stopReason,
+        complete: result.complete && !gapWarning,
+        stopReason: catalogStopReason,
         catalogSource,
         durationMs: Date.now() - startedAt,
     });
@@ -1937,10 +1962,10 @@ export async function syncOneAlpacaSymbol(
         firstTime: catalogEntry.intervals[interval]?.firstTime ?? null,
         lastTime: catalogEntry.intervals[interval]?.lastTime ?? null,
         filePath: getCsvPath(symbol, interval),
-        complete: result.complete,
+        complete: result.complete && !gapWarning,
         stopReason: catalogStopReason,
         source: catalogSource,
-        ...(result.complete ? {} : { warning: describeIncompleteStopReason(catalogStopReason) }),
+        ...((result.complete && !gapWarning) ? {} : { warning: gapWarning ?? describeIncompleteStopReason(catalogStopReason) }),
     };
 }
 
@@ -2001,7 +2026,7 @@ export async function processSyncBatch(
 ): Promise<void> {
     const signal = options?.signal;
     const source = normalizeDataSource(body.source);
-    const symbols = normalizeSymbols(body.symbols ?? body.symbol);
+    const symbols = normalizeSymbols(body.symbols ?? body.symbol, source);
     const interval = normalizeInterval(body.interval);
     const period = normalizePeriod(String(body.period ?? DEFAULT_PERIOD_BY_INTERVAL[interval] ?? "1y").trim());
     // Validate source-specific constraints BEFORE any work. Throws surface in

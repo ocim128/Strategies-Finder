@@ -88,6 +88,20 @@ describe("alpaca buildAlpacaBarsUrl", () => {
         assert.equal(params.get("end"), "2026-02-01T00:00:00Z");
     });
 
+    it("routes crypto pairs to Alpaca's crypto bars endpoint", () => {
+        const url = buildAlpacaBarsUrl(config, {
+            symbol: "paxg/usd",
+            timeframe: "30Min",
+            start: "2026-01-01T00:00:00Z",
+            end: "2026-02-01T00:00:00Z",
+        });
+        assert.equal(new URL(url).pathname, "/v1beta3/crypto/us/bars");
+        const params = new URL(url).searchParams;
+        assert.equal(params.get("symbols"), "PAXG/USD");
+        assert.equal(params.get("feed"), null);
+        assert.equal(params.get("adjustment"), null);
+    });
+
     it("omits start/end when not provided and includes page_token when provided", () => {
         const url = buildAlpacaBarsUrl(config, {
             symbol: "MSFT",
@@ -127,6 +141,18 @@ describe("alpaca parseAlpacaBarsResponse", () => {
             next_page_token: "  next==  ",
         });
         assert.equal(bars.length, 1);
+        assert.equal(nextPageToken, "next==");
+    });
+
+    it("flattens crypto bars keyed by symbol", () => {
+        const { bars, nextPageToken } = parseAlpacaBarsResponse({
+            bars: {
+                "PAXG/USD": [{ t: "2026-01-01T00:00:00Z", o: 1, h: 2, l: 0.5, c: 1.5, v: 10 }],
+            },
+            next_page_token: "next==",
+        });
+        assert.equal(bars.length, 1);
+        assert.equal(bars[0]!.c, 1.5);
         assert.equal(nextPageToken, "next==");
     });
 
@@ -286,6 +312,25 @@ describe("alpaca fetchAlpacaBars (stubbed fetch)", () => {
         const headers = fetchCalls[0]!.init?.headers as Record<string, string>;
         assert.equal(headers["APCA-API-KEY-ID"], "PKTESTKEY");
         assert.equal(headers["APCA-API-SECRET-KEY"], "testsecret");
+    });
+
+    it("fetches crypto bars from the PAXG/USD response shape", async () => {
+        pushResponse({
+            bars: {
+                "PAXG/USD": [{ t: "2026-01-01T00:00:00Z", o: 1, h: 2, l: 0.5, c: 1.5, v: 10 }],
+            },
+        });
+        const result = await fetchAlpacaBars(config, {
+            symbol: "PAXG/USD",
+            timeframe: "30Min",
+            start: "2026-01-01T00:00:00Z",
+            end: "2026-02-01T00:00:00Z",
+        });
+        const requestUrl = new URL(fetchCalls[0]!.url);
+        assert.equal(requestUrl.pathname, "/v1beta3/crypto/us/bars");
+        assert.equal(requestUrl.searchParams.get("symbols"), "PAXG/USD");
+        assert.equal(result.candles.length, 1);
+        assert.equal(result.candles[0]!.close, 1.5);
     });
 
     it("uses a host-scoped IPv4/DoH dispatcher for the public Alpaca host", async () => {

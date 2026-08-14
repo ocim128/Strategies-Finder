@@ -7,6 +7,7 @@ import {
     describeIbkrMarketDataReadiness,
     mergeCandlesByTime,
     normalizePeriod,
+    normalizeAlpacaSymbol,
     normalizeSymbol,
     parseCsvCandleLines,
     parseHistoryCandles,
@@ -19,6 +20,7 @@ import {
     resolveIbkrHistoryPageStartTime,
     replaceFileWithRetry,
     runIbkrKeepAliveCycle,
+    getCsvPath,
     shouldUseIncrementalIbkrSync,
     type SyncRunState,
 } from "../lib/ibkr-data/ibkr-data-vite-plugin";
@@ -399,6 +401,22 @@ describe("ibkr normalizeSymbol", () => {
     it("accepts digits, dots, underscores, and hyphens", () => {
         assert.equal(normalizeSymbol("brk.b"), "BRK.B");
         assert.equal(normalizeSymbol("a_b-c"), "A_B-C");
+    });
+});
+
+describe("alpaca normalizeSymbol", () => {
+    it("accepts crypto pairs while keeping the pair separator", () => {
+        assert.equal(normalizeAlpacaSymbol("paxg/usd"), "PAXG/USD");
+    });
+
+    it("rejects path syntax and malformed crypto pairs", () => {
+        assert.throws(() => normalizeAlpacaSymbol("../etc/passwd"));
+        assert.throws(() => normalizeAlpacaSymbol("PAXG/USD/EXTRA"));
+    });
+
+    it("canonicalizes crypto pair separators in the local CSV filename", () => {
+        assert.match(getCsvPath("PAXG/USD", "1d"), /PAXGUSD\.csv$/i);
+        assert.match(getCsvPath("PAXG/USD\u2022", "1d"), /PAXGUSD\.csv$/i);
     });
 });
 

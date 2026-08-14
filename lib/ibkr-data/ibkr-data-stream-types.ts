@@ -39,8 +39,9 @@ export type IbkrIntervalMeta = {
      * - `retry_exhausted`: late retries failed after some bars landed
      * - `chunk_limit`: hit the max-chunk ceiling
      * - `cancelled`: aborted mid-fetch (Stop / newer sync)
+     * - `data_gap`: fetched source contains a large missing-time gap
      */
-    stopReason?: "covered" | "no_more_data" | "retry_exhausted" | "chunk_limit" | "cancelled";
+    stopReason?: "covered" | "no_more_data" | "retry_exhausted" | "chunk_limit" | "cancelled" | "data_gap";
     /**
      * Which data source wrote this interval. Absent on catalog entries
      * written before Alpaca support landed — treated as `"ibkr"` for backward

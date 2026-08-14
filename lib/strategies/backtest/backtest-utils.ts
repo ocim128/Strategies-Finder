@@ -118,7 +118,9 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         executionModel,
         allowSameBarExit: false,
         slippageBps: Math.max(0, toNumberOr(settings?.slippageBps, 0)),
-        maxOpenTrades: clamp(Math.round(toNumberOr(settings?.maxOpenTrades, 1)), 1, 2),
+        // Preserve the existing persisted value (2) as the overlap toggle, but
+        // remove the artificial two-position cap from the execution model.
+        maxOpenTrades: toNumberOr(settings?.maxOpenTrades, 1) > 1 ? Number.POSITIVE_INFINITY : 1,
     };
     config.disableSignalExits = settings?.disableSignalExits === true
         && (hasActiveChartTakeProfitOrStopLoss(config) || hasActivePathExit(config) || hasActiveExitStrategyOverride(settings));

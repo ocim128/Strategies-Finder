@@ -36,6 +36,8 @@ import type { OHLCVData } from "../types/strategies";
 export const ALPACA_DATA_HOST = "https://data.alpaca.markets";
 /** Stock bars endpoint (the market-data API, NOT the paper-trading API). */
 const ALPACA_STOCK_BARS_PATH = "/v2/stocks/{symbol}/bars";
+/** Crypto bars endpoint. Crypto symbols are passed as `symbols=BASE/QUOTE`. */
+const ALPACA_CRYPTO_BARS_PATH = "/v1beta3/crypto/us/bars";
 /** Intervals supported by the Alpaca path in the IBKR data menu. */
 export const ALPACA_SUPPORTED_INTERVALS = ["30m", "1d"] as const;
 /** Alpaca `timeframe` tokens for the supported app intervals. */
@@ -187,17 +189,20 @@ export function buildAlpacaBarsUrl(
         pageToken?: string;
     },
 ): string {
+    const symbol = args.symbol.trim().toUpperCase();
+    const isCrypto = symbol.includes("/");
     const params = new URLSearchParams({
         timeframe: args.timeframe,
         sort: "asc",
-        feed: config.feed,
-        adjustment: config.adjustment,
         limit: String(Math.min(ALPACA_PAGE_LIMIT_MAX, Math.max(1, Math.floor(args.limit ?? ALPACA_DEFAULT_PAGE_LIMIT)))),
+        ...(isCrypto ? { symbols: symbol } : { feed: config.feed, adjustment: config.adjustment }),
     });
     if (args.start) params.set("start", args.start);
     if (args.end) params.set("end", args.end);
     if (args.pageToken) params.set("page_token", args.pageToken);
-    const path = ALPACA_STOCK_BARS_PATH.replace("{symbol}", encodeURIComponent(args.symbol.toUpperCase()));
+    const path = isCrypto
+        ? ALPACA_CRYPTO_BARS_PATH
+        : ALPACA_STOCK_BARS_PATH.replace("{symbol}", encodeURIComponent(symbol));
     return `${config.host}${path}?${params.toString()}`;
 }
 
@@ -225,7 +230,8 @@ type AlpacaBarRow = {
 
 /** Alpaca bars response shape. */
 type AlpacaBarsResponse = {
-    bars?: AlpacaBarRow[];
+    // Stock bars are an array; crypto bars are keyed by symbol.
+    bars?: AlpacaBarRow[] | Record<string, AlpacaBarRow[]>;
     next_page_token?: string | null;
     symbol?: string;
 };
@@ -275,7 +281,11 @@ export function parseAlpacaBarsResponse(payload: unknown): {
     nextPageToken: string | null;
 } {
     const value = payload && typeof payload === "object" ? payload as AlpacaBarsResponse : {};
-    const rows = Array.isArray(value.bars) ? value.bars as AlpacaBarRow[] : [];
+    const rows = Array.isArray(value.bars)
+        ? value.bars
+        : value.bars && typeof value.bars === "object"
+            ? Object.values(value.bars).flatMap((symbolBars) => Array.isArray(symbolBars) ? symbolBars : [])
+            : [];
     const token = typeof value.next_page_token === "string" && value.next_page_token.trim()
         ? value.next_page_token.trim()
         : null;

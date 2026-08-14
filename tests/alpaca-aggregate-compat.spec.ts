@@ -12,6 +12,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { aggregateSyntheticBars } from "../scripts/lib/synthetic-pair";
+import { describeLargeCandleGap } from "../lib/ibkr-data/candle-gap";
 import type { OHLCVData } from "../lib/types/strategies";
 
 // 30m bar interval in seconds.
@@ -45,6 +46,18 @@ function buildSession30mBars(dayStartEpoch: number, barsPerSession = 13): OHLCVD
 }
 
 describe("alpaca 30m -> 4h aggregation compatibility", () => {
+    it("reports a multi-year source gap instead of treating it as continuous history", () => {
+        const first = Math.floor(Date.UTC(2023, 5, 19, 14, 30) / 1000);
+        const second = Math.floor(Date.UTC(2026, 1, 12, 12) / 1000);
+        const candles: OHLCVData[] = [
+            { time: first as OHLCVData["time"], open: 1816, high: 1817, low: 1815, close: 1816.9, volume: 1 },
+            { time: second as OHLCVData["time"], open: 5070, high: 5071, low: 5069, close: 5070.815, volume: 1 },
+        ];
+        const warning = describeLargeCandleGap(candles);
+        assert.match(warning ?? "", /gap/);
+        assert.match(warning ?? "", /missing bars were not reconstructed/);
+    });
+
     it("buckets 8 contiguous 30m bars into one 4h bar with summed volume + correct OHLC", () => {
         // 8 contiguous 30m bars starting at a 4h boundary (00:00 UTC).
         const start = Math.floor(Date.UTC(2026, 0, 5) / 1000 / T4H) * T4H;
