@@ -406,7 +406,7 @@ describe('Backtesting Engine', () => {
                 const settings = {
                     executionModel,
                     tradeDirection: direction,
-                    maxOpenTrades: 2,
+                    maxOpenTrades: 3,
                 };
                 const signals: Signal[] = direction === 'long'
                     ? [
@@ -434,7 +434,54 @@ describe('Backtesting Engine', () => {
             }
         }
 
-        expect(normalizeBacktestSettings({ maxOpenTrades: 2 }).maxOpenTrades).to.equal(Infinity);
+        expect(normalizeBacktestSettings({ maxOpenTrades: 3 }).maxOpenTrades).to.equal(Infinity);
+    });
+
+    it('caps overlap at 2 and exits only the first opposite position for maxOpenTrades 2 (pre-unlimited semantics)', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 },
+            { time: 3 as Time, open: 101, high: 103, low: 100, close: 102, volume: 1000 },
+            { time: 4 as Time, open: 102, high: 104, low: 101, close: 103, volume: 1000 },
+            { time: 5 as Time, open: 103, high: 105, low: 102, close: 104, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: data[0]!.time, type: 'buy', price: data[0]!.close },
+            { time: data[1]!.time, type: 'buy', price: data[1]!.close },
+            { time: data[2]!.time, type: 'buy', price: data[2]!.close },
+            { time: data[3]!.time, type: 'sell', price: data[3]!.close },
+        ];
+        const options = {
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+            skipDrawdown: true,
+            requireTradeHistory: true,
+            collectDiagnostics: true,
+        } as const;
+        const settings = {
+            executionModel: 'signal_close' as const,
+            tradeDirection: 'long' as const,
+            maxOpenTrades: 2,
+        };
+
+        const full = runBacktest(data, signals, 10000, 10, 0, settings, undefined, undefined, options);
+        const compact = runBacktestCompact(data, signals, 10000, 10, 0, settings, undefined, undefined, options);
+
+        // The third buy is blocked (cap 2); the sell closes only the FIRST
+        // position, and the survivor runs to end of data.
+        for (const [label, backtest] of [['full', full], ['compact', compact]] as const) {
+            expect(backtest.trades, `${label} trade count`).to.have.length(2);
+            expect(backtest.diagnostics?.counts.maxOpenPositions, `${label} max open positions`).to.equal(2);
+            const signalExit = backtest.trades.find((trade) => trade.exitReason === 'signal');
+            const survivor = backtest.trades.find((trade) => trade.exitReason === 'end_of_data');
+            expect(signalExit, `${label} signal exit exists`).to.not.equal(undefined);
+            expect(survivor, `${label} survivor runs to end of data`).to.not.equal(undefined);
+            expect(signalExit!.exitTime).to.equal(data[3]!.time);
+            expect(signalExit!.entryTime).to.equal(data[0]!.time);
+        }
+
+        expect(normalizeBacktestSettings({ maxOpenTrades: 2 }).maxOpenTrades).to.equal(2);
+        expect(normalizeBacktestSettings({ maxOpenTrades: 1 }).maxOpenTrades).to.equal(1);
     });
 
     it('preserves unlimited overlap in combined compact runs', () => {
@@ -462,7 +509,7 @@ describe('Backtesting Engine', () => {
         const settings = {
             tradeDirection: 'combined' as const,
             executionModel: 'signal_close' as const,
-            maxOpenTrades: 2,
+            maxOpenTrades: 3,
         };
 
         const full = runBacktest(data, signals, 10000, 10, 0, settings, undefined, undefined, options);
@@ -504,7 +551,7 @@ describe('Backtesting Engine', () => {
                 ], 10000, 10, 0, {
                     executionModel,
                     tradeDirection: direction,
-                    maxOpenTrades: 2,
+                    maxOpenTrades: 3,
                     riskMaxHoldEnabled: true,
                     riskMaxHoldBars: 12,
                 }, undefined, undefined, commonOptions);
@@ -514,7 +561,7 @@ describe('Backtesting Engine', () => {
                 ], 10000, 10, 0, {
                     executionModel,
                     tradeDirection: direction,
-                    maxOpenTrades: 2,
+                    maxOpenTrades: 3,
                     riskMaxHoldEnabled: true,
                     riskMaxHoldBars: 12,
                 }, undefined, undefined, commonOptions);
@@ -527,6 +574,40 @@ describe('Backtesting Engine', () => {
                 }
             }
         }
+    });
+
+    it('counts max hold from each position own entry in capped overlap (no group anchor)', () => {
+        const data: OHLCVData[] = Array.from({ length: 16 }, (_, index) => ({
+            time: index as Time,
+            open: 100,
+            high: 101,
+            low: 99,
+            close: 100,
+            volume: 1000,
+        }));
+        const options = {
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+            skipDrawdown: true,
+            requireTradeHistory: true,
+        } as const;
+
+        const result = runBacktest(data, [
+            { time: data[0]!.time, type: 'buy', price: 100 },
+            { time: data[1]!.time, type: 'buy', price: 100 },
+        ], 10000, 10, 0, {
+            executionModel: 'signal_close',
+            tradeDirection: 'long',
+            maxOpenTrades: 2,
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 12,
+        }, undefined, undefined, options);
+
+        // Both positions exit via time_stop, each 12 bars after its OWN entry
+        // (bars 12 and 13), NOT both at the group's first entry + 12.
+        expect(result.trades).to.have.length(2);
+        expect(result.trades.every((trade) => trade.exitReason === 'time_stop')).to.equal(true);
+        expect(new Set(result.trades.map((trade) => trade.exitTime as number))).to.deep.equal(new Set([12, 13]));
     });
 
     it('preserves next-open entry-bar stop behavior on the Finder fast path', () => {

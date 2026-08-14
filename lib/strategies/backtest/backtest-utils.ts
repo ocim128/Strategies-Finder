@@ -1,6 +1,6 @@
 
 import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection, PathExitMode } from '../../types/index';
-import { NormalizedSettings } from '../../types/backtest';
+import { NormalizedSettings, MAX_OPEN_TRADES_UNLIMITED } from '../../types/backtest';
 import { toTimeKey } from '../../time-key';
 import { parseTimeToUnixSeconds } from '../../time-normalization';
 import { ADAPTIVE_TAKE_PROFIT_DEFAULTS, resolveTakeProfitMode } from '../../take-profit-settings';
@@ -118,9 +118,11 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         executionModel,
         allowSameBarExit: false,
         slippageBps: Math.max(0, toNumberOr(settings?.slippageBps, 0)),
-        // Preserve the existing persisted value (2) as the overlap toggle, but
-        // remove the artificial two-position cap from the execution model.
-        maxOpenTrades: toNumberOr(settings?.maxOpenTrades, 1) > 1 ? Number.POSITIVE_INFINITY : 1,
+        // 1 = classic, 2 = capped overlap (pre-unlimited semantics so persisted
+        // runs reproduce), MAX_OPEN_TRADES_UNLIMITED and above = Infinity.
+        maxOpenTrades: toNumberOr(settings?.maxOpenTrades, 1) >= MAX_OPEN_TRADES_UNLIMITED
+            ? Number.POSITIVE_INFINITY
+            : clamp(Math.round(toNumberOr(settings?.maxOpenTrades, 1)), 1, 2),
     };
     config.disableSignalExits = settings?.disableSignalExits === true
         && (hasActiveChartTakeProfitOrStopLoss(config) || hasActivePathExit(config) || hasActiveExitStrategyOverride(settings));

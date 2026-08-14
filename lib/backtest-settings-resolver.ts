@@ -7,6 +7,7 @@ import type {
     TradeDirection,
     PathExitMode,
 } from "./types/strategies";
+import { MAX_OPEN_TRADES_UNLIMITED } from "./types/backtest";
 import {
     readBoolean as readBooleanValue,
     readNumber as readNumberValue,
@@ -311,7 +312,12 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
     { key: "slippageBps" },
     {
         key: "maxOpenTrades",
-        resolve: (raw) => Math.max(1, Math.min(2, Math.round(readDefaultedNumber(raw, "maxOpenTrades")))),
+        // Only the explicit DOM value 3 selects unlimited overlap; any other
+        // out-of-range garbage clamps back to the conservative capped range.
+        resolve: (raw) => {
+            const value = Math.round(readDefaultedNumber(raw, "maxOpenTrades"));
+            return value === MAX_OPEN_TRADES_UNLIMITED ? value : Math.max(1, Math.min(2, value));
+        },
     },
     { key: "strategyTimeframeMinutes" },
     {

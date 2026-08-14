@@ -62,9 +62,16 @@ export interface NormalizedSettings {
     allowSameBarExit: boolean;
     slippageBps: number;
 
-    /** Maximum number of concurrently open positions (1 = classic, >1 = unlimited overlap) */
+    /** Maximum number of concurrently open positions (1–2 = capped overlap, Infinity = unlimited overlap) */
     maxOpenTrades: number;
 }
+
+/**
+ * Settings-level DOM value that selects unlimited overlap. Values below it cap
+ * concurrent positions at their own number (1 = classic, 2 = capped overlap);
+ * `normalizeBacktestSettings` maps this value (and above) to Infinity.
+ */
+export const MAX_OPEN_TRADES_UNLIMITED = 3;
 
 export interface IndicatorSeries {
     atr: (number | null)[];

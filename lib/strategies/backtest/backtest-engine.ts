@@ -194,13 +194,20 @@ function registerOpenedPosition(args: {
         flipLossDirection,
         barIndex,
     } = args;
-    const existingSameDirectionPosition = positions.find((existing) => existing.direction === position.direction);
+    // Group-anchored max-hold and close-all signal exits are unlimited-overlap
+    // semantics only; capped runs keep the pre-unlimited per-position behavior.
+    const unlimitedOverlap = settings.maxOpenTrades === Number.POSITIVE_INFINITY;
+    const existingSameDirectionPosition = unlimitedOverlap
+        ? positions.find((existing) => existing.direction === position.direction)
+        : undefined;
     const maxHoldGroupEntryBarIndex = existingSameDirectionPosition?.maxHoldGroupEntryBarIndex
         ?? existingSameDirectionPosition?.openedBarIndex
         ?? barIndex;
     positions.push(position);
     position.openedBarIndex = barIndex;
-    position.maxHoldGroupEntryBarIndex = maxHoldGroupEntryBarIndex;
+    if (unlimitedOverlap) {
+        position.maxHoldGroupEntryBarIndex = maxHoldGroupEntryBarIndex;
+    }
     registerSmartSizingPosition(smartSizingPositionState, position);
     registerAdaptiveTakeProfitPosition(settings, adaptiveTakeProfitState, position, barIndex);
     if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
@@ -259,17 +266,25 @@ function resolveSignalExitPrice(position: PositionState, signal: Signal, slippag
     return applySlippage(signal.price, exitSideForDirection(position.direction), slippageRate);
 }
 
+function isUnlimitedOverlap(config: NormalizedSettings): boolean {
+    return config.maxOpenTrades === Number.POSITIVE_INFINITY;
+}
+
 function findSignalExitTargets(
     positions: PositionState[],
     signal: Signal,
-    allowSameBarExit: boolean
+    allowSameBarExit: boolean,
+    closeAllOppositePositions: boolean
 ): PositionState[] {
     const signalDir = signalToPositionDirection(signal.type);
     const oppositeDir = getOppositeDirection(signalDir);
-    return positions.filter((position) =>
+    const matches = positions.filter((position) =>
         position.direction === oppositeDir
         && (allowSameBarExit || compareTime(signal.time, position.entryTime) !== 0)
     );
+    // Unlimited overlap closes every opposite-direction position on the
+    // signal; capped runs close only the first match (pre-unlimited behavior).
+    return closeAllOppositePositions ? matches : matches.slice(0, 1);
 }
 
 function hasOppositePositionForSignal(positions: PositionState[], signal: Signal): boolean {
@@ -2028,7 +2043,7 @@ export function runBacktestCompact(
                 const isExitOnly = signal.exitOnly === true;
                 const exitTargets = config.disableSignalExits && forcedExitReason === null && !isExitOnly
                     ? undefined
-                    : findSignalExitTargets(positions, signal, config.allowSameBarExit);
+                    : findSignalExitTargets(positions, signal, config.allowSameBarExit, isUnlimitedOverlap(config));
 
                 if ((!exitTargets || exitTargets.length === 0) && positions.length < maxOpenTrades) {
                     if (forcedExitReason !== null || isExitOnly) {
@@ -2134,7 +2149,7 @@ export function runBacktestCompact(
                     const isExitOnly = signal.exitOnly === true;
                     const exitTargets = config.disableSignalExits && forcedExitReason === null && !isExitOnly
                         ? undefined
-                        : findSignalExitTargets(positions, signal, config.allowSameBarExit);
+                        : findSignalExitTargets(positions, signal, config.allowSameBarExit, isUnlimitedOverlap(config));
 
                     if ((!exitTargets || exitTargets.length === 0) && positions.length < maxOpenTrades) {
                         // New entry (no opposite position to close, and we have room)
@@ -2642,7 +2657,7 @@ export function runBacktest(
                 const isExitOnly = signal.exitOnly === true;
                 const exitTargets = config.disableSignalExits && forcedExitReason === null && !isExitOnly
                     ? undefined
-                    : findSignalExitTargets(positions, signal, config.allowSameBarExit);
+                    : findSignalExitTargets(positions, signal, config.allowSameBarExit, isUnlimitedOverlap(config));
 
                 if ((!exitTargets || exitTargets.length === 0) && positions.length < maxOpenTrades) {
                     // New entry
@@ -2749,7 +2764,7 @@ export function runBacktest(
                     const isExitOnly = signal.exitOnly === true;
                     const exitTargets = config.disableSignalExits && forcedExitReason === null && !isExitOnly
                         ? undefined
-                        : findSignalExitTargets(positions, signal, config.allowSameBarExit);
+                        : findSignalExitTargets(positions, signal, config.allowSameBarExit, isUnlimitedOverlap(config));
 
                     if ((!exitTargets || exitTargets.length === 0) && positions.length < maxOpenTrades) {
                         // New entry
