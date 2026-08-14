@@ -50,7 +50,7 @@ import {
 	FRESH_SIGNAL_LIBRARIES_METRIC,
 	FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC,
 	TOTAL_TRADES_CAPPED_METRIC,
-	TOTAL_TRADES_CAPPED_LIMIT,
+	TOTAL_TRADES_SATURATION_PERCENTILE,
 	retainAssetOpportunityResultsForSymbols,
 	type FinderAssetOpportunityArchiveSort,
 	type FinderAssetOpportunityResortMetric,
@@ -3731,7 +3731,7 @@ export class FinderManager {
 							: metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
 								? "Fresh Signals (Libraries, by Trades)"
 								: metric === TOTAL_TRADES_CAPPED_METRIC
-									? `Total Trades (capped at ${TOTAL_TRADES_CAPPED_LIMIT})`
+									? `Total Trades (P${Math.round(TOTAL_TRADES_SATURATION_PERCENTILE * 100)} saturation)`
 									: METRIC_FULL_LABELS[metric],
 					});
 				}

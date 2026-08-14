@@ -256,15 +256,21 @@ export const FRESH_SIGNAL_LIBRARIES_METRIC = "freshSignalLibraries" as const;
  */
 export const FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC = "freshSignalLibrariesByTrades" as const;
 /**
- * Saturated trade count: `min(totalTrades, TOTAL_TRADES_CAPPED_LIMIT)`. Once an
- * asset reaches the cap, additional trades stop improving its rank, so a
- * dominant high-trade-count asset/strategy no longer locks the top position.
- * Ties at the cap are broken by netProfitPercent (descending) — expectancy is
- * intentionally NOT consulted.
+ * Percentile-saturated trade count: rank by
+ * `min(totalTrades, P90 of this result set's trade counts)` descending. The
+ * cap is computed per sort call so it auto-fits the run config — a fixed cap
+ * is meaningless across configs (maxholdbars=1 runs produce 500-1300 trades,
+ * 12-bar-hold runs ~50-150; a fixed 100 saturates everything on the former
+ * and degenerates the sort into its tiebreak). Only the hyper-active elite
+ * saturates at the cap; once there, extra trades stop improving rank so a
+ * dominant high-trade-count asset/strategy can no longer lock the top spot.
+ * Ties at the cap are broken by averageGain (descending — larger average
+ * win). netProfitPercent and expectancy are intentionally NOT consulted so
+ * the metric stays count-based.
  */
 export const TOTAL_TRADES_CAPPED_METRIC = "totalTradesCapped" as const;
-/** Saturation limit for {@link TOTAL_TRADES_CAPPED_METRIC}. */
-export const TOTAL_TRADES_CAPPED_LIMIT = 100;
+/** Saturation percentile (0-1) for {@link TOTAL_TRADES_CAPPED_METRIC}. */
+export const TOTAL_TRADES_SATURATION_PERCENTILE = 0.9;
 export type FinderAssetOpportunityResortMetric =
     | FinderMetric
     | typeof FRESH_SIGNAL_LIBRARIES_METRIC
@@ -294,6 +300,16 @@ const ASSET_RESORT_METRICS: readonly FinderAssetOpportunityResortMetric[] = [
 
 export function getAssetOpportunityResortMetrics(): readonly FinderAssetOpportunityResortMetric[] {
     return ASSET_RESORT_METRICS;
+}
+
+/** Linear-interpolated quantile of an ascending-sorted number array. */
+function quantileSorted(sortedAsc: readonly number[], q: number): number {
+    if (sortedAsc.length === 0) return 0;
+    const position = (sortedAsc.length - 1) * q;
+    const lower = Math.floor(position);
+    const upper = Math.ceil(position);
+    if (lower === upper) return sortedAsc[lower]!;
+    return sortedAsc[lower]! + (sortedAsc[upper]! - sortedAsc[lower]!) * (position - lower);
 }
 
 function getFreshSignalLibraryCounts(
@@ -401,17 +417,24 @@ export function sortAssetOpportunityResultsByMetric(
             });
     }
     if (metric === TOTAL_TRADES_CAPPED_METRIC) {
-        // Saturated count: min(totalTrades, cap), descending. Ties (common at
-        // the cap) fall back to netProfitPercent, NOT the expectancy-led
-        // generic chain — this metric is count-based by design and must stay
-        // independent of expectancy.
+        // Percentile saturation: cap = P90 of totalTrades within this result
+        // set (auto-fits the run config; a fixed cap saturates everything on
+        // maxholdbars=1 runs and degenerates into the tiebreak). Rank by
+        // min(trades, cap) descending; the saturated elite ties at the cap and
+        // is contested by averageGain (larger average win), then symbol.
+        // netProfitPercent and expectancy are deliberately NOT consulted.
+        const tradeCounts = results
+            .map((result) => getAssetOpportunityMetricValue(result, "totalTrades"))
+            .sort((left, right) => left - right);
+        if (tradeCounts.length === 0) return [...results];
+        const saturationCap = quantileSorted(tradeCounts, TOTAL_TRADES_SATURATION_PERCENTILE);
         return [...results].sort((a, b) => {
-            const capA = Math.min(getAssetOpportunityMetricValue(a, "totalTrades"), TOTAL_TRADES_CAPPED_LIMIT);
-            const capB = Math.min(getAssetOpportunityMetricValue(b, "totalTrades"), TOTAL_TRADES_CAPPED_LIMIT);
+            const capA = Math.min(getAssetOpportunityMetricValue(a, "totalTrades"), saturationCap);
+            const capB = Math.min(getAssetOpportunityMetricValue(b, "totalTrades"), saturationCap);
             if (capA !== capB) return capB - capA;
-            const profitA = getAssetOpportunityMetricValue(a, "netProfitPercent");
-            const profitB = getAssetOpportunityMetricValue(b, "netProfitPercent");
-            if (profitA !== profitB) return profitB - profitA;
+            const gainA = getAssetOpportunityMetricValue(a, "averageGain");
+            const gainB = getAssetOpportunityMetricValue(b, "averageGain");
+            if (gainA !== gainB) return gainB - gainA;
             if (a.symbol < b.symbol) return -1;
             if (a.symbol > b.symbol) return 1;
             return 0;
