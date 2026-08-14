@@ -255,10 +255,21 @@ export const FRESH_SIGNAL_LIBRARIES_METRIC = "freshSignalLibraries" as const;
  * totalTrades tiebreak is that winner's, not the symbol's max.
  */
 export const FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC = "freshSignalLibrariesByTrades" as const;
+/**
+ * Saturated trade count: `min(totalTrades, TOTAL_TRADES_CAPPED_LIMIT)`. Once an
+ * asset reaches the cap, additional trades stop improving its rank, so a
+ * dominant high-trade-count asset/strategy no longer locks the top position.
+ * Ties at the cap are broken by netProfitPercent (descending) — expectancy is
+ * intentionally NOT consulted.
+ */
+export const TOTAL_TRADES_CAPPED_METRIC = "totalTradesCapped" as const;
+/** Saturation limit for {@link TOTAL_TRADES_CAPPED_METRIC}. */
+export const TOTAL_TRADES_CAPPED_LIMIT = 100;
 export type FinderAssetOpportunityResortMetric =
     | FinderMetric
     | typeof FRESH_SIGNAL_LIBRARIES_METRIC
-    | typeof FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC;
+    | typeof FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
+    | typeof TOTAL_TRADES_CAPPED_METRIC;
 /** Special batch-only choice that archives the default order plus every metric. */
 export const ASSET_OPPORTUNITY_ALL_SORTS = "allAssetOpportunitySorts" as const;
 export type FinderAssetOpportunityArchiveSort =
@@ -278,6 +289,7 @@ const ASSET_RESORT_METRICS: readonly FinderAssetOpportunityResortMetric[] = [
     "totalTrades",
     FRESH_SIGNAL_LIBRARIES_METRIC,
     FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC,
+    TOTAL_TRADES_CAPPED_METRIC,
 ];
 
 export function getAssetOpportunityResortMetrics(): readonly FinderAssetOpportunityResortMetric[] {
@@ -387,6 +399,23 @@ export function sortAssetOpportunityResultsByMetric(
                 }
                 return a.symbol.localeCompare(b.symbol);
             });
+    }
+    if (metric === TOTAL_TRADES_CAPPED_METRIC) {
+        // Saturated count: min(totalTrades, cap), descending. Ties (common at
+        // the cap) fall back to netProfitPercent, NOT the expectancy-led
+        // generic chain — this metric is count-based by design and must stay
+        // independent of expectancy.
+        return [...results].sort((a, b) => {
+            const capA = Math.min(getAssetOpportunityMetricValue(a, "totalTrades"), TOTAL_TRADES_CAPPED_LIMIT);
+            const capB = Math.min(getAssetOpportunityMetricValue(b, "totalTrades"), TOTAL_TRADES_CAPPED_LIMIT);
+            if (capA !== capB) return capB - capA;
+            const profitA = getAssetOpportunityMetricValue(a, "netProfitPercent");
+            const profitB = getAssetOpportunityMetricValue(b, "netProfitPercent");
+            if (profitA !== profitB) return profitB - profitA;
+            if (a.symbol < b.symbol) return -1;
+            if (a.symbol > b.symbol) return 1;
+            return 0;
+        });
     }
     const SECONDARY_TIEBREAK_METRICS: readonly FinderMetric[] = ["expectancy", "netProfitPercent", "totalTrades"];
     const ascending = metric === "maxDrawdownPercent";

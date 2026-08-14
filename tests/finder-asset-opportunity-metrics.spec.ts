@@ -19,6 +19,8 @@ import {
     sortAssetOpportunityResults,
     sortAssetOpportunityResultsByMetric,
     getAssetOpportunityResortMetrics,
+    TOTAL_TRADES_CAPPED_METRIC,
+    TOTAL_TRADES_CAPPED_LIMIT,
     retainAssetOpportunityResultsForSymbols,
     type AssetPoolCandidate,
 } from "../lib/finder/finder-asset-opportunity-metrics";
@@ -327,6 +329,48 @@ describe("Asset Opportunity post-run re-sort", () => {
         const shallow = makeResortResult({ symbol: "B", maxDrawdownPercent: 5 });
         const sorted = sortAssetOpportunityResultsByMetric([deep, shallow], "maxDrawdownPercent");
         expect(sorted.map((r) => r.symbol)).to.deep.equal(["B", "A"]);
+    });
+
+    describe("totalTradesCapped", () => {
+        it("saturates at the cap so a dominant high-trade asset no longer hard-locks the top rank", () => {
+            // The whole point of the metric: under a raw totalTrades sort the
+            // 5000-trade asset always wins; capped, the 150-trade competitor
+            // ties at the cap and profit percentage decides.
+            const dominant = makeResortResult({ symbol: "A", totalTrades: 5000, netProfitPercent: 10 });
+            const challenger = makeResortResult({ symbol: "B", totalTrades: 150, netProfitPercent: 50 });
+            const sorted = sortAssetOpportunityResultsByMetric([dominant, challenger], TOTAL_TRADES_CAPPED_METRIC);
+            expect(sorted.map((r) => r.symbol)).to.deep.equal(["B", "A"]);
+        });
+
+        it("still ranks below-cap trade counts like totalTrades", () => {
+            const few = makeResortResult({ symbol: "A", totalTrades: 40, netProfitPercent: 500 });
+            const more = makeResortResult({ symbol: "B", totalTrades: 90, netProfitPercent: 1 });
+            const sorted = sortAssetOpportunityResultsByMetric([few, more], TOTAL_TRADES_CAPPED_METRIC);
+            expect(sorted.map((r) => r.symbol)).to.deep.equal(["B", "A"]);
+        });
+
+        it("breaks cap ties by netProfitPercent without consulting expectancy", () => {
+            // Both saturate at the cap; the expectancy leader must NOT win on
+            // expectancy — only netProfitPercent decides.
+            const profitLeader = makeResortResult({ symbol: "A", totalTrades: 800, netProfitPercent: 20, expectancy: 0.1 });
+            const expectancyLeader = makeResortResult({ symbol: "B", totalTrades: 900, netProfitPercent: 5, expectancy: 9 });
+            const sorted = sortAssetOpportunityResultsByMetric(
+                [expectancyLeader, profitLeader],
+                TOTAL_TRADES_CAPPED_METRIC,
+            );
+            expect(sorted.map((r) => r.symbol)).to.deep.equal(["A", "B"]);
+        });
+
+        it("falls back to symbol ascending when capped count and netProfitPercent both tie", () => {
+            const a = makeResortResult({ symbol: "Z", totalTrades: TOTAL_TRADES_CAPPED_LIMIT, netProfitPercent: 7 });
+            const b = makeResortResult({ symbol: "A", totalTrades: 5000, netProfitPercent: 7 });
+            const sorted = sortAssetOpportunityResultsByMetric([a, b], TOTAL_TRADES_CAPPED_METRIC);
+            expect(sorted.map((r) => r.symbol)).to.deep.equal(["A", "Z"]);
+        });
+
+        it("is exposed through the re-sort metric list", () => {
+            expect(getAssetOpportunityResortMetrics()).to.include(TOTAL_TRADES_CAPPED_METRIC);
+        });
     });
 
     it("recomputes each horizon average from the displayed result set after re-sort", () => {

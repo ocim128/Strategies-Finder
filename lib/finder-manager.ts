@@ -49,6 +49,8 @@ import {
 	getAssetOpportunityResortMetrics,
 	FRESH_SIGNAL_LIBRARIES_METRIC,
 	FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC,
+	TOTAL_TRADES_CAPPED_METRIC,
+	TOTAL_TRADES_CAPPED_LIMIT,
 	retainAssetOpportunityResultsForSymbols,
 	type FinderAssetOpportunityArchiveSort,
 	type FinderAssetOpportunityResortMetric,
@@ -3728,7 +3730,9 @@ export class FinderManager {
 							? "Fresh Signals (Libraries)"
 							: metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
 								? "Fresh Signals (Libraries, by Trades)"
-								: METRIC_FULL_LABELS[metric],
+								: metric === TOTAL_TRADES_CAPPED_METRIC
+									? `Total Trades (capped at ${TOTAL_TRADES_CAPPED_LIMIT})`
+									: METRIC_FULL_LABELS[metric],
 					});
 				}
 		} else if (scope === 'strategy_quality') {
