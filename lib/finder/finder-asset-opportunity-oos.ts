@@ -4,7 +4,7 @@ export const DEFAULT_FINDER_ASSET_OOS_HORIZONS = [1, 3, 5] as const;
 export const MAX_FINDER_ASSET_OOS_VALUE = 100_000;
 
 /** Inclusive batch range cap; larger sweeps must be split into smaller runs. */
-export const MAX_FINDER_ASSET_OOS_BATCH_VALUES = 100;
+export const MAX_FINDER_ASSET_OOS_BATCH_VALUES = 1000;
 
 export interface FinderAssetOosHorizonMetric {
     /** Forward close-to-entry PnL, summed across eligible OOS entries. */
@@ -105,9 +105,9 @@ export interface FinderAssetOosBatchHoldoutRange {
  * Validate an inclusive holdout range for Asset Opportunity batch mode.
  * Positive integers only (no `0`, which is the single-run "no holdout"
  * sentinel), ascending order, per-value cap at
- * {@link MAX_FINDER_ASSET_OOS_VALUE}, and an at-most-100-value range cap so a
- * batch cannot accidentally schedule runaway work. Returns the ordered range
- * or a validation error; never throws.
+ * {@link MAX_FINDER_ASSET_OOS_VALUE}, and an at-most-1000-value range cap so
+ * a batch cannot accidentally schedule runaway work. Returns the ordered
+ * range or a validation error; never throws.
  */
 export function normalizeFinderAssetOosBatchHoldoutRange(
     startValue: unknown,

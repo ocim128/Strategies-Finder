@@ -50,7 +50,7 @@ describe("Asset Opportunity batch holdout range", () => {
 
     it("caps the inclusive range at the batch value limit", () => {
         const capped = normalizeFinderAssetOosBatchHoldoutRange(1, MAX_FINDER_ASSET_OOS_BATCH_VALUES + 1);
-        expect(capped.error).to.match(/at most 100 holdout values/);
+        expect(capped.error).to.match(new RegExp(`at most ${MAX_FINDER_ASSET_OOS_BATCH_VALUES} holdout values`));
         const exact = normalizeFinderAssetOosBatchHoldoutRange(1, MAX_FINDER_ASSET_OOS_BATCH_VALUES);
         expect(exact.error).to.equal(null);
         expect(exact.start).to.equal(1);

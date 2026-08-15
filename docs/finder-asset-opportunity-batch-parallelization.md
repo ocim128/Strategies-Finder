@@ -7,7 +7,7 @@ Status: Implemented (2026-08-14) · Branch: `chore/complexity-reduction` · Scop
 `POST /api/finder/asset-opportunity-batch-run` executes the validated holdout
 sweep **sequentially on the single Vite dev-server thread**:
 
-- `processFinderAssetOpportunityBatchRun` (`lib/finder/server/finder-vite-plugin.ts:1770`) loops holdout values ascending, one at a time (up to `MAX_FINDER_ASSET_OOS_BATCH_VALUES = 100` values).
+- `processFinderAssetOpportunityBatchRun` (`lib/finder/server/finder-vite-plugin.ts:1770`) loops holdout values ascending, one at a time (up to `MAX_FINDER_ASSET_OOS_BATCH_VALUES = 1000` values).
 - Each iteration (`runAssetOpportunityIteration`, same file, line 1032) loops assets sequentially; only dataset *loading* is prefetched (`ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY = 12`).
 - Each asset × strategy pass runs `runServerAssetIsSearch` (`lib/finder/server/server-asset-is-search.ts`), evaluating up to `maxRuns` candidate backtests one by one.
 

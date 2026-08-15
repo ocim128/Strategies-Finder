@@ -47,7 +47,7 @@ in the Asset Opportunity settings (which hides and disables the single
 `POST /api/finder/asset-opportunity-batch-run` with the same fields as the
 single route plus `batch: { startHoldoutBars, endHoldoutBars }`. The server
 validates the range **before acquiring ownership**: positive integers,
-ascending (`start <= end`), each at most 100,000, and at most 100 values
+ascending (`start <= end`), each at most 100,000, and at most 1000 values
 (`normalizeFinderAssetOosBatchHoldoutRange` in
 `lib/finder/finder-asset-opportunity-oos.ts`).
 
