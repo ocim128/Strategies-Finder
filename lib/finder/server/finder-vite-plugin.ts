@@ -48,6 +48,7 @@
 
 import type { Plugin } from "vite";
 import { getHeapStatistics } from "node:v8";
+import { totalmem } from "node:os";
 import path from "node:path";
 import { debugLogger } from "../../debug-logger";
 import {
@@ -1334,7 +1335,15 @@ export async function processFinderAssetOpportunityBatchRun(
     // in-process loop. The sweep returns completed iterations in ascending
     // holdout order, so archives/events stay identical to the sequential run.
     const workerCount = input.batchTaskRunnerFactory
-        ? resolveAssetOpportunityBatchWorkerCount(totalIterations, totalAssets)
+        ? resolveAssetOpportunityBatchWorkerCount(
+            totalIterations,
+            totalAssets,
+            process.env,
+            totalmem(),
+            // The Rust engine's HTTP server serializes; cap the auto pool so
+            // workers don't contend for its queue (env override still wins).
+            { rustEngine: input.useRustEnginePreference === true },
+        )
         : 1;
 
     if (input.batchTaskRunnerFactory && workerCount > 1) {

@@ -98,6 +98,13 @@ export function resolveAssetOpportunityDatasetCacheCapacity(
 }
 
 /**
+ * Auto-pool cap when the Rust engine is preferred: its external HTTP server
+ * serializes execution, so a large pool only multiplies queued requests.
+ * The env override deliberately bypasses this cap (operator judgment).
+ */
+export const ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP = 8;
+
+/**
  * Resolve the worker count for one batch sweep.
  *
  * - `FINDER_ASSET_BATCH_WORKERS` env: integer >= 1 wins outright (1 = caller
@@ -109,12 +116,16 @@ export function resolveAssetOpportunityDatasetCacheCapacity(
  *   ceiling budgets 75% of ACTUAL system RAM (`os.totalmem()`, injectable for
  *   tests) for one full dataset copy per worker (~9 MB/symbol), so a 16 GB
  *   host auto-selects ~3x fewer workers than a 64 GB host. Always >= 1.
+ * - `options.rustEngine`: clamps the AUTO value (never the env override) to
+ *   {@link ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP} — the Rust server
+ *   serializes, so extra workers only contend for its queue.
  */
 export function resolveAssetOpportunityBatchWorkerCount(
     holdoutCount: number,
     symbolCount: number,
     env: NodeJS.ProcessEnv = process.env,
     systemMemoryBytes: number = totalmem(),
+    options?: { rustEngine?: boolean },
 ): number {
     const raw = env[FINDER_ASSET_BATCH_WORKERS_ENV];
     if (raw !== undefined && raw !== "") {
@@ -136,7 +147,7 @@ export function resolveAssetOpportunityBatchWorkerCount(
             memoryBudgetBytes / (Math.max(1, symbolCount) * ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL),
         ),
     );
-    return Math.max(
+    const auto = Math.max(
         1,
         Math.min(
             Math.max(1, holdoutCount),
@@ -144,6 +155,10 @@ export function resolveAssetOpportunityBatchWorkerCount(
             memoryCeiling,
         ),
     );
+    if (options?.rustEngine === true) {
+        return Math.min(auto, ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP);
+    }
+    return auto;
 }
 
 // ---------------------------------------------------------------------------

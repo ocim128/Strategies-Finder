@@ -300,6 +300,28 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(resolveAssetOpportunityBatchWorkerCount(2, 10, {}, 16 * GIB)).to.be.at.most(2);
     });
 
+    it("clamps the auto worker count for Rust-engine runs; the env override still wins", () => {
+        const auto = resolveAssetOpportunityBatchWorkerCount(41, 10, {}, 64 * GIB);
+        // rustEngine caps the AUTO value at 8 (the Rust HTTP server serializes;
+        // extra workers only contend for its queue)...
+        expect(resolveAssetOpportunityBatchWorkerCount(41, 10, {}, 64 * GIB, { rustEngine: true }))
+            .to.equal(Math.min(auto, 8));
+        // ...and never raises it when auto is already below the cap.
+        expect(resolveAssetOpportunityBatchWorkerCount(3, 10, {}, 64 * GIB, { rustEngine: true }))
+            .to.equal(Math.min(resolveAssetOpportunityBatchWorkerCount(3, 10, {}, 64 * GIB), 8));
+        // rustEngine: false / undefined keep the unchanged auto value.
+        expect(resolveAssetOpportunityBatchWorkerCount(41, 10, {}, 64 * GIB, { rustEngine: false })).to.equal(auto);
+        // The env override is the operator's explicit judgment call: it
+        // bypasses the Rust cap exactly like it bypasses the memory ceiling.
+        expect(resolveAssetOpportunityBatchWorkerCount(
+            41,
+            10,
+            { [FINDER_ASSET_BATCH_WORKERS_ENV]: "16" },
+            64 * GIB,
+            { rustEngine: true },
+        )).to.equal(16);
+    });
+
     it("produces identical ordered results, archives, and totals as the sequential loop", async () => {
         const sequential = await runAssetBatch({ owner: 8101, start: 2, end: 4, runId: "parallel-parity" });
         const parallel = await runAssetBatch({
