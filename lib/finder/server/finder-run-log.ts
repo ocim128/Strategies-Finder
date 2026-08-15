@@ -71,20 +71,114 @@ export interface AppendFinderRunLogEventArgs {
     append?: FinderRunLogAppend;
 }
 
-export async function appendFinderRunLogEvent(
-    args: AppendFinderRunLogEventArgs,
-): Promise<void> {
-    const dir = resolveFinderRunLogDir(args.root);
-    const filename = buildFinderRunLogFilename(args.runId);
-    const line = JSON.stringify({
+function serializeFinderRunLogLine(args: {
+    runId: string;
+    event: string;
+    data?: Record<string, unknown>;
+    ts?: number;
+}): string {
+    return JSON.stringify({
         ts: args.ts ?? Date.now(),
         runId: args.runId,
         event: args.event,
         ...(args.data ?? {}),
     });
+}
+
+export async function appendFinderRunLogEvent(
+    args: AppendFinderRunLogEventArgs,
+): Promise<void> {
+    const dir = resolveFinderRunLogDir(args.root);
+    const filename = buildFinderRunLogFilename(args.runId);
+    const line = serializeFinderRunLogLine(args);
     const append = args.append ?? (async (dirPath, fileName, content) => {
         await mkdir(dirPath, { recursive: true });
         await appendFile(path.join(dirPath, fileName), `${content}\n`, "utf8");
     });
     await append(dir, filename, line);
+}
+
+export interface CreateBufferedFinderRunLogSinkOptions {
+    /** Flush once this many lines are buffered. Default 256. */
+    maxLines?: number;
+    /** Flush this many ms after the first buffered line. Default 250. */
+    flushAfterMs?: number;
+    /**
+     * Events flushed IMMEDIATELY (durability points). Defaults to the
+     * iteration boundaries: every completed iteration is fully on disk before
+     * the next archive append runs.
+     */
+    boundaryEvents?: ReadonlySet<string>;
+    /** Injectable append leaf (tests); default appends the joined chunk. */
+    append?: FinderRunLogAppend;
+    /** Called once per FAILED flush; the buffer is cleared, never retried. */
+    onWriteError?: (error: unknown) => void;
+}
+
+/**
+ * Buffered {@link FinderRunLogSink} for high-frequency events. A large Asset
+ * Opportunity batch emits ~100k `asset_complete` lines; appending each with
+ * its own mkdir+appendFile costs ~200k syscalls. Lines accumulate and flush
+ * as ONE appendFile when the buffer fills, when `flushAfterMs` has elapsed
+ * since the first buffered line, or immediately for boundary events. The
+ * line schema is identical to {@link appendFinderRunLogEvent}; only the write
+ * granularity changes. Flushes are serialized through a promise chain so
+ * chunks never interleave; a failed flush reports via `onWriteError` and
+ * clears the buffer (fire-and-forget semantics — it can never fail a run).
+ */
+export function createBufferedFinderRunLogSink(
+    root: string,
+    runId: string,
+    options: CreateBufferedFinderRunLogSinkOptions = {},
+): FinderRunLogSink {
+    const maxLines = Math.max(1, Math.floor(options.maxLines ?? 256));
+    const flushAfterMs = Math.max(0, options.flushAfterMs ?? 250);
+    const boundaryEvents = options.boundaryEvents
+        ?? new Set(["iteration_start", "iteration_complete"]);
+    const dir = resolveFinderRunLogDir(root);
+    const filename = buildFinderRunLogFilename(runId);
+    // An injected append owns ALL filesystem effects (same seam contract as
+    // appendFinderRunLogEvent's injectable default = mkdir + appendFile);
+    // the production default mkdirs lazily on the first flush.
+    const append = options.append ?? ((dirPath, fileName, content) =>
+        appendFile(path.join(dirPath, fileName), content, "utf8"));
+    const ensureDir: () => Promise<void> = options.append
+        ? async () => undefined
+        : () => mkdir(dir, { recursive: true }).then(() => undefined);
+
+    let buffer: string[] = [];
+    let timer: NodeJS.Timeout | null = null;
+    let dirReady: Promise<void> | null = null;
+    // Serializes flushes: each append awaits the previous one so chunks stay
+    // ordered and never interleave mid-line.
+    let flushChain: Promise<void> = Promise.resolve();
+
+    const flushNow = (): void => {
+        if (timer !== null) {
+            clearTimeout(timer);
+            timer = null;
+        }
+        if (buffer.length === 0) return;
+        const lines = buffer;
+        buffer = [];
+        const chunk = `${lines.join("\n")}\n`;
+        dirReady ??= ensureDir();
+        flushChain = flushChain
+            .then(() => dirReady)
+            .then(() => append(dir, filename, chunk))
+            .catch((error: unknown) => {
+                options.onWriteError?.(error);
+            });
+    };
+
+    return (event, data) => {
+        buffer.push(serializeFinderRunLogLine({ runId, event, data }));
+        if (boundaryEvents.has(event) || buffer.length >= maxLines) {
+            flushNow();
+            return;
+        }
+        if (timer === null && Number.isFinite(flushAfterMs)) {
+            timer = setTimeout(flushNow, flushAfterMs);
+        }
+    };
 }

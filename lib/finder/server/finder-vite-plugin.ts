@@ -123,7 +123,7 @@ import {
     type AssetOpportunityArchiveAppend,
 } from "./finder-asset-opportunity-archive";
 import {
-    appendFinderRunLogEvent,
+    createBufferedFinderRunLogSink,
     resolveFinderRunLogDir,
     type FinderRunLogSink,
 } from "./finder-run-log";
@@ -2438,20 +2438,21 @@ function resolveServerProvider(symbol: string, providerBySymbol: Map<string, str
 }
 
 /**
- * Build the fire-and-forget JSONL run-log sink for one run. Write failures
- * are logged to the debug logger and never propagate, so a disk hiccup can
- * never fail a Finder run.
+ * Build the fire-and-forget JSONL run-log sink for one run. Writes are
+ * buffered (line schema identical to `appendFinderRunLogEvent`) with
+ * immediate flushes at iteration boundaries; write failures are logged to
+ * the debug logger and never propagate, so a disk hiccup can never fail a
+ * Finder run.
  */
 function buildFinderRunLogSink(root: string, runId: string): FinderRunLogSink {
-    return (event, data) => {
-        void appendFinderRunLogEvent({ root, runId, event, data }).catch((error) => {
+    return createBufferedFinderRunLogSink(root, runId, {
+        onWriteError: (error) => {
             debugLogger.warn("finder.run_log.append_failed", {
                 runId,
-                event,
                 error: error instanceof Error ? error.message : String(error),
             });
-        });
-    };
+        },
+    });
 }
 
 // ---------------------------------------------------------------------------
