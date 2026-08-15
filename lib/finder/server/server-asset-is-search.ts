@@ -180,6 +180,26 @@ export async function runServerAssetIsSearch(
     let rustFallbackRuns = 0;
     let typescriptCompletedRuns = 0;
     const typescriptReasonCounts = new Map<string, number>();
+    // Cache each exit lib's normalized param space so the per-candidate loop
+    // does not regenerate the full space (up to `maxRuns` param objects) once
+    // per entry candidate — O(maxRuns^2) allocations otherwise. Generation is
+    // deterministic here because the Asset path always sets a finite
+    // `options.randomSeed`, so the cached list equals what every in-loop call
+    // would produce. Mirrors `exitParamSetsByKey` in the browser
+    // `finder-runner.ts` and `finder-runner-universe.ts` runners.
+    const exitParamSetsByKey = new Map<string, StrategyParams[]>();
+    const getExitParamSets = (selection: FinderSelectedStrategy): StrategyParams[] => {
+        const cached = exitParamSetsByKey.get(selection.key);
+        if (cached) return cached;
+        const exitDefaults = getFinderStrategyParamDefaults(selection.strategy);
+        const exitGenerated = input.generateParamSets(exitDefaults, options);
+        const exitNormalized = normalizeFinderCandidateParamSets(selection.strategy, exitGenerated);
+        const exitParamSets = exitNormalized.length > 0
+            ? exitNormalized
+            : [{ ...selection.strategy.defaultParams }];
+        exitParamSetsByKey.set(selection.key, exitParamSets);
+        return exitParamSets;
+    };
 
     for (let index = 0; index < paramSets.length; index++) {
         if (input.isCancelled()) break;
@@ -196,12 +216,8 @@ export async function runServerAssetIsSearch(
             // the current-chart path without requiring a random source.
             const candidateIndex = index % input.exitStrategyCandidates.length;
             exitStrategy = input.exitStrategyCandidates[candidateIndex];
-            const exitDefaults = getFinderStrategyParamDefaults(exitStrategy.strategy);
-            const exitGenerated = input.generateParamSets(exitDefaults, options);
-            const exitNormalized = normalizeFinderCandidateParamSets(exitStrategy.strategy, exitGenerated);
-            exitParams = exitNormalized.length > 0
-                ? exitNormalized[index % exitNormalized.length]
-                : { ...exitStrategy.strategy.defaultParams };
+            const exitParamSets = getExitParamSets(exitStrategy);
+            exitParams = exitParamSets[index % exitParamSets.length];
         }
 
         const combinedParams = exitParams
