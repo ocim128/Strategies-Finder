@@ -7,6 +7,7 @@ import {
     processFinderAssetOpportunityRun,
     processFinderAssetOpportunityBatchRun,
     buildAssetOpportunityBatchHoldoutValues,
+    createProgressEventThrottle,
     __testInternals,
 } from "../lib/finder/server/finder-vite-plugin";
 import { HttpStatusError } from "../lib/vite-http-utils";
@@ -1412,6 +1413,47 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         expect(res.statusCode).to.equal(409);
         const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
         expect(payload.error).to.include("already running");
+    });
+});
+
+describe("finder server plugin progress event throttle", () => {
+    it("collapses rapid same-phase/same-percent writes into one stream event", () => {
+        const throttle = createProgressEventThrottle();
+        let writes = 0;
+        const write = (): void => { writes += 1; };
+        for (let index = 0; index < 200; index += 1) {
+            throttle({ percent: 42, phase: "evaluating", write });
+        }
+        expect(writes).to.equal(1);
+    });
+
+    it("emits on phase transitions and meaningful percent deltas immediately", () => {
+        const throttle = createProgressEventThrottle();
+        const emitted: Array<{ percent: number; phase: string }> = [];
+        const record = (percent: number, phase: string): void => {
+            throttle({ percent, phase, write: () => emitted.push({ percent, phase }) });
+        };
+        record(0, "loading");
+        record(0.2, "loading");        // same phase, small delta: suppressed
+        record(0.3, "evaluating");     // phase change: emitted even though <1%
+        record(0.4, "evaluating");     // suppressed
+        record(2.5, "evaluating");     // >=1% delta: emitted
+        expect(emitted).to.deep.equal([
+            { percent: 0, phase: "loading" },
+            { percent: 0.3, phase: "evaluating" },
+            { percent: 2.5, phase: "evaluating" },
+        ]);
+    });
+
+    it("emits again once the time threshold elapses (monotonic clock not mocked; uses large threshold)", () => {
+        // With a 0ms threshold every write is older than the threshold, so
+        // nothing is ever time-suppressed; the percent/phase gates still work.
+        const throttle = createProgressEventThrottle(0);
+        let writes = 0;
+        const write = (): void => { writes += 1; };
+        throttle({ percent: 1, phase: "loading", write });
+        throttle({ percent: 1.05, phase: "loading", write });
+        expect(writes).to.equal(2);
     });
 });
 

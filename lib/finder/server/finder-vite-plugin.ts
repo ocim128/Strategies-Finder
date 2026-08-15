@@ -927,6 +927,43 @@ export function buildAssetOpportunityBatchHoldoutValues(
 }
 
 /**
+ * Time/percent-delta throttle for high-frequency `asset_progress` /
+ * `asset_batch_progress` STREAM writes. The UI shows one aggregate percentage,
+ * but progress callbacks fire ~4x per (asset x strategy) pass — a large batch
+ * emits hundreds of thousands of events otherwise. Snapshot mirroring stays
+ * per-event (so `/status` reattach stays fully fresh); only the NDJSON write
+ * is gated. Emits on: first call, >= thresholdMs since the last write,
+ * >= minPercentDelta change, or any phase transition. Terminal and iteration
+ * events are separate event types and never pass through here.
+ */
+export function createProgressEventThrottle(thresholdMs = 250, minPercentDelta = 1): (sample: {
+    percent: number;
+    phase: string;
+    write: () => void;
+}) => void {
+    let lastEmitAt = 0;
+    let lastEmittedPercent = Number.NaN;
+    let lastEmittedPhase = "";
+    return (sample) => {
+        const now = Date.now();
+        const phaseChanged = sample.phase !== lastEmittedPhase;
+        const percentDelta = Math.abs(sample.percent - lastEmittedPercent);
+        if (
+            lastEmitAt !== 0
+            && !phaseChanged
+            && now - lastEmitAt < thresholdMs
+            && !(percentDelta >= minPercentDelta)
+        ) {
+            return;
+        }
+        lastEmitAt = now;
+        lastEmittedPercent = sample.percent;
+        lastEmittedPhase = sample.phase;
+        sample.write();
+    };
+}
+
+/**
  * Process ONE Asset Opportunity job (single run). Preserves the existing
  * events and status behavior exactly: initializes the asset-opportunity
  * snapshot, emits `asset_start`, runs the shared iteration seam once,
@@ -995,6 +1032,7 @@ export async function processFinderAssetOpportunityRun(
         strategyNames: selectedStrategies.map((strategy) => strategy.name),
     });
 
+    const throttleProgressWrite = createProgressEventThrottle();
     const iteration = await runAssetOpportunityIteration(
         input,
         {
@@ -1005,15 +1043,21 @@ export async function processFinderAssetOpportunityRun(
                 snapshot.loadedSymbols = progress.loadedSymbols;
                 snapshot.failedSymbols = progress.failedSymbols;
                 snapshot.strategyIndex = progress.strategyIndex;
-                writer({
-                    type: "asset_progress",
+                throttleProgressWrite({
                     percent: progress.percent,
-                    text: progress.status,
-                    status: progress.status,
                     phase: progress.phase,
-                    assetIndex: progress.assetIndex,
-                    totalAssets: progress.totalAssets,
-                    oosActive: progress.oosActive,
+                    write: () => {
+                        writer({
+                            type: "asset_progress",
+                            percent: progress.percent,
+                            text: progress.status,
+                            status: progress.status,
+                            phase: progress.phase,
+                            assetIndex: progress.assetIndex,
+                            totalAssets: progress.totalAssets,
+                            oosActive: progress.oosActive,
+                        });
+                    },
                 });
             },
             onAssetResult: (asset) => {
@@ -1378,6 +1422,10 @@ export async function processFinderAssetOpportunityBatchRun(
             minFreshSupport: input.minFreshSupport,
         }));
         let sweep: AssetOpportunityBatchSweepResult;
+        // ONE throttle for the whole sweep: progress messages from every
+        // in-flight worker interleave, and the aggregate percent is what the
+        // browser renders.
+        const throttleProgressWrite = createProgressEventThrottle();
         try {
             sweep = await runAssetOpportunityBatchSweep({
                 tasks,
@@ -1401,16 +1449,22 @@ export async function processFinderAssetOpportunityBatchRun(
                         currentHoldoutBars: aggregateState.inFlightHoldoutBars[0]
                             ?? snapshot.batch!.currentHoldoutBars,
                     };
-                    writer({
-                        type: "asset_batch_progress",
-                        runId: input.runId,
-                        holdoutBars: task.holdoutBars,
-                        iterationIndex: task.taskIndex,
-                        totalIterations,
+                    throttleProgressWrite({
                         percent: aggregateState.percent,
-                        phase: progress.phase as FinderJobPhase,
-                        statusText: snapshot.statusText,
-                        assetProgress: progress.percent,
+                        phase: progress.phase as string,
+                        write: () => {
+                            writer({
+                                type: "asset_batch_progress",
+                                runId: input.runId,
+                                holdoutBars: task.holdoutBars,
+                                iterationIndex: task.taskIndex,
+                                totalIterations,
+                                percent: aggregateState.percent,
+                                phase: progress.phase as FinderJobPhase,
+                                statusText: snapshot.statusText,
+                                assetProgress: progress.percent,
+                            });
+                        },
                     });
                 },
                 onRunLog: (event, payload) => {
@@ -1439,6 +1493,7 @@ export async function processFinderAssetOpportunityBatchRun(
         // runner above. symbolCount attaches the plain-dataset LRU so each
         // symbol loads once for the whole sequential sweep.
         const assetLoadContext = createServerFinderAssetOpportunityLoadContext(totalAssets);
+        const throttleProgressWrite = createProgressEventThrottle();
 
         for (let iterationIndex = 0; iterationIndex < totalIterations; iterationIndex += 1) {
             if (isCancelled()) break;
@@ -1476,16 +1531,22 @@ export async function processFinderAssetOpportunityBatchRun(
                             snapshot.strategyIndex = progress.strategyIndex;
                             snapshot.progressPercent =
                                 ((iterationIndex + progress.percent / 100) / totalIterations) * 100;
-                            writer({
-                                type: "asset_batch_progress",
-                                runId: input.runId,
-                                holdoutBars,
-                                iterationIndex,
-                                totalIterations,
+                            throttleProgressWrite({
                                 percent: snapshot.progressPercent,
                                 phase: progress.phase,
-                                statusText: progress.status,
-                                assetProgress: progress.percent,
+                                write: () => {
+                                    writer({
+                                        type: "asset_batch_progress",
+                                        runId: input.runId,
+                                        holdoutBars,
+                                        iterationIndex,
+                                        totalIterations,
+                                        percent: snapshot.progressPercent,
+                                        phase: progress.phase,
+                                        statusText: progress.status,
+                                        assetProgress: progress.percent,
+                                    });
+                                },
                             });
                         },
                         onAssetResult: () => {
