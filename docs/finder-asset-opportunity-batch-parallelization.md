@@ -229,9 +229,12 @@ threads still parallelize signal generation and TS fallback, but:
   holds only 4 entries (`maxCachedDataEntries`) and posts full OHLCV payloads
   per request — many workers may thrash it.
 
-Mitigation: recommend a lower `FINDER_ASSET_BATCH_WORKERS` (4–8) for
-Rust-enabled runs; document this in `docs/finder-server-side.md`. Do not
-change the Rust client in this plan (out of scope; measure first).
+Mitigation: the worker-count policy now enforces this automatically — when
+`useRustEnginePreference` is on, the AUTO worker count is clamped at
+`ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP` (8) in
+`resolveAssetOpportunityBatchWorkerCount`; the `FINDER_ASSET_BATCH_WORKERS`
+override remains the operator's judgment call and still wins. Changing the
+Rust client itself stays out of scope (measure first).
 
 ## Import Hygiene (Vite Config Bundle Trap)
 

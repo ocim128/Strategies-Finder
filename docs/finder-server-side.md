@@ -151,8 +151,21 @@ intentionally bypasses the memory ceiling (operator judgment) but is capped
 at 32. Each worker holds its own copy of every symbol dataset, so large
 symbol lists reduce the worker count automatically. With the Rust
 engine enabled the external Rust server becomes the serialization point and
-posts full OHLCV payloads per request — prefer `FINDER_ASSET_BATCH_WORKERS=4`
-to `8` for Rust-enabled runs.
+posts full OHLCV payloads per request — the AUTO worker count is therefore
+clamped at 8 (`ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP`); set
+`FINDER_ASSET_BATCH_WORKERS` explicitly only when you have measured a
+better value.
+
+Dataset reuse: the batch load context carries a run-scoped plain-dataset LRU
+(`BatchDatasetLoadContext.datasetCache`) sized by
+`resolveAssetOpportunityDatasetCacheCapacity` with the same 75%-RAM/9MB
+budget, so every plain symbol loads ONCE per worker (or once for a whole
+sequential sweep) instead of once per holdout iteration. Synthetic pairs are
+excluded (their `pairCache` already retains them), and failed or empty loads
+are never cached — they stay retryable. Iteration `iteration_complete`
+run-log lines carry `datasetCacheHits`/`datasetCacheMisses`, and the
+`timingsMs.dataLoading` diagnostic shows the corresponding drop after the
+first iteration.
 
 Failure semantics match the sequential loop: a fatal iteration stops the
 sweep with `asset_batch_fatal` while iterations before the failed index
