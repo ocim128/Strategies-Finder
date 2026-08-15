@@ -124,6 +124,14 @@ const FINDER_REVERSION_STRATEGY_KEYS = [
 
 const FINDER_STATUS_REQUEST_TIMEOUT_MS = 15_000;
 
+/**
+ * Trailing-edge flush interval for provisional Asset Opportunity rows.
+ * Streamed rows can arrive in the thousands; sorting + re-rendering the full
+ * list per row is O(n^2 log n) plus a DOM rebuild per event. State stays
+ * event-accurate — only the render is coalesced.
+ */
+const ASSET_PROVISIONAL_RENDER_FLUSH_MS = 150;
+
 function createFinderStatusRequestSignal(parentSignal: AbortSignal): {
 	signal: AbortSignal;
 	cleanup: () => void;
@@ -2550,6 +2558,30 @@ export class FinderManager {
 		let assetsWithFreshEntry = 0;
 		let failedAssets = 0;
 		let streamError: unknown = null;
+		// Coalesced provisional rendering: sort + render at most once per
+		// flush interval. The terminal asset_done render cancels any pending
+		// flush, and a late flush after terminal adoption is a no-op.
+		let provisionalRenderTimer: ReturnType<typeof setTimeout> | null = null;
+		const flushProvisionalRender = (): void => {
+			provisionalRenderTimer = null;
+			if (terminalResults !== null) return;
+			this.assetOpportunityRunResults = sortAssetOpportunityResults([
+				...provisionalAssetResults.values(),
+			]);
+			// Provisional streamed asset — no persistence until terminal
+			// asset_done adoption.
+			this.setAssetOpportunityLatestResults(this.assetOpportunityRunResults, false, options.topN);
+			this.renderLatestResults();
+		};
+		const scheduleProvisionalRender = (): void => {
+			if (provisionalRenderTimer !== null) return;
+			provisionalRenderTimer = setTimeout(flushProvisionalRender, ASSET_PROVISIONAL_RENDER_FLUSH_MS);
+		};
+		const cancelProvisionalRender = (): void => {
+			if (provisionalRenderTimer === null) return;
+			clearTimeout(provisionalRenderTimer);
+			provisionalRenderTimer = null;
+		};
 		try {
 			await consumeNdjsonStream<FinderAssetOpportunityStreamEvent>(response.body, {
 					onAssetStart: (event) => {
@@ -2571,13 +2603,7 @@ export class FinderManager {
 					}
 					assetsWithFreshEntry += 1;
 					provisionalAssetResults.set(assetResultKey(event.asset), event.asset);
-					this.assetOpportunityRunResults = sortAssetOpportunityResults([
-						...provisionalAssetResults.values(),
-					]);
-					// Provisional streamed asset — no persistence until terminal
-					// asset_done adoption.
-					this.setAssetOpportunityLatestResults(this.assetOpportunityRunResults, false, options.topN);
-					this.renderLatestResults();
+					scheduleProvisionalRender();
 				},
 				onAssetDone: (event) => {
 					if (event.runId !== runId) return;
@@ -2586,6 +2612,7 @@ export class FinderManager {
 					assetDiagnostics = event.assetDiagnostics;
 					assetsWithFreshEntry = event.totals.assetsWithFreshEntry;
 					failedAssets = event.totals.failedAssets;
+					cancelProvisionalRender();
 					if (isStillActive()) {
 						this.assetOpportunityRunResults = sortAssetOpportunityResults([...(terminalResults ?? [])]);
 						this.assetOpportunityDefaultResults = [...this.assetOpportunityRunResults];
@@ -2600,6 +2627,12 @@ export class FinderManager {
 			}, { requireTerminal: true, terminalTypes: ['asset_done', 'asset_fatal'] });
 		} catch (error) {
 			streamError = error;
+		}
+		cancelProvisionalRender();
+		if (terminalResults === null && streamError === null) {
+			// Stream ended without a terminal event carrying rows (e.g. an
+			// empty run): still surface the latest provisional state once.
+			flushProvisionalRender();
 		}
 
 		if (streamError) {
