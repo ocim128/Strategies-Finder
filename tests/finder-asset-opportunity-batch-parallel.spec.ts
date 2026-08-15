@@ -547,9 +547,10 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         // loads total — never a cached failure, never an extra reload.
         expect(loadCounts.get("DOWN")).to.equal(2);
         const first = iterations[0]!;
-        expect(first.assetDiagnostics.failedAssets.map((failure) => failure.symbol)).to.deep.equal(["DOWN"]);
-        expect(iterations[1]!.assetDiagnostics.failedAssets).to.deep.equal([]);
-        expect(iterations[2]!.assetDiagnostics.failedAssets).to.deep.equal([]);
+        const firstDiagnostics = first.assetDiagnostics!;
+        expect(firstDiagnostics.failedAssets.map((failure) => failure.symbol)).to.deep.equal(["DOWN"]);
+        expect(iterations[1]!.assetDiagnostics!.failedAssets).to.deep.equal([]);
+        expect(iterations[2]!.assetDiagnostics!.failedAssets).to.deep.equal([]);
         const done = events[events.length - 1]!;
         expect(done.type).to.equal("asset_batch_done");
     });

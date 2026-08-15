@@ -192,7 +192,7 @@ describe("server Asset IS search exit-param caching", () => {
             expect(variant).to.be.a("number");
             const index = variant as number;
             expect(result.exitStrategyKey).to.equal(expectedExitKeys[index % expectedExitKeys.length]!);
-            expect(result.exitStrategyParams.exitVariant).to.equal(index % EXIT_SETS);
+            expect(result.exitStrategyParams?.exitVariant).to.equal(index % EXIT_SETS);
         }
         const variants = results.map((result) => result.params.entryVariant).sort();
         expect(variants).to.deep.equal(Array.from({ length: ENTRY_SETS }, (_, i) => i));
