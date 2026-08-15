@@ -85,6 +85,26 @@ import { roc_threshold_reversion } from "./lib/roc_threshold_reversion";
 import { weighted_close_z_reversion } from "./lib/weighted_close_z_reversion";
 import { wick_defended_extreme_fade } from "./lib/wick_defended_extreme_fade";
 import { wick_ratio_extreme_fade } from "./lib/wick_ratio_extreme_fade";
+import { acceptance_consistency_continuation } from "./lib/acceptance_consistency_continuation";
+import { acceptance_crossover_momentum } from "./lib/acceptance_crossover_momentum";
+import { autocorrelation_gated_reversion } from "./lib/autocorrelation_gated_reversion";
+import { close_channel_breakout } from "./lib/close_channel_breakout";
+import { close_placement_persistence_level } from "./lib/close_placement_persistence_level";
+import { conviction_bar_pullback_continuation } from "./lib/conviction_bar_pullback_continuation";
+import { efficiency_acceptance_continuation } from "./lib/efficiency_acceptance_continuation";
+import { entropy_gated_breakout } from "./lib/entropy_gated_breakout";
+import { expansion_bar_directional_agreement } from "./lib/expansion_bar_directional_agreement";
+import { gap_and_go_continuation } from "./lib/gap_and_go_continuation";
+import { gap_fill_failure_fade } from "./lib/gap_fill_failure_fade";
+import { panic_capitulation_robust_fade } from "./lib/panic_capitulation_robust_fade";
+import { range_autocorrelation_volatility_persistence } from "./lib/range_autocorrelation_volatility_persistence";
+import { range_return_coherence_continuation } from "./lib/range_return_coherence_continuation";
+import { return_sign_entropy_concentration } from "./lib/return_sign_entropy_concentration";
+import { stacked_conviction_continuation } from "./lib/stacked_conviction_continuation";
+import { trailing_breakout_acceptance } from "./lib/trailing_breakout_acceptance";
+import { triple_confirmed_breakout } from "./lib/triple_confirmed_breakout";
+import { volatility_scaled_momentum_continuation } from "./lib/volatility_scaled_momentum_continuation";
+import { wick_imbalance_persistence_bias } from "./lib/wick_imbalance_persistence_bias";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -175,6 +195,26 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "weighted_close_z_reversion", strategy: weighted_close_z_reversion },
     { key: "wick_defended_extreme_fade", strategy: wick_defended_extreme_fade },
     { key: "wick_ratio_extreme_fade", strategy: wick_ratio_extreme_fade },
+    { key: "acceptance_consistency_continuation", strategy: acceptance_consistency_continuation },
+    { key: "acceptance_crossover_momentum", strategy: acceptance_crossover_momentum },
+    { key: "autocorrelation_gated_reversion", strategy: autocorrelation_gated_reversion },
+    { key: "close_channel_breakout", strategy: close_channel_breakout },
+    { key: "close_placement_persistence_level", strategy: close_placement_persistence_level },
+    { key: "conviction_bar_pullback_continuation", strategy: conviction_bar_pullback_continuation },
+    { key: "efficiency_acceptance_continuation", strategy: efficiency_acceptance_continuation },
+    { key: "entropy_gated_breakout", strategy: entropy_gated_breakout },
+    { key: "expansion_bar_directional_agreement", strategy: expansion_bar_directional_agreement },
+    { key: "gap_and_go_continuation", strategy: gap_and_go_continuation },
+    { key: "gap_fill_failure_fade", strategy: gap_fill_failure_fade },
+    { key: "panic_capitulation_robust_fade", strategy: panic_capitulation_robust_fade },
+    { key: "range_autocorrelation_volatility_persistence", strategy: range_autocorrelation_volatility_persistence },
+    { key: "range_return_coherence_continuation", strategy: range_return_coherence_continuation },
+    { key: "return_sign_entropy_concentration", strategy: return_sign_entropy_concentration },
+    { key: "stacked_conviction_continuation", strategy: stacked_conviction_continuation },
+    { key: "trailing_breakout_acceptance", strategy: trailing_breakout_acceptance },
+    { key: "triple_confirmed_breakout", strategy: triple_confirmed_breakout },
+    { key: "volatility_scaled_momentum_continuation", strategy: volatility_scaled_momentum_continuation },
+    { key: "wick_imbalance_persistence_bias", strategy: wick_imbalance_persistence_bias },
 ];
 
 export function createStrategiesRecordFromManifest(
