@@ -517,6 +517,50 @@ describe("Asset Opportunity runner", () => {
         expect(output.results[0]!.oosVerdict).to.be.oneOf(["pass", "fail", "inconclusive"]);
     });
 
+    it("counts both OOS modes when a fixed holdout and a legacy OOS window are active", async () => {
+        // The fixed-holdout branch (forward PnL at horizons) and the legacy
+        // complementary-window branch (winner backtest + verdict) are
+        // independent evaluations of the same winner; the diagnostics counter
+        // must ADD them, not let the second overwrite the first.
+        const strategy: Strategy = {
+            name: "FixedHoldoutPlusLegacy",
+            description: "boundary signal with both OOS modes enabled",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                const signals: Array<{ time: Time; type: "buy" | "sell"; price: number }> = [];
+                if (data[4]) signals.push({ time: data[4].time, type: "buy", price: data[4].close });
+                if (data[5]) signals.push({ time: data[5].time, type: "sell", price: data[5].close });
+                const latest = data[data.length - 1];
+                if (latest && data.length >= 8) signals.push({ time: latest.time, type: "buy", price: latest.close });
+                return signals;
+            },
+        };
+        const candles = makeCandles([100, 101, 102, 103, 100, 110, 90, 95, 96]);
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({
+                dataSlice: "half_oldest",
+                oosValidationEnabled: true,
+                assetOpportunity: {
+                    symbols: ["BOTH_MODES"],
+                    candidatePoolSize: 1,
+                    minFreshSupport: 1,
+                    oosIgnoreLastBars: 4,
+                    oosHorizons: [1, 3, 5],
+                },
+            }),
+            selectedStrategy: { key: "both_modes", name: strategy.name, strategy },
+            assets: [{ symbol: "BOTH_MODES", data: candles }],
+        }), makeCallbacks());
+
+        expect(output.results).to.have.length(1);
+        const diagnostics = output.outcomes[0]!.diagnostics;
+        expect(diagnostics, "diagnostics must be surfaced").to.exist;
+        expect(diagnostics!.oosEvaluations, "fixed-holdout horizons + legacy winner backtest").to.equal(2);
+        expect(output.results[0]!.oosHorizonMetrics).to.exist;
+        expect(output.results[0]!.oosResult).to.exist;
+    });
+
     it("uses the secondary execution context during fresh replay", async () => {
         const strategy: Strategy = {
             name: "CrossReplay",

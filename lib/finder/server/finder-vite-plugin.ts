@@ -1289,6 +1289,9 @@ export async function processFinderAssetOpportunityBatchRun(
         // before the batch started. All Sorts emits one delimited block per
         // ranking into this same per-N file.
         let archiveFilename = "";
+        // Pure function of the iteration's unchanged result set: compute once,
+        // not once per sort metric.
+        const baseline = buildAssetOpportunityForwardOosBaseline(iteration.results);
         try {
             for (const sortMetric of resolveAssetOpportunityArchiveSorts()) {
                 const archiveResults = sortAssetOpportunityResultsByMetric(iteration.results, sortMetric);
@@ -1304,7 +1307,7 @@ export async function processFinderAssetOpportunityBatchRun(
                     holdoutBars,
                     sortMetric,
                     topResults,
-                    baseline: buildAssetOpportunityForwardOosBaseline(iteration.results),
+                    baseline,
                     ...(archiveAppend ? { append: archiveAppend } : {}),
                 });
                 archiveFilename = path.basename(appended.path);
@@ -1678,7 +1681,9 @@ async function prepareAssetOpportunityRunPayload(
             `Asset Opportunity supports at most ${ASSET_OPPORTUNITY_MAX_SYMBOLS} symbols per run.`,
         );
     }
-    const heapWarning = resolveFinderUniverseHeapWarning(symbols.length);
+    // Same thresholds as Universe (the batch dataset LRU now also retains one
+    // copy per symbol), but the message must name the actual job kind.
+    const heapWarning = resolveFinderUniverseHeapWarning(symbols.length, undefined, "Asset Opportunity");
     if (heapWarning) {
         throw new HttpStatusError(507, heapWarning);
     }

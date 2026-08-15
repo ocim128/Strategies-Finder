@@ -27,14 +27,16 @@ function getV8HeapLimitMb(): number {
 }
 
 /**
- * Returns a human-readable warning string when the universe run is too large
- * for the current Node heap, or `null` when the run is safe to start. Pure:
- * the heap limit is injected so the function is unit-testable without monkey-
- * patching v8.
+ * Returns a human-readable warning string when the run is too large for the
+ * current Node heap, or `null` when the run is safe to start. Pure: the heap
+ * limit is injected so the function is unit-testable without monkey-patching
+ * v8. `scopeLabel` names the job kind in the message (Asset Opportunity
+ * reuses the Universe thresholds; only the wording differs).
  */
 export function resolveFinderUniverseHeapWarning(
     symbolCount: number,
     heapLimitMb: number = getV8HeapLimitMb(),
+    scopeLabel: string = "Finder Universe",
 ): string | null {
     const normalizedCount = Math.max(0, Math.floor(Number.isFinite(symbolCount) ? symbolCount : 0));
     const normalizedHeap = Math.max(0, Math.floor(Number.isFinite(heapLimitMb) ? heapLimitMb : 0));
@@ -49,7 +51,7 @@ export function resolveFinderUniverseHeapWarning(
     }
 
     return [
-        `Server-side Finder Universe needs more Node heap for ${normalizedCount} symbols.`,
+        `Server-side ${scopeLabel} needs more Node heap for ${normalizedCount} symbols.`,
         `Current V8 heap limit is ~${normalizedHeap} MB; this run needs at least ${requiredHeapMb} MB.`,
         "Restart with run_playground.bat, or run: set NODE_OPTIONS=--max-old-space-size=16384 && npm run dev",
     ].join(" ");

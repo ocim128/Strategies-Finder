@@ -1481,6 +1481,14 @@ describe("finder server plugin heap guard", () => {
         expect(resolveFinderUniverseHeapWarning(500, 16384)).to.equal(null);
         expect(resolveFinderUniverseHeapWarning(900, 16384)).to.equal(null);
     });
+
+    it("names the actual job kind via the scope label (Asset Opportunity reuses the thresholds)", () => {
+        const warning = resolveFinderUniverseHeapWarning(500, 4096, "Asset Opportunity");
+        expect(warning).to.not.equal(null);
+        expect(warning).to.contain("Server-side Asset Opportunity needs more Node heap");
+        // Default label keeps the historical Universe wording.
+        expect(resolveFinderUniverseHeapWarning(500, 4096)).to.contain("Server-side Finder Universe");
+    });
 });
 
 describe("finder server plugin toScalarCandidate (Phase 4 wire contract)", () => {

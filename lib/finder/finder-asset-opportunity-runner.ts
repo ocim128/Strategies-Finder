@@ -908,7 +908,9 @@ async function searchOneAsset(args: {
         const winnerIndex = result.historicalRank - 1;
         const winnerCandidate = topK[winnerIndex];
         if (winnerCandidate) {
-            diagnostics.oosEvaluations = 1;
+            // Additive: a fixed-holdout evaluation may already have been
+            // counted above; both modes can be active for the same asset.
+            diagnostics.oosEvaluations += 1;
             const winnerOos = await runCandidateOosOnAsset({
                 candidate: winnerCandidate,
                 strategy: preparedStrategy,
