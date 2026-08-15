@@ -170,6 +170,15 @@ For large runs, start the dev server with extra heap:
 NODE_OPTIONS=--max-old-space-size=16384 npm run dev
 ```
 
+The same heap guidance applies to server-owned Finder runs. Finder Asset
+Opportunity **Batch OOS Holdout** sweeps additionally run holdout iterations
+in parallel across a bounded worker-thread pool sized from your cores and
+RAM (~9 MB per symbol per worker against 75% of system RAM).
+`FINDER_ASSET_BATCH_WORKERS=1` forces the original sequential loop (rollback
+lever); Rust-engine runs prefer 4–8 workers. See
+[docs/finder-server-side.md](docs/finder-server-side.md) and
+[docs/finder-asset-opportunity-batch-parallelization.md](docs/finder-asset-opportunity-batch-parallelization.md).
+
 Reattach after a tab reload is automatic (2s poll). The last completed Batch output is restored from a compact local snapshot after reload, and Copy summary in server-side mode preserves B&H and OPEN_SCORE sections through scalar summary fields; see [docs/batch-backtest-server-side.md](docs/batch-backtest-server-side.md).
 
 ## Important Contracts

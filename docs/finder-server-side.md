@@ -63,9 +63,10 @@ the archived evidence can still show which strategy libraries contributed to a
 pair.
 
 The batch coordinator (`processFinderAssetOpportunityBatchRun` in
-`lib/finder/server/finder-vite-plugin.ts`) loops the range in ascending order
+`lib/finder/server/finder-vite-plugin.ts`) drives the range in ascending order
 and calls the same per-asset iteration seam as the single route
-(`runAssetOpportunityIteration`, extracted unchanged), cloning the options
+(`runAssetOpportunityIteration`, extracted unchanged into
+`lib/finder/server/asset-opportunity-iteration.ts`), cloning the options
 with `oosIgnoreLastBars` set to the current N. The random seed is preserved
 across iterations so differences come from the holdout boundary, not a new
 sample. After each iteration it appends a compact performance-only top-N
@@ -125,6 +126,42 @@ intact. If the archive append fails, the batch stops with a visible fatal
 (error prefixed `Archive write failed for holdout N`). Stream disconnect does
 not cancel the job; reload reattach polls the same scoped status endpoint and
 recovers the batch counts plus the last completed iteration.
+
+### Parallel holdout sweep (worker pool)
+
+The production batch route runs the holdout iterations across a bounded pool
+of `worker_threads` (`lib/finder/server/finder-asset-opportunity-batch-worker-pool.ts`),
+one holdout value per task, because iterations are independent by design
+(same seed; only the holdout boundary differs). The main thread stays the
+single writer: completed iterations are buffered and released in **ascending
+holdout order**, so archive blocks, `asset_batch_iteration_done` events, and
+the terminal snapshot are identical to a sequential run. Workers keep their
+own dataset caches alive across every holdout they process (the same reuse
+the sequential loop gets from its single context) and re-resolve strategies
+by key — strategy objects never cross the worker boundary, and iteration
+payloads are the already-scalar rows enforced by `toScalarAssetResult`.
+
+Worker count: `min(holdout values, logical cores − 2, memory ceiling)` where
+the ceiling estimates one full dataset copy per worker (~9 MB/symbol)
+against 75% of **actual system RAM** (`os.totalmem()` — 48 GB on a 64 GB
+host, 12 GB on a 16 GB host, so small hosts auto-select proportionally fewer
+workers). `FINDER_ASSET_BATCH_WORKERS=<N>` overrides outright — `1`
+forces the sequential in-process loop (the rollback lever); the override
+intentionally bypasses the memory ceiling (operator judgment) but is capped
+at 32. Each worker holds its own copy of every symbol dataset, so large
+symbol lists reduce the worker count automatically. With the Rust
+engine enabled the external Rust server becomes the serialization point and
+posts full OHLCV payloads per request — prefer `FINDER_ASSET_BATCH_WORKERS=4`
+to `8` for Rust-enabled runs.
+
+Failure semantics match the sequential loop: a fatal iteration stops the
+sweep with `asset_batch_fatal` while iterations before the failed index
+complete and archive normally (their runners are allowed to finish);
+iterations after it are aborted and never emit. On Stop, in-flight
+iterations are discarded and the ones that already completed flush
+ascending. A worker crash (non-zero exit or mid-task disappearance) maps to
+the same fatal path, and per-asset `run_log` events route through the main
+thread so `archive/finder-runs/<runId>.jsonl` stays a single file.
 
 Batch debug events: `finder.asset_opportunity_batch.start`,
 `finder.asset_opportunity_batch.iteration.complete`,
@@ -274,6 +311,7 @@ cancelled instead of starting heavy work. A newer run with a different
 - `..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-oos.spec.ts`
 - `..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-metadata.spec.ts`
 - `..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-archive.spec.ts`
+- `..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-batch-parallel.spec.ts`
 
 Manual smoke: run one and multiple strategies over 50 symbols, then 400
 symbols with the larger heap. Confirm progress scaling, server-side OOS
@@ -281,4 +319,10 @@ filtering, Stop (scoped by run id), diagnostics merging, reload reattach
 during IS and OOS phases, and Apply. For batch mode, enable the toggle, enter
 a small range such as 2–4 with at least two symbols, and verify one file per
 N under `archive/asset opportunity/`, append-on-repeat, empty-result blocks,
-Stop partial completion, and reload reattach mid-sweep.
+Stop partial completion, and reload reattach mid-sweep. For the parallel
+sweep, also compare a full run against a `FINDER_ASSET_BATCH_WORKERS=1`
+baseline — the per-N archive blocks must be identical for the same inputs,
+and Task Manager should show >100% CPU on the dev-server process during the
+sweep. A real-worker smoke script lives at
+`artifacts/smoke-batch-parallel-worker.ts` (run with esno; it sweeps the
+local IBKR data through three real workers).
