@@ -226,7 +226,9 @@ if (!isMainThread && parentPort) {
         if (message.type !== "run_task") return;
         const task = message.task;
         activeAbort = new AbortController();
-        assetLoadContext ??= createServerFinderAssetOpportunityLoadContext();
+        // symbolCount attaches the cross-iteration plain-dataset LRU so this
+        // worker loads each symbol once across ALL holdout tasks it processes.
+        assetLoadContext ??= createServerFinderAssetOpportunityLoadContext(task.symbols.length);
         runAssetOpportunityBatchWorkerTask({
             task,
             loadDataset: loadServerFinderDataset,

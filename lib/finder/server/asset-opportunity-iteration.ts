@@ -47,6 +47,7 @@ import {
 import { runServerAssetIsSearch } from "./server-asset-is-search";
 import { prepareClosedCandleData } from "../../backtest-executor";
 import { createServerFinderAssetOpportunityLoadContext } from "./server-finder-data-loader";
+import { parseSyntheticPairToken } from "../../synthetic-pair-token";
 
 const ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY = 12;
 
@@ -376,12 +377,33 @@ export async function runAssetOpportunityIteration(
     };
     const pendingAssetLoads = new Map<number, Promise<AssetLoadOutcome>>();
     const completedAssetLoadIntervals: Array<readonly [number, number]> = [];
+    // Run-scoped plain-dataset LRU (attached by the BATCH paths; undefined for
+    // single runs, which load each symbol exactly once). Retaining one copy
+    // per symbol across holdout iterations turns the batch sweep's per-
+    // iteration full-universe reload into a single load per worker/run.
+    // Synthetic pairs are excluded: their series are already retained by the
+    // context's pairCache under their own keys. Only successful non-empty
+    // loads are cached; rejected loads are evicted by SyntheticLegCache so
+    // both stay retryable.
+    const datasetCache = assetLoadContext.datasetCache;
     const scheduleAssetLoad = (assetIndex: number): void => {
         if (assetIndex >= totalAssets || isCancelled()) return;
         const symbol = symbols[assetIndex]!;
+        const cacheKey = datasetCache && parseSyntheticPairToken(symbol) === null
+            ? `${symbol}|${input.interval}`
+            : null;
+        const cached = cacheKey !== null ? datasetCache!.get(cacheKey) : undefined;
         const startedAt = performance.now();
+        const dataPromise = cached
+            ? cached
+            : input.loadDataset(symbol, input.interval, input.abortSignal, assetLoadContext).then((data) => {
+                if (cacheKey !== null && Array.isArray(data) && data.length > 0) {
+                    datasetCache!.set(cacheKey, Promise.resolve(data));
+                }
+                return data;
+            });
         const promise = Promise.resolve()
-            .then(() => input.loadDataset(symbol, input.interval, input.abortSignal, assetLoadContext))
+            .then(() => dataPromise)
             .then(
                 (data) => {
                     const finishedAt = performance.now();
@@ -735,6 +757,17 @@ export async function runAssetOpportunityIteration(
     };
     const summary = `Asset Opportunity complete: ${sortedAssetResults.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`;
 
+    // Cross-iteration dataset reuse is invisible to `timingsMs.dataLoading`
+    // (cache hits contribute ~0 duration), so surface the hit/miss counters
+    // explicitly for post-mortems.
+    if (datasetCache) {
+        debugLogger.event("finder.server.dataset_cache_stats", {
+            runId: input.runId,
+            hits: datasetCache.hitCount(),
+            misses: datasetCache.missCount(),
+        });
+    }
+
     input.runLog?.("iteration_complete", {
         totalAssets,
         assetsWithFreshEntry,
@@ -746,6 +779,9 @@ export async function runAssetOpportunityIteration(
         retainedResults: sortedAssetResults.length,
         cancelled,
         durationMs: totalDurationMs,
+        ...(datasetCache
+            ? { datasetCacheHits: datasetCache.hitCount(), datasetCacheMisses: datasetCache.missCount() }
+            : {}),
         summary,
     });
 

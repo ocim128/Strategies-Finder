@@ -33,6 +33,7 @@ import {
 } from "../lib/finder/server/finder-vite-plugin";
 import {
     resolveAssetOpportunityBatchWorkerCount,
+    resolveAssetOpportunityDatasetCacheCapacity,
     runAssetOpportunityBatchSweep,
     FINDER_ASSET_BATCH_WORKERS_ENV,
     type AssetOpportunityBatchRunnerEvents,
@@ -217,6 +218,8 @@ interface BatchRunArgs {
     isCancelled?: () => boolean;
     symbols?: string[];
     datasets?: Map<string, OHLCVData[]>;
+    /** Overrides the default dataset-map loader (call counting, fault injection). */
+    loadDataset?: (symbol: string) => Promise<OHLCVData[]>;
 }
 
 async function runAssetBatch(
@@ -238,7 +241,7 @@ async function runAssetBatch(
             capitalSettings,
             selectedStrategies: [{ key: STRATEGY_KEY, name: batchStrategy.name, strategy: batchStrategy }],
             useRustEnginePreference: false,
-            loadDataset: async (symbol) => datasets.get(symbol) ?? [],
+            loadDataset: args.loadDataset ?? (async (symbol) => datasets.get(symbol) ?? []),
             abortSignal: new AbortController().signal,
             candidatePoolSize: 2,
             minFreshSupport: 1,
@@ -462,5 +465,79 @@ describe("finder Asset Opportunity batch parallel execution", () => {
             expect(done.completedIterations).to.equal(2);
             expect(done.ok).to.equal(true);
         }
+    });
+
+    it("loads each plain dataset once across sequential holdout iterations (run-scoped dataset LRU)", async () => {
+        // The sequential batch attaches a plain-dataset LRU sized to the
+        // symbol count; without it every holdout iteration re-fetches every
+        // symbol (the shared DataCache is only 64 entries and thrashes on
+        // sequential scans).
+        const datasets = longUpDownDatasets();
+        const loadCounts = new Map<string, number>();
+        const { events } = await runAssetBatch({
+            owner: 8107,
+            start: 2,
+            end: 4,
+            runId: "parallel-dataset-cache",
+            datasets,
+            loadDataset: async (symbol) => {
+                loadCounts.set(symbol, (loadCounts.get(symbol) ?? 0) + 1);
+                return datasets.get(symbol) ?? [];
+            },
+        });
+
+        // 3 iterations completed, but each of the 2 plain symbols loaded once.
+        const iterations = extractIterations(events);
+        expect(iterations.length).to.equal(3);
+        expect(loadCounts.get("UP")).to.equal(1);
+        expect(loadCounts.get("DOWN")).to.equal(1);
+        // Iterations still produce their own (holdout-specific) result rows.
+        for (const iteration of iterations) {
+            expect(iteration.assets.length).to.be.greaterThan(0);
+        }
+    });
+
+    it("never caches failed dataset loads — every iteration retries them", async () => {
+        const datasets = longUpDownDatasets();
+        const loadCounts = new Map<string, number>();
+        const { events } = await runAssetBatch({
+            owner: 8108,
+            start: 2,
+            end: 4,
+            runId: "parallel-dataset-cache-retry",
+            datasets,
+            loadDataset: async (symbol) => {
+                const calls = (loadCounts.get(symbol) ?? 0) + 1;
+                loadCounts.set(symbol, calls);
+                // DOWN fails its FIRST load only; the retry proves rejections
+                // are not served from (or retained in) the dataset LRU.
+                if (symbol === "DOWN" && calls === 1) throw new Error("simulated transient load failure");
+                return datasets.get(symbol) ?? [];
+            },
+        });
+
+        const iterations = extractIterations(events);
+        expect(iterations.length).to.equal(3);
+        // UP succeeded immediately: cached, loaded once for the whole sweep.
+        expect(loadCounts.get("UP")).to.equal(1);
+        // DOWN's failed load was not cached: iteration 1 failed it, iteration
+        // 2 reloaded (success -> cached), iteration 3 reused the cache. Two
+        // loads total — never a cached failure, never an extra reload.
+        expect(loadCounts.get("DOWN")).to.equal(2);
+        const first = iterations[0]!;
+        expect(first.assetDiagnostics.failedAssets.map((failure) => failure.symbol)).to.deep.equal(["DOWN"]);
+        expect(iterations[1]!.assetDiagnostics.failedAssets).to.deep.equal([]);
+        expect(iterations[2]!.assetDiagnostics.failedAssets).to.deep.equal([]);
+        const done = events[events.length - 1]!;
+        expect(done.type).to.equal("asset_batch_done");
+    });
+
+    it("sizes the dataset LRU by the same memory budget as the worker pool", () => {
+        // Never more entries than symbols; memory-bounded at
+        // floor(75% RAM / 9MB per symbol), mirroring the worker-count ceiling.
+        expect(resolveAssetOpportunityDatasetCacheCapacity(10, 8 * GIB)).to.equal(10);
+        expect(resolveAssetOpportunityDatasetCacheCapacity(1000, 8 * GIB)).to.equal(682);
+        expect(resolveAssetOpportunityDatasetCacheCapacity(1000, 64 * GIB)).to.equal(1000);
+        expect(resolveAssetOpportunityDatasetCacheCapacity(0, 8 * GIB)).to.equal(1);
     });
 });

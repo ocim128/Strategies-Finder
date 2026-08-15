@@ -70,6 +70,15 @@ export interface BatchDatasetLoadContext {
     legCache?: SyntheticLegCache<OHLCVData[]>;
     /** Optional bounded pair cache; useful when a batch repeats the same assets. */
     pairCache?: SyntheticLegCache<OHLCVData[]>;
+    /**
+     * Optional bounded PLAIN-dataset cache for callers that reload the same
+     * symbol|interval series repeatedly across iterations (Asset Opportunity
+     * batch holdout sweeps). Consulted by the caller's load wrapper, NOT by
+     * this loader core — synthetic legs/pairs keep flowing through their own
+     * caches above, so do not store synthetic pairs here. Batch Backtest does
+     * not set this field.
+     */
+    datasetCache?: SyntheticLegCache<OHLCVData[]>;
     /** Build synthetic pairs from the shared leg cache instead of disk I/O. */
     preferInMemorySyntheticPairs?: boolean;
     diagnostics?: BatchDatasetLoadDiagnostics;

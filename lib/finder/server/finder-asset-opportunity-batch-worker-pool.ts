@@ -65,6 +65,38 @@ export const ASSET_OPPORTUNITY_BATCH_WORKER_COUNT_MAX = 32;
 const ASSET_OPPORTUNITY_BATCH_MEMORY_BUDGET_FRACTION = 0.75;
 const ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL = 9 * 1024 * 1024;
 
+/** 75% of ACTUAL system RAM budgeted for dataset copies (injectable for tests). */
+function resolveAssetOpportunityMemoryBudgetBytes(systemMemoryBytes: number): number {
+    return Math.max(
+        1,
+        Math.floor(
+            (Number.isFinite(systemMemoryBytes) && systemMemoryBytes > 0
+                ? systemMemoryBytes
+                : 8 * 1024 * 1024 * 1024)
+            * ASSET_OPPORTUNITY_BATCH_MEMORY_BUDGET_FRACTION,
+        ),
+    );
+}
+
+/**
+ * Capacity for a run-scoped PLAIN-dataset LRU that retains one copy of every
+ * symbol's series across batch holdout iterations (~9 MB/symbol at the 100k-bar
+ * cap). Uses the SAME memory budget as the worker-count policy so the retention
+ * a pool of N workers can afford is the retention the cache allows: bounded by
+ * the symbol count (never more entries than symbols exist) and by
+ * floor(budget / 9MB).
+ */
+export function resolveAssetOpportunityDatasetCacheCapacity(
+    symbolCount: number,
+    systemMemoryBytes: number = totalmem(),
+): number {
+    const memoryCeilingEntries = Math.floor(
+        resolveAssetOpportunityMemoryBudgetBytes(systemMemoryBytes)
+        / ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL,
+    );
+    return Math.max(1, Math.min(Math.max(1, Math.floor(symbolCount)), memoryCeilingEntries));
+}
+
 /**
  * Resolve the worker count for one batch sweep.
  *
@@ -97,15 +129,7 @@ export function resolveAssetOpportunityBatchWorkerCount(
     } catch {
         // Older Node without availableParallelism; keep the conservative default.
     }
-    const memoryBudgetBytes = Math.max(
-        1,
-        Math.floor(
-            (Number.isFinite(systemMemoryBytes) && systemMemoryBytes > 0
-                ? systemMemoryBytes
-                : 8 * 1024 * 1024 * 1024)
-            * ASSET_OPPORTUNITY_BATCH_MEMORY_BUDGET_FRACTION,
-        ),
-    );
+    const memoryBudgetBytes = resolveAssetOpportunityMemoryBudgetBytes(systemMemoryBytes);
     const memoryCeiling = Math.max(
         1,
         Math.floor(

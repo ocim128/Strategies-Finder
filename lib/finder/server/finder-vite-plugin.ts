@@ -1427,8 +1427,9 @@ export async function processFinderAssetOpportunityBatchRun(
         // The holdout boundary changes the evaluation window, not the source
         // candles. Keep the large synthetic-leg/pair caches alive across all batch
         // iterations and reset only per-iteration diagnostics in the iteration
-        // runner above.
-        const assetLoadContext = createServerFinderAssetOpportunityLoadContext();
+        // runner above. symbolCount attaches the plain-dataset LRU so each
+        // symbol loads once for the whole sequential sweep.
+        const assetLoadContext = createServerFinderAssetOpportunityLoadContext(totalAssets);
 
         for (let iterationIndex = 0; iterationIndex < totalIterations; iterationIndex += 1) {
             if (isCancelled()) break;

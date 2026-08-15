@@ -38,6 +38,7 @@ import { clearServerDataCache, createServerDataFetcher } from "../../data/server
 import { isIbkrSymbol } from "../../local-daily-datasets";
 import { resolveServerBatchCacheBudget } from "../../batch-backtest/server-batch-cache-budget";
 import { clearParsedIbkrCsvCache, loadFreshIbkrCandlesFromDisk } from "../../batch-backtest/server-ibkr-csv-loader";
+import { resolveAssetOpportunityDatasetCacheCapacity } from "./finder-asset-opportunity-batch-worker-pool";
 
 // Reuse a single long-lived DataFetcher for the whole server loader (Finding 8).
 const serverDataFetcher = createServerDataFetcher();
@@ -110,13 +111,27 @@ export async function loadServerFinderDataset(
  * Create bounded state for one Asset Opportunity run. The regular loader LRU
  * is intentionally small for long-lived server usage; a single 1,000-pair run
  * can safely retain the full unique IBKR leg set on high-memory machines.
+ *
+ * When `symbolCount` is provided (batch holdout sweeps, whose load context is
+ * reused across iterations), a plain-dataset LRU is attached so each symbol's
+ * series is loaded once per worker/run instead of once per iteration. It is
+ * sized by the SAME 75%-RAM/9MB-per-symbol budget the worker-count policy
+ * uses. Omitted for single runs — they load each symbol exactly once, so a
+ * cache would only add run-length retention.
  */
-export function createServerFinderAssetOpportunityLoadContext(): BatchDatasetLoadContext {
+export function createServerFinderAssetOpportunityLoadContext(symbolCount?: number): BatchDatasetLoadContext {
     return {
         legCache: new SyntheticLegCache(ASSET_OPPORTUNITY_RUN_LEG_CACHE_MAX_ENTRIES),
         pairCache: new SyntheticLegCache(ASSET_OPPORTUNITY_RUN_PAIR_CACHE_MAX_ENTRIES),
         preferInMemorySyntheticPairs: true,
         diagnostics: createBatchDatasetLoadDiagnostics(),
+        ...(symbolCount !== undefined
+            ? {
+                datasetCache: new SyntheticLegCache<OHLCVData[]>(
+                    resolveAssetOpportunityDatasetCacheCapacity(symbolCount),
+                ),
+            }
+            : {}),
     };
 }
 
