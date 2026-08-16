@@ -448,8 +448,6 @@ describe('Backtest settings compatibility', () => {
             polymarketPostSignalLimitExitMode: 'entry_offset',
             polymarketPostSignalLimitExitPriceCents: 80,
             polymarketPostSignalLimitExitOffsetCents: 20,
-            flipAfterConsecutiveLosses: 3,
-            flipCooldownTrades: 2,
             minTradesBeforeFirstFlip: 10,
         } as unknown as BacktestSettings;
 
@@ -470,8 +468,6 @@ describe('Backtest settings compatibility', () => {
         expect('polymarketPostSignalLimitExitMode' in sanitized).to.equal(false);
         expect('polymarketPostSignalLimitExitPriceCents' in sanitized).to.equal(false);
         expect('polymarketPostSignalLimitExitOffsetCents' in sanitized).to.equal(false);
-        expect('flipAfterConsecutiveLosses' in sanitized).to.equal(false);
-        expect('flipCooldownTrades' in sanitized).to.equal(false);
         expect('minTradesBeforeFirstFlip' in sanitized).to.equal(false);
     });
 
@@ -502,7 +498,6 @@ describe('Backtest settings compatibility', () => {
         expect(requiresTypescriptEngine({ tradeDirection: 'long' })).to.equal(true);
         expect(requiresTypescriptEngine({ tradeDirection: 'short' })).to.equal(true);
         expect(requiresTypescriptEngine({ tradeDirection: 'both' })).to.equal(true);
-        expect(requiresTypescriptEngine({ tradeDirection: 'both_flip_loss_2' })).to.equal(true);
         expect(requiresTypescriptEngine({ tradeDirection: 'combined' })).to.equal(true);
     });
 

@@ -15,7 +15,6 @@ function isValidTradeDirection(value: unknown): value is TradeDirection {
         || value === "short"
         || value === "both"
         || value === "both_no_flip"
-        || value === "both_flip_loss_2"
         || value === "combined";
 }
 
@@ -92,12 +91,6 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
     merged.allowSameBarExit = EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit;
     merged.invertSignals = toBooleanLike(merged.invertSignals)
         ?? EFFECTIVE_BACKTEST_DEFAULTS.invertSignals;
-    merged.flipAfterConsecutiveLosses = toFiniteNumber(merged.flipAfterConsecutiveLosses)
-        ?? EFFECTIVE_BACKTEST_DEFAULTS.flipAfterConsecutiveLosses;
-    merged.flipCooldownTrades = toFiniteNumber(merged.flipCooldownTrades)
-        ?? EFFECTIVE_BACKTEST_DEFAULTS.flipCooldownTrades;
-    merged.minTradesBeforeFirstFlip = toFiniteNumber(merged.minTradesBeforeFirstFlip)
-        ?? EFFECTIVE_BACKTEST_DEFAULTS.minTradesBeforeFirstFlip;
     merged.slippageBps = toFiniteNumber(merged.slippageBps)
         ?? EFFECTIVE_BACKTEST_DEFAULTS.slippageBps;
     merged.maxOpenTrades = toFiniteNumber(merged.maxOpenTrades)

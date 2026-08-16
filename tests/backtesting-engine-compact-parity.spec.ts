@@ -234,21 +234,6 @@ describe('Backtesting Engine - compact vs full parity', () => {
         expect(compact.diagnostics?.counts.fastPathRuns).to.equal(1);
     });
 
-    it('matches with flip-loss direction (same-bar entry detection across re-entries)', () => {
-        const data = makeData(40);
-        const signals = alternatingSignals(data, 3);
-        const settings = {
-            tradeDirection: 'both_flip_loss_2' as const,
-            flipAfterConsecutiveLosses: 2,
-            flipCooldownTrades: 1,
-            maxOpenTrades: 1,
-        };
-
-        const full = runBacktest(data, signals, 10000, 100, 0, settings);
-        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings);
-        assertMetricsParity(full, compact, { netProfit: 1e-6 });
-    });
-
     it('matches with path-dependent exits (MFE Giveback and Profit Compression)', () => {
         const data = makeData(100);
         const signals = buyEveryNSignal(data, 10);

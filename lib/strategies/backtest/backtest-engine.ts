@@ -2,7 +2,7 @@
 import { BacktestDiagnostics, BacktestResult, BacktestSettings, OHLCVData, Signal, Time, Trade } from '../../types/index';
 import { ensureCleanData } from '../strategy-helpers';
 import { IndicatorSeries, NormalizedSettings, PositionState, PrecomputedIndicators, TradeSizingConfig, TradeSizingMode } from '../../types/backtest';
-import { applySlippage, compareTime, directionFactorFor, exitSideForDirection, getExecutionShift, getTimeIndex, getTimeIndexValue, isLossStreakFlipTradeDirection, normalizeBacktestSettings, normalizeTradeDirection, resolveExecutionPrice, signalToPositionDirection, timeKey } from './backtest-utils';
+import { applySlippage, compareTime, directionFactorFor, exitSideForDirection, getExecutionShift, getTimeIndex, getTimeIndexValue, normalizeBacktestSettings, normalizeTradeDirection, resolveExecutionPrice, signalToPositionDirection, timeKey } from './backtest-utils';
 import {
     calculateSharpeRatioFromEquitySamples,
     calculateSharpeRatioFromReturns,
@@ -180,8 +180,6 @@ function registerOpenedPosition(args: {
     smartSizingPositionState: WeakMap<PositionState, SmartSizingPositionState>;
     settings: NormalizedSettings;
     adaptiveTakeProfitState: ReturnType<typeof createAdaptiveTakeProfitState>;
-    tradeDirection: ReturnType<typeof normalizeTradeDirection>;
-    flipLossDirection: FlipLossDirectionState;
     barIndex: number;
 }): void {
     const {
@@ -190,8 +188,6 @@ function registerOpenedPosition(args: {
         smartSizingPositionState,
         settings,
         adaptiveTakeProfitState,
-        tradeDirection,
-        flipLossDirection,
         barIndex,
     } = args;
     // Group-anchored max-hold and close-all signal exits are unlimited-overlap
@@ -210,9 +206,6 @@ function registerOpenedPosition(args: {
     }
     registerSmartSizingPosition(smartSizingPositionState, position);
     registerAdaptiveTakeProfitPosition(settings, adaptiveTakeProfitState, position, barIndex);
-    if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
-        flipLossDirection.activeDirection = position.direction;
-    }
 }
 
 function openPositionFromSignal(args: {
@@ -225,7 +218,6 @@ function openPositionFromSignal(args: {
     config: NormalizedSettings;
     adaptiveTakeProfitState: ReturnType<typeof createAdaptiveTakeProfitState>;
     tradeDirection: ReturnType<typeof normalizeTradeDirection>;
-    flipLossDirection: FlipLossDirectionState;
 }): { position: PositionState; entryCommission: number } | null {
     const opened = buildEntryPosition(args.entryBuildContext, args.signal, args.barIndex, args.capital);
     if (!opened) return null;
@@ -236,8 +228,6 @@ function openPositionFromSignal(args: {
         smartSizingPositionState: args.smartSizingPositionState,
         settings: args.config,
         adaptiveTakeProfitState: args.adaptiveTakeProfitState,
-        tradeDirection: args.tradeDirection,
-        flipLossDirection: args.flipLossDirection,
         barIndex: args.barIndex,
     });
     return {
@@ -303,7 +293,6 @@ function canImmediatelyReenterAfterSignalExit(args: {
     fullyClosed: boolean;
     wasPartial: boolean;
     tradeDirection: ReturnType<typeof normalizeTradeDirection>;
-    flipLossDirection: FlipLossDirectionState;
     signal: Signal;
     positions: PositionState[];
     maxOpenTrades: number;
@@ -318,12 +307,7 @@ function canImmediatelyReenterAfterSignalExit(args: {
     ) {
         return false;
     }
-    return args.tradeDirection === 'both'
-        || (
-            isLossStreakFlipTradeDirection(args.tradeDirection)
-            && args.flipLossDirection.activeDirection !== null
-            && signalToPositionDirection(args.signal.type) === args.flipLossDirection.activeDirection
-        );
+    return args.tradeDirection === 'both';
 }
 
 function getConflictingEntryTimes(signals: Signal[]): Set<string> {
@@ -1089,15 +1073,6 @@ type WinStreakRiskState = {
     consecutiveWins: number;
 };
 
-type FlipLossDirectionState = {
-    longConsecutiveLosses: number;
-    shortConsecutiveLosses: number;
-    activeDirection: 'long' | 'short' | null;
-    totalClosedTrades: number;
-    flipCooldownTradesRemaining: number;
-    hasFlipped: boolean;
-};
-
 function createWinStreakRiskState(): WinStreakRiskState {
     return {
         consecutiveWins: 0,
@@ -1111,17 +1086,6 @@ type SmartSizingPositionState = {
 
 const SMART_SIZING_FAST_PROGRESS_BARS = 2;
 const SMART_SIZING_PROGRESS_PERCENT = 50;
-
-function createFlipLossDirectionState(): FlipLossDirectionState {
-    return {
-        longConsecutiveLosses: 0,
-        shortConsecutiveLosses: 0,
-        activeDirection: null,
-        totalClosedTrades: 0,
-        flipCooldownTradesRemaining: 0,
-        hasFlipped: false,
-    };
-}
 
 function armSignalExitReentryCooldown(barIndex: number, cooldownBars: number): number {
     return barIndex + Math.max(0, cooldownBars) - 1;
@@ -1138,61 +1102,6 @@ function isEntryCooldownEnabled(config: NormalizedSettings): boolean {
 
 function getOppositeDirection(direction: 'long' | 'short'): 'long' | 'short' {
     return direction === 'long' ? 'short' : 'long';
-}
-
-function getDirectionLossStreakCount(state: FlipLossDirectionState, direction: 'long' | 'short'): number {
-    return direction === 'long' ? state.longConsecutiveLosses : state.shortConsecutiveLosses;
-}
-
-function setDirectionLossStreakCount(state: FlipLossDirectionState, direction: 'long' | 'short', nextValue: number): void {
-    if (direction === 'long') {
-        state.longConsecutiveLosses = nextValue;
-        return;
-    }
-    state.shortConsecutiveLosses = nextValue;
-}
-
-function canEnterLossFlipDirection(
-    tradeDirection: BacktestSettings['tradeDirection'],
-    state: FlipLossDirectionState,
-    signal: Signal
-): boolean {
-    if (!isLossStreakFlipTradeDirection(tradeDirection ?? 'long')) return true;
-    if (state.activeDirection === null) return true;
-    return signalToPositionDirection(signal.type) === state.activeDirection;
-}
-
-function updateLossFlipDirectionAfterClose(
-    tradeDirection: BacktestSettings['tradeDirection'],
-    config: NormalizedSettings,
-    state: FlipLossDirectionState,
-    direction: 'long' | 'short',
-    tradePnl: number
-): void {
-    if (!isLossStreakFlipTradeDirection(tradeDirection ?? 'long')) return;
-
-    state.totalClosedTrades += 1;
-    const wasOnFlipCooldown = state.flipCooldownTradesRemaining > 0;
-    if (state.flipCooldownTradesRemaining > 0) {
-        state.flipCooldownTradesRemaining -= 1;
-    }
-
-    const isLoss = tradePnl <= 0;
-    if (isLoss) {
-        const nextCount = getDirectionLossStreakCount(state, direction) + 1;
-        setDirectionLossStreakCount(state, direction, nextCount);
-        if (nextCount >= config.flipAfterConsecutiveLosses) {
-            if (wasOnFlipCooldown) return;
-            if (!state.hasFlipped && state.totalClosedTrades < config.minTradesBeforeFirstFlip) return;
-            state.activeDirection = getOppositeDirection(direction);
-            state.hasFlipped = true;
-            state.flipCooldownTradesRemaining = config.flipCooldownTrades;
-            setDirectionLossStreakCount(state, direction, 0);
-        }
-        return;
-    }
-
-    setDirectionLossStreakCount(state, direction, 0);
 }
 
 function updateWinStreakRiskState(state: WinStreakRiskState, tradePnl: number): void {
@@ -1776,7 +1685,6 @@ export function runBacktestCompact(
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
     const winStreakRisk = createWinStreakRiskState();
-    const flipLossDirection = createFlipLossDirectionState();
     const smartSizingState = createSmartSizingState(initialCapital);
     const smartSizingPositionState = createSmartSizingPositionState();
     const adaptiveTakeProfitState = createAdaptiveTakeProfitState(data, config, indicatorSeries, initialCapital);
@@ -1819,7 +1727,6 @@ export function runBacktestCompact(
     ) => {
         queueAdaptiveTakeProfitUpdate(position, exitPrice, exitReason, candle, capital);
         updateWinStreakRiskState(winStreakRisk, position.realizedPnl);
-        updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, position.direction, position.realizedPnl);
         updateSmartSizingState(
             smartSizingState,
             resolveVelocitySizingScore(smartSizingPositionState, position),
@@ -1971,7 +1878,6 @@ export function runBacktestCompact(
             config,
             adaptiveTakeProfitState,
             tradeDirection,
-            flipLossDirection,
         });
         if (opened) {
             capital -= opened.entryCommission;
@@ -2055,9 +1961,6 @@ export function runBacktestCompact(
                     if (isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i)) {
                         continue;
                     }
-                    if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
-                        continue;
-                    }
                     openSignalPosition(signal, i);
                 } else if (exitTargets && exitTargets.length > 0) {
                     let allTargetsFullyClosed = true;
@@ -2086,7 +1989,6 @@ export function runBacktestCompact(
                         fullyClosed: true,
                         wasPartial: !allExitOrdersFull,
                         tradeDirection,
-                        flipLossDirection,
                         signal,
                         positions,
                         maxOpenTrades,
@@ -2163,9 +2065,6 @@ export function runBacktestCompact(
                             && isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i)) {
                             continue;
                         }
-                        if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
-                            continue;
-                        }
                         const opened = openSignalPosition(signal, i);
                         if (opened) {
                             finalizeEntryBarState(opened.position, candle, i);
@@ -2198,7 +2097,6 @@ export function runBacktestCompact(
                             fullyClosed: true,
                             wasPartial: !allExitOrdersFull,
                             tradeDirection,
-                            flipLossDirection,
                             signal,
                             positions,
                             maxOpenTrades,
@@ -2404,7 +2302,6 @@ export function runBacktest(
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
     const winStreakRisk = createWinStreakRiskState();
-    const flipLossDirection = createFlipLossDirectionState();
     const smartSizingState = createSmartSizingState(initialCapital);
     const smartSizingPositionState = createSmartSizingPositionState();
     const adaptiveTakeProfitState = createAdaptiveTakeProfitState(data, config, indicatorSeries, initialCapital);
@@ -2446,7 +2343,6 @@ export function runBacktest(
     ) => {
         queueAdaptiveTakeProfitUpdate(position, exitPrice, exitReason, candle, capital);
         updateWinStreakRiskState(winStreakRisk, position.realizedPnl);
-        updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, position.direction, position.realizedPnl);
         updateSmartSizingState(
             smartSizingState,
             resolveVelocitySizingScore(smartSizingPositionState, position),
@@ -2591,7 +2487,6 @@ export function runBacktest(
             config,
             adaptiveTakeProfitState,
             tradeDirection,
-            flipLossDirection,
         });
         if (opened) {
             capital -= opened.entryCommission;
@@ -2670,9 +2565,6 @@ export function runBacktest(
                     if (isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i)) {
                         continue;
                     }
-                    if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
-                        continue;
-                    }
                     openSignalPosition(signal, i);
                 } else if (exitTargets && exitTargets.length > 0) {
                     // Signal exit
@@ -2702,7 +2594,6 @@ export function runBacktest(
                         fullyClosed: true,
                         wasPartial: !allExitOrdersFull,
                         tradeDirection,
-                        flipLossDirection,
                         signal,
                         positions,
                         maxOpenTrades,
@@ -2778,9 +2669,6 @@ export function runBacktest(
                             && isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i)) {
                             continue;
                         }
-                        if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
-                            continue;
-                        }
                         const opened = openSignalPosition(signal, i);
                         if (opened) {
                             finalizeEntryBarStateFull(opened.position, candle, i);
@@ -2813,7 +2701,6 @@ export function runBacktest(
                             fullyClosed: true,
                             wasPartial: !allExitOrdersFull,
                             tradeDirection,
-                            flipLossDirection,
                             signal,
                             positions,
                             maxOpenTrades,

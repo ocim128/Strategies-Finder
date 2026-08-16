@@ -33,6 +33,7 @@ export const open_clearance_collapse_reversal: Strategy = {
     paramLabels: {
         lookback: "Lookback",
     },
+    finderFixedParams: ["lookback"],
     normalizeParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);

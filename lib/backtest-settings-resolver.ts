@@ -92,9 +92,6 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     marketMode: "all" as MarketMode,
     tradeDirection: "short" as TradeDirection,
     invertSignals: false,
-    flipAfterConsecutiveLosses: 2,
-    flipCooldownTrades: 0,
-    minTradesBeforeFirstFlip: 0,
     confirmationMode: "agree" as ConfirmationMode,
     confirmationWindowBars: 0,
     executionModel: "next_open" as ExecutionModel,
@@ -175,9 +172,6 @@ type NumericResolverKey =
     | "riskCooldownBars"
     | "riskWinStreakStopLossAfterWins"
     | "riskWinStreakStopLossPercent"
-    | "flipAfterConsecutiveLosses"
-    | "flipCooldownTrades"
-    | "minTradesBeforeFirstFlip"
     | "confirmationWindowBars"
     | "slippageBps"
     | "maxOpenTrades"
@@ -306,9 +300,6 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
         disabledValue: 0,
         resolve: (raw) => Math.max(0, readDefaultedNumber(raw, "riskWinStreakStopLossPercent")),
     },
-    { key: "flipAfterConsecutiveLosses" },
-    { key: "flipCooldownTrades" },
-    { key: "minTradesBeforeFirstFlip" },
     { key: "slippageBps" },
     {
         key: "maxOpenTrades",
@@ -413,7 +404,7 @@ function resolveBooleanSettingRules(
     return resolved;
 }
 
-const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_no_flip", "both_flip_loss_2", "combined"]);
+const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_no_flip", "combined"]);
 const VALID_CONFIRMATION_MODES = new Set<ConfirmationMode>([
     "agree",
     "veto_opposite",

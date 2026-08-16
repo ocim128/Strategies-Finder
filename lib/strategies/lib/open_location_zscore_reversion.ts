@@ -30,6 +30,7 @@ export const open_location_zscore_reversion: Strategy = {
     paramLabels: {
         lookback: "Lookback Window",
     },
+    finderFixedParams: ["lookback"],
     normalizeParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);

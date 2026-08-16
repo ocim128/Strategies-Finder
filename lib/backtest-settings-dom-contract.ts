@@ -305,9 +305,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         legacyAliases: ["invertSignals"],
         rustSupport: "unsupported",
     }),
-    createField("flipAfterConsecutiveLosses", { rustSupport: "unsupported" }),
-    createField("flipCooldownTrades", { rustSupport: "unsupported" }),
-    createField("minTradesBeforeFirstFlip", { rustSupport: "unsupported" }),
     createField("confirmationStrategiesToggle", {
         parser: "boolean",
         rustSupport: "unsupported",

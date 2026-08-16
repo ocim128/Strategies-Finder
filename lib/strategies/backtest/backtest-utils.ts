@@ -102,9 +102,6 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         pathExitThreshold: toNumberOr(settings?.pathExitThreshold, 0),
         pathExitMinSamples: Math.max(5, toNumberOr(settings?.pathExitMinSamples, 30)),
         pathExitHorizonBars: Math.max(1, toNumberOr(settings?.pathExitHorizonBars, 50)),
-        flipAfterConsecutiveLosses: Math.max(1, Math.round(toNumberOr(settings?.flipAfterConsecutiveLosses, 2))),
-        flipCooldownTrades: Math.max(0, Math.round(toNumberOr(settings?.flipCooldownTrades, 0))),
-        minTradesBeforeFirstFlip: Math.max(0, Math.round(toNumberOr(settings?.minTradesBeforeFirstFlip, 0))),
 
         trendEmaPeriod: Math.max(0, toNumberOr(settings?.trendEmaPeriod, 0)),
         trendEmaSlopeBars: Math.max(0, toNumberOr(settings?.trendEmaSlopeBars, 0)),
@@ -184,7 +181,6 @@ export function normalizeTradeDirection(settings?: BacktestSettings): TradeDirec
     return settings?.tradeDirection === 'short'
         || settings?.tradeDirection === 'both'
         || settings?.tradeDirection === 'both_no_flip'
-        || settings?.tradeDirection === 'both_flip_loss_2'
         || settings?.tradeDirection === 'combined'
         ? settings.tradeDirection
         : 'long';
@@ -212,15 +208,10 @@ export function applySignalPolarity(signals: Signal[], settings?: BacktestSettin
 
 export function isBothLikeTradeDirection(
     tradeDirection: TradeDirection
-): tradeDirection is 'both' | 'both_no_flip' | 'both_flip_loss_2' | 'combined' {
+): tradeDirection is 'both' | 'both_no_flip' | 'combined' {
     return tradeDirection === 'both'
         || tradeDirection === 'both_no_flip'
-        || tradeDirection === 'both_flip_loss_2'
         || tradeDirection === 'combined';
-}
-
-export function isLossStreakFlipTradeDirection(tradeDirection: TradeDirection): boolean {
-    return tradeDirection === 'both_flip_loss_2';
 }
 
 export function signalToPositionDirection(type: Signal['type']): 'long' | 'short' {

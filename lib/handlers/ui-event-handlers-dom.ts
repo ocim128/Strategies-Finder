@@ -36,9 +36,6 @@ const UI_EVENT_HANDLER_DOM_IDS = {
     takeProfitAdaptiveRegimeBlend: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveRegimeBlend,
     takeProfitAdaptiveIcScale: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveIcScale,
     tradeDirection: "tradeDirection",
-    flipAfterConsecutiveLosses: "flipAfterConsecutiveLosses",
-    flipCooldownTrades: "flipCooldownTrades",
-    minTradesBeforeFirstFlip: "minTradesBeforeFirstFlip",
     confirmationStrategiesToggle: "confirmationStrategiesToggle",
     confirmationStrategiesSettings: "confirmationStrategiesSettings",
     confirmationStrategies: "confirmationStrategies",
@@ -124,9 +121,6 @@ type UiEventTypedControls = {
     takeProfitAdaptiveRegimeBlend: HTMLInputElement;
     takeProfitAdaptiveIcScale: HTMLInputElement;
     tradeDirection: HTMLSelectElement;
-    flipAfterConsecutiveLosses: HTMLInputElement;
-    flipCooldownTrades: HTMLInputElement;
-    minTradesBeforeFirstFlip: HTMLInputElement;
     confirmationStrategiesToggle: HTMLInputElement;
     confirmationStrategies: HTMLInputElement;
     confirmationMode: HTMLSelectElement;
@@ -198,7 +192,6 @@ export type UiEventHandlersDom = UiEventRequiredDom & {
     copyChartBtn: HTMLElement | null;
     riskSimpleAdvanced: HTMLElement | null;
     riskPercentage: HTMLElement | null;
-    flipLossStreakSettingsRow: HTMLElement | null;
     strategyTimeframeMinutesGroup: HTMLElement | null;
     disableSignalExits: HTMLInputElement | null;
     exitStrategyOverrideEnabled: HTMLInputElement | null;
@@ -240,7 +233,6 @@ export function createUiEventHandlersDom(): UiEventHandlersDom {
         copyChartBtn: getOptionalElement("copyChartBtn"),
         riskSimpleAdvanced: getOptionalElement("riskSimpleAdvanced"),
         riskPercentage: getOptionalElement("riskPercentage"),
-        flipLossStreakSettingsRow: getOptionalElement("flipLossStreakSettingsRow"),
         strategyTimeframeMinutesGroup: getOptionalElement("strategyTimeframeMinutesGroup"),
         disableSignalExits: getOptionalElement<HTMLInputElement>("disableSignalExits"),
         exitStrategyOverrideEnabled: getOptionalElement<HTMLInputElement>("exitStrategyOverrideEnabled"),

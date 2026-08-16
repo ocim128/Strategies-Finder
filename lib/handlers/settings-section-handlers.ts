@@ -89,16 +89,6 @@ function setInteractiveSectionState(section: HTMLElement | null, enabled: boolea
     setGroupDisabledState(section.querySelectorAll<HTMLElement>('.param-group'), enabled);
 }
 
-function setInputGroupState(
-    inputs: ArrayLike<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>,
-    enabled: boolean
-): void {
-    for (let i = 0; i < inputs.length; i++) {
-        const input = inputs[i];
-        input.disabled = !enabled;
-        input.closest<HTMLElement>('.param-group')?.classList.toggle('is-disabled', !enabled);
-    }
-}
 
 export function setupSettingsSections(dom: UiEventHandlersDom): void {
     const sectionFeatureBindings = {
@@ -219,23 +209,6 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     takeProfitModeSelect.addEventListener('change', applyTakeProfitMode);
     bindSharedTakeProfitFieldMirrors();
     applyRiskMode();
-
-    const tradeDirectionSelect = dom.tradeDirection;
-    const flipLossStreakSettingsRow = dom.flipLossStreakSettingsRow;
-    const flipLossStreakInputs = [
-        dom.flipAfterConsecutiveLosses,
-        dom.flipCooldownTrades,
-        dom.minTradesBeforeFirstFlip,
-    ];
-
-    const applyTradeDirectionMode = () => {
-        const isFlipLossMode = tradeDirectionSelect.value === 'both_flip_loss_2';
-        setSectionVisibility(flipLossStreakSettingsRow, isFlipLossMode);
-        setInputGroupState(flipLossStreakInputs, isFlipLossMode);
-    };
-
-    tradeDirectionSelect.addEventListener('change', applyTradeDirectionMode);
-    applyTradeDirectionMode();
 
     const confirmationStrategiesInput = dom.confirmationStrategies;
     const confirmationModeInput = dom.confirmationMode;

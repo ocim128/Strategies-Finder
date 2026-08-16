@@ -45,9 +45,6 @@ export interface NormalizedSettings {
     pathExitThreshold: number;
     pathExitMinSamples: number;
     pathExitHorizonBars: number;
-    flipAfterConsecutiveLosses: number;
-    flipCooldownTrades: number;
-    minTradesBeforeFirstFlip: number;
 
     trendEmaPeriod: number;
     trendEmaSlopeBars: number;

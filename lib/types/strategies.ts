@@ -267,7 +267,7 @@ export interface StrategyParams {
     [key: string]: number;
 }
 
-export type TradeDirection = 'long' | 'short' | 'both' | 'both_no_flip' | 'both_flip_loss_2' | 'combined';
+export type TradeDirection = 'long' | 'short' | 'both' | 'both_no_flip' | 'combined';
 export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
 export type ConfirmationMode = 'agree' | 'veto_opposite' | 'confirm_within_window' | 'veto_within_window';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';
@@ -387,12 +387,6 @@ export interface BacktestSettings {
     tradeDirection?: TradeDirection;
     /** Invert strategy output by swapping buy/sell signals before execution handling */
     invertSignals?: boolean;
-    /** For both_flip_loss_2: flip side after this many consecutive losses on active side */
-    flipAfterConsecutiveLosses?: number;
-    /** For both_flip_loss_2: after a flip, block additional flips for this many closed trades */
-    flipCooldownTrades?: number;
-    /** For both_flip_loss_2: require at least this many closed trades before first flip is allowed */
-    minTradesBeforeFirstFlip?: number;
     /** Execution timing model for signal fills */
     executionModel?: ExecutionModel;
     /** Allow exits on the same bar as entry */

@@ -117,9 +117,6 @@ export interface BacktestSettingsData {
     // Trade direction
     tradeDirection: TradeDirection;
     invertSignals: boolean;
-    flipAfterConsecutiveLosses: number;
-    flipCooldownTrades: number;
-    minTradesBeforeFirstFlip: number;
 
     // Signal confirmation
     confirmationStrategiesToggle: boolean;
@@ -469,7 +466,6 @@ export function resolveTradeDirection(
         || settings.tradeDirection === "short"
         || settings.tradeDirection === "both"
         || settings.tradeDirection === "both_no_flip"
-        || settings.tradeDirection === "both_flip_loss_2"
         || settings.tradeDirection === "combined"
     ) {
         return settings.tradeDirection;
