@@ -121,6 +121,49 @@ export function buildCloseAcceptanceSeries(data: OHLCVData[]): number[] {
 	);
 }
 
+const openLocationSeriesCache = new WeakMap<OHLCVData[], number[]>();
+
+/**
+ * Location of each bar's OPEN within the PRIOR bar's high-low range:
+ * (open[i] - low[i-1]) / (high[i-1] - low[i-1]). First bar falls back to 0.5.
+ * Deliberately NOT clamped: an open gapping beyond the prior bar's range yields
+ * values below 0 or above 1, and those extremes carry the signal (failed
+ * breakouts) — clamping would compress them away.
+ */
+export function buildOpenLocationSeries(data: OHLCVData[]): number[] {
+	const cached = openLocationSeriesCache.get(data);
+	if (cached) return cached;
+	const series = new Array<number>(data.length).fill(0.5);
+	for (let i = 1; i < data.length; i++) {
+		const priorRange = data[i - 1].high - data[i - 1].low;
+		if (priorRange > 0) {
+			series[i] = (data[i].open - data[i - 1].low) / priorRange;
+		}
+	}
+	openLocationSeriesCache.set(data, series);
+	return series;
+}
+
+const openGapSeriesCache = new WeakMap<OHLCVData[], number[]>();
+
+/**
+ * Relative session gap: open[i] / close[i-1] - 1. First bar falls back to 0.
+ * Positive = gap up into the current bar, negative = gap down.
+ */
+export function buildOpenGapPctSeries(data: OHLCVData[]): number[] {
+	const cached = openGapSeriesCache.get(data);
+	if (cached) return cached;
+	const series = new Array<number>(data.length).fill(0);
+	for (let i = 1; i < data.length; i++) {
+		const priorClose = data[i - 1].close;
+		if (priorClose > 0) {
+			series[i] = data[i].open / priorClose - 1;
+		}
+	}
+	openGapSeriesCache.set(data, series);
+	return series;
+}
+
 export function buildRollingAverage(
 	values: number[],
 	lookbackInput: number
