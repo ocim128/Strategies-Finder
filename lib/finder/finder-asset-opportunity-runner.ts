@@ -89,6 +89,7 @@ import {
 } from "./finder-asset-opportunity-metrics";
 import {
     calculateFinderAssetOosSignalMetrics,
+    normalizeFinderAssetEvalLastBars,
     normalizeFinderAssetOosHorizons,
     normalizeFinderAssetOosIgnoreLastBars,
 } from "./finder-asset-opportunity-oos";
@@ -636,6 +637,7 @@ async function searchOneAsset(args: {
         input.options.assetOpportunity?.oosIgnoreLastBars,
     );
     const oosHorizons = normalizeFinderAssetOosHorizons(input.options.assetOpportunity?.oosHorizons);
+    const evalLastBars = normalizeFinderAssetEvalLastBars(input.options.assetOpportunity?.evalLastBars);
     if (oosIgnoreLastBars > 0 && fullClosed.length - oosIgnoreLastBars < 2) {
         return finish({
             kind: "failed",
@@ -659,17 +661,20 @@ async function searchOneAsset(args: {
     // it only exists to enable reuse.
     const executionModel = input.settings.executionModel ?? "signal_close";
     const canReuseIsSignalsForFreshModel = executionModel !== "signal_close";
-    // With no fixed holdout and no data slice, the in-sample search includes
-    // the reserved application candle so the fresh-entry check below can reuse
-    // the candidate run's retained signals instead of re-executing every top-K
-    // candidate on the same bars. The search window gains one bar out of the
-    // full dataset (ranking/grade inputs shift negligibly — the existing
-    // endpoint adjustment already strips the still-open final trade); the
-    // winner's displayed metrics are still recomputed on the historical
-    // window further below, so displayed results exclude the application
-    // candle.
+    // With no fixed holdout, no data slice, and no evaluation window, the
+    // in-sample search includes the reserved application candle so the
+    // fresh-entry check below can reuse the candidate run's retained signals
+    // instead of re-executing every top-K candidate on the same bars. The search
+    // window gains one bar out of the full dataset (ranking/grade inputs shift
+    // negligibly — the existing endpoint adjustment already strips the
+    // still-open final trade); the winner's displayed metrics are still
+    // recomputed on the historical window further below, so displayed results
+    // exclude the application candle. An evalLastBars cap must NOT include it:
+    // the trailing window would re-capture the application candle into the
+    // search window.
     const includeApplicationCandleInSearch = canReuseIsSignalsForFreshModel
         && oosIgnoreLastBars === 0
+        && evalLastBars === 0
         && (input.options.dataSlice ?? "all") === "all";
     const inSampleHistorical = oosIgnoreLastBars > 0
         ? visibleValidationData
@@ -697,7 +702,14 @@ async function searchOneAsset(args: {
         ...(input.options.mode === "random" ? { randomSeed: assetSeed } : {}),
     };
 
-    const slicedHistorical = sliceHistoricalWindow(inSampleHistorical, assetOptions);
+    const fractionSlicedHistorical = sliceHistoricalWindow(inSampleHistorical, assetOptions);
+    // Cap the evaluation window to the last N bars AFTER the holdout trim and
+    // fraction slice, so `evalLastBars` composes with `oosIgnoreLastBars`:
+    // N=1000 + holdout=1000 evaluates bars [-2000, -1001]. Shorter datasets
+    // keep all their bars before the gap (slice(-N) semantics).
+    const slicedHistorical = evalLastBars > 0
+        ? fractionSlicedHistorical.slice(-evalLastBars)
+        : fractionSlicedHistorical;
     diagnostics.slicedHistoricalBars = slicedHistorical.length;
     diagnostics.timingsMs.preparation = performance.now() - preparationStartedAt;
     if (slicedHistorical.length === 0) {

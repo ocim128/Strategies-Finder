@@ -24,7 +24,7 @@ import {
     type AssetIsSearch,
 } from "../lib/finder/finder-asset-opportunity-runner";
 import type { FinderSelectedStrategy } from "../lib/finder/finder-runner";
-import type { FinderOptions, FinderResult } from "../lib/types/finder";
+import type { FinderOptions, FinderResult, FinderAssetOpportunityOptions } from "../lib/types/finder";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { BacktestResult, BacktestSettings, OHLCVData, Signal, Strategy, Time } from "../lib/types/strategies";
 
@@ -986,6 +986,177 @@ describe("Asset Opportunity runner", () => {
         }), makeCallbacks());
 
         expect(retainSignalsRequested, "no retention request when the windows differ").to.equal(false);
+        expect(executeCalls, "IS search + one recheck execution per top-K candidate")
+            .to.equal(paramSets.length + paramSets.length);
+        // The recheck still runs on the full boundary data and finds the entry.
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.freshStatus).to.equal("fresh");
+        expect(output.results[0]!.latestSignalTime).to.equal(candles[candles.length - 1]!.time);
+    });
+});
+
+describe("Asset Opportunity evaluation window (evalLastBars)", () => {
+    /**
+     * Locks the evalLastBars contract: the in-sample search sees ONLY the last
+     * N bars of the gap-trimmed window. The recency cap exists so performance
+     * reflects current regime, not full history — a window that leaked older
+     * bars or the live application candle would silently defeat that.
+     */
+    interface SearchWindowCapture {
+        length: number;
+        firstTime: Time | null;
+        lastTime: Time | null;
+    }
+
+    function makeWindowOptions(asset: Partial<FinderAssetOpportunityOptions> = {}): FinderOptions {
+        return makeOptions({
+            assetOpportunity: {
+                symbols: ["UP"],
+                candidatePoolSize: 3,
+                minFreshSupport: 1,
+                ...asset,
+            },
+        });
+    }
+
+    /** IS-search stub that records the exact search window and finds nothing. */
+    function makeWindowCapturingIsSearch(captures: SearchWindowCapture[]): AssetIsSearch {
+        return async (args) => {
+            const { ohlcvData } = args;
+            captures.push({
+                length: ohlcvData.length,
+                firstTime: ohlcvData.length > 0 ? ohlcvData[0]!.time : null,
+                lastTime: ohlcvData.length > 0 ? ohlcvData[ohlcvData.length - 1]!.time : null,
+            });
+            return { results: [], totalCandidatesEvaluated: 0 };
+        };
+    }
+
+    it("evaluates only the last N bars before the application candle", async () => {
+        const data = makeCandles(Array.from({ length: 120 }, (_, i) => 100 + i));
+        const captures: SearchWindowCapture[] = [];
+        await runAssetOpportunitySearch(makeInput({
+            options: makeWindowOptions({ evalLastBars: 50 }),
+            assets: [{ symbol: "UP", data }],
+            runIsSearch: makeWindowCapturingIsSearch(captures),
+        }), makeCallbacks());
+
+        expect(captures).to.have.length(1);
+        // historical excludes the application candle (index 119); the window is
+        // the last 50 of those 119 bars → indices 69..118.
+        expect(captures[0]!.length).to.equal(50);
+        expect(captures[0]!.firstTime).to.equal(data[69]!.time);
+        expect(captures[0]!.lastTime).to.equal(data[118]!.time);
+    });
+
+    it("composes with the OOS holdout gap: window = last N bars before the gap", async () => {
+        const data = makeCandles(Array.from({ length: 120 }, (_, i) => 100 + i));
+        const captures: SearchWindowCapture[] = [];
+        await runAssetOpportunitySearch(makeInput({
+            options: makeWindowOptions({ oosIgnoreLastBars: 20, evalLastBars: 30 }),
+            assets: [{ symbol: "UP", data }],
+            runIsSearch: makeWindowCapturingIsSearch(captures),
+        }), makeCallbacks());
+
+        expect(captures).to.have.length(1);
+        // The gap hides indices 100..119; the window is the last 30 visible
+        // bars → indices 70..99 ("first half of the last 50 before the gap").
+        expect(captures[0]!.length).to.equal(30);
+        expect(captures[0]!.firstTime).to.equal(data[70]!.time);
+        expect(captures[0]!.lastTime).to.equal(data[99]!.time);
+    });
+
+    it("keeps the application candle out of the capped window even when signal reuse would otherwise include it", async () => {
+        const data = makeCandles(Array.from({ length: 120 }, (_, i) => 100 + i));
+        const nextOpenSettings = { ...settings, executionModel: "next_open" as const };
+
+        // Without the cap (evalLastBars 0), a reuse-eligible execution model
+        // folds the application candle into the search window (120 bars).
+        const uncapped: SearchWindowCapture[] = [];
+        await runAssetOpportunitySearch(makeInput({
+            options: makeWindowOptions(),
+            settings: nextOpenSettings,
+            assets: [{ symbol: "UP", data }],
+            runIsSearch: makeWindowCapturingIsSearch(uncapped),
+        }), makeCallbacks());
+        expect(uncapped[0]!.length).to.equal(120);
+        expect(uncapped[0]!.lastTime).to.equal(data[119]!.time);
+
+        // With the cap, the trailing window must NOT re-capture the application
+        // candle: it ends at the candle before it.
+        const capped: SearchWindowCapture[] = [];
+        await runAssetOpportunitySearch(makeInput({
+            options: makeWindowOptions({ evalLastBars: 50 }),
+            settings: nextOpenSettings,
+            assets: [{ symbol: "UP", data }],
+            runIsSearch: makeWindowCapturingIsSearch(capped),
+        }), makeCallbacks());
+        expect(capped[0]!.length).to.equal(50);
+        expect(capped[0]!.lastTime).to.equal(data[118]!.time);
+    });
+
+    it("uses the full gap-trimmed history when the dataset is shorter than N", async () => {
+        const data = makeCandles(Array.from({ length: 40 }, (_, i) => 100 + i));
+        const captures: SearchWindowCapture[] = [];
+        await runAssetOpportunitySearch(makeInput({
+            options: makeWindowOptions({ evalLastBars: 1000 }),
+            assets: [{ symbol: "UP", data }],
+            runIsSearch: makeWindowCapturingIsSearch(captures),
+        }), makeCallbacks());
+
+        expect(captures[0]!.length).to.equal(39);
+        expect(captures[0]!.firstTime).to.equal(data[0]!.time);
+        expect(captures[0]!.lastTime).to.equal(data[38]!.time);
+    });
+
+    it("normalizes invalid values to 0 (all bars) instead of shifting the window", async () => {
+        const data = makeCandles(Array.from({ length: 120 }, (_, i) => 100 + i));
+        const captures: SearchWindowCapture[] = [];
+        await runAssetOpportunitySearch(makeInput({
+            options: makeWindowOptions({ evalLastBars: -25 }),
+            assets: [{ symbol: "UP", data }],
+            runIsSearch: makeWindowCapturingIsSearch(captures),
+        }), makeCallbacks());
+
+        // Same as the historical default: every bar but the application candle.
+        expect(captures[0]!.length).to.equal(119);
+        expect(captures[0]!.firstTime).to.equal(data[0]!.time);
+        expect(captures[0]!.lastTime).to.equal(data[118]!.time);
+    });
+
+    it("disables in-sample signal reuse when the window is capped", async () => {
+        // Mirror of the data-slice guard: a capped window shifts the boundary,
+        // so retained in-sample signals no longer match the recheck window and
+        // every top-K candidate must be re-executed on the full boundary data.
+        const candles = makeCandles([100, 101, 102, 103, 104, 105, 106, 107]);
+        const paramSets = [{ threshold: 1 }, { threshold: 2 }];
+        let executeCalls = 0;
+        let retainSignalsRequested = false;
+        const strategy: Strategy = {
+            name: "CappedNoReuse",
+            description: "enters on the latest bar of any data",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                executeCalls += 1;
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy" as const, price: latest.close }] : [];
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeWindowOptions({ evalLastBars: 3 }),
+            settings: { ...settings, executionModel: "next_open" },
+            selectedStrategy: { key: "capped_no_reuse", name: "CappedNoReuse", strategy },
+            candidatePoolSize: 2,
+            generateParamSets: () => paramSets.map((params) => ({ ...params })),
+            assets: [{ symbol: "CAPPED_NO_REUSE", data: candles }],
+            runIsSearch: async (args) => {
+                if (args.retainSignals === true) retainSignalsRequested = true;
+                return makeRetainingStubIsSearch()(args);
+            },
+        }), makeCallbacks());
+
+        expect(retainSignalsRequested, "no retention request when the window is capped").to.equal(false);
         expect(executeCalls, "IS search + one recheck execution per top-K candidate")
             .to.equal(paramSets.length + paramSets.length);
         // The recheck still runs on the full boundary data and finds the entry.

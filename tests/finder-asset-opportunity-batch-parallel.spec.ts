@@ -100,7 +100,7 @@ const longUpDownDatasets = (): Map<string, OHLCVData[]> => new Map<string, OHLCV
     ["DOWN", makeCandles(Array.from({ length: 40 }, (_, i) => 100 - i))],
 ]);
 
-function makeBatchOptions(symbols: string[]): FinderOptions {
+function makeBatchOptions(symbols: string[], overrides: Partial<FinderOptions> = {}): FinderOptions {
     return {
         mode: "random",
         randomSeed: 4242,
@@ -122,6 +122,7 @@ function makeBatchOptions(symbols: string[]): FinderOptions {
             minFreshSupport: 1,
             oosHorizons: [1, 3, 5],
         },
+        ...overrides,
     } as unknown as FinderOptions;
 }
 
@@ -220,6 +221,10 @@ interface BatchRunArgs {
     datasets?: Map<string, OHLCVData[]>;
     /** Overrides the default dataset-map loader (call counting, fault injection). */
     loadDataset?: (symbol: string) => Promise<OHLCVData[]>;
+    /** Merged over the default run options (e.g. an assetOpportunity override). */
+    optionsOverrides?: Partial<FinderOptions>;
+    /** Capture sink for the JSONL run log; omitted disables logging. */
+    runLog?: (event: string, payload: Record<string, unknown>) => void;
 }
 
 async function runAssetBatch(
@@ -236,7 +241,7 @@ async function runAssetBatch(
             runId: args.runId,
             interval: "5m",
             symbols,
-            options: makeBatchOptions(symbols),
+            options: makeBatchOptions(symbols, args.optionsOverrides),
             settings,
             capitalSettings,
             selectedStrategies: [{ key: STRATEGY_KEY, name: batchStrategy.name, strategy: batchStrategy }],
@@ -246,7 +251,7 @@ async function runAssetBatch(
             candidatePoolSize: 2,
             minFreshSupport: 1,
             archiveSort: null,
-            runLog: null,
+            runLog: args.runLog ?? null,
             batch: { startHoldoutBars: args.start, endHoldoutBars: args.end },
             ...(args.factory ? { batchTaskRunnerFactory: args.factory } : {}),
         },
@@ -369,6 +374,38 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(state).to.not.equal(null);
         expect(state!.loadedSymbols).to.be.greaterThan(0);
         expect(state!.strategyIndex).to.equal(0);
+    });
+
+    it("carries assetOpportunity.evalLastBars through every per-holdout iteration clone", async () => {
+        // buildIterationOptions reconstructs the assetOpportunity block field
+        // by field per holdout; a field missing there is silently dropped in
+        // EVERY batch iteration. The evaluation-window cap must ride along.
+        const runLogEvents: Array<[string, Record<string, unknown>]> = [];
+        const { events } = await runAssetBatch({
+            owner: 8110,
+            start: 2,
+            end: 3,
+            runId: "batch-eval-window-clone",
+            optionsOverrides: {
+                assetOpportunity: {
+                    symbols: ["UP", "DOWN"],
+                    candidatePoolSize: 2,
+                    minFreshSupport: 1,
+                    oosHorizons: [1, 3, 5],
+                    evalLastBars: 12,
+                },
+            },
+            runLog: (event, payload) => { runLogEvents.push([event, payload]); },
+        });
+
+        const starts = runLogEvents.filter(([event]) => event === "iteration_start");
+        expect(starts).to.have.length(2);
+        for (const [, payload] of starts) {
+            expect(payload).to.include({ evalLastBars: 12 });
+        }
+        expect(starts.map(([, payload]) => (payload as { holdoutBars: number }).holdoutBars))
+            .to.deep.equal([2, 3]);
+        expect(extractIterations(events).map((event) => event.holdoutBars)).to.deep.equal([2, 3]);
     });
 
     it("emits and archives strictly ascending even when workers complete out of order", async () => {

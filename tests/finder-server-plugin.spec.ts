@@ -1011,6 +1011,71 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
         expect(output.results[0]!.endpointAdjusted).to.equal(true);
         expect(output.results[0]!.endpointRemovedTrades).to.equal(1);
     });
+
+    it("caps the in-sample window to assetOpportunity.evalLastBars through the full server run", async () => {
+        // The evaluation-window cap must survive the whole server pipeline
+        // (route input → iteration → runner → IS search). The strategy records
+        // every data length it executes against; the IS pass must see exactly
+        // the capped window while the fresh-entry recheck still sees the full
+        // closed set.
+        const dataset = makeCandles(Array.from({ length: 12 }, (_, i) => 100 + i));
+        const executeLengths: number[] = [];
+        const strategy: Strategy = {
+            name: "Eval Window Capture",
+            description: "Records the window length it executes against.",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                executeLengths.push(data.length);
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy", price: latest.close }] : [];
+            },
+        };
+        const options: FinderOptions = {
+            ...makeOptions(["EVALWIN"]),
+            scope: "asset_opportunity",
+            topN: 1,
+            maxRuns: 1,
+            assetOpportunity: {
+                symbols: ["EVALWIN"],
+                candidatePoolSize: 1,
+                minFreshSupport: 1,
+                evalLastBars: 3,
+            },
+        };
+        const runLogEvents: Array<[string, Record<string, unknown>]> = [];
+        const events: FinderAssetOpportunityStreamEvent[] = [];
+        setRunOwnerForTests(7150);
+        await processFinderAssetOpportunityRun(
+            {
+                runId: "asset-eval-window",
+                interval: "5m",
+                symbols: ["EVALWIN"],
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategies: [{ key: "eval_window_capture", name: strategy.name, strategy }],
+                loadDataset: async () => dataset,
+                abortSignal: new AbortController().signal,
+                candidatePoolSize: 1,
+                minFreshSupport: 1,
+                runLog: (event, payload) => { runLogEvents.push([event, payload]); },
+            },
+            (event) => events.push(event),
+            7150,
+        );
+
+        // The IS search executed on the 3-bar capped window; the fresh-entry
+        // recheck re-executed on the full 12-bar closed set.
+        expect(executeLengths).to.include(3);
+        expect(executeLengths).to.include(12);
+        expect(Math.min(...executeLengths)).to.equal(3);
+        const start = runLogEvents.find(([event]) => event === "iteration_start");
+        expect(start, "iteration_start run-log event recorded").to.not.equal(undefined);
+        expect(start![1]).to.include({ evalLastBars: 3 });
+        const done = events[events.length - 1]!;
+        expect(done.type).to.equal("asset_done");
+    });
 });
 
 describe("finder server plugin Asset Opportunity batch execution", () => {

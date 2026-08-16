@@ -89,6 +89,12 @@ export interface FinderAssetOpportunityOptions {
     minFreshSupport: number;
     /** Number of historical bars reserved for fixed-horizon OOS measurement. */
     oosIgnoreLastBars?: number;
+    /**
+     * Cap the in-sample evaluation window to the last N bars (after the
+     * oosIgnoreLastBars gap is trimmed). 0/undefined evaluates all available
+     * bars before the gap.
+     */
+    evalLastBars?: number;
     /** Exactly three fixed forward-PnL horizons; defaults to 1, 3, 5. */
     oosHorizons?: number[];
 }

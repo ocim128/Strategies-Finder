@@ -78,6 +78,7 @@ import {
 } from "./finder/finder-manager-dom";
 import {
 	DEFAULT_FINDER_ASSET_OOS_HORIZONS,
+	normalizeFinderAssetEvalLastBars,
 	normalizeFinderAssetOosBatchHoldoutRange,
 	normalizeFinderAssetOosHorizons,
 	normalizeFinderAssetOosIgnoreLastBars,
@@ -257,6 +258,8 @@ type FinderPersistedUiState = {
 	assetOpportunityMinFreshSupport: number;
 	assetOpportunityOosIgnoreLastBars: number;
 	assetOpportunityOosHorizons: string;
+	/** Cap the in-sample evaluation window to the last N bars; 0 = all bars. */
+	assetOpportunityEvalWindowBars: number;
 	/** Batch OOS holdout mode: one Asset Opportunity run per holdout value. */
 	assetOpportunityOosBatchEnabled: boolean;
 	assetOpportunityOosBatchStartBars: number;
@@ -339,6 +342,7 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	assetOpportunityMinFreshSupport: 2,
 	assetOpportunityOosIgnoreLastBars: 0,
 	assetOpportunityOosHorizons: DEFAULT_FINDER_ASSET_OOS_HORIZONS.join(","),
+	assetOpportunityEvalWindowBars: 0,
 	assetOpportunityOosBatchEnabled: false,
 	assetOpportunityOosBatchStartBars: 1,
 	assetOpportunityOosBatchEndBars: 5,
@@ -489,6 +493,9 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 	const assetOpportunityOosHorizons = normalizeFinderAssetOosHorizons(
 		source.assetOpportunityOosHorizons,
 	).join(",");
+	const assetOpportunityEvalWindowBars = normalizeFinderAssetEvalLastBars(
+		source.assetOpportunityEvalWindowBars,
+	);
 	const batchRange = normalizeFinderAssetOosBatchHoldoutRange(
 		source.assetOpportunityOosBatchStartBars,
 		source.assetOpportunityOosBatchEndBars,
@@ -540,6 +547,7 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		assetOpportunityMinFreshSupport,
 		assetOpportunityOosIgnoreLastBars,
 		assetOpportunityOosHorizons,
+		assetOpportunityEvalWindowBars,
 		assetOpportunityOosBatchEnabled: source.assetOpportunityOosBatchEnabled === true,
 		assetOpportunityOosBatchStartBars: batchRange.error === null
 			? batchRange.start
@@ -941,6 +949,7 @@ export class FinderManager {
 		dom.finderAssetMinFreshSupport.value = String(this.uiState.assetOpportunityMinFreshSupport);
 		dom.finderAssetOosIgnoreLastBars.value = String(this.uiState.assetOpportunityOosIgnoreLastBars);
 		dom.finderAssetOosHorizons.value = this.uiState.assetOpportunityOosHorizons;
+		dom.finderAssetEvalWindowBars.value = String(this.uiState.assetOpportunityEvalWindowBars);
 		dom.finderAssetOosBatchToggle.checked = this.uiState.assetOpportunityOosBatchEnabled;
 		dom.finderAssetOosBatchStart.value = String(this.uiState.assetOpportunityOosBatchStartBars);
 		dom.finderAssetOosBatchEnd.value = String(this.uiState.assetOpportunityOosBatchEndBars);
@@ -1407,6 +1416,7 @@ export class FinderManager {
 			dom.finderAssetMinFreshSupport,
 			dom.finderAssetOosIgnoreLastBars,
 			dom.finderAssetOosHorizons,
+			dom.finderAssetEvalWindowBars,
 			dom.finderAssetOosBatchToggle,
 			dom.finderAssetOosBatchStart,
 			dom.finderAssetOosBatchEnd,
@@ -1469,6 +1479,13 @@ export class FinderManager {
 		this.uiState.assetOpportunityOosHorizons = normalizeFinderAssetOosHorizons(
 			dom.finderAssetOosHorizons.value,
 		).join(",");
+		this.uiState.assetOpportunityEvalWindowBars = normalizeFinderAssetEvalLastBars(
+			this.readFinderNumberInput(
+				dom.finderAssetEvalWindowBars,
+				DEFAULT_FINDER_UI_STATE.assetOpportunityEvalWindowBars,
+				0,
+			),
+		);
 		this.uiState.assetOpportunityOosBatchEnabled = dom.finderAssetOosBatchToggle.checked;
 		const batchRange = normalizeFinderAssetOosBatchHoldoutRange(
 			dom.finderAssetOosBatchStart.value,
@@ -3466,6 +3483,11 @@ export class FinderManager {
 				oosIgnoreLastBars: normalizeFinderAssetOosIgnoreLastBars(this.readFinderNumberInput(
 					dom.finderAssetOosIgnoreLastBars,
 					DEFAULT_FINDER_UI_STATE.assetOpportunityOosIgnoreLastBars,
+					0,
+				)),
+				evalLastBars: normalizeFinderAssetEvalLastBars(this.readFinderNumberInput(
+					dom.finderAssetEvalWindowBars,
+					DEFAULT_FINDER_UI_STATE.assetOpportunityEvalWindowBars,
 					0,
 				)),
 				oosHorizons: normalizeFinderAssetOosHorizons(dom.finderAssetOosHorizons.value),

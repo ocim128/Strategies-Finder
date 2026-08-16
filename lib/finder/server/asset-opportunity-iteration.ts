@@ -212,6 +212,7 @@ export async function runAssetOpportunityIteration(
         symbols: totalAssets,
         strategyKeys: selectedStrategies.map((strategy) => strategy.key),
         holdoutBars: input.options.assetOpportunity?.oosIgnoreLastBars ?? 0,
+        evalLastBars: input.options.assetOpportunity?.evalLastBars ?? 0,
         maxRuns: input.options.maxRuns,
         candidatePoolSize: input.candidatePoolSize,
     });

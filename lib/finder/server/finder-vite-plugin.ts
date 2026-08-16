@@ -110,6 +110,7 @@ import {
     assertAssetOpportunityStrategySelection,
 } from "../finder-asset-opportunity-runner";
 import {
+    normalizeFinderAssetEvalLastBars,
     normalizeFinderAssetOosBatchHoldoutRange,
     normalizeFinderAssetOosHorizons,
     normalizeFinderAssetOosIgnoreLastBars,
@@ -1240,6 +1241,7 @@ export async function processFinderAssetOpportunityBatchRun(
             minFreshSupport: input.minFreshSupport,
             oosHorizons: input.options.assetOpportunity?.oosHorizons,
             oosIgnoreLastBars: holdoutBars,
+            evalLastBars: input.options.assetOpportunity?.evalLastBars,
         },
     });
 
@@ -1701,6 +1703,9 @@ async function prepareAssetOpportunityRunPayload(
                     ...parsedOptions.assetOpportunity,
                     oosIgnoreLastBars: normalizeFinderAssetOosIgnoreLastBars(
                         parsedOptions.assetOpportunity.oosIgnoreLastBars,
+                    ),
+                    evalLastBars: normalizeFinderAssetEvalLastBars(
+                        parsedOptions.assetOpportunity.evalLastBars,
                     ),
                     oosHorizons: normalizeFinderAssetOosHorizons(
                         parsedOptions.assetOpportunity.oosHorizons,

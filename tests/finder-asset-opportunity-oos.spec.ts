@@ -6,6 +6,7 @@ import {
     DEFAULT_FINDER_ASSET_OOS_HORIZONS,
     MAX_FINDER_ASSET_OOS_BATCH_VALUES,
     MAX_FINDER_ASSET_OOS_VALUE,
+    normalizeFinderAssetEvalLastBars,
     normalizeFinderAssetOosBatchHoldoutRange,
     normalizeFinderAssetOosHorizons,
 } from "../lib/finder/finder-asset-opportunity-oos";
@@ -55,6 +56,24 @@ describe("Asset Opportunity batch holdout range", () => {
         expect(exact.error).to.equal(null);
         expect(exact.start).to.equal(1);
         expect(exact.end).to.equal(MAX_FINDER_ASSET_OOS_BATCH_VALUES);
+    });
+});
+
+describe("Asset Opportunity evaluation window normalization", () => {
+    it("treats 0, absent, and invalid values as the disabled sentinel", () => {
+        expect(normalizeFinderAssetEvalLastBars(0)).to.equal(0);
+        expect(normalizeFinderAssetEvalLastBars(undefined)).to.equal(0);
+        expect(normalizeFinderAssetEvalLastBars(-1000)).to.equal(0);
+        expect(normalizeFinderAssetEvalLastBars("abc")).to.equal(0);
+        expect(normalizeFinderAssetEvalLastBars(Number.NaN)).to.equal(0);
+        expect(normalizeFinderAssetEvalLastBars(null)).to.equal(0);
+    });
+
+    it("rounds non-integers and clamps to the shared asset cap", () => {
+        expect(normalizeFinderAssetEvalLastBars(1000)).to.equal(1000);
+        expect(normalizeFinderAssetEvalLastBars("1500")).to.equal(1500);
+        expect(normalizeFinderAssetEvalLastBars(999.6)).to.equal(1000);
+        expect(normalizeFinderAssetEvalLastBars(MAX_FINDER_ASSET_OOS_VALUE + 1)).to.equal(MAX_FINDER_ASSET_OOS_VALUE);
     });
 });
 

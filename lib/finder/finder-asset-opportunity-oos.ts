@@ -90,6 +90,14 @@ export function normalizeFinderAssetOosIgnoreLastBars(value: unknown): number {
     return Math.min(MAX_FINDER_ASSET_OOS_VALUE, Math.max(0, Math.round(numeric)));
 }
 
+export function normalizeFinderAssetEvalLastBars(value: unknown): number {
+    const numeric = typeof value === "number" || typeof value === "string"
+        ? Number(value)
+        : Number.NaN;
+    if (!Number.isFinite(numeric)) return 0;
+    return Math.min(MAX_FINDER_ASSET_OOS_VALUE, Math.max(0, Math.round(numeric)));
+}
+
 /**
  * Result of validating an inclusive batch holdout range. `error === null`
  * means the range is valid and `start`/`end` are ordered positive integers
