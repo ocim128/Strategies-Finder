@@ -43,4 +43,10 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "rejection_confirmed_depth_fade": () => import("./lib/rejection_confirmed_depth_fade").then(m => m.rejection_confirmed_depth_fade),
     "vwap_deviation_reversion": () => import("./lib/vwap_deviation_reversion").then(m => m.vwap_deviation_reversion),
     "robust_zscore_typical_fade": () => import("./lib/robust_zscore_typical_fade").then(m => m.robust_zscore_typical_fade),
+    "whipsaw_crossing_burst_reversal": () => import("./lib/whipsaw_crossing_burst_reversal").then(m => m.whipsaw_crossing_burst_reversal),
+    "body_impulse_zscore_exhaustion": () => import("./lib/body_impulse_zscore_exhaustion").then(m => m.body_impulse_zscore_exhaustion),
+    "open_clearance_collapse_reversal": () => import("./lib/open_clearance_collapse_reversal").then(m => m.open_clearance_collapse_reversal),
+    "open_lower_quartile_clearance_reversal": () => import("./lib/open_lower_quartile_clearance_reversal").then(m => m.open_lower_quartile_clearance_reversal),
+    "open_prior_midpoint_displacement_reversion": () => import("./lib/open_prior_midpoint_displacement_reversion").then(m => m.open_prior_midpoint_displacement_reversion),
+    "return_autocorrelation_alternation": () => import("./lib/return_autocorrelation_alternation").then(m => m.return_autocorrelation_alternation),
 };

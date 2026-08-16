@@ -476,4 +476,76 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "whipsaw_crossing_burst_reversal",
+        name: "Whipsaw Crossing Burst Reversal",
+        description: "Whipsaw crossing across moving average with range expansion.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["period"]
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "body_impulse_zscore_exhaustion",
+        name: "Body Impulse Z-Score Exhaustion",
+        description: "Rolling z-score of candle body impulse exhausting into reversal.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"]
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "open_clearance_collapse_reversal",
+        name: "Open Clearance Collapse Reversal",
+        description: "Opening clearance below prior low relative to preceding open clearance",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "open_lower_quartile_clearance_reversal",
+        name: "Open Lower Quartile Clearance Reversal",
+        description: "Opening auction clearance below the prior bar lower quartile boundary",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "open_prior_midpoint_displacement_reversion",
+        name: "Open Prior Midpoint Displacement Reversion",
+        description: "Open location relative to prior bar center of gravity",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "return_autocorrelation_alternation",
+        name: "Return Autocorrelation Alternation",
+        description: "One-bar return alternation: fade only when bar-to-bar returns are actively mean-reverting.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];

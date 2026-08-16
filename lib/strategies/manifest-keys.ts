@@ -41,4 +41,10 @@ export const builtInStrategyKeys: readonly string[] = [
     "rejection_confirmed_depth_fade",
     "vwap_deviation_reversion",
     "robust_zscore_typical_fade",
+    "whipsaw_crossing_burst_reversal",
+    "body_impulse_zscore_exhaustion",
+    "open_clearance_collapse_reversal",
+    "open_lower_quartile_clearance_reversal",
+    "open_prior_midpoint_displacement_reversion",
+    "return_autocorrelation_alternation",
 ];

@@ -42,6 +42,12 @@ import { lagged_value_anchor_reversion } from "./lib/lagged_value_anchor_reversi
 import { rejection_confirmed_depth_fade } from "./lib/rejection_confirmed_depth_fade";
 import { vwap_deviation_reversion } from "./lib/vwap_deviation_reversion";
 import { robust_zscore_typical_fade } from "./lib/robust_zscore_typical_fade";
+import { whipsaw_crossing_burst_reversal } from "./lib/whipsaw_crossing_burst_reversal";
+import { body_impulse_zscore_exhaustion } from "./lib/body_impulse_zscore_exhaustion";
+import { open_clearance_collapse_reversal } from "./lib/open_clearance_collapse_reversal";
+import { open_lower_quartile_clearance_reversal } from "./lib/open_lower_quartile_clearance_reversal";
+import { open_prior_midpoint_displacement_reversion } from "./lib/open_prior_midpoint_displacement_reversion";
+import { return_autocorrelation_alternation } from "./lib/return_autocorrelation_alternation";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -89,6 +95,12 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "rejection_confirmed_depth_fade", strategy: rejection_confirmed_depth_fade },
     { key: "vwap_deviation_reversion", strategy: vwap_deviation_reversion },
     { key: "robust_zscore_typical_fade", strategy: robust_zscore_typical_fade },
+    { key: "whipsaw_crossing_burst_reversal", strategy: whipsaw_crossing_burst_reversal },
+    { key: "body_impulse_zscore_exhaustion", strategy: body_impulse_zscore_exhaustion },
+    { key: "open_clearance_collapse_reversal", strategy: open_clearance_collapse_reversal },
+    { key: "open_lower_quartile_clearance_reversal", strategy: open_lower_quartile_clearance_reversal },
+    { key: "open_prior_midpoint_displacement_reversion", strategy: open_prior_midpoint_displacement_reversion },
+    { key: "return_autocorrelation_alternation", strategy: return_autocorrelation_alternation },
 ];
 
 export function createStrategiesRecordFromManifest(
