@@ -4,6 +4,8 @@ import {
     buildTopMeanShardTasks,
     resolveTopMeanShardSize,
     resolveTopMeanWorkerCount,
+    shouldBypassTopMeanSyntheticPairDiskCache,
+    TOP_MEAN_DISK_CACHE_BYPASS_PAIR_THRESHOLD,
     TopMeanWorkerPool,
 } from "../lib/batch-backtest/sp500-top-mean-worker-pool";
 import type { TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
@@ -43,6 +45,19 @@ function testShardSizeFeedsEveryWorker(): void {
         resolveTopMeanShardSize(100, 4, 20),
         20,
         "an explicit shard size remains authoritative",
+    );
+}
+
+function testLargeRunsBypassSyntheticDiskCache(): void {
+    assert.equal(
+        shouldBypassTopMeanSyntheticPairDiskCache(TOP_MEAN_DISK_CACHE_BYPASS_PAIR_THRESHOLD),
+        false,
+        "the disk cache remains available at its bounded file cap",
+    );
+    assert.equal(
+        shouldBypassTopMeanSyntheticPairDiskCache(TOP_MEAN_DISK_CACHE_BYPASS_PAIR_THRESHOLD + 1),
+        true,
+        "runs larger than the cache working set must avoid disk-cache churn",
     );
 }
 
@@ -320,6 +335,7 @@ async function testShardCompletesOnlyAfterDurableWrite(): Promise<void> {
 async function main(): Promise<void> {
     testWorkerCountResolution();
     testShardSizeFeedsEveryWorker();
+    testLargeRunsBypassSyntheticDiskCache();
     testCacheAwareShardPlanning();
     testWorkerPoolCancel();
     await testWorkerPathResolution();

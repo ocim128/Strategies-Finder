@@ -34,6 +34,9 @@ const WATCH_STRATEGIES = process.env.WATCH_STRATEGIES === '1';
 const WATCH_IGNORED_GLOBS = [
     // Generated artifacts are rewritten in place and can trip Vite's watcher on Windows.
     '**/artifacts/**',
+    // Synthetic-pair cache files are generated during large server-side runs;
+    // they are not application source and must not trigger Vite's watcher.
+    '**/price-data/synthetic-cache/**',
     // Strategy authoring often happens during long Finder/Hunt runs. Require a manual refresh
     // instead of interrupting the current browser session on every change under lib/strategies.
     ...(WATCH_STRATEGIES ? [] : ['**/lib/strategies/**']),

@@ -9,7 +9,11 @@
 import { clearLocalDailyCsvCachesForSymbols } from "../candle-cache";
 import { isIbkrSymbol } from "../local-daily-datasets";
 import type { OHLCVData } from "../types/strategies";
-import { createBatchDatasetLoaderCore, type BatchDatasetCacheStats } from "./batch-dataset-loader-core";
+import {
+    createBatchDatasetLoaderCore,
+    type BatchDatasetCacheStats,
+    type BatchDatasetLoadContext,
+} from "./batch-dataset-loader-core";
 import {
     createSeedFingerprintMemo,
     loadCachedSyntheticPair,
@@ -66,8 +70,9 @@ export async function loadServerBatchDataset(
     symbol: string,
     interval: string,
     signal?: AbortSignal,
+    context?: BatchDatasetLoadContext,
 ): Promise<OHLCVData[]> {
-    return loader.load(symbol, interval, signal);
+    return loader.load(symbol, interval, signal, context);
 }
 
 export function clearServerBatchDatasetCaches(): void {

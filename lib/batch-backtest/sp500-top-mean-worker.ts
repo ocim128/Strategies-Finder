@@ -35,6 +35,7 @@ export interface TopMeanWorkerTaskData {
     capitalSettings: CapitalSettings;
     interval: string;
     useRustEnginePreference?: boolean;
+    preferInMemorySyntheticPairs?: boolean;
 }
 
 export type TopMeanWorkerMessage =
@@ -155,7 +156,14 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
             const loadStartedAt = performance.now();
             let candles: OHLCVData[];
             try {
-                candles = await loadServerBatchDataset(pairSymbol, data.interval);
+                candles = await loadServerBatchDataset(
+                    pairSymbol,
+                    data.interval,
+                    undefined,
+                    data.preferInMemorySyntheticPairs
+                        ? { preferInMemorySyntheticPairs: true }
+                        : undefined,
+                );
             } finally {
                 timing.loadMs += performance.now() - loadStartedAt;
             }
@@ -322,8 +330,8 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
 }
 
 if (!isMainThread && parentPort) {
-    // Worker pool spawn contract: workers are spawned WITHOUT `workerData`
-    // (see sp500-top-mean-worker-pool.ts "Persistent worker pool" comment) so
+    // Worker pool spawn contract: workers receive TOP_MEAN cache metadata;
+    // every task arrives via the message listener. The single helper below
     // the one-shot branch that previously lived here was dead code — every
     // task arrives via the message listener. The single helper below replaces
     // the byte-identical then/catch bodies the two branches used to share.

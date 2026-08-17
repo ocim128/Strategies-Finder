@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
-import { isMainThread } from "node:worker_threads";
+import { isMainThread, workerData } from "node:worker_threads";
 import { extractCandlesFromCsvPayload } from "../candle-cache";
 import { normalizeTradFiDailyCandles } from "../data/data-interval-utils";
 import { isIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
@@ -23,13 +23,13 @@ const IBKR_HEADER = "time,open,high,low,close,volume";
  * IBKR sync bumps the seed mtime, invalidating the entry automatically — so
  * it stays always-fresh without an explicit clear. Bounded by entry count;
  * each entry is the parsed candle array (~73k bars, ~3.6 MB at the 30m seed
- * interval). The cap is set to cover the full IBKR symbol universe (501
- * symbols on disk) so a 1000-pair run whose ~500 unique legs overflow the
- * 128-entry SyntheticLegCache does not re-parse any CSV twice. Steady-state
+ * interval). The main-thread cap covers the full IBKR symbol universe (501
+ * symbols). TOP_MEAN workers use 128 entries because each worker has its own
+ * parsed-CSV cache; this avoids retaining the full universe in every worker.
  * footprint at full occupancy is ~1.8 GB — within the 16 GB
  * `--max-old-space-size` recommended for server-side runs.
  */
-const PARSED_CSV_CACHE_MAX_ENTRIES = 512;
+const PARSED_CSV_CACHE_MAX_ENTRIES = !isMainThread && workerData?.topMean === true ? 128 : 512;
 const parsedCsvCache = new Map<string, { mtimeMs: number; candles: OHLCVData[] }>();
 
 interface CacheCheck {

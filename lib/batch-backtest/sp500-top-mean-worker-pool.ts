@@ -16,9 +16,15 @@ import type {
     TopMeanWorkerTiming,
 } from "./sp500-top-mean-performance";
 import { TOP_MEAN_WORKER_COUNT_MAX } from "./sp500-top-mean-request-limits";
+import { MAX_CACHE_FILES } from "./synthetic-pair-disk-cache";
 
 export const TOP_MEAN_DEFAULT_SHARD_SIZE = 250;
 export const TOP_MEAN_TARGET_SHARDS_PER_WORKER = 4;
+export const TOP_MEAN_DISK_CACHE_BYPASS_PAIR_THRESHOLD = MAX_CACHE_FILES;
+
+export function shouldBypassTopMeanSyntheticPairDiskCache(totalPairs: number): boolean {
+    return Number.isFinite(totalPairs) && totalPairs > TOP_MEAN_DISK_CACHE_BYPASS_PAIR_THRESHOLD;
+}
 
 function moduleThisFileDir(): string {
     try {
@@ -287,6 +293,7 @@ export class TopMeanWorkerPool {
         const poolStartedAt = performance.now();
         const workerCount = resolveTopMeanWorkerCount(options.workerCount);
         const totalPairs = options.canonicalPairs.length;
+        const preferInMemorySyntheticPairs = shouldBypassTopMeanSyntheticPairDiskCache(totalPairs);
         // Completed shard indexes are meaningful only under the size that
         // created them. A resumed run must preserve that persisted partition;
         // new runs are free to use the dynamic worker-fed size.
@@ -434,8 +441,8 @@ export class TopMeanWorkerPool {
         // ~workerCount× the steady-state cost. The worker file ALREADY exposes
         // a `parentPort.on("message", ...)` follow-up handler alongside the
         // workerData one-shot — that handler was dead code (F7). Spawn workers
-        // ONCE without workerData (so the one-shot branch is skipped and the
-        // message listener handles every task), reuse them across shards via
+        // ONCE with TOP_MEAN workerData metadata; the message listener handles
+        // every task, and workers are reused across shards via
         // a free-list, and terminate them only on cancel / end / fatal.
         const buildTaskData = (task: ShardTask): TopMeanWorkerTaskData => ({
             shardIndex: task.shardIndex,
@@ -446,6 +453,7 @@ export class TopMeanWorkerPool {
             capitalSettings: options.capitalSettings,
             interval: options.interval,
             useRustEnginePreference: options.useRustEnginePreference,
+            preferInMemorySyntheticPairs,
         });
 
         type InFlight = {
@@ -669,15 +677,15 @@ export class TopMeanWorkerPool {
             }
         };
 
-        // Spawn the worker pool. No workerData → the worker's one-shot branch
-        // is skipped and the message listener handles every task.
+        // Spawn the worker pool. The workerData flag selects the smaller
+        // parsed-CSV cache used by large TOP_MEAN runs.
         const spawned: Worker[] = [];
         let spawnedWorkerCount = 0;
         const workerStartupStartedAt = performance.now();
         try {
             for (let i = freeWorkers.length; i < workerCount; i++) {
                 if (this.isCancelled) break;
-                const worker = new Worker(workerScriptPath, {});
+                const worker = new Worker(workerScriptPath, { workerData: { topMean: true } });
                 attachWorkerHandlers(worker);
                 freeWorkers.push(worker);
                 spawned.push(worker);

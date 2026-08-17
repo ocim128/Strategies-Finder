@@ -541,14 +541,24 @@ export async function storeSyntheticPair(
  */
 async function writeAtomic(filePath: string, buffer: Buffer): Promise<void> {
     const tmp = `${filePath}.${process.pid}.tmp`;
-    await writeFile(tmp, buffer);
-    await rename(tmp, filePath);
+    try {
+        await writeFile(tmp, buffer);
+        await rename(tmp, filePath);
+    } catch (error) {
+        try { await unlink(tmp); } catch { /* best-effort cleanup */ }
+        throw error;
+    }
 }
 
 function writeAtomicSync(filePath: string, buffer: Buffer): void {
     const tmp = `${filePath}.${process.pid}.tmp`;
-    writeFileSync(tmp, buffer);
-    renameSync(tmp, filePath);
+    try {
+        writeFileSync(tmp, buffer);
+        renameSync(tmp, filePath);
+    } catch (error) {
+        try { unlinkSync(tmp); } catch { /* best-effort cleanup */ }
+        throw error;
+    }
 }
 
 /** Exposed for tests so they can inspect path resolution without re-deriving. */
