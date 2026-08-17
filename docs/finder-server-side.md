@@ -20,8 +20,8 @@ final N candles remain hidden for validation.
 
 Asset Opportunity can reserve the last N historical bars as a fixed OOS
 holdout. In that mode, candidate ranking and the Finder data slice use only
-the visible prefix, the signal is generated on its last visible candle, and
-the hidden bars validate that one boundary prediction. Its signed
+the visible prefix, the signal is generated at its latest visible modeled fill boundary
+(the preceding candle for `next_open`/`next_close`), and the hidden bars validate that one boundary prediction. Its signed
 close-to-entry forward PnL is reported at three horizons (default `1,3,5`),
 with horizon 1 targeting the first hidden candle. The setting is disabled when
 N is `0`, which retains the normal latest-closed-candle opportunity behavior.

@@ -8,11 +8,12 @@
  *
  * Detection semantics — match the canonical `signal-entry-evaluator` model:
  *
- * - "fresh": the latest executed entry trade's source signal bar equals the
- *   latest closed candle (signalAgeBars === 0). A reversal (entry on the
- *   opposite side) on the latest bar counts as fresh. The trade itself is
- *   typically still open (exitReason === "end_of_data"), but the freshness
- *   determination is anchored on the signal bar, not the open/closed state.
+ * - "fresh": the latest executed entry trade's source signal bar is within
+ *   the requested freshness window (strictly the latest closed candle by
+ *   default). A reversal (entry on the opposite side) on the latest bar
+ *   counts as fresh. The trade itself is typically still open
+ *   (exitReason === "end_of_data"), but the freshness determination is
+ *   anchored on the signal bar, not the open/closed state.
  * - "active": there is an open position (latest trade exitReason ===
  *   "end_of_data") but its entry signal fired on an earlier bar — i.e. a
  *   repeated state signal, not a new opportunity.
@@ -129,23 +130,31 @@ function executionShiftFromSettings(settings: BacktestSettings | undefined): num
 
 function findLatestEntrySignal(args: {
     signals: Signal[] | undefined;
-    latestCandle: OHLCVData;
+    candles: OHLCVData[];
     settings?: BacktestSettings;
-}): { signal: Signal; direction: FinderAssetDirection } | null {
+    maxAgeBars: number;
+}): { signal: Signal; direction: FinderAssetDirection; signalAgeBars: number } | null {
     if (!args.signals || args.signals.length === 0) return null;
-    const latestCandleSec = parseTimeToUnixSeconds(args.latestCandle.time);
-    if (latestCandleSec === null) return null;
     const tradeDirection = normalizeTradeDirection(args.settings);
-    let latest: { signal: Signal; direction: FinderAssetDirection } | null = null;
-    for (const signal of args.signals) {
-        if (!allowsSignalAsEntry(signal.type, tradeDirection)) continue;
-        if (parseTimeToUnixSeconds(signal.time) !== latestCandleSec) continue;
-        latest = {
-            signal,
-            direction: signal.type === "sell" ? "short" : "long",
-        };
+    const latestCandleIndex = args.candles.length - 1;
+    for (let signalAgeBars = 0; signalAgeBars <= args.maxAgeBars; signalAgeBars += 1) {
+        const candle = args.candles[latestCandleIndex - signalAgeBars];
+        if (!candle) continue;
+        const candleTimeSec = parseTimeToUnixSeconds(candle.time);
+        if (candleTimeSec === null) continue;
+        let latest: { signal: Signal; direction: FinderAssetDirection; signalAgeBars: number } | null = null;
+        for (const signal of args.signals) {
+            if (!allowsSignalAsEntry(signal.type, tradeDirection)) continue;
+            if (parseTimeToUnixSeconds(signal.time) !== candleTimeSec) continue;
+            latest = {
+                signal,
+                direction: signal.type === "sell" ? "short" : "long",
+                signalAgeBars,
+            };
+        }
+        if (latest) return latest;
     }
-    return latest;
+    return null;
 }
 
 /**
@@ -162,8 +171,19 @@ export function detectFreshEntry(args: {
     candles: OHLCVData[];
     settings?: BacktestSettings;
     signals?: Signal[];
+    /**
+     * Maximum source-signal age accepted as fresh. The default is 0, which
+     * preserves the strict latest-signal semantics used by generic callers.
+     * Asset Opportunity passes 1 for next-bar execution so a signal that fills
+     * on the latest candle is not discarded solely because its source signal
+     * was on the preceding candle.
+     */
+    freshnessBars?: number;
 }): FinderFreshEntryResult {
     const { result, candles, settings } = args;
+    const freshnessBars = Number.isFinite(args.freshnessBars)
+        ? Math.max(0, Math.floor(args.freshnessBars!))
+        : 0;
     const fallback: FinderFreshEntryResult = {
         freshStatus: "flat",
         direction: null,
@@ -177,11 +197,11 @@ export function detectFreshEntry(args: {
         return fallback;
     }
 
-    const latestCandle = candles[candles.length - 1]!;
     const latestEntrySignal = findLatestEntrySignal({
         signals: args.signals,
-        latestCandle,
+        candles,
         settings,
+        maxAgeBars: freshnessBars,
     });
     const executionShift = executionShiftFromSettings(settings);
 
@@ -194,8 +214,8 @@ export function detectFreshEntry(args: {
             return {
                 freshStatus: "fresh",
                 direction: latestEntrySignal.direction,
-                latestSignalTime: latestCandle.time,
-                signalAgeBars: 0,
+                latestSignalTime: latestEntrySignal.signal.time,
+                signalAgeBars: latestEntrySignal.signalAgeBars,
                 fillTiming: resolveFillTiming(settings),
                 isOpen: false,
                 latestTrade: null,
@@ -216,11 +236,16 @@ export function detectFreshEntry(args: {
     const isOpen = latestTrade.exitReason === "end_of_data";
     const direction: FinderAssetDirection = latestTrade.type === "short" ? "short" : "long";
 
-    if (executionShift > 0 && latestEntrySignal && (!isOpen || latestEntrySignal.direction !== direction)) {
+    if (
+        executionShift > 0
+        && latestEntrySignal
+        && latestEntrySignal.signalAgeBars === 0
+        && (!isOpen || latestEntrySignal.direction !== direction)
+    ) {
         return {
             freshStatus: "fresh",
             direction: latestEntrySignal.direction,
-            latestSignalTime: latestCandle.time,
+            latestSignalTime: latestEntrySignal.signal.time,
             signalAgeBars: 0,
             fillTiming: resolveFillTiming(settings),
             isOpen,
@@ -229,9 +254,10 @@ export function detectFreshEntry(args: {
     }
 
     let freshStatus: FinderAssetFreshStatus;
-    if (signalAgeBars === 0) {
-        // Signal fired on the latest closed candle. This includes reversals
-        // (entry on the opposite side) and brand-new entries from flat.
+    if (signalAgeBars <= freshnessBars) {
+        // The signal fired within the caller's freshness window. This includes
+        // reversals (entry on the opposite side) and brand-new entries from
+        // flat. Asset Opportunity uses a one-bar window for next-bar fills.
         freshStatus = "fresh";
     } else if (isOpen) {
         // Position is open but entered on an earlier bar: a repeated state

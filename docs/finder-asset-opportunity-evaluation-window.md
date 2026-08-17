@@ -43,7 +43,7 @@ Non-goals (explicitly out):
   every `sliceFinderDataWindow` call site (current-chart, Universe, Strategy Quality, OOS) for an
   Asset-Opportunity-only need. If wanted later, promote `evalLastBars` to `FinderDataSlice` then.
 - No changes to the Universe/Strategy Quality/current-chart paths, the worker pool, archive format, stream
-  contracts, or the fresh-entry detection algorithm.
+  contracts, or generic fresh-entry detection. Asset Opportunity uses the execution-aware modeled fill boundary for next-bar execution.
 - No new routes, schemas, caches, or abstractions.
 
 ## Design

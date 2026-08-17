@@ -50,6 +50,7 @@ import { FinderResultRanker } from "../finder-result-ranker";
 import { buildSelectionResult } from "../endpoint";
 import { matchesFinderTradeCountFilter } from "../finder-manager-logic";
 import { runAssetCandidateBacktest } from "../finder-asset-candidate-execution";
+import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
 
 const ASSET_IS_SEARCH_YIELD_EVERY_RUNS = 256;
 const ASSET_IS_SEARCH_YIELD_MIN_MS = 1000;
@@ -118,6 +119,10 @@ export async function runServerAssetIsSearch(
     input: ServerAssetIsSearchInput,
 ): Promise<ServerAssetIsSearchOutput> {
     const { options, settings, capitalSettings, selectedStrategy } = input;
+    // `executeBacktest` skips its own confirmation preload when this lean path
+    // supplies pre-resolved settings, so load the configured libraries once
+    // before the candidate loop.
+    await ensureConfirmationStrategiesLoaded(settings);
     const totalStartedAt = performance.now();
     const requiresFullAnalytics = finderAssetSearchRequiresFullAnalytics(options.sortPriority);
     if (selectedStrategy.strategy.crossSymbolConfig && !input.dataFetcher) {

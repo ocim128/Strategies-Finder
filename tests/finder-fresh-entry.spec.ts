@@ -114,6 +114,22 @@ describe("Finder fresh-entry detector", () => {
         expect(detected.fillTiming).to.equal("next_open");
     });
 
+    it("accepts a penultimate next_open signal when freshness follows the modeled fill boundary", () => {
+        const data = candles(5);
+        const signalCandle = data[data.length - 2]!;
+        const detected = detectFreshEntry({
+            result: resultWith([]),
+            candles: data,
+            settings: { ...NEXT_OPEN_SETTINGS, tradeDirection: "long" },
+            signals: [{ time: signalCandle.time, type: "buy", price: signalCandle.close }],
+            freshnessBars: 1,
+        });
+        expect(detected.freshStatus).to.equal("fresh");
+        expect(detected.direction).to.equal("long");
+        expect(detected.latestSignalTime).to.equal(signalCandle.time);
+        expect(detected.signalAgeBars).to.equal(1);
+        expect(detected.fillTiming).to.equal("next_open");
+    });
     it("keeps a repeated latest next_open signal active when the prior position is open", () => {
         const data = candles(5);
         const latest = data[data.length - 1]!;

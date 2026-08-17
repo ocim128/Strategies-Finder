@@ -28,6 +28,8 @@ import {
     type FinderAssetOpportunityArchiveSort,
 } from "../lib/finder/finder-asset-opportunity-metrics";
 import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
+import { ensureConfirmationStrategiesLoaded } from "../lib/confirmation-signal-filter";
+import { getLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from "../lib/strategies/built-in-catalog";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions, FinderUniverseCandidate } from "../lib/types/finder";
 import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
@@ -987,6 +989,53 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
         expect(output.results[0]!.selectionResult.totalTrades).to.equal(3);
     });
 
+    it("loads configured confirmation strategies before the pre-resolved server candidate loop", async () => {
+        const confirmationKey = "ema_confirmation";
+        unregisterLoadedBuiltInStrategy(confirmationKey);
+        const strategy: Strategy = {
+            name: "Confirmed Server Candidate",
+            description: "Emits a boundary long entry for confirmation loading coverage.",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                const signalCandle = data[data.length - 2];
+                return signalCandle
+                    ? [{ time: signalCandle.time, type: "buy", price: signalCandle.close }]
+                    : [];
+            },
+        };
+        try {
+            const output = await runServerAssetIsSearch({
+                ohlcvData: makeCandles(Array.from({ length: 40 }, (_, index) => 100 + index)),
+                symbol: "CONFIRMATION",
+                interval: "5m",
+                options: {
+                    ...makeOptions(["CONFIRMATION"]),
+                    scope: "asset_opportunity",
+                    topN: 1,
+                },
+                settings: {
+                    ...settings,
+                    executionModel: "next_open",
+                    confirmationStrategies: [confirmationKey],
+                    confirmationMode: "agree",
+                    confirmationWindowBars: 0,
+                    confirmationStrategyParams: { [confirmationKey]: { emaPeriod: 10 } },
+                },
+                capitalSettings,
+                selectedStrategy: { key: "confirmed_server_candidate", name: strategy.name, strategy },
+                generateParamSets: () => [{}],
+                isCancelled: () => false,
+                yieldControl: async () => undefined,
+                retainSignals: true,
+            });
+            expect(getLoadedBuiltInStrategy(confirmationKey)).to.exist;
+            expect(output.results).to.have.length(1);
+            expect(output.signalsByCandidate?.[0]).to.have.length(1);
+        } finally {
+            await ensureConfirmationStrategiesLoaded({ confirmationStrategies: [confirmationKey] });
+        }
+    });
     it("retains endpoint-adjusted selection metrics in the candidate pass", async () => {
         const output = await runServerAssetIsSearch({
             ohlcvData: makeCandles([100, 101, 102, 103]),

@@ -1050,6 +1050,10 @@ function mergeAssetOpportunityEngineUsage(
     }
 }
 
+function resolveAssetOpportunityFreshnessBars(settings: BacktestSettings): number {
+    return settings.executionModel === "signal_close" ? 0 : 1;
+}
+
 /**
  * One candidate's fresh-entry evaluation, whether produced by re-executing the
  * candidate (`regenerateSignalsAndDetectFresh`) or by reusing the in-sample
@@ -1094,6 +1098,7 @@ function detectFreshFromRetainedSignals(args: {
         candles: args.candles,
         settings: args.settings,
         signals: args.signals,
+        freshnessBars: resolveAssetOpportunityFreshnessBars(args.settings),
     });
     return {
         freshStatus: detected.freshStatus,
@@ -1109,6 +1114,7 @@ function detectFreshFromRetainedSignals(args: {
             signals: args.signals,
             candle: args.candles[args.candles.length - 1]!,
             direction: detected.direction,
+            signalTime: detected.latestSignalTime,
             fallback: detected.latestTrade?.entryPrice ?? null,
         }),
         engineUsed: "typescript",
@@ -1152,7 +1158,13 @@ function regenerateSignalsAndDetectFresh(args: {
         useRustEnginePreference: args.useRustEnginePreference,
         signalOnly: args.settings.executionModel !== "signal_close",
     }).then(({ result, candles, signals, engineUsed, engineDiagnostics }) => {
-        const detected = detectFreshEntry({ result, candles, settings: args.settings, signals });
+        const detected = detectFreshEntry({
+            result,
+            candles,
+            settings: args.settings,
+            signals,
+            freshnessBars: resolveAssetOpportunityFreshnessBars(args.settings),
+        });
         return {
             freshStatus: detected.freshStatus,
             direction: detected.direction,
@@ -1167,6 +1179,7 @@ function regenerateSignalsAndDetectFresh(args: {
                 signals,
                 candle: args.fullClosed[args.fullClosed.length - 1]!,
                 direction: detected.direction,
+                signalTime: detected.latestSignalTime,
                 fallback: detected.latestTrade?.entryPrice ?? null,
             }),
             engineUsed,
@@ -1182,9 +1195,10 @@ function resolveLatestSignalPrice(args: {
     signals: Signal[];
     candle: OHLCVData;
     direction: FinderAssetDirection | null;
+    signalTime?: Time | null;
     fallback: number | null;
 }): number | null {
-    const candleTimeSec = parseTimeToUnixSeconds(args.candle.time);
+    const candleTimeSec = parseTimeToUnixSeconds(args.signalTime ?? args.candle.time);
     if (args.direction) {
         for (let index = args.signals.length - 1; index >= 0; index -= 1) {
             const signal = args.signals[index]!;

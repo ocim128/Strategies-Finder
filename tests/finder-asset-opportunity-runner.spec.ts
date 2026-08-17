@@ -393,6 +393,35 @@ describe("Asset Opportunity runner", () => {
         expect(output.results[0]!.signalAgeBars).to.equal(0);
     });
 
+    it("recognizes a penultimate next_open signal at the latest modeled fill boundary", async () => {
+        const strategy: Strategy = {
+            name: "Penultimate Next Open Test",
+            description: "emits one entry on the candle filled by the latest next-open bar",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                const signalCandle = data[data.length - 2];
+                return signalCandle
+                    ? [{ time: signalCandle.time, type: "buy", price: signalCandle.close }]
+                    : [];
+            },
+        };
+        const data = makeCandles([100, 101, 102, 103, 104, 105]);
+        const output = await runAssetOpportunitySearch(
+            makeInput({
+                settings: { ...settings, executionModel: "next_open", tradeDirection: "long" },
+                selectedStrategy: { key: "penultimate_next_open", name: strategy.name, strategy },
+                assets: [{ symbol: "PENULTIMATE", data }],
+                runIsSearch: makeRetainingStubIsSearch(),
+            }),
+            makeCallbacks(),
+        );
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.freshStatus).to.equal("fresh");
+        expect(output.results[0]!.latestSignalTime).to.equal(data[data.length - 2]!.time);
+        expect(output.results[0]!.signalAgeBars).to.equal(1);
+        expect(output.results[0]!.fillTiming).to.equal("next_open");
+    });
     it("reserves the real latest candle before slicing and exposes OOS evidence", async () => {
         const strategy: Strategy = {
             name: "SlicedFresh",

@@ -324,13 +324,14 @@ export interface FinderUniverseCandidate {
 }
 
 /**
- * Fresh-entry status of the latest closed candle for one asset candidate.
+ * Fresh-entry status at the latest modeled entry boundary for one asset candidate.
  *
- * - `fresh`: a NEW entry transition occurred on the latest closed candle (the
- *   candidate was flat before and entered on the last bar; or reversed).
- * - `active`: the candidate is in a position whose entry happened on an earlier
- *   bar (a repeated state signal). Not a fresh opportunity.
- * - `flat`: no position is open and no new entry fired on the latest bar.
+ * - `fresh`: a NEW entry transition occurred at the latest modeled entry
+ *   boundary. For `next_open`/`next_close`, a signal on the immediately
+ *   preceding candle is the entry filled on the latest candle.
+ * - `active`: the candidate is in a position whose entry happened before that
+ *   boundary (a repeated state signal). Not a fresh opportunity.
+ * - `flat`: no position is open and no new entry is pending at the boundary.
  *
  * The fresh-entry detector re-runs the strategy on the full closed data
  * (including the application candle) and inspects the latest trade + signal.
@@ -353,9 +354,9 @@ export type FinderAssetDirection = 'long' | 'short';
  * full strategy parameter space.
  */
 export interface FinderAssetSupportCounts {
-    /** Fresh long candidates within the pool (latest bar produced a long entry). */
+    /** Fresh long candidates within the pool (latest modeled boundary produced a long entry). */
     freshLongCandidates: number;
-    /** Fresh short candidates within the pool (latest bar produced a short entry). */
+    /** Fresh short candidates within the pool (latest modeled boundary produced a short entry). */
     freshShortCandidates: number;
     /** Fresh candidates whose direction matches the winner's direction. */
     freshSameDirection: number;
@@ -384,7 +385,7 @@ export type FinderAssetDecisionGrade = 'select' | 'watch' | 'reject';
 /**
  * One asset opportunity result. Built independently per asset — no value is
  * averaged across assets. Every displayed row has a fresh entry; assets with
- * no fresh latest-bar transition are excluded from results and counted only
+ * no fresh latest-boundary transition are excluded from results and counted only
  * in diagnostics.
  *
  * The current signal is never used to choose the historical candidate rank; it
@@ -410,9 +411,9 @@ export interface FinderAssetOpportunityResult {
     isHistoricalBest: boolean;
     freshStatus: FinderAssetFreshStatus;
     direction: FinderAssetDirection;
-    /** Latest closed-candle signal time (unix seconds). Null when no signal exists. */
+    /** Source signal time for the latest modeled entry (unix seconds). Null when no signal exists. */
     latestSignalTime: Time | null;
-    /** Signal age in bars, relative to the latest closed candle. 0 = fresh on the latest bar. */
+    /** Signal age in bars relative to the latest closed candle; next-bar fills may be fresh at age 1. */
     signalAgeBars: number;
     fillTiming: FinderAssetFillTiming;
     /** Historical selection metrics (endpoint-adjusted). */
