@@ -33,6 +33,8 @@
     "research:open-score": "esno scripts/replay-open-score-run.ts",
     "synthetic:pair": "esno scripts/build-synthetic-pair.ts",
     "ibkr:aggregate": "esno scripts/ibkr-aggregate-csv.ts",
+    "data:preflight": "esno scripts/data-integrity-preflight.ts",
+    "analyze:sleeve-exit-curve": "esno scripts/sleeve-exit-curve.ts",
     "strategies:sync-manifest": "esno scripts/sync-strategy-manifest.ts",
     "strategies:audit-prepared": "esno scripts/audit-prepared-strategies.ts",
     "build:types": "tsc -p tsconfig.types.json",
