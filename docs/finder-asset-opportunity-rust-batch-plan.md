@@ -1,6 +1,6 @@
 # Finder Asset Opportunity Multi-Asset Rust Batch Plan
 
-Status: planned (no implementation yet)  
+Status: Implemented behind an opt-in gate; default activation remains off pending the full workload benchmark
 Date: 2026-08-18  
 Scope: server-side Finder Asset Opportunity in-sample candidate simulation for
 single runs and batch OOS holdout iterations. The existing TypeScript path,
@@ -46,6 +46,74 @@ No database, persistence schema, public route, UI partial, or browser API
 change is planned. The existing loopback Rust server and worker-thread pool
 remain the infrastructure boundary. The current Rust worker cap of eight is
 kept until measurements prove the external server can safely process more.
+
+## Phase 0 result and implementation decision (2026-08-18)
+
+The live loopback service was reachable at `127.0.0.1:3030/api/health` during
+implementation and reported `trading-engine-rust` version `0.1.0`. Its source
+was inspected in the adjacent external `trading-engine` workspace; no files in
+that workspace were changed.
+
+The confirmed `/api/backtest/batch` contract is:
+
+- one `data` array per request;
+- an `items` array containing `{ id, signals, settings? }`;
+- shared `initialCapital`, `positionSizePercent`, `commissionPercent`,
+  `baseSettings`, `sizing`, and `compact` fields;
+- a complete `{ results, processingTimeMs }` response, with one result per
+  submitted item when the request succeeds;
+- `compact: true` omits `trades` and `equityCurve`, but the service does not
+  return endpoint-adjusted Finder selection metrics.
+
+The capability matrix is therefore:
+
+| Asset Opportunity setting | Rust batch decision | Reason |
+| --- | --- | --- |
+| `signal_close` | supported by the new seam | Rust consumes signals at their candle time |
+| `next_open`, `next_close` | TypeScript fallback | not represented by the Rust settings model |
+| zero slippage | supported by the new seam | the Rust settings model has no slippage field |
+| non-zero slippage | TypeScript fallback | silently ignoring slippage would change fills |
+| `allowSameBarExit: true` | supported by the new seam | matches the Rust signal-processing order |
+| `allowSameBarExit: false` | TypeScript fallback | Rust has no equivalent setting |
+| long / short | supported by the new seam | both are implemented by Rust |
+| combined / both directions | TypeScript fallback | Rust normalizes `Both` to long |
+| one open position | supported by the new seam | Rust runs one position |
+| multiple positions / hold / path controls | TypeScript fallback | not represented by Rust |
+| percent / fixed sizing | supported by the new seam | both are accepted by the batch API |
+| smart sizing | TypeScript fallback | the existing client rejects it |
+| endpoint selection | normalized locally from transient full results | the Rust API has no endpoint-selection option |
+
+The implementation uses `compact: false` at the transport boundary only when
+endpoint selection needs the Rust trade path. It applies the existing
+`buildSelectionResult` function locally, then drops `trades` and `equityCurve`
+before the candidate reaches the ranker. This preserves the current Finder
+selection contract without retaining full trade histories. Requests are
+partitioned by serialized body size, and malformed, incomplete, duplicate,
+unknown, or inconsistent results trigger a whole-batch TypeScript fallback.
+Eligible server passes upload each asset/window once through `/api/data/cache`
+and reuse the returned cache ID with `/api/backtest/batch/cached` for later
+strategy batches. If the cache contract is unavailable, the raw-data batch
+endpoint remains available as the bounded fallback. Both request and response
+byte budgets are enforced before a full result is parsed.
+
+The server gate is `FINDER_ASSET_OPPORTUNITY_RUST_BATCH=1`; the request budget
+can be adjusted with `FINDER_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES` (default
+16 MiB, bounded to 1-128 MiB). The response budget can be adjusted with
+`FINDER_ASSET_OPPORTUNITY_RUST_BATCH_MAX_RESPONSE_BYTES` (default 128 MiB,
+bounded to 4-512 MiB). The UI Rust preference must also be enabled.
+The gate is intentionally off by default because the required 499-asset,
+45-strategy one-holdout and two-holdout benchmark was not available during
+implementation. The existing TypeScript path remains the authority, and the
+independent `FINDER_ASSET_BATCH_WORKERS=1` rollback remains unchanged.
+
+The Phase 0 go/no-go decision is **go** for bounded candidate batching within
+one asset and **no-go** for cross-asset request grouping with the current
+service. Version `0.1.0` accepts one shared dataset per request and has no
+dataset reference or per-item dataset field. The implementation therefore
+keeps the existing per-asset orchestration, transfers that asset once per
+bounded candidate batch, and does not invent an incompatible external API.
+Numerical full-workload parity and performance qualification remain rollout
+criteria; until they are run, the feature stays opt-in and off by default.
 
 ## Phase 0 — Freeze the Rust compatibility contract
 
@@ -125,12 +193,14 @@ per-candidate HTTP overhead, oversized requests, and unbounded result retention.
    do not invent a second Rust service or a browser-facing route.
 2. Keep dataset transfer bounded. Do not send all 499 assets in one unbounded
    payload. Partition by measured serialized payload size and available worker
-   memory; transfer each dataset once per request or use the existing Rust data
-   cache when the external contract supports stable dataset references.
+   memory; transfer each dataset once per asset/window or use the existing Rust
+   data cache when the external contract supports stable dataset references.
 3. Add compact-result validation and normalization. Reject malformed, missing,
    duplicate, or inconsistent candidate IDs rather than silently dropping them.
 4. Preserve existing request timeouts and add caller cancellation support if
    the batch request otherwise prevents the Finder Stop path from returning.
+   Bound both request and response bodies; a response over the configured limit
+   must take the complete TypeScript fallback before JSON parsing.
 5. Add an opt-in server feature gate, such as an environment-controlled batch
    mode, so the Rust bridge is not activated by the existing UI preference until
    parity and performance validation are complete. The UI Rust preference and
