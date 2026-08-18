@@ -524,13 +524,14 @@ describe("Asset Opportunity post-run re-sort", () => {
         expect(sorted.map((r) => r.symbol)).to.deep.equal(["A", "B"]);
     });
 
-    it("tstatEdge scores candidates under the minimum trade floor as 0 (2-trade lottery tickets rank last)", () => {
-        // Why: on a no-minTrades run the un-floored sort's top was stuffed with
-        // 2-trade all-win candidates mapping to Infinity — not significance.
-        const lottery = makeResortResult({ symbol: "A", expectancy: 16.94, winRate: 100, avgWin: 16.94, avgLoss: 0, totalTrades: 2 });
+    it("tstatEdge maps an all-win candidate to +Infinity regardless of sample size (run-level minTrades owns guarding)", () => {
+        // Why (operator decision 2026-08-18): the run's minimum-trade filter is the
+        // single owner of sample-size guarding; the sort stays a pure t-stat. The
+        // all-win degenerate follows the payoffRatio precedent (+Infinity).
+        const tinyAllWin = makeResortResult({ symbol: "A", expectancy: 16.94, winRate: 100, avgWin: 16.94, avgLoss: 0, totalTrades: 2 });
         const proven = makeResortResult({ symbol: "B", expectancy: 0.5, winRate: 55, avgWin: 10, avgLoss: 5, totalTrades: 100 });
-        const sorted = sortAssetOpportunityResultsByMetric([lottery, proven], "tstatEdge");
-        expect(sorted.map((r) => r.symbol)).to.deep.equal(["B", "A"]);
+        const sorted = sortAssetOpportunityResultsByMetric([proven, tinyAllWin], "tstatEdge");
+        expect(sorted.map((r) => r.symbol)).to.deep.equal(["A", "B"]);
     });
 
     it("invertedNetProfit ranks worst-first (most negative netProfit at the top)", () => {

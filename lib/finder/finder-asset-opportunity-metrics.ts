@@ -276,8 +276,10 @@ export const TOTAL_TRADES_SATURATION_PERCENTILE = 0.9;
  * with sd approximated from the binary win/loss mixture (winRate, avgWin, avgLoss).
  * Ranks by SIGNIFICANCE, not size — the search optimizes size metrics, so
  * size-sorted tops are overfit extremes by construction; t-stat instead rewards a
- * modest edge proven over many trades. An all-win all-equal candidate (zero
- * variance) with positive expectancy maps to +Infinity and ranks first.
+ * modest edge proven over many trades. Sample-size guarding is owned by the RUN's
+ * minimum-trade filter, not by this sort. An all-win candidate (zero observed
+ * variance) with positive expectancy maps to +Infinity and ranks first — the same
+ * convention payoffRatio uses for all-win candidates.
  */
 export const T_STAT_EDGE_METRIC = "tstatEdge" as const;
 /**
@@ -300,14 +302,6 @@ export const INVERTED_PROFIT_FACTOR_METRIC = "invertedProfitFactor" as const;
  * (smallest DD best), so its inversion is DESCENDING — largest drawdown first.
  */
 export const INVERTED_MAX_DRAWDOWN_METRIC = "invertedMaxDrawdownPercent" as const;
-/**
- * Minimum trade count for the t-stat sort to score a candidate at all. A t-stat
- * needs enough draws for "significance" to mean anything — without a floor,
- * 2-trade all-win candidates map to +Infinity and stuff the top of the sort
- * (observed on the 2026-08-18 no-minTrades run). Candidates below the floor
- * score 0.
- */
-export const T_STAT_EDGE_MIN_TRADES = 10;
 export type FinderAssetOpportunityResortMetric =
     | FinderMetric
     | typeof FRESH_SIGNAL_LIBRARIES_METRIC
@@ -422,8 +416,8 @@ function getAssetOpportunityMetricValue(
 
 /**
  * t-stat of the per-trade edge from the binary win/loss mixture. Returns 0 for
- * missing fields or fewer than 2 trades; a positive-expectancy zero-variance
- * candidate (all identical wins) maps to +Infinity.
+ * missing fields or fewer than 2 trades; a positive-expectancy all-win candidate
+ * (zero observed variance) maps to +Infinity (payoffRatio precedent).
  */
 function getTStatEdgeValue(result: FinderAssetOpportunityResult): number {
     const sel = result.selectionResult;
@@ -432,19 +426,13 @@ function getTStatEdgeValue(result: FinderAssetOpportunityResult): number {
     const winRate = sel.winRate;
     const avgWin = sel.avgWin;
     const avgLoss = sel.avgLoss;
-    if (!Number.isFinite(mean) || !Number.isFinite(winRate) || !Number.isFinite(avgWin) || !Number.isFinite(avgLoss) || trades < T_STAT_EDGE_MIN_TRADES) {
+    if (!Number.isFinite(mean) || !Number.isFinite(winRate) || !Number.isFinite(avgWin) || !Number.isFinite(avgLoss) || trades < 2) {
         return 0;
     }
-    // Jeffreys-style smoothing keeps t finite for all-win candidates (zero observed
-    // variance): cap the win probability at n/(n+1) (one hypothetical loss) and,
-    // when no loss was ever observed, assume a loss at least the size of a win —
-    // conservative in TP-only geometry where real losses are unbounded. Without
-    // this, all-win candidates map to +Infinity and one strategy's perfect win
-    // streak monopolizes the sort's top (observed 2026-08-18).
-    const winProbability = Math.min(Math.min(1, Math.max(0, winRate / 100)), trades / (trades + 1));
-    const effectiveAvgLoss = avgLoss > 0 ? avgLoss : (avgWin > 0 ? avgWin : 1);
-    const variance = winProbability * (avgWin - mean) ** 2 + (1 - winProbability) * (effectiveAvgLoss + mean) ** 2;
-    return (mean * Math.sqrt(trades)) / Math.sqrt(Math.max(variance, Number.MIN_VALUE));
+    const winProbability = Math.min(1, Math.max(0, winRate / 100));
+    const variance = winProbability * (avgWin - mean) ** 2 + (1 - winProbability) * (avgLoss + mean) ** 2;
+    if (variance <= 0) return mean > 0 ? Number.POSITIVE_INFINITY : 0;
+    return (mean * Math.sqrt(trades)) / Math.sqrt(variance);
 }
 
 /**

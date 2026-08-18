@@ -41,7 +41,7 @@ const BLOCK_PATTERN = new RegExp(
     "gm",
 );
 const MIN_TRADES_FOR_LOSS_QUALITY = 15;
-const TSTAT_MIN_TRADES = 10;
+const TSTAT_MIN_TRADES = 2;
 let tstatMinTradesOverride: number | null = null;
 const RECURRENCE_PRESENCE_RATE = 0.4;
 
@@ -295,14 +295,11 @@ function customSortPicks(file: FileData, sortName: string, horizonBars: number):
                         return { entry, t: null as number | null };
                     }
                     const mean = entry.avgTrade!;
-                    // Jeffreys-style smoothing: finite t for all-win candidates
-                    // (zero observed variance); cap win prob at n/(n+1) and assume
-                    // an unobserved loss is at least the size of a win.
-                    const trades = entry.trades!;
-                    const winProbability = Math.min(w, trades / (trades + 1));
-                    const effectiveAvgLoss = entry.avgLoss! > 0 ? entry.avgLoss! : (entry.avgWin! > 0 ? entry.avgWin! : 1);
-                    const variance = winProbability * (entry.avgWin! - mean) ** 2 + (1 - winProbability) * (effectiveAvgLoss + mean) ** 2;
-                    return { entry, t: (mean * Math.sqrt(trades)) / Math.sqrt(Math.max(variance, Number.MIN_VALUE)) };
+                    // Plain t-stat (app parity): the run's minimum-trade filter owns
+                    // sample guarding; all-win (zero variance) maps to +Infinity.
+                    const variance = w * (entry.avgWin! - mean) ** 2 + (1 - w) * (entry.avgLoss! + mean) ** 2;
+                    if (variance <= 0) return { entry, t: mean > 0 ? Number.POSITIVE_INFINITY : null };
+                    return { entry, t: (mean * Math.sqrt(entry.trades!)) / Math.sqrt(variance) };
                 })
                 .filter((item): item is { entry: UniqueCandidate; t: number } => item.t !== null)
                 .sort((left, right) => right.t - left.t)
