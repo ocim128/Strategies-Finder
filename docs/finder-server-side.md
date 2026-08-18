@@ -156,10 +156,11 @@ without budgeting a full-universe copy per worker. Chunked tasks carry only
 their symbol partition and stay affinity-pinned to one worker across holdouts,
 so the total retained dataset budget stays bounded by the same policy while
 synthetic leg/pair caches are reused. Large holdout ranges still use one
-whole-holdout task per worker. With the Rust
-engine enabled the external Rust server becomes the serialization point and
+whole-holdout task per worker. When Rust is actually eligible, the external
+Rust server becomes the serialization point and
 posts full OHLCV payloads per request — the AUTO worker count is therefore
-clamped at 8 (`ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP`); set
+clamped at 8 (`ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP`); a Rust preference
+alone does not apply that cap when the settings force TypeScript. Set
 `FINDER_ASSET_BATCH_WORKERS` explicitly only when you have measured a
 better value.
 

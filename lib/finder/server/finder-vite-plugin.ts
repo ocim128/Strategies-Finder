@@ -63,7 +63,7 @@ import { runFinderUniverseExecution } from "../finder-runner-universe";
 import type { FinderSelectedStrategy } from "../finder-runner";
 import { FinderParamSpace } from "../finder-param-space";
 import { sliceFinderDataWindow } from "../finder-manager-logic";
-import type { CapitalSettings } from "../../types/backtest";
+import { isSmartTradeSizingMode, type CapitalSettings } from "../../types/backtest";
 import type {
     FinderAssetOpportunityResult,
     FinderAssetOpportunityDiagnostics,
@@ -77,6 +77,8 @@ import {
     type BatchDatasetLoadContext,
 } from "../../batch-backtest/batch-dataset-loader-core";
 import { loadBuiltInStrategyByKey } from "../../../strategyRegistry";
+import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
+import { requiresTypescriptEngine } from "../../rust-settings-sanitizer";
 import {
     clearServerFinderDatasetCaches,
     createServerFinderAssetOpportunityLoadContext,
@@ -1623,6 +1625,16 @@ export async function processFinderAssetOpportunityBatchRun(
     // leaving most CPU idle. Larger ranges keep one whole iteration per task,
     // preserving cross-holdout dataset-cache reuse.
     const canChunkAssets = input.batchTaskRunnerFactory && totalAssets >= ASSET_OPPORTUNITY_BATCH_MIN_CHUNKED_ASSETS;
+    // The request may carry the UI's Rust preference even when the current
+    // settings force every candidate through TypeScript. Only apply the Rust
+    // worker cap when a Rust execution is actually possible; otherwise the
+    // smaller chunks can evict the holdout signal cache before reuse.
+    const resolvedCapitalSettings = resolveCapitalSettingsFromRaw(
+        input.capitalSettings as unknown as Record<string, unknown>,
+    );
+    const rustCanRun = input.useRustEnginePreference === true
+        && !requiresTypescriptEngine(input.settings)
+        && !isSmartTradeSizingMode(resolvedCapitalSettings.sizingMode);
     const workerCapacity = input.batchTaskRunnerFactory
         ? canChunkAssets
             ? resolveAssetOpportunityChunkWorkerCount(
@@ -1630,14 +1642,14 @@ export async function processFinderAssetOpportunityBatchRun(
                 totalAssets,
                 process.env,
                 totalmem(),
-                input.useRustEnginePreference === true,
+                rustCanRun,
             )
             : resolveAssetOpportunityBatchWorkerCount(
                 Math.max(totalIterations, ASSET_OPPORTUNITY_BATCH_PARALLEL_TASK_TARGET),
                 totalAssets,
                 process.env,
                 totalmem(),
-                { rustEngine: input.useRustEnginePreference === true },
+                { rustEngine: rustCanRun },
             )
         : 1;
     const assetChunkCount = canChunkAssets
@@ -1653,7 +1665,10 @@ export async function processFinderAssetOpportunityBatchRun(
                 process.env,
                 totalmem(),
                 {
-                    rustEngine: input.useRustEnginePreference === true,
+                    // Match the actual engine eligibility used for chunking;
+                    // a Rust preference alone is not sufficient to serialize
+                    // this TypeScript-only workload.
+                    rustEngine: rustCanRun,
                     taskCount: totalWorkerTasks,
                 },
             )
