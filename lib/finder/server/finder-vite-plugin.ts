@@ -2492,9 +2492,7 @@ async function handleStopRequest(runId: unknown): Promise<{ ok: boolean; stopped
             /* best-effort */
         }
     }
-    if (runWasActive) {
-        runOwner = RUN_OWNER_NONE;
-    } else if (runState?.runId !== requestedRunId) {
+    if (!runWasActive && runState?.runId !== requestedRunId) {
         // Stop arrived before the matching run acquired ownership. Record
         // the run id so the run request can finish cancelled instead of
         // starting heavy work (Stop-before-ownership race closer).

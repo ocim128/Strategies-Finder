@@ -438,7 +438,7 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         const state = getRunStateForTests();
         expect(state).to.not.equal(null);
         expect(state!.loadedSymbols).to.be.greaterThan(0);
-        expect(state!.strategyIndex).to.equal(0);
+        expect(state!.strategyIndex).to.equal(1);
     });
 
     it("carries assetOpportunity.evalLastBars through every per-holdout iteration clone", async () => {
@@ -575,6 +575,47 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         // Task 0 (holdout 2) completed and flushed; task 1 (holdout 3) was
         // aborted mid-flight and discarded; tasks 2/3 never started.
         expect(emitted).to.deep.equal([2]);
+    });
+
+    it("wakes the sweep and stops parked workers when cancellation arrives mid-task", async () => {
+        const datasets = longUpDownDatasets();
+        const symbols = [...datasets.keys()];
+        const tasks: AssetOpportunityBatchWorkerTask[] = [2, 3].map((holdoutBars, taskIndex) => ({
+            taskIndex,
+            holdoutBars,
+            runId: "parallel-stop-poll",
+            interval: "5m",
+            symbols,
+            options: makeBatchOptions(symbols),
+            settings,
+            capitalSettings,
+            strategyKeys: [STRATEGY_KEY],
+            exitStrategyKeys: [],
+            useRustEnginePreference: false,
+            providerBySymbol: null,
+            candidatePoolSize: 2,
+            minFreshSupport: 1,
+        }));
+        let stopRequested = false;
+        const sweep = runAssetOpportunityBatchSweep({
+            tasks,
+            runnerCount: 2,
+            createRunner: createInProcessRunnerFactory({
+                datasets,
+                parkUntilStopTasks: new Set([0, 1]),
+            }),
+            onIterationResult: async () => {
+                throw new Error("parked tasks must be stopped before completion");
+            },
+            onProgress: () => {},
+            onRunLog: () => {},
+            isCancelled: () => stopRequested,
+        });
+
+        setTimeout(() => { stopRequested = true; }, 10);
+        const result = await sweep;
+        expect(result.cancelled).to.equal(true);
+        expect(result.completedIterations).to.equal(0);
     });
 
     it("keeps the sequential in-process loop when no runner factory is wired", async () => {

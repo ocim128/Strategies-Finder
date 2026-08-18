@@ -677,6 +677,43 @@ describe("finder server plugin processFinderUniverseRun", () => {
         setRunOwnerForTests(0); // cleanup
     });
 
+    it("keeps ownership until a matching stopped job reaches teardown", async () => {
+        const owner = 7308;
+        const activeRunId = "run-stop-teardown";
+        setRunOwnerForTests(owner);
+        __testInternals.setRunStateForTests({
+            runId: activeRunId,
+            startedAt: Date.now(),
+            finishedAt: null,
+            interval: "5m",
+            strategyKeys: [STRATEGY_KEY],
+            strategyIndex: 0,
+            strategyCount: 1,
+            phase: "evaluating",
+            totalSymbols: 2,
+            progressPercent: 30,
+            statusText: "running",
+            loadedSymbols: 2,
+            failedSymbols: 0,
+            candidates: [],
+            diagnostics: null,
+            cancelled: false,
+            summary: null,
+            error: null,
+            totals: null,
+        });
+
+        const stopped = await handleStopRequest(activeRunId);
+        expect(stopped).to.deep.equal({ ok: true, stopped: true });
+
+        // A second run must not be allowed to acquire the single owner while
+        // the stopped job's async teardown is still pending. Before this
+        // regression fix, Stop set runOwner to NONE immediately and this
+        // stale-id request was incorrectly recorded as a pending Stop.
+        const stale = await handleStopRequest("another-run");
+        expect(stale).to.deep.equal({ ok: false, stopped: false });
+    });
+
     it("Stop-before-ownership works when an older terminal snapshot exists", async () => {
         __testInternals.setRunStateForTests({
             runId: "older-terminal-run",

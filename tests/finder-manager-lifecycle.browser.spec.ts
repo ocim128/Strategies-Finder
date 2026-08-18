@@ -323,6 +323,8 @@ beforeEach(() => {
     m.assetOpportunityRunResults = [];
     m.assetOpportunityDefaultResults = [];
     m.uiState.scope = "current_chart";
+    (m.ui as any).statusElement = null;
+    (m.ui as any).lastStatusText = "";
     elsById.clear();
     (globalThis as any).localStorage._store.clear();
     (globalThis as any).localStorage._writes.clear();
@@ -378,6 +380,20 @@ describe("FinderManager reattach lifecycle (audit Finding 2)", () => {
         const recovered = await recovery;
         expect(recovered, "stale terminal snapshot must not be adopted").to.equal(null);
         expect(manager().activeServerRunId).to.equal("run-b");
+    });
+
+    it("does not treat an HTTP-200 server stop rejection as success", async () => {
+        const runId = "server-rejected-stop";
+        persistActiveServerRun(runId);
+        manager().isRunning = true;
+
+        const stop = manager().stopActiveServerRun(runId);
+        mockFetch.resolveFirst(makeResponse({ ok: false, stopped: false }));
+        await stop;
+
+        const stored = JSON.parse((globalThis as any).localStorage.getItem("playground_finder_active_server_run"));
+        expect(stored.data.runId).to.equal(runId);
+        expect(elsById.get("finderStatus")?.textContent).to.include("rejected by the server");
     });
 });
 

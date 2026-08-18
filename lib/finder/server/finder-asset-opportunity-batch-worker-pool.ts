@@ -313,6 +313,12 @@ export async function createRealWorkerAssetOpportunityBatchRunner(
     const worker = new Worker(workerPath, {});
     let currentTask: AssetOpportunityBatchWorkerTask | null = null;
     let disposed = false;
+    let stopping = false;
+    let termination: Promise<number> | null = null;
+    const terminateWorker = (): Promise<number> => {
+        termination ??= worker.terminate();
+        return termination;
+    };
     const takeCurrentTask = (): AssetOpportunityBatchWorkerTask | null => {
         const task = currentTask;
         currentTask = null;
@@ -380,22 +386,29 @@ export async function createRealWorkerAssetOpportunityBatchRunner(
 
     return {
         runTask: (task) => {
+            if (disposed || stopping) {
+                events.onFatal(task, "batch worker was stopped before task start");
+                return;
+            }
             currentTask = task;
             const command: AssetOpportunityBatchWorkerCommand = { type: "run_task", task };
             worker.postMessage(command);
         },
         stop: () => {
-            try {
-                const command: AssetOpportunityBatchWorkerCommand = { type: "stop" };
-                worker.postMessage(command);
-            } catch {
-                // Worker already gone; the exit handler reported the fatal.
-            }
+            if (disposed || stopping) return;
+            stopping = true;
+            // A worker may be inside a long synchronous simulation and unable
+            // to service parentPort until it yields. Terminate immediately so
+            // Stop cannot leave CPU/RAM-heavy orphan work behind. The exit
+            // handler reports the in-flight task as terminal; the sweep treats
+            // that callback as cancellation when its flag is set.
+            void terminateWorker();
         },
         dispose: async () => {
             if (disposed) return;
             disposed = true;
-            await worker.terminate();
+            stopping = true;
+            await terminateWorker();
         },
     };
 }
@@ -637,6 +650,18 @@ export async function runAssetOpportunityBatchSweep(
         });
     };
 
+    // Stop can arrive while every real worker is busy in synchronous strategy
+    // evaluation. Progress messages are not a reliable wake-up signal, so
+    // poll the shared cancellation token and drive the same pump that sends
+    // termination to in-flight runners. The poll is cleared in the sweep
+    // finally block below.
+    const cancellationPoll = setInterval(() => {
+        if (!cancelledFlag && args.isCancelled()) {
+            cancelledFlag = true;
+            handleTerminal();
+        }
+    }, 25);
+
     try {
         for (let index = 0; index < runnerCount; index += 1) {
             let self!: AssetOpportunityBatchTaskRunner;
@@ -710,6 +735,7 @@ export async function runAssetOpportunityBatchSweep(
             fatal,
         };
     } finally {
+        clearInterval(cancellationPoll);
         for (const runner of runners) {
             try {
                 runner.stop();

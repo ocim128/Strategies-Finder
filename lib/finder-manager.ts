@@ -855,14 +855,18 @@ export class FinderManager {
 			if (!response.ok) {
 				throw new Error(`status ${response.status}`);
 			}
-			// The matching run was stopped or no longer owns the server.
+			const payload = await response.json() as { ok?: unknown; stopped?: unknown };
+			if (payload.ok !== true) {
+				throw new Error('server rejected the stop request');
+			}
+			// The matching run was stopped or was already terminal.
 			this.clearActiveServerRun();
 		} catch (error) {
 			debugLogger.warn('finder.server.stop_failed', {
 				runId,
 				error: error instanceof Error ? error.message : String(error),
 			});
-			this.setStatus('Finder Stop could not reach the server; reload to reattach.');
+			this.setStatus('Finder Stop was rejected by the server; reload to reattach.');
 		}
 	}
 
