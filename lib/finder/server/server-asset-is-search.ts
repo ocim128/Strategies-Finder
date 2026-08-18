@@ -52,6 +52,16 @@ import { matchesFinderTradeCountFilter } from "../finder-manager-logic";
 import { runAssetCandidateBacktest } from "../finder-asset-candidate-execution";
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
+import { rustEngine } from "../../rust-engine-client";
+import { debugLogger } from "../../debug-logger";
+import {
+    dispatchAssetOpportunityRustBatch,
+    normalizeAssetOpportunityRustCandidateResult,
+    resolveAssetOpportunityRustBatchEligibility,
+    resolveAssetOpportunityRustBatchFeatureConfig,
+    type AssetOpportunityRustBatchClient,
+    type AssetOpportunityRustBatchItem,
+} from "./finder-asset-opportunity-rust-batch";
 
 const ASSET_IS_SEARCH_YIELD_EVERY_RUNS = 256;
 const ASSET_IS_SEARCH_YIELD_MIN_MS = 1000;
@@ -73,6 +83,10 @@ export interface ServerAssetIsSearchInput {
     /** Full closed series for batch-only signal reuse across holdout prefixes. */
     fullSignalData?: OHLCVData[];
     signalCache?: AssetOpportunitySignalCache;
+    abortSignal?: AbortSignal;
+    rustBatchClient?: AssetOpportunityRustBatchClient;
+    /** Per-iteration cache of Rust dataset uploads, keyed by asset/window. */
+    rustBatchDatasetCache?: Map<string, Promise<string | null>>;
     isCancelled: () => boolean;
     yieldControl: () => Promise<void>;
     /**
@@ -107,6 +121,27 @@ function resolveCachedSignalsForWindow(
         const barIndex = signal.barIndex!;
         return barIndex >= 0 && barIndex < length;
     });
+}
+
+function buildRustBatchDatasetCacheKey(
+    input: Pick<ServerAssetIsSearchInput, "symbol" | "interval" | "ohlcvData">,
+    client: AssetOpportunityRustBatchClient,
+): string {
+    const dataKey = client.getDataCacheKey?.(input.ohlcvData);
+    if (dataKey) return JSON.stringify([input.symbol, input.interval, dataKey]);
+    const first = input.ohlcvData[0];
+    const last = input.ohlcvData[input.ohlcvData.length - 1];
+    return JSON.stringify([
+        input.symbol,
+        input.interval,
+        input.ohlcvData.length,
+        first?.time ?? null,
+        first?.open ?? null,
+        first?.close ?? null,
+        last?.time ?? null,
+        last?.open ?? null,
+        last?.close ?? null,
+    ]);
 }
 
 export interface ServerAssetIsSearchOutput {
@@ -184,6 +219,33 @@ export async function runServerAssetIsSearch(
         ? normalized
         : [{ ...selectedStrategy.strategy.defaultParams }];
     const parameterGenerationMs = performance.now() - parameterGenerationStartedAt;
+
+    const rustBatchFeatureConfig = resolveAssetOpportunityRustBatchFeatureConfig();
+    const rustBatchEligibility = resolveAssetOpportunityRustBatchEligibility({
+        featureConfig: rustBatchFeatureConfig,
+        useRustEnginePreference: input.useRustEnginePreference,
+        settings,
+        capitalSettings,
+        selectedStrategy,
+        exitStrategyCandidates: input.exitStrategyCandidates,
+        dataFetcherPresent: input.dataFetcher !== undefined,
+    });
+    if (rustBatchEligibility.eligible) {
+        return runServerAssetIsSearchWithRustBatch({
+            input,
+            paramSets,
+            preparedStrategy,
+            preResolvedCapital,
+            requiresFullAnalytics,
+            parameterGenerationMs,
+            rustBatchClient: input.rustBatchClient ?? rustEngine,
+            rustBatchFeatureConfig,
+            ...(input.rustBatchDatasetCache ? { rustBatchDatasetCache: input.rustBatchDatasetCache } : {}),
+            setCurrentBacktestSettings: (nextSettings) => {
+                currentBacktestSettings = nextSettings;
+            },
+        });
+    }
 
     // Bounded top-K accumulation, mirroring the browser single-timeframe path
     // (FinderResultRanker). Keeping only the best `topN` candidates live means
@@ -447,6 +509,366 @@ export async function runServerAssetIsSearch(
             total: performance.now() - totalStartedAt,
             parameterGeneration: parameterGenerationMs,
             backtest: backtestMs,
+            yielding: yieldingMs,
+        },
+        engineUsage: {
+            rustAttemptedRuns,
+            rustCompletedRuns,
+            rustFallbackRuns,
+            typescriptCompletedRuns,
+            typescriptReasons: [...typescriptReasonCounts.entries()]
+                .map(([reason, runs]) => ({ reason, runs }))
+                .sort((a, b) => b.runs - a.runs || a.reason.localeCompare(b.reason)),
+        },
+    };
+}
+
+type RustBatchSearchInput = {
+    input: ServerAssetIsSearchInput;
+    paramSets: StrategyParams[];
+    preparedStrategy: ReturnType<typeof createPreparedFinderStrategy>;
+    preResolvedCapital: ReturnType<typeof resolveCapitalSettingsFromRaw>;
+    requiresFullAnalytics: boolean;
+    parameterGenerationMs: number;
+    rustBatchClient: AssetOpportunityRustBatchClient;
+    rustBatchFeatureConfig: ReturnType<typeof resolveAssetOpportunityRustBatchFeatureConfig>;
+    rustBatchDatasetCache?: Map<string, Promise<string | null>>;
+    setCurrentBacktestSettings: (settings: BacktestSettings) => void;
+};
+
+type PreparedRustBatchCandidate = {
+    id: string;
+    entryParams: StrategyParams;
+    signals: Signal[];
+    backtestSettings: BacktestSettings;
+};
+
+async function runServerAssetIsSearchWithRustBatch(
+    args: RustBatchSearchInput,
+): Promise<ServerAssetIsSearchOutput> {
+    const { input, paramSets, preparedStrategy, preResolvedCapital, requiresFullAnalytics, parameterGenerationMs } = args;
+    const { options, settings, capitalSettings, selectedStrategy } = input;
+    const totalStartedAt = performance.now();
+    const preparedCandidates: PreparedRustBatchCandidate[] = [];
+    let candidateEvaluationsAttempted = 0;
+    let candidateEvaluationsCompleted = 0;
+    let candidateEvaluationFailures = 0;
+    let signalCacheHits = 0;
+    let signalCacheMisses = 0;
+    let candidateBacktestMs = 0;
+    let yieldingMs = 0;
+    let evaluationsSinceYield = 0;
+    let lastYieldAt = performance.now();
+
+    const canReuseFullSignals = Boolean(
+        input.signalCache
+        && input.fullSignalData
+        && input.fullSignalData.length >= input.ohlcvData.length
+        && (input.options.dataSlice ?? "all") === "all"
+        && Number(input.options.assetOpportunity?.evalLastBars ?? 0) === 0
+        && input.settings.strategyTimeframeEnabled !== true,
+    );
+
+    for (let index = 0; index < paramSets.length; index += 1) {
+        if (input.isCancelled()) break;
+        candidateEvaluationsAttempted += 1;
+        const entryParams = paramSets[index]!;
+        const candidateId = `asset-opportunity:${index}`;
+        const signalCacheKey = canReuseFullSignals
+            ? buildSignalCacheKey(input, entryParams)
+            : null;
+        const cachedFullSignals = signalCacheKey ? input.signalCache!.get(signalCacheKey) : undefined;
+        if (signalCacheKey) {
+            if (cachedFullSignals) signalCacheHits += 1;
+            else signalCacheMisses += 1;
+        }
+
+        try {
+            let signals: Signal[];
+            let backtestSettings: BacktestSettings;
+            if (cachedFullSignals) {
+                const output = await runAssetCandidateBacktest({
+                    data: input.ohlcvData,
+                    symbol: input.symbol,
+                    interval: input.interval,
+                    strategy: preparedStrategy,
+                    strategyKey: selectedStrategy.key,
+                    strategyParams: entryParams,
+                    riskOverrideParams: entryParams,
+                    settings,
+                    capitalSettings,
+                    options,
+                    useRustEnginePreference: input.useRustEnginePreference,
+                    closedCandleDataOverride: input.ohlcvData,
+                    preGeneratedSignals: resolveCachedSignalsForWindow(cachedFullSignals, input.ohlcvData) ?? [],
+                    needs: {
+                        compact: false,
+                        trades: false,
+                        fullAnalytics: false,
+                        signalsOnly: true,
+                        endpointSelection: false,
+                    },
+                });
+                signals = output.signals;
+                backtestSettings = output.backtestSettings;
+            } else if (canReuseFullSignals && signalCacheKey && input.fullSignalData) {
+                const fullOutput = await runAssetCandidateBacktest({
+                    data: input.fullSignalData,
+                    symbol: input.symbol,
+                    interval: input.interval,
+                    strategy: preparedStrategy,
+                    strategyKey: selectedStrategy.key,
+                    strategyParams: entryParams,
+                    riskOverrideParams: entryParams,
+                    settings,
+                    capitalSettings,
+                    options,
+                    useRustEnginePreference: input.useRustEnginePreference,
+                    closedCandleDataOverride: input.fullSignalData,
+                    needs: {
+                        compact: false,
+                        trades: false,
+                        fullAnalytics: false,
+                        signalsOnly: true,
+                        endpointSelection: false,
+                    },
+                });
+                if (fullOutput.signals.every((signal) => Number.isInteger(signal.barIndex))) {
+                    input.signalCache!.set(signalCacheKey, fullOutput.signals);
+                }
+                signals = resolveCachedSignalsForWindow(fullOutput.signals, input.ohlcvData) ?? [];
+                backtestSettings = fullOutput.backtestSettings;
+            } else {
+                const output = await runAssetCandidateBacktest({
+                    data: input.ohlcvData,
+                    symbol: input.symbol,
+                    interval: input.interval,
+                    strategy: preparedStrategy,
+                    strategyKey: selectedStrategy.key,
+                    strategyParams: entryParams,
+                    riskOverrideParams: entryParams,
+                    settings,
+                    capitalSettings,
+                    options,
+                    useRustEnginePreference: input.useRustEnginePreference,
+                    closedCandleDataOverride: input.ohlcvData,
+                    needs: {
+                        compact: false,
+                        trades: false,
+                        fullAnalytics: false,
+                        signalsOnly: true,
+                        endpointSelection: false,
+                    },
+                });
+                signals = output.signals;
+                backtestSettings = output.backtestSettings;
+            }
+            args.setCurrentBacktestSettings(backtestSettings);
+            preparedCandidates.push({ id: candidateId, entryParams, signals, backtestSettings });
+        } catch {
+            candidateEvaluationFailures += 1;
+        }
+        evaluationsSinceYield += 1;
+        const now = performance.now();
+        if (
+            evaluationsSinceYield >= ASSET_IS_SEARCH_YIELD_EVERY_RUNS
+            || now - lastYieldAt >= ASSET_IS_SEARCH_YIELD_MIN_MS
+        ) {
+            evaluationsSinceYield = 0;
+            lastYieldAt = now;
+            const yieldingStartedAt = performance.now();
+            await input.yieldControl();
+            yieldingMs += performance.now() - yieldingStartedAt;
+        }
+    }
+
+    const topKRanker = new FinderResultRanker(Math.max(1, options.topN), options.sortPriority);
+    const signalsByResult = new Map<FinderResult, Signal[]>();
+    const typescriptReasonCounts = new Map<string, number>();
+    let rustAttemptedRuns = 0;
+    let rustCompletedRuns = 0;
+    let rustFallbackRuns = 0;
+    let typescriptCompletedRuns = 0;
+    const offer = (candidate: FinderResult, signals: Signal[]): void => {
+        if (!matchesFinderTradeCountFilter(candidate.selectionResult.totalTrades, options)) return;
+        const retained = topKRanker.offer(candidate);
+        if (input.retainSignals === true && retained) signalsByResult.set(candidate, signals);
+    };
+    const addTypescriptReason = (reason: string): void => {
+        typescriptReasonCounts.set(reason, (typescriptReasonCounts.get(reason) ?? 0) + 1);
+    };
+
+    if (preparedCandidates.length > 0 && !input.isCancelled()) {
+        const baseSettings = preparedCandidates[0]!.backtestSettings;
+        let cacheId: string | undefined;
+        let cacheKey: string | undefined;
+        if (args.rustBatchDatasetCache && args.rustBatchClient.cacheData && args.rustBatchClient.runCachedBatchBacktestWithStatus) {
+            cacheKey = buildRustBatchDatasetCacheKey(input, args.rustBatchClient);
+            let cachePromise = args.rustBatchDatasetCache.get(cacheKey);
+            if (!cachePromise) {
+                cachePromise = args.rustBatchClient.cacheData(input.ohlcvData, {
+                    signal: input.abortSignal,
+                    maxRequestBytes: args.rustBatchFeatureConfig.maxRequestBytes,
+                    maxResponseBytes: 1 * 1024 * 1024,
+                }).catch(() => null);
+                args.rustBatchDatasetCache.set(cacheKey, cachePromise);
+            }
+            cacheId = (await cachePromise) ?? undefined;
+        }
+        const dispatched = await dispatchAssetOpportunityRustBatch({
+            client: args.rustBatchClient,
+            data: input.ohlcvData,
+            items: preparedCandidates.map<AssetOpportunityRustBatchItem>((candidate) => ({
+                id: candidate.id,
+                signals: candidate.signals,
+                settings: candidate.backtestSettings,
+            })),
+            initialCapital: capitalSettings.initialCapital,
+            positionSizePercent: capitalSettings.positionSize,
+            commissionPercent: capitalSettings.commission,
+            baseSettings,
+            sizing: {
+                mode: capitalSettings.sizingMode,
+                fixedTradeAmount: capitalSettings.fixedTradeAmount,
+                advancedSizing: capitalSettings.advancedSizing,
+            },
+            maxRequestBytes: args.rustBatchFeatureConfig.maxRequestBytes,
+            maxResponseBytes: args.rustBatchFeatureConfig.maxResponseBytes,
+            ...(cacheId ? { cacheId } : {}),
+            signal: input.abortSignal,
+        });
+
+        if (dispatched.status === "completed") {
+            candidateBacktestMs += dispatched.latencyMs;
+            debugLogger.event("finder.asset_opportunity.rust_batch", {
+                symbol: input.symbol,
+                status: dispatched.status,
+                requests: dispatched.requests,
+                items: preparedCandidates.length,
+                fallbackItems: 0,
+                requestBytes: dispatched.requestBytes,
+                latencyMs: Math.round(dispatched.latencyMs),
+                cachedDataset: Boolean(cacheId),
+            });
+            rustAttemptedRuns += preparedCandidates.length;
+            rustCompletedRuns += preparedCandidates.length;
+            candidateEvaluationsCompleted += preparedCandidates.length;
+            for (const candidate of preparedCandidates) {
+                const batchResult = dispatched.results.get(candidate.id);
+                if (!batchResult) continue;
+                const compact = normalizeAssetOpportunityRustCandidateResult(
+                    batchResult.result,
+                    input.ohlcvData[input.ohlcvData.length - 1]?.time ?? null,
+                    preResolvedCapital.initialCapital,
+                );
+                const finderResult: FinderResult = {
+                    key: selectedStrategy.key,
+                    name: selectedStrategy.name,
+                    params: candidate.entryParams,
+                    result: compact.result,
+                    selectionResult: compact.selectionResult,
+                    endpointAdjusted: compact.endpointAdjusted,
+                    endpointRemovedTrades: compact.endpointRemovedTrades,
+                };
+                offer(finderResult, candidate.signals);
+            }
+        } else if (dispatched.status === "cancelled") {
+            debugLogger.event("finder.asset_opportunity.rust_batch", {
+                symbol: input.symbol,
+                status: dispatched.status,
+                requests: dispatched.requests,
+                items: preparedCandidates.length,
+                fallbackItems: 0,
+                requestBytes: dispatched.requestBytes,
+                latencyMs: Math.round(dispatched.latencyMs),
+                reason: dispatched.reason,
+                cachedDataset: Boolean(cacheId),
+            });
+        } else if (dispatched.status === "fallback") {
+            candidateBacktestMs += dispatched.latencyMs;
+            if (cacheKey && dispatched.reason === "http_error") {
+                input.rustBatchDatasetCache?.delete(cacheKey);
+            }
+            debugLogger.event("finder.asset_opportunity.rust_batch", {
+                symbol: input.symbol,
+                status: dispatched.status,
+                requests: dispatched.requests,
+                items: preparedCandidates.length,
+                fallbackItems: preparedCandidates.length,
+                requestBytes: dispatched.requestBytes,
+                latencyMs: Math.round(dispatched.latencyMs),
+                reason: dispatched.reason,
+                cachedDataset: Boolean(cacheId),
+            });
+            const reason = `Rust batch fallback: ${dispatched.reason}`;
+            for (const candidate of preparedCandidates) {
+                if (input.isCancelled()) break;
+                rustAttemptedRuns += 1;
+                rustFallbackRuns += 1;
+                const startedAt = performance.now();
+                try {
+                    const output = await runAssetCandidateBacktest({
+                        data: input.ohlcvData,
+                        symbol: input.symbol,
+                        interval: input.interval,
+                        strategy: preparedStrategy,
+                        strategyKey: selectedStrategy.key,
+                        strategyParams: candidate.entryParams,
+                        riskOverrideParams: candidate.entryParams,
+                        settings,
+                        capitalSettings,
+                        options,
+                        useRustEnginePreference: input.useRustEnginePreference,
+                        closedCandleDataOverride: input.ohlcvData,
+                        preGeneratedSignals: candidate.signals,
+                        needs: {
+                            compact: true,
+                            trades: false,
+                            fullAnalytics: requiresFullAnalytics,
+                            endpointSelection: "auto",
+                        },
+                    });
+                    const selection = output.endpointSelection ?? buildSelectionResult(
+                        output.result,
+                        input.ohlcvData[input.ohlcvData.length - 1]?.time ?? null,
+                        preResolvedCapital.initialCapital,
+                    );
+                    offer({
+                        key: selectedStrategy.key,
+                        name: selectedStrategy.name,
+                        params: candidate.entryParams,
+                        result: output.result,
+                        selectionResult: selection.result,
+                        endpointAdjusted: selection.adjusted,
+                        endpointRemovedTrades: selection.removedTrades,
+                    }, candidate.signals);
+                    candidateEvaluationsCompleted += 1;
+                    typescriptCompletedRuns += 1;
+                    addTypescriptReason(reason);
+                } catch {
+                    candidateEvaluationFailures += 1;
+                }
+                candidateBacktestMs += performance.now() - startedAt;
+            }
+        }
+    }
+
+    const topK = topKRanker.toSortedArray(Math.max(1, options.topN));
+    return {
+        results: topK,
+        totalCandidatesEvaluated: paramSets.length,
+        candidateEvaluationsAttempted,
+        candidateEvaluationsCompleted,
+        candidateEvaluationFailures,
+        signalCacheHits,
+        signalCacheMisses,
+        ...(input.retainSignals === true
+            ? { signalsByCandidate: topK.map((candidate) => signalsByResult.get(candidate) ?? []) }
+            : {}),
+        timingsMs: {
+            total: performance.now() - totalStartedAt,
+            parameterGeneration: parameterGenerationMs,
+            backtest: candidateBacktestMs,
             yielding: yieldingMs,
         },
         engineUsage: {

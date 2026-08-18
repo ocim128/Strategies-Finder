@@ -315,6 +315,7 @@ export async function runAssetOpportunityIteration(
     let currentPhase: FinderJobPhase = "loading";
     let currentStrategyIndex = 0;
     const secondaryDataCache = new Map<string, Promise<OHLCVData[]>>();
+    const rustBatchDatasetCache = new Map<string, Promise<string | null>>();
     const assetDataFetcher = selectedStrategies.some((strategy) => strategy.strategy.crossSymbolConfig) && input.getProvider
         ? {
             getProvider: input.getProvider,
@@ -359,6 +360,8 @@ export async function runAssetOpportunityIteration(
             confirmationStrategiesLoaded: true,
             ...(args.signalCache ? { signalCache: args.signalCache, fullSignalData: args.fullSignalData } : {}),
             ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
+            ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+            rustBatchDatasetCache,
             isCancelled: args.isCancelled,
             yieldControl: args.yieldControl,
             ...(args.retainSignals === true ? { retainSignals: true } : {}),

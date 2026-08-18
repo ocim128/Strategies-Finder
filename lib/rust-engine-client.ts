@@ -11,6 +11,86 @@ import { OHLCVData, Signal, BacktestResult, BacktestSettings } from './types/str
 import { debugLogger } from './debug-logger';
 import { isSmartTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from './types/backtest';
 
+export type RustBatchRequestOptions = {
+    signal?: AbortSignal;
+    maxRequestBytes?: number;
+    maxResponseBytes?: number;
+    /** Test/diagnostic override; production callers use the 120s default. */
+    timeoutMs?: number;
+};
+
+export type RustBatchTransportFailureReason =
+    | 'health_unavailable'
+    | 'unsupported_sizing'
+    | 'request_too_large'
+    | 'response_too_large'
+    | 'http_error'
+    | 'timeout'
+    | 'cancelled'
+    | 'network_error'
+    | 'malformed_response';
+
+export type RustBatchTransportResult =
+    | {
+        ok: true;
+        response: unknown;
+        requestBytes: number;
+        responseBytes?: number;
+        elapsedMs: number;
+    }
+    | {
+        ok: false;
+        reason: RustBatchTransportFailureReason;
+        requestBytes?: number;
+        responseBytes?: number;
+        message?: string;
+    };
+
+type RustFetch = typeof fetch;
+
+type BoundedResponseText =
+    | { ok: true; text: string; bytes: number }
+    | { ok: false; bytes: number };
+
+async function readResponseTextWithinLimit(response: Response, maxResponseBytes?: number): Promise<BoundedResponseText> {
+    if (maxResponseBytes === undefined || !response.body) {
+        const text = await response.text();
+        const bytes = new TextEncoder().encode(text).byteLength;
+        return maxResponseBytes !== undefined && bytes > maxResponseBytes
+            ? { ok: false, bytes }
+            : { ok: true, text, bytes };
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!value) continue;
+
+            totalBytes += value.byteLength;
+            if (totalBytes > maxResponseBytes) {
+                await reader.cancel();
+                return { ok: false, bytes: totalBytes };
+            }
+            chunks.push(value);
+        }
+    } finally {
+        reader.releaseLock();
+    }
+
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+    return { ok: true, text: new TextDecoder().decode(bytes), bytes: totalBytes };
+}
+
 const rustLog = {
     info: (message: string, ...data: unknown[]) => debugLogger.info(message, data.length <= 1 ? data[0] : data),
     warn: (message: string, ...data: unknown[]) => debugLogger.warn(message, data.length <= 1 ? data[0] : data),
@@ -47,6 +127,7 @@ interface RustBacktestRequest {
 
 export class RustEngineClient {
     private readonly baseUrl: string;
+    private readonly fetchImpl: RustFetch;
     private isAvailable: boolean = false;
     private engineVersion: string | null = null;
     private lastHealthCheck: number = 0;
@@ -61,8 +142,9 @@ export class RustEngineClient {
     private readonly maxCachedDataEntries = 4;
     private readonly cachedDataIdsByHash = new Map<string, string>();
 
-    constructor(baseUrl: string = 'http://127.0.0.1:3030') {
+    constructor(baseUrl: string = 'http://127.0.0.1:3030', fetchImpl: RustFetch = fetch) {
         this.baseUrl = baseUrl;
+        this.fetchImpl = fetchImpl;
     }
 
     /**
@@ -86,6 +168,11 @@ export class RustEngineClient {
         const firstTime = this.normalizeTimeForHash(data[0].time);
         const lastTime = this.normalizeTimeForHash(data[lastIndex].time);
         return `${data.length}-${firstTime}-${lastTime}-${hash.toString(16)}`;
+    }
+
+    /** Stable local key for callers that share the server-side data cache. */
+    getDataCacheKey(data: OHLCVData[]): string {
+        return this.generateDataHash(data);
     }
 
     private hashBar(hash: number, bar: OHLCVData, index: number): number {
@@ -161,7 +248,8 @@ export class RustEngineClient {
     /**
      * Check if the Rust server is available
      */
-    async checkHealth(): Promise<boolean> {
+    async checkHealth(signal?: AbortSignal): Promise<boolean> {
+        if (signal?.aborted) return false;
         const now = Date.now();
 
         // Use cached positive result if recent
@@ -175,9 +263,13 @@ export class RustEngineClient {
         }
 
         try {
-            const response = await fetch(`${this.baseUrl}/api/health`, {
+            const healthTimeoutSignal = AbortSignal.timeout(2000);
+            const healthSignal = signal
+                ? AbortSignal.any([signal, healthTimeoutSignal])
+                : healthTimeoutSignal;
+            const response = await this.fetchImpl(`${this.baseUrl}/api/health`, {
                 method: 'GET',
-                signal: AbortSignal.timeout(2000), // 2 second timeout
+                signal: healthSignal,
             });
 
             if (response.ok) {
@@ -256,7 +348,7 @@ export class RustEngineClient {
 
             const startTime = performance.now();
 
-            const response = await fetch(`${this.baseUrl}/api/backtest`, {
+            const response = await this.fetchImpl(`${this.baseUrl}/api/backtest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(request),
@@ -299,51 +391,229 @@ export class RustEngineClient {
         commissionPercent: number,
         baseSettings: BacktestSettings,
         sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
-        compact: boolean = true
+        compact: boolean = true,
+        requestOptions?: RustBatchRequestOptions,
     ): Promise<{ results: Array<{ id: string; result: BacktestResult }>; processingTimeMs: number } | null> {
-        if (!await this.checkHealth()) {
-            return null;
+        const outcome = await this.runBatchBacktestWithStatus(
+            data,
+            items,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            baseSettings,
+            sizing,
+            compact,
+            requestOptions,
+        );
+        return outcome.ok ? outcome.response as { results: Array<{ id: string; result: BacktestResult }>; processingTimeMs: number } : null;
+    }
+
+    /**
+     * Run a batch request while preserving the failure reason needed by the
+     * Asset Opportunity TypeScript fallback. Existing callers should keep using
+     * `runBatchBacktest`; this status surface is intentionally opt-in.
+     */
+    async runBatchBacktestWithStatus(
+        data: OHLCVData[],
+        items: Array<{
+            id: string;
+            signals: Signal[];
+            settings?: BacktestSettings;
+        }>,
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        baseSettings: BacktestSettings,
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        compact: boolean = true,
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<RustBatchTransportResult> {
+        const request = {
+            data,
+            items,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            baseSettings,
+            sizing,
+            compact,
+        };
+        return this.runBatchRequestWithStatus(
+            '/api/backtest/batch',
+            request,
+            items.length,
+            sizing,
+            requestOptions,
+        );
+    }
+
+    async runCachedBatchBacktest(
+        cacheId: string,
+        items: Array<{
+            id: string;
+            signals: Signal[];
+            settings?: BacktestSettings;
+        }>,
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        baseSettings: BacktestSettings,
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        compact: boolean = true,
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<{ results: Array<{ id: string; result: BacktestResult }>; processingTimeMs: number } | null> {
+        const outcome = await this.runCachedBatchBacktestWithStatus(
+            cacheId,
+            items,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            baseSettings,
+            sizing,
+            compact,
+            requestOptions,
+        );
+        return outcome.ok ? outcome.response as { results: Array<{ id: string; result: BacktestResult }>; processingTimeMs: number } : null;
+    }
+
+    async runCachedBatchBacktestWithStatus(
+        cacheId: string,
+        items: Array<{
+            id: string;
+            signals: Signal[];
+            settings?: BacktestSettings;
+        }>,
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        baseSettings: BacktestSettings,
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        compact: boolean = true,
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<RustBatchTransportResult> {
+        const request = {
+            cacheId,
+            items,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            baseSettings,
+            sizing,
+            compact,
+        };
+        const outcome = await this.runBatchRequestWithStatus(
+            '/api/backtest/batch/cached',
+            request,
+            items.length,
+            sizing,
+            requestOptions,
+        );
+        if (!outcome.ok && outcome.reason === 'http_error') {
+            this.forgetCachedDataId(cacheId);
+        }
+        return outcome;
+    }
+
+    private async runBatchRequestWithStatus(
+        endpoint: string,
+        request: unknown,
+        itemCount: number,
+        sizing: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings } | undefined,
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<RustBatchTransportResult> {
+        if (requestOptions?.signal?.aborted) {
+            return { ok: false, reason: 'cancelled' };
+        }
+        if (!await this.checkHealth(requestOptions?.signal)) {
+            if (requestOptions?.signal?.aborted) {
+                return { ok: false, reason: 'cancelled' };
+            }
+            return { ok: false, reason: 'health_unavailable' };
         }
         if (sizing && isSmartTradeSizingMode(sizing.mode)) {
             rustLog.warn(`[RustEngine] ${sizing.mode} sizing is not supported on Rust batch backtests, using TypeScript fallback`);
-            return null;
+            return { ok: false, reason: 'unsupported_sizing' };
         }
 
+        let body: string;
         try {
-            const request = {
-                data,
-                items,
-                initialCapital,
-                positionSizePercent,
-                commissionPercent,
-                baseSettings,
-                sizing,
-                compact,
+            body = JSON.stringify(request);
+        } catch (error) {
+            return {
+                ok: false,
+                reason: 'malformed_response',
+                message: error instanceof Error ? error.message : String(error),
             };
+        }
+        const requestBytes = new TextEncoder().encode(body).byteLength;
+        if (requestOptions?.maxRequestBytes !== undefined && requestBytes > requestOptions.maxRequestBytes) {
+            return { ok: false, reason: 'request_too_large', requestBytes };
+        }
+        const maxResponseBytes = requestOptions?.maxResponseBytes;
 
-            const startTime = performance.now();
-
-            const response = await fetch(`${this.baseUrl}/api/backtest/batch`, {
+        const startTime = performance.now();
+        const timeoutSignal = AbortSignal.timeout(requestOptions?.timeoutMs ?? this.batchBacktestTimeoutMs);
+        const requestSignal = requestOptions?.signal
+            ? AbortSignal.any([requestOptions.signal, timeoutSignal])
+            : timeoutSignal;
+        try {
+            const response = await this.fetchImpl(`${this.baseUrl}${endpoint}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(request),
-                signal: AbortSignal.timeout(this.batchBacktestTimeoutMs),
+                body,
+                signal: requestSignal,
             });
 
             if (!response.ok) {
                 rustLog.error('[RustEngine] Batch backtest failed:', response.statusText);
-                return null;
+                return { ok: false, reason: 'http_error', requestBytes, message: response.statusText };
             }
 
-            const result = await response.json();
+            const declaredResponseBytes = Number(response.headers.get('content-length'));
+            if (
+                maxResponseBytes !== undefined
+                && Number.isFinite(declaredResponseBytes)
+                && declaredResponseBytes > maxResponseBytes
+            ) {
+                return { ok: false, reason: 'response_too_large', requestBytes };
+            }
+            const responseTextResult = await readResponseTextWithinLimit(response, maxResponseBytes);
+            if (!responseTextResult.ok) {
+                return { ok: false, reason: 'response_too_large', requestBytes, message: `response exceeded ${maxResponseBytes} bytes` };
+            }
+            const responseText = responseTextResult.text;
+            const responseBytes = responseTextResult.bytes;
+            let responseJson: unknown;
+            try {
+                responseJson = JSON.parse(responseText);
+            } catch (error) {
+                return {
+                    ok: false,
+                    reason: 'malformed_response',
+                    requestBytes,
+                    responseBytes,
+                    message: error instanceof Error ? error.message : String(error),
+                };
+            }
             const elapsed = performance.now() - startTime;
-
-            rustLog.info(`[RustEngine] Batch backtest: ${items.length} runs in ${elapsed.toFixed(2)}ms (Rust: ${result.processingTimeMs}ms)`);
-
-            return result;
+            const processingTimeMs = responseJson && typeof responseJson === 'object'
+                ? (responseJson as { processingTimeMs?: unknown }).processingTimeMs
+                : undefined;
+            rustLog.info(`[RustEngine] Batch ${endpoint}: ${itemCount} runs in ${elapsed.toFixed(2)}ms (Rust: ${String(processingTimeMs ?? 'unknown')}ms)`);
+            return { ok: true, response: responseJson, requestBytes, responseBytes, elapsedMs: elapsed };
         } catch (error) {
+            const reason = requestOptions?.signal?.aborted
+                ? 'cancelled'
+                : timeoutSignal.aborted
+                    ? 'timeout'
+                    : 'network_error';
             rustLog.error('[RustEngine] Batch backtest error:', error);
-            return null;
+            return {
+                ok: false,
+                reason,
+                requestBytes,
+                message: error instanceof Error ? error.message : String(error),
+            };
         }
     }
 
@@ -358,8 +628,8 @@ export class RustEngineClient {
      * 
      * Returns cache ID to use in runCachedBatchBacktest.
      */
-    async cacheData(data: OHLCVData[]): Promise<string | null> {
-        if (!await this.checkHealth()) {
+    async cacheData(data: OHLCVData[], requestOptions?: RustBatchRequestOptions): Promise<string | null> {
+        if (requestOptions?.signal?.aborted || !await this.checkHealth(requestOptions?.signal)) {
             return null;
         }
 
@@ -375,12 +645,22 @@ export class RustEngineClient {
         try {
             rustLog.info(`[RustEngine] Caching ${data.length} bars...`);
             const startTime = performance.now();
+            const body = JSON.stringify({ data });
+            const requestBytes = new TextEncoder().encode(body).byteLength;
+            if (requestOptions?.maxRequestBytes !== undefined && requestBytes > requestOptions.maxRequestBytes) {
+                rustLog.warn(`[RustEngine] Cache request exceeds ${requestOptions.maxRequestBytes} bytes`);
+                return null;
+            }
+            const timeoutSignal = AbortSignal.timeout(requestOptions?.timeoutMs ?? this.cacheTimeoutMs);
+            const requestSignal = requestOptions?.signal
+                ? AbortSignal.any([requestOptions.signal, timeoutSignal])
+                : timeoutSignal;
 
-            const response = await fetch(`${this.baseUrl}/api/data/cache`, {
+            const response = await this.fetchImpl(`${this.baseUrl}/api/data/cache`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ data }),
-                signal: AbortSignal.timeout(this.cacheTimeoutMs),
+                body,
+                signal: requestSignal,
             });
 
             if (!response.ok) {
@@ -388,7 +668,20 @@ export class RustEngineClient {
                 return null;
             }
 
-            const result = await response.json();
+            const declaredResponseBytes = Number(response.headers.get('content-length'));
+            if (
+                requestOptions?.maxResponseBytes !== undefined
+                && Number.isFinite(declaredResponseBytes)
+                && declaredResponseBytes > requestOptions.maxResponseBytes
+            ) {
+                return null;
+            }
+            const responseTextResult = await readResponseTextWithinLimit(response, requestOptions?.maxResponseBytes);
+            if (!responseTextResult.ok) {
+                return null;
+            }
+            const responseText = responseTextResult.text;
+            const result = JSON.parse(responseText) as { cacheId?: unknown; barCount?: unknown };
             const elapsed = performance.now() - startTime;
             const cacheId = typeof result?.cacheId === "string" && result.cacheId.length > 0
                 ? result.cacheId
@@ -406,73 +699,6 @@ export class RustEngineClient {
             return cacheId;
         } catch (error) {
             rustLog.error('[RustEngine] Cache data error:', error);
-            return null;
-        }
-    }
-
-    /**
-     * Run batch backtests using previously cached OHLCV data.
-     * Much faster for large datasets as data is only sent once.
-     */
-    async runCachedBatchBacktest(
-        cacheId: string,
-        items: Array<{
-            id: string;
-            signals: Signal[];
-            settings?: BacktestSettings;
-        }>,
-        initialCapital: number,
-        positionSizePercent: number,
-        commissionPercent: number,
-        baseSettings: BacktestSettings,
-        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
-        compact: boolean = true
-    ): Promise<{ results: Array<{ id: string; result: BacktestResult }>; processingTimeMs: number } | null> {
-        if (!await this.checkHealth()) {
-            return null;
-        }
-        if (sizing && isSmartTradeSizingMode(sizing.mode)) {
-            rustLog.warn(`[RustEngine] ${sizing.mode} sizing is not supported on cached Rust batch backtests, using TypeScript fallback`);
-            return null;
-        }
-
-        try {
-            const request = {
-                cacheId,
-                items,
-                initialCapital,
-                positionSizePercent,
-                commissionPercent,
-                baseSettings,
-                sizing,
-                compact,
-            };
-
-            const startTime = performance.now();
-
-            const response = await fetch(`${this.baseUrl}/api/backtest/batch/cached`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(request),
-                signal: AbortSignal.timeout(this.batchBacktestTimeoutMs),
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                rustLog.error('[RustEngine] Cached batch backtest failed:', response.statusText, errorText);
-                this.forgetCachedDataId(cacheId);
-                return null;
-            }
-
-            const result = await response.json();
-            const elapsed = performance.now() - startTime;
-
-            rustLog.info(`[RustEngine] Cached batch: ${items.length} runs in ${elapsed.toFixed(2)}ms (Rust: ${result.processingTimeMs}ms)`);
-
-            return result;
-        } catch (error) {
-            rustLog.error('[RustEngine] Cached batch backtest error:', error);
-            this.forgetCachedDataId(cacheId);
             return null;
         }
     }
