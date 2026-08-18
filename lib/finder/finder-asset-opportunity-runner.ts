@@ -95,6 +95,7 @@ import {
 } from "./finder-asset-opportunity-oos";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { debugLogger } from "../debug-logger";
+import type { AssetOpportunitySignalCache } from "./finder-asset-opportunity-search-cache";
 
 /**
  * Bounded concurrency for fresh-entry signal regeneration. The server clamps
@@ -132,6 +133,9 @@ export type AssetIsSearch = (args: {
      * bar-for-bar identical to the in-sample window.
      */
     retainSignals?: boolean;
+    /** Full closed data used only by the batch signal-reuse optimization. */
+    fullSignalData?: OHLCVData[];
+    signalCache?: AssetOpportunitySignalCache;
 }) => Promise<{
     results: FinderResult[];
     /** Total candidates considered before the returned top-K reduction. */
@@ -139,6 +143,8 @@ export type AssetIsSearch = (args: {
     candidateEvaluationsAttempted?: number;
     candidateEvaluationsCompleted?: number;
     candidateEvaluationFailures?: number;
+    signalCacheHits?: number;
+    signalCacheMisses?: number;
     /**
      * Parallel to `results` (same order): the signals from each returned
      * candidate's in-sample evaluation. Present only when `retainSignals` was
@@ -170,6 +176,8 @@ export interface AssetOpportunitySearchDiagnostics {
     candidateEvaluationsAttempted: number;
     candidateEvaluationsCompleted: number;
     candidateEvaluationFailures: number;
+    signalCacheHits: number;
+    signalCacheMisses: number;
     freshEntryRechecks: number;
     oosEvaluations: number;
     winnerAnalyticsRecomputations: number;
@@ -240,6 +248,8 @@ export interface AssetOpportunityRunInput {
     dataFetcher?: CrossSymbolDataFetcher;
     /** Matches the server's explicit Rust preference for replay execution. */
     useRustEnginePreference?: boolean;
+    /** Worker-local cache for full-series signals reused across batch holdouts. */
+    signalCache?: AssetOpportunitySignalCache;
     /** Recompute full scalar analytics once for the selected winner. */
     recomputeWinnerAnalytics?: boolean;
     /** Asset list (each independently searched). */
@@ -586,6 +596,8 @@ async function searchOneAsset(args: {
         candidateEvaluationsAttempted: 0,
         candidateEvaluationsCompleted: 0,
         candidateEvaluationFailures: 0,
+        signalCacheHits: 0,
+        signalCacheMisses: 0,
         freshEntryRechecks: 0,
         oosEvaluations: 0,
         winnerAnalyticsRecomputations: 0,
@@ -745,12 +757,15 @@ async function searchOneAsset(args: {
         isCancelled: callbacks.isCancelled,
         yieldControl: callbacks.yieldControl,
         retainSignals: canReuseIsSignalsForFresh,
+        ...(input.signalCache ? { fullSignalData: fullClosed, signalCache: input.signalCache } : {}),
     });
     diagnostics.timingsMs.inSampleSearch = performance.now() - inSampleStartedAt;
     diagnostics.candidatesEvaluated = finderOutput.totalCandidatesEvaluated ?? finderOutput.results.length;
     diagnostics.candidateEvaluationsAttempted = finderOutput.candidateEvaluationsAttempted ?? finderOutput.results.length;
     diagnostics.candidateEvaluationsCompleted = finderOutput.candidateEvaluationsCompleted ?? finderOutput.results.length;
     diagnostics.candidateEvaluationFailures = finderOutput.candidateEvaluationFailures ?? 0;
+    diagnostics.signalCacheHits = finderOutput.signalCacheHits ?? 0;
+    diagnostics.signalCacheMisses = finderOutput.signalCacheMisses ?? 0;
     if (finderOutput.timingsMs) {
         diagnostics.timingsMs.parameterGeneration = finderOutput.timingsMs.parameterGeneration;
         diagnostics.timingsMs.candidateBacktests = finderOutput.timingsMs.backtest;

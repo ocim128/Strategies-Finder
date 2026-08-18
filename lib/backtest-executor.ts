@@ -122,6 +122,8 @@ export interface BacktestExecutorRequest {
     preResolvedSettings?: BacktestSettings;
     /** Pre-resolved capital settings. When provided, skips resolveCapitalSettingsFromRaw. */
     preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
+    /** Fully prepared primary signals; skips strategy signal generation. */
+    preGeneratedSignals?: Signal[];
 }
 
 export interface BacktestExecutorTimings {
@@ -325,15 +327,17 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     });
 
     const signalGenerationStartedAt = executorTimings ? performance.now() : 0;
-    const signals = resolveBacktestSignalsForData({
-        data: backtestData,
-        interval,
-        strategy,
-        params: normalizedParams,
-        settings: resolvedSettings,
-        blockRange,
-        executionContext,
-    });
+    const signals = req.preGeneratedSignals
+        ? filterSignalsByBlockRange(req.preGeneratedSignals, blockRange)
+        : resolveBacktestSignalsForData({
+            data: backtestData,
+            interval,
+            strategy,
+            params: normalizedParams,
+            settings: resolvedSettings,
+            blockRange,
+            executionContext,
+        });
     if (executorTimings) {
         executorTimings.signalGenerationMs += performance.now() - signalGenerationStartedAt;
     }

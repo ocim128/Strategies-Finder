@@ -1,12 +1,11 @@
 /**
  * worker_threads entry for the Finder Asset Opportunity BATCH holdout sweep.
  *
- * One worker executes whole holdout iterations (one `run_task` message at a
- * time) via the unchanged `runAssetOpportunityIteration` leaf. The worker
- * keeps a long-lived `assetLoadContext` across tasks so its synthetic
- * leg/pair caches are reused for every holdout it processes — the same
- * cross-iteration reuse the sequential batch loop gets from its single
- * context.
+ * One worker executes whole holdout iterations or contiguous asset chunks
+ * (one `run_task` message at a time) via the unchanged
+ * `runAssetOpportunityIteration` leaf. The worker keeps a long-lived
+ * `assetLoadContext` across tasks so its synthetic leg/pair caches are reused
+ * for every task it processes.
  *
  * Strategy objects never cross the worker boundary: the task carries keys and
  * the worker resolves them through `loadBuiltInStrategyByKey` (the same call
@@ -40,6 +39,10 @@ import {
 } from "./server-finder-data-loader";
 import type { FinderJobPhase } from "./finder-stream-types";
 import type { FinderRunLogSink } from "./finder-run-log";
+import {
+    createAssetOpportunitySignalCache,
+    type AssetOpportunitySignalCache,
+} from "../finder-asset-opportunity-search-cache";
 
 /**
  * One holdout iteration's full input, structured-clone-safe. `options` is the
@@ -49,6 +52,10 @@ import type { FinderRunLogSink } from "./finder-run-log";
 export interface AssetOpportunityBatchWorkerTask {
     taskIndex: number;
     holdoutBars: number;
+    /** Contiguous asset partition within one holdout; omitted for whole sweeps. */
+    assetChunkIndex?: number;
+    assetChunkCount?: number;
+    includeFullStrategyBreakdown?: boolean;
     runId: string;
     interval: string;
     symbols: string[];
@@ -117,6 +124,8 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
     ) => Promise<OHLCVData[]>;
     /** Long-lived context reused across this worker's tasks; omitted on the first task. */
     assetLoadContext?: BatchDatasetLoadContext;
+    /** Persistent full-signal cache reused across this worker's holdout tasks. */
+    signalCache?: AssetOpportunitySignalCache;
     abortSignal: AbortSignal;
     isCancelled: () => boolean;
     onProgress: (progress: {
@@ -153,6 +162,8 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
             abortSignal: args.abortSignal,
             loadDataset: args.loadDataset,
             ...(args.assetLoadContext ? { assetLoadContext: args.assetLoadContext } : {}),
+            ...(args.signalCache ? { signalCache: args.signalCache } : {}),
+            ...(task.includeFullStrategyBreakdown === true ? { includeFullStrategyBreakdown: true } : {}),
             ...(getProvider ? { getProvider } : {}),
             candidatePoolSize: task.candidatePoolSize,
             minFreshSupport: task.minFreshSupport,
@@ -213,6 +224,7 @@ if (!isMainThread && parentPort) {
     // abort controller persist across tasks so dataset caches are reused for
     // every holdout this worker processes.
     let assetLoadContext: BatchDatasetLoadContext | null = null;
+    let signalCache: AssetOpportunitySignalCache | null = null;
     let activeAbort: AbortController | null = null;
     const post = (message: AssetOpportunityBatchWorkerEvent): void => {
         parentPort?.postMessage(message);
@@ -229,10 +241,12 @@ if (!isMainThread && parentPort) {
         // symbolCount attaches the cross-iteration plain-dataset LRU so this
         // worker loads each symbol once across ALL holdout tasks it processes.
         assetLoadContext ??= createServerFinderAssetOpportunityLoadContext(task.symbols.length);
+        signalCache ??= createAssetOpportunitySignalCache();
         runAssetOpportunityBatchWorkerTask({
             task,
             loadDataset: loadServerFinderDataset,
             assetLoadContext,
+            signalCache,
             abortSignal: activeAbort.signal,
             isCancelled: () => activeAbort?.signal.aborted === true,
             onProgress: (progress) => {

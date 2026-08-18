@@ -2,8 +2,9 @@
  * Coordinator for the parallel Finder Asset Opportunity BATCH holdout sweep.
  *
  * Partitions the ascending holdout sweep across a bounded pool of
- * worker_threads (one holdout iteration = one task), then returns completed
- * iterations to the caller IN ASCENDING HOLDOUT ORDER so the existing
+ * worker_threads (a task is either one whole holdout or one contiguous asset
+ * chunk), then returns completed iterations to the caller IN ASCENDING
+ * HOLDOUT ORDER so the existing
  * archive-append / `asset_batch_iteration_done` / snapshot bookkeeping stays
  * on the main thread and byte-identical to the sequential loop.
  *
@@ -20,8 +21,11 @@
  *
  * Worker count policy: `FINDER_ASSET_BATCH_WORKERS` env override (1 = the
  * caller keeps the sequential in-process loop); otherwise
- * min(holdoutCount, cores - 2, memoryCeiling) where memoryCeiling estimates
- * one full dataset copy per worker (~9 MB/symbol) against a 48 GB budget.
+ * min(effective task count, cores - 2, memoryCeiling) where memoryCeiling
+ * estimates one full dataset copy per worker (~9 MB/symbol) against a 48 GB
+ * budget. Chunked tasks carry only their assigned asset partition and are
+ * affinity-scheduled to the same persistent worker across holdouts, preserving
+ * that worker's leg/pair cache.
  *
  * Import hygiene (the documented vite.config bundle trap): leaf modules and
  * node:worker_threads only. This module is imported by finder-vite-plugin.ts
@@ -112,10 +116,14 @@ export const ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP = 8;
  *   lever). The override intentionally bypasses the memory ceiling — it is
  *   the operator's explicit judgment call — but is still capped at
  *   {@link ASSET_OPPORTUNITY_BATCH_WORKER_COUNT_MAX}.
- * - Auto: min(holdout values, logical cores - 2, memory ceiling). The memory
+ * - Auto: min(effective task count, logical cores - 2, memory ceiling). The memory
  *   ceiling budgets 75% of ACTUAL system RAM (`os.totalmem()`, injectable for
  *   tests) for one full dataset copy per worker (~9 MB/symbol), so a 16 GB
  *   host auto-selects ~3x fewer workers than a 64 GB host. Always >= 1.
+ *   `options.taskCount` replaces the holdout count when a caller decomposes
+ *   each holdout into independent asset chunks.
+ *   `options.taskSymbolCount` replaces `symbolCount` for the memory estimate
+ *   when each task retains only an asset partition.
  * - `options.rustEngine`: clamps the AUTO value (never the env override) to
  *   {@link ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP} — the Rust server
  *   serializes, so extra workers only contend for its queue.
@@ -125,7 +133,7 @@ export function resolveAssetOpportunityBatchWorkerCount(
     symbolCount: number,
     env: NodeJS.ProcessEnv = process.env,
     systemMemoryBytes: number = totalmem(),
-    options?: { rustEngine?: boolean },
+    options?: { rustEngine?: boolean; taskCount?: number; taskSymbolCount?: number },
 ): number {
     const raw = env[FINDER_ASSET_BATCH_WORKERS_ENV];
     if (raw !== undefined && raw !== "") {
@@ -141,16 +149,17 @@ export function resolveAssetOpportunityBatchWorkerCount(
         // Older Node without availableParallelism; keep the conservative default.
     }
     const memoryBudgetBytes = resolveAssetOpportunityMemoryBudgetBytes(systemMemoryBytes);
+    const memorySymbolCount = Math.max(1, Math.floor(options?.taskSymbolCount ?? symbolCount));
     const memoryCeiling = Math.max(
         1,
         Math.floor(
-            memoryBudgetBytes / (Math.max(1, symbolCount) * ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL),
+            memoryBudgetBytes / (memorySymbolCount * ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL),
         ),
     );
     const auto = Math.max(
         1,
         Math.min(
-            Math.max(1, holdoutCount),
+            Math.max(1, Math.floor(options?.taskCount ?? holdoutCount)),
             Math.max(1, cores - 2),
             memoryCeiling,
         ),
@@ -460,8 +469,17 @@ export async function runAssetOpportunityBatchSweep(
     const inFlight = new Map<number, AssetOpportunityBatchWorkerTask>();
     const percentByIndex = new Map<number, number>();
     const freeRunners: AssetOpportunityBatchTaskRunner[] = [];
+    const chunkAffinityMode = tasks.length > 0 && tasks.every(
+        (task) => Number.isInteger(task.assetChunkIndex)
+            && Number.isInteger(task.assetChunkCount)
+            && task.assetChunkCount! > 1,
+    );
+    const pendingChunkTasks = chunkAffinityMode ? [...tasks] : [];
+    const chunkRunnerByIndex = new Map<number, AssetOpportunityBatchTaskRunner>();
+    const freeChunkRunners = new Map<number, AssetOpportunityBatchTaskRunner>();
     const runnerTasks = new Map<AssetOpportunityBatchTaskRunner, AssetOpportunityBatchWorkerTask>();
     let cancelFlushed = false;
+    let assignedTaskCount = 0;
 
     const aggregate = (): AssetOpportunityBatchSweepAggregate => {
         let sum = 0;
@@ -522,17 +540,42 @@ export async function runAssetOpportunityBatchSweep(
                 }
                 if (sweepError) break;
 
-                // 3. Assignment: only while healthy and tasks remain.
-                while (
-                    fatal === null
-                    && !cancelledFlag
-                    && !args.isCancelled()
-                    && nextTaskIndex < totalTasks
-                    && freeRunners.length > 0
-                ) {
-                    const runner = freeRunners.pop()!;
-                    const task = tasks[nextTaskIndex]!;
-                    nextTaskIndex += 1;
+                // 3. Assignment: only while healthy and tasks remain. Chunked
+                // tasks stay on the same runner by assetChunkIndex so the
+                // persistent worker cache survives the holdout sweep.
+                while (fatal === null && !cancelledFlag && !args.isCancelled()) {
+                    let runner: AssetOpportunityBatchTaskRunner | undefined;
+                    let task: AssetOpportunityBatchWorkerTask | undefined;
+                    if (chunkAffinityMode) {
+                        for (const [chunkIndex, readyRunner] of freeChunkRunners) {
+                            const pendingIndex = pendingChunkTasks.findIndex(
+                                (candidate) => candidate.assetChunkIndex === chunkIndex,
+                            );
+                            if (pendingIndex >= 0) {
+                                runner = readyRunner;
+                                freeChunkRunners.delete(chunkIndex);
+                                task = pendingChunkTasks.splice(pendingIndex, 1)[0];
+                                break;
+                            }
+                            freeChunkRunners.delete(chunkIndex);
+                        }
+                        if (!task && freeRunners.length > 0) {
+                            const pendingIndex = pendingChunkTasks.findIndex(
+                                (candidate) => !chunkRunnerByIndex.has(candidate.assetChunkIndex!),
+                            );
+                            if (pendingIndex >= 0) {
+                                runner = freeRunners.pop();
+                                task = pendingChunkTasks.splice(pendingIndex, 1)[0];
+                                chunkRunnerByIndex.set(task.assetChunkIndex!, runner!);
+                            }
+                        }
+                    } else if (nextTaskIndex < totalTasks && freeRunners.length > 0) {
+                        runner = freeRunners.pop();
+                        task = tasks[nextTaskIndex];
+                        nextTaskIndex += 1;
+                    }
+                    if (!runner || !task) break;
+                    assignedTaskCount += 1;
                     inFlight.set(task.taskIndex, task);
                     percentByIndex.set(task.taskIndex, 0);
                     runnerTasks.set(runner, task);
@@ -581,7 +624,7 @@ export async function runAssetOpportunityBatchSweep(
             }
             return;
         }
-        if (nextTaskIndex >= totalTasks && inFlight.size === 0 && buffered.size === 0) {
+        if (assignedTaskCount >= totalTasks && inFlight.size === 0 && buffered.size === 0) {
             settled = true;
             settleResolve();
         }
@@ -606,8 +649,12 @@ export async function runAssetOpportunityBatchSweep(
                 onComplete: (task, iteration) => {
                     inFlight.delete(task.taskIndex);
                     percentByIndex.set(task.taskIndex, 100);
-                    freeRunners.push(self);
                     runnerTasks.delete(self);
+                    if (chunkAffinityMode) {
+                        freeChunkRunners.set(task.assetChunkIndex!, self);
+                    } else {
+                        freeRunners.push(self);
+                    }
                     // Discard aborted results; archive only true completions.
                     // After a fatal, iterations AFTER the failed index are
                     // dropped (the sequential loop never runs them).
@@ -620,8 +667,12 @@ export async function runAssetOpportunityBatchSweep(
                 },
                 onFatal: (task, error) => {
                     inFlight.delete(task.taskIndex);
-                    freeRunners.push(self);
                     runnerTasks.delete(self);
+                    if (chunkAffinityMode) {
+                        freeChunkRunners.set(task.assetChunkIndex!, self);
+                    } else {
+                        freeRunners.push(self);
+                    }
                     if (fatal === null && !cancelledFlag) {
                         fatal = { task, error };
                         debugLogger.warn("finder.asset_opportunity_batch.worker_iteration_failed", {

@@ -130,26 +130,33 @@ recovers the batch counts plus the last completed iteration.
 ### Parallel holdout sweep (worker pool)
 
 The production batch route runs the holdout iterations across a bounded pool
-of `worker_threads` (`lib/finder/server/finder-asset-opportunity-batch-worker-pool.ts`),
-one holdout value per task, because iterations are independent by design
-(same seed; only the holdout boundary differs). The main thread stays the
-single writer: completed iterations are buffered and released in **ascending
-holdout order**, so archive blocks, `asset_batch_iteration_done` events, and
-the terminal snapshot are identical to a sequential run. Workers keep their
-own dataset caches alive across every holdout they process (the same reuse
-the sequential loop gets from its single context) and re-resolve strategies
-by key — strategy objects never cross the worker boundary, and iteration
-payloads are the already-scalar rows enforced by `toScalarAssetResult`.
+of `worker_threads` (`lib/finder/server/finder-asset-opportunity-batch-worker-pool.ts`).
+Large ranges use one holdout value per task because iterations are independent
+by design (same seed; only the holdout boundary differs). When a small range
+would underfill the pool, each holdout is split into contiguous asset chunks;
+the main thread merges those chunks back into one iteration before archiving.
+The main thread stays the single writer: completed iterations are buffered and
+released in **ascending holdout order**, so archive blocks,
+`asset_batch_iteration_done` events, and the terminal snapshot remain
+sequential-parity outputs. Workers re-resolve strategies by key — strategy
+objects never cross the worker boundary — and iteration payloads are the
+already-scalar rows enforced by `toScalarAssetResult`.
 
-Worker count: `min(holdout values, logical cores − 2, memory ceiling)` where
-the ceiling estimates one full dataset copy per worker (~9 MB/symbol)
-against 75% of **actual system RAM** (`os.totalmem()` — 48 GB on a 64 GB
+Worker count: `min(task count, logical cores − 2, memory ceiling)` where
+the ceiling estimates one full dataset copy per worker (~9 MB/symbol) against
+75% of **actual system RAM** (`os.totalmem()` — 48 GB on a 64 GB
 host, 12 GB on a 16 GB host, so small hosts auto-select proportionally fewer
 workers). `FINDER_ASSET_BATCH_WORKERS=<N>` overrides outright — `1`
 forces the sequential in-process loop (the rollback lever); the override
 intentionally bypasses the memory ceiling (operator judgment) but is capped
 at 32. Each worker holds its own copy of every symbol dataset, so large
-symbol lists reduce the worker count automatically. With the Rust
+symbol lists reduce the worker count automatically. For chunked tasks the
+memory estimate uses the partition size, allowing the pool to use more CPU
+without budgeting a full-universe copy per worker. Chunked tasks carry only
+their symbol partition and stay affinity-pinned to one worker across holdouts,
+so the total retained dataset budget stays bounded by the same policy while
+synthetic leg/pair caches are reused. Large holdout ranges still use one
+whole-holdout task per worker. With the Rust
 engine enabled the external Rust server becomes the serialization point and
 posts full OHLCV payloads per request — the AUTO worker count is therefore
 clamped at 8 (`ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP`); set
@@ -166,6 +173,18 @@ are never cached — they stay retryable. Iteration `iteration_complete`
 run-log lines carry `datasetCacheHits`/`datasetCacheMisses`, and the
 `timingsMs.dataLoading` diagnostic shows the corresponding drop after the
 first iteration.
+
+The same worker also keeps a bounded full-series signal cache for repeated
+holdout prefixes. It is used only when the search uses the complete data slice,
+has no `evalLastBars` or exit-strategy override, and has strategy timeframes
+disabled; these are the conditions under which indexed signals can be filtered
+to a shorter prefix without changing their meaning. The first eligible
+candidate pays a signal-only warm pass, while later holdouts reuse the cached
+signals and still run their normal trade simulation. The cache is worker-local
+and bounded to 8,192 strategy/parameter entries. Asset diagnostics expose
+`work.signalCacheHits` and `work.signalCacheMisses` so a run can verify the
+reuse rate; a zero hit count is expected for unsupported strategy signal shapes
+or ineligible option combinations.
 
 Failure semantics match the sequential loop: a fatal iteration stops the
 sweep with `asset_batch_fatal` while iterations before the failed index

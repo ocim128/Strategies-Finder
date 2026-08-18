@@ -138,6 +138,7 @@ import {
 import {
     ASSET_OPPORTUNITY_ALL_SORTS,
     getAssetOpportunityResortMetrics,
+    sortAssetOpportunityResults,
     sortAssetOpportunityResultsByMetric,
     type FinderAssetOpportunityArchiveSort,
     type FinderAssetOpportunityResortMetric,
@@ -148,6 +149,7 @@ import {
     type FinderAssetOpportunityRunInput,
 } from "./asset-opportunity-iteration";
 import {
+    ASSET_OPPORTUNITY_BATCH_WORKER_COUNT_MAX,
     createRealWorkerAssetOpportunityBatchRunner,
     resolveAssetOpportunityBatchWorkerCount,
     runAssetOpportunityBatchSweep,
@@ -178,6 +180,242 @@ const MAX_RUN_ID_LENGTH = 128;
 
 /** Asset Opportunity keeps symbol-count and heap guards; candidate work is not preflight-capped. */
 const ASSET_OPPORTUNITY_MAX_SYMBOLS = 1_000;
+
+/** Keep a small batch fully occupied when holdoutCount would underfill it. */
+const ASSET_OPPORTUNITY_BATCH_PARALLEL_TASK_TARGET = 8;
+/** Avoid chunk overhead for tiny test/research universes. */
+const ASSET_OPPORTUNITY_BATCH_MIN_CHUNKED_ASSETS = 32;
+/** Chunked workers retain only their partition; the resolver still clamps to cores/memory. */
+const ASSET_OPPORTUNITY_BATCH_CHUNK_WORKER_TARGET = ASSET_OPPORTUNITY_BATCH_WORKER_COUNT_MAX;
+
+function resolveAssetOpportunityChunkWorkerCount(
+    totalIterations: number,
+    totalAssets: number,
+    env: NodeJS.ProcessEnv,
+    systemMemoryBytes: number,
+    rustEngine: boolean,
+): number {
+    let workerCount = resolveAssetOpportunityBatchWorkerCount(
+        Math.max(totalIterations, ASSET_OPPORTUNITY_BATCH_CHUNK_WORKER_TARGET),
+        totalAssets,
+        env,
+        systemMemoryBytes,
+        {
+            rustEngine,
+            taskCount: ASSET_OPPORTUNITY_BATCH_CHUNK_WORKER_TARGET,
+            taskSymbolCount: Math.ceil(totalAssets / ASSET_OPPORTUNITY_BATCH_CHUNK_WORKER_TARGET),
+        },
+    );
+    // Recompute the memory estimate from the actual partition size. This
+    // converges downward on small-memory hosts while allowing chunked runs to
+    // use the CPU available on large-memory hosts.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        const next = resolveAssetOpportunityBatchWorkerCount(
+            totalIterations,
+            totalAssets,
+            env,
+            systemMemoryBytes,
+            {
+                rustEngine,
+                taskCount: workerCount,
+                taskSymbolCount: Math.ceil(totalAssets / workerCount),
+            },
+        );
+        if (next === workerCount) break;
+        workerCount = next;
+    }
+    return Math.max(1, workerCount);
+}
+
+function mergeAssetOpportunityChunkResults(
+    entries: Array<{
+        task: AssetOpportunityBatchWorkerTask;
+        iteration: AssetOpportunityIterationResult;
+    }>,
+    selectedStrategies: FinderSelectedStrategy[],
+): AssetOpportunityIterationResult {
+    if (entries.length === 0) {
+        throw new Error("Cannot merge an empty Asset Opportunity chunk set.");
+    }
+
+    const orderedEntries = [...entries].sort(
+        (left, right) => (left.task.assetChunkIndex ?? 0) - (right.task.assetChunkIndex ?? 0),
+    );
+    const strategyOrder = new Map(selectedStrategies.map((strategy, index) => [strategy.key, index]));
+    const orderedResults = orderedEntries.flatMap(({ task, iteration }) => {
+        const symbolOrder = new Map(task.symbols.map((symbol, index) => [symbol, index]));
+        return [...iteration.results].sort((left, right) => {
+            const symbolDelta = (symbolOrder.get(left.symbol) ?? Number.MAX_SAFE_INTEGER)
+                - (symbolOrder.get(right.symbol) ?? Number.MAX_SAFE_INTEGER);
+            if (symbolDelta !== 0) return symbolDelta;
+            return (strategyOrder.get(left.strategyKey) ?? Number.MAX_SAFE_INTEGER)
+                - (strategyOrder.get(right.strategyKey) ?? Number.MAX_SAFE_INTEGER);
+        });
+    });
+    const results = sortAssetOpportunityResults(orderedResults);
+    const diagnostics = orderedEntries.map(({ iteration }) => iteration.assetDiagnostics);
+    const sum = (values: number[]): number => values.reduce((total, value) => total + value, 0);
+    const max = (values: number[]): number => values.reduce((highest, value) => Math.max(highest, value), 0);
+    const work = diagnostics.map((diagnostic) => diagnostic.work).filter((value): value is NonNullable<typeof value> => Boolean(value));
+    const timings = diagnostics.map((diagnostic) => diagnostic.timingsMs).filter((value): value is NonNullable<typeof value> => Boolean(value));
+    const loadedCounts = diagnostics.map((diagnostic) => Math.max(0, diagnostic.totalAssets - diagnostic.failedAssets.length));
+    const loadedBarValues = work.map((value) => value.loadedBars).filter((value) => value.max > 0);
+    const totalLoadedCount = sum(loadedCounts);
+    const loadedBars = loadedBarValues.length > 0
+        ? {
+            min: Math.min(...loadedBarValues.map((value) => value.min)),
+            max: Math.max(...loadedBarValues.map((value) => value.max)),
+            avg: totalLoadedCount > 0
+                ? Math.round(sum(work.map((value, index) => value.loadedBars.avg * loadedCounts[index]!)) / totalLoadedCount)
+                : 0,
+        }
+        : { min: 0, max: 0, avg: 0 };
+    const timingMax = (key: keyof NonNullable<FinderAssetOpportunityDiagnostics["timingsMs"]>): number =>
+        max(timings.map((value) => value[key]));
+    const timingSum = (key: keyof NonNullable<FinderAssetOpportunityDiagnostics["timingsMs"]>): number =>
+        sum(timings.map((value) => value[key]));
+    const totalDuration = timingMax("total");
+    const dataLoading = timingMax("dataLoading");
+    const dataPreparation = timingMax("dataPreparation");
+    const inSampleSearch = timingMax("inSampleSearch");
+    const freshEntryRechecks = timingMax("freshEntryRechecks");
+    const oosValidation = timingMax("oosValidation");
+    const resultReduction = timingMax("resultReduction");
+    const winnerAnalytics = timingMax("winnerAnalytics");
+    const strategyBreakdownByKey = new Map<string, NonNullable<FinderAssetOpportunityDiagnostics["strategyBreakdown"]>[number]>();
+    for (const diagnostic of diagnostics) {
+        for (const entry of diagnostic.strategyBreakdown ?? []) {
+            const existing = strategyBreakdownByKey.get(entry.strategyKey);
+            if (!existing) {
+                strategyBreakdownByKey.set(entry.strategyKey, { ...entry });
+                continue;
+            }
+            existing.assetsEvaluated += entry.assetsEvaluated;
+            existing.candidatesEvaluated += entry.candidatesEvaluated;
+            existing.candidateEvaluationsAttempted += entry.candidateEvaluationsAttempted;
+            existing.candidateEvaluationsCompleted += entry.candidateEvaluationsCompleted;
+            existing.candidateEvaluationFailures += entry.candidateEvaluationFailures;
+            existing.freshEntryRechecks += entry.freshEntryRechecks;
+            existing.oosEvaluations += entry.oosEvaluations;
+            existing.durationMs += entry.durationMs;
+        }
+    }
+    const strategyBreakdown = [...strategyBreakdownByKey.values()]
+        .sort((left, right) => right.durationMs - left.durationMs || left.strategyKey.localeCompare(right.strategyKey))
+        .slice(0, 10);
+    const engineUsage = {
+        rustRequested: diagnostics.some((diagnostic) => diagnostic.engineUsage?.rustRequested === true),
+        rustAttemptedRuns: sum(diagnostics.map((diagnostic) => diagnostic.engineUsage?.rustAttemptedRuns ?? 0)),
+        rustCompletedRuns: sum(diagnostics.map((diagnostic) => diagnostic.engineUsage?.rustCompletedRuns ?? 0)),
+        rustFallbackRuns: sum(diagnostics.map((diagnostic) => diagnostic.engineUsage?.rustFallbackRuns ?? 0)),
+        typescriptCompletedRuns: sum(diagnostics.map((diagnostic) => diagnostic.engineUsage?.typescriptCompletedRuns ?? 0)),
+        typescriptReasons: [] as Array<{ reason: string; runs: number }>,
+    };
+    const reasonCounts = new Map<string, number>();
+    for (const diagnostic of diagnostics) {
+        for (const reason of diagnostic.engineUsage?.typescriptReasons ?? []) {
+            reasonCounts.set(reason.reason, (reasonCounts.get(reason.reason) ?? 0) + reason.runs);
+        }
+    }
+    engineUsage.typescriptReasons = [...reasonCounts.entries()]
+        .map(([reason, runs]) => ({ reason, runs }))
+        .sort((left, right) => right.runs - left.runs || left.reason.localeCompare(right.reason));
+    const failedAssets = diagnostics.flatMap((diagnostic) => diagnostic.failedAssets);
+    const totalAssets = sum(diagnostics.map((diagnostic) => diagnostic.totalAssets));
+    const assetsWithFreshEntry = sum(diagnostics.map((diagnostic) => diagnostic.assetsWithFreshEntry));
+    const assetsWithNoFreshEntry = sum(diagnostics.map((diagnostic) => diagnostic.assetsWithNoFreshEntry));
+    const selectGradeAssets = sum(diagnostics.map((diagnostic) => diagnostic.selectGradeAssets));
+    const watchGradeAssets = sum(diagnostics.map((diagnostic) => diagnostic.watchGradeAssets));
+    const rejectGradeAssets = sum(diagnostics.map((diagnostic) => diagnostic.rejectGradeAssets));
+    const loaderDiagnostics = diagnostics.map((diagnostic) => diagnostic.loader).filter(
+        (value): value is NonNullable<FinderAssetOpportunityDiagnostics["loader"]> => Boolean(value),
+    );
+    const loader = loaderDiagnostics.length > 0
+        ? {
+            requests: sum(loaderDiagnostics.map((value) => value.requests)),
+            syntheticPairRequests: sum(loaderDiagnostics.map((value) => value.syntheticPairRequests)),
+            pairCacheHits: sum(loaderDiagnostics.map((value) => value.pairCacheHits)),
+            pairCacheMisses: sum(loaderDiagnostics.map((value) => value.pairCacheMisses)),
+            diskCacheHits: sum(loaderDiagnostics.map((value) => value.diskCacheHits)),
+            diskCacheMisses: sum(loaderDiagnostics.map((value) => value.diskCacheMisses)),
+            legCacheHits: sum(loaderDiagnostics.map((value) => value.legCacheHits)),
+            legCacheMisses: sum(loaderDiagnostics.map((value) => value.legCacheMisses)),
+            sourceLoads: sum(loaderDiagnostics.map((value) => value.sourceLoads)),
+            sourceBarsRequested: sum(loaderDiagnostics.map((value) => value.sourceBarsRequested)),
+            sourceBarsLoaded: sum(loaderDiagnostics.map((value) => value.sourceBarsLoaded)),
+            pairBuilds: sum(loaderDiagnostics.map((value) => value.pairBuilds)),
+            diskCacheBypasses: sum(loaderDiagnostics.map((value) => value.diskCacheBypasses)),
+            timingsMs: {
+                total: sum(loaderDiagnostics.map((value) => value.timingsMs.total)),
+                fingerprint: sum(loaderDiagnostics.map((value) => value.timingsMs.fingerprint)),
+                diskLookup: sum(loaderDiagnostics.map((value) => value.timingsMs.diskLookup)),
+                sourceLoads: sum(loaderDiagnostics.map((value) => value.timingsMs.sourceLoads)),
+                pairBuild: sum(loaderDiagnostics.map((value) => value.timingsMs.pairBuild)),
+                pairWrite: sum(loaderDiagnostics.map((value) => value.timingsMs.pairWrite)),
+            },
+        }
+        : undefined;
+    const slowestAssets = diagnostics.flatMap((diagnostic) => diagnostic.slowestAssets ?? [])
+        .sort((left, right) => right.timingsMs.total - left.timingsMs.total)
+        .slice(0, 10);
+    const assetDiagnostics: FinderAssetOpportunityDiagnostics = {
+        totalAssets,
+        assetsWithFreshEntry,
+        assetsWithNoFreshEntry,
+        selectGradeAssets,
+        watchGradeAssets,
+        rejectGradeAssets,
+        failedAssets,
+        work: {
+            selectedStrategies: work[0]?.selectedStrategies ?? selectedStrategies.length,
+            candidateEvaluationsEstimated: sum(work.map((value) => value.candidateEvaluationsEstimated)),
+            candidateEvaluationsAttempted: sum(work.map((value) => value.candidateEvaluationsAttempted)),
+            candidateEvaluationsCompleted: sum(work.map((value) => value.candidateEvaluationsCompleted)),
+            candidateEvaluationFailures: sum(work.map((value) => value.candidateEvaluationFailures)),
+            signalCacheHits: sum(work.map((value) => value.signalCacheHits)),
+            signalCacheMisses: sum(work.map((value) => value.signalCacheMisses)),
+            freshEntryRechecks: sum(work.map((value) => value.freshEntryRechecks)),
+            oosEvaluations: sum(work.map((value) => value.oosEvaluations)),
+            winnerAnalyticsRecomputations: sum(work.map((value) => value.winnerAnalyticsRecomputations)),
+            loadedBars,
+        },
+        timingsMs: {
+            total: totalDuration,
+            dataLoading,
+            dataPreparation,
+            inSampleSearch,
+            parameterGeneration: timingSum("parameterGeneration"),
+            candidateBacktests: timingSum("candidateBacktests"),
+            freshEntryRechecks,
+            oosValidation,
+            resultReduction,
+            winnerAnalytics,
+            yielding: timingMax("yielding"),
+            other: Math.max(0, totalDuration - dataLoading - dataPreparation - inSampleSearch
+                - freshEntryRechecks - oosValidation - resultReduction - winnerAnalytics),
+        },
+        ...(loader ? { loader } : {}),
+        strategyBreakdown,
+        slowestAssets,
+        engineUsage,
+    };
+    const mergedTotals: FinderAssetOpportunityTotals = {
+        totalAssets,
+        assetsWithFreshEntry,
+        selectGradeAssets,
+        watchGradeAssets,
+        rejectGradeAssets,
+        failedAssets: failedAssets.length,
+        engineUsage,
+    };
+    return {
+        results,
+        cancelled: entries.some(({ iteration }) => iteration.cancelled),
+        assetDiagnostics,
+        totals: mergedTotals,
+        summary: `Asset Opportunity complete: ${results.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`,
+    };
+}
 
 // Stateless param-space generator (no constructor args, no browser deps).
 // Module-scope so it's reused across requests, mirroring FinderManager.paramSpace.
@@ -1379,20 +1617,46 @@ export async function processFinderAssetOpportunityBatchRun(
         });
     };
 
-    // Parallel sweep when a runner factory is wired (production HTTP path)
-    // AND more than one worker resolves; otherwise the original sequential
-    // in-process loop. The sweep returns completed iterations in ascending
-    // holdout order, so archives/events stay identical to the sequential run.
+    // Parallel sweep when a runner factory is wired (production HTTP path).
+    // Small holdout ranges are decomposed into contiguous asset chunks so a
+    // two-holdout run can still occupy the bounded worker pool instead of
+    // leaving most CPU idle. Larger ranges keep one whole iteration per task,
+    // preserving cross-holdout dataset-cache reuse.
+    const canChunkAssets = input.batchTaskRunnerFactory && totalAssets >= ASSET_OPPORTUNITY_BATCH_MIN_CHUNKED_ASSETS;
+    const workerCapacity = input.batchTaskRunnerFactory
+        ? canChunkAssets
+            ? resolveAssetOpportunityChunkWorkerCount(
+                totalIterations,
+                totalAssets,
+                process.env,
+                totalmem(),
+                input.useRustEnginePreference === true,
+            )
+            : resolveAssetOpportunityBatchWorkerCount(
+                Math.max(totalIterations, ASSET_OPPORTUNITY_BATCH_PARALLEL_TASK_TARGET),
+                totalAssets,
+                process.env,
+                totalmem(),
+                { rustEngine: input.useRustEnginePreference === true },
+            )
+        : 1;
+    const assetChunkCount = canChunkAssets
+        ? Math.max(1, Math.min(totalAssets, workerCapacity))
+        : 1;
+    const totalWorkerTasks = totalIterations * assetChunkCount;
     const workerCount = input.batchTaskRunnerFactory
-        ? resolveAssetOpportunityBatchWorkerCount(
-            totalIterations,
-            totalAssets,
-            process.env,
-            totalmem(),
-            // The Rust engine's HTTP server serializes; cap the auto pool so
-            // workers don't contend for its queue (env override still wins).
-            { rustEngine: input.useRustEnginePreference === true },
-        )
+        ? assetChunkCount > 1
+            ? assetChunkCount
+            : resolveAssetOpportunityBatchWorkerCount(
+                totalIterations,
+                totalAssets,
+                process.env,
+                totalmem(),
+                {
+                    rustEngine: input.useRustEnginePreference === true,
+                    taskCount: totalWorkerTasks,
+                },
+            )
         : 1;
 
     if (input.batchTaskRunnerFactory && workerCount > 1) {
@@ -1401,6 +1665,7 @@ export async function processFinderAssetOpportunityBatchRun(
             workerCount,
             totalIterations,
             totalAssets,
+            assetChunkCount,
         });
         // Worker task payloads carry a plain provider map (functions cannot
         // cross the worker boundary); keys normalized like resolveServerProvider.
@@ -1410,34 +1675,63 @@ export async function processFinderAssetOpportunityBatchRun(
                     .map(([symbol, provider]) => [symbol.trim().toUpperCase(), provider]),
             )
             : null;
-        const tasks: AssetOpportunityBatchWorkerTask[] = holdoutValues.map((holdoutBars, iterationIndex) => ({
-            taskIndex: iterationIndex,
-            holdoutBars,
-            runId: input.runId,
-            interval: input.interval,
-            symbols: [...symbols],
-            options: buildIterationOptions(holdoutBars),
-            settings: input.settings,
-            capitalSettings: input.capitalSettings,
-            strategyKeys: selectedStrategies.map((strategy) => strategy.key),
-            exitStrategyKeys: (input.exitStrategyCandidates ?? []).map((strategy) => strategy.key),
-            useRustEnginePreference: input.useRustEnginePreference === true,
-            providerBySymbol: providerRecord,
-            candidatePoolSize: input.candidatePoolSize,
-            minFreshSupport: input.minFreshSupport,
-        }));
+        const tasks: AssetOpportunityBatchWorkerTask[] = holdoutValues.flatMap((holdoutBars, iterationIndex) => {
+            const chunkSize = Math.ceil(totalAssets / assetChunkCount);
+            return Array.from({ length: assetChunkCount }, (_, assetChunkIndex) => {
+                const start = assetChunkIndex * chunkSize;
+                const end = Math.min(totalAssets, start + chunkSize);
+                return {
+                    taskIndex: iterationIndex * assetChunkCount + assetChunkIndex,
+                    holdoutBars,
+                    ...(assetChunkCount > 1
+                        ? { assetChunkIndex, assetChunkCount, includeFullStrategyBreakdown: true }
+                        : {}),
+                    runId: input.runId,
+                    interval: input.interval,
+                    symbols: symbols.slice(start, end),
+                    options: buildIterationOptions(holdoutBars),
+                    settings: input.settings,
+                    capitalSettings: input.capitalSettings,
+                    strategyKeys: selectedStrategies.map((strategy) => strategy.key),
+                    exitStrategyKeys: (input.exitStrategyCandidates ?? []).map((strategy) => strategy.key),
+                    useRustEnginePreference: input.useRustEnginePreference === true,
+                    providerBySymbol: providerRecord,
+                    candidatePoolSize: input.candidatePoolSize,
+                    minFreshSupport: input.minFreshSupport,
+                };
+            });
+        });
         let sweep: AssetOpportunityBatchSweepResult;
         // ONE throttle for the whole sweep: progress messages from every
         // in-flight worker interleave, and the aggregate percent is what the
         // browser renders.
         const throttleProgressWrite = createProgressEventThrottle();
         try {
+            const chunkResultsByIteration = new Map<number, Array<{
+                task: AssetOpportunityBatchWorkerTask;
+                iteration: AssetOpportunityIterationResult;
+            }>>();
             sweep = await runAssetOpportunityBatchSweep({
                 tasks,
                 runnerCount: workerCount,
                 createRunner: input.batchTaskRunnerFactory,
-                onIterationResult: (task, iteration) =>
-                    completeOrderedIteration(task.taskIndex, task.holdoutBars, iteration),
+                onIterationResult: async (task, iteration) => {
+                    const iterationIndex = Math.floor(task.taskIndex / assetChunkCount);
+                    if (assetChunkCount === 1) {
+                        await completeOrderedIteration(iterationIndex, task.holdoutBars, iteration);
+                        return;
+                    }
+                    const entries = chunkResultsByIteration.get(iterationIndex) ?? [];
+                    entries.push({ task, iteration });
+                    chunkResultsByIteration.set(iterationIndex, entries);
+                    if (entries.length < assetChunkCount) return;
+                    chunkResultsByIteration.delete(iterationIndex);
+                    await completeOrderedIteration(
+                        iterationIndex,
+                        task.holdoutBars,
+                        mergeAssetOpportunityChunkResults(entries, selectedStrategies),
+                    );
+                },
                 onProgress: (task, progress, aggregateState) => {
                     snapshot.phase = progress.phase as FinderJobPhase;
                     snapshot.statusText = `Batch OOS holdout ${task.holdoutBars} bars: ${progress.status}`;
@@ -1453,6 +1747,7 @@ export async function processFinderAssetOpportunityBatchRun(
                         ...snapshot.batch!,
                         currentHoldoutBars: aggregateState.inFlightHoldoutBars[0]
                             ?? snapshot.batch!.currentHoldoutBars,
+                        currentIteration: Math.floor(task.taskIndex / assetChunkCount) + 1,
                     };
                     throttleProgressWrite({
                         percent: aggregateState.percent,
@@ -1462,7 +1757,7 @@ export async function processFinderAssetOpportunityBatchRun(
                                 type: "asset_batch_progress",
                                 runId: input.runId,
                                 holdoutBars: task.holdoutBars,
-                                iterationIndex: task.taskIndex,
+                                iterationIndex: Math.floor(task.taskIndex / assetChunkCount),
                                 totalIterations,
                                 percent: aggregateState.percent,
                                 phase: progress.phase as FinderJobPhase,

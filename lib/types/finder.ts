@@ -758,6 +758,8 @@ export interface FinderAssetOpportunityDiagnostics {
         candidateEvaluationsAttempted: number;
         candidateEvaluationsCompleted: number;
         candidateEvaluationFailures: number;
+        signalCacheHits: number;
+        signalCacheMisses: number;
         freshEntryRechecks: number;
         oosEvaluations: number;
         winnerAnalyticsRecomputations: number;

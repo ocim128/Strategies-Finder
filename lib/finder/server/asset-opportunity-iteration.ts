@@ -48,6 +48,8 @@ import { runServerAssetIsSearch } from "./server-asset-is-search";
 import { prepareClosedCandleData } from "../../backtest-executor";
 import { createServerFinderAssetOpportunityLoadContext } from "./server-finder-data-loader";
 import { parseSyntheticPairToken } from "../../synthetic-pair-token";
+import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
+import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 
 const ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY = 12;
 
@@ -113,6 +115,8 @@ export interface FinderAssetOpportunityRunInput {
     selectedStrategies: FinderSelectedStrategy[];
     exitStrategyCandidates?: FinderSelectedStrategy[];
     useRustEnginePreference?: boolean;
+    /** Worker-local full-signal cache shared by the batch holdout tasks. */
+    signalCache?: AssetOpportunitySignalCache;
     abortSignal: AbortSignal;
     loadDataset: (
         symbol: string,
@@ -132,6 +136,8 @@ export interface FinderAssetOpportunityRunInput {
     minFreshSupport: number;
     /** Reusable caches for a multi-iteration Asset Opportunity batch. */
     assetLoadContext?: BatchDatasetLoadContext;
+    /** Chunked batch workers retain all strategy rows so the coordinator can rebuild top-10 diagnostics exactly. */
+    includeFullStrategyBreakdown?: boolean;
     /** Legacy compatibility field; automatic batch archives always use All Sorts. */
     archiveSort?: FinderAssetOpportunityArchiveSort | null;
     /**
@@ -206,6 +212,10 @@ export async function runAssetOpportunityIteration(
     const totalAssets = symbols.length;
     const iterationStartedAt = Date.now();
     assertAssetOpportunityStrategySelection(selectedStrategies);
+    // Confirmation libraries are selected by the shared settings, not by the
+    // current asset or entry strategy. Load them once per worker task instead
+    // of repeating the cached async lookup for every asset-strategy pass.
+    await ensureConfirmationStrategiesLoaded(input.settings);
 
     input.runLog?.("iteration_start", {
         interval: input.interval,
@@ -253,6 +263,8 @@ export async function runAssetOpportunityIteration(
     let candidateEvaluationsAttempted = 0;
     let candidateEvaluationsCompleted = 0;
     let candidateEvaluationFailures = 0;
+    let signalCacheHits = 0;
+    let signalCacheMisses = 0;
     let freshEntryRechecks = 0;
     let oosEvaluations = 0;
     let winnerAnalyticsRecomputations = 0;
@@ -344,6 +356,8 @@ export async function runAssetOpportunityIteration(
             exitStrategyCandidates: args.exitStrategyCandidates,
             generateParamSets: args.generateParamSets,
             useRustEnginePreference: input.useRustEnginePreference,
+            confirmationStrategiesLoaded: true,
+            ...(args.signalCache ? { signalCache: args.signalCache, fullSignalData: args.fullSignalData } : {}),
             ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
             isCancelled: args.isCancelled,
             yieldControl: args.yieldControl,
@@ -363,6 +377,8 @@ export async function runAssetOpportunityIteration(
             candidateEvaluationsAttempted: output.candidateEvaluationsAttempted,
             candidateEvaluationsCompleted: output.candidateEvaluationsCompleted,
             candidateEvaluationFailures: output.candidateEvaluationFailures,
+            signalCacheHits: output.signalCacheHits,
+            signalCacheMisses: output.signalCacheMisses,
             ...(output.signalsByCandidate ? { signalsByCandidate: output.signalsByCandidate } : {}),
             timingsMs: output.timingsMs,
             engineUsage: output.engineUsage,
@@ -489,6 +505,7 @@ export async function runAssetOpportunityIteration(
                         minFreshSupport: input.minFreshSupport,
                         ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
                         useRustEnginePreference: input.useRustEnginePreference,
+                        ...(input.signalCache ? { signalCache: input.signalCache } : {}),
                         // The server IS pass retains compact trade history and
                         // builds the endpoint-adjusted selection result for
                         // every candidate, so a full winner rerun is redundant.
@@ -535,6 +552,8 @@ export async function runAssetOpportunityIteration(
                                 candidateEvaluationsAttempted += searchDiagnostics.candidateEvaluationsAttempted;
                                 candidateEvaluationsCompleted += searchDiagnostics.candidateEvaluationsCompleted;
                                 candidateEvaluationFailures += searchDiagnostics.candidateEvaluationFailures;
+                                signalCacheHits += searchDiagnostics.signalCacheHits;
+                                signalCacheMisses += searchDiagnostics.signalCacheMisses;
                                 freshEntryRechecks += searchDiagnostics.freshEntryRechecks;
                                 oosEvaluations += searchDiagnostics.oosEvaluations;
                                 winnerAnalyticsRecomputations += searchDiagnostics.winnerAnalyticsRecomputations;
@@ -718,6 +737,8 @@ export async function runAssetOpportunityIteration(
             candidateEvaluationsAttempted,
             candidateEvaluationsCompleted,
             candidateEvaluationFailures,
+            signalCacheHits,
+            signalCacheMisses,
             freshEntryRechecks,
             oosEvaluations,
             winnerAnalyticsRecomputations,
@@ -745,7 +766,7 @@ export async function runAssetOpportunityIteration(
                 durationMs: roundDiagnosticMs(stats.durationMs),
             }))
             .sort((a, b) => b.durationMs - a.durationMs || a.strategyKey.localeCompare(b.strategyKey))
-            .slice(0, 10),
+            .slice(0, input.includeFullStrategyBreakdown === true ? undefined : 10),
         // slowAssetPasses is already top-10 by timingsMs.total (kept bounded
         // and sorted by `recordAssetPass` on every push), so just map to the
         // rounded diagnostic shape here.

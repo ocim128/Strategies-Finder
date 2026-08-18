@@ -16,7 +16,7 @@
  *    emit.
  *  - CANCEL: Stop discards in-flight iterations but flushes the ones that
  *    already completed, ascending.
- *  - WORKER COUNT POLICY: env override + holdout/cores/memory clamps.
+ *  - WORKER COUNT POLICY: env override + effective-task/cores/memory clamps.
  *
  * The runners are in-process fakes (not real worker_threads) so the spec is
  * hermetic: no dev server, no real dataset loads. The real Worker bootstrap
@@ -128,6 +128,7 @@ function makeBatchOptions(symbols: string[], overrides: Partial<FinderOptions> =
 
 interface FakeRunnerOptions {
     datasets: Map<string, OHLCVData[]>;
+    onTaskStart?: (task: AssetOpportunityBatchWorkerTask, runnerIndex: number) => void;
     /** Per-task completion delay; late completions force out-of-order arrival. */
     delayMs?: (taskIndex: number) => number;
     /** Task indexes that surface as iteration fatals. */
@@ -145,7 +146,9 @@ interface FakeRunnerOptions {
  * parity with the sequential path is exercised end-to-end without threads.
  */
 function createInProcessRunnerFactory(options: FakeRunnerOptions): AssetOpportunityBatchRunnerFactory {
+    let nextRunnerIndex = 0;
     return (events: AssetOpportunityBatchRunnerEvents): AssetOpportunityBatchTaskRunner => {
+        const runnerIndex = nextRunnerIndex++;
         let abort: AbortController | null = null;
         const parked = new Set<() => void>();
         const runCore = (task: AssetOpportunityBatchWorkerTask, signal: AbortSignal): void => {
@@ -167,6 +170,7 @@ function createInProcessRunnerFactory(options: FakeRunnerOptions): AssetOpportun
         };
         return {
             runTask: (task) => {
+                options.onTaskStart?.(task, runnerIndex);
                 abort = new AbortController();
                 if (options.parkUntilStopTasks?.has(task.taskIndex)) {
                     parked.add(() => {
@@ -303,6 +307,67 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(resolveAssetOpportunityBatchWorkerCount(41, 1000, {}, 16 * GIB)).to.equal(1);
         // Few symbols: the memory ceiling stops binding; cores/holdouts clamp.
         expect(resolveAssetOpportunityBatchWorkerCount(2, 10, {}, 16 * GIB)).to.be.at.most(2);
+        // Chunked batches size the same policy from the expanded task count.
+        expect(resolveAssetOpportunityBatchWorkerCount(2, 1000, {}, 64 * GIB, { taskCount: 8 })).to.equal(5);
+    });
+
+    it("fills the worker pool with contiguous asset chunks for a small holdout range", async () => {
+        const datasets = new Map<string, OHLCVData[]>();
+        for (let index = 0; index < 32; index += 1) {
+            datasets.set(`ASSET_${index}`, makeCandles(Array.from({ length: 40 }, (_, bar) => 100 + bar)));
+        }
+        const sequential = await runAssetBatch({
+            owner: 8110,
+            start: 2,
+            end: 3,
+            runId: "sequential-asset-chunks",
+            datasets,
+            symbols: [...datasets.keys()],
+        });
+        const started: Array<{ task: AssetOpportunityBatchWorkerTask; runnerIndex: number }> = [];
+        const { events } = await runAssetBatch({
+            owner: 8111,
+            start: 2,
+            end: 3,
+            runId: "parallel-asset-chunks",
+            datasets,
+            symbols: [...datasets.keys()],
+            factory: createInProcessRunnerFactory({
+                datasets,
+                onTaskStart: (task, runnerIndex) => started.push({ task, runnerIndex }),
+            }),
+        });
+
+        expect(extractIterations(events).map((event) => event.holdoutBars)).to.deep.equal([2, 3]);
+        const sequentialIterations = extractIterations(sequential.events);
+        const parallelIterations = extractIterations(events);
+        expect(parallelIterations.map((event) => event.assets)).to.deep.equal(
+            sequentialIterations.map((event) => event.assets),
+        );
+        expect(parallelIterations.map((event) => event.totals)).to.deep.equal(
+            sequentialIterations.map((event) => event.totals),
+        );
+        const chunkCounts = new Set(started.map(({ task }) => task.assetChunkCount));
+        expect(chunkCounts.size).to.equal(1);
+        const chunkCount = [...chunkCounts][0]!;
+        expect(chunkCount).to.be.greaterThan(1);
+        expect(started).to.have.length(chunkCount * 2);
+        for (const holdout of [2, 3]) {
+            const holdoutTasks = started.filter(({ task }) => task.holdoutBars === holdout).map(({ task }) => task);
+            expect(holdoutTasks).to.have.length(chunkCount);
+            expect(holdoutTasks.flatMap((task) => task.symbols)).to.deep.equal([...datasets.keys()]);
+        }
+        const runnerByChunk = new Map<number, number>();
+        for (const { task, runnerIndex } of started) {
+            const chunkIndex = task.assetChunkIndex!;
+            const previousRunner = runnerByChunk.get(chunkIndex);
+            if (previousRunner === undefined) {
+                runnerByChunk.set(chunkIndex, runnerIndex);
+            } else {
+                expect(runnerIndex).to.equal(previousRunner);
+            }
+        }
+        expect(new Set(started.map(({ runnerIndex }) => runnerIndex)).size).to.equal(chunkCount);
     });
 
     it("clamps the auto worker count for Rust-engine runs; the env override still wins", () => {

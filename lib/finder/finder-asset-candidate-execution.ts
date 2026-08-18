@@ -166,6 +166,8 @@ export async function runAssetCandidateBacktest(args: {
      * strategies (the cross-symbol runtime owns its closed view).
      */
     closedCandleDataOverride?: OHLCVData[];
+    /** Fully prepared primary signals; skips strategy signal generation. */
+    preGeneratedSignals?: Signal[];
     needs: AssetCandidateBacktestNeeds;
 }): Promise<AssetCandidateBacktestOutput> {
     const rustSettings = sanitizeBacktestSettingsForRust(args.settings);
@@ -224,6 +226,7 @@ export async function runAssetCandidateBacktest(args: {
         },
         ...(args.dataFetcher ? { dataFetcher: args.dataFetcher } : {}),
         ...(args.closedCandleDataOverride ? { closedCandleDataOverride: args.closedCandleDataOverride } : {}),
+        ...(args.preGeneratedSignals ? { preGeneratedSignals: args.preGeneratedSignals } : {}),
         backtestRunOptions,
     });
     return {
