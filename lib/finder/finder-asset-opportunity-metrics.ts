@@ -281,6 +281,26 @@ export const TOTAL_TRADES_SATURATION_PERCENTILE = 0.9;
  */
 export const T_STAT_EDGE_METRIC = "tstatEdge" as const;
 /**
+ * Inverted (worst-first) archive sorts: rank by the base metric ASCENDING so the
+ * top slot is the WORST candidate (e.g. most negative netProfit). Research purpose:
+ * test whether in-search FAILURE carries forward information (fade candidates) —
+ * the offline union-pool probe can only see "best of the worst"; the full-pool
+ * archive blocks expose the true bottom of the candidate list. The run-level
+ * minimum-trade filter guards the top against degenerate 1-2 trade candidates;
+ * these sorts deliberately apply no extra floor.
+ */
+export const INVERTED_NET_PROFIT_METRIC = "invertedNetProfit" as const;
+export const INVERTED_EXPECTANCY_METRIC = "invertedExpectancy" as const;
+export const INVERTED_AVERAGE_GAIN_METRIC = "invertedAverageGain" as const;
+export const INVERTED_WIN_RATE_METRIC = "invertedWinRate" as const;
+export const INVERTED_SHARPE_RATIO_METRIC = "invertedSharpeRatio" as const;
+export const INVERTED_PROFIT_FACTOR_METRIC = "invertedProfitFactor" as const;
+/**
+ * Worst-first by drawdown: the base maxDrawdownPercent sort is already ascending
+ * (smallest DD best), so its inversion is DESCENDING — largest drawdown first.
+ */
+export const INVERTED_MAX_DRAWDOWN_METRIC = "invertedMaxDrawdownPercent" as const;
+/**
  * Minimum trade count for the t-stat sort to score a candidate at all. A t-stat
  * needs enough draws for "significance" to mean anything — without a floor,
  * 2-trade all-win candidates map to +Infinity and stuff the top of the sort
@@ -293,7 +313,14 @@ export type FinderAssetOpportunityResortMetric =
     | typeof FRESH_SIGNAL_LIBRARIES_METRIC
     | typeof FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
     | typeof TOTAL_TRADES_CAPPED_METRIC
-    | typeof T_STAT_EDGE_METRIC;
+    | typeof T_STAT_EDGE_METRIC
+    | typeof INVERTED_NET_PROFIT_METRIC
+    | typeof INVERTED_EXPECTANCY_METRIC
+    | typeof INVERTED_AVERAGE_GAIN_METRIC
+    | typeof INVERTED_WIN_RATE_METRIC
+    | typeof INVERTED_SHARPE_RATIO_METRIC
+    | typeof INVERTED_PROFIT_FACTOR_METRIC
+    | typeof INVERTED_MAX_DRAWDOWN_METRIC;
 /** Special batch-only choice that archives the default order plus every metric. */
 export const ASSET_OPPORTUNITY_ALL_SORTS = "allAssetOpportunitySorts" as const;
 export type FinderAssetOpportunityArchiveSort =
@@ -315,6 +342,13 @@ const ASSET_RESORT_METRICS: readonly FinderAssetOpportunityResortMetric[] = [
     FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC,
     TOTAL_TRADES_CAPPED_METRIC,
     T_STAT_EDGE_METRIC,
+    INVERTED_NET_PROFIT_METRIC,
+    INVERTED_EXPECTANCY_METRIC,
+    INVERTED_AVERAGE_GAIN_METRIC,
+    INVERTED_WIN_RATE_METRIC,
+    INVERTED_SHARPE_RATIO_METRIC,
+    INVERTED_PROFIT_FACTOR_METRIC,
+    INVERTED_MAX_DRAWDOWN_METRIC,
 ];
 
 export function getAssetOpportunityResortMetrics(): readonly FinderAssetOpportunityResortMetric[] {
@@ -361,7 +395,14 @@ function getAssetOpportunityMetricValue(
     switch (metric) {
         case "netProfit": return Number.isFinite(sel.netProfit) ? sel.netProfit : 0;
         case "netProfitPercent": return Number.isFinite(sel.netProfitPercent) ? sel.netProfitPercent : 0;
-        case "profitFactor": return Number.isFinite(sel.profitFactor) ? sel.profitFactor : 0;
+        case "profitFactor": {
+            if (Number.isFinite(sel.profitFactor)) return sel.profitFactor;
+            // All-win candidate (no losses => null PF) with positive net maps to
+            // +Infinity (payoffRatio precedent). As 0 it would wrongly top the
+            // inverted (worst-first) sort; as +Infinity it ranks correctly in
+            // BOTH directions.
+            return sel.netProfit > 0 ? Number.POSITIVE_INFINITY : 0;
+        }
         case "sharpeRatio": return Number.isFinite(sel.sharpeRatio) ? sel.sharpeRatio : 0;
         case "winRate": return Number.isFinite(sel.winRate) ? sel.winRate : 0;
         case "maxDrawdownPercent": return Number.isFinite(sel.maxDrawdownPercent) ? sel.maxDrawdownPercent : 0;
@@ -394,10 +435,16 @@ function getTStatEdgeValue(result: FinderAssetOpportunityResult): number {
     if (!Number.isFinite(mean) || !Number.isFinite(winRate) || !Number.isFinite(avgWin) || !Number.isFinite(avgLoss) || trades < T_STAT_EDGE_MIN_TRADES) {
         return 0;
     }
-    const winProbability = Math.min(1, Math.max(0, winRate / 100));
-    const variance = winProbability * (avgWin - mean) ** 2 + (1 - winProbability) * (avgLoss + mean) ** 2;
-    if (variance <= 0) return mean > 0 ? Number.POSITIVE_INFINITY : 0;
-    return (mean * Math.sqrt(trades)) / Math.sqrt(variance);
+    // Jeffreys-style smoothing keeps t finite for all-win candidates (zero observed
+    // variance): cap the win probability at n/(n+1) (one hypothetical loss) and,
+    // when no loss was ever observed, assume a loss at least the size of a win —
+    // conservative in TP-only geometry where real losses are unbounded. Without
+    // this, all-win candidates map to +Infinity and one strategy's perfect win
+    // streak monopolizes the sort's top (observed 2026-08-18).
+    const winProbability = Math.min(Math.min(1, Math.max(0, winRate / 100)), trades / (trades + 1));
+    const effectiveAvgLoss = avgLoss > 0 ? avgLoss : (avgWin > 0 ? avgWin : 1);
+    const variance = winProbability * (avgWin - mean) ** 2 + (1 - winProbability) * (effectiveAvgLoss + mean) ** 2;
+    return (mean * Math.sqrt(trades)) / Math.sqrt(Math.max(variance, Number.MIN_VALUE));
 }
 
 /**
@@ -498,10 +545,27 @@ export function sortAssetOpportunityResultsByMetric(
             return 0;
         });
     }
-    const ascending = metric === "maxDrawdownPercent";
+    const INVERTED_METRIC_BASE: Partial<Record<FinderAssetOpportunityResortMetric, FinderMetric>> = {
+        [INVERTED_NET_PROFIT_METRIC]: "netProfit",
+        [INVERTED_EXPECTANCY_METRIC]: "expectancy",
+        [INVERTED_AVERAGE_GAIN_METRIC]: "averageGain",
+        [INVERTED_WIN_RATE_METRIC]: "winRate",
+        [INVERTED_SHARPE_RATIO_METRIC]: "sharpeRatio",
+        [INVERTED_PROFIT_FACTOR_METRIC]: "profitFactor",
+        [INVERTED_MAX_DRAWDOWN_METRIC]: "maxDrawdownPercent",
+    };
+    const invertedBase = INVERTED_METRIC_BASE[metric];
+    // Safe cast: when metric is one of the inverted keys the lookup above is
+    // defined, so the ?? fallback only ever sees a plain FinderMetric.
+    const valueMetric = (invertedBase ?? metric) as FinderMetric;
+    // Worst-first direction: larger-is-better metrics invert to ascending; the
+    // smaller-is-better drawdown metric inverts to descending.
+    const ascending = invertedBase !== undefined
+        ? invertedBase !== "maxDrawdownPercent"
+        : metric === "maxDrawdownPercent";
     return [...results].sort((a, b) => {
-        const valA = getAssetOpportunityMetricValue(a, metric);
-        const valB = getAssetOpportunityMetricValue(b, metric);
+        const valA = getAssetOpportunityMetricValue(a, valueMetric);
+        const valB = getAssetOpportunityMetricValue(b, valueMetric);
         if (valA !== valB) return ascending ? valA - valB : valB - valA;
         // Metric tie: fall back to realized performance scalars (each
         // larger-is-better) before the deterministic symbol order, so a mass

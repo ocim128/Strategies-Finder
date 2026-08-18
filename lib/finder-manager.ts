@@ -52,6 +52,13 @@ import {
 	TOTAL_TRADES_CAPPED_METRIC,
 	TOTAL_TRADES_SATURATION_PERCENTILE,
 	T_STAT_EDGE_METRIC,
+	INVERTED_NET_PROFIT_METRIC,
+	INVERTED_EXPECTANCY_METRIC,
+	INVERTED_AVERAGE_GAIN_METRIC,
+	INVERTED_WIN_RATE_METRIC,
+	INVERTED_SHARPE_RATIO_METRIC,
+	INVERTED_PROFIT_FACTOR_METRIC,
+	INVERTED_MAX_DRAWDOWN_METRIC,
 	retainAssetOpportunityResultsForSymbols,
 	type FinderAssetOpportunityArchiveSort,
 	type FinderAssetOpportunityResortMetric,
@@ -3779,18 +3786,30 @@ export class FinderManager {
 				options.push({ value: metric, label: UNIVERSE_METRIC_FULL_LABELS[metric] });
 			}
 		} else if (scope === 'asset_opportunity') {
+				const invertedLabels: Partial<Record<FinderAssetOpportunityResortMetric, string>> = {
+					[INVERTED_NET_PROFIT_METRIC]: "Net Profit (inverted — worst first)",
+					[INVERTED_EXPECTANCY_METRIC]: "Expectancy (inverted — worst first)",
+					[INVERTED_AVERAGE_GAIN_METRIC]: "Average Gain (inverted — worst first)",
+					[INVERTED_WIN_RATE_METRIC]: "Win Rate (inverted — worst first)",
+					[INVERTED_SHARPE_RATIO_METRIC]: "Sharpe Ratio (inverted — worst first)",
+					[INVERTED_PROFIT_FACTOR_METRIC]: "Profit Factor (inverted — worst first)",
+					[INVERTED_MAX_DRAWDOWN_METRIC]: "Max Drawdown % (inverted — worst first)",
+				};
 				for (const metric of getAssetOpportunityResortMetrics()) {
 					options.push({
 						value: metric,
-							label: metric === FRESH_SIGNAL_LIBRARIES_METRIC
+						label: invertedLabels[metric]
+							?? (metric === FRESH_SIGNAL_LIBRARIES_METRIC
 								? "Fresh Signals (Libraries)"
 								: metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
 									? "Fresh Signals (Libraries, by Trades)"
 									: metric === TOTAL_TRADES_CAPPED_METRIC
 										? `Total Trades (P${Math.round(TOTAL_TRADES_SATURATION_PERCENTILE * 100)} saturation)`
-										: metric === T_STAT_EDGE_METRIC
-											? "T-Stat of Edge (significance)"
-											: METRIC_FULL_LABELS[metric],
+									: metric === T_STAT_EDGE_METRIC
+										? "T-Stat of Edge (significance)"
+										// Safe cast: the inverted labels map above covers every
+										// non-FinderMetric member left in the union here.
+										: METRIC_FULL_LABELS[metric as FinderMetric]),
 					});
 				}
 		} else if (scope === 'strategy_quality') {

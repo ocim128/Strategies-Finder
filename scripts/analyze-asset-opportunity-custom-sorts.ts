@@ -42,6 +42,7 @@ const BLOCK_PATTERN = new RegExp(
 );
 const MIN_TRADES_FOR_LOSS_QUALITY = 15;
 const TSTAT_MIN_TRADES = 10;
+let tstatMinTradesOverride: number | null = null;
 const RECURRENCE_PRESENCE_RATE = 0.4;
 
 interface SelectionPerformance {
@@ -227,6 +228,8 @@ interface UniqueCandidate {
     winRate: number | null;
     trades: number | null;
     maxDrawdownPercent: number | null;
+    netProfit: number | null;
+    expectancy: number | null;
 }
 
 function uniqueCandidates(file: FileData): UniqueCandidate[] {
@@ -246,6 +249,8 @@ function uniqueCandidates(file: FileData): UniqueCandidate[] {
             winRate: typeof performance?.winRate === "number" ? performance.winRate : null,
             trades: typeof performance?.totalTrades === "number" ? performance.totalTrades : null,
             maxDrawdownPercent: typeof performance?.maxDrawdownPercent === "number" ? performance.maxDrawdownPercent : null,
+            netProfit: typeof (performance as { netProfit?: number | null } | null | undefined)?.netProfit === "number" ? (performance as { netProfit: number }).netProfit : null,
+            expectancy: typeof performance?.avgTrade === "number" ? performance.avgTrade : null,
         });
     }
     return result;
@@ -286,13 +291,18 @@ function customSortPicks(file: FileData, sortName: string, horizonBars: number):
             return uniqueCandidates(file)
                 .map((entry) => {
                     const w = entry.winRate !== null ? entry.winRate / 100 : null;
-                    if (w === null || entry.avgWin === null || entry.avgLoss === null || entry.avgTrade === null || entry.trades === null || entry.trades! < TSTAT_MIN_TRADES) {
+                    if (w === null || entry.avgWin === null || entry.avgLoss === null || entry.avgTrade === null || entry.trades === null || entry.trades! < (tstatMinTradesOverride ?? TSTAT_MIN_TRADES)) {
                         return { entry, t: null as number | null };
                     }
                     const mean = entry.avgTrade!;
-                    const variance = w * (entry.avgWin! - mean) ** 2 + (1 - w) * (entry.avgLoss! + mean) ** 2;
-                    if (variance <= 0) return { entry, t: null as number | null };
-                    return { entry, t: (mean * Math.sqrt(entry.trades!)) / Math.sqrt(variance) };
+                    // Jeffreys-style smoothing: finite t for all-win candidates
+                    // (zero observed variance); cap win prob at n/(n+1) and assume
+                    // an unobserved loss is at least the size of a win.
+                    const trades = entry.trades!;
+                    const winProbability = Math.min(w, trades / (trades + 1));
+                    const effectiveAvgLoss = entry.avgLoss! > 0 ? entry.avgLoss! : (entry.avgWin! > 0 ? entry.avgWin! : 1);
+                    const variance = winProbability * (entry.avgWin! - mean) ** 2 + (1 - winProbability) * (effectiveAvgLoss + mean) ** 2;
+                    return { entry, t: (mean * Math.sqrt(trades)) / Math.sqrt(Math.max(variance, Number.MIN_VALUE)) };
                 })
                 .filter((item): item is { entry: UniqueCandidate; t: number } => item.t !== null)
                 .sort((left, right) => right.t - left.t)
@@ -337,6 +347,24 @@ function customSortPicks(file: FileData, sortName: string, horizonBars: number):
                     || (right.meanAvgTrade ?? Number.NEGATIVE_INFINITY) - (left.meanAvgTrade ?? Number.NEGATIVE_INFINITY))
                 .map((aggregate) => ({ symbol: aggregate.symbol, value: symbolPickValue(aggregate, horizonBars) }));
         }
+        case "inverted_netProfit": {
+            return uniqueCandidates(file)
+                .filter((entry) => entry.netProfit !== null)
+                .sort((left, right) => left.netProfit! - right.netProfit!)
+                .map((entry) => ({ symbol: entry.row.symbol!, value: rowForwardPnl(entry.row, horizonBars), detail: entry.row.strategyId }));
+        }
+        case "inverted_expectancy": {
+            return uniqueCandidates(file)
+                .filter((entry) => entry.expectancy !== null && entry.trades !== null && entry.trades! >= (tstatMinTradesOverride ?? TSTAT_MIN_TRADES))
+                .sort((left, right) => left.expectancy! - right.expectancy!)
+                .map((entry) => ({ symbol: entry.row.symbol!, value: rowForwardPnl(entry.row, horizonBars), detail: entry.row.strategyId }));
+        }
+        case "inverted_averageGain": {
+            return uniqueCandidates(file)
+                .filter((entry) => entry.avgWin !== null && entry.trades !== null && entry.trades! >= (tstatMinTradesOverride ?? TSTAT_MIN_TRADES))
+                .sort((left, right) => left.avgWin! - right.avgWin!)
+                .map((entry) => ({ symbol: entry.row.symbol!, value: rowForwardPnl(entry.row, horizonBars), detail: entry.row.strategyId }));
+        }
         default:
             return [];
     }
@@ -368,6 +396,7 @@ function main(): void {
     const sampleSize = Math.max(1, Math.floor(Number(getArgument(argv, "--sample-size") ?? 10) || 10));
     const iterations = Math.max(1, Math.floor(Number(getArgument(argv, "--iterations") ?? 2000) || 2000));
     const seed = Math.floor(Number(getArgument(argv, "--seed") ?? 42) || 42);
+    tstatMinTradesOverride = Math.max(1, Math.floor(Number(getArgument(argv, "--tstat-min-trades") ?? Number.NaN) || Number.NaN)) || null;
     const outputPrefix = getArgument(argv, "--output-prefix");
 
     const minHoldoutBars = Math.floor(Number(getArgument(argv, "--min-holdout") ?? 0) || 0);
@@ -397,6 +426,9 @@ function main(): void {
         "efficiency_dd",
         "edge_per_loss",
         "param_plateau",
+        "inverted_netProfit",
+        "inverted_expectancy",
+        "inverted_averageGain",
     ];
     const rng = createRng(seed);
     const lines: string[] = [];

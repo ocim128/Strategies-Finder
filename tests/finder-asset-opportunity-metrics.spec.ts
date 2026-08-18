@@ -497,6 +497,13 @@ describe("Asset Opportunity post-run re-sort", () => {
         expect(metrics).to.include("payoffRatio");
         expect(metrics).to.include("freshSignalLibraries");
         expect(metrics).to.include("tstatEdge");
+        expect(metrics).to.include("invertedNetProfit");
+        expect(metrics).to.include("invertedExpectancy");
+        expect(metrics).to.include("invertedAverageGain");
+        expect(metrics).to.include("invertedWinRate");
+        expect(metrics).to.include("invertedSharpeRatio");
+        expect(metrics).to.include("invertedProfitFactor");
+        expect(metrics).to.include("invertedMaxDrawdownPercent");
     });
 
     it("sorts by tstatEdge so a proven modest edge outranks a bigger unproven edge", () => {
@@ -525,6 +532,48 @@ describe("Asset Opportunity post-run re-sort", () => {
         const sorted = sortAssetOpportunityResultsByMetric([lottery, proven], "tstatEdge");
         expect(sorted.map((r) => r.symbol)).to.deep.equal(["B", "A"]);
     });
+
+    it("invertedNetProfit ranks worst-first (most negative netProfit at the top)", () => {
+        // Why: the inverted archive sorts expose the true bottom of the full
+        // candidate pool, testing whether in-search failure carries forward info.
+        const loser = makeResortResult({ symbol: "A", netProfit: -500 });
+        const winner = makeResortResult({ symbol: "B", netProfit: 5000 });
+        const sorted = sortAssetOpportunityResultsByMetric([winner, loser], "invertedNetProfit");
+        expect(sorted.map((r) => r.symbol)).to.deep.equal(["A", "B"]);
+    });
+
+    it("invertedExpectancy ranks worst-first and invertedAverageGain ranks smallest average win first", () => {
+        const badEdge = makeResortResult({ symbol: "A", expectancy: -2, avgWin: 1 });
+        const goodEdge = makeResortResult({ symbol: "B", expectancy: 3, avgWin: 12 });
+        expect(sortAssetOpportunityResultsByMetric([goodEdge, badEdge], "invertedExpectancy").map((r) => r.symbol)).to.deep.equal(["A", "B"]);
+        expect(sortAssetOpportunityResultsByMetric([goodEdge, badEdge], "invertedAverageGain").map((r) => r.symbol)).to.deep.equal(["A", "B"]);
+    });
+
+    it("invertedMaxDrawdownPercent ranks LARGEST drawdown first (base direction flips)", () => {
+        // Why: the base DD sort is ascending (smallest best); worst-first means
+        // descending — the one inverted metric whose direction must flip.
+        const deepDD = makeResortResult({ symbol: "A", maxDrawdownPercent: 40 });
+        const shallowDD = makeResortResult({ symbol: "B", maxDrawdownPercent: 5 });
+        expect(sortAssetOpportunityResultsByMetric([shallowDD, deepDD], "invertedMaxDrawdownPercent").map((r) => r.symbol)).to.deep.equal(["A", "B"]);
+    });
+
+    it("invertedProfitFactor ranks an all-win (null PF) candidate LAST, not worst-first", () => {
+        // Why: null PF means no losses — mapping it to 0 (old behavior) would
+        // wrongly top the worst-first sort with the safest candidates.
+        const allWin = makeResortResult({ symbol: "A", netProfit: 100, profitFactor: 1 });
+        (allWin.selectionResult as { profitFactor: number | null }).profitFactor = null;
+        const losing = makeResortResult({ symbol: "B", netProfit: -50, profitFactor: 0.3 });
+        expect(sortAssetOpportunityResultsByMetric([allWin, losing], "invertedProfitFactor").map((r) => r.symbol)).to.deep.equal(["B", "A"]);
+    });
+
+    it("profitFactor treats a null PF all-win positive candidate as best in the normal direction", () => {
+        const allWin = makeResortResult({ symbol: "A", netProfit: 100, profitFactor: 1 });
+        (allWin.selectionResult as { profitFactor: number | null }).profitFactor = null;
+        const finite = makeResortResult({ symbol: "B", netProfit: 80, profitFactor: 2.5 });
+        expect(sortAssetOpportunityResultsByMetric([finite, allWin], "profitFactor").map((r) => r.symbol)).to.deep.equal(["A", "B"]);
+    });
+
+
 
 
     it("sorts by payoffRatio descending (avgWin / avgLoss; larger is better)", () => {
