@@ -63,7 +63,7 @@ import { runFinderUniverseExecution } from "../finder-runner-universe";
 import type { FinderSelectedStrategy } from "../finder-runner";
 import { FinderParamSpace } from "../finder-param-space";
 import { sliceFinderDataWindow } from "../finder-manager-logic";
-import { isSmartTradeSizingMode, type CapitalSettings } from "../../types/backtest";
+import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../../types/backtest";
 import type {
     FinderAssetOpportunityResult,
     FinderAssetOpportunityDiagnostics,
@@ -1634,7 +1634,7 @@ export async function processFinderAssetOpportunityBatchRun(
     );
     const rustCanRun = input.useRustEnginePreference === true
         && !requiresTypescriptEngine(input.settings)
-        && !isSmartTradeSizingMode(resolvedCapitalSettings.sizingMode);
+        && isRustSupportedTradeSizingMode(resolvedCapitalSettings.sizingMode);
     const workerCapacity = input.batchTaskRunnerFactory
         ? canChunkAssets
             ? resolveAssetOpportunityChunkWorkerCount(
@@ -1656,6 +1656,12 @@ export async function processFinderAssetOpportunityBatchRun(
         ? Math.max(1, Math.min(totalAssets, workerCapacity))
         : 1;
     const totalWorkerTasks = totalIterations * assetChunkCount;
+    let lastBatchProgressPercent = 0;
+    const resolveMonotonicBatchProgress = (percent: number): number => {
+        const normalized = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
+        lastBatchProgressPercent = Math.max(lastBatchProgressPercent, normalized);
+        return lastBatchProgressPercent;
+    };
     const workerCount = input.batchTaskRunnerFactory
         ? assetChunkCount > 1
             ? assetChunkCount
@@ -1750,7 +1756,7 @@ export async function processFinderAssetOpportunityBatchRun(
                 onProgress: (task, progress, aggregateState) => {
                     snapshot.phase = progress.phase as FinderJobPhase;
                     snapshot.statusText = `Batch OOS holdout ${task.holdoutBars} bars: ${progress.status}`;
-                    snapshot.progressPercent = aggregateState.percent;
+                    snapshot.progressPercent = resolveMonotonicBatchProgress(aggregateState.percent);
                     // Latest-writer-wins across the in-flight iterations so
                     // /status keeps reporting live loaded/failed counters and
                     // the strategy index instead of zeros (each arriving
@@ -1765,7 +1771,7 @@ export async function processFinderAssetOpportunityBatchRun(
                         currentIteration: Math.floor(task.taskIndex / assetChunkCount) + 1,
                     };
                     throttleProgressWrite({
-                        percent: aggregateState.percent,
+                        percent: snapshot.progressPercent,
                         phase: progress.phase as string,
                         write: () => {
                             writer({
@@ -1774,7 +1780,7 @@ export async function processFinderAssetOpportunityBatchRun(
                                 holdoutBars: task.holdoutBars,
                                 iterationIndex: Math.floor(task.taskIndex / assetChunkCount),
                                 totalIterations,
-                                percent: aggregateState.percent,
+                                percent: snapshot.progressPercent,
                                 phase: progress.phase as FinderJobPhase,
                                 statusText: snapshot.statusText,
                                 assetProgress: progress.percent,
@@ -1808,6 +1814,7 @@ export async function processFinderAssetOpportunityBatchRun(
         // runner above. symbolCount attaches the plain-dataset LRU so each
         // symbol loads once for the whole sequential sweep.
         const assetLoadContext = createServerFinderAssetOpportunityLoadContext(totalAssets);
+        const rustBatchDatasetCache = new Map<string, Promise<string | null>>();
         const throttleProgressWrite = createProgressEventThrottle();
 
         for (let iterationIndex = 0; iterationIndex < totalIterations; iterationIndex += 1) {
@@ -1820,7 +1827,9 @@ export async function processFinderAssetOpportunityBatchRun(
             };
             snapshot.phase = "loading";
             snapshot.statusText = `Batch OOS holdout ${holdoutBars} bars (iteration ${iterationIndex + 1}/${totalIterations})...`;
-            snapshot.progressPercent = (iterationIndex / totalIterations) * 100;
+            snapshot.progressPercent = resolveMonotonicBatchProgress(
+                (iterationIndex / totalIterations) * 100,
+            );
             writer({
                 type: "asset_batch_progress",
                 runId: input.runId,
@@ -1836,7 +1845,12 @@ export async function processFinderAssetOpportunityBatchRun(
             let iteration: AssetOpportunityIterationResult;
             try {
                 iteration = await runAssetOpportunityIteration(
-                    { ...input, options: buildIterationOptions(holdoutBars), assetLoadContext },
+                    {
+                        ...input,
+                        options: buildIterationOptions(holdoutBars),
+                        assetLoadContext,
+                        rustBatchDatasetCache,
+                    },
                     {
                         onProgress: (progress) => {
                             snapshot.phase = progress.phase;
@@ -1844,8 +1858,9 @@ export async function processFinderAssetOpportunityBatchRun(
                             snapshot.loadedSymbols = progress.loadedSymbols;
                             snapshot.failedSymbols = progress.failedSymbols;
                             snapshot.strategyIndex = progress.strategyIndex;
-                            snapshot.progressPercent =
-                                ((iterationIndex + progress.percent / 100) / totalIterations) * 100;
+                            snapshot.progressPercent = resolveMonotonicBatchProgress(
+                                ((iterationIndex + progress.percent / 100) / totalIterations) * 100,
+                            );
                             throttleProgressWrite({
                                 percent: snapshot.progressPercent,
                                 phase: progress.phase,

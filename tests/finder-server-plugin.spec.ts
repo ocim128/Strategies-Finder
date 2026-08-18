@@ -873,7 +873,7 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
                 settings,
                 capitalSettings,
                 selectedStrategies,
-                useRustEnginePreference: true,
+                useRustEnginePreference: false,
                 loadDataset: async (symbol) => {
                     loaded.push(symbol);
                     inFlightLoads += 1;
@@ -927,11 +927,12 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
             expect(done.assetDiagnostics!.timingsMs!.inSampleSearch).to.be.at.least(0);
             expect(done.assetDiagnostics!.strategyBreakdown).to.have.length(2);
             expect(done.assetDiagnostics!.slowestAssets).to.have.length(4);
-            expect(done.assetDiagnostics!.engineUsage!.rustRequested).to.equal(true);
+            expect(done.assetDiagnostics!.engineUsage!.rustRequested).to.equal(false);
             expect(done.assetDiagnostics!.engineUsage!.rustAttemptedRuns).to.equal(0);
+            expect(done.assetDiagnostics!.engineUsage!.rustCompletedRuns).to.equal(0);
             expect(done.assetDiagnostics!.engineUsage!.typescriptCompletedRuns).to.equal(8);
             expect(done.assetDiagnostics!.engineUsage!.typescriptReasons).to.deep.include({
-                reason: "same-bar exits are disabled",
+                reason: "Rust was not requested",
                 runs: 8,
             });
         }
@@ -1122,6 +1123,12 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
         const start = runLogEvents.find(([event]) => event === "iteration_start");
         expect(start, "iteration_start run-log event recorded").to.not.equal(undefined);
         expect(start![1]).to.include({ evalLastBars: 3 });
+        const progressPercents = events
+            .filter((event): event is Extract<FinderAssetOpportunityStreamEvent, { type: "asset_progress" }> => event.type === "asset_progress")
+            .map((event) => event.percent);
+        expect(progressPercents.length).to.be.greaterThan(0);
+        expect(progressPercents.every((percent, index) => index === 0 || percent >= progressPercents[index - 1]!))
+            .to.equal(true, "Asset Opportunity progress must not move backwards");
         const done = events[events.length - 1]!;
         expect(done.type).to.equal("asset_done");
     });

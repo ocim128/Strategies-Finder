@@ -56,12 +56,15 @@ import { rustEngine } from "../../rust-engine-client";
 import { debugLogger } from "../../debug-logger";
 import {
     dispatchAssetOpportunityRustBatch,
+    buildAssetOpportunityRustDatasetCacheKey,
     normalizeAssetOpportunityRustCandidateResult,
     resolveAssetOpportunityRustBatchEligibility,
     resolveAssetOpportunityRustBatchFeatureConfig,
+    shouldUseRustAssetOpportunityBatch,
     type AssetOpportunityRustBatchClient,
     type AssetOpportunityRustBatchItem,
 } from "./finder-asset-opportunity-rust-batch";
+import type { AssetOpportunityRustMultiBatchCoordinator } from "./finder-asset-opportunity-multi-rust-batch";
 
 const ASSET_IS_SEARCH_YIELD_EVERY_RUNS = 256;
 const ASSET_IS_SEARCH_YIELD_MIN_MS = 1000;
@@ -85,6 +88,7 @@ export interface ServerAssetIsSearchInput {
     signalCache?: AssetOpportunitySignalCache;
     abortSignal?: AbortSignal;
     rustBatchClient?: AssetOpportunityRustBatchClient;
+    rustMultiAssetBatch?: AssetOpportunityRustMultiBatchCoordinator;
     /** Per-iteration cache of Rust dataset uploads, keyed by asset/window. */
     rustBatchDatasetCache?: Map<string, Promise<string | null>>;
     isCancelled: () => boolean;
@@ -121,27 +125,6 @@ function resolveCachedSignalsForWindow(
         const barIndex = signal.barIndex!;
         return barIndex >= 0 && barIndex < length;
     });
-}
-
-function buildRustBatchDatasetCacheKey(
-    input: Pick<ServerAssetIsSearchInput, "symbol" | "interval" | "ohlcvData">,
-    client: AssetOpportunityRustBatchClient,
-): string {
-    const dataKey = client.getDataCacheKey?.(input.ohlcvData);
-    if (dataKey) return JSON.stringify([input.symbol, input.interval, dataKey]);
-    const first = input.ohlcvData[0];
-    const last = input.ohlcvData[input.ohlcvData.length - 1];
-    return JSON.stringify([
-        input.symbol,
-        input.interval,
-        input.ohlcvData.length,
-        first?.time ?? null,
-        first?.open ?? null,
-        first?.close ?? null,
-        last?.time ?? null,
-        last?.open ?? null,
-        last?.close ?? null,
-    ]);
 }
 
 export interface ServerAssetIsSearchOutput {
@@ -221,6 +204,10 @@ export async function runServerAssetIsSearch(
     const parameterGenerationMs = performance.now() - parameterGenerationStartedAt;
 
     const rustBatchFeatureConfig = resolveAssetOpportunityRustBatchFeatureConfig();
+    const rustBatchDensityEligible = shouldUseRustAssetOpportunityBatch(
+        paramSets.length,
+        Number(options.assetOpportunity?.evalLastBars ?? 0),
+    );
     const rustBatchEligibility = resolveAssetOpportunityRustBatchEligibility({
         featureConfig: rustBatchFeatureConfig,
         useRustEnginePreference: input.useRustEnginePreference,
@@ -230,7 +217,7 @@ export async function runServerAssetIsSearch(
         exitStrategyCandidates: input.exitStrategyCandidates,
         dataFetcherPresent: input.dataFetcher !== undefined,
     });
-    if (rustBatchEligibility.eligible) {
+    if (rustBatchEligibility.eligible && rustBatchDensityEligible) {
         return runServerAssetIsSearchWithRustBatch({
             input,
             paramSets,
@@ -240,12 +227,23 @@ export async function runServerAssetIsSearch(
             parameterGenerationMs,
             rustBatchClient: input.rustBatchClient ?? rustEngine,
             rustBatchFeatureConfig,
+            ...(input.rustMultiAssetBatch ? { rustMultiAssetBatch: input.rustMultiAssetBatch } : {}),
             ...(input.rustBatchDatasetCache ? { rustBatchDatasetCache: input.rustBatchDatasetCache } : {}),
             setCurrentBacktestSettings: (nextSettings) => {
                 currentBacktestSettings = nextSettings;
             },
         });
     }
+    if (rustBatchEligibility.eligible && !rustBatchDensityEligible) {
+        debugLogger.event("finder.asset_opportunity.rust_batch.skipped_low_density", {
+            symbol: input.symbol,
+            candidateCount: paramSets.length,
+            dataBars: input.ohlcvData.length,
+        });
+    }
+    const executionUseRustEnginePreference = rustBatchEligibility.eligible && !rustBatchDensityEligible
+        ? false
+        : input.useRustEnginePreference;
 
     // Bounded top-K accumulation, mirroring the browser single-timeframe path
     // (FinderResultRanker). Keeping only the best `topN` candidates live means
@@ -369,7 +367,7 @@ export async function runServerAssetIsSearch(
                     ? { exitOverride: { key: exitStrategy.key, params: exitParams ?? {} } }
                     : {}),
                 ...(input.dataFetcher ? { dataFetcher: input.dataFetcher } : {}),
-                useRustEnginePreference: input.useRustEnginePreference,
+                useRustEnginePreference: executionUseRustEnginePreference,
                 // The caller has already supplied the historical closed
                 // window. Keep its array identity stable so prepared Finder
                 // data and executor-side caches can be reused per asset.
@@ -402,7 +400,7 @@ export async function runServerAssetIsSearch(
                         settings,
                         capitalSettings,
                         options,
-                        useRustEnginePreference: input.useRustEnginePreference,
+                        useRustEnginePreference: executionUseRustEnginePreference,
                         closedCandleDataOverride: input.fullSignalData,
                         needs: {
                             compact: false,
@@ -429,7 +427,9 @@ export async function runServerAssetIsSearch(
             if (output.engineUsed === "rust") rustCompletedRuns += 1;
             else {
                 typescriptCompletedRuns += 1;
-                const reason = output.engineDiagnostics?.typescriptReason ?? "TypeScript execution reason unavailable";
+                const reason = rustBatchEligibility.eligible && !rustBatchDensityEligible
+                    ? "Rust batch skipped: low candidate density"
+                    : output.engineDiagnostics?.typescriptReason ?? "TypeScript execution reason unavailable";
                 typescriptReasonCounts.set(reason, (typescriptReasonCounts.get(reason) ?? 0) + 1);
                 if (output.engineDiagnostics?.rustAttempted) rustFallbackRuns += 1;
             }
@@ -531,6 +531,7 @@ type RustBatchSearchInput = {
     requiresFullAnalytics: boolean;
     parameterGenerationMs: number;
     rustBatchClient: AssetOpportunityRustBatchClient;
+    rustMultiAssetBatch?: AssetOpportunityRustMultiBatchCoordinator;
     rustBatchFeatureConfig: ReturnType<typeof resolveAssetOpportunityRustBatchFeatureConfig>;
     rustBatchDatasetCache?: Map<string, Promise<string | null>>;
     setCurrentBacktestSettings: (settings: BacktestSettings) => void;
@@ -697,16 +698,78 @@ async function runServerAssetIsSearchWithRustBatch(
     const addTypescriptReason = (reason: string): void => {
         typescriptReasonCounts.set(reason, (typescriptReasonCounts.get(reason) ?? 0) + 1);
     };
+    const rustCandidates = preparedCandidates.filter((candidate) => candidate.signals.length > 0);
+    const noSignalCandidates = preparedCandidates.filter((candidate) => candidate.signals.length === 0);
 
-    if (preparedCandidates.length > 0 && !input.isCancelled()) {
-        const baseSettings = preparedCandidates[0]!.backtestSettings;
+    // Empty signal sets already have a cheap, authoritative TypeScript result.
+    // Keep them out of the Rust transport so the batch only spends engine time
+    // on candidates that actually require trade simulation.
+    for (const candidate of noSignalCandidates) {
+        if (input.isCancelled()) break;
+        try {
+            const output = await runAssetCandidateBacktest({
+                data: input.ohlcvData,
+                symbol: input.symbol,
+                interval: input.interval,
+                strategy: preparedStrategy,
+                strategyKey: selectedStrategy.key,
+                strategyParams: candidate.entryParams,
+                riskOverrideParams: candidate.entryParams,
+                settings,
+                capitalSettings,
+                options,
+                useRustEnginePreference: input.useRustEnginePreference,
+                closedCandleDataOverride: input.ohlcvData,
+                preGeneratedSignals: [],
+                needs: {
+                    compact: true,
+                    trades: false,
+                    fullAnalytics: requiresFullAnalytics,
+                    endpointSelection: "auto",
+                },
+            });
+            const selection = output.endpointSelection ?? buildSelectionResult(
+                output.result,
+                input.ohlcvData[input.ohlcvData.length - 1]?.time ?? null,
+                preResolvedCapital.initialCapital,
+            );
+            offer({
+                key: selectedStrategy.key,
+                name: selectedStrategy.name,
+                params: candidate.entryParams,
+                result: output.result,
+                selectionResult: selection.result,
+                endpointAdjusted: selection.adjusted,
+                endpointRemovedTrades: selection.removedTrades,
+            }, []);
+            candidateEvaluationsCompleted += 1;
+            typescriptCompletedRuns += 1;
+            addTypescriptReason("no signals required trade simulation");
+        } catch {
+            candidateEvaluationFailures += 1;
+        }
+    }
+
+    if (rustCandidates.length > 0 && !input.isCancelled()) {
+        const baseSettings = rustCandidates[0]!.backtestSettings;
         let cacheId: string | undefined;
         let cacheKey: string | undefined;
-        if (args.rustBatchDatasetCache && args.rustBatchClient.cacheData && args.rustBatchClient.runCachedBatchBacktestWithStatus) {
-            cacheKey = buildRustBatchDatasetCacheKey(input, args.rustBatchClient);
+        const rustDataset = args.rustMultiAssetBatch
+            ? input.fullSignalData ?? input.ohlcvData
+            : input.ohlcvData;
+        if (!args.rustMultiAssetBatch
+            && args.rustBatchDatasetCache
+            && args.rustBatchClient.cacheData
+            && args.rustBatchClient.runCachedBatchBacktestWithStatus) {
+            cacheKey = buildAssetOpportunityRustDatasetCacheKey({
+                symbol: input.symbol,
+                interval: input.interval,
+                data: rustDataset,
+                client: args.rustBatchClient,
+            });
             let cachePromise = args.rustBatchDatasetCache.get(cacheKey);
             if (!cachePromise) {
-                cachePromise = args.rustBatchClient.cacheData(input.ohlcvData, {
+                cachePromise = args.rustBatchClient.cacheData(rustDataset, {
                     signal: input.abortSignal,
                     maxRequestBytes: args.rustBatchFeatureConfig.maxRequestBytes,
                     maxResponseBytes: 1 * 1024 * 1024,
@@ -715,10 +778,15 @@ async function runServerAssetIsSearchWithRustBatch(
             }
             cacheId = (await cachePromise) ?? undefined;
         }
-        const dispatched = await dispatchAssetOpportunityRustBatch({
+        const dispatched = await (args.rustMultiAssetBatch
+            ? args.rustMultiAssetBatch.dispatchCandidate
+            : dispatchAssetOpportunityRustBatch)({
             client: args.rustBatchClient,
             data: input.ohlcvData,
-            items: preparedCandidates.map<AssetOpportunityRustBatchItem>((candidate) => ({
+            ...(args.rustMultiAssetBatch && input.fullSignalData
+                ? { cacheData: input.fullSignalData }
+                : {}),
+            items: rustCandidates.map<AssetOpportunityRustBatchItem>((candidate) => ({
                 id: candidate.id,
                 signals: candidate.signals,
                 settings: candidate.backtestSettings,
@@ -727,6 +795,7 @@ async function runServerAssetIsSearchWithRustBatch(
             positionSizePercent: capitalSettings.positionSize,
             commissionPercent: capitalSettings.commission,
             baseSettings,
+            lastDataTime: input.ohlcvData[input.ohlcvData.length - 1]?.time ?? null,
             sizing: {
                 mode: capitalSettings.sizingMode,
                 fixedTradeAmount: capitalSettings.fixedTradeAmount,
@@ -735,6 +804,9 @@ async function runServerAssetIsSearchWithRustBatch(
             maxRequestBytes: args.rustBatchFeatureConfig.maxRequestBytes,
             maxResponseBytes: args.rustBatchFeatureConfig.maxResponseBytes,
             ...(cacheId ? { cacheId } : {}),
+            ...(args.rustMultiAssetBatch && input.fullSignalData
+                ? { datasetEndIndex: input.ohlcvData.length }
+                : {}),
             signal: input.abortSignal,
         });
 
@@ -744,23 +816,30 @@ async function runServerAssetIsSearchWithRustBatch(
                 symbol: input.symbol,
                 status: dispatched.status,
                 requests: dispatched.requests,
-                items: preparedCandidates.length,
+                items: rustCandidates.length,
                 fallbackItems: 0,
                 requestBytes: dispatched.requestBytes,
                 latencyMs: Math.round(dispatched.latencyMs),
                 cachedDataset: Boolean(cacheId),
             });
-            rustAttemptedRuns += preparedCandidates.length;
-            rustCompletedRuns += preparedCandidates.length;
-            candidateEvaluationsCompleted += preparedCandidates.length;
-            for (const candidate of preparedCandidates) {
+            rustAttemptedRuns += rustCandidates.length;
+            rustCompletedRuns += rustCandidates.length;
+            candidateEvaluationsCompleted += rustCandidates.length;
+            for (const candidate of rustCandidates) {
                 const batchResult = dispatched.results.get(candidate.id);
                 if (!batchResult) continue;
-                const compact = normalizeAssetOpportunityRustCandidateResult(
-                    batchResult.result,
-                    input.ohlcvData[input.ohlcvData.length - 1]?.time ?? null,
-                    preResolvedCapital.initialCapital,
-                );
+                const compact = batchResult.selectionResult
+                    ? {
+                        result: batchResult.result,
+                        selectionResult: batchResult.selectionResult,
+                        endpointAdjusted: batchResult.endpointAdjusted === true,
+                        endpointRemovedTrades: batchResult.endpointRemovedTrades ?? 0,
+                    }
+                    : normalizeAssetOpportunityRustCandidateResult(
+                        batchResult.result,
+                        input.ohlcvData[input.ohlcvData.length - 1]?.time ?? null,
+                        preResolvedCapital.initialCapital,
+                    );
                 const finderResult: FinderResult = {
                     key: selectedStrategy.key,
                     name: selectedStrategy.name,
@@ -777,7 +856,7 @@ async function runServerAssetIsSearchWithRustBatch(
                 symbol: input.symbol,
                 status: dispatched.status,
                 requests: dispatched.requests,
-                items: preparedCandidates.length,
+                items: rustCandidates.length,
                 fallbackItems: 0,
                 requestBytes: dispatched.requestBytes,
                 latencyMs: Math.round(dispatched.latencyMs),
@@ -793,15 +872,15 @@ async function runServerAssetIsSearchWithRustBatch(
                 symbol: input.symbol,
                 status: dispatched.status,
                 requests: dispatched.requests,
-                items: preparedCandidates.length,
-                fallbackItems: preparedCandidates.length,
+                items: rustCandidates.length,
+                fallbackItems: rustCandidates.length,
                 requestBytes: dispatched.requestBytes,
                 latencyMs: Math.round(dispatched.latencyMs),
                 reason: dispatched.reason,
                 cachedDataset: Boolean(cacheId),
             });
             const reason = `Rust batch fallback: ${dispatched.reason}`;
-            for (const candidate of preparedCandidates) {
+            for (const candidate of rustCandidates) {
                 if (input.isCancelled()) break;
                 rustAttemptedRuns += 1;
                 rustFallbackRuns += 1;

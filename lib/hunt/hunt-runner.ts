@@ -8,7 +8,7 @@ import { runFinderExecution, type FinderSelectedStrategy } from "../finder/finde
 import { resolveBacktestSettingsFromRaw } from "../backtest-settings-resolver";
 import { createTaskYielder } from "../task-yield";
 import type { OHLCVData } from "../types/index";
-import { isSmartTradeSizingMode } from "../types/backtest";
+import { isRustSupportedTradeSizingMode } from "../types/backtest";
 import type { FinderOptions, FinderMetric } from "../types/finder";
 import { buildHuntFinderOptions, getHuntPrimaryMetric, groupHuntSurvivors, sortHuntProfileResults, tagProfileResults } from "./hunt-results";
 import {
@@ -204,7 +204,7 @@ export function createHuntRunController(
                     });
                     const requiresTsEngine =
                         backtestService.requiresTypescriptEngine(backtestSettings)
-                        || isSmartTradeSizingMode(capitalSettings.sizingMode);
+                        || !isRustSupportedTradeSizingMode(capitalSettings.sizingMode);
 
                     const finderStart = performance.now();
 

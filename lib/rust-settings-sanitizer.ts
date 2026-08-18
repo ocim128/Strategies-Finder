@@ -3,7 +3,6 @@ import { isSameEventPolymarketExitMode } from "./polymarket-exit-mode";
 
 export function getTypescriptEngineRequirementReasons(settings: BacktestSettings): string[] {
     const executionModel = settings.executionModel ?? 'signal_close';
-    const allowSameBarExit = false;
     const slippageBps = settings.slippageBps ?? 0;
     const marketMode = 'all';
 
@@ -46,7 +45,6 @@ export function getTypescriptEngineRequirementReasons(settings: BacktestSettings
     const reasons: string[] = [];
     if (executionModel !== 'signal_close') reasons.push('execution model is not signal_close');
     if (slippageBps > 0) reasons.push('slippage is enabled');
-    if (!allowSameBarExit) reasons.push('same-bar exits are disabled');
     if (usesCombinedDirection) reasons.push('combined trade direction is enabled');
     if (usesNonAllMarketMode) reasons.push('market-mode filtering is enabled');
     if (usesRiskMaxHold) reasons.push('maximum hold bars are enabled');
@@ -79,7 +77,6 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "pathExitMinSamples",
     "pathExitHorizonBars",
     "executionModel",
-    "allowSameBarExit",
     "slippageBps",
     "maxOpenTrades",
     "marketMode",

@@ -17,7 +17,7 @@ import type {
     StrategyParams,
     Polymarket1sRuntimeContext,
 } from "./types/strategies";
-import { isSmartTradeSizingMode, type CapitalSettings } from "./types/backtest";
+import { isRustSupportedTradeSizingMode, type CapitalSettings } from "./types/backtest";
 import { selectExecutionAwareClosedCandles } from "./alert-evaluation-window";
 import { resolveCapitalSettingsFromRaw } from "./backtest-capital-settings";
 import type { BacktestExecutionContext } from "./backtest-endpoint-contract";
@@ -436,7 +436,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     const resolvedCapital = req.preResolvedCapital ?? resolveCapitalSettingsFromRaw(capitalSettings as Record<string, unknown>);
 
     const typescriptRequirementReasons = getTypescriptEngineRequirementReasons(resolvedSettings);
-    if (isSmartTradeSizingMode(resolvedCapital.sizingMode)) {
+    if (!isRustSupportedTradeSizingMode(resolvedCapital.sizingMode)) {
         typescriptRequirementReasons.push(`${resolvedCapital.sizingMode} position sizing requires TypeScript`);
     }
     const requireTs = typescriptRequirementReasons.length > 0;
@@ -555,7 +555,7 @@ export async function executeBacktestFromSignals(
     let filteredSignals = signals;
     filteredSignals = filterSignalsByBlockRange(filteredSignals, blockRange);
 
-    const requireTs = requiresTypescriptEngine(resolvedSettings) || isSmartTradeSizingMode(resolvedCapital.sizingMode);
+    const requireTs = requiresTypescriptEngine(resolvedSettings) || !isRustSupportedTradeSizingMode(resolvedCapital.sizingMode);
     if (shouldAttemptRust(context.engineMode ?? "auto", requireTs, context.useRustEnginePreference)) {
         const rustResult = await tryRustBacktest(
             backtestData,

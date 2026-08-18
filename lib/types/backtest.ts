@@ -168,6 +168,14 @@ export function isSmartTradeSizingMode(mode: TradeSizingMode): boolean {
     return mode !== 'percent' && mode !== 'fixed';
 }
 
+/**
+ * Sizing modes whose trade-by-trade semantics are implemented by the Rust
+ * executor. Other smart modes depend on TypeScript-only rolling state.
+ */
+export function isRustSupportedTradeSizingMode(mode: TradeSizingMode): boolean {
+    return mode === 'percent' || mode === 'fixed' || mode === 'kelly_criterion';
+}
+
 export function isDirectFractionTradeSizingMode(mode: TradeSizingMode): boolean {
     return mode === 'kelly_criterion' || mode === 'optimal_f' || mode === 'secure_f';
 }

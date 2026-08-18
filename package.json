@@ -7,6 +7,7 @@
     "test:e2e": "esno tests/e2e.spec.ts",
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
+    "benchmark:engines": "esno scripts/engine-benchmark.ts",
     "verify": "npm run typecheck && npm run typecheck:tests && npm run test",
     "ci": "npm run verify && npm run build:check",
     "genetic:hunt": "esno scripts/genetic-hunt.ts",

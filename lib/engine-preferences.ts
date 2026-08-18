@@ -1,11 +1,10 @@
 export type EnginePreference = 'rust' | 'typescript';
 
 export const ENGINE_TOGGLE_ID = 'useRustEngineToggle';
-// Default to 'typescript': the Rust server is not bundled with this repo and
-// is not configured by .env.example. Users who run an external Rust engine on
-// 127.0.0.1:3030 can opt in via the UI toggle; fresh installs no longer probe
-// a server that is not there.
-const DEFAULT_ENGINE_PREFERENCE: EnginePreference = 'typescript';
+// Rust is the default acceleration path when the local service is available.
+// Every call still falls back to TypeScript if the service is unavailable, and
+// the UI toggle remains the explicit opt-out.
+const DEFAULT_ENGINE_PREFERENCE: EnginePreference = 'rust';
 
 export function getEnginePreference(): EnginePreference {
     const toggle = document.getElementById(ENGINE_TOGGLE_ID) as HTMLInputElement | null;

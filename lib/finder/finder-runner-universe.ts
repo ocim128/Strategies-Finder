@@ -9,7 +9,7 @@ import {
 } from "../rust-settings-sanitizer";
 import { createSeededRandom } from "../param-math-utils";
 import { SHARPE_MIN_SAMPLES } from "../strategies/performance-metrics";
-import { isSmartTradeSizingMode, type CapitalSettings } from "../types/backtest";
+import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../types/backtest";
 import type {
     FinderOptions,
     FinderDiagnostics,
@@ -847,7 +847,7 @@ export async function runFinderUniverseExecution(
             input.interval,
         );
         const typescriptRequirementReasons = getTypescriptEngineRequirementReasons(preResolvedSettings);
-        if (isSmartTradeSizingMode(preResolvedCapital.sizingMode)) {
+        if (!isRustSupportedTradeSizingMode(preResolvedCapital.sizingMode)) {
             typescriptRequirementReasons.push(`${preResolvedCapital.sizingMode} position sizing requires TypeScript`);
         }
 

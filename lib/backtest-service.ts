@@ -30,7 +30,7 @@ import {
     resolveBacktestSettingsFromRaw
 } from "./backtest-settings-resolver";
 import { resolveSubscriptionExecutionBacktestSettings } from "./alert-subscription-utils";
-import { isSmartTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
+import { isRustSupportedTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
 import {
     createDomBacktestRunHandle,
     delayBacktestUi,
@@ -701,7 +701,7 @@ export class BacktestService {
     }
 
     private requiresTypescriptSizingMode(sizingMode: TradeSizingMode): boolean {
-        return isSmartTradeSizingMode(sizingMode);
+        return !isRustSupportedTradeSizingMode(sizingMode);
     }
 
     private resolveSubscriptionCapitalSettings(backtestSettings: BacktestSettings): CapitalSettings {

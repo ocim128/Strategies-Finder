@@ -296,7 +296,10 @@ describe("Finder universe runner", () => {
                 rustRequested: false,
                 rustCompletedRuns: 0,
                 typescriptCompletedRuns: 3,
-                typescriptReasons: [{ reason: "same-bar exits are disabled", runs: 3 }],
+                typescriptReasons: [
+                    { reason: "Rust was not requested", runs: 2 },
+                    { reason: "no signals required trade simulation", runs: 1 },
+                ],
             },
             failedSymbols: [{ symbol: "MISSING", reason: "Dataset missing" }],
         });

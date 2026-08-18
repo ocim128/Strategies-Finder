@@ -109,7 +109,7 @@ import type {
 	FinderUniverseCandidate,
 	FinderUniverseMetric,
 } from './types/finder';
-import { isSmartTradeSizingMode, type CapitalSettings } from "./types/backtest";
+import { isRustSupportedTradeSizingMode, type CapitalSettings } from "./types/backtest";
 import type { BacktestSettings } from "./types/strategies";
 
 const QUOTE_SUFFIXES = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'BRL'];
@@ -1990,7 +1990,7 @@ export class FinderManager {
 
 		const capitalSettings = backtestService.getCapitalSettings();
 		const settings = backtestService.getBacktestSettings();
-		const requiresTsEngine = backtestService.requiresTypescriptEngine(settings) || isSmartTradeSizingMode(capitalSettings.sizingMode);
+		const requiresTsEngine = backtestService.requiresTypescriptEngine(settings) || !isRustSupportedTradeSizingMode(capitalSettings.sizingMode);
 
 		const blockSlicedData = sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
 		const windowSlicedData = sliceFinderDataWindow(blockSlicedData, options.dataSlice ?? "all");

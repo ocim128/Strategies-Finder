@@ -94,6 +94,7 @@ import {
     normalizeFinderAssetOosIgnoreLastBars,
 } from "./finder-asset-opportunity-oos";
 import { parseTimeToUnixSeconds } from "../time-normalization";
+import { timeKey } from "../strategies/backtest/backtest-utils";
 import { debugLogger } from "../debug-logger";
 import type { AssetOpportunitySignalCache } from "./finder-asset-opportunity-search-cache";
 
@@ -104,6 +105,82 @@ import type { AssetOpportunitySignalCache } from "./finder-asset-opportunity-sea
  * Rust-worker / heap spike. Indexed results keep output order identical.
  */
 const ASSET_FRESH_RECHECK_CONCURRENCY = 6;
+
+const FRESH_SIGNAL_WARMUP_MIN_BARS = 64;
+const FRESH_SIGNAL_WARMUP_MAX_BARS = 2_048;
+
+function resolveFreshSignalWarmupBars(
+    candidates: readonly FinderResult[],
+    settings: BacktestSettings,
+): number {
+    let largestPeriod = 0;
+    const periodLikeKey = /(period|lookback|bars|length|window|horizon|lag|slow|fast)/i;
+    const inspect = (values: Record<string, unknown>): void => {
+        for (const [key, value] of Object.entries(values)) {
+            if (!periodLikeKey.test(key)) continue;
+            const numeric = Number(value);
+            if (Number.isFinite(numeric)) largestPeriod = Math.max(largestPeriod, Math.abs(numeric));
+        }
+    };
+    inspect(settings as unknown as Record<string, unknown>);
+    for (const candidate of candidates) inspect(candidate.params);
+    return Math.min(
+        FRESH_SIGNAL_WARMUP_MAX_BARS,
+        Math.max(FRESH_SIGNAL_WARMUP_MIN_BARS, Math.ceil(largestPeriod * 3)),
+    );
+}
+
+/**
+ * Build the smallest useful signal-generation window for a bounded Asset
+ * Opportunity evaluation. The boundary data remains full-sized for Rust
+ * replay; only TypeScript strategy signal generation is shortened. The
+ * warmup is deliberately conservative because Strategy has no universal
+ * lookback contract and several built-ins use EMA/rolling state.
+ */
+function resolveFreshSignalWindow(args: {
+    boundaryData: OHLCVData[];
+    slicedHistorical: OHLCVData[];
+    evalLastBars: number;
+    dataSlice: FinderOptions["dataSlice"];
+    candidates: readonly FinderResult[];
+    settings: BacktestSettings;
+    crossSymbol: boolean;
+    batchAvailable: boolean;
+}): OHLCVData[] | undefined {
+    if (
+        args.evalLastBars <= 0
+        || args.dataSlice !== "all"
+        || args.crossSymbol
+        || args.boundaryData.length <= args.slicedHistorical.length
+        || !args.batchAvailable
+    ) {
+        return undefined;
+    }
+    const signalWindowBars = args.evalLastBars + resolveFreshSignalWarmupBars(args.candidates, args.settings);
+    if (signalWindowBars >= args.boundaryData.length) return undefined;
+    return args.boundaryData.slice(-signalWindowBars);
+}
+
+/**
+ * Strategy signal barIndex values are local to the shortened signal window.
+ * Rust and the fresh detector consume the full boundary timeline, so align
+ * them by timestamp before the signals leave the TypeScript process.
+ */
+function alignSignalsToBoundary(
+    signals: readonly Signal[],
+    boundaryData: readonly OHLCVData[],
+): Signal[] {
+    const indexByTime = new Map<string, number>();
+    for (let index = 0; index < boundaryData.length; index += 1) {
+        indexByTime.set(timeKey(boundaryData[index]!.time), index);
+    }
+    return signals.flatMap((signal) => {
+        const barIndex = indexByTime.get(timeKey(signal.time));
+        return barIndex === undefined
+            ? []
+            : [{ ...signal, barIndex }];
+    });
+}
 
 /**
  * The in-sample search seam. Production wires the existing browser
@@ -171,6 +248,7 @@ export interface AssetOpportunitySearchDiagnostics {
     dataBars: number;
     historicalBars: number;
     slicedHistoricalBars: number;
+    freshSignalWindowBars: number;
     oosBars: number;
     candidatesEvaluated: number;
     candidateEvaluationsAttempted: number;
@@ -221,6 +299,39 @@ export interface AssetOpportunityAssetInput {
     precomputedFullClosed?: OHLCVData[];
 }
 
+export interface AssetOpportunityFreshEntryBatchCandidate {
+    id: string;
+    signals: Signal[];
+    backtestSettings: BacktestSettings;
+}
+
+export interface AssetOpportunityFreshEntryBatchInput {
+    data: OHLCVData[];
+    /** Optional full prefix source already cached by the candidate batch. */
+    cacheData?: OHLCVData[];
+    datasetEndIndex?: number;
+    symbol: string;
+    interval: string;
+    settings: BacktestSettings;
+    capitalSettings: CapitalSettings;
+    options: FinderOptions;
+    selectedStrategy: FinderSelectedStrategy;
+    exitStrategyCandidates?: FinderSelectedStrategy[];
+    dataFetcher?: CrossSymbolDataFetcher;
+    useRustEnginePreference?: boolean;
+    candidates: AssetOpportunityFreshEntryBatchCandidate[];
+}
+
+export interface AssetOpportunityFreshEntryBatchEvaluation {
+    result: BacktestResult;
+    engineUsed: "rust";
+    rustAttempted: true;
+}
+
+export type AssetOpportunityFreshEntryBatchExecutor = (
+    input: AssetOpportunityFreshEntryBatchInput,
+) => Promise<Map<string, AssetOpportunityFreshEntryBatchEvaluation> | null>;
+
 /**
  * The full per-run input.
  */
@@ -248,8 +359,12 @@ export interface AssetOpportunityRunInput {
     dataFetcher?: CrossSymbolDataFetcher;
     /** Matches the server's explicit Rust preference for replay execution. */
     useRustEnginePreference?: boolean;
+    /** Optional engine override for the non-batched fresh-entry replay. */
+    freshEntryUseRustEnginePreference?: boolean;
     /** Worker-local cache for full-series signals reused across batch holdouts. */
     signalCache?: AssetOpportunitySignalCache;
+    /** Optional server-side batch executor for signal_close fresh rechecks. */
+    freshEntryBatch?: AssetOpportunityFreshEntryBatchExecutor;
     /** Recompute full scalar analytics once for the selected winner. */
     recomputeWinnerAnalytics?: boolean;
     /** Asset list (each independently searched). */
@@ -591,6 +706,7 @@ async function searchOneAsset(args: {
         dataBars: asset.data.length,
         historicalBars: 0,
         slicedHistoricalBars: 0,
+        freshSignalWindowBars: 0,
         oosBars: 0,
         candidatesEvaluated: 0,
         candidateEvaluationsAttempted: 0,
@@ -663,12 +779,13 @@ async function searchOneAsset(args: {
     const visibleValidationData = oosIgnoreLastBars > 0
         ? fullClosed.slice(0, -oosIgnoreLastBars)
         : fullClosed;
-    // Signal reuse for fresh-entry detection is only parity-safe for
+    // Retained-signal reuse for fresh-entry detection is only parity-safe for
     // non-`signal_close` execution models: their recheck runs `signalsOnly`,
     // so `detectFreshEntry` sees an empty-trades result that the retained
     // in-sample signals reproduce exactly. A `signal_close` recheck instead
     // needs the re-simulated trade list (the compact in-sample fast path
-    // drops trades), so `signal_close` keeps re-executing the recheck — and
+    // drops trades), so `signal_close` still uses the Rust fresh batch path
+    // or the full-data TypeScript fallback — and
     // keeps the application candle out of the search window, since including
     // it only exists to enable reuse.
     const executionModel = input.settings.executionModel ?? "signal_close";
@@ -737,9 +854,9 @@ async function searchOneAsset(args: {
     // skipped. Any other data slice shifts the window boundaries, so the
     // recheck must re-run on the full boundary data.
     const recheckData = oosIgnoreLastBars > 0 ? visibleValidationData : fullClosed;
-    const canReuseIsSignalsForFresh = canReuseIsSignalsForFreshModel
-        && (input.options.dataSlice ?? "all") === "all"
+    const canReuseFreshSignals = (input.options.dataSlice ?? "all") === "all"
         && recheckData.length === slicedHistorical.length;
+    const canReuseIsSignalsForFresh = canReuseIsSignalsForFreshModel && canReuseFreshSignals;
 
     // 5. Run the in-sample search on the historical window. The `runIsSearch`
     // seam decouples this leaf from the browser-bound `finder-runner` module.
@@ -756,8 +873,9 @@ async function searchOneAsset(args: {
         generateParamSets: input.generateParamSets,
         isCancelled: callbacks.isCancelled,
         yieldControl: callbacks.yieldControl,
-        retainSignals: canReuseIsSignalsForFresh,
-        ...(input.signalCache ? { fullSignalData: fullClosed, signalCache: input.signalCache } : {}),
+        retainSignals: canReuseFreshSignals,
+        fullSignalData: fullClosed,
+        ...(input.signalCache ? { signalCache: input.signalCache } : {}),
     });
     diagnostics.timingsMs.inSampleSearch = performance.now() - inSampleStartedAt;
     diagnostics.candidatesEvaluated = finderOutput.totalCandidatesEvaluated ?? finderOutput.results.length;
@@ -788,6 +906,24 @@ async function searchOneAsset(args: {
         return finish({ kind: "no_fresh_entry", symbol, candidatesEvaluated: totalCandidatesEvaluated, bestHistoricalRank: null });
     }
 
+    // With an explicit recency-bounded evaluation, the historical ranking
+    // window is intentionally shorter than the visible boundary. Generate
+    // fresh signals on that recent window plus conservative indicator warmup,
+    // then replay those signals across the full boundary in Rust. Cross-symbol
+    // strategies stay on the exact full-data path because their secondary
+    // alignment has no equivalent bounded-window contract.
+    const freshSignalData = resolveFreshSignalWindow({
+        boundaryData: recheckData,
+        slicedHistorical,
+        evalLastBars,
+        dataSlice: input.options.dataSlice ?? "all",
+        candidates: topK,
+        settings: input.settings,
+        crossSymbol: Boolean(input.dataFetcher || selectedStrategy.strategy.crossSymbolConfig),
+        batchAvailable: Boolean(input.freshEntryBatch && executionModel === "signal_close"),
+    });
+    diagnostics.freshSignalWindowBars = freshSignalData?.length ?? 0;
+
     // 7. Re-generate signals for each top-K candidate on the visible boundary
     // data. In validation mode this ends before the hidden OOS window; with no
     // holdout it retains the normal full-closed application-candle behavior.
@@ -795,9 +931,112 @@ async function searchOneAsset(args: {
     // `canReuseIsSignalsForFresh`), the in-sample run's retained signals are
     // reused instead of re-executing every candidate on the same bars.
     const freshStartedAt = performance.now();
-    const retainedSignals = canReuseIsSignalsForFresh && finderOutput.signalsByCandidate
+    const retainedFreshSignals = canReuseFreshSignals && finderOutput.signalsByCandidate
         ? eligibleCandidateIndexes.map((index) => finderOutput.signalsByCandidate![index] ?? [])
         : undefined;
+    const retainedSignals = canReuseIsSignalsForFresh ? retainedFreshSignals : undefined;
+    let batchedFreshEvaluations: AssetFreshEvaluation[] | null = null;
+    if (!retainedSignals && input.freshEntryBatch && executionModel === "signal_close") {
+        try {
+            const preparedFreshCandidates = await mapWithConcurrencyLimit(
+                topK,
+                ASSET_FRESH_RECHECK_CONCURRENCY,
+                async (candidate, candidateIndex) => {
+                    if (callbacks.isCancelled()) throw new Error("Finder stopped.");
+                    const combinedParams = withExitStrategyBaseParams(
+                        candidate.params,
+                        candidate.exitStrategyParams ?? {},
+                    );
+                    const exitStrategy = candidate.exitStrategyKey
+                        ? input.exitStrategyCandidates?.find((selection) => selection.key === candidate.exitStrategyKey)?.strategy
+                        : undefined;
+                    const normalizedParams = normalizeFinderCandidateParams(
+                        preparedStrategy,
+                        combinedParams,
+                        exitStrategy?.normalizeParams
+                            ? { normalizeExitParams: exitStrategy.normalizeParams }
+                            : undefined,
+                    );
+                    const output = await runAssetCandidateBacktest({
+                        strategy: preparedStrategy,
+                        strategyKey: candidate.key,
+                        strategyParams: candidate.params,
+                        data: freshSignalData ?? recheckData,
+                        symbol,
+                        interval: input.interval,
+                        settings: input.settings,
+                        capitalSettings: input.capitalSettings,
+                        options: assetOptions,
+                        riskOverrideParams: normalizedParams,
+                        ...(candidate.exitStrategyKey
+                            ? {
+                                exitOverride: {
+                                    key: candidate.exitStrategyKey,
+                                    params: candidate.exitStrategyParams ?? {},
+                                },
+                            }
+                            : {}),
+                        dataFetcher: input.dataFetcher,
+                        useRustEnginePreference: input.useRustEnginePreference,
+                        closedCandleDataOverride: freshSignalData ?? recheckData,
+                        ...(retainedFreshSignals
+                            ? { preGeneratedSignals: retainedFreshSignals[candidateIndex] ?? [] }
+                            : {}),
+                        needs: {
+                            compact: false,
+                            trades: false,
+                            fullAnalytics: false,
+                            signalsOnly: true,
+                            endpointSelection: false,
+                        },
+                    });
+                    return {
+                        id: `fresh-entry:${candidateIndex}`,
+                        signals: freshSignalData
+                            ? alignSignalsToBoundary(output.signals, recheckData)
+                            : output.signals,
+                        backtestSettings: output.backtestSettings,
+                    } satisfies AssetOpportunityFreshEntryBatchCandidate;
+                },
+            );
+            const batchResults = await input.freshEntryBatch({
+                data: recheckData,
+                ...(fullClosed.length >= recheckData.length
+                    ? { cacheData: fullClosed, datasetEndIndex: recheckData.length }
+                    : {}),
+                symbol,
+                interval: input.interval,
+                settings: input.settings,
+                capitalSettings: input.capitalSettings,
+                options: assetOptions,
+                selectedStrategy,
+                exitStrategyCandidates: input.exitStrategyCandidates,
+                dataFetcher: input.dataFetcher,
+                useRustEnginePreference: input.useRustEnginePreference,
+                candidates: preparedFreshCandidates,
+            });
+            if (batchResults) {
+                batchedFreshEvaluations = preparedFreshCandidates.map((prepared) => {
+                    const evaluation = batchResults.get(prepared.id);
+                    if (!evaluation) throw new Error(`Rust fresh batch omitted ${prepared.id}`);
+                    return buildFreshEntryEvaluation({
+                        result: evaluation.result,
+                        candles: recheckData,
+                        settings: input.settings,
+                        signals: prepared.signals,
+                        engineUsed: evaluation.engineUsed,
+                        rustAttempted: evaluation.rustAttempted,
+                    });
+                });
+            }
+        } catch (error) {
+            if (callbacks.isCancelled()) throw error;
+            debugLogger.warn("finder.asset_opportunity.fresh_batch_fallback", {
+                symbol,
+                reason: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
     const freshEvaluations: AssetFreshEvaluation[] = retainedSignals
         ? topK.map((_candidate, candidateIndex) => detectFreshFromRetainedSignals({
             signals: retainedSignals[candidateIndex] ?? [],
@@ -808,7 +1047,8 @@ async function searchOneAsset(args: {
         // one per pool candidate (50). Indexed result storage keeps the
         // output order identical to the old Promise.all path. Cancellation is
         // checked between tasks so Stop does not drain the whole pool.
-        : await mapWithConcurrencyLimit(
+        : batchedFreshEvaluations
+            ?? await mapWithConcurrencyLimit(
             topK,
             ASSET_FRESH_RECHECK_CONCURRENCY,
             (candidate) => {
@@ -826,7 +1066,8 @@ async function searchOneAsset(args: {
                     options: assetOptions,
                     exitStrategyCandidates: input.exitStrategyCandidates,
                     dataFetcher: input.dataFetcher,
-                    useRustEnginePreference: input.useRustEnginePreference,
+                    useRustEnginePreference: input.freshEntryUseRustEnginePreference
+                        ?? input.useRustEnginePreference,
                 });
             },
         );
@@ -1135,6 +1376,45 @@ function detectFreshFromRetainedSignals(args: {
         engineUsed: "typescript",
         rustAttempted: false,
         signalsReused: true,
+    };
+}
+
+function buildFreshEntryEvaluation(args: {
+    result: BacktestResult;
+    candles: OHLCVData[];
+    settings: BacktestSettings;
+    signals: Signal[];
+    engineUsed: "rust" | "typescript";
+    rustAttempted: boolean;
+    typescriptReason?: string;
+}): AssetFreshEvaluation {
+    const detected = detectFreshEntry({
+        result: args.result,
+        candles: args.candles,
+        settings: args.settings,
+        signals: args.signals,
+        freshnessBars: resolveAssetOpportunityFreshnessBars(args.settings),
+    });
+    return {
+        freshStatus: detected.freshStatus,
+        direction: detected.direction,
+        latestSignalTime: detected.latestSignalTime,
+        signalAgeBars: detected.signalAgeBars,
+        fillTiming: detected.fillTiming ?? "signal_close",
+        isOpen: detected.isOpen,
+        latestTradeEntryTime: detected.latestTrade
+            ? parseTimeToUnixSeconds(detected.latestTrade.entryTime)
+            : null,
+        latestSignalPrice: resolveLatestSignalPrice({
+            signals: args.signals,
+            candle: args.candles[args.candles.length - 1]!,
+            direction: detected.direction,
+            signalTime: detected.latestSignalTime,
+            fallback: detected.latestTrade?.entryPrice ?? null,
+        }),
+        engineUsed: args.engineUsed,
+        rustAttempted: args.rustAttempted,
+        ...(args.typescriptReason ? { typescriptReason: args.typescriptReason } : {}),
     };
 }
 

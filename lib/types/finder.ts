@@ -805,6 +805,7 @@ export interface FinderAssetOpportunityDiagnostics {
         dataBars: number;
         historicalBars: number;
         slicedHistoricalBars: number;
+        freshSignalWindowBars: number;
         oosBars: number;
         dataLoadingMs: number;
         candidatesEvaluated: number;

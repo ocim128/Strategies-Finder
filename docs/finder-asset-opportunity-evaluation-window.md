@@ -69,10 +69,11 @@ Properties:
   search window when `dataSlice === "all"` and there is no holdout. With N active it must NOT: the candle
   would be folded in and then re-captured by `.slice(-N)`, leaking the application candle into the search
   window. Extend the guard with `&& (input.options.assetOpportunity?.evalLastBars ?? 0) === 0`.
-- **Fresh-entry recheck unchanged**: `canReuseIsSignalsForFresh` (`finder-asset-opportunity-runner.ts:716`)
-  compares window lengths, so a shrunk window automatically takes the existing re-execute path (already the
-  behavior for non-`all` fraction slices). The recheck itself still runs on the full boundary data — recent
-  performance is bounded, but the live signal is still detected on the newest *visible* candle.
+- **Fresh-entry boundary is preserved**: Rust trade replay and fresh detection still use the full visible
+  boundary data. When `evalLastBars > 0`, `signal_close` fresh-entry signal generation uses the recent
+  evaluation window plus conservative indicator warmup, then remaps signal timestamps to the full boundary
+  before the Rust batch call. The per-asset diagnostic `freshSignalWindowBars` reports the shortened signal
+  input. If the Rust batch is unavailable, the existing full-data TypeScript fallback remains authoritative.
 - **OOS holdout composition**: with M > 0 the hidden bars remain the fixed OOS holdout; N only narrows the IS
   window before the gap. The batch holdout sweep rebuilds the `assetOpportunity` block per iteration
   (`buildIterationOptions` in `lib/finder/server/finder-vite-plugin.ts`), so the field must be listed there
@@ -143,8 +144,9 @@ cannot leak into the search; diagnostics and the JSONL run log record the settin
 
 - Missing the application-candle guard would silently include the live candle in ranking — the highest-risk
   detail of this feature; locked by a dedicated spec case.
-- Fresh-entry recheck cost: with N active and no gap, signal reuse is disabled and every top-K candidate
-  re-executes the recheck (the existing slow path for non-`all` slices). Accepted; noted under Performance.
+- Fresh-entry signal generation is bounded when N is active and Rust fresh batching is available; the full
+  boundary remains the source of truth for Rust trade replay and final detection. The full-data TypeScript
+  fallback is retained for transport failure or unsupported settings.
 
 **Deliverables**: window-capped search, guard fix, run-log field.
 

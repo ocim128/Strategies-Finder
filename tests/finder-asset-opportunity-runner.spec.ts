@@ -361,8 +361,54 @@ describe("Asset Opportunity runner", () => {
         expect(diagnostics!.timingsMs.total).to.be.at.least(0);
         expect(diagnostics!.engineUsage.typescriptCompletedRuns).to.be.at.least(1);
         expect(diagnostics!.engineUsage.typescriptReasons.map((entry) => entry.reason)).to.include(
-            "same-bar exits are disabled",
+            "Rust was not requested",
         );
+    });
+
+    it("uses the server fresh-entry batch result for signal_close rechecks", async () => {
+        const strategy: Strategy = {
+            name: "Fresh Batch Test",
+            description: "enters on the latest bar",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                const latest = data[data.length - 1];
+                return latest
+                    ? [{ time: latest.time, type: "buy", price: latest.close }]
+                    : [];
+            },
+        };
+        let batchCalls = 0;
+        const output = await runAssetOpportunitySearch(
+            makeInput({
+                selectedStrategy: { key: "fresh_batch", name: strategy.name, strategy },
+                assets: [{ symbol: "BATCH", data: makeCandles([100, 101, 102, 103, 104]) }],
+                freshEntryBatch: async (batchInput) => {
+                    batchCalls += 1;
+                    expect(batchInput.candidates).to.have.length(1);
+                    const evaluations = new Map();
+                    for (const candidate of batchInput.candidates) {
+                        evaluations.set(candidate.id, {
+                            result: runBacktestForAssetTest(
+                                batchInput.data,
+                                candidate.signals,
+                                batchInput.settings,
+                            ),
+                            signals: candidate.signals,
+                            engineUsed: "rust" as const,
+                            rustAttempted: true as const,
+                        });
+                    }
+                    return evaluations;
+                },
+            }),
+            makeCallbacks(),
+        );
+        expect(batchCalls).to.equal(1);
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.freshStatus).to.equal("fresh");
+        expect(output.outcomes[0]!.diagnostics?.engineUsage.rustCompletedRuns).to.equal(1);
+        expect(output.outcomes[0]!.diagnostics?.engineUsage.typescriptCompletedRuns).to.equal(0);
     });
 
     it("recognizes a latest next_open signal before the next-bar fill exists", async () => {
@@ -979,6 +1025,101 @@ describe("Asset Opportunity runner", () => {
         expect(output.results).to.have.length(1);
         expect(output.results[0]!.freshStatus).to.equal("fresh");
         expect(output.results[0]!.latestSignalTime).to.equal(candles[candles.length - 1]!.time);
+    });
+
+    it("reuses signal_close signals for a fixed holdout while still replaying Rust trades", async () => {
+        const candles = makeCandles([100, 101, 102, 103, 104, 105, 106, 107]);
+        let executeCalls = 0;
+        let retainSignalsRequested = false;
+        let freshBatchCalls = 0;
+        const strategy: Strategy = {
+            name: "SignalCloseHoldoutReuse",
+            description: "enters on the visible boundary",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                executeCalls += 1;
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy" as const, price: latest.close }] : [];
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({ assetOpportunity: { oosIgnoreLastBars: 2 } as FinderAssetOpportunityOptions }),
+            selectedStrategy: { key: "signal_close_holdout_reuse", name: strategy.name, strategy },
+            assets: [{ symbol: "SC_HOLDOUT_REUSE", data: candles }],
+            runIsSearch: async (args) => {
+                retainSignalsRequested = args.retainSignals === true;
+                return makeRetainingStubIsSearch()(args);
+            },
+            freshEntryBatch: async (batchInput) => {
+                freshBatchCalls += 1;
+                expect(batchInput.candidates[0]?.signals.length).to.be.greaterThan(0);
+                return new Map(batchInput.candidates.map((candidate) => [candidate.id, {
+                    result: runBacktestForAssetTest(batchInput.data, candidate.signals, settings),
+                    signals: candidate.signals,
+                    engineUsed: "rust" as const,
+                    rustAttempted: true,
+                }]));
+            },
+        }), makeCallbacks());
+
+        expect(retainSignalsRequested).to.equal(true);
+        expect(freshBatchCalls).to.equal(1);
+        expect(executeCalls, "the strategy is generated once in IS and not regenerated for the recheck")
+            .to.equal(1);
+        expect(output.outcomes[0]!.diagnostics?.freshEntryRechecks).to.equal(1);
+    });
+
+    it("bounds fresh signal generation for eval windows and remaps signal indices", async () => {
+        const candles = makeCandles(Array.from({ length: 100 }, (_, index) => 100 + index));
+        const signalInputLengths: number[] = [];
+        let freshBatchDataLength = 0;
+        let freshSignalBarIndex = -1;
+        const strategy: Strategy = {
+            name: "BoundedFreshSignal",
+            description: "enters on the latest bar",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                signalInputLengths.push(data.length);
+                const latest = data[data.length - 1];
+                return latest
+                    ? [{ time: latest.time, type: "buy" as const, price: latest.close }]
+                    : [];
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({
+                assetOpportunity: {
+                    evalLastBars: 4,
+                    oosIgnoreLastBars: 2,
+                    candidatePoolSize: 1,
+                },
+            }),
+            selectedStrategy: { key: "bounded_fresh_signal", name: strategy.name, strategy },
+            generateParamSets: () => [{ threshold: 1 }],
+            assets: [{ symbol: "BOUNDED_FRESH", data: candles }],
+            runIsSearch: makeStubIsSearch(),
+            freshEntryBatch: async (batchInput) => {
+                freshBatchDataLength = batchInput.data.length;
+                freshSignalBarIndex = batchInput.candidates[0]?.signals.at(-1)?.barIndex ?? -1;
+                return new Map(batchInput.candidates.map((candidate) => [candidate.id, {
+                    result: runBacktestForAssetTest(batchInput.data, candidate.signals, settings),
+                    signals: candidate.signals,
+                    engineUsed: "rust" as const,
+                    rustAttempted: true,
+                }]));
+            },
+        }), makeCallbacks());
+
+        // 4 evaluation bars + 64 conservative warmup bars, ending at the
+        // visible boundary (index 97), rather than regenerating on all 98.
+        expect(signalInputLengths).to.deep.equal([4, 68]);
+        expect(freshBatchDataLength).to.equal(98);
+        expect(freshSignalBarIndex).to.equal(97);
+        expect(output.outcomes[0]!.diagnostics?.freshSignalWindowBars).to.equal(68);
+        expect(output.results[0]!.freshStatus).to.equal("fresh");
+        expect(output.results[0]!.latestSignalTime).to.equal(candles[97]!.time);
     });
 
     it("still re-executes the recheck when a data slice shifts the window", async () => {

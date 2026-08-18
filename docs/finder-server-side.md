@@ -280,8 +280,9 @@ the terminal snapshot is the one place that carries the final candidate slice.
 Copied diagnostics report job-cache requests, hits, misses, unique bars,
 candidate plans versus symbol evaluations, and actual Rust/TypeScript executor
 usage. When Rust was requested but a run remains on TypeScript, diagnostics
-include the deterministic eligibility reason; current execution semantics
-disable same-bar exits, which the Rust backend does not support. Timing phases
+include the deterministic eligibility reason. Same-bar exit policy is passed
+to the compatible Rust service; unsupported execution settings still fall back
+to TypeScript. Timing phases
 are marked `overlapping` because yielding and nested
 signal/backtest work must not be added together as independent wall time.
 

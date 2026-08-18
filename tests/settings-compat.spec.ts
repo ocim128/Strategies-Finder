@@ -479,10 +479,10 @@ describe('Backtest settings compatibility', () => {
     });
 
     it('requires TS engine for realism constraints', () => {
-        // Same-bar exits are no longer configurable, so the TS engine is required.
-        expect(requiresTypescriptEngine({})).to.equal(true);
-        expect(requiresTypescriptEngine({ executionModel: 'signal_close', slippageBps: 0, allowSameBarExit: true })).to.equal(true);
-        expect(getTypescriptEngineRequirementReasons({})).to.deep.equal(['same-bar exits are disabled']);
+        // The Rust engine now receives the same-bar exit policy explicitly.
+        expect(requiresTypescriptEngine({})).to.equal(false);
+        expect(requiresTypescriptEngine({ executionModel: 'signal_close', slippageBps: 0, allowSameBarExit: true })).to.equal(false);
+        expect(getTypescriptEngineRequirementReasons({})).to.deep.equal([]);
 
         // Non-signal_close execution model requires TS
         expect(requiresTypescriptEngine({ executionModel: 'next_open' })).to.equal(true);
@@ -491,12 +491,12 @@ describe('Backtest settings compatibility', () => {
         // Slippage requires TS
         expect(requiresTypescriptEngine({ slippageBps: 5 })).to.equal(true);
 
-        expect(requiresTypescriptEngine({ allowSameBarExit: false })).to.equal(true);
+        expect(requiresTypescriptEngine({ allowSameBarExit: false })).to.equal(false);
     });
 
     it('keeps combined trade directions on the TS engine path', () => {
-        expect(requiresTypescriptEngine({ tradeDirection: 'long' })).to.equal(true);
-        expect(requiresTypescriptEngine({ tradeDirection: 'short' })).to.equal(true);
+        expect(requiresTypescriptEngine({ tradeDirection: 'long' })).to.equal(false);
+        expect(requiresTypescriptEngine({ tradeDirection: 'short' })).to.equal(false);
         expect(requiresTypescriptEngine({ tradeDirection: 'both' })).to.equal(true);
         expect(requiresTypescriptEngine({ tradeDirection: 'combined' })).to.equal(true);
     });

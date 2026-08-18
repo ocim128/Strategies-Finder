@@ -7,9 +7,9 @@
  * Falls back to TypeScript implementation when Rust server is unavailable.
  */
 
-import { OHLCVData, Signal, BacktestResult, BacktestSettings } from './types/strategies';
+import { OHLCVData, Signal, BacktestResult, BacktestSettings, Time } from './types/strategies';
 import { debugLogger } from './debug-logger';
-import { isSmartTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from './types/backtest';
+import { isRustSupportedTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from './types/backtest';
 
 export type RustBatchRequestOptions = {
     signal?: AbortSignal;
@@ -46,7 +46,123 @@ export type RustBatchTransportResult =
         message?: string;
     };
 
+export interface RustFreshEntryTradeSummary {
+    type: 'long' | 'short';
+    entryTime: Time;
+    entryPrice: number;
+    exitReason: string;
+}
+
+export interface RustFreshEntrySummary {
+    totalTrades: number;
+    latestTrade: RustFreshEntryTradeSummary | null;
+    isOpen: boolean;
+}
+
+export interface RustFreshEntryBatchResponse {
+    results: Array<{ id: string; result: RustFreshEntrySummary }>;
+    processingTimeMs: number;
+}
+
+export interface RustAssetOpportunityMetricSummary {
+    netProfit: number;
+    netProfitPercent: number;
+    winRate: number;
+    expectancy: number;
+    avgTrade: number;
+    profitFactor: number | null;
+    maxDrawdown: number;
+    maxDrawdownPercent: number;
+    totalTrades: number;
+    winningTrades: number;
+    losingTrades: number;
+    avgWin: number;
+    avgLoss: number;
+    sharpeRatio: number;
+}
+
+export interface RustAssetOpportunityCandidateSummary {
+    result: RustAssetOpportunityMetricSummary;
+    selectionResult: RustAssetOpportunityMetricSummary;
+    endpointAdjusted: boolean;
+    endpointRemovedTrades: number;
+}
+
+export interface RustAssetOpportunityBatchResponse {
+    results: Array<{
+        id: string;
+        result: RustAssetOpportunityMetricSummary;
+        selectionResult: RustAssetOpportunityMetricSummary;
+        endpointAdjusted: boolean;
+        endpointRemovedTrades: number;
+    }>;
+    processingTimeMs: number;
+}
+
+export interface RustMultiAssetBatchWorkload {
+    id: string;
+    data?: OHLCVData[];
+    packedData?: number[];
+    items: Array<{
+        id: string;
+        signals: Signal[];
+        packedSignals?: number[];
+        settings?: BacktestSettings;
+    }>;
+    lastDataTime?: Time | null;
+    cacheId?: string;
+    dataEndIndex?: number;
+}
+
 type RustFetch = typeof fetch;
+
+function packMultiAssetData(data: OHLCVData[]): number[] | null {
+    const packed: number[] = [];
+    for (const bar of data) {
+        const time = typeof bar.time === 'number' ? bar.time : Number(bar.time);
+        if (!Number.isFinite(time)) return null;
+        packed.push(time, bar.open, bar.high, bar.low, bar.close, bar.volume);
+    }
+    return packed;
+}
+
+/** Compact signal rows: time, direction (0=buy/1=sell), price, bar index (-1 when absent). */
+export function packMultiAssetSignals(signals: Signal[]): number[] | null {
+    const packed: number[] = [];
+    for (const signal of signals) {
+        const time = typeof signal.time === 'number' ? signal.time : Number(signal.time);
+        const barIndex = signal.barIndex === undefined ? -1 : signal.barIndex;
+        // These fields have semantics that the Rust contract does not carry;
+        // leave such signals in the lossless object form.
+        if (
+            !Number.isFinite(time)
+            || !Number.isFinite(signal.price)
+            || (signal.type !== 'buy' && signal.type !== 'sell')
+            || !Number.isInteger(barIndex)
+            || signal.triggerPrice !== undefined
+            || signal.sizeFraction !== undefined
+            || signal.exitOnly === true
+        ) return null;
+        packed.push(time, signal.type === 'buy' ? 0 : 1, signal.price, barIndex);
+    }
+    return packed;
+}
+
+export function compactMultiAssetWorkload(workload: RustMultiAssetBatchWorkload): RustMultiAssetBatchWorkload {
+    const compactItems = workload.items.map((item) => {
+        if (item.packedSignals !== undefined) return item;
+        const packedSignals = packMultiAssetSignals(item.signals);
+        if (!packedSignals) return item;
+        const { signals: _signals, ...withoutSignals } = item;
+        return { ...withoutSignals, signals: [], packedSignals };
+    });
+    const withCompactItems = { ...workload, items: compactItems };
+    if (!workload.data) return withCompactItems;
+    const packedData = packMultiAssetData(workload.data);
+    if (!packedData) return withCompactItems;
+    const { data: _data, ...withoutData } = withCompactItems;
+    return { ...withoutData, packedData };
+}
 
 type BoundedResponseText =
     | { ok: true; text: string; bytes: number }
@@ -241,6 +357,11 @@ export class RustEngineClient {
         }
     }
 
+    /** Drop a server cache id after a cached request reports that it is gone. */
+    invalidateCachedDataId(cacheId: string): void {
+        this.forgetCachedDataId(cacheId);
+    }
+
     // ========================================================================
     // Connection Management
     // ========================================================================
@@ -330,7 +451,7 @@ export class RustEngineClient {
         if (!await this.checkHealth()) {
             return null;
         }
-        if (sizing && isSmartTradeSizingMode(sizing.mode)) {
+        if (sizing && !isRustSupportedTradeSizingMode(sizing.mode)) {
             rustLog.warn(`[RustEngine] ${sizing.mode} sizing is not supported on Rust backend, using TypeScript fallback`);
             return null;
         }
@@ -514,6 +635,276 @@ export class RustEngineClient {
         return outcome;
     }
 
+    async runFreshEntryBatchBacktest(
+        data: OHLCVData[],
+        items: Array<{ id: string; signals: Signal[]; settings?: BacktestSettings }>,
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        baseSettings: BacktestSettings,
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<RustFreshEntryBatchResponse | null> {
+        const outcome = await this.runFreshEntryBatchBacktestWithStatus(
+            data,
+            items,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            baseSettings,
+            sizing,
+            requestOptions,
+        );
+        return outcome.ok ? outcome.response as RustFreshEntryBatchResponse : null;
+    }
+
+    async runFreshEntryBatchBacktestWithStatus(
+        data: OHLCVData[],
+        items: Array<{ id: string; signals: Signal[]; settings?: BacktestSettings }>,
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        baseSettings: BacktestSettings,
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<RustBatchTransportResult> {
+        const request = {
+            data,
+            items,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            baseSettings,
+            sizing,
+        };
+        return this.runBatchRequestWithStatus(
+            '/api/backtest/fresh-entry/batch',
+            request,
+            items.length,
+            sizing,
+            requestOptions,
+        );
+    }
+
+    async runCachedFreshEntryBatchBacktest(
+        cacheId: string,
+        items: Array<{ id: string; signals: Signal[]; settings?: BacktestSettings }>,
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        baseSettings: BacktestSettings,
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<RustFreshEntryBatchResponse | null> {
+        const outcome = await this.runCachedFreshEntryBatchBacktestWithStatus(
+            cacheId,
+            items,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            baseSettings,
+            sizing,
+            requestOptions,
+        );
+        return outcome.ok ? outcome.response as RustFreshEntryBatchResponse : null;
+    }
+
+    async runCachedFreshEntryBatchBacktestWithStatus(
+        cacheId: string,
+        items: Array<{ id: string; signals: Signal[]; settings?: BacktestSettings }>,
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        baseSettings: BacktestSettings,
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<RustBatchTransportResult> {
+        const request = {
+            cacheId,
+            items,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            baseSettings,
+            sizing,
+        };
+        return this.runBatchRequestWithStatus(
+            '/api/backtest/fresh-entry/batch/cached',
+            request,
+            items.length,
+            sizing,
+            requestOptions,
+        );
+    }
+
+    async runAssetOpportunityBatchBacktest(
+        data: OHLCVData[],
+        items: Array<{ id: string; signals: Signal[]; settings?: BacktestSettings }>,
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        baseSettings: BacktestSettings,
+        lastDataTime: Time | null,
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<RustAssetOpportunityBatchResponse | null> {
+        const outcome = await this.runAssetOpportunityBatchBacktestWithStatus(
+            data,
+            items,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            baseSettings,
+            lastDataTime,
+            sizing,
+            requestOptions,
+        );
+        return outcome.ok ? outcome.response as RustAssetOpportunityBatchResponse : null;
+    }
+
+    async runAssetOpportunityBatchBacktestWithStatus(
+        data: OHLCVData[],
+        items: Array<{ id: string; signals: Signal[]; settings?: BacktestSettings }>,
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        baseSettings: BacktestSettings,
+        lastDataTime: Time | null,
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<RustBatchTransportResult> {
+        const request = {
+            data,
+            items,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            baseSettings,
+            sizing,
+            lastDataTime,
+        };
+        return this.runBatchRequestWithStatus(
+            '/api/backtest/asset-opportunity/batch',
+            request,
+            items.length,
+            sizing,
+            requestOptions,
+        );
+    }
+
+    async runCachedAssetOpportunityBatchBacktest(
+        cacheId: string,
+        items: Array<{ id: string; signals: Signal[]; settings?: BacktestSettings }>,
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        baseSettings: BacktestSettings,
+        lastDataTime: Time | null,
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<RustAssetOpportunityBatchResponse | null> {
+        const outcome = await this.runCachedAssetOpportunityBatchBacktestWithStatus(
+            cacheId,
+            items,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            baseSettings,
+            lastDataTime,
+            sizing,
+            requestOptions,
+        );
+        return outcome.ok ? outcome.response as RustAssetOpportunityBatchResponse : null;
+    }
+
+    async runCachedAssetOpportunityBatchBacktestWithStatus(
+        cacheId: string,
+        items: Array<{ id: string; signals: Signal[]; settings?: BacktestSettings }>,
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        baseSettings: BacktestSettings,
+        lastDataTime: Time | null,
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<RustBatchTransportResult> {
+        const request = {
+            cacheId,
+            items,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            baseSettings,
+            sizing,
+            lastDataTime,
+        };
+        const outcome = await this.runBatchRequestWithStatus(
+            '/api/backtest/asset-opportunity/batch/cached',
+            request,
+            items.length,
+            sizing,
+            requestOptions,
+        );
+        if (!outcome.ok && outcome.reason === 'http_error') {
+            this.forgetCachedDataId(cacheId);
+        }
+        return outcome;
+    }
+
+    async runMultiAssetAssetOpportunityBatchBacktestWithStatus(
+        workloads: RustMultiAssetBatchWorkload[],
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        baseSettings: BacktestSettings,
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<RustBatchTransportResult> {
+        const request = {
+            workloads: workloads.map(compactMultiAssetWorkload),
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            baseSettings,
+            sizing,
+        };
+        const itemCount = workloads.reduce((total, workload) => total + workload.items.length, 0);
+        return this.runBatchRequestWithStatus(
+            '/api/backtest/asset-opportunity/multi-batch',
+            request,
+            itemCount,
+            sizing,
+            requestOptions,
+        );
+    }
+
+    async runMultiAssetFreshEntryBatchBacktestWithStatus(
+        workloads: RustMultiAssetBatchWorkload[],
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        baseSettings: BacktestSettings,
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<RustBatchTransportResult> {
+        const request = {
+            workloads: workloads.map(compactMultiAssetWorkload),
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            baseSettings,
+            sizing,
+        };
+        const itemCount = workloads.reduce((total, workload) => total + workload.items.length, 0);
+        return this.runBatchRequestWithStatus(
+            '/api/backtest/fresh-entry/multi-batch',
+            request,
+            itemCount,
+            sizing,
+            requestOptions,
+        );
+    }
+
     private async runBatchRequestWithStatus(
         endpoint: string,
         request: unknown,
@@ -530,7 +921,7 @@ export class RustEngineClient {
             }
             return { ok: false, reason: 'health_unavailable' };
         }
-        if (sizing && isSmartTradeSizingMode(sizing.mode)) {
+        if (sizing && !isRustSupportedTradeSizingMode(sizing.mode)) {
             rustLog.warn(`[RustEngine] ${sizing.mode} sizing is not supported on Rust batch backtests, using TypeScript fallback`);
             return { ok: false, reason: 'unsupported_sizing' };
         }
@@ -645,7 +1036,8 @@ export class RustEngineClient {
         try {
             rustLog.info(`[RustEngine] Caching ${data.length} bars...`);
             const startTime = performance.now();
-            const body = JSON.stringify({ data });
+            const packedData = packMultiAssetData(data);
+            const body = JSON.stringify(packedData ? { packedData } : { data });
             const requestBytes = new TextEncoder().encode(body).byteLength;
             if (requestOptions?.maxRequestBytes !== undefined && requestBytes > requestOptions.maxRequestBytes) {
                 rustLog.warn(`[RustEngine] Cache request exceeds ${requestOptions.maxRequestBytes} bytes`);
@@ -701,6 +1093,27 @@ export class RustEngineClient {
             rustLog.error('[RustEngine] Cache data error:', error);
             return null;
         }
+    }
+
+    async cacheMultiAssetDataWithStatus(
+        workloads: Array<{ id: string; data: OHLCVData[] }>,
+        requestOptions?: RustBatchRequestOptions,
+    ): Promise<RustBatchTransportResult> {
+        return this.runBatchRequestWithStatus(
+            '/api/data/multi-cache',
+            {
+                workloads: workloads.map((workload) => {
+                    const packedData = packMultiAssetData(workload.data);
+                    return {
+                        id: workload.id,
+                        ...(packedData ? { packedData } : { data: workload.data }),
+                    };
+                }),
+            },
+            workloads.length,
+            undefined,
+            requestOptions,
+        );
     }
 
     /**

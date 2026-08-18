@@ -8,13 +8,17 @@ import {
     partitionAssetOpportunityRustBatchItems,
     resolveAssetOpportunityRustBatchEligibility,
     resolveAssetOpportunityRustBatchFeatureConfig,
+    shouldUseRustAssetOpportunityBatch,
     validateAssetOpportunityRustBatchResponse,
+    validateAssetOpportunityRustSummaryBatchResponse,
     type AssetOpportunityRustBatchClient,
+    type AssetOpportunityRustFreshBatchClient,
 } from "../lib/finder/server/finder-asset-opportunity-rust-batch";
+import { runServerAssetOpportunityFreshRustBatch } from "../lib/finder/server/finder-asset-opportunity-fresh-rust-batch";
 import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
 import { RustEngineClient } from "../lib/rust-engine-client";
 import type { CapitalSettings } from "../lib/types/backtest";
-import type { FinderOptions } from "../lib/types/finder";
+import type { FinderOptions, FinderResult } from "../lib/types/finder";
 import type { BacktestResult, BacktestSettings, OHLCVData, Signal, Strategy, Time } from "../lib/types/strategies";
 
 const capitalSettings: CapitalSettings = {
@@ -98,6 +102,57 @@ function makeRustResponse(ids: readonly string[], netProfit = 0): unknown {
     };
 }
 
+function makeFreshRustResponse(ids: readonly string[]): unknown {
+    return {
+        processingTimeMs: 1,
+        results: ids.map((id) => ({
+            id,
+            result: {
+                totalTrades: 1,
+                latestTrade: {
+                    type: "long",
+                    entryTime: 1_700_000_000,
+                    entryPrice: 100,
+                    exitReason: "signal",
+                },
+                isOpen: false,
+            },
+        })),
+    };
+}
+
+function makeMetricSummary(netProfit = 0): Record<string, unknown> {
+    return {
+        netProfit,
+        netProfitPercent: netProfit / 100,
+        winRate: 0,
+        expectancy: 0,
+        avgTrade: 0,
+        profitFactor: 0,
+        maxDrawdown: 0,
+        maxDrawdownPercent: 0,
+        totalTrades: 0,
+        winningTrades: 0,
+        losingTrades: 0,
+        avgWin: 0,
+        avgLoss: 0,
+        sharpeRatio: 0,
+    };
+}
+
+function makeAssetOpportunitySummaryResponse(ids: readonly string[]): unknown {
+    return {
+        processingTimeMs: 1,
+        results: ids.map((id, index) => ({
+            id,
+            result: makeMetricSummary(index),
+            selectionResult: makeMetricSummary(index),
+            endpointAdjusted: false,
+            endpointRemovedTrades: 0,
+        })),
+    };
+}
+
 function makeSignals(): Signal[] {
     return [
         { time: 1_700_000_000 as Time, type: "buy", price: 100, barIndex: 0 },
@@ -115,13 +170,23 @@ function makeClient(response: unknown): AssetOpportunityRustBatchClient & { call
     };
 }
 
+function makeFreshClient(response: unknown): AssetOpportunityRustFreshBatchClient & { calls: number } {
+    return {
+        calls: 0,
+        async runFreshEntryBatchBacktestWithStatus(..._args) {
+            this.calls += 1;
+            return { ok: true, response, requestBytes: 100, elapsedMs: 2 };
+        },
+    };
+}
+
 describe("Asset Opportunity Rust batch contract", () => {
-    it("keeps the feature opt-in and clamps the request-size setting", () => {
-        expect(resolveAssetOpportunityRustBatchFeatureConfig({}).enabled).to.equal(false);
+    it("keeps the feature independently disableable and clamps request-size settings", () => {
+        expect(resolveAssetOpportunityRustBatchFeatureConfig({}).enabled).to.equal(true);
         expect(resolveAssetOpportunityRustBatchFeatureConfig({
-            FINDER_ASSET_OPPORTUNITY_RUST_BATCH: "1",
+            FINDER_ASSET_OPPORTUNITY_RUST_BATCH: "0",
             FINDER_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES: "999999999",
-        }).enabled).to.equal(true);
+        }).enabled).to.equal(false);
         expect(resolveAssetOpportunityRustBatchFeatureConfig({}).maxResponseBytes)
             .to.equal(DEFAULT_ASSET_OPPORTUNITY_RUST_BATCH_MAX_RESPONSE_BYTES);
         expect(resolveAssetOpportunityRustBatchFeatureConfig({
@@ -153,7 +218,7 @@ describe("Asset Opportunity Rust batch contract", () => {
         expect(resolveAssetOpportunityRustBatchEligibility({
             ...base,
             settings: { ...eligibleSettings, allowSameBarExit: false },
-        }).reason).to.equal("same_bar_exit_contract_unsupported");
+        }).eligible).to.equal(true);
         expect(resolveAssetOpportunityRustBatchEligibility({
             ...base,
             settings: { ...eligibleSettings, tradeDirection: "both" },
@@ -166,6 +231,21 @@ describe("Asset Opportunity Rust batch contract", () => {
             ...base,
             settings: { ...eligibleSettings, strategyTimeframeEnabled: true },
         }).reason).to.equal("risk_control_unsupported");
+        expect(resolveAssetOpportunityRustBatchEligibility({
+            ...base,
+            capitalSettings: { ...capitalSettings, sizingMode: "kelly_criterion" },
+        }).eligible).to.equal(true);
+        expect(resolveAssetOpportunityRustBatchEligibility({
+            ...base,
+            capitalSettings: { ...capitalSettings, sizingMode: "risk_parity" },
+        }).reason).to.equal("smart_sizing_unsupported");
+    });
+
+    it("skips external Rust transport for low-density Asset Opportunity searches", () => {
+        expect(shouldUseRustAssetOpportunityBatch(2, 500)).to.equal(false);
+        expect(shouldUseRustAssetOpportunityBatch(7, 500)).to.equal(false);
+        expect(shouldUseRustAssetOpportunityBatch(8, 500)).to.equal(true);
+        expect(shouldUseRustAssetOpportunityBatch(2, 0)).to.equal(true);
     });
 
     it("partitions candidate items before the serialized request exceeds the budget", () => {
@@ -225,6 +305,43 @@ describe("Asset Opportunity Rust batch contract", () => {
         }, ["a"]);
         expect(normalized.ok).to.equal(true);
         if (normalized.ok) expect(normalized.results.get("a")!.result.profitFactor).to.equal(Number.POSITIVE_INFINITY);
+        const zeroTradeNullProfitFactor = { ...makeResult(0), profitFactor: null };
+        const emptyNormalized = validateAssetOpportunityRustBatchResponse({
+            processingTimeMs: 1,
+            results: [{ id: "empty", result: zeroTradeNullProfitFactor }],
+        }, ["empty"]);
+        expect(emptyNormalized.ok).to.equal(true);
+        if (emptyNormalized.ok) expect(emptyNormalized.results.get("empty")!.result.profitFactor).to.equal(0);
+    });
+
+    it("validates the scalar Asset Opportunity response and avoids full histories", async () => {
+        const response = makeAssetOpportunitySummaryResponse(["a"]);
+        const validated = validateAssetOpportunityRustSummaryBatchResponse(response, ["a"]);
+        expect(validated.ok).to.equal(true);
+        const client: AssetOpportunityRustBatchClient = {
+            async runBatchBacktestWithStatus() {
+                throw new Error("full-history endpoint should not be selected");
+            },
+            async runAssetOpportunityBatchBacktestWithStatus() {
+                return { ok: true, response, requestBytes: 100, elapsedMs: 1 };
+            },
+        };
+        const result = await dispatchAssetOpportunityRustBatch({
+            client,
+            data: makeCandles(4),
+            lastDataTime: makeCandles(4).at(-1)!.time,
+            items: [{ id: "a", signals: makeSignals(), settings: eligibleSettings }],
+            initialCapital: 10_000,
+            positionSizePercent: 100,
+            commissionPercent: 0,
+            baseSettings: eligibleSettings,
+            maxRequestBytes: DEFAULT_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES,
+        });
+        expect(result.status).to.equal("completed");
+        if (result.status === "completed") {
+            expect(result.results.get("a")?.result.trades).to.deep.equal([]);
+            expect(result.results.get("a")?.selectionResult?.equityCurve).to.deep.equal([]);
+        }
     });
 
     it("sends one bounded full-result batch request and preserves cancellation/timeout reasons", async () => {
@@ -319,6 +436,33 @@ describe("Asset Opportunity Rust batch contract", () => {
             { maxResponseBytes: 64 },
         );
         expect(oversized).to.include({ ok: false, reason: "response_too_large" });
+    });
+
+    it("retries an evicted cached dataset through the raw Rust batch endpoint", async () => {
+        const calls: string[] = [];
+        const client: AssetOpportunityRustBatchClient = {
+            async runCachedBatchBacktestWithStatus() {
+                calls.push("cached");
+                return { ok: false, reason: "http_error", requestBytes: 120, message: "404", };
+            },
+            async runBatchBacktestWithStatus() {
+                calls.push("raw");
+                return { ok: true, response: makeRustResponse(["cached"]), requestBytes: 240, elapsedMs: 2 };
+            },
+        };
+        const result = await dispatchAssetOpportunityRustBatch({
+            client,
+            data: makeCandles(4),
+            cacheId: "evicted-cache",
+            items: [{ id: "cached", signals: makeSignals(), settings: eligibleSettings }],
+            initialCapital: 10_000,
+            positionSizePercent: 100,
+            commissionPercent: 0,
+            baseSettings: eligibleSettings,
+            maxRequestBytes: DEFAULT_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES,
+        });
+        expect(result.status).to.equal("completed");
+        expect(calls).to.deep.equal(["cached", "raw"]);
     });
 
     it("falls back the whole batch when validation fails, never returning a partial set", async () => {
@@ -428,6 +572,45 @@ describe("Asset Opportunity Rust batch contract", () => {
             if (previous === undefined) delete process.env.FINDER_ASSET_OPPORTUNITY_RUST_BATCH;
             else process.env.FINDER_ASSET_OPPORTUNITY_RUST_BATCH = previous;
         }
+    });
+
+    it("runs signal_close fresh rechecks through the Rust batch seam", async () => {
+        const strategy: Strategy = {
+            name: "Fresh Rust fixture",
+            description: "fresh batch fixture",
+            defaultParams: {},
+            paramLabels: {},
+            execute: () => makeSignals(),
+        };
+        const candidate: FinderResult = {
+            key: "fresh_rust_fixture",
+            name: strategy.name,
+            params: {},
+            result: makeResult(1),
+            selectionResult: makeResult(1),
+            endpointAdjusted: false,
+            endpointRemovedTrades: 0,
+        };
+        const result = await runServerAssetOpportunityFreshRustBatch({
+            client: makeFreshClient(makeFreshRustResponse(["fresh-0"])),
+            input: {
+                data: makeCandles(8),
+                symbol: "RUST",
+                interval: "5m",
+                settings: eligibleSettings,
+                capitalSettings,
+                options: makeOptions(),
+                useRustEnginePreference: true,
+                selectedStrategy: { key: candidate.key, name: strategy.name, strategy },
+                candidates: [{
+                    id: "fresh-0",
+                    signals: makeSignals(),
+                    backtestSettings: eligibleSettings,
+                }],
+            },
+        });
+        expect(result?.get("fresh-0")?.engineUsed).to.equal("rust");
+        expect(result?.get("fresh-0")?.rustAttempted).to.equal(true);
     });
 
     it("reruns every candidate through TypeScript after an incomplete Rust batch", async () => {

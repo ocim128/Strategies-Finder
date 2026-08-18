@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
-import { isSmartTradeSizingMode, type CapitalSettings } from "../types/backtest";
+import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../types/backtest";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import {
     EFFECTIVE_BACKTEST_DEFAULTS,
@@ -303,7 +303,7 @@ export class TopMeanCoordinatorEngine {
         const capital = resolveCapitalSettingsFromRaw(
             this._request.capitalSettings as unknown as Record<string, unknown>,
         );
-        if (isSmartTradeSizingMode(capital.sizingMode)) {
+        if (!isRustSupportedTradeSizingMode(capital.sizingMode)) {
             reasons.push(`${capital.sizingMode} sizing is not supported by Rust`);
         }
         return reasons;
