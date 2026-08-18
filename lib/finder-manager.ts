@@ -51,6 +51,7 @@ import {
 	FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC,
 	TOTAL_TRADES_CAPPED_METRIC,
 	TOTAL_TRADES_SATURATION_PERCENTILE,
+	T_STAT_EDGE_METRIC,
 	retainAssetOpportunityResultsForSymbols,
 	type FinderAssetOpportunityArchiveSort,
 	type FinderAssetOpportunityResortMetric,
@@ -3781,13 +3782,15 @@ export class FinderManager {
 				for (const metric of getAssetOpportunityResortMetrics()) {
 					options.push({
 						value: metric,
-						label: metric === FRESH_SIGNAL_LIBRARIES_METRIC
-							? "Fresh Signals (Libraries)"
-							: metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
-								? "Fresh Signals (Libraries, by Trades)"
-								: metric === TOTAL_TRADES_CAPPED_METRIC
-									? `Total Trades (P${Math.round(TOTAL_TRADES_SATURATION_PERCENTILE * 100)} saturation)`
-									: METRIC_FULL_LABELS[metric],
+							label: metric === FRESH_SIGNAL_LIBRARIES_METRIC
+								? "Fresh Signals (Libraries)"
+								: metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
+									? "Fresh Signals (Libraries, by Trades)"
+									: metric === TOTAL_TRADES_CAPPED_METRIC
+										? `Total Trades (P${Math.round(TOTAL_TRADES_SATURATION_PERCENTILE * 100)} saturation)`
+										: metric === T_STAT_EDGE_METRIC
+											? "T-Stat of Edge (significance)"
+											: METRIC_FULL_LABELS[metric],
 					});
 				}
 		} else if (scope === 'strategy_quality') {

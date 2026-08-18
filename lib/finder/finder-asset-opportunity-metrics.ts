@@ -271,11 +271,21 @@ export const FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC = "freshSignalLibrariesByTr
 export const TOTAL_TRADES_CAPPED_METRIC = "totalTradesCapped" as const;
 /** Saturation percentile (0-1) for {@link TOTAL_TRADES_CAPPED_METRIC}. */
 export const TOTAL_TRADES_SATURATION_PERCENTILE = 0.9;
+/**
+ * Statistical significance of the per-trade edge: expectancy * sqrt(trades) / sd,
+ * with sd approximated from the binary win/loss mixture (winRate, avgWin, avgLoss).
+ * Ranks by SIGNIFICANCE, not size — the search optimizes size metrics, so
+ * size-sorted tops are overfit extremes by construction; t-stat instead rewards a
+ * modest edge proven over many trades. An all-win all-equal candidate (zero
+ * variance) with positive expectancy maps to +Infinity and ranks first.
+ */
+export const T_STAT_EDGE_METRIC = "tstatEdge" as const;
 export type FinderAssetOpportunityResortMetric =
     | FinderMetric
     | typeof FRESH_SIGNAL_LIBRARIES_METRIC
     | typeof FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
-    | typeof TOTAL_TRADES_CAPPED_METRIC;
+    | typeof TOTAL_TRADES_CAPPED_METRIC
+    | typeof T_STAT_EDGE_METRIC;
 /** Special batch-only choice that archives the default order plus every metric. */
 export const ASSET_OPPORTUNITY_ALL_SORTS = "allAssetOpportunitySorts" as const;
 export type FinderAssetOpportunityArchiveSort =
@@ -296,6 +306,7 @@ const ASSET_RESORT_METRICS: readonly FinderAssetOpportunityResortMetric[] = [
     FRESH_SIGNAL_LIBRARIES_METRIC,
     FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC,
     TOTAL_TRADES_CAPPED_METRIC,
+    T_STAT_EDGE_METRIC,
 ];
 
 export function getAssetOpportunityResortMetrics(): readonly FinderAssetOpportunityResortMetric[] {
@@ -358,6 +369,27 @@ function getAssetOpportunityMetricValue(
         case "totalTrades": return sel.totalTrades ?? 0;
         default: return 0;
     }
+}
+
+/**
+ * t-stat of the per-trade edge from the binary win/loss mixture. Returns 0 for
+ * missing fields or fewer than 2 trades; a positive-expectancy zero-variance
+ * candidate (all identical wins) maps to +Infinity.
+ */
+function getTStatEdgeValue(result: FinderAssetOpportunityResult): number {
+    const sel = result.selectionResult;
+    const mean = sel.expectancy;
+    const trades = sel.totalTrades ?? 0;
+    const winRate = sel.winRate;
+    const avgWin = sel.avgWin;
+    const avgLoss = sel.avgLoss;
+    if (!Number.isFinite(mean) || !Number.isFinite(winRate) || !Number.isFinite(avgWin) || !Number.isFinite(avgLoss) || trades < 2) {
+        return 0;
+    }
+    const winProbability = Math.min(1, Math.max(0, winRate / 100));
+    const variance = winProbability * (avgWin - mean) ** 2 + (1 - winProbability) * (avgLoss + mean) ** 2;
+    if (variance <= 0) return mean > 0 ? Number.POSITIVE_INFINITY : 0;
+    return (mean * Math.sqrt(trades)) / Math.sqrt(variance);
 }
 
 /**
@@ -441,6 +473,23 @@ export function sortAssetOpportunityResultsByMetric(
         });
     }
     const SECONDARY_TIEBREAK_METRICS: readonly FinderMetric[] = ["expectancy", "netProfitPercent", "totalTrades"];
+    if (metric === T_STAT_EDGE_METRIC) {
+        // Descending by t-stat; ties fall back to the same realized-performance
+        // scalars as the generic metric path before the deterministic symbol order.
+        return [...results].sort((a, b) => {
+            const valA = getTStatEdgeValue(a);
+            const valB = getTStatEdgeValue(b);
+            if (valA !== valB) return valB - valA;
+            for (const secondary of SECONDARY_TIEBREAK_METRICS) {
+                const sA = getAssetOpportunityMetricValue(a, secondary);
+                const sB = getAssetOpportunityMetricValue(b, secondary);
+                if (sA !== sB) return sB - sA;
+            }
+            if (a.symbol < b.symbol) return -1;
+            if (a.symbol > b.symbol) return 1;
+            return 0;
+        });
+    }
     const ascending = metric === "maxDrawdownPercent";
     return [...results].sort((a, b) => {
         const valA = getAssetOpportunityMetricValue(a, metric);

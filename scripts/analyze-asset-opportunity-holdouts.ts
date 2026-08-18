@@ -24,7 +24,7 @@ const REPORT_QUESTIONS = [
     "How often are the selected observations positive for each sort and horizon?",
     "Is the typical (median) forward PnL positive, or is the average driven by outliers?",
     "What do the lower-percentile and worst forward PnL results look like?",
-    "Does forward performance change between the 5-, 12-, and 15-bar horizons?",
+    "Does forward performance change between the tested forward horizons?",
     "Which symbol+strategy candidates recur most often in the top-10 results?",
     "Which recurring candidates stay positive across multiple forward horizons?",
     "Which candidates are supported by several independent archive sorts?",
@@ -1332,18 +1332,27 @@ function analysisHorizonValue(analysis: { horizons: HoldoutHorizonAnalysis[] }, 
     return analysis.horizons.find((horizon) => horizon.horizonBars === horizonBars)?.averagePnlPercent ?? null;
 }
 
+function renderHorizonColumnHeader(horizonColumns: number[]): string {
+    return horizonColumns.map((bars) => `${bars}-bar avg/positive`).join(" | ");
+}
+
+function renderHorizonColumnCells(horizonColumns: number[], renderCell: (bars: number) => string): string[] {
+    return horizonColumns.map((bars) => renderCell(bars));
+}
+
 function renderSignalCandleHourSection(
     lines: string[],
     label: string,
     hours: SignalCandleHourAnalysis[],
     primaryHorizonBars: number,
+    horizonColumns: number[],
 ): void {
     lines.push("", `SIGNAL CANDLE HOUR — ${label} (best/worst by ${primaryHorizonBars}-bar average)`);
     if (hours.length === 0) {
         lines.push("Unavailable: new archive rows must contain signalCandleHourUtc/signalCandleHourJakarta.");
         return;
     }
-    lines.push("Hour | Occurrences | Holdouts | Strategies | 5-bar avg/positive | 12-bar avg/positive | 15-bar avg/positive");
+    lines.push(`Hour | Occurrences | Holdouts | Strategies | ${renderHorizonColumnHeader(horizonColumns)}`);
     const ranked = [...hours].sort((left, right) => {
         return (analysisHorizonValue(right, primaryHorizonBars) ?? Number.NEGATIVE_INFINITY)
             - (analysisHorizonValue(left, primaryHorizonBars) ?? Number.NEGATIVE_INFINITY)
@@ -1358,9 +1367,7 @@ function renderSignalCandleHourSection(
             String(hour.occurrences),
             String(hour.holdoutBars.length),
             String(hour.strategyCount),
-            formatAnalysisHorizon(hour.horizons.find((horizon) => horizon.horizonBars === 5)),
-            formatAnalysisHorizon(hour.horizons.find((horizon) => horizon.horizonBars === 12)),
-            formatAnalysisHorizon(hour.horizons.find((horizon) => horizon.horizonBars === 15)),
+            ...renderHorizonColumnCells(horizonColumns, (bars) => formatAnalysisHorizon(hour.horizons.find((horizon) => horizon.horizonBars === bars))),
         ].join(" | "));
     }
     lines.push("Full hour breakdown is stored in JSON under signalCandleHourPerformance.");
@@ -1411,17 +1418,16 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
             ].join(" | "));
         }
     }
+    const horizonColumns = [...new Set(report.sorts.flatMap((sort) => sort.horizons.map((horizon) => horizon.horizonBars)))].sort((left, right) => left - right).slice(0, 3);
     lines.push("", "STRATEGY LIBRARY FORWARD OOS CONTRIBUTION (selected top rows; sorted by primary-horizon average)");
-    lines.push("Strategy | Occurrences | Holdouts | Sorts | 5-bar avg/positive | 12-bar avg/positive | 15-bar avg/positive");
+    lines.push(`Strategy | Occurrences | Holdouts | Sorts | ${renderHorizonColumnHeader(horizonColumns)}`);
     for (const strategy of report.strategyPerformance) {
         lines.push([
             strategy.strategyId,
             String(strategy.occurrences),
             String(strategy.holdoutBars.length),
             String(strategy.sortMetrics.length),
-            formatAnalysisHorizon(strategy.horizons.find((horizon) => horizon.horizonBars === 5)),
-            formatAnalysisHorizon(strategy.horizons.find((horizon) => horizon.horizonBars === 12)),
-            formatAnalysisHorizon(strategy.horizons.find((horizon) => horizon.horizonBars === 15)),
+            ...renderHorizonColumnCells(horizonColumns, (bars) => formatAnalysisHorizon(strategy.horizons.find((horizon) => horizon.horizonBars === bars))),
         ].join(" | "));
     }
     lines.push("Note: occurrences can repeat the same candidate across holdout values and archive sorts; this is contribution evidence, not independent strategy backtests.");
@@ -1468,16 +1474,16 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
     }
     const primaryHorizonBars = report.sorts.some((sort) => sort.horizons.some((horizon) => horizon.horizonBars === 12)) ? 12 : report.sorts[0]?.horizons[0]?.horizonBars ?? 0;
     if (report.signalCandleHoursAvailable) {
-        renderSignalCandleHourSection(lines, "UTC", report.signalCandleHourPerformance.utc, primaryHorizonBars);
-        renderSignalCandleHourSection(lines, "Asia/Jakarta", report.signalCandleHourPerformance.jakarta, primaryHorizonBars);
+        renderSignalCandleHourSection(lines, "UTC", report.signalCandleHourPerformance.utc, primaryHorizonBars, horizonColumns);
+        renderSignalCandleHourSection(lines, "Asia/Jakarta", report.signalCandleHourPerformance.jakarta, primaryHorizonBars, horizonColumns);
     } else {
         lines.push("", "SIGNAL CANDLE HOUR");
         lines.push("Unavailable: legacy archive rows do not contain signal candle hour fields. New batches will report UTC and Asia/Jakarta hours.");
     }
-    lines.push("", `PERSISTENT CANDIDATES (one row per candidate; top ${DEFAULT_REPORT_CANDIDATES} by coverage, then 12-bar OOS consistency)`);
+    lines.push("", `PERSISTENT CANDIDATES (one row per candidate; top ${DEFAULT_REPORT_CANDIDATES} by coverage, then ${primaryHorizonBars}-bar OOS consistency)`);
     for (const sort of report.sorts) {
         lines.push("", `Sort: ${sort.sortMetric}`);
-        lines.push("Candidate | Coverage | Top 3% | Median rank | Longest run | 5-bar avg/positive | 12-bar avg/positive | 15-bar avg/positive | All horizons positive");
+        lines.push(`Candidate | Coverage | Top 3% | Median rank | Longest run | ${renderHorizonColumnHeader(horizonColumns)} | All horizons positive`);
         const candidates = [...sort.candidates]
             .sort((left, right) => compareCandidates(left, right, primaryCandidateHorizon(sort)))
             .slice(0, DEFAULT_REPORT_CANDIDATES);
@@ -1488,9 +1494,7 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
                 formatPercent(candidate.topRankRatePercent),
                 formatNumber(candidate.medianRank),
                 String(candidate.longestContiguousHoldoutRun),
-                formatCandidateHorizon(candidate, 5),
-                formatCandidateHorizon(candidate, 12),
-                formatCandidateHorizon(candidate, 15),
+                ...renderHorizonColumnCells(horizonColumns, (bars) => formatCandidateHorizon(candidate, bars)),
                 `${candidate.allHorizonPositiveWindows}/${candidate.allHorizonCompleteWindows}`,
             ].join(" | "));
         }
