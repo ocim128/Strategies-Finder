@@ -41,6 +41,7 @@ const BLOCK_PATTERN = new RegExp(
     "gm",
 );
 const MIN_TRADES_FOR_LOSS_QUALITY = 15;
+const TSTAT_MIN_TRADES = 10;
 const RECURRENCE_PRESENCE_RATE = 0.4;
 
 interface SelectionPerformance {
@@ -285,7 +286,7 @@ function customSortPicks(file: FileData, sortName: string, horizonBars: number):
             return uniqueCandidates(file)
                 .map((entry) => {
                     const w = entry.winRate !== null ? entry.winRate / 100 : null;
-                    if (w === null || entry.avgWin === null || entry.avgLoss === null || entry.avgTrade === null || entry.trades === null || entry.trades! < 2) {
+                    if (w === null || entry.avgWin === null || entry.avgLoss === null || entry.avgTrade === null || entry.trades === null || entry.trades! < TSTAT_MIN_TRADES) {
                         return { entry, t: null as number | null };
                     }
                     const mean = entry.avgTrade!;

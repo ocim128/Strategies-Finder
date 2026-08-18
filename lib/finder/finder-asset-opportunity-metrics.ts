@@ -280,6 +280,14 @@ export const TOTAL_TRADES_SATURATION_PERCENTILE = 0.9;
  * variance) with positive expectancy maps to +Infinity and ranks first.
  */
 export const T_STAT_EDGE_METRIC = "tstatEdge" as const;
+/**
+ * Minimum trade count for the t-stat sort to score a candidate at all. A t-stat
+ * needs enough draws for "significance" to mean anything — without a floor,
+ * 2-trade all-win candidates map to +Infinity and stuff the top of the sort
+ * (observed on the 2026-08-18 no-minTrades run). Candidates below the floor
+ * score 0.
+ */
+export const T_STAT_EDGE_MIN_TRADES = 10;
 export type FinderAssetOpportunityResortMetric =
     | FinderMetric
     | typeof FRESH_SIGNAL_LIBRARIES_METRIC
@@ -383,7 +391,7 @@ function getTStatEdgeValue(result: FinderAssetOpportunityResult): number {
     const winRate = sel.winRate;
     const avgWin = sel.avgWin;
     const avgLoss = sel.avgLoss;
-    if (!Number.isFinite(mean) || !Number.isFinite(winRate) || !Number.isFinite(avgWin) || !Number.isFinite(avgLoss) || trades < 2) {
+    if (!Number.isFinite(mean) || !Number.isFinite(winRate) || !Number.isFinite(avgWin) || !Number.isFinite(avgLoss) || trades < T_STAT_EDGE_MIN_TRADES) {
         return 0;
     }
     const winProbability = Math.min(1, Math.max(0, winRate / 100));

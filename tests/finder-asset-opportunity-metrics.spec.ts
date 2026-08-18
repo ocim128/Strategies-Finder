@@ -517,6 +517,16 @@ describe("Asset Opportunity post-run re-sort", () => {
         expect(sorted.map((r) => r.symbol)).to.deep.equal(["A", "B"]);
     });
 
+    it("tstatEdge scores candidates under the minimum trade floor as 0 (2-trade lottery tickets rank last)", () => {
+        // Why: on a no-minTrades run the un-floored sort's top was stuffed with
+        // 2-trade all-win candidates mapping to Infinity — not significance.
+        const lottery = makeResortResult({ symbol: "A", expectancy: 16.94, winRate: 100, avgWin: 16.94, avgLoss: 0, totalTrades: 2 });
+        const proven = makeResortResult({ symbol: "B", expectancy: 0.5, winRate: 55, avgWin: 10, avgLoss: 5, totalTrades: 100 });
+        const sorted = sortAssetOpportunityResultsByMetric([lottery, proven], "tstatEdge");
+        expect(sorted.map((r) => r.symbol)).to.deep.equal(["B", "A"]);
+    });
+
+
     it("sorts by payoffRatio descending (avgWin / avgLoss; larger is better)", () => {
         // Orthogonal to totalTrades: measures outcome asymmetry, not activity.
         const low = makeResortResult({ symbol: "A", avgWin: 10, avgLoss: 10 }); // payoff 1.0
