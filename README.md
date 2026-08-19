@@ -74,6 +74,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Backtest run feedback presenter: `lib/backtest-run-presenter.ts`
 - TS engine: `lib/strategies/backtest/*`
 - Rust engine client: `lib/rust-engine-client.ts`
+- Rust loopback service: `rust-engine/` (started by `run_playground.bat`)
 
 ### Chart and renderer layer
 - Chart controller: `lib/chart-manager.ts`

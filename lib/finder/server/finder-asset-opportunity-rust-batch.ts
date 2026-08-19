@@ -31,11 +31,9 @@ const MIN_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES = 1 * 1024 * 1024;
 const MAX_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES = 128 * 1024 * 1024;
 const MIN_ASSET_OPPORTUNITY_RUST_BATCH_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_ASSET_OPPORTUNITY_RUST_BATCH_MAX_RESPONSE_BYTES = 512 * 1024 * 1024;
-const MIN_RUST_BATCH_CANDIDATES_PER_ASSET = 8;
-
 export function shouldUseRustAssetOpportunityBatch(candidateCount: number, evalLastBars = 0): boolean {
     if (!Number.isFinite(evalLastBars) || evalLastBars <= 0) return true;
-    return Number.isFinite(candidateCount) && candidateCount >= MIN_RUST_BATCH_CANDIDATES_PER_ASSET;
+    return Number.isFinite(candidateCount) && candidateCount > 0;
 }
 
 export type AssetOpportunityRustBatchFailureReason =
@@ -142,7 +140,6 @@ export interface AssetOpportunityRustBatchEligibilityInput {
     capitalSettings: CapitalSettings;
     selectedStrategy: FinderSelectedStrategy;
     exitStrategyCandidates?: FinderSelectedStrategy[];
-    dataFetcherPresent?: boolean;
 }
 
 export interface AssetOpportunityRustBatchEligibility {
@@ -254,26 +251,21 @@ export function resolveAssetOpportunityRustBatchFeatureConfig(
 
 /**
  * Eligibility deliberately repeats the Rust capability fence instead of
- * weakening the generic single-run `rust-settings-sanitizer` gate. The Rust
- * server has no execution-model or slippage fields, and its `Both` direction
- * normalizes to long, so those cases must remain TypeScript.
+ * weakening the generic single-run `rust-settings-sanitizer` gate. The Asset
+ * Opportunity Rust kernel has its own compact execution-model/slippage seam;
+ * its `Both` direction still normalizes to long, so that case remains
+ * TypeScript.
  */
 export function resolveAssetOpportunityRustBatchEligibility(
     input: AssetOpportunityRustBatchEligibilityInput,
 ): AssetOpportunityRustBatchEligibility {
     if (!input.featureConfig.enabled) return { eligible: false, reason: "feature_disabled" };
     if (input.useRustEnginePreference !== true) return { eligible: false, reason: "rust_preference_disabled" };
-    if (input.selectedStrategy.strategy.crossSymbolConfig || input.dataFetcherPresent) {
+    if (input.selectedStrategy.strategy.crossSymbolConfig) {
         return { eligible: false, reason: "cross_symbol_unsupported" };
     }
     if (input.exitStrategyCandidates && input.exitStrategyCandidates.length > 0) {
         return { eligible: false, reason: "exit_override_unsupported" };
-    }
-    if ((input.settings.executionModel ?? "signal_close") !== "signal_close") {
-        return { eligible: false, reason: "execution_model_unsupported" };
-    }
-    if ((input.settings.slippageBps ?? 0) !== 0) {
-        return { eligible: false, reason: "slippage_unsupported" };
     }
     const direction = input.settings.tradeDirection ?? "long";
     if (direction !== "long" && direction !== "short") {
@@ -285,7 +277,6 @@ export function resolveAssetOpportunityRustBatchEligibility(
     if (
         input.settings.riskMinHoldEnabled === true
         || input.settings.riskMaxHoldEnabled === true
-        || input.settings.riskCooldownEnabled === true
         || input.settings.riskWinStreakStopLossEnabled === true
         || input.settings.disableSignalExits === true
         || input.settings.pathExitEnabled === true

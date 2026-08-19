@@ -15,6 +15,7 @@ import {
     type AssetOpportunityRustFreshBatchClient,
 } from "../lib/finder/server/finder-asset-opportunity-rust-batch";
 import { runServerAssetOpportunityFreshRustBatch } from "../lib/finder/server/finder-asset-opportunity-fresh-rust-batch";
+import { createAssetOpportunityRustMultiBatchCoordinator } from "../lib/finder/server/finder-asset-opportunity-multi-rust-batch";
 import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
 import { RustEngineClient } from "../lib/rust-engine-client";
 import type { CapitalSettings } from "../lib/types/backtest";
@@ -194,7 +195,7 @@ describe("Asset Opportunity Rust batch contract", () => {
         }).maxRequestBytes).to.equal(DEFAULT_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES);
     });
 
-    it("admits only the proven signal-close long/short profile", () => {
+    it("admits the proven execution-model/slippage profile and keeps unsupported controls on TypeScript", () => {
         const base = {
             featureConfig: {
                 enabled: true,
@@ -209,12 +210,40 @@ describe("Asset Opportunity Rust batch contract", () => {
         expect(resolveAssetOpportunityRustBatchEligibility(base).eligible).to.equal(true);
         expect(resolveAssetOpportunityRustBatchEligibility({
             ...base,
-            settings: { ...eligibleSettings, executionModel: "next_open" },
-        }).reason).to.equal("execution_model_unsupported");
+            settings: {
+                ...eligibleSettings,
+                executionModel: "next_open",
+                slippageBps: 5,
+                riskCooldownEnabled: true,
+                riskCooldownBars: 1,
+            },
+        }).eligible).to.equal(true);
         expect(resolveAssetOpportunityRustBatchEligibility({
             ...base,
-            settings: { ...eligibleSettings, slippageBps: 1 },
-        }).reason).to.equal("slippage_unsupported");
+            selectedStrategy: {
+                key: "cross-symbol-entry",
+                name: "Cross-symbol entry",
+                strategy: { crossSymbolConfig: { defaultSymbol: "SECONDARY", minBars: 1 } } as Strategy,
+            },
+        }).reason).to.equal("cross_symbol_unsupported");
+        expect(resolveAssetOpportunityRustBatchEligibility({
+            ...base,
+            settings: { ...eligibleSettings, executionModel: "next_open", stopLossAtr: 1.5 },
+        }).eligible).to.equal(true);
+        expect(resolveAssetOpportunityRustBatchEligibility({
+            ...base,
+            settings: {
+                ...eligibleSettings,
+                executionModel: "next_open",
+                stopLossAtr: 1.5,
+                riskCooldownEnabled: true,
+                riskCooldownBars: 1,
+            },
+        }).eligible).to.equal(true);
+        expect(resolveAssetOpportunityRustBatchEligibility({
+            ...base,
+            settings: { ...eligibleSettings, riskMinHoldEnabled: true },
+        }).reason).to.equal("risk_control_unsupported");
         expect(resolveAssetOpportunityRustBatchEligibility({
             ...base,
             settings: { ...eligibleSettings, allowSameBarExit: false },
@@ -241,9 +270,9 @@ describe("Asset Opportunity Rust batch contract", () => {
         }).reason).to.equal("smart_sizing_unsupported");
     });
 
-    it("skips external Rust transport for low-density Asset Opportunity searches", () => {
-        expect(shouldUseRustAssetOpportunityBatch(2, 500)).to.equal(false);
-        expect(shouldUseRustAssetOpportunityBatch(7, 500)).to.equal(false);
+    it("keeps Rust enabled for sparse capped searches so low-density runs do not silently become TypeScript", () => {
+        expect(shouldUseRustAssetOpportunityBatch(2, 500)).to.equal(true);
+        expect(shouldUseRustAssetOpportunityBatch(7, 500)).to.equal(true);
         expect(shouldUseRustAssetOpportunityBatch(8, 500)).to.equal(true);
         expect(shouldUseRustAssetOpportunityBatch(2, 0)).to.equal(true);
     });
@@ -523,6 +552,62 @@ describe("Asset Opportunity Rust batch contract", () => {
         }
     });
 
+    it("carries realistic execution settings into the specialized Rust batch", async () => {
+        const strategy: Strategy = {
+            name: "Realistic Rust batch fixture",
+            description: "deterministic signals",
+            defaultParams: { marker: 1 },
+            paramLabels: { marker: "Marker" },
+            execute: () => makeSignals(),
+        };
+        let capturedBaseSettings: BacktestSettings | undefined;
+        let capturedItemSettings: BacktestSettings | undefined;
+        const client: AssetOpportunityRustBatchClient = {
+            async runBatchBacktestWithStatus(_data, items, _initialCapital, _positionSize, _commission, baseSettings) {
+                capturedBaseSettings = baseSettings;
+                capturedItemSettings = items[0]?.settings;
+                return { ok: true, response: makeRustResponse(items.map((item) => item.id)), requestBytes: 100, elapsedMs: 2 };
+            },
+        };
+        const output = await runServerAssetIsSearch({
+            ohlcvData: makeCandles(8),
+            symbol: "RUST",
+            interval: "5m",
+            options: makeOptions(),
+            settings: {
+                ...eligibleSettings,
+                executionModel: "next_open",
+                slippageBps: 5,
+                riskCooldownEnabled: true,
+                riskCooldownBars: 1,
+            },
+            capitalSettings,
+            selectedStrategy: { key: "realistic_rust_batch_fixture", name: strategy.name, strategy },
+            generateParamSets: () => [{ marker: 1 }, { marker: 2 }],
+            useRustEnginePreference: true,
+            // Asset Opportunity shares one secondary-data helper across the
+            // selected strategy set. A plain strategy must remain Rust-eligible
+            // when that helper exists for a different selected strategy.
+            dataFetcher: {
+                getProvider: () => "local",
+                fetchDataDetached: async () => makeCandles(8),
+            },
+            confirmationStrategiesLoaded: true,
+            rustBatchClient: client,
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+        });
+        expect(output.engineUsage.rustCompletedRuns).to.equal(2);
+        expect(capturedBaseSettings?.executionModel).to.equal("next_open");
+        expect(capturedBaseSettings?.slippageBps).to.equal(5);
+        expect(capturedBaseSettings?.riskCooldownEnabled).to.equal(true);
+        expect(capturedBaseSettings?.riskCooldownBars).to.equal(1);
+        expect(capturedItemSettings?.executionModel).to.equal("next_open");
+        expect(capturedItemSettings?.slippageBps).to.equal(5);
+        expect(capturedItemSettings?.riskCooldownEnabled).to.equal(true);
+        expect(capturedItemSettings?.riskCooldownBars).to.equal(1);
+    });
+
     it("uploads one dataset and reuses its cache for the Rust candidate batch", async () => {
         const previous = process.env.FINDER_ASSET_OPPORTUNITY_RUST_BATCH;
         process.env.FINDER_ASSET_OPPORTUNITY_RUST_BATCH = "1";
@@ -649,5 +734,83 @@ describe("Asset Opportunity Rust batch contract", () => {
             if (previous === undefined) delete process.env.FINDER_ASSET_OPPORTUNITY_RUST_BATCH;
             else process.env.FINDER_ASSET_OPPORTUNITY_RUST_BATCH = previous;
         }
+    });
+
+    it("coalesces queued multi-asset cache bootstrap before Rust execution", async () => {
+        const cacheGroupSizes: number[] = [];
+        const executionGroupSizes: number[] = [];
+        const metric = {
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: null,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+        };
+        const client = {
+            getDataCacheKey: (data: OHLCVData[]) => String(data[0]?.time ?? "empty"),
+            cacheMultiAssetDataWithStatus: async (group: Array<{ id: string; data: OHLCVData[] }>) => {
+                cacheGroupSizes.push(group.length);
+                return {
+                    ok: true as const,
+                    response: {
+                        datasets: group.map((entry) => ({ id: entry.id, cacheId: `cache:${entry.id}` })),
+                    },
+                    requestBytes: 1,
+                    elapsedMs: 1,
+                };
+            },
+            runMultiAssetAssetOpportunityBatchBacktestWithStatus: async (workloads: Array<{
+                items: Array<{ id: string }>;
+            }>) => {
+                executionGroupSizes.push(workloads.length);
+                return {
+                    ok: true as const,
+                    response: {
+                        processingTimeMs: 1,
+                        results: workloads.flatMap((workload) => workload.items.map((item) => ({
+                            id: item.id,
+                            result: metric,
+                            selectionResult: metric,
+                            endpointAdjusted: false,
+                            endpointRemovedTrades: 0,
+                        }))),
+                    },
+                    requestBytes: 1,
+                    elapsedMs: 1,
+                };
+            },
+        } as any;
+        const coordinator = createAssetOpportunityRustMultiBatchCoordinator(client);
+        const makeInput = (data: OHLCVData[], id: string) => ({
+            client,
+            data,
+            items: [{ id, signals: [] }],
+            initialCapital: 10_000,
+            positionSizePercent: 100,
+            commissionPercent: 0,
+            baseSettings: eligibleSettings,
+            lastDataTime: data[data.length - 1]?.time ?? null,
+            maxRequestBytes: 16 * 1024 * 1024,
+            maxResponseBytes: 128 * 1024 * 1024,
+        });
+
+        const [first, second] = await Promise.all([
+            coordinator.dispatchCandidate(makeInput(makeCandles(8), "first")),
+            coordinator.dispatchCandidate(makeInput(makeCandles(8).map((candle) => ({ ...candle, time: (Number(candle.time) + 1) as Time })), "second")),
+        ]);
+
+        expect(first.status).to.equal("completed");
+        expect(second.status).to.equal("completed");
+        expect(cacheGroupSizes).to.deep.equal([2]);
+        expect(executionGroupSizes).to.deep.equal([2]);
     });
 });

@@ -1,5 +1,7 @@
 /**
- * worker_threads entry for the Finder Asset Opportunity BATCH holdout sweep.
+ * worker_threads entry for Finder Asset Opportunity asset chunks. The same
+ * worker is used by the BATCH holdout sweep and by the Rust-preference single
+ * run path.
  *
  * One worker executes whole holdout iterations or contiguous asset chunks
  * (one `run_task` message at a time) via the unchanged
@@ -69,6 +71,8 @@ export interface AssetOpportunityBatchWorkerTask {
     providerBySymbol: Record<string, string> | null;
     candidatePoolSize: number;
     minFreshSupport: number;
+    /** Benchmark-only structured-clone data source; production workers load from the server loader. */
+    inlineDatasets?: Record<string, OHLCVData[]>;
 }
 export type AssetOpportunityBatchWorkerCommand =
     | { type: "run_task"; task: AssetOpportunityBatchWorkerTask }
@@ -83,6 +87,7 @@ export type AssetOpportunityBatchWorkerEvent =
         status: string;
         phase: FinderJobPhase;
         /** Snapshot counters from this iteration's progress (see AssetOpportunityIterationProgress). */
+        assetIndex: number;
         loadedSymbols: number;
         failedSymbols: number;
         strategyIndex: number;
@@ -132,6 +137,7 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
         percent: number;
         status: string;
         phase: FinderJobPhase;
+        assetIndex: number;
         loadedSymbols: number;
         failedSymbols: number;
         strategyIndex: number;
@@ -175,6 +181,7 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
                     percent: progress.percent,
                     status: progress.status,
                     phase: progress.phase,
+                    assetIndex: progress.assetIndex,
                     loadedSymbols: progress.loadedSymbols,
                     failedSymbols: progress.failedSymbols,
                     strategyIndex: progress.strategyIndex,
@@ -244,7 +251,9 @@ if (!isMainThread && parentPort) {
         signalCache ??= createAssetOpportunitySignalCache();
         runAssetOpportunityBatchWorkerTask({
             task,
-            loadDataset: loadServerFinderDataset,
+            loadDataset: task.inlineDatasets
+                ? async (symbol) => task.inlineDatasets![symbol] ?? []
+                : loadServerFinderDataset,
             assetLoadContext,
             signalCache,
             abortSignal: activeAbort.signal,
@@ -257,6 +266,7 @@ if (!isMainThread && parentPort) {
                     percent: progress.percent,
                     status: progress.status,
                     phase: progress.phase,
+                    assetIndex: progress.assetIndex,
                     loadedSymbols: progress.loadedSymbols,
                     failedSymbols: progress.failedSymbols,
                     strategyIndex: progress.strategyIndex,

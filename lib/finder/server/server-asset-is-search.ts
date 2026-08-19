@@ -215,7 +215,6 @@ export async function runServerAssetIsSearch(
         capitalSettings,
         selectedStrategy,
         exitStrategyCandidates: input.exitStrategyCandidates,
-        dataFetcherPresent: input.dataFetcher !== undefined,
     });
     if (rustBatchEligibility.eligible && rustBatchDensityEligible) {
         return runServerAssetIsSearchWithRustBatch({
@@ -241,6 +240,9 @@ export async function runServerAssetIsSearch(
             dataBars: input.ohlcvData.length,
         });
     }
+    const rustBatchFallbackReason = input.useRustEnginePreference === true && !rustBatchEligibility.eligible
+        ? `Asset Opportunity Rust batch ineligible: ${rustBatchEligibility.reason ?? "unknown"}`
+        : undefined;
     const executionUseRustEnginePreference = rustBatchEligibility.eligible && !rustBatchDensityEligible
         ? false
         : input.useRustEnginePreference;
@@ -427,9 +429,10 @@ export async function runServerAssetIsSearch(
             if (output.engineUsed === "rust") rustCompletedRuns += 1;
             else {
                 typescriptCompletedRuns += 1;
-                const reason = rustBatchEligibility.eligible && !rustBatchDensityEligible
-                    ? "Rust batch skipped: low candidate density"
-                    : output.engineDiagnostics?.typescriptReason ?? "TypeScript execution reason unavailable";
+                const reason = rustBatchFallbackReason
+                    ?? (rustBatchEligibility.eligible && !rustBatchDensityEligible
+                        ? "Rust batch skipped: low candidate density"
+                        : output.engineDiagnostics?.typescriptReason ?? "TypeScript execution reason unavailable");
                 typescriptReasonCounts.set(reason, (typescriptReasonCounts.get(reason) ?? 0) + 1);
                 if (output.engineDiagnostics?.rustAttempted) rustFallbackRuns += 1;
             }
@@ -698,60 +701,24 @@ async function runServerAssetIsSearchWithRustBatch(
     const addTypescriptReason = (reason: string): void => {
         typescriptReasonCounts.set(reason, (typescriptReasonCounts.get(reason) ?? 0) + 1);
     };
-    const rustCandidates = preparedCandidates.filter((candidate) => candidate.signals.length > 0);
-    const noSignalCandidates = preparedCandidates.filter((candidate) => candidate.signals.length === 0);
+    // Empty signal sets are valid scalar Rust workloads. Sending them through
+    // the same validated batch avoids thousands of per-candidate TypeScript
+    // executor calls while preserving the zero-trade result contract.
 
-    // Empty signal sets already have a cheap, authoritative TypeScript result.
-    // Keep them out of the Rust transport so the batch only spends engine time
-    // on candidates that actually require trade simulation.
-    for (const candidate of noSignalCandidates) {
-        if (input.isCancelled()) break;
-        try {
-            const output = await runAssetCandidateBacktest({
-                data: input.ohlcvData,
-                symbol: input.symbol,
-                interval: input.interval,
-                strategy: preparedStrategy,
-                strategyKey: selectedStrategy.key,
-                strategyParams: candidate.entryParams,
-                riskOverrideParams: candidate.entryParams,
-                settings,
-                capitalSettings,
-                options,
-                useRustEnginePreference: input.useRustEnginePreference,
-                closedCandleDataOverride: input.ohlcvData,
-                preGeneratedSignals: [],
-                needs: {
-                    compact: true,
-                    trades: false,
-                    fullAnalytics: requiresFullAnalytics,
-                    endpointSelection: "auto",
-                },
-            });
-            const selection = output.endpointSelection ?? buildSelectionResult(
-                output.result,
-                input.ohlcvData[input.ohlcvData.length - 1]?.time ?? null,
-                preResolvedCapital.initialCapital,
-            );
-            offer({
-                key: selectedStrategy.key,
-                name: selectedStrategy.name,
-                params: candidate.entryParams,
-                result: output.result,
-                selectionResult: selection.result,
-                endpointAdjusted: selection.adjusted,
-                endpointRemovedTrades: selection.removedTrades,
-            }, []);
-            candidateEvaluationsCompleted += 1;
-            typescriptCompletedRuns += 1;
-            addTypescriptReason("no signals required trade simulation");
-        } catch {
-            candidateEvaluationFailures += 1;
-        }
-    }
-
-    if (rustCandidates.length > 0 && !input.isCancelled()) {
-        const baseSettings = rustCandidates[0]!.backtestSettings;
+    if (preparedCandidates.length > 0 && !input.isCancelled()) {
+        // `runAssetCandidateBacktest` intentionally sanitizes realism fields
+        // before its generic executor call. The Asset Opportunity batch has
+        // explicit parity implementations for execution timing, slippage, and
+        // entry cooldown, so carry them into the Rust-only request without
+        // changing the TypeScript fallback contract.
+        const rustSettingsFor = (candidate: PreparedRustBatchCandidate): BacktestSettings => ({
+            ...candidate.backtestSettings,
+            executionModel: settings.executionModel,
+            slippageBps: settings.slippageBps,
+            riskCooldownEnabled: settings.riskCooldownEnabled,
+            riskCooldownBars: settings.riskCooldownBars,
+        });
+        const baseSettings = rustSettingsFor(preparedCandidates[0]!);
         let cacheId: string | undefined;
         let cacheKey: string | undefined;
         const rustDataset = args.rustMultiAssetBatch
@@ -786,10 +753,10 @@ async function runServerAssetIsSearchWithRustBatch(
             ...(args.rustMultiAssetBatch && input.fullSignalData
                 ? { cacheData: input.fullSignalData }
                 : {}),
-            items: rustCandidates.map<AssetOpportunityRustBatchItem>((candidate) => ({
+            items: preparedCandidates.map<AssetOpportunityRustBatchItem>((candidate) => ({
                 id: candidate.id,
                 signals: candidate.signals,
-                settings: candidate.backtestSettings,
+                settings: rustSettingsFor(candidate),
             })),
             initialCapital: capitalSettings.initialCapital,
             positionSizePercent: capitalSettings.positionSize,
@@ -816,16 +783,16 @@ async function runServerAssetIsSearchWithRustBatch(
                 symbol: input.symbol,
                 status: dispatched.status,
                 requests: dispatched.requests,
-                items: rustCandidates.length,
+                items: preparedCandidates.length,
                 fallbackItems: 0,
                 requestBytes: dispatched.requestBytes,
                 latencyMs: Math.round(dispatched.latencyMs),
                 cachedDataset: Boolean(cacheId),
             });
-            rustAttemptedRuns += rustCandidates.length;
-            rustCompletedRuns += rustCandidates.length;
-            candidateEvaluationsCompleted += rustCandidates.length;
-            for (const candidate of rustCandidates) {
+            rustAttemptedRuns += preparedCandidates.length;
+            rustCompletedRuns += preparedCandidates.length;
+            candidateEvaluationsCompleted += preparedCandidates.length;
+            for (const candidate of preparedCandidates) {
                 const batchResult = dispatched.results.get(candidate.id);
                 if (!batchResult) continue;
                 const compact = batchResult.selectionResult
@@ -856,7 +823,7 @@ async function runServerAssetIsSearchWithRustBatch(
                 symbol: input.symbol,
                 status: dispatched.status,
                 requests: dispatched.requests,
-                items: rustCandidates.length,
+                items: preparedCandidates.length,
                 fallbackItems: 0,
                 requestBytes: dispatched.requestBytes,
                 latencyMs: Math.round(dispatched.latencyMs),
@@ -872,15 +839,15 @@ async function runServerAssetIsSearchWithRustBatch(
                 symbol: input.symbol,
                 status: dispatched.status,
                 requests: dispatched.requests,
-                items: rustCandidates.length,
-                fallbackItems: rustCandidates.length,
+                items: preparedCandidates.length,
+                fallbackItems: preparedCandidates.length,
                 requestBytes: dispatched.requestBytes,
                 latencyMs: Math.round(dispatched.latencyMs),
                 reason: dispatched.reason,
                 cachedDataset: Boolean(cacheId),
             });
             const reason = `Rust batch fallback: ${dispatched.reason}`;
-            for (const candidate of rustCandidates) {
+            for (const candidate of preparedCandidates) {
                 if (input.isCancelled()) break;
                 rustAttemptedRuns += 1;
                 rustFallbackRuns += 1;

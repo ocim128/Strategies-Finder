@@ -118,6 +118,7 @@ out
 # Build output
 dist/
 dist-ssr/
+rust-engine/target/
 
 # User artifacts
 test_strategies_output.txt

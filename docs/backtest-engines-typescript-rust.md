@@ -1,16 +1,16 @@
 # TypeScript and Rust Backtest Engines
 
 Status: current architecture reference  
-Date: 2026-08-18
+Date: 2026-08-19
 
 This document describes the two backtest engines used by Strategies-Finder,
 how the application chooses between them, and how the server-side Finder Asset
 Opportunity path uses Rust without changing the TypeScript strategy and ranking
 contracts.
 
-The Rust service is maintained in the adjacent `trading-engine` workspace. The
-TypeScript repository owns the client, engine-selection rules, Finder
-orchestration, result normalization, and fallback behavior.
+The Rust service is maintained in this repository under `rust-engine/`. The
+TypeScript side owns the client, engine-selection rules, Finder orchestration,
+result normalization, and fallback behavior.
 
 ## Executive summary
 
@@ -19,20 +19,21 @@ orchestration, result normalization, and fallback behavior.
 | Strategy signal generation | Authoritative for built-in strategies and Finder | Does not receive a strategy key or generate the strategy signal set |
 | Trade simulation | Full compatibility surface | Supported subset of signal-driven simulation |
 | Results | Full result, compact result, trades, equity curve, diagnostics | Full result or compact/scalar summaries depending on endpoint |
-| Main implementation | `lib/strategies/backtest/backtest-engine.ts` | `trading-engine/src/backtest/engine.rs` |
+| Main implementation | `lib/strategies/backtest/backtest-engine.ts` | `rust-engine/src/backtest/engine.rs` |
 | Application boundary | In-process function calls | HTTP over loopback, normally `127.0.0.1:3030` |
 | Failure behavior | Primary implementation and fallback | Optional acceleration; unavailable or invalid Rust results fall back to TypeScript |
-| Best workload | Low-density Finder work, unsupported settings, and latency-sensitive small runs | Dense batches where one request can amortize data transfer and process overhead |
+| Best workload | Unsupported settings, signal generation, and latency-sensitive small runs | Eligible Asset Opportunity simulation batches, including sparse capped runs after bounded batching |
 
 Rust is not a replacement for the TypeScript engine. It is a compatible
-simulation backend for a deliberately fenced subset. The current production
-benchmark showed TypeScript faster for the observed low-density Finder shape:
+simulation backend for a deliberately fenced subset. The benchmark separates
+the complete Finder wall clock from the eligible simulation stage because
+strategy signal generation remains TypeScript-owned:
 
-- 128 assets × 45 real strategies × 3,589 bars: TypeScript approximately 5.9 s;
-  forced Rust approximately 13.5 s.
-- 499 assets × 45 real strategies, two candidates per asset, and a 500-bar
-  evaluation window: approximately 23.2 s in TypeScript; the adaptive Rust gate
-  intentionally selected TypeScript because the candidate density was too low.
+- Cold end-to-end Finder runs can still favor TypeScript when the Rust service
+  must upload a large dataset and the candidate pool is sparse.
+- The checked-in engine benchmark uses identical signals, settings, and candles
+  for both kernels; its scalar Asset Opportunity replay is the meaningful Rust
+  speed target, while the complete Finder wall clock remains a separate measure.
 
 The isolated Rust simulation kernel can still be faster. The complete Finder
 workload also includes TypeScript signal generation, request packing,
@@ -155,21 +156,21 @@ or an OOS trade history.
 
 ### Service and implementation
 
-The adjacent Rust crate is `trading-engine` version `0.1.0` in the inspected
-service. Its server binary is configured in `trading-engine/src/main.rs` and
+The Rust crate in this repository is `rust-engine` version `0.1.0`. Its server
+binary is configured in `rust-engine/src/main.rs` and
 binds to `127.0.0.1:3030`. Release compilation uses optimization level 3, LTO,
-and one codegen unit (`trading-engine/Cargo.toml`). Rayon parallelizes eligible
+and one codegen unit (`rust-engine/Cargo.toml`). Rayon parallelizes eligible
 batch items and independent multi-asset workloads.
 
 The main Rust modules are:
 
-- `trading-engine/src/types.rs`: wire-compatible OHLCV, Signal, Trade,
+- `rust-engine/src/types.rs`: wire-compatible OHLCV, Signal, Trade,
   BacktestResult, BacktestSettings, sizing, and batch request types.
-- `trading-engine/src/backtest/engine.rs`: indicator resolution, signal
+- `rust-engine/src/backtest/engine.rs`: indicator resolution, signal
   preparation, position simulation, compact result handling, and statistics.
-- `trading-engine/src/api/routes.rs`: HTTP handlers, packed-data decoding,
+- `rust-engine/src/api/routes.rs`: HTTP handlers, packed-data decoding,
   dataset cache resolution, multi-asset workload slicing, and batch dispatch.
-- `trading-engine/src/indicators/*`: Rust indicator implementations used by
+- `rust-engine/src/indicators/*`: Rust indicator implementations used by
   the supported settings.
 
 Rust receives signal objects or compact packed signals. The strategy source,
@@ -261,11 +262,14 @@ semantics are not represented by the Rust contract.
 `getTypescriptEngineRequirementReasons()` keeps TypeScript for settings whose
 semantics Rust does not represent, including:
 
-- non-`signal_close` execution models;
-- non-zero slippage;
+- non-`signal_close` execution models in the generic executor (the specialized
+  Asset Opportunity batch also supports `next_open`/`next_close`);
+- non-zero slippage in the generic executor (the specialized Asset Opportunity
+  batch carries and applies slippage during its parity-tested simulation);
 - combined/both-direction execution;
 - multiple open positions;
-- enabled minimum/maximum hold or cooldown controls;
+- enabled minimum/maximum hold controls (the specialized Asset Opportunity
+  batch also carries a parity-tested entry cooldown);
 - adaptive percentage take profit;
 - same-event Polymarket exits and Polymarket protection;
 - disabled signal exits;
@@ -286,13 +290,16 @@ rechecks the Finder-specific contract. Rust Asset Opportunity simulation is
 eligible only when all of the following hold:
 
 - the feature is enabled and the server caller has Rust preference enabled;
-- the strategy is not cross-symbol and no cross-symbol data fetcher is active;
+- the strategy is not cross-symbol;
 - no exit-strategy override is active;
-- execution is `signal_close` with zero slippage;
+- execution is `signal_close`, `next_open`, or `next_close`; the selected
+  execution price and non-negative slippage are carried through the specialized
+  Rust batch;
 - direction is `long` or `short`;
 - `maxOpenTrades` is one;
-- minimum/maximum hold, cooldown, win-streak, path-exit, strategy-timeframe,
-  same-event, and Polymarket protection controls are inactive;
+- minimum/maximum hold, win-streak, path-exit, strategy-timeframe, same-event,
+  and Polymarket protection controls are inactive; entry cooldown is carried
+  through the specialized Rust kernel;
 - percentage take profit is fixed when percentage take profit is enabled;
 - sizing is `percent`, `fixed`, or `kelly_criterion`.
 
@@ -301,7 +308,7 @@ adapter from silently dropping a setting and changing the research result.
 
 ### Candidate and fresh-entry endpoints
 
-The adjacent Rust server exposes these relevant routes:
+The in-repository Rust server exposes these relevant routes:
 
 | Route | Purpose | Returned payload |
 | --- | --- | --- |
@@ -321,7 +328,7 @@ ranking does not need to transmit full `trades` and `equityCurve` arrays.
 coalesces independent asset dispatches while preserving one logical result per
 asset. It uses:
 
-- up to 256 workload entries per multi-asset request;
+- up to 1,024 workload entries per multi-asset request;
 - up to 32 datasets per cache-bootstrap request;
 - a 12 ms batching window;
 - packed row-major OHLCV values in the order
@@ -352,17 +359,23 @@ Fresh-entry detection needs only total trades, the latest trade's entry fields,
 exit reason, and whether a position remains open. The fresh-entry endpoint
 returns those fields instead of full histories.
 
-### Adaptive density gate
+### Bounded Asset Opportunity batching
 
-Rust is not forced for every eligible workload. When a capped evaluation has a
-positive `evalLastBars` window and fewer than eight candidates per asset,
-`shouldUseRustAssetOpportunityBatch()` selects TypeScript. Unbounded/full-window
-or denser work can use the Rust multi-asset path.
+Rust is enabled for every positive candidate count that passes the existing
+capability fence, including capped evaluations with only two candidates per
+asset. Candidate work is still grouped into bounded multi-asset requests. Fresh
+entry batching has a separate dense-pool gate because its extra signal
+generation phase and loopback request can cost more than it saves for sparse
+capped searches. A failed, oversized, unsupported, or unavailable batch falls
+back to TypeScript. This keeps the benchmark honest for sparse runs instead of
+silently turning the Rust-preference arm into a TypeScript control.
 
-This gate is based on end-to-end cost, not the isolated Rust loop. It is
-particularly relevant to the observed 499-asset, two-candidate, 500-bar
-holdout shape, where HTTP and serialization overhead can exceed the simulation
-work saved.
+For single-run server jobs with at least 32 assets, the Rust-preference path
+uses up to four persistent Node worker threads. Each worker owns a disjoint
+asset chunk, generates the same TypeScript strategy signals, and sends its
+eligible scalar simulations to Rust. The TypeScript-preference path remains
+single-process, so the production-shaped benchmark measures the actual route
+behavior rather than comparing a Rust-only kernel against a different input.
 
 ## Wire and cache contracts
 
@@ -425,6 +438,8 @@ Rollback controls are intentionally independent:
 - uncheck the UI Rust engine toggle to select TypeScript;
 - set `FINDER_ASSET_OPPORTUNITY_RUST_BATCH=0` to disable the specialized Finder
   batch seam;
+- set `FINDER_ASSET_OPPORTUNITY_RUST_FRESH_BATCH=0` to disable only specialized
+  fresh-entry Rust batching;
 - set `FINDER_ASSET_BATCH_WORKERS=1` to reduce the separate holdout worker
   concurrency when diagnosing resource pressure;
 - stop the optional loopback Rust service to exercise health-unavailable
@@ -449,8 +464,8 @@ The Rust client logs both client elapsed time and the server's
 `processingTimeMs`. A small Rust processing time with a large client elapsed
 time indicates transport or queueing overhead, not a slow Rust simulation.
 Similarly, a Finder run can remain TypeScript-heavy even with Rust enabled
-because signal generation, unsupported settings, low-density gating, fresh/OOS
-requirements, or fallback decisions occur before or around Rust simulation.
+because signal generation, unsupported settings, fresh/OOS requirements, or
+fallback decisions occur before or around Rust simulation.
 
 The UI engine indicator reflects the selected preference, not proof that every
 candidate used Rust. Per-run diagnostics and engine usage counters are the
@@ -471,7 +486,10 @@ Relevant focused checks include:
 - `tests/settings-compat.spec.ts` for settings compatibility;
 - `scripts/engine-benchmark.ts` for isolated TypeScript/Rust engine comparison;
 - `scripts/finder-asset-opportunity-benchmark.ts` for production-shaped Finder
-  measurements.
+  measurements. Use `--real-strategies` for the production-loadable strategy
+  set (required for the worker-pool arm), `--workers=N` to choose the Rust
+  asset-worker count, and `--warm-rust-cache` when measuring the steady-state
+  simulation path; its output reports cache warmup separately.
 
 For changes to either engine boundary, validate both a Rust-available run and a
 Rust-unavailable run. For settings changes, add a positive parity case and an
@@ -479,9 +497,9 @@ explicit unsupported-settings fallback case. For transport changes, validate
 request limits, response limits, cancellation, timeout, cache eviction, and
 missing/duplicate/unknown result IDs.
 
-The external Rust workspace must be tested separately with its Rust test suite
-and a live health/API probe. The TypeScript repository cannot prove Rust source
-parity through typechecking alone.
+The in-repository Rust crate must be tested separately with its Rust test suite
+and a live health/API probe. TypeScript typechecking cannot prove Rust source
+parity on its own.
 
 ## Known limitations
 
@@ -498,4 +516,3 @@ parity through typechecking alone.
   assumption derived from language or benchmark speed.
 - The UI preference indicates opt-in/opt-out policy; it does not mean every
   individual backtest was executed by Rust.
-

@@ -22,7 +22,7 @@ import {
     validateAssetOpportunityRustSummaryBatchResponse,
 } from "./finder-asset-opportunity-rust-batch";
 
-const MAX_WORKLOADS_PER_REQUEST = 256;
+const MAX_WORKLOADS_PER_REQUEST = 1024;
 const MAX_CACHE_WORKLOADS_PER_REQUEST = 32;
 const MAX_BATCH_WAIT_MS = 12;
 
@@ -45,6 +45,15 @@ type FreshQueueEntry = {
     input: AssetOpportunityRustFreshBatchDispatchInput;
     resolve: (result: AssetOpportunityRustFreshBatchDispatch) => void;
 }
+
+type CacheQueueEntry = {
+    id: string;
+    dataKey: string;
+    data: OHLCVData[];
+    signal: AbortSignal | undefined;
+    maxRequestBytes: number;
+    resolve: (cacheId: string | null) => void;
+};
 
 function estimateRequestBytes(request: unknown): number {
     return new TextEncoder().encode(JSON.stringify(request)).byteLength;
@@ -82,9 +91,17 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
     let freshTimer: ReturnType<typeof setTimeout> | undefined;
     let candidateFlushing = false;
     let freshFlushing = false;
+    // The Rust endpoint parallelizes each request with Rayon. Keep candidate
+    // and fresh-entry requests from multiplying independent Rayon pools and
+    // oversubscribing the host when both queues are active.
+    let rustRequestTail: Promise<void> = Promise.resolve();
     const dataKeysByData = new WeakMap<object, string>();
     const cachedIdsByDataKey = new Map<string, string>();
     const pendingCacheIdsByDataKey = new Map<string, Promise<string | null>>();
+    const cacheQueue: CacheQueueEntry[] = [];
+    let cacheSequence = 0;
+    let cacheTimer: ReturnType<typeof setTimeout> | undefined;
+    let cacheFlushing = false;
     const sharedDatasetCache = options?.datasetCache;
     const getDataKey = (data: OHLCVData[]): string => {
         const object = data as object;
@@ -114,6 +131,110 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
         dispatchAssetOpportunityRustBatch(input);
     const dispatchFreshDirect = (input: AssetOpportunityRustFreshBatchDispatchInput): Promise<AssetOpportunityRustFreshBatchDispatch> =>
         dispatchAssetOpportunityRustFreshEntryBatch(input);
+
+    async function withRustRequestSlot<T>(operation: () => Promise<T>): Promise<T> {
+        const previous = rustRequestTail;
+        let release!: () => void;
+        rustRequestTail = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        await previous;
+        try {
+            return await operation();
+        } finally {
+            release();
+        }
+    }
+
+    const scheduleCacheFlush = (): void => {
+        if (cacheTimer !== undefined) return;
+        cacheTimer = setTimeout(() => {
+            cacheTimer = undefined;
+            void flushCacheQueue();
+        }, MAX_BATCH_WAIT_MS);
+    };
+
+    async function flushCacheQueue(): Promise<void> {
+        if (cacheFlushing) return;
+        cacheFlushing = true;
+        try {
+            while (cacheQueue.length > 0) {
+                const entries = cacheQueue.splice(0, MAX_CACHE_WORKLOADS_PER_REQUEST);
+                const maxRequestBytes = Math.min(...entries.map((entry) => entry.maxRequestBytes));
+                const cacheIds = new Map<string, string>();
+                if (client.cacheMultiAssetDataWithStatus) {
+                    const response = await client.cacheMultiAssetDataWithStatus(
+                        entries.map((entry) => ({ id: entry.id, data: entry.data })),
+                        {
+                            signal: entries[0]!.signal,
+                            maxRequestBytes,
+                            maxResponseBytes: 1 * 1024 * 1024,
+                        },
+                    );
+                    if (response.ok) {
+                        const payload = response.response as { datasets?: unknown };
+                        if (Array.isArray(payload.datasets)) {
+                            for (const dataset of payload.datasets) {
+                                if (!dataset || typeof dataset !== "object") continue;
+                                const id = (dataset as { id?: unknown }).id;
+                                const cacheId = (dataset as { cacheId?: unknown }).cacheId;
+                                if (typeof id === "string" && typeof cacheId === "string" && cacheId.length > 0) {
+                                    cacheIds.set(id, cacheId);
+                                }
+                            }
+                        }
+                    }
+                } else if (client.cacheData) {
+                    await Promise.all(entries.map(async (entry) => {
+                        const cacheId = await client.cacheData!(entry.data, {
+                            signal: entry.signal,
+                            maxRequestBytes: entry.maxRequestBytes,
+                            maxResponseBytes: 1 * 1024 * 1024,
+                        }).catch(() => null);
+                        if (cacheId) cacheIds.set(entry.id, cacheId);
+                    }));
+                }
+                for (const entry of entries) {
+                    const cacheId = cacheIds.get(entry.id) ?? null;
+                    if (cacheId) {
+                        cachedIdsByDataKey.set(entry.dataKey, cacheId);
+                        sharedDatasetCache?.set(entry.dataKey, Promise.resolve(cacheId));
+                    } else {
+                        pendingCacheIdsByDataKey.delete(entry.dataKey);
+                    }
+                    entry.resolve(cacheId);
+                }
+            }
+        } finally {
+            cacheFlushing = false;
+            if (cacheQueue.length > 0) scheduleCacheFlush();
+        }
+    }
+
+    function requestCacheId(
+        dataKey: string,
+        data: OHLCVData[],
+        signal: AbortSignal | undefined,
+        maxRequestBytes: number,
+    ): Promise<string | null> {
+        if (!client.cacheData && !client.cacheMultiAssetDataWithStatus) return Promise.resolve(null);
+        const existing = pendingCacheIdsByDataKey.get(dataKey);
+        if (existing) return existing;
+        const promise = new Promise<string | null>((resolve) => {
+            cacheQueue.push({
+                id: `dataset-${cacheSequence++}`,
+                dataKey,
+                data,
+                signal,
+                maxRequestBytes,
+                resolve,
+            });
+        });
+        pendingCacheIdsByDataKey.set(dataKey, promise);
+        if (cacheQueue.length >= MAX_CACHE_WORKLOADS_PER_REQUEST) void flushCacheQueue();
+        else scheduleCacheFlush();
+        return promise;
+    }
 
     async function sendCandidateGroup(entries: CandidateQueueEntry[]): Promise<void> {
         const maxRequestBytes = Math.min(...entries.map((entry) => entry.input.maxRequestBytes));
@@ -149,7 +270,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
             await Promise.all(entries.map(async (entry) => entry.resolve(await dispatchCandidateDirect(entry.input))));
             return;
         }
-        const transport = await client.runMultiAssetAssetOpportunityBatchBacktestWithStatus(
+        const transport = await withRustRequestSlot(() => client.runMultiAssetAssetOpportunityBatchBacktestWithStatus(
             requestWorkloads,
             request.initialCapital,
             request.positionSizePercent,
@@ -161,7 +282,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
                 maxRequestBytes,
                 maxResponseBytes: Number.isFinite(maxResponseBytes) ? maxResponseBytes : undefined,
             },
-        );
+        ));
         if (!transport.ok) {
             if (transport.reason === "http_error") invalidateCachedWorkloads(entries, workloads);
             await Promise.all(entries.map(async (entry) => entry.resolve(await dispatchCandidateDirect(entry.input))));
@@ -231,7 +352,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
             await Promise.all(entries.map(async (entry) => entry.resolve(await dispatchFreshDirect(entry.input))));
             return;
         }
-        const transport = await client.runMultiAssetFreshEntryBatchBacktestWithStatus(
+        const transport = await withRustRequestSlot(() => client.runMultiAssetFreshEntryBatchBacktestWithStatus(
             requestWorkloads,
             request.initialCapital,
             request.positionSizePercent,
@@ -243,7 +364,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
                 maxRequestBytes,
                 maxResponseBytes: Number.isFinite(maxResponseBytes) ? maxResponseBytes : undefined,
             },
-        );
+        ));
         if (!transport.ok) {
             if (transport.reason === "http_error") invalidateCachedWorkloads(entries, workloads);
             await Promise.all(entries.map(async (entry) => entry.resolve(await dispatchFreshDirect(entry.input))));
@@ -347,73 +468,22 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
             const data = workload.data;
             if (!data) return false;
             const dataKey = getDataKey(data);
-            const cachedId = cachedIdsByDataKey.get(dataKey);
+            const cachedId = cachedIdsByDataKey.get(dataKey) ?? cacheIds.get(workload.id);
             if (cachedId) cacheIds.set(workload.id, cachedId);
             return !cachedId;
         });
         if (missing.length > 0) {
-            if (client.cacheData) {
-                const dataByKey = new Map<string, OHLCVData[]>();
-                for (const workload of missing) {
-                    if (workload.data) dataByKey.set(getDataKey(workload.data), workload.data);
-                }
-                const cachedEntries = await Promise.all([...dataByKey.entries()].map(async ([dataKey, data]) => {
-                    let promise = pendingCacheIdsByDataKey.get(dataKey);
-                    if (!promise) {
-                        promise = client.cacheData!(data, {
-                            signal,
-                            maxRequestBytes,
-                            maxResponseBytes: 1 * 1024 * 1024,
-                        }).catch(() => null);
-                        pendingCacheIdsByDataKey.set(dataKey, promise);
-                    }
-                    const cacheId = await promise;
-                    return { dataKey, cacheId };
-                }));
-                for (const { dataKey, cacheId } of cachedEntries) {
-                    if (!cacheId) {
-                        pendingCacheIdsByDataKey.delete(dataKey);
-                        return null;
-                    }
-                    cachedIdsByDataKey.set(dataKey, cacheId);
-                    sharedDatasetCache?.set(dataKey, Promise.resolve(cacheId));
-                }
-            } else if (client.cacheMultiAssetDataWithStatus) {
-                const cacheGroups: Array<Array<{ id: string; data: OHLCVData[] }>> = [];
-                for (let index = 0; index < missing.length; index += MAX_CACHE_WORKLOADS_PER_REQUEST) {
-                    cacheGroups.push(missing.slice(index, index + MAX_CACHE_WORKLOADS_PER_REQUEST).map((workload) => ({
-                        id: workload.id,
-                        data: workload.data!,
-                    })));
-                }
-                const cachedGroups = await Promise.all(cacheGroups.map((group) =>
-                    client.cacheMultiAssetDataWithStatus!(group, {
-                        signal,
-                        maxRequestBytes,
-                        maxResponseBytes: 1 * 1024 * 1024,
-                    }),
-                ));
-                for (const cached of cachedGroups) {
-                    if (!cached.ok) return null;
-                    const payload = cached.response as { datasets?: unknown };
-                    if (!Array.isArray(payload.datasets)) return null;
-                    for (const dataset of payload.datasets) {
-                        if (!dataset || typeof dataset !== "object") return null;
-                        const id = (dataset as { id?: unknown }).id;
-                        const cacheId = (dataset as { cacheId?: unknown }).cacheId;
-                        if (typeof id !== "string" || typeof cacheId !== "string" || cacheId.length === 0) return null;
-                        cacheIds.set(id, cacheId);
-                        const workload = missing.find((candidate) => candidate.id === id);
-                        if (workload?.data && sharedDatasetCache) {
-                            sharedDatasetCache.set(
-                                getDataKey(workload.data),
-                                Promise.resolve(cacheId),
-                            );
-                        }
-                    }
-                }
-            } else {
-                return null;
+            const dataByKey = new Map<string, OHLCVData[]>();
+            for (const workload of missing) {
+                if (workload.data) dataByKey.set(getDataKey(workload.data), workload.data);
+            }
+            const cachedEntries = await Promise.all([...dataByKey.entries()].map(([dataKey, data]) =>
+                requestCacheId(dataKey, data, signal, maxRequestBytes).then((cacheId) => ({ dataKey, cacheId })),
+            ));
+            for (const { dataKey, cacheId } of cachedEntries) {
+                if (!cacheId) return null;
+                cachedIdsByDataKey.set(dataKey, cacheId);
+                sharedDatasetCache?.set(dataKey, Promise.resolve(cacheId));
             }
             for (const workload of missing) {
                 const data = workload.data;

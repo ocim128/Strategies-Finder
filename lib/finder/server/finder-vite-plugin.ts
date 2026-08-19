@@ -147,6 +147,8 @@ import {
 } from "../finder-asset-opportunity-metrics";
 import {
     runAssetOpportunityIteration,
+    type AssetOpportunityIterationCallbacks,
+    type AssetOpportunityIterationProgress,
     type AssetOpportunityIterationResult,
     type FinderAssetOpportunityRunInput,
 } from "./asset-opportunity-iteration";
@@ -1211,8 +1213,163 @@ export function createProgressEventThrottle(thresholdMs = 250, minPercentDelta =
  * mirrors progress onto the snapshot + `asset_progress` events, streams each
  * scalar asset via `asset_complete`, and terminates with `asset_done`.
  */
+async function runFinderAssetOpportunityWorkerSweep(
+    input: FinderAssetOpportunityRunInput & {
+        batchTaskRunnerFactory: AssetOpportunityBatchRunnerFactory;
+        assetWorkerCount: number;
+        providerBySymbol?: Record<string, string>;
+    },
+    callbacks: AssetOpportunityIterationCallbacks,
+    isCancelled: () => boolean,
+): Promise<AssetOpportunityIterationResult> {
+    const totalAssets = input.symbols.length;
+    const chunkCount = Math.max(1, Math.min(input.assetWorkerCount, totalAssets));
+    const chunkSize = Math.ceil(totalAssets / chunkCount);
+    const providerBySymbol = input.providerBySymbol ?? {};
+    const tasks: AssetOpportunityBatchWorkerTask[] = Array.from({ length: chunkCount }, (_, assetChunkIndex) => {
+        const symbols = input.symbols.slice(assetChunkIndex * chunkSize, (assetChunkIndex + 1) * chunkSize);
+        const options = input.options.assetOpportunity
+            ? {
+                ...input.options,
+                assetOpportunity: {
+                    ...input.options.assetOpportunity,
+                    symbols,
+                },
+            }
+            : input.options;
+        return {
+            taskIndex: assetChunkIndex,
+            holdoutBars: 0,
+            assetChunkIndex,
+            assetChunkCount: chunkCount,
+            runId: input.runId,
+            interval: input.interval,
+            symbols,
+            options,
+            settings: input.settings,
+            capitalSettings: input.capitalSettings,
+            strategyKeys: input.selectedStrategies.map((strategy) => strategy.key),
+            exitStrategyKeys: (input.exitStrategyCandidates ?? []).map((strategy) => strategy.key),
+            useRustEnginePreference: input.useRustEnginePreference === true,
+            providerBySymbol,
+            candidatePoolSize: input.candidatePoolSize,
+            minFreshSupport: input.minFreshSupport,
+        };
+    });
+    const completed: Array<{ task: AssetOpportunityBatchWorkerTask; iteration: AssetOpportunityIterationResult }> = [];
+    const sweep = await runAssetOpportunityBatchSweep({
+        tasks,
+        runnerCount: chunkCount,
+        createRunner: input.batchTaskRunnerFactory,
+        onIterationResult: async (task, iteration) => {
+            completed.push({ task, iteration });
+        },
+        onProgress: (task, progress, aggregate) => {
+            const chunkStart = (task.assetChunkIndex ?? 0) * chunkSize;
+            callbacks.onProgress({
+                percent: aggregate.percent,
+                text: progress.status,
+                status: progress.status,
+                phase: progress.phase as AssetOpportunityIterationProgress["phase"],
+                oosActive: false,
+                assetIndex: chunkStart + progress.assetIndex,
+                totalAssets,
+                strategyIndex: progress.strategyIndex,
+                loadedSymbols: Math.min(totalAssets, chunkStart + progress.loadedSymbols),
+                failedSymbols: progress.failedSymbols,
+            });
+        },
+        onRunLog: (event, payload) => input.runLog?.(event, payload),
+        isCancelled,
+    });
+    if (sweep.fatal) throw new Error(sweep.fatal.error);
+    if (completed.length === 0) {
+        if (sweep.cancelled || isCancelled()) {
+            return {
+                results: [],
+                cancelled: true,
+                assetDiagnostics: {
+                    totalAssets,
+                    assetsWithFreshEntry: 0,
+                    assetsWithNoFreshEntry: 0,
+                    selectGradeAssets: 0,
+                    watchGradeAssets: 0,
+                    rejectGradeAssets: 0,
+                    failedAssets: [],
+                    work: {
+                        selectedStrategies: input.selectedStrategies.length,
+                        candidateEvaluationsEstimated: 0,
+                        candidateEvaluationsAttempted: 0,
+                        candidateEvaluationsCompleted: 0,
+                        candidateEvaluationFailures: 0,
+                        signalCacheHits: 0,
+                        signalCacheMisses: 0,
+                        freshEntryRechecks: 0,
+                        oosEvaluations: 0,
+                        winnerAnalyticsRecomputations: 0,
+                        loadedBars: { min: 0, max: 0, avg: 0 },
+                    },
+                    timingsMs: {
+                        total: 0,
+                        dataLoading: 0,
+                        dataPreparation: 0,
+                        inSampleSearch: 0,
+                        parameterGeneration: 0,
+                        candidateBacktests: 0,
+                        freshEntryRechecks: 0,
+                        oosValidation: 0,
+                        resultReduction: 0,
+                        winnerAnalytics: 0,
+                        yielding: 0,
+                        other: 0,
+                    },
+                },
+                totals: {
+                    totalAssets,
+                    assetsWithFreshEntry: 0,
+                    selectGradeAssets: 0,
+                    watchGradeAssets: 0,
+                    rejectGradeAssets: 0,
+                    failedAssets: 0,
+                    engineUsage: {
+                        rustRequested: input.useRustEnginePreference === true,
+                        rustAttemptedRuns: 0,
+                        rustCompletedRuns: 0,
+                        rustFallbackRuns: 0,
+                        typescriptCompletedRuns: 0,
+                        typescriptReasons: [],
+                    },
+                },
+                summary: "",
+            };
+        }
+        throw new Error("Asset Opportunity worker sweep completed without a result.");
+    }
+    const merged = mergeAssetOpportunityChunkResults(completed, input.selectedStrategies);
+    const accumulated: FinderAssetOpportunityResult[] = [];
+    const assetIndexBySymbol = new Map(input.symbols.map((symbol, index) => [symbol, index]));
+    for (const result of merged.results) {
+        accumulated.push(result);
+        callbacks.onAssetResult({
+            result,
+            assetIndex: assetIndexBySymbol.get(result.symbol) ?? -1,
+            totalAssets,
+            results: accumulated,
+        });
+    }
+    return {
+        ...merged,
+        cancelled: sweep.cancelled,
+    };
+}
+
 export async function processFinderAssetOpportunityRun(
-    input: FinderAssetOpportunityRunInput,
+    input: FinderAssetOpportunityRunInput & {
+        /** Optional Rust-only asset chunking for the single-run route. */
+        batchTaskRunnerFactory?: AssetOpportunityBatchRunnerFactory;
+        assetWorkerCount?: number;
+        providerBySymbol?: Record<string, string>;
+    },
     writer: (event: FinderAssetOpportunityStreamEvent) => void,
     owner: number,
 ): Promise<void> {
@@ -1274,48 +1431,57 @@ export async function processFinderAssetOpportunityRun(
     });
 
     const throttleProgressWrite = createProgressEventThrottle();
-    const iteration = await runAssetOpportunityIteration(
-        input,
-        {
-            onProgress: (progress) => {
-                snapshot.phase = progress.phase;
-                snapshot.progressPercent = progress.percent;
-                snapshot.statusText = progress.status;
-                snapshot.loadedSymbols = progress.loadedSymbols;
-                snapshot.failedSymbols = progress.failedSymbols;
-                snapshot.strategyIndex = progress.strategyIndex;
-                throttleProgressWrite({
-                    percent: progress.percent,
-                    phase: progress.phase,
-                    write: () => {
-                        writer({
-                            type: "asset_progress",
-                            percent: progress.percent,
-                            text: progress.status,
-                            status: progress.status,
-                            phase: progress.phase,
-                            assetIndex: progress.assetIndex,
-                            totalAssets: progress.totalAssets,
-                            oosActive: progress.oosActive,
-                        });
-                    },
-                });
-            },
-            onAssetResult: (asset) => {
-                snapshot.assetResults = asset.results;
-                writer({
-                    type: "asset_complete",
-                    asset: asset.result,
-                    assetIndex: asset.assetIndex,
-                    totalAssets: asset.totalAssets,
-                });
-            },
-            onStatus: (status) => {
-                snapshot.statusText = status;
-            },
+    const callbacks = {
+        onProgress: (progress: Parameters<NonNullable<AssetOpportunityIterationCallbacks["onProgress"]>>[0]) => {
+            snapshot.phase = progress.phase;
+            snapshot.progressPercent = progress.percent;
+            snapshot.statusText = progress.status;
+            snapshot.loadedSymbols = progress.loadedSymbols;
+            snapshot.failedSymbols = progress.failedSymbols;
+            snapshot.strategyIndex = progress.strategyIndex;
+            throttleProgressWrite({
+                percent: progress.percent,
+                phase: progress.phase,
+                write: () => {
+                    writer({
+                        type: "asset_progress",
+                        percent: progress.percent,
+                        text: progress.status,
+                        status: progress.status,
+                        phase: progress.phase,
+                        assetIndex: progress.assetIndex,
+                        totalAssets: progress.totalAssets,
+                        oosActive: progress.oosActive,
+                    });
+                },
+            });
         },
-        () => runOwner !== owner || input.abortSignal.aborted,
-    );
+        onAssetResult: (asset: Parameters<NonNullable<AssetOpportunityIterationCallbacks["onAssetResult"]>>[0]) => {
+            snapshot.assetResults = asset.results;
+            writer({
+                type: "asset_complete",
+                asset: asset.result,
+                assetIndex: asset.assetIndex,
+                totalAssets: asset.totalAssets,
+            });
+        },
+        onStatus: (status: string) => {
+            snapshot.statusText = status;
+        },
+    } satisfies AssetOpportunityIterationCallbacks;
+    const workerFactory = input.batchTaskRunnerFactory;
+    const workerCount = input.assetWorkerCount ?? 1;
+    const iteration = workerFactory && workerCount > 1
+        ? await runFinderAssetOpportunityWorkerSweep(
+            { ...input, batchTaskRunnerFactory: workerFactory, assetWorkerCount: workerCount },
+            callbacks,
+            () => runOwner !== owner || input.abortSignal.aborted,
+        )
+        : await runAssetOpportunityIteration(
+            input,
+            callbacks,
+            () => runOwner !== owner || input.abortSignal.aborted,
+        );
 
     snapshot.assetResults = iteration.results;
     snapshot.cancelled = iteration.cancelled;
@@ -2194,6 +2360,24 @@ async function handleAssetOpportunityRunRequest(
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
     ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context);
+    const resolvedCapitalSettings = resolveCapitalSettingsFromRaw(
+        prepared.capitalSettings as unknown as Record<string, unknown>,
+    );
+    const rustCanRunInWorkers = prepared.useRustEnginePreference === true
+        && !requiresTypescriptEngine(prepared.settings)
+        && isRustSupportedTradeSizingMode(resolvedCapitalSettings.sizingMode);
+    const singleRunWorkerCount = rustCanRunInWorkers && prepared.symbols.length >= 32
+        ? Math.min(
+            4,
+            resolveAssetOpportunityChunkWorkerCount(
+                1,
+                prepared.symbols.length,
+                process.env,
+                totalmem(),
+                true,
+            ),
+        )
+        : 1;
 
     await withFinderRunStream({
         res,
@@ -2224,6 +2408,16 @@ async function handleAssetOpportunityRunRequest(
                 getProvider: (symbol) => resolveServerProvider(symbol, prepared.providerBySymbol),
                 candidatePoolSize: prepared.candidatePoolSize,
                 minFreshSupport: prepared.minFreshSupport,
+                ...(singleRunWorkerCount > 1
+                    ? {
+                        batchTaskRunnerFactory: createRealWorkerAssetOpportunityBatchRunner,
+                        assetWorkerCount: singleRunWorkerCount,
+                        providerBySymbol: Object.fromEntries(
+                            [...prepared.providerBySymbol.entries()]
+                                .map(([symbol, provider]) => [symbol.trim().toUpperCase(), provider]),
+                        ),
+                    }
+                    : {}),
                 runLog: buildFinderRunLogSink(runLogRoot, prepared.runId),
             },
             safeWrite,

@@ -10,6 +10,15 @@ import {
     createProgressEventThrottle,
     __testInternals,
 } from "../lib/finder/server/finder-vite-plugin";
+import {
+    runAssetOpportunityIteration,
+    type AssetOpportunityIterationResult,
+} from "../lib/finder/server/asset-opportunity-iteration";
+import type {
+    AssetOpportunityBatchRunnerFactory,
+    AssetOpportunityBatchRunnerEvents,
+    AssetOpportunityBatchTaskRunner,
+} from "../lib/finder/server/finder-asset-opportunity-batch-worker-pool";
 import { HttpStatusError } from "../lib/vite-http-utils";
 import { resolveFinderUniverseHeapWarning } from "../lib/finder/server/finder-server-heap-guard";
 import {
@@ -873,6 +882,85 @@ describe("finder server plugin processFinderUniverseRun", () => {
 });
 
 describe("finder server plugin Asset Opportunity multi-strategy execution", () => {
+    it("maps worker-chunk progress to the asset index, not the strategy index", async () => {
+        const symbols = ["UP", "DOWN"];
+        const datasets = upDownDatasets();
+        const selectedStrategies = [{
+            key: "asset_opportunity_test_a",
+            name: "Asset Opportunity A",
+            strategy: assetOpportunityStrategy,
+        }];
+        const createRunner: AssetOpportunityBatchRunnerFactory = (events: AssetOpportunityBatchRunnerEvents): AssetOpportunityBatchTaskRunner => ({
+            runTask(task) {
+                const abort = new AbortController();
+                void runAssetOpportunityIteration(
+                    {
+                        runId: task.runId,
+                        interval: task.interval,
+                        symbols: task.symbols,
+                        options: task.options,
+                        settings: task.settings,
+                        capitalSettings: task.capitalSettings,
+                        selectedStrategies,
+                        useRustEnginePreference: false,
+                        abortSignal: abort.signal,
+                        loadDataset: async (symbol) => datasets.get(symbol) ?? [],
+                        candidatePoolSize: task.candidatePoolSize,
+                        minFreshSupport: task.minFreshSupport,
+                    },
+                    {
+                        onProgress: (progress) => events.onProgress(task, progress),
+                        onAssetResult: () => undefined,
+                    },
+                    () => abort.signal.aborted,
+                ).then(
+                    (iteration: AssetOpportunityIterationResult) => events.onComplete(task, iteration),
+                    (error: unknown) => events.onFatal(task, error instanceof Error ? error.message : String(error)),
+                );
+            },
+            stop() { /* test runner is synchronously cancellable through the local controller */ },
+            dispose: async () => undefined,
+        });
+        const options: FinderOptions = {
+            ...makeOptions(symbols),
+            scope: "asset_opportunity",
+            assetOpportunity: {
+                symbols,
+                candidatePoolSize: 1,
+                minFreshSupport: 1,
+            },
+        };
+        const events: FinderAssetOpportunityStreamEvent[] = [];
+        setRunOwnerForTests(7099);
+        await processFinderAssetOpportunityRun(
+            {
+                runId: "asset-worker-progress",
+                interval: "5m",
+                symbols,
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategies,
+                useRustEnginePreference: false,
+                loadDataset: async (symbol) => datasets.get(symbol) ?? [],
+                abortSignal: new AbortController().signal,
+                candidatePoolSize: 1,
+                minFreshSupport: 1,
+                batchTaskRunnerFactory: createRunner,
+                assetWorkerCount: 2,
+            },
+            (event) => events.push(event),
+            7099,
+        );
+
+        const progressAssetIndexes = events
+            .filter((event): event is Extract<FinderAssetOpportunityStreamEvent, { type: "asset_progress" }> => event.type === "asset_progress")
+            .map((event) => event.assetIndex);
+        expect(progressAssetIndexes).to.include(1);
+        expect(progressAssetIndexes.every((index) => index >= 0 && index < symbols.length)).to.equal(true);
+        expect(events[events.length - 1]!.type).to.equal("asset_done");
+    });
+
     it("evaluates every selected strategy for every asset and returns scalar rows", async () => {
         const selectedStrategies = [
             { key: "asset_opportunity_test_a", name: "Asset Opportunity A", strategy: assetOpportunityStrategy },

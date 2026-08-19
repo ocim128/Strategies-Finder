@@ -59,8 +59,8 @@ import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-fi
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 
 const ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY = 12;
-const ASSET_OPPORTUNITY_RUST_EVALUATION_CONCURRENCY = 256;
-const ASSET_OPPORTUNITY_RUST_STRATEGY_CONCURRENCY = 2;
+const ASSET_OPPORTUNITY_RUST_EVALUATION_CONCURRENCY = 16;
+const ASSET_OPPORTUNITY_RUST_STRATEGY_CONCURRENCY = 16;
 
 function mergeTimingIntervals(intervals: Array<readonly [number, number]>): number {
     if (intervals.length === 0) return 0;
@@ -354,9 +354,14 @@ export async function runAssetOpportunityIteration(
         input.candidatePoolSize,
         Number(input.options.assetOpportunity?.evalLastBars ?? 0),
     );
+    // Fresh-entry batching has one extra signal-generation phase per
+    // candidate. Keep that HTTP round trip for dense pools where it amortizes;
+    // sparse capped searches still use Rust for the in-sample scalar replay.
+    const freshEntryBatchDenseEnough = input.candidatePoolSize >= 8;
     const freshEntryBatchEnabled = input.useRustEnginePreference === true
         && rustBatchFeatureConfig.enabled
         && rustBatchDensityEligible
+        && freshEntryBatchDenseEnough
         && process.env.FINDER_ASSET_OPPORTUNITY_RUST_FRESH_BATCH !== "0"
         && (input.exitStrategyCandidates?.length ?? 0) === 0;
     const evaluationConcurrency = input.useRustEnginePreference === true

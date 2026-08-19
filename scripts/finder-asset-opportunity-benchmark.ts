@@ -2,6 +2,12 @@ import { performance } from "node:perf_hooks";
 import { debugLogger } from "../lib/debug-logger";
 import { runAssetOpportunityIteration } from "../lib/finder/server/asset-opportunity-iteration";
 import { rustEngine } from "../lib/rust-engine-client";
+import { prepareClosedCandleData } from "../lib/backtest-executor";
+import {
+    createRealWorkerAssetOpportunityBatchRunner,
+    runAssetOpportunityBatchSweep,
+    type AssetOpportunityBatchWorkerTask,
+} from "../lib/finder/server/finder-asset-opportunity-batch-worker-pool";
 import { loadBuiltInStrategyByKey } from "../strategyRegistry";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions } from "../lib/types/finder";
@@ -14,6 +20,8 @@ const CANDIDATE_COUNT = Number(process.argv.find((arg) => arg.startsWith("--cand
 const FOUR_HOURS_SECONDS = 4 * 60 * 60;
 const USE_REAL_STRATEGIES = process.argv.includes("--real-strategies");
 const ENGINE_ONLY = process.argv.find((arg) => arg.startsWith("--engine="))?.slice(9);
+const WARM_RUST_CACHE = process.argv.includes("--warm-rust-cache");
+const WORKER_COUNT = Number(process.argv.find((arg) => arg.startsWith("--workers="))?.slice(10) ?? 0);
 
 // These are the 45 built-ins used by the production-shaped Asset Opportunity
 // run. The deterministic strategy remains available as the small smoke case,
@@ -172,20 +180,161 @@ async function buildSelectedStrategies(): Promise<Array<{ key: string; name: str
     return selected;
 }
 
+async function runInWorkerPool(
+    datasets: Map<string, OHLCVData[]>,
+    selectedStrategies: Array<{ key: string; name: string; strategy: Strategy }>,
+    workerCount: number,
+): Promise<{
+    iterations: number;
+    assets: number;
+    results: number;
+    engineUsage: Record<string, unknown>;
+}> {
+    const symbols = [...datasets.keys()];
+    const chunkCount = Math.max(1, Math.min(workerCount, symbols.length));
+    const chunkSize = Math.ceil(symbols.length / chunkCount);
+    const tasks: AssetOpportunityBatchWorkerTask[] = Array.from({ length: chunkCount }, (_, assetChunkIndex) => {
+        const chunkSymbols = symbols.slice(assetChunkIndex * chunkSize, (assetChunkIndex + 1) * chunkSize);
+        return {
+            taskIndex: assetChunkIndex,
+            holdoutBars: 0,
+            assetChunkIndex,
+            assetChunkCount: chunkCount,
+            runId: `finder-engine-benchmark-worker-${assetChunkIndex}`,
+            interval: "4h",
+            symbols: chunkSymbols,
+            options: buildOptions(chunkSymbols),
+            settings,
+            capitalSettings,
+            strategyKeys: selectedStrategies.map((strategy) => strategy.key),
+            exitStrategyKeys: [],
+            useRustEnginePreference: true,
+            providerBySymbol: null,
+            candidatePoolSize: CANDIDATE_COUNT,
+            minFreshSupport: 1,
+            inlineDatasets: Object.fromEntries(chunkSymbols.map((symbol) => [symbol, datasets.get(symbol)!])),
+        };
+    });
+    const completed: Array<Awaited<ReturnType<typeof runAssetOpportunityIteration>>> = [];
+    await runAssetOpportunityBatchSweep({
+        tasks,
+        runnerCount: chunkCount,
+        createRunner: createRealWorkerAssetOpportunityBatchRunner,
+        onIterationResult: async (_task, iteration) => {
+            completed.push(iteration);
+        },
+        onProgress: () => undefined,
+        onRunLog: () => undefined,
+        isCancelled: () => false,
+    });
+    const usageFor = (iteration: Awaited<ReturnType<typeof runAssetOpportunityIteration>>) => {
+        const usage = iteration.totals.engineUsage;
+        return {
+            rustAttemptedRuns: usage?.rustAttemptedRuns ?? 0,
+            rustCompletedRuns: usage?.rustCompletedRuns ?? 0,
+            rustFallbackRuns: usage?.rustFallbackRuns ?? 0,
+            typescriptCompletedRuns: usage?.typescriptCompletedRuns ?? 0,
+        };
+    };
+    const usage = completed.reduce((totals, iteration) => {
+        const iterationUsage = usageFor(iteration);
+        totals.rustAttemptedRuns += iterationUsage.rustAttemptedRuns;
+        totals.rustCompletedRuns += iterationUsage.rustCompletedRuns;
+        totals.rustFallbackRuns += iterationUsage.rustFallbackRuns;
+        totals.typescriptCompletedRuns += iterationUsage.typescriptCompletedRuns;
+        return totals;
+    }, {
+        rustRequested: true,
+        rustAttemptedRuns: 0,
+        rustCompletedRuns: 0,
+        rustFallbackRuns: 0,
+        typescriptCompletedRuns: 0,
+    });
+    return {
+        iterations: completed.length,
+        assets: symbols.length,
+        results: completed.reduce((total, iteration) => total + iteration.results.length, 0),
+        engineUsage: usage,
+    };
+}
+
 async function run(useRustEnginePreference: boolean, datasets: Map<string, OHLCVData[]>): Promise<void> {
     const symbols = [...datasets.keys()];
     const selectedStrategies = await buildSelectedStrategies();
+    // Worker tasks resolve strategy keys in the worker's built-in catalog,
+    // exactly like the production server route. The deterministic smoke
+    // strategy is intentionally main-thread-only because it is not a
+    // production-loadable built-in and must not be silently replaced by a
+    // different workload.
+    if (useRustEnginePreference && WORKER_COUNT > 1 && !USE_REAL_STRATEGIES) {
+        throw new Error("--workers requires --real-strategies so the benchmark uses production-loadable strategies");
+    }
+    const effectiveWorkerCount = WORKER_COUNT > 1
+        ? WORKER_COUNT
+        : useRustEnginePreference && USE_REAL_STRATEGIES && symbols.length >= 32
+            ? 4
+            : 0;
+    if (useRustEnginePreference && effectiveWorkerCount > 1) {
+        const startedAt = performance.now();
+        const workerOutput = await runInWorkerPool(datasets, selectedStrategies, effectiveWorkerCount);
+        console.log(JSON.stringify({
+            engine: "rust",
+            strategyMode: USE_REAL_STRATEGIES ? "real-built-ins" : "deterministic-smoke",
+            assets: workerOutput.assets,
+            workerCount: effectiveWorkerCount,
+            executionMode: "rust-asset-workers",
+            wallMs: Number((performance.now() - startedAt).toFixed(2)),
+            iterations: workerOutput.iterations,
+            results: workerOutput.results,
+            engineUsage: workerOutput.engineUsage,
+            progressMonotonic: true,
+        }));
+        return;
+    }
+    let rustBatchDatasetCache: Map<string, Promise<string | null>> | undefined;
+    let rustCacheWarmupMs: number | undefined;
     if (useRustEnginePreference) {
         // A benchmark must not reuse ids from a prior Rust process. The
         // service cache is intentionally process-local and the client keeps a
         // small local id map for production reuse.
         rustEngine.clearLocalCache();
         await fetch("http://127.0.0.1:3030/api/data/clear", { method: "POST" });
+        if (WARM_RUST_CACHE) {
+            rustBatchDatasetCache = new Map();
+            const warmupStartedAt = performance.now();
+            for (let start = 0; start < symbols.length; start += 32) {
+                const workloads = symbols.slice(start, start + 32).map((symbol, offset) => ({
+                    id: `warm-${start + offset}`,
+                    data: prepareClosedCandleData(datasets.get(symbol)!, "4h", settings),
+                }));
+                const cached = await rustEngine.cacheMultiAssetDataWithStatus(workloads, {
+                    maxRequestBytes: 128 * 1024 * 1024,
+                    maxResponseBytes: 4 * 1024 * 1024,
+                });
+                if (!cached.ok) throw new Error(`Rust cache warmup failed: ${cached.reason}`);
+                const payload = cached.response as { datasets?: Array<{ id?: unknown; cacheId?: unknown }> };
+                for (const entry of payload.datasets ?? []) {
+                    const index = typeof entry.id === "string" ? Number(entry.id.slice("warm-".length)) : NaN;
+                    const symbol = Number.isInteger(index) ? symbols[index] : undefined;
+                    const cacheId = typeof entry.cacheId === "string" ? entry.cacheId : undefined;
+                    if (symbol && cacheId) {
+                        const rawData = datasets.get(symbol)!;
+                        const preparedData = prepareClosedCandleData(rawData, "4h", settings);
+                        rustBatchDatasetCache.set(
+                            rustEngine.getDataCacheKey(preparedData),
+                            Promise.resolve(cacheId),
+                        );
+                        rustBatchDatasetCache.set(rustEngine.getDataCacheKey(rawData), Promise.resolve(cacheId));
+                    }
+                }
+            }
+            rustCacheWarmupMs = performance.now() - warmupStartedAt;
+        }
     }
     const startedAt = performance.now();
     const progressValues: number[] = [];
     const transportLogs: string[] = [];
-    const seenLogIds = new Set<number>();
+    const seenLogIds = new Set<number>(debugLogger.getEntries().map((entry) => entry.id));
     const unsubscribe = useRustEnginePreference
         ? debugLogger.subscribe((entries) => {
             for (const entry of entries) {
@@ -211,6 +360,7 @@ async function run(useRustEnginePreference: boolean, datasets: Map<string, OHLCV
             loadDataset: async (symbol) => datasets.get(symbol)!,
             candidatePoolSize: CANDIDATE_COUNT,
             minFreshSupport: 1,
+            ...(rustBatchDatasetCache ? { rustBatchDatasetCache } : {}),
             ...(USE_REAL_STRATEGIES
                 ? {}
                 : {
@@ -234,6 +384,12 @@ async function run(useRustEnginePreference: boolean, datasets: Map<string, OHLCV
         strategyMode: USE_REAL_STRATEGIES ? "real-built-ins" : "deterministic-smoke",
         assets: symbols.length,
         wallMs: Number(wallMs.toFixed(2)),
+        ...(rustCacheWarmupMs !== undefined
+            ? {
+                rustCacheWarmupMs: Number(rustCacheWarmupMs.toFixed(2)),
+                totalWithWarmupMs: Number((wallMs + rustCacheWarmupMs).toFixed(2)),
+            }
+            : {}),
         diagnosticsMs: output.assetDiagnostics.timingsMs,
         engineUsage: output.totals.engineUsage,
         results: output.results.length,
@@ -243,6 +399,11 @@ async function run(useRustEnginePreference: boolean, datasets: Map<string, OHLCV
                 transport: {
                     requests: transportLogs.length,
                     elapsedMs: Number(transportElapsedMs.toFixed(2)),
+                    endpoints: transportLogs.map((message) => message.match(/Batch (\/api\/[^:]+):/)?.[1] ?? "unknown"),
+                    rustServiceMs: Number(transportLogs.reduce((total, message) => {
+                        const match = message.match(/\(Rust: ([0-9.]+)ms\)/);
+                        return total + (match ? Number(match[1]) : 0);
+                    }, 0).toFixed(2)),
                 },
             }
             : {}),

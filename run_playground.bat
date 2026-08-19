@@ -68,7 +68,7 @@ if defined IBKR_GATEWAY_PID (
 )
 
 echo Starting Rust Trading Engine...
-start "Rust Trading Engine" cmd /k "cd /d "%~dp0..\..\..\trading-engine" && cargo run --release"
+start "Rust Trading Engine" cmd /k "cd /d "%~dp0rust-engine" && cargo run --release --bin trading-engine-server"
 
 :: --- Optional cloudflared tunnel ------------------------------------------
 :: Exposes the local Vite server (port 5173) to a stable public URL so the

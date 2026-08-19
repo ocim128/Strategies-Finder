@@ -279,6 +279,7 @@ export interface AssetOpportunityBatchRunnerEvents {
             percent: number;
             status: string;
             phase: string;
+            assetIndex: number;
             loadedSymbols: number;
             failedSymbols: number;
             strategyIndex: number;
@@ -332,6 +333,7 @@ export async function createRealWorkerAssetOpportunityBatchRunner(
                     percent: message.percent,
                     status: message.status,
                     phase: message.phase,
+                    assetIndex: message.assetIndex,
                     loadedSymbols: message.loadedSymbols,
                     failedSymbols: message.failedSymbols,
                     strategyIndex: message.strategyIndex,
@@ -442,6 +444,7 @@ export interface AssetOpportunityBatchSweepArgs {
             percent: number;
             status: string;
             phase: string;
+            assetIndex: number;
             loadedSymbols: number;
             failedSymbols: number;
             strategyIndex: number;

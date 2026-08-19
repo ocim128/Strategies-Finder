@@ -41,7 +41,6 @@ export async function runServerAssetOpportunityFreshRustBatch(args: {
         capitalSettings: input.capitalSettings,
         selectedStrategy: input.selectedStrategy,
         exitStrategyCandidates: input.exitStrategyCandidates,
-        dataFetcherPresent: input.dataFetcher !== undefined,
     });
     if (!eligibility.eligible) return null;
 
@@ -77,12 +76,24 @@ export async function runServerAssetOpportunityFreshRustBatch(args: {
         items: input.candidates.map((candidate) => ({
             id: candidate.id,
             signals: candidate.signals,
-            settings: candidate.backtestSettings,
+            settings: {
+                ...candidate.backtestSettings,
+                executionModel: input.settings.executionModel,
+                slippageBps: input.settings.slippageBps,
+                riskCooldownEnabled: input.settings.riskCooldownEnabled,
+                riskCooldownBars: input.settings.riskCooldownBars,
+            },
         })),
         initialCapital: input.capitalSettings.initialCapital,
         positionSizePercent: input.capitalSettings.positionSize,
         commissionPercent: input.capitalSettings.commission,
-        baseSettings: input.candidates[0]!.backtestSettings,
+        baseSettings: {
+            ...input.candidates[0]!.backtestSettings,
+            executionModel: input.settings.executionModel,
+            slippageBps: input.settings.slippageBps,
+            riskCooldownEnabled: input.settings.riskCooldownEnabled,
+            riskCooldownBars: input.settings.riskCooldownBars,
+        },
         sizing: {
             mode: input.capitalSettings.sizingMode,
             fixedTradeAmount: input.capitalSettings.fixedTradeAmount,
