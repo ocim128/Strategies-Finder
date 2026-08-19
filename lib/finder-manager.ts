@@ -4183,6 +4183,10 @@ export class FinderManager {
 				universeSelectedStrategyKeys: filterKeys(this.uiState.universeSelectedStrategyKeys),
 			},
 			backtestSettings: backtestService.getBacktestSettings(),
+			// Capital settings live outside backtestSettings (commission is a
+			// capital setting) — without this line the copied config cannot prove
+			// whether commission was active.
+			capitalSettings: backtestService.getCapitalSettings(),
 		};
 		try {
 			await this.copyTextToClipboard(formatConfigurationJson(payload));

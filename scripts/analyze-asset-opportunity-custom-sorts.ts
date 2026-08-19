@@ -214,10 +214,53 @@ function symbolPickValue(aggregate: SymbolAggregate, horizonBars: number): numbe
     return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 }
 
-function rankPicks(picks: Pick[], topK: number, baseline: number): number | null {
+function filterHoldoutsByStride(files: FileData[], stride: number): FileData[] {
+    if (stride <= 1) return files;
+    const kept: FileData[] = [];
+    let nextTarget = -Infinity;
+    for (const f of files) {
+        if (f.holdoutBars >= nextTarget) {
+            kept.push(f);
+            nextTarget = f.holdoutBars + stride;
+        }
+    }
+    return kept;
+}
+
+function computePoolBaseline(files: FileData[]): Map<number, Map<number, number>> {
+    const byHoldout = new Map<number, Map<number, number>>();
+    for (const file of files) {
+        const horizonValues = new Map<number, number[]>();
+        const seenCandidateKeys = new Set<string>();
+        for (const row of file.rows) {
+            const rowObj = row as { symbol?: string; strategyId?: string; candidateFingerprint?: string; forwardOosPerformance?: ArchiveRow["forwardOosPerformance"] };
+            const key = `${rowObj.symbol ?? ""}|${rowObj.strategyId ?? ""}|${rowObj.candidateFingerprint ?? ""}`;
+            if (seenCandidateKeys.has(key)) continue;
+            seenCandidateKeys.add(key);
+            for (const horizon of row.forwardOosPerformance?.horizons ?? []) {
+                if (typeof horizon.bars === "number" && typeof horizon.pnlPercent === "number" && (horizon.sampleSize ?? 1) > 0) {
+                    let values = horizonValues.get(horizon.bars);
+                    if (!values) horizonValues.set(horizon.bars, values = []);
+                    values.push(horizon.pnlPercent);
+                }
+            }
+        }
+        const horizonMeans = new Map<number, number>();
+        for (const [horizon, values] of horizonValues) {
+            if (values.length > 0) {
+                horizonMeans.set(horizon, values.reduce((sum, v) => sum + v, 0) / values.length);
+            }
+        }
+        byHoldout.set(file.holdoutBars, horizonMeans);
+    }
+    return byHoldout;
+}
+
+function rankPicks(picks: Pick[], topK: number, baseline: number, frictionPct = 0): number | null {
     const values = picks.slice(0, topK).map((pick) => pick.value).filter((value): value is number => value !== null && Number.isFinite(value));
     if (values.length === 0) return null;
-    return values.reduce((sum, value) => sum + value, 0) / values.length - baseline;
+    const selectedMean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    return (selectedMean - frictionPct) - baseline;
 }
 
 interface UniqueCandidate {
@@ -396,12 +439,29 @@ function main(): void {
     tstatMinTradesOverride = Math.max(1, Math.floor(Number(getArgument(argv, "--tstat-min-trades") ?? Number.NaN) || Number.NaN)) || null;
     const outputPrefix = getArgument(argv, "--output-prefix");
 
+    const frictionBps = Math.max(0, Number(getArgument(argv, "--friction-bps") ?? 0) || 0);
+    const frictionPct = frictionBps / 100;
+    const controlArg = (getArgument(argv, "--control") ?? "baseline").toLowerCase();
+    const control: "baseline" | "random_pool" = controlArg === "random_pool" ? "random_pool" : "baseline";
+
     const minHoldoutBars = Math.floor(Number(getArgument(argv, "--min-holdout") ?? 0) || 0);
     const maxHoldoutBars = Math.floor(Number(getArgument(argv, "--max-holdout") ?? Number.POSITIVE_INFINITY) || Number.POSITIVE_INFINITY);
-    const files = loadFiles(archiveDirectory).filter((file) => file.holdoutBars >= minHoldoutBars && file.holdoutBars <= maxHoldoutBars);
-    const horizons = [...new Set(files.flatMap((file) => [...file.baselineByHorizon.keys()]))].sort((left, right) => left - right);
+    const rawFiles = loadFiles(archiveDirectory).filter((file) => file.holdoutBars >= minHoldoutBars && file.holdoutBars <= maxHoldoutBars);
+    const horizons = [...new Set(rawFiles.flatMap((file) => [...file.baselineByHorizon.keys()]))].sort((left, right) => left - right);
     const horizonFallback = horizons[0] ?? 12;
     const primaryHorizon = Math.max(1, Math.floor(Number(getArgument(argv, "--horizon") ?? horizonFallback) || horizonFallback));
+
+    const nonOverlappingFlag = argv.includes("--non-overlapping");
+    const strideArg = getArgument(argv, "--stride-bars");
+    let strideBars = 1;
+    if (nonOverlappingFlag) {
+        strideBars = primaryHorizon;
+    } else if (strideArg !== undefined) {
+        strideBars = strideArg.toLowerCase() === "auto" ? primaryHorizon : Math.max(1, Math.floor(Number(strideArg)) || 1);
+    }
+
+    const files = filterHoldoutsByStride(rawFiles, strideBars);
+    const poolBaselines = computePoolBaseline(files);
 
     // Batch-level presence rates for recurrence_batch.
     const presenceBySymbol = new Map<string, number>();
@@ -431,10 +491,12 @@ function main(): void {
     const lines: string[] = [];
     lines.push("Asset Opportunity Custom-Sort Stability");
     lines.push("=======================================");
-    lines.push(`Batch run: ${files[0]?.batchRunId} | files: ${files.length} | primary horizon: ${primaryHorizon} bars | top-K: ${topKList.join("/")}`);
-    lines.push(`Bootstrap: ${iterations} shuffles x ${sampleSize} files (seed ${seed}) | verdicts pre-stated (STABLE+/WEAK+/UNSTABLE)`);
+    lines.push(`Batch run: ${files[0]?.batchRunId} | files: ${files.length} of ${rawFiles.length} | primary horizon: ${primaryHorizon} bars | top-K: ${topKList.join("/")}`);
+    lines.push(`Stride: ${strideBars > 1 ? `${strideBars} bars (non-overlapping windows)` : "1 bar (all files)"} | Friction: ${frictionBps > 0 ? `${frictionBps} bps (${(frictionBps / 100).toFixed(2)}%)` : "0 bps"}`);
+    lines.push(`Control: ${control === "random_pool" ? "Unique active candidate pool average" : "Universe all-candidate baseline"}`);
+    lines.push(`Bootstrap: ${iterations} shuffles x ${Math.min(sampleSize, files.length)} files (seed ${seed}) | verdicts pre-stated (STABLE+/WEAK+/UNSTABLE)`);
     lines.push(`recurrence_batch presence bar: >= ${(RECURRENCE_PRESENCE_RATE * 100).toFixed(0)}% of files (${recurringSymbols.length} symbols qualify)`);
-    lines.push(`Caveat: holdout windows overlap; stability indicators, not p-values. Union-pool re-rank only reaches`);
+    lines.push(`Caveat: ${strideBars >= primaryHorizon ? "non-overlapping holdouts eliminate serial price overlap" : "holdout windows overlap; stability indicators, not independent p-values"}. Union-pool re-rank only reaches`);
     lines.push(`candidates already inside some sort's top-10 (~50/file) — candidates outside every top-10 are unreachable.`);
     lines.push("");
     lines.push(`CUSTOM SORT STABILITY (primary horizon ${primaryHorizon} bars)`);
@@ -443,6 +505,9 @@ function main(): void {
     const json: Record<string, unknown> = {
         archiveDirectory,
         batchRunId: files[0]?.batchRunId,
+        strideBars,
+        frictionBps,
+        control,
         customSorts: [] as Array<Record<string, unknown>>,
         recurrenceSymbols: recurringSymbols,
     };
@@ -469,9 +534,11 @@ function main(): void {
         for (const topK of topKList) {
             const deltas: number[] = [];
             for (const file of files) {
-                const baseline = file.baselineByHorizon.get(primaryHorizon);
+                const baseline = control === "random_pool"
+                    ? poolBaselines.get(file.holdoutBars)?.get(primaryHorizon)
+                    : file.baselineByHorizon.get(primaryHorizon);
                 if (baseline === undefined) continue;
-                const delta = rankPicks(customSortPicks(file, sortName, primaryHorizon), topK, baseline);
+                const delta = rankPicks(customSortPicks(file, sortName, primaryHorizon), topK, baseline, frictionPct);
                 if (delta !== null) deltas.push(delta);
             }
             emitCell(sortName, topK, deltas);
@@ -487,7 +554,9 @@ function main(): void {
             .map((entry) => entry.symbol);
         const deltas: number[] = [];
         for (const file of files) {
-            const baseline = file.baselineByHorizon.get(primaryHorizon);
+            const baseline = control === "random_pool"
+                ? poolBaselines.get(file.holdoutBars)?.get(primaryHorizon)
+                : file.baselineByHorizon.get(primaryHorizon);
             if (baseline === undefined) continue;
             const aggregates = buildSymbolAggregates(file);
             const values = picksByPresence
@@ -495,7 +564,10 @@ function main(): void {
                 .filter((aggregate): aggregate is SymbolAggregate => !!aggregate)
                 .map((aggregate) => symbolPickValue(aggregate, primaryHorizon))
                 .filter((value): value is number => value !== null);
-            if (values.length > 0) deltas.push(values.reduce((sum, value) => sum + value, 0) / values.length - baseline);
+            if (values.length > 0) {
+                const meanVal = values.reduce((sum, value) => sum + value, 0) / values.length;
+                deltas.push((meanVal - frictionPct) - baseline);
+            }
         }
         emitCell(`recurrence_batch [${picksByPresence.join(", ")}]`, topK, deltas);
     }

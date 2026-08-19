@@ -162,9 +162,72 @@ function loadBlocks(archiveDirectory: string): ParsedBlock[] {
     );
 }
 
-function blockDelta(block: ParsedBlock, topK: number, horizonBars: number): number | null {
-    const baseline = block.baselineByHorizon.get(horizonBars);
-    if (baseline === undefined) return null;
+function filterHoldoutsByStride(holdouts: number[], stride: number): Set<number> {
+    if (stride <= 1) return new Set(holdouts);
+    const kept = new Set<number>();
+    let nextTarget = -Infinity;
+    for (const h of holdouts) {
+        if (h >= nextTarget) {
+            kept.add(h);
+            nextTarget = h + stride;
+        }
+    }
+    return kept;
+}
+
+function computePoolBaseline(blocks: ParsedBlock[]): Map<number, Map<number, number>> {
+    // holdoutBars -> horizonBars -> mean forward PnL across all unique candidates present in that holdout
+    const byHoldout = new Map<number, Map<number, number>>();
+    const grouped = new Map<number, ParsedBlock[]>();
+    for (const block of blocks) {
+        let list = grouped.get(block.holdoutBars);
+        if (!list) grouped.set(block.holdoutBars, list = []);
+        list.push(block);
+    }
+    for (const [holdout, holdoutBlocks] of grouped) {
+        const horizonValues = new Map<number, number[]>();
+        const seenCandidateKeys = new Set<string>();
+        for (const block of holdoutBlocks) {
+            for (const row of block.rows) {
+                const rowObj = row as { symbol?: string; strategyId?: string; candidateFingerprint?: string; forwardOosPerformance?: ArchiveRow["forwardOosPerformance"] };
+                const key = `${rowObj.symbol ?? ""}|${rowObj.strategyId ?? ""}|${rowObj.candidateFingerprint ?? ""}`;
+                if (seenCandidateKeys.has(key)) continue;
+                seenCandidateKeys.add(key);
+                for (const horizon of row.forwardOosPerformance?.horizons ?? []) {
+                    if (typeof horizon.bars === "number" && typeof horizon.pnlPercent === "number" && (horizon.sampleSize ?? 1) > 0) {
+                        let values = horizonValues.get(horizon.bars);
+                        if (!values) horizonValues.set(horizon.bars, values = []);
+                        values.push(horizon.pnlPercent);
+                    }
+                }
+            }
+        }
+        const horizonMeans = new Map<number, number>();
+        for (const [horizon, values] of horizonValues) {
+            if (values.length > 0) {
+                horizonMeans.set(horizon, values.reduce((sum, v) => sum + v, 0) / values.length);
+            }
+        }
+        byHoldout.set(holdout, horizonMeans);
+    }
+    return byHoldout;
+}
+
+function blockDelta(
+    block: ParsedBlock,
+    topK: number,
+    horizonBars: number,
+    frictionPct = 0,
+    control: "baseline" | "random_pool" = "baseline",
+    poolBaselines?: Map<number, Map<number, number>>,
+): number | null {
+    let baseline: number | undefined;
+    if (control === "random_pool") {
+        baseline = poolBaselines?.get(block.holdoutBars)?.get(horizonBars);
+    } else {
+        baseline = block.baselineByHorizon.get(horizonBars);
+    }
+    if (baseline === undefined || !Number.isFinite(baseline)) return null;
     const selected = block.rows
         .filter((row) => typeof row.rank === "number" && row.rank! >= 1 && row.rank! <= topK);
     if (selected.length === 0) return null;
@@ -176,7 +239,9 @@ function blockDelta(block: ParsedBlock, topK: number, horizonBars: number): numb
         }
     }
     if (values.length === 0) return null;
-    return values.reduce((sum, value) => sum + value, 0) / values.length - baseline;
+    const selectedMean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const netSelectedMean = selectedMean - frictionPct;
+    return netSelectedMean - baseline;
 }
 
 function mean(values: number[]): number {
@@ -222,21 +287,42 @@ function main(): void {
     const seed = Math.floor(Number(getArgument(argv, "--seed") ?? 42) || 42);
     const outputPrefix = getArgument(argv, "--output-prefix");
 
+    const frictionBps = Math.max(0, Number(getArgument(argv, "--friction-bps") ?? 0) || 0);
+    const frictionPct = frictionBps / 100;
+    const controlArg = (getArgument(argv, "--control") ?? "baseline").toLowerCase();
+    const control: "baseline" | "random_pool" = controlArg === "random_pool" ? "random_pool" : "baseline";
+
     const minHoldoutBars = Math.floor(Number(getArgument(argv, "--min-holdout") ?? 0) || 0);
     const maxHoldoutBars = Math.floor(Number(getArgument(argv, "--max-holdout") ?? Number.POSITIVE_INFINITY) || Number.POSITIVE_INFINITY);
-    const blocks = loadBlocks(archiveDirectory).filter((block) => block.holdoutBars >= minHoldoutBars && block.holdoutBars <= maxHoldoutBars);
-    const holdoutBarsSet = [...new Set(blocks.map((block) => block.holdoutBars))].sort((left, right) => left - right);
-    const sorts = [...new Set(blocks.map((block) => block.sortMetric))].sort((left, right) => left.localeCompare(right));
-    const horizons = [...new Set(blocks.flatMap((block) => [...block.baselineByHorizon.keys()]))].sort((left, right) => left - right);
+    let rawBlocks = loadBlocks(archiveDirectory).filter((block) => block.holdoutBars >= minHoldoutBars && block.holdoutBars <= maxHoldoutBars);
+    
+    const horizons = [...new Set(rawBlocks.flatMap((block) => [...block.baselineByHorizon.keys()]))].sort((left, right) => left - right);
     const primaryHorizonFallback = horizons[0] ?? 12;
     const primaryHorizon = Math.max(1, Math.floor(Number(getArgument(argv, "--horizon") ?? primaryHorizonFallback) || primaryHorizonFallback));
+
+    const nonOverlappingFlag = argv.includes("--non-overlapping");
+    const strideArg = getArgument(argv, "--stride-bars");
+    let strideBars = 1;
+    if (nonOverlappingFlag) {
+        strideBars = primaryHorizon;
+    } else if (strideArg !== undefined) {
+        strideBars = strideArg.toLowerCase() === "auto" ? primaryHorizon : Math.max(1, Math.floor(Number(strideArg)) || 1);
+    }
+
+    const allHoldoutBarsSet = [...new Set(rawBlocks.map((block) => block.holdoutBars))].sort((left, right) => left - right);
+    const allowedHoldouts = filterHoldoutsByStride(allHoldoutBarsSet, strideBars);
+    const blocks = rawBlocks.filter((block) => allowedHoldouts.has(block.holdoutBars));
+    const holdoutBarsSet = [...new Set(blocks.map((block) => block.holdoutBars))].sort((left, right) => left - right);
+    const sorts = [...new Set(blocks.map((block) => block.sortMetric))].sort((left, right) => left.localeCompare(right));
+
+    const poolBaselines = computePoolBaseline(blocks);
 
     // Collect per-cell samples: sort -> topK -> horizon -> per-file deltas.
     const samples = new Map<string, Map<number, Map<number, CellSample[]>>>();
     for (const block of blocks) {
         for (const topK of topKList) {
             for (const horizon of horizons) {
-                const delta = blockDelta(block, topK, horizon);
+                const delta = blockDelta(block, topK, horizon, frictionPct, control, poolBaselines);
                 if (delta === null) continue;
                 let bySort = samples.get(block.sortMetric);
                 if (!bySort) samples.set(block.sortMetric, bySort = new Map());
@@ -255,6 +341,9 @@ function main(): void {
         batchRunId: blocks[0]?.batchRunId,
         files: holdoutBarsSet.length,
         holdoutRange: [holdoutBarsSet[0], holdoutBarsSet[holdoutBarsSet.length - 1]],
+        strideBars,
+        frictionBps,
+        control,
         sampleSize,
         iterations,
         seed,
@@ -266,11 +355,13 @@ function main(): void {
 
     lines.push("Asset Opportunity Decision-Rule Stability");
     lines.push("==========================================");
-    lines.push(`Batch run: ${blocks[0]?.batchRunId} | files: ${holdoutBarsSet.length} (holdouts ${holdoutBarsSet[holdoutBarsSet.length - 1]}..${holdoutBarsSet[0]})`);
-    lines.push(`Bootstrap: ${iterations} shuffles x ${sampleSize} random files (seed ${seed}) | primary horizon: ${primaryHorizon} bars | top-K: ${topKList.join("/")}`);
-    lines.push(`Delta = top-K selected forward PnL minus all-candidate baseline, per file.`);
+    lines.push(`Batch run: ${blocks[0]?.batchRunId} | files: ${holdoutBarsSet.length} of ${allHoldoutBarsSet.length} (holdouts ${holdoutBarsSet[holdoutBarsSet.length - 1]}..${holdoutBarsSet[0]})`);
+    lines.push(`Stride: ${strideBars > 1 ? `${strideBars} bars (non-overlapping windows)` : "1 bar (all holdouts)"} | Friction: ${frictionBps > 0 ? `${frictionBps} bps (${(frictionBps / 100).toFixed(2)}%)` : "0 bps"}`);
+    lines.push(`Control: ${control === "random_pool" ? "Unique active candidate pool average" : "Universe all-candidate baseline"}`);
+    lines.push(`Bootstrap: ${iterations} shuffles x ${Math.min(sampleSize, holdoutBarsSet.length)} random files (seed ${seed}) | primary horizon: ${primaryHorizon} bars | top-K: ${topKList.join("/")}`);
+    lines.push(`Delta = top-K selected forward PnL (net of friction) minus ${control === "random_pool" ? "pool average" : "all-candidate baseline"}, per file.`);
     lines.push(`Pre-stated verdict: STABLE+ = boot p5>0 AND >=60% files positive; WEAK+ = boot p50>0 AND >=55%; else UNSTABLE.`);
-    lines.push(`Caveat: holdout windows overlap; these are stability indicators, not independent-sample p-values.`);
+    lines.push(`Caveat: ${strideBars >= primaryHorizon ? "non-overlapping holdouts eliminate serial price overlap" : "holdout windows overlap; stability indicators, not independent p-values"}.`);
     lines.push("");
     lines.push(`RULE STABILITY (primary horizon ${primaryHorizon} bars)`);
     lines.push("Sort | K | Files | Mean | Median | %Files+ | Trim10 | Boot p5 | Boot p50 | Boot p95 | Boot %+ | Verdict");
@@ -381,3 +472,4 @@ function main(): void {
 }
 
 main();
+
