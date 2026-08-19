@@ -10,6 +10,7 @@ use crate::types::{
     TradeSizingConfig, TradeSizingMode, TradeType, OHLCV,
 };
 use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, RwLock};
 /// Internal position state during backtest
 #[derive(Debug, Clone)]
 struct Position {
@@ -137,11 +138,11 @@ struct NormalizedSettings {
 }
 #[derive(Debug, Clone)]
 struct IndicatorSeries {
-    atr: Vec<Option<f64>>,
-    ema_trend: Vec<Option<f64>>,
-    adx: Vec<Option<f64>>,
-    volume_sma: Vec<Option<f64>>,
-    rsi: Vec<Option<f64>>,
+    atr: Arc<Vec<f64>>,
+    ema_trend: Arc<Vec<f64>>,
+    adx: Arc<Vec<f64>>,
+    volume_sma: Arc<Vec<f64>>,
+    rsi: Arc<Vec<f64>>,
 }
 #[derive(Debug, Clone)]
 struct PreparedSignal {
@@ -149,20 +150,13 @@ struct PreparedSignal {
     signal_type: SignalType,
     price: f64,
     bar_index: usize,
-    reason: Option<String>,
     order: usize,
 }
 fn clamp(value: f64, min: f64, max: f64) -> f64 {
     value.max(min).min(max)
 }
-fn to_option_series(values: Vec<f64>) -> Vec<Option<f64>> {
-    values
-        .into_iter()
-        .map(|v| if v.is_finite() { Some(v) } else { None })
-        .collect()
-}
-fn get_series_value(series: &[Option<f64>], index: usize) -> Option<f64> {
-    series.get(index).copied().flatten()
+fn get_series_value(series: &[f64], index: usize) -> Option<f64> {
+    series.get(index).copied().filter(|value| value.is_finite())
 }
 fn normalize_settings(settings: &BacktestSettings) -> NormalizedSettings {
     NormalizedSettings {
@@ -365,24 +359,14 @@ fn passes_regime_filters(
     }
     true
 }
-fn resolve_signal_index(
-    data: &[OHLCV],
-    signal: &Signal,
-    time_index: &mut Option<HashMap<Time, usize>>,
-) -> Option<usize> {
+fn resolve_signal_index(data: &[OHLCV], signal: &Signal) -> Option<usize> {
     if let Some(index) = signal.bar_index {
         if index < data.len() {
             return Some(index);
         }
     }
-    let time_index = time_index.get_or_insert_with(|| {
-        let mut lookup = HashMap::with_capacity(data.len());
-        for (index, candle) in data.iter().enumerate() {
-            lookup.insert(candle.time, index);
-        }
-        lookup
-    });
-    time_index.get(&signal.time).copied()
+    data.binary_search_by_key(&signal.time, |candle| candle.time)
+        .ok()
 }
 fn prepare_signals(
     data: &[OHLCV],
@@ -390,8 +374,7 @@ fn prepare_signals(
     config: &NormalizedSettings,
     indicators: &IndicatorSeries,
     trade_direction: TradeDirection,
-) -> Vec<Signal> {
-    let mut time_index: Option<HashMap<Time, usize>> = None;
+) -> Vec<PreparedSignal> {
     let is_short = trade_direction == TradeDirection::Short;
     let entry_type = if is_short {
         SignalType::Sell
@@ -406,7 +389,7 @@ fn prepare_signals(
     let signal_execution_shift = execution_shift(config);
     let mut prepared: Vec<PreparedSignal> = Vec::with_capacity(signals.len());
     for (order, signal) in signals.iter().enumerate() {
-        let Some(signal_index) = resolve_signal_index(data, signal, &mut time_index) else {
+        let Some(signal_index) = resolve_signal_index(data, signal) else {
             continue;
         };
         if signal.signal_type == exit_type {
@@ -419,7 +402,6 @@ fn prepare_signals(
                 signal_type: signal.signal_type,
                 price: resolve_execution_price(data, signal, signal_index, execution_index, config),
                 bar_index: execution_index,
-                reason: signal.reason.clone(),
                 order,
             });
             continue;
@@ -463,7 +445,6 @@ fn prepare_signals(
             signal_type: entry_type,
             price: entry_price,
             bar_index: execution_index,
-            reason: signal.reason.clone(),
             order,
         });
     }
@@ -473,15 +454,6 @@ fn prepare_signals(
             .then_with(|| a.order.cmp(&b.order))
     });
     prepared
-        .into_iter()
-        .map(|signal| Signal {
-            time: signal.time,
-            signal_type: signal.signal_type,
-            price: signal.price,
-            bar_index: Some(signal.bar_index),
-            reason: signal.reason,
-        })
-        .collect()
 }
 #[inline]
 fn resolve_stop_loss_exit_price(candle: &OHLCV, stop_loss: f64, is_short: bool) -> f64 {
@@ -787,11 +759,78 @@ fn exit_position(
         state.update(pos.realized_pnl);
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum IndicatorKind {
+    Atr,
+    Ema,
+    Adx,
+    VolumeSma,
+    Rsi,
+}
+type IndicatorCache = RwLock<HashMap<(IndicatorKind, usize), Arc<Vec<f64>>>>;
+
 pub(crate) struct MarketSeries {
     highs: Vec<f64>,
     lows: Vec<f64>,
     closes: Vec<f64>,
     volumes: Vec<f64>,
+    indicator_cache: IndicatorCache,
+}
+impl MarketSeries {
+    fn get_or_compute<F>(&self, kind: IndicatorKind, period: usize, compute: F) -> Arc<Vec<f64>>
+    where
+        F: FnOnce() -> Vec<f64>,
+    {
+        if let Some(cached) = self
+            .indicator_cache
+            .read()
+            .expect("market indicator cache lock poisoned")
+            .get(&(kind, period))
+        {
+            return cached.clone();
+        }
+
+        let mut cache = self
+            .indicator_cache
+            .write()
+            .expect("market indicator cache lock poisoned");
+        if let Some(cached) = cache.get(&(kind, period)) {
+            return cached.clone();
+        }
+        let computed = Arc::new(compute());
+        cache.insert((kind, period), computed.clone());
+        computed
+    }
+
+    fn get_or_compute_atr(&self, period: usize) -> Arc<Vec<f64>> {
+        self.get_or_compute(IndicatorKind::Atr, period, || {
+            calculate_atr(&self.highs, &self.lows, &self.closes, period)
+        })
+    }
+
+    fn get_or_compute_ema(&self, period: usize) -> Arc<Vec<f64>> {
+        self.get_or_compute(IndicatorKind::Ema, period, || {
+            calculate_ema(&self.closes, period)
+        })
+    }
+
+    fn get_or_compute_adx(&self, period: usize) -> Arc<Vec<f64>> {
+        self.get_or_compute(IndicatorKind::Adx, period, || {
+            calculate_adx(&self.highs, &self.lows, &self.closes, period)
+        })
+    }
+
+    fn get_or_compute_volume_sma(&self, period: usize) -> Arc<Vec<f64>> {
+        self.get_or_compute(IndicatorKind::VolumeSma, period, || {
+            calculate_sma(&self.volumes, period)
+        })
+    }
+
+    fn get_or_compute_rsi(&self, period: usize) -> Arc<Vec<f64>> {
+        self.get_or_compute(IndicatorKind::Rsi, period, || {
+            calculate_rsi(&self.closes, period)
+        })
+    }
 }
 pub(crate) fn build_market_series(data: &[OHLCV]) -> MarketSeries {
     MarketSeries {
@@ -799,6 +838,7 @@ pub(crate) fn build_market_series(data: &[OHLCV]) -> MarketSeries {
         lows: data.iter().map(|d| d.low).collect(),
         closes: data.iter().map(|d| d.close).collect(),
         volumes: data.iter().map(|d| d.volume).collect(),
+        indicator_cache: RwLock::new(HashMap::new()),
     }
 }
 /// Run a full backtest
@@ -886,10 +926,6 @@ pub(crate) fn run_backtest_with_market_series_options(
     let fixed_trade_amount = sizing.map_or(0.0, |s| s.fixed_trade_amount.max(0.0));
     let kelly_settings =
         sizing.map_or_else(AdvancedSizingConfig::default, |s| s.advanced_sizing.clone());
-    let highs = &market_series.highs;
-    let lows = &market_series.lows;
-    let closes = &market_series.closes;
-    let volumes = &market_series.volumes;
     let needs_atr = config.stop_loss_atr > 0.0
         || config.take_profit_atr > 0.0
         || config.trailing_atr > 0.0
@@ -898,31 +934,31 @@ pub(crate) fn run_backtest_with_market_series_options(
         || config.partial_take_profit_at_r > 0.0
         || config.break_even_at_r > 0.0;
     let atr = if needs_atr {
-        to_option_series(calculate_atr(&highs, &lows, &closes, config.atr_period))
+        market_series.get_or_compute_atr(config.atr_period)
     } else {
-        Vec::new()
+        Arc::new(Vec::new())
     };
     let ema_trend = if config.trend_ema_period > 0 {
-        to_option_series(calculate_ema(&closes, config.trend_ema_period))
+        market_series.get_or_compute_ema(config.trend_ema_period)
     } else {
-        Vec::new()
+        Arc::new(Vec::new())
     };
     let use_adx = config.adx_min > 0.0 || config.adx_max > 0.0;
     let adx = if use_adx {
         let adx_period = config.adx_period.max(1);
-        to_option_series(calculate_adx(&highs, &lows, &closes, adx_period))
+        market_series.get_or_compute_adx(adx_period)
     } else {
-        Vec::new()
+        Arc::new(Vec::new())
     };
     let volume_sma = if config.entry_confirmation == EntryConfirmationMode::Volume {
-        to_option_series(calculate_sma(&volumes, config.volume_sma_period))
+        market_series.get_or_compute_volume_sma(config.volume_sma_period)
     } else {
-        Vec::new()
+        Arc::new(Vec::new())
     };
     let rsi = if config.entry_confirmation == EntryConfirmationMode::Rsi {
-        to_option_series(calculate_rsi(&closes, config.rsi_period))
+        market_series.get_or_compute_rsi(config.rsi_period)
     } else {
-        Vec::new()
+        Arc::new(Vec::new())
     };
     let indicators = IndicatorSeries {
         atr,
@@ -983,7 +1019,7 @@ pub(crate) fn run_backtest_with_market_series_options(
         if compact && position.is_none() {
             match prepared_signals
                 .get(signal_idx)
-                .and_then(|signal| signal.bar_index)
+                .map(|signal| signal.bar_index)
             {
                 Some(next_signal_index) if next_signal_index > i => {
                     i = next_signal_index;
@@ -1440,6 +1476,35 @@ mod tests {
         let result = run_backtest(&data, &signals, 10000.0, 2.0, 0.1, &settings, None, false);
         assert_eq!(result.total_trades, 0);
         assert_eq!(result.net_profit, 0.0);
+    }
+    #[test]
+    fn market_series_reuses_indicator_results_across_backtests() {
+        let data = create_test_data(100);
+        let market_series = build_market_series(&data);
+
+        let first = market_series.get_or_compute_atr(14);
+        let second = market_series.get_or_compute_atr(14);
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(
+            market_series
+                .indicator_cache
+                .read()
+                .expect("market indicator cache lock poisoned")
+                .len(),
+            1
+        );
+    }
+    #[test]
+    fn signal_time_fallback_uses_sorted_data_without_building_a_map() {
+        let data = create_test_data(3);
+        let signal = Signal::buy(60000, 100.0);
+
+        assert_eq!(resolve_signal_index(&data, &signal), Some(1));
+        assert_eq!(
+            resolve_signal_index(&data, &Signal::buy(90000, 100.0)),
+            None
+        );
     }
     #[test]
     fn test_backtest_single_trade() {

@@ -18,19 +18,36 @@ use axum::{
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::Instant;
 use tokio::sync::RwLock;
 const MAX_DATA_CACHE_ENTRIES: usize = 512;
-const MAX_DATA_CACHE_BARS: usize = 2_000_000;
+const MAX_DATA_CACHE_BARS: usize = 16_000_000;
 // ============================================================================
 // Data Cache Types
 // ============================================================================
+pub struct CachedDataset {
+    data: Arc<Vec<OHLCV>>,
+    last_access: u64,
+}
+
 /// Shared application state containing the OHLCV data cache
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct AppState {
     /// Cache of OHLCV data indexed by hash
-    pub data_cache: Arc<RwLock<HashMap<String, Arc<Vec<OHLCV>>>>>,
+    pub data_cache: Arc<RwLock<HashMap<String, CachedDataset>>>,
+    cache_access_counter: Arc<AtomicU64>,
+}
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            data_cache: Arc::new(RwLock::new(HashMap::new())),
+            cache_access_counter: Arc::new(AtomicU64::new(0)),
+        }
+    }
 }
 /// Request to cache OHLCV data
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,7 +250,13 @@ pub async fn cache_data_handler(
     // Store in cache
     {
         let mut cache = state.data_cache.write().await;
-        cache.insert(cache_id.clone(), Arc::new(data));
+        cache.insert(
+            cache_id.clone(),
+            CachedDataset {
+                data: Arc::new(data),
+                last_access: next_cache_access(&state),
+            },
+        );
         // Keep a bounded working set for grouped multi-asset requests.
         trim_data_cache(&mut cache);
     }
@@ -249,25 +272,40 @@ pub async fn multi_cache_data_handler(
     State(state): State<AppState>,
     Json(req): Json<MultiAssetCacheRequest>,
 ) -> Result<Json<MultiAssetCacheResponse>, (StatusCode, String)> {
+    let decoded = req
+        .workloads
+        .into_iter()
+        .map(|workload| {
+            let data = if !workload.data.is_empty() {
+                workload.data
+            } else if let Some(packed_data) = workload.packed_data {
+                decode_packed_ohlcv(packed_data)
+                    .map_err(|message| (StatusCode::BAD_REQUEST, message))?
+            } else {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("Multi-asset cache workload '{}' has no data", workload.id),
+                ));
+            };
+            let data = Arc::new(data);
+            let cache_id = cache_id_for_data(data.as_slice());
+            Ok((workload.id, data, cache_id))
+        })
+        .collect::<Result<Vec<_>, (StatusCode, String)>>()?;
+
     let mut cache = state.data_cache.write().await;
-    let mut datasets = Vec::with_capacity(req.workloads.len());
-    for workload in req.workloads {
-        let data = if !workload.data.is_empty() {
-            workload.data
-        } else if let Some(packed_data) = workload.packed_data {
-            decode_packed_ohlcv(packed_data)
-                .map_err(|message| (StatusCode::BAD_REQUEST, message))?
-        } else {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                format!("Multi-asset cache workload '{}' has no data", workload.id),
-            ));
-        };
+    let mut datasets = Vec::with_capacity(decoded.len());
+    for (id, data, cache_id) in decoded {
         let bar_count = data.len();
-        let cache_id = cache_id_for_data(&data);
-        cache.insert(cache_id.clone(), Arc::new(data));
+        cache.insert(
+            cache_id.clone(),
+            CachedDataset {
+                data,
+                last_access: next_cache_access(&state),
+            },
+        );
         datasets.push(MultiAssetCacheResult {
-            id: workload.id,
+            id,
             cache_id,
             bar_count,
         });
@@ -290,11 +328,27 @@ fn cache_id_for_data(data: &[OHLCV]) -> String {
     }
     format!("{:x}", hasher.finish())
 }
-fn trim_data_cache(cache: &mut HashMap<String, Arc<Vec<OHLCV>>>) {
+fn next_cache_access(state: &AppState) -> u64 {
+    state.cache_access_counter.fetch_add(1, Ordering::Relaxed)
+}
+
+async fn get_cached_dataset(state: &AppState, cache_id: &str) -> Option<Arc<Vec<OHLCV>>> {
+    let mut cache = state.data_cache.write().await;
+    let access = next_cache_access(state);
+    let entry = cache.get_mut(cache_id)?;
+    entry.last_access = access;
+    Some(entry.data.clone())
+}
+
+fn trim_data_cache(cache: &mut HashMap<String, CachedDataset>) {
     while cache.len() > MAX_DATA_CACHE_ENTRIES
-        || cache.values().map(|data| data.len()).sum::<usize>() > MAX_DATA_CACHE_BARS
+        || cache.values().map(|entry| entry.data.len()).sum::<usize>() > MAX_DATA_CACHE_BARS
     {
-        if let Some(key) = cache.keys().next().cloned() {
+        let lru_key = cache
+            .iter()
+            .min_by_key(|(_, entry)| entry.last_access)
+            .map(|(key, _)| key.clone());
+        if let Some(key) = lru_key {
             cache.remove(&key);
         } else {
             break;
@@ -370,10 +424,7 @@ pub async fn cached_batch_backtest_handler(
 ) -> Result<Json<BatchBacktestResponse>, (StatusCode, String)> {
     let start = Instant::now();
     // Get cached data
-    let data = {
-        let cache = state.data_cache.read().await;
-        cache.get(&req.cache_id).cloned()
-    };
+    let data = get_cached_dataset(&state, &req.cache_id).await;
     let data = match data {
         Some(d) => d,
         None => {
@@ -711,10 +762,7 @@ pub async fn cached_fresh_entry_batch_handler(
     State(state): State<AppState>,
     Json(req): Json<CachedBatchBacktestRequest>,
 ) -> Result<Json<FreshEntryBatchResponse>, (StatusCode, String)> {
-    let data = {
-        let cache = state.data_cache.read().await;
-        cache.get(&req.cache_id).cloned()
-    };
+    let data = get_cached_dataset(&state, &req.cache_id).await;
     let Some(data) = data else {
         return Err((
             StatusCode::NOT_FOUND,
@@ -799,10 +847,7 @@ pub async fn cached_asset_opportunity_batch_handler(
     State(state): State<AppState>,
     Json(req): Json<CachedBatchBacktestRequest>,
 ) -> Result<Json<AssetOpportunityBatchResponse>, (StatusCode, String)> {
-    let data = {
-        let cache = state.data_cache.read().await;
-        cache.get(&req.cache_id).cloned()
-    };
+    let data = get_cached_dataset(&state, &req.cache_id).await;
     let Some(data) = data else {
         return Err((
             StatusCode::NOT_FOUND,
@@ -829,63 +874,54 @@ struct ResolvedMultiAssetWorkload {
     last_data_time: Option<Time>,
     data_end_index: Option<usize>,
 }
+struct DecodedMultiAssetWorkload {
+    id: String,
+    data: Option<Arc<Vec<OHLCV>>>,
+    items: Vec<crate::types::BatchBacktestItem>,
+    last_data_time: Option<Time>,
+    cache_id: Option<String>,
+    generated_cache_id: Option<String>,
+    data_end_index: Option<usize>,
+}
+struct MultiAssetWorkloadContext<'a> {
+    data: &'a [OHLCV],
+    market_series: crate::backtest::MarketSeries,
+    last_data_time: Option<Time>,
+}
 async fn resolve_multi_asset_workloads(
     state: &AppState,
     workloads: Vec<crate::types::MultiAssetBatchWorkload>,
 ) -> Result<(Vec<ResolvedMultiAssetWorkload>, Vec<MultiAssetCacheResult>), (StatusCode, String)> {
-    let mut cache = state.data_cache.write().await;
-    let mut cache_ids = Vec::new();
-    let resolved = workloads
+    // Decode request-owned payloads before taking the shared cache lock. This
+    // keeps packed OHLCV/signal decoding from blocking unrelated requests.
+    let decoded = workloads
         .into_iter()
         .map(|workload| {
-            let data = if !workload.data.is_empty() {
-                Arc::new(workload.data)
-            } else if let Some(packed_data) = workload.packed_data {
-                Arc::new(
+            let crate::types::MultiAssetBatchWorkload {
+                id,
+                data,
+                packed_data,
+                items,
+                last_data_time,
+                cache_id,
+                data_end_index,
+            } = workload;
+            let data = if !data.is_empty() {
+                Some(Arc::new(data))
+            } else if let Some(packed_data) = packed_data {
+                Some(Arc::new(
                     decode_packed_ohlcv(packed_data)
                         .map_err(|message| (StatusCode::BAD_REQUEST, message))?,
-                )
-            } else if let Some(cache_id) = workload.cache_id.as_deref() {
-                cache.get(cache_id).cloned().ok_or_else(|| {
-                    (
-                        StatusCode::NOT_FOUND,
-                        format!(
-                            "Cache ID '{}' not found. Upload data first via /api/data/cache",
-                            cache_id
-                        ),
-                    )
-                })?
+                ))
             } else {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    format!(
-                        "Multi-asset workload '{}' has no data or cacheId",
-                        workload.id
-                    ),
-                ));
+                None
             };
-            if workload.cache_id.is_none() {
-                let cache_id = cache_id_for_data(data.as_slice());
-                cache.insert(cache_id.clone(), data.clone());
-                cache_ids.push(MultiAssetCacheResult {
-                    id: workload.id.clone(),
-                    cache_id,
-                    bar_count: data.len(),
-                });
-            }
-            if let Some(end) = workload.data_end_index {
-                if end == 0 || end > data.len() {
-                    return Err((
-                        StatusCode::BAD_REQUEST,
-                        format!(
-                            "Multi-asset workload '{}' has an invalid dataEndIndex",
-                            workload.id
-                        ),
-                    ));
-                }
-            }
-            let items = workload
-                .items
+            let generated_cache_id = if cache_id.is_none() {
+                data.as_ref().map(|data| cache_id_for_data(data.as_slice()))
+            } else {
+                None
+            };
+            let items = items
                 .into_iter()
                 .map(|mut item| {
                     if let Some(packed_signals) = item.packed_signals.take() {
@@ -895,7 +931,7 @@ async fn resolve_multi_asset_workloads(
                                     StatusCode::BAD_REQUEST,
                                     format!(
                                         "Workload '{}' has invalid packed signals: {message}",
-                                        workload.id
+                                        id
                                     ),
                                 )
                             })?;
@@ -903,14 +939,78 @@ async fn resolve_multi_asset_workloads(
                     Ok(item)
                 })
                 .collect::<Result<Vec<_>, (StatusCode, String)>>()?;
-            Ok(ResolvedMultiAssetWorkload {
+            Ok(DecodedMultiAssetWorkload {
+                id,
                 data,
                 items,
-                last_data_time: workload.last_data_time,
-                data_end_index: workload.data_end_index,
+                last_data_time,
+                cache_id,
+                generated_cache_id,
+                data_end_index,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
+
+    let mut cache = state.data_cache.write().await;
+    let mut cache_ids = Vec::new();
+    let mut resolved = Vec::with_capacity(decoded.len());
+    for workload in decoded {
+        let data = if let Some(data) = workload.data {
+            data
+        } else if let Some(cache_id) = workload.cache_id.as_deref() {
+            let access = next_cache_access(state);
+            let Some(entry) = cache.get_mut(cache_id) else {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    format!(
+                        "Cache ID '{}' not found. Upload data first via /api/data/cache",
+                        cache_id
+                    ),
+                ));
+            };
+            entry.last_access = access;
+            entry.data.clone()
+        } else {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Multi-asset workload '{}' has no data or cacheId",
+                    workload.id
+                ),
+            ));
+        };
+        if let Some(cache_id) = workload.generated_cache_id {
+            cache.insert(
+                cache_id.clone(),
+                CachedDataset {
+                    data: data.clone(),
+                    last_access: next_cache_access(state),
+                },
+            );
+            cache_ids.push(MultiAssetCacheResult {
+                id: workload.id.clone(),
+                cache_id,
+                bar_count: data.len(),
+            });
+        }
+        if let Some(end) = workload.data_end_index {
+            if end == 0 || end > data.len() {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "Multi-asset workload '{}' has an invalid dataEndIndex",
+                        workload.id
+                    ),
+                ));
+            }
+        }
+        resolved.push(ResolvedMultiAssetWorkload {
+            data,
+            items: workload.items,
+            last_data_time: workload.last_data_time,
+            data_end_index: workload.data_end_index,
+        });
+    }
     trim_data_cache(&mut cache);
     Ok((resolved, cache_ids))
 }
@@ -923,40 +1023,46 @@ pub async fn multi_asset_opportunity_batch_handler(
 ) -> Result<Json<AssetOpportunityBatchResponse>, (StatusCode, String)> {
     let start = Instant::now();
     let (workloads, cache_ids) = resolve_multi_asset_workloads(&state, req.workloads).await?;
-    let results: Vec<AssetOpportunityBatchResultItem> = workloads
+    let contexts: Vec<MultiAssetWorkloadContext<'_>> = workloads
         .par_iter()
-        .flat_map(|workload| {
+        .map(|workload| {
             let end = workload.data_end_index.unwrap_or(workload.data.len());
             let data = &workload.data[..end];
-            let market_series = build_market_series(data);
-            workload
-                .items
-                .iter()
-                .map(|item| {
-                    let settings = item
-                        .settings
-                        .clone()
-                        .unwrap_or_else(|| req.base_settings.clone());
-                    let result = run_backtest_with_market_series_options(
-                        data,
-                        &item.signals,
-                        req.initial_capital,
-                        req.position_size_percent,
-                        req.commission_percent,
-                        &settings,
-                        Some(&req.sizing),
-                        true,
-                        true,
-                        &market_series,
-                    );
-                    summarize_asset_opportunity_result(
-                        result,
-                        item.id.clone(),
-                        workload.last_data_time,
-                        req.initial_capital,
-                    )
-                })
-                .collect::<Vec<_>>()
+            MultiAssetWorkloadContext {
+                data,
+                market_series: build_market_series(data),
+                last_data_time: workload.last_data_time,
+            }
+        })
+        .collect();
+    let results: Vec<AssetOpportunityBatchResultItem> = contexts
+        .par_iter()
+        .zip(workloads.par_iter())
+        .flat_map(|(context, workload)| {
+            workload.items.par_iter().map(|item| {
+                let settings = item
+                    .settings
+                    .clone()
+                    .unwrap_or_else(|| req.base_settings.clone());
+                let result = run_backtest_with_market_series_options(
+                    context.data,
+                    &item.signals,
+                    req.initial_capital,
+                    req.position_size_percent,
+                    req.commission_percent,
+                    &settings,
+                    Some(&req.sizing),
+                    true,
+                    true,
+                    &context.market_series,
+                );
+                summarize_asset_opportunity_result(
+                    result,
+                    item.id.clone(),
+                    context.last_data_time,
+                    req.initial_capital,
+                )
+            })
         })
         .collect();
     Ok(Json(AssetOpportunityBatchResponse {
@@ -1164,5 +1270,31 @@ mod tests {
         assert!(compact_with_trades.equity_curve.is_empty());
         assert_eq!(compact_with_trades.trades.len(), 1);
         assert_eq!(compact_with_trades.total_trades, full.total_trades);
+    }
+
+    #[test]
+    fn data_cache_evicts_the_least_recently_used_dataset() {
+        let mut cache = HashMap::with_capacity(MAX_DATA_CACHE_ENTRIES + 1);
+        cache.insert(
+            "oldest".to_string(),
+            CachedDataset {
+                data: Arc::new(Vec::new()),
+                last_access: 0,
+            },
+        );
+        for index in 0..MAX_DATA_CACHE_ENTRIES {
+            cache.insert(
+                format!("dataset-{index}"),
+                CachedDataset {
+                    data: Arc::new(Vec::new()),
+                    last_access: index as u64 + 1,
+                },
+            );
+        }
+
+        trim_data_cache(&mut cache);
+
+        assert_eq!(cache.len(), MAX_DATA_CACHE_ENTRIES);
+        assert!(!cache.contains_key("oldest"));
     }
 }
