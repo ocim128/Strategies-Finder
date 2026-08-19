@@ -2,6 +2,7 @@ import { StrategyParams, type OHLCVData } from "./strategies/index";
 import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey, ensureStrategyKeysLoaded, getStrategyKind, getStrategyKindTitle } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtest-service";
+import { builtInStrategyKeys } from "./strategies/manifest-keys";
 import { paramManager } from "./param-manager";
 import { uiManager } from "./ui-manager";
 import { setVisible } from "./dom-utils";
@@ -474,6 +475,28 @@ function normalizeTimingSortMetrics(value: unknown): FinderMetric[] {
 	return value
 		.filter((metric): metric is FinderMetric => isTimingSortMetric(metric))
 		.filter((metric, index, metrics) => metrics.indexOf(metric) === index);
+}
+
+/**
+ * JSON formatter for copied run configurations: primitives arrays (strategy-key
+ * lists, sort orders) are inlined on one line so an all-strategies selection
+ * does not balloon the payload to hundreds of lines.
+ */
+function formatConfigurationJson(value: unknown, depth = 0): string {
+	const pad = "\t".repeat(depth);
+	const inner = "\t".repeat(depth + 1);
+	if (Array.isArray(value)) {
+		const allPrimitives = value.every((item) => item === null || typeof item !== "object");
+		if (allPrimitives) return JSON.stringify(value);
+		if (value.length === 0) return "[]";
+		return "[\n" + value.map((item) => inner + formatConfigurationJson(item, depth + 1)).join(",\n") + "\n" + pad + "]";
+	}
+	if (value !== null && typeof value === "object") {
+		const entries = Object.entries(value as Record<string, unknown>);
+		if (entries.length === 0) return "{}";
+		return "{\n" + entries.map(([key, item]) => inner + JSON.stringify(key) + ": " + formatConfigurationJson(item, depth + 1)).join(",\n") + "\n" + pad + "}";
+	}
+	return JSON.stringify(value);
 }
 
 function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
@@ -1009,6 +1032,10 @@ export class FinderManager {
 		dom.finderCopyDiagnostics.disabled = true;
 		dom.finderCopyDiagnostics.addEventListener('click', () => {
 			void this.copyFinderDiagnostics();
+		});
+
+		dom.finderCopyConfiguration.addEventListener('click', () => {
+			void this.copyRunConfiguration();
 		});
 
 		dom.finderList.addEventListener('click', (event) => {
@@ -4135,6 +4162,37 @@ export class FinderManager {
 			textarea.remove();
 		}
 	}
+
+	/**
+	 * Copy the complete run configuration (Finder UI state + backtest settings) as
+	 * JSON. The AO batch archives a config.txt with backtest settings only; this
+	 * payload carries the Finder-side settings (strategies, universe, holdout,
+	 * eval window, trade filters) so archive runs are fully reproducible.
+	 */
+	private async copyRunConfiguration(): Promise<void> {
+		this.captureFinderUiState();
+		// Deleted strategy libraries keep stale keys in persisted UI state; filter
+		// both selection lists against the live manifest so the copied config only
+		// references strategies that exist.
+		const knownKeys = new Set(builtInStrategyKeys);
+		const filterKeys = (keys: string[]) => keys.filter((key) => knownKeys.has(key));
+		const payload = {
+			finder: {
+				...this.uiState,
+				currentChartSelectedStrategyKeys: filterKeys(this.uiState.currentChartSelectedStrategyKeys),
+				universeSelectedStrategyKeys: filterKeys(this.uiState.universeSelectedStrategyKeys),
+			},
+			backtestSettings: backtestService.getBacktestSettings(),
+		};
+		try {
+			await this.copyTextToClipboard(formatConfigurationJson(payload));
+			uiManager.showToast('Finder configuration copied', 'success');
+		} catch (error) {
+			debugLogger.error('finder.copy_configuration_failed', { error: error instanceof Error ? error.message : String(error) });
+			uiManager.showToast('Copy failed - check browser permissions', 'error');
+		}
+	}
+
 
 	private async copyFinderDiagnostics(): Promise<void> {
 		if (this.latestResults.scope === 'asset_opportunity' && this.latestAssetOpportunityDiagnostics) {
