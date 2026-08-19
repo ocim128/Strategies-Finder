@@ -8,6 +8,7 @@ import type {
 import type {
     AssetOpportunityRustBatchDispatch,
     AssetOpportunityRustBatchDispatchInput,
+    AssetOpportunityRustBatchFailureReason,
     AssetOpportunityRustFreshBatchDispatch,
     AssetOpportunityRustFreshBatchDispatchInput,
     RustAssetOpportunityCandidateResult,
@@ -22,9 +23,14 @@ import {
     validateAssetOpportunityRustSummaryBatchResponse,
 } from "./finder-asset-opportunity-rust-batch";
 
-const MAX_WORKLOADS_PER_REQUEST = 1024;
+// Keep each Rust request below the transport timeout at the default
+// candidate-pool size. The endpoint parallelizes every workload internally;
+// oversized requests only hold the HTTP slot longer and turn into a full
+// TypeScript fallback when they cross the timeout.
+const MAX_WORKLOADS_PER_REQUEST = 128;
 const MAX_CACHE_WORKLOADS_PER_REQUEST = 32;
 const MAX_BATCH_WAIT_MS = 12;
+const DIRECT_FALLBACK_CONCURRENCY = 8;
 
 type MultiAssetBatchClient = Pick<
     RustEngineClient,
@@ -67,6 +73,40 @@ function estimateMultiRequestBytes(request: {
         ...request,
         workloads: request.workloads.map(compactMultiAssetWorkload),
     });
+}
+
+function resolveTransportFallback(
+    entries: Array<CandidateQueueEntry | FreshQueueEntry>,
+    reason: AssetOpportunityRustBatchFailureReason,
+    requestBytes: number,
+    message?: string,
+): void {
+    for (const entry of entries) {
+        entry.resolve({
+            status: reason === "cancelled" ? "cancelled" : "fallback",
+            reason,
+            requests: 1,
+            requestBytes,
+            latencyMs: 0,
+            ...(message ? { message } : {}),
+        });
+    }
+}
+
+async function resolveDirectCandidateFallbacks(entries: CandidateQueueEntry[]): Promise<void> {
+    for (let start = 0; start < entries.length; start += DIRECT_FALLBACK_CONCURRENCY) {
+        await Promise.all(entries.slice(start, start + DIRECT_FALLBACK_CONCURRENCY).map(async (entry) => {
+            entry.resolve(await dispatchAssetOpportunityRustBatch(entry.input));
+        }));
+    }
+}
+
+async function resolveDirectFreshFallbacks(entries: FreshQueueEntry[]): Promise<void> {
+    for (let start = 0; start < entries.length; start += DIRECT_FALLBACK_CONCURRENCY) {
+        await Promise.all(entries.slice(start, start + DIRECT_FALLBACK_CONCURRENCY).map(async (entry) => {
+            entry.resolve(await dispatchAssetOpportunityRustFreshEntryBatch(entry.input));
+        }));
+    }
 }
 
 export interface AssetOpportunityRustMultiBatchCoordinator {
@@ -126,11 +166,6 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
             void flushFresh();
         }, MAX_BATCH_WAIT_MS);
     };
-
-    const dispatchCandidateDirect = (input: AssetOpportunityRustBatchDispatchInput): Promise<AssetOpportunityRustBatchDispatch> =>
-        dispatchAssetOpportunityRustBatch(input);
-    const dispatchFreshDirect = (input: AssetOpportunityRustFreshBatchDispatchInput): Promise<AssetOpportunityRustFreshBatchDispatch> =>
-        dispatchAssetOpportunityRustFreshEntryBatch(input);
 
     async function withRustRequestSlot<T>(operation: () => Promise<T>): Promise<T> {
         const previous = rustRequestTail;
@@ -267,7 +302,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
         const request = { ...requestBase, workloads: requestWorkloads };
         const requestBytes = estimateMultiRequestBytes(request);
         if (requestBytes > maxRequestBytes) {
-            await Promise.all(entries.map(async (entry) => entry.resolve(await dispatchCandidateDirect(entry.input))));
+            await resolveDirectCandidateFallbacks(entries);
             return;
         }
         const transport = await withRustRequestSlot(() => client.runMultiAssetAssetOpportunityBatchBacktestWithStatus(
@@ -284,14 +319,28 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
             },
         ));
         if (!transport.ok) {
+            if (
+                transport.reason === "timeout"
+                || transport.reason === "network_error"
+                || transport.reason === "health_unavailable"
+                || transport.reason === "cancelled"
+            ) {
+                resolveTransportFallback(
+                    entries,
+                    transport.reason,
+                    transport.requestBytes ?? requestBytes,
+                    transport.message,
+                );
+                return;
+            }
             if (transport.reason === "http_error") invalidateCachedWorkloads(entries, workloads);
-            await Promise.all(entries.map(async (entry) => entry.resolve(await dispatchCandidateDirect(entry.input))));
+            await resolveDirectCandidateFallbacks(entries);
             return;
         }
         const expectedIds = workloads.flatMap((workload) => workload.items.map((item) => item.id));
         const validated = validateAssetOpportunityRustSummaryBatchResponse(transport.response, expectedIds);
         if (!validated.ok) {
-            await Promise.all(entries.map(async (entry) => entry.resolve(await dispatchCandidateDirect(entry.input))));
+            await resolveDirectCandidateFallbacks(entries);
             return;
         }
         rememberResponseCacheIds(transport.response, entries, workloads);
@@ -301,7 +350,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
                 const wireId = `${entry.token}:${item.id}`;
                 const result = validated.results.get(wireId);
                 if (!result) {
-                    await Promise.all(entries.map(async (queued) => queued.resolve(await dispatchCandidateDirect(queued.input))));
+                    await resolveDirectCandidateFallbacks(entries);
                     return;
                 }
                 const normalized = normalizeAssetOpportunityRustSummaryCandidateResult(result.summary);
@@ -349,7 +398,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
         };
         const requestBytes = estimateMultiRequestBytes(request);
         if (requestBytes > maxRequestBytes) {
-            await Promise.all(entries.map(async (entry) => entry.resolve(await dispatchFreshDirect(entry.input))));
+            await resolveDirectFreshFallbacks(entries);
             return;
         }
         const transport = await withRustRequestSlot(() => client.runMultiAssetFreshEntryBatchBacktestWithStatus(
@@ -366,14 +415,28 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
             },
         ));
         if (!transport.ok) {
+            if (
+                transport.reason === "timeout"
+                || transport.reason === "network_error"
+                || transport.reason === "health_unavailable"
+                || transport.reason === "cancelled"
+            ) {
+                resolveTransportFallback(
+                    entries,
+                    transport.reason,
+                    transport.requestBytes ?? requestBytes,
+                    transport.message,
+                );
+                return;
+            }
             if (transport.reason === "http_error") invalidateCachedWorkloads(entries, workloads);
-            await Promise.all(entries.map(async (entry) => entry.resolve(await dispatchFreshDirect(entry.input))));
+            await resolveDirectFreshFallbacks(entries);
             return;
         }
         const expectedIds = workloads.flatMap((workload) => workload.items.map((item) => item.id));
         const validated = validateAssetOpportunityRustFreshBatchResponse(transport.response, expectedIds);
         if (!validated.ok) {
-            await Promise.all(entries.map(async (entry) => entry.resolve(await dispatchFreshDirect(entry.input))));
+            await resolveDirectFreshFallbacks(entries);
             return;
         }
         for (const entry of entries) {
@@ -382,7 +445,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
                 const wireId = `${entry.token}:${item.id}`;
                 const result = validated.results.get(wireId);
                 if (!result) {
-                    await Promise.all(entries.map(async (queued) => queued.resolve(await dispatchFreshDirect(queued.input))));
+                    await resolveDirectFreshFallbacks(entries);
                     return;
                 }
                 results.set(item.id, { id: item.id, summary: result.summary });

@@ -813,4 +813,37 @@ describe("Asset Opportunity Rust batch contract", () => {
         expect(cacheGroupSizes).to.deep.equal([2]);
         expect(executionGroupSizes).to.deep.equal([2]);
     });
+
+    it("does not fan out direct Rust retries after a grouped timeout", async () => {
+        let directCalls = 0;
+        const client = {
+            getDataCacheKey: (data: OHLCVData[]) => String(data[0]?.time ?? "empty"),
+            invalidateCachedDataId: () => undefined,
+            runMultiAssetAssetOpportunityBatchBacktestWithStatus: async () => ({
+                ok: false as const,
+                reason: "timeout" as const,
+                requestBytes: 1,
+            }),
+            runBatchBacktestWithStatus: async () => {
+                directCalls += 1;
+                return { ok: false as const, reason: "timeout" as const };
+            },
+        } as any;
+        const coordinator = createAssetOpportunityRustMultiBatchCoordinator(client);
+        const result = await coordinator.dispatchCandidate({
+            client,
+            data: makeCandles(8),
+            items: [{ id: "timed-out", signals: [] }],
+            initialCapital: 10_000,
+            positionSizePercent: 100,
+            commissionPercent: 0,
+            baseSettings: eligibleSettings,
+            lastDataTime: makeCandles(8).at(-1)?.time ?? null,
+            maxRequestBytes: 16 * 1024 * 1024,
+            maxResponseBytes: 128 * 1024 * 1024,
+        });
+
+        expect(result).to.include({ status: "fallback", reason: "timeout" });
+        expect(directCalls).to.equal(0);
+    });
 });

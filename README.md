@@ -176,7 +176,7 @@ Opportunity **Batch OOS Holdout** sweeps additionally run holdout iterations
 in parallel across a bounded worker-thread pool sized from your cores and
 RAM (~9 MB per symbol per worker against 75% of system RAM).
 `FINDER_ASSET_BATCH_WORKERS=1` forces the original sequential loop (rollback
-lever); Rust-engine runs prefer 4–8 workers. See
+lever); Rust-engine runs prefer at most 2 workers. See
 [docs/finder-server-side.md](docs/finder-server-side.md) and
 [docs/finder-asset-opportunity-batch-parallelization.md](docs/finder-asset-opportunity-batch-parallelization.md).
 

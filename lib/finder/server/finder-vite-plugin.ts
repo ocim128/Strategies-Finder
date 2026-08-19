@@ -2368,7 +2368,7 @@ async function handleAssetOpportunityRunRequest(
         && isRustSupportedTradeSizingMode(resolvedCapitalSettings.sizingMode);
     const singleRunWorkerCount = rustCanRunInWorkers && prepared.symbols.length >= 32
         ? Math.min(
-            4,
+            2,
             resolveAssetOpportunityChunkWorkerCount(
                 1,
                 prepared.symbols.length,

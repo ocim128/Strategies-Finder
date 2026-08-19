@@ -360,7 +360,7 @@ process-memory only. The run-log sink keeps writing the same sanitized filename
   runs, ÷ worker count in batch mode).
 - Phase 2: ~19,000 avoided dataset loads on a 20-holdout × 1,000-symbol batch; expected ~15–35%
   total batch time reduction proportional to the measured `dataLoading` share.
-- Phase 3: prevents 14-worker stampedes against the serialized Rust server (documented 4–8 target).
+- Phase 3: prevents multi-worker stampedes against the serialized Rust server (documented 2-worker cap).
 - Phase 4: ~50–100× fewer stream events + browser DOM updates on large batches.
 - Phase 5: ~100× fewer run-log syscalls.
 - Phase 6: eliminates quadratic sort + per-row DOM rebuilds in the browser.
@@ -386,8 +386,8 @@ from the context factory call sites (single-run behavior), and worker count via
   synthetic-heavy universes).
 - **Unknown:** real-world `dataLoading` share of batch wall time (Phase 2's headline number) — the
   diagnostics already measure it; record before/after in this document when the phase lands.
-- **Unknown:** whether the Rust server's practical sweet spot is 4 or 8 workers — 8 is chosen as
-  the documented upper bound; the env override absorbs operator tuning.
+- **Measured:** the Rust server's practical stable ceiling for the Finder path is 2 automatic
+  workers; the env override remains available for deliberate operator tuning.
 - **Out of scope:** parallelizing the single (non-batch) run, prefix-reuse algorithms for holdout
   sweeps, sharing datasets ACROSS workers (shared-memory arrays), and any loosening of the heap
   guard for asset runs.

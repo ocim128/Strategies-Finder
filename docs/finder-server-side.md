@@ -159,7 +159,7 @@ synthetic leg/pair caches are reused. Large holdout ranges still use one
 whole-holdout task per worker. When Rust is actually eligible, the external
 Rust server becomes the serialization point and
 posts full OHLCV payloads per request — the AUTO worker count is therefore
-clamped at 8 (`ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP`); a Rust preference
+clamped at 2 (`ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP`); a Rust preference
 alone does not apply that cap when the settings force TypeScript. Set
 `FINDER_ASSET_BATCH_WORKERS` explicitly only when you have measured a
 better value.

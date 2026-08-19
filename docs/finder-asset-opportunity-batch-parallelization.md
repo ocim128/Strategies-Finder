@@ -231,7 +231,7 @@ threads still parallelize signal generation and TS fallback, but:
 
 Mitigation: the worker-count policy now enforces this automatically — when
 `useRustEnginePreference` is on, the AUTO worker count is clamped at
-`ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP` (8) in
+`ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP` (2) in
 `resolveAssetOpportunityBatchWorkerCount`; the `FINDER_ASSET_BATCH_WORKERS`
 override remains the operator's judgment call and still wins. Changing the
 Rust client itself stays out of scope (measure first).

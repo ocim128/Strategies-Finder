@@ -372,13 +372,13 @@ describe("finder Asset Opportunity batch parallel execution", () => {
 
     it("clamps the auto worker count for Rust-engine runs; the env override still wins", () => {
         const auto = resolveAssetOpportunityBatchWorkerCount(41, 10, {}, 64 * GIB);
-        // rustEngine caps the AUTO value at 8 (the Rust HTTP server serializes;
+        // rustEngine caps the AUTO value at 2 (the Rust HTTP server serializes;
         // extra workers only contend for its queue)...
         expect(resolveAssetOpportunityBatchWorkerCount(41, 10, {}, 64 * GIB, { rustEngine: true }))
-            .to.equal(Math.min(auto, 8));
+            .to.equal(Math.min(auto, 2));
         // ...and never raises it when auto is already below the cap.
         expect(resolveAssetOpportunityBatchWorkerCount(3, 10, {}, 64 * GIB, { rustEngine: true }))
-            .to.equal(Math.min(resolveAssetOpportunityBatchWorkerCount(3, 10, {}, 64 * GIB), 8));
+            .to.equal(Math.min(resolveAssetOpportunityBatchWorkerCount(3, 10, {}, 64 * GIB), 2));
         // rustEngine: false / undefined keep the unchanged auto value.
         expect(resolveAssetOpportunityBatchWorkerCount(41, 10, {}, 64 * GIB, { rustEngine: false })).to.equal(auto);
         // The env override is the operator's explicit judgment call: it

@@ -106,7 +106,7 @@ export function resolveAssetOpportunityDatasetCacheCapacity(
  * serializes execution, so a large pool only multiplies queued requests.
  * The env override deliberately bypasses this cap (operator judgment).
  */
-export const ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP = 8;
+export const ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP = 2;
 
 /**
  * Resolve the worker count for one batch sweep.
