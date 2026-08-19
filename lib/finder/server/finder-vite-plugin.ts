@@ -2233,9 +2233,6 @@ async function prepareAssetOpportunityRunPayload(
     const selectedStrategies = await resolveSelectedStrategies(strategyKeys);
     const settings = (body.settings ?? {}) as BacktestSettings;
     const capitalSettings = (body.capitalSettings ?? {}) as CapitalSettings;
-    // TEMP COMMISSION DEBUG (remove after diagnosis): trace the capital settings
-    // the browser actually sent for asset-opportunity batch runs.
-    console.log(`[commission-debug] asset-opportunity-batch-run capitalSettings=${JSON.stringify(capitalSettings)}`);
     const useRustEnginePreference = body.useRustEnginePreference === true;
     const candidatePoolSize = clampCandidatePoolSize(options.assetOpportunity?.candidatePoolSize);
     const minFreshSupport = clampMinFreshSupport(options.assetOpportunity?.minFreshSupport);

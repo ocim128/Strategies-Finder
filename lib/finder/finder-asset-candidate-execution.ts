@@ -193,12 +193,6 @@ export async function runAssetCandidateBacktest(args: {
     const preResolvedCapital = resolveCapitalSettingsFromRaw(
         args.capitalSettings as unknown as Record<string, unknown>,
     );
-    // TEMP COMMISSION DEBUG (remove after diagnosis): one line per candidate
-    // execution showing the commission that actually reached the executor.
-    if ((globalThis as { __commissionDebugLogged?: boolean }).__commissionDebugLogged !== true) {
-        (globalThis as { __commissionDebugLogged?: boolean }).__commissionDebugLogged = true;
-        console.log(`[commission-debug] first candidate execution commission=${preResolvedCapital.commission} raw=${JSON.stringify(args.capitalSettings)}`);
-    }
     const backtestRunOptions = resolveAssetCandidateBacktestRunOptions(
         args.needs,
         args.data,
