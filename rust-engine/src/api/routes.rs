@@ -166,6 +166,19 @@ pub struct ProxyRequest {
 // ============================================================================
 // Handlers
 // ============================================================================
+async fn run_on_blocking_pool<F, T>(work: F) -> Result<T, (StatusCode, String)>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(work).await.map_err(|error| {
+        tracing::error!("CPU-bound backtest task failed: {}", error);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Backtest worker task failed: {error}"),
+        )
+    })
+}
 /// Handle backtest request
 pub async fn backtest_handler(Json(req): Json<BacktestRequest>) -> Json<BacktestResult> {
     let market_series = build_market_series(&req.data);
@@ -186,41 +199,45 @@ pub async fn backtest_handler(Json(req): Json<BacktestRequest>) -> Json<Backtest
 /// Handle batch backtest request - runs multiple backtests in parallel
 pub async fn batch_backtest_handler(
     Json(req): Json<BatchBacktestRequest>,
-) -> Json<BatchBacktestResponse> {
-    let start = Instant::now();
-    let market_series = build_market_series(&req.data);
-    // Run all backtests in parallel using rayon
-    let results: Vec<BatchBacktestResultItem> = req
-        .items
-        .par_iter()
-        .map(|item| {
-            // Use item-specific settings if provided, otherwise use base settings
-            let settings = item
-                .settings
-                .clone()
-                .unwrap_or_else(|| req.base_settings.clone());
-            let result = run_backtest_with_market_series(
-                &req.data,
-                &item.signals,
-                req.initial_capital,
-                req.position_size_percent,
-                req.commission_percent,
-                &settings,
-                Some(&req.sizing),
-                req.compact,
-                &market_series,
-            );
-            BatchBacktestResultItem {
-                id: item.id.clone(),
-                result,
-            }
-        })
-        .collect();
-    let processing_time_ms = start.elapsed().as_millis() as u64;
-    Json(BatchBacktestResponse {
-        results,
-        processing_time_ms,
+) -> Result<Json<BatchBacktestResponse>, (StatusCode, String)> {
+    let response = run_on_blocking_pool(move || {
+        let start = Instant::now();
+        let market_series = build_market_series(&req.data);
+        // Run all backtests in parallel using rayon.
+        let results: Vec<BatchBacktestResultItem> = req
+            .items
+            .par_iter()
+            .map(|item| {
+                // Use item-specific settings if provided, otherwise use base settings
+                let settings = item
+                    .settings
+                    .clone()
+                    .unwrap_or_else(|| req.base_settings.clone());
+                let result = run_backtest_with_market_series(
+                    &req.data,
+                    &item.signals,
+                    req.initial_capital,
+                    req.position_size_percent,
+                    req.commission_percent,
+                    &settings,
+                    Some(&req.sizing),
+                    req.compact,
+                    &market_series,
+                );
+                BatchBacktestResultItem {
+                    id: item.id.clone(),
+                    result,
+                }
+            })
+            .collect();
+        let processing_time_ms = start.elapsed().as_millis() as u64;
+        BatchBacktestResponse {
+            results,
+            processing_time_ms,
+        }
     })
+    .await?;
+    Ok(Json(response))
 }
 /// Cache OHLCV data and return a cache ID
 /// This allows sending large datasets once and referencing them by ID
@@ -442,43 +459,47 @@ pub async fn cached_batch_backtest_handler(
         req.items.len(),
         data.len()
     );
-    let market_series = build_market_series(data.as_slice());
-    // Run all backtests in parallel using rayon
-    let results: Vec<BatchBacktestResultItem> = req
-        .items
-        .par_iter()
-        .map(|item| {
-            let settings = item
-                .settings
-                .clone()
-                .unwrap_or_else(|| req.base_settings.clone());
-            let result = run_backtest_with_market_series(
-                data.as_slice(),
-                &item.signals,
-                req.initial_capital,
-                req.position_size_percent,
-                req.commission_percent,
-                &settings,
-                Some(&req.sizing),
-                req.compact,
-                &market_series,
-            );
-            BatchBacktestResultItem {
-                id: item.id.clone(),
-                result,
-            }
-        })
-        .collect();
-    let processing_time_ms = start.elapsed().as_millis() as u64;
+    let response = run_on_blocking_pool(move || {
+        let market_series = build_market_series(data.as_slice());
+        // Run all backtests in parallel using rayon.
+        let results: Vec<BatchBacktestResultItem> = req
+            .items
+            .par_iter()
+            .map(|item| {
+                let settings = item
+                    .settings
+                    .clone()
+                    .unwrap_or_else(|| req.base_settings.clone());
+                let result = run_backtest_with_market_series(
+                    data.as_slice(),
+                    &item.signals,
+                    req.initial_capital,
+                    req.position_size_percent,
+                    req.commission_percent,
+                    &settings,
+                    Some(&req.sizing),
+                    req.compact,
+                    &market_series,
+                );
+                BatchBacktestResultItem {
+                    id: item.id.clone(),
+                    result,
+                }
+            })
+            .collect();
+        let processing_time_ms = start.elapsed().as_millis() as u64;
+        BatchBacktestResponse {
+            results,
+            processing_time_ms,
+        }
+    })
+    .await?;
     tracing::info!(
         "Cached batch backtest: {} runs in {}ms",
-        results.len(),
-        processing_time_ms
+        response.results.len(),
+        response.processing_time_ms
     );
-    Ok(Json(BatchBacktestResponse {
-        results,
-        processing_time_ms,
-    }))
+    Ok(Json(response))
 }
 fn metric_summary_from_result(result: &BacktestResult) -> AssetOpportunityMetricSummary {
     AssetOpportunityMetricSummary {
@@ -746,16 +767,30 @@ fn run_fresh_entry_batch(
 /// Handle fresh-entry backtest summaries without returning full trade history.
 pub async fn fresh_entry_batch_handler(
     Json(req): Json<BatchBacktestRequest>,
-) -> Json<FreshEntryBatchResponse> {
-    Json(run_fresh_entry_batch(
-        &req.data,
-        &req.items,
-        req.initial_capital,
-        req.position_size_percent,
-        req.commission_percent,
-        req.base_settings,
-        req.sizing,
-    ))
+) -> Result<Json<FreshEntryBatchResponse>, (StatusCode, String)> {
+    let BatchBacktestRequest {
+        data,
+        items,
+        initial_capital,
+        position_size_percent,
+        commission_percent,
+        base_settings,
+        sizing,
+        ..
+    } = req;
+    let response = run_on_blocking_pool(move || {
+        run_fresh_entry_batch(
+            &data,
+            &items,
+            initial_capital,
+            position_size_percent,
+            commission_percent,
+            base_settings,
+            sizing,
+        )
+    })
+    .await?;
+    Ok(Json(response))
 }
 /// Handle cached fresh-entry backtest summaries.
 pub async fn cached_fresh_entry_batch_handler(
@@ -772,15 +807,28 @@ pub async fn cached_fresh_entry_batch_handler(
             ),
         ));
     };
-    Ok(Json(run_fresh_entry_batch(
-        data.as_slice(),
-        &req.items,
-        req.initial_capital,
-        req.position_size_percent,
-        req.commission_percent,
-        req.base_settings,
-        req.sizing,
-    )))
+    let CachedBatchBacktestRequest {
+        items,
+        initial_capital,
+        position_size_percent,
+        commission_percent,
+        base_settings,
+        sizing,
+        ..
+    } = req;
+    let response = run_on_blocking_pool(move || {
+        run_fresh_entry_batch(
+            data.as_slice(),
+            &items,
+            initial_capital,
+            position_size_percent,
+            commission_percent,
+            base_settings,
+            sizing,
+        )
+    })
+    .await?;
+    Ok(Json(response))
 }
 fn run_asset_opportunity_batch(
     data: &[OHLCV],
@@ -830,17 +878,32 @@ fn run_asset_opportunity_batch(
 /// Handle Asset Opportunity batch backtests without returning trade history.
 pub async fn asset_opportunity_batch_handler(
     Json(req): Json<BatchBacktestRequest>,
-) -> Json<AssetOpportunityBatchResponse> {
-    Json(run_asset_opportunity_batch(
-        &req.data,
-        &req.items,
-        req.initial_capital,
-        req.position_size_percent,
-        req.commission_percent,
-        req.base_settings,
-        req.sizing,
-        req.last_data_time,
-    ))
+) -> Result<Json<AssetOpportunityBatchResponse>, (StatusCode, String)> {
+    let BatchBacktestRequest {
+        data,
+        items,
+        initial_capital,
+        position_size_percent,
+        commission_percent,
+        base_settings,
+        sizing,
+        last_data_time,
+        ..
+    } = req;
+    let response = run_on_blocking_pool(move || {
+        run_asset_opportunity_batch(
+            &data,
+            &items,
+            initial_capital,
+            position_size_percent,
+            commission_percent,
+            base_settings,
+            sizing,
+            last_data_time,
+        )
+    })
+    .await?;
+    Ok(Json(response))
 }
 /// Handle cached Asset Opportunity batch backtests without returning history.
 pub async fn cached_asset_opportunity_batch_handler(
@@ -857,16 +920,30 @@ pub async fn cached_asset_opportunity_batch_handler(
             ),
         ));
     };
-    Ok(Json(run_asset_opportunity_batch(
-        data.as_slice(),
-        &req.items,
-        req.initial_capital,
-        req.position_size_percent,
-        req.commission_percent,
-        req.base_settings,
-        req.sizing,
-        req.last_data_time,
-    )))
+    let CachedBatchBacktestRequest {
+        items,
+        initial_capital,
+        position_size_percent,
+        commission_percent,
+        base_settings,
+        sizing,
+        last_data_time,
+        ..
+    } = req;
+    let response = run_on_blocking_pool(move || {
+        run_asset_opportunity_batch(
+            data.as_slice(),
+            &items,
+            initial_capital,
+            position_size_percent,
+            commission_percent,
+            base_settings,
+            sizing,
+            last_data_time,
+        )
+    })
+    .await?;
+    Ok(Json(response))
 }
 struct ResolvedMultiAssetWorkload {
     data: Arc<Vec<OHLCV>>,
@@ -1022,49 +1099,60 @@ pub async fn multi_asset_opportunity_batch_handler(
     Json(req): Json<MultiAssetBatchBacktestRequest>,
 ) -> Result<Json<AssetOpportunityBatchResponse>, (StatusCode, String)> {
     let start = Instant::now();
-    let (workloads, cache_ids) = resolve_multi_asset_workloads(&state, req.workloads).await?;
-    let contexts: Vec<MultiAssetWorkloadContext<'_>> = workloads
-        .par_iter()
-        .map(|workload| {
-            let end = workload.data_end_index.unwrap_or(workload.data.len());
-            let data = &workload.data[..end];
-            MultiAssetWorkloadContext {
-                data,
-                market_series: build_market_series(data),
-                last_data_time: workload.last_data_time,
-            }
-        })
-        .collect();
-    let results: Vec<AssetOpportunityBatchResultItem> = contexts
-        .par_iter()
-        .zip(workloads.par_iter())
-        .flat_map(|(context, workload)| {
-            workload.items.par_iter().map(|item| {
-                let settings = item
-                    .settings
-                    .clone()
-                    .unwrap_or_else(|| req.base_settings.clone());
-                let result = run_backtest_with_market_series_options(
-                    context.data,
-                    &item.signals,
-                    req.initial_capital,
-                    req.position_size_percent,
-                    req.commission_percent,
-                    &settings,
-                    Some(&req.sizing),
-                    true,
-                    true,
-                    &context.market_series,
-                );
-                summarize_asset_opportunity_result(
-                    result,
-                    item.id.clone(),
-                    context.last_data_time,
-                    req.initial_capital,
-                )
+    let MultiAssetBatchBacktestRequest {
+        workloads: requested_workloads,
+        initial_capital,
+        position_size_percent,
+        commission_percent,
+        base_settings,
+        sizing,
+    } = req;
+    let (workloads, cache_ids) = resolve_multi_asset_workloads(&state, requested_workloads).await?;
+    let results = run_on_blocking_pool(move || {
+        let contexts: Vec<MultiAssetWorkloadContext<'_>> = workloads
+            .par_iter()
+            .map(|workload| {
+                let end = workload.data_end_index.unwrap_or(workload.data.len());
+                let data = &workload.data[..end];
+                MultiAssetWorkloadContext {
+                    data,
+                    market_series: build_market_series(data),
+                    last_data_time: workload.last_data_time,
+                }
             })
-        })
-        .collect();
+            .collect();
+        contexts
+            .par_iter()
+            .zip(workloads.par_iter())
+            .flat_map(|(context, workload)| {
+                workload.items.par_iter().map(|item| {
+                    let settings = item
+                        .settings
+                        .clone()
+                        .unwrap_or_else(|| base_settings.clone());
+                    let result = run_backtest_with_market_series_options(
+                        context.data,
+                        &item.signals,
+                        initial_capital,
+                        position_size_percent,
+                        commission_percent,
+                        &settings,
+                        Some(&sizing),
+                        true,
+                        true,
+                        &context.market_series,
+                    );
+                    summarize_asset_opportunity_result(
+                        result,
+                        item.id.clone(),
+                        context.last_data_time,
+                        initial_capital,
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+    })
+    .await?;
     Ok(Json(AssetOpportunityBatchResponse {
         results,
         processing_time_ms: start.elapsed().as_millis() as u64,
@@ -1077,41 +1165,52 @@ pub async fn multi_asset_fresh_entry_batch_handler(
     Json(req): Json<MultiAssetBatchBacktestRequest>,
 ) -> Result<Json<FreshEntryBatchResponse>, (StatusCode, String)> {
     let start = Instant::now();
-    let (workloads, _) = resolve_multi_asset_workloads(&state, req.workloads).await?;
-    let results: Vec<FreshEntryBatchResultItem> = workloads
-        .par_iter()
-        .flat_map(|workload| {
-            let end = workload.data_end_index.unwrap_or(workload.data.len());
-            let data = &workload.data[..end];
-            let market_series = build_market_series(data);
-            workload
-                .items
-                .iter()
-                .map(|item| {
-                    let settings = item
-                        .settings
-                        .clone()
-                        .unwrap_or_else(|| req.base_settings.clone());
-                    let result = run_backtest_with_market_series_options(
-                        data,
-                        &item.signals,
-                        req.initial_capital,
-                        req.position_size_percent,
-                        req.commission_percent,
-                        &settings,
-                        Some(&req.sizing),
-                        true,
-                        true,
-                        &market_series,
-                    );
-                    FreshEntryBatchResultItem {
-                        id: item.id.clone(),
-                        result: summarize_fresh_entry_result(result),
-                    }
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect();
+    let MultiAssetBatchBacktestRequest {
+        workloads: requested_workloads,
+        initial_capital,
+        position_size_percent,
+        commission_percent,
+        base_settings,
+        sizing,
+    } = req;
+    let (workloads, _) = resolve_multi_asset_workloads(&state, requested_workloads).await?;
+    let results = run_on_blocking_pool(move || {
+        workloads
+            .par_iter()
+            .flat_map(|workload| {
+                let end = workload.data_end_index.unwrap_or(workload.data.len());
+                let data = &workload.data[..end];
+                let market_series = build_market_series(data);
+                workload
+                    .items
+                    .iter()
+                    .map(|item| {
+                        let settings = item
+                            .settings
+                            .clone()
+                            .unwrap_or_else(|| base_settings.clone());
+                        let result = run_backtest_with_market_series_options(
+                            data,
+                            &item.signals,
+                            initial_capital,
+                            position_size_percent,
+                            commission_percent,
+                            &settings,
+                            Some(&sizing),
+                            true,
+                            true,
+                            &market_series,
+                        );
+                        FreshEntryBatchResultItem {
+                            id: item.id.clone(),
+                            result: summarize_fresh_entry_result(result),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    })
+    .await?;
     Ok(Json(FreshEntryBatchResponse {
         results,
         processing_time_ms: start.elapsed().as_millis() as u64,
@@ -1270,6 +1369,44 @@ mod tests {
         assert!(compact_with_trades.equity_curve.is_empty());
         assert_eq!(compact_with_trades.trades.len(), 1);
         assert_eq!(compact_with_trades.total_trades, full.total_trades);
+    }
+
+    #[tokio::test]
+    async fn batch_backtest_route_preserves_item_results_after_offload() {
+        let request = make_backtest_request(false, false);
+        let response = batch_backtest_handler(Json(BatchBacktestRequest {
+            data: request.data,
+            items: vec![crate::types::BatchBacktestItem {
+                id: "candidate-1".to_string(),
+                signals: request.signals,
+                packed_signals: None,
+                settings: None,
+            }],
+            initial_capital: request.initial_capital,
+            position_size_percent: request.position_size_percent,
+            commission_percent: request.commission_percent,
+            base_settings: request.settings,
+            sizing: request.sizing,
+            compact: request.compact,
+            last_data_time: None,
+        }))
+        .await
+        .expect("batch worker should complete")
+        .0;
+
+        assert_eq!(response.results.len(), 1);
+        assert_eq!(response.results[0].id, "candidate-1");
+        assert_eq!(response.results[0].result.total_trades, 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_pool_runner_uses_a_worker_thread() {
+        let executor_thread = std::thread::current().id();
+        let worker_thread = run_on_blocking_pool(|| std::thread::current().id())
+            .await
+            .expect("blocking worker should complete");
+
+        assert_ne!(executor_thread, worker_thread);
     }
 
     #[test]
