@@ -617,6 +617,12 @@ pub struct BacktestRequest {
     pub settings: BacktestSettings,
     #[serde(default)]
     pub sizing: TradeSizingConfig,
+    /// When true, omit the equity curve and optionally the trade history.
+    #[serde(default)]
+    pub compact: bool,
+    /// When true in compact mode, retain the full trade history.
+    #[serde(default)]
+    pub retain_trades: bool,
 }
 /// Single item in a batch backtest request
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -822,5 +828,33 @@ mod tests {
         let parsed: OHLCV = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.time, candle.time);
         assert_eq!(parsed.close, candle.close);
+    }
+    #[test]
+    fn test_backtest_request_output_options_default_to_full_output() {
+        let request: BacktestRequest = serde_json::from_value(serde_json::json!({
+            "data": [],
+            "signals": [],
+            "initialCapital": 10000.0,
+            "positionSizePercent": 100.0,
+            "commissionPercent": 0.1,
+        }))
+        .unwrap();
+        assert!(!request.compact);
+        assert!(!request.retain_trades);
+    }
+    #[test]
+    fn test_backtest_request_output_options_use_camel_case() {
+        let request: BacktestRequest = serde_json::from_value(serde_json::json!({
+            "data": [],
+            "signals": [],
+            "initialCapital": 10000.0,
+            "positionSizePercent": 100.0,
+            "commissionPercent": 0.1,
+            "compact": true,
+            "retainTrades": true,
+        }))
+        .unwrap();
+        assert!(request.compact);
+        assert!(request.retain_trades);
     }
 }

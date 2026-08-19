@@ -1,7 +1,6 @@
 //! API Routes and Handlers
 use crate::backtest::{
-    build_market_series, run_backtest, run_backtest_with_market_series,
-    run_backtest_with_market_series_options,
+    build_market_series, run_backtest_with_market_series, run_backtest_with_market_series_options,
 };
 use crate::types::{
     BacktestRequest, BacktestResult, BatchBacktestRequest, BatchBacktestResponse,
@@ -152,7 +151,8 @@ pub struct ProxyRequest {
 // ============================================================================
 /// Handle backtest request
 pub async fn backtest_handler(Json(req): Json<BacktestRequest>) -> Json<BacktestResult> {
-    let result = run_backtest(
+    let market_series = build_market_series(&req.data);
+    let result = run_backtest_with_market_series_options(
         &req.data,
         &req.signals,
         req.initial_capital,
@@ -160,7 +160,9 @@ pub async fn backtest_handler(Json(req): Json<BacktestRequest>) -> Json<Backtest
         req.commission_percent,
         &req.settings,
         Some(&req.sizing),
-        false,
+        req.compact,
+        req.retain_trades,
+        &market_series,
     );
     Json(result)
 }
@@ -1117,4 +1119,50 @@ pub async fn proxy_handler(
         }
     };
     Ok(Json(data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_backtest_request(compact: bool, retain_trades: bool) -> BacktestRequest {
+        BacktestRequest {
+            data: vec![
+                OHLCV::new(0, 100.0, 101.0, 99.0, 100.0, 1000.0),
+                OHLCV::new(60000, 105.0, 106.0, 104.0, 105.0, 1000.0),
+                OHLCV::new(120000, 105.0, 106.0, 104.0, 105.0, 1000.0),
+            ],
+            signals: vec![Signal::buy(0, 100.0), Signal::sell(60000, 105.0)],
+            initial_capital: 10000.0,
+            position_size_percent: 100.0,
+            commission_percent: 0.0,
+            settings: crate::types::BacktestSettings::default(),
+            sizing: crate::types::TradeSizingConfig::default(),
+            compact,
+            retain_trades,
+        }
+    }
+
+    #[tokio::test]
+    async fn generic_backtest_route_honors_output_options() {
+        let full = backtest_handler(Json(make_backtest_request(false, false)))
+            .await
+            .0;
+        assert!(!full.equity_curve.is_empty());
+        assert_eq!(full.trades.len(), 1);
+
+        let compact = backtest_handler(Json(make_backtest_request(true, false)))
+            .await
+            .0;
+        assert!(compact.equity_curve.is_empty());
+        assert!(compact.trades.is_empty());
+        assert_eq!(compact.total_trades, full.total_trades);
+
+        let compact_with_trades = backtest_handler(Json(make_backtest_request(true, true)))
+            .await
+            .0;
+        assert!(compact_with_trades.equity_curve.is_empty());
+        assert_eq!(compact_with_trades.trades.len(), 1);
+        assert_eq!(compact_with_trades.total_trades, full.total_trades);
+    }
 }

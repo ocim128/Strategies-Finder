@@ -358,9 +358,9 @@ protocol remain unchanged unless diagnostics need new optional counters.
 
 ### Risks or blockers
 
-- `executeBacktest` currently owns the generic Rust decision and does not pass
-  Asset Opportunity compact/endpoint options to the single Rust endpoint. The
-  new batch path must not quietly bypass those semantics for unrelated callers.
+- `executeBacktest` owns the generic Rust decision and now passes compact/trade-
+  history options to the single Rust endpoint; endpoint selection remains a
+  separate TypeScript concern for callers that need it.
 - Candidate-specific exit/risk settings may make a batch item ineligible even
   when its base run is eligible.
 - A multi-asset grouping change can accidentally alter prepared-data identity,

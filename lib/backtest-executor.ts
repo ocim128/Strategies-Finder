@@ -33,7 +33,7 @@ import {
     type CrossSymbolDataFetcher,
 } from "./cross-symbol-runtime";
 import { shouldUseRustEngine } from "./engine-preferences";
-import { rustEngine } from "./rust-engine-client";
+import { rustEngine, type RustOutputOptions } from "./rust-engine-client";
 import {
     getTypescriptEngineRequirementReasons,
     sanitizeBacktestSettingsForRust,
@@ -447,7 +447,16 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     );
     if (rustAttempted) {
         const engineStartedAt = executorTimings ? performance.now() : 0;
-        const rustResult = await tryRustBacktest(backtestData, mergedSignals, resolvedCapital, resolvedSettings);
+        const rustResult = await tryRustBacktest(
+            backtestData,
+            mergedSignals,
+            resolvedCapital,
+            resolvedSettings,
+            {
+                compact: shouldUseCompactBacktest(req),
+                retainTrades: req.backtestRunOptions?.requireTradeHistory === true,
+            },
+        );
         if (executorTimings) executorTimings.engineMs += performance.now() - engineStartedAt;
         if (rustResult && isResultConsistent(rustResult)) {
             let result = rustResult;
@@ -948,7 +957,8 @@ async function tryRustBacktest(
     data: OHLCVData[],
     signals: Signal[],
     capitalSettings: CapitalSettings,
-    settings: BacktestSettings
+    settings: BacktestSettings,
+    outputOptions?: RustOutputOptions,
 ): Promise<BacktestResult | null> {
     const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = capitalSettings;
     return rustEngine.runBacktest(
@@ -958,7 +968,8 @@ async function tryRustBacktest(
         positionSize,
         commission,
         sanitizeBacktestSettingsForRust(settings),
-        { mode: sizingMode, fixedTradeAmount, advancedSizing: capitalSettings.advancedSizing }
+        { mode: sizingMode, fixedTradeAmount, advancedSizing: capitalSettings.advancedSizing },
+        outputOptions,
     );
 }
 

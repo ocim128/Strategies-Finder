@@ -19,6 +19,11 @@ export type RustBatchRequestOptions = {
     timeoutMs?: number;
 };
 
+export type RustOutputOptions = {
+    compact?: boolean;
+    retainTrades?: boolean;
+};
+
 export type RustBatchTransportFailureReason =
     | 'health_unavailable'
     | 'unsupported_sizing'
@@ -235,6 +240,8 @@ interface RustBacktestRequest {
         fixedTradeAmount: number;
         advancedSizing?: AdvancedSizingSettings;
     };
+    compact?: boolean;
+    retainTrades?: boolean;
 }
 
 // ============================================================================
@@ -446,7 +453,8 @@ export class RustEngineClient {
         positionSizePercent: number,
         commissionPercent: number,
         settings: BacktestSettings,
-        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings }
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        outputOptions?: RustOutputOptions,
     ): Promise<BacktestResult | null> {
         if (!await this.checkHealth()) {
             return null;
@@ -465,6 +473,8 @@ export class RustEngineClient {
                 commissionPercent,
                 settings,
                 sizing,
+                compact: outputOptions?.compact ?? false,
+                retainTrades: outputOptions?.retainTrades ?? false,
             };
 
             const startTime = performance.now();
