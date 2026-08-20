@@ -451,11 +451,11 @@ function main(): void {
     const horizonFallback = horizons[0] ?? 12;
     const primaryHorizon = Math.max(1, Math.floor(Number(getArgument(argv, "--horizon") ?? horizonFallback) || horizonFallback));
 
-    const nonOverlappingFlag = argv.includes("--non-overlapping");
+    const overlappingFlag = argv.includes("--overlapping") || argv.includes("--all-holdouts");
     const strideArg = getArgument(argv, "--stride-bars");
-    let strideBars = 1;
-    if (nonOverlappingFlag) {
-        strideBars = primaryHorizon;
+    let strideBars = primaryHorizon;
+    if (overlappingFlag) {
+        strideBars = 1;
     } else if (strideArg !== undefined) {
         strideBars = strideArg.toLowerCase() === "auto" ? primaryHorizon : Math.max(1, Math.floor(Number(strideArg)) || 1);
     }
