@@ -222,19 +222,21 @@ function calculateRollingHighLow(
     const lower: (number | null)[] = new Array(high.length).fill(null);
     const maxDeque: number[] = [];
     const minDeque: number[] = [];
+    let maxHead = 0;
+    let minHead = 0;
 
     for (let i = 0; i < high.length; i++) {
-        while (maxDeque.length > 0 && high[maxDeque[maxDeque.length - 1]] <= high[i]) maxDeque.pop();
+        while (maxDeque.length > maxHead && high[maxDeque[maxDeque.length - 1]] <= high[i]) maxDeque.pop();
         maxDeque.push(i);
-        if (maxDeque[0] <= i - period) maxDeque.shift();
+        while (maxDeque.length > maxHead && maxDeque[maxHead] <= i - period) maxHead++;
 
-        while (minDeque.length > 0 && low[minDeque[minDeque.length - 1]] >= low[i]) minDeque.pop();
+        while (minDeque.length > minHead && low[minDeque[minDeque.length - 1]] >= low[i]) minDeque.pop();
         minDeque.push(i);
-        if (minDeque[0] <= i - period) minDeque.shift();
+        while (minDeque.length > minHead && minDeque[minHead] <= i - period) minHead++;
 
         if (i >= period - 1) {
-            upper[i] = high[maxDeque[0]];
-            lower[i] = low[minDeque[0]];
+            upper[i] = high[maxDeque[maxHead]];
+            lower[i] = low[minDeque[minHead]];
         }
     }
 

@@ -535,18 +535,19 @@ export function evaluateLatestEntrySignalFromPreparedSignals(
         price: latestTrade.entryPrice,
     };
 
-    const candleTimeToLastIndex = new Map<number, number>();
-    request.candles.forEach((bar, idx) => {
-        const sec = toUnixSeconds(bar.time);
-        if (sec !== null) {
-            candleTimeToLastIndex.set(sec, idx);
-        }
-    });
-
     const signalTimeSec = toUnixSeconds(latestSignal.time) ?? entryTimeSec;
-    const signalIndex = Number.isFinite(latestSignal.barIndex)
-        ? Math.trunc(latestSignal.barIndex as number)
-        : candleTimeToLastIndex.get(signalTimeSec);
+    let signalIndex: number | undefined;
+    if (Number.isFinite(latestSignal.barIndex)) {
+        signalIndex = Math.trunc(latestSignal.barIndex as number);
+    } else {
+        for (let idx = request.candles.length - 1; idx >= 0; idx--) {
+            const sec = toUnixSeconds(request.candles[idx].time);
+            if (sec === signalTimeSec) {
+                signalIndex = idx;
+                break;
+            }
+        }
+    }
 
     if (signalIndex === undefined || signalIndex < 0 || signalIndex >= request.candles.length) {
         return {
