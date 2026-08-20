@@ -1,6 +1,7 @@
 import { debugLogger, DebugEntry } from "./debug-logger";
 import { state } from "./state";
 import { getRequiredElement } from "./dom-utils";
+import { coalesceAnimationFrame } from "./render-scheduler";
 
 type LagSnapshot = {
     lastLagMs: number;
@@ -15,6 +16,7 @@ let debugPanelAbortController: AbortController | null = null;
 let lagIntervalId: number | null = null;
 let refreshIntervalId: number | null = null;
 let unsubscribeDebugLogger: (() => void) | null = null;
+let cancelScheduledDebugRender: (() => void) | null = null;
 
 function safeStringify(value: unknown): string {
     try {
@@ -60,7 +62,6 @@ export function initDebugPanel() {
     let lag: LagSnapshot = { lastLagMs: 0, maxLagMs: 0 };
     let lastLagLoggedAt = 0;
     let lastTick = Date.now();
-    let renderScheduled = false;
     debugPanelInitialized = true;
     debugPanelAbortController = new AbortController();
     const listenerOptions = { signal: debugPanelAbortController.signal };
@@ -108,6 +109,11 @@ export function initDebugPanel() {
         renderPerf();
         renderLogs();
     };
+    const renderFrame = coalesceAnimationFrame(() => {
+        renderLogs();
+        renderPerf();
+    });
+    cancelScheduledDebugRender = renderFrame.cancel;
 
     const setVisible = (visible: boolean) => {
         panel.classList.toggle('active', visible);
@@ -151,17 +157,12 @@ export function initDebugPanel() {
     }, listenerOptions);
 
     unsubscribeDebugLogger = debugLogger.subscribe(() => {
-        if (!isVisible() || renderScheduled) return;
+        if (!isVisible()) return;
         // Finder/Batch emit high-frequency cache/progress events; without
         // coalescing, every event rebuilds the full 200-row log DOM. Batch
         // per-frame with requestAnimationFrame so N events in one frame cost
         // one render, not N.
-        renderScheduled = true;
-        requestAnimationFrame(() => {
-            renderScheduled = false;
-            renderLogs();
-            renderPerf();
-        });
+        renderFrame.schedule();
     });
 
     document.addEventListener('keydown', (event) => {
@@ -197,5 +198,7 @@ export function disposeDebugPanel(): void {
     debugPanelAbortController = null;
     unsubscribeDebugLogger?.();
     unsubscribeDebugLogger = null;
+    cancelScheduledDebugRender?.();
+    cancelScheduledDebugRender = null;
     debugPanelInitialized = false;
 }

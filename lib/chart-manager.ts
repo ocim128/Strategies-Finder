@@ -310,8 +310,8 @@ export class ChartManager {
             top = containerRect.height - tooltipHeight - 10;
         }
 
-        this.tooltip.style.left = `${left}px`;
-        this.tooltip.style.top = `${top}px`;
+        this.tooltip.style.setProperty("--tooltip-x", `${left}px`);
+        this.tooltip.style.setProperty("--tooltip-y", `${top}px`);
 
         // Update content
         const formatPrice = (p: number) => formatDisplayPrice(p);

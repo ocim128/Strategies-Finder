@@ -11,6 +11,12 @@ import { settingsManager } from "./settings-manager";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import { getLocalDailyAssets, isMarkedLocalStockSymbol } from "./local-daily-datasets";
 import { cloneJsonCompatible, parseJsonPreservingNonFinite } from "./json-utils";
+import { debounce } from "./debounce";
+import { coalesceAnimationFrame } from "./render-scheduler";
+import {
+	getPolymarketExitModeSelect,
+	getPolymarketOutcomeIntervalSelect,
+} from "./handlers/state-subscriptions-dom";
 
 import {
 	FINDER_SORT_OPTIONS,
@@ -614,6 +620,7 @@ export class FinderManager {
 	private lastStrategyToggleKey: string | null = null;
 	private uiState: FinderPersistedUiState = normalizeFinderUiState(null);
 	private readonly ui = new FinderUI();
+	private readonly persistUiStateDebounced = debounce(() => this.saveUiState(), 300);
 	private readonly paramSpace = new FinderParamSpace();
 	private readonly taskYielder = createTaskYielder();
 	private dom: FinderManagerDom | null = null;
@@ -1315,15 +1322,17 @@ export class FinderManager {
 			dom.finderUniverseSortSecondary,
 		].forEach((element) => {
 			element.addEventListener("input", () => {
-				this.captureUniverseUiState();
+				this.captureUniverseUiState(false);
+				this.persistUiStateDebounced();
 			});
 			element.addEventListener("change", () => {
-				this.captureUniverseUiState();
+				this.captureUniverseUiState(false);
+				this.persistUiStateDebounced();
 			});
 		});
 	}
 
-	private captureUniverseUiState(): void {
+	private captureUniverseUiState(persist = true): void {
 		const dom = this.getDom();
 		this.uiState.universeSymbolsText = dom.finderUniverseSymbols.value;
 		this.uiState.universeMinActiveSymbols = Math.max(1, Math.round(this.readFinderNumberInput(dom.finderUniverseMinActiveSymbols, DEFAULT_FINDER_UI_STATE.universeMinActiveSymbols, 1)));
@@ -1335,7 +1344,9 @@ export class FinderManager {
 		this.uiState.universeSort = normalizeFinderUniverseMetric(dom.finderUniverseSort.value, DEFAULT_FINDER_UI_STATE.universeSort);
 		this.uiState.universeSortSecondary = normalizeFinderUniverseMetric(dom.finderUniverseSortSecondary.value, DEFAULT_FINDER_UI_STATE.universeSortSecondary);
 		this.updateUniverseSummary();
-		this.saveUiState();
+		if (persist) {
+			this.saveUiState();
+		}
 	}
 
 	private applyScopeUi(): void {
@@ -1420,14 +1431,15 @@ export class FinderManager {
 
 		refreshControls();
 		toggle.addEventListener('change', refreshControls);
-		document.getElementById('polymarketOutcomeInterval')?.addEventListener('change', refreshControls);
-		document.getElementById('polymarketExitMode')?.addEventListener('change', refreshControls);
+		getPolymarketOutcomeIntervalSelect()?.addEventListener('change', refreshControls);
+		getPolymarketExitModeSelect()?.addEventListener('change', refreshControls);
 	}
 
 	private initFinderSettingsPersistenceUI(): void {
 		const dom = this.getDom();
 		const persist = () => {
-			this.captureFinderUiState();
+			this.captureFinderUiState(false);
+			this.persistUiStateDebounced();
 		};
 		[
 			dom.finderSort,
@@ -1465,7 +1477,7 @@ export class FinderManager {
 		});
 	}
 
-	private captureFinderUiState(): void {
+	private captureFinderUiState(persist = true): void {
 		const dom = this.getDom();
 		const sortItems = Array.from(dom.finderSortList.querySelectorAll<HTMLElement>(".finder-sort-item"));
 		this.uiState.sortPrimary = normalizeFinderMetric(dom.finderSort.value, DEFAULT_FINDER_UI_STATE.sortPrimary);
@@ -1535,7 +1547,9 @@ export class FinderManager {
 			this.uiState.assetOpportunityOosBatchEndBars = batchRange.end;
 		}
 		this.syncAssetOosBatchControls();
-		this.saveUiState();
+		if (persist) {
+			this.saveUiState();
+		}
 	}
 
 	/**
@@ -3161,21 +3175,14 @@ export class FinderManager {
 		// candidate events back-to-back in one chunk. `finalized` guards the
 		// race where a candidate event in the SAME chunk as `done` would defer
 		// a render that fires AFTER the authoritative terminal slice render.
-		let renderScheduled = false;
 		let finalized = false;
-		const scheduleRender = (): void => {
-			if (renderScheduled || finalized) return;
-			renderScheduled = true;
-			const flush = (): void => {
-				renderScheduled = false;
-				if (finalized) return;
+		const renderFrame = coalesceAnimationFrame(() => {
+			if (!finalized) {
 				renderMerged();
-			};
-			if (typeof requestAnimationFrame === 'function') {
-				requestAnimationFrame(flush);
-			} else {
-				Promise.resolve().then(flush);
 			}
+		});
+		const scheduleRender = (): void => {
+			if (!finalized) renderFrame.schedule();
 		};
 
 		let streamError: unknown = null;

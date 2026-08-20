@@ -58,6 +58,8 @@ let isCollapsed = false;
 let isLiveUpdatesEnabled = false;
 let unsubscribeService: (() => void) | null = null;
 let workerUrlListener: ((event: Event) => void) | null = null;
+let lastRenderedSignature: string | null = null;
+const renderedPositionById = new Map<string, LivePosition | ClosedTrade>();
 
 // Format helpers
 function toFiniteNumber(value: unknown): number {
@@ -194,7 +196,7 @@ function createPositionCard(position: LivePosition | ClosedTrade): HTMLElement {
     
     const card = document.createElement('div');
     card.className = `lp-position${isMismatch ? ' mismatch' : ''}${isClosed ? ' closed' : ''}`;
-    card.dataset.streamId = position.streamId;
+    card.dataset.positionId = position.streamId;
     
     const pnlClass = position.unrealizedPnl === null 
         ? '' 
@@ -252,8 +254,40 @@ function createPositionCard(position: LivePosition | ClosedTrade): HTMLElement {
         </div>
     `;
     
-    card.addEventListener('click', () => handlePositionClick(position));
     return card;
+}
+
+function buildPositionRenderSignature(
+    viewMode: 'open' | 'closed',
+    items: readonly (LivePosition | ClosedTrade)[],
+): string {
+    return JSON.stringify([
+        viewMode,
+        Math.floor(Date.now() / 60_000),
+        items.map((item) => [
+            item.streamId,
+            item.symbol,
+            item.interval,
+            item.strategyKey,
+            item.configName,
+            item.direction,
+            item.entryPrice,
+            item.entryTime,
+            item.currentPrice,
+            item.unrealizedPnl,
+            item.unrealizedPnlPercent,
+            item.stopLossPrice,
+            item.takeProfitPrice,
+            item.isOpen,
+            item.mismatch,
+            item.mismatchReason,
+            !item.isOpen ? (item as ClosedTrade).exitPrice : null,
+            !item.isOpen ? (item as ClosedTrade).exitTime : null,
+            !item.isOpen ? (item as ClosedTrade).realizedPnl : null,
+            !item.isOpen ? (item as ClosedTrade).realizedPnlPercent : null,
+            !item.isOpen ? (item as ClosedTrade).exitReason : null,
+        ]),
+    ]);
 }
 
 function renderPositions(positions: LivePosition[], closedTrades: ClosedTrade[]): void {
@@ -263,6 +297,7 @@ function renderPositions(positions: LivePosition[], closedTrades: ClosedTrade[])
     
     const viewMode = livePositionsService.getState().viewMode;
     const itemsToShow = viewMode === 'open' ? positions : closedTrades;
+    const renderSignature = buildPositionRenderSignature(viewMode, itemsToShow);
     
     // Update count
     const openCount = positions.length;
@@ -276,6 +311,10 @@ function renderPositions(positions: LivePosition[], closedTrades: ClosedTrade[])
         mismatchText.textContent = `${mismatchCount} mismatch${mismatchCount > 1 ? 'es' : ''} detected`;
     } else {
         mismatchBanner.style.display = 'none';
+    }
+
+    if (renderSignature === lastRenderedSignature) {
+        return;
     }
     
     // Render list
@@ -297,9 +336,24 @@ function renderPositions(positions: LivePosition[], closedTrades: ClosedTrade[])
         `;
     } else {
         listEl.innerHTML = '';
+        renderedPositionById.clear();
         itemsToShow.forEach(item => {
+            renderedPositionById.set(item.streamId, item);
             listEl.appendChild(createPositionCard(item));
         });
+    }
+    if (itemsToShow.length === 0) {
+        renderedPositionById.clear();
+    }
+    lastRenderedSignature = renderSignature;
+}
+
+function handlePositionListClick(event: Event): void {
+    const card = (event.target as HTMLElement).closest<HTMLElement>('.lp-position');
+    const positionId = card?.dataset.positionId;
+    const position = positionId ? renderedPositionById.get(positionId) : undefined;
+    if (position) {
+        void handlePositionClick(position);
     }
 }
 
@@ -628,10 +682,12 @@ export function initLivePositionsHandlers(): void {
     });
     
     // Double-click on position opens detail modal
+    list?.addEventListener('click', handlePositionListClick);
     list?.addEventListener('dblclick', (e) => {
         const card = (e.target as HTMLElement).closest('.lp-position') as HTMLElement | null;
-        if (card?.dataset?.streamId) {
-            void openDetailModal(card.dataset.streamId);
+        const positionId = card?.dataset?.positionId;
+        if (positionId) {
+            void openDetailModal(positionId);
         }
     });
     
@@ -660,4 +716,6 @@ export function disposeLivePositionsHandlers(): void {
         workerUrlListener = null;
     }
     livePositionsService.stopPolling();
+    lastRenderedSignature = null;
+    renderedPositionById.clear();
 }

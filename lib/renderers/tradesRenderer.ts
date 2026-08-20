@@ -8,6 +8,7 @@ import { escapeHtml } from "../html-escape";
 import { resolveOpenTradeDisplayMetrics } from "../open-trade-display";
 import { createTradesRendererDom, type TradesRendererDom } from "./trades-renderer-dom";
 import { copyToClipboard } from "../browser-transfer";
+import { cancelIdleBatched, scheduleIdleBatched } from "../render-scheduler";
 import { getCurrentUiBacktestEndpointSnapshot } from "../backtest-endpoint-copy";
 import {
     buildBacktestDiagnosticOutput,
@@ -50,7 +51,7 @@ export class TradesRenderer {
     private jumpHandlersBound = false;
     private diagnosticsHandlersBound = false;
     private tradeRenderGeneration = 0;
-    private pendingDeferredRenderIds: number[] = [];
+    private pendingDeferredRenderIds: Array<ReturnType<typeof scheduleIdleBatched>> = [];
     private lastPolymarketAnnotationKey = '';
     private lastPolymarketAnnotationPromise: Promise<Trade[]> | null = null;
     private latestBacktestDiagnostics: BacktestDiagnosticOutput | null = null;
@@ -861,23 +862,12 @@ export class TradesRenderer {
     }
 
     private scheduleDeferredRender(callback: () => void): void {
-        if (typeof window.requestIdleCallback === 'function') {
-            const deferredId = window.requestIdleCallback(() => callback());
-            this.pendingDeferredRenderIds.push(deferredId);
-            return;
-        }
-
-        const deferredId = window.setTimeout(callback, 16);
-        this.pendingDeferredRenderIds.push(deferredId);
+        this.pendingDeferredRenderIds.push(scheduleIdleBatched(callback));
     }
 
     private cancelPendingDeferredRenders(): void {
         for (const deferredId of this.pendingDeferredRenderIds) {
-            if (typeof window.cancelIdleCallback === 'function') {
-                window.cancelIdleCallback(deferredId);
-            } else {
-                window.clearTimeout(deferredId);
-            }
+            cancelIdleBatched(deferredId);
         }
         this.pendingDeferredRenderIds = [];
     }

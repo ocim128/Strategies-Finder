@@ -29,6 +29,7 @@ import { getOptionalElement } from "./dom-utils";
 import { initCrossSymbolUI } from "./cross-symbol-ui";
 import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
 import { getLocalDailyAsset, isIbkrSymbol, isStockMarketSymbol } from "./local-daily-datasets";
+import { coalesceAnimationFrame } from "./render-scheduler";
 import { markAppTiming, logAppTimingSnapshot } from "./app-timing";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 import {
@@ -202,15 +203,16 @@ export async function bootstrapApp(): Promise<void> {
     });
     await runBootstrapStep("charts", "pre_restore", () => {
         chartManager.initCharts();
-        let crosshairRaf: number | null = null;
-        state.chart.subscribeCrosshairMove((param) => {
-            if (crosshairRaf !== null) {
-                cancelAnimationFrame(crosshairRaf);
+        let latestCrosshairParam: Parameters<typeof handleCrosshairMove>[0] | null = null;
+        const crosshairFrame = coalesceAnimationFrame(() => {
+            if (latestCrosshairParam !== null) {
+                handleCrosshairMove(latestCrosshairParam);
+                latestCrosshairParam = null;
             }
-            crosshairRaf = requestAnimationFrame(() => {
-                handleCrosshairMove(param);
-                crosshairRaf = null;
-            });
+        });
+        state.chart.subscribeCrosshairMove((param) => {
+            latestCrosshairParam = param;
+            crosshairFrame.schedule();
         });
     });
     await runBootstrapStep("strategy-panel", "pre_restore", () => strategyPanelController.init());

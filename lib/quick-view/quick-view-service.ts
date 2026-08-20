@@ -33,6 +33,7 @@ import {
 } from "./quick-view-renderer";
 import type { TradeSizingMode } from "../types/backtest";
 import { applyPolymarketAlternativeSizing } from "../polymarket-alternative-sizing";
+import { cancelIdleBatched, scheduleIdleBatched } from "../render-scheduler";
 import { getAlternativeSizingEnabled, getBacktestSettings, getCapitalSettings } from "../backtest-settings-reader";
 
 
@@ -617,7 +618,7 @@ class QuickViewManager {
     private currentTrades: Trade[] = [];
     private keyboardHandler: ((e: KeyboardEvent) => void) | null = null;
     private tradeRenderGeneration = 0;
-    private pendingDeferredRenderIds: number[] = [];
+    private pendingDeferredRenderIds: Array<ReturnType<typeof scheduleIdleBatched>> = [];
     private overlayRenderGeneration = 0;
 
     init() {
@@ -1101,23 +1102,12 @@ class QuickViewManager {
     }
 
     private scheduleDeferredRender(callback: () => void): void {
-        if (typeof window.requestIdleCallback === 'function') {
-            const deferredId = window.requestIdleCallback(() => callback());
-            this.pendingDeferredRenderIds.push(deferredId);
-            return;
-        }
-
-        const deferredId = window.setTimeout(callback, 16);
-        this.pendingDeferredRenderIds.push(deferredId);
+        this.pendingDeferredRenderIds.push(scheduleIdleBatched(callback));
     }
 
     private cancelPendingDeferredRenders(): void {
         for (const deferredId of this.pendingDeferredRenderIds) {
-            if (typeof window.cancelIdleCallback === 'function') {
-                window.cancelIdleCallback(deferredId);
-            } else {
-                window.clearTimeout(deferredId);
-            }
+            cancelIdleBatched(deferredId);
         }
         this.pendingDeferredRenderIds = [];
     }

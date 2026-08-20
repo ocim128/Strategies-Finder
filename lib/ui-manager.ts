@@ -76,14 +76,12 @@ export class UIManager {
         // Change percentage
         const change = ((data.close - data.open) / data.open) * 100;
         const changeEl = dom.ohlcChange;
+        const arrowEl = dom.ohlcChangeArrow;
         const changeValueEl = dom.ohlcChangeValue;
-        const arrowEl = changeEl?.querySelector('.ohlc-change-arrow');
 
         changeValueEl.textContent = `${isPositive ? '+' : ''}${change.toFixed(2)}%`;
         changeEl.className = `ohlc-change ${isPositive ? 'positive' : 'negative'}`;
-        if (arrowEl) {
-            arrowEl.textContent = isPositive ? '▲' : '▼';
-        }
+        arrowEl.textContent = isPositive ? '▲' : '▼';
     }
 
     private formatVolume(volume: number): string {

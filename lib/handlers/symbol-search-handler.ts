@@ -11,6 +11,7 @@ import {
     type LocalDailyAsset,
 } from "../local-daily-datasets";
 import { uiManager } from "../ui-manager";
+import { escapeHtml } from "../html-escape";
 import {
     getBinanceMarketTypeForProvider,
     isBinanceDataProvider,
@@ -45,8 +46,6 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
     const localDailyAssetBySelection = new Map<string, LocalDailyAsset>();
     const localDailySelectionBySymbol = new Map<string, string>();
     const getActiveBinanceMarketType = (): BinanceMarketType => state.binanceMarketType;
-    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
     const syncLocalDailyPicker = () => {
         if (!localSp500Select) return;
         const currentSymbol = state.currentSymbol.trim().toUpperCase();
@@ -221,14 +220,14 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
             return;
         }
 
-        const headerText = query ? `Results for &quot;${esc(query)}&quot;` : 'Popular Assets';
+        const headerText = query ? `Results for &quot;${escapeHtml(query)}&quot;` : 'Popular Assets';
         const html = `<div class="symbol-search-results-header">${headerText}</div>` +
             assets.map(asset => {
                 const active = asset.symbol === state.currentSymbol ? ' active' : '';
                 const bc = asset.type === 'crypto' ? 'crypto' : asset.type === 'stock' ? 'stock' : asset.type === 'forex' ? 'forex' : 'commodity';
-                const icon = esc((asset.baseAsset?.substring(0, 3) || asset.symbol.substring(0, 3)));
+                const icon = escapeHtml((asset.baseAsset?.substring(0, 3) || asset.symbol.substring(0, 3)));
                 const bt = asset.provider === 'binance-futures' ? 'Futures' : asset.type === 'crypto' ? 'Crypto' : asset.type === 'stock' ? 'Stock' : asset.type === 'forex' ? 'Forex' : 'Commodity';
-                return `<div class="symbol-search-item${active}" data-symbol="${esc(asset.symbol)}" data-provider="${esc(asset.provider)}" data-display-name="${esc(asset.displayName)}" role="button" tabindex="0"><div class="symbol-item-icon">${icon}</div><div class="symbol-item-details"><div class="symbol-item-name">${esc(asset.displayName)}<span class="symbol-item-badge ${bc}">${bt}</span></div><div class="symbol-item-pair">${esc(asset.symbol)}</div></div></div>`;
+                return `<div class="symbol-search-item${active}" data-symbol="${escapeHtml(asset.symbol)}" data-provider="${escapeHtml(asset.provider)}" data-display-name="${escapeHtml(asset.displayName)}" role="button" tabindex="0"><div class="symbol-item-icon">${icon}</div><div class="symbol-item-details"><div class="symbol-item-name">${escapeHtml(asset.displayName)}<span class="symbol-item-badge ${bc}">${bt}</span></div><div class="symbol-item-pair">${escapeHtml(asset.symbol)}</div></div></div>`;
             }).join('');
 
         symbolSearchResults.insertAdjacentHTML('afterbegin', html);

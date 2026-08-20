@@ -1,6 +1,12 @@
 import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
 import type { Time } from "../types/strategies";
-import { formatProfitFactor } from "../ui-formatters";
+import {
+    formatNullableAdaptivePercentPoints as formatPercent,
+    formatNullableAdaptiveSignedPercentPoints as formatSignedPercent,
+    formatNullableFixed as formatNumber,
+    formatNullableCurrency as formatCurrency,
+    formatProfitFactor,
+} from "../ui-formatters";
 import { computeBuyAndHoldPct, computeCurrentMaxActiveCandidates, computeOpenTradeAssetScores } from "./batch-row-scalars";
 import type { CurrentMaxActiveCandidate } from "./batch-row-scalars";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
@@ -569,21 +575,6 @@ function formatStatus(status: BatchBacktestSymbolResult["status"]): string {
     }
 }
 
-function formatCurrency(value: number | null | undefined): string {
-    if (value === null || value === undefined || !Number.isFinite(value)) {
-        return "--";
-    }
-    const sign = value >= 0 ? "+" : "";
-    return `${sign}$${value.toFixed(2)}`;
-}
-
-function formatNumber(value: number | null | undefined, digits: number): string {
-    if (value === null || value === undefined || !Number.isFinite(value)) {
-        return "--";
-    }
-    return value.toFixed(digits);
-}
-
 function formatVerdictCounts(verdictCounts: ReadonlyMap<string, number>): string {
     const labels = ["STRONG", "SOLID", "MARGINAL", "WEAK", "THIN", "LOSING"];
     const parts = labels
@@ -667,21 +658,6 @@ function formatHoldDuration(days: number | null | undefined): string {
         return `${hours.toFixed(hours >= 10 ? 0 : 1)}h`;
     }
     return `${Math.max(0, hours * 60).toFixed(0)}m`;
-}
-
-function formatPercent(value: number | null | undefined): string {
-    if (value === null || value === undefined || !Number.isFinite(value)) {
-        return "--";
-    }
-    return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
-}
-
-function formatSignedPercent(value: number | null | undefined): string {
-    if (value === null || value === undefined || !Number.isFinite(value)) {
-        return "--";
-    }
-    const sign = value >= 0 ? "+" : "";
-    return `${sign}${value.toFixed(Math.abs(value) >= 10 ? 1 : 2)}%`;
 }
 
 function formatTimeRange(firstTime?: Time, lastTime?: Time): string {

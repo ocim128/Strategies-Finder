@@ -53,6 +53,7 @@ import {
 import { commitBacktestResult } from "./state-actions";
 import { copyToClipboard } from "./browser-transfer";
 import { uiManager } from "./ui-manager";
+import { formatNullableFixed, formatNullablePercentPoints } from "./ui-formatters";
 
 type WalkForwardRunMode = "analysis" | "quick";
 
@@ -90,8 +91,8 @@ class WalkForwardService {
     private numberInputs: Record<WalkForwardNumberInputId, HTMLInputElement> | null = null;
     private readonly uiHost = {
         formatSignedPercent: formatWalkForwardSignedPercent,
-        formatNumber: (value: number | null, digits?: number) => this.formatNumber(value, digits),
-        formatPercent: (value: number | null, digits?: number) => this.formatPercent(value, digits),
+        formatNumber: (value: number | null, digits = 2) => formatNullableFixed(value, digits, "-", "Inf"),
+        formatPercent: (value: number | null, digits = 2) => formatNullablePercentPoints(value, digits, "-"),
         formatBaseParamsSummary: () => formatWalkForwardBaseParamsSummary(this.lastRunBaseParams),
         formatWindowParams: formatWalkForwardWindowParams,
     };
@@ -647,17 +648,6 @@ class WalkForwardService {
                 return null;
             }
         });
-    }
-
-    private formatNumber(value: number | null, digits: number = 2): string {
-        if (value === Infinity) return "Inf";
-        if (!Number.isFinite(value)) return "-";
-        return Number(value).toFixed(digits);
-    }
-
-    private formatPercent(value: number | null, digits: number = 2): string {
-        if (!Number.isFinite(value)) return "-";
-        return `${Number(value).toFixed(digits)}%`;
     }
 
     /**

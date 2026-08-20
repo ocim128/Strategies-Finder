@@ -7,6 +7,7 @@
 
 import { debugLogger } from '../debug-logger';
 import { bindFormAccessibility } from '../form-accessibility';
+import { createSettingsWorkspaceDom } from '../ui-manager-dom';
 import {
     STRATEGY_PANEL_SETTINGS_SECTIONS,
     type SettingsPresetMode,
@@ -49,8 +50,7 @@ function applyAccordionState(header: HTMLElement, body: HTMLElement): void {
 }
 
 function initAccordion(): void {
-    const settingsTab = document.getElementById('settingsTab');
-    if (!settingsTab) return;
+    const { settingsTab } = createSettingsWorkspaceDom();
 
     STRATEGY_PANEL_SETTINGS_SECTIONS.forEach((sectionDef) => {
         const section = settingsTab.querySelector<HTMLElement>(`.settings-section[data-section="${sectionDef.id}"]`);
@@ -97,8 +97,7 @@ function initAccordion(): void {
 }
 
 function initWorkspaceAccordion(): void {
-    const header = document.getElementById('strategyWorkspaceToggle');
-    const body = document.getElementById('strategyWorkspaceBody');
+    const { strategyWorkspaceToggle: header, strategyWorkspaceBody: body } = createSettingsWorkspaceDom();
     // The outer workspace accordion was flattened (F7): the toggle element is
     // kept in the DOM for contract stability but is `hidden`, and the body is
     // always visible. Skip wiring the accordion behavior in that case.
@@ -125,7 +124,7 @@ function initWorkspaceAccordion(): void {
 }
 
 function initPresets(): void {
-    const settingsTab = document.getElementById('settingsTab');
+    const { settingsTab } = createSettingsWorkspaceDom();
     const presetBar = document.getElementById('settingsPresetBar');
     if (!settingsTab || !presetBar) return;
 
@@ -162,10 +161,7 @@ function applyPreset(preset: SettingsPresetMode, settingsTab: HTMLElement, prese
 }
 
 function syncRegistryMarkup(): void {
-    const settingsTab = document.getElementById('settingsTab');
-    if (!settingsTab) return;
-
-    const sectionsContainer = document.getElementById('strategyWorkspaceSections');
+    const { settingsTab, strategyWorkspaceSections: sectionsContainer } = createSettingsWorkspaceDom();
     const firstFooterElement = Array.from(sectionsContainer?.children ?? [])
         .find((child) => !(child as HTMLElement).classList.contains('settings-section')) ?? null;
 

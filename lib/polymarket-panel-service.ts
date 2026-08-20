@@ -27,13 +27,14 @@ import { PolymarketBridgeExport } from "./polymarket-bridge-export";
 import { PolymarketOutcomeLoader } from "./polymarket-outcome-loader";
 import { isActualPolymarketEntryMinuteMode, type PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 import { isSameEventPolymarketExitMode, type PolymarketExitMode } from "./polymarket-exit-mode";
+import { coalesceAnimationFrame } from "./render-scheduler";
 
 class PolymarketPanelService {
     private dom: PolymarketPanelDom | null = null;
     private initialized = false;
     private outcomeLoader: PolymarketOutcomeLoader | null = null;
     private bridgeExport: PolymarketBridgeExport | null = null;
-    private renderFrameId: number | null = null;
+    private readonly renderFrame = coalesceAnimationFrame(() => this.render());
     private renderTimeoutId: number | null = null;
 
     public init(): void {
@@ -632,17 +633,11 @@ class PolymarketPanelService {
             window.clearTimeout(this.renderTimeoutId);
             this.renderTimeoutId = null;
         }
-        if (this.renderFrameId !== null) {
-            window.cancelAnimationFrame(this.renderFrameId);
-            this.renderFrameId = null;
-        }
+        this.renderFrame.cancel();
 
         const queueFrame = () => {
             this.renderTimeoutId = null;
-            this.renderFrameId = window.requestAnimationFrame(() => {
-                this.renderFrameId = null;
-                this.render();
-            });
+            this.renderFrame.schedule();
         };
 
         if (delayMs > 0) {

@@ -2,6 +2,7 @@ import { state } from "./state";
 import { createStrategyPanelDom } from "./strategy-panel-dom";
 import { debugLogger } from "./debug-logger";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
+import { coalesceAnimationFrame } from "./render-scheduler";
 
 const STORAGE_KEY = "strategyPanelLayout";
 const MOBILE_BREAKPOINT_PX = 960;
@@ -49,7 +50,7 @@ class StrategyPanelController {
     private tabKeydownListeners = new Map<string, (event: KeyboardEvent) => void>();
     private togglePanelClickListener: (() => void) | null = null;
     private panelResizeHandlePointerDownListener: ((event: PointerEvent) => void) | null = null;
-    private pendingChartSyncFrame: number | null = null;
+    private readonly chartSyncFrame = coalesceAnimationFrame(() => this.resizeCharts());
     private moreMenuOpen = false;
     private moreTriggerClickListener: (() => void) | null = null;
     private moreMenuItemClickListener = new Map<string, () => void>();
@@ -132,10 +133,7 @@ class StrategyPanelController {
             window.removeEventListener("pointercancel", this.handleStopResizing as EventListener);
             this.handleStopResizing = null;
         }
-        if (this.pendingChartSyncFrame !== null) {
-            cancelAnimationFrame(this.pendingChartSyncFrame);
-            this.pendingChartSyncFrame = null;
-        }
+        this.chartSyncFrame.cancel();
 
         this.isResizing = false;
         this.pendingWidthPx = null;
@@ -617,20 +615,11 @@ class StrategyPanelController {
         }
 
         if (!finalSync) {
-            if (this.pendingChartSyncFrame !== null) {
-                return;
-            }
-            this.pendingChartSyncFrame = requestAnimationFrame(() => {
-                this.pendingChartSyncFrame = null;
-                this.resizeCharts();
-            });
+            this.chartSyncFrame.schedule();
             return;
         }
 
-        if (this.pendingChartSyncFrame !== null) {
-            cancelAnimationFrame(this.pendingChartSyncFrame);
-            this.pendingChartSyncFrame = null;
-        }
+        this.chartSyncFrame.cancel();
 
         this.resizeCharts();
         window.dispatchEvent(new Event("resize"));

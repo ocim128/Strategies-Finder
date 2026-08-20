@@ -1,6 +1,7 @@
 import type { MonteCarloResult, MonteCarloSimulation } from "./strategies/monte-carlo/monte-carlo-engine";
 import type { MonteCarloDomElements } from "./monte-carlo-dom";
 import { mean, median, percentile, sampleStdDev } from "./statistics-utils";
+import { escapeHtml } from "./html-escape";
 import {
     formatDecimal,
     formatDollarAmount,
@@ -221,7 +222,7 @@ function renderMethodComparison(
 
     tbody.innerHTML = rows.map((row) => `
         <tr>
-            <td>${row.isPrimary ? `${row.label} (Primary)` : row.label}</td>
+            <td>${escapeHtml(row.isPrimary ? `${row.label} (Primary)` : row.label)}</td>
             <td>${formatSignedCurrency(row.medianNetProfit)}</td>
             <td>${formatPercent(row.medianMaxDrawdown)}</td>
             <td>${formatPercent(row.maxDrawdown95)}</td>
@@ -244,7 +245,7 @@ function renderConfidenceIntervals(
         ciData: MonteCarloResult["confidenceIntervals"][keyof MonteCarloResult["confidenceIntervals"]],
     ) => `
         <tr>
-            <td>${label}</td>
+            <td>${escapeHtml(label)}</td>
             <td>${formatMonteCarloMetricValue(observed, label)}</td>
             <td>[${formatMonteCarloMetricValue(ciData.ci50Lower, label)}, ${formatMonteCarloMetricValue(ciData.ci50Upper, label)}]</td>
             <td>[${formatMonteCarloMetricValue(ciData.ci90Lower, label)}, ${formatMonteCarloMetricValue(ciData.ci90Upper, label)}]</td>
@@ -469,14 +470,25 @@ function renderFanLegend(container: HTMLElement, simulations: readonly MonteCarl
 }
 
 function formatValue(value: number, metric: string): string {
-    if (metric.includes("Rate") || metric.includes("Drawdown")) {
-        return formatPercent(value);
-    }
-    if (metric.includes("Profit") || metric.includes("Loss") || metric.includes("Pnl") || metric.includes("PnL")) {
-        return formatSignedCurrency(value);
-    }
-    if (metric.includes("Bankroll")) {
-        return formatDollarAmount(value);
-    }
-    return formatDecimal(value);
+    const formatter = MONTE_CARLO_METRIC_FORMATTERS[metric as MonteCarloMetricLabel] ?? formatDecimal;
+    return formatter(value);
 }
+
+type MonteCarloMetricLabel =
+    | "Net Profit"
+    | "Bankroll PnL"
+    | "Max Drawdown"
+    | "Sharpe Ratio"
+    | "Win Rate"
+    | "Positive Trade Rate"
+    | "Final Bankroll";
+
+const MONTE_CARLO_METRIC_FORMATTERS: Record<MonteCarloMetricLabel, (value: number) => string> = {
+    "Net Profit": formatSignedCurrency,
+    "Bankroll PnL": formatSignedCurrency,
+    "Max Drawdown": formatPercent,
+    "Sharpe Ratio": formatDecimal,
+    "Win Rate": formatPercent,
+    "Positive Trade Rate": formatPercent,
+    "Final Bankroll": formatDollarAmount,
+};

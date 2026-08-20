@@ -1,5 +1,7 @@
 import type { WalkForwardResult } from "./strategies/walk-forward";
 import type { WalkForwardServiceDom } from "./walk-forward-dom";
+import { escapeHtml } from "./html-escape";
+import { formatNullableSignedFixed } from "./ui-formatters";
 
 export type WalkForwardLoadingMode = "analysis" | "quick";
 
@@ -9,14 +11,6 @@ export interface WalkForwardUiHost {
     formatPercent(value: number | null, digits?: number): string;
     formatBaseParamsSummary(): string | null;
     formatWindowParams(params: Record<string, number>): string;
-}
-
-function formatSignedValue(value: number | null, digits = 2): string {
-    if (value === null || !Number.isFinite(value)) {
-        return "-";
-    }
-    const prefix = value > 0 ? "+" : "";
-    return `${prefix}${value.toFixed(digits)}`;
 }
 
 function getAlphaDecayTone(status: "decaying" | "weakening" | "stable" | "strengthening" | "improving" | "insufficient_data"): "positive" | "negative" | "neutral" {
@@ -81,10 +75,10 @@ export function renderWalkForwardDecayPanel(
             const trendTone = metric.trendDirection === "up" ? "positive" : metric.trendDirection === "down" ? "negative" : "neutral";
             return `
                 <tr>
-                    <td>${metric.name}</td>
+                    <td>${escapeHtml(metric.name)}</td>
                     <td>${host.formatNumber(metric.firstValue, 3)}</td>
                     <td>${host.formatNumber(metric.latestValue, 3)}</td>
-                    <td class="${driftTone}">${formatSignedValue(metric.driftPercentOfRange, 1)}%</td>
+                    <td class="${driftTone}">${formatNullableSignedFixed(metric.driftPercentOfRange, 1, "-")}%</td>
                     <td>${host.formatNumber(metric.normalizedStdDev * 100, 1)}%</td>
                     <td class="${trendTone}">${formatTrendLabel(metric.trendDirection, metric.normalizedTrendPerWindow)}</td>
                     <td class="${stabilityTone}">${host.formatNumber(metric.stabilityScore, 0)}</td>
@@ -132,7 +126,7 @@ export function renderWalkForwardDecayPanel(
             </div>
             <div class="wf-stat">
                 <span class="wf-label">Edge Delta</span>
-                <span class="wf-value ${alphaTone}">${formatSignedValue(decay.alphaDecay.recentVsEarlyDelta, 3)}</span>
+                <span class="wf-value ${alphaTone}">${formatNullableSignedFixed(decay.alphaDecay.recentVsEarlyDelta, 3, "-")}</span>
             </div>
             <div class="wf-stat">
                 <span class="wf-label">CUSUM</span>
@@ -155,25 +149,25 @@ export function renderWalkForwardDecayPanel(
             <div class="wf-stat">
                 <span class="wf-label">Sharpe vs Peak</span>
                 <span class="wf-value ${rollingSharpeVsPeak !== null && rollingSharpeVsPeak < 0 ? "negative" : rollingSharpeVsPeak !== null && rollingSharpeVsPeak > 0 ? "positive" : "neutral"}">
-                    ${formatSignedValue(rollingSharpeVsPeak, 3)}
+                    ${formatNullableSignedFixed(rollingSharpeVsPeak, 3, "-")}
                 </span>
             </div>
             <div class="wf-stat">
                 <span class="wf-label">Sortino vs Peak</span>
                 <span class="wf-value ${rollingSortinoVsPeak !== null && rollingSortinoVsPeak < 0 ? "negative" : rollingSortinoVsPeak !== null && rollingSortinoVsPeak > 0 ? "positive" : "neutral"}">
-                    ${formatSignedValue(rollingSortinoVsPeak, 3)}
+                    ${formatNullableSignedFixed(rollingSortinoVsPeak, 3, "-")}
                 </span>
             </div>
             <div class="wf-stat">
                 <span class="wf-label">Last ${comparisonWindowLabel} vs Prior ${comparisonWindowLabel} Sharpe</span>
                 <span class="wf-value ${rollingSharpeRecentVsPrior !== null && rollingSharpeRecentVsPrior < 0 ? "negative" : rollingSharpeRecentVsPrior !== null && rollingSharpeRecentVsPrior > 0 ? "positive" : "neutral"}">
-                    ${formatSignedValue(rollingSharpeRecentVsPrior, 3)}
+                    ${formatNullableSignedFixed(rollingSharpeRecentVsPrior, 3, "-")}
                 </span>
             </div>
             <div class="wf-stat">
                 <span class="wf-label">Last ${comparisonWindowLabel} vs Prior ${comparisonWindowLabel} Sortino</span>
                 <span class="wf-value ${rollingSortinoRecentVsPrior !== null && rollingSortinoRecentVsPrior < 0 ? "negative" : rollingSortinoRecentVsPrior !== null && rollingSortinoRecentVsPrior > 0 ? "positive" : "neutral"}">
-                    ${formatSignedValue(rollingSortinoRecentVsPrior, 3)}
+                    ${formatNullableSignedFixed(rollingSortinoRecentVsPrior, 3, "-")}
                 </span>
             </div>
             <div class="wf-stat">
@@ -190,9 +184,9 @@ export function renderWalkForwardDecayPanel(
             <span>CUSUM threshold: ${decay.cusum.threshold.toFixed(2)}</span>
             <span>Rolling window: ${Math.max(0, decay.rollingRiskWindowSize)} WFA windows</span>
             <span>Half-life fit: ${(decay.halfLife.fitQuality * 100).toFixed(0)}%</span>
-            <span>${decay.halfLife.reason}</span>
+            <span>${escapeHtml(decay.halfLife.reason)}</span>
             ${decay.robustnessPenalty > 0
-                ? `<span>Decay penalty: -${decay.robustnessPenalty} robustness (${decay.robustnessPenaltyReasons.join(", ")})</span>`
+                ? `<span>Decay penalty: -${decay.robustnessPenalty} robustness (${escapeHtml(decay.robustnessPenaltyReasons.join(", "))})</span>`
                 : ""}
         </div>
         <div class="wf-decay-section">
@@ -253,7 +247,7 @@ export function updateWalkForwardSummaryPanel(
         ${baseParamsSummary ? `
         <div class="wf-stat" style="grid-column: 1 / -1;">
             <span class="wf-label">Base Params Used</span>
-            <span class="wf-value">${baseParamsSummary}</span>
+            <span class="wf-value">${escapeHtml(baseParamsSummary ?? "")}</span>
         </div>
         ` : ""}
         <div class="wf-stat">
@@ -325,7 +319,7 @@ export function updateWalkForwardWindowTable(
                 <td>${windowResult.performanceDegradationPercent.toFixed(0)}%</td>
                 <td>${windowResult.inSampleResult.sharpeRatio.toFixed(2)}</td>
                 <td>${oos.sharpeRatio.toFixed(2)}</td>
-                <td title="${JSON.stringify(windowResult.optimizedParams)}">${paramsStr}</td>
+                <td title="${escapeHtml(JSON.stringify(windowResult.optimizedParams))}">${escapeHtml(paramsStr)}</td>
                 <td class="${statusClass}">${statusIcon}</td>
             </tr>
         `;

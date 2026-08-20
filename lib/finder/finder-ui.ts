@@ -1,7 +1,12 @@
 import { getRequiredElement, setVisible } from "../dom-utils";
+import { escapeHtml } from "../html-escape";
 import {
     formatPolymarketCents,
     formatProfitFactor,
+    formatNullablePercentPoints,
+    formatNullableSignedPercentPoints,
+    formatScore as formatUiScore,
+    formatNullableCurrency,
     formatSignedCompactDollar,
 } from "../ui-formatters";
 import type { FinderAssetOpportunityResult, FinderMode, FinderOosVerdict, FinderRandomBenchmark, FinderResult, FinderStrategyQualityResult, FinderUniverseCandidate, FinderUniverseOosAggregate, FinderUniverseSymbolMetrics } from "../types/finder";
@@ -37,7 +42,7 @@ export class FinderUI {
 
     private getCopyButton(): HTMLButtonElement | null {
         if (!this.copyButton) {
-            this.copyButton = document.getElementById("finderCopyTopResults") as HTMLButtonElement | null;
+            this.copyButton = getRequiredElement<HTMLButtonElement>("finderCopyTopResults");
         }
         return this.copyButton;
     }
@@ -139,17 +144,17 @@ export class FinderUI {
                     metrics.appendChild(this.createMetricChip(`BaseY ${(poly.alwaysYesBaselineWinRate * 100).toFixed(1)}%`));
                 }
             } else {
-                metrics.appendChild(this.createMetricChip(`Net ${this.formatCurrency(result.netProfit)}`));
+                metrics.appendChild(this.createMetricChip(`Net ${formatNullableCurrency(result.netProfit)}`));
                 metrics.appendChild(this.createMetricChip(`PF ${formatProfitFactor(result.profitFactor)}`));
                 metrics.appendChild(this.createMetricChip(`Sharpe ${result.sharpeRatio.toFixed(2)}`));
                 if (Number.isFinite(item.compositeEdgeRatio)) {
                     metrics.appendChild(this.createMetricChip(`ER ${item.compositeEdgeRatio!.toFixed(2)}`));
                 }
                 if (typeof result.tradeTimingQuality?.entryScore === "number") {
-                    metrics.appendChild(this.createMetricChip(`Entry ${this.formatScore(result.tradeTimingQuality.entryScore)}`));
+                    metrics.appendChild(this.createMetricChip(`Entry ${formatUiScore(result.tradeTimingQuality.entryScore)}`));
                 }
                 if (typeof result.tradeTimingQuality?.exitScore === "number") {
-                    metrics.appendChild(this.createMetricChip(`Exit ${this.formatScore(result.tradeTimingQuality.exitScore)}`));
+                    metrics.appendChild(this.createMetricChip(`Exit ${formatUiScore(result.tradeTimingQuality.exitScore)}`));
                 }
                 metrics.appendChild(this.createMetricChip(`DD ${result.maxDrawdownPercent.toFixed(2)}%`));
                 metrics.appendChild(this.createMetricChip(`Trades ${result.totalTrades}`));
@@ -220,7 +225,7 @@ export class FinderUI {
                     : item.medianReturnDrawdownRatio.toFixed(2);
                 metrics.appendChild(this.createMetricChip(`Med R/DD ${returnDrawdown}`));
             }
-            metrics.appendChild(this.createMetricChip(`Worst ${this.formatCurrency(item.worstNetProfit)}`));
+            metrics.appendChild(this.createMetricChip(`Worst ${formatNullableCurrency(item.worstNetProfit)}`));
             metrics.appendChild(this.createMetricChip(`Trades ${item.totalTrades}`));
             if (item.oosAggregate) {
                 metrics.appendChild(this.createUniverseOosChip(item.oosAggregate));
@@ -282,7 +287,7 @@ export class FinderUI {
                     if (symbolResult.result) {
                         const r = symbolResult.result;
                         const pairNeutral = r.metricBasis === "pair_neutral_log";
-                        textParts.push(`${pairNeutral ? "Net(log)" : "Net"} ${this.formatCurrency(r.netProfit)}`);
+                        textParts.push(`${pairNeutral ? "Net(log)" : "Net"} ${formatNullableCurrency(r.netProfit)}`);
                         textParts.push(`${pairNeutral ? "Exp(log)" : "Exp"} ${r.expectancy.toFixed(2)}`);
                         textParts.push(`PF ${formatProfitFactor(r.profitFactor)}`);
                         textParts.push(`WR ${r.winRate.toFixed(0)}%`);
@@ -374,7 +379,7 @@ export class FinderUI {
 
                 const value = document.createElement("strong");
                 value.className = "finder-asset-horizon-value";
-                value.textContent = this.formatSignedPercent(horizon.averagePnlPercent);
+                value.textContent = formatNullableSignedPercentPoints(horizon.averagePnlPercent);
                 cell.appendChild(value);
 
                 const sample = document.createElement("span");
@@ -409,7 +414,7 @@ export class FinderUI {
             metrics.appendChild(this.createMetricChip(`Agree ${(item.support.directionAgreementRatio * 100).toFixed(0)}%`));
             metrics.appendChild(this.createMetricChip(`Exp ${selection.expectancy.toFixed(2)}`));
             metrics.appendChild(this.createMetricChip(`PF ${formatProfitFactor(selection.profitFactor)}`));
-            metrics.appendChild(this.createMetricChip(`Net ${this.formatCurrency(selection.netProfit)}`));
+            metrics.appendChild(this.createMetricChip(`Net ${formatNullableCurrency(selection.netProfit)}`));
             metrics.appendChild(this.createMetricChip(`DD ${selection.maxDrawdownPercent.toFixed(2)}%`));
             metrics.appendChild(this.createMetricChip(`Sharpe ${selection.sharpeRatio.toFixed(2)}`));
             metrics.appendChild(this.createMetricChip(`Trades ${selection.totalTrades}`));
@@ -479,7 +484,7 @@ export class FinderUI {
             metrics.appendChild(this.createMetricChip(item.sharpeAvailableSymbols > 0
                 ? `Sharpe ${item.averageSharpe.toFixed(2)}`
                 : "Sharpe --"));
-            metrics.appendChild(this.createMetricChip(`PnL ${this.formatCurrency(item.totalNetProfit)}`));
+            metrics.appendChild(this.createMetricChip(`PnL ${formatNullableCurrency(item.totalNetProfit)}`));
             metrics.appendChild(this.createMetricChip(`Trades ${item.totalTrades}`));
             metrics.appendChild(this.createMetricChip(`WR ${item.weightedWinRate.toFixed(1)}%`));
             metrics.appendChild(this.createMetricChip(`Active ${item.activeSymbols}/${item.requestedSymbols}`));
@@ -487,7 +492,7 @@ export class FinderUI {
             metrics.appendChild(this.createMetricChip(`No Trade ${item.noTradeSymbols}`));
             metrics.appendChild(this.createMetricChip(`Worst DD ${item.worstMaxDrawdownPercent.toFixed(2)}%`));
             if (item.oos) {
-                metrics.appendChild(this.createMetricChip(`OOS PnL ${this.formatCurrency(item.oos.totalNetProfit)}`));
+                metrics.appendChild(this.createMetricChip(`OOS PnL ${formatNullableCurrency(item.oos.totalNetProfit)}`));
                 metrics.appendChild(this.createMetricChip(`OOS PF ${formatProfitFactor(item.oos.profitFactor)}`));
                 metrics.appendChild(this.createMetricChip(`OOS Trades ${item.oos.totalTrades}`));
             }
@@ -507,14 +512,14 @@ export class FinderUI {
                 const textParts = [symbolResult.symbol, `Bars ${symbolResult.barCount}`];
                 if (symbolResult.result) {
                     const result = symbolResult.result;
-                    textParts.push(`PnL ${this.formatCurrency(result.netProfit)}`);
+                    textParts.push(`PnL ${formatNullableCurrency(result.netProfit)}`);
                     textParts.push(`Exp ${result.expectancy.toFixed(2)}`);
                     textParts.push(`PF ${formatProfitFactor(result.profitFactor)}`);
                     textParts.push(`Sharpe ${result.totalTrades >= 5 ? result.sharpeRatio.toFixed(2) : "--"}`);
                     textParts.push(`Trades ${result.totalTrades}`);
                 }
                 if (symbolResult.oosResult) {
-                    textParts.push(`OOS PnL ${this.formatCurrency(symbolResult.oosResult.netProfit)}`);
+                    textParts.push(`OOS PnL ${formatNullableCurrency(symbolResult.oosResult.netProfit)}`);
                     textParts.push(`OOS PF ${formatProfitFactor(symbolResult.oosResult.profitFactor)}`);
                 }
                 if (symbolResult.error) textParts.push(symbolResult.error);
@@ -594,8 +599,8 @@ export class FinderUI {
         const coveragePct = (benchmark.shortCoverage * 100).toFixed(1);
         body.innerHTML = `
             <div class="finder-benchmark-grid">
-                <span><strong>Pipeline:</strong> ${benchmark.pipeline}</span>
-                <span><strong>Engine:</strong> ${benchmark.engineMode}</span>
+                <span><strong>Pipeline:</strong> ${escapeHtml(benchmark.pipeline)}</span>
+                <span><strong>Engine:</strong> ${escapeHtml(benchmark.engineMode)}</span>
                 <span><strong>Throughput:</strong> ${benchmark.runsPerSecond.toFixed(2)} runs/s</span>
                 <span><strong>Cost:</strong> ${benchmark.msPerRun.toFixed(2)} ms/run</span>
                 <span><strong>Runs:</strong> ${benchmark.processedRuns}/${benchmark.totalRuns}</span>
@@ -611,16 +616,6 @@ export class FinderUI {
         const span = document.createElement("span");
         span.textContent = text;
         return span;
-    }
-
-    private formatSignedPercent(value: number | null): string {
-        if (value === null || !Number.isFinite(value)) return "--";
-        return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
-    }
-
-    private formatPercent(value: number | null): string {
-        if (value === null || !Number.isFinite(value)) return "--";
-        return `${value.toFixed(1)}%`;
     }
 
     private createAssetOosPanel(metrics: NonNullable<FinderAssetOpportunityResult["oosHorizonMetrics"]>): HTMLDivElement {
@@ -661,13 +656,13 @@ export class FinderUI {
 
             const value = document.createElement("strong");
             value.className = "finder-asset-horizon-value";
-            value.textContent = this.formatSignedPercent(horizon.pnlPercent);
+            value.textContent = formatNullableSignedPercentPoints(horizon.pnlPercent);
             cell.appendChild(value);
 
             const sample = document.createElement("span");
             sample.className = "finder-asset-horizon-sample";
             sample.textContent = horizon.sampleSize > 0
-                ? `${this.formatPercent(horizon.winRatePercent)} win · n=${horizon.sampleSize}`
+                ? `${formatNullablePercentPoints(horizon.winRatePercent, 1)} win · n=${horizon.sampleSize}`
                 : "No data";
             cell.appendChild(sample);
             horizons.appendChild(cell);
@@ -682,7 +677,7 @@ export class FinderUI {
         const label = verdict === "pass" ? "OOS ✓"
             : verdict === "fail" ? "OOS ✗"
             : "OOS ?";
-        span.textContent = `${label} ${this.formatCurrency(netProfit)} • PF ${formatProfitFactor(profitFactor)} • ${totalTrades}`;
+        span.textContent = `${label} ${formatNullableCurrency(netProfit)} • PF ${formatProfitFactor(profitFactor)} • ${totalTrades}`;
         return span;
     }
 
@@ -703,7 +698,7 @@ export class FinderUI {
         const mark = verdict === "pass" ? "✓"
             : verdict === "fail" ? "✗"
             : "?";
-        span.textContent = `OOS ${mark} ${this.formatCurrency(oos.netProfit)} • PF ${formatProfitFactor(oos.profitFactor)}`;
+        span.textContent = `OOS ${mark} ${formatNullableCurrency(oos.netProfit)} • PF ${formatProfitFactor(oos.profitFactor)}`;
         return span;
     }
 
@@ -785,11 +780,6 @@ export class FinderUI {
         return value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
     }
 
-    private formatCurrency(value: number): string {
-        const sign = value >= 0 ? "+" : "";
-        return `${sign}$${value.toFixed(2)}`;
-    }
-
     private formatUniverseStatus(status: string): string {
         switch (status) {
             case "profitable":
@@ -834,12 +824,8 @@ export class FinderUI {
         return String(time);
     }
 
-    private formatScore(value: number): string {
-        return Number.isInteger(value) ? value.toString() : value.toFixed(1);
-    }
-
     private formatSelectionSummary(result: BacktestResult): string {
-        return `Selection ${this.formatCurrency(result.netProfit)} • ${result.totalTrades} trades`;
+        return `Selection ${formatNullableCurrency(result.netProfit)} • ${result.totalTrades} trades`;
     }
 
     private formatStrategyVerdictSuffix(ratio: number): string {

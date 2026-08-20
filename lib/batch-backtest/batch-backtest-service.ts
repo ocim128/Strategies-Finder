@@ -75,6 +75,8 @@ import type { OpenScoreUsdReplayStreamEvent } from "./batch-open-score-usd-repla
 import type { StrategyParams, BacktestSettings } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import { escapeHtml } from "../html-escape";
+import { debounce } from "../debounce";
+import { coalesceAnimationFrame } from "../render-scheduler";
 
 const BATCH_RESULTS_STORAGE = {
     key: "playground_batch_backtest_latest_results",
@@ -257,7 +259,14 @@ export class BatchBacktestService {
     // visible progress too long). Terminal paths flush synchronously so the
     // final row count is always visible immediately on done/cancel/error.
     private liveRenderQueue: BatchBacktestSymbolResult[] = [];
-    private liveRenderRafId: number | null = null;
+    private pendingLiveRender: { dom: BatchBacktestDom; token: number } | null = null;
+    private readonly liveRenderFrame = coalesceAnimationFrame(() => {
+        const pending = this.pendingLiveRender;
+        this.pendingLiveRender = null;
+        if (pending) {
+            this.flushLiveRenderNow(pending.dom, pending.token);
+        }
+    });
     // Reattach polling timer id (set when this tab is observing a server-side
     // run that started before page load).
     private reattachTimer: ReturnType<typeof setTimeout> | null = null;
@@ -298,8 +307,11 @@ export class BatchBacktestService {
     // work. Bound the retained history and coalesce the DOM updates.
     private static readonly TOP_MEAN_DIAGNOSTIC_MAX_ENTRIES = 500;
     private static readonly TOP_MEAN_DIAGNOSTIC_RENDER_DEBOUNCE_MS = 250;
-    private topMeanDiagnosticRenderScheduled = false;
-    private topMeanDiagnosticRenderTimer: ReturnType<typeof setTimeout> | null = null;
+    private readonly renderTopMeanDiagnosticDebounced = debounce(() => {
+        const dom = this.dom;
+        if (!dom) return;
+        dom.batchBacktestSp500TopMeanDiagnostic.textContent = this.buildTopMeanDiagnosticText();
+    }, BatchBacktestService.TOP_MEAN_DIAGNOSTIC_RENDER_DEBOUNCE_MS);
 
     private getDom(): BatchBacktestDom {
         return this.dom ??= createBatchBacktestDom();
@@ -1994,11 +2006,8 @@ export class BatchBacktestService {
             this.flushLiveRenderNow(dom, token);
             return;
         }
-        if (this.liveRenderRafId !== null) return;
-        this.liveRenderRafId = requestAnimationFrame(() => {
-            this.liveRenderRafId = null;
-            this.flushLiveRenderNow(dom, token);
-        });
+        this.pendingLiveRender = { dom, token };
+        this.liveRenderFrame.schedule();
     }
 
     /**
@@ -2023,10 +2032,8 @@ export class BatchBacktestService {
      * stale RAF callback can't fire against a newer run's DOM.
      */
     private cancelLiveRenderRaf(): void {
-        if (this.liveRenderRafId !== null) {
-            cancelAnimationFrame(this.liveRenderRafId);
-            this.liveRenderRafId = null;
-        }
+        this.liveRenderFrame.cancel();
+        this.pendingLiveRender = null;
     }
 
     /**
@@ -3138,15 +3145,7 @@ export class BatchBacktestService {
         // Coalesce rapid bursts (progress + per-window + reattach polls) into
         // one DOM write per debounce window. The Copy button always reads the
         // current array via `buildTopMeanDiagnosticText()`, so no data is lost.
-        if (this.topMeanDiagnosticRenderScheduled) return;
-        this.topMeanDiagnosticRenderScheduled = true;
-        this.topMeanDiagnosticRenderTimer = setTimeout(() => {
-            this.topMeanDiagnosticRenderTimer = null;
-            this.topMeanDiagnosticRenderScheduled = false;
-            const currentDom = this.dom;
-            if (!currentDom) return;
-            currentDom.batchBacktestSp500TopMeanDiagnostic.textContent = this.buildTopMeanDiagnosticText();
-        }, BatchBacktestService.TOP_MEAN_DIAGNOSTIC_RENDER_DEBOUNCE_MS);
+        this.renderTopMeanDiagnosticDebounced();
     }
 
     public downloadSp500TopMeanResults(): void {
@@ -3317,11 +3316,7 @@ export class BatchBacktestService {
         this.stopReattachPoll();
         this.stopTopMeanReattachPoll();
         this.cancelLiveRenderRaf();
-        if (this.topMeanDiagnosticRenderTimer) {
-            clearTimeout(this.topMeanDiagnosticRenderTimer);
-            this.topMeanDiagnosticRenderTimer = null;
-        }
-        this.topMeanDiagnosticRenderScheduled = false;
+        this.renderTopMeanDiagnosticDebounced.cancel();
     }
 }
 

@@ -30,6 +30,8 @@ import {
     type StateSubscriptionsDom,
 } from "./state-subscriptions-dom";
 import type { Time } from "lightweight-charts";
+import { getMockBarsInput, getVisibleCandlesInput } from "./ui-event-handlers-dom";
+import { coalesceAnimationFrame } from "../render-scheduler";
 
 function updatePolymarketEntryOffsetVisibility(dom: StateSubscriptionsDom, interval: string = state.currentInterval): void {
     const rows = dom.polymarketSettingsRows;
@@ -183,12 +185,42 @@ export function setupStateSubscriptions() {
     let lastDataLength = 0;
 
     let reloadTimeout: number | null = null;
-    let deferredBacktestUiFrame: number | null = null;
+    let pendingBacktestResult: typeof state.currentBacktestResult = null;
+    let jumpToTrade: (time: Time) => void;
+    const deferredBacktestUiFrame = coalesceAnimationFrame(() => {
+        const result = pendingBacktestResult;
+        pendingBacktestResult = null;
+        if (!result || state.currentBacktestResult !== result) {
+            return;
+        }
+
+        runBacktestResultUiSteps([
+            {
+                step: "trade_markers",
+                run: () => chartManager.displayTradeMarkers(result.trades, uiManager.formatPrice),
+            },
+        ]);
+        void activateLazyFeature("quick-view")
+            .then(async () => {
+                if (state.currentBacktestResult !== result) {
+                    return;
+                }
+
+                const { quickViewManager } = await import("../quick-view");
+                quickViewManager.setJumpToTrade(jumpToTrade);
+                return quickViewManager.onBacktestComplete(result);
+            })
+            .catch((error) => {
+                debugLogger.warn("quick_view.lazy_init_failed", {
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            });
+    });
     const isPanelVisible = (tabId: string) => {
         const panel = document.getElementById(`${tabId}Tab`) as HTMLElement | null;
         return Boolean(panel && !panel.hidden && panel.style.display !== 'none');
     };
-    const jumpToTrade = (time: Time) => {
+    jumpToTrade = (time: Time) => {
         const dataIndex = state.ohlcvData.findIndex(d => d.time === time);
         if (dataIndex !== -1) {
             const from = Math.max(0, dataIndex - 20);
@@ -246,7 +278,7 @@ export function setupStateSubscriptions() {
         livePositionsService.syncActiveChartPrice();
 
         getRequiredElement('dataPoints').textContent = `${data.length} candles`;
-        const candlesInput = document.getElementById('visibleCandlesInput') as HTMLInputElement | null;
+        const candlesInput = getVisibleCandlesInput();
         if (candlesInput) {
             candlesInput.value = String(data.length);
         }
@@ -277,11 +309,8 @@ export function setupStateSubscriptions() {
 
     // Sync backtest results
     state.subscribe('currentBacktestResult', (result) => {
-        if (deferredBacktestUiFrame !== null) {
-            cancelAnimationFrame(deferredBacktestUiFrame);
-            deferredBacktestUiFrame = null;
-        }
-
+        deferredBacktestUiFrame.cancel();
+        pendingBacktestResult = null;
 
         if (result) {
             const strategy = strategyRegistry.get(state.currentStrategyKey);
@@ -313,34 +342,8 @@ export function setupStateSubscriptions() {
                 },
             ]);
 
-            deferredBacktestUiFrame = requestAnimationFrame(() => {
-                deferredBacktestUiFrame = null;
-                if (state.currentBacktestResult !== result) {
-                    return;
-                }
-
-                runBacktestResultUiSteps([
-                    {
-                        step: "trade_markers",
-                        run: () => chartManager.displayTradeMarkers(result.trades, uiManager.formatPrice),
-                    },
-                ]);
-                void activateLazyFeature("quick-view")
-                    .then(async () => {
-                        if (state.currentBacktestResult !== result) {
-                            return;
-                        }
-
-                        const { quickViewManager } = await import("../quick-view");
-                        quickViewManager.setJumpToTrade(jumpToTrade);
-                        return quickViewManager.onBacktestComplete(result);
-                    })
-                    .catch((error) => {
-                        debugLogger.warn("quick_view.lazy_init_failed", {
-                            error: error instanceof Error ? error.message : String(error),
-                        });
-                    });
-            });
+            pendingBacktestResult = result;
+            deferredBacktestUiFrame.schedule();
         }
     });
 
@@ -429,7 +432,7 @@ export function setupStateSubscriptions() {
 
     state.subscribe('mockChartBars', (mockChartBars) => {
         debugLogger.event('state.mockChartBars', { mockChartBars });
-        const input = document.getElementById('mockBarsInput') as HTMLInputElement | null;
+        const input = getMockBarsInput();
         if (input) {
             input.value = String(mockChartBars);
         }

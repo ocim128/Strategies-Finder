@@ -35,6 +35,7 @@ import {
 } from "./settings-model";
 import { createSettingsManagerDom, type SettingsManagerDom } from "./settings-manager-dom";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
+import { debounce } from "./debounce";
 
 export {
     DEFAULT_APP_SETTINGS,
@@ -94,7 +95,7 @@ const STRATEGY_CONFIGS_STORAGE = {
 
 class SettingsManager {
     private autoSaveEnabled: boolean = true;
-    private saveDebounceTimeout: number | null = null;
+    private readonly debouncedSaveSettings = debounce(() => this.saveSettings(), 500);
 
     private dom: SettingsManagerDom | null = null;
 
@@ -156,13 +157,7 @@ class SettingsManager {
         if (!this.autoSaveEnabled) {
             return;
         }
-        if (this.saveDebounceTimeout !== null) {
-            clearTimeout(this.saveDebounceTimeout);
-        }
-        this.saveDebounceTimeout = window.setTimeout(() => {
-            this.saveSettings();
-            this.saveDebounceTimeout = null;
-        }, 500);
+        this.debouncedSaveSettings();
     }
 
     public async runWithoutAutoSave<T>(work: () => Promise<T> | T): Promise<T> {

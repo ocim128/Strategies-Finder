@@ -253,3 +253,11 @@ export function createUiEventHandlersDom(): UiEventHandlersDom {
         pathExitHorizonBars: getOptionalElement<HTMLInputElement>("pathExitHorizonBars"),
     };
 }
+
+export function getMockBarsInput(): HTMLInputElement | null {
+    return getOptionalElement<HTMLInputElement>("mockBarsInput");
+}
+
+export function getVisibleCandlesInput(): HTMLInputElement | null {
+    return getOptionalElement<HTMLInputElement>("visibleCandlesInput");
+}

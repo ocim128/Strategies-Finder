@@ -17,16 +17,18 @@
     padding: var(--space-2-5) var(--space-3);
     min-width: 180px;
     box-shadow: var(--shadow-elevated);
-    backdrop-filter: blur(12px) saturate(120%);
-    -webkit-backdrop-filter: blur(12px) saturate(120%);
+    left: 0;
+    top: 0;
+    --tooltip-x: 0px;
+    --tooltip-y: 0px;
     opacity: 0;
-    transform: translateY(6px) scale(0.98);
+    transform: translate3d(var(--tooltip-x), var(--tooltip-y), 0) translateY(6px) scale(0.98);
     transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 .chart-tooltip.visible {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translate3d(var(--tooltip-x), var(--tooltip-y), 0) translateY(0) scale(1);
 }
 
 .tooltip-header {

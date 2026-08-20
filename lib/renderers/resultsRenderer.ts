@@ -1,6 +1,12 @@
 import { BacktestResult, PostEntryPathStats, TradeTimingQuality } from "../strategies/index";
 import { getRequiredElement, updateTextContent, setVisible } from "../dom-utils";
 import { createResultsRendererDom, type ResultsRendererDom } from "./results-renderer-dom";
+import { escapeHtml } from "../html-escape";
+import {
+    formatNullableFixed,
+    formatNullablePercentPoints,
+    formatNullableSignedPercentPoints,
+} from "../ui-formatters";
 import {
     canComputeBacktestEdgeAnalysis,
     ensureBacktestEdgeAnalysis,
@@ -190,20 +196,20 @@ export class ResultsRenderer {
 
         const entryRows = quality.entry.horizons.map((horizon) => `
             <div class="edge-ratio-cell value">${horizon.bars} bars</div>
-            <div class="edge-ratio-cell value right ${this.scoreClass(horizon.score)}">${this.formatScore(horizon.score)}</div>
-            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.avgMfePct, 2)}</div>
-            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.avgMaePct, 2)}</div>
-            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.positiveForwardRatePct, 1)}</div>
-            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.movementConfidencePct, 1)}</div>
+            <div class="edge-ratio-cell value right ${this.scoreClass(horizon.score)}">${formatNullableFixed(horizon.score, 1)}</div>
+            <div class="edge-ratio-cell value right">${formatNullablePercentPoints(horizon.avgMfePct, 2)}</div>
+            <div class="edge-ratio-cell value right">${formatNullablePercentPoints(horizon.avgMaePct, 2)}</div>
+            <div class="edge-ratio-cell value right">${formatNullablePercentPoints(horizon.positiveForwardRatePct, 1)}</div>
+            <div class="edge-ratio-cell value right">${formatNullablePercentPoints(horizon.movementConfidencePct, 1)}</div>
             <div class="edge-ratio-cell value right">${horizon.sampleSize}</div>
         `).join('');
         const exitRows = quality.exit.horizons.map((horizon) => `
             <div class="edge-ratio-cell value">${horizon.bars} bars</div>
-            <div class="edge-ratio-cell value right ${this.scoreClass(horizon.score)}">${this.formatScore(horizon.score)}</div>
-            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.avgAvoidedAdversePct, 2)}</div>
-            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.avgMissedContinuationPct, 2)}</div>
-            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.adverseAfterExitRatePct, 1)}</div>
-            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.movementConfidencePct, 1)}</div>
+            <div class="edge-ratio-cell value right ${this.scoreClass(horizon.score)}">${formatNullableFixed(horizon.score, 1)}</div>
+            <div class="edge-ratio-cell value right">${formatNullablePercentPoints(horizon.avgAvoidedAdversePct, 2)}</div>
+            <div class="edge-ratio-cell value right">${formatNullablePercentPoints(horizon.avgMissedContinuationPct, 2)}</div>
+            <div class="edge-ratio-cell value right">${formatNullablePercentPoints(horizon.adverseAfterExitRatePct, 1)}</div>
+            <div class="edge-ratio-cell value right">${formatNullablePercentPoints(horizon.movementConfidencePct, 1)}</div>
             <div class="edge-ratio-cell value right">${horizon.sampleSize}</div>
         `).join('');
 
@@ -211,19 +217,19 @@ export class ResultsRenderer {
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-label">Entry Score</div>
-                    <div class="stat-value ${this.scoreClass(quality.entryScore)}">${this.formatScore(quality.entryScore)}</div>
+                    <div class="stat-value ${this.scoreClass(quality.entryScore)}">${formatNullableFixed(quality.entryScore, 1)}</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Exit Score</div>
-                    <div class="stat-value ${this.scoreClass(quality.exitScore)}">${this.formatScore(quality.exitScore)}</div>
+                    <div class="stat-value ${this.scoreClass(quality.exitScore)}">${formatNullableFixed(quality.exitScore, 1)}</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Capture Score</div>
-                    <div class="stat-value ${this.scoreClass(quality.exit.captureScore)}">${this.formatScore(quality.exit.captureScore)}</div>
+                    <div class="stat-value ${this.scoreClass(quality.exit.captureScore)}">${formatNullableFixed(quality.exit.captureScore, 1)}</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Avg Giveback</div>
-                    <div class="stat-value">${this.formatPercent(quality.exit.averageGivebackPct, 2)}</div>
+                    <div class="stat-value">${formatNullablePercentPoints(quality.exit.averageGivebackPct, 2)}</div>
                 </div>
             </div>
 
@@ -259,7 +265,7 @@ export class ResultsRenderer {
                         ${exitRows}
                     </div>
                 </div>
-                <div class="edge-composite">Capture: <span class="${this.scoreClass(quality.exit.captureScore)}">${this.formatScore(quality.exit.captureScore)}</span> <span class="edge-composite-hint">| Avg Giveback ${this.formatPercent(quality.exit.averageGivebackPct, 2)} | ${quality.exit.captureSampleSize} samples</span></div>
+                <div class="edge-composite">Capture: <span class="${this.scoreClass(quality.exit.captureScore)}">${formatNullableFixed(quality.exit.captureScore, 1)}</span> <span class="edge-composite-hint">| Avg Giveback ${formatNullablePercentPoints(quality.exit.averageGivebackPct, 2)} | ${quality.exit.captureSampleSize} samples</span></div>
             </div>
         `;
     }
@@ -299,15 +305,15 @@ export class ResultsRenderer {
 
         container.innerHTML = sideOrder.map((side) => {
             const stats = postEntryPath[side];
-            const avgClosedBars = this.formatNumber(stats.avgClosedTradeTimeBars, 1);
-            const avgClosedMinutes = this.formatNumber(stats.avgClosedTradeTimeMinutes, 1);
+            const avgClosedBars = formatNullableFixed(stats.avgClosedTradeTimeBars, 1);
+            const avgClosedMinutes = formatNullableFixed(stats.avgClosedTradeTimeMinutes, 1);
             const timeSummary = `Avg Closed: ${avgClosedBars} bars | ${avgClosedMinutes}m`;
 
-            const avgMoves = stats.avgSignedMovePctByBar.map((value) => this.formatPercent(value, 2, true));
-            const medMoves = stats.medianSignedMovePctByBar.map((value) => this.formatPercent(value, 2, true));
-            const highMoves = stats.maxSignedMovePctByBar.map((value) => this.formatPercent(value, 2, true));
-            const lowMoves = stats.minSignedMovePctByBar.map((value) => this.formatPercent(value, 2, true));
-            const winRates = stats.positiveRatePctByBar.map((value) => this.formatPercent(value, 1));
+            const avgMoves = stats.avgSignedMovePctByBar.map((value) => formatNullableSignedPercentPoints(value, 2, "--", false));
+            const medMoves = stats.medianSignedMovePctByBar.map((value) => formatNullableSignedPercentPoints(value, 2, "--", false));
+            const highMoves = stats.maxSignedMovePctByBar.map((value) => formatNullableSignedPercentPoints(value, 2, "--", false));
+            const lowMoves = stats.minSignedMovePctByBar.map((value) => formatNullableSignedPercentPoints(value, 2, "--", false));
+            const winRates = stats.positiveRatePctByBar.map((value) => formatNullablePercentPoints(value, 1));
             const samples = stats.sampleSizeByBar.map((value) => value.toString());
 
             return `
@@ -338,11 +344,11 @@ export class ResultsRenderer {
         if (hasOpenTrade) {
             const hint = getRequiredElement('postEntryPathHint');
             const tradeType = openTrade.tradeType ? openTrade.tradeType.toUpperCase() : 'N/A';
-            const moveText = this.formatPercent(openTrade.signedMovePct, 2, true);
+            const moveText = formatNullableSignedPercentPoints(openTrade.signedMovePct, 2, "--", false);
             const basisText = openTrade.basisBar === null ? 'n/a' : `+${openTrade.basisBar}`;
             const barsHeldText = openTrade.barsHeld === null ? 'n/a' : openTrade.barsHeld.toString();
-            const winText = this.formatPercent(openTrade.winProbabilityPct, 1);
-            const loseText = this.formatPercent(openTrade.loseProbabilityPct, 1);
+            const winText = formatNullablePercentPoints(openTrade.winProbabilityPct, 1);
+            const loseText = formatNullablePercentPoints(openTrade.loseProbabilityPct, 1);
 
             if (openTrade.winProbabilityPct === null || openTrade.loseProbabilityPct === null) {
                 hint.textContent = `Open trade (${tradeType}, EOD) detected. Not enough historical samples to estimate win/lose probability yet.`;
@@ -442,7 +448,7 @@ export class ResultsRenderer {
         container.innerHTML = `
             <div class="edge-verdict-banner ${verdictClass}">
                 <div class="edge-verdict-label">${verdictLabel}</div>
-                <div class="edge-verdict-summary">${edge.summary}</div>
+                <div class="edge-verdict-summary">${escapeHtml(edge.summary)}</div>
             </div>
 
             <div class="edge-subsection">
@@ -525,17 +531,6 @@ export class ResultsRenderer {
         `;
     }
 
-    private formatPercent(value: number | null | undefined, decimals: number, signed = false, suffix = '%'): string {
-        if (typeof value !== 'number' || !Number.isFinite(value)) return '--';
-        const prefix = signed && value > 0 ? '+' : '';
-        return `${prefix}${value.toFixed(decimals)}${suffix}`;
-    }
-
-    private formatNumber(value: number | null, decimals: number): string {
-        if (value === null || !Number.isFinite(value)) return '--';
-        return value.toFixed(decimals);
-    }
-
     private formatMetricValue(value: number, decimals: number, suffix = ''): string {
         if (!Number.isFinite(value)) {
             if (value === Number.POSITIVE_INFINITY) return `INF${suffix}`;
@@ -543,11 +538,6 @@ export class ResultsRenderer {
             return '--';
         }
         return `${value.toFixed(decimals)}${suffix}`;
-    }
-
-    private formatScore(value: number | null | undefined): string {
-        if (typeof value !== 'number' || !Number.isFinite(value)) return '--';
-        return value.toFixed(1);
     }
 
     private scoreClass(value: number | null | undefined): string {

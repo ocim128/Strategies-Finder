@@ -10,6 +10,7 @@
 import { parseBatchSymbols } from "../batch-backtest/batch-backtest-runner";
 import { debugLogger } from "../debug-logger";
 import { setVisible } from "../dom-utils";
+import { debounce } from "../debounce";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { state } from "../state";
@@ -159,7 +160,7 @@ class RankPairsService {
     private runToken = 0;
     private resultViewVersion = 0;
     private reattachGeneration = 0;
-    private summaryDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    private readonly updateSummaryDebounced = debounce(() => this.updateSummary(this.getDom()), 120);
 
     private getDom(): RankPairsDom {
         return this.dom ??= createRankPairsDom();
@@ -198,11 +199,7 @@ class RankPairsService {
         });
         dom.rankPairsSymbols.addEventListener("input", () => {
             this.clearStaleResults(dom);
-            if (this.summaryDebounceTimer) clearTimeout(this.summaryDebounceTimer);
-            this.summaryDebounceTimer = setTimeout(() => {
-                this.summaryDebounceTimer = null;
-                this.updateSummary(dom);
-            }, 120);
+            this.updateSummaryDebounced();
         });
         dom.rankPairsMode.addEventListener("change", () => {
             this.clearStaleResults(dom);
