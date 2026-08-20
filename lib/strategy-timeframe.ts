@@ -1,5 +1,5 @@
 import type { OHLCVData, Signal, Time } from "./types/strategies";
-import { getResampleBucketStart, type ResampleOptions } from "./strategies/resample-utils";
+import { getIntervalSeconds, type ResampleOptions } from "./strategies/resample-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 
 /**
@@ -41,15 +41,21 @@ export function mapSignalsFromHigherTimeframe(
     higherData: OHLCVData[],
     higherSignals: Signal[],
     interval: string,
-    options?: ResampleOptions
+    _options?: ResampleOptions
 ): Signal[] {
     if (higherSignals.length === 0) return [];
+
+    const intervalSeconds = getIntervalSeconds(interval);
+    const validInterval = Number.isFinite(intervalSeconds) && intervalSeconds > 0;
+    const getBucketStart = (time: number): number => validInterval
+        ? Math.floor(time / intervalSeconds) * intervalSeconds
+        : Math.floor(time);
 
     const lastBaseIndexByBucket = new Map<number, number>();
     for (let i = 0; i < numericBaseData.length; i++) {
         const time = Number(numericBaseData[i].time);
         if (!Number.isFinite(time)) continue;
-        const bucketStart = getResampleBucketStart(time, interval, options);
+        const bucketStart = getBucketStart(time);
         lastBaseIndexByBucket.set(bucketStart, i);
     }
 
@@ -71,7 +77,7 @@ export function mapSignalsFromHigherTimeframe(
         if (bucketStart === null) {
             const signalTimeSec = parseTimeToUnixSeconds(signal.time);
             if (signalTimeSec !== null) {
-                bucketStart = getResampleBucketStart(signalTimeSec, interval, options);
+                bucketStart = getBucketStart(signalTimeSec);
             }
         }
 

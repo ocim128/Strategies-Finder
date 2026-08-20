@@ -29,7 +29,7 @@ function buildSegmentTimeIndex(data: readonly OHLCVData[]): Map<string, number> 
 function resolveSegmentSignalIndex(
     signal: Signal,
     segment: ContiguousTimeSegment,
-    segmentTimeIndex: Map<string, number>
+    segmentTimeIndex: Map<string, number> | null
 ): number | null {
     if (Number.isFinite(signal.barIndex as number)) {
         const barIndex = Math.trunc(signal.barIndex as number);
@@ -37,6 +37,8 @@ function resolveSegmentSignalIndex(
             return barIndex;
         }
     }
+
+    if (segmentTimeIndex === null) return null;
 
     return segmentTimeIndex.get(timeKey(signal.time))
         ?? segmentTimeIndex.get(canonicalTimeKey(signal.time))
@@ -46,7 +48,7 @@ function resolveSegmentSignalIndex(
 function remapSegmentSignal(
     signal: Signal,
     segment: ContiguousTimeSegment,
-    segmentTimeIndex: Map<string, number>
+    segmentTimeIndex: Map<string, number> | null
 ): Signal | null {
     const localIndex = resolveSegmentSignalIndex(signal, segment, segmentTimeIndex);
     if (localIndex === null) return null;
@@ -128,8 +130,16 @@ export function executeStrategyAcrossTimeGapSegments(args: {
         const segmentSignals = args.executeSegment(segment.data, segmentContext);
         if (segmentSignals.length === 0) continue;
 
-        const segmentTimeIndex = buildSegmentTimeIndex(segment.data);
+        let segmentTimeIndex: Map<string, number> | null = null;
         for (const signal of segmentSignals) {
+            if (!Number.isFinite(signal.barIndex as number)) {
+                segmentTimeIndex ??= buildSegmentTimeIndex(segment.data);
+            } else {
+                const barIndex = Math.trunc(signal.barIndex as number);
+                if (barIndex < 0 || barIndex >= segment.data.length) {
+                    segmentTimeIndex ??= buildSegmentTimeIndex(segment.data);
+                }
+            }
             const remapped = remapSegmentSignal(signal, segment, segmentTimeIndex);
             if (remapped) signals.push(remapped);
         }

@@ -521,6 +521,8 @@ export function buildRollingMinMax(
 	const max: NullableSeries = new Array(values.length).fill(null);
 	const minDeque: number[] = [];
 	const maxDeque: number[] = [];
+	let minHead = 0;
+	let maxHead = 0;
 	let nextIndexToAdd = 0;
 
 	const addIndex = (index: number): void => {
@@ -539,12 +541,12 @@ export function buildRollingMinMax(
 		}
 
 		const start = end - lookback + 1;
-		while (minDeque.length > 0 && minDeque[0] < start) minDeque.shift();
-		while (maxDeque.length > 0 && maxDeque[0] < start) maxDeque.shift();
+		while (minDeque.length > minHead && minDeque[minHead] < start) minHead++;
+		while (maxDeque.length > maxHead && maxDeque[maxHead] < start) maxHead++;
 
-		if (start < 0 || end < 0 || minDeque.length === 0 || maxDeque.length === 0) continue;
-		min[i] = values[minDeque[0]];
-		max[i] = values[maxDeque[0]];
+		if (start < 0 || end < 0 || minDeque.length <= minHead || maxDeque.length <= maxHead) continue;
+		min[i] = values[minDeque[minHead]];
+		max[i] = values[maxDeque[maxHead]];
 	}
 
 	const result = { min, max };
@@ -657,35 +659,56 @@ export function buildRollingCorrelation(
 
 	const len = Math.min(series1.length, series2.length);
 	const result: (number | null)[] = new Array(len).fill(null);
+	if (len < lookback) {
+		byKey.set(`${lookback}`, result);
+		return result;
+	}
+
+	const originX = series1.find((value) => Number.isFinite(value)) ?? 0;
+	const originY = series2.find((value) => Number.isFinite(value)) ?? 0;
+	let sumX = 0;
+	let sumY = 0;
+	let sumXX = 0;
+	let sumYY = 0;
+	let sumXY = 0;
+	let nonFinitePairs = 0;
+
+	const updatePair = (index: number, direction: 1 | -1): void => {
+		const x = series1[index];
+		const y = series2[index];
+		if (!Number.isFinite(x) || !Number.isFinite(y)) {
+			nonFinitePairs += direction;
+			return;
+		}
+
+		const centeredX = x - originX;
+		const centeredY = y - originY;
+		sumX += direction * centeredX;
+		sumY += direction * centeredY;
+		sumXX += direction * centeredX * centeredX;
+		sumYY += direction * centeredY * centeredY;
+		sumXY += direction * centeredX * centeredY;
+	};
+
+	for (let i = 0; i < lookback; i++) updatePair(i, 1);
 
 	for (let i = lookback - 1; i < len; i++) {
-		let sumX = 0;
-		let sumY = 0;
-		const n = lookback;
-
-		for (let j = 0; j < n; j++) {
-			const idx = i - n + 1 + j;
-			sumX += series1[idx];
-			sumY += series2[idx];
-		}
-		const meanX = sumX / n;
-		const meanY = sumY / n;
-
-		let cov = 0;
-		let varX = 0;
-		let varY = 0;
-		for (let j = 0; j < n; j++) {
-			const idx = i - n + 1 + j;
-			const dx = series1[idx] - meanX;
-			const dy = series2[idx] - meanY;
-			cov += dx * dy;
-			varX += dx * dx;
-			varY += dy * dy;
+		if (i >= lookback) {
+			updatePair(i - lookback, -1);
+			updatePair(i, 1);
 		}
 
-		const denom = Math.sqrt(varX * varY);
+		if (nonFinitePairs > 0) {
+			result[i] = Number.NaN;
+			continue;
+		}
+
+		const covariance = sumXY - ((sumX * sumY) / lookback);
+		const varianceX = Math.max(0, sumXX - ((sumX * sumX) / lookback));
+		const varianceY = Math.max(0, sumYY - ((sumY * sumY) / lookback));
+		const denom = Math.sqrt(varianceX * varianceY);
 		if (denom <= 0) continue;
-		result[i] = cov / denom;
+		result[i] = covariance / denom;
 	}
 
 	byKey.set(`${lookback}`, result);
