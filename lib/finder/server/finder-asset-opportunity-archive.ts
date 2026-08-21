@@ -1,5 +1,6 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
+import { formatCapturedConfiguration } from "../finder-config-capture";
 import type { FinderAssetOpportunityResortMetric } from "../finder-asset-opportunity-metrics";
 import type { AssetOpportunityForwardOosBaseline } from "../finder-asset-opportunity-metadata";
 
@@ -152,7 +153,9 @@ export async function appendAssetOpportunityArchiveRunConfig(
         `Batch run id: ${args.batchRunId}`,
         `Run configuration: JSON`,
         "=".repeat(80),
-        JSON.stringify(args.config, null, 2),
+        // Primitive arrays (symbols, strategy keys, horizons) inline on one
+        // line — a 500-symbol universe otherwise costs ~1,000 lines per block.
+        formatCapturedConfiguration(args.config),
         "",
     ].join("\n");
     const append = args.append ?? defaultAppend;

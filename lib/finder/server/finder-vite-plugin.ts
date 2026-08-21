@@ -1645,7 +1645,6 @@ export async function processFinderAssetOpportunityBatchRun(
             config: {
                 runId: input.runId,
                 interval: input.interval,
-                symbols: input.symbols,
                 strategyKeys: selectedStrategies.map((strategy) => strategy.key),
                 batch: { startHoldoutBars: batch.startHoldoutBars, endHoldoutBars: batch.endHoldoutBars },
                 finder: {

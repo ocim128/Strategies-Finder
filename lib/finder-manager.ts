@@ -26,7 +26,7 @@ import {
 	UNIVERSE_METRIC_FULL_LABELS,
 } from "./finder/constants";
 import { buildFinderEvaluationData, runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
-import { captureTradeFilter } from "./finder/finder-config-capture";
+import { captureTradeFilter, formatCapturedConfiguration } from "./finder/finder-config-capture";
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderUI } from "./finder/finder-ui";
 import {
@@ -482,28 +482,6 @@ function normalizeTimingSortMetrics(value: unknown): FinderMetric[] {
 	return value
 		.filter((metric): metric is FinderMetric => isTimingSortMetric(metric))
 		.filter((metric, index, metrics) => metrics.indexOf(metric) === index);
-}
-
-/**
- * JSON formatter for copied run configurations: primitives arrays (strategy-key
- * lists, sort orders) are inlined on one line so an all-strategies selection
- * does not balloon the payload to hundreds of lines.
- */
-function formatConfigurationJson(value: unknown, depth = 0): string {
-	const pad = "\t".repeat(depth);
-	const inner = "\t".repeat(depth + 1);
-	if (Array.isArray(value)) {
-		const allPrimitives = value.every((item) => item === null || typeof item !== "object");
-		if (allPrimitives) return JSON.stringify(value);
-		if (value.length === 0) return "[]";
-		return "[\n" + value.map((item) => inner + formatConfigurationJson(item, depth + 1)).join(",\n") + "\n" + pad + "]";
-	}
-	if (value !== null && typeof value === "object") {
-		const entries = Object.entries(value as Record<string, unknown>);
-		if (entries.length === 0) return "{}";
-		return "{\n" + entries.map(([key, item]) => inner + JSON.stringify(key) + ": " + formatConfigurationJson(item, depth + 1)).join(",\n") + "\n" + pad + "}";
-	}
-	return JSON.stringify(value);
 }
 
 function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
@@ -4203,7 +4181,7 @@ export class FinderManager {
 			capitalSettings: backtestService.getCapitalSettings(),
 		};
 		try {
-			await this.copyTextToClipboard(formatConfigurationJson(payload));
+			await this.copyTextToClipboard(formatCapturedConfiguration(payload));
 			uiManager.showToast('Finder configuration copied', 'success');
 		} catch (error) {
 			debugLogger.error('finder.copy_configuration_failed', { error: error instanceof Error ? error.message : String(error) });
