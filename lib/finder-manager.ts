@@ -26,6 +26,7 @@ import {
 	UNIVERSE_METRIC_FULL_LABELS,
 } from "./finder/constants";
 import { buildFinderEvaluationData, runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
+import { captureTradeFilter } from "./finder/finder-config-capture";
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderUI } from "./finder/finder-ui";
 import {
@@ -4183,9 +4184,15 @@ export class FinderManager {
 		// references strategies that exist.
 		const knownKeys = new Set(builtInStrategyKeys);
 		const filterKeys = (keys: string[]) => keys.filter((key) => knownKeys.has(key));
+		// Null the trade-filter inputs when the toggle is off — stale values
+		// captured verbatim read as an enforced filter in archived configs.
+		const tradeFilter = captureTradeFilter(this.uiState);
 		const payload = {
 			finder: {
 				...this.uiState,
+				tradeFilterEnabled: tradeFilter.tradeFilterEnabled,
+				minTrades: tradeFilter.minTrades,
+				maxTradesText: tradeFilter.tradeFilterEnabled ? this.uiState.maxTradesText : null,
 				currentChartSelectedStrategyKeys: filterKeys(this.uiState.currentChartSelectedStrategyKeys),
 				universeSelectedStrategyKeys: filterKeys(this.uiState.universeSelectedStrategyKeys),
 			},

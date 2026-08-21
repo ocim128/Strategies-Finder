@@ -73,6 +73,11 @@ export type AssetOpportunityArchiveAppend = (
     content: string,
 ) => Promise<void>;
 
+const defaultAppend: AssetOpportunityArchiveAppend = async (dir, filename, content) => {
+    await mkdir(dir, { recursive: true });
+    await appendFile(path.join(dir, filename), content, "utf8");
+};
+
 export interface AppendAssetOpportunityArchiveBlockArgs {
     /** Vite-configured project root; archive dir is always `<root>/archive/asset opportunity`. */
     root: string;
@@ -108,13 +113,52 @@ export async function appendAssetOpportunityArchiveBlock(
         topResults: args.topResults,
         baseline: args.baseline,
     });
-    const append = args.append ?? (async (dirPath, fileName, fileContent) => {
-        await mkdir(dirPath, { recursive: true });
-        await appendFile(path.join(dirPath, fileName), fileContent, "utf8");
-    });
+    const append = args.append ?? defaultAppend;
     await append(dir, filename, content);
     return {
         path: path.join(dir, filename),
+        bytes: Buffer.byteLength(content, "utf8"),
+    };
+}
+
+export const ASSET_OPPORTUNITY_ARCHIVE_CONFIG_FILENAME = "config.txt";
+
+export interface AppendAssetOpportunityArchiveRunConfigArgs {
+    /** Vite-configured project root; archive dir is always `<root>/archive/asset opportunity`. */
+    root: string;
+    batchRunId: string;
+    /** Serializable run configuration (finder options + backtest + capital settings). */
+    config: unknown;
+    /** Optional deterministic timestamp for tests. */
+    timestamp?: string;
+    /** Optional injected append leaf for tests. */
+    append?: AssetOpportunityArchiveAppend;
+}
+
+/**
+ * Append one batch run's full configuration to
+ * `<root>/archive/asset opportunity/config.txt` — one delimited block per run
+ * (same Timestamp / Batch-run-id header shape as the holdout blocks) so every
+ * archived holdout sweep carries a matching, timestamped config record without
+ * relying on the operator remembering Copy Configuration.
+ */
+export async function appendAssetOpportunityArchiveRunConfig(
+    args: AppendAssetOpportunityArchiveRunConfigArgs,
+): Promise<AssetOpportunityArchiveAppendResult> {
+    const dir = resolveAssetOpportunityArchiveDir(args.root);
+    const content = [
+        "=".repeat(80),
+        `Timestamp: ${args.timestamp ?? new Date().toISOString()}`,
+        `Batch run id: ${args.batchRunId}`,
+        `Run configuration: JSON`,
+        "=".repeat(80),
+        JSON.stringify(args.config, null, 2),
+        "",
+    ].join("\n");
+    const append = args.append ?? defaultAppend;
+    await append(dir, ASSET_OPPORTUNITY_ARCHIVE_CONFIG_FILENAME, content);
+    return {
+        path: path.join(dir, ASSET_OPPORTUNITY_ARCHIVE_CONFIG_FILENAME),
         bytes: Buffer.byteLength(content, "utf8"),
     };
 }

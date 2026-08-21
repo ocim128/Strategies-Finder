@@ -123,8 +123,10 @@ import {
 } from "../finder-asset-opportunity-metadata";
 import {
     appendAssetOpportunityArchiveBlock,
+    appendAssetOpportunityArchiveRunConfig,
     type AssetOpportunityArchiveAppend,
 } from "./finder-asset-opportunity-archive";
+import { captureTradeFilter } from "../finder-config-capture";
 import {
     createBufferedFinderRunLogSink,
     resolveFinderRunLogDir,
@@ -1628,6 +1630,39 @@ export async function processFinderAssetOpportunityBatchRun(
         strategyNames: selectedStrategies.map((strategy) => strategy.name),
         archiveSort: ASSET_OPPORTUNITY_ALL_SORTS,
     });
+
+    // Append the run's full configuration to the archive config log BEFORE the
+    // sweep so every archived holdout file has a matching, timestamped config
+    // record even when the operator forgets Copy Configuration (and even when
+    // the run dies mid-sweep). Trade-filter bounds are normalized to null when
+    // the toggle is off so the record can never read as an enforced filter.
+    // Best-effort: a metadata write must not kill a research run — holdout
+    // archive failures stay fatal, this one only warns.
+    try {
+        await appendAssetOpportunityArchiveRunConfig({
+            root: archiveRoot,
+            batchRunId: input.runId,
+            config: {
+                runId: input.runId,
+                interval: input.interval,
+                symbols: input.symbols,
+                strategyKeys: selectedStrategies.map((strategy) => strategy.key),
+                batch: { startHoldoutBars: batch.startHoldoutBars, endHoldoutBars: batch.endHoldoutBars },
+                finder: {
+                    ...input.options,
+                    ...captureTradeFilter(input.options),
+                },
+                backtestSettings: input.settings,
+                capitalSettings: input.capitalSettings,
+            },
+            ...(archiveAppend ? { append: archiveAppend } : {}),
+        });
+    } catch (error) {
+        debugLogger.warn("finder.asset_opportunity_batch.config_archive_failed", {
+            runId: input.runId,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
 
     const isCancelled = () => runOwner !== owner || input.abortSignal.aborted;
     const lastIteration: {

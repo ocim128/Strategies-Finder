@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
     appendAssetOpportunityArchiveBlock,
+    appendAssetOpportunityArchiveRunConfig,
     buildAssetOpportunityArchiveBlockText,
     buildAssetOpportunityArchiveFilename,
     resolveAssetOpportunityArchiveDir,
@@ -138,6 +139,70 @@ describe("Asset Opportunity archive writer", () => {
         });
         expect(text).to.contain(`Archive baseline: ${JSON.stringify(baseline)}`);
         expect(text.lastIndexOf("\n[")).to.be.greaterThan(text.indexOf("Archive baseline:"));
+    });
+
+    it("appends one run-config block per batch run to config.txt and never overwrites", async () => {
+        const root = mkdtempSync(path.join(tmpdir(), "finder-archive-"));
+        try {
+            const config = { finder: { tradeFilterEnabled: false, minTrades: null }, capitalSettings: { commissionRate: 0.1 } };
+            const first = await appendAssetOpportunityArchiveRunConfig({
+                root,
+                batchRunId: "batch-1",
+                config,
+                timestamp: "2026-01-01T00:00:00.000Z",
+            });
+            await appendAssetOpportunityArchiveRunConfig({
+                root,
+                batchRunId: "batch-2",
+                config,
+                timestamp: "2026-01-02T00:00:00.000Z",
+            });
+
+            expect(path.basename(first.path)).to.equal("config.txt");
+            expect(first.bytes).to.be.greaterThan(0);
+            const content = readFileSync(first.path, "utf8");
+            expect(content).to.contain("Timestamp: 2026-01-01T00:00:00.000Z");
+            expect(content).to.contain("Batch run id: batch-1");
+            expect(content).to.contain("Batch run id: batch-2");
+            expect(content).to.contain("Run configuration: JSON");
+            // Each block's JSON body round-trips the full config; two blocks,
+            // each delimited by an opening and closing separator line.
+            const marker = `Run configuration: JSON\n${"=".repeat(80)}`;
+            const bodies: unknown[] = [];
+            let cursor = 0;
+            for (;;) {
+                const start = content.indexOf(marker, cursor);
+                if (start === -1) break;
+                let body = content.slice(start + marker.length);
+                const nextSeparator = body.indexOf("=".repeat(80));
+                if (nextSeparator !== -1) body = body.slice(0, nextSeparator);
+                bodies.push(JSON.parse(body.trim()));
+                cursor = start + marker.length;
+            }
+            expect(bodies).to.deep.equal([config, config]);
+            expect(content.match(/^={80}$/gm) ?? []).to.have.length(4);
+            expect(content).to.match(/\n$/);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("injects the append leaf for run-config writes so tests never touch the real archive", async () => {
+        const calls: Array<{ dir: string; filename: string; content: string }> = [];
+        const result = await appendAssetOpportunityArchiveRunConfig({
+            root: "/virtual/root",
+            batchRunId: "batch-3",
+            config: { finder: {} },
+            timestamp: "2026-01-03T00:00:00.000Z",
+            append: async (dir, filename, content) => {
+                calls.push({ dir, filename, content });
+            },
+        });
+        expect(calls).to.have.length(1);
+        expect(calls[0]!.dir).to.equal(path.join("/virtual/root", "archive", "asset opportunity"));
+        expect(calls[0]!.filename).to.equal("config.txt");
+        expect(result.path).to.equal(path.join(calls[0]!.dir, "config.txt"));
+        expect(result.bytes).to.equal(Buffer.byteLength(calls[0]!.content, "utf8"));
     });
 
     it("does not accept an arbitrary path from a caller", () => {

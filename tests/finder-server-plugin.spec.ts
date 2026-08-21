@@ -1339,7 +1339,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
     });
 
     it("runs every holdout once in ascending order, archives per-N files, and emits scalar rows", async () => {
-        const { events, appended } = await runAssetBatch({ owner: 7301, start: 2, end: 4, runId: "batch-order" });
+        const { events, appended, contents } = await runAssetBatch({ owner: 7301, start: 2, end: 4, runId: "batch-order" });
 
         const start = events[0]!;
         expect(start.type).to.equal("asset_batch_start");
@@ -1378,11 +1378,22 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                 expect(asset.oosHorizonMetrics?.ignoreLastBars).to.equal(iteration.holdoutBars);
             }
         }
-        // One block per archive sort for each N, in ascending N order.
+        // The run config is archived first (one config.txt block), then one
+        // block per archive sort for each N, in ascending N order.
         const archiveBlockCount = 1 + getAssetOpportunityResortMetrics().length;
-        expect(appended).to.deep.equal([2, 3, 4].flatMap((holdout) =>
-            Array.from({ length: archiveBlockCount }, () => `oos-holdout-${holdout}-bars.txt`),
-        ));
+        expect(appended).to.deep.equal([
+            "config.txt",
+            ...[2, 3, 4].flatMap((holdout) =>
+                Array.from({ length: archiveBlockCount }, () => `oos-holdout-${holdout}-bars.txt`),
+            ),
+        ]);
+        // The archived run config carries the batch identity plus the trade
+        // filter normalized so an inactive filter cannot read as enforced.
+        const configBlock = contents[0]!;
+        expect(configBlock).to.contain("Run configuration: JSON");
+        expect(configBlock).to.contain(`"runId": "batch-order"`);
+        expect(configBlock).to.contain(`"tradeFilterEnabled": false`);
+        expect(configBlock).to.contain(`"minTrades": null`);
 
         // Terminal status carries the batch counts and the LAST iteration rows.
         const status = handleStatusRequest("batch-order");
@@ -1420,7 +1431,8 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
             "run_default",
             ...getAssetOpportunityResortMetrics(),
         ];
-        expect(contents).to.have.length(2 * expectedSortLabels.length);
+        // +1 for the run-config block archived before the sweep.
+        expect(contents).to.have.length(1 + 2 * expectedSortLabels.length);
         for (const sortLabel of expectedSortLabels) {
             expect(contents.filter((content) => content.includes(`Archive sort: ${sortLabel}\n`))).to.have.length(2);
         }
@@ -1441,7 +1453,8 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
             "run_default",
             ...getAssetOpportunityResortMetrics(),
         ];
-        expect(contents).to.have.length(2 * expectedSortLabels.length);
+        // +1 for the run-config block archived before the sweep.
+        expect(contents).to.have.length(1 + 2 * expectedSortLabels.length);
         for (const sortLabel of expectedSortLabels) {
             expect(contents.filter((content) => content.includes(`Archive sort: ${sortLabel}\n`))).to.have.length(2);
         }
@@ -1455,21 +1468,24 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
     it("stops after the current iteration when ownership is lost mid-batch", async () => {
         // The injected append runs AFTER the first iteration completes; losing
         // ownership there must prevent the next iteration from starting and
-        // report partial completion.
+        // report partial completion. The run-config block (archived before the
+        // sweep) must NOT trigger the ownership flip.
         const { events, appended } = await runAssetBatch({
             owner: 7302,
             start: 1,
             end: 3,
             runId: "batch-stop",
-            append: async () => {
-                setRunOwnerForTests(0);
+            append: async (_dir, filename) => {
+                if (filename.startsWith("oos-holdout-")) {
+                    setRunOwnerForTests(0);
+                }
             },
         });
         const iterations = events.filter(
             (event) => event.type === "asset_batch_iteration_done",
         ) as Array<Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_iteration_done" }>>;
         expect(iterations.map((event) => event.holdoutBars)).to.deep.equal([1]);
-        expect(appended).to.deep.equal(Array.from({ length: 1 + getAssetOpportunityResortMetrics().length }, () => "oos-holdout-1-bars.txt"));
+        expect(appended).to.deep.equal(["config.txt", ...Array.from({ length: 1 + getAssetOpportunityResortMetrics().length }, () => "oos-holdout-1-bars.txt")]);
         const done = events[events.length - 1]!;
         expect(done.type).to.equal("asset_batch_done");
         if (done.type === "asset_batch_done") {
@@ -1495,9 +1511,10 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                 throw new Error("disk full");
             },
         });
-        // The first iteration's append throws; the batch must not start the
-        // second iteration and must emit asset_batch_fatal.
-        expect(appended).to.deep.equal(["oos-holdout-1-bars.txt"]);
+        // The run-config block is best-effort (its append failure only warns),
+        // then the first iteration's holdout append throws; the batch must not
+        // start the second iteration and must emit asset_batch_fatal.
+        expect(appended).to.deep.equal(["config.txt", "oos-holdout-1-bars.txt"]);
         const fatal = events.find((event) => event.type === "asset_batch_fatal") as
             Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_fatal" }> | undefined;
         expect(fatal).to.not.equal(undefined);
@@ -1521,11 +1538,12 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
             runId: "batch-empty-results",
         });
 
-        expect(appended).to.deep.equal([2, 3].flatMap((holdout) =>
+        expect(appended).to.deep.equal(["config.txt", ...[2, 3].flatMap((holdout) =>
             Array.from({ length: 1 + getAssetOpportunityResortMetrics().length }, () => `oos-holdout-${holdout}-bars.txt`),
-        ));
-        expect(contents).to.have.length(2 * (1 + getAssetOpportunityResortMetrics().length));
-        expect(contents.every((content) => content.includes("\n[]\n"))).to.equal(true);
+        )]);
+        expect(contents).to.have.length(1 + 2 * (1 + getAssetOpportunityResortMetrics().length));
+        // The +1 leading config block is the only non-empty-payload append.
+        expect(contents.slice(1).every((content) => content.includes("\n[]\n"))).to.equal(true);
 
         const iterations = events.filter(
             (event) => event.type === "asset_batch_iteration_done",
@@ -1551,7 +1569,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         ) as Array<Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_iteration_done" }>>;
         expect(iterations).to.have.length(1);
         expect(iterations[0]!.holdoutBars).to.equal(5);
-        expect(appended).to.deep.equal(Array.from({ length: 1 + getAssetOpportunityResortMetrics().length }, () => "oos-holdout-5-bars.txt"));
+        expect(appended).to.deep.equal(["config.txt", ...Array.from({ length: 1 + getAssetOpportunityResortMetrics().length }, () => "oos-holdout-5-bars.txt")]);
     });
 
     function makeBatchRouteRequest(body: Record<string, unknown>): any {
