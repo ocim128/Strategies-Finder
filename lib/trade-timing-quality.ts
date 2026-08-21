@@ -129,12 +129,8 @@ function computeEntryHorizon(
 
             const favorablePrice = isLong ? candle.high : candle.low;
             const adversePrice = isLong ? candle.low : candle.high;
-            const favorableMove = isLong
-                ? percentMove(favorablePrice, trade.entryPrice)
-                : percentMove(trade.entryPrice, favorablePrice);
-            const adverseMove = isLong
-                ? percentMove(trade.entryPrice, adversePrice)
-                : percentMove(adversePrice, trade.entryPrice);
+            const favorableMove = absoluteMovePct(trade.entryPrice, favorablePrice);
+            const adverseMove = absoluteMovePct(trade.entryPrice, adversePrice);
 
             mfePct = Math.max(mfePct, favorableMove);
             maePct = Math.max(maePct, adverseMove);
@@ -142,9 +138,7 @@ function computeEntryHorizon(
 
         const forwardClose = ohlcvData[endIndex].close;
         if (!Number.isFinite(forwardClose)) continue;
-        const forwardClosePct = isLong
-            ? percentMove(forwardClose, trade.entryPrice)
-            : percentMove(trade.entryPrice, forwardClose);
+        const forwardClosePct = directionalMovePct(trade.entryPrice, forwardClose, isLong);
 
         mfeSum += Math.max(0, mfePct);
         maeSum += Math.max(0, maePct);
@@ -210,12 +204,8 @@ function computeExitHorizon(
 
             const adversePrice = isLong ? candle.low : candle.high;
             const favorablePrice = isLong ? candle.high : candle.low;
-            const adverseMove = isLong
-                ? percentMove(trade.exitPrice, adversePrice)
-                : percentMove(adversePrice, trade.exitPrice);
-            const favorableMove = isLong
-                ? percentMove(favorablePrice, trade.exitPrice)
-                : percentMove(trade.exitPrice, favorablePrice);
+            const adverseMove = absoluteMovePct(trade.exitPrice, adversePrice);
+            const favorableMove = absoluteMovePct(trade.exitPrice, favorablePrice);
 
             avoidedAdversePct = Math.max(avoidedAdversePct, adverseMove);
             missedContinuationPct = Math.max(missedContinuationPct, favorableMove);
@@ -223,9 +213,7 @@ function computeExitHorizon(
 
         const horizonClose = ohlcvData[endIndex].close;
         if (!Number.isFinite(horizonClose)) continue;
-        const postExitClosePct = isLong
-            ? percentMove(horizonClose, trade.exitPrice)
-            : percentMove(trade.exitPrice, horizonClose);
+        const postExitClosePct = directionalMovePct(trade.exitPrice, horizonClose, isLong);
 
         avoidedAdverseSum += Math.max(0, avoidedAdversePct);
         missedContinuationSum += Math.max(0, missedContinuationPct);
@@ -278,9 +266,7 @@ function computeExitCapture(
         if (entryIndex === undefined || exitIndex === undefined || exitIndex < entryIndex) continue;
 
         const isLong = trade.type === "long";
-        const realizedMovePct = isLong
-            ? percentMove(trade.exitPrice, trade.entryPrice)
-            : percentMove(trade.entryPrice, trade.exitPrice);
+        const realizedMovePct = directionalMovePct(trade.entryPrice, trade.exitPrice, isLong);
         let mfeDuringTrade = 0;
 
         if (exitIndex > entryIndex + 1) {
@@ -288,9 +274,7 @@ function computeExitCapture(
                 const candle = ohlcvData[index];
                 if (!Number.isFinite(candle.high) || !Number.isFinite(candle.low)) continue;
                 const favorablePrice = isLong ? candle.high : candle.low;
-                const favorableMove = isLong
-                    ? percentMove(favorablePrice, trade.entryPrice)
-                    : percentMove(trade.entryPrice, favorablePrice);
+                const favorableMove = absoluteMovePct(trade.entryPrice, favorablePrice);
                 mfeDuringTrade = Math.max(mfeDuringTrade, favorableMove);
             }
         }
@@ -428,6 +412,15 @@ function emptyExitHorizon(horizon: number, movementFloorPct: number): TradeTimin
 
 function percentMove(to: number, from: number): number {
     return ((to - from) / from) * 100;
+}
+
+function absoluteMovePct(referencePrice: number, price: number): number {
+    return Math.abs(percentMove(price, referencePrice));
+}
+
+function directionalMovePct(referencePrice: number, price: number, isLong: boolean): number {
+    const move = percentMove(price, referencePrice);
+    return isLong ? move : -move;
 }
 
 function isFinitePositive(value: number): boolean {

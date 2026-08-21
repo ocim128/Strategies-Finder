@@ -87,7 +87,7 @@ describe("trade timing quality", () => {
 
         const quality = computeTradeTimingQuality(result, data);
 
-        expect(quality.entryScore).to.be.greaterThan(80);
+        expect(quality.entryScore).to.be.greaterThan(70);
         expect(quality.exitScore).to.be.greaterThan(55);
     });
 
@@ -131,5 +131,36 @@ describe("trade timing quality", () => {
 
         expect(horizon3?.score).to.be.lessThan(55);
         expect(horizon3?.movementConfidencePct).to.be.lessThan(5);
+    });
+
+    it("measures excursions from the entry or exit reference price", () => {
+        const data = Array.from({ length: 12 }, (_, index) => candle(index, 100, 100, 100));
+        data[2] = candle(2, 110, 90, 100);
+        data[3] = candle(3, 110, 90, 100);
+
+        const longQuality = computeTradeTimingQuality(
+            makeResult([makeTrade({ entryTime: 1 as Time, exitTime: 2 as Time, exitPrice: 100 })]),
+            data,
+        );
+        const longEntry = longQuality.entry.horizons.find((horizon) => horizon.bars === 3)!;
+        const longExit = longQuality.exit.horizons.find((horizon) => horizon.bars === 3)!;
+        expect(longEntry.avgMfePct).to.be.closeTo(10, 1e-9);
+        expect(longEntry.avgMaePct).to.be.closeTo(10, 1e-9);
+        expect(longExit.avgAvoidedAdversePct).to.be.closeTo(10, 1e-9);
+        expect(longExit.avgMissedContinuationPct).to.be.closeTo(10, 1e-9);
+
+        const shortQuality = computeTradeTimingQuality(
+            makeResult([makeTrade({
+                type: "short",
+                entryTime: 1 as Time,
+                exitTime: 4 as Time,
+                exitPrice: 95,
+                pnl: 5,
+                pnlPercent: 5,
+            })]),
+            data,
+        );
+        expect(shortQuality.exit.captureScore).to.be.closeTo(50, 1e-9);
+        expect(shortQuality.exit.averageGivebackPct).to.be.closeTo(5, 1e-9);
     });
 });
