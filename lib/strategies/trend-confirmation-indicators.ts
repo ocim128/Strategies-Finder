@@ -285,54 +285,119 @@ function lowerBoundWeightedValue(window: WeightedValue[], target: WeightedValue)
     return low;
 }
 
+function calculateVolumeWeightedMedianSorted(
+    values: number[],
+    volumes: number[],
+    period: number,
+): NullableSeries {
+    const result: NullableSeries = new Array(values.length).fill(null);
+    const window: WeightedValue[] = [];
+    let totalWeight = 0;
+
+    for (let i = 0; i < values.length; i++) {
+        const entry = {
+            index: i,
+            value: values[i],
+            weight: Math.max(0, volumes[i]),
+        };
+        window.splice(lowerBoundWeightedValue(window, entry), 0, entry);
+        totalWeight += entry.weight;
+
+        if (i >= period) {
+            const outgoing = {
+                index: i - period,
+                value: values[i - period],
+                weight: Math.max(0, volumes[i - period]),
+            };
+            window.splice(lowerBoundWeightedValue(window, outgoing), 1);
+            totalWeight -= outgoing.weight;
+        }
+        if (i < period - 1) continue;
+
+        if (totalWeight <= 0) {
+            const middle = period >> 1;
+            result[i] = (period & 1)
+                ? window[middle].value
+                : (window[middle - 1].value + window[middle].value) / 2;
+            continue;
+        }
+
+        const targetWeight = totalWeight / 2;
+        let cumulativeWeight = 0;
+        for (const candidate of window) {
+            cumulativeWeight += candidate.weight;
+            if (cumulativeWeight >= targetWeight) {
+                result[i] = candidate.value;
+                break;
+            }
+        }
+    }
+    return result;
+}
+
+function calculateVolumeWeightedMedianFenwick(
+    values: number[],
+    volumes: number[],
+    period: number,
+): NullableSeries {
+    const result: NullableSeries = new Array(values.length).fill(null);
+    const sortedValues = [...new Set(values)].sort((left, right) => left - right);
+    const rankByValue = new Map<number, number>();
+    sortedValues.forEach((value, index) => rankByValue.set(value, index));
+    const tree = new Float64Array(sortedValues.length + 1);
+    let totalWeight = 0;
+
+    const addWeight = (rank: number, weight: number): void => {
+        for (let index = rank + 1; index < tree.length; index += index & -index) {
+            tree[index] += weight;
+        }
+    };
+
+    const findWeightedMedian = (targetWeight: number): number => {
+        let index = 0;
+        let accumulated = 0;
+        let step = 1;
+        while ((step << 1) < tree.length) step <<= 1;
+        for (; step > 0; step >>= 1) {
+            const next = index + step;
+            if (next < tree.length && accumulated + tree[next] < targetWeight) {
+                accumulated += tree[next];
+                index = next;
+            }
+        }
+        return sortedValues[index]!;
+    };
+
+    for (let i = 0; i < values.length; i++) {
+        const weight = volumes[i];
+        addWeight(rankByValue.get(values[i])!, weight);
+        totalWeight += weight;
+
+        if (i >= period) {
+            const outgoingWeight = volumes[i - period];
+            addWeight(rankByValue.get(values[i - period])!, -outgoingWeight);
+            totalWeight -= outgoingWeight;
+        }
+        if (i >= period - 1) {
+            result[i] = findWeightedMedian(totalWeight / 2);
+        }
+    }
+    return result;
+}
+
 export function calculateVolumeWeightedMedian(
     values: number[],
     volumes: number[],
     period: number
 ): NullableSeries {
     return getCachedPairedSeries(values, volumes, `volume-weighted-median:${period}`, () => {
-        const result: NullableSeries = new Array(values.length).fill(null);
-        const window: WeightedValue[] = [];
-        let totalWeight = 0;
-
-        for (let i = 0; i < values.length; i++) {
-            const entry = {
-                index: i,
-                value: values[i],
-                weight: Math.max(0, volumes[i]),
-            };
-            window.splice(lowerBoundWeightedValue(window, entry), 0, entry);
-            totalWeight += entry.weight;
-
-            if (i >= period) {
-                const outgoing = {
-                    index: i - period,
-                    value: values[i - period],
-                    weight: Math.max(0, volumes[i - period]),
-                };
-                window.splice(lowerBoundWeightedValue(window, outgoing), 1);
-                totalWeight -= outgoing.weight;
-            }
-            if (i < period - 1) continue;
-
-            if (totalWeight <= 0) {
-                const middle = period >> 1;
-                result[i] = (period & 1)
-                    ? window[middle].value
-                    : (window[middle - 1].value + window[middle].value) / 2;
-                continue;
-            }
-
-            const targetWeight = totalWeight / 2;
-            let cumulativeWeight = 0;
-            for (const candidate of window) {
-                cumulativeWeight += candidate.weight;
-                if (cumulativeWeight >= targetWeight) {
-                    result[i] = candidate.value;
-                    break;
-                }
-            }
-        }
-        return result;
+        const fastPathEligible = Number.isInteger(period)
+            && period >= 1
+            && values.length === volumes.length
+            && values.every(Number.isFinite)
+            && volumes.every((volume) => Number.isFinite(volume) && volume > 0);
+        return fastPathEligible
+            ? calculateVolumeWeightedMedianFenwick(values, volumes, period)
+            : calculateVolumeWeightedMedianSorted(values, volumes, period);
     });
 }
