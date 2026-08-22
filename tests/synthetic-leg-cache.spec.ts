@@ -17,12 +17,10 @@ describe("SyntheticLegCache", () => {
     it("dedups concurrent in-flight requests for the same key to one producer call", async () => {
         const cache = new SyntheticLegCache<string>(8);
         let producerCalls = 0;
+        let resolvePending!: (value: string) => void;
         const produce = (key: string): Promise<string> => {
-            const p = new Promise<string>((resolve) => {
-                producerCalls += 1;
-                // Resolve on next tick so concurrent callers see no cached value yet.
-                setTimeout(() => resolve(key), 5);
-            });
+            producerCalls += 1;
+            const p = new Promise<string>((resolve) => { resolvePending = resolve; });
             cache.set(key, p);
             return p;
         };
@@ -32,7 +30,10 @@ describe("SyntheticLegCache", () => {
         // Fan out 10 concurrent requests for the SAME key while the first is
         // still in-flight. Only the first should reach the producer; the rest
         // must attach to the cached in-flight promise.
-        const results = await Promise.all(Array.from({ length: 10 }, () => get("ZECUSDT|1m|50000")));
+        const resultsPromise = Promise.all(Array.from({ length: 10 }, () => get("ZECUSDT|1m|50000")));
+        expect(producerCalls, "in-flight callers must share the first promise").to.equal(1);
+        resolvePending("ZECUSDT|1m|50000");
+        const results = await resultsPromise;
 
         expect(producerCalls, "shared leg must be fetched once, not once per caller").to.equal(1);
         expect(results.every((r) => r === "ZECUSDT|1m|50000")).to.equal(true);
@@ -95,12 +96,14 @@ describe("SyntheticLegCache", () => {
     it("evicts a failed promise so the next request retries", async () => {
         const cache = new SyntheticLegCache<number>(4);
         let producerCalls = 0;
+        let rejectFirst!: (error: Error) => void;
 
         const first = new Promise<number>((_, reject) => {
             producerCalls += 1;
-            setTimeout(() => reject(new Error("network")), 5);
+            rejectFirst = reject;
         });
         cache.set("flaky", first);
+        rejectFirst(new Error("network"));
         await first.catch(() => {});
 
         // After rejection, the entry must be gone so a retry is possible.
@@ -108,7 +111,7 @@ describe("SyntheticLegCache", () => {
 
         const second = new Promise<number>((resolve) => {
             producerCalls += 1;
-            setTimeout(() => resolve(42), 5);
+            resolve(42);
         });
         cache.set("flaky", second);
         expect(await second).to.equal(42);

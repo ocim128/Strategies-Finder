@@ -1,12 +1,9 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import type { OHLCVData, Time } from "../../lib/types/strategies";
+import type { OHLCVData } from "../../lib/types/strategies";
 import { builtInStrategyKeys } from "../../lib/strategies/manifest-keys";
 import { open_location_zscore_reversion } from "../../lib/strategies/lib/open_location_zscore_reversion";
-
-function bar(time: number, open: number, high: number, low: number, close: number, volume = 1000): OHLCVData {
-    return { time: time as Time, open, high, low, close, volume };
-}
+import { bar } from "../helpers/strategy-fixtures";
 
 const NEW_DIVERGENCE_KEYS = [
     "open_location_zscore_reversion",

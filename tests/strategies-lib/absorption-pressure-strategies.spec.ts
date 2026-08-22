@@ -1,12 +1,9 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import type { OHLCVData, Time } from "../../lib/types/strategies";
+import type { OHLCVData } from "../../lib/types/strategies";
 import { builtInStrategyKeys } from "../../lib/strategies/manifest-keys";
 import { robust_zscore_typical_fade } from "../../lib/strategies/lib/robust_zscore_typical_fade";
-
-function bar(time: number, open: number, high: number, low: number, close: number, volume = 1000): OHLCVData {
-    return { time: time as Time, open, high, low, close, volume };
-}
+import { bar } from "../helpers/strategy-fixtures";
 
 const NEW_ABSORPTION_KEYS = [
     "robust_zscore_typical_fade",

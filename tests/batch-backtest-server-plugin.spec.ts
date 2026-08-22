@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import assert from "node:assert/strict";
 import { describe, it, after, afterEach, before } from "node:test";
 import { sep } from "node:path";
 import { Readable } from "node:stream";
@@ -739,10 +740,7 @@ describe("batch-backtest server plugin processRunBatch", () => {
 describe("batch-backtest server plugin releaseLastResults", () => {
     it("is idempotent and safe to call when nothing is retained", async () => {
         await releaseLastResults("test_idempotent_1");
-        await releaseLastResults("test_idempotent_2");
-        // No throw + heapUsedMb is logged internally; nothing to assert beyond
-        // survival, since the retained state is module-private.
-        expect(true).to.equal(true);
+        await assert.doesNotReject(releaseLastResults("test_idempotent_2"));
     });
 });
 

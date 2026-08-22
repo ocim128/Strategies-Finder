@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { OHLCVData } from "../lib/types/strategies";
+import { OHLCVData, Time } from "../lib/types/strategies";
 import {
     buildOpenLocationSeries,
     buildOpenGapPctSeries,
 } from "../lib/strategies/lib/price-action-frequency-core";
 
 function bar(time: number, open: number, high: number, low: number, close: number): OHLCVData {
-    return { time, open, high, low, close, volume: 1000 };
+    return { time: time as Time, open, high, low, close, volume: 1000 };
 }
 
 test("buildOpenLocationSeries measures the open against the PRIOR bar's range", () => {

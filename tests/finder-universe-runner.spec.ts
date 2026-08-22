@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
+import { performance } from "node:perf_hooks";
 import { runFinderUniverseExecution } from "../lib/finder/finder-runner-universe";
 import { buildFinderUniverseCandidate, FinderUniverseSurvivorRanker, sortFinderUniverseCandidates } from "../lib/finder/finder-universe-metrics";
 import type { CapitalSettings } from "../lib/types/backtest";
@@ -1163,30 +1164,36 @@ describe("Finder universe runner", () => {
             },
         };
 
-        await runFinderUniverseExecution(
-            {
-                interval: "5m",
-                options,
-                settings,
-                capitalSettings,
-                selectedStrategy: {
-                    key: "universe_test",
-                    name: testStrategy.name,
-                    strategy: testStrategy,
+        const realNow = performance.now;
+        performance.now = () => 0;
+        try {
+            await runFinderUniverseExecution(
+                {
+                    interval: "5m",
+                    options,
+                    settings,
+                    capitalSettings,
+                    selectedStrategy: {
+                        key: "universe_test",
+                        name: testStrategy.name,
+                        strategy: testStrategy,
+                    },
+                    loadDataset: async (symbol) => datasets.get(symbol) ?? [],
+                    generateParamSets: () => Array.from({ length: 20 }, (_v, i) => ({ threshold: (i % 5) + 1 })),
                 },
-                loadDataset: async (symbol) => datasets.get(symbol) ?? [],
-                generateParamSets: () => Array.from({ length: 20 }, (_v, i) => ({ threshold: (i % 5) + 1 })),
-            },
-            {
-                setProgress: () => {},
-                setStatus: () => {},
-                yieldControl: async () => {},
-                isCancelled: () => false,
-                onResultsUpdate: () => {
-                    updateCount += 1;
-                },
-            }
-        );
+                {
+                    setProgress: () => {},
+                    setStatus: () => {},
+                    yieldControl: async () => {},
+                    isCancelled: () => false,
+                    onResultsUpdate: () => {
+                        updateCount += 1;
+                    },
+                }
+            );
+        } finally {
+            performance.now = realNow;
+        }
 
         // 20 candidates pass filters; previously updateCount would be ~20.
         // With the 750ms throttle and an in-memory run, it should be a small

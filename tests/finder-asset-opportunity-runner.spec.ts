@@ -1089,7 +1089,12 @@ describe("Asset Opportunity runner", () => {
             },
         };
         const output = await runAssetOpportunitySearch(makeInput({
-            options: makeOptions({ assetOpportunity: { oosIgnoreLastBars: 2 } as FinderAssetOpportunityOptions }),
+            options: makeOptions({ assetOpportunity: {
+                symbols: ["SC_HOLDOUT_REUSE"],
+                candidatePoolSize: 1,
+                minFreshSupport: 1,
+                oosIgnoreLastBars: 2,
+            } }),
             selectedStrategy: { key: "signal_close_holdout_reuse", name: strategy.name, strategy },
             assets: [{ symbol: "SC_HOLDOUT_REUSE", data: candles }],
             runIsSearch: async (args) => {
@@ -1136,9 +1141,11 @@ describe("Asset Opportunity runner", () => {
         const output = await runAssetOpportunitySearch(makeInput({
             options: makeOptions({
                 assetOpportunity: {
+                    symbols: ["BOUNDED_NEXT_OPEN"],
                     evalLastBars: 4,
                     oosIgnoreLastBars: 2,
                     candidatePoolSize: 1,
+                    minFreshSupport: 1,
                 },
             }),
             selectedStrategy: { key: "bounded_fresh_signal", name: strategy.name, strategy },
@@ -1186,9 +1193,11 @@ describe("Asset Opportunity runner", () => {
         const output = await runAssetOpportunitySearch(makeInput({
             options: makeOptions({
                 assetOpportunity: {
+                    symbols: ["BOUNDED_NEXT_OPEN"],
                     evalLastBars: 4,
                     oosIgnoreLastBars: 2,
                     candidatePoolSize: 1,
+                    minFreshSupport: 1,
                 },
             }),
             settings: { ...settings, executionModel: "next_open", tradeDirection: "long" },

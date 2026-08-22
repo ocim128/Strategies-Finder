@@ -18,30 +18,19 @@
 
 import { evaluatePolymarketOutcomes } from "../lib/polymarket-outcome-evaluator";
 import { parseTimeToUnixSeconds } from "../lib/time-normalization";
+import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { OHLCVData, Strategy, Signal } from "../lib/types/strategies";
 import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
-let testCount = 0;
-let passCount = 0;
-let failCount = 0;
-
 function ok(cond: boolean, label: string): void {
-    testCount++;
-    if (cond) {
-        passCount++;
-        console.log(`  ✓ ${label}`);
-    } else {
-        failCount++;
-        console.error(`  ✗ ${label}`);
-    }
+    assert.ok(cond, label);
 }
 
 function eq<T>(a: T, b: T, label: string): void {
-    const same = JSON.stringify(a) === JSON.stringify(b);
-    if (!same) console.error(`    Expected: ${JSON.stringify(b)}\n    Got:      ${JSON.stringify(a)}`);
-    ok(same, label);
+    assert.deepEqual(a, b, label);
 }
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────
@@ -86,6 +75,8 @@ function makeFixedStrategy(signals: Signal[]): Strategy {
         execute: () => signals,
     };
 }
+
+test("polymarket outcome evaluator", () => {
 
 // ─── 1. Timestamp normalisation ───────────────────────────────────────────
 
@@ -322,11 +313,4 @@ console.log("\n[9] Missing rows do not inflate coverage");
 
 // ─── Summary ─────────────────────────────────────────────────────────────
 
-console.log(`\n${"─".repeat(60)}`);
-console.log(`Tests: ${testCount}  Pass: ${passCount}  Fail: ${failCount}`);
-if (failCount > 0) {
-    console.error(`\n${failCount} test(s) FAILED`);
-    process.exitCode = 1;
-} else {
-    console.log("\nAll tests passed ✓");
-}
+});

@@ -15,28 +15,19 @@ import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
 import type { Trade } from "../lib/types/strategies";
 import { resolveBacktestSettingsFromRaw } from "../lib/backtest-settings-resolver";
 import { normalizeStoredHuntRunSettings, DEFAULT_HUNT_RUN_SETTINGS } from "../lib/hunt/hunt-model";
-
-let testCount = 0;
-let passCount = 0;
-let failCount = 0;
+import assert from "node:assert/strict";
+import { test } from "node:test";
 
 function ok(cond: boolean, label: string): void {
-    testCount++;
-    if (cond) {
-        passCount++;
-        console.log(`  ✓ ${label}`);
-    } else {
-        failCount++;
-        console.error(`  ✗ ${label}`);
-    }
+    assert.ok(cond, label);
 }
 
 function eq<T>(actual: T, expected: T, label: string): void {
-    ok(actual === expected, `${label} → ${JSON.stringify(actual)} === ${JSON.stringify(expected)}`);
+    assert.deepEqual(actual, expected, label);
 }
 
 function approx(actual: number, expected: number, tolerance: number, label: string): void {
-    ok(Math.abs(actual - expected) <= tolerance, `${label} → ${actual} ≈ ${expected} (±${tolerance})`);
+    assert.ok(Math.abs(actual - expected) <= tolerance, label);
 }
 
 function makeOutcome(overrides: Partial<PolymarketOutcomeRow> = {}): PolymarketOutcomeRow {
@@ -92,6 +83,8 @@ function makePricePoint(overrides: Partial<PolymarketPricePoint> = {}): Polymark
         ...overrides,
     };
 }
+
+test("polymarket signal exit evaluator", () => {
 
 console.log("\n=== resolveEffectivePolymarketExitMode ===");
 
@@ -1165,9 +1158,4 @@ console.log("\n=== hunt model: polymarketExitMode ===");
     eq(withInvalid.polymarketExitMode, "resolve_hold", "hunt invalid → resolve_hold");
 }
 
-console.log("\n=== summary ===");
-console.log(`  ${passCount}/${testCount} passed`);
-if (failCount > 0) {
-    console.error(`  ${failCount} FAILED`);
-    process.exit(1);
-}
+});

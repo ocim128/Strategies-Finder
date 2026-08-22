@@ -638,12 +638,19 @@ describe("finder Asset Opportunity batch parallel execution", () => {
             minFreshSupport: 1,
         }));
         let stopRequested = false;
-        const sweep = runAssetOpportunityBatchSweep({
+        let started = 0;
+        // Flip the shared token after both parked tasks are assigned. This
+        // drives the same cancellation poll/stop path without wall-clock time.
+        const deterministicSweep = runAssetOpportunityBatchSweep({
             tasks,
             runnerCount: 2,
             createRunner: createInProcessRunnerFactory({
                 datasets,
                 parkUntilStopTasks: new Set([0, 1]),
+                onTaskStart: () => {
+                    started += 1;
+                    if (started === 2) stopRequested = true;
+                },
             }),
             onIterationResult: async () => {
                 throw new Error("parked tasks must be stopped before completion");
@@ -652,9 +659,7 @@ describe("finder Asset Opportunity batch parallel execution", () => {
             onRunLog: () => {},
             isCancelled: () => stopRequested,
         });
-
-        setTimeout(() => { stopRequested = true; }, 10);
-        const result = await sweep;
+        const result = await deterministicSweep;
         expect(result.cancelled).to.equal(true);
         expect(result.completedIterations).to.equal(0);
     });
