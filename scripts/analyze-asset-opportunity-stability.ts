@@ -386,6 +386,18 @@ function main(): void {
     };
 
     const stableCells: Array<{ sort: string; topK: number }> = [];
+    interface RuleRow {
+        sort: string;
+        topK: number;
+        files: number;
+        meanDelta: number;
+        medianDelta: number;
+        signStability: number;
+        trim10: number;
+        boot: { p5: number; p50: number; p95: number; positiveRate: number };
+        verdict: string;
+    }
+    const ruleRows: RuleRow[] = [];
     for (const sort of sorts) {
         for (const topK of topKList) {
             const list = samples.get(sort)?.get(topK)?.get(primaryHorizon);
@@ -397,32 +409,54 @@ function main(): void {
                 ? "STABLE+"
                 : boot.p50 > 0 && signStability >= 0.55 ? "WEAK+" : "UNSTABLE";
             if (verdict !== "UNSTABLE") stableCells.push({ sort, topK });
-            lines.push([
+            ruleRows.push({
                 sort,
-                String(topK),
-                String(deltas.length),
-                formatDelta(mean(deltas)),
-                formatDelta(median(deltas)),
-                formatRate(signStability),
-                formatDelta(trimmedMean(deltas, 0.1)),
-                formatDelta(boot.p5),
-                formatDelta(boot.p50),
-                formatDelta(boot.p95),
-                formatRate(boot.positiveRate),
+                topK,
+                files: deltas.length,
+                meanDelta: mean(deltas),
+                medianDelta: median(deltas),
+                signStability,
+                trim10: trimmedMean(deltas, 0.1),
+                boot,
                 verdict,
-            ].join(" | "));
-            (json.cells as Array<Record<string, unknown>>).push({
-                sort, topK, horizon: primaryHorizon, files: deltas.length,
-                mean: mean(deltas), median: median(deltas), signStability,
-                trimmedMean: trimmedMean(deltas, 0.1), bootstrap: boot, verdict,
             });
         }
+    }
+    // Best cells first: most positive mean delta at the top of every table.
+    ruleRows.sort((left, right) => right.meanDelta - left.meanDelta);
+    const bestMeanBySort = new Map<string, number>();
+    for (const row of ruleRows) {
+        bestMeanBySort.set(row.sort, Math.max(bestMeanBySort.get(row.sort) ?? -Infinity, row.meanDelta));
+    }
+    const orderedSorts = [...sorts].sort(
+        (left, right) => (bestMeanBySort.get(right) ?? -Infinity) - (bestMeanBySort.get(left) ?? -Infinity),
+    );
+    for (const row of ruleRows) {
+        lines.push([
+            row.sort,
+            String(row.topK),
+            String(row.files),
+            formatDelta(row.meanDelta),
+            formatDelta(row.medianDelta),
+            formatRate(row.signStability),
+            formatDelta(row.trim10),
+            formatDelta(row.boot.p5),
+            formatDelta(row.boot.p50),
+            formatDelta(row.boot.p95),
+            formatRate(row.boot.positiveRate),
+            row.verdict,
+        ].join(" | "));
+        (json.cells as Array<Record<string, unknown>>).push({
+            sort: row.sort, topK: row.topK, horizon: primaryHorizon, files: row.files,
+            mean: row.meanDelta, median: row.medianDelta, signStability: row.signStability,
+            trimmedMean: row.trim10, bootstrap: row.boot, verdict: row.verdict,
+        });
     }
 
     lines.push("");
     lines.push(`HORIZON SENSITIVITY (mean delta / %files positive)`);
     lines.push(`Sort | K | ${horizons.map((horizon) => `${horizon} bars`).join(" | ")}`);
-    for (const sort of sorts) {
+    for (const sort of orderedSorts) {
         for (const topK of topKList) {
             const byHorizon = samples.get(sort)?.get(topK);
             if (!byHorizon) continue;
@@ -448,7 +482,7 @@ function main(): void {
     }
     lines.push(`Sort | ${quartileLabels.join(" | ")}`);
     const lastK = topKList[topKList.length - 1]!;
-    for (const sort of sorts) {
+    for (const sort of orderedSorts) {
         const byHorizon = samples.get(sort)?.get(lastK)?.get(primaryHorizon);
         if (!byHorizon) continue;
         const cells = Array.from({ length: quartileCount }, (_, index) => {
@@ -463,7 +497,17 @@ function main(): void {
     }
 
     const report = lines.join("\n");
-    console.log(report);
+    // Console copy adds ANSI color (green positive / red negative, verdict
+    // highlights); the written .txt/.json stay plain so files stay clean.
+    const useColor = process.stdout.isTTY === true && process.env.NO_COLOR === undefined;
+    const colorize = (text: string): string => text
+        .replace(/STABLE\+/g, "\u001b[92mSTABLE+\u001b[0m")
+        .replace(/WEAK\+/g, "\u001b[32mWEAK+\u001b[0m")
+        .replace(/UNSTABLE/g, "\u001b[31mUNSTABLE\u001b[0m")
+        .replace(/[+-]\d+\.\d+%/g, (match) => match.startsWith("+")
+            ? `\u001b[32m${match}\u001b[0m`
+            : `\u001b[31m${match}\u001b[0m`);
+    console.log(useColor ? colorize(report) : report);
     if (outputPrefix) {
         fs.writeFileSync(`${outputPrefix}.txt`, `${report}\n`);
         fs.writeFileSync(`${outputPrefix}.json`, `${JSON.stringify(json, null, 2)}\n`);
