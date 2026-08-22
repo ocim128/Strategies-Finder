@@ -338,13 +338,14 @@ asset. It uses:
   sell, and `-1` means no bar index;
 - object-form signals when fields such as `triggerPrice`, `sizeFraction`, or
   `exitOnly` cannot be represented losslessly;
-- `dataEndIndex` to evaluate a prefix without sending a second prefix dataset;
+- `dataStartIndex` and `dataEndIndex` to evaluate a contiguous window from a
+  cached full dataset without sending a second sliced dataset;
 - shared content-keyed cache promises so an asset/window is uploaded once and
   reused across strategy batches and holdout iterations.
 
 The Rust server keeps each dataset as a workload boundary, builds a separate
-market series for it, validates `dataEndIndex`, and parallelizes the workloads
-with Rayon. It does not combine candles from different assets.
+market series for it, validates the data window bounds, and parallelizes the
+workloads with Rayon. It does not combine candles from different assets.
 
 ### Endpoint selection and summaries
 
@@ -407,7 +408,8 @@ Each workload has its own identity and dataset:
   "workloads": [{
     "id": "asset-1",
     "cacheId": "...",
-    "dataEndIndex": 500,
+    "dataStartIndex": 7500,
+    "dataEndIndex": 8000,
     "items": [{"id": "asset-1:candidate-1", "signals": []}],
     "lastDataTime": 123
   }],

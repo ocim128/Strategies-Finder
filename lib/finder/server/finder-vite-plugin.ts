@@ -318,6 +318,8 @@ function mergeAssetOpportunityChunkResults(
     const strategyBreakdown = [...strategyBreakdownByKey.values()]
         .sort((left, right) => right.durationMs - left.durationMs || left.strategyKey.localeCompare(right.strategyKey))
         .slice(0, 10);
+    const aggregateStrategyWorkMs = [...strategyBreakdownByKey.values()]
+        .reduce((total, entry) => total + entry.durationMs, 0);
     const engineUsage = {
         rustRequested: diagnostics.some((diagnostic) => diagnostic.engineUsage?.rustRequested === true),
         rustAttemptedRuns: sum(diagnostics.map((diagnostic) => diagnostic.engineUsage?.rustAttemptedRuns ?? 0)),
@@ -408,6 +410,13 @@ function mergeAssetOpportunityChunkResults(
             yielding: timingMax("yielding"),
             other: Math.max(0, totalDuration - dataLoading - dataPreparation - inSampleSearch
                 - freshEntryRechecks - oosValidation - resultReduction - winnerAnalytics),
+        },
+        timingSummary: {
+            wallClockMs: totalDuration,
+            aggregateStrategyWorkMs,
+            parallelism: totalDuration > 0
+                ? Number((aggregateStrategyWorkMs / totalDuration).toFixed(2))
+                : 0,
         },
         ...(loader ? { loader } : {}),
         strategyBreakdown,
@@ -1333,6 +1342,11 @@ async function runFinderAssetOpportunityWorkerSweep(
                         winnerAnalytics: 0,
                         yielding: 0,
                         other: 0,
+                    },
+                    timingSummary: {
+                        wallClockMs: 0,
+                        aggregateStrategyWorkMs: 0,
+                        parallelism: 0,
                     },
                 },
                 totals: {

@@ -949,6 +949,7 @@ struct ResolvedMultiAssetWorkload {
     data: Arc<Vec<OHLCV>>,
     items: Vec<crate::types::BatchBacktestItem>,
     last_data_time: Option<Time>,
+    data_start_index: Option<usize>,
     data_end_index: Option<usize>,
 }
 struct DecodedMultiAssetWorkload {
@@ -958,6 +959,7 @@ struct DecodedMultiAssetWorkload {
     last_data_time: Option<Time>,
     cache_id: Option<String>,
     generated_cache_id: Option<String>,
+    data_start_index: Option<usize>,
     data_end_index: Option<usize>,
 }
 struct MultiAssetWorkloadContext<'a> {
@@ -981,6 +983,7 @@ async fn resolve_multi_asset_workloads(
                 items,
                 last_data_time,
                 cache_id,
+                data_start_index,
                 data_end_index,
             } = workload;
             let data = if !data.is_empty() {
@@ -1023,6 +1026,7 @@ async fn resolve_multi_asset_workloads(
                 last_data_time,
                 cache_id,
                 generated_cache_id,
+                data_start_index,
                 data_end_index,
             })
         })
@@ -1070,21 +1074,22 @@ async fn resolve_multi_asset_workloads(
                 bar_count: data.len(),
             });
         }
-        if let Some(end) = workload.data_end_index {
-            if end == 0 || end > data.len() {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    format!(
-                        "Multi-asset workload '{}' has an invalid dataEndIndex",
-                        workload.id
-                    ),
-                ));
-            }
+        let start = workload.data_start_index.unwrap_or(0);
+        let end = workload.data_end_index.unwrap_or(data.len());
+        if start >= end || end > data.len() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Multi-asset workload '{}' has an invalid data window",
+                    workload.id
+                ),
+            ));
         }
         resolved.push(ResolvedMultiAssetWorkload {
             data,
             items: workload.items,
             last_data_time: workload.last_data_time,
+            data_start_index: workload.data_start_index,
             data_end_index: workload.data_end_index,
         });
     }
@@ -1112,8 +1117,9 @@ pub async fn multi_asset_opportunity_batch_handler(
         let contexts: Vec<MultiAssetWorkloadContext<'_>> = workloads
             .par_iter()
             .map(|workload| {
+                let start = workload.data_start_index.unwrap_or(0);
                 let end = workload.data_end_index.unwrap_or(workload.data.len());
-                let data = &workload.data[..end];
+                let data = &workload.data[start..end];
                 MultiAssetWorkloadContext {
                     data,
                     market_series: build_market_series(data),
@@ -1178,8 +1184,9 @@ pub async fn multi_asset_fresh_entry_batch_handler(
         workloads
             .par_iter()
             .flat_map(|workload| {
+                let start = workload.data_start_index.unwrap_or(0);
                 let end = workload.data_end_index.unwrap_or(workload.data.len());
-                let data = &workload.data[..end];
+                let data = &workload.data[start..end];
                 let market_series = build_market_series(data);
                 workload
                     .items

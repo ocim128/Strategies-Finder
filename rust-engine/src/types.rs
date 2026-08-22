@@ -682,6 +682,8 @@ pub struct MultiAssetBatchWorkload {
     #[serde(default)]
     pub cache_id: Option<String>,
     #[serde(default)]
+    pub data_start_index: Option<usize>,
+    #[serde(default)]
     pub data_end_index: Option<usize>,
 }
 /// Multi-asset batch request. Each workload has its own OHLCV data and item

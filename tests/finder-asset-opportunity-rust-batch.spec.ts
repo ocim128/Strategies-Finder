@@ -814,6 +814,135 @@ describe("Asset Opportunity Rust batch contract", () => {
         expect(executionGroupSizes).to.deep.equal([2]);
     });
 
+    it("preserves the cached dataset window start and end in grouped requests", async () => {
+        let observedWindow: { start?: number; end?: number } | undefined;
+        const metric = {
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: null,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+        };
+        const client = {
+            getDataCacheKey: () => "windowed-dataset",
+            cacheMultiAssetDataWithStatus: async (group: Array<{ id: string }>) => ({
+                ok: true as const,
+                response: { datasets: group.map((entry) => ({ id: entry.id, cacheId: `cache:${entry.id}` })) },
+                requestBytes: 1,
+                elapsedMs: 1,
+            }),
+            runMultiAssetAssetOpportunityBatchBacktestWithStatus: async (workloads: Array<{
+                dataStartIndex?: number;
+                dataEndIndex?: number;
+                items: Array<{ id: string }>;
+            }>) => {
+                observedWindow = {
+                    start: workloads[0]?.dataStartIndex,
+                    end: workloads[0]?.dataEndIndex,
+                };
+                return {
+                    ok: true as const,
+                    response: {
+                        processingTimeMs: 1,
+                        results: workloads.flatMap((workload) => workload.items.map((item) => ({
+                            id: item.id,
+                            result: metric,
+                            selectionResult: metric,
+                            endpointAdjusted: false,
+                            endpointRemovedTrades: 0,
+                        }))),
+                    },
+                    requestBytes: 1,
+                    elapsedMs: 1,
+                };
+            },
+        } as any;
+        const coordinator = createAssetOpportunityRustMultiBatchCoordinator(client);
+        const data = makeCandles(8);
+        const result = await coordinator.dispatchCandidate({
+            client,
+            data: data.slice(2, 6),
+            cacheData: data,
+            datasetStartIndex: 2,
+            datasetEndIndex: 6,
+            items: [{ id: "windowed", signals: [] }],
+            initialCapital: 10_000,
+            positionSizePercent: 100,
+            commissionPercent: 0,
+            baseSettings: eligibleSettings,
+            maxRequestBytes: 16 * 1024 * 1024,
+        });
+
+        expect(result.status).to.equal("completed");
+        expect(observedWindow).to.deep.equal({ start: 2, end: 6 });
+    });
+
+    it("maps a trailing IS slice onto the cached full dataset", async () => {
+        const strategy: Strategy = {
+            name: "Windowed Rust fixture",
+            description: "deterministic signals",
+            defaultParams: { marker: 1 },
+            paramLabels: { marker: "Marker" },
+            execute: () => makeSignals(),
+        };
+        const fullData = makeCandles(8);
+        const windowData = fullData.slice(2, 6);
+        let capturedInput: any;
+        const rustMultiAssetBatch = {
+            dispatchCandidate: async (input: any) => {
+                capturedInput = input;
+                const result = makeResult(0);
+                const candidate = input.items[0];
+                return {
+                    status: "completed" as const,
+                    results: new Map([[candidate.id, {
+                        id: candidate.id,
+                        result,
+                        selectionResult: result,
+                        endpointAdjusted: false,
+                        endpointRemovedTrades: 0,
+                    }]]),
+                    requests: 1,
+                    requestBytes: 1,
+                    latencyMs: 1,
+                };
+            },
+            dispatchFresh: async () => ({ status: "cancelled" as const, reason: "cancelled" as const, requests: 0, requestBytes: 0, latencyMs: 0 }),
+        };
+        const output = await runServerAssetIsSearch({
+            ohlcvData: windowData,
+            fullSignalData: fullData,
+            symbol: "RUST",
+            interval: "5m",
+            options: makeOptions(),
+            settings: eligibleSettings,
+            capitalSettings,
+            selectedStrategy: { key: "windowed_rust_fixture", name: strategy.name, strategy },
+            generateParamSets: () => [{ marker: 1 }],
+            useRustEnginePreference: true,
+            confirmationStrategiesLoaded: true,
+            rustBatchClient: {} as AssetOpportunityRustBatchClient,
+            rustMultiAssetBatch: rustMultiAssetBatch as any,
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+        });
+
+        expect(output.results).to.have.length(1);
+        expect(capturedInput.data).to.equal(windowData);
+        expect(capturedInput.cacheData).to.equal(fullData);
+        expect(capturedInput.datasetStartIndex).to.equal(2);
+        expect(capturedInput.datasetEndIndex).to.equal(6);
+    });
+
     it("reuses the shared dataset cache across holdout coordinators", async () => {
         const cacheGroupSizes: number[] = [];
         const metric = {

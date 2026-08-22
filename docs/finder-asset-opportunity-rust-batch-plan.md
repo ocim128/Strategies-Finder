@@ -169,8 +169,9 @@ workloads, while cache bootstrap requests are limited to 32 datasets. Content-
 keyed cache promises ensure each dataset/window is uploaded once and reused
 across strategies and fresh-entry replay. OHLCV and ordinary signals use packed
 row-major transport; unsupported signal fields keep the lossless object form.
-The adjacent Rust service resolves raw or cached workloads, slices
-`dataEndIndex` for candidate prefixes, and parallelizes workloads with Rayon.
+The adjacent Rust service resolves raw or cached workloads, slices the
+`dataStartIndex`/`dataEndIndex` window for candidate evaluation, and
+parallelizes workloads with Rayon.
 
 The cache is bounded by both 512 entries and 2,000,000 retained bars. This
 covers the observed 499-asset/3,589-bar run without evictions while preventing

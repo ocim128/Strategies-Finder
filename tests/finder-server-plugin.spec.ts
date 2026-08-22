@@ -1050,6 +1050,11 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
             expect(done.assetDiagnostics!.work!.candidateEvaluationsAttempted).to.be.greaterThan(0);
             expect(done.assetDiagnostics!.work!.candidateEvaluationsCompleted).to.be.greaterThan(0);
             expect(done.assetDiagnostics!.timingsMs!.inSampleSearch).to.be.at.least(0);
+            expect(done.assetDiagnostics!.timingSummary).to.deep.include({
+                wallClockMs: done.assetDiagnostics!.timingsMs!.total,
+            });
+            expect(done.assetDiagnostics!.timingSummary!.aggregateStrategyWorkMs).to.be.at.least(0);
+            expect(done.assetDiagnostics!.timingSummary!.parallelism).to.be.at.least(0);
             expect(done.assetDiagnostics!.strategyBreakdown).to.have.length(2);
             expect(done.assetDiagnostics!.slowestAssets).to.have.length(4);
             expect(done.assetDiagnostics!.engineUsage!.rustRequested).to.equal(false);

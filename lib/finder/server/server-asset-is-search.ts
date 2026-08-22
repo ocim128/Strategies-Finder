@@ -55,6 +55,7 @@ import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-fi
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 import { rustEngine } from "../../rust-engine-client";
 import { debugLogger } from "../../debug-logger";
+import { timeKey } from "../../strategies/backtest/backtest-utils";
 import {
     dispatchAssetOpportunityRustBatch,
     buildAssetOpportunityRustDatasetCacheKey,
@@ -585,6 +586,49 @@ type PreparedRustBatchCandidate = {
     backtestSettings: BacktestSettings;
 };
 
+type RustDatasetWindow = {
+    startIndex: number;
+    endIndex: number;
+};
+
+/**
+ * Resolve the sliced IS window inside the full series used by the persistent
+ * Rust cache. Rust receives the full cached series plus these bounds; without
+ * a start bound, a trailing evalLastBars window would be replayed from bar 0.
+ */
+function resolveRustDatasetWindow(
+    fullData: OHLCVData[] | undefined,
+    windowData: OHLCVData[],
+): RustDatasetWindow | null {
+    if (!fullData || windowData.length === 0 || windowData.length > fullData.length) return null;
+    const first = windowData[0];
+    const last = windowData[windowData.length - 1];
+    if (!first || !last) return null;
+    let lastIndex = fullData.lastIndexOf(last);
+    if (lastIndex < 0) {
+        const lastTimeKey = timeKey(last.time);
+        for (let index = fullData.length - 1; index >= 0; index -= 1) {
+            if (timeKey(fullData[index]!.time) === lastTimeKey) {
+                lastIndex = index;
+                break;
+            }
+        }
+    }
+    if (lastIndex < 0) return null;
+    const endIndex = lastIndex + 1;
+    const startIndex = endIndex - windowData.length;
+    if (startIndex < 0) return null;
+    const fullLast = fullData[endIndex - 1];
+    const fullFirst = fullData[startIndex];
+    if (
+        !fullLast
+        || !fullFirst
+        || timeKey(fullLast.time) !== timeKey(last.time)
+        || timeKey(fullFirst.time) !== timeKey(first.time)
+    ) return null;
+    return { startIndex, endIndex };
+}
+
 async function runServerAssetIsSearchWithRustBatch(
     args: RustBatchSearchInput,
 ): Promise<ServerAssetIsSearchOutput> {
@@ -759,8 +803,11 @@ async function runServerAssetIsSearchWithRustBatch(
         const baseSettings = rustSettingsFor(preparedCandidates[0]!);
         let cacheId: string | undefined;
         let cacheKey: string | undefined;
-        const rustDataset = args.rustMultiAssetBatch
-            ? input.fullSignalData ?? input.ohlcvData
+        const rustDatasetWindow = args.rustMultiAssetBatch
+            ? resolveRustDatasetWindow(input.fullSignalData, input.ohlcvData)
+            : null;
+        const rustDataset = rustDatasetWindow && input.fullSignalData
+            ? input.fullSignalData
             : input.ohlcvData;
         if (!args.rustMultiAssetBatch
             && args.rustBatchDatasetCache
@@ -788,8 +835,12 @@ async function runServerAssetIsSearchWithRustBatch(
             : dispatchAssetOpportunityRustBatch)({
             client: args.rustBatchClient,
             data: input.ohlcvData,
-            ...(args.rustMultiAssetBatch && input.fullSignalData
-                ? { cacheData: input.fullSignalData }
+            ...(rustDatasetWindow && input.fullSignalData
+                ? {
+                    cacheData: input.fullSignalData,
+                    datasetStartIndex: rustDatasetWindow.startIndex,
+                    datasetEndIndex: rustDatasetWindow.endIndex,
+                }
                 : {}),
             items: preparedCandidates.map<AssetOpportunityRustBatchItem>((candidate) => ({
                 id: candidate.id,
@@ -809,9 +860,6 @@ async function runServerAssetIsSearchWithRustBatch(
             maxRequestBytes: args.rustBatchFeatureConfig.maxRequestBytes,
             maxResponseBytes: args.rustBatchFeatureConfig.maxResponseBytes,
             ...(cacheId ? { cacheId } : {}),
-            ...(args.rustMultiAssetBatch && input.fullSignalData
-                ? { datasetEndIndex: input.ohlcvData.length }
-                : {}),
             signal: input.abortSignal,
         });
 

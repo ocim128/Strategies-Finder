@@ -769,7 +769,11 @@ export interface FinderAssetOpportunityDiagnostics {
             avg: number;
         };
     };
-    /** Wall-clock phase timings. These identify where an optimization can pay off. */
+    /**
+     * `total` is wall-clock time for the run. The phase values are inclusive
+     * child-work timings and can exceed `total` when assets or strategies run
+     * concurrently.
+     */
     timingsMs?: {
         total: number;
         dataLoading: number;
@@ -783,6 +787,13 @@ export interface FinderAssetOpportunityDiagnostics {
         winnerAnalytics: number;
         yielding: number;
         other: number;
+    };
+    /** Explicit timing semantics for parallel Asset Opportunity runs. */
+    timingSummary?: {
+        wallClockMs: number;
+        aggregateStrategyWorkMs: number;
+        /** Aggregate strategy work divided by wall-clock time. */
+        parallelism: number;
     };
     /** Detailed synthetic/data-loader counters for server-side runs. */
     loader?: BatchDatasetLoadDiagnostics;

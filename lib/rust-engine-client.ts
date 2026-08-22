@@ -116,6 +116,7 @@ export interface RustMultiAssetBatchWorkload {
     }>;
     lastDataTime?: Time | null;
     cacheId?: string;
+    dataStartIndex?: number;
     dataEndIndex?: number;
 }
 

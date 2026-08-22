@@ -851,6 +851,8 @@ export async function runAssetOpportunityIteration(
             timingsMs: { ...assetLoadContext.diagnostics.timingsMs },
         }
         : undefined;
+    const aggregateStrategyWorkMs = [...strategyBreakdown.values()]
+        .reduce((total, stats) => total + stats.durationMs, 0);
     const assetDiagnostics: FinderAssetOpportunityDiagnostics = {
         totalAssets,
         assetsWithFreshEntry,
@@ -885,6 +887,13 @@ export async function runAssetOpportunityIteration(
             winnerAnalytics: roundDiagnosticMs(winnerAnalyticsMs),
             yielding: roundDiagnosticMs(yieldingMs),
             other: roundDiagnosticMs(Math.max(0, totalDurationMs - measuredPhaseMs)),
+        },
+        timingSummary: {
+            wallClockMs: roundDiagnosticMs(totalDurationMs),
+            aggregateStrategyWorkMs: roundDiagnosticMs(aggregateStrategyWorkMs),
+            parallelism: totalDurationMs > 0
+                ? Number((aggregateStrategyWorkMs / totalDurationMs).toFixed(2))
+                : 0,
         },
         ...(loaderDiagnostics ? { loader: loaderDiagnostics } : {}),
         strategyBreakdown: [...strategyBreakdown.entries()]

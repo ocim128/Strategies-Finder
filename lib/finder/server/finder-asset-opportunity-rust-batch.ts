@@ -162,6 +162,7 @@ export interface AssetOpportunityRustBatchDispatchInput {
     maxRequestBytes: number;
     maxResponseBytes?: number;
     cacheId?: string;
+    datasetStartIndex?: number;
     datasetEndIndex?: number;
     signal?: AbortSignal;
 }
@@ -197,6 +198,7 @@ export interface AssetOpportunityRustFreshBatchDispatchInput {
     maxRequestBytes: number;
     maxResponseBytes?: number;
     cacheId?: string;
+    datasetStartIndex?: number;
     signal?: AbortSignal;
 }
 

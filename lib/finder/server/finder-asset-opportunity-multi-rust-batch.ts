@@ -279,6 +279,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
             ...(entry.input.cacheId
                 ? { cacheId: entry.input.cacheId }
                 : { data: entry.input.cacheData ?? entry.input.data }),
+            ...(entry.input.datasetStartIndex !== undefined ? { dataStartIndex: entry.input.datasetStartIndex } : {}),
             ...(entry.input.datasetEndIndex !== undefined ? { dataEndIndex: entry.input.datasetEndIndex } : {}),
             items: entry.input.items.map((item) => ({
                 ...item,
@@ -380,6 +381,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
             ...(entry.input.cacheId
                 ? { cacheId: entry.input.cacheId }
                 : { data: entry.input.cacheData ?? entry.input.data }),
+            ...(entry.input.datasetStartIndex !== undefined ? { dataStartIndex: entry.input.datasetStartIndex } : {}),
             ...(entry.input.datasetEndIndex !== undefined ? { dataEndIndex: entry.input.datasetEndIndex } : {}),
             items: entry.input.items.map((item) => ({
                 ...item,

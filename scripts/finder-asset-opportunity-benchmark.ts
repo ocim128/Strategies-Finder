@@ -391,6 +391,7 @@ async function run(useRustEnginePreference: boolean, datasets: Map<string, OHLCV
             }
             : {}),
         diagnosticsMs: output.assetDiagnostics.timingsMs,
+        timingSummary: output.assetDiagnostics.timingSummary,
         engineUsage: output.totals.engineUsage,
         results: output.results.length,
         progressMonotonic: progressValues.every((value, index) => index === 0 || value >= progressValues[index - 1]!),
