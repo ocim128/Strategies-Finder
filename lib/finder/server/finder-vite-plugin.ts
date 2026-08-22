@@ -2015,6 +2015,7 @@ export async function processFinderAssetOpportunityBatchRun(
         // symbol loads once for the whole sequential sweep.
         const assetLoadContext = createServerFinderAssetOpportunityLoadContext(totalAssets);
         const rustBatchDatasetCache = new Map<string, Promise<string | null>>();
+        const paramSetCache = new Map<string, StrategyParams[]>();
         const throttleProgressWrite = createProgressEventThrottle();
 
         for (let iterationIndex = 0; iterationIndex < totalIterations; iterationIndex += 1) {
@@ -2050,6 +2051,7 @@ export async function processFinderAssetOpportunityBatchRun(
                         options: buildIterationOptions(holdoutBars),
                         assetLoadContext,
                         rustBatchDatasetCache,
+                        paramSetCache,
                     },
                     {
                         onProgress: (progress) => {

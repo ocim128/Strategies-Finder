@@ -51,6 +51,27 @@ const ASSET_OPPORTUNITY_RUN_PAIR_CACHE_MAX_ENTRIES = cacheBudget.pairCacheMaxEnt
     ? 512
     : 256;
 
+/**
+ * Capacity for synthetic pairs in a batch holdout run. Pair requests are
+ * revisited in the same order on every holdout, so an LRU smaller than the
+ * worker's assigned symbol set degenerates into a miss on every sweep. Use
+ * the existing full-dataset memory budget as the upper bound; the pair cache
+ * is still bounded when a worker cannot retain its whole partition.
+ */
+export function resolveAssetOpportunityPairCacheCapacity(
+    symbolCount: number,
+    systemMemoryBytes?: number,
+): number {
+    const normalizedSymbolCount = Math.max(1, Math.floor(symbolCount));
+    return Math.max(
+        1,
+        Math.min(
+            normalizedSymbolCount,
+            resolveAssetOpportunityDatasetCacheCapacity(normalizedSymbolCount, systemMemoryBytes),
+        ),
+    );
+}
+
 // The bounded-cache startup prune is triggered lazily by the disk-cache module
 // on the first write (see `storeSyntheticPair` → `maybePruneAfterWrite`), NOT at
 // import time. Running it at import time would prune the real cache directory
@@ -120,9 +141,12 @@ export async function loadServerFinderDataset(
  * cache would only add run-length retention.
  */
 export function createServerFinderAssetOpportunityLoadContext(symbolCount?: number): BatchDatasetLoadContext {
+    const pairCacheMaxEntries = symbolCount === undefined
+        ? ASSET_OPPORTUNITY_RUN_PAIR_CACHE_MAX_ENTRIES
+        : resolveAssetOpportunityPairCacheCapacity(symbolCount);
     return {
         legCache: new SyntheticLegCache(ASSET_OPPORTUNITY_RUN_LEG_CACHE_MAX_ENTRIES),
-        pairCache: new SyntheticLegCache(ASSET_OPPORTUNITY_RUN_PAIR_CACHE_MAX_ENTRIES),
+        pairCache: new SyntheticLegCache(pairCacheMaxEntries),
         preferInMemorySyntheticPairs: true,
         diagnostics: createBatchDatasetLoadDiagnostics(),
         ...(symbolCount !== undefined

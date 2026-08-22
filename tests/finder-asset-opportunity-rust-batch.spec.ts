@@ -814,6 +814,129 @@ describe("Asset Opportunity Rust batch contract", () => {
         expect(executionGroupSizes).to.deep.equal([2]);
     });
 
+    it("reuses the shared dataset cache across holdout coordinators", async () => {
+        const cacheGroupSizes: number[] = [];
+        const metric = {
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: null,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+        };
+        const client = {
+            getDataCacheKey: (data: OHLCVData[]) => String(data[0]?.time ?? "empty"),
+            cacheMultiAssetDataWithStatus: async (group: Array<{ id: string; data: OHLCVData[] }>) => {
+                cacheGroupSizes.push(group.length);
+                return {
+                    ok: true as const,
+                    response: {
+                        datasets: group.map((entry) => ({ id: entry.id, cacheId: `cache:${entry.id}` })),
+                    },
+                    requestBytes: 1,
+                    elapsedMs: 1,
+                };
+            },
+            runMultiAssetAssetOpportunityBatchBacktestWithStatus: async (workloads: Array<{
+                items: Array<{ id: string }>;
+            }>) => {
+                return {
+                    ok: true as const,
+                    response: {
+                        processingTimeMs: 1,
+                        results: workloads.flatMap((workload) => workload.items.map((item) => ({
+                            id: item.id,
+                            result: metric,
+                            selectionResult: metric,
+                            endpointAdjusted: false,
+                            endpointRemovedTrades: 0,
+                        }))),
+                    },
+                    requestBytes: 1,
+                    elapsedMs: 1,
+                };
+            },
+        } as any;
+        const sharedDatasetCache = new Map<string, Promise<string | null>>();
+        const data = makeCandles(8);
+        const makeInput = (id: string) => ({
+            client,
+            data,
+            items: [{ id, signals: [] }],
+            initialCapital: 10_000,
+            positionSizePercent: 100,
+            commissionPercent: 0,
+            baseSettings: eligibleSettings,
+            lastDataTime: data[data.length - 1]?.time ?? null,
+            maxRequestBytes: 16 * 1024 * 1024,
+            maxResponseBytes: 128 * 1024 * 1024,
+        });
+
+        await createAssetOpportunityRustMultiBatchCoordinator(client, { datasetCache: sharedDatasetCache })
+            .dispatchCandidate(makeInput("first"));
+        await createAssetOpportunityRustMultiBatchCoordinator(client, { datasetCache: sharedDatasetCache })
+            .dispatchCandidate(makeInput("second"));
+
+        expect(cacheGroupSizes).to.deep.equal([1]);
+    });
+
+    it("drops a shared cache ID after multi-batch eviction", async () => {
+        let cacheCalls = 0;
+        let multiCalls = 0;
+        let rawCalls = 0;
+        const data = makeCandles(8);
+        const client = {
+            getDataCacheKey: () => "same-dataset",
+            cacheMultiAssetDataWithStatus: async (group: Array<{ id: string }>) => {
+                cacheCalls += group.length;
+                return {
+                    ok: true as const,
+                    response: { datasets: group.map((entry) => ({ id: entry.id, cacheId: `cache:${entry.id}` })) },
+                    requestBytes: 1,
+                    elapsedMs: 1,
+                };
+            },
+            runMultiAssetAssetOpportunityBatchBacktestWithStatus: async () => {
+                multiCalls += 1;
+                return { ok: false as const, reason: "http_error" as const, requestBytes: 1 };
+            },
+            runBatchBacktestWithStatus: async () => {
+                rawCalls += 1;
+                return { ok: true as const, response: makeRustResponse(["candidate"]), requestBytes: 1, elapsedMs: 1 };
+            },
+        } as any;
+        const sharedDatasetCache = new Map<string, Promise<string | null>>();
+        const makeInput = (id: string) => ({
+            client,
+            data,
+            items: [{ id, signals: [] }],
+            initialCapital: 10_000,
+            positionSizePercent: 100,
+            commissionPercent: 0,
+            baseSettings: eligibleSettings,
+            lastDataTime: data[data.length - 1]?.time ?? null,
+            maxRequestBytes: 16 * 1024 * 1024,
+            maxResponseBytes: 128 * 1024 * 1024,
+        });
+
+        await createAssetOpportunityRustMultiBatchCoordinator(client, { datasetCache: sharedDatasetCache })
+            .dispatchCandidate(makeInput("candidate"));
+        await createAssetOpportunityRustMultiBatchCoordinator(client, { datasetCache: sharedDatasetCache })
+            .dispatchCandidate(makeInput("candidate"));
+
+        expect(cacheCalls).to.equal(2);
+        expect(multiCalls).to.equal(2);
+        expect(rawCalls).to.equal(2);
+    });
+
     it("does not fan out direct Rust retries after a grouped timeout", async () => {
         let directCalls = 0;
         const client = {

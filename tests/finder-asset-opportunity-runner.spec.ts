@@ -1153,10 +1153,11 @@ describe("Asset Opportunity runner", () => {
             runIsSearch: makeStubIsSearch(),
         }), makeCallbacks());
 
-        // Four IS bars plus the 64-bar conservative warmup; the fresh
-        // signal-only recheck no longer walks the full 98-bar boundary.
-        expect(signalInputLengths).to.deep.equal([4, 68]);
-        expect(output.outcomes[0]!.diagnostics?.freshSignalWindowBars).to.equal(68);
+        // Fresh next-bar detection only needs the latest two signal bars plus
+        // the 64-bar conservative warmup; it no longer walks the full
+        // 500-bar evaluation window or 98-bar boundary.
+        expect(signalInputLengths).to.deep.equal([4, 66]);
+        expect(output.outcomes[0]!.diagnostics?.freshSignalWindowBars).to.equal(66);
         expect(output.results[0]!.freshStatus).to.equal("fresh");
         expect(output.results[0]!.latestSignalTime).to.equal(candles[97]!.time);
     });

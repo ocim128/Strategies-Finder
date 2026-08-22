@@ -487,6 +487,9 @@ export function normalizeFinderCandidateParamSets(
     paramSets: StrategyParams[],
     options?: { normalizeExitParams?: (exitParams: StrategyParams) => StrategyParams }
 ): StrategyParams[] {
+    if (paramSets.length === 1) {
+        return [normalizeFinderCandidateParams(strategy, paramSets[0]!, options)];
+    }
     const normalized: StrategyParams[] = [];
     const seen = new Set<string>();
 

@@ -281,6 +281,50 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     const backtestData = req.closedCandleDataOverride
         ?? selectClosedCandleData(effectiveData, interval, resolvedSettings, nowSec, blockRange);
 
+    // Asset Opportunity's next-bar fresh-entry pass only needs the generated
+    // signals. Avoid the remaining context-alignment/Polymarket/exit
+    // resolution setup when none of those execution features can affect that
+    // signal-only result.
+    // Keep this deliberately narrow; the regular path remains authoritative
+    // for confirmation, custom execution context, and all exit-aware runs.
+    if (
+        req.backtestRunOptions?.signalsOnly === true
+        && !req.dataFetcher
+        && !req.crossSymbolInput
+        && !strategy.crossSymbolConfig
+        && !strategy.polymarket1sConfig
+        && !req.strategyExecutionContext
+        && !(resolvedSettings.confirmationStrategies?.length)
+        && resolvedSettings.exitStrategyOverrideEnabled !== true
+    ) {
+        const signals = req.preGeneratedSignals
+            ? filterSignalsByBlockRange(req.preGeneratedSignals, blockRange)
+            : resolveBacktestSignalsForData({
+                data: backtestData,
+                interval,
+                strategy,
+                params: normalizedParams,
+                settings: resolvedSettings,
+                blockRange,
+            });
+        const result = createEmptyBacktestResult();
+        result.exitControlDiagnostics = buildExitControlDiagnostics({
+            requestedSettings: backtestSettings as Record<string, unknown>,
+            resolvedSettings,
+            primarySignals: signals.length,
+            exitOverrideSignals: 0,
+            mergedSignals: signals,
+            mergedExitOnlySignals: 0,
+            exitStrategyLoaded: false,
+            skippedReason: "override_disabled",
+        });
+        registerBacktestEdgeAnalysisInput(result, backtestData);
+        return finish(result, "typescript", signals, {
+            rustAttempted: false,
+            typescriptReason: "signal-only execution",
+        });
+    }
+
     let alignedCrossSymbolContext = crossSymbolContext;
     if (alignedCrossSymbolContext?.crossSymbol && backtestData.length > 0) {
         const firstTime = backtestData[0].time;

@@ -140,7 +140,7 @@ function resolveFreshSignalWarmupBars(
 function resolveFreshSignalWindow(args: {
     boundaryData: OHLCVData[];
     slicedHistorical: OHLCVData[];
-    evalLastBars: number;
+    signalLookbackBars: number;
     dataSlice: FinderOptions["dataSlice"];
     candidates: readonly FinderResult[];
     settings: BacktestSettings;
@@ -148,7 +148,7 @@ function resolveFreshSignalWindow(args: {
     canUseBoundedSignalWindow: boolean;
 }): OHLCVData[] | undefined {
     if (
-        args.evalLastBars <= 0
+        args.signalLookbackBars <= 0
         || args.dataSlice !== "all"
         || args.crossSymbol
         || args.boundaryData.length <= args.slicedHistorical.length
@@ -156,7 +156,8 @@ function resolveFreshSignalWindow(args: {
     ) {
         return undefined;
     }
-    const signalWindowBars = args.evalLastBars + resolveFreshSignalWarmupBars(args.candidates, args.settings);
+    const signalWindowBars = args.signalLookbackBars
+        + resolveFreshSignalWarmupBars(args.candidates, args.settings);
     if (signalWindowBars >= args.boundaryData.length) return undefined;
     return args.boundaryData.slice(-signalWindowBars);
 }
@@ -915,7 +916,12 @@ async function searchOneAsset(args: {
     const freshSignalData = resolveFreshSignalWindow({
         boundaryData: recheckData,
         slicedHistorical,
-        evalLastBars,
+        // signal_close replay needs the full capped evaluation window to
+        // reconstruct the latest trade. Signal-only next-bar detection only
+        // needs the accepted freshness range (0..1 bars) plus warmup.
+        signalLookbackBars: executionModel === "signal_close"
+            ? evalLastBars
+            : Math.max(2, resolveAssetOpportunityFreshnessBars(input.settings) + 1),
         dataSlice: input.options.dataSlice ?? "all",
         candidates: topK,
         settings: input.settings,

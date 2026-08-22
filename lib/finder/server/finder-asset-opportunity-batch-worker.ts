@@ -26,7 +26,7 @@
 
 import { parentPort, isMainThread } from "node:worker_threads";
 import type { FinderSelectedStrategy } from "../finder-runner";
-import type { BacktestSettings, OHLCVData, Strategy } from "../../types/strategies";
+import type { BacktestSettings, OHLCVData, Strategy, StrategyParams } from "../../types/strategies";
 import type { CapitalSettings } from "../../types/backtest";
 import type { FinderOptions } from "../../types/finder";
 import type { BatchDatasetLoadContext } from "../../batch-backtest/batch-dataset-loader-core";
@@ -77,6 +77,11 @@ export interface AssetOpportunityBatchWorkerTask {
 export type AssetOpportunityBatchWorkerCommand =
     | { type: "run_task"; task: AssetOpportunityBatchWorkerTask }
     | { type: "stop" };
+
+type AssetOpportunityWorkerStrategySelection = {
+    selectedStrategies: FinderSelectedStrategy[];
+    exitStrategyCandidates?: FinderSelectedStrategy[];
+};
 
 export type AssetOpportunityBatchWorkerEvent =
     | {
@@ -131,6 +136,12 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
     assetLoadContext?: BatchDatasetLoadContext;
     /** Persistent full-signal cache reused across this worker's holdout tasks. */
     signalCache?: AssetOpportunitySignalCache;
+    /** Persistent Rust dataset cache reused across this worker's holdout tasks. */
+    rustBatchDatasetCache?: Map<string, Promise<string | null>>;
+    /** Worker-local strategy objects reused across persistent holdout tasks. */
+    strategySelection?: AssetOpportunityWorkerStrategySelection;
+    /** Worker-local normalized candidate parameter sets reused across tasks. */
+    paramSetCache?: Map<string, StrategyParams[]>;
     abortSignal: AbortSignal;
     isCancelled: () => boolean;
     onProgress: (progress: {
@@ -145,8 +156,11 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
     runLog?: FinderRunLogSink | null;
 }): Promise<AssetOpportunityIterationResult> {
     const { task } = args;
-    const selectedStrategies = await resolveStrategiesStrict(task.strategyKeys);
-    const exitStrategyCandidates = await resolveExitStrategiesLenient(task.exitStrategyKeys);
+    const selectedStrategies = args.strategySelection?.selectedStrategies
+        ?? await resolveStrategiesStrict(task.strategyKeys);
+    const exitStrategyCandidates = args.strategySelection
+        ? args.strategySelection.exitStrategyCandidates
+        : await resolveExitStrategiesLenient(task.exitStrategyKeys);
     // Mirrors the plugin's resolveServerProvider: normalized symbol lookup
     // with a binance default. Keys arrive pre-normalized from the main thread.
     const getProvider = task.providerBySymbol
@@ -168,6 +182,8 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
             abortSignal: args.abortSignal,
             loadDataset: args.loadDataset,
             ...(args.assetLoadContext ? { assetLoadContext: args.assetLoadContext } : {}),
+            ...(args.rustBatchDatasetCache ? { rustBatchDatasetCache: args.rustBatchDatasetCache } : {}),
+            ...(args.paramSetCache ? { paramSetCache: args.paramSetCache } : {}),
             ...(args.signalCache ? { signalCache: args.signalCache } : {}),
             ...(task.includeFullStrategyBreakdown === true ? { includeFullStrategyBreakdown: true } : {}),
             ...(getProvider ? { getProvider } : {}),
@@ -232,12 +248,16 @@ if (!isMainThread && parentPort) {
     // every holdout this worker processes.
     let assetLoadContext: BatchDatasetLoadContext | null = null;
     let signalCache: AssetOpportunitySignalCache | null = null;
+    const rustBatchDatasetCache = new Map<string, Promise<string | null>>();
+    const paramSetCache = new Map<string, StrategyParams[]>();
+    let strategySelectionKey = "";
+    let strategySelection: AssetOpportunityWorkerStrategySelection | null = null;
     let activeAbort: AbortController | null = null;
     const post = (message: AssetOpportunityBatchWorkerEvent): void => {
         parentPort?.postMessage(message);
     };
 
-    parentPort.on("message", (message: AssetOpportunityBatchWorkerCommand) => {
+    parentPort.on("message", async (message: AssetOpportunityBatchWorkerCommand) => {
         if (message.type === "stop") {
             activeAbort?.abort();
             return;
@@ -245,6 +265,26 @@ if (!isMainThread && parentPort) {
         if (message.type !== "run_task") return;
         const task = message.task;
         activeAbort = new AbortController();
+        const nextStrategySelectionKey = `${task.strategyKeys.join("\u0000")}\u0001${task.exitStrategyKeys.join("\u0000")}`;
+        try {
+            if (strategySelection === null || strategySelectionKey !== nextStrategySelectionKey) {
+                const selectedStrategies = await resolveStrategiesStrict(task.strategyKeys);
+                const exitStrategyCandidates = await resolveExitStrategiesLenient(task.exitStrategyKeys);
+                strategySelection = {
+                    selectedStrategies,
+                    ...(exitStrategyCandidates ? { exitStrategyCandidates } : {}),
+                };
+                strategySelectionKey = nextStrategySelectionKey;
+            }
+        } catch (error) {
+            post({
+                type: "iteration_fatal",
+                taskIndex: task.taskIndex,
+                holdoutBars: task.holdoutBars,
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return;
+        }
         // symbolCount attaches the cross-iteration plain-dataset LRU so this
         // worker loads each symbol once across ALL holdout tasks it processes.
         assetLoadContext ??= createServerFinderAssetOpportunityLoadContext(task.symbols.length);
@@ -255,7 +295,10 @@ if (!isMainThread && parentPort) {
                 ? async (symbol) => task.inlineDatasets![symbol] ?? []
                 : loadServerFinderDataset,
             assetLoadContext,
+            rustBatchDatasetCache,
+            paramSetCache,
             signalCache,
+            strategySelection: strategySelection!,
             abortSignal: activeAbort.signal,
             isCancelled: () => activeAbort?.signal.aborted === true,
             onProgress: (progress) => {

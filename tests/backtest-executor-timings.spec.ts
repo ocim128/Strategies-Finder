@@ -75,6 +75,14 @@ async function main(): Promise<void> {
             skipResultPostProcessing: true,
         },
     });
+    const signalsOnlyRegularPath = await executeBacktest({
+        ...commonRequest,
+        strategyExecutionContext: {},
+        backtestRunOptions: {
+            signalsOnly: true,
+            skipResultPostProcessing: true,
+        },
+    });
 
     assert.deepEqual(
         measured.result.trades,
@@ -87,6 +95,11 @@ async function main(): Promise<void> {
     assert.equal(measured.result.sharpeRatio, 0);
     assert.equal(measured.result.maxDrawdown, 0);
     assert.ok(signalsOnly.signals.length > 0, "signal-only execution must still generate strategy signals");
+    assert.deepEqual(
+        signalsOnly.signals,
+        signalsOnlyRegularPath.signals,
+        "signal-only fast path must preserve the regular executor's signals",
+    );
     assert.equal(signalsOnly.result.trades.length, 0);
     assert.equal(signalsOnly.result.totalTrades, 0);
     assert.equal(signalsOnly.engineDiagnostics?.typescriptReason, "signal-only execution");

@@ -289,6 +289,39 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         resetRunStateForTests();
     });
 
+    it("accepts a worker-local strategy selection without resolving task keys", async () => {
+        const task: AssetOpportunityBatchWorkerTask = {
+            taskIndex: 0,
+            holdoutBars: 2,
+            runId: "cached-worker-strategy-selection",
+            interval: "5m",
+            symbols: ["UP"],
+            options: makeBatchOptions(["UP"]),
+            settings,
+            capitalSettings,
+            // The injected selection is the authoritative worker-local cache;
+            // empty keys prove the task path does not resolve the catalog again.
+            strategyKeys: [],
+            exitStrategyKeys: [],
+            useRustEnginePreference: false,
+            providerBySymbol: null,
+            candidatePoolSize: 2,
+            minFreshSupport: 1,
+        };
+        const output = await runAssetOpportunityBatchWorkerTask({
+            task,
+            strategySelection: {
+                selectedStrategies: [{ key: STRATEGY_KEY, name: batchStrategy.name, strategy: batchStrategy }],
+            },
+            loadDataset: async () => longUpDownDatasets().get("UP") ?? [],
+            abortSignal: new AbortController().signal,
+            isCancelled: () => false,
+            onProgress: () => undefined,
+        });
+
+        expect(output.assetDiagnostics.totalAssets).to.equal(1);
+    });
+
     it("resolves the worker count from env override, holdout count, cores, and the system-memory ceiling", () => {
         // Env override wins outright, bypasses the memory ceiling (operator
         // judgment call), and clamps at the hard cap.

@@ -479,6 +479,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
         const dataKey = getDataKey(data);
         cachedIdsByDataKey.delete(dataKey);
         pendingCacheIdsByDataKey.delete(dataKey);
+        sharedDatasetCache?.delete(dataKey);
     }
 
     function rememberResponseCacheIds(

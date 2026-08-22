@@ -14,8 +14,22 @@ const FINDER_PARAM_MATH_OPTIONS = Object.freeze({ includeFinderExtraBounds: true
 export class FinderParamSpace {
     public generateParamSets(defaultParams: StrategyParams, options: FinderOptions): StrategyParams[] {
         const keys = Object.keys(defaultParams);
+        const normalizedDefault = this.normalizeParams(defaultParams);
         if (keys.length === 0 || options.mode === "default") {
-            return [this.normalizeParams(defaultParams)];
+            return [normalizedDefault];
+        }
+        // Random generation always seeds its result with the normalized
+        // default candidate. With one requested run there is no sampling to
+        // perform, so avoid building every parameter range for this common
+        // Asset Opportunity batch case. Invalid defaults retain the existing
+        // fallback behavior and continue through random generation below.
+        if (
+            options.mode === "random"
+            && Number.isFinite(options.maxRuns)
+            && options.maxRuns <= 1
+            && validateParams(normalizedDefault)
+        ) {
+            return [normalizedDefault];
         }
 
         const valuesByKey = keys.map((key) => this.buildRangeValues(key, defaultParams[key], options));

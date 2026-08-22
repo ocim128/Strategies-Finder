@@ -4,7 +4,7 @@ import { createAssetOpportunitySignalCache } from "../lib/finder/finder-asset-op
 import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions } from "../lib/types/finder";
-import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
+import type { BacktestSettings, OHLCVData, Strategy, StrategyParams, Time } from "../lib/types/strategies";
 
 const settings: BacktestSettings = {
     executionModel: "signal_close",
@@ -59,6 +59,52 @@ function makeOptions(): FinderOptions {
 }
 
 describe("server Asset Opportunity signal cache", () => {
+    it("reuses normalized single-run params across holdout searches", async () => {
+        let generatorCalls = 0;
+        const paramSetCache = new Map<string, StrategyParams[]>();
+        const strategy: Strategy = {
+            name: "Param Cache Strategy",
+            description: "Uses one normalized default candidate.",
+            defaultParams: { marker: 1 },
+            paramLabels: { marker: "Marker" },
+            normalizeParams: (params) => ({ marker: Math.round(params.marker ?? 1) }),
+            execute(data) {
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy", price: latest.close }] : [];
+            },
+        };
+        const base = {
+            interval: "5m",
+            settings,
+            capitalSettings,
+            selectedStrategy: { key: "param_cache_strategy", name: strategy.name, strategy },
+            generateParamSets: (defaults: StrategyParams) => {
+                generatorCalls += 1;
+                return [{ ...defaults, marker: 1.2 }];
+            },
+            paramSetCache,
+            useRustEnginePreference: false,
+            confirmationStrategiesLoaded: true,
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+        } as const;
+        const first = await runServerAssetIsSearch({
+            ...base,
+            symbol: "CACHE_A",
+            ohlcvData: makeCandles(40),
+            options: makeOptions(),
+        });
+        const second = await runServerAssetIsSearch({
+            ...base,
+            symbol: "CACHE_B",
+            ohlcvData: makeCandles(40),
+            options: { ...makeOptions(), randomSeed: 9876 },
+        });
+
+        expect(generatorCalls).to.equal(1);
+        expect(second.results).to.deep.equal(first.results);
+    });
+
     it("reuses full-series signals without changing prefix results", async () => {
         let executeCalls = 0;
         const strategy: Strategy = {

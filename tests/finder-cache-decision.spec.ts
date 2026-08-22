@@ -21,6 +21,21 @@ import { buildFinderResult, generateSignalsForJob } from '../lib/finder/finder-r
 import { withExitStrategyBaseParams } from '../lib/finder/exit-strategy-param-prefix';
 
 describe('Finder adaptive cache mode decision', () => {
+    it('normalizes a single Finder candidate without changing its result', () => {
+        const strategy = {
+            name: 'single candidate',
+            description: 'single candidate normalization',
+            defaultParams: { lookback: 10 },
+            paramLabels: { lookback: 'Lookback' },
+            normalizeParams: (params: Record<string, number>) => ({
+                lookback: Math.max(2, Math.round(params.lookback ?? 10)),
+            }),
+        } as any;
+
+        expect(normalizeFinderCandidateParamSets(strategy, [{ lookback: 2.4 }]))
+            .to.deep.equal([{ lookback: 2 }]);
+    });
+
     it('enables cache for large dataset (>500k bars)', () => {
         const result = shouldUseRustCachedMode(600_000, 100, 20);
         expect(result.useCache).to.equal(true);

@@ -147,6 +147,8 @@ export interface FinderAssetOpportunityRunInput {
     assetLoadContext?: BatchDatasetLoadContext;
     /** Reuse Rust dataset cache IDs across sequential holdout iterations. */
     rustBatchDatasetCache?: Map<string, Promise<string | null>>;
+    /** Reuse normalized candidate parameter sets across batch holdout tasks. */
+    paramSetCache?: Map<string, StrategyParams[]>;
     /** Chunked batch workers retain all strategy rows so the coordinator can rebuild top-10 diagnostics exactly. */
     includeFullStrategyBreakdown?: boolean;
     /** Legacy compatibility field; automatic batch archives always use All Sorts. */
@@ -423,6 +425,12 @@ export async function runAssetOpportunityIteration(
             confirmationStrategiesLoaded: true,
             fullSignalData: args.fullSignalData,
             ...(args.signalCache ? { signalCache: args.signalCache } : {}),
+            ...(!input.generateParamSets
+                && input.paramSetCache
+                && input.options.mode === "random"
+                && Number(input.options.maxRuns) <= 1
+                ? { paramSetCache: input.paramSetCache }
+                : {}),
             ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
             ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
             rustBatchDatasetCache,

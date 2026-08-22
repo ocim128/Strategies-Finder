@@ -37,6 +37,7 @@ import type { FinderOptions, FinderResult } from "../../types/finder";
 import type { FinderSelectedStrategy } from "../finder-runner";
 import type { CrossSymbolDataFetcher } from "../../cross-symbol-runtime";
 import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
+import { serializeParams } from "../finder-param-math";
 import {
     buildFinderSearchBaseParams,
     createPreparedFinderStrategy,
@@ -91,6 +92,8 @@ export interface ServerAssetIsSearchInput {
     rustMultiAssetBatch?: AssetOpportunityRustMultiBatchCoordinator;
     /** Per-iteration cache of Rust dataset uploads, keyed by asset/window. */
     rustBatchDatasetCache?: Map<string, Promise<string | null>>;
+    /** Persistent cache of normalized default candidate sets for batch runs. */
+    paramSetCache?: Map<string, StrategyParams[]>;
     isCancelled: () => boolean;
     yieldControl: () => Promise<void>;
     /**
@@ -125,6 +128,28 @@ function resolveCachedSignalsForWindow(
         const barIndex = signal.barIndex!;
         return barIndex >= 0 && barIndex < length;
     });
+}
+
+function buildParamSetCacheKey(
+    selectedStrategy: FinderSelectedStrategy,
+    entryDefaults: StrategyParams,
+    options: FinderOptions,
+): string {
+    // A random single-run search always returns the normalized default, so its
+    // per-asset seed does not affect the cached candidate. Other modes retain
+    // the seed because it changes sampled candidate ordering.
+    const seed = options.mode === "random" && Number(options.maxRuns) <= 1
+        ? ""
+        : String(options.randomSeed);
+    return [
+        selectedStrategy.key,
+        serializeParams(entryDefaults),
+        options.mode,
+        String(options.maxRuns),
+        String(options.rangePercent),
+        String(options.steps),
+        seed,
+    ].join("\u0001");
 }
 
 export interface ServerAssetIsSearchOutput {
@@ -196,11 +221,24 @@ export async function runServerAssetIsSearch(
     // Build the same base params the current-chart path uses.
     const parameterGenerationStartedAt = performance.now();
     const entryDefaults = buildFinderSearchBaseParams(selectedStrategy.strategy, settings, options);
-    const generated = input.generateParamSets(entryDefaults, options);
-    const normalized = normalizeFinderCandidateParamSets(selectedStrategy.strategy, generated);
-    const paramSets = normalized.length > 0
-        ? normalized
-        : [{ ...selectedStrategy.strategy.defaultParams }];
+    const canReuseParamSets = input.paramSetCache
+        && options.mode === "random"
+        && Number(options.maxRuns) <= 1;
+    const paramCacheKey = canReuseParamSets
+        ? buildParamSetCacheKey(selectedStrategy, entryDefaults, options)
+        : null;
+    const cachedParamSets = paramCacheKey
+        ? input.paramSetCache!.get(paramCacheKey)
+        : undefined;
+    let paramSets = cachedParamSets;
+    if (!paramSets) {
+        const generated = input.generateParamSets(entryDefaults, options);
+        const normalized = normalizeFinderCandidateParamSets(selectedStrategy.strategy, generated);
+        paramSets = normalized.length > 0
+            ? normalized
+            : [{ ...selectedStrategy.strategy.defaultParams }];
+        if (paramCacheKey) input.paramSetCache!.set(paramCacheKey, paramSets);
+    }
     const parameterGenerationMs = performance.now() - parameterGenerationStartedAt;
 
     const rustBatchFeatureConfig = resolveAssetOpportunityRustBatchFeatureConfig();
