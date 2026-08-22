@@ -5,9 +5,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
     appendAssetOpportunityArchiveBlock,
+    appendAssetOpportunityArchivePairSummary,
     appendAssetOpportunityArchiveRunConfig,
     buildAssetOpportunityArchiveBlockText,
     buildAssetOpportunityArchiveFilename,
+    buildAssetOpportunityPairSummaryBlockText,
+    buildAssetOpportunityPairSummaryFilename,
     resolveAssetOpportunityArchiveDir,
 } from "../lib/finder/server/finder-asset-opportunity-archive";
 
@@ -25,6 +28,13 @@ describe("Asset Opportunity archive writer", () => {
         // No path separator can reach the filename: only a validated integer
         // ever formats it.
         expect(() => buildAssetOpportunityArchiveFilename(Number.NaN)).to.throw();
+    });
+
+    it("builds pair-summary filenames and rejects invalid holdouts", () => {
+        expect(buildAssetOpportunityPairSummaryFilename(12)).to.equal("oos-pair-summary-12-bars.txt");
+        expect(() => buildAssetOpportunityPairSummaryFilename(0)).to.throw(/Invalid holdout bars/);
+        expect(() => buildAssetOpportunityPairSummaryFilename(1.5)).to.throw(/Invalid holdout bars/);
+        expect(() => buildAssetOpportunityPairSummaryFilename(Number.NaN)).to.throw();
     });
 
     it("writes one delimited block containing timestamp, run id, holdout, and compact JSON", async () => {
@@ -139,6 +149,45 @@ describe("Asset Opportunity archive writer", () => {
         });
         expect(text).to.contain(`Archive baseline: ${JSON.stringify(baseline)}`);
         expect(text.lastIndexOf("\n[")).to.be.greaterThan(text.indexOf("Archive baseline:"));
+    });
+
+    it("appends a pair-summary block with round-trippable JSON", async () => {
+        const pairSummaries = [{
+            symbol: "PAIR_A",
+            candidateCount: 3,
+            profitableShare: 2 / 3,
+            medianNetProfitPercent: 1.5,
+            netProfitP75MinusP25: 2,
+            medianExpectancy: 0.5,
+            topNetProfit: 12,
+            forwardPnlPercentByHorizon: { 12: 3.25 },
+        }];
+        const text = buildAssetOpportunityPairSummaryBlockText({
+            timestamp: "2026-01-01T00:00:00.000Z",
+            batchRunId: "batch-pair-summary",
+            holdoutBars: 12,
+            pairSummaries,
+        });
+        expect(text).to.contain("Pair summaries: JSON");
+        expect(text).to.contain("OOS holdout: 12 bars");
+        expect(JSON.parse(text.slice(text.lastIndexOf("\n[")))).to.deep.equal(pairSummaries);
+
+        const calls: Array<{ dir: string; filename: string; content: string }> = [];
+        const result = await appendAssetOpportunityArchivePairSummary({
+            root: "/virtual/root",
+            batchRunId: "batch-pair-summary",
+            holdoutBars: 12,
+            pairSummaries,
+            timestamp: "2026-01-01T00:00:00.000Z",
+            append: async (dir, filename, content) => {
+                calls.push({ dir, filename, content });
+            },
+        });
+        expect(calls).to.have.length(1);
+        expect(calls[0]!.dir).to.equal(path.join("/virtual/root", "archive", "asset opportunity"));
+        expect(calls[0]!.filename).to.equal("oos-pair-summary-12-bars.txt");
+        expect(result.path).to.equal(path.join(calls[0]!.dir, calls[0]!.filename));
+        expect(result.bytes).to.equal(Buffer.byteLength(calls[0]!.content, "utf8"));
     });
 
     it("appends one run-config block per batch run to config.txt and never overwrites", async () => {

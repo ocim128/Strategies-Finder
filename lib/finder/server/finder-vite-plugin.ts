@@ -118,11 +118,13 @@ import {
     normalizeFinderAssetOosIgnoreLastBars,
 } from "../finder-asset-opportunity-oos";
 import {
+    buildAssetOpportunityPairSummaries,
     buildAssetOpportunityForwardOosBaseline,
     buildAssetOpportunityPerformancePayload,
 } from "../finder-asset-opportunity-metadata";
 import {
     appendAssetOpportunityArchiveBlock,
+    appendAssetOpportunityArchivePairSummary,
     appendAssetOpportunityArchiveRunConfig,
     type AssetOpportunityArchiveAppend,
 } from "./finder-asset-opportunity-archive";
@@ -1735,6 +1737,14 @@ export async function processFinderAssetOpportunityBatchRun(
         // not once per sort metric.
         const baseline = buildAssetOpportunityForwardOosBaseline(iteration.results);
         try {
+            const pairSummaries = buildAssetOpportunityPairSummaries(iteration.results);
+            await appendAssetOpportunityArchivePairSummary({
+                root: archiveRoot,
+                batchRunId: input.runId,
+                holdoutBars,
+                pairSummaries,
+                ...(archiveAppend ? { append: archiveAppend } : {}),
+            });
             for (const sortMetric of resolveAssetOpportunityArchiveSorts()) {
                 const archiveResults = sortAssetOpportunityResultsByMetric(iteration.results, sortMetric);
                 const topResults = archiveResults
