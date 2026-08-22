@@ -1,5 +1,11 @@
 import puppeteer, { Page } from 'puppeteer';
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
+import { createRequire } from 'node:module';
+import path from 'node:path';
+
+const requireFromHere = createRequire(import.meta.url);
+const vitePackagePath = requireFromHere.resolve('vite/package.json');
+const viteCliPath = path.join(path.dirname(vitePackagePath), 'bin', 'vite.js');
 
 // Helper to wait
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -9,7 +15,14 @@ console.log('Script starting...');
 function stopProcessTree(child: ChildProcess): void {
     if (!child.pid) return;
     if (process.platform === 'win32') {
-        spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+        const result = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000 });
+        if (result.error) {
+            try {
+                child.kill();
+            } catch {
+                // ignore cleanup errors
+            }
+        }
         return;
     }
     try {
@@ -139,9 +152,9 @@ async function runTest() {
 
         // Start vite on a specific port, but allow fallback if busy
         // Port 0 picks a random available port
-        // Use npx with shell: true for Windows compatibility
-        const viteProcess = spawn('npx', ['vite', '--port', '0'], {
-            shell: true,
+        // Resolve the installed CLI directly so npm workspace discovery cannot
+        // make the smoke test depend on the surrounding checkout layout.
+        const viteProcess = spawn(process.execPath, [viteCliPath, '--port', '0'], {
             cwd: process.cwd(),
             stdio: 'pipe',
             env: { ...process.env, FORCE_COLOR: '0' }
@@ -169,13 +182,13 @@ async function runTest() {
             // Strip ANSI codes for easier matching
             const cleanBuffer = outputBuffer.replace(/\x1b\[[0-9;]*m/g, '');
 
-            // Regex for localhost port
-            // Matches http://localhost:PORT
-            const match = cleanBuffer.match(/http:\/\/localhost:(\d+)/);
+            // Match either loopback hostname Vite may advertise.
+            const match = cleanBuffer.match(/http:\/\/(localhost|127\.0\.0\.1):(\d+)/);
 
             if (match && !serverReady) {
-                const port = match[1];
-                baseUrl = `http://localhost:${port}`;
+                const host = match[1];
+                const port = match[2];
+                baseUrl = `http://${host}:${port}`;
                 serverReady = true;
                 console.log(`Vite server detected at ${baseUrl}`);
             }

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { availableParallelism } from "node:os";
+import { fileURLToPath } from "node:url";
 import {
     buildTopMeanShardTasks,
     resolveTopMeanShardSize,
@@ -10,6 +11,8 @@ import {
 } from "../lib/batch-backtest/sp500-top-mean-worker-pool";
 import type { TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
 import { TOP_MEAN_WORKER_COUNT_MAX } from "../lib/batch-backtest/sp500-top-mean-request-limits";
+
+const testWorkerPath = fileURLToPath(new URL("./helpers/top-mean-test-worker.cjs", import.meta.url));
 
 function testWorkerCountResolution(): void {
     const defaultCount = resolveTopMeanWorkerCount();
@@ -97,8 +100,7 @@ function testCacheAwareShardPlanning(): void {
 
 function testWorkerPoolCancel(): void {
     const pool = new TopMeanWorkerPool();
-    pool.cancel();
-    assert.ok(true, "Pool cancellation should succeed cleanly");
+    assert.doesNotThrow(() => pool.cancel(), "Pool cancellation should succeed cleanly");
 }
 
 async function testWorkerPathResolution(): Promise<void> {
@@ -139,7 +141,7 @@ async function testPersistentWorkerPoolEndToEnd(): Promise<void> {
         runId: "smoke_test_persistent_pool",
         status: "running",
         fingerprint: "smoke",
-        strategyKey: "dema_confirmation",
+        strategyKey: "__test_success__",
         interval: "4h",
         pairCount: pairs.length,
         shardSize: 2,
@@ -159,7 +161,7 @@ async function testPersistentWorkerPoolEndToEnd(): Promise<void> {
             runId: manifest.runId,
             manifest,
             canonicalPairs: pairs,
-            strategyKey: "dema_confirmation",
+            strategyKey: "__test_success__",
             strategyParams: { lookback: 20, threshold: 0.5 },
             backtestSettings: { direction: "long", slippage: 0, commission: 0 } as any,
             capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 } as any,
@@ -167,12 +169,14 @@ async function testPersistentWorkerPoolEndToEnd(): Promise<void> {
             workerCount: 2,
             shardSize: 2,
             useRustEnginePreference: false,
+            workerPath: testWorkerPath,
             onProgress: (completed, total, _text) => {
                 progressCalls.push({ completed, total });
             },
         });
 
-        // No real data → no engine use, but the type is { rust, typescript }.
+        // The deterministic worker reports zero-duration TypeScript work, but
+        // the pool still aggregates the stable { rust, typescript } shape.
         assert.equal(typeof usage.rust, "number");
         assert.equal(typeof usage.typescript, "number");
     } finally {
@@ -181,34 +185,22 @@ async function testPersistentWorkerPoolEndToEnd(): Promise<void> {
         pool.cancel();
     }
 
-    // All shards completed (manifest.completedShards reflects the 5 shards
-    // even though every pair inside failed to load — the worker's per-pair
-    // failure path still allows the shard to complete with empty artifacts).
+    // All shards completed and the deterministic worker emitted one empty
+    // artifact result per pair.
     assert.equal(manifest.completedShards.length, 5, "All 5 shards must complete even when pairs fail to load");
     assert.equal(
         manifest.shardOrder,
         "leg_affinity_v1",
         "new manifests persist the affinity partition so an interrupted run resumes identically",
     );
-    // Pair-level failures are recorded. Each fake pair yields < 200 candles,
-    // so each contributes one failedPairsCount increment.
-    assert.ok(
-        manifest.failedPairsCount >= pairs.length,
-        `Expected at least ${pairs.length} failed pairs; got ${manifest.failedPairsCount}`,
-    );
-    // onProgress only fires on per-pair SUCCESS (not failure); with fake
-    // symbols nothing loads, so the callback count is 0 by design. The
-    // contract this locks is that execute() RETURNS — a stuck free-list or a
-    // worker not released would hang here and time out. The progress
-    // counter is captured for diagnostic inspection but not asserted > 0.
-    assert.ok(Array.isArray(progressCalls), "progress callback list is an array");
-    void progressCalls;
+    assert.equal(manifest.failedPairsCount, 0, "deterministic worker should not report pair failures");
+    assert.equal(progressCalls.length, pairs.length, "every completed pair should emit progress");
 }
 
 /**
  * Retry-path termination smoke test.
  *
- * Forces every shard to fail (unknown strategy key) so the pool's retry path
+ * Forces every shard to fail (deterministic worker error) so the pool's retry path
  * runs under contention: 5 shards, 2 workers, every shard errors on both the
  * initial attempt and the retry. The contract locked here is that execute()
  * TERMINATES (success or failure) rather than hanging — a stuck free-list /
@@ -220,9 +212,8 @@ async function testPersistentWorkerPoolEndToEnd(): Promise<void> {
  * inverts that ordering.
  */
 async function testRetryDrainsAcrossWorkerRelease(): Promise<void> {
-    // Use an unknown strategy to force every shard to post `error`. The
-    // worker's per-shard catch turns this into a `type: "error"` message
-    // (the worker itself stays alive for reuse).
+    // The test worker posts a deterministic `type: "error"` message while
+    // remaining alive for reuse.
     const pairs = [
         "FAKE_A•+FAKE_B•", "FAKE_C•+FAKE_D•", "FAKE_E•+FAKE_F•",
         "FAKE_G•+FAKE_H•", "FAKE_I•+FAKE_J•",
@@ -232,7 +223,7 @@ async function testRetryDrainsAcrossWorkerRelease(): Promise<void> {
         runId: "smoke_test_retry_drain",
         status: "running",
         fingerprint: "smoke",
-        strategyKey: "__nonexistent_strategy_for_retry_test__",
+        strategyKey: "__test_retry__",
         interval: "4h",
         pairCount: pairs.length,
         shardSize: 1,   // force one pair per shard → 5 shards, each errors + retries
@@ -261,7 +252,7 @@ async function testRetryDrainsAcrossWorkerRelease(): Promise<void> {
                 runId: manifest.runId,
                 manifest,
                 canonicalPairs: pairs,
-                strategyKey: "__nonexistent_strategy_for_retry_test__",
+                strategyKey: "__test_retry__",
                 strategyParams: {},
                 backtestSettings: { direction: "long", slippage: 0, commission: 0 } as any,
                 capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 } as any,
@@ -269,6 +260,7 @@ async function testRetryDrainsAcrossWorkerRelease(): Promise<void> {
                 workerCount: 2,
                 shardSize: 1,
                 useRustEnginePreference: false,
+                workerPath: testWorkerPath,
             });
             executeReturned = true;
         } catch (err) {
@@ -276,7 +268,7 @@ async function testRetryDrainsAcrossWorkerRelease(): Promise<void> {
             assert.ok(err instanceof Error, "execute() rejection is an Error");
             assert.match(
                 (err instanceof Error ? err.message : String(err)),
-                /not found in manifest|Operation cancelled/,
+                /deterministic retry failure|Operation cancelled/,
                 `unexpected error: ${err instanceof Error ? err.message : String(err)}`,
             );
         }
@@ -293,7 +285,7 @@ async function testShardCompletesOnlyAfterDurableWrite(): Promise<void> {
         runId: "smoke_test_durable_shard",
         status: "running",
         fingerprint: "smoke",
-        strategyKey: "dema_confirmation",
+        strategyKey: "__test_success__",
         interval: "4h",
         pairCount: 1,
         shardSize: 1,
@@ -312,7 +304,7 @@ async function testShardCompletesOnlyAfterDurableWrite(): Promise<void> {
             runId: manifest.runId,
             manifest,
             canonicalPairs: pairs,
-            strategyKey: manifest.strategyKey,
+            strategyKey: "__test_success__",
             strategyParams: { lookback: 20, threshold: 0.5 },
             backtestSettings: { direction: "long", slippage: 0, commission: 0 } as any,
             capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 } as any,
@@ -320,6 +312,7 @@ async function testShardCompletesOnlyAfterDurableWrite(): Promise<void> {
             workerCount: 1,
             shardSize: 1,
             useRustEnginePreference: false,
+            workerPath: testWorkerPath,
             writeShardArtifacts: async () => {
                 writes += 1;
                 if (writes === 1) throw new Error("simulated disk failure");

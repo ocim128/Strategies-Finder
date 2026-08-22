@@ -6,7 +6,18 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { build as buildWithEsbuild } from "esbuild";
 
-type TestRunStatus = "PASS" | "FAIL";
+export type TestRunStatus = "PASS" | "FAIL" | "SKIP";
+
+export function classifyTestRunStatus(
+    exitCode: number | null,
+    hasSpawnError: boolean,
+    outputTruncated: boolean,
+    timedOut: boolean,
+    skipReason?: string,
+): TestRunStatus {
+    if (exitCode !== 0 || hasSpawnError || outputTruncated || timedOut) return "FAIL";
+    return skipReason ? "SKIP" : "PASS";
+}
 
 type TestRunResult = {
     file: string;
@@ -22,6 +33,7 @@ type TestRunResult = {
      * bounded tail is retained in memory. Empty on PASS.
      */
     tailLines: string[];
+    skipReason?: string;
 };
 
 type OutputMode = "compact" | "verbose" | "silent";
@@ -32,6 +44,7 @@ type TestRunSummary = {
     totalCount: number;
     passedCount: number;
     failedCount: number;
+    skippedCount: number;
     durationMs: number;
     timeoutMs: number;
     verbose: boolean;
@@ -45,6 +58,7 @@ type TestRunSummary = {
         signal: NodeJS.Signals | null;
         timedOut: boolean;
         logFile: string;
+        skipReason?: string;
     }>;
 };
 
@@ -66,7 +80,7 @@ const DEFAULT_MAX_JOBS = 6;
  * 384 MiB). Only the last `capacity` cleaned lines are retained; the full
  * output is streamed to the per-test log file by the runner.
  */
-class LineRingBuffer {
+export class LineRingBuffer {
     private readonly capacity: number;
     private readonly lines: string[] = [];
     private pending = "";
@@ -147,11 +161,11 @@ function stripAnsi(text: string): string {
     return text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
 }
 
-function normalizeForMatch(value: string): string {
+export function normalizeForMatch(value: string): string {
     return value.replace(/\\/g, "/").toLowerCase();
 }
 
-function sanitizeLogName(file: string): string {
+export function sanitizeLogName(file: string): string {
     return file.replace(/[\\/]/g, "__").replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
@@ -211,7 +225,7 @@ function resolveDefaultJobCount(): number {
     return Math.max(1, Math.min(DEFAULT_MAX_JOBS, Math.max(1, available - 1)));
 }
 
-function parseExplicitJobCount(raw: string | undefined): number {
+export function parseExplicitJobCount(raw: string | undefined): number {
     const parsed = Number(raw);
     if (!raw || !Number.isFinite(parsed) || parsed < 1) {
         throw new Error("--jobs requires a positive numeric value.");
@@ -219,7 +233,7 @@ function parseExplicitJobCount(raw: string | undefined): number {
     return Math.floor(parsed);
 }
 
-function parseTimeoutMs(raw: string | undefined): number {
+export function parseTimeoutMs(raw: string | undefined): number {
     const parsed = Number(raw);
     if (!raw || !Number.isFinite(parsed) || parsed < 1000) {
         throw new Error("--timeoutMs requires a numeric value of at least 1000.");
@@ -232,7 +246,7 @@ function isEnabledEnvFlag(value: string | undefined): boolean {
     return value === "true" || value === "1";
 }
 
-function selectTests(testFiles: readonly string[], filters: string[]): string[] {
+export function selectTests(testFiles: readonly string[], filters: string[]): string[] {
     if (filters.length === 0) return [...testFiles];
 
     const normalizedFilters = filters.map(normalizeForMatch);
@@ -253,13 +267,15 @@ function printTestResult(result: TestRunResult, outputMode: OutputMode): void {
     if (outputMode === "verbose") {
         // Verbose output is streamed live to the console during the run (see
         // `runSingleTest`); only the status line is emitted post-completion.
-        console.log(`[${result.status}] ${result.file} (${formatDuration(result.durationMs)})`);
+        const reason = result.skipReason ? `: ${result.skipReason}` : "";
+        console.log(`[${result.status}] ${result.file} (${formatDuration(result.durationMs)})${reason}`);
         return;
     }
 
     if (outputMode !== "compact") return;
 
-    console.log(`${result.status} ${result.file} (${formatDuration(result.durationMs)})`);
+    const reason = result.skipReason ? `: ${result.skipReason}` : "";
+    console.log(`${result.status} ${result.file} (${formatDuration(result.durationMs)})${reason}`);
     if (result.status === "FAIL") {
         if (result.tailLines.length > 0) {
             for (const line of result.tailLines) {
@@ -282,6 +298,8 @@ async function runSingleTest(
     const tail = new LineRingBuffer(FAILURE_TAIL_LINE_COUNT);
     let capturedBytes = 0;
     let outputTruncated = false;
+    let skipReason: string | undefined;
+    let markerBuffer = "";
     let timedOut = false;
     let spawnError: unknown = null;
     const verbose = outputMode === "verbose";
@@ -327,6 +345,9 @@ async function runSingleTest(
         }
 
         const text = chunk.toString("utf8");
+        markerBuffer = `${markerBuffer}${text}`.slice(-8192);
+        const skipMatch = markerBuffer.match(/(?:^|\r?\n)SKIP:\s*([^\r\n]+)/);
+        if (skipMatch && !skipReason) skipReason = skipMatch[1]!.trim();
         log.write(text);
         // ANSI is stripped from tail lines so the compact failure output stays
         // readable; the log file retains the raw chunk verbatim.
@@ -374,7 +395,7 @@ async function runSingleTest(
     });
 
     const durationMs = Date.now() - startedAt;
-    const status: TestRunStatus = exitCode === 0 && !spawnError && !outputTruncated && !timedOut ? "PASS" : "FAIL";
+    const status = classifyTestRunStatus(exitCode, Boolean(spawnError), outputTruncated, timedOut, skipReason);
 
     return {
         file,
@@ -385,6 +406,7 @@ async function runSingleTest(
         timedOut,
         logFile: logPath,
         tailLines: status === "FAIL" ? tail.flush() : [],
+        ...(skipReason ? { skipReason } : {}),
     };
 }
 
@@ -526,13 +548,15 @@ async function main(): Promise<void> {
     const durationMs = Date.now() - startedAt;
 
     const passedCount = results.filter((result) => result.status === "PASS").length;
-    const failedCount = results.length - passedCount;
+    const failedCount = results.filter((result) => result.status === "FAIL").length;
+    const skippedCount = results.filter((result) => result.status === "SKIP").length;
     const summary: TestRunSummary = {
         generatedAt: new Date().toISOString(),
         selectedCount: results.length,
         totalCount: testFiles.length,
         passedCount,
         failedCount,
+        skippedCount,
         durationMs,
         timeoutMs,
         verbose,
@@ -546,6 +570,7 @@ async function main(): Promise<void> {
             signal: result.signal,
             timedOut: result.timedOut,
             logFile: result.logFile,
+            ...(result.skipReason ? { skipReason: result.skipReason } : {}),
         })),
     };
 
@@ -555,7 +580,7 @@ async function main(): Promise<void> {
         console.log(JSON.stringify(summary, null, 2));
     } else {
         console.log(
-            `Summary: ${passedCount} passed, ${failedCount} failed, ${results.length} total (${formatDuration(durationMs)})`
+            `Summary: ${passedCount} passed, ${failedCount} failed, ${skippedCount} skipped, ${results.length} total (${formatDuration(durationMs)})`
         );
         console.log(`Logs: ${latestLogsDir}`);
         console.log(`Summary JSON: ${summaryPath}`);
@@ -569,11 +594,13 @@ async function main(): Promise<void> {
     process.exit(failedCount === 0 ? 0 : 1);
 }
 
-void main().catch((error: unknown) => {
-    if (error instanceof Error && (error.message.startsWith("--jobs") || error.message.startsWith("--timeout"))) {
-        console.error(`Error: ${error.message}`);
+if (process.argv[1] && path.resolve(process.argv[1]) === currentFilePath) {
+    void main().catch((error: unknown) => {
+        if (error instanceof Error && (error.message.startsWith("--jobs") || error.message.startsWith("--timeout"))) {
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        }
+        console.error(error instanceof Error ? error.stack ?? error.message : String(error));
         process.exit(1);
-    }
-    console.error(error instanceof Error ? error.stack ?? error.message : String(error));
-    process.exit(1);
-});
+    });
+}

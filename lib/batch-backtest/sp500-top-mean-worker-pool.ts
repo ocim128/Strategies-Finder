@@ -217,6 +217,8 @@ export interface WorkerPoolRunOptions {
     shardSize?: number;
     useRustEnginePreference?: boolean;
     baseDir?: string;
+    /** Test seam for deterministic worker lifecycle specs; production uses the resolved worker bundle. */
+    workerPath?: string;
     /** Test seam; production uses the atomic async artifact writer. */
     writeShardArtifacts?: typeof writeShardArtifactsAsync;
     onProgress?: (completedPairs: number, totalPairs: number, text: string) => void;
@@ -430,7 +432,7 @@ export class TopMeanWorkerPool {
 
         let completedPairsCount = options.manifest.completedPairsCount || 0;
         const workerBundleStartedAt = performance.now();
-        const workerScriptPath = await resolveTopMeanWorkerPath();
+        const workerScriptPath = options.workerPath ?? await resolveTopMeanWorkerPath();
         const workerBundleMs = performance.now() - workerBundleStartedAt;
 
         // ---- Persistent worker pool (F3+F7) ---------------------------------

@@ -1,23 +1,10 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import type { OHLCVData, Time } from "../../lib/types/strategies";
 import { builtInStrategyKeys } from "../../lib/strategies/manifest-keys";
 import { vwap_deviation_reversion } from "../../lib/strategies/lib/vwap_deviation_reversion";
-
-function bar(time: number, open: number, high: number, low: number, close: number, volume = 1000): OHLCVData {
-    return { time: time as Time, open, high, low, close, volume };
-}
+import { bar, oscillatingBars } from "../helpers/strategy-fixtures";
 
 // Bars with a small oscillation around `base`, giving stable non-zero dispersion.
-function oscBars(count: number, base: number): OHLCVData[] {
-    const bars: OHLCVData[] = [];
-    for (let i = 0; i < count; i++) {
-        const close = i % 2 === 0 ? base : base + 0.5;
-        bars.push(bar(i, close - 0.5, close + 1, close - 1, close));
-    }
-    return bars;
-}
-
 const NEW_MOMENTUM_KEYS = [
     "vwap_deviation_reversion",
 ];
@@ -36,7 +23,7 @@ describe("momentum regime strategy family", () => {
 
     it("vwap_deviation_reversion buys when close sits two ATRs below the VWAP anchor", () => {
         const data = [
-            ...oscBars(30, 100),
+            ...oscillatingBars(30, 100),
             bar(30, 89.5, 91, 89, 90),
         ];
         const signals = vwap_deviation_reversion.execute(data, { period: 30 });
