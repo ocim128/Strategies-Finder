@@ -468,6 +468,51 @@ describe("Asset Opportunity runner", () => {
         expect(output.results[0]!.signalAgeBars).to.equal(1);
         expect(output.results[0]!.fillTiming).to.equal("next_open");
     });
+
+    it("reuses capped in-sample signals for fixed-holdout next_open freshness", async () => {
+        const strategy: Strategy = {
+            name: "Fixed Holdout Next Open Reuse",
+            description: "emits one entry at the visible boundary",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                const latest = data[data.length - 1];
+                return latest
+                    ? [{ time: latest.time, type: "buy", price: latest.close }]
+                    : [];
+            },
+        };
+        const data = makeCandles([100, 101, 102, 103, 104, 105, 106, 107, 108]);
+        let retainSignals = false;
+        const output = await runAssetOpportunitySearch(
+            makeInput({
+                settings: { ...settings, executionModel: "next_open", tradeDirection: "long" },
+                options: makeOptions({
+                    assetOpportunity: {
+                        symbols: ["FIXED_REUSE"],
+                        oosIgnoreLastBars: 2,
+                        evalLastBars: 4,
+                        candidatePoolSize: 1,
+                        minFreshSupport: 1,
+                    },
+                }),
+                selectedStrategy: { key: "fixed_reuse", name: strategy.name, strategy },
+                assets: [{ symbol: "FIXED_REUSE", data }],
+                runIsSearch: async (args) => {
+                    retainSignals = args.retainSignals === true;
+                    return makeRetainingStubIsSearch()(args);
+                },
+            }),
+            makeCallbacks(),
+        );
+        expect(retainSignals).to.equal(true);
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.freshStatus).to.equal("fresh");
+        expect(output.results[0]!.latestSignalTime).to.equal(data[6]!.time);
+        expect(output.outcomes[0]!.diagnostics?.freshEntryRechecks).to.equal(1);
+        expect(output.outcomes[0]!.diagnostics?.timingsMs.freshEntryRechecks).to.be.lessThan(5);
+    });
+
     it("reserves the real latest candle before slicing and exposes OOS evidence", async () => {
         const strategy: Strategy = {
             name: "SlicedFresh",

@@ -34,6 +34,7 @@ import {
 import {
     resolveAssetOpportunityBatchWorkerCount,
     resolveAssetOpportunityDatasetCacheCapacity,
+    ASSET_OPPORTUNITY_BATCH_RUST_CHUNK_WORKER_CAP,
     runAssetOpportunityBatchSweep,
     FINDER_ASSET_BATCH_WORKERS_ENV,
     type AssetOpportunityBatchRunnerEvents,
@@ -409,6 +410,13 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         // extra workers only contend for its queue)...
         expect(resolveAssetOpportunityBatchWorkerCount(41, 10, {}, 64 * GIB, { rustEngine: true }))
             .to.equal(Math.min(auto, 2));
+        expect(resolveAssetOpportunityBatchWorkerCount(
+            41,
+            10,
+            {},
+            64 * GIB,
+            { rustEngine: true, rustWorkerCap: ASSET_OPPORTUNITY_BATCH_RUST_CHUNK_WORKER_CAP },
+        )).to.equal(Math.min(auto, ASSET_OPPORTUNITY_BATCH_RUST_CHUNK_WORKER_CAP));
         // ...and never raises it when auto is already below the cap.
         expect(resolveAssetOpportunityBatchWorkerCount(3, 10, {}, 64 * GIB, { rustEngine: true }))
             .to.equal(Math.min(resolveAssetOpportunityBatchWorkerCount(3, 10, {}, 64 * GIB), 2));

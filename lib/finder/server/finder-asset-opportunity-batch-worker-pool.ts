@@ -109,6 +109,13 @@ export function resolveAssetOpportunityDatasetCacheCapacity(
 export const ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP = 2;
 
 /**
+ * Chunked Asset Opportunity runs do substantial TypeScript signal generation
+ * before each Rust request. Four workers overlap that CPU work better than the
+ * non-chunked Rust cap, while keeping external Rust contention bounded.
+ */
+export const ASSET_OPPORTUNITY_BATCH_RUST_CHUNK_WORKER_CAP = 4;
+
+/**
  * Resolve the worker count for one batch sweep.
  *
  * - `FINDER_ASSET_BATCH_WORKERS` env: integer >= 1 wins outright (1 = caller
@@ -124,16 +131,23 @@ export const ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP = 2;
  *   each holdout into independent asset chunks.
  *   `options.taskSymbolCount` replaces `symbolCount` for the memory estimate
  *   when each task retains only an asset partition.
+ * - `options.rustWorkerCap` overrides the default Rust cap for a caller that
+ *   has a measured hybrid TypeScript/Rust workload.
  * - `options.rustEngine`: clamps the AUTO value (never the env override) to
- *   {@link ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP} — the Rust server
- *   serializes, so extra workers only contend for its queue.
+ *   the selected Rust worker cap — the Rust server serializes, so extra
+ *   workers only contend for its queue.
  */
 export function resolveAssetOpportunityBatchWorkerCount(
     holdoutCount: number,
     symbolCount: number,
     env: NodeJS.ProcessEnv = process.env,
     systemMemoryBytes: number = totalmem(),
-    options?: { rustEngine?: boolean; taskCount?: number; taskSymbolCount?: number },
+    options?: {
+        rustEngine?: boolean;
+        taskCount?: number;
+        taskSymbolCount?: number;
+        rustWorkerCap?: number;
+    },
 ): number {
     const raw = env[FINDER_ASSET_BATCH_WORKERS_ENV];
     if (raw !== undefined && raw !== "") {
@@ -165,7 +179,10 @@ export function resolveAssetOpportunityBatchWorkerCount(
         ),
     );
     if (options?.rustEngine === true) {
-        return Math.min(auto, ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP);
+        const rustWorkerCap = Number.isFinite(options.rustWorkerCap) && options.rustWorkerCap! >= 1
+            ? Math.min(ASSET_OPPORTUNITY_BATCH_WORKER_COUNT_MAX, Math.floor(options.rustWorkerCap!))
+            : ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP;
+        return Math.min(auto, rustWorkerCap);
     }
     return auto;
 }

@@ -852,11 +852,29 @@ async function searchOneAsset(args: {
     // also matches the recheck window (always in fixed-holdout mode; in
     // no-holdout mode when the application candle was included above), the
     // retained in-sample signals are sufficient and the re-execution is
-    // skipped. Any other data slice shifts the window boundaries, so the
-    // recheck must re-run on the full boundary data.
+    // skipped. A fixed holdout with a recency cap is also safe for next-bar
+    // models: the capped in-sample window is a suffix ending at the same
+    // boundary, and fresh detection only reads signals from the latest one or
+    // two boundary bars. Any other data slice or execution model keeps the
+    // existing recheck path.
     const recheckData = oosIgnoreLastBars > 0 ? visibleValidationData : fullClosed;
+    const sameSignalBoundary = slicedHistorical.length > 0
+        && recheckData.length > slicedHistorical.length
+        && timeKey(slicedHistorical[slicedHistorical.length - 1]!.time)
+            === timeKey(recheckData[recheckData.length - 1]!.time);
+    const canReuseCappedNextBarSignals = executionModel !== "signal_close"
+        && oosIgnoreLastBars > 0
+        && evalLastBars > 0
+        && (input.options.dataSlice ?? "all") === "all"
+        && sameSignalBoundary
+        && !input.dataFetcher
+        && !selectedStrategy.strategy.crossSymbolConfig
+        && !selectedStrategy.strategy.polymarket1sConfig
+        && !input.exitStrategyCandidates?.length
+        && input.settings.strategyTimeframeEnabled !== true
+        && !(input.settings.confirmationStrategies?.length);
     const canReuseFreshSignals = (input.options.dataSlice ?? "all") === "all"
-        && recheckData.length === slicedHistorical.length;
+        && (recheckData.length === slicedHistorical.length || canReuseCappedNextBarSignals);
     const canReuseIsSignalsForFresh = canReuseIsSignalsForFreshModel && canReuseFreshSignals;
 
     // 5. Run the in-sample search on the historical window. The `runIsSearch`
@@ -1345,9 +1363,10 @@ type AssetFreshEvaluation = {
 
 /**
  * Detect the fresh-entry status from signals retained by the in-sample search,
- * WITHOUT re-executing the candidate. Only valid when the in-sample window and
- * the recheck window are bar-for-bar identical AND the execution model is not
- * `signal_close` (both enforced by the caller via `canReuseIsSignalsForFresh`).
+ * WITHOUT re-executing the candidate. The caller permits this only when the
+ * windows are bar-for-bar identical, or when a fixed-holdout next-bar check
+ * uses a capped suffix ending at the same boundary. `signal_close` remains
+ * excluded because its recheck consumes a re-simulated trade list.
  *
  * Parity with `regenerateSignalsAndDetectFresh`: for non-`signal_close`
  * models the recheck runs `signalsOnly`, so `detectFreshEntry` sees an

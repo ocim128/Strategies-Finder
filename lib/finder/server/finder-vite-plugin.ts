@@ -158,6 +158,7 @@ import {
 } from "./asset-opportunity-iteration";
 import {
     ASSET_OPPORTUNITY_BATCH_WORKER_COUNT_MAX,
+    ASSET_OPPORTUNITY_BATCH_RUST_CHUNK_WORKER_CAP,
     createRealWorkerAssetOpportunityBatchRunner,
     resolveAssetOpportunityBatchWorkerCount,
     runAssetOpportunityBatchSweep,
@@ -210,6 +211,9 @@ function resolveAssetOpportunityChunkWorkerCount(
         systemMemoryBytes,
         {
             rustEngine,
+            ...(rustEngine
+                ? { rustWorkerCap: ASSET_OPPORTUNITY_BATCH_RUST_CHUNK_WORKER_CAP }
+                : {}),
             taskCount: ASSET_OPPORTUNITY_BATCH_CHUNK_WORKER_TARGET,
             taskSymbolCount: Math.ceil(totalAssets / ASSET_OPPORTUNITY_BATCH_CHUNK_WORKER_TARGET),
         },
@@ -225,6 +229,9 @@ function resolveAssetOpportunityChunkWorkerCount(
             systemMemoryBytes,
             {
                 rustEngine,
+                ...(rustEngine
+                    ? { rustWorkerCap: ASSET_OPPORTUNITY_BATCH_RUST_CHUNK_WORKER_CAP }
+                    : {}),
                 taskCount: workerCount,
                 taskSymbolCount: Math.ceil(totalAssets / workerCount),
             },
