@@ -1122,6 +1122,45 @@ describe("Asset Opportunity runner", () => {
         expect(output.results[0]!.latestSignalTime).to.equal(candles[97]!.time);
     });
 
+    it("bounds next_open signal-only rechecks without a Rust batch", async () => {
+        const candles = makeCandles(Array.from({ length: 100 }, (_, index) => 100 + index));
+        const signalInputLengths: number[] = [];
+        const strategy: Strategy = {
+            name: "Bounded Next Open Signal",
+            description: "enters on the latest bar",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                signalInputLengths.push(data.length);
+                const latest = data[data.length - 1];
+                return latest
+                    ? [{ time: latest.time, type: "buy" as const, price: latest.close }]
+                    : [];
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({
+                assetOpportunity: {
+                    evalLastBars: 4,
+                    oosIgnoreLastBars: 2,
+                    candidatePoolSize: 1,
+                },
+            }),
+            settings: { ...settings, executionModel: "next_open", tradeDirection: "long" },
+            selectedStrategy: { key: "bounded_next_open_signal", name: strategy.name, strategy },
+            generateParamSets: () => [{ threshold: 1 }],
+            assets: [{ symbol: "BOUNDED_NEXT_OPEN", data: candles }],
+            runIsSearch: makeStubIsSearch(),
+        }), makeCallbacks());
+
+        // Four IS bars plus the 64-bar conservative warmup; the fresh
+        // signal-only recheck no longer walks the full 98-bar boundary.
+        expect(signalInputLengths).to.deep.equal([4, 68]);
+        expect(output.outcomes[0]!.diagnostics?.freshSignalWindowBars).to.equal(68);
+        expect(output.results[0]!.freshStatus).to.equal("fresh");
+        expect(output.results[0]!.latestSignalTime).to.equal(candles[97]!.time);
+    });
+
     it("still re-executes the recheck when a data slice shifts the window", async () => {
         // Guard: signal reuse is only valid when the recheck window is
         // bar-for-bar identical to the in-sample window. A non-"all" data

@@ -145,14 +145,14 @@ function resolveFreshSignalWindow(args: {
     candidates: readonly FinderResult[];
     settings: BacktestSettings;
     crossSymbol: boolean;
-    batchAvailable: boolean;
+    canUseBoundedSignalWindow: boolean;
 }): OHLCVData[] | undefined {
     if (
         args.evalLastBars <= 0
         || args.dataSlice !== "all"
         || args.crossSymbol
         || args.boundaryData.length <= args.slicedHistorical.length
-        || !args.batchAvailable
+        || !args.canUseBoundedSignalWindow
     ) {
         return undefined;
     }
@@ -920,7 +920,12 @@ async function searchOneAsset(args: {
         candidates: topK,
         settings: input.settings,
         crossSymbol: Boolean(input.dataFetcher || selectedStrategy.strategy.crossSymbolConfig),
-        batchAvailable: Boolean(input.freshEntryBatch && executionModel === "signal_close"),
+        // signal_close needs the batch path because its fresh check consumes
+        // replayed trades. next_open/next_close only consume generated
+        // signals, so their signal-only recheck can safely use the same
+        // bounded recent window even without a Rust batch executor.
+        canUseBoundedSignalWindow: executionModel !== "signal_close"
+            || Boolean(input.freshEntryBatch),
     });
     diagnostics.freshSignalWindowBars = freshSignalData?.length ?? 0;
 
@@ -1059,6 +1064,7 @@ async function searchOneAsset(args: {
                     candidate,
                     strategy: preparedStrategy,
                     fullClosed: recheckData,
+                    ...(freshSignalData ? { signalData: freshSignalData } : {}),
                     symbol,
                     interval: input.interval,
                     settings: input.settings,
@@ -1419,10 +1425,10 @@ function buildFreshEntryEvaluation(args: {
 }
 
 /**
- * Re-run one candidate's strategy on the full closed data and detect the
- * fresh-entry status. Mirrors the prior current-chart Apply path: signal
- * generation + backtest on the FULL closed set (including the application
- * candle), then `detectFreshEntry`.
+ * Re-run one candidate's strategy on the boundary data and detect the
+ * fresh-entry status. Non-signal-close paths may generate signals on a
+ * bounded recent window first; detection still runs against the full boundary
+ * timeline so signal age and fill timing retain their original meaning.
  *
  * Returns the parallel-array entry consumed by `reduceAssetTopKToResult`.
  */
@@ -1430,6 +1436,7 @@ function regenerateSignalsAndDetectFresh(args: {
     candidate: FinderResult;
     strategy: Strategy;
     fullClosed: OHLCVData[];
+    signalData?: OHLCVData[];
     symbol: string;
     interval: string;
     settings: BacktestSettings;
@@ -1439,10 +1446,11 @@ function regenerateSignalsAndDetectFresh(args: {
     dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
 }): Promise<AssetFreshEvaluation> {
+    const signalData = args.signalData ?? args.fullClosed;
     return executeAssetCandidate({
         candidate: args.candidate,
         strategy: args.strategy,
-        data: args.fullClosed,
+        data: signalData,
         symbol: args.symbol,
         interval: args.interval,
         settings: args.settings,
@@ -1452,12 +1460,15 @@ function regenerateSignalsAndDetectFresh(args: {
         dataFetcher: args.dataFetcher,
         useRustEnginePreference: args.useRustEnginePreference,
         signalOnly: args.settings.executionModel !== "signal_close",
-    }).then(({ result, candles, signals, engineUsed, engineDiagnostics }) => {
+    }).then(({ result, signals, engineUsed, engineDiagnostics }) => {
+        const boundarySignals = args.signalData
+            ? alignSignalsToBoundary(signals, args.fullClosed)
+            : signals;
         const detected = detectFreshEntry({
             result,
-            candles,
+            candles: args.fullClosed,
             settings: args.settings,
-            signals,
+            signals: boundarySignals,
             freshnessBars: resolveAssetOpportunityFreshnessBars(args.settings),
         });
         return {
@@ -1471,7 +1482,7 @@ function regenerateSignalsAndDetectFresh(args: {
                 ? parseTimeToUnixSeconds(detected.latestTrade.entryTime)
                 : null,
             latestSignalPrice: resolveLatestSignalPrice({
-                signals,
+                signals: boundarySignals,
                 candle: args.fullClosed[args.fullClosed.length - 1]!,
                 direction: detected.direction,
                 signalTime: detected.latestSignalTime,
