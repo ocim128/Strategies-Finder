@@ -50,6 +50,7 @@ import type { Plugin } from "vite";
 import { getHeapStatistics } from "node:v8";
 import { totalmem } from "node:os";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { debugLogger } from "../../debug-logger";
 import {
@@ -67,6 +68,8 @@ import { sliceFinderDataWindow } from "../finder-manager-logic";
 import {
     FINDER_ASSET_FRESH_FOLD_COUNT,
     FINDER_ASSET_FRESH_FOLD_STRIDE_BARS,
+    buildFreshFoldScheduleFromData,
+    getFinderAssetDataBounds,
     normalizeFinderAssetFreshFoldSchedule,
     normalizeFinderAssetFoldEnd,
     sliceFinderAssetDataAtFoldEnd,
@@ -1264,8 +1267,60 @@ interface FinderAssetOpportunityRequestBody {
     foldEnd?: unknown;
     /** Explicit 25-entry fresh-window fold schedule. */
     foldSchedule?: unknown;
+    /** Let the server compose the schedule from the reference dataset. */
+    scheduleMode?: unknown;
     /** Required role for a fresh-window batch budget. */
     batchRole?: unknown;
+}
+
+type FinderFreshWindowScheduleMode = "auto";
+
+const FRESH_WINDOW_PROVENANCE_ERROR =
+    "Fresh-window requires real FINDER_DATA_SYNC_SNAPSHOT and GIT_COMMIT provenance.";
+
+let derivedFreshWindowGitCommit: string | null | undefined;
+
+function normalizeFreshWindowProvenanceValue(value: string | undefined): string | null {
+    const normalized = value?.trim();
+    return normalized && normalized !== "unknown" ? normalized : null;
+}
+
+function deriveFreshWindowGitCommit(): string | null {
+    if (derivedFreshWindowGitCommit !== undefined) return derivedFreshWindowGitCommit;
+    try {
+        const output = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+        });
+        derivedFreshWindowGitCommit = normalizeFreshWindowProvenanceValue(output);
+    } catch {
+        derivedFreshWindowGitCommit = null;
+    }
+    return derivedFreshWindowGitCommit;
+}
+
+/** Resolve fresh provenance without weakening the fail-closed identity gate. */
+export function resolveFreshWindowProvenance(
+    referenceData: readonly OHLCVData[],
+    env: Partial<Pick<NodeJS.ProcessEnv, "FINDER_DATA_SYNC_SNAPSHOT" | "GIT_COMMIT">> = process.env,
+    gitCommitResolver?: () => string | null,
+): { dataSyncSnapshot: string; gitCommit: string } | null {
+    const dataSyncSnapshot = normalizeFreshWindowProvenanceValue(env.FINDER_DATA_SYNC_SNAPSHOT)
+        ?? (() => {
+            const latestTimestamp = getFinderAssetDataBounds(referenceData).last;
+            return latestTimestamp === null ? null : String(latestTimestamp);
+        })();
+    const gitCommit = normalizeFreshWindowProvenanceValue(env.GIT_COMMIT)
+        ?? normalizeFreshWindowProvenanceValue((gitCommitResolver ?? deriveFreshWindowGitCommit)() ?? undefined);
+    if (!dataSyncSnapshot || !gitCommit) return null;
+    return { dataSyncSnapshot, gitCommit };
+}
+
+/** Compose the registered fresh schedule from actual reference candles. */
+export function composeFreshWindowFoldSchedule(
+    referenceData: readonly OHLCVData[],
+): FinderAssetOpportunityFoldScheduleEntry[] {
+    return buildFreshFoldScheduleFromData(referenceData);
 }
 
 /**
@@ -1662,6 +1717,7 @@ type FinderAssetOpportunityBatchInput = FinderAssetOpportunityRunInput & {
     /** Normalized symbol-to-provider map for worker task payloads. */
     providerBySymbol?: Record<string, string>;
     foldSchedule?: FinderAssetOpportunityFoldScheduleEntry[];
+    scheduleMode?: FinderFreshWindowScheduleMode;
     batchRole?: FinderFreshWindowBatchRole;
     dataSyncSnapshot?: string;
     gitCommit?: string;
@@ -1713,6 +1769,7 @@ function buildFreshWindowIdentity(
         evalLastBars,
         oosIgnoreLastBars,
         oosHorizons,
+        ...(input.scheduleMode ? { scheduleMode: input.scheduleMode } : {}),
     };
     const invalidReasons: string[] = [];
     invalidReasons.push(...validateFreshWindowExecutionSettings(input.settings));
@@ -2527,6 +2584,8 @@ export async function processFinderAssetOpportunityBatchRun(
 async function prepareAssetOpportunityRunPayload(
     body: FinderAssetOpportunityRequestBody & { batch?: unknown },
     batch?: { validate: true },
+    referenceDataLoader: (symbol: string, interval: string) => Promise<OHLCVData[]> =
+        (symbol, interval) => loadServerFinderDataset(symbol, interval),
 ): Promise<{
     runId: string;
     symbols: string[];
@@ -2548,6 +2607,11 @@ async function prepareAssetOpportunityRunPayload(
     researchProgram?: AssetOpportunityResearchProgram;
     /** Present for fresh-window batches: the pre-registered budget role. */
     batchRole?: FinderFreshWindowBatchRole;
+    /** Present for fresh-window batches that ask the server to compose folds. */
+    scheduleMode?: FinderFreshWindowScheduleMode;
+    /** Resolved fresh provenance persisted into the run identity. */
+    dataSyncSnapshot?: string;
+    gitCommit?: string;
     /** Present when the request declares a point-in-time fold boundary. */
     foldEnd?: number;
     /** Present for fresh-window batch requests: one explicit entry per fold. */
@@ -2558,7 +2622,10 @@ async function prepareAssetOpportunityRunPayload(
         ? parseAssetOpportunityFreshWindowBatchRole(body.batchRole)
         : undefined;
     const foldEnd = parseAssetOpportunityFoldEnd(body.foldEnd);
-    const foldSchedule = researchProgram === "fresh-window"
+    const scheduleMode = researchProgram === "fresh-window"
+        ? parseAssetOpportunityFreshWindowScheduleMode(body.scheduleMode)
+        : undefined;
+    let foldSchedule = researchProgram === "fresh-window"
         ? parseAssetOpportunityFreshFoldSchedule(body.foldSchedule)
         : undefined;
     if (runOwner !== RUN_OWNER_NONE) {
@@ -2639,7 +2706,10 @@ async function prepareAssetOpportunityRunPayload(
                 `Fresh-window batch must use holdout range ${FINDER_ASSET_FRESH_FOLD_STRIDE_BARS}..${FINDER_ASSET_FRESH_FOLD_COUNT * FINDER_ASSET_FRESH_FOLD_STRIDE_BARS} at stride ${FINDER_ASSET_FRESH_FOLD_STRIDE_BARS}.`,
             );
         }
-        if (researchProgram === "fresh-window" && !foldSchedule) {
+        if (researchProgram === "fresh-window" && foldSchedule && scheduleMode === "auto") {
+            throw new HttpStatusError(400, "Fresh-window batch must provide either foldSchedule or scheduleMode auto, not both.");
+        }
+        if (researchProgram === "fresh-window" && !foldSchedule && scheduleMode !== "auto") {
             throw new HttpStatusError(400, "Fresh-window batch requires an explicit 25-entry foldSchedule.");
         }
         batchRange = { start: range.start, end: range.end };
@@ -2650,14 +2720,35 @@ async function prepareAssetOpportunityRunPayload(
     const selectedStrategies = await resolveSelectedStrategies(strategyKeys);
     const settings = (body.settings ?? {}) as BacktestSettings;
     const capitalSettings = (body.capitalSettings ?? {}) as CapitalSettings;
+    let freshDataSyncSnapshot: string | undefined;
+    let freshGitCommit: string | undefined;
     if (researchProgram === "fresh-window") {
         const executionErrors = validateFreshWindowExecutionSettings(settings);
         if (executionErrors.length > 0) {
             throw new HttpStatusError(400, `Fresh-window execution contract rejected: ${executionErrors.join("; ")}`);
         }
-        if (!process.env.FINDER_DATA_SYNC_SNAPSHOT || process.env.FINDER_DATA_SYNC_SNAPSHOT === "unknown"
-            || !process.env.GIT_COMMIT || process.env.GIT_COMMIT === "unknown") {
-            throw new HttpStatusError(400, "Fresh-window requires real FINDER_DATA_SYNC_SNAPSHOT and GIT_COMMIT provenance.");
+        const needsReferenceData = scheduleMode === "auto"
+            || normalizeFreshWindowProvenanceValue(process.env.FINDER_DATA_SYNC_SNAPSHOT) === null;
+        let referenceData: OHLCVData[] = [];
+        if (needsReferenceData) {
+            try {
+                referenceData = await referenceDataLoader(symbols[0]!, interval);
+            } catch {
+                referenceData = [];
+            }
+        }
+        const provenance = resolveFreshWindowProvenance(referenceData);
+        if (!provenance) {
+            throw new HttpStatusError(400, FRESH_WINDOW_PROVENANCE_ERROR);
+        }
+        freshDataSyncSnapshot = provenance.dataSyncSnapshot;
+        freshGitCommit = provenance.gitCommit;
+        if (batch && scheduleMode === "auto") {
+            try {
+                foldSchedule = composeFreshWindowFoldSchedule(referenceData);
+            } catch (error) {
+                throw new HttpStatusError(400, error instanceof Error ? error.message : String(error));
+            }
         }
     }
     const useRustEnginePreference = body.useRustEnginePreference === true;
@@ -2686,6 +2777,9 @@ async function prepareAssetOpportunityRunPayload(
         minFreshSupport,
         ...(researchProgram ? { researchProgram } : {}),
         ...(batchRole ? { batchRole } : {}),
+        ...(scheduleMode ? { scheduleMode } : {}),
+        ...(freshDataSyncSnapshot ? { dataSyncSnapshot: freshDataSyncSnapshot } : {}),
+        ...(freshGitCommit ? { gitCommit: freshGitCommit } : {}),
         ...(foldEnd !== undefined ? { foldEnd } : {}),
         ...(foldSchedule ? { foldSchedule } : {}),
         ...(batch ? { batchRange, archiveSort } : {}),
@@ -2705,6 +2799,14 @@ function parseAssetOpportunityFreshWindowBatchRole(raw: unknown): FinderFreshWin
         throw new HttpStatusError(400, "Fresh-window batchRole must be collection, judged, or replication.");
     }
     return raw;
+}
+
+function parseAssetOpportunityFreshWindowScheduleMode(raw: unknown): FinderFreshWindowScheduleMode | undefined {
+    if (raw === undefined || raw === null || raw === "") return undefined;
+    if (raw !== "auto") {
+        throw new HttpStatusError(400, "Fresh-window scheduleMode must be auto.");
+    }
+    return "auto";
 }
 
 function parseAssetOpportunityFoldEnd(raw: unknown): number | undefined {
@@ -2975,10 +3077,11 @@ async function handleAssetOpportunityBatchRunRequest(
                 ...(prepared.researchProgram === "fresh-window" ? { loadDatasetIsRaw: true } : {}),
                 ...(prepared.researchProgram ? { researchProgram: prepared.researchProgram } : {}),
                 ...(prepared.batchRole ? { batchRole: prepared.batchRole } : {}),
+                ...(prepared.scheduleMode ? { scheduleMode: prepared.scheduleMode } : {}),
                 ...(prepared.foldEnd !== undefined || prepared.researchProgram === "fresh-window"
                     ? {
-                        dataSyncSnapshot: process.env.FINDER_DATA_SYNC_SNAPSHOT ?? "unknown",
-                        gitCommit: process.env.GIT_COMMIT ?? "unknown",
+                        dataSyncSnapshot: prepared.dataSyncSnapshot ?? "unknown",
+                        gitCommit: prepared.gitCommit ?? "unknown",
                     }
                     : {}),
                 loadSecondaryDataset: loadDatasetFullClosed,
@@ -3625,8 +3728,19 @@ export const __testInternals = {
     parseRunId,
     parseAssetOpportunityResearchProgram,
     parseAssetOpportunityFreshWindowBatchRole,
+    parseAssetOpportunityFreshWindowScheduleMode,
     parseAssetOpportunityFoldEnd,
     parseAssetOpportunityFreshFoldSchedule,
+    composeFreshWindowFoldSchedule,
+    resolveFreshWindowProvenance,
+    prepareFreshWindowBatchForTests: (
+        body: FinderAssetOpportunityRequestBody & { batch?: unknown },
+        referenceData: OHLCVData[],
+    ) => prepareAssetOpportunityRunPayload(
+        body,
+        { validate: true },
+        async () => referenceData,
+    ),
     consumePendingStopForRun,
     writeStreamEventBestEffort,
     withCanonicalUniverseSymbols,
@@ -3639,6 +3753,9 @@ export const __testInternals = {
     flushPendingDatasetCacheInvalidation,
     acquireRunOwnershipForTests(): number {
         return acquireRunOwnership();
+    },
+    resetFreshWindowGitCommitForTests(): void {
+        derivedFreshWindowGitCommit = undefined;
     },
     setRunStateForTests(snapshot: FinderRunSnapshot | null): void {
         runState = snapshot;

@@ -31,6 +31,7 @@ import type { FinderOptions } from "../lib/types/finder";
 import type { BacktestSettings, OHLCVData, Time } from "../lib/types/strategies";
 
 const { setRunOwnerForTests, resetRunStateForTests } = __testInternals;
+const { prepareFreshWindowBatchForTests, resetFreshWindowGitCommitForTests } = __testInternals;
 const STRATEGY_KEY = "short_return_streak_fade_chop";
 const SYMBOLS = ["FIXTURE_1", "FIXTURE_2", "FIXTURE_3", "FIXTURE_4", "FIXTURE_5", "FIXTURE_6"];
 const INTERVAL = "4h";
@@ -326,9 +327,11 @@ function buildWallClockSchedule(dataEndTime: number): FreshFoldSchedule {
 async function runGeneratedArchive(
     useWorkers: boolean,
     scheduleOverride?: FreshFoldSchedule,
-): Promise<{ root: string; lines: string[] }> {
+    batchRole: "collection" | "judged" = "collection",
+): Promise<{ root: string; lines: string[]; provenance?: { dataSyncSnapshot: string; gitCommit: string } }> {
     const datasets = buildFixtureDatasets();
     const referenceTimestamps = datasets.get(SYMBOLS[0]!)!.map((candle) => Number(candle.time));
+    const autoSchedule = scheduleOverride === undefined;
     const foldSchedule = scheduleOverride ?? buildFreshFoldScheduleFromDataEnd(referenceTimestamps);
     const hasCalendarGap = datasets.get(SYMBOLS[0]!)!.some((candle, index, candles) =>
         index > 0 && Number(candle.time) - Number(candles[index - 1]!.time) > BAR_SECONDS,
@@ -343,18 +346,45 @@ async function runGeneratedArchive(
     if (!strategy) throw new Error(`Fixture strategy failed to load: ${STRATEGY_KEY}`);
     const root = mkdtempSync(path.join(tmpdir(), "fresh-window-pipeline-"));
     const previousWorkerCount = process.env[FINDER_ASSET_BATCH_WORKERS_ENV];
+    const previousDataSyncSnapshot = process.env.FINDER_DATA_SYNC_SNAPSHOT;
+    const previousGitCommit = process.env.GIT_COMMIT;
+    let prepared: Awaited<ReturnType<typeof prepareFreshWindowBatchForTests>> | null = null;
     process.env[FINDER_ASSET_BATCH_WORKERS_ENV] = useWorkers ? "2" : "1";
     try {
+        if (autoSchedule) {
+            delete process.env.FINDER_DATA_SYNC_SNAPSHOT;
+            delete process.env.GIT_COMMIT;
+            resetFreshWindowGitCommitForTests();
+            prepared = await prepareFreshWindowBatchForTests(
+                {
+                    runId: useWorkers ? "fixture-worker-run" : "fixture-sequential-run",
+                    symbols: SYMBOLS,
+                    interval: INTERVAL,
+                    options: buildOptions(),
+                    settings,
+                    capitalSettings,
+                    strategyKeys: [STRATEGY_KEY],
+                    useRustEnginePreference: false,
+                    providerBySymbol: Object.fromEntries(SYMBOLS.map((symbol) => [symbol, "binance"])),
+                    researchProgram: "fresh-window",
+                    batchRole,
+                    scheduleMode: "auto",
+                    batch: { startHoldoutBars: 12, endHoldoutBars: 300 },
+                },
+                datasets.get(SYMBOLS[0]!)!,
+            );
+            expect(prepared.foldSchedule).to.deep.equal(foldSchedule);
+        }
         setRunOwnerForTests(useWorkers ? 9302 : 9301);
         await processFinderAssetOpportunityBatchRun(
             {
                 runId: useWorkers ? "fixture-worker-run" : "fixture-sequential-run",
                 interval: INTERVAL,
                 symbols: SYMBOLS,
-                options: buildOptions(),
-                settings,
-                capitalSettings,
-                selectedStrategies: [{ key: STRATEGY_KEY, name: strategy.name, strategy }],
+                options: prepared?.options ?? buildOptions(),
+                settings: prepared?.settings ?? settings,
+                capitalSettings: prepared?.capitalSettings ?? capitalSettings,
+                selectedStrategies: prepared?.selectedStrategies ?? [{ key: STRATEGY_KEY, name: strategy.name, strategy }],
                 useRustEnginePreference: false,
                 loadDataset: async (symbol) => datasets.get(symbol) ?? [],
                 loadForwardDataset: async (symbol) => datasets.get(symbol) ?? [],
@@ -364,10 +394,11 @@ async function runGeneratedArchive(
                 archiveSort: null,
                 batch: { startHoldoutBars: 12, endHoldoutBars: 300 },
                 researchProgram: "fresh-window",
-                batchRole: "collection",
-                foldSchedule,
-                dataSyncSnapshot: "fixture-sync-2026-08-23",
-                gitCommit: "fixture-commit-2026-08-23",
+                batchRole,
+                ...(prepared?.scheduleMode ? { scheduleMode: prepared.scheduleMode } : {}),
+                foldSchedule: prepared?.foldSchedule ?? foldSchedule,
+                dataSyncSnapshot: prepared?.dataSyncSnapshot ?? "fixture-sync-2026-08-23",
+                gitCommit: prepared?.gitCommit ?? "fixture-commit-2026-08-23",
                 ...(useWorkers ? { batchTaskRunnerFactory: createFixtureWorkerFactory(datasets) } : {}),
             },
             (_event: FinderAssetOpportunityBatchStreamEvent) => undefined,
@@ -376,11 +407,21 @@ async function runGeneratedArchive(
         );
     } finally {
         restoreWorkerCount(previousWorkerCount);
+        if (previousDataSyncSnapshot === undefined) delete process.env.FINDER_DATA_SYNC_SNAPSHOT;
+        else process.env.FINDER_DATA_SYNC_SNAPSHOT = previousDataSyncSnapshot;
+        if (previousGitCommit === undefined) delete process.env.GIT_COMMIT;
+        else process.env.GIT_COMMIT = previousGitCommit;
         resetRunStateForTests();
     }
     const archiveDirectory = path.join(root, "archive", "fresh-window");
     const lines = runFreshWindowAnalysis({ archiveDirectory });
-    return { root, lines };
+    return {
+        root,
+        lines,
+        ...(prepared?.dataSyncSnapshot && prepared.gitCommit
+            ? { provenance: { dataSyncSnapshot: prepared.dataSyncSnapshot, gitCommit: prepared.gitCommit } }
+            : {}),
+    };
 }
 
 describe("fresh-window real producer-to-analyzer integration", () => {
@@ -390,10 +431,17 @@ describe("fresh-window real producer-to-analyzer integration", () => {
 
     for (const [label, useWorkers] of [["sequential", false], ["worker_threads", true]] as const) {
         it(`produces an analyzer-valid collection archive through the ${label} path`, async () => {
-            const { root, lines } = await runGeneratedArchive(useWorkers);
+            const { root, lines, provenance } = await runGeneratedArchive(useWorkers);
             try {
                 expect(lines).to.include("S0: PASS");
                 expect(lines.some((line) => line.startsWith("Recurrence: NOT AUTHORIZED"))).to.equal(true);
+                expect(provenance).to.not.equal(undefined);
+                const config = readFileSync(
+                    path.join(root, "archive", "fresh-window", "config.txt"),
+                    "utf8",
+                );
+                expect(config).to.contain(`"dataSyncSnapshot": "${provenance!.dataSyncSnapshot}"`);
+                expect(config).to.contain(`"gitCommit": "${provenance!.gitCommit}"`);
                 expect(lines).to.include("S0 windows=25, fullPoolRows=150, eligibleRows=150, finiteExecutionRows=49, randomControls=25");
                 expect(lines).to.include("S0 hand checks: TP=32, SL=3, horizon=14");
                 const identity = readFileSync(
@@ -424,6 +472,17 @@ describe("fresh-window real producer-to-analyzer integration", () => {
             }
         });
     }
+
+    it("rejects a judged auto-scheduled archive without a prior collection", async () => {
+        const { root, lines } = await runGeneratedArchive(false, undefined, "judged");
+        try {
+            expect(lines).to.include("S0: FAIL");
+            expect(lines.some((line) => /prior valid collection/i.test(line))).to.equal(true);
+            expect(lines.some((line) => line.startsWith("Recurrence:"))).to.equal(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
 
     it("fails S0 for the old wall-clock schedule against the same gapped data", async () => {
         const datasets = buildFixtureDatasets();

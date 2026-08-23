@@ -723,3 +723,69 @@ with the current provenance values: start with
 `scripts/fresh-window-batch-request.ts --config <copied config JSON> --csv <synced reference 4h CSV> --role collection --interval 4h --base-url http://127.0.0.1:5173`.
 After it completes, run
 `scripts/analyze-fresh-window-research.ts --archive-dir archive\fresh-window --stride-bars 12 --horizon 12 --seed 42`.
+
+### UI completion
+
+Fresh-window collection can now be started from the Finder Asset Opportunity
+panel without the operator request script or provenance environment variables.
+The browser sends `researchProgram: "fresh-window"`, the persisted
+`batchRole`, and `scheduleMode: "auto"`; it does not calculate timestamps.
+The operator must enable Batch OOS, set the frozen fresh-window range to
+12..300, enable Fresh-window research mode, choose the role, and start the
+batch from the UI.
+
+The server uses this fail-closed provenance precedence:
+
+1. A non-empty, non-`unknown` `FINDER_DATA_SYNC_SNAPSHOT` environment value
+   wins; otherwise the newest valid candle timestamp from the first normalized
+   request symbol's reference dataset is recorded.
+2. A non-empty, non-`unknown` `GIT_COMMIT` environment value wins; otherwise
+   `git rev-parse --short HEAD` is derived once and cached for the server
+   process.
+3. If either value cannot be provided or derived, the request is rejected with
+   the existing 400 provenance error. The resolved values and the composed
+   25-entry bar-anchored schedule are written into the fresh identity block.
+
+The explicit `foldSchedule` contract remains unchanged for the operator
+script and other callers. `scheduleMode: "auto"` selects the shared builder,
+which anchors folds to real reference-candle timestamps and applies the same
+36-bar reserve and short-data guard as the existing schedule builder.
+
+#### Pure-UI operator checklist
+
+1. Start the normal Vite development server (`npm run dev`); no
+   `FINDER_DATA_SYNC_SNAPSHOT` or `GIT_COMMIT` export is required. Use the
+   existing Node heap setting only when the selected universe needs it.
+2. Sync the intended reference data and open Finder → Asset Opportunity.
+3. Enable **Batch OOS**, set Start `12` and End `300`, then enable
+   **Fresh-window research mode**.
+4. Choose `Collection` for a new data window. Use `Judged` or `Replication`
+   only after the analyzer's prior-archive gate permits that role.
+5. Start the batch. Confirm the archive identity contains the derived or
+   explicitly overridden provenance and the 25 composed fold entries.
+6. Run the S0-first analyzer after the batch closes; do not read any verdict
+   below `S0: PASS`, and never judge a collection archive.
+
+`start-fresh-server.bat` and `run-fresh-collection.bat` remain optional
+compatibility launchers. They still exercise the explicit-schedule contract;
+the browser path no longer depends on either launcher.
+
+#### UI-completion validation
+
+The fresh-window eight-suite transcript passed with 213 tests:
+
+```text
+feature-dom-contracts.spec.ts                     48
+finder-server-plugin.spec.ts                      88
+finder-asset-opportunity-batch-parallel.spec.ts   18
+finder-asset-opportunity-archive.spec.ts          13
+finder-asset-opportunity-fold.spec.ts             11
+finder-asset-opportunity-forward-contract.spec.ts 16
+analyze-fresh-window-research.spec.ts              18
+vite-config-bundle.spec.ts                          1
+```
+
+Additional UI and real-pipeline checks passed with 11 browser lifecycle tests
+and 4 fresh-window integration tests (sequential auto schedule, worker auto
+schedule, invalid judged role gating, and the old wall-clock negative case).
+`npm run typecheck` also passed. No real batch or push was performed.

@@ -58,8 +58,10 @@ const {
     parseRunId,
     parseAssetOpportunityResearchProgram,
     parseAssetOpportunityFreshWindowBatchRole,
+    parseAssetOpportunityFreshWindowScheduleMode,
     parseAssetOpportunityFoldEnd,
     parseAssetOpportunityFreshFoldSchedule,
+    resolveFreshWindowProvenance,
     consumePendingStopForRun,
     writeStreamEventBestEffort,
     withCanonicalUniverseSymbols,
@@ -2168,6 +2170,37 @@ describe("Asset Opportunity fold validation", () => {
         } catch (error) {
             expect((error as HttpStatusError).status).to.equal(400);
         }
+    });
+
+    it("accepts auto schedule mode and rejects other modes", () => {
+        expect(parseAssetOpportunityFreshWindowScheduleMode(undefined)).to.equal(undefined);
+        expect(parseAssetOpportunityFreshWindowScheduleMode("auto")).to.equal("auto");
+        expect(() => parseAssetOpportunityFreshWindowScheduleMode("wall-clock")).to.throw(HttpStatusError);
+    });
+});
+
+describe("Fresh-window provenance resolution", () => {
+    it("derives the newest reference candle and short git commit when env is absent", () => {
+        const referenceData = makeCandles([100, 101, 102]);
+        expect(resolveFreshWindowProvenance(referenceData, {}, () => "derived-commit")).to.deep.equal({
+            dataSyncSnapshot: "1700000600",
+            gitCommit: "derived-commit",
+        });
+    });
+
+    it("fails closed when both provenance sources are underivable", () => {
+        expect(resolveFreshWindowProvenance([], {}, () => null)).to.equal(null);
+    });
+
+    it("gives explicit environment provenance precedence over derivation", () => {
+        expect(resolveFreshWindowProvenance(
+            makeCandles([100, 101]),
+            { FINDER_DATA_SYNC_SNAPSHOT: "sync-override", GIT_COMMIT: "commit-override" },
+            () => "derived-commit",
+        )).to.deep.equal({
+            dataSyncSnapshot: "sync-override",
+            gitCommit: "commit-override",
+        });
     });
 });
 

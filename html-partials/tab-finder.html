@@ -187,6 +187,17 @@
                 </div>
                 <div class="param-hint">Runs one Asset Opportunity search per holdout value (inclusive, ascending, max 100 values) and appends each top-N payload to archive/asset opportunity/oos-holdout-&lt;N&gt;-bars.txt. The single OOS Holdout Bars input above is ignored while batch mode is on.</div>
             </div>
+            <div id="finderAssetFreshWindowBatchRoleSettings" style="display:none;">
+                <div class="param-group">
+                    <label class="param-label" for="finderAssetFreshWindowBatchRole">Fresh-window batch role</label>
+                    <select class="param-input" id="finderAssetFreshWindowBatchRole">
+                        <option value="collection">Collection</option>
+                        <option value="judged">Judged</option>
+                        <option value="replication">Replication</option>
+                    </select>
+                </div>
+                <div class="param-hint">Collection records a candidate batch; Judged and Replication are gated by earlier valid archives.</div>
+            </div>
             <div class="param-hint">Searches each asset independently for every selected strategy; support counts only each sampled candidate pool. Reserve the last N historical bars for forward OOS PnL at the three listed horizons. Eval Window Bars caps the search to the last N bars before any holdout gap; 0 evaluates all available bars.</div>
         </div>
         <div id="finderQualitySettings" style="display:none;">

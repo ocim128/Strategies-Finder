@@ -73,6 +73,21 @@ export function buildFreshFoldScheduleFromDataEnd(
     });
 }
 
+/** Build the same schedule directly from a reference candle series. */
+export function buildFreshFoldScheduleFromData(
+    referenceData: readonly OHLCVData[],
+    widestHorizonBars = 24,
+): FinderAssetOpportunityFoldScheduleEntry[] {
+    const referenceTimestamps = referenceData.map((candle, index) => {
+        const timestamp = timeToNumber(candle.time);
+        if (timestamp === null) {
+            throw new Error(`Fresh-window reference candle ${index} has an unusable timestamp.`);
+        }
+        return timestamp;
+    });
+    return buildFreshFoldScheduleFromDataEnd(referenceTimestamps, widestHorizonBars);
+}
+
 /** Resolve one fresh forward window from actual reference-bar order. */
 export function getFinderAssetOpportunityFreshFoldWindow(
     referenceTimestamps: readonly number[],
@@ -138,7 +153,7 @@ export function normalizeFinderAssetFreshFoldSchedule(
     return schedule;
 }
 
-export function getFinderAssetDataBounds(data: OHLCVData[]): {
+export function getFinderAssetDataBounds(data: readonly OHLCVData[]): {
     first: number | null;
     last: number | null;
 } {

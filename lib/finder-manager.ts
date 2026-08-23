@@ -119,6 +119,7 @@ import type {
 } from './types/finder';
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "./types/backtest";
 import type { BacktestSettings } from "./types/strategies";
+import type { FinderFreshWindowBatchRole } from "./finder/finder-asset-opportunity-research-types";
 
 const QUOTE_SUFFIXES = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'BRL'];
 const MAJOR_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT"] as const;
@@ -282,6 +283,8 @@ type FinderPersistedUiState = {
 	assetOpportunityOosBatchEndBars: number;
 	/** Route Asset Opportunity batch artifacts to the fresh-window namespace. */
 	assetOpportunityFreshWindowResearchEnabled: boolean;
+	/** Fresh-window batch budget role persisted with the other Finder toggles. */
+	assetOpportunityFreshWindowBatchRole: FinderFreshWindowBatchRole;
 };
 
 const FINDER_UI_STORAGE = {
@@ -365,6 +368,7 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	assetOpportunityOosBatchStartBars: 1,
 	assetOpportunityOosBatchEndBars: 5,
 	assetOpportunityFreshWindowResearchEnabled: false,
+	assetOpportunityFreshWindowBatchRole: "collection",
 };
 
 const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
@@ -430,6 +434,10 @@ function normalizeFinderMetric(value: unknown, fallback: FinderMetric): FinderMe
 
 function normalizeFinderMode(value: unknown): FinderMode {
 	return value === "grid" || value === "genetic" ? value : "random";
+}
+
+function normalizeFinderFreshWindowBatchRole(value: unknown): FinderFreshWindowBatchRole {
+	return value === "judged" || value === "replication" ? value : "collection";
 }
 
 function normalizePolymarketRankMode(value: unknown): PolymarketFinderRankMode {
@@ -575,6 +583,9 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 			? batchRange.end
 			: DEFAULT_FINDER_UI_STATE.assetOpportunityOosBatchEndBars,
 		assetOpportunityFreshWindowResearchEnabled: source.assetOpportunityFreshWindowResearchEnabled === true,
+		assetOpportunityFreshWindowBatchRole: normalizeFinderFreshWindowBatchRole(
+			source.assetOpportunityFreshWindowBatchRole,
+		),
 	};
 }
 
@@ -977,6 +988,7 @@ export class FinderManager {
 		dom.finderAssetEvalWindowBars.value = String(this.uiState.assetOpportunityEvalWindowBars);
 		dom.finderAssetOosBatchToggle.checked = this.uiState.assetOpportunityOosBatchEnabled;
 		dom.finderAssetFreshWindowResearchToggle.checked = this.uiState.assetOpportunityFreshWindowResearchEnabled;
+		dom.finderAssetFreshWindowBatchRole.value = this.uiState.assetOpportunityFreshWindowBatchRole;
 		dom.finderAssetOosBatchStart.value = String(this.uiState.assetOpportunityOosBatchStartBars);
 		dom.finderAssetOosBatchEnd.value = String(this.uiState.assetOpportunityOosBatchEndBars);
 		this.syncAssetOosBatchControls();
@@ -1454,6 +1466,7 @@ export class FinderManager {
 			dom.finderAssetEvalWindowBars,
 			dom.finderAssetOosBatchToggle,
 			dom.finderAssetFreshWindowResearchToggle,
+			dom.finderAssetFreshWindowBatchRole,
 			dom.finderAssetOosBatchStart,
 			dom.finderAssetOosBatchEnd,
 		].forEach((element) => {
@@ -1524,6 +1537,9 @@ export class FinderManager {
 		);
 		this.uiState.assetOpportunityOosBatchEnabled = dom.finderAssetOosBatchToggle.checked;
 		this.uiState.assetOpportunityFreshWindowResearchEnabled = dom.finderAssetFreshWindowResearchToggle.checked;
+		this.uiState.assetOpportunityFreshWindowBatchRole = normalizeFinderFreshWindowBatchRole(
+			dom.finderAssetFreshWindowBatchRole.value,
+		);
 		const batchRange = normalizeFinderAssetOosBatchHoldoutRange(
 			dom.finderAssetOosBatchStart.value,
 			dom.finderAssetOosBatchEnd.value,
@@ -1547,6 +1563,10 @@ export class FinderManager {
 		const dom = this.getDom();
 		const batchEnabled = dom.finderAssetOosBatchToggle.checked;
 		setVisible(dom.finderAssetOosBatchSettings, batchEnabled);
+		setVisible(
+			dom.finderAssetFreshWindowBatchRoleSettings,
+			dom.finderAssetFreshWindowResearchToggle.checked,
+		);
 		dom.finderAssetOosIgnoreLastBars.disabled = batchEnabled;
 		dom.finderAssetOosIgnoreLastBars.closest(".param-group")?.classList.toggle("is-disabled", batchEnabled);
 	}
@@ -2855,7 +2875,8 @@ export class FinderManager {
 				...(this.uiState.assetOpportunityFreshWindowResearchEnabled
 					? {
 						researchProgram: "fresh-window" as const,
-						batchRole: "collection" as const,
+						batchRole: this.uiState.assetOpportunityFreshWindowBatchRole,
+						scheduleMode: "auto" as const,
 					}
 					: {}),
 				batch: {
