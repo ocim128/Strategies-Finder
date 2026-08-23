@@ -1,7 +1,9 @@
 import {
     compactMultiAssetWorkload,
+    prepareRustRequest,
 } from "../../rust-engine-client";
 import type {
+    PreparedRustRequest,
     RustMultiAssetBatchWorkload,
     RustEngineClient,
 } from "../../rust-engine-client";
@@ -61,15 +63,11 @@ type CacheQueueEntry = {
     resolve: (cacheId: string | null) => void;
 };
 
-function estimateRequestBytes(request: unknown): number {
-    return new TextEncoder().encode(JSON.stringify(request)).byteLength;
-}
-
-function estimateMultiRequestBytes(request: {
+function prepareMultiRequest(request: {
     workloads: RustMultiAssetBatchWorkload[];
     [key: string]: unknown;
-}): number {
-    return estimateRequestBytes({
+}): PreparedRustRequest {
+    return prepareRustRequest({
         ...request,
         workloads: request.workloads.map(compactMultiAssetWorkload),
     });
@@ -135,7 +133,6 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
     // and fresh-entry requests from multiplying independent Rayon pools and
     // oversubscribing the host when both queues are active.
     let rustRequestTail: Promise<void> = Promise.resolve();
-    const dataKeysByData = new WeakMap<object, string>();
     const cachedIdsByDataKey = new Map<string, string>();
     const pendingCacheIdsByDataKey = new Map<string, Promise<string | null>>();
     const cacheQueue: CacheQueueEntry[] = [];
@@ -144,12 +141,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
     let cacheFlushing = false;
     const sharedDatasetCache = options?.datasetCache;
     const getDataKey = (data: OHLCVData[]): string => {
-        const object = data as object;
-        const cached = dataKeysByData.get(object);
-        if (cached) return cached;
-        const key = client.getDataCacheKey(data);
-        dataKeysByData.set(object, key);
-        return key;
+        return client.getDataCacheKey(data);
     };
 
     const scheduleCandidateFlush = (): void => {
@@ -301,7 +293,8 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
         );
         const requestWorkloads = executionWorkloads ?? workloads;
         const request = { ...requestBase, workloads: requestWorkloads };
-        const requestBytes = estimateMultiRequestBytes(request);
+        const preparedRequest = prepareMultiRequest(request);
+        const requestBytes = preparedRequest.requestBytes;
         if (requestBytes > maxRequestBytes) {
             await resolveDirectCandidateFallbacks(entries);
             return;
@@ -317,6 +310,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
                 signal: entries[0]!.input.signal,
                 maxRequestBytes,
                 maxResponseBytes: Number.isFinite(maxResponseBytes) ? maxResponseBytes : undefined,
+                preparedRequest,
             },
         ));
         if (!transport.ok) {
@@ -398,7 +392,8 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
             baseSettings: entries[0]!.input.baseSettings,
             sizing: entries[0]!.input.sizing,
         };
-        const requestBytes = estimateMultiRequestBytes(request);
+        const preparedRequest = prepareMultiRequest(request);
+        const requestBytes = preparedRequest.requestBytes;
         if (requestBytes > maxRequestBytes) {
             await resolveDirectFreshFallbacks(entries);
             return;
@@ -414,6 +409,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
                 signal: entries[0]!.input.signal,
                 maxRequestBytes,
                 maxResponseBytes: Number.isFinite(maxResponseBytes) ? maxResponseBytes : undefined,
+                preparedRequest,
             },
         ));
         if (!transport.ok) {

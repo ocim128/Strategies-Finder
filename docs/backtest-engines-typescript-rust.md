@@ -162,6 +162,10 @@ binds to `127.0.0.1:3030`. Release compilation uses optimization level 3, LTO,
 and one codegen unit (`rust-engine/Cargo.toml`). Rayon parallelizes eligible
 batch items and independent multi-asset workloads.
 
+CPU-heavy generic backtests are dispatched through Tokio's blocking pool. The
+service's browser CORS policy permits the two default local Vite origins and an
+optional `VITE_DEV_SERVER_ORIGIN`; it does not use a wildcard origin policy.
+
 The main Rust modules are:
 
 - `rust-engine/src/types.rs`: wire-compatible OHLCV, Signal, Trade,
@@ -430,10 +434,15 @@ the raw-data route before TypeScript fallback.
 ### Safety and failure handling
 
 The client bounds serialized request and response sizes, applies timeouts,
-propagates cancellation, and checks health before a batch. The Finder adapter
-also validates that every expected item appears exactly once. These failures
-produce a whole-batch fallback; partial Rust output is never mixed with
-TypeScript output for the same dispatch.
+propagates cancellation, and checks both the health status and engine identity
+before a batch. Generic results and Finder results pass structural and metric
+validation before they reach the UI; malformed output preserves an actionable
+fallback reason. These failures produce a whole-batch fallback; partial Rust
+output is never mixed with TypeScript output for the same dispatch.
+
+The optional `/api/proxy` route uses a shared 15-second HTTPS client, exact-host
+allowlisting, redirect revalidation, and an 8 MiB response cap. It is a local
+development convenience, not a general outbound fetch service.
 
 Rollback controls are intentionally independent:
 
@@ -499,9 +508,10 @@ explicit unsupported-settings fallback case. For transport changes, validate
 request limits, response limits, cancellation, timeout, cache eviction, and
 missing/duplicate/unknown result IDs.
 
-The in-repository Rust crate must be tested separately with its Rust test suite
-and a live health/API probe. TypeScript typechecking cannot prove Rust source
-parity on its own.
+The in-repository Rust crate must be tested separately with `cargo fmt --check`,
+`cargo test`, and strict `cargo clippy --all-targets -- -D warnings`, plus a
+live health/API probe. TypeScript typechecking cannot prove Rust source parity
+on its own.
 
 ## Known limitations
 

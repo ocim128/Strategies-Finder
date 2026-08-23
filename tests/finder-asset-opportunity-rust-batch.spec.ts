@@ -814,6 +814,55 @@ describe("Asset Opportunity Rust batch contract", () => {
         expect(executionGroupSizes).to.deep.equal([2]);
     });
 
+    it("does not reuse a grouped cache ID after an in-place dataset mutation", async () => {
+        let cacheCalls = 0;
+        const metric = makeMetricSummary(0);
+        const client = {
+            getDataCacheKey: (data: OHLCVData[]) => String(data[1]?.close ?? "empty"),
+            cacheData: async () => {
+                cacheCalls += 1;
+                return `cache:${cacheCalls}`;
+            },
+            runMultiAssetAssetOpportunityBatchBacktestWithStatus: async (workloads: Array<{
+                items: Array<{ id: string }>;
+            }>) => ({
+                ok: true as const,
+                response: {
+                    processingTimeMs: 1,
+                    results: workloads.flatMap((workload) => workload.items.map((item) => ({
+                        id: item.id,
+                        result: metric,
+                        selectionResult: metric,
+                        endpointAdjusted: false,
+                        endpointRemovedTrades: 0,
+                    }))),
+                },
+                requestBytes: 1,
+                elapsedMs: 1,
+            }),
+        } as any;
+        const coordinator = createAssetOpportunityRustMultiBatchCoordinator(client);
+        const data = makeCandles(8);
+        const input = () => ({
+            client,
+            data,
+            items: [{ id: "mutable", signals: [] }],
+            initialCapital: 10_000,
+            positionSizePercent: 100,
+            commissionPercent: 0,
+            baseSettings: eligibleSettings,
+            lastDataTime: data[data.length - 1]?.time ?? null,
+            maxRequestBytes: 16 * 1024 * 1024,
+            maxResponseBytes: 128 * 1024 * 1024,
+        });
+
+        await coordinator.dispatchCandidate(input());
+        data[1]!.close += 1;
+        await coordinator.dispatchCandidate(input());
+
+        expect(cacheCalls).to.equal(2);
+    });
+
     it("preserves the cached dataset window start and end in grouped requests", async () => {
         let observedWindow: { start?: number; end?: number } | undefined;
         const metric = {

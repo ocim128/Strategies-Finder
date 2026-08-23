@@ -22,10 +22,39 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
+use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::RwLock;
 const MAX_DATA_CACHE_ENTRIES: usize = 512;
 const MAX_DATA_CACHE_BARS: usize = 16_000_000;
+const MAX_PROXY_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const ALLOWED_PROXY_HOSTS: [&str; 4] = [
+    "api.twelvedata.com",
+    "query1.finance.yahoo.com",
+    "query2.finance.yahoo.com",
+    "api.binance.com",
+];
+
+fn is_allowed_proxy_url(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url
+            .host_str()
+            .is_some_and(|host| ALLOWED_PROXY_HOSTS.contains(&host))
+}
+
+fn build_proxy_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 5 || !is_allowed_proxy_url(attempt.url()) {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        }))
+        .build()
+        .expect("proxy HTTP client configuration should be valid")
+}
 // ============================================================================
 // Data Cache Types
 // ============================================================================
@@ -40,12 +69,14 @@ pub struct AppState {
     /// Cache of OHLCV data indexed by hash
     pub data_cache: Arc<RwLock<HashMap<String, CachedDataset>>>,
     cache_access_counter: Arc<AtomicU64>,
+    pub proxy_client: reqwest::Client,
 }
 impl Default for AppState {
     fn default() -> Self {
         Self {
             data_cache: Arc::new(RwLock::new(HashMap::new())),
             cache_access_counter: Arc::new(AtomicU64::new(0)),
+            proxy_client: build_proxy_client(),
         }
     }
 }
@@ -180,21 +211,26 @@ where
     })
 }
 /// Handle backtest request
-pub async fn backtest_handler(Json(req): Json<BacktestRequest>) -> Json<BacktestResult> {
-    let market_series = build_market_series(&req.data);
-    let result = run_backtest_with_market_series_options(
-        &req.data,
-        &req.signals,
-        req.initial_capital,
-        req.position_size_percent,
-        req.commission_percent,
-        &req.settings,
-        Some(&req.sizing),
-        req.compact,
-        req.retain_trades,
-        &market_series,
-    );
-    Json(result)
+pub async fn backtest_handler(
+    Json(req): Json<BacktestRequest>,
+) -> Result<Json<BacktestResult>, (StatusCode, String)> {
+    let result = run_on_blocking_pool(move || {
+        let market_series = build_market_series(&req.data);
+        run_backtest_with_market_series_options(
+            &req.data,
+            &req.signals,
+            req.initial_capital,
+            req.position_size_percent,
+            req.commission_percent,
+            &req.settings,
+            Some(&req.sizing),
+            req.compact,
+            req.retain_trades,
+            &market_series,
+        )
+    })
+    .await?;
+    Ok(Json(result))
 }
 /// Handle batch backtest request - runs multiple backtests in parallel
 pub async fn batch_backtest_handler(
@@ -373,7 +409,7 @@ fn trim_data_cache(cache: &mut HashMap<String, CachedDataset>) {
     }
 }
 fn decode_packed_ohlcv(values: Vec<f64>) -> Result<Vec<OHLCV>, String> {
-    if values.len() % 6 != 0 {
+    if !values.len().is_multiple_of(6) {
         return Err("Packed OHLCV data length must be divisible by 6".to_string());
     }
     let mut data = Vec::with_capacity(values.len() / 6);
@@ -396,7 +432,7 @@ fn decode_packed_ohlcv(values: Vec<f64>) -> Result<Vec<OHLCV>, String> {
     Ok(data)
 }
 fn decode_packed_signals(values: Vec<f64>) -> Result<Vec<Signal>, String> {
-    if values.len() % 4 != 0 {
+    if !values.len().is_multiple_of(4) {
         return Err("Packed signal data length must be divisible by 4".to_string());
     }
     let mut signals = Vec::with_capacity(values.len() / 4);
@@ -529,19 +565,21 @@ fn metric_summary_from_trades(
     initial_capital: f64,
 ) -> AssetOpportunityMetricSummary {
     let total_trades = trades.len() as u32;
-    let winning_trades = trades.iter().filter(|trade| trade.pnl > 0.0).count() as u32;
-    let losing_trades = total_trades.saturating_sub(winning_trades);
-    let total_profit: f64 = trades
-        .iter()
-        .filter(|trade| trade.pnl > 0.0)
-        .map(|trade| trade.pnl)
-        .sum();
-    let total_loss: f64 = trades
-        .iter()
-        .filter(|trade| trade.pnl <= 0.0)
-        .map(|trade| trade.pnl.abs())
-        .sum();
-    let net_profit: f64 = trades.iter().map(|trade| trade.pnl).sum();
+    let mut winning_trades = 0_u32;
+    let mut losing_trades = 0_u32;
+    let mut total_profit = 0.0;
+    let mut total_loss = 0.0;
+    let mut net_profit = 0.0;
+    for trade in trades {
+        net_profit += trade.pnl;
+        if trade.pnl > 0.0 {
+            winning_trades += 1;
+            total_profit += trade.pnl;
+        } else {
+            losing_trades += 1;
+            total_loss += trade.pnl.abs();
+        }
+    }
     let win_rate_fraction = if total_trades > 0 {
         winning_trades as f64 / total_trades as f64
     } else {
@@ -686,13 +724,17 @@ fn summarize_asset_opportunity_result(
             endpoint_removed_trades: 0,
         };
     };
-    let filtered: Vec<&Trade> = result
+    let removed = result
         .trades
         .iter()
-        .filter(|trade| trade.exit_time < last_data_time)
-        .collect();
-    let removed = result.trades.len().saturating_sub(filtered.len());
+        .filter(|trade| trade.exit_time >= last_data_time)
+        .count();
     let selection_result = if removed > 0 {
+        let filtered: Vec<&Trade> = result
+            .trades
+            .iter()
+            .filter(|trade| trade.exit_time < last_data_time)
+            .collect();
         metric_summary_from_trades(&result, &filtered, initial_capital)
     } else {
         raw_summary.clone()
@@ -830,6 +872,7 @@ pub async fn cached_fresh_entry_batch_handler(
     .await?;
     Ok(Json(response))
 }
+#[allow(clippy::too_many_arguments)]
 fn run_asset_opportunity_batch(
     data: &[OHLCV],
     items: &[crate::types::BatchBacktestItem],
@@ -1279,33 +1322,33 @@ async fn handle_socket(mut socket: WebSocket) {
 /// Proxy handler for external API requests (avoids CORS issues)
 /// This allows the frontend to make requests to external APIs through our server
 pub async fn proxy_handler(
+    State(state): State<AppState>,
     Json(req): Json<ProxyRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    // Validate URL to prevent abuse
-    let allowed_hosts = [
-        "api.twelvedata.com",
-        "query1.finance.yahoo.com",
-        "query2.finance.yahoo.com",
-        "api.binance.com",
-    ];
     let url = match reqwest::Url::parse(&req.url) {
         Ok(u) => u,
         Err(_) => return Err((StatusCode::BAD_REQUEST, "Invalid URL".to_string())),
     };
-    if let Some(host) = url.host_str() {
-        if !allowed_hosts.iter().any(|&h| host == h) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                format!("Host '{}' is not allowed", host),
-            ));
-        }
-    } else {
+    if url.host_str().is_none() {
         return Err((StatusCode::BAD_REQUEST, "No host in URL".to_string()));
     }
+    if url.scheme() != "https" {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Only HTTPS proxy URLs are allowed".to_string(),
+        ));
+    }
+    if !is_allowed_proxy_url(&url) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "Host '{}' is not allowed",
+                url.host_str().unwrap_or("unknown")
+            ),
+        ));
+    }
     tracing::debug!("Proxying request to: {}", req.url);
-    // Make the request
-    let client = reqwest::Client::new();
-    let response = match client.get(&req.url).send().await {
+    let response = match state.proxy_client.get(url).send().await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Proxy request failed: {}", e);
@@ -1319,17 +1362,39 @@ pub async fn proxy_handler(
             format!("External API returned status: {}", response.status()),
         ));
     }
-    // Parse JSON response
-    let data = match response.json::<serde_json::Value>().await {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("Failed to parse JSON: {}", e);
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_PROXY_RESPONSE_BYTES as u64)
+    {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            "External API response is too large".to_string(),
+        ));
+    }
+    let mut body = Vec::new();
+    let mut response = response;
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        tracing::error!("Failed to read proxy response: {}", error);
+        (
+            StatusCode::BAD_GATEWAY,
+            "Failed to read response".to_string(),
+        )
+    })? {
+        if body.len().saturating_add(chunk.len()) > MAX_PROXY_RESPONSE_BYTES {
             return Err((
                 StatusCode::BAD_GATEWAY,
-                "Failed to parse response".to_string(),
+                "External API response is too large".to_string(),
             ));
         }
-    };
+        body.extend_from_slice(&chunk);
+    }
+    let data = serde_json::from_slice::<serde_json::Value>(&body).map_err(|error| {
+        tracing::error!("Failed to parse JSON: {}", error);
+        (
+            StatusCode::BAD_GATEWAY,
+            "Failed to parse response".to_string(),
+        )
+    })?;
     Ok(Json(data))
 }
 
@@ -1359,12 +1424,14 @@ mod tests {
     async fn generic_backtest_route_honors_output_options() {
         let full = backtest_handler(Json(make_backtest_request(false, false)))
             .await
+            .expect("generic backtest worker should complete")
             .0;
         assert!(!full.equity_curve.is_empty());
         assert_eq!(full.trades.len(), 1);
 
         let compact = backtest_handler(Json(make_backtest_request(true, false)))
             .await
+            .expect("generic compact backtest worker should complete")
             .0;
         assert!(compact.equity_curve.is_empty());
         assert!(compact.trades.is_empty());
@@ -1372,6 +1439,7 @@ mod tests {
 
         let compact_with_trades = backtest_handler(Json(make_backtest_request(true, true)))
             .await
+            .expect("generic compact trade backtest worker should complete")
             .0;
         assert!(compact_with_trades.equity_curve.is_empty());
         assert_eq!(compact_with_trades.trades.len(), 1);
@@ -1440,5 +1508,18 @@ mod tests {
 
         assert_eq!(cache.len(), MAX_DATA_CACHE_ENTRIES);
         assert!(!cache.contains_key("oldest"));
+    }
+
+    #[test]
+    fn proxy_allowlist_requires_https_and_exact_hosts() {
+        assert!(is_allowed_proxy_url(
+            &reqwest::Url::parse("https://api.binance.com/api/v3/klines").unwrap()
+        ));
+        assert!(!is_allowed_proxy_url(
+            &reqwest::Url::parse("http://api.binance.com/api/v3/klines").unwrap()
+        ));
+        assert!(!is_allowed_proxy_url(
+            &reqwest::Url::parse("https://api.binance.com.evil.example/").unwrap()
+        ));
     }
 }

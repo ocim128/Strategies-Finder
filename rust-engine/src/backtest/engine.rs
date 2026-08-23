@@ -259,14 +259,14 @@ fn passes_entry_confirmation(
             let is_short = trade_direction == TradeDirection::Short;
             if is_short {
                 let mut lowest_low = f64::INFINITY;
-                for i in start..entry_index {
-                    lowest_low = lowest_low.min(data[i].low);
+                for bar in data.iter().take(entry_index).skip(start) {
+                    lowest_low = lowest_low.min(bar.low);
                 }
                 return data[entry_index].close < lowest_low;
             }
             let mut highest_high = f64::NEG_INFINITY;
-            for i in start..entry_index {
-                highest_high = highest_high.max(data[i].high);
+            for bar in data.iter().take(entry_index).skip(start) {
+                highest_high = highest_high.max(bar.high);
             }
             data[entry_index].close > highest_high
         }
@@ -697,6 +697,7 @@ fn process_position_exits(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn exit_position(
     position: &mut Option<Position>,
     trades: &mut Vec<Trade>,
@@ -855,6 +856,7 @@ pub(crate) fn build_market_series(data: &[OHLCV]) -> MarketSeries {
 /// # Returns
 /// Complete backtest results with all statistics
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn run_backtest(
     data: &[OHLCV],
     signals: &[Signal],
@@ -879,6 +881,7 @@ pub fn run_backtest(
     )
 }
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_backtest_with_market_series(
     data: &[OHLCV],
     signals: &[Signal],
@@ -903,6 +906,7 @@ pub(crate) fn run_backtest_with_market_series(
         market_series,
     )
 }
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_backtest_with_market_series_options(
     data: &[OHLCV],
     signals: &[Signal],
@@ -1384,17 +1388,24 @@ pub fn calculate_backtest_stats(
     }
     let net_profit = final_capital - initial_capital;
     let net_profit_percent = (net_profit / initial_capital) * 100.0;
-    let winning_trades: Vec<&Trade> = trades.iter().filter(|t| t.pnl > 0.0).collect();
-    let losing_trades: Vec<&Trade> = trades.iter().filter(|t| t.pnl <= 0.0).collect();
-    let win_count = winning_trades.len() as u32;
-    let loss_count = losing_trades.len() as u32;
+    let mut win_count = 0_u32;
+    let mut loss_count = 0_u32;
+    let mut total_wins = 0.0;
+    let mut total_losses = 0.0;
+    for trade in &trades {
+        if trade.pnl > 0.0 {
+            win_count += 1;
+            total_wins += trade.pnl;
+        } else {
+            loss_count += 1;
+            total_losses += trade.pnl.abs();
+        }
+    }
     let win_rate_fraction = if total_trades > 0 {
         win_count as f64 / total_trades as f64
     } else {
         0.0
     };
-    let total_wins: f64 = winning_trades.iter().map(|t| t.pnl).sum();
-    let total_losses: f64 = losing_trades.iter().map(|t| t.pnl.abs()).sum();
     let avg_win = if win_count > 0 {
         total_wins / win_count as f64
     } else {
@@ -1440,10 +1451,13 @@ fn calculate_sharpe_ratio(trades: &[Trade]) -> f64 {
     if trades.len() < 2 {
         return 0.0;
     }
-    let returns: Vec<f64> = trades.iter().map(|t| t.pnl_percent).collect();
-    let n = returns.len() as f64;
-    let mean = returns.iter().sum::<f64>() / n;
-    let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (n - 1.0);
+    let n = trades.len() as f64;
+    let mean = trades.iter().map(|trade| trade.pnl_percent).sum::<f64>() / n;
+    let variance = trades
+        .iter()
+        .map(|trade| (trade.pnl_percent - mean).powi(2))
+        .sum::<f64>()
+        / (n - 1.0);
     let std_dev = variance.sqrt();
     if std_dev == 0.0 {
         return 0.0;
@@ -1451,6 +1465,7 @@ fn calculate_sharpe_ratio(trades: &[Trade]) -> f64 {
     mean / std_dev
 }
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     fn create_test_data(n: usize) -> Vec<OHLCV> {

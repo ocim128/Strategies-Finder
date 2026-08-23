@@ -10,6 +10,7 @@
 import { OHLCVData, Signal, BacktestResult, BacktestSettings, Time } from './types/strategies';
 import { debugLogger } from './debug-logger';
 import { isRustSupportedTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from './types/backtest';
+import { validateRustBacktestResult } from './rust-backtest-result-validator';
 
 export type RustBatchRequestOptions = {
     signal?: AbortSignal;
@@ -17,7 +18,14 @@ export type RustBatchRequestOptions = {
     maxResponseBytes?: number;
     /** Test/diagnostic override; production callers use the 120s default. */
     timeoutMs?: number;
+    /** A caller that already serialized this exact request can reuse it. */
+    preparedRequest?: PreparedRustRequest;
 };
+
+export interface PreparedRustRequest {
+    body: string;
+    requestBytes: number;
+}
 
 export type RustOutputOptions = {
     compact?: boolean;
@@ -50,6 +58,19 @@ export type RustBatchTransportResult =
         responseBytes?: number;
         message?: string;
     };
+
+export type RustBacktestFailureReason =
+    | 'health_unavailable'
+    | 'unsupported_sizing'
+    | 'http_error'
+    | 'timeout'
+    | 'network_error'
+    | 'malformed_response'
+    | 'inconsistent_result';
+
+export type RustBacktestTransportResult =
+    | { ok: true; result: BacktestResult }
+    | { ok: false; reason: RustBacktestFailureReason; message?: string };
 
 export interface RustFreshEntryTradeSummary {
     type: 'long' | 'short';
@@ -121,6 +142,17 @@ export interface RustMultiAssetBatchWorkload {
 }
 
 type RustFetch = typeof fetch;
+
+export function prepareRustRequest(request: unknown): PreparedRustRequest {
+    const body = JSON.stringify(request);
+    if (typeof body !== 'string') {
+        throw new Error('Rust request could not be serialized');
+    }
+    return {
+        body,
+        requestBytes: new TextEncoder().encode(body).byteLength,
+    };
+}
 
 function packMultiAssetData(data: OHLCVData[]): number[] | null {
     const packed: number[] = [];
@@ -258,6 +290,9 @@ export class RustEngineClient {
     private readonly healthCheckInterval = 30000; // 30 seconds
     private readonly healthCheckFailureBackoff = 5000; // 5 seconds negative cache
     private lastHealthCheckFailed: boolean = false;
+    private healthCheckInFlight?: Promise<boolean>;
+    private lastHealthFailureReason: string | null = null;
+    private lastHealthLatencyMs: number | null = null;
     private readonly backtestTimeoutMs = 30_000;
     private readonly batchBacktestTimeoutMs = 120_000;
     private readonly cacheTimeoutMs = 180_000;
@@ -276,22 +311,18 @@ export class RustEngineClient {
      */
     private generateDataHash(data: OHLCVData[]): string {
         if (data.length === 0) return 'empty';
-        const maxSamples = 200_000;
-        const stride = Math.max(1, Math.floor(data.length / maxSamples));
-        let hash = 0x811c9dc5;
+        let hashA = 0x811c9dc5;
+        let hashB = 0x01000193;
 
-        for (let i = 0; i < data.length; i += stride) {
-            hash = this.hashBar(hash, data[i], i);
+        for (let i = 0; i < data.length; i++) {
+            hashA = this.hashBar(hashA, data[i], i);
+            hashB = this.hashBar(hashB, data[i], i);
         }
 
         const lastIndex = data.length - 1;
-        if (lastIndex % stride !== 0) {
-            hash = this.hashBar(hash, data[lastIndex], lastIndex);
-        }
-
         const firstTime = this.normalizeTimeForHash(data[0].time);
         const lastTime = this.normalizeTimeForHash(data[lastIndex].time);
-        return `${data.length}-${firstTime}-${lastTime}-${hash.toString(16)}`;
+        return `${data.length}-${firstTime}-${lastTime}-${hashA.toString(16)}-${hashB.toString(16)}`;
     }
 
     /** Stable local key for callers that share the server-side data cache. */
@@ -391,6 +422,22 @@ export class RustEngineClient {
             return false;
         }
 
+        // A caller-owned signal must not be shared with other callers. An
+        // uncancellable probe, however, is safe to share during cold-start
+        // bursts such as Finder cache/bootstrap setup.
+        if (signal) return this.performHealthCheck(signal);
+        if (this.healthCheckInFlight) return this.healthCheckInFlight;
+        const probe = this.performHealthCheck();
+        this.healthCheckInFlight = probe;
+        try {
+            return await probe;
+        } finally {
+            if (this.healthCheckInFlight === probe) this.healthCheckInFlight = undefined;
+        }
+    }
+
+    private async performHealthCheck(signal?: AbortSignal): Promise<boolean> {
+        const startedAt = performance.now();
         try {
             const healthTimeoutSignal = AbortSignal.timeout(2000);
             const healthSignal = signal
@@ -402,28 +449,39 @@ export class RustEngineClient {
             });
 
             if (response.ok) {
-                const data: RustHealthResponse = await response.json();
-                this.isAvailable = data.status === 'healthy';
+                const data = await response.json() as Partial<RustHealthResponse>;
+                this.isAvailable = data.status === 'healthy' && data.engine === 'trading-engine-rust';
                 this.engineVersion = typeof data.version === 'string' ? data.version : null;
                 this.lastHealthCheckFailed = !this.isAvailable;
-                this.lastHealthCheck = now;
+                this.lastHealthCheck = Date.now();
+                this.lastHealthLatencyMs = performance.now() - startedAt;
+                this.lastHealthFailureReason = this.isAvailable
+                    ? null
+                    : data.status !== 'healthy'
+                        ? `invalid_status:${String(data.status)}`
+                        : `invalid_engine:${String(data.engine)}`;
                 if (this.isAvailable) {
-                    rustLog.info(`[RustEngine] Connected: v${this.engineVersion ?? 'unknown'}`);
+                    rustLog.info(`[RustEngine] Connected: v${this.engineVersion ?? 'unknown'} (${this.lastHealthLatencyMs.toFixed(1)}ms)`);
                 } else {
-                    rustLog.warn(`[RustEngine] Health check returned status "${data.status}", using TypeScript fallback`);
+                    rustLog.warn(`[RustEngine] Health check rejected (${this.lastHealthFailureReason}), using TypeScript fallback`);
                 }
                 return this.isAvailable;
             }
             this.isAvailable = false;
             this.engineVersion = null;
             this.lastHealthCheckFailed = true;
-            this.lastHealthCheck = now;
+            this.lastHealthCheck = Date.now();
+            this.lastHealthLatencyMs = performance.now() - startedAt;
+            this.lastHealthFailureReason = `http_status:${response.status}`;
         } catch (error) {
+            if (signal?.aborted) return false;
             this.isAvailable = false;
             this.engineVersion = null;
             this.lastHealthCheckFailed = true;
-            this.lastHealthCheck = now;
-            rustLog.warn('[RustEngine] Server not available, using TypeScript fallback');
+            this.lastHealthCheck = Date.now();
+            this.lastHealthLatencyMs = performance.now() - startedAt;
+            this.lastHealthFailureReason = error instanceof Error ? error.name : 'unknown_error';
+            rustLog.warn(`[RustEngine] Server not available (${this.lastHealthFailureReason}), using TypeScript fallback`);
         }
 
         return false;
@@ -440,6 +498,13 @@ export class RustEngineClient {
         return this.engineVersion;
     }
 
+    get healthDiagnostics(): { latencyMs: number | null; failureReason: string | null } {
+        return {
+            latencyMs: this.lastHealthLatencyMs,
+            failureReason: this.lastHealthFailureReason,
+        };
+    }
+
     // ========================================================================
     // Backtest API
     // ========================================================================
@@ -447,7 +512,7 @@ export class RustEngineClient {
     /**
      * Run backtest on Rust engine
      */
-    async runBacktest(
+    async runBacktestWithStatus(
         data: OHLCVData[],
         signals: Signal[],
         initialCapital: number,
@@ -456,13 +521,13 @@ export class RustEngineClient {
         settings: BacktestSettings,
         sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
         outputOptions?: RustOutputOptions,
-    ): Promise<BacktestResult | null> {
+    ): Promise<RustBacktestTransportResult> {
         if (!await this.checkHealth()) {
-            return null;
+            return { ok: false, reason: 'health_unavailable' };
         }
         if (sizing && !isRustSupportedTradeSizingMode(sizing.mode)) {
             rustLog.warn(`[RustEngine] ${sizing.mode} sizing is not supported on Rust backend, using TypeScript fallback`);
-            return null;
+            return { ok: false, reason: 'unsupported_sizing' };
         }
 
         try {
@@ -480,28 +545,63 @@ export class RustEngineClient {
 
             const startTime = performance.now();
 
+            const timeoutSignal = AbortSignal.timeout(this.backtestTimeoutMs);
             const response = await this.fetchImpl(`${this.baseUrl}/api/backtest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(request),
-                signal: AbortSignal.timeout(this.backtestTimeoutMs),
+                signal: timeoutSignal,
             });
 
             if (!response.ok) {
                 rustLog.error('[RustEngine] Backtest failed:', response.statusText);
-                return null;
+                return { ok: false, reason: 'http_error', message: response.statusText };
             }
 
-            const result: BacktestResult = await response.json();
+            const validation = validateRustBacktestResult(await response.json());
+            if (!validation.ok) {
+                rustLog.error('[RustEngine] Backtest returned malformed output:', validation.message);
+                return { ok: false, reason: 'malformed_response', message: validation.message };
+            }
+            const result = validation.result;
             const elapsed = performance.now() - startTime;
 
             rustLog.info(`[RustEngine] Backtest completed in ${elapsed.toFixed(2)}ms (${data.length} bars)`);
 
-            return result;
+            return { ok: true, result };
         } catch (error) {
             rustLog.error('[RustEngine] Backtest error:', error);
-            return null;
+            return {
+                ok: false,
+                reason: error instanceof DOMException && error.name === 'TimeoutError'
+                    ? 'timeout'
+                    : 'network_error',
+                message: error instanceof Error ? error.message : String(error),
+            };
         }
+    }
+
+    async runBacktest(
+        data: OHLCVData[],
+        signals: Signal[],
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        settings: BacktestSettings,
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
+        outputOptions?: RustOutputOptions,
+    ): Promise<BacktestResult | null> {
+        const outcome = await this.runBacktestWithStatus(
+            data,
+            signals,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            settings,
+            sizing,
+            outputOptions,
+        );
+        return outcome.ok ? outcome.result : null;
     }
 
     /**
@@ -937,9 +1037,9 @@ export class RustEngineClient {
             return { ok: false, reason: 'unsupported_sizing' };
         }
 
-        let body: string;
+        let preparedRequest: PreparedRustRequest;
         try {
-            body = JSON.stringify(request);
+            preparedRequest = requestOptions?.preparedRequest ?? prepareRustRequest(request);
         } catch (error) {
             return {
                 ok: false,
@@ -947,7 +1047,8 @@ export class RustEngineClient {
                 message: error instanceof Error ? error.message : String(error),
             };
         }
-        const requestBytes = new TextEncoder().encode(body).byteLength;
+        const body = preparedRequest.body;
+        const requestBytes = preparedRequest.requestBytes;
         if (requestOptions?.maxRequestBytes !== undefined && requestBytes > requestOptions.maxRequestBytes) {
             return { ok: false, reason: 'request_too_large', requestBytes };
         }

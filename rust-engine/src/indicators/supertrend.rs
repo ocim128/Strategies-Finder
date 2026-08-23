@@ -78,12 +78,10 @@ pub fn calculate_supertrend(
             } else {
                 1
             }
+        } else if close[i] > final_upper {
+            1
         } else {
-            if close[i] > final_upper {
-                1
-            } else {
-                -1
-            }
+            -1
         };
         direction[i] = current_trend;
         supertrend[i] = if current_trend == 1 {

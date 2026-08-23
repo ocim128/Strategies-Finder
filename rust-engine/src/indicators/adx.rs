@@ -75,10 +75,7 @@ pub fn calculate_adx(high: &[f64], low: &[f64], close: &[f64], period: usize) ->
         };
     }
     // Calculate ADX as smoothed DX
-    let mut dx_sum = 0.0;
-    for i in period..(period * 2) {
-        dx_sum += dx[i];
-    }
+    let dx_sum: f64 = dx.iter().take(period * 2).skip(period).sum();
     adx[period * 2 - 1] = dx_sum / period_f;
     for i in (period * 2)..len {
         adx[i] = (adx[i - 1] * (period_f - 1.0) + dx[i]) / period_f;
@@ -155,10 +152,7 @@ pub fn calculate_adx_with_di(
             100.0 * (plus_di - minus_di).abs() / di_sum
         };
     }
-    let mut dx_sum = 0.0;
-    for i in period..(period * 2) {
-        dx_sum += dx[i];
-    }
+    let dx_sum: f64 = dx.iter().take(period * 2).skip(period).sum();
     adx[period * 2 - 1] = dx_sum / period_f;
     for i in (period * 2)..len {
         adx[i] = (adx[i - 1] * (period_f - 1.0) + dx[i]) / period_f;

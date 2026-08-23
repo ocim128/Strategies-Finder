@@ -73,12 +73,11 @@ impl FinderRunner {
                     false,
                 );
                 // Apply trade filter
-                if self.options.trade_filter_enabled {
-                    if result.total_trades < self.options.min_trades
-                        || result.total_trades > self.options.max_trades
-                    {
-                        return None;
-                    }
+                if self.options.trade_filter_enabled
+                    && (result.total_trades < self.options.min_trades
+                        || result.total_trades > self.options.max_trades)
+                {
+                    return None;
                 }
                 // Update progress
                 let done = completed.fetch_add(1, Ordering::SeqCst) + 1;
@@ -280,6 +279,7 @@ impl FinderRunner {
     }
 }
 /// Convenience function for strategy finder
+#[allow(clippy::too_many_arguments)]
 pub fn run_finder(
     data: &[OHLCV],
     generate_signals: impl Fn(&[OHLCV], &StrategyParams) -> Vec<Signal> + Sync,

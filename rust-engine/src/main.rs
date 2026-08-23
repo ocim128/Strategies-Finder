@@ -6,14 +6,35 @@
 //! - Strategy finder
 use axum::{
     extract::DefaultBodyLimit,
+    http::{header, HeaderValue, Method},
     routing::{get, post},
     Json, Router,
 };
 use std::net::SocketAddr;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use trading_engine::api::routes;
 const MAX_JSON_BODY_BYTES: usize = 256 * 1024 * 1024;
+
+fn cors_origins(configured_origin: Option<&str>) -> Vec<HeaderValue> {
+    let mut origins = vec![
+        HeaderValue::from_static("http://localhost:5173"),
+        HeaderValue::from_static("http://127.0.0.1:5173"),
+    ];
+    if let Some(origin) = configured_origin
+        .map(str::trim)
+        .map(|origin| origin.trim_end_matches('/'))
+        .filter(|origin| origin.starts_with("http://") || origin.starts_with("https://"))
+    {
+        if let Ok(value) = HeaderValue::try_from(origin) {
+            if !origins.contains(&value) {
+                origins.push(value);
+            }
+        }
+    }
+    origins
+}
+
 #[tokio::main]
 async fn main() {
     // Initialize tracing
@@ -25,10 +46,13 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
     // CORS configuration for browser access
+    let configured_origin = std::env::var("VITE_DEV_SERVER_ORIGIN").ok();
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_origin(AllowOrigin::list(cors_origins(
+            configured_origin.as_deref(),
+        )))
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers([header::CONTENT_TYPE]);
     // Shared application state (for data caching)
     let state = routes::AppState::default();
     // Build router
@@ -120,4 +144,26 @@ async fn health_check() -> Json<serde_json::Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "engine": "trading-engine-rust"
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cors_allows_only_expected_local_origins() {
+        let origins = cors_origins(Some("http://localhost:4173/"));
+        assert!(origins
+            .iter()
+            .any(|origin| origin == "http://localhost:5173"));
+        assert!(origins
+            .iter()
+            .any(|origin| origin == "http://127.0.0.1:5173"));
+        assert!(origins
+            .iter()
+            .any(|origin| origin == "http://localhost:4173"));
+        assert!(!origins
+            .iter()
+            .any(|origin| origin == "https://evil.example"));
+    }
 }

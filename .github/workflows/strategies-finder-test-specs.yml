@@ -22,6 +22,19 @@ jobs:
       - run: npm ci --prefix debug/playground
       - run: npm run verify --prefix debug/playground/Strategies-Finder
 
+  rust:
+    name: Rust engine format and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --manifest-path debug/playground/Strategies-Finder/rust-engine/Cargo.toml -- --check
+      - run: cargo test --manifest-path debug/playground/Strategies-Finder/rust-engine/Cargo.toml
+      - run: cargo clippy --manifest-path debug/playground/Strategies-Finder/rust-engine/Cargo.toml --all-targets -- -D warnings
+
   e2e:
     name: Browser smoke test
     runs-on: ubuntu-latest

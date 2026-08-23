@@ -33,7 +33,8 @@ import {
     type CrossSymbolDataFetcher,
 } from "./cross-symbol-runtime";
 import { shouldUseRustEngine } from "./engine-preferences";
-import { rustEngine, type RustOutputOptions } from "./rust-engine-client";
+import { rustEngine, type RustBacktestFailureReason, type RustOutputOptions } from "./rust-engine-client";
+import { validateRustBacktestResult } from "./rust-backtest-result-validator";
 import {
     getTypescriptEngineRequirementReasons,
     sanitizeBacktestSettingsForRust,
@@ -489,6 +490,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         requireTs,
         req.context.useRustEnginePreference,
     );
+    let rustFailureReason: RustBacktestFailureReason | undefined;
     if (rustAttempted) {
         const engineStartedAt = executorTimings ? performance.now() : 0;
         const rustResult = await tryRustBacktest(
@@ -502,8 +504,8 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             },
         );
         if (executorTimings) executorTimings.engineMs += performance.now() - engineStartedAt;
-        if (rustResult && isResultConsistent(rustResult)) {
-            let result = rustResult;
+        if (rustResult.result && isResultConsistent(rustResult.result)) {
+            let result = rustResult.result;
             result.exitControlDiagnostics = exitControlDiagnostics;
             if (!shouldSkipResultPostProcessing(req)) {
                 finalizeResult(result, backtestData, interval, settingsWithMeta);
@@ -516,6 +518,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             registerBacktestEdgeAnalysisInput(result, backtestData);
             return finish(result, "rust", signals, { rustAttempted: true });
         }
+        rustFailureReason = rustResult.result ? "inconsistent_result" : rustResult.reason;
     }
 
     const runBacktestImpl = shouldUseCompactBacktest(req)
@@ -554,7 +557,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     }
     registerBacktestEdgeAnalysisInput(result, backtestData);
     const typescriptReason = rustAttempted
-        ? "Rust backend was unavailable or rejected the result"
+        ? rustFailureReason ?? "Rust backend was unavailable or rejected the result"
         : typescriptRequirementReasons[0]
             ?? "Rust was not requested";
     return finish(result, "typescript", signals, {
@@ -616,8 +619,8 @@ export async function executeBacktestFromSignals(
             resolvedCapital,
             resolvedSettings
         );
-        if (rustResult && isResultConsistent(rustResult)) {
-            let result = rustResult;
+        if (rustResult.result && isResultConsistent(rustResult.result)) {
+            let result = rustResult.result;
             finalizeResult(result, backtestData, interval, settings);
             if (annotatePolymarket) {
                 const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
@@ -1003,9 +1006,9 @@ async function tryRustBacktest(
     capitalSettings: CapitalSettings,
     settings: BacktestSettings,
     outputOptions?: RustOutputOptions,
-): Promise<BacktestResult | null> {
+): Promise<{ result: BacktestResult | null; reason?: RustBacktestFailureReason }> {
     const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = capitalSettings;
-    return rustEngine.runBacktest(
+    const outcome = await rustEngine.runBacktestWithStatus(
         data,
         signals,
         initialCapital,
@@ -1015,6 +1018,9 @@ async function tryRustBacktest(
         { mode: sizingMode, fixedTradeAmount, advancedSizing: capitalSettings.advancedSizing },
         outputOptions,
     );
+    return outcome.ok
+        ? { result: outcome.result }
+        : { result: null, reason: outcome.reason };
 }
 
 function finalizeResult(
@@ -1091,6 +1097,7 @@ function recomputePerformanceAnalytics(result: BacktestResult) {
 }
 
 function isResultConsistent(result: BacktestResult): boolean {
+    if (!validateRustBacktestResult(result).ok) return false;
     const totalTrades = result.totalTrades;
     if (totalTrades !== result.winningTrades + result.losingTrades) return false;
     if (totalTrades <= 0) return true;

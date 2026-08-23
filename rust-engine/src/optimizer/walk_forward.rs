@@ -192,6 +192,7 @@ impl WalkForwardRunner {
         grid
     }
     /// Calculate optimization score for a backtest result
+    #[allow(clippy::manual_clamp)]
     fn calculate_score(&self, result: &BacktestResult) -> f64 {
         if result.total_trades < self.config.min_trades {
             return -1000.0;
@@ -280,6 +281,7 @@ impl WalkForwardRunner {
         (1.0 - (total_cv / count as f64).min(1.0)) * 100.0
     }
     /// Calculate robustness score
+    #[allow(clippy::manual_clamp)]
     fn calculate_robustness(
         &self,
         avg_is_sharpe: f64,
@@ -348,6 +350,7 @@ impl WalkForwardRunner {
     }
 }
 /// Convenience function for walk-forward analysis
+#[allow(clippy::too_many_arguments)]
 pub fn run_walk_forward(
     data: &[OHLCV],
     generate_signals: impl Fn(&[OHLCV], &StrategyParams) -> Vec<Signal> + Sync,

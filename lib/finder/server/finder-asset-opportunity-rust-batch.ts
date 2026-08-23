@@ -14,6 +14,7 @@ import type { FinderSelectedStrategy } from "../finder-runner";
 import { isRustSupportedTradeSizingMode } from "../../types/backtest";
 import { buildSelectionResult } from "../endpoint";
 import { isSameEventPolymarketExitMode } from "../../polymarket-exit-mode";
+import { validateRustBacktestResult } from "../../rust-backtest-result-validator";
 import {
     type RustEngineClient,
     type RustAssetOpportunityCandidateSummary,
@@ -366,54 +367,9 @@ export function partitionAssetOpportunityRustBatchItems(args: {
     return { chunks };
 }
 
-const REQUIRED_RESULT_FIELDS = [
-    "netProfit",
-    "netProfitPercent",
-    "winRate",
-    "expectancy",
-    "avgTrade",
-    "profitFactor",
-    "maxDrawdown",
-    "maxDrawdownPercent",
-    "totalTrades",
-    "winningTrades",
-    "losingTrades",
-    "avgWin",
-    "avgLoss",
-    "sharpeRatio",
-] as const;
-
-function isFiniteOrPositiveInfinity(value: unknown): value is number {
-    return typeof value === "number" && (Number.isFinite(value) || value === Number.POSITIVE_INFINITY);
-}
-
 function normalizeBacktestResult(value: unknown): BacktestResult | null {
-    if (!value || typeof value !== "object") return null;
-    const raw = value as Record<string, unknown>;
-    if (!Array.isArray(raw.trades) || !Array.isArray(raw.equityCurve)) return null;
-    for (const field of REQUIRED_RESULT_FIELDS) {
-        if (field === "profitFactor" && raw[field] === null) continue;
-        if (!isFiniteOrPositiveInfinity(raw[field])) return null;
-    }
-    const totalTrades = raw.totalTrades as number;
-    const winningTrades = raw.winningTrades as number;
-    const losingTrades = raw.losingTrades as number;
-    if (![totalTrades, winningTrades, losingTrades].every(Number.isInteger)) return null;
-    if (totalTrades < 0 || winningTrades < 0 || losingTrades < 0 || totalTrades !== winningTrades + losingTrades) return null;
-    const profitFactor = raw.profitFactor === null && totalTrades === 0
-        ? 0
-        : raw.profitFactor === null && winningTrades > 0 && losingTrades === 0
-            ? Number.POSITIVE_INFINITY
-            : raw.profitFactor;
-    if (!isFiniteOrPositiveInfinity(profitFactor)) return null;
-    if (totalTrades > 0) {
-        const expectedWinRate = (winningTrades / totalTrades) * 100;
-        const expectedAvgTrade = (raw.netProfit as number) / totalTrades;
-        const tolerance = Math.max(0.01, Math.abs(expectedAvgTrade) * 0.15);
-        if (Math.abs(expectedWinRate - (raw.winRate as number)) > 1) return null;
-        if (Math.abs(expectedAvgTrade - (raw.avgTrade as number)) > tolerance) return null;
-    }
-    return { ...raw, profitFactor } as unknown as BacktestResult;
+    const validation = validateRustBacktestResult(value);
+    return validation.ok ? validation.result : null;
 }
 
 export function validateAssetOpportunityRustBatchResponse(
