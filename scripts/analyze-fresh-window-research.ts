@@ -523,13 +523,13 @@ function checkS0(
         if (fold.foldEnd === null || !Number.isFinite(fold.foldEnd) || fold.foldEnd <= 0) {
             errors.push(`invalid foldEnd at holdout ${fold.holdoutBars}`);
         }
-        if (fold.searchWindowEnd !== null && fold.foldEnd !== null && fold.searchWindowEnd > fold.foldEnd) {
+        if (fold.foldEnd === null || fold.searchWindowEnd === null || fold.oosStart === null || fold.oosEnd === null) {
+            errors.push(`fold bounds are incomplete at holdout ${fold.holdoutBars}`);
+        } else if (fold.searchWindowEnd > fold.foldEnd!) {
             errors.push(`search window exceeds foldEnd at holdout ${fold.holdoutBars}`);
-        }
-        if (fold.oosStart !== null && fold.foldEnd !== null && fold.oosStart <= fold.foldEnd) {
+        } else if (fold.oosStart <= fold.foldEnd!) {
             errors.push(`OOS starts at or before foldEnd at holdout ${fold.holdoutBars}`);
-        }
-        if (fold.oosStart !== null && fold.oosEnd !== null && fold.oosEnd < fold.oosStart) {
+        } else if (fold.oosEnd < fold.oosStart) {
             errors.push(`OOS interval is inverted at holdout ${fold.holdoutBars}`);
         }
     }
@@ -553,12 +553,19 @@ function checkS0(
         } else if (fold.expectedRowCount !== fold.rows.length) {
             errors.push(`expected evaluated row count mismatch at holdout ${fold.holdoutBars}`);
         }
+        const validOutcomeCount = fold.rows.filter((row) => normalizeOutcome(row, horizon) !== null).length;
         if (fold.outcomeRowCount === null || fold.outcomeRowCount < 0) {
             errors.push(`forward outcome row count is missing at holdout ${fold.holdoutBars}`);
         } else if (fold.expectedRowCount !== null
             && fold.expectedRowCount > 0
             && fold.outcomeRowCount / fold.expectedRowCount < 0.95) {
             errors.push(`forward outcome coverage below 95% at holdout ${fold.holdoutBars}`);
+        } else if (fold.outcomeRowCount !== validOutcomeCount) {
+            errors.push(`forward outcome validity count mismatch at holdout ${fold.holdoutBars}`);
+        } else if (fold.expectedRowCount !== null
+            && fold.expectedRowCount > 0
+            && validOutcomeCount / fold.expectedRowCount < 0.95) {
+            errors.push(`valid forward outcome coverage below 95% at holdout ${fold.holdoutBars}`);
         }
         for (const row of fold.rows) {
             if (!row.symbol || !row.strategyKey || !row.candidateFingerprint || !row.identityHash) {
