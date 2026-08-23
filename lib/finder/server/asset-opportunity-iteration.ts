@@ -56,6 +56,7 @@ import { prepareClosedCandleData } from "../../backtest-executor";
 import { createServerFinderAssetOpportunityLoadContext } from "./server-finder-data-loader";
 import { parseSyntheticPairToken } from "../../synthetic-pair-token";
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
+import { parseIntervalSeconds } from "../../interval-utils";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
 import {
@@ -63,8 +64,10 @@ import {
     assertFinderAssetDataStrictlyAfterFoldEnd,
     FINDER_ASSET_FRESH_FOLD_STRIDE_BARS,
     getFinderAssetDataBounds,
+    getFinderAssetOpportunityFreshFoldWindow,
     sliceFinderAssetDataAtFoldEnd,
     sliceFinderAssetDataStrictlyAfterFoldEnd,
+    sliceFinderAssetDataWithinFreshFoldWindow,
     type FinderAssetOpportunityFoldMetadata,
 } from "../finder-asset-opportunity-fold";
 
@@ -233,6 +236,8 @@ export interface AssetOpportunityIterationResult {
     summary: string;
     /** Independent expected count from evaluation attempts, not archive rows. */
     expectedCandidateSummaryRows?: number;
+    /** Candidates with a fresh signal and an entry inside the OOS window. */
+    expectedOutcomeSummaryRows?: number;
     /** Point-in-time bounds observed while loading the fold and its forward data. */
     foldMetadata?: FinderAssetOpportunityFoldMetadata;
 }
@@ -357,8 +362,15 @@ export async function runAssetOpportunityIteration(
     let loadedSymbols = 0;
     let failedSymbols = 0;
     let searchWindowEnd: number | null = null;
-    let oosStart: number | null = null;
-    let oosEnd: number | null = null;
+    const intervalSeconds = parseIntervalSeconds(input.interval);
+    const freshFoldWindow = input.researchProgram === "fresh-window"
+        && input.foldEnd !== undefined
+        && intervalSeconds !== null
+        ? getFinderAssetOpportunityFreshFoldWindow(input.foldEnd, intervalSeconds)
+        : null;
+    let oosStart: number | null = freshFoldWindow?.oosStart ?? null;
+    let oosEnd: number | null = freshFoldWindow?.oosEnd ?? null;
+    let expectedOutcomeSummaryRows = 0;
     // Assets in a Rust wave finish out of order. Progress must therefore be
     // the aggregate of each asset's furthest strategy fraction, not a direct
     // projection of the callback's assetIndex. The latter made a late callback
@@ -461,7 +473,12 @@ export async function runAssetOpportunityIteration(
             forwardHorizons: args.forwardHorizons,
             ...(args.signalCache ? { signalCache: args.signalCache } : {}),
             ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
-            ...(callbacks.onCandidateSummaryChunk ? { onCandidateSummaryChunk: callbacks.onCandidateSummaryChunk } : {}),
+            ...(callbacks.onCandidateSummaryChunk ? {
+                onCandidateSummaryChunk: async (rows: FinderAssetOpportunityCandidateSummaryRow[]) => {
+                    expectedOutcomeSummaryRows += rows.filter((row) => row.forwardOutcomeEligible === true).length;
+                    await callbacks.onCandidateSummaryChunk!(rows);
+                },
+            } : {}),
             ...(!input.generateParamSets
                 && input.paramSetCache
                 && input.options.mode === "random"
@@ -546,13 +563,19 @@ export async function runAssetOpportunityIteration(
                     const forwardData = rawForwardData === undefined
                         ? undefined
                         : input.loadDatasetIsRaw
-                            ? sliceFinderAssetDataStrictlyAfterFoldEnd(
-                                rawForwardData,
-                                input.foldEnd,
-                                input.researchProgram === "fresh-window"
-                                    ? FINDER_ASSET_FRESH_FOLD_STRIDE_BARS
-                                    : undefined,
-                            )
+                            ? input.researchProgram === "fresh-window" && intervalSeconds !== null
+                                ? sliceFinderAssetDataWithinFreshFoldWindow(
+                                    rawForwardData,
+                                    input.foldEnd,
+                                    intervalSeconds,
+                                )
+                                : sliceFinderAssetDataStrictlyAfterFoldEnd(
+                                    rawForwardData,
+                                    input.foldEnd,
+                                    input.researchProgram === "fresh-window"
+                                        ? FINDER_ASSET_FRESH_FOLD_STRIDE_BARS
+                                        : undefined,
+                                )
                             : rawForwardData;
                     const finishedAt = performance.now();
                     return {
@@ -619,11 +642,13 @@ export async function runAssetOpportunityIteration(
                 if (searchBounds.last !== null) {
                     searchWindowEnd = Math.max(searchWindowEnd ?? searchBounds.last, searchBounds.last);
                 }
-                if (forwardBounds.first !== null) {
-                    oosStart = Math.min(oosStart ?? forwardBounds.first, forwardBounds.first);
-                }
-                if (forwardBounds.last !== null) {
-                    oosEnd = Math.max(oosEnd ?? forwardBounds.last, forwardBounds.last);
+                if (freshFoldWindow === null) {
+                    if (forwardBounds.first !== null) {
+                        oosStart = Math.min(oosStart ?? forwardBounds.first, forwardBounds.first);
+                    }
+                    if (forwardBounds.last !== null) {
+                        oosEnd = Math.max(oosEnd ?? forwardBounds.last, forwardBounds.last);
+                    }
                 }
             }
             loadedBarsMin = Math.min(loadedBarsMin, data.length);
@@ -1038,6 +1063,9 @@ export async function runAssetOpportunityIteration(
         summary,
         ...(input.researchProgram === "fresh-window"
             ? { expectedCandidateSummaryRows: candidateEvaluationsAttempted }
+            : {}),
+        ...(input.researchProgram === "fresh-window"
+            ? { expectedOutcomeSummaryRows }
             : {}),
         ...(input.foldEnd !== undefined
             ? {

@@ -16,6 +16,11 @@ export interface FinderAssetOpportunityFoldScheduleEntry {
     foldEnd: number;
 }
 
+export interface FinderAssetOpportunityFreshFoldWindow {
+    oosStart: number;
+    oosEnd: number;
+}
+
 /** Build the 25 point-in-time folds ending one stride before the data end. */
 export function buildFreshFoldScheduleFromDataEnd(
     dataEndTime: number,
@@ -34,6 +39,23 @@ export function buildFreshFoldScheduleFromDataEnd(
                 * FINDER_ASSET_FRESH_FOLD_STRIDE_BARS
                 * barSeconds,
     }));
+}
+
+/** The fresh program judges exactly one stride of calendar time per fold. */
+export function getFinderAssetOpportunityFreshFoldWindow(
+    foldEnd: number,
+    barSeconds: number,
+): FinderAssetOpportunityFreshFoldWindow {
+    if (!Number.isFinite(foldEnd) || foldEnd <= 0) {
+        throw new Error("Fresh-window foldEnd must be a positive finite timestamp.");
+    }
+    if (!Number.isFinite(barSeconds) || barSeconds <= 0) {
+        throw new Error("Fresh-window barSeconds must be a positive finite number.");
+    }
+    return {
+        oosStart: foldEnd + barSeconds,
+        oosEnd: foldEnd + FINDER_ASSET_FRESH_FOLD_STRIDE_BARS * barSeconds,
+    };
 }
 
 /**
@@ -122,6 +144,20 @@ export function sliceFinderAssetDataStrictlyAfterFoldEnd(
         return timestamp !== null && timestamp > foldEnd;
     });
     return maxBars === undefined ? forward : forward.slice(0, maxBars);
+}
+
+/** Slice by the declared calendar window; missing calendar bars stay missing. */
+export function sliceFinderAssetDataWithinFreshFoldWindow(
+    data: readonly OHLCVData[],
+    foldEnd: number | undefined,
+    barSeconds: number,
+): OHLCVData[] {
+    if (foldEnd === undefined) return [];
+    const { oosEnd } = getFinderAssetOpportunityFreshFoldWindow(foldEnd, barSeconds);
+    return data.filter((candle) => {
+        const timestamp = timeToNumber(candle.time);
+        return timestamp !== null && timestamp > foldEnd && timestamp <= oosEnd;
+    });
 }
 
 export function assertFinderAssetDataAtOrBeforeFoldEnd(

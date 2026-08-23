@@ -77,6 +77,7 @@ import {
 } from "./finder-asset-opportunity-research";
 import type { FinderAssetOpportunityCandidateSummaryRow as FinderAssetOpportunityCandidateSummaryRowType } from "../finder-asset-opportunity-research-types";
 import { simulateFinderAssetOpportunityForwardOutcome } from "../finder-asset-opportunity-forward-contract";
+import { FINDER_ASSET_FRESH_FOLD_STRIDE_BARS } from "../finder-asset-opportunity-fold";
 
 const ASSET_IS_SEARCH_YIELD_EVERY_RUNS = 256;
 const ASSET_IS_SEARCH_YIELD_MIN_MS = 1000;
@@ -127,25 +128,32 @@ export interface ServerAssetIsSearchInput {
     ) => void | Promise<void>;
 }
 
+type FreshForwardCapture = {
+    eligible: boolean;
+    outcomes?: NonNullable<FinderAssetOpportunityCandidateSummaryRowType["forwardOutcomes"]>;
+};
+
 function buildFreshForwardOutcomes(args: {
     input: ServerAssetIsSearchInput;
     signals: Signal[];
     resolvedSettings: BacktestSettings;
-}): FinderAssetOpportunityCandidateSummaryRowType["forwardOutcomes"] {
+}): FreshForwardCapture {
     const { input, signals, resolvedSettings } = args;
-    if (input.researchProgram !== "fresh-window" || !input.forwardData?.length) return undefined;
+    if (input.researchProgram !== "fresh-window" || !input.forwardData?.length) return { eligible: false };
     const foldCandle = input.ohlcvData[input.ohlcvData.length - 1];
-    if (!foldCandle) return undefined;
+    if (!foldCandle) return { eligible: false };
     const boundarySignal = [...signals]
         .filter((signal) => timeKey(signal.time) === timeKey(foldCandle.time))
         .at(-1);
-    if (!boundarySignal || (boundarySignal.type !== "buy" && boundarySignal.type !== "sell")) return undefined;
+    if (!boundarySignal || (boundarySignal.type !== "buy" && boundarySignal.type !== "sell")) {
+        return { eligible: false };
+    }
     const direction = boundarySignal.type === "buy" ? "long" : "short";
     const fullData = [...input.ohlcvData, ...input.forwardData];
     const isNextEntry = resolvedSettings.executionModel !== "signal_close";
     const entryBarIndex = isNextEntry ? input.ohlcvData.length : input.ohlcvData.length - 1;
     const firstForward = input.forwardData[0];
-    if (!firstForward) return undefined;
+    if (!firstForward) return { eligible: false };
     const rawEntryPrice = resolvedSettings.executionModel === "signal_close"
         ? boundarySignal.price
         : resolvedSettings.executionModel === "next_open"
@@ -168,7 +176,12 @@ function buildFreshForwardOutcomes(args: {
     const horizons = input.forwardHorizons?.length ? input.forwardHorizons : [12, 18, 24];
     const outcomes: NonNullable<FinderAssetOpportunityCandidateSummaryRowType["forwardOutcomes"]> = {};
     for (const horizonBars of horizons) {
-        if (!Number.isInteger(horizonBars) || horizonBars <= 0) continue;
+        // Fresh folds declare one stride of calendar time. Longer configured
+        // horizons are intentionally excluded rather than pretending that a
+        // 12-bar slice contains 18/24 bars of evidence.
+        if (!Number.isInteger(horizonBars)
+            || horizonBars <= 0
+            || horizonBars > FINDER_ASSET_FRESH_FOLD_STRIDE_BARS) continue;
         const outcome = simulateFinderAssetOpportunityForwardOutcome({
             candles: fullData,
             direction,
@@ -184,7 +197,10 @@ function buildFreshForwardOutcomes(args: {
         });
         if (outcome) outcomes[String(horizonBars)] = outcome;
     }
-    return Object.keys(outcomes).length > 0 ? outcomes : undefined;
+    return {
+        eligible: true,
+        ...(Object.keys(outcomes).length > 0 ? { outcomes } : {}),
+    };
 }
 
 function buildSignalCacheKey(input: ServerAssetIsSearchInput, params: StrategyParams): string {
@@ -675,14 +691,15 @@ export async function runServerAssetIsSearch(
                     candidate.selectionResult,
                     input.ohlcvData,
                 );
-                const forwardOutcomes = buildFreshForwardOutcomes({
+                const forwardCapture = buildFreshForwardOutcomes({
                     input,
                     signals: candidateSignals,
                     resolvedSettings: resolvedCandidateSettings,
                 });
                 await emitResearchSummary({
                     ...pathSummary,
-                    ...(forwardOutcomes ? { forwardOutcomes } : {}),
+                    ...(forwardCapture.eligible ? { forwardOutcomeEligible: true } : {}),
+                    ...(forwardCapture.outcomes ? { forwardOutcomes: forwardCapture.outcomes } : {}),
                 });
             }
             if (!passesTradeFilter) {

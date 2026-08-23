@@ -878,7 +878,7 @@ describe("finder Asset Opportunity batch parallel execution", () => {
             taskIndex,
             holdoutBars: taskIndex === 0 ? 12 : 24,
             runId: "reaudit-cache",
-            interval: "4h",
+            interval: "100s",
             symbols: ["PAIR"],
             options,
             settings: cacheSettings,
@@ -927,13 +927,13 @@ describe("finder Asset Opportunity batch parallel execution", () => {
             foldEnd: 1500,
             searchWindowEnd: 1500,
             oosStart: 1600,
-            oosEnd: 2400,
+            oosEnd: 2700,
         });
         expect(secondRun.result.foldMetadata).to.deep.equal({
             foldEnd: 1700,
             searchWindowEnd: 1700,
             oosStart: 1800,
-            oosEnd: 2400,
+            oosEnd: 2900,
         });
         expect(firstRun.summaryRows[0]?.forwardOutcomes?.["12"]?.entryTimestamp).to.equal("1600");
         expect(secondRun.summaryRows[0]?.forwardOutcomes?.["12"]?.entryTimestamp).to.equal("1800");

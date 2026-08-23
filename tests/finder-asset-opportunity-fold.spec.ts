@@ -5,10 +5,12 @@ import {
     assertFinderAssetDataAtOrBeforeFoldEnd,
     assertFinderAssetDataStrictlyAfterFoldEnd,
     buildFreshFoldScheduleFromDataEnd,
+    getFinderAssetOpportunityFreshFoldWindow,
     normalizeFinderAssetFreshFoldSchedule,
     normalizeFinderAssetFoldEnd,
     sliceFinderAssetDataAtFoldEnd,
     sliceFinderAssetDataStrictlyAfterFoldEnd,
+    sliceFinderAssetDataWithinFreshFoldWindow,
 } from "../lib/finder/finder-asset-opportunity-fold";
 
 function candles(times: number[]): OHLCVData[] {
@@ -73,6 +75,16 @@ describe("Asset Opportunity point-in-time fold contract", () => {
         expect(sliceFinderAssetDataStrictlyAfterFoldEnd(raw, 200).map((candle) => candle.time))
             .to.deep.equal([300, 400, 500]);
         expect(sliceFinderAssetDataStrictlyAfterFoldEnd(raw, undefined, 2)).to.deep.equal([]);
+    });
+
+    it("uses calendar bounds for fresh windows and preserves missing bars", () => {
+        expect(getFinderAssetOpportunityFreshFoldWindow(100, 100)).to.deep.equal({
+            oosStart: 200,
+            oosEnd: 1300,
+        });
+        const raw = candles([200, 300, 1300, 1400]);
+        expect(sliceFinderAssetDataWithinFreshFoldWindow(raw, 100, 100).map((candle) => candle.time))
+            .to.deep.equal([200, 300, 1300]);
     });
 
     it("preserves legacy absent-fold copy semantics", () => {

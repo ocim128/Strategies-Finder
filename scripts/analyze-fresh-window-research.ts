@@ -25,6 +25,7 @@ import {
     FINDER_ASSET_FRESH_FOLD_COUNT,
     FINDER_ASSET_FRESH_FOLD_STRIDE_BARS,
 } from "../lib/finder/finder-asset-opportunity-fold";
+import { parseIntervalSeconds } from "../lib/interval-utils";
 import { parseTimeToUnixSeconds } from "../lib/time-normalization";
 
 const SEPARATOR = "=".repeat(80);
@@ -45,6 +46,7 @@ export interface FreshWindowIdentityFold {
     holdoutBars: number;
     declaredRowCount: number;
     expectedRowCount: number | null;
+    expectedOutcomeRowCount: number | null;
     outcomeRowCount: number | null;
     controlSeed: number | null;
     controlDrawIdentities: FinderAssetOpportunityControlDraw[] | null;
@@ -88,6 +90,7 @@ export interface S0Result {
     handChecks: Record<FreshWindowExitReason, number>;
     fullPoolRows: number;
     eligibleRows: number;
+    expectedOutcomeRows: number;
     finiteExecutionRows: number;
     randomControls: number;
     controlSeed: number;
@@ -186,6 +189,7 @@ function parseIdentityBlock(body: string): FreshWindowIdentityFold | null {
         holdoutBars: parseHeaderNumber(header, "OOS holdout: ") ?? 0,
         declaredRowCount: parseHeaderNumber(header, "Declared row count: ") ?? -1,
         expectedRowCount: parseHeaderNumber(header, "Expected evaluated row count: "),
+        expectedOutcomeRowCount: parseHeaderNumber(header, "Expected eligible outcome row count: "),
         outcomeRowCount: parseHeaderNumber(header, "Forward outcome row count: "),
         controlSeed: parseHeaderNumber(header, "Control seed: "),
         controlDrawIdentities: parseHeaderJson<FinderAssetOpportunityControlDraw[]>(
@@ -621,7 +625,18 @@ function checkS0(
             break;
         }
     }
+    const intervalSeconds = parseIntervalSeconds(config?.interval ?? "");
+    if (intervalSeconds === null) errors.push("config interval has no usable bar duration");
+    for (const fold of windows) {
+        if (intervalSeconds === null || fold.foldEnd === null || fold.oosStart === null || fold.oosEnd === null) continue;
+        const expectedOosStart = fold.foldEnd + intervalSeconds;
+        const expectedOosEnd = fold.foldEnd + stride * intervalSeconds;
+        if (fold.oosStart !== expectedOosStart || fold.oosEnd !== expectedOosEnd) {
+            errors.push(`OOS bounds do not match the stride window at holdout ${fold.holdoutBars}`);
+        }
+    }
     const identityRows = windows.flatMap((fold) => fold.rows);
+    let expectedOutcomeRows = 0;
     for (const fold of windows) {
         if (fold.judgmentStatus !== "VALID") {
             errors.push(`fold judgment is not VALID at holdout ${fold.holdoutBars}`);
@@ -632,19 +647,23 @@ function checkS0(
         } else if (fold.expectedRowCount !== fold.rows.length) {
             errors.push(`expected evaluated row count mismatch at holdout ${fold.holdoutBars}`);
         }
+        if (fold.expectedOutcomeRowCount === null || fold.expectedOutcomeRowCount < 0) {
+            errors.push(`expected eligible outcome row count is missing at holdout ${fold.holdoutBars}`);
+        } else {
+            expectedOutcomeRows += fold.expectedOutcomeRowCount;
+        }
         const validOutcomeCount = fold.rows.filter((row) => normalizeOutcome(row, horizon) !== null).length;
         if (fold.outcomeRowCount === null || fold.outcomeRowCount < 0) {
             errors.push(`forward outcome row count is missing at holdout ${fold.holdoutBars}`);
-        } else if (fold.expectedRowCount !== null
-            && fold.expectedRowCount > 0
-            && fold.outcomeRowCount / fold.expectedRowCount < 0.95) {
+        } else if (fold.expectedOutcomeRowCount !== null
+            && fold.outcomeRowCount > fold.expectedOutcomeRowCount) {
+            errors.push(`forward outcome row count exceeds eligible denominator at holdout ${fold.holdoutBars}`);
+        } else if (fold.expectedOutcomeRowCount !== null
+            && fold.expectedOutcomeRowCount > 0
+            && fold.outcomeRowCount / fold.expectedOutcomeRowCount < 0.95) {
             errors.push(`forward outcome coverage below 95% at holdout ${fold.holdoutBars}`);
         } else if (fold.outcomeRowCount !== validOutcomeCount) {
             errors.push(`forward outcome validity count mismatch at holdout ${fold.holdoutBars}`);
-        } else if (fold.expectedRowCount !== null
-            && fold.expectedRowCount > 0
-            && validOutcomeCount / fold.expectedRowCount < 0.95) {
-            errors.push(`valid forward outcome coverage below 95% at holdout ${fold.holdoutBars}`);
         }
         for (const row of fold.rows) {
             const rawOutcome = row.forwardOutcomes?.[String(horizon)];
@@ -744,6 +763,7 @@ function checkS0(
         handChecks,
         fullPoolRows: identityRows.length,
         eligibleRows,
+        expectedOutcomeRows,
         finiteExecutionRows,
         randomControls,
         controlSeed,
@@ -921,6 +941,7 @@ export function runFreshWindowAnalysis(args: {
         `Archive: ${args.archiveDirectory}`,
         `S0: ${s0.ok ? "PASS" : "FAIL"}`,
         `S0 windows=${s0.windows.length}, fullPoolRows=${s0.fullPoolRows}, eligibleRows=${s0.eligibleRows}, finiteExecutionRows=${s0.finiteExecutionRows}, randomControls=${s0.randomControls}`,
+        `S0 coverage: eligible-outcomes=${s0.finiteExecutionRows}/${s0.expectedOutcomeRows}, all-evaluated=${s0.fullPoolRows > 0 ? ((s0.finiteExecutionRows / s0.fullPoolRows) * 100).toFixed(2) : "0.00"}%`,
         `S0 hand checks: TP=${s0.handChecks.take_profit}, SL=${s0.handChecks.stop_loss}, horizon=${s0.handChecks.end_of_data}`,
         `S0 control trace: seed=${s0.controlSeed}, drawDigest=${s0.controlDrawDigest}`,
     ];

@@ -38,9 +38,10 @@ function buildArchive(options?: {
     const totalStrategyCount = strategyCount + (options?.extraIneligibleStrategies ?? 0);
     for (let index = 1; index <= 25; index += 1) {
         const holdout = index * 12;
-        const searchEnd = 9000 + index;
-        const oosStart = 10000 + index * 12;
-        const oosEnd = oosStart + 11;
+        const foldEnd = 1_700_000_000 + (index - 1) * 12 * 14_400;
+        const searchEnd = foldEnd - 14_400;
+        const oosStart = foldEnd + 14_400;
+        const oosEnd = foldEnd + 12 * 14_400;
         const rows = Array.from({ length: totalStrategyCount }, (_, strategyIndex) => {
             const strategyKey = `strategy_${strategyIndex}`;
             const candidateFingerprint = options?.recurring && strategyIndex === 0
@@ -71,6 +72,7 @@ function buildArchive(options?: {
                     : strategyIndex === 0 ? 5 : 2,
                 medianBarsToTerminal: 4,
                 tpFirstShare: 1,
+                forwardOutcomeEligible: true,
                 forwardOutcomes: {
                     "12": {
                         exitReason,
@@ -115,13 +117,14 @@ function buildArchive(options?: {
             `OOS holdout: ${holdout} bars`,
             `Declared row count: ${rows.length}`,
             `Expected evaluated row count: ${rows.length}`,
+            `Expected eligible outcome row count: ${rows.filter((row) => row.forwardOutcomeEligible === true).length}`,
             `Forward outcome row count: ${rows.filter((row) => row.forwardOutcomes?.["12"] !== undefined).length}`,
             ...(options?.omitTrace ? [] : [
                 `Control seed: ${controlTrace.seed}`,
                 `Control draw digest: ${controlTrace.digest}`,
                 `Control draw identities: ${JSON.stringify(controlTrace.draws)}`,
             ]),
-            `Fold end: ${9000 + index}`,
+            `Fold end: ${foldEnd}`,
             `Search window end: ${searchEnd}`,
             `OOS start: ${oosStart}`,
             `OOS end: ${oosEnd}`,
@@ -135,7 +138,7 @@ function buildArchive(options?: {
     }
     const foldSchedule = Array.from({ length: 25 }, (_, index) => ({
         holdoutBars: (index + 1) * 12,
-        foldEnd: 9001 + index,
+        foldEnd: 1_700_000_000 + index * 12 * 14_400,
     }));
     const identity = {
         identityVersion: 1,
