@@ -1224,6 +1224,53 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
         expect(rows.every((row) => typeof row.netProfitPercent === "number" || row.netProfitPercent === null)).to.equal(true);
     });
 
+    it("captures execution-unit forward outcomes for every fresh-window candidate", async () => {
+        const chunks: Array<Array<Record<string, unknown>>> = [];
+        const forwardData = makeCandles([102, 104, 106]);
+        const output = await runServerAssetIsSearch({
+            ohlcvData: makeCandles([100, 101, 102]),
+            forwardData,
+            forwardHorizons: [12, 18, 24],
+            symbol: "RESEARCH_FORWARD",
+            interval: "5m",
+            options: {
+                ...makeOptions(["RESEARCH_FORWARD"]),
+                scope: "asset_opportunity",
+                topN: 1,
+            },
+            settings: {
+                ...settings,
+                riskMode: "percentage",
+                takeProfitEnabled: true,
+                takeProfitPercent: 2,
+                stopLossEnabled: true,
+                stopLossPercent: 2,
+            },
+            capitalSettings,
+            selectedStrategy: {
+                key: "asset_opportunity_boundary",
+                name: assetOpportunityStrategy.name,
+                strategy: assetOpportunityStrategy,
+            },
+            generateParamSets: () => [{ threshold: 1 }, { threshold: 2 }],
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+            researchProgram: "fresh-window",
+            onCandidateSummaryChunk: (rows) => { chunks.push(rows as Array<Record<string, unknown>>); },
+        });
+
+        expect(output.results).to.have.length(1);
+        const rows = chunks.flat();
+        expect(rows).to.have.length(2);
+        expect(rows.every((row) => row.profitFactor !== undefined)).to.equal(true);
+        expect(rows.every((row) => {
+            const outcomes = row.forwardOutcomes as Record<string, { exitReason: string }> | undefined;
+            return outcomes !== undefined
+                && Object.keys(outcomes).join(",") === "12,18,24"
+                && outcomes["12"]?.exitReason === "take_profit";
+        })).to.equal(true);
+    });
+
     it("caps the in-sample window to assetOpportunity.evalLastBars through the full server run", async () => {
         // The evaluation-window cap must survive the whole server pipeline
         // (route input → iteration → runner → IS search). The strategy records

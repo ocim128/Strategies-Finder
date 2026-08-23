@@ -55,7 +55,8 @@ import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-fi
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 import { rustEngine } from "../../rust-engine-client";
 import { debugLogger } from "../../debug-logger";
-import { timeKey } from "../../strategies/backtest/backtest-utils";
+import { applySlippage, entrySideForDirection, timeKey } from "../../strategies/backtest/backtest-utils";
+import { resolveEntryRiskTargets } from "../../entry-risk-targets";
 import {
     dispatchAssetOpportunityRustBatch,
     buildAssetOpportunityRustDatasetCacheKey,
@@ -75,6 +76,7 @@ import {
     type FinderAssetOpportunityCandidateSummaryRow,
 } from "./finder-asset-opportunity-research";
 import type { FinderAssetOpportunityCandidateSummaryRow as FinderAssetOpportunityCandidateSummaryRowType } from "../finder-asset-opportunity-research-types";
+import { simulateFinderAssetOpportunityForwardOutcome } from "../finder-asset-opportunity-forward-contract";
 
 const ASSET_IS_SEARCH_YIELD_EVERY_RUNS = 256;
 const ASSET_IS_SEARCH_YIELD_MIN_MS = 1000;
@@ -95,6 +97,10 @@ export interface ServerAssetIsSearchInput {
     confirmationStrategiesLoaded?: boolean;
     /** Full closed series for batch-only signal reuse across holdout prefixes. */
     fullSignalData?: OHLCVData[];
+    /** Candles strictly after a declared point-in-time fold. */
+    forwardData?: OHLCVData[];
+    /** Fixed execution-unit horizons captured for the fresh research program. */
+    forwardHorizons?: number[];
     signalCache?: AssetOpportunitySignalCache;
     abortSignal?: AbortSignal;
     rustBatchClient?: AssetOpportunityRustBatchClient;
@@ -119,6 +125,66 @@ export interface ServerAssetIsSearchInput {
     onCandidateSummaryChunk?: (
         rows: FinderAssetOpportunityCandidateSummaryRowType[],
     ) => void | Promise<void>;
+}
+
+function buildFreshForwardOutcomes(args: {
+    input: ServerAssetIsSearchInput;
+    signals: Signal[];
+    resolvedSettings: BacktestSettings;
+}): FinderAssetOpportunityCandidateSummaryRowType["forwardOutcomes"] {
+    const { input, signals, resolvedSettings } = args;
+    if (input.researchProgram !== "fresh-window" || !input.forwardData?.length) return undefined;
+    const foldCandle = input.ohlcvData[input.ohlcvData.length - 1];
+    if (!foldCandle) return undefined;
+    const boundarySignal = [...signals]
+        .filter((signal) => timeKey(signal.time) === timeKey(foldCandle.time))
+        .at(-1);
+    if (!boundarySignal || (boundarySignal.type !== "buy" && boundarySignal.type !== "sell")) return undefined;
+    const direction = boundarySignal.type === "buy" ? "long" : "short";
+    const fullData = [...input.ohlcvData, ...input.forwardData];
+    const isNextEntry = resolvedSettings.executionModel !== "signal_close";
+    const entryBarIndex = isNextEntry ? input.ohlcvData.length : input.ohlcvData.length - 1;
+    const firstForward = input.forwardData[0];
+    if (!firstForward) return undefined;
+    const rawEntryPrice = resolvedSettings.executionModel === "signal_close"
+        ? boundarySignal.price
+        : resolvedSettings.executionModel === "next_open"
+            ? firstForward.open
+            : firstForward.close;
+    const slippageRate = Math.max(0, Number(resolvedSettings.slippageBps ?? 0)) / 10_000;
+    const entryFillPrice = applySlippage(
+        rawEntryPrice,
+        entrySideForDirection(direction),
+        slippageRate,
+    );
+    const targets = resolveEntryRiskTargets({
+        candles: fullData,
+        entryTime: isNextEntry ? firstForward.time : foldCandle.time,
+        entryPrice: entryFillPrice,
+        direction,
+        settings: resolvedSettings,
+        entryBarIndex,
+    });
+    const horizons = input.forwardHorizons?.length ? input.forwardHorizons : [12, 18, 24];
+    const outcomes: NonNullable<FinderAssetOpportunityCandidateSummaryRowType["forwardOutcomes"]> = {};
+    for (const horizonBars of horizons) {
+        if (!Number.isInteger(horizonBars) || horizonBars <= 0) continue;
+        const outcome = simulateFinderAssetOpportunityForwardOutcome({
+            candles: fullData,
+            direction,
+            entryPrice: rawEntryPrice,
+            entryBarIndex,
+            takeProfitPrice: targets.takeProfitPrice,
+            stopLossPrice: targets.stopLossPrice,
+            horizonBars,
+            executionModel: resolvedSettings.executionModel ?? "signal_close",
+            allowSameBarExit: resolvedSettings.allowSameBarExit === true,
+            slippageBps: Number(resolvedSettings.slippageBps ?? 0),
+            commissionPercent: Number(input.capitalSettings.commission ?? 0),
+        });
+        if (outcome) outcomes[String(horizonBars)] = outcome;
+    }
+    return Object.keys(outcomes).length > 0 ? outcomes : undefined;
 }
 
 function buildSignalCacheKey(input: ServerAssetIsSearchInput, params: StrategyParams): string {
@@ -470,6 +536,8 @@ export async function runServerAssetIsSearch(
             else signalCacheMisses += 1;
         }
         const candidateStartedAt = performance.now();
+        let resolvedCandidateSettings = settings;
+        let candidateSignals: Signal[] = [];
         try {
             // Shared candidate execution (risk overrides, exit override
             // injection, executor settings, and the compact endpoint-selection
@@ -549,6 +617,8 @@ export async function runServerAssetIsSearch(
             // Keep the prepared-strategy settings provider aligned with the
             // settings the run actually used (risk overrides + exit override).
             currentBacktestSettings = output.backtestSettings;
+            resolvedCandidateSettings = output.backtestSettings;
+            candidateSignals = output.signals;
             backtestMs += performance.now() - candidateStartedAt;
             candidateEvaluationsCompleted += 1;
             if (output.engineDiagnostics?.rustAttempted) rustAttemptedRuns += 1;
@@ -600,9 +670,20 @@ export async function runServerAssetIsSearch(
                     result: candidate.selectionResult,
                     passesTradeFilter,
                 });
-                await emitResearchSummary(
-                    attachFinderAssetOpportunityPathScalars(summary, candidate.selectionResult, input.ohlcvData),
+                const pathSummary = attachFinderAssetOpportunityPathScalars(
+                    summary,
+                    candidate.selectionResult,
+                    input.ohlcvData,
                 );
+                const forwardOutcomes = buildFreshForwardOutcomes({
+                    input,
+                    signals: candidateSignals,
+                    resolvedSettings: resolvedCandidateSettings,
+                });
+                await emitResearchSummary({
+                    ...pathSummary,
+                    ...(forwardOutcomes ? { forwardOutcomes } : {}),
+                });
             }
             if (!passesTradeFilter) {
                 continue;

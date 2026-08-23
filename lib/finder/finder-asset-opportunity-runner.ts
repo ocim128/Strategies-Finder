@@ -214,6 +214,8 @@ export type AssetIsSearch = (args: {
     retainSignals?: boolean;
     /** Full closed data used only by the batch signal-reuse optimization. */
     fullSignalData?: OHLCVData[];
+    forwardData?: OHLCVData[];
+    forwardHorizons?: number[];
     signalCache?: AssetOpportunitySignalCache;
     researchProgram?: "fresh-window";
     onCandidateSummaryChunk?: (
@@ -294,6 +296,8 @@ export interface AssetOpportunityAssetInput {
     symbol: string;
     /** Raw OHLCV dataset for the asset (closed-candle selection happens inside). */
     data: OHLCVData[];
+    /** Optional candles strictly after the declared point-in-time fold. */
+    forwardData?: OHLCVData[];
     /**
      * Optional caller-supplied execution-aware closed-candle view of `data`.
      * When the caller runs multiple strategies over the same asset, hoisting
@@ -313,8 +317,6 @@ export interface AssetOpportunityFreshEntryBatchCandidate {
 
 export interface AssetOpportunityFreshEntryBatchInput {
     data: OHLCVData[];
-    /** Optional candles strictly after the declared point-in-time fold. */
-    forwardData?: OHLCVData[];
     /** Optional full prefix source already cached by the candidate batch. */
     cacheData?: OHLCVData[];
     datasetEndIndex?: number;
@@ -901,6 +903,10 @@ async function searchOneAsset(args: {
         yieldControl: callbacks.yieldControl,
         retainSignals: canReuseFreshSignals,
         fullSignalData: fullClosed,
+        ...(asset.forwardData ? { forwardData: asset.forwardData } : {}),
+        ...(input.options.assetOpportunity?.oosHorizons
+            ? { forwardHorizons: input.options.assetOpportunity.oosHorizons }
+            : {}),
         ...(input.signalCache ? { signalCache: input.signalCache } : {}),
     });
     diagnostics.timingsMs.inSampleSearch = performance.now() - inSampleStartedAt;

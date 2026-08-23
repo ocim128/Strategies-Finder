@@ -456,6 +456,8 @@ export async function runAssetOpportunityIteration(
             useRustEnginePreference: input.useRustEnginePreference,
             confirmationStrategiesLoaded: true,
             fullSignalData: args.fullSignalData,
+            forwardData: args.forwardData,
+            forwardHorizons: args.forwardHorizons,
             ...(args.signalCache ? { signalCache: args.signalCache } : {}),
             ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
             ...(callbacks.onCandidateSummaryChunk ? { onCandidateSummaryChunk: callbacks.onCandidateSummaryChunk } : {}),
