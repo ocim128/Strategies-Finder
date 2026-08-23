@@ -119,16 +119,77 @@ function buildSignalCacheKey(input: ServerAssetIsSearchInput, params: StrategyPa
     ]);
 }
 
+type SignalWindow = {
+    startIndex: number;
+    endIndex: number;
+};
+
+/** Find the exact contiguous location of a capped search window in full data. */
+function resolveSignalWindow(
+    fullData: readonly OHLCVData[],
+    windowData: readonly OHLCVData[],
+): SignalWindow | null {
+    if (windowData.length === 0 || windowData.length > fullData.length) return null;
+    const firstTime = timeKey(windowData[0]!.time);
+    const lastTime = timeKey(windowData[windowData.length - 1]!.time);
+    let startIndex = fullData.findIndex((candle) => timeKey(candle.time) === firstTime);
+    while (startIndex >= 0) {
+        const endIndex = startIndex + windowData.length;
+        if (
+            endIndex <= fullData.length
+            && timeKey(fullData[endIndex - 1]!.time) === lastTime
+        ) {
+            let matches = true;
+            for (let offset = 1; offset < windowData.length - 1; offset += 1) {
+                if (timeKey(fullData[startIndex + offset]!.time) !== timeKey(windowData[offset]!.time)) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) return { startIndex, endIndex };
+        }
+        startIndex = fullData.findIndex(
+            (candle, index) => index > startIndex && timeKey(candle.time) === firstTime,
+        );
+    }
+    return null;
+}
+
 function resolveCachedSignalsForWindow(
-    signals: Signal[],
-    data: OHLCVData[],
+    signals: readonly Signal[],
+    signalWindow: SignalWindow | null,
 ): Signal[] | null {
     if (!signals.every((signal) => Number.isInteger(signal.barIndex))) return null;
-    const length = data.length;
-    return signals.filter((signal) => {
+    if (!signalWindow) return null;
+    // Rust uses barIndex for execution state, so cached full-series indexes
+    // must be rebased to the local capped dataset before dispatch.
+    return signals.flatMap((signal) => {
         const barIndex = signal.barIndex!;
-        return barIndex >= 0 && barIndex < length;
+        if (barIndex < signalWindow.startIndex || barIndex >= signalWindow.endIndex) return [];
+        return [{ ...signal, barIndex: barIndex - signalWindow.startIndex }];
     });
+}
+
+function canReuseFullSignalsForWindow(
+    input: ServerAssetIsSearchInput,
+    signalWindow: SignalWindow | null,
+): boolean {
+    // Full-series signal reuse is only valid for primary, deterministic entry
+    // signals. These features can introduce data/context outside the supplied
+    // primary window, so they retain the direct path.
+    return Boolean(
+        input.signalCache
+        && input.fullSignalData
+        && signalWindow
+        && !input.exitStrategyCandidates?.length
+        && (input.options.dataSlice ?? "all") === "all"
+        && input.settings.strategyTimeframeEnabled !== true
+        && !input.dataFetcher
+        && !input.selectedStrategy.strategy.crossSymbolConfig
+        && !input.selectedStrategy.strategy.polymarket1sConfig
+        && !(input.settings.confirmationStrategies?.length)
+        && input.settings.exitStrategyOverrideEnabled !== true,
+    );
 }
 
 function buildParamSetCacheKey(
@@ -341,6 +402,10 @@ export async function runServerAssetIsSearch(
         exitParamSetsByKey.set(selection.key, exitParamSets);
         return exitParamSets;
     };
+    const signalWindow = input.fullSignalData
+        ? resolveSignalWindow(input.fullSignalData, input.ohlcvData)
+        : null;
+    const canReuseFullSignals = canReuseFullSignalsForWindow(input, signalWindow);
 
     for (let index = 0; index < paramSets.length; index++) {
         if (input.isCancelled()) break;
@@ -364,15 +429,6 @@ export async function runServerAssetIsSearch(
         const combinedParams = exitParams
             ? withExitStrategyBaseParams(entryParams, exitParams)
             : entryParams;
-        const canReuseFullSignals = Boolean(
-            input.signalCache
-            && input.fullSignalData
-            && input.fullSignalData.length >= input.ohlcvData.length
-            && !input.exitStrategyCandidates?.length
-            && (input.options.dataSlice ?? "all") === "all"
-            && Number(input.options.assetOpportunity?.evalLastBars ?? 0) === 0
-            && input.settings.strategyTimeframeEnabled !== true,
-        );
         const signalCacheKey = canReuseFullSignals
             ? buildSignalCacheKey(input, entryParams)
             : null;
@@ -380,7 +436,7 @@ export async function runServerAssetIsSearch(
             ? input.signalCache!.get(signalCacheKey)
             : undefined;
         const preGeneratedSignals = cachedFullSignals
-            ? resolveCachedSignalsForWindow(cachedFullSignals, input.ohlcvData)
+            ? resolveCachedSignalsForWindow(cachedFullSignals, signalWindow)
             : null;
         if (signalCacheKey) {
             if (preGeneratedSignals !== null) signalCacheHits += 1;
@@ -451,7 +507,11 @@ export async function runServerAssetIsSearch(
                             endpointSelection: false,
                         },
                     });
-                    if (fullSignalOutput.signals.every((signal) => Number.isInteger(signal.barIndex))) {
+                    const cachedSignals = resolveCachedSignalsForWindow(
+                        fullSignalOutput.signals,
+                        signalWindow,
+                    );
+                    if (cachedSignals !== null) {
                         input.signalCache!.set(signalCacheKey, fullSignalOutput.signals);
                     }
                 } catch {
@@ -645,15 +705,10 @@ async function runServerAssetIsSearchWithRustBatch(
     let yieldingMs = 0;
     let evaluationsSinceYield = 0;
     let lastYieldAt = performance.now();
-
-    const canReuseFullSignals = Boolean(
-        input.signalCache
-        && input.fullSignalData
-        && input.fullSignalData.length >= input.ohlcvData.length
-        && (input.options.dataSlice ?? "all") === "all"
-        && Number(input.options.assetOpportunity?.evalLastBars ?? 0) === 0
-        && input.settings.strategyTimeframeEnabled !== true,
-    );
+    const signalWindow = input.fullSignalData
+        ? resolveSignalWindow(input.fullSignalData, input.ohlcvData)
+        : null;
+    const canReuseFullSignals = canReuseFullSignalsForWindow(input, signalWindow);
 
     for (let index = 0; index < paramSets.length; index += 1) {
         if (input.isCancelled()) break;
@@ -664,15 +719,18 @@ async function runServerAssetIsSearchWithRustBatch(
             ? buildSignalCacheKey(input, entryParams)
             : null;
         const cachedFullSignals = signalCacheKey ? input.signalCache!.get(signalCacheKey) : undefined;
+        const preGeneratedSignals = cachedFullSignals
+            ? resolveCachedSignalsForWindow(cachedFullSignals, signalWindow)
+            : null;
         if (signalCacheKey) {
-            if (cachedFullSignals) signalCacheHits += 1;
+            if (preGeneratedSignals !== null) signalCacheHits += 1;
             else signalCacheMisses += 1;
         }
 
         try {
             let signals: Signal[];
             let backtestSettings: BacktestSettings;
-            if (cachedFullSignals) {
+            if (preGeneratedSignals !== null) {
                 const output = await runAssetCandidateBacktest({
                     data: input.ohlcvData,
                     symbol: input.symbol,
@@ -686,7 +744,7 @@ async function runServerAssetIsSearchWithRustBatch(
                     options,
                     useRustEnginePreference: input.useRustEnginePreference,
                     closedCandleDataOverride: input.ohlcvData,
-                    preGeneratedSignals: resolveCachedSignalsForWindow(cachedFullSignals, input.ohlcvData) ?? [],
+                    preGeneratedSignals,
                     needs: {
                         compact: false,
                         trades: false,
@@ -719,11 +777,39 @@ async function runServerAssetIsSearchWithRustBatch(
                         endpointSelection: false,
                     },
                 });
-                if (fullOutput.signals.every((signal) => Number.isInteger(signal.barIndex))) {
+                const cachedSignals = resolveCachedSignalsForWindow(
+                    fullOutput.signals,
+                    signalWindow,
+                );
+                if (cachedSignals !== null) {
                     input.signalCache!.set(signalCacheKey, fullOutput.signals);
+                    signals = cachedSignals;
+                    backtestSettings = fullOutput.backtestSettings;
+                } else {
+                    const output = await runAssetCandidateBacktest({
+                        data: input.ohlcvData,
+                        symbol: input.symbol,
+                        interval: input.interval,
+                        strategy: preparedStrategy,
+                        strategyKey: selectedStrategy.key,
+                        strategyParams: entryParams,
+                        riskOverrideParams: entryParams,
+                        settings,
+                        capitalSettings,
+                        options,
+                        useRustEnginePreference: input.useRustEnginePreference,
+                        closedCandleDataOverride: input.ohlcvData,
+                        needs: {
+                            compact: false,
+                            trades: false,
+                            fullAnalytics: false,
+                            signalsOnly: true,
+                            endpointSelection: false,
+                        },
+                    });
+                    signals = output.signals;
+                    backtestSettings = output.backtestSettings;
                 }
-                signals = resolveCachedSignalsForWindow(fullOutput.signals, input.ohlcvData) ?? [];
-                backtestSettings = fullOutput.backtestSettings;
             } else {
                 const output = await runAssetCandidateBacktest({
                     data: input.ohlcvData,

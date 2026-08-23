@@ -33,7 +33,7 @@ function makeCandles(length: number): OHLCVData[] {
     }));
 }
 
-function makeOptions(): FinderOptions {
+function makeOptions(evalLastBars = 0): FinderOptions {
     return {
         mode: "random",
         randomSeed: 1234,
@@ -53,7 +53,7 @@ function makeOptions(): FinderOptions {
             symbols: ["CACHE"],
             candidatePoolSize: 1,
             minFreshSupport: 1,
-            evalLastBars: 0,
+            evalLastBars,
         },
     } as unknown as FinderOptions;
 }
@@ -160,6 +160,65 @@ describe("server Asset Opportunity signal cache", () => {
         });
 
         expect(first.results).to.have.length(1);
+        expect(first.signalCacheHits).to.equal(0);
+        expect(first.signalCacheMisses).to.equal(1);
+        expect(cached.signalCacheHits).to.equal(1);
+        expect(cached.signalCacheMisses).to.equal(0);
+        expect(cached.results).to.deep.equal(direct.results);
+        expect(callsAfterWarm).to.equal(2);
+        expect(executeCalls).to.equal(3);
+    });
+
+    it("reuses full-series signals for trailing capped windows with local bar indexes", async () => {
+        let executeCalls = 0;
+        const strategy: Strategy = {
+            name: "Trailing Cache Strategy",
+            description: "Emits signals from candle values so a trailing window is causal-equivalent.",
+            defaultParams: { marker: 1 },
+            paramLabels: { marker: "Marker" },
+            execute(data) {
+                executeCalls += 1;
+                return data.flatMap((candle, index) => candle.close % 5 === 0
+                    ? [{ time: candle.time, type: "buy" as const, price: candle.close, barIndex: index }]
+                    : []);
+            },
+        };
+        const fullData = makeCandles(40);
+        const firstWindow = fullData.slice(0, 30);
+        const trailingWindow = fullData.slice(10, 30);
+        const cache = createAssetOpportunitySignalCache();
+        const base = {
+            symbol: "CACHE",
+            interval: "5m",
+            options: makeOptions(20),
+            settings,
+            capitalSettings,
+            selectedStrategy: { key: "trailing_cache_strategy", name: strategy.name, strategy },
+            generateParamSets: () => [{ marker: 1 }],
+            useRustEnginePreference: false,
+            confirmationStrategiesLoaded: true,
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+        } as const;
+
+        const first = await runServerAssetIsSearch({
+            ...base,
+            ohlcvData: firstWindow,
+            fullSignalData: fullData,
+            signalCache: cache,
+        });
+        const callsAfterWarm = executeCalls;
+        const cached = await runServerAssetIsSearch({
+            ...base,
+            ohlcvData: trailingWindow,
+            fullSignalData: fullData,
+            signalCache: cache,
+        });
+        const direct = await runServerAssetIsSearch({
+            ...base,
+            ohlcvData: trailingWindow,
+        });
+
         expect(first.signalCacheHits).to.equal(0);
         expect(first.signalCacheMisses).to.equal(1);
         expect(cached.signalCacheHits).to.equal(1);

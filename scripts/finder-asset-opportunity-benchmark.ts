@@ -8,10 +8,11 @@ import {
     runAssetOpportunityBatchSweep,
     type AssetOpportunityBatchWorkerTask,
 } from "../lib/finder/server/finder-asset-opportunity-batch-worker-pool";
+import { createAssetOpportunitySignalCache } from "../lib/finder/finder-asset-opportunity-search-cache";
 import { loadBuiltInStrategyByKey } from "../strategyRegistry";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions } from "../lib/types/finder";
-import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
+import type { BacktestSettings, OHLCVData, Strategy, StrategyParams, Time } from "../lib/types/strategies";
 
 const BAR_COUNT = 3_589;
 const ASSET_COUNT = Number(process.argv.find((arg) => arg.startsWith("--assets="))?.slice(9) ?? 64);
@@ -22,6 +23,10 @@ const USE_REAL_STRATEGIES = process.argv.includes("--real-strategies");
 const ENGINE_ONLY = process.argv.find((arg) => arg.startsWith("--engine="))?.slice(9);
 const WARM_RUST_CACHE = process.argv.includes("--warm-rust-cache");
 const WORKER_COUNT = Number(process.argv.find((arg) => arg.startsWith("--workers="))?.slice(10) ?? 0);
+const HOLDOUT_COUNT = Number(process.argv.find((arg) => arg.startsWith("--holdouts="))?.slice(11) ?? 1);
+// `--holdouts=N` repeats the same asset universe sequentially so the
+// worker-local signal cache can amortize its cold full-series pass.
+const DISABLE_SIGNAL_CACHE = process.argv.includes("--no-signal-cache");
 
 // These are the 45 built-ins used by the production-shaped Asset Opportunity
 // run. The deterministic strategy remains available as the small smoke case,
@@ -137,7 +142,7 @@ function buildDataset(assetIndex: number): OHLCVData[] {
     });
 }
 
-function buildOptions(symbols: string[]): FinderOptions {
+function buildOptions(symbols: string[], holdoutIndex = 0): FinderOptions {
     return {
         mode: "random",
         sortPriority: ["netProfit"],
@@ -157,7 +162,7 @@ function buildOptions(symbols: string[]): FinderOptions {
             candidatePoolSize: CANDIDATE_COUNT,
             minFreshSupport: 1,
             ...(USE_REAL_STRATEGIES
-                ? { evalLastBars: 500, oosIgnoreLastBars: 12 }
+                ? { evalLastBars: 500, oosIgnoreLastBars: 12 * (holdoutIndex + 1) }
                 : {}),
         },
     };
@@ -274,7 +279,7 @@ async function run(useRustEnginePreference: boolean, datasets: Map<string, OHLCV
         : useRustEnginePreference && USE_REAL_STRATEGIES && symbols.length >= 32
             ? 4
             : 0;
-    if (useRustEnginePreference && effectiveWorkerCount > 1) {
+    if (useRustEnginePreference && effectiveWorkerCount > 1 && HOLDOUT_COUNT === 1) {
         const startedAt = performance.now();
         const workerOutput = await runInWorkerPool(datasets, selectedStrategies, effectiveWorkerCount);
         console.log(JSON.stringify({
@@ -346,33 +351,41 @@ async function run(useRustEnginePreference: boolean, datasets: Map<string, OHLCV
             }
         })
         : undefined;
-    const output = await runAssetOpportunityIteration(
-        {
-            runId: `finder-engine-benchmark-${useRustEnginePreference ? "rust" : "typescript"}`,
-            interval: "4h",
-            symbols,
-            options: buildOptions(symbols),
-            settings,
-            capitalSettings,
-            selectedStrategies,
-            useRustEnginePreference,
-            abortSignal: new AbortController().signal,
-            loadDataset: async (symbol) => datasets.get(symbol)!,
-            candidatePoolSize: CANDIDATE_COUNT,
-            minFreshSupport: 1,
-            ...(rustBatchDatasetCache ? { rustBatchDatasetCache } : {}),
-            ...(USE_REAL_STRATEGIES
-                ? {}
-                : {
-                    generateParamSets: () => Array.from({ length: CANDIDATE_COUNT }, (_, index) => ({ lookback: 22 + index })),
-                }),
-        },
-        {
-            onProgress: (progress) => progressValues.push(progress.percent),
-            onAssetResult: () => undefined,
-        },
-        () => false,
-    );
+    const signalCache = DISABLE_SIGNAL_CACHE ? undefined : createAssetOpportunitySignalCache();
+    const paramSetCache = new Map<string, StrategyParams[]>();
+    const outputs: Array<Awaited<ReturnType<typeof runAssetOpportunityIteration>>> = [];
+    for (let holdoutIndex = 0; holdoutIndex < HOLDOUT_COUNT; holdoutIndex += 1) {
+        const output = await runAssetOpportunityIteration(
+            {
+                runId: `finder-engine-benchmark-${useRustEnginePreference ? "rust" : "typescript"}-${holdoutIndex}`,
+                interval: "4h",
+                symbols,
+                options: buildOptions(symbols, holdoutIndex),
+                settings,
+                capitalSettings,
+                selectedStrategies,
+                useRustEnginePreference,
+                abortSignal: new AbortController().signal,
+                loadDataset: async (symbol) => datasets.get(symbol)!,
+                candidatePoolSize: CANDIDATE_COUNT,
+                minFreshSupport: 1,
+                ...(rustBatchDatasetCache ? { rustBatchDatasetCache } : {}),
+                ...(signalCache ? { signalCache } : {}),
+                paramSetCache,
+                ...(USE_REAL_STRATEGIES
+                    ? {}
+                    : {
+                        generateParamSets: () => Array.from({ length: CANDIDATE_COUNT }, (_, index) => ({ lookback: 22 + index })),
+                    }),
+            },
+            {
+                onProgress: (progress) => progressValues.push(holdoutIndex * 100 + progress.percent),
+                onAssetResult: () => undefined,
+            },
+            () => false,
+        );
+        outputs.push(output);
+    }
     unsubscribe?.();
     const wallMs = performance.now() - startedAt;
     const transportElapsedMs = transportLogs.reduce((total, message) => {
@@ -390,10 +403,22 @@ async function run(useRustEnginePreference: boolean, datasets: Map<string, OHLCV
                 totalWithWarmupMs: Number((wallMs + rustCacheWarmupMs).toFixed(2)),
             }
             : {}),
-        diagnosticsMs: output.assetDiagnostics.timingsMs,
-        timingSummary: output.assetDiagnostics.timingSummary,
-        engineUsage: output.totals.engineUsage,
-        results: output.results.length,
+        holdouts: HOLDOUT_COUNT,
+        signalCache: {
+            enabled: !DISABLE_SIGNAL_CACHE,
+            hits: outputs.reduce((total, output) => total + (output.assetDiagnostics.work?.signalCacheHits ?? 0), 0),
+            misses: outputs.reduce((total, output) => total + (output.assetDiagnostics.work?.signalCacheMisses ?? 0), 0),
+        },
+        diagnosticsMs: outputs.length === 1
+            ? outputs[0]!.assetDiagnostics.timingsMs
+            : outputs.map((output) => output.assetDiagnostics.timingsMs),
+        timingSummary: outputs.length === 1
+            ? outputs[0]!.assetDiagnostics.timingSummary
+            : outputs.map((output) => output.assetDiagnostics.timingSummary),
+        engineUsage: outputs.length === 1
+            ? outputs[0]!.totals.engineUsage
+            : outputs.map((output) => output.totals.engineUsage),
+        results: outputs.reduce((total, output) => total + output.results.length, 0),
         progressMonotonic: progressValues.every((value, index) => index === 0 || value >= progressValues[index - 1]!),
         ...(transportLogs.length > 0
             ? {
@@ -415,6 +440,7 @@ async function main(): Promise<void> {
     if (!Number.isInteger(ASSET_COUNT) || ASSET_COUNT < 1) throw new Error("--assets must be a positive integer");
     if (!Number.isInteger(STRATEGY_COUNT) || STRATEGY_COUNT < 1) throw new Error("--strategies must be a positive integer");
     if (!Number.isInteger(CANDIDATE_COUNT) || CANDIDATE_COUNT < 1) throw new Error("--candidates must be a positive integer");
+    if (!Number.isInteger(HOLDOUT_COUNT) || HOLDOUT_COUNT < 1) throw new Error("--holdouts must be a positive integer");
     const datasets = new Map<string, OHLCVData[]>();
     for (let index = 0; index < ASSET_COUNT; index += 1) {
         datasets.set(`BENCH${index.toString().padStart(4, "0")}`, buildDataset(index));
