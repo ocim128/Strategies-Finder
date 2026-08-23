@@ -242,3 +242,80 @@ not yet ready to declare the next real batch a judged experiment because the
 current production batch has no one-request schedule for 25 distinct
 point-in-time fold ends. Until that protocol is amended and verified, the
 correct status is **tooling complete, Phase 6 blocked, no rule conclusion**.
+
+## Rework report (R1–R6, 2026-08-23)
+
+The audit rework is complete in six isolated item commits plus the narrow
+long-direction hardening follow-up `eafec5a1`. No real batch was run; Phase 6
+remains operator-blocked.
+
+| Item | Change | Audit sections resolved |
+|---|---|---|
+| R1 `8c3190a4` | Fresh judgment now accepts only `next_open`, percentage TP/SL, and `allowSameBarExit=false`; validation rejects other models, first-touch uses the engine’s relative tolerance, and forward archives carry gross return, slippage, commission, and entry/exit timestamps as separate scalar fields. | B6, execution-contract item 4 |
+| R2 `317764c1` | Fresh requests require the explicit 25-entry schedule. Each task receives its own `foldEnd`; raw symbol/interval data is cached and sliced per fold, including the forward loader. | B4, B10.1 |
+| R3 `1f1e01fa` + `eafec5a1` | Fresh provenance (`GIT_COMMIT`, `FINDER_DATA_SYNC_SNAPSHOT`) and configuration persistence fail closed. S0 rejects invalid fold judgments, validates the pinned long-direction settings and interval, checks fold bounds, and compares independent expected/archived/outcome counts. Seed 42 and its draw digest are archived. | B3, B7 |
+| R4 `735d502d` | Time-to-TP selects lowest `medianBarsToTP` with at least three TP hits and judges selected-minus-control execution net. Recurrence counts exact tuples across strictly earlier fold ends and has collection/judged/replication gates. Strategy coverage uses eligible rows and eligible-pair denominators with the fixed `>=3` and `<10%` rules. | B8, agenda items 1–3 |
+| R5 `1fdffd6a` | Fresh summary retention is capped at 100,000 scalar rows per task; overflow is fatal. Research blocks are written in one write, synced, and terminated by `Record complete: true`; the analyzer rejects any block without that final marker. | B5, B9 |
+| R6 `be5e3982` | Added legacy absent-fold copy and loader-parity regressions, plus timestamp/positional slicing coverage for mixed representations, duplicate timestamps, and irregular gaps. | B2, B10.3 |
+
+### Acceptance fixtures
+
+The auditor’s adversarial cases now fail closed or select the registered rule:
+
+- The `next_close` mismatch is no longer judgeable: fresh request validation
+  rejects it, while the pinned `next_open` engine-parity fixtures pass.
+- An `INVALID` fold marker produces `S0: FAIL` and no downstream verdict.
+- Missing forward outcomes below 95% coverage produce `S0: FAIL` with an
+  explicit coverage error rather than silent exclusion.
+- The PF-versus-median-bars fixture exercises the median-bars execution-net
+  judge; the old bars/control wording is absent.
+- A high-density recurrence fixture selects the prior-fold recurring tuple and
+  emits the required collection → judged → replication budget line.
+- Failed/ineligible strategy rows do not inflate distinct-strategy coverage;
+  the fixed eligible-pair denominator yields the expected coverage kill.
+- A trailing partial identity block is ignored by the parser, reducing the
+  fold count and suppressing all verdict sections.
+- The retention-cap test accepts exactly 100,000 rows and rejects the next
+  append without growing the target.
+
+### R2 cache decision and benchmark
+
+The selected R2 design caches raw plain datasets by `symbol|interval` and
+performs the timestamp slice separately for each fold. This preserves one
+successful plain-dataset load per run while preventing the first fold’s slice
+from leaking into later folds. The existing benchmark order of magnitude was
+reproduced before the rework: 5,800 scalar rows serialized to 4,175,154 JSON
+bytes in 23 chunks and 8,600 rows to 6,191,331 bytes in 34 chunks; the
+corresponding forward-outcome call counts were 17,400 and 25,800. These are
+serialization/leaf benchmarks, not a production 679-symbol batch.
+
+### Final validation
+
+`npm run typecheck` passed. The complete fresh-window suite passed after each
+rework commit and after the direction follow-up: feature-DOM contracts, Finder server plugin,
+parallel batch, archive, fold, forward-contract, and fresh-window analyzer.
+The final focused counts were 48, 82, 17, 13, 7, 8, and 10 passing tests,
+respectively. Existing untracked audit scratch files and the user’s plan
+document were preserved. No closed-window analyzer/archive, trend-confirmation
+module, or real batch was modified/run.
+
+### Updated operator checklist
+
+Before Phase 6, the operator must:
+
+1. Start a fresh Vite process with the documented heap budget and verify the
+   server is running the final rework commits.
+2. Confirm the exact 679-symbol universe, 45 strategy keys, data-sync snapshot,
+   git commit, provider map, and pinned `next_open` TP2/SL2 settings.
+3. Supply all 25 explicit fold schedule entries in the fresh request; the UI
+   mode alone is not sufficient. Verify each task’s archived fold end is
+   distinct and its search/forward bounds satisfy `search <= fold < oos`.
+4. Confirm config and identity writes succeed. Treat any missing completion
+   marker, expected-count line, outcome coverage below 95%, or `INVALID`
+   judgment as a fatal archive, not a partial research result.
+5. Run the full fresh-window suite and inspect the S0 control trace before the
+   first data batch. Do not run a real batch until the operator explicitly
+   opens Phase 6.
+6. Judge only archives whose analyzer output says `S0: PASS`; require the
+   registered verdict bars, chronological-half signs, recurrence budget, and
+   the later untouched replication before any promotion.
