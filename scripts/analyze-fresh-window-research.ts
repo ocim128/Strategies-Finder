@@ -14,6 +14,10 @@ import type {
     FinderAssetOpportunityCandidateSummaryRow,
 } from "../lib/finder/finder-asset-opportunity-research-types";
 import { buildFinderAssetOpportunityControlTrace } from "../lib/finder/finder-asset-opportunity-control-trace";
+import {
+    isFinderFreshWindowBatchRole,
+    type FinderFreshWindowBatchRole,
+} from "../lib/finder/finder-asset-opportunity-research-types";
 
 const SEPARATOR = "=".repeat(80);
 const IDENTITY_FILE = /^oos-fold-identities-(\d+)-bars\.txt$/;
@@ -42,6 +46,7 @@ export interface FreshWindowOutcome {
 export interface FreshWindowIdentityFold {
     timestamp: string;
     batchRunId: string;
+    batchRole: FinderFreshWindowBatchRole | null;
     holdoutBars: number;
     declaredRowCount: number;
     expectedRowCount: number | null;
@@ -74,6 +79,12 @@ export interface FreshWindowConfig {
     capitalSettings?: Record<string, unknown>;
 }
 
+interface ParsedConfigRecord {
+    timestamp: string;
+    batchRunId: string;
+    config: FreshWindowConfig;
+}
+
 export interface S0Result {
     ok: boolean;
     errors: string[];
@@ -86,6 +97,7 @@ export interface S0Result {
     randomControls: number;
     controlSeed: number;
     controlDrawDigest: string;
+    batchRole: FinderFreshWindowBatchRole | null;
 }
 
 interface FoldMetric {
@@ -181,6 +193,10 @@ function parseIdentityBlock(body: string): FreshWindowIdentityFold | null {
     return {
         timestamp: parseHeaderText(header, "Timestamp: ") ?? "",
         batchRunId: parseHeaderText(header, "Batch run id: ") ?? "",
+        batchRole: (() => {
+            const value = parseHeaderText(header, "Batch role: ");
+            return isFinderFreshWindowBatchRole(value) ? value : null;
+        })(),
         holdoutBars: parseHeaderNumber(header, "OOS holdout: ") ?? 0,
         declaredRowCount: parseHeaderNumber(header, "Declared row count: ") ?? -1,
         expectedRowCount: parseHeaderNumber(header, "Expected evaluated row count: "),
@@ -200,9 +216,9 @@ function parseIdentityBlock(body: string): FreshWindowIdentityFold | null {
     };
 }
 
-function parseConfig(text: string): FreshWindowConfig | null {
+function parseConfigRecords(text: string): ParsedConfigRecord[] {
     const blocks = parseBlocks(text);
-    const parsed: Array<{ timestamp: string; config: FreshWindowConfig }> = [];
+    const parsed: ParsedConfigRecord[] = [];
     for (const body of blocks) {
         if (!body.includes("Run configuration: JSON")) continue;
         const start = body.indexOf("{", body.indexOf(SEPARATOR));
@@ -212,6 +228,7 @@ function parseConfig(text: string): FreshWindowConfig | null {
             const config = JSON.parse(body.slice(start, end + 1)) as FreshWindowConfig;
             parsed.push({
                 timestamp: parseHeaderText(body.split(/\r?\n/), "Timestamp: ") ?? "",
+                batchRunId: parseHeaderText(body.split(/\r?\n/), "Batch run id: ") ?? "",
                 config,
             });
         } catch {
@@ -220,7 +237,11 @@ function parseConfig(text: string): FreshWindowConfig | null {
         }
     }
     parsed.sort((left, right) => left.timestamp.localeCompare(right.timestamp));
-    return parsed.at(-1)?.config ?? null;
+    return parsed;
+}
+
+function parseConfig(text: string): FreshWindowConfig | null {
+    return parseConfigRecords(text).at(-1)?.config ?? null;
 }
 
 function latestIdentityBlock(fileText: string): FreshWindowIdentityFold | null {
@@ -433,9 +454,68 @@ function loadFolds(archiveDirectory: string): FreshWindowIdentityFold[] {
         .filter((fold): fold is FreshWindowIdentityFold => fold !== null);
 }
 
+function loadAllIdentityBlocks(archiveDirectory: string): FreshWindowIdentityFold[] {
+    return fs.readdirSync(archiveDirectory)
+        .map((file) => file.match(IDENTITY_FILE))
+        .filter((match): match is RegExpMatchArray => match !== null)
+        .flatMap((match) => {
+            const file = match.input!;
+            return parseBlocks(fs.readFileSync(path.join(archiveDirectory, file), "utf8"))
+                .map(parseIdentityBlock)
+                .filter((block): block is FreshWindowIdentityFold => block !== null);
+        });
+}
+
 function loadConfig(archiveDirectory: string): FreshWindowConfig | null {
     const filename = path.join(archiveDirectory, "config.txt");
     return fs.existsSync(filename) ? parseConfig(fs.readFileSync(filename, "utf8")) : null;
+}
+
+function loadConfigRecords(archiveDirectory: string): ParsedConfigRecord[] {
+    const filename = path.join(archiveDirectory, "config.txt");
+    return fs.existsSync(filename)
+        ? parseConfigRecords(fs.readFileSync(filename, "utf8"))
+        : [];
+}
+
+function hasValidPriorArchiveRole(
+    records: readonly ParsedConfigRecord[],
+    allIdentityBlocks: readonly FreshWindowIdentityFold[],
+    role: FinderFreshWindowBatchRole,
+    currentWindows: readonly FreshWindowIdentityFold[],
+): boolean {
+    const currentTimestamp = records.at(-1)?.timestamp ?? "";
+    const currentRunId = records.at(-1)?.config.runId ?? "";
+    const currentFoldEnds = currentWindows
+        .map((fold) => fold.foldEnd)
+        .filter((value): value is number => value !== null && Number.isFinite(value));
+    const currentLatestFoldEnd = Math.max(...currentFoldEnds);
+    for (const record of records) {
+        if (record.timestamp >= currentTimestamp || record.batchRunId === currentRunId) continue;
+        if (record.config.judgmentStatus !== "VALID") continue;
+        const identity = record.config.freshWindowIdentity as Record<string, unknown> | undefined;
+        if (identity?.batchRole !== role) continue;
+        const digest = identity?.configIdentityDigest;
+        if (typeof digest !== "string") continue;
+        const { configIdentityDigest, ...withoutDigest } = identity;
+        if (sha256Json(withoutDigest) !== digest) continue;
+        const blocks = allIdentityBlocks.filter((block) =>
+            block.batchRunId === (record.config.runId ?? record.batchRunId)
+            && block.batchRole === role
+            && block.judgmentStatus === "VALID",
+        );
+        const byHoldout = new Map(blocks.map((block) => [block.holdoutBars, block]));
+        if (expectedHoldouts(DEFAULT_STRIDE).size !== byHoldout.size) continue;
+        if (![...expectedHoldouts(DEFAULT_STRIDE)].every((holdout) => byHoldout.has(holdout))) continue;
+        const priorFoldEnds = blocks
+            .map((block) => block.foldEnd)
+            .filter((value): value is number => value !== null && Number.isFinite(value));
+        if (priorFoldEnds.length === EXPECTED_WINDOWS
+            && priorFoldEnds.some((foldEnd) => foldEnd < currentLatestFoldEnd)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 function checkS0(
@@ -446,6 +526,8 @@ function checkS0(
     const allFolds = loadFolds(archiveDirectory);
     const expected = expectedHoldouts(stride);
     const windows = allFolds.filter((fold) => expected.has(fold.holdoutBars));
+    const configRecords = loadConfigRecords(archiveDirectory);
+    const allIdentityBlocks = loadAllIdentityBlocks(archiveDirectory);
     const config = loadConfig(archiveDirectory);
     const errors: string[] = [];
     if (windows.length !== EXPECTED_WINDOWS) errors.push(`expected ${EXPECTED_WINDOWS} stride-${stride} windows, found ${windows.length}`);
@@ -461,6 +543,7 @@ function checkS0(
         "foldSchedule",
         "foldScheduleDigest",
         "controlSeed",
+        "batchRole",
         "dataSyncSnapshot",
         "gitCommit",
         "configIdentityDigest",
@@ -474,6 +557,21 @@ function checkS0(
     if (identity?.dataSyncSnapshot === "unknown") errors.push("dataSyncSnapshot is unknown");
     if (identity?.gitCommit === "unknown") errors.push("gitCommit is unknown");
     if (identity?.controlSeed !== DEFAULT_SEED) errors.push(`control seed must be ${DEFAULT_SEED}`);
+    const batchRole = isFinderFreshWindowBatchRole(identity?.batchRole) ? identity.batchRole : null;
+    if (!batchRole) errors.push("fresh-window identity batchRole is missing or invalid");
+    if (batchRole && config?.freshWindowIdentity && config.freshWindowIdentity.batchRole !== batchRole) {
+        errors.push("configuration and identity batchRole differ");
+    }
+    if (batchRole === "judged"
+        && config
+        && !hasValidPriorArchiveRole(configRecords, allIdentityBlocks, "collection", windows)) {
+        errors.push("judged batch has no prior VALID collection archive with strictly-earlier folds");
+    }
+    if (batchRole === "replication"
+        && config
+        && !hasValidPriorArchiveRole(configRecords, allIdentityBlocks, "judged", windows)) {
+        errors.push("replication batch has no prior VALID judged archive with strictly-earlier folds");
+    }
     if (identity) {
         const { configIdentityDigest, ...identityWithoutDigest } = identity;
         if (typeof configIdentityDigest !== "string"
@@ -654,10 +752,22 @@ function checkS0(
         randomControls: selectedControls.length,
         controlSeed,
         controlDrawDigest,
+        batchRole,
     };
 }
 
-function recurrenceReport(windows: FreshWindowIdentityFold[], horizon: number, seed: number): string[] {
+function recurrenceReport(
+    windows: FreshWindowIdentityFold[],
+    horizon: number,
+    seed: number,
+    batchRole: FinderFreshWindowBatchRole | null,
+): string[] {
+    if (batchRole === "collection") {
+        return [
+            "Recurrence: NOT AUTHORIZED (collection archive; judged role requires a prior collection)",
+            "Recurrence budget: collection=PASS, judged=NOT AUTHORIZED, replication=NOT AUTHORIZED",
+        ];
+    }
     const ordered = orderedByFoldEnd(windows);
     const seenCounts = new Map<string, number>();
     const foldDeltas: Array<{ foldEnd: number; delta: number }> = [];
@@ -706,7 +816,9 @@ function recurrenceReport(windows: FreshWindowIdentityFold[], horizon: number, s
         const latestDensity = densities.at(-1) ?? 0;
         return [
             `Recurrence: INSUFFICIENT DATA (no judged fold at density >=5%; latest density ${(latestDensity * 100).toFixed(2)}%)`,
-            "Recurrence budget: collection=PASS, judged=INSUFFICIENT, replication=NOT AUTHORIZED",
+            batchRole === "replication"
+                ? "Recurrence budget: collection=PASS, judged=PASS, replication=INSUFFICIENT"
+                : "Recurrence budget: collection=PASS, judged=PASS, replication=NOT AUTHORIZED",
         ];
     }
     const deltas = foldDeltas.map(({ delta }) => delta);
@@ -722,7 +834,9 @@ function recurrenceReport(windows: FreshWindowIdentityFold[], horizon: number, s
     const latestDensity = densities.at(-1) ?? 0;
     return [
         `Recurrence: ${kill ? "KILL" : verdict.verdict} execution-net delta=${verdict.mean.toFixed(4)}% positive=${verdict.positiveWindows}/${verdict.windows} halves=${firstHalf.toFixed(4)}/${secondHalf.toFixed(4)} latest density ${(latestDensity * 100).toFixed(2)}%`,
-        "Recurrence budget: collection=PASS, judged=PASS, replication=REQUIRED before any promotion",
+        batchRole === "replication"
+            ? `Recurrence budget: collection=PASS, judged=PASS, replication=${kill ? "KILL" : "PASS"}`
+            : "Recurrence budget: collection=PASS, judged=PASS, replication=REQUIRED before any promotion",
     ];
 }
 
@@ -833,7 +947,7 @@ export function runFreshWindowAnalysis(args: {
     lines.push(
         `Time-to-TP: ${timeToTpKill ? "KILL" : verdict.verdict} execution-net delta(selected-control)=${verdict.mean.toFixed(4)}% positive=${verdict.positiveWindows}/${verdict.windows} p5=${verdict.bootstrapP5.toFixed(4)} halves=${firstHalf.toFixed(4)}/${secondHalf.toFixed(4)}`,
     );
-    lines.push(...recurrenceReport(s0.windows, horizon, seed));
+    lines.push(...recurrenceReport(s0.windows, horizon, seed, s0.batchRole));
     lines.push(...strategyGateReport(s0.windows, horizon, seed));
     lines.push(legacyDiagnostic(args.archiveDirectory));
     lines.push("Decision budget: collection -> judged batch -> one untouched replication; no deployment from this report alone.");

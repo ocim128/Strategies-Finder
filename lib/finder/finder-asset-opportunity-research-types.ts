@@ -44,3 +44,11 @@ export interface FinderAssetOpportunityPairContextRow {
 }
 
 export type FinderFreshWindowJudgmentStatus = "VALID" | "INVALID";
+
+export const FINDER_FRESH_WINDOW_BATCH_ROLES = ["collection", "judged", "replication"] as const;
+export type FinderFreshWindowBatchRole = typeof FINDER_FRESH_WINDOW_BATCH_ROLES[number];
+
+export function isFinderFreshWindowBatchRole(value: unknown): value is FinderFreshWindowBatchRole {
+    return typeof value === "string"
+        && (FINDER_FRESH_WINDOW_BATCH_ROLES as readonly string[]).includes(value);
+}

@@ -290,6 +290,7 @@ async function runAssetBatch(
             ...(args.factory ? { batchTaskRunnerFactory: args.factory } : {}),
             ...(args.researchProgram ? {
                 researchProgram: args.researchProgram,
+                ...(fresh ? { batchRole: "collection" as const } : {}),
                 ...(fresh ? { foldSchedule: freshFoldSchedule() } : {}),
                 ...(fresh ? { dataSyncSnapshot: "sync-2026-08-23", gitCommit: "abc123" } : {}),
             } : {}),

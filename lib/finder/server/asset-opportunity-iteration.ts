@@ -59,6 +59,7 @@ import { parseSyntheticPairToken } from "../../synthetic-pair-token";
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
+import type { FinderFreshWindowBatchRole } from "../finder-asset-opportunity-research-types";
 import {
     assertFinderAssetDataAtOrBeforeFoldEnd,
     assertFinderAssetDataStrictlyAfterFoldEnd,
@@ -170,6 +171,7 @@ export interface FinderAssetOpportunityRunInput {
     /** Explicit fresh-window fold schedule; one entry is used per batch task. */
     foldSchedule?: FinderAssetOpportunityFoldScheduleEntry[];
     researchProgram?: AssetOpportunityResearchProgram;
+    batchRole?: FinderFreshWindowBatchRole;
     /** When true, loaders/cache retain raw candles and this leaf slices per fold. */
     loadDatasetIsRaw?: boolean;
     /** Operator/data provenance captured in fresh-window archive envelopes. */

@@ -26,6 +26,7 @@ function buildArchive(options?: {
     extraIneligibleStrategies?: number;
     partialFold?: boolean;
     reorderRows?: boolean;
+    batchRole?: "collection" | "judged" | "replication";
 }): string {
     const root = mkdtempSync(path.join(tmpdir(), "fresh-window-analyzer-"));
     const strategyCount = options?.strategyCount ?? 3;
@@ -94,6 +95,7 @@ function buildArchive(options?: {
             separator,
             `Timestamp: 2026-08-23T00:${String(index).padStart(2, "0")}:00.000Z`,
             "Batch run id: fixture-run",
+            `Batch role: ${options?.batchRole ?? "collection"}`,
             `Fold id: ${holdout}`,
             `OOS holdout: ${holdout} bars`,
             `Declared row count: ${rows.length}`,
@@ -121,6 +123,7 @@ function buildArchive(options?: {
     const identity = {
         identityVersion: 1,
         researchProgram: "fresh-window",
+        batchRole: options?.batchRole ?? "collection",
         symbols: ["PAIR"],
         symbolDigest: createHash("sha256").update(JSON.stringify(["PAIR"])).digest("hex"),
         strategyKeys: Array.from({ length: totalStrategyCount }, (_, index) => `strategy_${index}`),
@@ -185,7 +188,7 @@ describe("fresh-window research analyzer", () => {
             const lines = runFreshWindowAnalysis({ archiveDirectory: root });
             expect(lines[2]).to.equal("S0: PASS");
             expect(lines.some((line) => line.startsWith("Legacy visible-pool diagnostic only:"))).to.equal(true);
-            expect(lines.some((line) => line.startsWith("Recurrence: INSUFFICIENT DATA"))).to.equal(true);
+            expect(lines.some((line) => line.startsWith("Recurrence: NOT AUTHORIZED"))).to.equal(true);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -217,7 +220,7 @@ describe("fresh-window research analyzer", () => {
         try {
             const lines = runFreshWindowAnalysis({ archiveDirectory: root });
             expect(lines.some((line) => line.startsWith("Recurrence:") && !line.includes("INSUFFICIENT DATA"))).to.equal(true);
-            expect(lines.some((line) => line.startsWith("Recurrence budget: collection=PASS, judged=PASS"))).to.equal(true);
+            expect(lines.some((line) => line.startsWith("Recurrence budget: collection=PASS, judged=NOT AUTHORIZED"))).to.equal(true);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -301,4 +304,18 @@ describe("fresh-window research analyzer", () => {
             rmSync(root, { recursive: true, force: true });
         }
     });
+
+    it("blocks a one-run judged recurrence archive without a prior collection", () => {
+        const root = buildArchive({ recurring: true, batchRole: "judged" });
+        try {
+            const lines = runFreshWindowAnalysis({ archiveDirectory: root });
+            expect(lines[2]).to.equal("S0: FAIL");
+            expect(lines.some((line) => line.includes("no prior VALID collection archive"))).to.equal(true);
+            expect(lines.some((line) => line.startsWith("Recurrence:"))).to.equal(false);
+            expect(lines.some((line) => line.includes("judged=PASS"))).to.equal(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
 });

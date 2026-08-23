@@ -2853,7 +2853,10 @@ export class FinderManager {
 				providerBySymbol,
 				archiveSort,
 				...(this.uiState.assetOpportunityFreshWindowResearchEnabled
-					? { researchProgram: "fresh-window" as const }
+					? {
+						researchProgram: "fresh-window" as const,
+						batchRole: "collection" as const,
+					}
 					: {}),
 				batch: {
 					startHoldoutBars: range.start,

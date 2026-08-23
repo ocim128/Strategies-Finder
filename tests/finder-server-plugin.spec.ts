@@ -56,6 +56,7 @@ const {
     parseStrategyKeys,
     parseRunId,
     parseAssetOpportunityResearchProgram,
+    parseAssetOpportunityFreshWindowBatchRole,
     parseAssetOpportunityFoldEnd,
     parseAssetOpportunityFreshFoldSchedule,
     consumePendingStopForRun,
@@ -1489,6 +1490,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                     batch: { startHoldoutBars: runStart, endHoldoutBars: runEnd },
                     ...(args.freshWindow ? {
                         researchProgram: "fresh-window" as const,
+                        batchRole: "collection" as const,
                         foldSchedule: freshFoldSchedule,
                         dataSyncSnapshot: "sync-2026-08-23",
                         gitCommit: "abc123",
@@ -2120,6 +2122,15 @@ describe("Asset Opportunity research program validation", () => {
             } catch (error) {
                 expect((error as HttpStatusError).status).to.equal(400);
             }
+        }
+    });
+
+    it("requires an explicit fresh-window batch role", () => {
+        expect(parseAssetOpportunityFreshWindowBatchRole("collection")).to.equal("collection");
+        expect(parseAssetOpportunityFreshWindowBatchRole("judged")).to.equal("judged");
+        expect(parseAssetOpportunityFreshWindowBatchRole("replication")).to.equal("replication");
+        for (const value of [undefined, "", "other", "collection/../escape"]) {
+            expect(() => parseAssetOpportunityFreshWindowBatchRole(value)).to.throw(HttpStatusError);
         }
     });
 });

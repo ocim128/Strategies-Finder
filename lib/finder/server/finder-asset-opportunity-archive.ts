@@ -10,6 +10,7 @@ import type { FinderAssetOpportunityFoldMetadata } from "../finder-asset-opportu
 import type {
     FinderAssetOpportunityCandidateSummaryRow,
     FinderAssetOpportunityPairContextRow,
+    FinderFreshWindowBatchRole,
     FinderFreshWindowJudgmentStatus,
 } from "../finder-asset-opportunity-research-types";
 import type { FinderAssetOpportunityControlDraw } from "../finder-asset-opportunity-control-trace";
@@ -34,6 +35,7 @@ export const ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER = "Record complete
 
 export const ASSET_OPPORTUNITY_RESEARCH_PROGRAMS = ["fresh-window"] as const;
 export type AssetOpportunityResearchProgram = typeof ASSET_OPPORTUNITY_RESEARCH_PROGRAMS[number];
+export type { FinderFreshWindowBatchRole } from "../finder-asset-opportunity-research-types";
 
 export function isAssetOpportunityResearchProgram(value: unknown): value is AssetOpportunityResearchProgram {
     return typeof value === "string"
@@ -247,6 +249,7 @@ export interface AppendAssetOpportunityArchivePairSummaryArgs {
 export interface AssetOpportunityFoldIdentityBlock {
     timestamp: string;
     batchRunId: string;
+    batchRole?: FinderFreshWindowBatchRole;
     holdoutBars: number;
     declaredRowCount: number;
     /** Independent evaluator count; unlike declaredRowCount this is not derived from rows. */
@@ -277,6 +280,7 @@ export function buildAssetOpportunityFoldIdentityBlockText(
         separator,
         `Timestamp: ${block.timestamp}`,
         `Batch run id: ${block.batchRunId}`,
+        ...(block.batchRole ? [`Batch role: ${block.batchRole}`] : []),
         `Fold id: ${block.holdoutBars}`,
         `OOS holdout: ${block.holdoutBars} bars`,
         `Declared row count: ${block.declaredRowCount}`,
@@ -308,6 +312,7 @@ export interface AppendAssetOpportunityArchiveFoldIdentitiesArgs {
     root: string;
     program?: AssetOpportunityResearchProgram;
     batchRunId: string;
+    batchRole?: FinderFreshWindowBatchRole;
     holdoutBars: number;
     rows: FinderAssetOpportunityCandidateSummaryRow[];
     expectedRowCount?: number;
@@ -332,6 +337,7 @@ export async function appendAssetOpportunityArchiveFoldIdentities(
     const content = buildAssetOpportunityFoldIdentityBlockText({
         timestamp: args.timestamp ?? new Date().toISOString(),
         batchRunId: args.batchRunId,
+        ...(args.batchRole ? { batchRole: args.batchRole } : {}),
         holdoutBars: args.holdoutBars,
         declaredRowCount: args.rows.length,
         ...(args.expectedRowCount !== undefined ? { expectedRowCount: args.expectedRowCount } : {}),

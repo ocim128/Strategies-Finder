@@ -146,6 +146,7 @@ import {
     type FinderFreshWindowJudgmentStatus,
 } from "./finder-asset-opportunity-research";
 import { buildFinderAssetOpportunityControlTrace } from "../finder-asset-opportunity-control-trace";
+import { isFinderFreshWindowBatchRole, type FinderFreshWindowBatchRole } from "../finder-asset-opportunity-research-types";
 import { captureTradeFilter } from "../finder-config-capture";
 import {
     createBufferedFinderRunLogSink,
@@ -1253,6 +1254,8 @@ interface FinderAssetOpportunityRequestBody {
     foldEnd?: unknown;
     /** Explicit 25-entry fresh-window fold schedule. */
     foldSchedule?: unknown;
+    /** Required role for a fresh-window batch budget. */
+    batchRole?: unknown;
 }
 
 /**
@@ -1667,6 +1670,7 @@ function buildFreshWindowIdentity(
     const identity: Record<string, unknown> = {
         identityVersion: 1,
         researchProgram: input.researchProgram,
+        batchRole: input.batchRole ?? null,
         interval: input.interval,
         symbols,
         symbolDigest: sha256Json(symbols),
@@ -1694,6 +1698,7 @@ function buildFreshWindowIdentity(
     }
     if (dataSyncSnapshot === "unknown") invalidReasons.push("dataSyncSnapshot is missing");
     if (gitCommit === "unknown") invalidReasons.push("gitCommit is missing");
+    if (!isFinderFreshWindowBatchRole(input.batchRole)) invalidReasons.push("batchRole is missing or invalid");
     if (evalLastBars !== 1000) invalidReasons.push(`evalLastBars must be 1000 (got ${String(evalLastBars)})`);
     if (oosIgnoreLastBars !== 26) invalidReasons.push(`oosIgnoreLastBars must be 26 (got ${String(oosIgnoreLastBars)})`);
     if (oosHorizons.length !== 3 || oosHorizons.some((value, index) => value !== [12, 18, 24][index])) {
@@ -1763,6 +1768,9 @@ export async function processFinderAssetOpportunityBatchRun(
         && (!input.dataSyncSnapshot || input.dataSyncSnapshot === "unknown"
             || !input.gitCommit || input.gitCommit === "unknown")) {
         throw new Error("Fresh-window batch requires real dataSyncSnapshot and gitCommit provenance.");
+    }
+    if (input.researchProgram === "fresh-window" && !isFinderFreshWindowBatchRole(input.batchRole)) {
+        throw new Error("Fresh-window batch requires a valid batchRole: collection, judged, or replication.");
     }
     const holdoutValues = foldEntries.map((entry) => entry.holdoutBars);
     const totalIterations = holdoutValues.length;
@@ -1975,6 +1983,7 @@ export async function processFinderAssetOpportunityBatchRun(
                     root: archiveRoot,
                     program: input.researchProgram,
                     batchRunId: input.runId,
+                    batchRole: input.batchRole,
                     holdoutBars,
                     rows: summaryRows,
                     expectedRowCount: iteration.expectedCandidateSummaryRows,
@@ -2513,12 +2522,17 @@ async function prepareAssetOpportunityRunPayload(
     archiveSort?: FinderAssetOpportunityArchiveSort | null;
     /** Present when the request selects the fresh-window archive namespace. */
     researchProgram?: AssetOpportunityResearchProgram;
+    /** Present for fresh-window batches: the pre-registered budget role. */
+    batchRole?: FinderFreshWindowBatchRole;
     /** Present when the request declares a point-in-time fold boundary. */
     foldEnd?: number;
     /** Present for fresh-window batch requests: one explicit entry per fold. */
     foldSchedule?: FinderAssetOpportunityFoldScheduleEntry[];
 }> {
     const researchProgram = parseAssetOpportunityResearchProgram(body.researchProgram);
+    const batchRole = researchProgram === "fresh-window"
+        ? parseAssetOpportunityFreshWindowBatchRole(body.batchRole)
+        : undefined;
     const foldEnd = parseAssetOpportunityFoldEnd(body.foldEnd);
     const foldSchedule = researchProgram === "fresh-window"
         ? parseAssetOpportunityFreshFoldSchedule(body.foldSchedule)
@@ -2643,6 +2657,7 @@ async function prepareAssetOpportunityRunPayload(
         candidatePoolSize,
         minFreshSupport,
         ...(researchProgram ? { researchProgram } : {}),
+        ...(batchRole ? { batchRole } : {}),
         ...(foldEnd !== undefined ? { foldEnd } : {}),
         ...(foldSchedule ? { foldSchedule } : {}),
         ...(batch ? { batchRange, archiveSort } : {}),
@@ -2653,6 +2668,13 @@ function parseAssetOpportunityResearchProgram(raw: unknown): AssetOpportunityRes
     if (raw === undefined || raw === null || raw === "") return undefined;
     if (!isAssetOpportunityResearchProgram(raw)) {
         throw new HttpStatusError(400, "Invalid Asset Opportunity research program.");
+    }
+    return raw;
+}
+
+function parseAssetOpportunityFreshWindowBatchRole(raw: unknown): FinderFreshWindowBatchRole {
+    if (!isFinderFreshWindowBatchRole(raw)) {
+        throw new HttpStatusError(400, "Fresh-window batchRole must be collection, judged, or replication.");
     }
     return raw;
 }
@@ -2837,6 +2859,7 @@ async function handleAssetOpportunityRunRequest(
                     : {}),
                 ...(prepared.researchProgram === "fresh-window" ? { loadDatasetIsRaw: true } : {}),
                 ...(prepared.researchProgram ? { researchProgram: prepared.researchProgram } : {}),
+                ...(prepared.batchRole ? { batchRole: prepared.batchRole } : {}),
                 ...(prepared.foldEnd !== undefined || prepared.researchProgram === "fresh-window"
                     ? {
                         dataSyncSnapshot: process.env.FINDER_DATA_SYNC_SNAPSHOT ?? "unknown",
@@ -2946,6 +2969,7 @@ async function handleAssetOpportunityBatchRunRequest(
                     : {}),
                 ...(prepared.researchProgram === "fresh-window" ? { loadDatasetIsRaw: true } : {}),
                 ...(prepared.researchProgram ? { researchProgram: prepared.researchProgram } : {}),
+                ...(prepared.batchRole ? { batchRole: prepared.batchRole } : {}),
                 ...(prepared.foldEnd !== undefined || prepared.researchProgram === "fresh-window"
                     ? {
                         dataSyncSnapshot: process.env.FINDER_DATA_SYNC_SNAPSHOT ?? "unknown",
@@ -2976,6 +3000,7 @@ async function handleAssetOpportunityBatchRunRequest(
                         .map(([symbol, provider]) => [symbol.trim().toUpperCase(), provider]),
                 ),
                 ...(prepared.researchProgram ? { researchProgram: prepared.researchProgram } : {}),
+                ...(prepared.batchRole ? { batchRole: prepared.batchRole } : {}),
                 ...(prepared.foldSchedule ? { foldSchedule: prepared.foldSchedule } : {}),
             },
             safeWrite,
@@ -3600,6 +3625,7 @@ export const __testInternals = {
     parseStrategyKeys,
     parseRunId,
     parseAssetOpportunityResearchProgram,
+    parseAssetOpportunityFreshWindowBatchRole,
     parseAssetOpportunityFoldEnd,
     parseAssetOpportunityFreshFoldSchedule,
     consumePendingStopForRun,

@@ -67,6 +67,7 @@ describe("Asset Opportunity archive writer", () => {
         expect(buildAssetOpportunityFoldIdentityBlockText({
             timestamp: "t",
             batchRunId: "b",
+            batchRole: "collection",
             holdoutBars: 12,
             declaredRowCount: 1,
             controlSeed: 42,
@@ -79,6 +80,7 @@ describe("Asset Opportunity archive writer", () => {
             root: "/virtual/root",
             program: "fresh-window",
             batchRunId: "b",
+            batchRole: "collection",
             holdoutBars: 12,
             rows,
             controlSeed: 42,
@@ -90,6 +92,7 @@ describe("Asset Opportunity archive writer", () => {
         expect(calls[0]!.filename).to.equal("oos-fold-identities-12-bars.txt");
         expect(calls[0]!.content).to.contain("hash-a");
         expect(calls[0]!.content).to.contain("Control draw digest: digest-a");
+        expect(calls[0]!.content).to.contain("Batch role: collection");
         expect(calls[0]!.content).to.contain("Control draw identities: [{\"symbol\":\"PAIR_A\",\"identityHash\":\"hash-a\"}]");
         expect(calls[0]!.content).to.contain(ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER);
     });
