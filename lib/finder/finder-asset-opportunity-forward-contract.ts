@@ -80,6 +80,7 @@ function netReturnPercent(
     direction: "long" | "short",
     slippageBps: number,
     commissionPercent: number,
+    applyExitSlippage = true,
 ): {
     entryPrice: number;
     exitPrice: number;
@@ -90,7 +91,9 @@ function netReturnPercent(
 } {
     const slippageRate = Math.max(0, slippageBps) / 10_000;
     const entryFill = applySlippage(entryPrice, entrySideForDirection(direction), slippageRate);
-    const exitFill = applySlippage(exitPrice, exitSideForDirection(direction), slippageRate);
+    const exitFill = applyExitSlippage
+        ? applySlippage(exitPrice, exitSideForDirection(direction), slippageRate)
+        : exitPrice;
     const rawGross = direction === "long"
         ? (exitPrice - entryPrice) / entryPrice
         : (entryPrice - exitPrice) / entryPrice;
@@ -98,14 +101,20 @@ function netReturnPercent(
         ? (exitFill - entryFill) / entryFill
         : (entryFill - exitFill) / entryFill;
     const commissionRate = Math.max(0, commissionPercent) / 100;
-    const roundTripCommission = commissionRate * (1 + Math.abs(exitFill / entryFill));
+    const entryCommission = entryFill * commissionRate;
+    const exitCommission = exitFill * commissionRate;
+    const roundTripCommission = (entryCommission + exitCommission) / entryFill;
+    const rawPnlPerUnit = direction === "long"
+        ? exitFill - entryFill
+        : entryFill - exitFill;
+    const netReturn = (rawPnlPerUnit - entryCommission - exitCommission) / entryFill;
     return {
         entryPrice: entryFill,
         exitPrice: exitFill,
         grossReturnPercent: rawGross * 100,
         slippagePercent: (rawGross - filledGross) * 100,
         commissionPercent: roundTripCommission * 100,
-        netReturnPercent: (filledGross - roundTripCommission) * 100,
+        netReturnPercent: netReturn * 100,
     };
 }
 
@@ -213,6 +222,7 @@ export function simulateFinderAssetOpportunityForwardOutcome(
         input.direction,
         input.slippageBps,
         input.commissionPercent,
+        false,
     );
     return {
         exitReason: "end_of_data",

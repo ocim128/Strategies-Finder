@@ -268,4 +268,99 @@ describe("Asset Opportunity execution-unit forward contract", () => {
         expect(engine.result.trades[0]!.exitPrice).to.equal(simulated?.exitPrice);
         expect(engine.result.trades[0]!.pnlPercent).to.equal(simulated?.netReturnPercent);
     });
+
+    it("matches the engine's raw-close end-of-data path with entry slippage", async () => {
+        const entry = 100;
+        const entryFill = entry * 1.01;
+        const takeProfit = entryFill * 1.02;
+        const stopLoss = entryFill * 0.98;
+        const data = [
+            candle(1, 100, 100, 100, 100),
+            candle(2, entry, 100, 100, entry),
+            candle(3, 100, takeProfit * (1 - 2e-10), stopLoss * (1 + 2e-10), 100),
+            candle(4, 100, 100, 100, 100),
+        ];
+        const strategy: Strategy = {
+            name: "contract-end-of-data-parity",
+            description: "fixture",
+            defaultParams: {},
+            paramLabels: {},
+            execute(candles) {
+                return [{ time: candles[0]!.time, type: "buy", price: candles[0]!.close }];
+            },
+        };
+        const settings: BacktestSettings = {
+            executionModel: "next_open",
+            allowSameBarExit: false,
+            tradeDirection: "long",
+            riskMode: "percentage",
+            stopLossEnabled: true,
+            stopLossPercent: 2,
+            takeProfitEnabled: true,
+            takeProfitPercent: 2,
+            slippageBps: 100,
+        };
+        const capitalSettings: CapitalSettings = {
+            initialCapital: 10_000,
+            positionSize: 100,
+            commission: 0.1,
+            sizingMode: "percent",
+            fixedTradeAmount: 1_000,
+        };
+        const options = {
+            mode: "random",
+            scope: "asset_opportunity",
+            sortPriority: ["netProfit"],
+            dataSlice: "all",
+            freezeRiskManagement: false,
+        } as unknown as FinderOptions;
+        const engine = await runAssetCandidateBacktest({
+            data,
+            symbol: "END-OF-DATA-PARITY",
+            interval: "4h",
+            strategy,
+            strategyKey: "contract-end-of-data-parity",
+            strategyParams: {},
+            riskOverrideParams: {},
+            settings,
+            capitalSettings,
+            options,
+            closedCandleDataOverride: data,
+            needs: { compact: false, trades: true, fullAnalytics: false, endpointSelection: false },
+        });
+        const simulated = simulateFinderAssetOpportunityForwardOutcome({
+            candles: data,
+            direction: "long",
+            entryPrice: entry,
+            entryBarIndex: 1,
+            takeProfitPrice: takeProfit,
+            stopLossPrice: stopLoss,
+            horizonBars: 3,
+            executionModel: "next_open",
+            allowSameBarExit: false,
+            slippageBps: 100,
+            commissionPercent: 0.1,
+        });
+        const trade = engine.result.trades[0]!;
+        expect(simulated?.exitReason).to.equal(trade.exitReason);
+        expect(simulated?.exitPrice).to.equal(trade.exitPrice);
+        // The engine computes PnL after multiplying by its allocated share
+        // count; the contract is per-unit. They are mathematically identical,
+        // with only the expected IEEE-754 operation-order residue remaining.
+        expect(simulated?.netReturnPercent).to.be.closeTo(trade.pnlPercent, 1e-12);
+    });
+
+    it("keeps the raw final close when end-of-data has no slippage", () => {
+        const result = contract({
+            executionModel: "next_open",
+            candles: [candle(1, 100, 100, 100, 100), candle(2, 100, 100, 100, 99)],
+            entryBarIndex: 1,
+            takeProfitPrice: 200,
+            stopLossPrice: 1,
+            horizonBars: 1,
+            slippageBps: 0,
+        });
+        expect(result?.exitReason).to.equal("end_of_data");
+        expect(result?.exitPrice).to.equal(99);
+    });
 });
