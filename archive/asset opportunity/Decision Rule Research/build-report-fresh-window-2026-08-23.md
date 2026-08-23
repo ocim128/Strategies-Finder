@@ -289,6 +289,14 @@ bytes in 23 chunks and 8,600 rows to 6,191,331 bytes in 34 chunks; the
 corresponding forward-outcome call counts were 17,400 and 25,800. These are
 serialization/leaf benchmarks, not a production 679-symbol batch.
 
+The added synthetic 679-symbol/45-strategy scalar-retention benchmark used
+30,555 rows with the complete three-horizon outcome shape: 36,540,581 JSON
+bytes and a 44,465,352-byte (42.41 MiB) V8 heap delta. It is a retention
+ceiling check for the scalar identity path, not an OHLCV-memory measurement;
+the R2 raw cache retains one successful dataset per symbol and never 25 fold
+copies. A production run must still be observed with the documented heap
+budget before Phase 6 is opened.
+
 ### Final validation
 
 `npm run typecheck` passed. The complete fresh-window suite passed after each
