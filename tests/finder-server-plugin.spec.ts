@@ -1194,6 +1194,36 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
         expect(output.results[0]!.endpointRemovedTrades).to.equal(1);
     });
 
+    it("captures every fresh-window candidate before top-K reduction and disables Rust", async () => {
+        const chunks: Array<Array<Record<string, unknown>>> = [];
+        const output = await runServerAssetIsSearch({
+            ohlcvData: makeCandles([100, 101, 102, 103, 104, 105]),
+            symbol: "RESEARCH",
+            interval: "5m",
+            options: {
+                ...makeOptions(["RESEARCH"]),
+                scope: "asset_opportunity",
+                topN: 1,
+            },
+            settings,
+            capitalSettings,
+            selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
+            generateParamSets: () => [{ threshold: 1 }, { threshold: 2 }, { threshold: 3 }],
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+            researchProgram: "fresh-window",
+            onCandidateSummaryChunk: (rows) => { chunks.push(rows as Array<Record<string, unknown>>); },
+            useRustEnginePreference: true,
+        });
+
+        const rows = chunks.flat();
+        expect(output.results).to.have.length(1);
+        expect(rows).to.have.length(3);
+        expect(new Set(rows.map((row) => row.identityHash)).size).to.equal(3);
+        expect(rows.every((row) => typeof row.candidateFingerprint === "string")).to.equal(true);
+        expect(rows.every((row) => typeof row.netProfitPercent === "number" || row.netProfitPercent === null)).to.equal(true);
+    });
+
     it("caps the in-sample window to assetOpportunity.evalLastBars through the full server run", async () => {
         // The evaluation-window cap must survive the whole server pipeline
         // (route input → iteration → runner → IS search). The strategy records

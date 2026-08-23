@@ -67,6 +67,14 @@ import {
     type AssetOpportunityRustBatchItem,
 } from "./finder-asset-opportunity-rust-batch";
 import type { AssetOpportunityRustMultiBatchCoordinator } from "./finder-asset-opportunity-multi-rust-batch";
+import {
+    FINDER_ASSET_OPPORTUNITY_RESEARCH_CHUNK_SIZE,
+    attachFinderAssetOpportunityPathScalars,
+    buildFinderAssetOpportunityCandidateFingerprint,
+    buildFinderAssetOpportunityCandidateSummaryRow,
+    type FinderAssetOpportunityCandidateSummaryRow,
+} from "./finder-asset-opportunity-research";
+import type { FinderAssetOpportunityCandidateSummaryRow as FinderAssetOpportunityCandidateSummaryRowType } from "../finder-asset-opportunity-research-types";
 
 const ASSET_IS_SEARCH_YIELD_EVERY_RUNS = 256;
 const ASSET_IS_SEARCH_YIELD_MIN_MS = 1000;
@@ -106,6 +114,11 @@ export interface ServerAssetIsSearchInput {
      * pass and released once the caller finishes the asset.
      */
     retainSignals?: boolean;
+    /** Fresh-window captures disable Rust until equivalent scalars exist there. */
+    researchProgram?: "fresh-window";
+    onCandidateSummaryChunk?: (
+        rows: FinderAssetOpportunityCandidateSummaryRowType[],
+    ) => void | Promise<void>;
 }
 
 function buildSignalCacheKey(input: ServerAssetIsSearchInput, params: StrategyParams): string {
@@ -255,6 +268,7 @@ export async function runServerAssetIsSearch(
     input: ServerAssetIsSearchInput,
 ): Promise<ServerAssetIsSearchOutput> {
     const { options, settings, capitalSettings, selectedStrategy } = input;
+    const freshResearchCapture = input.researchProgram === "fresh-window";
     // `executeBacktest` skips its own confirmation preload when this lean path
     // supplies pre-resolved settings, so load the configured libraries once
     // before the candidate loop.
@@ -316,7 +330,7 @@ export async function runServerAssetIsSearch(
         selectedStrategy,
         exitStrategyCandidates: input.exitStrategyCandidates,
     });
-    if (rustBatchEligibility.eligible && rustBatchDensityEligible) {
+    if (!freshResearchCapture && rustBatchEligibility.eligible && rustBatchDensityEligible) {
         return runServerAssetIsSearchWithRustBatch({
             input,
             paramSets,
@@ -343,9 +357,11 @@ export async function runServerAssetIsSearch(
     const rustBatchFallbackReason = input.useRustEnginePreference === true && !rustBatchEligibility.eligible
         ? `Asset Opportunity Rust batch ineligible: ${rustBatchEligibility.reason ?? "unknown"}`
         : undefined;
-    const executionUseRustEnginePreference = rustBatchEligibility.eligible && !rustBatchDensityEligible
+    const executionUseRustEnginePreference = freshResearchCapture
         ? false
-        : input.useRustEnginePreference;
+        : rustBatchEligibility.eligible && !rustBatchDensityEligible
+            ? false
+            : input.useRustEnginePreference;
 
     // Bounded top-K accumulation, mirroring the browser single-timeframe path
     // (FinderResultRanker). Keeping only the best `topN` candidates live means
@@ -382,6 +398,16 @@ export async function runServerAssetIsSearch(
     let rustFallbackRuns = 0;
     let typescriptCompletedRuns = 0;
     const typescriptReasonCounts = new Map<string, number>();
+    let researchSummaryChunk: FinderAssetOpportunityCandidateSummaryRow[] = [];
+    const emitResearchSummary = async (row: FinderAssetOpportunityCandidateSummaryRow): Promise<void> => {
+        if (!freshResearchCapture || !input.onCandidateSummaryChunk) return;
+        researchSummaryChunk.push(row);
+        if (researchSummaryChunk.length >= FINDER_ASSET_OPPORTUNITY_RESEARCH_CHUNK_SIZE) {
+            const chunk = researchSummaryChunk;
+            researchSummaryChunk = [];
+            await input.onCandidateSummaryChunk(chunk);
+        }
+    };
     // Cache each exit lib's normalized param space so the per-candidate loop
     // does not regenerate the full space (up to `maxRuns` param objects) once
     // per entry candidate — O(maxRuns^2) allocations otherwise. Generation is
@@ -429,6 +455,7 @@ export async function runServerAssetIsSearch(
         const combinedParams = exitParams
             ? withExitStrategyBaseParams(entryParams, exitParams)
             : entryParams;
+        const candidateFingerprint = buildFinderAssetOpportunityCandidateFingerprint(combinedParams);
         const signalCacheKey = canReuseFullSignals
             ? buildSignalCacheKey(input, entryParams)
             : null;
@@ -472,7 +499,7 @@ export async function runServerAssetIsSearch(
                 ...(preGeneratedSignals ? { preGeneratedSignals } : {}),
                 needs: {
                     compact: true,
-                    trades: false,
+                    trades: freshResearchCapture,
                     fullAnalytics: requiresFullAnalytics,
                     // Compact endpoint-adjusted selection scalars unless the
                     // resolved trade direction is "combined" (which retains
@@ -563,7 +590,21 @@ export async function runServerAssetIsSearch(
                 endpointAdjusted: selection.adjusted,
                 endpointRemovedTrades: selection.removedTrades,
             };
-            if (!matchesFinderTradeCountFilter(candidate.selectionResult.totalTrades, options)) {
+            const passesTradeFilter = matchesFinderTradeCountFilter(candidate.selectionResult.totalTrades, options);
+            if (freshResearchCapture) {
+                const summary = buildFinderAssetOpportunityCandidateSummaryRow({
+                    symbol: input.symbol,
+                    strategyKey: selectedStrategy.key,
+                    candidateIndex: index,
+                    candidateFingerprint,
+                    result: candidate.selectionResult,
+                    passesTradeFilter,
+                });
+                await emitResearchSummary(
+                    attachFinderAssetOpportunityPathScalars(summary, candidate.selectionResult, input.ohlcvData),
+                );
+            }
+            if (!passesTradeFilter) {
                 continue;
             }
             // Attach signals only when the candidate is actually retained:
@@ -574,6 +615,14 @@ export async function runServerAssetIsSearch(
                 signalsByResult.set(candidate, output.signals);
             }
         } catch {
+            if (freshResearchCapture) {
+                await emitResearchSummary(buildFinderAssetOpportunityCandidateSummaryRow({
+                    symbol: input.symbol,
+                    strategyKey: selectedStrategy.key,
+                    candidateIndex: index,
+                    candidateFingerprint,
+                }));
+            }
             backtestMs += performance.now() - candidateStartedAt;
             candidateEvaluationFailures += 1;
             // Skip failed candidates; the caller counts failures in diagnostics.
@@ -592,6 +641,12 @@ export async function runServerAssetIsSearch(
             await input.yieldControl();
             yieldingMs += performance.now() - yieldingStartedAt;
         }
+    }
+
+    if (researchSummaryChunk.length > 0 && input.onCandidateSummaryChunk) {
+        const chunk = researchSummaryChunk;
+        researchSummaryChunk = [];
+        await input.onCandidateSummaryChunk(chunk);
     }
 
     const topN = Math.max(1, options.topN);

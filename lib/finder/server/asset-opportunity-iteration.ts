@@ -28,6 +28,7 @@ import {
     type BatchDatasetLoadContext,
 } from "../../batch-backtest/batch-dataset-loader-core";
 import type { FinderAssetOpportunityArchiveSort } from "../finder-asset-opportunity-metrics";
+import type { AssetOpportunityResearchProgram } from "./finder-asset-opportunity-archive";
 import type { FinderRunLogSink } from "./finder-run-log";
 import {
     runAssetOpportunitySearch,
@@ -57,6 +58,7 @@ import { createServerFinderAssetOpportunityLoadContext } from "./server-finder-d
 import { parseSyntheticPairToken } from "../../synthetic-pair-token";
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
+import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
 import {
     assertFinderAssetDataAtOrBeforeFoldEnd,
     assertFinderAssetDataStrictlyAfterFoldEnd,
@@ -162,6 +164,7 @@ export interface FinderAssetOpportunityRunInput {
     minFreshSupport: number;
     /** Last candle timestamp allowed in the point-in-time search fold. */
     foldEnd?: number;
+    researchProgram?: AssetOpportunityResearchProgram;
     /** Operator/data provenance captured in fresh-window archive envelopes. */
     dataSyncSnapshot?: string;
     gitCommit?: string;
@@ -218,6 +221,8 @@ export interface AssetOpportunityIterationCallbacks {
     onAssetResult: (asset: AssetOpportunityIterationAssetResult) => void;
     /** Status text updates that in single mode only mutate the snapshot. */
     onStatus?: (status: string) => void;
+    /** Bounded full-pool scalar chunks emitted before the ranker discards candidates. */
+    onCandidateSummaryChunk?: (rows: FinderAssetOpportunityCandidateSummaryRow[]) => void | Promise<void>;
 }
 
 export interface AssetOpportunityIterationResult {
@@ -452,6 +457,8 @@ export async function runAssetOpportunityIteration(
             confirmationStrategiesLoaded: true,
             fullSignalData: args.fullSignalData,
             ...(args.signalCache ? { signalCache: args.signalCache } : {}),
+            ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
+            ...(callbacks.onCandidateSummaryChunk ? { onCandidateSummaryChunk: callbacks.onCandidateSummaryChunk } : {}),
             ...(!input.generateParamSets
                 && input.paramSetCache
                 && input.options.mode === "random"

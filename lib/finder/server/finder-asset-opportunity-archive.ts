@@ -7,6 +7,7 @@ import type {
     AssetOpportunityPairSummaryRow,
 } from "../finder-asset-opportunity-metadata";
 import type { FinderAssetOpportunityFoldMetadata } from "../finder-asset-opportunity-fold";
+import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
 
 /**
  * Server-side archive leaf for Asset Opportunity batch iterations.
@@ -77,6 +78,13 @@ export interface AssetOpportunityArchiveBlock {
     foldMetadata?: FinderAssetOpportunityFoldMetadata;
     dataSyncSnapshot?: string;
     gitCommit?: string;
+}
+
+export function buildAssetOpportunityFoldIdentityFilename(holdoutBars: number): string {
+    if (!Number.isInteger(holdoutBars) || holdoutBars <= 0) {
+        throw new Error(`Invalid holdout bars for archive filename: ${String(holdoutBars)}.`);
+    }
+    return `oos-fold-identities-${holdoutBars}-bars.txt`;
 }
 
 export function buildAssetOpportunityArchiveBlockText(block: AssetOpportunityArchiveBlock): string {
@@ -195,6 +203,78 @@ export interface AppendAssetOpportunityArchivePairSummaryArgs {
     pairSummaries: AssetOpportunityPairSummaryRow[];
     timestamp?: string;
     append?: AssetOpportunityArchiveAppend;
+}
+
+export interface AssetOpportunityFoldIdentityBlock {
+    timestamp: string;
+    batchRunId: string;
+    holdoutBars: number;
+    declaredRowCount: number;
+    rows: FinderAssetOpportunityCandidateSummaryRow[];
+    foldMetadata?: FinderAssetOpportunityFoldMetadata;
+    dataSyncSnapshot?: string;
+    gitCommit?: string;
+}
+
+export function buildAssetOpportunityFoldIdentityBlockText(
+    block: AssetOpportunityFoldIdentityBlock,
+): string {
+    if (block.declaredRowCount !== block.rows.length) {
+        throw new Error(
+            `Fold identity row count mismatch: declared ${block.declaredRowCount}, received ${block.rows.length}.`,
+        );
+    }
+    const separator = "=".repeat(80);
+    return [
+        separator,
+        `Timestamp: ${block.timestamp}`,
+        `Batch run id: ${block.batchRunId}`,
+        `Fold id: ${block.holdoutBars}`,
+        `OOS holdout: ${block.holdoutBars} bars`,
+        `Declared row count: ${block.declaredRowCount}`,
+        ...(block.foldMetadata ? [`Fold end: ${block.foldMetadata.foldEnd}`] : []),
+        ...(block.dataSyncSnapshot ? [`Data sync snapshot: ${block.dataSyncSnapshot}`] : []),
+        ...(block.gitCommit ? [`Git commit: ${block.gitCommit}`] : []),
+        separator,
+        JSON.stringify(block.rows),
+        "",
+    ].join("\n");
+}
+
+export interface AppendAssetOpportunityArchiveFoldIdentitiesArgs {
+    root: string;
+    program?: AssetOpportunityResearchProgram;
+    batchRunId: string;
+    holdoutBars: number;
+    rows: FinderAssetOpportunityCandidateSummaryRow[];
+    foldMetadata?: FinderAssetOpportunityFoldMetadata;
+    dataSyncSnapshot?: string;
+    gitCommit?: string;
+    timestamp?: string;
+    append?: AssetOpportunityArchiveAppend;
+}
+
+export async function appendAssetOpportunityArchiveFoldIdentities(
+    args: AppendAssetOpportunityArchiveFoldIdentitiesArgs,
+): Promise<AssetOpportunityArchiveAppendResult> {
+    const filename = buildAssetOpportunityFoldIdentityFilename(args.holdoutBars);
+    const dir = resolveAssetOpportunityArchiveDir(args.root, args.program);
+    const content = buildAssetOpportunityFoldIdentityBlockText({
+        timestamp: args.timestamp ?? new Date().toISOString(),
+        batchRunId: args.batchRunId,
+        holdoutBars: args.holdoutBars,
+        declaredRowCount: args.rows.length,
+        rows: args.rows,
+        ...(args.foldMetadata ? { foldMetadata: args.foldMetadata } : {}),
+        ...(args.dataSyncSnapshot ? { dataSyncSnapshot: args.dataSyncSnapshot } : {}),
+        ...(args.gitCommit ? { gitCommit: args.gitCommit } : {}),
+    });
+    const append = args.append ?? defaultAppend;
+    await append(dir, filename, content);
+    return {
+        path: path.join(dir, filename),
+        bytes: Buffer.byteLength(content, "utf8"),
+    };
 }
 
 export async function appendAssetOpportunityArchivePairSummary(

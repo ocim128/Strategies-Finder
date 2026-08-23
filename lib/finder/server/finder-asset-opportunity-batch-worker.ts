@@ -49,6 +49,7 @@ import {
     sliceFinderAssetDataAtFoldEnd,
     sliceFinderAssetDataStrictlyAfterFoldEnd,
 } from "../finder-asset-opportunity-fold";
+import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
 
 /**
  * One holdout iteration's full input, structured-clone-safe. `options` is the
@@ -76,6 +77,7 @@ export interface AssetOpportunityBatchWorkerTask {
     candidatePoolSize: number;
     minFreshSupport: number;
     foldEnd?: number;
+    researchProgram?: "fresh-window";
     /** Benchmark-only structured-clone data source; production workers load from the server loader. */
     inlineDatasets?: Record<string, OHLCVData[]>;
 }
@@ -106,6 +108,11 @@ export type AssetOpportunityBatchWorkerEvent =
         type: "run_log";
         event: string;
         payload: Record<string, unknown>;
+    }
+    | {
+        type: "candidate_summary_chunk";
+        taskIndex: number;
+        rows: FinderAssetOpportunityCandidateSummaryRow[];
     }
     | {
         type: "iteration_complete";
@@ -164,6 +171,7 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
         failedSymbols: number;
         strategyIndex: number;
     }) => void;
+    onCandidateSummaryChunk?: (rows: FinderAssetOpportunityCandidateSummaryRow[]) => void;
     runLog?: FinderRunLogSink | null;
 }): Promise<AssetOpportunityIterationResult> {
     const { task } = args;
@@ -202,6 +210,7 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
             candidatePoolSize: task.candidatePoolSize,
             minFreshSupport: task.minFreshSupport,
             ...(task.foldEnd !== undefined ? { foldEnd: task.foldEnd } : {}),
+            ...(task.researchProgram ? { researchProgram: task.researchProgram } : {}),
             ...(args.runLog ? { runLog: args.runLog } : {}),
         },
         {
@@ -220,6 +229,7 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
                 // Batch orchestration renders only iteration_done rows; the
                 // sequential loop likewise ignores per-asset callbacks.
             },
+            onCandidateSummaryChunk: args.onCandidateSummaryChunk,
         },
         () => args.isCancelled() || args.abortSignal.aborted,
     );
@@ -348,6 +358,9 @@ if (!isMainThread && parentPort) {
             },
             runLog: (event, payload) => {
                 post({ type: "run_log", event, payload });
+            },
+            onCandidateSummaryChunk: (rows) => {
+                post({ type: "candidate_summary_chunk", taskIndex: task.taskIndex, rows });
             },
         }).then(
             (iteration) => {

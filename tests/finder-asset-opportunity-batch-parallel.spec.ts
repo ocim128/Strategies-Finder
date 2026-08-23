@@ -158,9 +158,12 @@ function createInProcessRunnerFactory(options: FakeRunnerOptions): AssetOpportun
                 loadDataset: async (symbol) => options.datasets.get(symbol) ?? [],
                 abortSignal: signal,
                 isCancelled: () => signal.aborted,
-                onProgress: (progress) => {
-                    events.onProgress(task, progress);
-                },
+            onProgress: (progress) => {
+                events.onProgress(task, progress);
+            },
+            onCandidateSummaryChunk: (rows) => {
+                events.onCandidateSummaryChunk?.(task, rows);
+            },
                 runLog: (event, payload) => {
                     events.onRunLog(event, payload);
                 },
@@ -230,6 +233,7 @@ interface BatchRunArgs {
     optionsOverrides?: Partial<FinderOptions>;
     /** Capture sink for the JSONL run log; omitted disables logging. */
     runLog?: (event: string, payload: Record<string, unknown>) => void;
+    researchProgram?: "fresh-window";
 }
 
 async function runAssetBatch(
@@ -259,6 +263,7 @@ async function runAssetBatch(
             runLog: args.runLog ?? null,
             batch: { startHoldoutBars: args.start, endHoldoutBars: args.end },
             ...(args.factory ? { batchTaskRunnerFactory: args.factory } : {}),
+            ...(args.researchProgram ? { researchProgram: args.researchProgram } : {}),
         },
         (event) => events.push(event),
         args.owner,
@@ -321,6 +326,21 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         });
 
         expect(output.assetDiagnostics.totalAssets).to.equal(1);
+    });
+
+    it("round-trips bounded fresh-window summary chunks through the worker protocol", async () => {
+        const run = await runAssetBatch({
+            owner: 8112,
+            start: 2,
+            end: 2,
+            runId: "fresh-worker-summary-chunks",
+            researchProgram: "fresh-window",
+            factory: createInProcessRunnerFactory({ datasets: longUpDownDatasets() }),
+        });
+        expect(run.appended).to.include("oos-fold-identities-2-bars.txt");
+        const identityContent = run.contents[run.appended.indexOf("oos-fold-identities-2-bars.txt")]!;
+        expect(identityContent).to.contain("Declared row count:");
+        expect(identityContent).to.contain("identityHash");
     });
 
     it("resolves the worker count from env override, holdout count, cores, and the system-memory ceiling", () => {

@@ -6,11 +6,14 @@ import path from "node:path";
 import {
     appendAssetOpportunityArchiveBlock,
     appendAssetOpportunityArchivePairSummary,
+    appendAssetOpportunityArchiveFoldIdentities,
     appendAssetOpportunityArchiveRunConfig,
     buildAssetOpportunityArchiveBlockText,
     buildAssetOpportunityArchiveFilename,
     buildAssetOpportunityPairSummaryBlockText,
     buildAssetOpportunityPairSummaryFilename,
+    buildAssetOpportunityFoldIdentityFilename,
+    buildAssetOpportunityFoldIdentityBlockText,
     isAssetOpportunityResearchProgram,
     resolveAssetOpportunityArchiveDir,
 } from "../lib/finder/server/finder-asset-opportunity-archive";
@@ -41,6 +44,44 @@ describe("Asset Opportunity archive writer", () => {
         expect(() => buildAssetOpportunityPairSummaryFilename(0)).to.throw(/Invalid holdout bars/);
         expect(() => buildAssetOpportunityPairSummaryFilename(1.5)).to.throw(/Invalid holdout bars/);
         expect(() => buildAssetOpportunityPairSummaryFilename(Number.NaN)).to.throw();
+    });
+
+    it("writes a scalar full-pool identity block with a declared row count", async () => {
+        const rows = [{
+            symbol: "PAIR_A",
+            strategyKey: "strategy-a",
+            candidateFingerprint: "{x:1}",
+            identityHash: "hash-a",
+            candidateIndex: 0,
+            evaluationOk: true,
+            passesTradeFilter: true,
+            netProfitPercent: 1,
+            totalTrades: 2,
+            tpHitCount: 1,
+            medianBarsToTP: 3,
+            medianBarsToTerminal: 4,
+            tpFirstShare: 0.5,
+        }];
+        expect(buildAssetOpportunityFoldIdentityFilename(12)).to.equal("oos-fold-identities-12-bars.txt");
+        expect(buildAssetOpportunityFoldIdentityBlockText({
+            timestamp: "t",
+            batchRunId: "b",
+            holdoutBars: 12,
+            declaredRowCount: 1,
+            rows,
+        })).to.contain("Declared row count: 1");
+        const calls: Array<{ dir: string; filename: string; content: string }> = [];
+        await appendAssetOpportunityArchiveFoldIdentities({
+            root: "/virtual/root",
+            program: "fresh-window",
+            batchRunId: "b",
+            holdoutBars: 12,
+            rows,
+            append: async (dir, filename, content) => { calls.push({ dir, filename, content }); },
+        });
+        expect(calls[0]!.dir).to.equal(path.join("/virtual/root", "archive", "fresh-window"));
+        expect(calls[0]!.filename).to.equal("oos-fold-identities-12-bars.txt");
+        expect(calls[0]!.content).to.contain("hash-a");
     });
 
     it("writes one delimited block containing timestamp, run id, holdout, and compact JSON", async () => {

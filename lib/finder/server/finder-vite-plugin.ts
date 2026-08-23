@@ -130,11 +130,13 @@ import {
 import {
     appendAssetOpportunityArchiveBlock,
     appendAssetOpportunityArchivePairSummary,
+    appendAssetOpportunityArchiveFoldIdentities,
     appendAssetOpportunityArchiveRunConfig,
     isAssetOpportunityResearchProgram,
     type AssetOpportunityResearchProgram,
     type AssetOpportunityArchiveAppend,
 } from "./finder-asset-opportunity-archive";
+import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
 import { captureTradeFilter } from "../finder-config-capture";
 import {
     createBufferedFinderRunLogSink,
@@ -1317,6 +1319,7 @@ async function runFinderAssetOpportunityWorkerSweep(
             candidatePoolSize: input.candidatePoolSize,
             minFreshSupport: input.minFreshSupport,
             ...(input.foldEnd !== undefined ? { foldEnd: input.foldEnd } : {}),
+            ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
         };
     });
     const completed: Array<{ task: AssetOpportunityBatchWorkerTask; iteration: AssetOpportunityIterationResult }> = [];
@@ -1747,6 +1750,7 @@ export async function processFinderAssetOpportunityBatchRun(
         totals: FinderAssetOpportunityTotals | null;
         holdoutBars: number | null;
     } = { results: [], assetDiagnostics: null, totals: null, holdoutBars: null };
+    const summaryRowsByTaskIndex = new Map<number, FinderAssetOpportunityCandidateSummaryRow[]>();
 
     // Clone options for the current N; keep the same random seed so the only
     // difference between iterations is the holdout boundary.
@@ -1798,6 +1802,7 @@ export async function processFinderAssetOpportunityBatchRun(
         iterationIndex: number,
         holdoutBars: number,
         iteration: AssetOpportunityIterationResult,
+        summaryRows: FinderAssetOpportunityCandidateSummaryRow[] = [],
     ): Promise<void> => {
         snapshot.batch = {
             ...snapshot.batch!,
@@ -1812,6 +1817,19 @@ export async function processFinderAssetOpportunityBatchRun(
         // not once per sort metric.
         const baseline = buildAssetOpportunityForwardOosBaseline(iteration.results);
         try {
+            if (input.researchProgram === "fresh-window") {
+                await appendAssetOpportunityArchiveFoldIdentities({
+                    root: archiveRoot,
+                    program: input.researchProgram,
+                    batchRunId: input.runId,
+                    holdoutBars,
+                    rows: summaryRows,
+                    ...(iteration.foldMetadata ? { foldMetadata: iteration.foldMetadata } : {}),
+                    ...(input.dataSyncSnapshot ? { dataSyncSnapshot: input.dataSyncSnapshot } : {}),
+                    ...(input.gitCommit ? { gitCommit: input.gitCommit } : {}),
+                    ...(archiveAppend ? { append: archiveAppend } : {}),
+                });
+            }
             const pairSummaries = buildAssetOpportunityPairSummaries(iteration.results);
             await appendAssetOpportunityArchivePairSummary({
                 root: archiveRoot,
@@ -2010,6 +2028,7 @@ export async function processFinderAssetOpportunityBatchRun(
                     candidatePoolSize: input.candidatePoolSize,
                     minFreshSupport: input.minFreshSupport,
                     ...(input.foldEnd !== undefined ? { foldEnd: input.foldEnd } : {}),
+                    ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
                 };
             });
         });
@@ -2030,7 +2049,9 @@ export async function processFinderAssetOpportunityBatchRun(
                 onIterationResult: async (task, iteration) => {
                     const iterationIndex = Math.floor(task.taskIndex / assetChunkCount);
                     if (assetChunkCount === 1) {
-                        await completeOrderedIteration(iterationIndex, task.holdoutBars, iteration);
+                        const summaryRows = summaryRowsByTaskIndex.get(task.taskIndex) ?? [];
+                        summaryRowsByTaskIndex.delete(task.taskIndex);
+                        await completeOrderedIteration(iterationIndex, task.holdoutBars, iteration, summaryRows);
                         return;
                     }
                     const entries = chunkResultsByIteration.get(iterationIndex) ?? [];
@@ -2038,10 +2059,18 @@ export async function processFinderAssetOpportunityBatchRun(
                     chunkResultsByIteration.set(iterationIndex, entries);
                     if (entries.length < assetChunkCount) return;
                     chunkResultsByIteration.delete(iterationIndex);
+                    const summaryRows = [...entries]
+                        .sort((left, right) => (left.task.assetChunkIndex ?? 0) - (right.task.assetChunkIndex ?? 0))
+                        .flatMap(({ task: chunkTask }) => {
+                            const rows = summaryRowsByTaskIndex.get(chunkTask.taskIndex) ?? [];
+                            summaryRowsByTaskIndex.delete(chunkTask.taskIndex);
+                            return rows;
+                        });
                     await completeOrderedIteration(
                         iterationIndex,
                         task.holdoutBars,
                         mergeAssetOpportunityChunkResults(entries, selectedStrategies),
+                        summaryRows,
                     );
                 },
                 onProgress: (task, progress, aggregateState) => {
@@ -2082,6 +2111,13 @@ export async function processFinderAssetOpportunityBatchRun(
                 onRunLog: (event, payload) => {
                     input.runLog?.(event, payload);
                 },
+                onCandidateSummaryChunk: input.researchProgram === "fresh-window"
+                    ? (task, rows) => {
+                        const existing = summaryRowsByTaskIndex.get(task.taskIndex) ?? [];
+                        existing.push(...rows);
+                        summaryRowsByTaskIndex.set(task.taskIndex, existing);
+                    }
+                    : undefined,
                 isCancelled,
             });
         } catch (error) {
@@ -2135,6 +2171,7 @@ export async function processFinderAssetOpportunityBatchRun(
             });
 
             let iteration: AssetOpportunityIterationResult;
+            const summaryRows: FinderAssetOpportunityCandidateSummaryRow[] = [];
             try {
                 iteration = await runAssetOpportunityIteration(
                     {
@@ -2180,6 +2217,9 @@ export async function processFinderAssetOpportunityBatchRun(
                         onStatus: (status) => {
                             snapshot.statusText = status;
                         },
+                        onCandidateSummaryChunk: input.researchProgram === "fresh-window"
+                            ? (rows) => { summaryRows.push(...rows); }
+                            : undefined,
                     },
                     isCancelled,
                 );
@@ -2195,7 +2235,7 @@ export async function processFinderAssetOpportunityBatchRun(
             }
 
             try {
-                await completeOrderedIteration(iterationIndex, holdoutBars, iteration);
+                await completeOrderedIteration(iterationIndex, holdoutBars, iteration, summaryRows);
             } catch (error) {
                 if (error instanceof BatchArchiveFatalSentinel) {
                     return;
@@ -2563,6 +2603,7 @@ async function handleAssetOpportunityRunRequest(
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
                 ...(prepared.foldEnd !== undefined ? { foldEnd: prepared.foldEnd, loadForwardDataset } : {}),
+                ...(prepared.researchProgram ? { researchProgram: prepared.researchProgram } : {}),
                 ...(prepared.foldEnd !== undefined
                     ? {
                         dataSyncSnapshot: process.env.FINDER_DATA_SYNC_SNAPSHOT ?? "unknown",
@@ -2662,6 +2703,7 @@ async function handleAssetOpportunityBatchRunRequest(
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
                 ...(prepared.foldEnd !== undefined ? { foldEnd: prepared.foldEnd, loadForwardDataset } : {}),
+                ...(prepared.researchProgram ? { researchProgram: prepared.researchProgram } : {}),
                 ...(prepared.foldEnd !== undefined
                     ? {
                         dataSyncSnapshot: process.env.FINDER_DATA_SYNC_SNAPSHOT ?? "unknown",

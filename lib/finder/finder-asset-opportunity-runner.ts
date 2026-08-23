@@ -97,6 +97,7 @@ import { parseTimeToUnixSeconds } from "../time-normalization";
 import { timeKey } from "../strategies/backtest/backtest-utils";
 import { debugLogger } from "../debug-logger";
 import type { AssetOpportunitySignalCache } from "./finder-asset-opportunity-search-cache";
+import type { FinderAssetOpportunityCandidateSummaryRow } from "./finder-asset-opportunity-research-types";
 
 /**
  * Bounded concurrency for fresh-entry signal regeneration. The server clamps
@@ -214,6 +215,10 @@ export type AssetIsSearch = (args: {
     /** Full closed data used only by the batch signal-reuse optimization. */
     fullSignalData?: OHLCVData[];
     signalCache?: AssetOpportunitySignalCache;
+    researchProgram?: "fresh-window";
+    onCandidateSummaryChunk?: (
+        rows: FinderAssetOpportunityCandidateSummaryRow[],
+    ) => void | Promise<void>;
 }) => Promise<{
     results: FinderResult[];
     /** Total candidates considered before the returned top-K reduction. */
