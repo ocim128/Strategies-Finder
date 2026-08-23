@@ -461,3 +461,52 @@ The final audit C2 scratch cases are now permanent:
 Validation after promotion: feature-DOM 48, Finder server 83, batch parallel
 18, archive 13, fold 7, forward contract 16, fresh-window analyzer 18, and
 Vite-config bundle 1; 204 tests passed, with `npm run typecheck` also passing.
+
+### Smoke defect fixes
+
+The live six-symbol smoke archive was invalid research data and was not used
+as evidence. Its three S0 failures mapped to these fixes:
+
+- **S1 - forward-window geometry** (`602403d8`): fresh mode now caps each
+  forward slice at `FINDER_ASSET_FRESH_FOLD_STRIDE_BARS` (12 bars). The shared
+  builder places the 25 fold ends from `dataEnd - 25 * 12 bars` through
+  `dataEnd - 12 bars`, so each recorded OOS interval is disjoint and the last
+  fold still has a complete forward window. This is the selected geometry
+  because the analyzer's locked schedule requires 12-bar spacing and the
+  12-bar forward target; the declared 18/24-bar horizons remain recorded but
+  are censored at the fresh fold boundary. Legacy calls without `foldEnd`
+  retain uncapped behavior.
+- **S2 - expected row count** (`a02d124d`): the worker event and worker-pool
+  reconstruction now preserve `expectedCandidateSummaryRows`, so real fold
+  identity headers carry the independent evaluated count instead of
+  `unknown`.
+- **S3 - candidate identity** (`2d2a3626`): zero-parameter candidates now
+  receive the stable non-empty fingerprint `default`; this satisfies the
+  tuple identity contract without changing the candidate parameters or
+  ranking.
+- **S4 - real pipeline coverage** (`03c0c1ca`):
+  `tests/finder-fresh-window-integration.spec.ts` generates temporary archives
+  through `processFinderAssetOpportunityBatchRun`, runs the actual analyzer,
+  and covers both sequential and real `worker_threads` execution. Both
+  cases passed with:
+
+  ```text
+  S0: PASS
+  S0 windows=25, fullPoolRows=150, eligibleRows=150, finiteExecutionRows=150, randomControls=25
+  S0 hand checks: TP=50, SL=50, horizon=50
+  Recurrence: NOT AUTHORIZED (collection archive; judged role requires a prior collection)
+  ```
+
+- **S5 - shared schedule builder** (`f6941310`):
+  `scripts/fresh-window-batch-request.ts` now uses
+  `buildFreshFoldScheduleFromDataEnd(...)` rather than maintaining separate
+  fold arithmetic.
+- **S6 - smoke cleanup**: the 76 files under `archive/fresh-window/` were
+  deleted locally because they were produced before these fixes. The empty
+  directory is not research evidence and no deletion was committed to a
+  tracked archive path.
+
+Validation for this rework: feature-DOM 48, Finder server 84, batch parallel
+18, archive 13, fold 9, forward contract 16, analyzer 18, and the real
+producer integration 2; Vite-config bundle 1; `npm run typecheck` PASS. No
+real batch or push was performed.
