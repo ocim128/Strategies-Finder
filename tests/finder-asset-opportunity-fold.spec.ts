@@ -56,6 +56,30 @@ describe("Asset Opportunity point-in-time fold contract", () => {
         assertFinderAssetDataStrictlyAfterFoldEnd(forward, 300, "forward");
     });
 
+    it("preserves legacy absent-fold copy semantics", () => {
+        const raw = candles([100, 200, 300]);
+        const historical = sliceFinderAssetDataAtFoldEnd(raw, undefined);
+        const forward = sliceFinderAssetDataStrictlyAfterFoldEnd(raw, undefined);
+        expect(historical).to.deep.equal(raw);
+        expect(historical).to.not.equal(raw);
+        expect(forward).to.deep.equal([]);
+    });
+
+    it("matches the positional cutoff on mixed time shapes, duplicate timestamps, and irregular gaps", () => {
+        const raw: OHLCVData[] = [
+            { ...candles([1_700_000_000])[0]!, time: "2023-11-14T22:13:20.000Z" },
+            { ...candles([1_700_000_001])[0]!, time: 1_700_000_001 },
+            { ...candles([1_700_000_123])[0]!, time: 1_700_000_123 },
+            { ...candles([1_700_000_123])[0]!, time: "2023-11-14T22:15:23.000Z" },
+            { ...candles([1_700_100_000])[0]!, time: 1_700_100_000 },
+            { ...candles([1_700_200_000])[0]!, time: 1_700_200_000 },
+        ];
+        const positionalHistorical = raw.slice(0, 5);
+        const positionalForward = raw.slice(5);
+        expect(sliceFinderAssetDataAtFoldEnd(raw, 1_700_100_000)).to.deep.equal(positionalHistorical);
+        expect(sliceFinderAssetDataStrictlyAfterFoldEnd(raw, 1_700_100_000)).to.deep.equal(positionalForward);
+    });
+
     it("fails loudly when a loader hands the iteration post-fold search data", () => {
         expect(() => assertFinderAssetDataAtOrBeforeFoldEnd(candles([100, 300, 400]), 300, "fixture"))
             .to.throw(/contains data after foldEnd 300/);

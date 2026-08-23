@@ -1273,6 +1273,58 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
         })).to.equal(true);
     });
 
+    it("loads historical and forward datasets together and preserves raw-fold slicing", async () => {
+        const raw = makeCandles([100, 101, 102, 103]);
+        const calls: string[] = [];
+        const foldEnd = Number(raw[1]!.time);
+        const output = await runAssetOpportunityIteration(
+            {
+                runId: "iteration-loader-parity",
+                interval: "5m",
+                symbols: ["PAIR"],
+                options: {
+                    ...makeOptions(["PAIR"]),
+                    scope: "asset_opportunity",
+                    topN: 1,
+                    maxRuns: 1,
+                    assetOpportunity: {
+                        symbols: ["PAIR"],
+                        candidatePoolSize: 1,
+                        minFreshSupport: 1,
+                        oosIgnoreLastBars: 1,
+                        oosHorizons: [1],
+                    },
+                },
+                settings,
+                capitalSettings,
+                selectedStrategies: [{ key: "asset_opportunity_test", name: assetOpportunityStrategy.name, strategy: assetOpportunityStrategy }],
+                abortSignal: new AbortController().signal,
+                loadDataset: async () => {
+                    calls.push("historical");
+                    return raw;
+                },
+                loadForwardDataset: async () => {
+                    calls.push("forward");
+                    return raw;
+                },
+                candidatePoolSize: 1,
+                minFreshSupport: 1,
+                foldEnd,
+                loadDatasetIsRaw: true,
+                generateParamSets: () => [{ threshold: 1 }],
+            },
+            {
+                onProgress: () => undefined,
+                onAssetResult: () => undefined,
+                onCandidateSummaryChunk: () => undefined,
+            },
+            () => false,
+        );
+
+        expect(calls).to.deep.equal(["historical", "forward"]);
+        expect(output.foldMetadata?.foldEnd).to.equal(foldEnd);
+    });
+
     it("caps the in-sample window to assetOpportunity.evalLastBars through the full server run", async () => {
         // The evaluation-window cap must survive the whole server pipeline
         // (route input → iteration → runner → IS search). The strategy records
