@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { runFreshWindowAnalysis } from "../scripts/analyze-fresh-window-research";
+import { buildFinderAssetOpportunityControlTrace } from "../lib/finder/finder-asset-opportunity-control-trace";
 
 const separator = "=".repeat(80);
 const completeMarker = "Record complete: true";
@@ -24,6 +25,7 @@ function buildArchive(options?: {
     medianWinnerPositive?: boolean;
     extraIneligibleStrategies?: number;
     partialFold?: boolean;
+    reorderRows?: boolean;
 }): string {
     const root = mkdtempSync(path.join(tmpdir(), "fresh-window-analyzer-"));
     const strategyCount = options?.strategyCount ?? 3;
@@ -83,6 +85,8 @@ function buildArchive(options?: {
             }
             return row;
         });
+        const controlTrace = buildFinderAssetOpportunityControlTrace(rows, index - 1, 12, 42);
+        const archivedRows = options?.reorderRows && index === 2 ? [...rows].reverse() : rows;
         const searchEnd = 9000 + index;
         const oosStart = 10000 + index * 12;
         const oosEnd = oosStart + 11;
@@ -95,13 +99,16 @@ function buildArchive(options?: {
             `Declared row count: ${rows.length}`,
             `Expected evaluated row count: ${rows.length}`,
             `Forward outcome row count: ${rows.filter((row) => row.forwardOutcomes?.["12"] !== undefined).length}`,
+            `Control seed: ${controlTrace.seed}`,
+            `Control draw digest: ${controlTrace.digest}`,
+            `Control draw identities: ${JSON.stringify(controlTrace.draws)}`,
             `Fold end: ${9000 + index}`,
             `Search window end: ${searchEnd}`,
             `OOS start: ${oosStart}`,
             `OOS end: ${oosEnd}`,
             `Judgment: ${options?.invalidFold && index === 25 ? "INVALID" : "VALID"}`,
             separator,
-            JSON.stringify(rows),
+            JSON.stringify(archivedRows),
             ...(options?.partialFold && index === 25 ? [] : [completeMarker]),
             "",
         ].join("\n");
@@ -277,6 +284,18 @@ describe("fresh-window research analyzer", () => {
             const lines = runFreshWindowAnalysis({ archiveDirectory: root });
             expect(lines[2]).to.equal("S0: FAIL");
             expect(lines.some((line) => line.includes("expected 25 stride-12 windows, found 24"))).to.equal(true);
+            expect(lines.some((line) => line.startsWith("Time-to-TP:"))).to.equal(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects a reordered archive row set against the producer control trace", () => {
+        const root = buildArchive({ reorderRows: true });
+        try {
+            const lines = runFreshWindowAnalysis({ archiveDirectory: root });
+            expect(lines[2]).to.equal("S0: FAIL");
+            expect(lines.some((line) => line.includes("control draw trace mismatch"))).to.equal(true);
             expect(lines.some((line) => line.startsWith("Time-to-TP:"))).to.equal(false);
         } finally {
             rmSync(root, { recursive: true, force: true });

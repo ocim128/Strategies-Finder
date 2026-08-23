@@ -12,6 +12,7 @@ import type {
     FinderAssetOpportunityPairContextRow,
     FinderFreshWindowJudgmentStatus,
 } from "../finder-asset-opportunity-research-types";
+import type { FinderAssetOpportunityControlDraw } from "../finder-asset-opportunity-control-trace";
 
 /**
  * Server-side archive leaf for Asset Opportunity batch iterations.
@@ -252,6 +253,9 @@ export interface AssetOpportunityFoldIdentityBlock {
     expectedRowCount?: number;
     /** Number of rows carrying the primary forward outcome. */
     outcomeRowCount?: number;
+    controlSeed?: number;
+    controlDrawIdentities?: FinderAssetOpportunityControlDraw[];
+    controlDrawDigest?: string;
     rows: FinderAssetOpportunityCandidateSummaryRow[];
     foldMetadata?: FinderAssetOpportunityFoldMetadata;
     dataSyncSnapshot?: string;
@@ -278,6 +282,9 @@ export function buildAssetOpportunityFoldIdentityBlockText(
         `Declared row count: ${block.declaredRowCount}`,
         `Expected evaluated row count: ${block.expectedRowCount ?? "unknown"}`,
         `Forward outcome row count: ${block.outcomeRowCount ?? "unknown"}`,
+        `Control seed: ${block.controlSeed ?? "unknown"}`,
+        `Control draw digest: ${block.controlDrawDigest ?? "unknown"}`,
+        `Control draw identities: ${block.controlDrawIdentities ? JSON.stringify(block.controlDrawIdentities) : "unknown"}`,
         ...(block.foldMetadata ? [
             `Fold end: ${block.foldMetadata.foldEnd}`,
             `Search window end: ${block.foldMetadata.searchWindowEnd ?? "unknown"}`,
@@ -305,6 +312,9 @@ export interface AppendAssetOpportunityArchiveFoldIdentitiesArgs {
     rows: FinderAssetOpportunityCandidateSummaryRow[];
     expectedRowCount?: number;
     outcomeRowCount?: number;
+    controlSeed?: number;
+    controlDrawIdentities?: FinderAssetOpportunityControlDraw[];
+    controlDrawDigest?: string;
     foldMetadata?: FinderAssetOpportunityFoldMetadata;
     dataSyncSnapshot?: string;
     gitCommit?: string;
@@ -326,6 +336,9 @@ export async function appendAssetOpportunityArchiveFoldIdentities(
         declaredRowCount: args.rows.length,
         ...(args.expectedRowCount !== undefined ? { expectedRowCount: args.expectedRowCount } : {}),
         ...(args.outcomeRowCount !== undefined ? { outcomeRowCount: args.outcomeRowCount } : {}),
+        ...(args.controlSeed !== undefined ? { controlSeed: args.controlSeed } : {}),
+        ...(args.controlDrawIdentities ? { controlDrawIdentities: args.controlDrawIdentities } : {}),
+        ...(args.controlDrawDigest ? { controlDrawDigest: args.controlDrawDigest } : {}),
         rows: args.rows,
         ...(args.foldMetadata ? { foldMetadata: args.foldMetadata } : {}),
         ...(args.dataSyncSnapshot ? { dataSyncSnapshot: args.dataSyncSnapshot } : {}),

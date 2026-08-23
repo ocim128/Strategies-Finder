@@ -69,6 +69,9 @@ describe("Asset Opportunity archive writer", () => {
             batchRunId: "b",
             holdoutBars: 12,
             declaredRowCount: 1,
+            controlSeed: 42,
+            controlDrawIdentities: [{ symbol: "PAIR_A", identityHash: "hash-a" }],
+            controlDrawDigest: "digest-a",
             rows,
         })).to.contain("Declared row count: 1");
         const calls: Array<{ dir: string; filename: string; content: string }> = [];
@@ -78,11 +81,16 @@ describe("Asset Opportunity archive writer", () => {
             batchRunId: "b",
             holdoutBars: 12,
             rows,
+            controlSeed: 42,
+            controlDrawIdentities: [{ symbol: "PAIR_A", identityHash: "hash-a" }],
+            controlDrawDigest: "digest-a",
             append: async (dir, filename, content) => { calls.push({ dir, filename, content }); },
         });
         expect(calls[0]!.dir).to.equal(path.join("/virtual/root", "archive", "fresh-window"));
         expect(calls[0]!.filename).to.equal("oos-fold-identities-12-bars.txt");
         expect(calls[0]!.content).to.contain("hash-a");
+        expect(calls[0]!.content).to.contain("Control draw digest: digest-a");
+        expect(calls[0]!.content).to.contain("Control draw identities: [{\"symbol\":\"PAIR_A\",\"identityHash\":\"hash-a\"}]");
         expect(calls[0]!.content).to.contain(ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER);
     });
 

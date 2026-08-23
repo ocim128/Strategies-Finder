@@ -145,6 +145,7 @@ import {
     type FinderAssetOpportunityCandidateSummaryRow,
     type FinderFreshWindowJudgmentStatus,
 } from "./finder-asset-opportunity-research";
+import { buildFinderAssetOpportunityControlTrace } from "../finder-asset-opportunity-control-trace";
 import { captureTradeFilter } from "../finder-config-capture";
 import {
     createBufferedFinderRunLogSink,
@@ -1969,6 +1970,7 @@ export async function processFinderAssetOpportunityBatchRun(
                 );
             }
             if (input.researchProgram === "fresh-window") {
+                const controlTrace = buildFinderAssetOpportunityControlTrace(summaryRows, iterationIndex, 12, 42);
                 await appendAssetOpportunityArchiveFoldIdentities({
                     root: archiveRoot,
                     program: input.researchProgram,
@@ -1977,6 +1979,9 @@ export async function processFinderAssetOpportunityBatchRun(
                     rows: summaryRows,
                     expectedRowCount: iteration.expectedCandidateSummaryRows,
                     outcomeRowCount: summaryRows.filter((row) => row.forwardOutcomes?.["12"] !== undefined).length,
+                    controlSeed: controlTrace.seed,
+                    controlDrawIdentities: controlTrace.draws,
+                    controlDrawDigest: controlTrace.digest,
                     ...(iteration.foldMetadata ? { foldMetadata: iteration.foldMetadata } : {}),
                     ...(input.dataSyncSnapshot ? { dataSyncSnapshot: input.dataSyncSnapshot } : {}),
                     ...(input.gitCommit ? { gitCommit: input.gitCommit } : {}),

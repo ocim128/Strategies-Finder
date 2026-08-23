@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import type {
     FinderAssetOpportunityCandidateSummaryRow,
 } from "../lib/finder/finder-asset-opportunity-research-types";
+import { buildFinderAssetOpportunityControlTrace } from "../lib/finder/finder-asset-opportunity-control-trace";
 
 const SEPARATOR = "=".repeat(80);
 const IDENTITY_FILE = /^oos-fold-identities-(\d+)-bars\.txt$/;
@@ -45,6 +46,9 @@ export interface FreshWindowIdentityFold {
     declaredRowCount: number;
     expectedRowCount: number | null;
     outcomeRowCount: number | null;
+    controlSeed: number | null;
+    controlDrawIdentities: Array<{ symbol: string; identityHash: string | null }> | null;
+    controlDrawDigest: string | null;
     foldEnd: number | null;
     searchWindowEnd: number | null;
     oosStart: number | null;
@@ -135,6 +139,16 @@ function parseHeaderText(lines: string[], prefix: string): string | null {
     return line ? line.slice(prefix.length).trim() : null;
 }
 
+function parseHeaderJson<T>(lines: string[], prefix: string): T | null {
+    const value = parseHeaderText(lines, prefix);
+    if (!value || value === "unknown") return null;
+    try {
+        return JSON.parse(value) as T;
+    } catch {
+        return null;
+    }
+}
+
 function parseBlocks(text: string): string[] {
     const sections = text.split(SEPARATOR);
     const blocks: string[] = [];
@@ -171,6 +185,12 @@ function parseIdentityBlock(body: string): FreshWindowIdentityFold | null {
         declaredRowCount: parseHeaderNumber(header, "Declared row count: ") ?? -1,
         expectedRowCount: parseHeaderNumber(header, "Expected evaluated row count: "),
         outcomeRowCount: parseHeaderNumber(header, "Forward outcome row count: "),
+        controlSeed: parseHeaderNumber(header, "Control seed: "),
+        controlDrawIdentities: parseHeaderJson<Array<{ symbol: string; identityHash: string | null }>>(
+            header,
+            "Control draw identities: ",
+        ),
+        controlDrawDigest: parseHeaderText(header, "Control draw digest: "),
         foldEnd: parseHeaderNumber(header, "Fold end: "),
         searchWindowEnd: parseHeaderNumber(header, "Search window end: "),
         oosStart: parseHeaderNumber(header, "OOS start: "),
@@ -303,21 +323,14 @@ function buildControlDrawDigest(
     horizon: number,
     seed: number,
 ): string {
-    const trace = orderedByFoldEnd(windows).map((fold, index) => {
-        const bySymbol = new Map<string, FinderAssetOpportunityCandidateSummaryRow[]>();
-        for (const row of fold.rows) {
-            const rows = bySymbol.get(row.symbol) ?? [];
-            rows.push(row);
-            bySymbol.set(row.symbol, rows);
-        }
-        const rng = createRng(seed + index);
-        const draws = [...bySymbol.entries()]
-            .sort(([left], [right]) => left.localeCompare(right))
-            .map(([symbol, rows]) => {
-                const draw = sampleOne(eligibleRows(rows, horizon), rng);
-                return [symbol, draw?.identityHash ?? null] as const;
-            });
-        return { holdoutBars: fold.holdoutBars, draws };
+    const trace = orderedByFoldEnd(windows).map((fold) => {
+        const draw = buildFinderAssetOpportunityControlTrace(
+            fold.rows,
+            Math.max(0, Math.floor(fold.holdoutBars / DEFAULT_STRIDE) - 1),
+            horizon,
+            seed,
+        );
+        return { holdoutBars: fold.holdoutBars, draws: draw.draws };
     });
     return sha256Json(trace);
 }
@@ -576,6 +589,27 @@ function checkS0(
                 errors.push(`candidate tuple hash mismatch at holdout ${fold.holdoutBars}`);
                 break;
             }
+        }
+    }
+    const orderedTraceWindows = orderedByFoldEnd(windows);
+    for (const fold of orderedTraceWindows) {
+        const archivedDraws = fold.controlDrawIdentities;
+        if (fold.controlSeed !== DEFAULT_SEED
+            || archivedDraws === null
+            || fold.controlDrawDigest === null
+            || fold.controlDrawDigest === "unknown") {
+            errors.push(`control draw trace is missing at holdout ${fold.holdoutBars}`);
+            continue;
+        }
+        const recomputed = buildFinderAssetOpportunityControlTrace(
+            fold.rows,
+            Math.max(0, Math.floor(fold.holdoutBars / stride) - 1),
+            horizon,
+            fold.controlSeed,
+        );
+        if (recomputed.digest !== fold.controlDrawDigest
+            || JSON.stringify(recomputed.draws) !== JSON.stringify(archivedDraws)) {
+            errors.push(`control draw trace mismatch at holdout ${fold.holdoutBars}`);
         }
     }
     const handChecks: Record<FreshWindowExitReason, number> = {
