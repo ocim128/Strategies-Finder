@@ -29,6 +29,9 @@ function buildArchive(options?: {
     batchRole?: "collection" | "judged" | "replication";
     malformedTimestamp?: boolean;
     outOfOrderTimestamp?: boolean;
+    outOfBoundsTimestamp?: boolean;
+    omitTrace?: boolean;
+    driftField?: "tradeDirection" | "riskMode" | "takeProfitPercent" | "allowSameBarExit" | "executionModel";
 }): string {
     const root = mkdtempSync(path.join(tmpdir(), "fresh-window-analyzer-"));
     const strategyCount = options?.strategyCount ?? 3;
@@ -84,6 +87,8 @@ function buildArchive(options?: {
                             ? "not-a-timestamp"
                             : options?.outOfOrderTimestamp && index === 1 && strategyIndex === 0
                                 ? String(oosStart + 1)
+                                : options?.outOfBoundsTimestamp && index === 1 && strategyIndex === 0
+                                    ? String(oosStart - 1)
                                 : String(oosStart),
                         exitTimestamp: options?.malformedTimestamp
                             ? "also-not-a-timestamp"
@@ -111,9 +116,11 @@ function buildArchive(options?: {
             `Declared row count: ${rows.length}`,
             `Expected evaluated row count: ${rows.length}`,
             `Forward outcome row count: ${rows.filter((row) => row.forwardOutcomes?.["12"] !== undefined).length}`,
-            `Control seed: ${controlTrace.seed}`,
-            `Control draw digest: ${controlTrace.digest}`,
-            `Control draw identities: ${JSON.stringify(controlTrace.draws)}`,
+            ...(options?.omitTrace ? [] : [
+                `Control seed: ${controlTrace.seed}`,
+                `Control draw digest: ${controlTrace.digest}`,
+                `Control draw identities: ${JSON.stringify(controlTrace.draws)}`,
+            ]),
             `Fold end: ${9000 + index}`,
             `Search window end: ${searchEnd}`,
             `OOS start: ${oosStart}`,
@@ -151,6 +158,27 @@ function buildArchive(options?: {
     Object.assign(identity, {
         configIdentityDigest: createHash("sha256").update(JSON.stringify(identity)).digest("hex"),
     });
+    const backtestSettings: Record<string, unknown> = {
+        executionModel: "next_open",
+        tradeDirection: "long",
+        allowSameBarExit: false,
+        riskMode: "percentage",
+        stopLossEnabled: true,
+        stopLossPercent: 2,
+        takeProfitEnabled: true,
+        takeProfitPercent: 2,
+        slippageBps: 10,
+    };
+    if (options?.driftField) {
+        const driftValues: Record<string, unknown> = {
+            tradeDirection: "short",
+            riskMode: "atr",
+            takeProfitPercent: 3,
+            allowSameBarExit: true,
+            executionModel: "next_close",
+        };
+        backtestSettings[options.driftField] = driftValues[options.driftField];
+    }
     const config = [
         separator,
         "Timestamp: 2026-08-23T00:00:00.000Z",
@@ -162,17 +190,7 @@ function buildArchive(options?: {
             interval: "4h",
             judgmentStatus: "VALID",
             freshWindowIdentity: identity,
-            backtestSettings: {
-                executionModel: "next_open",
-                tradeDirection: "long",
-                allowSameBarExit: false,
-                riskMode: "percentage",
-                stopLossEnabled: true,
-                stopLossPercent: 2,
-                takeProfitEnabled: true,
-                takeProfitPercent: 2,
-                slippageBps: 10,
-            },
+            backtestSettings,
             capitalSettings: { commission: 0.1 },
             finder: {
                 scope: "asset_opportunity",
@@ -199,6 +217,7 @@ describe("fresh-window research analyzer", () => {
             expect(lines[2]).to.equal("S0: PASS");
             expect(lines.some((line) => line.startsWith("Legacy visible-pool diagnostic only:"))).to.equal(true);
             expect(lines.some((line) => line.startsWith("Recurrence: NOT AUTHORIZED"))).to.equal(true);
+            expect(lines.some((line) => line.includes("judged=PASS"))).to.equal(false);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -315,6 +334,30 @@ describe("fresh-window research analyzer", () => {
         }
     });
 
+    it("rejects a missing producer control trace in S0", () => {
+        const root = buildArchive({ omitTrace: true });
+        try {
+            const lines = runFreshWindowAnalysis({ archiveDirectory: root });
+            expect(lines[2]).to.equal("S0: FAIL");
+            expect(lines.some((line) => line.includes("control draw trace is missing"))).to.equal(true);
+            expect(lines.some((line) => /^(Time-to-TP:|Recurrence:|Strategy gate:)/.test(line))).to.equal(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects a forward entry timestamp outside the declared fold bounds", () => {
+        const root = buildArchive({ outOfBoundsTimestamp: true });
+        try {
+            const lines = runFreshWindowAnalysis({ archiveDirectory: root });
+            expect(lines[2]).to.equal("S0: FAIL");
+            expect(lines.some((line) => line.includes("forward outcome timestamp is outside fold bounds"))).to.equal(true);
+            expect(lines.some((line) => /^(Time-to-TP:|Recurrence:|Strategy gate:)/.test(line))).to.equal(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("blocks a one-run judged recurrence archive without a prior collection", () => {
         const root = buildArchive({ recurring: true, batchRole: "judged" });
         try {
@@ -325,6 +368,39 @@ describe("fresh-window research analyzer", () => {
             expect(lines.some((line) => line.includes("judged=PASS"))).to.equal(false);
         } finally {
             rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("blocks a replication archive without a prior valid judged archive", () => {
+        const root = buildArchive({ recurring: true, batchRole: "replication" });
+        try {
+            const lines = runFreshWindowAnalysis({ archiveDirectory: root });
+            expect(lines[2]).to.equal("S0: FAIL");
+            expect(lines.some((line) => line.includes("no prior VALID judged archive with strictly-earlier folds"))).to.equal(true);
+            expect(lines.some((line) => /^(Time-to-TP:|Recurrence:|Strategy gate:)/.test(line))).to.equal(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects each one-field frozen-settings drift in S0", () => {
+        const cases = [
+            ["tradeDirection", "backtest setting tradeDirection is short, expected long"],
+            ["riskMode", "backtest setting riskMode is atr, expected percentage"],
+            ["takeProfitPercent", "backtest setting takeProfitPercent is 3, expected 2"],
+            ["allowSameBarExit", "backtest setting allowSameBarExit is true, expected false"],
+            ["executionModel", "backtest setting executionModel is next_close, expected next_open"],
+        ] as const;
+        for (const [field, message] of cases) {
+            const root = buildArchive({ driftField: field });
+            try {
+                const lines = runFreshWindowAnalysis({ archiveDirectory: root });
+                expect(lines[2], field).to.equal("S0: FAIL");
+                expect(lines.some((line) => line.includes(message)), field).to.equal(true);
+                expect(lines.some((line) => /^(Time-to-TP:|Recurrence:|Strategy gate:)/.test(line)), field).to.equal(false);
+            } finally {
+                rmSync(root, { recursive: true, force: true });
+            }
         }
     });
 

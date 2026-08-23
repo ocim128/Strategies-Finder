@@ -47,6 +47,8 @@ import {
     runAssetOpportunityBatchWorkerTask,
     type AssetOpportunityBatchWorkerTask,
 } from "../lib/finder/server/finder-asset-opportunity-batch-worker";
+import { createServerFinderAssetOpportunityLoadContext } from "../lib/finder/server/server-finder-data-loader";
+import type { FinderSelectedStrategy } from "../lib/finder/finder-runner";
 import type { FinderAssetOpportunityBatchStreamEvent } from "../lib/finder/server/finder-stream-types";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions } from "../lib/types/finder";
@@ -818,6 +820,127 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(iterations[2]!.assetDiagnostics!.failedAssets).to.deep.equal([]);
         const done = events[events.length - 1]!;
         expect(done.type).to.equal("asset_batch_done");
+    });
+
+    it("re-slices a cached raw dataset for each fold", async () => {
+        const cacheStrategy: FinderSelectedStrategy = {
+            key: "reaudit-cache",
+            name: "reaudit-cache",
+            strategy: {
+                name: "reaudit-cache",
+                description: "cache fold fixture",
+                defaultParams: {},
+                paramLabels: {},
+                execute(data: OHLCVData[]) {
+                    const last = data.at(-1);
+                    return last ? [{ time: last.time, type: "buy", price: last.close }] : [];
+                },
+            },
+        };
+        const options = {
+            mode: "random",
+            scope: "asset_opportunity",
+            sortPriority: ["netProfit"],
+            topN: 1,
+            maxRuns: 1,
+            dataSlice: "all",
+            assetOpportunity: {
+                symbols: ["PAIR"],
+                evalLastBars: 1000,
+                oosIgnoreLastBars: 12,
+                oosHorizons: [12, 18, 24],
+                candidatePoolSize: 1,
+                minFreshSupport: 1,
+            },
+        } as unknown as FinderOptions;
+        const cacheSettings: BacktestSettings = {
+            executionModel: "next_open",
+            tradeDirection: "long",
+            allowSameBarExit: false,
+            riskMode: "percentage",
+            stopLossEnabled: true,
+            stopLossPercent: 2,
+            takeProfitEnabled: true,
+            takeProfitPercent: 2,
+            slippageBps: 0,
+        };
+        const raw = Array.from({ length: 24 }, (_, index) => ({
+            time: (100 + index * 100) as Time,
+            open: 100 + index,
+            high: 101 + index,
+            low: 99 + index,
+            close: 100 + index,
+            volume: 1_000,
+        }));
+        const context = createServerFinderAssetOpportunityLoadContext(1);
+        let rawLoadCalls = 0;
+        const makeTask = (foldEnd: number, taskIndex: number): AssetOpportunityBatchWorkerTask => ({
+            taskIndex,
+            holdoutBars: taskIndex === 0 ? 12 : 24,
+            runId: "reaudit-cache",
+            interval: "4h",
+            symbols: ["PAIR"],
+            options,
+            settings: cacheSettings,
+            capitalSettings: { ...capitalSettings, commission: 0 },
+            strategyKeys: [],
+            exitStrategyKeys: [],
+            useRustEnginePreference: false,
+            providerBySymbol: null,
+            candidatePoolSize: 1,
+            minFreshSupport: 1,
+            foldEnd,
+            loadDatasetIsRaw: true,
+            researchProgram: "fresh-window",
+            inlineDatasets: { PAIR: raw },
+        });
+        const run = async (task: AssetOpportunityBatchWorkerTask) => {
+            const summaryRows: any[] = [];
+            const result = await runAssetOpportunityBatchWorkerTask({
+                task,
+                strategySelection: { selectedStrategies: [cacheStrategy] },
+                loadDataset: async () => {
+                    rawLoadCalls += 1;
+                    return raw;
+                },
+                loadForwardDataset: async () => raw,
+                assetLoadContext: context,
+                abortSignal: new AbortController().signal,
+                isCancelled: () => false,
+                onProgress: () => undefined,
+                onCandidateSummaryChunk: (rows) => summaryRows.push(...rows),
+            });
+            return { result, summaryRows };
+        };
+
+        const firstRun = await run(makeTask(1500, 0));
+        const secondRun = await run(makeTask(1700, 1));
+        const firstSlowest = firstRun.result.assetDiagnostics.slowestAssets?.[0];
+        const secondSlowest = secondRun.result.assetDiagnostics.slowestAssets?.[0];
+        expect(rawLoadCalls).to.equal(1);
+        expect(context.datasetCache).to.not.equal(undefined);
+        expect({
+            hits: context.datasetCache!.hitCount(),
+            misses: context.datasetCache!.missCount(),
+        }).to.deep.equal({ hits: 1, misses: 1 });
+        expect(firstRun.result.foldMetadata).to.deep.equal({
+            foldEnd: 1500,
+            searchWindowEnd: 1500,
+            oosStart: 1600,
+            oosEnd: 2400,
+        });
+        expect(secondRun.result.foldMetadata).to.deep.equal({
+            foldEnd: 1700,
+            searchWindowEnd: 1700,
+            oosStart: 1800,
+            oosEnd: 2400,
+        });
+        expect(firstRun.summaryRows[0]?.forwardOutcomes?.["12"]?.entryTimestamp).to.equal("1600");
+        expect(secondRun.summaryRows[0]?.forwardOutcomes?.["12"]?.entryTimestamp).to.equal("1800");
+        expect(firstSlowest?.historicalBars).to.equal(3);
+        expect(firstSlowest?.slicedHistoricalBars).to.equal(3);
+        expect(secondSlowest?.historicalBars).to.equal(5);
+        expect(secondSlowest?.slicedHistoricalBars).to.equal(5);
     });
 
     it("sizes the dataset LRU by the same memory budget as the worker pool", () => {

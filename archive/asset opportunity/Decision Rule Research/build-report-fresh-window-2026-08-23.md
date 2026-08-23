@@ -442,3 +442,22 @@ git diff --check                               PASS
    explicitly registered engine-policy decision.
 6. Record the four fix commits with the archive and preserve the re-audit
    fixtures. No real batch or push was performed during this rework.
+
+### Coverage closure
+
+The final audit C2 scratch cases are now permanent:
+
+- C2-1: `rejects a missing producer control trace in S0`.
+- C2-2: `rejects a forward entry timestamp outside the declared fold bounds`.
+- C2-3: `passes S0 and keeps legacy rows diagnostic-only` now asserts collection
+  output is `Recurrence: NOT AUTHORIZED` and never contains `judged=PASS`.
+- C2-4: `blocks a replication archive without a prior valid judged archive`.
+- C2-5: `rejects each one-field frozen-settings drift in S0` covers the five
+  required single-field mutations.
+- C2-6: `matches the engine on a TP touch at the final available bar`.
+- C2-7: `re-slices a cached raw dataset for each fold` locks the two-fold
+  raw-cache counts and fold-specific slices.
+
+Validation after promotion: feature-DOM 48, Finder server 83, batch parallel
+18, archive 13, fold 7, forward contract 16, fresh-window analyzer 18, and
+Vite-config bundle 1; 204 tests passed, with `npm run typecheck` also passing.
