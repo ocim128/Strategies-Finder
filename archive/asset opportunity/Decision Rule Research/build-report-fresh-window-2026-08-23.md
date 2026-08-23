@@ -510,3 +510,135 @@ Validation for this rework: feature-DOM 48, Finder server 84, batch parallel
 18, archive 13, fold 9, forward contract 16, analyzer 18, and the real
 producer integration 2; Vite-config bundle 1; `npm run typecheck` PASS. No
 real batch or push was performed.
+
+### Round-3 smoke fixes
+
+The second live smoke exposed two remaining S0 failures that the dense S4
+fixture could not expose: real fold intervals were 43 bars wide despite being
+spaced 12 bars apart, and only about 47% of evaluated candidates could have a
+forward outcome because most had no fresh signal at the fold boundary.
+
+#### T1 - exact stride-window geometry
+
+Fresh mode now records and slices the declared calendar interval
+`(foldEnd, foldEnd + 12 * barSeconds]`. The OOS start and end in every identity
+block come from that declared interval, not from the minimum and maximum
+timestamps observed across asset-specific forward slices. With the shared
+25-entry schedule, adjacent intervals are therefore disjoint by construction.
+Missing calendar bars remain missing; they are not synthesized or compressed
+into positional bars. Legacy calls without `foldEnd` retain their previous
+uncapped forward behavior.
+
+The locked decision for the configured 18- and 24-bar horizons is
+exclude-by-missingness: fresh forward capture emits only the 12-bar horizon,
+because the declared judged window is one stride wide. The config remains the
+frozen `[12,18,24]` record, but S0 judges horizon 12 only and makes no claim
+from absent 18/24 outcomes. A wider-horizon experiment would require a new
+schedule and a separate preregistration.
+
+#### T2 - eligible-outcome denominator
+
+Each fresh candidate summary now carries `forwardOutcomeEligible` only when a
+fresh boundary signal exists and its entry can be placed in the forward slice.
+The producer counts those rows as `Expected eligible outcome row count` and
+threads the count through both worker paths into the archive identity block.
+`Forward outcome row count` remains the number with a valid 12-bar outcome.
+
+S0's 95% gate is now `outcomeRowCount / expectedOutcomeRowCount`. The old
+all-evaluated denominator is retained as a diagnostic only, so a real sparse
+signal population is not incorrectly treated as a producer failure.
+
+#### T3 - realistic producer-to-analyzer integration
+
+`tests/finder-fresh-window-integration.spec.ts` now creates six 4-hour fixture
+assets with weekend calendar gaps, one continuous-calendar asset, additional
+per-asset missing bars, different forward-slice widths, and sparse boundary
+signals. It produces the archive through the real batch request path, runs the
+actual analyzer, and exercises both the sequential and worker-thread paths.
+Both paths produce this locked result:
+
+```text
+S0: PASS
+S0 windows=25, fullPoolRows=150, eligibleRows=150, finiteExecutionRows=52, randomControls=25
+S0 coverage: eligible-outcomes=52/52, all-evaluated=34.67%
+S0 hand checks: TP=47, SL=1, horizon=4
+Recurrence: NOT AUTHORIZED (collection archive; judged role requires a prior collection)
+```
+
+The 52/52 eligible coverage proves the eligible denominator is wired
+correctly; the independent 52/150 (34.67%) all-evaluated diagnostic proves
+the integration no longer relies on every evaluated candidate having a
+forward outcome. The fixture also fails its own preflight if calendar gaps or
+different forward widths disappear.
+
+#### T4 - operator schedule path
+
+The operator script already uses the shared
+`buildFreshFoldScheduleFromDataEnd(...)` helper, so no separate schedule math
+was left to drift in this round.
+
+#### T5 - smoke artifact cleanup
+
+The 76 invalid files under `archive/fresh-window/` from the round-2 smoke were
+cleared locally. The directory is empty, and no tracked archive deletion was
+made. No real batch was run during this round.
+
+#### Validation and live rerun
+
+Validated with:
+
+```text
+..\..\..\node_modules\.bin\esno tests\analyze-fresh-window-research.spec.ts
+..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-fold.spec.ts
+..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-archive.spec.ts
+..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-forward-contract.spec.ts
+..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-batch-parallel.spec.ts
+..\..\..\node_modules\.bin\esno tests\finder-server-plugin.spec.ts
+..\..\..\node_modules\.bin\esno tests\finder-fresh-window-integration.spec.ts
+..\..\..\node_modules\.bin\esno tests\vite-config-bundle.spec.ts
+npm run typecheck
+```
+
+All passed: analyzer 18, fold 10, archive 13, forward contract 16,
+batch-parallel 18, server 84, integration 2, Vite bundle 1, and TypeScript
+typecheck.
+
+For the final live collection smoke, use two PowerShell windows. In the first,
+set real provenance from the sync just completed and start the server:
+
+```powershell
+$env:NODE_OPTIONS = "--max-old-space-size=16384"
+$env:FINDER_ASSET_BATCH_WORKERS = "2"
+$env:FINDER_DATA_SYNC_SNAPSHOT = "<actual sync-log timestamp>"
+$env:GIT_COMMIT = (git rev-parse HEAD).Trim()
+npm run dev
+```
+
+In the second, use the copied Finder configuration and a synced reference CSV
+whose last timestamp is the data end used for the universe:
+
+```powershell
+$configPath = (Resolve-Path "<path to Copy Configuration JSON>").Path
+$csvPath = (Resolve-Path "<synced reference 4h CSV>").Path
+..\..\..\node_modules\.bin\esno scripts\fresh-window-batch-request.ts `
+  --config $configPath `
+  --csv $csvPath `
+  --role collection `
+  --interval 4h `
+  --base-url http://127.0.0.1:5173
+```
+
+After the stream closes, judge only with:
+
+```powershell
+..\..\..\node_modules\.bin\esno scripts\analyze-fresh-window-research.ts `
+  --archive-dir "archive\fresh-window" `
+  --stride-bars 12 `
+  --horizon 12 `
+  --seed 42
+```
+
+The collection smoke must show `S0: PASS`, disjoint 12-bar OOS bounds,
+eligible-outcome coverage at least 95%, and
+`Recurrence: NOT AUTHORIZED`. Do not read any downstream verdict from a
+collection archive.

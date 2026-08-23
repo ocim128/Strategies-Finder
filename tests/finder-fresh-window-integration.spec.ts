@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { ensureBuiltInStrategyLoaded } from "../lib/strategies/built-in-catalog";
-import { buildFreshFoldScheduleFromDataEnd } from "../lib/finder/finder-asset-opportunity-fold";
+import {
+    buildFreshFoldScheduleFromDataEnd,
+    sliceFinderAssetDataWithinFreshFoldWindow,
+} from "../lib/finder/finder-asset-opportunity-fold";
 import {
     FINDER_ASSET_BATCH_WORKERS_ENV,
     resolveAssetOpportunityBatchWorkerPath,
@@ -34,30 +37,103 @@ const INTERVAL = "4h";
 const BAR_SECONDS = 4 * 60 * 60;
 
 function buildFixtureDatasets(): Map<string, OHLCVData[]> {
-    return new Map(SYMBOLS.map((symbol) => [symbol, Array.from({ length: 400 }, (_, index) => {
-        const phase = index % 8;
-        const symbolIndex = SYMBOLS.indexOf(symbol);
-        const moveScale = symbolIndex >= 4 ? 0.1 : 1;
-        const close = 100 - moveScale * (phase < 4 ? phase : 7 - phase);
-        const high = symbolIndex < 2
-            ? close * 1.10
-            : symbolIndex < 4
-                ? close * 1.001
-                : close * 1.001;
-        const low = symbolIndex < 2
-            ? close * 0.999
-            : symbolIndex < 4
-                ? close * 0.80
-                : close * 0.999;
-        return {
-            time: (1_700_000_000 + index * BAR_SECONDS) as Time,
-            open: close,
-            high,
-            low,
-            close,
-            volume: 1000,
-        };
-    })]));
+    const calendarSlotTimes = Array.from({ length: 720 }, (_, slot) => 1_700_000_000 + slot * BAR_SECONDS);
+    const calendarTimes = calendarSlotTimes
+        .filter((time) => ![0, 6].includes(new Date(time * 1000).getUTCDay()));
+    const schedule = buildFreshFoldScheduleFromDataEnd(calendarTimes.at(-1)!, BAR_SECONDS);
+    const signalHoldouts = new Map(SYMBOLS.map((_, symbolIndex) => [
+        symbolIndex,
+        schedule
+            .filter((_, foldIndex) => symbolIndex === 0
+                || (symbolIndex === 5 && foldIndex === 6)
+                || (symbolIndex === 1 && foldIndex === 1)
+                || (symbolIndex === 2 && foldIndex === 2))
+            .map((entry) => entry.holdoutBars),
+    ]));
+
+    return new Map(SYMBOLS.map((symbol, symbolIndex) => {
+        const times = (symbolIndex === 5 ? calendarSlotTimes : calendarTimes).filter((_, slot) =>
+            !(symbolIndex === 1 && slot % 17 === 0)
+            && !(symbolIndex === 2 && slot % 23 === 0)
+            && !(symbolIndex === 3 && slot % 31 === 0),
+        );
+        const moveScale = symbolIndex === 2 ? 0.1 : 1;
+        const phaseBars = symbolIndex === 5 ? 80 : 180;
+        const closes = times.map((_, index) => {
+            // A bounded, old in-sample regime supplies real trade/path
+            // scalars. It ends well before the judged boundaries; the later
+            // flat region plus isolated fold markers keeps forward outcomes
+            // sparse instead of making every candidate eligible.
+            if (index >= phaseBars) return 100;
+            const phase = index % 8;
+            return 100 - moveScale * (phase < 4 ? phase : 7 - phase);
+        });
+        const signalIndexes = (signalHoldouts.get(symbolIndex) ?? []).map((holdout) => {
+            const foldEnd = schedule.find((entry) => entry.holdoutBars === holdout)!.foldEnd;
+            const boundaryIndex = times.reduce(
+                (last, time, index) => time <= foldEnd ? index : last,
+                -1,
+            );
+            // The batch hides `holdoutBars` candles before it asks the
+            // fresh-entry path about this fold. Put the sparse streak at the
+            // actual visible boundary, not at raw foldEnd (which is outside
+            // the search window once the holdout is applied).
+            const signalIndex = boundaryIndex - holdout;
+            return signalIndex;
+        }).filter((signalIndex) => signalIndex >= 4);
+        const sortedSignalIndexes = [...new Set(signalIndexes)].sort((left, right) => left - right);
+        let clusterStart = 0;
+        while (clusterStart < sortedSignalIndexes.length) {
+            let clusterEnd = clusterStart;
+            while (
+                clusterEnd + 1 < sortedSignalIndexes.length
+                && sortedSignalIndexes[clusterEnd + 1]! - sortedSignalIndexes[clusterEnd]! <= 4
+            ) {
+                clusterEnd += 1;
+            }
+            const firstSignalIndex = sortedSignalIndexes[clusterStart]!;
+            const lastSignalIndex = sortedSignalIndexes[clusterEnd]!;
+            for (let index = firstSignalIndex - 3; index <= lastSignalIndex; index += 1) {
+                closes[index] = 100 - (index - (firstSignalIndex - 3)) * moveScale;
+            }
+            clusterStart = clusterEnd + 1;
+        }
+        if (symbolIndex === 0) {
+            // Weekend folds have fewer visible rows before their boundary.
+            // Keep the bounded in-sample regime available in those windows.
+            for (const holdout of [84, 168, 252]) {
+                const foldEnd = schedule.find((entry) => entry.holdoutBars === holdout)!.foldEnd;
+                const boundaryIndex = times.reduce(
+                    (last, time, index) => time <= foldEnd ? index : last,
+                    -1,
+                );
+                const signalIndex = boundaryIndex - holdout;
+                for (const offset of [30, 18, 6]) {
+                    const cycleEnd = signalIndex - offset;
+                    if (cycleEnd < 4 || cycleEnd + 1 >= closes.length) continue;
+                    closes[cycleEnd - 3] = 100;
+                    closes[cycleEnd - 2] = 99;
+                    closes[cycleEnd - 1] = 98;
+                    closes[cycleEnd] = 97;
+                    closes[cycleEnd + 1] = 100;
+                }
+            }
+        }
+        const candles = times.map((time, index) => {
+            const close = closes[index]!;
+            const takeProfitAsset = symbolIndex === 0 || symbolIndex === 4 || symbolIndex === 5;
+            const stopLossAsset = symbolIndex === 1;
+            return {
+                time: time as Time,
+                open: close,
+                high: close * (takeProfitAsset ? 1.10 : 1.001),
+                low: close * (stopLossAsset ? 0.80 : 0.999),
+                close,
+                volume: 1000,
+            };
+        });
+        return [symbol, candles];
+    }));
 }
 
 function restoreWorkerCount(previous: string | undefined): void {
@@ -126,6 +202,9 @@ function createFixtureWorkerFactory(
                         ...(message.foldMetadata ? { foldMetadata: message.foldMetadata } : {}),
                         ...(message.expectedCandidateSummaryRows !== undefined
                             ? { expectedCandidateSummaryRows: message.expectedCandidateSummaryRows }
+                            : {}),
+                        ...(message.expectedOutcomeSummaryRows !== undefined
+                            ? { expectedOutcomeSummaryRows: message.expectedOutcomeSummaryRows }
                             : {}),
                     });
                 }
@@ -234,6 +313,15 @@ async function runGeneratedArchive(useWorkers: boolean): Promise<{ root: string;
     const datasets = buildFixtureDatasets();
     const dataEndTime = Number(datasets.get(SYMBOLS[0]!)!.at(-1)!.time);
     const foldSchedule = buildFreshFoldScheduleFromDataEnd(dataEndTime, BAR_SECONDS);
+    const hasCalendarGap = datasets.get(SYMBOLS[0]!)!.some((candle, index, candles) =>
+        index > 0 && Number(candle.time) - Number(candles[index - 1]!.time) > BAR_SECONDS,
+    );
+    const forwardWidths = SYMBOLS.flatMap((symbol) => foldSchedule.map((fold) =>
+        sliceFinderAssetDataWithinFreshFoldWindow(datasets.get(symbol)!, fold.foldEnd, BAR_SECONDS).length,
+    ));
+    if (!hasCalendarGap || new Set(forwardWidths).size < 2) {
+        throw new Error(`Fixture is not calendar-realistic: gap=${hasCalendarGap}, widths=${forwardWidths.join(",")}`);
+    }
     const strategy = await ensureBuiltInStrategyLoaded(STRATEGY_KEY);
     if (!strategy) throw new Error(`Fixture strategy failed to load: ${STRATEGY_KEY}`);
     const root = mkdtempSync(path.join(tmpdir(), "fresh-window-pipeline-"));
@@ -289,12 +377,20 @@ describe("fresh-window real producer-to-analyzer integration", () => {
             try {
                 expect(lines).to.include("S0: PASS");
                 expect(lines.some((line) => line.startsWith("Recurrence: NOT AUTHORIZED"))).to.equal(true);
+                expect(lines).to.include("S0 windows=25, fullPoolRows=150, eligibleRows=150, finiteExecutionRows=52, randomControls=25");
+                expect(lines).to.include("S0 hand checks: TP=47, SL=1, horizon=4");
                 const identity = readFileSync(
                     path.join(root, "archive", "fresh-window", "oos-fold-identities-300-bars.txt"),
                     "utf8",
                 );
                 expect(identity).to.contain("Expected evaluated row count: 6");
+                expect(identity).to.contain("Expected eligible outcome row count:");
                 expect(identity).to.contain("candidateFingerprint");
+                const coverage = lines.find((line) => line.startsWith("S0 coverage:"));
+                expect(coverage).to.not.equal(undefined);
+                expect(coverage).to.contain("eligible-outcomes=52/52");
+                expect(coverage).to.contain("all-evaluated=34.67%");
+                expect(Number(coverage!.match(/all-evaluated=([0-9.]+)%/)?.[1])).to.be.lessThan(50);
                 expect(readdirSync(path.join(root, "archive", "fresh-window"))).to.have.length.greaterThan(25);
             } finally {
                 rmSync(root, { recursive: true, force: true });
