@@ -239,6 +239,8 @@ export interface AssetOpportunityIterationResult {
     assetDiagnostics: FinderAssetOpportunityDiagnostics;
     totals: FinderAssetOpportunityTotals;
     summary: string;
+    /** Independent expected count from evaluation attempts, not archive rows. */
+    expectedCandidateSummaryRows?: number;
     /** Point-in-time bounds observed while loading the fold and its forward data. */
     foldMetadata?: FinderAssetOpportunityFoldMetadata;
 }
@@ -1036,6 +1038,9 @@ export async function runAssetOpportunityIteration(
         assetDiagnostics,
         totals,
         summary,
+        ...(input.researchProgram === "fresh-window"
+            ? { expectedCandidateSummaryRows: candidateEvaluationsAttempted }
+            : {}),
         ...(input.foldEnd !== undefined
             ? {
                 foldMetadata: {

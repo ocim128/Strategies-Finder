@@ -1437,8 +1437,8 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                     ...(args.freshWindow ? {
                         researchProgram: "fresh-window" as const,
                         foldSchedule: freshFoldSchedule,
-                        dataSyncSnapshot: args.freshWindow === "valid" ? "sync-2026-08-23" : undefined,
-                        gitCommit: args.freshWindow === "valid" ? "abc123" : undefined,
+                        dataSyncSnapshot: "sync-2026-08-23",
+                        gitCommit: "abc123",
                         providerBySymbol: { UP: "binance", DOWN: "binance" },
                     } : {}),
                 },

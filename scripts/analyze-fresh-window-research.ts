@@ -27,9 +27,14 @@ export type FreshWindowExitReason = "take_profit" | "stop_loss" | "end_of_data";
 export interface FreshWindowOutcome {
     exitReason: FreshWindowExitReason;
     barsHeld: number;
+    grossReturnPercent: number;
+    slippagePercent: number;
+    commissionPercent: number;
     netReturnPercent: number;
     entryPrice: number;
     exitPrice: number;
+    entryTimestamp: string;
+    exitTimestamp: string;
 }
 
 export interface FreshWindowIdentityFold {
@@ -37,6 +42,8 @@ export interface FreshWindowIdentityFold {
     batchRunId: string;
     holdoutBars: number;
     declaredRowCount: number;
+    expectedRowCount: number | null;
+    outcomeRowCount: number | null;
     foldEnd: number | null;
     searchWindowEnd: number | null;
     oosStart: number | null;
@@ -49,7 +56,7 @@ export interface FreshWindowConfig {
     runId?: string;
     interval?: string;
     strategyKeys?: string[];
-    finder?: {
+    finder?: Record<string, unknown> & {
         assetOpportunity?: {
             evalLastBars?: number;
             oosIgnoreLastBars?: number;
@@ -72,6 +79,8 @@ export interface S0Result {
     eligibleRows: number;
     finiteExecutionRows: number;
     randomControls: number;
+    controlSeed: number;
+    controlDrawDigest: string;
 }
 
 interface FoldMetric {
@@ -157,6 +166,8 @@ function parseIdentityBlock(body: string): FreshWindowIdentityFold | null {
         batchRunId: parseHeaderText(header, "Batch run id: ") ?? "",
         holdoutBars: parseHeaderNumber(header, "OOS holdout: ") ?? 0,
         declaredRowCount: parseHeaderNumber(header, "Declared row count: ") ?? -1,
+        expectedRowCount: parseHeaderNumber(header, "Expected evaluated row count: "),
+        outcomeRowCount: parseHeaderNumber(header, "Forward outcome row count: "),
         foldEnd: parseHeaderNumber(header, "Fold end: "),
         searchWindowEnd: parseHeaderNumber(header, "Search window end: "),
         oosStart: parseHeaderNumber(header, "OOS start: "),
@@ -212,8 +223,15 @@ function normalizeOutcome(row: FinderAssetOpportunityCandidateSummaryRow, horizo
             && outcome.exitReason !== "end_of_data")
         || finiteNumber(outcome.barsHeld) === null
         || finiteNumber(outcome.netReturnPercent) === null
+        || finiteNumber(outcome.grossReturnPercent) === null
+        || finiteNumber(outcome.slippagePercent) === null
+        || finiteNumber(outcome.commissionPercent) === null
         || finiteNumber(outcome.entryPrice) === null
         || finiteNumber(outcome.exitPrice) === null
+        || typeof outcome.entryTimestamp !== "string"
+        || outcome.entryTimestamp.length === 0
+        || typeof outcome.exitTimestamp !== "string"
+        || outcome.exitTimestamp.length === 0
     ) return null;
     return outcome;
 }
@@ -259,6 +277,30 @@ function eligibleRows(rows: readonly FinderAssetOpportunityCandidateSummaryRow[]
     return rows.filter((row) => row.evaluationOk && row.passesTradeFilter && normalizeOutcome(row, horizon) !== null);
 }
 
+function buildControlDrawDigest(
+    windows: readonly FreshWindowIdentityFold[],
+    horizon: number,
+    seed: number,
+): string {
+    const trace = windows.map((fold, index) => {
+        const bySymbol = new Map<string, FinderAssetOpportunityCandidateSummaryRow[]>();
+        for (const row of fold.rows) {
+            const rows = bySymbol.get(row.symbol) ?? [];
+            rows.push(row);
+            bySymbol.set(row.symbol, rows);
+        }
+        const rng = createRng(seed + index);
+        const draws = [...bySymbol.entries()]
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([symbol, rows]) => {
+                const draw = sampleOne(eligibleRows(rows, horizon), rng);
+                return [symbol, draw?.identityHash ?? null] as const;
+            });
+        return { holdoutBars: fold.holdoutBars, draws };
+    });
+    return sha256Json(trace);
+}
+
 function computeWindowMetrics(
     fold: FreshWindowIdentityFold,
     horizon: number,
@@ -274,7 +316,7 @@ function computeWindowMetrics(
     const controlValues: number[] = [];
     const selectedNet: number[] = [];
     const controlNet: number[] = [];
-    for (const rows of bySymbol.values()) {
+    for (const [, rows] of [...bySymbol.entries()].sort(([left], [right]) => left.localeCompare(right))) {
         const eligible = eligibleRows(rows, horizon);
         const selected = topByProfitFactor(eligible);
         const control = sampleOne(eligible, rng);
@@ -391,7 +433,9 @@ function checkS0(
         "strategyDigest",
         "providerBySymbol",
         "engine",
-        "foldEnd",
+        "foldSchedule",
+        "foldScheduleDigest",
+        "controlSeed",
         "dataSyncSnapshot",
         "gitCommit",
         "configIdentityDigest",
@@ -402,6 +446,9 @@ function checkS0(
         }
     }
     if (identity?.researchProgram !== "fresh-window") errors.push("identity researchProgram is not fresh-window");
+    if (identity?.dataSyncSnapshot === "unknown") errors.push("dataSyncSnapshot is unknown");
+    if (identity?.gitCommit === "unknown") errors.push("gitCommit is unknown");
+    if (identity?.controlSeed !== DEFAULT_SEED) errors.push(`control seed must be ${DEFAULT_SEED}`);
     if (identity) {
         const { configIdentityDigest, ...identityWithoutDigest } = identity;
         if (typeof configIdentityDigest !== "string"
@@ -414,18 +461,64 @@ function checkS0(
         if (!Array.isArray(identity.strategyKeys) || sha256Json(identity.strategyKeys) !== identity.strategyDigest) {
             errors.push("strategy list digest mismatch");
         }
+        if (!Array.isArray(identity.foldSchedule) || identity.foldSchedule.length !== EXPECTED_WINDOWS) {
+            errors.push(`fold schedule must contain ${EXPECTED_WINDOWS} entries`);
+        } else if (sha256Json(identity.foldSchedule) !== identity.foldScheduleDigest) {
+            errors.push("fold schedule digest mismatch");
+        }
     }
     const engine = identity?.engine as { effective?: unknown } | undefined;
     if (engine?.effective !== "typescript") errors.push("fresh-window effective engine is not recorded as TypeScript");
     const backtestSettings = config?.backtestSettings;
     const capitalSettings = config?.capitalSettings;
+    if (config?.interval !== "4h") errors.push(`config interval is ${String(config?.interval)}`);
+    const frozenSettings: Record<string, unknown> = {
+        executionModel: "next_open",
+        allowSameBarExit: false,
+        riskMode: "percentage",
+        stopLossEnabled: true,
+        stopLossPercent: 2,
+        takeProfitEnabled: true,
+        takeProfitPercent: 2,
+    };
+    for (const [key, expectedValue] of Object.entries(frozenSettings)) {
+        if (backtestSettings?.[key] !== expectedValue) {
+            errors.push(`backtest setting ${key} is ${String(backtestSettings?.[key])}, expected ${String(expectedValue)}`);
+        }
+    }
     if (finiteNumber(backtestSettings?.slippageBps) === null) errors.push("slippageBps is missing from the execution identity");
     if (finiteNumber(capitalSettings?.commission) === null) errors.push("commission is missing from the execution identity");
+    if (finiteNumber(backtestSettings?.slippageBps) !== 10) errors.push("slippageBps must be 10");
+    if (finiteNumber(capitalSettings?.commission) !== 0.1) errors.push("commission must be 0.1");
+    const finder = config?.finder as Record<string, unknown> | undefined;
+    if (finder?.scope !== "asset_opportunity") errors.push("finder scope is not asset_opportunity");
+    if (finder?.mode !== "random") errors.push("finder mode is not random");
     const runIds = new Set(windows.map((fold) => fold.batchRunId));
     if (runIds.size !== 1) errors.push(`identity blocks contain ${runIds.size} batch run ids`);
     const foldEnds = windows.map((fold) => fold.foldEnd).filter((value): value is number => value !== null);
     if (foldEnds.length !== windows.length || new Set(foldEnds).size !== foldEnds.length) {
         errors.push("fold ends are missing or repeated; point-in-time folds are not distinct");
+    }
+    const foldSchedule = Array.isArray(identity?.foldSchedule)
+        ? identity.foldSchedule as Array<{ holdoutBars?: unknown; foldEnd?: unknown }>
+        : [];
+    for (const fold of windows) {
+        const marker = foldSchedule.find((entry) => entry.holdoutBars === fold.holdoutBars);
+        if (!marker || marker.foldEnd !== fold.foldEnd) {
+            errors.push(`fold marker does not match the declared schedule at holdout ${fold.holdoutBars} (archive=${String(fold.foldEnd)}, schedule=${String(marker?.foldEnd)})`);
+        }
+        if (fold.foldEnd === null || !Number.isFinite(fold.foldEnd) || fold.foldEnd <= 0) {
+            errors.push(`invalid foldEnd at holdout ${fold.holdoutBars}`);
+        }
+        if (fold.searchWindowEnd !== null && fold.foldEnd !== null && fold.searchWindowEnd > fold.foldEnd) {
+            errors.push(`search window exceeds foldEnd at holdout ${fold.holdoutBars}`);
+        }
+        if (fold.oosStart !== null && fold.foldEnd !== null && fold.oosStart <= fold.foldEnd) {
+            errors.push(`OOS starts at or before foldEnd at holdout ${fold.holdoutBars}`);
+        }
+        if (fold.oosStart !== null && fold.oosEnd !== null && fold.oosEnd < fold.oosStart) {
+            errors.push(`OOS interval is inverted at holdout ${fold.holdoutBars}`);
+        }
     }
     const ordered = [...windows].sort((left, right) => (left.oosStart ?? Infinity) - (right.oosStart ?? Infinity));
     for (let index = 1; index < ordered.length; index += 1) {
@@ -438,7 +531,22 @@ function checkS0(
     }
     const identityRows = windows.flatMap((fold) => fold.rows);
     for (const fold of windows) {
+        if (fold.judgmentStatus !== "VALID") {
+            errors.push(`fold judgment is not VALID at holdout ${fold.holdoutBars}`);
+        }
         if (fold.declaredRowCount !== fold.rows.length) errors.push(`row count mismatch at holdout ${fold.holdoutBars}`);
+        if (fold.expectedRowCount === null || fold.expectedRowCount < 0) {
+            errors.push(`expected evaluated row count is missing at holdout ${fold.holdoutBars}`);
+        } else if (fold.expectedRowCount !== fold.rows.length) {
+            errors.push(`expected evaluated row count mismatch at holdout ${fold.holdoutBars}`);
+        }
+        if (fold.outcomeRowCount === null || fold.outcomeRowCount < 0) {
+            errors.push(`forward outcome row count is missing at holdout ${fold.holdoutBars}`);
+        } else if (fold.expectedRowCount !== null
+            && fold.expectedRowCount > 0
+            && fold.outcomeRowCount / fold.expectedRowCount < 0.95) {
+            errors.push(`forward outcome coverage below 95% at holdout ${fold.holdoutBars}`);
+        }
         for (const row of fold.rows) {
             if (!row.symbol || !row.strategyKey || !row.candidateFingerprint || !row.identityHash) {
                 errors.push(`incomplete candidate identity at holdout ${fold.holdoutBars}`);
@@ -476,6 +584,10 @@ function checkS0(
     if (options?.evalLastBars !== 1000) errors.push(`config evalLastBars is ${String(options?.evalLastBars)}`);
     if (options?.oosIgnoreLastBars !== 26) errors.push(`config oosIgnoreLastBars is ${String(options?.oosIgnoreLastBars)}`);
     if (JSON.stringify(options?.oosHorizons ?? []) !== JSON.stringify([12, 18, 24])) errors.push("config horizons are not [12,18,24]");
+    const controlSeed = identity?.controlSeed === DEFAULT_SEED ? DEFAULT_SEED : -1;
+    const controlDrawDigest = controlSeed === DEFAULT_SEED
+        ? buildControlDrawDigest(windows, horizon, controlSeed)
+        : "invalid";
     return {
         ok: errors.length === 0,
         errors: [...new Set(errors)],
@@ -486,6 +598,8 @@ function checkS0(
         eligibleRows,
         finiteExecutionRows,
         randomControls: selectedControls.length,
+        controlSeed,
+        controlDrawDigest,
     };
 }
 
@@ -599,6 +713,7 @@ export function runFreshWindowAnalysis(args: {
         `S0: ${s0.ok ? "PASS" : "FAIL"}`,
         `S0 windows=${s0.windows.length}, fullPoolRows=${s0.fullPoolRows}, eligibleRows=${s0.eligibleRows}, finiteExecutionRows=${s0.finiteExecutionRows}, randomControls=${s0.randomControls}`,
         `S0 hand checks: TP=${s0.handChecks.take_profit}, SL=${s0.handChecks.stop_loss}, horizon=${s0.handChecks.end_of_data}`,
+        `S0 control trace: seed=${s0.controlSeed}, drawDigest=${s0.controlDrawDigest}`,
     ];
     if (!s0.ok) {
         lines.push(...s0.errors.map((error) => `S0 ERROR: ${error}`));

@@ -14,7 +14,12 @@ function identityHash(symbol: string, strategyKey: string, candidateFingerprint:
         .digest("hex");
 }
 
-function buildArchive(options?: { strategyCount?: number; badHash?: boolean }): string {
+function buildArchive(options?: {
+    strategyCount?: number;
+    badHash?: boolean;
+    missingOutcome?: boolean;
+    invalidFold?: boolean;
+}): string {
     const root = mkdtempSync(path.join(tmpdir(), "fresh-window-analyzer-"));
     const strategyCount = options?.strategyCount ?? 3;
     for (let index = 1; index <= 25; index += 1) {
@@ -46,13 +51,21 @@ function buildArchive(options?: { strategyCount?: number; badHash?: boolean }): 
                     "12": {
                         exitReason,
                         barsHeld: 2,
+                        grossReturnPercent: strategyIndex === 0 ? 1.2 : 0.2,
+                        slippagePercent: 0.1,
+                        commissionPercent: 0.1,
                         netReturnPercent: strategyIndex === 0 ? 1 : 0,
                         entryPrice: 100,
                         exitPrice: 102,
+                        entryTimestamp: `2026-08-22T00:${String(index).padStart(2, "0")}:00.000Z`,
+                        exitTimestamp: `2026-08-22T01:${String(index).padStart(2, "0")}:00.000Z`,
                     },
                 },
             };
             if (options?.badHash && index === 1 && strategyIndex === 0) row.identityHash = "bad";
+            if (options?.missingOutcome && index === 25 && strategyIndex === strategyCount - 1) {
+                row.forwardOutcomes = {};
+            }
             return row;
         });
         const searchEnd = 9000 + index;
@@ -65,17 +78,23 @@ function buildArchive(options?: { strategyCount?: number; badHash?: boolean }): 
             `Fold id: ${holdout}`,
             `OOS holdout: ${holdout} bars`,
             `Declared row count: ${rows.length}`,
-            `Fold end: ${50000 + index}`,
+            `Expected evaluated row count: ${rows.length}`,
+            `Forward outcome row count: ${rows.filter((row) => row.forwardOutcomes?.["12"] !== undefined).length}`,
+            `Fold end: ${9000 + index}`,
             `Search window end: ${searchEnd}`,
             `OOS start: ${oosStart}`,
             `OOS end: ${oosEnd}`,
-            "Judgment: VALID",
+            `Judgment: ${options?.invalidFold && index === 25 ? "INVALID" : "VALID"}`,
             separator,
             JSON.stringify(rows),
             "",
         ].join("\n");
         writeFileSync(path.join(root, `oos-fold-identities-${holdout}-bars.txt`), content, "utf8");
     }
+    const foldSchedule = Array.from({ length: 25 }, (_, index) => ({
+        holdoutBars: (index + 1) * 12,
+        foldEnd: 9001 + index,
+    }));
     const identity = {
         identityVersion: 1,
         researchProgram: "fresh-window",
@@ -87,7 +106,9 @@ function buildArchive(options?: { strategyCount?: number; badHash?: boolean }): 
             .digest("hex"),
         providerBySymbol: { PAIR: "binance" },
         engine: { effective: "typescript" },
-        foldEnd: 50001,
+        foldSchedule,
+        foldScheduleDigest: createHash("sha256").update(JSON.stringify(foldSchedule)).digest("hex"),
+        controlSeed: 42,
         dataSyncSnapshot: "sync",
         gitCommit: "commit",
     };
@@ -102,11 +123,23 @@ function buildArchive(options?: { strategyCount?: number; badHash?: boolean }): 
         separator,
         JSON.stringify({
             runId: "fixture-run",
+            interval: "4h",
             judgmentStatus: "VALID",
             freshWindowIdentity: identity,
-            backtestSettings: { slippageBps: 10 },
+            backtestSettings: {
+                executionModel: "next_open",
+                allowSameBarExit: false,
+                riskMode: "percentage",
+                stopLossEnabled: true,
+                stopLossPercent: 2,
+                takeProfitEnabled: true,
+                takeProfitPercent: 2,
+                slippageBps: 10,
+            },
             capitalSettings: { commission: 0.1 },
             finder: {
+                scope: "asset_opportunity",
+                mode: "random",
                 assetOpportunity: {
                     evalLastBars: 1000,
                     oosIgnoreLastBars: 26,
@@ -160,6 +193,29 @@ describe("fresh-window research analyzer", () => {
             expect(lines[2]).to.equal("S0: FAIL");
             expect(lines.some((line) => line.startsWith("Time-to-TP:"))).to.equal(false);
             expect(lines.some((line) => line.includes("tuple hash mismatch"))).to.equal(true);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects missing forward outcomes below the coverage threshold", () => {
+        const root = buildArchive({ missingOutcome: true });
+        try {
+            const lines = runFreshWindowAnalysis({ archiveDirectory: root });
+            expect(lines[2]).to.equal("S0: FAIL");
+            expect(lines.some((line) => line.includes("coverage below 95%"))).to.equal(true);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects an invalid per-fold judgment before any verdict", () => {
+        const root = buildArchive({ invalidFold: true });
+        try {
+            const lines = runFreshWindowAnalysis({ archiveDirectory: root });
+            expect(lines[2]).to.equal("S0: FAIL");
+            expect(lines.some((line) => line.includes("fold judgment is not VALID"))).to.equal(true);
+            expect(lines.some((line) => line.startsWith("Time-to-TP:"))).to.equal(false);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

@@ -481,6 +481,14 @@ function mergeAssetOpportunityChunkResults(
         assetDiagnostics,
         totals: mergedTotals,
         summary: `Asset Opportunity complete: ${results.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`,
+        ...(entries.some(({ iteration }) => iteration.expectedCandidateSummaryRows !== undefined)
+            ? {
+                expectedCandidateSummaryRows: entries.reduce(
+                    (total, { iteration }) => total + (iteration.expectedCandidateSummaryRows ?? 0),
+                    0,
+                ),
+            }
+            : {}),
         ...(foldMetadata ? { foldMetadata } : {}),
     };
 }
@@ -1655,6 +1663,7 @@ function buildFreshWindowIdentity(
         },
         foldSchedule: input.foldSchedule ?? null,
         foldScheduleDigest: sha256Json(input.foldSchedule ?? null),
+        controlSeed: 42,
         dataSyncSnapshot,
         gitCommit,
         evalLastBars,
@@ -1732,6 +1741,11 @@ export async function processFinderAssetOpportunityBatchRun(
         }));
     if (input.researchProgram === "fresh-window" && foldEntries.length !== 25) {
         throw new Error("Fresh-window batch requires exactly 25 fold schedule entries.");
+    }
+    if (input.researchProgram === "fresh-window"
+        && (!input.dataSyncSnapshot || input.dataSyncSnapshot === "unknown"
+            || !input.gitCommit || input.gitCommit === "unknown")) {
+        throw new Error("Fresh-window batch requires real dataSyncSnapshot and gitCommit provenance.");
     }
     const holdoutValues = foldEntries.map((entry) => entry.holdoutBars);
     const totalIterations = holdoutValues.length;
@@ -1830,8 +1844,8 @@ export async function processFinderAssetOpportunityBatchRun(
                 capitalSettings: input.capitalSettings,
                 ...(freshWindowIdentity ? { freshWindowIdentity: freshWindowIdentity.identity } : {}),
                 ...(freshWindowIdentity ? { judgmentStatus: freshWindowIdentity.judgmentStatus } : {}),
-                ...(input.foldEnd !== undefined ? {
-                    foldEnd: input.foldEnd,
+                ...(input.foldEnd !== undefined || input.researchProgram === "fresh-window" ? {
+                    ...(input.foldEnd !== undefined ? { foldEnd: input.foldEnd } : {}),
                     dataSyncSnapshot: input.dataSyncSnapshot ?? "unknown",
                     gitCommit: input.gitCommit ?? "unknown",
                 } : {}),
@@ -1843,6 +1857,11 @@ export async function processFinderAssetOpportunityBatchRun(
                 : {}),
         });
     } catch (error) {
+        if (input.researchProgram === "fresh-window") {
+            throw new Error(
+                `Fresh-window configuration archive failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
         debugLogger.warn("finder.asset_opportunity_batch.config_archive_failed", {
             runId: input.runId,
             error: error instanceof Error ? error.message : String(error),
@@ -1933,6 +1952,8 @@ export async function processFinderAssetOpportunityBatchRun(
                     batchRunId: input.runId,
                     holdoutBars,
                     rows: summaryRows,
+                    expectedRowCount: iteration.expectedCandidateSummaryRows,
+                    outcomeRowCount: summaryRows.filter((row) => row.forwardOutcomes?.["12"] !== undefined).length,
                     ...(iteration.foldMetadata ? { foldMetadata: iteration.foldMetadata } : {}),
                     ...(input.dataSyncSnapshot ? { dataSyncSnapshot: input.dataSyncSnapshot } : {}),
                     ...(input.gitCommit ? { gitCommit: input.gitCommit } : {}),
@@ -2553,6 +2574,10 @@ async function prepareAssetOpportunityRunPayload(
         const executionErrors = validateFreshWindowExecutionSettings(settings);
         if (executionErrors.length > 0) {
             throw new HttpStatusError(400, `Fresh-window execution contract rejected: ${executionErrors.join("; ")}`);
+        }
+        if (!process.env.FINDER_DATA_SYNC_SNAPSHOT || process.env.FINDER_DATA_SYNC_SNAPSHOT === "unknown"
+            || !process.env.GIT_COMMIT || process.env.GIT_COMMIT === "unknown") {
+            throw new HttpStatusError(400, "Fresh-window requires real FINDER_DATA_SYNC_SNAPSHOT and GIT_COMMIT provenance.");
         }
     }
     const useRustEnginePreference = body.useRustEnginePreference === true;

@@ -239,6 +239,10 @@ export interface AssetOpportunityFoldIdentityBlock {
     batchRunId: string;
     holdoutBars: number;
     declaredRowCount: number;
+    /** Independent evaluator count; unlike declaredRowCount this is not derived from rows. */
+    expectedRowCount?: number;
+    /** Number of rows carrying the primary forward outcome. */
+    outcomeRowCount?: number;
     rows: FinderAssetOpportunityCandidateSummaryRow[];
     foldMetadata?: FinderAssetOpportunityFoldMetadata;
     dataSyncSnapshot?: string;
@@ -263,6 +267,8 @@ export function buildAssetOpportunityFoldIdentityBlockText(
         `Fold id: ${block.holdoutBars}`,
         `OOS holdout: ${block.holdoutBars} bars`,
         `Declared row count: ${block.declaredRowCount}`,
+        `Expected evaluated row count: ${block.expectedRowCount ?? "unknown"}`,
+        `Forward outcome row count: ${block.outcomeRowCount ?? "unknown"}`,
         ...(block.foldMetadata ? [
             `Fold end: ${block.foldMetadata.foldEnd}`,
             `Search window end: ${block.foldMetadata.searchWindowEnd ?? "unknown"}`,
@@ -287,6 +293,8 @@ export interface AppendAssetOpportunityArchiveFoldIdentitiesArgs {
     batchRunId: string;
     holdoutBars: number;
     rows: FinderAssetOpportunityCandidateSummaryRow[];
+    expectedRowCount?: number;
+    outcomeRowCount?: number;
     foldMetadata?: FinderAssetOpportunityFoldMetadata;
     dataSyncSnapshot?: string;
     gitCommit?: string;
@@ -306,6 +314,8 @@ export async function appendAssetOpportunityArchiveFoldIdentities(
         batchRunId: args.batchRunId,
         holdoutBars: args.holdoutBars,
         declaredRowCount: args.rows.length,
+        ...(args.expectedRowCount !== undefined ? { expectedRowCount: args.expectedRowCount } : {}),
+        ...(args.outcomeRowCount !== undefined ? { outcomeRowCount: args.outcomeRowCount } : {}),
         rows: args.rows,
         ...(args.foldMetadata ? { foldMetadata: args.foldMetadata } : {}),
         ...(args.dataSyncSnapshot ? { dataSyncSnapshot: args.dataSyncSnapshot } : {}),

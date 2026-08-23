@@ -289,6 +289,7 @@ async function runAssetBatch(
             ...(args.researchProgram ? {
                 researchProgram: args.researchProgram,
                 ...(fresh ? { foldSchedule: freshFoldSchedule() } : {}),
+                ...(fresh ? { dataSyncSnapshot: "sync-2026-08-23", gitCommit: "abc123" } : {}),
             } : {}),
         },
         (event) => events.push(event),
