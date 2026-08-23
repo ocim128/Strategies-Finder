@@ -168,6 +168,7 @@ describe("Asset Opportunity execution-unit forward contract", () => {
     it("rejects next-close for the fresh-window execution contract", () => {
         const errors = validateFreshWindowExecutionSettings({
             executionModel: "next_close",
+            tradeDirection: "long",
             allowSameBarExit: false,
             riskMode: "percentage",
             stopLossEnabled: true,
@@ -176,6 +177,20 @@ describe("Asset Opportunity execution-unit forward contract", () => {
             takeProfitPercent: 2,
         });
         expect(errors.some((error) => error.includes("executionModel"))).to.equal(true);
+    });
+
+    it("rejects a short fresh-window judgment", () => {
+        const errors = validateFreshWindowExecutionSettings({
+            executionModel: "next_open",
+            tradeDirection: "short",
+            allowSameBarExit: false,
+            riskMode: "percentage",
+            stopLossEnabled: true,
+            stopLossPercent: 2,
+            takeProfitEnabled: true,
+            takeProfitPercent: 2,
+        });
+        expect(errors.some((error) => error.includes("tradeDirection"))).to.equal(true);
     });
 
     it("uses a relative threshold at a TP/SL boundary", () => {

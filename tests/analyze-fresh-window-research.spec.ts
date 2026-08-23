@@ -144,6 +144,7 @@ function buildArchive(options?: {
             freshWindowIdentity: identity,
             backtestSettings: {
                 executionModel: "next_open",
+                tradeDirection: "long",
                 allowSameBarExit: false,
                 riskMode: "percentage",
                 stopLossEnabled: true,

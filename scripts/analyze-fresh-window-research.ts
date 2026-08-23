@@ -486,6 +486,7 @@ function checkS0(
     if (config?.interval !== "4h") errors.push(`config interval is ${String(config?.interval)}`);
     const frozenSettings: Record<string, unknown> = {
         executionModel: "next_open",
+        tradeDirection: "long",
         allowSameBarExit: false,
         riskMode: "percentage",
         stopLossEnabled: true,

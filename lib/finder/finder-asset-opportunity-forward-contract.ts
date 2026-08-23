@@ -118,6 +118,9 @@ export function validateFreshWindowExecutionSettings(settings: BacktestSettings)
     const reasons: string[] = [];
     const stopLossPercent = Number(settings.stopLossPercent);
     const takeProfitPercent = Number(settings.takeProfitPercent);
+    if (settings.tradeDirection !== "long") {
+        reasons.push(`tradeDirection must be long (got ${String(settings.tradeDirection)})`);
+    }
     if (settings.executionModel !== "next_open") {
         reasons.push(`executionModel must be next_open (got ${String(settings.executionModel)})`);
     }
