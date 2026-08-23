@@ -378,6 +378,17 @@ Nine audit findings landed across the Batch and Finder server plugins. The contr
   - `..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts`
   - Manual smoke: start `NODE_OPTIONS=--max-old-space-size=16384 npm run dev`, run one and multiple strategies over 50 symbols, then 400 symbols. Confirm progress scaling, server-side OOS filtering, Stop (scoped by run id), diagnostics merging, reload reattach during IS and OOS, and Apply.
 
+### Fresh-Window Research Mode
+- Docs: `docs/fresh-window-research.md`; plan: `docs/finder-fresh-window-research.md`; semantics: the research agenda in `archive/asset opportunity/Decision Rule Research/research-agenda-2026-08-23.md`
+- Legacy isolation is absolute: absent `researchProgram` in the request, ALL behavior (archive namespace, engine selection, loaders) must be byte-identical to before. Fresh runs write only to `archive/fresh-window`.
+- Pinned execution path only (long, next_open, allowSameBarExit=false, percentage TP/SL). Reject other models at BOTH request validation and S0. The forward contract must stay engine-parity on this path (end-of-data uses the raw close, no exit slippage) — never modify the engine for parity.
+- Full-pool scalar capture happens BEFORE the IS-search ranker discards (`server-asset-is-search.ts`); the seed-42 control draws from that pool and the producer-archived draw trace must keep matching S0 recomputation.
+- The dataset cache stores RAW data (`symbol|interval` key); per-fold historical/forward slicing happens per iteration. Do not cache sliced views.
+- Fresh-run identity/config persistence failures are FATAL (legacy config append stays best-effort). S0 enforces: full frozen-settings validation, fold bounds ordering, expected row counts, control-trace digest, batchRole chain (collection -> judged -> replication), completion markers, outcome coverage. A failing S0 prints NO verdicts.
+- Bounded retention: per-task scalar rows are capped (overflow is fatal); archives are scalar-only with completion markers.
+- Import hygiene as everywhere in the server plugin: new modules must stay Node/leaf-only.
+- Validation habit: the eight suites listed in `docs/fresh-window-research.md` plus `npm run typecheck`.
+
 ### Modify Exit Strategy Override
 - Keep it gated on `disableSignalExits`; when normal signal exits are enabled, the override is inert
 - Preserve `Signal.exitOnly` through signal preparation and every TS engine signal loop; exit-only signals close opposite positions but never open new positions
