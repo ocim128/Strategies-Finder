@@ -40,6 +40,7 @@ import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-sea
 import { ensureConfirmationStrategiesLoaded } from "../lib/confirmation-signal-filter";
 import { getLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from "../lib/strategies/built-in-catalog";
 import { ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER } from "../lib/finder/server/finder-asset-opportunity-archive";
+import { buildFinderAssetOpportunityCandidateFingerprint } from "../lib/finder/server/finder-asset-opportunity-research";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions, FinderUniverseCandidate } from "../lib/types/finder";
 import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
@@ -1509,6 +1510,10 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         })();
         return run.then(() => ({ events, appended, contents }));
     }
+
+    it("gives zero-parameter candidates a non-empty identity fingerprint", () => {
+        expect(buildFinderAssetOpportunityCandidateFingerprint({})).to.have.length.greaterThan(0);
+    });
 
     it("builds ascending holdout values for a validated range", () => {
         expect(buildAssetOpportunityBatchHoldoutValues(2, 4)).to.deep.equal([2, 3, 4]);

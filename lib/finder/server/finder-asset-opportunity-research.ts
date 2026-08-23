@@ -17,7 +17,7 @@ export const FINDER_ASSET_OPPORTUNITY_RESEARCH_CHUNK_SIZE = 256;
 export function buildFinderAssetOpportunityCandidateFingerprint(
     params: Record<string, number>,
 ): string {
-    return serializeParams(params);
+    return serializeParams(params) || "default";
 }
 
 export function buildFinderAssetOpportunityCandidateIdentityHash(args: {
