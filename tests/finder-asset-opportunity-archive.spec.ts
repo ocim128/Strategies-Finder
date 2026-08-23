@@ -14,6 +14,7 @@ import {
     buildAssetOpportunityPairSummaryFilename,
     buildAssetOpportunityFoldIdentityFilename,
     buildAssetOpportunityFoldIdentityBlockText,
+    ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER,
     isAssetOpportunityResearchProgram,
     resolveAssetOpportunityArchiveDir,
 } from "../lib/finder/server/finder-asset-opportunity-archive";
@@ -82,6 +83,7 @@ describe("Asset Opportunity archive writer", () => {
         expect(calls[0]!.dir).to.equal(path.join("/virtual/root", "archive", "fresh-window"));
         expect(calls[0]!.filename).to.equal("oos-fold-identities-12-bars.txt");
         expect(calls[0]!.content).to.contain("hash-a");
+        expect(calls[0]!.content).to.contain(ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER);
     });
 
     it("writes one delimited block containing timestamp, run id, holdout, and compact JSON", async () => {
@@ -182,7 +184,8 @@ describe("Asset Opportunity archive writer", () => {
         });
         expect(text.startsWith("=".repeat(80))).to.equal(true);
         const jsonStart = text.indexOf("[");
-        expect(JSON.parse(text.slice(jsonStart))).to.deep.equal([{ rank: 1 }]);
+        const markerStart = text.indexOf(ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER);
+        expect(JSON.parse(text.slice(jsonStart, markerStart).trim())).to.deep.equal([{ rank: 1 }]);
     });
 
     it("serializes the optional all-candidate baseline before the top results", () => {
@@ -228,7 +231,9 @@ describe("Asset Opportunity archive writer", () => {
         });
         expect(text).to.contain("Pair summaries: JSON");
         expect(text).to.contain("OOS holdout: 12 bars");
-        expect(JSON.parse(text.slice(text.lastIndexOf("\n[")))).to.deep.equal(pairSummaries);
+        const jsonStart = text.lastIndexOf("\n[") + 1;
+        const markerStart = text.indexOf(ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER);
+        expect(JSON.parse(text.slice(jsonStart, markerStart).trim())).to.deep.equal(pairSummaries);
 
         const calls: Array<{ dir: string; filename: string; content: string }> = [];
         const result = await appendAssetOpportunityArchivePairSummary({
@@ -272,6 +277,7 @@ describe("Asset Opportunity archive writer", () => {
             expect(content).to.contain("Batch run id: batch-1");
             expect(content).to.contain("Batch run id: batch-2");
             expect(content).to.contain("Run configuration: JSON");
+            expect(content.match(new RegExp(ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER, "g")) ?? []).to.have.length(2);
             // Each block's JSON body round-trips the full config; two blocks,
             // each delimited by an opening and closing separator line.
             const marker = `Run configuration: JSON\n${"=".repeat(80)}`;
@@ -283,6 +289,7 @@ describe("Asset Opportunity archive writer", () => {
                 let body = content.slice(start + marker.length);
                 const nextSeparator = body.indexOf("=".repeat(80));
                 if (nextSeparator !== -1) body = body.slice(0, nextSeparator);
+                body = body.slice(0, body.indexOf(ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER));
                 bodies.push(JSON.parse(body.trim()));
                 cursor = start + marker.length;
             }

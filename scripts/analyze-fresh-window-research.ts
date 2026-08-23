@@ -21,6 +21,7 @@ const DEFAULT_HORIZON = 12;
 const DEFAULT_STRIDE = 12;
 const DEFAULT_SEED = 42;
 const EXPECTED_WINDOWS = 25;
+const COMPLETE_MARKER = "Record complete: true";
 
 export type FreshWindowExitReason = "take_profit" | "stop_loss" | "end_of_data";
 
@@ -142,7 +143,9 @@ function parseBlocks(text: string): string[] {
     // config.txt, so splitting only on the delimiter is safer than a greedy
     // JSON-line regex.
     for (let index = 1; index + 1 < sections.length; index += 2) {
-        blocks.push(`${sections[index]}${SEPARATOR}${sections[index + 1]}`);
+        const block = `${sections[index]}${SEPARATOR}${sections[index + 1]}`;
+        const lastLine = block.trimEnd().split(/\r?\n/).at(-1);
+        if (lastLine === COMPLETE_MARKER) blocks.push(block);
     }
     return blocks;
 }

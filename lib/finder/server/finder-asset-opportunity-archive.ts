@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from "node:fs/promises";
+import { mkdir, open } from "node:fs/promises";
 import path from "node:path";
 import { formatCapturedConfiguration } from "../finder-config-capture";
 import type { FinderAssetOpportunityResortMetric } from "../finder-asset-opportunity-metrics";
@@ -29,6 +29,7 @@ import type {
  */
 
 export const ASSET_OPPORTUNITY_ARCHIVE_DIR_NAME = "asset opportunity";
+export const ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER = "Record complete: true";
 
 export const ASSET_OPPORTUNITY_RESEARCH_PROGRAMS = ["fresh-window"] as const;
 export type AssetOpportunityResearchProgram = typeof ASSET_OPPORTUNITY_RESEARCH_PROGRAMS[number];
@@ -116,6 +117,7 @@ export function buildAssetOpportunityArchiveBlockText(block: AssetOpportunityArc
         ...(block.baseline ? [`Archive baseline: ${JSON.stringify(block.baseline)}`] : []),
         separator,
         JSON.stringify(block.topResults),
+        ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER,
         "",
     ].join("\n");
 }
@@ -129,7 +131,13 @@ export type AssetOpportunityArchiveAppend = (
 
 const defaultAppend: AssetOpportunityArchiveAppend = async (dir, filename, content) => {
     await mkdir(dir, { recursive: true });
-    await appendFile(path.join(dir, filename), content, "utf8");
+    const handle = await open(path.join(dir, filename), "a");
+    try {
+        await handle.writeFile(content, "utf8");
+        await handle.sync();
+    } finally {
+        await handle.close();
+    }
 };
 
 export interface AppendAssetOpportunityArchiveBlockArgs {
@@ -217,6 +225,7 @@ export function buildAssetOpportunityPairSummaryBlockText(
         ...(block.judgmentInvalidReasons && block.judgmentInvalidReasons.length > 0
             ? [`Judgment invalid reasons: ${JSON.stringify(block.judgmentInvalidReasons)}`]
             : []),
+        ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER,
         "",
     ].join("\n");
 }
@@ -283,6 +292,7 @@ export function buildAssetOpportunityFoldIdentityBlockText(
             : []),
         separator,
         JSON.stringify(block.rows),
+        ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER,
         "",
     ].join("\n");
 }
@@ -394,6 +404,7 @@ export async function appendAssetOpportunityArchiveRunConfig(
         // Primitive arrays (symbols, strategy keys, horizons) inline on one
         // line — a 500-symbol universe otherwise costs ~1,000 lines per block.
         formatCapturedConfiguration(args.config),
+        ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER,
         "",
     ].join("\n");
     const append = args.append ?? defaultAppend;

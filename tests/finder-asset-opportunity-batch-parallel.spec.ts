@@ -30,6 +30,8 @@ import { strategyRegistry } from "../strategyRegistry";
 import {
     processFinderAssetOpportunityBatchRun,
     __testInternals,
+    appendFreshWindowSummaryRowsWithinCap,
+    FRESH_WINDOW_SUMMARY_ROWS_PER_TASK_CAP,
 } from "../lib/finder/server/finder-vite-plugin";
 import {
     resolveAssetOpportunityBatchWorkerCount,
@@ -312,6 +314,14 @@ function extractIterations(events: FinderAssetOpportunityBatchStreamEvent[]): It
 }
 
 describe("finder Asset Opportunity batch parallel execution", () => {
+    it("bounds fresh-window summary retention per task and rejects overflow", () => {
+        const target: any[] = [];
+        const row = {} as any;
+        expect(appendFreshWindowSummaryRowsWithinCap(target, Array.from({ length: FRESH_WINDOW_SUMMARY_ROWS_PER_TASK_CAP }, () => row))).to.equal(true);
+        expect(target).to.have.length(FRESH_WINDOW_SUMMARY_ROWS_PER_TASK_CAP);
+        expect(appendFreshWindowSummaryRowsWithinCap(target, [row])).to.equal(false);
+        expect(target).to.have.length(FRESH_WINDOW_SUMMARY_ROWS_PER_TASK_CAP);
+    });
     before(() => {
         strategyRegistry.register(STRATEGY_KEY, batchStrategy);
     });

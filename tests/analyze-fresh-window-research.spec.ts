@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { runFreshWindowAnalysis } from "../scripts/analyze-fresh-window-research";
 
 const separator = "=".repeat(80);
+const completeMarker = "Record complete: true";
 
 function identityHash(symbol: string, strategyKey: string, candidateFingerprint: string): string {
     return createHash("sha256")
@@ -22,6 +23,7 @@ function buildArchive(options?: {
     recurring?: boolean;
     medianWinnerPositive?: boolean;
     extraIneligibleStrategies?: number;
+    partialFold?: boolean;
 }): string {
     const root = mkdtempSync(path.join(tmpdir(), "fresh-window-analyzer-"));
     const strategyCount = options?.strategyCount ?? 3;
@@ -100,6 +102,7 @@ function buildArchive(options?: {
             `Judgment: ${options?.invalidFold && index === 25 ? "INVALID" : "VALID"}`,
             separator,
             JSON.stringify(rows),
+            ...(options?.partialFold && index === 25 ? [] : [completeMarker]),
             "",
         ].join("\n");
         writeFileSync(path.join(root, `oos-fold-identities-${holdout}-bars.txt`), content, "utf8");
@@ -160,6 +163,7 @@ function buildArchive(options?: {
                 },
             },
         }),
+        completeMarker,
         "",
     ].join("\n");
     writeFileSync(path.join(root, "config.txt"), config, "utf8");
@@ -260,6 +264,18 @@ describe("fresh-window research analyzer", () => {
             const lines = runFreshWindowAnalysis({ archiveDirectory: root });
             expect(lines[2]).to.equal("S0: FAIL");
             expect(lines.some((line) => line.includes("fold judgment is not VALID"))).to.equal(true);
+            expect(lines.some((line) => line.startsWith("Time-to-TP:"))).to.equal(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects a trailing partial identity block deterministically", () => {
+        const root = buildArchive({ partialFold: true });
+        try {
+            const lines = runFreshWindowAnalysis({ archiveDirectory: root });
+            expect(lines[2]).to.equal("S0: FAIL");
+            expect(lines.some((line) => line.includes("expected 25 stride-12 windows, found 24"))).to.equal(true);
             expect(lines.some((line) => line.startsWith("Time-to-TP:"))).to.equal(false);
         } finally {
             rmSync(root, { recursive: true, force: true });

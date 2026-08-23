@@ -214,6 +214,22 @@ const ASSET_OPPORTUNITY_BATCH_MIN_CHUNKED_ASSETS = 32;
 /** Chunked workers retain only their partition; the resolver still clamps to cores/memory. */
 const ASSET_OPPORTUNITY_BATCH_CHUNK_WORKER_TARGET = ASSET_OPPORTUNITY_BATCH_WORKER_COUNT_MAX;
 
+/**
+ * Fresh-window identity rows are accumulated only until their ordered fold
+ * can be archived. Keep that transient per-task retention bounded; overflow
+ * is fatal so a partial identity archive can never be judged as complete.
+ */
+export const FRESH_WINDOW_SUMMARY_ROWS_PER_TASK_CAP = 100_000;
+
+export function appendFreshWindowSummaryRowsWithinCap(
+    target: FinderAssetOpportunityCandidateSummaryRow[],
+    rows: readonly FinderAssetOpportunityCandidateSummaryRow[],
+): boolean {
+    if (target.length + rows.length > FRESH_WINDOW_SUMMARY_ROWS_PER_TASK_CAP) return false;
+    target.push(...rows);
+    return true;
+}
+
 function resolveAssetOpportunityChunkWorkerCount(
     totalIterations: number,
     totalAssets: number,
@@ -1876,6 +1892,7 @@ export async function processFinderAssetOpportunityBatchRun(
         holdoutBars: number | null;
     } = { results: [], assetDiagnostics: null, totals: null, holdoutBars: null };
     const summaryRowsByTaskIndex = new Map<number, FinderAssetOpportunityCandidateSummaryRow[]>();
+    const summaryRowsOverflowByTaskIndex = new Set<number>();
 
     // Clone options for the current N; keep the same random seed so the only
     // difference between iterations is the holdout boundary.
@@ -1928,6 +1945,7 @@ export async function processFinderAssetOpportunityBatchRun(
         holdoutBars: number,
         iteration: AssetOpportunityIterationResult,
         summaryRows: FinderAssetOpportunityCandidateSummaryRow[] = [],
+        summaryRowsOverflow = false,
     ): Promise<void> => {
         snapshot.batch = {
             ...snapshot.batch!,
@@ -1945,6 +1963,11 @@ export async function processFinderAssetOpportunityBatchRun(
             ? buildFinderAssetOpportunityPairContext(summaryRows, selectedStrategies.length)
             : undefined;
         try {
+            if (summaryRowsOverflow) {
+                throw new Error(
+                    `Fresh-window summary rows exceeded the per-task cap of ${FRESH_WINDOW_SUMMARY_ROWS_PER_TASK_CAP}.`,
+                );
+            }
             if (input.researchProgram === "fresh-window") {
                 await appendAssetOpportunityArchiveFoldIdentities({
                     root: archiveRoot,
@@ -2199,7 +2222,8 @@ export async function processFinderAssetOpportunityBatchRun(
                     if (assetChunkCount === 1) {
                         const summaryRows = summaryRowsByTaskIndex.get(task.taskIndex) ?? [];
                         summaryRowsByTaskIndex.delete(task.taskIndex);
-                        await completeOrderedIteration(iterationIndex, task.holdoutBars, iteration, summaryRows);
+                        const summaryRowsOverflow = summaryRowsOverflowByTaskIndex.delete(task.taskIndex);
+                        await completeOrderedIteration(iterationIndex, task.holdoutBars, iteration, summaryRows, summaryRowsOverflow);
                         return;
                     }
                     const entries = chunkResultsByIteration.get(iterationIndex) ?? [];
@@ -2207,11 +2231,14 @@ export async function processFinderAssetOpportunityBatchRun(
                     chunkResultsByIteration.set(iterationIndex, entries);
                     if (entries.length < assetChunkCount) return;
                     chunkResultsByIteration.delete(iterationIndex);
+                    let summaryRowsOverflow = false;
                     const summaryRows = [...entries]
                         .sort((left, right) => (left.task.assetChunkIndex ?? 0) - (right.task.assetChunkIndex ?? 0))
                         .flatMap(({ task: chunkTask }) => {
                             const rows = summaryRowsByTaskIndex.get(chunkTask.taskIndex) ?? [];
                             summaryRowsByTaskIndex.delete(chunkTask.taskIndex);
+                            summaryRowsOverflow = summaryRowsOverflow
+                                || summaryRowsOverflowByTaskIndex.delete(chunkTask.taskIndex);
                             return rows;
                         });
                     await completeOrderedIteration(
@@ -2219,6 +2246,7 @@ export async function processFinderAssetOpportunityBatchRun(
                         task.holdoutBars,
                         mergeAssetOpportunityChunkResults(entries, selectedStrategies),
                         summaryRows,
+                        summaryRowsOverflow,
                     );
                 },
                 onProgress: (task, progress, aggregateState) => {
@@ -2262,7 +2290,9 @@ export async function processFinderAssetOpportunityBatchRun(
                 onCandidateSummaryChunk: input.researchProgram === "fresh-window"
                     ? (task, rows) => {
                         const existing = summaryRowsByTaskIndex.get(task.taskIndex) ?? [];
-                        existing.push(...rows);
+                        if (!appendFreshWindowSummaryRowsWithinCap(existing, rows)) {
+                            summaryRowsOverflowByTaskIndex.add(task.taskIndex);
+                        }
                         summaryRowsByTaskIndex.set(task.taskIndex, existing);
                     }
                     : undefined,
@@ -2321,6 +2351,7 @@ export async function processFinderAssetOpportunityBatchRun(
 
             let iteration: AssetOpportunityIterationResult;
             const summaryRows: FinderAssetOpportunityCandidateSummaryRow[] = [];
+            let summaryRowsOverflow = false;
             try {
                 iteration = await runAssetOpportunityIteration(
                     {
@@ -2370,7 +2401,9 @@ export async function processFinderAssetOpportunityBatchRun(
                             snapshot.statusText = status;
                         },
                         onCandidateSummaryChunk: input.researchProgram === "fresh-window"
-                            ? (rows) => { summaryRows.push(...rows); }
+                            ? (rows) => {
+                                if (!appendFreshWindowSummaryRowsWithinCap(summaryRows, rows)) summaryRowsOverflow = true;
+                            }
                             : undefined,
                     },
                     isCancelled,
@@ -2387,7 +2420,7 @@ export async function processFinderAssetOpportunityBatchRun(
             }
 
             try {
-                await completeOrderedIteration(iterationIndex, holdoutBars, iteration, summaryRows);
+                await completeOrderedIteration(iterationIndex, holdoutBars, iteration, summaryRows, summaryRowsOverflow);
             } catch (error) {
                 if (error instanceof BatchArchiveFatalSentinel) {
                     return;

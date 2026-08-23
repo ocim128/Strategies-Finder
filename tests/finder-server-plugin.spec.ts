@@ -39,6 +39,7 @@ import {
 import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
 import { ensureConfirmationStrategiesLoaded } from "../lib/confirmation-signal-filter";
 import { getLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from "../lib/strategies/built-in-catalog";
+import { ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER } from "../lib/finder/server/finder-asset-opportunity-archive";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions, FinderUniverseCandidate } from "../lib/types/finder";
 import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
@@ -1516,8 +1517,9 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         const pairSummaryBlocks = contents.filter((content) => content.includes("Pair summaries: JSON\n"));
         expect(pairSummaryBlocks).to.have.length(3);
         for (const content of pairSummaryBlocks) {
-            const jsonStart = content.lastIndexOf("\n[");
-            expect(JSON.parse(content.slice(jsonStart))).to.be.an("array");
+            const jsonStart = content.lastIndexOf("\n[") + 1;
+            const markerStart = content.indexOf(ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER);
+            expect(JSON.parse(content.slice(jsonStart, markerStart).trim())).to.be.an("array");
         }
         // The archived run config carries the batch identity plus the trade
         // filter normalized so an inactive filter cannot read as enforced.
