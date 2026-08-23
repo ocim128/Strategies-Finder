@@ -280,6 +280,8 @@ type FinderPersistedUiState = {
 	assetOpportunityOosBatchEnabled: boolean;
 	assetOpportunityOosBatchStartBars: number;
 	assetOpportunityOosBatchEndBars: number;
+	/** Route Asset Opportunity batch artifacts to the fresh-window namespace. */
+	assetOpportunityFreshWindowResearchEnabled: boolean;
 };
 
 const FINDER_UI_STORAGE = {
@@ -362,6 +364,7 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	assetOpportunityOosBatchEnabled: false,
 	assetOpportunityOosBatchStartBars: 1,
 	assetOpportunityOosBatchEndBars: 5,
+	assetOpportunityFreshWindowResearchEnabled: false,
 };
 
 const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
@@ -571,6 +574,7 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		assetOpportunityOosBatchEndBars: batchRange.error === null
 			? batchRange.end
 			: DEFAULT_FINDER_UI_STATE.assetOpportunityOosBatchEndBars,
+		assetOpportunityFreshWindowResearchEnabled: source.assetOpportunityFreshWindowResearchEnabled === true,
 	};
 }
 
@@ -972,6 +976,7 @@ export class FinderManager {
 		dom.finderAssetOosHorizons.value = this.uiState.assetOpportunityOosHorizons;
 		dom.finderAssetEvalWindowBars.value = String(this.uiState.assetOpportunityEvalWindowBars);
 		dom.finderAssetOosBatchToggle.checked = this.uiState.assetOpportunityOosBatchEnabled;
+		dom.finderAssetFreshWindowResearchToggle.checked = this.uiState.assetOpportunityFreshWindowResearchEnabled;
 		dom.finderAssetOosBatchStart.value = String(this.uiState.assetOpportunityOosBatchStartBars);
 		dom.finderAssetOosBatchEnd.value = String(this.uiState.assetOpportunityOosBatchEndBars);
 		this.syncAssetOosBatchControls();
@@ -1448,6 +1453,7 @@ export class FinderManager {
 			dom.finderAssetOosHorizons,
 			dom.finderAssetEvalWindowBars,
 			dom.finderAssetOosBatchToggle,
+			dom.finderAssetFreshWindowResearchToggle,
 			dom.finderAssetOosBatchStart,
 			dom.finderAssetOosBatchEnd,
 		].forEach((element) => {
@@ -1517,6 +1523,7 @@ export class FinderManager {
 			),
 		);
 		this.uiState.assetOpportunityOosBatchEnabled = dom.finderAssetOosBatchToggle.checked;
+		this.uiState.assetOpportunityFreshWindowResearchEnabled = dom.finderAssetFreshWindowResearchToggle.checked;
 		const batchRange = normalizeFinderAssetOosBatchHoldoutRange(
 			dom.finderAssetOosBatchStart.value,
 			dom.finderAssetOosBatchEnd.value,
@@ -2845,6 +2852,9 @@ export class FinderManager {
 				useRustEnginePreference: shouldUseRustEngine(),
 				providerBySymbol,
 				archiveSort,
+				...(this.uiState.assetOpportunityFreshWindowResearchEnabled
+					? { researchProgram: "fresh-window" as const }
+					: {}),
 				batch: {
 					startHoldoutBars: range.start,
 					endHoldoutBars: range.end,

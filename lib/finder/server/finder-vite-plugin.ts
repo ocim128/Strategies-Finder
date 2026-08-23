@@ -126,6 +126,8 @@ import {
     appendAssetOpportunityArchiveBlock,
     appendAssetOpportunityArchivePairSummary,
     appendAssetOpportunityArchiveRunConfig,
+    isAssetOpportunityResearchProgram,
+    type AssetOpportunityResearchProgram,
     type AssetOpportunityArchiveAppend,
 } from "./finder-asset-opportunity-archive";
 import { captureTradeFilter } from "../finder-config-capture";
@@ -509,6 +511,8 @@ export type FinderRunSnapshot = {
     interval: string;
     /** Job kind discriminator; defaults to symbol_universe for legacy state. */
     jobKind?: "symbol_universe" | "asset_opportunity" | "asset_opportunity_batch";
+    /** Research archive namespace, present only for an explicit program. */
+    researchProgram?: AssetOpportunityResearchProgram;
     /** Ordered selected entry strategy keys for the whole job. */
     strategyKeys: string[];
     /** 0-based index of the strategy currently being evaluated. */
@@ -1172,6 +1176,8 @@ interface FinderAssetOpportunityRequestBody {
     providerBySymbol?: unknown;
     /** Legacy field accepted for compatibility; batch archives always use All Sorts. */
     archiveSort?: unknown;
+    /** Optional allowlisted research archive program. */
+    researchProgram?: unknown;
 }
 
 /**
@@ -1580,6 +1586,7 @@ export async function processFinderAssetOpportunityBatchRun(
          * (parallel path only; functions cannot cross the worker boundary).
          */
         providerBySymbol?: Record<string, string>;
+        researchProgram?: AssetOpportunityResearchProgram;
     },
     writer: (event: FinderAssetOpportunityBatchStreamEvent) => void,
     owner: number,
@@ -1601,6 +1608,7 @@ export async function processFinderAssetOpportunityBatchRun(
         finishedAt: null,
         interval: input.interval,
         jobKind: "asset_opportunity_batch",
+        ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
         strategyKeys: selectedStrategies.map((strategy) => strategy.key),
         strategyIndex: 0,
         strategyCount: selectedStrategies.length,
@@ -1664,12 +1672,14 @@ export async function processFinderAssetOpportunityBatchRun(
     try {
         await appendAssetOpportunityArchiveRunConfig({
             root: archiveRoot,
+            ...(input.researchProgram ? { program: input.researchProgram } : {}),
             batchRunId: input.runId,
             config: {
                 runId: input.runId,
                 interval: input.interval,
                 strategyKeys: selectedStrategies.map((strategy) => strategy.key),
                 batch: { startHoldoutBars: batch.startHoldoutBars, endHoldoutBars: batch.endHoldoutBars },
+                ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
                 finder: {
                     ...input.options,
                     ...captureTradeFilter(input.options),
@@ -1761,6 +1771,7 @@ export async function processFinderAssetOpportunityBatchRun(
             const pairSummaries = buildAssetOpportunityPairSummaries(iteration.results);
             await appendAssetOpportunityArchivePairSummary({
                 root: archiveRoot,
+                ...(input.researchProgram ? { program: input.researchProgram } : {}),
                 batchRunId: input.runId,
                 holdoutBars,
                 pairSummaries,
@@ -1776,6 +1787,7 @@ export async function processFinderAssetOpportunityBatchRun(
                     }));
                 const appended = await appendAssetOpportunityArchiveBlock({
                     root: archiveRoot,
+                    ...(input.researchProgram ? { program: input.researchProgram } : {}),
                     batchRunId: input.runId,
                     holdoutBars,
                     sortMetric,
@@ -2221,7 +2233,10 @@ async function prepareAssetOpportunityRunPayload(
     batchRange?: { start: number; end: number };
     /** Present only for the batch route: normalized archive sort selection. */
     archiveSort?: FinderAssetOpportunityArchiveSort | null;
+    /** Present when the request selects the fresh-window archive namespace. */
+    researchProgram?: AssetOpportunityResearchProgram;
 }> {
+    const researchProgram = parseAssetOpportunityResearchProgram(body.researchProgram);
     if (runOwner !== RUN_OWNER_NONE) {
         throw new HttpStatusError(409, "A Finder run is already running. Use Stop first.");
     }
@@ -2324,8 +2339,17 @@ async function prepareAssetOpportunityRunPayload(
         providerBySymbol,
         candidatePoolSize,
         minFreshSupport,
+        ...(researchProgram ? { researchProgram } : {}),
         ...(batch ? { batchRange, archiveSort } : {}),
     };
+}
+
+function parseAssetOpportunityResearchProgram(raw: unknown): AssetOpportunityResearchProgram | undefined {
+    if (raw === undefined || raw === null || raw === "") return undefined;
+    if (!isAssetOpportunityResearchProgram(raw)) {
+        throw new HttpStatusError(400, "Invalid Asset Opportunity research program.");
+    }
+    return raw;
 }
 
 /**
@@ -2573,6 +2597,7 @@ async function handleAssetOpportunityBatchRunRequest(
                     [...prepared.providerBySymbol.entries()]
                         .map(([symbol, provider]) => [symbol.trim().toUpperCase(), provider]),
                 ),
+                ...(prepared.researchProgram ? { researchProgram: prepared.researchProgram } : {}),
             },
             safeWrite,
             owner,
@@ -2805,6 +2830,7 @@ function buildStatusSnapshot(): FinderRunStatusSnapshot {
         phase: state.phase,
         interval: state.interval,
         jobKind,
+        ...(state.researchProgram ? { researchProgram: state.researchProgram } : {}),
         strategyKeys: state.strategyKeys,
         strategyIndex: state.strategyIndex,
         strategyCount: state.strategyCount,
@@ -3191,6 +3217,7 @@ export const __testInternals = {
     assertUniverseOptions,
     parseStrategyKeys,
     parseRunId,
+    parseAssetOpportunityResearchProgram,
     consumePendingStopForRun,
     writeStreamEventBestEffort,
     withCanonicalUniverseSymbols,

@@ -54,6 +54,7 @@ const {
     assertUniverseOptions,
     parseStrategyKeys,
     parseRunId,
+    parseAssetOpportunityResearchProgram,
     consumePendingStopForRun,
     writeStreamEventBestEffort,
     withCanonicalUniverseSymbols,
@@ -1889,6 +1890,25 @@ describe("assertUniverseOptions nested validation", () => {
             scope: "symbol_universe",
             universe: { symbols: ["BTCUSDT", "ETHUSDT"] },
         } as FinderOptions)).to.not.throw();
+    });
+});
+
+describe("Asset Opportunity research program validation", () => {
+    it("keeps the absent program on the legacy path", () => {
+        expect(parseAssetOpportunityResearchProgram(undefined)).to.equal(undefined);
+        expect(parseAssetOpportunityResearchProgram("")).to.equal(undefined);
+        expect(parseAssetOpportunityResearchProgram("fresh-window")).to.equal("fresh-window");
+    });
+
+    it("rejects invalid and traversal-shaped program names with 400", () => {
+        for (const value of ["other", "fresh-window/../escape", "../escape"]) {
+            expect(() => parseAssetOpportunityResearchProgram(value)).to.throw(HttpStatusError);
+            try {
+                parseAssetOpportunityResearchProgram(value);
+            } catch (error) {
+                expect((error as HttpStatusError).status).to.equal(400);
+            }
+        }
     });
 });
 

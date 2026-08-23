@@ -24,9 +24,22 @@ import type {
 
 export const ASSET_OPPORTUNITY_ARCHIVE_DIR_NAME = "asset opportunity";
 
+export const ASSET_OPPORTUNITY_RESEARCH_PROGRAMS = ["fresh-window"] as const;
+export type AssetOpportunityResearchProgram = typeof ASSET_OPPORTUNITY_RESEARCH_PROGRAMS[number];
+
+export function isAssetOpportunityResearchProgram(value: unknown): value is AssetOpportunityResearchProgram {
+    return typeof value === "string"
+        && (ASSET_OPPORTUNITY_RESEARCH_PROGRAMS as readonly string[]).includes(value);
+}
+
 /** Resolve the archive directory from a Vite-configured project root. */
-export function resolveAssetOpportunityArchiveDir(root: string): string {
-    return path.join(root, "archive", ASSET_OPPORTUNITY_ARCHIVE_DIR_NAME);
+export function resolveAssetOpportunityArchiveDir(
+    root: string,
+    program?: AssetOpportunityResearchProgram,
+): string {
+    return program === undefined
+        ? path.join(root, "archive", ASSET_OPPORTUNITY_ARCHIVE_DIR_NAME)
+        : path.join(root, "archive", program);
 }
 
 /**
@@ -92,6 +105,7 @@ const defaultAppend: AssetOpportunityArchiveAppend = async (dir, filename, conte
 export interface AppendAssetOpportunityArchiveBlockArgs {
     /** Vite-configured project root; archive dir is always `<root>/archive/asset opportunity`. */
     root: string;
+    program?: AssetOpportunityResearchProgram;
     batchRunId: string;
     holdoutBars: number;
     /** Re-sort metric used for this payload; null means the run default. */
@@ -115,7 +129,7 @@ export async function appendAssetOpportunityArchiveBlock(
     args: AppendAssetOpportunityArchiveBlockArgs,
 ): Promise<AssetOpportunityArchiveAppendResult> {
     const filename = buildAssetOpportunityArchiveFilename(args.holdoutBars);
-    const dir = resolveAssetOpportunityArchiveDir(args.root);
+    const dir = resolveAssetOpportunityArchiveDir(args.root, args.program);
     const content = buildAssetOpportunityArchiveBlockText({
         timestamp: args.timestamp ?? new Date().toISOString(),
         batchRunId: args.batchRunId,
@@ -157,6 +171,7 @@ export function buildAssetOpportunityPairSummaryBlockText(
 
 export interface AppendAssetOpportunityArchivePairSummaryArgs {
     root: string;
+    program?: AssetOpportunityResearchProgram;
     batchRunId: string;
     holdoutBars: number;
     pairSummaries: AssetOpportunityPairSummaryRow[];
@@ -168,7 +183,7 @@ export async function appendAssetOpportunityArchivePairSummary(
     args: AppendAssetOpportunityArchivePairSummaryArgs,
 ): Promise<AssetOpportunityArchiveAppendResult> {
     const filename = buildAssetOpportunityPairSummaryFilename(args.holdoutBars);
-    const dir = resolveAssetOpportunityArchiveDir(args.root);
+    const dir = resolveAssetOpportunityArchiveDir(args.root, args.program);
     const content = buildAssetOpportunityPairSummaryBlockText({
         timestamp: args.timestamp ?? new Date().toISOString(),
         batchRunId: args.batchRunId,
@@ -188,6 +203,7 @@ export const ASSET_OPPORTUNITY_ARCHIVE_CONFIG_FILENAME = "config.txt";
 export interface AppendAssetOpportunityArchiveRunConfigArgs {
     /** Vite-configured project root; archive dir is always `<root>/archive/asset opportunity`. */
     root: string;
+    program?: AssetOpportunityResearchProgram;
     batchRunId: string;
     /** Serializable run configuration (finder options + backtest + capital settings). */
     config: unknown;
@@ -207,7 +223,7 @@ export interface AppendAssetOpportunityArchiveRunConfigArgs {
 export async function appendAssetOpportunityArchiveRunConfig(
     args: AppendAssetOpportunityArchiveRunConfigArgs,
 ): Promise<AssetOpportunityArchiveAppendResult> {
-    const dir = resolveAssetOpportunityArchiveDir(args.root);
+    const dir = resolveAssetOpportunityArchiveDir(args.root, args.program);
     const content = [
         "=".repeat(80),
         `Timestamp: ${args.timestamp ?? new Date().toISOString()}`,

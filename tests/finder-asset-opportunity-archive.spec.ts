@@ -11,6 +11,7 @@ import {
     buildAssetOpportunityArchiveFilename,
     buildAssetOpportunityPairSummaryBlockText,
     buildAssetOpportunityPairSummaryFilename,
+    isAssetOpportunityResearchProgram,
     resolveAssetOpportunityArchiveDir,
 } from "../lib/finder/server/finder-asset-opportunity-archive";
 
@@ -18,6 +19,11 @@ describe("Asset Opportunity archive writer", () => {
     it("derives the archive dir from the configured root only", () => {
         const dir = resolveAssetOpportunityArchiveDir("/repo/project");
         expect(dir).to.equal(path.join("/repo/project", "archive", "asset opportunity"));
+        expect(resolveAssetOpportunityArchiveDir("/repo/project", "fresh-window"))
+            .to.equal(path.join("/repo/project", "archive", "fresh-window"));
+        expect(isAssetOpportunityResearchProgram("fresh-window")).to.equal(true);
+        expect(isAssetOpportunityResearchProgram("fresh-window/../escape")).to.equal(false);
+        expect(isAssetOpportunityResearchProgram("../escape")).to.equal(false);
     });
 
     it("builds per-N filenames and rejects non-integer / non-positive N", () => {

@@ -346,6 +346,8 @@ export type FinderRunStatusSnapshot = {
      * report `symbol_universe` by default.
      */
     jobKind: FinderJobKind;
+    /** Research archive namespace, present for explicitly selected programs. */
+    researchProgram?: "fresh-window";
     /** Ordered selected entry strategy keys. */
     strategyKeys: string[];
     /** 0-based index of the strategy currently being evaluated. */
