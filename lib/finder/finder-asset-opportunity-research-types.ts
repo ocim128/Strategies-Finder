@@ -1,9 +1,14 @@
 export interface FinderAssetOpportunityForwardOutcomeSummary {
     exitReason: "take_profit" | "stop_loss" | "end_of_data";
     barsHeld: number;
+    grossReturnPercent: number;
+    slippagePercent: number;
+    commissionPercent: number;
     netReturnPercent: number;
     entryPrice: number;
     exitPrice: number;
+    entryTimestamp: string;
+    exitTimestamp: string;
 }
 
 /** Scalar-only research row; this module has no Node or browser dependencies. */

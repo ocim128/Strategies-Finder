@@ -1397,6 +1397,18 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                 },
             }
             : makeBatchOptions(["UP", "DOWN"], args.start, args.end);
+        const runSettings = args.freshWindow
+            ? {
+                ...settings,
+                executionModel: "next_open" as const,
+                allowSameBarExit: false,
+                riskMode: "percentage" as const,
+                stopLossEnabled: true,
+                stopLossPercent: 2,
+                takeProfitEnabled: true,
+                takeProfitPercent: 2,
+            }
+            : settings;
         setRunOwnerForTests(args.owner);
         const run = (async () => {
             await processFinderAssetOpportunityBatchRun(
@@ -1405,7 +1417,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                     interval: "5m",
                     symbols: ["UP", "DOWN"],
                     options: freshOptions,
-                    settings,
+                    settings: runSettings,
                     capitalSettings,
                     selectedStrategies: [batchStrategy],
                     useRustEnginePreference: true,

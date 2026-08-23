@@ -1,14 +1,27 @@
-import type { OHLCVData } from "../types/strategies";
-import { applySlippage, entrySideForDirection, exitSideForDirection } from "../strategies/backtest/backtest-utils";
+import type { BacktestSettings, OHLCVData } from "../types/strategies";
+import {
+    applySlippage,
+    entrySideForDirection,
+    exitSideForDirection,
+    timeKey,
+} from "../strategies/backtest/backtest-utils";
 
 export type FinderAssetOpportunityForwardExitReason = "take_profit" | "stop_loss" | "end_of_data";
 
 export interface FinderAssetOpportunityForwardOutcome {
     exitReason: FinderAssetOpportunityForwardExitReason;
     barsHeld: number;
+    /** Price movement before execution costs. */
+    grossReturnPercent: number;
+    /** Adverse entry/exit slippage, expressed as percentage points. */
+    slippagePercent: number;
+    /** Round-trip commission, expressed as percentage points. */
+    commissionPercent: number;
     netReturnPercent: number;
     entryPrice: number;
     exitPrice: number;
+    entryTimestamp: string;
+    exitTimestamp: string;
 }
 
 export interface FinderAssetOpportunityForwardContractInput {
@@ -29,18 +42,35 @@ function isFinitePrice(value: number | null): value is number {
     return value !== null && Number.isFinite(value) && value > 0;
 }
 
+function comparisonTolerance(left: number, right: number): number {
+    const magnitude = Math.max(Math.abs(left), Math.abs(right));
+    return magnitude > 0 ? magnitude * 1e-10 : 1e-12;
+}
+
+function greaterThanOrNearlyEqual(left: number, right: number): boolean {
+    return left > right || Math.abs(left - right) <= comparisonTolerance(left, right);
+}
+
+function lessThanOrNearlyEqual(left: number, right: number): boolean {
+    return left < right || Math.abs(left - right) <= comparisonTolerance(left, right);
+}
+
 function hitStop(candle: OHLCVData, price: number, direction: "long" | "short"): boolean {
-    return direction === "short" ? candle.high >= price : candle.low <= price;
+    return direction === "short"
+        ? greaterThanOrNearlyEqual(candle.high, price)
+        : lessThanOrNearlyEqual(candle.low, price);
 }
 
 function hitTakeProfit(candle: OHLCVData, price: number, direction: "long" | "short"): boolean {
-    return direction === "short" ? candle.low <= price : candle.high >= price;
+    return direction === "short"
+        ? lessThanOrNearlyEqual(candle.low, price)
+        : greaterThanOrNearlyEqual(candle.high, price);
 }
 
 function stopFill(candle: OHLCVData, stopPrice: number, direction: "long" | "short"): number {
     if (!Number.isFinite(candle.open)) return stopPrice;
-    if (direction === "short" && candle.open >= stopPrice) return candle.open;
-    if (direction === "long" && candle.open <= stopPrice) return candle.open;
+    if (direction === "short" && greaterThanOrNearlyEqual(candle.open, stopPrice)) return candle.open;
+    if (direction === "long" && lessThanOrNearlyEqual(candle.open, stopPrice)) return candle.open;
     return stopPrice;
 }
 
@@ -50,11 +80,21 @@ function netReturnPercent(
     direction: "long" | "short",
     slippageBps: number,
     commissionPercent: number,
-): { entryPrice: number; exitPrice: number; netReturnPercent: number } {
+): {
+    entryPrice: number;
+    exitPrice: number;
+    grossReturnPercent: number;
+    slippagePercent: number;
+    commissionPercent: number;
+    netReturnPercent: number;
+} {
     const slippageRate = Math.max(0, slippageBps) / 10_000;
     const entryFill = applySlippage(entryPrice, entrySideForDirection(direction), slippageRate);
     const exitFill = applySlippage(exitPrice, exitSideForDirection(direction), slippageRate);
-    const gross = direction === "long"
+    const rawGross = direction === "long"
+        ? (exitPrice - entryPrice) / entryPrice
+        : (entryPrice - exitPrice) / entryPrice;
+    const filledGross = direction === "long"
         ? (exitFill - entryFill) / entryFill
         : (entryFill - exitFill) / entryFill;
     const commissionRate = Math.max(0, commissionPercent) / 100;
@@ -62,8 +102,40 @@ function netReturnPercent(
     return {
         entryPrice: entryFill,
         exitPrice: exitFill,
-        netReturnPercent: (gross - roundTripCommission) * 100,
+        grossReturnPercent: rawGross * 100,
+        slippagePercent: (rawGross - filledGross) * 100,
+        commissionPercent: roundTripCommission * 100,
+        netReturnPercent: (filledGross - roundTripCommission) * 100,
     };
+}
+
+/**
+ * The fresh-window program has one execution contract. Keeping this check in
+ * a dependency-light leaf lets the HTTP route and the S0 analyzer enforce the
+ * same rule without each inventing its own defaults.
+ */
+export function validateFreshWindowExecutionSettings(settings: BacktestSettings): string[] {
+    const reasons: string[] = [];
+    const stopLossPercent = Number(settings.stopLossPercent);
+    const takeProfitPercent = Number(settings.takeProfitPercent);
+    if (settings.executionModel !== "next_open") {
+        reasons.push(`executionModel must be next_open (got ${String(settings.executionModel)})`);
+    }
+    if (settings.allowSameBarExit !== false) {
+        reasons.push(`allowSameBarExit must be false (got ${String(settings.allowSameBarExit)})`);
+    }
+    if (settings.riskMode !== "percentage") {
+        reasons.push(`riskMode must be percentage (got ${String(settings.riskMode)})`);
+    }
+    if (settings.stopLossEnabled !== true || !Number.isFinite(stopLossPercent)
+        || stopLossPercent <= 0) {
+        reasons.push("stop-loss must be enabled with a positive percentage");
+    }
+    if (settings.takeProfitEnabled !== true || !Number.isFinite(takeProfitPercent)
+        || takeProfitPercent <= 0) {
+        reasons.push("take-profit must be enabled with a positive percentage");
+    }
+    return reasons;
 }
 
 /**
@@ -104,6 +176,8 @@ export function simulateFinderAssetOpportunityForwardOutcome(
             return {
                 exitReason: "stop_loss",
                 barsHeld: Math.max(0, index - input.entryBarIndex),
+                entryTimestamp: timeKey(input.candles[input.entryBarIndex]!.time),
+                exitTimestamp: timeKey(candle.time),
                 ...net,
             };
         }
@@ -120,6 +194,8 @@ export function simulateFinderAssetOpportunityForwardOutcome(
             return {
                 exitReason: "take_profit",
                 barsHeld: Math.max(0, index - input.entryBarIndex),
+                entryTimestamp: timeKey(input.candles[input.entryBarIndex]!.time),
+                exitTimestamp: timeKey(candle.time),
                 ...net,
             };
         }
@@ -138,6 +214,8 @@ export function simulateFinderAssetOpportunityForwardOutcome(
     return {
         exitReason: "end_of_data",
         barsHeld: Math.max(0, finalIndex - input.entryBarIndex),
+        entryTimestamp: timeKey(input.candles[input.entryBarIndex]!.time),
+        exitTimestamp: timeKey(finalCandle.time),
         ...net,
     };
 }

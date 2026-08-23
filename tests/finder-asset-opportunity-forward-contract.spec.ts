@@ -3,7 +3,10 @@ import { describe, it } from "node:test";
 import type { BacktestSettings, OHLCVData, Strategy } from "../lib/types/strategies";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions } from "../lib/types/finder";
-import { simulateFinderAssetOpportunityForwardOutcome } from "../lib/finder/finder-asset-opportunity-forward-contract";
+import {
+    simulateFinderAssetOpportunityForwardOutcome,
+    validateFreshWindowExecutionSettings,
+} from "../lib/finder/finder-asset-opportunity-forward-contract";
 import { runAssetCandidateBacktest } from "../lib/finder/finder-asset-candidate-execution";
 
 function candle(time: number, open: number, high: number, low: number, close: number): OHLCVData {
@@ -79,6 +82,9 @@ describe("Asset Opportunity execution-unit forward contract", () => {
         // Long entry slips up to 101; exit slips down from the 95 open to
         // 94.05. The 0.1% commission is applied to both sides once.
         expect(result?.entryPrice).to.be.closeTo(101, 1e-9);
+        expect(result?.grossReturnPercent).to.equal(-5);
+        expect(result?.slippagePercent).to.be.greaterThan(0);
+        expect(result?.commissionPercent).to.be.closeTo(0.193118811881188, 1e-12);
         expect(result?.netReturnPercent).to.be.closeTo(
             (((94.05 - 101) / 101) - (0.001 * (1 + 94.05 / 101))) * 100,
             1e-9,
@@ -115,6 +121,72 @@ describe("Asset Opportunity execution-unit forward contract", () => {
         expect(long?.exitReason).to.equal("take_profit");
         expect(short?.exitReason).to.equal("take_profit");
         expect(long?.netReturnPercent).to.equal(short?.netReturnPercent);
+    });
+
+    it("keeps signal-close TP gaps on the same first-touch path as the engine", () => {
+        const result = contract({
+            executionModel: "signal_close",
+            allowSameBarExit: true,
+            candles: [
+                candle(1, 100, 100, 100, 100),
+                candle(2, 105, 106, 104, 105),
+            ],
+            horizonBars: 1,
+        });
+        expect(result?.exitReason).to.equal("take_profit");
+        expect(result?.exitPrice).to.equal(102);
+    });
+
+    it("keeps signal-close SL gaps on the same first-touch path as the engine", () => {
+        const result = contract({
+            executionModel: "signal_close",
+            allowSameBarExit: true,
+            candles: [
+                candle(1, 100, 100, 100, 100),
+                candle(2, 95, 96, 94, 95),
+            ],
+            horizonBars: 1,
+        });
+        expect(result?.exitReason).to.equal("stop_loss");
+        expect(result?.exitPrice).to.equal(95);
+    });
+
+    it("allows only a protective stop on the next-open entry bar", () => {
+        const result = contract({
+            executionModel: "next_open",
+            allowSameBarExit: false,
+            candles: [
+                candle(1, 100, 103, 97, 100),
+                candle(2, 100, 100, 100, 100),
+            ],
+            horizonBars: 2,
+        });
+        expect(result?.exitReason).to.equal("stop_loss");
+        expect(result?.barsHeld).to.equal(0);
+    });
+
+    it("rejects next-close for the fresh-window execution contract", () => {
+        const errors = validateFreshWindowExecutionSettings({
+            executionModel: "next_close",
+            allowSameBarExit: false,
+            riskMode: "percentage",
+            stopLossEnabled: true,
+            stopLossPercent: 2,
+            takeProfitEnabled: true,
+            takeProfitPercent: 2,
+        });
+        expect(errors.some((error) => error.includes("executionModel"))).to.equal(true);
+    });
+
+    it("uses a relative threshold at a TP/SL boundary", () => {
+        const result = contract({
+            candles: [
+                candle(1, 100, 100, 100, 100),
+                candle(2, 100, 102 + (102 * 5e-11), 100, 102),
+            ],
+            horizonBars: 1,
+        });
+        expect(result?.exitReason).to.equal("take_profit");
     });
 
     it("matches the TypeScript engine on a fixed percentage TP/SL fixture", async () => {

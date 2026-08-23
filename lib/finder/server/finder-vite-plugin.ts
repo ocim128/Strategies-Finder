@@ -79,6 +79,7 @@ import type {
     FinderUniverseCandidate,
 } from "../../types/finder";
 import type { BacktestSettings, OHLCVData, Strategy, StrategyParams } from "../../types/strategies";
+import { validateFreshWindowExecutionSettings } from "../finder-asset-opportunity-forward-contract";
 import {
     type BatchDatasetLoadContext,
 } from "../../batch-backtest/batch-dataset-loader-core";
@@ -1656,6 +1657,7 @@ function buildFreshWindowIdentity(
         oosHorizons,
     };
     const invalidReasons: string[] = [];
+    invalidReasons.push(...validateFreshWindowExecutionSettings(input.settings));
     if (input.foldEnd === undefined) invalidReasons.push("foldEnd is missing");
     if (dataSyncSnapshot === "unknown") invalidReasons.push("dataSyncSnapshot is missing");
     if (gitCommit === "unknown") invalidReasons.push("gitCommit is missing");
@@ -2506,6 +2508,12 @@ async function prepareAssetOpportunityRunPayload(
     const selectedStrategies = await resolveSelectedStrategies(strategyKeys);
     const settings = (body.settings ?? {}) as BacktestSettings;
     const capitalSettings = (body.capitalSettings ?? {}) as CapitalSettings;
+    if (researchProgram === "fresh-window") {
+        const executionErrors = validateFreshWindowExecutionSettings(settings);
+        if (executionErrors.length > 0) {
+            throw new HttpStatusError(400, `Fresh-window execution contract rejected: ${executionErrors.join("; ")}`);
+        }
+    }
     const useRustEnginePreference = body.useRustEnginePreference === true;
     const candidatePoolSize = clampCandidatePoolSize(options.assetOpportunity?.candidatePoolSize);
     const minFreshSupport = clampMinFreshSupport(options.assetOpportunity?.minFreshSupport);
