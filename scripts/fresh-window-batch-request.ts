@@ -50,14 +50,18 @@ const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
     capitalSettings: Record<string, unknown>;
 };
 
-// ---- Fold schedule: use the same 25-entry builder as the batch tests and
-// server contract. It reserves one forward stride after the final fold.
-const BAR_SECONDS: Record<string, number> = { "1m": 60, "5m": 300, "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400 };
-const barSeconds = BAR_SECONDS[interval] ?? 14400;
+// ---- Fold schedule: anchor every fold to an actual reference candle. The
+// reference CSV is used only for point-in-time schedule construction; the
+// server still loads the requested universe symbols independently.
 const lines = fs.readFileSync(csvPath, "utf8").trim().split(/\r?\n/);
-const lastTime = new Date(lines[lines.length - 1]!.split(",")[0]!).getTime();
-if (!Number.isFinite(lastTime)) throw new Error(`Could not parse last candle time from ${csvPath}`);
-const foldSchedule = buildFreshFoldScheduleFromDataEnd(Math.floor(lastTime / 1000), barSeconds);
+const referenceTimestamps = lines.map((line) => {
+    const raw = line.split(",")[0]?.trim() ?? "";
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric > 1e12 ? numeric / 1000 : numeric;
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed / 1000 : null;
+}).filter((value): value is number => value !== null);
+const foldSchedule = buildFreshFoldScheduleFromDataEnd(referenceTimestamps);
 
 // ---- Symbols from the config's universe text (or --symbols override).
 const universeText = String(config.finder.universeSymbolsText ?? "");

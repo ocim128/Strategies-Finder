@@ -35,12 +35,14 @@ const STRATEGY_KEY = "short_return_streak_fade_chop";
 const SYMBOLS = ["FIXTURE_1", "FIXTURE_2", "FIXTURE_3", "FIXTURE_4", "FIXTURE_5", "FIXTURE_6"];
 const INTERVAL = "4h";
 const BAR_SECONDS = 4 * 60 * 60;
+type FreshFoldSchedule = ReturnType<typeof buildFreshFoldScheduleFromDataEnd>;
 
 function buildFixtureDatasets(): Map<string, OHLCVData[]> {
     const calendarSlotTimes = Array.from({ length: 720 }, (_, slot) => 1_700_000_000 + slot * BAR_SECONDS);
+    const holidayTime = calendarSlotTimes[300]!;
     const calendarTimes = calendarSlotTimes
-        .filter((time) => ![0, 6].includes(new Date(time * 1000).getUTCDay()));
-    const schedule = buildFreshFoldScheduleFromDataEnd(calendarTimes.at(-1)!, BAR_SECONDS);
+        .filter((time) => ![0, 6].includes(new Date(time * 1000).getUTCDay()) && time !== holidayTime);
+    const schedule = buildFreshFoldScheduleFromDataEnd(calendarTimes);
     const signalHoldouts = new Map(SYMBOLS.map((_, symbolIndex) => [
         symbolIndex,
         schedule
@@ -309,15 +311,30 @@ const capitalSettings: CapitalSettings = {
     fixedTradeAmount: 1000,
 };
 
-async function runGeneratedArchive(useWorkers: boolean): Promise<{ root: string; lines: string[] }> {
+function buildWallClockSchedule(dataEndTime: number): FreshFoldSchedule {
+    return Array.from({ length: 25 }, (_, index) => {
+        const foldEnd = dataEndTime - (25 - index) * 12 * BAR_SECONDS;
+        return {
+            holdoutBars: (index + 1) * 12,
+            foldEnd,
+            oosStart: foldEnd + BAR_SECONDS,
+            oosEnd: foldEnd + 12 * BAR_SECONDS,
+        };
+    });
+}
+
+async function runGeneratedArchive(
+    useWorkers: boolean,
+    scheduleOverride?: FreshFoldSchedule,
+): Promise<{ root: string; lines: string[] }> {
     const datasets = buildFixtureDatasets();
-    const dataEndTime = Number(datasets.get(SYMBOLS[0]!)!.at(-1)!.time);
-    const foldSchedule = buildFreshFoldScheduleFromDataEnd(dataEndTime, BAR_SECONDS);
+    const referenceTimestamps = datasets.get(SYMBOLS[0]!)!.map((candle) => Number(candle.time));
+    const foldSchedule = scheduleOverride ?? buildFreshFoldScheduleFromDataEnd(referenceTimestamps);
     const hasCalendarGap = datasets.get(SYMBOLS[0]!)!.some((candle, index, candles) =>
         index > 0 && Number(candle.time) - Number(candles[index - 1]!.time) > BAR_SECONDS,
     );
     const forwardWidths = SYMBOLS.flatMap((symbol) => foldSchedule.map((fold) =>
-        sliceFinderAssetDataWithinFreshFoldWindow(datasets.get(symbol)!, fold.foldEnd, BAR_SECONDS).length,
+        sliceFinderAssetDataWithinFreshFoldWindow(datasets.get(symbol)!, fold).length,
     ));
     if (!hasCalendarGap || new Set(forwardWidths).size < 2) {
         throw new Error(`Fixture is not calendar-realistic: gap=${hasCalendarGap}, widths=${forwardWidths.join(",")}`);
@@ -377,8 +394,8 @@ describe("fresh-window real producer-to-analyzer integration", () => {
             try {
                 expect(lines).to.include("S0: PASS");
                 expect(lines.some((line) => line.startsWith("Recurrence: NOT AUTHORIZED"))).to.equal(true);
-                expect(lines).to.include("S0 windows=25, fullPoolRows=150, eligibleRows=150, finiteExecutionRows=52, randomControls=25");
-                expect(lines).to.include("S0 hand checks: TP=47, SL=1, horizon=4");
+                expect(lines).to.include("S0 windows=25, fullPoolRows=150, eligibleRows=150, finiteExecutionRows=49, randomControls=25");
+                expect(lines).to.include("S0 hand checks: TP=32, SL=3, horizon=14");
                 const identity = readFileSync(
                     path.join(root, "archive", "fresh-window", "oos-fold-identities-300-bars.txt"),
                     "utf8",
@@ -388,13 +405,43 @@ describe("fresh-window real producer-to-analyzer integration", () => {
                 expect(identity).to.contain("candidateFingerprint");
                 const coverage = lines.find((line) => line.startsWith("S0 coverage:"));
                 expect(coverage).to.not.equal(undefined);
-                expect(coverage).to.contain("eligible-outcomes=52/52");
-                expect(coverage).to.contain("all-evaluated=34.67%");
+                expect(coverage).to.contain("eligible-outcomes=49/49");
+                expect(coverage).to.contain("all-evaluated=32.67%");
                 expect(Number(coverage!.match(/all-evaluated=([0-9.]+)%/)?.[1])).to.be.lessThan(50);
+                const identityFiles = readdirSync(path.join(root, "archive", "fresh-window"))
+                    .filter((file) => /^oos-fold-identities-\d+-bars\.txt$/.test(file));
+                expect(identityFiles).to.have.length(25);
+                for (const file of identityFiles) {
+                    const count = Number(readFileSync(
+                        path.join(root, "archive", "fresh-window", file),
+                        "utf8",
+                    ).match(/Forward outcome row count: (\d+)/)?.[1] ?? 0);
+                    expect(count, file).to.be.greaterThan(0);
+                }
                 expect(readdirSync(path.join(root, "archive", "fresh-window"))).to.have.length.greaterThan(25);
             } finally {
                 rmSync(root, { recursive: true, force: true });
             }
         });
     }
+
+    it("fails S0 for the old wall-clock schedule against the same gapped data", async () => {
+        const datasets = buildFixtureDatasets();
+        const dataEndTime = Number(datasets.get(SYMBOLS[0]!)!.at(-1)!.time);
+        const { root, lines } = await runGeneratedArchive(false, buildWallClockSchedule(dataEndTime));
+        try {
+            expect(lines).to.include("S0: FAIL");
+            expect(lines).to.include("S0 ERROR: full-pool random control is missing in one or more windows");
+            const identityFiles = readdirSync(path.join(root, "archive", "fresh-window"))
+                .filter((file) => /^oos-fold-identities-\d+-bars\.txt$/.test(file));
+            expect(identityFiles.some((file) =>
+                /Forward outcome row count: 0/.test(readFileSync(
+                    path.join(root, "archive", "fresh-window", file),
+                    "utf8",
+                )),
+            )).to.equal(true);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
 });

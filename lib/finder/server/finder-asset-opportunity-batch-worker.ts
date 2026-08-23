@@ -49,6 +49,7 @@ import {
     sliceFinderAssetDataAtFoldEnd,
     sliceFinderAssetDataStrictlyAfterFoldEnd,
 } from "../finder-asset-opportunity-fold";
+import type { FinderAssetOpportunityFreshFoldWindow } from "../finder-asset-opportunity-fold";
 import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
 
 /**
@@ -77,6 +78,7 @@ export interface AssetOpportunityBatchWorkerTask {
     candidatePoolSize: number;
     minFreshSupport: number;
     foldEnd?: number;
+    freshFoldWindow?: FinderAssetOpportunityFreshFoldWindow;
     /** Fresh-window workers cache raw data and slice inside the iteration leaf. */
     loadDatasetIsRaw?: boolean;
     researchProgram?: "fresh-window";
@@ -215,6 +217,7 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
             candidatePoolSize: task.candidatePoolSize,
             minFreshSupport: task.minFreshSupport,
             ...(task.foldEnd !== undefined ? { foldEnd: task.foldEnd } : {}),
+            ...(task.freshFoldWindow ? { freshFoldWindow: task.freshFoldWindow } : {}),
             ...(task.loadDatasetIsRaw === true ? { loadDatasetIsRaw: true } : {}),
             ...(task.researchProgram ? { researchProgram: task.researchProgram } : {}),
             ...(args.runLog ? { runLog: args.runLog } : {}),

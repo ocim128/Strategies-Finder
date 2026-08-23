@@ -139,6 +139,8 @@ function buildArchive(options?: {
     const foldSchedule = Array.from({ length: 25 }, (_, index) => ({
         holdoutBars: (index + 1) * 12,
         foldEnd: 1_700_000_000 + index * 12 * 14_400,
+        oosStart: 1_700_000_000 + index * 12 * 14_400 + 14_400,
+        oosEnd: 1_700_000_000 + index * 12 * 14_400 + 12 * 14_400,
     }));
     const identity = {
         identityVersion: 1,

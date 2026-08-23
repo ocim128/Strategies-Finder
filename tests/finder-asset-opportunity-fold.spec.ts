@@ -37,6 +37,8 @@ describe("Asset Opportunity point-in-time fold contract", () => {
         const schedule = Array.from({ length: 25 }, (_, index) => ({
             holdoutBars: (index + 1) * 12,
             foldEnd: 1_700_000_000 + ((index + 1) * 300),
+            oosStart: 1_700_000_000 + ((index + 2) * 300),
+            oosEnd: 1_700_000_000 + ((index + 13) * 300),
         }));
         expect(normalizeFinderAssetFreshFoldSchedule(schedule)).to.deep.equal(schedule);
         expect(() => normalizeFinderAssetFreshFoldSchedule(schedule.slice(0, 24)))
@@ -50,12 +52,25 @@ describe("Asset Opportunity point-in-time fold contract", () => {
     });
 
     it("builds folds with one stride of forward data after the final boundary", () => {
-        const schedule = buildFreshFoldScheduleFromDataEnd(1_700_100_000, 300);
+        const timestamps = Array.from({ length: 400 }, (_, index) => 1_700_000_000 + index * 300);
+        const schedule = buildFreshFoldScheduleFromDataEnd(timestamps);
         expect(schedule).to.have.length(25);
-        expect(schedule[0]).to.deep.equal({ holdoutBars: 12, foldEnd: 1_700_010_000 });
-        expect(schedule[24]).to.deep.equal({ holdoutBars: 300, foldEnd: 1_700_096_400 });
-        expect(schedule[1]!.foldEnd - schedule[0]!.foldEnd).to.equal(3_600);
-        expect(() => buildFreshFoldScheduleFromDataEnd(0, 300)).to.throw(/dataEndTime/);
+        expect(schedule[0]).to.deep.equal({
+            holdoutBars: 12,
+            foldEnd: timestamps[75],
+            oosStart: timestamps[76],
+            oosEnd: timestamps[87],
+        });
+        expect(schedule[24]).to.deep.equal({
+            holdoutBars: 300,
+            foldEnd: timestamps[363],
+            oosStart: timestamps[364],
+            oosEnd: timestamps[375],
+        });
+        expect(schedule[1]!.foldEnd).to.equal(timestamps[87]);
+        expect(() => buildFreshFoldScheduleFromDataEnd([])).to.throw(/reference series is empty/);
+        expect(() => buildFreshFoldScheduleFromDataEnd(timestamps.slice(0, 324)))
+            .to.throw(/too short/);
     });
 
     it("keeps the fold boundary inclusive and makes the forward window strictly later", () => {
@@ -78,13 +93,32 @@ describe("Asset Opportunity point-in-time fold contract", () => {
     });
 
     it("uses calendar bounds for fresh windows and preserves missing bars", () => {
-        expect(getFinderAssetOpportunityFreshFoldWindow(100, 100)).to.deep.equal({
+        const referenceTimestamps = Array.from({ length: 13 }, (_, index) => 100 + index * 100);
+        expect(getFinderAssetOpportunityFreshFoldWindow(referenceTimestamps, 100)).to.deep.equal({
             oosStart: 200,
             oosEnd: 1300,
         });
         const raw = candles([200, 300, 1300, 1400]);
-        expect(sliceFinderAssetDataWithinFreshFoldWindow(raw, 100, 100).map((candle) => candle.time))
+        expect(sliceFinderAssetDataWithinFreshFoldWindow(raw, { oosStart: 200, oosEnd: 1300 }).map((candle) => candle.time))
             .to.deep.equal([200, 300, 1300]);
+    });
+
+    it("anchors every fold and its forward window to gapped reference bars", () => {
+        const timestamps = Array.from({ length: 500 }, (_, index) => 1_700_000_000 + index * 14_400)
+            .filter((timestamp) => {
+                const day = new Date(timestamp * 1000).getUTCDay();
+                return day !== 0 && day !== 6 && timestamp !== 1_704_326_400;
+            });
+        const schedule = buildFreshFoldScheduleFromDataEnd(timestamps);
+        expect(schedule.every((entry) => timestamps.includes(entry.foldEnd))).to.equal(true);
+        expect(schedule.every((entry) => {
+            const foldIndex = timestamps.indexOf(entry.foldEnd);
+            return entry.oosStart === timestamps[foldIndex + 1]
+                && entry.oosEnd === timestamps[foldIndex + 12];
+        })).to.equal(true);
+        expect(schedule.every((entry) =>
+            sliceFinderAssetDataWithinFreshFoldWindow(candles(timestamps), entry).length === 12,
+        )).to.equal(true);
     });
 
     it("preserves legacy absent-fold copy semantics", () => {

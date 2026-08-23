@@ -25,7 +25,6 @@ import {
     FINDER_ASSET_FRESH_FOLD_COUNT,
     FINDER_ASSET_FRESH_FOLD_STRIDE_BARS,
 } from "../lib/finder/finder-asset-opportunity-fold";
-import { parseIntervalSeconds } from "../lib/interval-utils";
 import { parseTimeToUnixSeconds } from "../lib/time-normalization";
 
 const SEPARATOR = "=".repeat(80);
@@ -596,12 +595,14 @@ function checkS0(
         errors.push("fold ends are missing or repeated; point-in-time folds are not distinct");
     }
     const foldSchedule = Array.isArray(identity?.foldSchedule)
-        ? identity.foldSchedule as Array<{ holdoutBars?: unknown; foldEnd?: unknown }>
+        ? identity.foldSchedule as Array<{ holdoutBars?: unknown; foldEnd?: unknown; oosStart?: unknown; oosEnd?: unknown }>
         : [];
     for (const fold of windows) {
         const marker = foldSchedule.find((entry) => entry.holdoutBars === fold.holdoutBars);
         if (!marker || marker.foldEnd !== fold.foldEnd) {
             errors.push(`fold marker does not match the declared schedule at holdout ${fold.holdoutBars} (archive=${String(fold.foldEnd)}, schedule=${String(marker?.foldEnd)})`);
+        } else if (marker.oosStart !== fold.oosStart || marker.oosEnd !== fold.oosEnd) {
+            errors.push(`fold OOS bounds do not match the declared schedule at holdout ${fold.holdoutBars}`);
         }
         if (fold.foldEnd === null || !Number.isFinite(fold.foldEnd) || fold.foldEnd <= 0) {
             errors.push(`invalid foldEnd at holdout ${fold.holdoutBars}`);
@@ -623,16 +624,6 @@ function checkS0(
             && ordered[index - 1]!.oosEnd! >= ordered[index]!.oosStart!) {
             errors.push("forward target intervals overlap");
             break;
-        }
-    }
-    const intervalSeconds = parseIntervalSeconds(config?.interval ?? "");
-    if (intervalSeconds === null) errors.push("config interval has no usable bar duration");
-    for (const fold of windows) {
-        if (intervalSeconds === null || fold.foldEnd === null || fold.oosStart === null || fold.oosEnd === null) continue;
-        const expectedOosStart = fold.foldEnd + intervalSeconds;
-        const expectedOosEnd = fold.foldEnd + stride * intervalSeconds;
-        if (fold.oosStart !== expectedOosStart || fold.oosEnd !== expectedOosEnd) {
-            errors.push(`OOS bounds do not match the stride window at holdout ${fold.holdoutBars}`);
         }
     }
     const identityRows = windows.flatMap((fold) => fold.rows);

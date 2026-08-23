@@ -1767,6 +1767,8 @@ export async function processFinderAssetOpportunityBatchRun(
         : legacyHoldoutValues.map((holdoutBars) => ({
             holdoutBars,
             foldEnd: input.foldEnd ?? 0,
+            oosStart: 0,
+            oosEnd: 0,
         }));
     if (input.researchProgram === "fresh-window" && foldEntries.length !== FINDER_ASSET_FRESH_FOLD_COUNT) {
         throw new Error(`Fresh-window batch requires exactly ${FINDER_ASSET_FRESH_FOLD_COUNT} fold schedule entries.`);
@@ -2217,7 +2219,14 @@ export async function processFinderAssetOpportunityBatchRun(
                     candidatePoolSize: input.candidatePoolSize,
                     minFreshSupport: input.minFreshSupport,
                     ...(input.researchProgram === "fresh-window"
-                        ? { foldEnd: foldEntry.foldEnd, loadDatasetIsRaw: true }
+                        ? {
+                            foldEnd: foldEntry.foldEnd,
+                            freshFoldWindow: {
+                                oosStart: foldEntry.oosStart,
+                                oosEnd: foldEntry.oosEnd,
+                            },
+                            loadDatasetIsRaw: true,
+                        }
                         : input.foldEnd !== undefined
                             ? { foldEnd: input.foldEnd }
                             : {}),
@@ -2380,7 +2389,14 @@ export async function processFinderAssetOpportunityBatchRun(
                         ...input,
                         options: buildIterationOptions(holdoutBars),
                         ...(input.researchProgram === "fresh-window"
-                            ? { foldEnd: foldEntry.foldEnd, loadDatasetIsRaw: true }
+                            ? {
+                                foldEnd: foldEntry.foldEnd,
+                                freshFoldWindow: {
+                                    oosStart: foldEntry.oosStart,
+                                    oosEnd: foldEntry.oosEnd,
+                                },
+                                loadDatasetIsRaw: true,
+                            }
                             : {}),
                         assetLoadContext,
                         rustBatchDatasetCache,

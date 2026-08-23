@@ -1469,6 +1469,8 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         const freshFoldSchedule = Array.from({ length: 25 }, (_, index) => ({
             holdoutBars: (index + 1) * 12,
             foldEnd: 1_700_000_000 + ((100 + index) * 300),
+            oosStart: 1_700_000_000 + ((101 + index) * 300),
+            oosEnd: 1_700_000_000 + ((112 + index) * 300),
         }));
         const runStart = args.freshWindow ? 12 : args.start;
         const runEnd = args.freshWindow ? 300 : args.end;
@@ -2157,6 +2159,8 @@ describe("Asset Opportunity fold validation", () => {
         const schedule = Array.from({ length: 25 }, (_, index) => ({
             holdoutBars: (index + 1) * 12,
             foldEnd: 1_700_000_000 + ((index + 1) * 300),
+            oosStart: 1_700_000_000 + ((index + 2) * 300),
+            oosEnd: 1_700_000_000 + ((index + 13) * 300),
         }));
         expect(parseAssetOpportunityFreshFoldSchedule(schedule)).to.deep.equal(schedule);
         try {

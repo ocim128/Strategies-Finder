@@ -642,3 +642,84 @@ The collection smoke must show `S0: PASS`, disjoint 12-bar OOS bounds,
 eligible-outcome coverage at least 95%, and
 `Recurrence: NOT AUTHORIZED`. Do not read any downstream verdict from a
 collection archive.
+
+### Round-4 fix
+
+#### U1 - bar-index fold anchoring
+
+`buildFreshFoldScheduleFromDataEnd(...)` now accepts the strictly ascending
+timestamps of an actual reference candle series. It selects 25 fold ends at
+12-reference-bar intervals, and each `foldEnd` is therefore a timestamp that
+exists in that series. The final fold leaves 36 real reference bars after its
+boundary: the 12-bar judged stride plus the widest recorded 24-bar horizon.
+Each entry records `oosStart` as the next reference bar and `oosEnd` as the
+12th following reference bar. A reference series shorter than 325 bars throws
+instead of silently compressing the schedule.
+
+Fresh forward slicing and archive metadata use those declared timestamp
+bounds. They no longer derive a fold's OOS window from wall-clock arithmetic
+or from the min/max forward slice observed across assets. Legacy paths without
+`foldEnd` retain their previous slicing behavior. The operator script now
+parses every timestamp in its reference CSV and passes that series to the
+shared builder.
+
+#### U2 - weekend-realistic proof
+
+The real producer-to-analyzer integration fixture now starts with 720 nominal
+4-hour slots, removes UTC weekend bars and one irregular holiday bar, keeps
+one asset on the continuous calendar, and removes additional bars at
+per-asset 17/23/31-slot patterns. Its sparse boundary signals and differing
+asset widths are otherwise processed by the production batch paths.
+
+Both sequential and `worker_threads` runs produced the same valid result:
+
+```text
+S0: PASS
+S0 windows=25, fullPoolRows=150, eligibleRows=150, finiteExecutionRows=49, randomControls=25
+S0 coverage: eligible-outcomes=49/49, all-evaluated=32.67%
+S0 hand checks: TP=32, SL=3, horizon=14
+Recurrence: NOT AUTHORIZED (collection archive; judged role requires a prior collection)
+```
+
+The test additionally reads every one of the 25 identity files and requires a
+positive forward-outcome count. Running the old wall-clock schedule against
+the same gapped datasets fails with
+`S0 ERROR: full-pool random control is missing in one or more windows` and a
+zero-outcome fold. That paired failure demonstrates that the fixture can
+detect the original live bug rather than merely accepting the corrected code.
+
+#### U3 - analyzer sanity
+
+S0 now compares archive OOS bounds with the declared schedule markers, checks
+each outcome against those recorded bounds, and checks interval overlap using
+the actual timestamps. The removed check that reconstructed
+`foldEnd + intervalSeconds` and `foldEnd + stride * intervalSeconds` was the
+remaining wall-clock assumption; no uniform-calendar arithmetic is used for
+fresh fold validation.
+
+#### Round-4 validation and live rerun
+
+Passed from the repository root:
+
+```text
+..\..\..\node_modules\.bin\esno tests\analyze-fresh-window-research.spec.ts  (18)
+..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-archive.spec.ts  (13)
+..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-batch-parallel.spec.ts  (18)
+..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-fold.spec.ts  (11)
+..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-forward-contract.spec.ts  (16)
+..\..\..\node_modules\.bin\esno tests\finder-server-plugin.spec.ts  (84)
+..\..\..\node_modules\.bin\esno tests\finder-fresh-window-integration.spec.ts  (3)
+..\..\..\node_modules\.bin\esno tests\vite-config-bundle.spec.ts  (1)
+npm run typecheck
+```
+
+The invalid local `archive/fresh-window` smoke artifacts were cleared again;
+no tracked archive deletion was made. No real batch or push was performed.
+For the operator's next live acceptance, use the existing Round-3 commands
+with the current provenance values: start with
+`NODE_OPTIONS=--max-old-space-size=16384`, `FINDER_ASSET_BATCH_WORKERS=2`,
+`FINDER_DATA_SYNC_SNAPSHOT=<actual sync-log timestamp>`, and
+`GIT_COMMIT=(git rev-parse HEAD).Trim()`, then run
+`scripts/fresh-window-batch-request.ts --config <copied config JSON> --csv <synced reference 4h CSV> --role collection --interval 4h --base-url http://127.0.0.1:5173`.
+After it completes, run
+`scripts/analyze-fresh-window-research.ts --archive-dir archive\fresh-window --stride-bars 12 --horizon 12 --seed 42`.

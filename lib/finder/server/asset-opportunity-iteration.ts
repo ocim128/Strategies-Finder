@@ -56,18 +56,16 @@ import { prepareClosedCandleData } from "../../backtest-executor";
 import { createServerFinderAssetOpportunityLoadContext } from "./server-finder-data-loader";
 import { parseSyntheticPairToken } from "../../synthetic-pair-token";
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
-import { parseIntervalSeconds } from "../../interval-utils";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
 import {
     assertFinderAssetDataAtOrBeforeFoldEnd,
     assertFinderAssetDataStrictlyAfterFoldEnd,
-    FINDER_ASSET_FRESH_FOLD_STRIDE_BARS,
     getFinderAssetDataBounds,
-    getFinderAssetOpportunityFreshFoldWindow,
     sliceFinderAssetDataAtFoldEnd,
     sliceFinderAssetDataStrictlyAfterFoldEnd,
     sliceFinderAssetDataWithinFreshFoldWindow,
+    type FinderAssetOpportunityFreshFoldWindow,
     type FinderAssetOpportunityFoldMetadata,
 } from "../finder-asset-opportunity-fold";
 
@@ -169,6 +167,8 @@ export interface FinderAssetOpportunityRunInput {
     minFreshSupport: number;
     /** Last candle timestamp allowed in the point-in-time search fold. */
     foldEnd?: number;
+    /** Actual reference-bar window for the fresh forward slice. */
+    freshFoldWindow?: FinderAssetOpportunityFreshFoldWindow;
     researchProgram?: AssetOpportunityResearchProgram;
     /** When true, loaders/cache retain raw candles and this leaf slices per fold. */
     loadDatasetIsRaw?: boolean;
@@ -362,11 +362,8 @@ export async function runAssetOpportunityIteration(
     let loadedSymbols = 0;
     let failedSymbols = 0;
     let searchWindowEnd: number | null = null;
-    const intervalSeconds = parseIntervalSeconds(input.interval);
     const freshFoldWindow = input.researchProgram === "fresh-window"
-        && input.foldEnd !== undefined
-        && intervalSeconds !== null
-        ? getFinderAssetOpportunityFreshFoldWindow(input.foldEnd, intervalSeconds)
+        ? input.freshFoldWindow ?? null
         : null;
     let oosStart: number | null = freshFoldWindow?.oosStart ?? null;
     let oosEnd: number | null = freshFoldWindow?.oosEnd ?? null;
@@ -563,18 +560,14 @@ export async function runAssetOpportunityIteration(
                     const forwardData = rawForwardData === undefined
                         ? undefined
                         : input.loadDatasetIsRaw
-                            ? input.researchProgram === "fresh-window" && intervalSeconds !== null
+                            ? input.researchProgram === "fresh-window"
                                 ? sliceFinderAssetDataWithinFreshFoldWindow(
                                     rawForwardData,
-                                    input.foldEnd,
-                                    intervalSeconds,
+                                    freshFoldWindow ?? undefined,
                                 )
                                 : sliceFinderAssetDataStrictlyAfterFoldEnd(
                                     rawForwardData,
                                     input.foldEnd,
-                                    input.researchProgram === "fresh-window"
-                                        ? FINDER_ASSET_FRESH_FOLD_STRIDE_BARS
-                                        : undefined,
                                 )
                             : rawForwardData;
                     const finishedAt = performance.now();

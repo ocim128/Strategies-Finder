@@ -98,10 +98,12 @@ function makeCandles(closes: number[]): OHLCVData[] {
     }));
 }
 
-function freshFoldSchedule(): Array<{ holdoutBars: number; foldEnd: number }> {
+function freshFoldSchedule(): Array<{ holdoutBars: number; foldEnd: number; oosStart: number; oosEnd: number }> {
     return Array.from({ length: 25 }, (_, index) => ({
         holdoutBars: (index + 1) * 12,
         foldEnd: 1_700_000_000 + ((100 + index) * 300),
+        oosStart: 1_700_000_000 + ((101 + index) * 300),
+        oosEnd: 1_700_000_000 + ((112 + index) * 300),
     }));
 }
 
@@ -890,6 +892,10 @@ describe("finder Asset Opportunity batch parallel execution", () => {
             candidatePoolSize: 1,
             minFreshSupport: 1,
             foldEnd,
+            freshFoldWindow: {
+                oosStart: foldEnd + 100,
+                oosEnd: foldEnd + 1_200,
+            },
             loadDatasetIsRaw: true,
             researchProgram: "fresh-window",
             inlineDatasets: { PAIR: raw },
