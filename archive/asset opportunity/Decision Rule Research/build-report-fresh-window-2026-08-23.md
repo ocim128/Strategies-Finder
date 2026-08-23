@@ -246,14 +246,14 @@ correct status is **tooling complete, Phase 6 blocked, no rule conclusion**.
 ## Rework report (R1–R6, 2026-08-23)
 
 The audit rework is complete in six isolated item commits plus the narrow
-long-direction hardening follow-up `eafec5a1`. No real batch was run; Phase 6
+long-direction/S0 hardening follow-ups `eafec5a1` and `8cfedb84`. No real batch was run; Phase 6
 remains operator-blocked.
 
 | Item | Change | Audit sections resolved |
 |---|---|---|
 | R1 `8c3190a4` | Fresh judgment now accepts only `next_open`, percentage TP/SL, and `allowSameBarExit=false`; validation rejects other models, first-touch uses the engine’s relative tolerance, and forward archives carry gross return, slippage, commission, and entry/exit timestamps as separate scalar fields. | B6, execution-contract item 4 |
 | R2 `317764c1` | Fresh requests require the explicit 25-entry schedule. Each task receives its own `foldEnd`; raw symbol/interval data is cached and sliced per fold, including the forward loader. | B4, B10.1 |
-| R3 `1f1e01fa` + `eafec5a1` | Fresh provenance (`GIT_COMMIT`, `FINDER_DATA_SYNC_SNAPSHOT`) and configuration persistence fail closed. S0 rejects invalid fold judgments, validates the pinned long-direction settings and interval, checks fold bounds, and compares independent expected/archived/outcome counts. Seed 42 and its draw digest are archived. | B3, B7 |
+| R3 `1f1e01fa` + `eafec5a1` + `8cfedb84` | Fresh provenance (`GIT_COMMIT`, `FINDER_DATA_SYNC_SNAPSHOT`) and configuration persistence fail closed. S0 rejects invalid fold judgments, validates the pinned long-direction settings and interval, requires complete fold bounds, and compares independent expected/archived/valid-outcome counts. Seed 42 and its draw digest are archived. | B3, B7 |
 | R4 `735d502d` | Time-to-TP selects lowest `medianBarsToTP` with at least three TP hits and judges selected-minus-control execution net. Recurrence counts exact tuples across strictly earlier fold ends and has collection/judged/replication gates. Strategy coverage uses eligible rows and eligible-pair denominators with the fixed `>=3` and `<10%` rules. | B8, agenda items 1–3 |
 | R5 `1fdffd6a` | Fresh summary retention is capped at 100,000 scalar rows per task; overflow is fatal. Research blocks are written in one write, synced, and terminated by `Record complete: true`; the analyzer rejects any block without that final marker. | B5, B9 |
 | R6 `be5e3982` | Added legacy absent-fold copy and loader-parity regressions, plus timestamp/positional slicing coverage for mixed representations, duplicate timestamps, and irregular gaps. | B2, B10.3 |
@@ -292,7 +292,7 @@ serialization/leaf benchmarks, not a production 679-symbol batch.
 ### Final validation
 
 `npm run typecheck` passed. The complete fresh-window suite passed after each
-rework commit and after the direction follow-up: feature-DOM contracts, Finder server plugin,
+rework commit and after the S0 hardening follow-up: feature-DOM contracts, Finder server plugin,
 parallel batch, archive, fold, forward-contract, and fresh-window analyzer.
 The final focused counts were 48, 82, 17, 13, 7, 8, and 10 passing tests,
 respectively. Existing untracked audit scratch files and the user’s plan
