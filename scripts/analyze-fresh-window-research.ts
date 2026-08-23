@@ -18,6 +18,7 @@ import {
     isFinderFreshWindowBatchRole,
     type FinderFreshWindowBatchRole,
 } from "../lib/finder/finder-asset-opportunity-research-types";
+import { parseTimeToUnixSeconds } from "../lib/time-normalization";
 
 const SEPARATOR = "=".repeat(80);
 const IDENTITY_FILE = /^oos-fold-identities-(\d+)-bars\.txt$/;
@@ -261,6 +262,12 @@ function expectedHoldouts(stride: number): Set<number> {
 function normalizeOutcome(row: FinderAssetOpportunityCandidateSummaryRow, horizon: number): FreshWindowOutcome | null {
     const outcome = row.forwardOutcomes?.[String(horizon)] as FreshWindowOutcome | undefined;
     if (!outcome) return null;
+    const entryTimestamp = typeof outcome.entryTimestamp === "string"
+        ? parseTimeToUnixSeconds(outcome.entryTimestamp)
+        : null;
+    const exitTimestamp = typeof outcome.exitTimestamp === "string"
+        ? parseTimeToUnixSeconds(outcome.exitTimestamp)
+        : null;
     if (
         (outcome.exitReason !== "take_profit"
             && outcome.exitReason !== "stop_loss"
@@ -272,10 +279,9 @@ function normalizeOutcome(row: FinderAssetOpportunityCandidateSummaryRow, horizo
         || finiteNumber(outcome.commissionPercent) === null
         || finiteNumber(outcome.entryPrice) === null
         || finiteNumber(outcome.exitPrice) === null
-        || typeof outcome.entryTimestamp !== "string"
-        || outcome.entryTimestamp.length === 0
-        || typeof outcome.exitTimestamp !== "string"
-        || outcome.exitTimestamp.length === 0
+        || entryTimestamp === null
+        || exitTimestamp === null
+        || entryTimestamp > exitTimestamp
     ) return null;
     return outcome;
 }
@@ -677,6 +683,34 @@ function checkS0(
             && fold.expectedRowCount > 0
             && validOutcomeCount / fold.expectedRowCount < 0.95) {
             errors.push(`valid forward outcome coverage below 95% at holdout ${fold.holdoutBars}`);
+        }
+        for (const row of fold.rows) {
+            const rawOutcome = row.forwardOutcomes?.[String(horizon)] as FreshWindowOutcome | undefined;
+            if (rawOutcome) {
+                const rawEntryTimestamp = typeof rawOutcome.entryTimestamp === "string"
+                    ? parseTimeToUnixSeconds(rawOutcome.entryTimestamp)
+                    : null;
+                const rawExitTimestamp = typeof rawOutcome.exitTimestamp === "string"
+                    ? parseTimeToUnixSeconds(rawOutcome.exitTimestamp)
+                    : null;
+                if (rawEntryTimestamp === null || rawExitTimestamp === null) {
+                    errors.push(`invalid forward outcome timestamp at holdout ${fold.holdoutBars}`);
+                } else if (rawEntryTimestamp > rawExitTimestamp) {
+                    errors.push(`forward outcome timestamps are out of order at holdout ${fold.holdoutBars}`);
+                }
+            }
+            const outcome = normalizeOutcome(row, horizon);
+            if (!outcome || fold.oosStart === null || fold.oosEnd === null) continue;
+            const entryTimestamp = parseTimeToUnixSeconds(outcome.entryTimestamp);
+            const exitTimestamp = parseTimeToUnixSeconds(outcome.exitTimestamp);
+            if (entryTimestamp === null || exitTimestamp === null
+                || entryTimestamp < fold.oosStart
+                || entryTimestamp > fold.oosEnd
+                || exitTimestamp < fold.oosStart
+                || exitTimestamp > fold.oosEnd) {
+                errors.push(`forward outcome timestamp is outside fold bounds at holdout ${fold.holdoutBars}`);
+                break;
+            }
         }
         for (const row of fold.rows) {
             if (!row.symbol || !row.strategyKey || !row.candidateFingerprint || !row.identityHash) {

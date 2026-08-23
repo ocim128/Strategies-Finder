@@ -27,12 +27,17 @@ function buildArchive(options?: {
     partialFold?: boolean;
     reorderRows?: boolean;
     batchRole?: "collection" | "judged" | "replication";
+    malformedTimestamp?: boolean;
+    outOfOrderTimestamp?: boolean;
 }): string {
     const root = mkdtempSync(path.join(tmpdir(), "fresh-window-analyzer-"));
     const strategyCount = options?.strategyCount ?? 3;
     const totalStrategyCount = strategyCount + (options?.extraIneligibleStrategies ?? 0);
     for (let index = 1; index <= 25; index += 1) {
         const holdout = index * 12;
+        const searchEnd = 9000 + index;
+        const oosStart = 10000 + index * 12;
+        const oosEnd = oosStart + 11;
         const rows = Array.from({ length: totalStrategyCount }, (_, strategyIndex) => {
             const strategyKey = `strategy_${strategyIndex}`;
             const candidateFingerprint = options?.recurring && strategyIndex === 0
@@ -75,8 +80,16 @@ function buildArchive(options?: {
                             : strategyIndex === 0 ? 1 : 0,
                         entryPrice: 100,
                         exitPrice: 102,
-                        entryTimestamp: `2026-08-22T00:${String(index).padStart(2, "0")}:00.000Z`,
-                        exitTimestamp: `2026-08-22T01:${String(index).padStart(2, "0")}:00.000Z`,
+                        entryTimestamp: options?.malformedTimestamp
+                            ? "not-a-timestamp"
+                            : options?.outOfOrderTimestamp && index === 1 && strategyIndex === 0
+                                ? String(oosStart + 1)
+                                : String(oosStart),
+                        exitTimestamp: options?.malformedTimestamp
+                            ? "also-not-a-timestamp"
+                            : options?.outOfOrderTimestamp && index === 1 && strategyIndex === 0
+                                ? String(oosStart)
+                                : String(oosEnd),
                     },
                 },
             };
@@ -88,9 +101,6 @@ function buildArchive(options?: {
         });
         const controlTrace = buildFinderAssetOpportunityControlTrace(rows, index - 1, 12, 42);
         const archivedRows = options?.reorderRows && index === 2 ? [...rows].reverse() : rows;
-        const searchEnd = 9000 + index;
-        const oosStart = 10000 + index * 12;
-        const oosEnd = oosStart + 11;
         const content = [
             separator,
             `Timestamp: 2026-08-23T00:${String(index).padStart(2, "0")}:00.000Z`,
@@ -313,6 +323,30 @@ describe("fresh-window research analyzer", () => {
             expect(lines.some((line) => line.includes("no prior VALID collection archive"))).to.equal(true);
             expect(lines.some((line) => line.startsWith("Recurrence:"))).to.equal(false);
             expect(lines.some((line) => line.includes("judged=PASS"))).to.equal(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects non-timestamp forward outcomes in S0", () => {
+        const root = buildArchive({ malformedTimestamp: true });
+        try {
+            const lines = runFreshWindowAnalysis({ archiveDirectory: root });
+            expect(lines[2]).to.equal("S0: FAIL");
+            expect(lines.some((line) => line.includes("invalid forward outcome timestamp"))).to.equal(true);
+            expect(lines.some((line) => line.startsWith("Time-to-TP:"))).to.equal(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects out-of-order forward timestamps in S0", () => {
+        const root = buildArchive({ outOfOrderTimestamp: true });
+        try {
+            const lines = runFreshWindowAnalysis({ archiveDirectory: root });
+            expect(lines[2]).to.equal("S0: FAIL");
+            expect(lines.some((line) => line.includes("timestamps are out of order"))).to.equal(true);
+            expect(lines.some((line) => line.startsWith("Time-to-TP:"))).to.equal(false);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
