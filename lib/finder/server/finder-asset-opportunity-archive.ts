@@ -7,7 +7,11 @@ import type {
     AssetOpportunityPairSummaryRow,
 } from "../finder-asset-opportunity-metadata";
 import type { FinderAssetOpportunityFoldMetadata } from "../finder-asset-opportunity-fold";
-import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
+import type {
+    FinderAssetOpportunityCandidateSummaryRow,
+    FinderAssetOpportunityPairContextRow,
+    FinderFreshWindowJudgmentStatus,
+} from "../finder-asset-opportunity-research-types";
 
 /**
  * Server-side archive leaf for Asset Opportunity batch iterations.
@@ -78,6 +82,8 @@ export interface AssetOpportunityArchiveBlock {
     foldMetadata?: FinderAssetOpportunityFoldMetadata;
     dataSyncSnapshot?: string;
     gitCommit?: string;
+    judgmentStatus?: FinderFreshWindowJudgmentStatus;
+    judgmentInvalidReasons?: string[];
 }
 
 export function buildAssetOpportunityFoldIdentityFilename(holdoutBars: number): string {
@@ -103,6 +109,10 @@ export function buildAssetOpportunityArchiveBlockText(block: AssetOpportunityArc
         ] : []),
         ...(block.dataSyncSnapshot ? [`Data sync snapshot: ${block.dataSyncSnapshot}`] : []),
         ...(block.gitCommit ? [`Git commit: ${block.gitCommit}`] : []),
+        ...(block.judgmentStatus ? [`Judgment: ${block.judgmentStatus}`] : []),
+        ...(block.judgmentInvalidReasons && block.judgmentInvalidReasons.length > 0
+            ? [`Judgment invalid reasons: ${JSON.stringify(block.judgmentInvalidReasons)}`]
+            : []),
         ...(block.baseline ? [`Archive baseline: ${JSON.stringify(block.baseline)}`] : []),
         separator,
         JSON.stringify(block.topResults),
@@ -135,6 +145,8 @@ export interface AppendAssetOpportunityArchiveBlockArgs {
     foldMetadata?: FinderAssetOpportunityFoldMetadata;
     dataSyncSnapshot?: string;
     gitCommit?: string;
+    judgmentStatus?: FinderFreshWindowJudgmentStatus;
+    judgmentInvalidReasons?: string[];
     /** Optional deterministic timestamp for tests. */
     timestamp?: string;
     /** Optional injected append leaf for tests. */
@@ -163,6 +175,8 @@ export async function appendAssetOpportunityArchiveBlock(
         ...(args.foldMetadata ? { foldMetadata: args.foldMetadata } : {}),
         ...(args.dataSyncSnapshot ? { dataSyncSnapshot: args.dataSyncSnapshot } : {}),
         ...(args.gitCommit ? { gitCommit: args.gitCommit } : {}),
+        ...(args.judgmentStatus ? { judgmentStatus: args.judgmentStatus } : {}),
+        ...(args.judgmentInvalidReasons ? { judgmentInvalidReasons: args.judgmentInvalidReasons } : {}),
     });
     const append = args.append ?? defaultAppend;
     await append(dir, filename, content);
@@ -177,6 +191,9 @@ export interface AssetOpportunityPairSummaryBlock {
     batchRunId: string;
     holdoutBars: number;
     pairSummaries: AssetOpportunityPairSummaryRow[];
+    fullPoolContext?: FinderAssetOpportunityPairContextRow[];
+    judgmentStatus?: FinderFreshWindowJudgmentStatus;
+    judgmentInvalidReasons?: string[];
 }
 
 export function buildAssetOpportunityPairSummaryBlockText(
@@ -191,6 +208,15 @@ export function buildAssetOpportunityPairSummaryBlockText(
         "Pair summaries: JSON",
         separator,
         JSON.stringify(block.pairSummaries),
+        ...(block.fullPoolContext ? [
+            "Full-pool pair context: JSON",
+            separator,
+            JSON.stringify(block.fullPoolContext),
+        ] : []),
+        ...(block.judgmentStatus ? [`Judgment: ${block.judgmentStatus}`] : []),
+        ...(block.judgmentInvalidReasons && block.judgmentInvalidReasons.length > 0
+            ? [`Judgment invalid reasons: ${JSON.stringify(block.judgmentInvalidReasons)}`]
+            : []),
         "",
     ].join("\n");
 }
@@ -201,6 +227,9 @@ export interface AppendAssetOpportunityArchivePairSummaryArgs {
     batchRunId: string;
     holdoutBars: number;
     pairSummaries: AssetOpportunityPairSummaryRow[];
+    fullPoolContext?: FinderAssetOpportunityPairContextRow[];
+    judgmentStatus?: FinderFreshWindowJudgmentStatus;
+    judgmentInvalidReasons?: string[];
     timestamp?: string;
     append?: AssetOpportunityArchiveAppend;
 }
@@ -214,6 +243,8 @@ export interface AssetOpportunityFoldIdentityBlock {
     foldMetadata?: FinderAssetOpportunityFoldMetadata;
     dataSyncSnapshot?: string;
     gitCommit?: string;
+    judgmentStatus?: FinderFreshWindowJudgmentStatus;
+    judgmentInvalidReasons?: string[];
 }
 
 export function buildAssetOpportunityFoldIdentityBlockText(
@@ -232,9 +263,18 @@ export function buildAssetOpportunityFoldIdentityBlockText(
         `Fold id: ${block.holdoutBars}`,
         `OOS holdout: ${block.holdoutBars} bars`,
         `Declared row count: ${block.declaredRowCount}`,
-        ...(block.foldMetadata ? [`Fold end: ${block.foldMetadata.foldEnd}`] : []),
+        ...(block.foldMetadata ? [
+            `Fold end: ${block.foldMetadata.foldEnd}`,
+            `Search window end: ${block.foldMetadata.searchWindowEnd ?? "unknown"}`,
+            `OOS start: ${block.foldMetadata.oosStart ?? "unknown"}`,
+            `OOS end: ${block.foldMetadata.oosEnd ?? "unknown"}`,
+        ] : []),
         ...(block.dataSyncSnapshot ? [`Data sync snapshot: ${block.dataSyncSnapshot}`] : []),
         ...(block.gitCommit ? [`Git commit: ${block.gitCommit}`] : []),
+        ...(block.judgmentStatus ? [`Judgment: ${block.judgmentStatus}`] : []),
+        ...(block.judgmentInvalidReasons && block.judgmentInvalidReasons.length > 0
+            ? [`Judgment invalid reasons: ${JSON.stringify(block.judgmentInvalidReasons)}`]
+            : []),
         separator,
         JSON.stringify(block.rows),
         "",
@@ -250,6 +290,8 @@ export interface AppendAssetOpportunityArchiveFoldIdentitiesArgs {
     foldMetadata?: FinderAssetOpportunityFoldMetadata;
     dataSyncSnapshot?: string;
     gitCommit?: string;
+    judgmentStatus?: FinderFreshWindowJudgmentStatus;
+    judgmentInvalidReasons?: string[];
     timestamp?: string;
     append?: AssetOpportunityArchiveAppend;
 }
@@ -268,6 +310,8 @@ export async function appendAssetOpportunityArchiveFoldIdentities(
         ...(args.foldMetadata ? { foldMetadata: args.foldMetadata } : {}),
         ...(args.dataSyncSnapshot ? { dataSyncSnapshot: args.dataSyncSnapshot } : {}),
         ...(args.gitCommit ? { gitCommit: args.gitCommit } : {}),
+        ...(args.judgmentStatus ? { judgmentStatus: args.judgmentStatus } : {}),
+        ...(args.judgmentInvalidReasons ? { judgmentInvalidReasons: args.judgmentInvalidReasons } : {}),
     });
     const append = args.append ?? defaultAppend;
     await append(dir, filename, content);
@@ -287,6 +331,9 @@ export async function appendAssetOpportunityArchivePairSummary(
         batchRunId: args.batchRunId,
         holdoutBars: args.holdoutBars,
         pairSummaries: args.pairSummaries,
+        ...(args.fullPoolContext ? { fullPoolContext: args.fullPoolContext } : {}),
+        ...(args.judgmentStatus ? { judgmentStatus: args.judgmentStatus } : {}),
+        ...(args.judgmentInvalidReasons ? { judgmentInvalidReasons: args.judgmentInvalidReasons } : {}),
     });
     const append = args.append ?? defaultAppend;
     await append(dir, filename, content);
@@ -305,6 +352,8 @@ export interface AppendAssetOpportunityArchiveRunConfigArgs {
     batchRunId: string;
     /** Serializable run configuration (finder options + backtest + capital settings). */
     config: unknown;
+    judgmentStatus?: FinderFreshWindowJudgmentStatus;
+    judgmentInvalidReasons?: string[];
     /** Optional deterministic timestamp for tests. */
     timestamp?: string;
     /** Optional injected append leaf for tests. */
@@ -327,6 +376,10 @@ export async function appendAssetOpportunityArchiveRunConfig(
         `Timestamp: ${args.timestamp ?? new Date().toISOString()}`,
         `Batch run id: ${args.batchRunId}`,
         `Run configuration: JSON`,
+        ...(args.judgmentStatus ? [`Judgment: ${args.judgmentStatus}`] : []),
+        ...(args.judgmentInvalidReasons && args.judgmentInvalidReasons.length > 0
+            ? [`Judgment invalid reasons: ${JSON.stringify(args.judgmentInvalidReasons)}`]
+            : []),
         "=".repeat(80),
         // Primitive arrays (symbols, strategy keys, horizons) inline on one
         // line — a 500-symbol universe otherwise costs ~1,000 lines per block.

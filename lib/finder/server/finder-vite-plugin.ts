@@ -49,6 +49,7 @@
 import type { Plugin } from "vite";
 import { getHeapStatistics } from "node:v8";
 import { totalmem } from "node:os";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { debugLogger } from "../../debug-logger";
 import {
@@ -136,7 +137,11 @@ import {
     type AssetOpportunityResearchProgram,
     type AssetOpportunityArchiveAppend,
 } from "./finder-asset-opportunity-archive";
-import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
+import {
+    buildFinderAssetOpportunityPairContext,
+    type FinderAssetOpportunityCandidateSummaryRow,
+    type FinderFreshWindowJudgmentStatus,
+} from "./finder-asset-opportunity-research";
 import { captureTradeFilter } from "../finder-config-capture";
 import {
     createBufferedFinderRunLogSink,
@@ -547,6 +552,8 @@ export type FinderRunSnapshot = {
     jobKind?: "symbol_universe" | "asset_opportunity" | "asset_opportunity_batch";
     /** Research archive namespace, present only for an explicit program. */
     researchProgram?: AssetOpportunityResearchProgram;
+    judgmentStatus?: FinderFreshWindowJudgmentStatus;
+    judgmentInvalidReasons?: string[];
     /** Point-in-time fold boundary, present only for a declared fold. */
     foldEnd?: number;
     /** Ordered selected entry strategy keys for the whole job. */
@@ -1599,6 +1606,72 @@ export async function processFinderAssetOpportunityRun(
     });
 }
 
+type FreshWindowIdentity = {
+    identity: Record<string, unknown>;
+    judgmentStatus: FinderFreshWindowJudgmentStatus;
+    judgmentInvalidReasons: string[];
+};
+
+function sha256Json(value: unknown): string {
+    return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function buildFreshWindowIdentity(
+    input: FinderAssetOpportunityRunInput & { providerBySymbol?: Record<string, string> },
+    selectedStrategies: FinderSelectedStrategy[],
+): FreshWindowIdentity | null {
+    if (input.researchProgram !== "fresh-window") return null;
+    const symbols = [...input.symbols];
+    const strategyKeys = selectedStrategies.map((strategy) => strategy.key);
+    const providerBySymbol = Object.fromEntries(
+        symbols.map((symbol) => [
+            symbol,
+            input.providerBySymbol?.[symbol.trim().toUpperCase()] ?? "binance",
+        ]),
+    );
+    const evalLastBars = input.options.assetOpportunity?.evalLastBars ?? null;
+    const oosIgnoreLastBars = input.options.assetOpportunity?.oosIgnoreLastBars ?? null;
+    const oosHorizons = input.options.assetOpportunity?.oosHorizons ?? [];
+    const dataSyncSnapshot = input.dataSyncSnapshot ?? "unknown";
+    const gitCommit = input.gitCommit ?? "unknown";
+    const identity: Record<string, unknown> = {
+        identityVersion: 1,
+        researchProgram: input.researchProgram,
+        interval: input.interval,
+        symbols,
+        symbolDigest: sha256Json(symbols),
+        strategyKeys,
+        strategyDigest: sha256Json(strategyKeys),
+        providerBySymbol,
+        engine: {
+            requested: input.useRustEnginePreference === true ? "rust" : "typescript",
+            effective: "typescript",
+            rustEquivalent: false,
+        },
+        foldEnd: input.foldEnd ?? null,
+        dataSyncSnapshot,
+        gitCommit,
+        evalLastBars,
+        oosIgnoreLastBars,
+        oosHorizons,
+    };
+    const invalidReasons: string[] = [];
+    if (input.foldEnd === undefined) invalidReasons.push("foldEnd is missing");
+    if (dataSyncSnapshot === "unknown") invalidReasons.push("dataSyncSnapshot is missing");
+    if (gitCommit === "unknown") invalidReasons.push("gitCommit is missing");
+    if (evalLastBars !== 1000) invalidReasons.push(`evalLastBars must be 1000 (got ${String(evalLastBars)})`);
+    if (oosIgnoreLastBars !== 26) invalidReasons.push(`oosIgnoreLastBars must be 26 (got ${String(oosIgnoreLastBars)})`);
+    if (oosHorizons.length !== 3 || oosHorizons.some((value, index) => value !== [12, 18, 24][index])) {
+        invalidReasons.push(`oosHorizons must be [12,18,24] (got ${JSON.stringify(oosHorizons)})`);
+    }
+    identity.configIdentityDigest = sha256Json(identity);
+    return {
+        identity,
+        judgmentStatus: invalidReasons.length === 0 ? "VALID" : "INVALID",
+        judgmentInvalidReasons: invalidReasons,
+    };
+}
+
 /**
  * Process one Asset Opportunity BATCH job: runs the validated holdout sweep
  * (ascending) under ONE owner/run id. Each iteration clones the options with
@@ -1642,6 +1715,7 @@ export async function processFinderAssetOpportunityBatchRun(
     );
     const totalIterations = holdoutValues.length;
     assertAssetOpportunityStrategySelection(selectedStrategies);
+    const freshWindowIdentity = buildFreshWindowIdentity(input, selectedStrategies);
 
     runState = {
         runId: input.runId,
@@ -1650,6 +1724,10 @@ export async function processFinderAssetOpportunityBatchRun(
         interval: input.interval,
         jobKind: "asset_opportunity_batch",
         ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
+        ...(freshWindowIdentity ? { judgmentStatus: freshWindowIdentity.judgmentStatus } : {}),
+        ...(freshWindowIdentity && freshWindowIdentity.judgmentInvalidReasons.length > 0
+            ? { judgmentInvalidReasons: freshWindowIdentity.judgmentInvalidReasons }
+            : {}),
         ...(input.foldEnd !== undefined ? { foldEnd: input.foldEnd } : {}),
         strategyKeys: selectedStrategies.map((strategy) => strategy.key),
         strategyIndex: 0,
@@ -1728,6 +1806,8 @@ export async function processFinderAssetOpportunityBatchRun(
                 },
                 backtestSettings: input.settings,
                 capitalSettings: input.capitalSettings,
+                ...(freshWindowIdentity ? { freshWindowIdentity: freshWindowIdentity.identity } : {}),
+                ...(freshWindowIdentity ? { judgmentStatus: freshWindowIdentity.judgmentStatus } : {}),
                 ...(input.foldEnd !== undefined ? {
                     foldEnd: input.foldEnd,
                     dataSyncSnapshot: input.dataSyncSnapshot ?? "unknown",
@@ -1735,6 +1815,10 @@ export async function processFinderAssetOpportunityBatchRun(
                 } : {}),
             },
             ...(archiveAppend ? { append: archiveAppend } : {}),
+            ...(freshWindowIdentity ? { judgmentStatus: freshWindowIdentity.judgmentStatus } : {}),
+            ...(freshWindowIdentity && freshWindowIdentity.judgmentInvalidReasons.length > 0
+                ? { judgmentInvalidReasons: freshWindowIdentity.judgmentInvalidReasons }
+                : {}),
         });
     } catch (error) {
         debugLogger.warn("finder.asset_opportunity_batch.config_archive_failed", {
@@ -1816,6 +1900,9 @@ export async function processFinderAssetOpportunityBatchRun(
         // Pure function of the iteration's unchanged result set: compute once,
         // not once per sort metric.
         const baseline = buildAssetOpportunityForwardOosBaseline(iteration.results);
+        const fullPoolContext = input.researchProgram === "fresh-window"
+            ? buildFinderAssetOpportunityPairContext(summaryRows, selectedStrategies.length)
+            : undefined;
         try {
             if (input.researchProgram === "fresh-window") {
                 await appendAssetOpportunityArchiveFoldIdentities({
@@ -1827,6 +1914,10 @@ export async function processFinderAssetOpportunityBatchRun(
                     ...(iteration.foldMetadata ? { foldMetadata: iteration.foldMetadata } : {}),
                     ...(input.dataSyncSnapshot ? { dataSyncSnapshot: input.dataSyncSnapshot } : {}),
                     ...(input.gitCommit ? { gitCommit: input.gitCommit } : {}),
+                    ...(freshWindowIdentity ? { judgmentStatus: freshWindowIdentity.judgmentStatus } : {}),
+                    ...(freshWindowIdentity && freshWindowIdentity.judgmentInvalidReasons.length > 0
+                        ? { judgmentInvalidReasons: freshWindowIdentity.judgmentInvalidReasons }
+                        : {}),
                     ...(archiveAppend ? { append: archiveAppend } : {}),
                 });
             }
@@ -1837,6 +1928,11 @@ export async function processFinderAssetOpportunityBatchRun(
                 batchRunId: input.runId,
                 holdoutBars,
                 pairSummaries,
+                ...(fullPoolContext ? { fullPoolContext } : {}),
+                ...(freshWindowIdentity ? { judgmentStatus: freshWindowIdentity.judgmentStatus } : {}),
+                ...(freshWindowIdentity && freshWindowIdentity.judgmentInvalidReasons.length > 0
+                    ? { judgmentInvalidReasons: freshWindowIdentity.judgmentInvalidReasons }
+                    : {}),
                 ...(archiveAppend ? { append: archiveAppend } : {}),
             });
             for (const sortMetric of resolveAssetOpportunityArchiveSorts()) {
@@ -1858,6 +1954,10 @@ export async function processFinderAssetOpportunityBatchRun(
                     ...(iteration.foldMetadata ? { foldMetadata: iteration.foldMetadata } : {}),
                     ...(input.dataSyncSnapshot ? { dataSyncSnapshot: input.dataSyncSnapshot } : {}),
                     ...(input.gitCommit ? { gitCommit: input.gitCommit } : {}),
+                    ...(freshWindowIdentity ? { judgmentStatus: freshWindowIdentity.judgmentStatus } : {}),
+                    ...(freshWindowIdentity && freshWindowIdentity.judgmentInvalidReasons.length > 0
+                        ? { judgmentInvalidReasons: freshWindowIdentity.judgmentInvalidReasons }
+                        : {}),
                     ...(archiveAppend ? { append: archiveAppend } : {}),
                 });
                 archiveFilename = path.basename(appended.path);
@@ -2965,6 +3065,8 @@ function buildStatusSnapshot(): FinderRunStatusSnapshot {
         interval: state.interval,
         jobKind,
         ...(state.researchProgram ? { researchProgram: state.researchProgram } : {}),
+        ...(state.judgmentStatus ? { judgmentStatus: state.judgmentStatus } : {}),
+        ...(state.judgmentInvalidReasons ? { judgmentInvalidReasons: state.judgmentInvalidReasons } : {}),
         ...(state.foldEnd !== undefined ? { foldEnd: state.foldEnd } : {}),
         strategyKeys: state.strategyKeys,
         strategyIndex: state.strategyIndex,

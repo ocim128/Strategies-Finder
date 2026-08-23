@@ -382,6 +382,7 @@ export async function createRealWorkerAssetOpportunityBatchRunner(
                     assetDiagnostics: message.assetDiagnostics,
                     totals: message.totals,
                     summary: "",
+                    ...(message.foldMetadata ? { foldMetadata: message.foldMetadata } : {}),
                 });
             }
             return;

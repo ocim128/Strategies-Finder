@@ -121,6 +121,7 @@ export type AssetOpportunityBatchWorkerEvent =
         results: AssetOpportunityIterationResult["results"];
         totals: AssetOpportunityIterationResult["totals"];
         assetDiagnostics: AssetOpportunityIterationResult["assetDiagnostics"];
+        foldMetadata?: AssetOpportunityIterationResult["foldMetadata"];
         cancelled: boolean;
     }
     | {
@@ -371,6 +372,7 @@ if (!isMainThread && parentPort) {
                     results: iteration.results,
                     totals: iteration.totals,
                     assetDiagnostics: iteration.assetDiagnostics,
+                    ...(iteration.foldMetadata ? { foldMetadata: iteration.foldMetadata } : {}),
                     cancelled: iteration.cancelled,
                 });
             },

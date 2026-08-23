@@ -2,8 +2,15 @@ import { createHash } from "node:crypto";
 import type { BacktestResult, OHLCVData, Trade } from "../../types/strategies";
 import { timeKey } from "../../strategies/backtest/backtest-utils";
 import { serializeParams } from "../finder-param-math";
-import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
-export type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
+import type {
+    FinderAssetOpportunityCandidateSummaryRow,
+    FinderAssetOpportunityPairContextRow,
+} from "../finder-asset-opportunity-research-types";
+export type {
+    FinderAssetOpportunityCandidateSummaryRow,
+    FinderAssetOpportunityPairContextRow,
+    FinderFreshWindowJudgmentStatus,
+} from "../finder-asset-opportunity-research-types";
 
 export const FINDER_ASSET_OPPORTUNITY_RESEARCH_CHUNK_SIZE = 256;
 
@@ -60,7 +67,7 @@ function buildPathScalars(
     });
     return {
         tpHitCount: tpTrades.length,
-        medianBarsToTP: median(tpBars),
+        medianBarsToTP: tpBars.length >= 3 ? median(tpBars) : null,
         medianBarsToTerminal: median(terminalBars),
         // Each engine Trade is one terminal path. This is the fraction whose
         // terminal exit was a TP; Phase 3 replaces/extends this with the
@@ -118,4 +125,64 @@ export function attachFinderAssetOpportunityPathScalars(
     candles: OHLCVData[],
 ): FinderAssetOpportunityCandidateSummaryRow {
     return { ...row, ...buildPathScalars(result, candles) };
+}
+
+function meanFinite(values: number[]): number | null {
+    return values.length > 0
+        ? values.reduce((sum, value) => sum + value, 0) / values.length
+        : null;
+}
+
+function entropyBits(values: string[]): number {
+    if (values.length === 0) return 0;
+    const counts = new Map<string, number>();
+    for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+    return [...counts.values()].reduce((entropy, count) => {
+        const probability = count / values.length;
+        return entropy - probability * Math.log2(probability);
+    }, 0);
+}
+
+/** Build full-pool pair context without consulting the retained top-K rows. */
+export function buildFinderAssetOpportunityPairContext(
+    rows: readonly FinderAssetOpportunityCandidateSummaryRow[],
+    selectedStrategyCount: number,
+): FinderAssetOpportunityPairContextRow[] {
+    const bySymbol = new Map<string, FinderAssetOpportunityCandidateSummaryRow[]>();
+    for (const row of rows) {
+        const symbolRows = bySymbol.get(row.symbol) ?? [];
+        symbolRows.push(row);
+        bySymbol.set(row.symbol, symbolRows);
+    }
+    const denominator = Math.max(1, Math.floor(selectedStrategyCount));
+    return [...bySymbol.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([symbol, symbolRows]) => {
+            const tpBars = symbolRows
+                .map((row) => row.medianBarsToTP)
+                .filter((value): value is number => value !== null && Number.isFinite(value));
+            const terminalBars = symbolRows
+                .map((row) => row.medianBarsToTerminal)
+                .filter((value): value is number => value !== null && Number.isFinite(value));
+            const tpShares = symbolRows
+                .map((row) => row.tpFirstShare)
+                .filter((value): value is number => value !== null && Number.isFinite(value));
+            const profitFactors = symbolRows
+                .map((row) => row.profitFactor)
+                .filter((value): value is number => value !== null && Number.isFinite(value));
+            const strategyKeys = symbolRows.map((row) => row.strategyKey);
+            const distinctStrategyCount = new Set(strategyKeys).size;
+            return {
+                symbol,
+                candidateCount: symbolRows.length,
+                distinctStrategyCount,
+                strategyCoverage: distinctStrategyCount / denominator,
+                strategyIdEntropy: entropyBits(strategyKeys),
+                meanMedianBarsToTP: meanFinite(tpBars),
+                meanMedianBarsToTerminal: meanFinite(terminalBars),
+                meanTpFirstShare: meanFinite(tpShares),
+                topProfitFactor: profitFactors.length > 0 ? Math.max(...profitFactors) : null,
+                fullPool: true,
+            } satisfies FinderAssetOpportunityPairContextRow;
+        });
 }

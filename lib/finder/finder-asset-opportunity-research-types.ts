@@ -24,3 +24,18 @@ export interface FinderAssetOpportunityCandidateSummaryRow {
     tpFirstShare: number | null;
     forwardOutcomes?: Record<string, FinderAssetOpportunityForwardOutcomeSummary>;
 }
+
+export interface FinderAssetOpportunityPairContextRow {
+    symbol: string;
+    candidateCount: number;
+    distinctStrategyCount: number;
+    strategyCoverage: number;
+    strategyIdEntropy: number;
+    meanMedianBarsToTP: number | null;
+    meanMedianBarsToTerminal: number | null;
+    meanTpFirstShare: number | null;
+    topProfitFactor: number | null;
+    fullPool: true;
+}
+
+export type FinderFreshWindowJudgmentStatus = "VALID" | "INVALID";

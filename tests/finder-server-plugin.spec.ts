@@ -1379,12 +1379,24 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         end: number;
         archiveSort?: FinderAssetOpportunityArchiveSort | null;
         datasets?: Map<string, OHLCVData[]>;
+        freshWindow?: "valid" | "invalid";
         append?: (dir: string, filename: string, content: string) => Promise<void>;
     }): Promise<{ events: FinderAssetOpportunityBatchStreamEvent[]; appended: string[]; contents: string[] }> {
         const datasets = args.datasets ?? longUpDownDatasets();
         const events: FinderAssetOpportunityBatchStreamEvent[] = [];
         const appended: string[] = [];
         const contents: string[] = [];
+        const freshOptions = args.freshWindow
+            ? {
+                ...makeBatchOptions(["UP", "DOWN"], args.start, args.end),
+                assetOpportunity: {
+                    ...makeBatchOptions(["UP", "DOWN"], args.start, args.end).assetOpportunity!,
+                    evalLastBars: args.freshWindow === "valid" ? 1000 : 0,
+                    oosIgnoreLastBars: args.freshWindow === "valid" ? 26 : 0,
+                    oosHorizons: args.freshWindow === "valid" ? [12, 18, 24] : [1, 3, 5],
+                },
+            }
+            : makeBatchOptions(["UP", "DOWN"], args.start, args.end);
         setRunOwnerForTests(args.owner);
         const run = (async () => {
             await processFinderAssetOpportunityBatchRun(
@@ -1392,7 +1404,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                     runId: args.runId ?? "batch-run",
                     interval: "5m",
                     symbols: ["UP", "DOWN"],
-                    options: makeBatchOptions(["UP", "DOWN"], args.start, args.end),
+                    options: freshOptions,
                     settings,
                     capitalSettings,
                     selectedStrategies: [batchStrategy],
@@ -1403,6 +1415,13 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                     minFreshSupport: 1,
                     archiveSort: args.archiveSort ?? null,
                     batch: { startHoldoutBars: args.start, endHoldoutBars: args.end },
+                    ...(args.freshWindow ? {
+                        researchProgram: "fresh-window" as const,
+                        foldEnd: 1_700_000_000 + (39 * 300),
+                        dataSyncSnapshot: args.freshWindow === "valid" ? "sync-2026-08-23" : undefined,
+                        gitCommit: args.freshWindow === "valid" ? "abc123" : undefined,
+                        providerBySymbol: { UP: "binance", DOWN: "binance" },
+                    } : {}),
                 },
                 (event) => events.push(event),
                 args.owner,
@@ -1505,6 +1524,48 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         expect(status.terminalAssets?.length).to.equal(iterations[2]!.assets.length);
         expect(status.assetTotals).to.not.equal(null);
         expect(status.assetDiagnostics).to.not.equal(null);
+    });
+
+    it("records a valid fresh-window identity and full-pool pair context", async () => {
+        const { contents, appended } = await runAssetBatch({
+            owner: 7310,
+            start: 2,
+            end: 2,
+            runId: "batch-fresh-valid",
+            freshWindow: "valid",
+        });
+
+        expect(appended).to.include("oos-fold-identities-2-bars.txt");
+        const config = contents.find((content) => content.includes("Run configuration: JSON"))!;
+        expect(config).to.contain('"judgmentStatus": "VALID"');
+        expect(config).to.contain('"symbolDigest"');
+        expect(config).to.contain('"strategyDigest"');
+        expect(config).to.contain('"configIdentityDigest"');
+        expect(contents.some((content) => content.includes("Full-pool pair context: JSON"))).to.equal(true);
+        expect(contents.filter((content) => content.includes("Judgment: VALID")).length).to.be.greaterThan(0);
+        const status = handleStatusRequest("batch-fresh-valid");
+        if (!status.ok) throw new Error(status.error);
+        expect(status.judgmentStatus).to.equal("VALID");
+    });
+
+    it("archives a fresh-window run but marks drifted identity INVALID", async () => {
+        const { contents, appended } = await runAssetBatch({
+            owner: 7311,
+            start: 2,
+            end: 2,
+            runId: "batch-fresh-invalid",
+            freshWindow: "invalid",
+        });
+
+        expect(appended).to.include("oos-fold-identities-2-bars.txt");
+        const config = contents.find((content) => content.includes("Run configuration: JSON"))!;
+        expect(config).to.contain('"judgmentStatus": "INVALID"');
+        expect(config).to.contain("evalLastBars must be 1000");
+        expect(contents.some((content) => content.includes("Judgment: INVALID"))).to.equal(true);
+        const status = handleStatusRequest("batch-fresh-invalid");
+        if (!status.ok) throw new Error(status.error);
+        expect(status.judgmentStatus).to.equal("INVALID");
+        expect(status.judgmentInvalidReasons).to.be.an("array").with.length.greaterThan(0);
     });
 
     it("always archives the default order and every resort metric", async () => {
