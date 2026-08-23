@@ -273,6 +273,24 @@ function topByProfitFactor(rows: readonly FinderAssetOpportunityCandidateSummary
         .at(0) ?? null;
 }
 
+function topByTimeToTp(rows: readonly FinderAssetOpportunityCandidateSummaryRow[]): FinderAssetOpportunityCandidateSummaryRow | null {
+    return [...rows]
+        .filter((row) => row.tpHitCount !== null
+            && row.tpHitCount >= 3
+            && row.medianBarsToTP !== null
+            && Number.isFinite(row.medianBarsToTP))
+        .sort((left, right) => (left.medianBarsToTP ?? Infinity) - (right.medianBarsToTP ?? Infinity)
+            || left.symbol.localeCompare(right.symbol)
+            || left.strategyKey.localeCompare(right.strategyKey)
+            || left.candidateFingerprint.localeCompare(right.candidateFingerprint)
+            || left.candidateIndex - right.candidateIndex)
+        .at(0) ?? null;
+}
+
+function orderedByFoldEnd(windows: readonly FreshWindowIdentityFold[]): FreshWindowIdentityFold[] {
+    return [...windows].sort((left, right) => (left.foldEnd ?? Infinity) - (right.foldEnd ?? Infinity));
+}
+
 function eligibleRows(rows: readonly FinderAssetOpportunityCandidateSummaryRow[], horizon: number): FinderAssetOpportunityCandidateSummaryRow[] {
     return rows.filter((row) => row.evaluationOk && row.passesTradeFilter && normalizeOutcome(row, horizon) !== null);
 }
@@ -282,7 +300,7 @@ function buildControlDrawDigest(
     horizon: number,
     seed: number,
 ): string {
-    const trace = windows.map((fold, index) => {
+    const trace = orderedByFoldEnd(windows).map((fold, index) => {
         const bySymbol = new Map<string, FinderAssetOpportunityCandidateSummaryRow[]>();
         for (const row of fold.rows) {
             const rows = bySymbol.get(row.symbol) ?? [];
@@ -312,37 +330,28 @@ function computeWindowMetrics(
         rows.push(row);
         bySymbol.set(row.symbol, rows);
     }
-    const selectedValues: number[] = [];
-    const controlValues: number[] = [];
     const selectedNet: number[] = [];
     const controlNet: number[] = [];
     for (const [, rows] of [...bySymbol.entries()].sort(([left], [right]) => left.localeCompare(right))) {
         const eligible = eligibleRows(rows, horizon);
-        const selected = topByProfitFactor(eligible);
+        const selected = topByTimeToTp(eligible);
         const control = sampleOne(eligible, rng);
         if (!selected || !control) continue;
         const selectedOutcome = normalizeOutcome(selected, horizon)!;
         const controlOutcome = normalizeOutcome(control, horizon)!;
-        // Lower bars-to-TP is the registered direction; full-pool control is
-        // therefore control minus selected. The same rows' execution net is
-        // retained for the S0 cost/coverage diagnostic.
-        if (selected.medianBarsToTP !== null && control.medianBarsToTP !== null) {
-            selectedValues.push(selected.medianBarsToTP);
-            controlValues.push(control.medianBarsToTP);
-        }
         selectedNet.push(selectedOutcome.netReturnPercent);
         controlNet.push(controlOutcome.netReturnPercent);
     }
-    if (selectedValues.length === 0) return null;
-    const selected = mean(selectedValues);
-    const control = mean(controlValues);
+    if (selectedNet.length === 0) return null;
+    const selected = mean(selectedNet);
+    const control = mean(controlNet);
     return {
         fold,
         selected,
         control,
-        delta: control - selected,
-        selectedNet: selectedNet.length > 0 ? mean(selectedNet) : null,
-        controlNet: controlNet.length > 0 ? mean(controlNet) : null,
+        delta: selected - control,
+        selectedNet: selected,
+        controlNet: control,
     };
 }
 
@@ -603,29 +612,73 @@ function checkS0(
     };
 }
 
-function recurrenceReport(windows: FreshWindowIdentityFold[]): string[] {
-    const ordered = [...windows].sort((left, right) => (left.foldEnd ?? Infinity) - (right.foldEnd ?? Infinity));
-    const seen = new Set<string>();
-    let currentDensity = 0;
-    let currentCount = 0;
-    let currentEligible = 0;
+function recurrenceReport(windows: FreshWindowIdentityFold[], horizon: number, seed: number): string[] {
+    const ordered = orderedByFoldEnd(windows);
+    const seenCounts = new Map<string, number>();
+    const foldDeltas: Array<{ foldEnd: number; delta: number }> = [];
+    const densities: number[] = [];
     for (const fold of ordered) {
+        const currentRows = fold.rows.filter((row) => row.evaluationOk && row.passesTradeFilter);
+        const priorCounts = new Map<string, number>();
         let recurring = 0;
-        let eligible = 0;
-        for (const row of fold.rows) {
-            if (!row.evaluationOk || !row.passesTradeFilter) continue;
-            eligible += 1;
-            if (seen.has(row.identityHash)) recurring += 1;
+        for (const row of currentRows) {
+            const count = seenCounts.get(row.identityHash) ?? 0;
+            priorCounts.set(row.identityHash, count);
+            if (count > 0) recurring += 1;
         }
-        currentDensity = eligible > 0 ? recurring / eligible : 0;
-        currentCount = recurring;
-        currentEligible = eligible;
-        for (const row of fold.rows) if (row.evaluationOk) seen.add(row.identityHash);
+        const density = currentRows.length > 0 ? recurring / currentRows.length : 0;
+        densities.push(density);
+        if (density >= 0.05) {
+            const rowsBySymbol = new Map<string, FinderAssetOpportunityCandidateSummaryRow[]>();
+            for (const row of currentRows) {
+                const rows = rowsBySymbol.get(row.symbol) ?? [];
+                rows.push(row);
+                rowsBySymbol.set(row.symbol, rows);
+            }
+            const rng = createRng(seed + (fold.foldEnd ?? fold.holdoutBars));
+            const deltas: number[] = [];
+            for (const [, rows] of [...rowsBySymbol.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+                const eligible = rows.filter((row) => normalizeOutcome(row, horizon) !== null);
+                const selected = [...eligible]
+                    .sort((left, right) => (priorCounts.get(right.identityHash) ?? 0) - (priorCounts.get(left.identityHash) ?? 0)
+                        || left.strategyKey.localeCompare(right.strategyKey)
+                        || left.candidateFingerprint.localeCompare(right.candidateFingerprint)
+                        || left.candidateIndex - right.candidateIndex)
+                    .at(0);
+                const control = sampleOne(eligible, rng);
+                if (!selected || !control) continue;
+                const selectedOutcome = normalizeOutcome(selected, horizon)!;
+                const controlOutcome = normalizeOutcome(control, horizon)!;
+                deltas.push(selectedOutcome.netReturnPercent - controlOutcome.netReturnPercent);
+            }
+            if (deltas.length > 0 && fold.foldEnd !== null) {
+                foldDeltas.push({ foldEnd: fold.foldEnd, delta: mean(deltas) });
+            }
+        }
+        for (const row of currentRows) seenCounts.set(row.identityHash, (seenCounts.get(row.identityHash) ?? 0) + 1);
     }
-    if (currentEligible === 0 || currentDensity < 0.05) {
-        return [`Recurrence: INSUFFICIENT DATA (latest density ${(currentDensity * 100).toFixed(2)}%, ${currentCount}/${currentEligible})`];
+    if (foldDeltas.length === 0) {
+        const latestDensity = densities.at(-1) ?? 0;
+        return [
+            `Recurrence: INSUFFICIENT DATA (no judged fold at density >=5%; latest density ${(latestDensity * 100).toFixed(2)}%)`,
+            "Recurrence budget: collection=PASS, judged=INSUFFICIENT, replication=NOT AUTHORIZED",
+        ];
     }
-    return [`Recurrence: latest prior-fold density ${(currentDensity * 100).toFixed(2)}% (${currentCount}/${currentEligible})`];
+    const deltas = foldDeltas.map(({ delta }) => delta);
+    const verdict = summarizeVerdict(deltas, seed);
+    const midpoint = Math.ceil(foldDeltas.length / 2);
+    const firstHalf = mean(foldDeltas.slice(0, midpoint).map(({ delta }) => delta));
+    const secondHalf = mean(foldDeltas.slice(midpoint).map(({ delta }) => delta));
+    const kill = verdict.verdict === "UNSTABLE"
+        || verdict.mean <= 0
+        || verdict.signStability < 0.55
+        || firstHalf <= 0
+        || secondHalf <= 0;
+    const latestDensity = densities.at(-1) ?? 0;
+    return [
+        `Recurrence: ${kill ? "KILL" : verdict.verdict} execution-net delta=${verdict.mean.toFixed(4)}% positive=${verdict.positiveWindows}/${verdict.windows} halves=${firstHalf.toFixed(4)}/${secondHalf.toFixed(4)} latest density ${(latestDensity * 100).toFixed(2)}%`,
+        "Recurrence budget: collection=PASS, judged=PASS, replication=REQUIRED before any promotion",
+    ];
 }
 
 function strategyGateReport(windows: FreshWindowIdentityFold[], horizon: number, seed: number): string[] {
@@ -635,7 +688,7 @@ function strategyGateReport(windows: FreshWindowIdentityFold[], horizon: number,
     const foldIncrements: Array<number | null> = [];
     let totalPairs = 0;
     let gatedPairs = 0;
-    const orderedWindows = [...windows].sort((left, right) => left.holdoutBars - right.holdoutBars);
+    const orderedWindows = orderedByFoldEnd(windows);
     for (const fold of orderedWindows) {
         const rowsBySymbol = new Map<string, FinderAssetOpportunityCandidateSummaryRow[]>();
         for (const row of fold.rows) {
@@ -646,9 +699,10 @@ function strategyGateReport(windows: FreshWindowIdentityFold[], horizon: number,
         const foldUngated: number[] = [];
         const foldGated: number[] = [];
         for (const [symbol, rows] of rowsBySymbol) {
-            totalPairs += 1;
-            const distinct = new Set(rows.map((row) => row.strategyKey)).size;
             const eligible = eligibleRows(rows, horizon);
+            if (eligible.length === 0) continue;
+            totalPairs += 1;
+            const distinct = new Set(eligible.map((row) => row.strategyKey)).size;
             const selected = topByProfitFactor(eligible);
             const random = sampleOne(eligible, createRng(seed + fold.holdoutBars + symbol.length));
             if (!selected || !random) continue;
@@ -719,7 +773,7 @@ export function runFreshWindowAnalysis(args: {
         lines.push(...s0.errors.map((error) => `S0 ERROR: ${error}`));
         return lines;
     }
-    const metrics = s0.windows
+    const metrics = orderedByFoldEnd(s0.windows)
         .map((fold, index) => computeWindowMetrics(fold, horizon, createRng(seed + index)))
         .filter((metric): metric is FoldMetric => metric !== null);
     const verdict = summarizeVerdict(metrics.map((metric) => metric.delta), seed);
@@ -732,9 +786,9 @@ export function runFreshWindowAnalysis(args: {
         || firstHalf <= 0
         || secondHalf <= 0;
     lines.push(
-        `Time-to-TP: ${timeToTpKill ? "KILL" : verdict.verdict} delta(control-selected bars)=${verdict.mean.toFixed(4)} positive=${verdict.positiveWindows}/${verdict.windows} p5=${verdict.bootstrapP5.toFixed(4)} halves=${firstHalf.toFixed(4)}/${secondHalf.toFixed(4)}`,
+        `Time-to-TP: ${timeToTpKill ? "KILL" : verdict.verdict} execution-net delta(selected-control)=${verdict.mean.toFixed(4)}% positive=${verdict.positiveWindows}/${verdict.windows} p5=${verdict.bootstrapP5.toFixed(4)} halves=${firstHalf.toFixed(4)}/${secondHalf.toFixed(4)}`,
     );
-    lines.push(...recurrenceReport(s0.windows));
+    lines.push(...recurrenceReport(s0.windows, horizon, seed));
     lines.push(...strategyGateReport(s0.windows, horizon, seed));
     lines.push(legacyDiagnostic(args.archiveDirectory));
     lines.push("Decision budget: collection -> judged batch -> one untouched replication; no deployment from this report alone.");

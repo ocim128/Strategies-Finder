@@ -19,14 +19,21 @@ function buildArchive(options?: {
     badHash?: boolean;
     missingOutcome?: boolean;
     invalidFold?: boolean;
+    recurring?: boolean;
+    medianWinnerPositive?: boolean;
+    extraIneligibleStrategies?: number;
 }): string {
     const root = mkdtempSync(path.join(tmpdir(), "fresh-window-analyzer-"));
     const strategyCount = options?.strategyCount ?? 3;
+    const totalStrategyCount = strategyCount + (options?.extraIneligibleStrategies ?? 0);
     for (let index = 1; index <= 25; index += 1) {
         const holdout = index * 12;
-        const rows = Array.from({ length: strategyCount }, (_, strategyIndex) => {
+        const rows = Array.from({ length: totalStrategyCount }, (_, strategyIndex) => {
             const strategyKey = `strategy_${strategyIndex}`;
-            const candidateFingerprint = `candidate_${index}_${strategyIndex}`;
+            const candidateFingerprint = options?.recurring && strategyIndex === 0
+                ? "recurring-candidate"
+                : `candidate_${index}_${strategyIndex}`;
+            const eligible = strategyIndex < strategyCount;
             const exitReason = index === 1
                 ? "take_profit"
                 : index === 2
@@ -38,13 +45,17 @@ function buildArchive(options?: {
                 candidateFingerprint,
                 identityHash: identityHash("PAIR", strategyKey, candidateFingerprint),
                 candidateIndex: strategyIndex,
-                evaluationOk: true,
-                passesTradeFilter: true,
-                profitFactor: strategyIndex === 0 ? 3 : 1,
+                evaluationOk: eligible,
+                passesTradeFilter: eligible,
+                profitFactor: options?.recurring
+                    ? strategyIndex === 1 ? 3 : 1
+                    : strategyIndex === 0 ? 3 : 1,
                 netProfitPercent: 1,
                 totalTrades: 3,
                 tpHitCount: 3,
-                medianBarsToTP: strategyIndex === 0 ? 5 : 2,
+                medianBarsToTP: options?.recurring
+                    ? strategyIndex === 0 ? 2 : 5
+                    : strategyIndex === 0 ? 5 : 2,
                 medianBarsToTerminal: 4,
                 tpFirstShare: 1,
                 forwardOutcomes: {
@@ -54,7 +65,9 @@ function buildArchive(options?: {
                         grossReturnPercent: strategyIndex === 0 ? 1.2 : 0.2,
                         slippagePercent: 0.1,
                         commissionPercent: 0.1,
-                        netReturnPercent: strategyIndex === 0 ? 1 : 0,
+                        netReturnPercent: options?.medianWinnerPositive
+                            ? strategyIndex === 0 ? 1 : strategyIndex === 1 ? -1 : 0
+                            : strategyIndex === 0 ? 1 : 0,
                         entryPrice: 100,
                         exitPrice: 102,
                         entryTimestamp: `2026-08-22T00:${String(index).padStart(2, "0")}:00.000Z`,
@@ -100,9 +113,9 @@ function buildArchive(options?: {
         researchProgram: "fresh-window",
         symbols: ["PAIR"],
         symbolDigest: createHash("sha256").update(JSON.stringify(["PAIR"])).digest("hex"),
-        strategyKeys: Array.from({ length: strategyCount }, (_, index) => `strategy_${index}`),
+        strategyKeys: Array.from({ length: totalStrategyCount }, (_, index) => `strategy_${index}`),
         strategyDigest: createHash("sha256")
-            .update(JSON.stringify(Array.from({ length: strategyCount }, (_, index) => `strategy_${index}`)))
+            .update(JSON.stringify(Array.from({ length: totalStrategyCount }, (_, index) => `strategy_${index}`)))
             .digest("hex"),
         providerBySymbol: { PAIR: "binance" },
         engine: { effective: "typescript" },
@@ -176,11 +189,43 @@ describe("fresh-window research analyzer", () => {
         }
     });
 
+    it("judges the median-bars selector when PF and median-bars disagree", () => {
+        const root = buildArchive({ recurring: true, medianWinnerPositive: true });
+        try {
+            const lines = runFreshWindowAnalysis({ archiveDirectory: root });
+            expect(lines.some((line) => line.startsWith("Time-to-TP:") && line.includes("execution-net delta"))).to.equal(true);
+            expect(lines.some((line) => line.includes("delta(control-selected bars)"))).to.equal(false);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("uses strict prior-fold recurrence counts and its execution-net judge", () => {
+        const root = buildArchive({ recurring: true, medianWinnerPositive: true });
+        try {
+            const lines = runFreshWindowAnalysis({ archiveDirectory: root });
+            expect(lines.some((line) => line.startsWith("Recurrence:") && !line.includes("INSUFFICIENT DATA"))).to.equal(true);
+            expect(lines.some((line) => line.startsWith("Recurrence budget: collection=PASS, judged=PASS"))).to.equal(true);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("kills strategy coverage below the fixed ten-percent gate", () => {
         const root = buildArchive({ strategyCount: 1 });
         try {
             const lines = runFreshWindowAnalysis({ archiveDirectory: root });
             expect(lines.some((line) => line.startsWith("Strategy gate: KILL (coverage"))).to.equal(true);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("computes strategy coverage from eligible rows and eligible-pair denominator", () => {
+        const root = buildArchive({ strategyCount: 1, extraIneligibleStrategies: 2 });
+        try {
+            const lines = runFreshWindowAnalysis({ archiveDirectory: root });
+            expect(lines.some((line) => line.startsWith("Strategy gate: KILL (coverage 0.00% < 10%)"))).to.equal(true);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
