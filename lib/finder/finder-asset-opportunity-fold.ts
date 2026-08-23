@@ -16,6 +16,26 @@ export interface FinderAssetOpportunityFoldScheduleEntry {
     foldEnd: number;
 }
 
+/** Build the 25 point-in-time folds ending one stride before the data end. */
+export function buildFreshFoldScheduleFromDataEnd(
+    dataEndTime: number,
+    barSeconds: number,
+): FinderAssetOpportunityFoldScheduleEntry[] {
+    if (!Number.isFinite(dataEndTime) || dataEndTime <= 0) {
+        throw new Error("Fresh-window dataEndTime must be a positive finite timestamp.");
+    }
+    if (!Number.isFinite(barSeconds) || barSeconds <= 0) {
+        throw new Error("Fresh-window barSeconds must be a positive finite number.");
+    }
+    return Array.from({ length: FINDER_ASSET_FRESH_FOLD_COUNT }, (_, index) => ({
+        holdoutBars: (index + 1) * FINDER_ASSET_FRESH_FOLD_STRIDE_BARS,
+        foldEnd: dataEndTime
+            - (FINDER_ASSET_FRESH_FOLD_COUNT - index)
+                * FINDER_ASSET_FRESH_FOLD_STRIDE_BARS
+                * barSeconds,
+    }));
+}
+
 /**
  * Parse the complete fresh-window schedule at the request boundary. The
  * holdout values are deliberately part of the payload rather than inferred
@@ -94,12 +114,14 @@ export function sliceFinderAssetDataAtFoldEnd(
 export function sliceFinderAssetDataStrictlyAfterFoldEnd(
     data: OHLCVData[],
     foldEnd: number | undefined,
+    maxBars?: number,
 ): OHLCVData[] {
     if (foldEnd === undefined) return [];
-    return data.filter((candle) => {
+    const forward = data.filter((candle) => {
         const timestamp = timeToNumber(candle.time);
         return timestamp !== null && timestamp > foldEnd;
     });
+    return maxBars === undefined ? forward : forward.slice(0, maxBars);
 }
 
 export function assertFinderAssetDataAtOrBeforeFoldEnd(

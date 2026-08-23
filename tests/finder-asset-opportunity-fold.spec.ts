@@ -4,6 +4,7 @@ import type { OHLCVData } from "../lib/types/strategies";
 import {
     assertFinderAssetDataAtOrBeforeFoldEnd,
     assertFinderAssetDataStrictlyAfterFoldEnd,
+    buildFreshFoldScheduleFromDataEnd,
     normalizeFinderAssetFreshFoldSchedule,
     normalizeFinderAssetFoldEnd,
     sliceFinderAssetDataAtFoldEnd,
@@ -46,6 +47,15 @@ describe("Asset Opportunity point-in-time fold contract", () => {
         )).to.throw(/strictly ascending/);
     });
 
+    it("builds folds with one stride of forward data after the final boundary", () => {
+        const schedule = buildFreshFoldScheduleFromDataEnd(1_700_100_000, 300);
+        expect(schedule).to.have.length(25);
+        expect(schedule[0]).to.deep.equal({ holdoutBars: 12, foldEnd: 1_700_010_000 });
+        expect(schedule[24]).to.deep.equal({ holdoutBars: 300, foldEnd: 1_700_096_400 });
+        expect(schedule[1]!.foldEnd - schedule[0]!.foldEnd).to.equal(3_600);
+        expect(() => buildFreshFoldScheduleFromDataEnd(0, 300)).to.throw(/dataEndTime/);
+    });
+
     it("keeps the fold boundary inclusive and makes the forward window strictly later", () => {
         const raw = candles([100, 200, 300, 400]);
         const search = sliceFinderAssetDataAtFoldEnd(raw, 300);
@@ -54,6 +64,15 @@ describe("Asset Opportunity point-in-time fold contract", () => {
         expect(forward.map((candle) => candle.time)).to.deep.equal([400]);
         assertFinderAssetDataAtOrBeforeFoldEnd(search, 300, "search");
         assertFinderAssetDataStrictlyAfterFoldEnd(forward, 300, "forward");
+    });
+
+    it("caps only the requested forward window without changing legacy slicing", () => {
+        const raw = candles([100, 200, 300, 400, 500]);
+        expect(sliceFinderAssetDataStrictlyAfterFoldEnd(raw, 200, 2).map((candle) => candle.time))
+            .to.deep.equal([300, 400]);
+        expect(sliceFinderAssetDataStrictlyAfterFoldEnd(raw, 200).map((candle) => candle.time))
+            .to.deep.equal([300, 400, 500]);
+        expect(sliceFinderAssetDataStrictlyAfterFoldEnd(raw, undefined, 2)).to.deep.equal([]);
     });
 
     it("preserves legacy absent-fold copy semantics", () => {

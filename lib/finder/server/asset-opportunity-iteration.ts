@@ -61,6 +61,7 @@ import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-
 import {
     assertFinderAssetDataAtOrBeforeFoldEnd,
     assertFinderAssetDataStrictlyAfterFoldEnd,
+    FINDER_ASSET_FRESH_FOLD_STRIDE_BARS,
     getFinderAssetDataBounds,
     sliceFinderAssetDataAtFoldEnd,
     sliceFinderAssetDataStrictlyAfterFoldEnd,
@@ -545,7 +546,13 @@ export async function runAssetOpportunityIteration(
                     const forwardData = rawForwardData === undefined
                         ? undefined
                         : input.loadDatasetIsRaw
-                            ? sliceFinderAssetDataStrictlyAfterFoldEnd(rawForwardData, input.foldEnd)
+                            ? sliceFinderAssetDataStrictlyAfterFoldEnd(
+                                rawForwardData,
+                                input.foldEnd,
+                                input.researchProgram === "fresh-window"
+                                    ? FINDER_ASSET_FRESH_FOLD_STRIDE_BARS
+                                    : undefined,
+                            )
                             : rawForwardData;
                     const finishedAt = performance.now();
                     return {
