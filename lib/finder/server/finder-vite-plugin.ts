@@ -509,6 +509,14 @@ function mergeAssetOpportunityChunkResults(
                 ),
             }
             : {}),
+        ...(entries.some(({ iteration }) => iteration.expectedOutcomeSummaryRows !== undefined)
+            ? {
+                expectedOutcomeSummaryRows: entries.reduce(
+                    (total, { iteration }) => total + (iteration.expectedOutcomeSummaryRows ?? 0),
+                    0,
+                ),
+            }
+            : {}),
         ...(foldMetadata ? { foldMetadata } : {}),
     };
 }
@@ -1986,6 +1994,7 @@ export async function processFinderAssetOpportunityBatchRun(
                     holdoutBars,
                     rows: summaryRows,
                     expectedRowCount: iteration.expectedCandidateSummaryRows,
+                    expectedOutcomeRowCount: iteration.expectedOutcomeSummaryRows,
                     outcomeRowCount: summaryRows.filter((row) => row.forwardOutcomes?.["12"] !== undefined).length,
                     controlSeed: controlTrace.seed,
                     controlDrawIdentities: controlTrace.draws,

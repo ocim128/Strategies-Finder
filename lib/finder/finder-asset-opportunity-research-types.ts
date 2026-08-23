@@ -27,6 +27,8 @@ export interface FinderAssetOpportunityCandidateSummaryRow {
     medianBarsToTP: number | null;
     medianBarsToTerminal: number | null;
     tpFirstShare: number | null;
+    /** True when a fresh signal supplied an entry inside the OOS window. */
+    forwardOutcomeEligible?: boolean;
     forwardOutcomes?: Record<string, FinderAssetOpportunityForwardOutcomeSummary>;
 }
 

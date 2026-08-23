@@ -254,6 +254,8 @@ export interface AssetOpportunityFoldIdentityBlock {
     declaredRowCount: number;
     /** Independent evaluator count; unlike declaredRowCount this is not derived from rows. */
     expectedRowCount?: number;
+    /** Candidates eligible for a forward entry inside the declared OOS window. */
+    expectedOutcomeRowCount?: number;
     /** Number of rows carrying the primary forward outcome. */
     outcomeRowCount?: number;
     controlSeed?: number;
@@ -285,6 +287,7 @@ export function buildAssetOpportunityFoldIdentityBlockText(
         `OOS holdout: ${block.holdoutBars} bars`,
         `Declared row count: ${block.declaredRowCount}`,
         `Expected evaluated row count: ${block.expectedRowCount ?? "unknown"}`,
+        `Expected eligible outcome row count: ${block.expectedOutcomeRowCount ?? "unknown"}`,
         `Forward outcome row count: ${block.outcomeRowCount ?? "unknown"}`,
         `Control seed: ${block.controlSeed ?? "unknown"}`,
         `Control draw digest: ${block.controlDrawDigest ?? "unknown"}`,
@@ -316,6 +319,7 @@ export interface AppendAssetOpportunityArchiveFoldIdentitiesArgs {
     holdoutBars: number;
     rows: FinderAssetOpportunityCandidateSummaryRow[];
     expectedRowCount?: number;
+    expectedOutcomeRowCount?: number;
     outcomeRowCount?: number;
     controlSeed?: number;
     controlDrawIdentities?: FinderAssetOpportunityControlDraw[];
@@ -341,6 +345,9 @@ export async function appendAssetOpportunityArchiveFoldIdentities(
         holdoutBars: args.holdoutBars,
         declaredRowCount: args.rows.length,
         ...(args.expectedRowCount !== undefined ? { expectedRowCount: args.expectedRowCount } : {}),
+        ...(args.expectedOutcomeRowCount !== undefined
+            ? { expectedOutcomeRowCount: args.expectedOutcomeRowCount }
+            : {}),
         ...(args.outcomeRowCount !== undefined ? { outcomeRowCount: args.outcomeRowCount } : {}),
         ...(args.controlSeed !== undefined ? { controlSeed: args.controlSeed } : {}),
         ...(args.controlDrawIdentities ? { controlDrawIdentities: args.controlDrawIdentities } : {}),

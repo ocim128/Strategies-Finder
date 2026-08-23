@@ -386,6 +386,9 @@ export async function createRealWorkerAssetOpportunityBatchRunner(
                     ...(message.expectedCandidateSummaryRows !== undefined
                         ? { expectedCandidateSummaryRows: message.expectedCandidateSummaryRows }
                         : {}),
+                    ...(message.expectedOutcomeSummaryRows !== undefined
+                        ? { expectedOutcomeSummaryRows: message.expectedOutcomeSummaryRows }
+                        : {}),
                 });
             }
             return;

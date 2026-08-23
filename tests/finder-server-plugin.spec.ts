@@ -1267,10 +1267,11 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
         const rows = chunks.flat();
         expect(rows).to.have.length(2);
         expect(rows.every((row) => row.profitFactor !== undefined)).to.equal(true);
+        expect(rows.every((row) => row.forwardOutcomeEligible === true)).to.equal(true);
         expect(rows.every((row) => {
             const outcomes = row.forwardOutcomes as Record<string, { exitReason: string }> | undefined;
             return outcomes !== undefined
-                && Object.keys(outcomes).join(",") === "12,18,24"
+                && Object.keys(outcomes).join(",") === "12"
                 && outcomes["12"]?.exitReason === "take_profit";
         })).to.equal(true);
     });
