@@ -65,6 +65,8 @@ import type { FinderSelectedStrategy } from "../finder-runner";
 import { FinderParamSpace } from "../finder-param-space";
 import { sliceFinderDataWindow } from "../finder-manager-logic";
 import {
+    FINDER_ASSET_FRESH_FOLD_COUNT,
+    FINDER_ASSET_FRESH_FOLD_STRIDE_BARS,
     normalizeFinderAssetFreshFoldSchedule,
     normalizeFinderAssetFoldEnd,
     sliceFinderAssetDataAtFoldEnd,
@@ -1645,12 +1647,25 @@ type FreshWindowIdentity = {
     judgmentInvalidReasons: string[];
 };
 
+type FinderAssetOpportunityBatchInput = FinderAssetOpportunityRunInput & {
+    batch: { startHoldoutBars: number; endHoldoutBars: number };
+    /** Optional worker factory; omitted callers use the sequential path. */
+    batchTaskRunnerFactory?: AssetOpportunityBatchRunnerFactory;
+    /** Normalized symbol-to-provider map for worker task payloads. */
+    providerBySymbol?: Record<string, string>;
+    foldSchedule?: FinderAssetOpportunityFoldScheduleEntry[];
+    batchRole?: FinderFreshWindowBatchRole;
+    dataSyncSnapshot?: string;
+    gitCommit?: string;
+    archiveSort?: FinderAssetOpportunityArchiveSort | null;
+};
+
 function sha256Json(value: unknown): string {
     return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 function buildFreshWindowIdentity(
-    input: FinderAssetOpportunityRunInput & { providerBySymbol?: Record<string, string> },
+    input: FinderAssetOpportunityBatchInput,
     selectedStrategies: FinderSelectedStrategy[],
 ): FreshWindowIdentity | null {
     if (input.researchProgram !== "fresh-window") return null;
@@ -1693,8 +1708,8 @@ function buildFreshWindowIdentity(
     };
     const invalidReasons: string[] = [];
     invalidReasons.push(...validateFreshWindowExecutionSettings(input.settings));
-    if (!input.foldSchedule || input.foldSchedule.length !== 25) {
-        invalidReasons.push("foldSchedule must contain exactly 25 entries");
+    if (!input.foldSchedule || input.foldSchedule.length !== FINDER_ASSET_FRESH_FOLD_COUNT) {
+        invalidReasons.push(`foldSchedule must contain exactly ${FINDER_ASSET_FRESH_FOLD_COUNT} entries`);
     }
     if (dataSyncSnapshot === "unknown") invalidReasons.push("dataSyncSnapshot is missing");
     if (gitCommit === "unknown") invalidReasons.push("gitCommit is missing");
@@ -1725,23 +1740,7 @@ function buildFreshWindowIdentity(
  * server job — Stop and reload reattach use the same owner/status machinery.
  */
 export async function processFinderAssetOpportunityBatchRun(
-    input: FinderAssetOpportunityRunInput & {
-        batch: { startHoldoutBars: number; endHoldoutBars: number };
-        /**
-         * Optional runner factory enabling the parallel worker sweep. The
-         * production HTTP handler wires real workers; direct callers without
-         * it keep the sequential in-process loop (also used when the
-         * resolved worker count is 1 — see resolveAssetOpportunityBatchWorkerCount
-         * and the FINDER_ASSET_BATCH_WORKERS rollback lever).
-         */
-        batchTaskRunnerFactory?: AssetOpportunityBatchRunnerFactory;
-        /**
-         * Normalized symbol -> provider map for worker task payloads
-         * (parallel path only; functions cannot cross the worker boundary).
-         */
-        providerBySymbol?: Record<string, string>;
-        researchProgram?: AssetOpportunityResearchProgram;
-    },
+    input: FinderAssetOpportunityBatchInput,
     writer: (event: FinderAssetOpportunityBatchStreamEvent) => void,
     owner: number,
     archiveRoot: string,
@@ -1761,8 +1760,8 @@ export async function processFinderAssetOpportunityBatchRun(
             holdoutBars,
             foldEnd: input.foldEnd ?? 0,
         }));
-    if (input.researchProgram === "fresh-window" && foldEntries.length !== 25) {
-        throw new Error("Fresh-window batch requires exactly 25 fold schedule entries.");
+    if (input.researchProgram === "fresh-window" && foldEntries.length !== FINDER_ASSET_FRESH_FOLD_COUNT) {
+        throw new Error(`Fresh-window batch requires exactly ${FINDER_ASSET_FRESH_FOLD_COUNT} fold schedule entries.`);
     }
     if (input.researchProgram === "fresh-window"
         && (!input.dataSyncSnapshot || input.dataSyncSnapshot === "unknown"
@@ -2608,8 +2607,12 @@ async function prepareAssetOpportunityRunPayload(
             throw new HttpStatusError(400, range.error);
         }
         if (researchProgram === "fresh-window"
-            && (range.start !== 12 || range.end !== 300)) {
-            throw new HttpStatusError(400, "Fresh-window batch must use holdout range 12..300 at stride 12.");
+            && (range.start !== FINDER_ASSET_FRESH_FOLD_STRIDE_BARS
+                || range.end !== FINDER_ASSET_FRESH_FOLD_COUNT * FINDER_ASSET_FRESH_FOLD_STRIDE_BARS)) {
+            throw new HttpStatusError(
+                400,
+                `Fresh-window batch must use holdout range ${FINDER_ASSET_FRESH_FOLD_STRIDE_BARS}..${FINDER_ASSET_FRESH_FOLD_COUNT * FINDER_ASSET_FRESH_FOLD_STRIDE_BARS} at stride ${FINDER_ASSET_FRESH_FOLD_STRIDE_BARS}.`,
+            );
         }
         if (researchProgram === "fresh-window" && !foldSchedule) {
             throw new HttpStatusError(400, "Fresh-window batch requires an explicit 25-entry foldSchedule.");
@@ -2698,6 +2701,32 @@ function parseAssetOpportunityFreshFoldSchedule(
     } catch (error) {
         throw new HttpStatusError(400, error instanceof Error ? error.message : String(error));
     }
+}
+
+function createAssetOpportunityDatasetLoaders(
+    input: Pick<FinderAssetOpportunityRunInput, "researchProgram" | "foldEnd">,
+) {
+    // Fresh-window iterations receive raw data and slice it inside the leaf;
+    // legacy runs keep the existing handler-side slice behavior.
+    const loadDatasetFullClosed = (
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ): Promise<OHLCVData[]> => loadServerFinderDataset(symbol, interval, signal, context).then((data) =>
+        input.researchProgram === "fresh-window"
+            ? data
+            : input.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, input.foldEnd));
+    const loadForwardDataset = (
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ): Promise<OHLCVData[]> => loadServerFinderDataset(symbol, interval, signal, context).then((data) =>
+        input.researchProgram === "fresh-window"
+            ? data
+            : sliceFinderAssetDataStrictlyAfterFoldEnd(data, input.foldEnd));
+    return { loadDatasetFullClosed, loadForwardDataset };
 }
 
 /**
@@ -2789,28 +2818,7 @@ async function handleAssetOpportunityRunRequest(
     const runAbortController = new AbortController();
     abortController = runAbortController;
 
-    // Asset Opportunity reserves the real latest closed candle inside the
-    // runner before applying options.dataSlice. Do not slice this loader;
-    // slicing here would make an old candle look current for half/fifth
-    // windows.
-    const loadDatasetFullClosed = (
-        sym: string,
-        intv: string,
-        signal?: AbortSignal,
-        context?: BatchDatasetLoadContext,
-    ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context).then((data) =>
-        prepared.researchProgram === "fresh-window"
-            ? data
-            : prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd));
-    const loadForwardDataset = (
-        sym: string,
-        intv: string,
-        signal?: AbortSignal,
-        context?: BatchDatasetLoadContext,
-    ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context).then((data) =>
-        prepared.researchProgram === "fresh-window"
-            ? data
-            : sliceFinderAssetDataStrictlyAfterFoldEnd(data, prepared.foldEnd));
+    const { loadDatasetFullClosed, loadForwardDataset } = createAssetOpportunityDatasetLoaders(prepared);
     const resolvedCapitalSettings = resolveCapitalSettingsFromRaw(
         prepared.capitalSettings as unknown as Record<string, unknown>,
     );
@@ -2859,18 +2867,7 @@ async function handleAssetOpportunityRunRequest(
                     : {}),
                 ...(prepared.researchProgram === "fresh-window" ? { loadDatasetIsRaw: true } : {}),
                 ...(prepared.researchProgram ? { researchProgram: prepared.researchProgram } : {}),
-                ...(prepared.batchRole ? { batchRole: prepared.batchRole } : {}),
-                ...(prepared.foldEnd !== undefined || prepared.researchProgram === "fresh-window"
-                    ? {
-                        dataSyncSnapshot: process.env.FINDER_DATA_SYNC_SNAPSHOT ?? "unknown",
-                        gitCommit: process.env.GIT_COMMIT ?? "unknown",
-                    }
-                    : {}),
-                loadSecondaryDataset: (sym, intv, signal, context) =>
-                    loadServerFinderDataset(sym, intv, signal, context).then((data) =>
-                        prepared.researchProgram === "fresh-window"
-                            ? data
-                            : prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd)),
+                loadSecondaryDataset: loadDatasetFullClosed,
                 getProvider: (symbol) => resolveServerProvider(symbol, prepared.providerBySymbol),
                 candidatePoolSize: prepared.candidatePoolSize,
                 minFreshSupport: prepared.minFreshSupport,
@@ -2919,24 +2916,7 @@ async function handleAssetOpportunityBatchRunRequest(
     const runAbortController = new AbortController();
     abortController = runAbortController;
 
-    const loadDatasetFullClosed = (
-        sym: string,
-        intv: string,
-        signal?: AbortSignal,
-        context?: BatchDatasetLoadContext,
-    ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context).then((data) =>
-        prepared.researchProgram === "fresh-window"
-            ? data
-            : prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd));
-    const loadForwardDataset = (
-        sym: string,
-        intv: string,
-        signal?: AbortSignal,
-        context?: BatchDatasetLoadContext,
-    ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context).then((data) =>
-        prepared.researchProgram === "fresh-window"
-            ? data
-            : sliceFinderAssetDataStrictlyAfterFoldEnd(data, prepared.foldEnd));
+    const { loadDatasetFullClosed, loadForwardDataset } = createAssetOpportunityDatasetLoaders(prepared);
 
     await withFinderRunStream({
         res,
@@ -2976,11 +2956,7 @@ async function handleAssetOpportunityBatchRunRequest(
                         gitCommit: process.env.GIT_COMMIT ?? "unknown",
                     }
                     : {}),
-                loadSecondaryDataset: (sym, intv, signal, context) =>
-                    loadServerFinderDataset(sym, intv, signal, context).then((data) =>
-                        prepared.researchProgram === "fresh-window"
-                            ? data
-                            : prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd)),
+                loadSecondaryDataset: loadDatasetFullClosed,
                 getProvider: (symbol) => resolveServerProvider(symbol, prepared.providerBySymbol),
                 candidatePoolSize: prepared.candidatePoolSize,
                 minFreshSupport: prepared.minFreshSupport,
@@ -2999,8 +2975,6 @@ async function handleAssetOpportunityBatchRunRequest(
                     [...prepared.providerBySymbol.entries()]
                         .map(([symbol, provider]) => [symbol.trim().toUpperCase(), provider]),
                 ),
-                ...(prepared.researchProgram ? { researchProgram: prepared.researchProgram } : {}),
-                ...(prepared.batchRole ? { batchRole: prepared.batchRole } : {}),
                 ...(prepared.foldSchedule ? { foldSchedule: prepared.foldSchedule } : {}),
             },
             safeWrite,

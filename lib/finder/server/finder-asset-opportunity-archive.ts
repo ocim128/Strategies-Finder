@@ -42,6 +42,12 @@ export function isAssetOpportunityResearchProgram(value: unknown): value is Asse
         && (ASSET_OPPORTUNITY_RESEARCH_PROGRAMS as readonly string[]).includes(value);
 }
 
+function assertValidArchiveHoldoutBars(holdoutBars: number, label = "archive"): void {
+    if (!Number.isInteger(holdoutBars) || holdoutBars <= 0) {
+        throw new Error(`Invalid holdout bars for ${label} filename: ${String(holdoutBars)}.`);
+    }
+}
+
 /** Resolve the archive directory from a Vite-configured project root. */
 export function resolveAssetOpportunityArchiveDir(
     root: string,
@@ -58,16 +64,12 @@ export function resolveAssetOpportunityArchiveDir(
  * filesystem layer.
  */
 export function buildAssetOpportunityArchiveFilename(holdoutBars: number): string {
-    if (!Number.isInteger(holdoutBars) || holdoutBars <= 0) {
-        throw new Error(`Invalid holdout bars for archive filename: ${String(holdoutBars)}.`);
-    }
+    assertValidArchiveHoldoutBars(holdoutBars);
     return `oos-holdout-${holdoutBars}-bars.txt`;
 }
 
 export function buildAssetOpportunityPairSummaryFilename(holdoutBars: number): string {
-    if (!Number.isInteger(holdoutBars) || holdoutBars <= 0) {
-        throw new Error(`Invalid holdout bars for pair summary archive filename: ${String(holdoutBars)}.`);
-    }
+    assertValidArchiveHoldoutBars(holdoutBars, "pair summary archive");
     return `oos-pair-summary-${holdoutBars}-bars.txt`;
 }
 
@@ -91,9 +93,7 @@ export interface AssetOpportunityArchiveBlock {
 }
 
 export function buildAssetOpportunityFoldIdentityFilename(holdoutBars: number): string {
-    if (!Number.isInteger(holdoutBars) || holdoutBars <= 0) {
-        throw new Error(`Invalid holdout bars for archive filename: ${String(holdoutBars)}.`);
-    }
+    assertValidArchiveHoldoutBars(holdoutBars);
     return `oos-fold-identities-${holdoutBars}-bars.txt`;
 }
 

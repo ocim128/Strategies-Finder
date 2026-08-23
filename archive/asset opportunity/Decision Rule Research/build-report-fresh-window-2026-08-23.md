@@ -1,7 +1,7 @@
 # Fresh-Window Research Infrastructure Build Report
 
-Date: 2026-08-23  
-Repository: `Strategies-Finder`  
+Date: 2026-08-23
+Repository: `Strategies-Finder`
 Status: Phases 0–5 implemented and fixture-validated; Phase 6 real-data execution was not run.
 
 ## Executive result
@@ -327,3 +327,118 @@ Before Phase 6, the operator must:
 6. Judge only archives whose analyzer output says `S0: PASS`; require the
    registered verdict bars, chronological-half signs, recurrence budget, and
    the later untouched replication before any promotion.
+
+## Final rework report (F1–F4, 2026-08-24)
+
+The final re-audit identified four remaining flaws. Each was fixed in its own
+commit and converted into a permanent regression case. No real batch was run,
+and the closed-window analyzers, archives, backtest engine, and
+`trend-confirmation-*` modules were not modified.
+
+### F1 — end-of-data parity
+
+Audit mapping: re-audit issue 1 / C1.
+
+Before the fix, the exact re-audit case disagreed at an uncensored forced
+close: the engine produced `exitPrice=100` and
+`pnlPercent=-1.1891089108910853`, while the forward contract applied exit
+slippage and produced `exitPrice=99` and
+`netReturnPercent=-2.178217821782178`. The contract now uses the raw final
+close and no exit slippage for the end-of-data path, matching the current
+engine policy. The engine itself was left unchanged. The exact pinned
+`next_open`, 100-bps-slippage, 0.1%-commission case and a no-slippage variant
+now pass in `finder-asset-opportunity-forward-contract.spec.ts`.
+
+The semantic values match the engine. The parity assertion allows only the
+sub-1e-14 IEEE-754 operation-order residue caused by the engine multiplying
+per-share P&L by allocated share count before division while the contract
+computes the equivalent per-unit return; exit reason and exit price remain
+exact. Whether live forced closes should charge slippage remains an open
+engine-policy question and was intentionally not changed here.
+
+Commit: `1ea21abd fix(fresh-window): F1 align end-of-data close semantics`.
+
+### F2 — producer-archived control trace
+
+Audit mapping: re-audit issue 2 / C3.
+
+Before the fix, the archive stored seed 42 but not the producer’s actual
+per-fold draw. The analyzer could therefore recompute a draw from the
+archived rows without proving that it was the draw used during production.
+The producer now archives, inside each fold identity block, the selected
+control tuple identities and a digest of the draw sequence. S0 independently
+recomputes the seed-42 draw from the archived row order and requires both the
+identity list and digest to match; missing or mismatched trace data fails S0
+before any verdict is emitted. The permanent archive/analyzer regression
+reorders rows after the trace was recorded and confirms that the trace check
+fails.
+
+Commit: `0ab0b4fd fix(fresh-window): F2 archive producer control traces`.
+
+### F3 — recurrence budget as enforced state
+
+Audit mapping: re-audit issue 3 / C4.
+
+Before the fix, a one-run high-density archive could print
+`collection=PASS, judged=PASS` even though no earlier valid collection
+archive existed; recurrence authorization was advisory text. The archive
+identity now carries a validated operator-supplied role:
+`collection`, `judged`, or `replication`. S0 blocks a judged run without a
+strictly earlier valid collection archive and blocks replication without the
+required earlier judged archive. Collection-only output cannot claim
+`judged=PASS`, and unauthorized recurrence produces no recurrence verdict.
+The permanent exact high-density one-run fixture now fails S0 and emits no
+judged pass.
+
+Commit: `d9b186d2 fix(fresh-window): F3 enforce recurrence batch roles`.
+
+### F4 — timestamp validation
+
+Audit mapping: re-audit issue 4 / C1/C3 timestamp integrity.
+
+Before the fix, malformed or out-of-order entry/exit timestamps could pass S0.
+S0 now parses both timestamps, rejects non-timestamp values, rejects
+`entry > exit`, and rejects timestamps outside the fold’s declared OOS bounds.
+Permanent invalid-timestamp and out-of-order fixtures both fail S0 before
+downstream time-to-TP or recurrence judgments.
+
+Commit: `ff2d5c2d fix(fresh-window): F4 validate outcome timestamps`.
+
+### Final verification evidence
+
+The final transcript completed with zero failures:
+
+```text
+feature-dom-contracts                         48 passed
+finder-server-plugin                          83 passed
+finder-asset-opportunity-batch-parallel       17 passed
+finder-asset-opportunity-archive              13 passed
+finder-asset-opportunity-fold                  7 passed
+finder-asset-opportunity-forward-contract     15 passed
+analyze-fresh-window-research                 14 passed
+vite-config-bundle                             1 passed
+npm run typecheck                              PASS
+git diff --check                               PASS
+```
+
+### Updated operator checklist
+
+1. Run the full fresh-window suite, the Vite-config bundle check, and
+   `npm run typecheck` before collecting data. Do not open a real batch on a
+   failing S0/control-trace test.
+2. Supply a valid `batchRole` on every fresh request. Use `collection` for
+   collection-only work; use `judged` only when a strictly earlier valid
+   collection archive exists; use `replication` only after the required
+   judged archive exists.
+3. After each archive, verify every fold identity contains the seed-42 draw
+   identities and digest, and require S0 to report PASS. A missing trace,
+   reordered rows, malformed timestamp, out-of-order timestamp, or
+   out-of-bounds timestamp is a fatal archive condition.
+4. Treat collection output as collection evidence only. It must never be
+   promoted or described as a judged PASS. Recurrence and downstream rule
+   verdicts are read only after S0 authorization.
+5. Keep the current engine’s forced-close behavior as the parity baseline.
+   The question of changing live slippage policy requires a separate,
+   explicitly registered engine-policy decision.
+6. Record the four fix commits with the archive and preserve the re-audit
+   fixtures. No real batch or push was performed during this rework.

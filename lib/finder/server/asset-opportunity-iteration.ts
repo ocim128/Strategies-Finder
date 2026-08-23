@@ -27,9 +27,8 @@ import {
     createBatchDatasetLoadDiagnostics,
     type BatchDatasetLoadContext,
 } from "../../batch-backtest/batch-dataset-loader-core";
-import type { FinderAssetOpportunityArchiveSort } from "../finder-asset-opportunity-metrics";
-import type { AssetOpportunityResearchProgram } from "./finder-asset-opportunity-archive";
 import type { FinderRunLogSink } from "./finder-run-log";
+import type { AssetOpportunityResearchProgram } from "./finder-asset-opportunity-archive";
 import {
     runAssetOpportunitySearch,
     assertAssetOpportunityStrategySelection,
@@ -59,14 +58,12 @@ import { parseSyntheticPairToken } from "../../synthetic-pair-token";
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
-import type { FinderFreshWindowBatchRole } from "../finder-asset-opportunity-research-types";
 import {
     assertFinderAssetDataAtOrBeforeFoldEnd,
     assertFinderAssetDataStrictlyAfterFoldEnd,
     getFinderAssetDataBounds,
     sliceFinderAssetDataAtFoldEnd,
     sliceFinderAssetDataStrictlyAfterFoldEnd,
-    type FinderAssetOpportunityFoldScheduleEntry,
     type FinderAssetOpportunityFoldMetadata,
 } from "../finder-asset-opportunity-fold";
 
@@ -168,15 +165,9 @@ export interface FinderAssetOpportunityRunInput {
     minFreshSupport: number;
     /** Last candle timestamp allowed in the point-in-time search fold. */
     foldEnd?: number;
-    /** Explicit fresh-window fold schedule; one entry is used per batch task. */
-    foldSchedule?: FinderAssetOpportunityFoldScheduleEntry[];
     researchProgram?: AssetOpportunityResearchProgram;
-    batchRole?: FinderFreshWindowBatchRole;
     /** When true, loaders/cache retain raw candles and this leaf slices per fold. */
     loadDatasetIsRaw?: boolean;
-    /** Operator/data provenance captured in fresh-window archive envelopes. */
-    dataSyncSnapshot?: string;
-    gitCommit?: string;
     /** Reusable caches for a multi-iteration Asset Opportunity batch. */
     assetLoadContext?: BatchDatasetLoadContext;
     /** Reuse Rust dataset cache IDs across sequential holdout iterations. */
@@ -185,8 +176,6 @@ export interface FinderAssetOpportunityRunInput {
     paramSetCache?: Map<string, StrategyParams[]>;
     /** Chunked batch workers retain all strategy rows so the coordinator can rebuild top-10 diagnostics exactly. */
     includeFullStrategyBreakdown?: boolean;
-    /** Legacy compatibility field; automatic batch archives always use All Sorts. */
-    archiveSort?: FinderAssetOpportunityArchiveSort | null;
     /**
      * Optional fire-and-forget per-run diagnostics sink (JSONL run log). The
      * HTTP handlers build it from the resolved run-log root + run id; direct

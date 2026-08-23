@@ -10,39 +10,33 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import type {
-    FinderAssetOpportunityCandidateSummaryRow,
-} from "../lib/finder/finder-asset-opportunity-research-types";
-import { buildFinderAssetOpportunityControlTrace } from "../lib/finder/finder-asset-opportunity-control-trace";
 import {
     isFinderFreshWindowBatchRole,
+    type FinderAssetOpportunityCandidateSummaryRow,
+    type FinderAssetOpportunityForwardOutcomeSummary,
     type FinderFreshWindowBatchRole,
 } from "../lib/finder/finder-asset-opportunity-research-types";
+import {
+    buildFinderAssetOpportunityControlTrace,
+    createFinderAssetOpportunityRng,
+    type FinderAssetOpportunityControlDraw,
+} from "../lib/finder/finder-asset-opportunity-control-trace";
+import {
+    FINDER_ASSET_FRESH_FOLD_COUNT,
+    FINDER_ASSET_FRESH_FOLD_STRIDE_BARS,
+} from "../lib/finder/finder-asset-opportunity-fold";
 import { parseTimeToUnixSeconds } from "../lib/time-normalization";
 
 const SEPARATOR = "=".repeat(80);
 const IDENTITY_FILE = /^oos-fold-identities-(\d+)-bars\.txt$/;
 const HOLDOUT_FILE = /^oos-holdout-(\d+)-bars\.txt$/;
 const DEFAULT_HORIZON = 12;
-const DEFAULT_STRIDE = 12;
+const DEFAULT_STRIDE = FINDER_ASSET_FRESH_FOLD_STRIDE_BARS;
 const DEFAULT_SEED = 42;
-const EXPECTED_WINDOWS = 25;
+const EXPECTED_WINDOWS = FINDER_ASSET_FRESH_FOLD_COUNT;
 const COMPLETE_MARKER = "Record complete: true";
 
-export type FreshWindowExitReason = "take_profit" | "stop_loss" | "end_of_data";
-
-export interface FreshWindowOutcome {
-    exitReason: FreshWindowExitReason;
-    barsHeld: number;
-    grossReturnPercent: number;
-    slippagePercent: number;
-    commissionPercent: number;
-    netReturnPercent: number;
-    entryPrice: number;
-    exitPrice: number;
-    entryTimestamp: string;
-    exitTimestamp: string;
-}
+export type FreshWindowExitReason = FinderAssetOpportunityForwardOutcomeSummary["exitReason"];
 
 export interface FreshWindowIdentityFold {
     timestamp: string;
@@ -53,7 +47,7 @@ export interface FreshWindowIdentityFold {
     expectedRowCount: number | null;
     outcomeRowCount: number | null;
     controlSeed: number | null;
-    controlDrawIdentities: Array<{ symbol: string; identityHash: string | null }> | null;
+    controlDrawIdentities: FinderAssetOpportunityControlDraw[] | null;
     controlDrawDigest: string | null;
     foldEnd: number | null;
     searchWindowEnd: number | null;
@@ -99,15 +93,6 @@ export interface S0Result {
     controlSeed: number;
     controlDrawDigest: string;
     batchRole: FinderFreshWindowBatchRole | null;
-}
-
-interface FoldMetric {
-    fold: FreshWindowIdentityFold;
-    selected: number;
-    control: number;
-    delta: number;
-    selectedNet: number | null;
-    controlNet: number | null;
 }
 
 interface VerdictSummary {
@@ -203,7 +188,7 @@ function parseIdentityBlock(body: string): FreshWindowIdentityFold | null {
         expectedRowCount: parseHeaderNumber(header, "Expected evaluated row count: "),
         outcomeRowCount: parseHeaderNumber(header, "Forward outcome row count: "),
         controlSeed: parseHeaderNumber(header, "Control seed: "),
-        controlDrawIdentities: parseHeaderJson<Array<{ symbol: string; identityHash: string | null }>>(
+        controlDrawIdentities: parseHeaderJson<FinderAssetOpportunityControlDraw[]>(
             header,
             "Control draw identities: ",
         ),
@@ -241,10 +226,6 @@ function parseConfigRecords(text: string): ParsedConfigRecord[] {
     return parsed;
 }
 
-function parseConfig(text: string): FreshWindowConfig | null {
-    return parseConfigRecords(text).at(-1)?.config ?? null;
-}
-
 function latestIdentityBlock(fileText: string): FreshWindowIdentityFold | null {
     const blocks = parseBlocks(fileText)
         .map(parseIdentityBlock)
@@ -255,12 +236,15 @@ function latestIdentityBlock(fileText: string): FreshWindowIdentityFold | null {
 
 function expectedHoldouts(stride: number): Set<number> {
     const output = new Set<number>();
-    for (let holdout = stride; holdout <= 300; holdout += stride) output.add(holdout);
+    for (let index = 1; index <= EXPECTED_WINDOWS; index += 1) output.add(index * stride);
     return output;
 }
 
-function normalizeOutcome(row: FinderAssetOpportunityCandidateSummaryRow, horizon: number): FreshWindowOutcome | null {
-    const outcome = row.forwardOutcomes?.[String(horizon)] as FreshWindowOutcome | undefined;
+function normalizeOutcome(
+    row: FinderAssetOpportunityCandidateSummaryRow,
+    horizon: number,
+): FinderAssetOpportunityForwardOutcomeSummary | null {
+    const outcome = row.forwardOutcomes?.[String(horizon)];
     if (!outcome) return null;
     const entryTimestamp = typeof outcome.entryTimestamp === "string"
         ? parseTimeToUnixSeconds(outcome.entryTimestamp)
@@ -284,16 +268,6 @@ function normalizeOutcome(row: FinderAssetOpportunityCandidateSummaryRow, horizo
         || entryTimestamp > exitTimestamp
     ) return null;
     return outcome;
-}
-
-function createRng(seed: number): () => number {
-    let state = seed >>> 0;
-    return () => {
-        state = (state + 0x6D2B79F5) | 0;
-        let value = Math.imul(state ^ (state >>> 15), 1 | state);
-        value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value;
-        return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
-    };
 }
 
 function median(values: number[]): number {
@@ -366,7 +340,7 @@ function computeWindowMetrics(
     fold: FreshWindowIdentityFold,
     horizon: number,
     rng: () => number,
-): FoldMetric | null {
+): number | null {
     const bySymbol = new Map<string, FinderAssetOpportunityCandidateSummaryRow[]>();
     for (const row of fold.rows) {
         const rows = bySymbol.get(row.symbol) ?? [];
@@ -388,14 +362,7 @@ function computeWindowMetrics(
     if (selectedNet.length === 0) return null;
     const selected = mean(selectedNet);
     const control = mean(controlNet);
-    return {
-        fold,
-        selected,
-        control,
-        delta: selected - control,
-        selectedNet: selected,
-        controlNet: control,
-    };
+    return selected - control;
 }
 
 function percentile(values: number[], fraction: number): number {
@@ -423,7 +390,7 @@ export function summarizeVerdict(deltas: number[], seed = DEFAULT_SEED): Verdict
             verdict: "UNSTABLE",
         };
     }
-    const rng = createRng(seed);
+    const rng = createFinderAssetOpportunityRng(seed);
     const bootstrap: number[] = [];
     for (let iteration = 0; iteration < 2000; iteration += 1) {
         const sample: number[] = [];
@@ -470,11 +437,6 @@ function loadAllIdentityBlocks(archiveDirectory: string): FreshWindowIdentityFol
                 .map(parseIdentityBlock)
                 .filter((block): block is FreshWindowIdentityFold => block !== null);
         });
-}
-
-function loadConfig(archiveDirectory: string): FreshWindowConfig | null {
-    const filename = path.join(archiveDirectory, "config.txt");
-    return fs.existsSync(filename) ? parseConfig(fs.readFileSync(filename, "utf8")) : null;
 }
 
 function loadConfigRecords(archiveDirectory: string): ParsedConfigRecord[] {
@@ -534,7 +496,7 @@ function checkS0(
     const windows = allFolds.filter((fold) => expected.has(fold.holdoutBars));
     const configRecords = loadConfigRecords(archiveDirectory);
     const allIdentityBlocks = loadAllIdentityBlocks(archiveDirectory);
-    const config = loadConfig(archiveDirectory);
+    const config = configRecords.at(-1)?.config ?? null;
     const errors: string[] = [];
     if (windows.length !== EXPECTED_WINDOWS) errors.push(`expected ${EXPECTED_WINDOWS} stride-${stride} windows, found ${windows.length}`);
     if (!config) errors.push("config.txt has no parseable configuration block");
@@ -685,7 +647,7 @@ function checkS0(
             errors.push(`valid forward outcome coverage below 95% at holdout ${fold.holdoutBars}`);
         }
         for (const row of fold.rows) {
-            const rawOutcome = row.forwardOutcomes?.[String(horizon)] as FreshWindowOutcome | undefined;
+            const rawOutcome = row.forwardOutcomes?.[String(horizon)];
             if (rawOutcome) {
                 const rawEntryTimestamp = typeof rawOutcome.entryTimestamp === "string"
                     ? parseTimeToUnixSeconds(rawOutcome.entryTimestamp)
@@ -762,10 +724,10 @@ function checkS0(
         if (handChecks[reason] === 0) errors.push(`no hand-checkable ${reason} execution outcome`);
     }
     if (identityRows.length === 0) errors.push("full-pool identity rows are absent");
-    const selectedControls = windows
-        .map((fold, index) => computeWindowMetrics(fold, horizon, createRng(DEFAULT_SEED + index)))
-        .filter((metric): metric is FoldMetric => metric !== null);
-    if (selectedControls.length !== windows.length) errors.push("full-pool random control is missing in one or more windows");
+    const randomControls = windows.filter((fold, index) =>
+        computeWindowMetrics(fold, horizon, createFinderAssetOpportunityRng(DEFAULT_SEED + index)) !== null,
+    ).length;
+    if (randomControls !== windows.length) errors.push("full-pool random control is missing in one or more windows");
     const options = config?.finder?.assetOpportunity;
     if (options?.evalLastBars !== 1000) errors.push(`config evalLastBars is ${String(options?.evalLastBars)}`);
     if (options?.oosIgnoreLastBars !== 26) errors.push(`config oosIgnoreLastBars is ${String(options?.oosIgnoreLastBars)}`);
@@ -783,7 +745,7 @@ function checkS0(
         fullPoolRows: identityRows.length,
         eligibleRows,
         finiteExecutionRows,
-        randomControls: selectedControls.length,
+        randomControls,
         controlSeed,
         controlDrawDigest,
         batchRole,
@@ -824,7 +786,7 @@ function recurrenceReport(
                 rows.push(row);
                 rowsBySymbol.set(row.symbol, rows);
             }
-            const rng = createRng(seed + (fold.foldEnd ?? fold.holdoutBars));
+            const rng = createFinderAssetOpportunityRng(seed + (fold.foldEnd ?? fold.holdoutBars));
             const deltas: number[] = [];
             for (const [, rows] of [...rowsBySymbol.entries()].sort(([left], [right]) => left.localeCompare(right))) {
                 const eligible = rows.filter((row) => normalizeOutcome(row, horizon) !== null);
@@ -897,7 +859,7 @@ function strategyGateReport(windows: FreshWindowIdentityFold[], horizon: number,
             totalPairs += 1;
             const distinct = new Set(eligible.map((row) => row.strategyKey)).size;
             const selected = topByProfitFactor(eligible);
-            const random = sampleOne(eligible, createRng(seed + fold.holdoutBars + symbol.length));
+            const random = sampleOne(eligible, createFinderAssetOpportunityRng(seed + fold.holdoutBars + symbol.length));
             if (!selected || !random) continue;
             const selectedOutcome = normalizeOutcome(selected, horizon)!;
             const randomOutcome = normalizeOutcome(random, horizon)!;
@@ -967,12 +929,12 @@ export function runFreshWindowAnalysis(args: {
         return lines;
     }
     const metrics = orderedByFoldEnd(s0.windows)
-        .map((fold, index) => computeWindowMetrics(fold, horizon, createRng(seed + index)))
-        .filter((metric): metric is FoldMetric => metric !== null);
-    const verdict = summarizeVerdict(metrics.map((metric) => metric.delta), seed);
+        .map((fold, index) => computeWindowMetrics(fold, horizon, createFinderAssetOpportunityRng(seed + index)))
+        .filter((metric): metric is number => metric !== null);
+    const verdict = summarizeVerdict(metrics, seed);
     const midpoint = Math.ceil(metrics.length / 2);
-    const firstHalf = mean(metrics.slice(0, midpoint).map((metric) => metric.delta));
-    const secondHalf = mean(metrics.slice(midpoint).map((metric) => metric.delta));
+    const firstHalf = mean(metrics.slice(0, midpoint));
+    const secondHalf = mean(metrics.slice(midpoint));
     const timeToTpKill = verdict.mean <= 0
         || verdict.signStability < 0.55
         || verdict.verdict === "UNSTABLE"

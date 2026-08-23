@@ -43,7 +43,8 @@ function isControlEligible(
         && outcome.exitTimestamp.length > 0;
 }
 
-function createRng(seed: number): () => number {
+/** The fixed RNG used by both the producer and the post-hoc analyzer. */
+export function createFinderAssetOpportunityRng(seed: number): () => number {
     let state = seed >>> 0;
     return () => {
         state = (state + 0x6D2B79F5) | 0;
@@ -66,7 +67,7 @@ export function buildFinderAssetOpportunityControlTrace(
         symbolRows.push(row);
         bySymbol.set(row.symbol, symbolRows);
     }
-    const rng = createRng(seed + foldIndex);
+    const rng = createFinderAssetOpportunityRng(seed + foldIndex);
     const draws = [...bySymbol.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([symbol, symbolRows]) => {
@@ -82,4 +83,3 @@ export function buildFinderAssetOpportunityControlTrace(
         digest: sha256Json(draws),
     };
 }
-

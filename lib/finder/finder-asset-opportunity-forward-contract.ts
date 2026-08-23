@@ -1,4 +1,5 @@
 import type { BacktestSettings, OHLCVData } from "../types/strategies";
+import type { FinderAssetOpportunityForwardOutcomeSummary } from "./finder-asset-opportunity-research-types";
 import {
     applySlippage,
     entrySideForDirection,
@@ -6,23 +7,8 @@ import {
     timeKey,
 } from "../strategies/backtest/backtest-utils";
 
-export type FinderAssetOpportunityForwardExitReason = "take_profit" | "stop_loss" | "end_of_data";
-
-export interface FinderAssetOpportunityForwardOutcome {
-    exitReason: FinderAssetOpportunityForwardExitReason;
-    barsHeld: number;
-    /** Price movement before execution costs. */
-    grossReturnPercent: number;
-    /** Adverse entry/exit slippage, expressed as percentage points. */
-    slippagePercent: number;
-    /** Round-trip commission, expressed as percentage points. */
-    commissionPercent: number;
-    netReturnPercent: number;
-    entryPrice: number;
-    exitPrice: number;
-    entryTimestamp: string;
-    exitTimestamp: string;
-}
+export type FinderAssetOpportunityForwardOutcome = FinderAssetOpportunityForwardOutcomeSummary;
+export type FinderAssetOpportunityForwardExitReason = FinderAssetOpportunityForwardOutcome["exitReason"];
 
 export interface FinderAssetOpportunityForwardContractInput {
     candles: OHLCVData[];
