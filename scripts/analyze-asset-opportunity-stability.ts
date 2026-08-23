@@ -61,6 +61,8 @@ interface ParsedBlock {
 interface CellSample {
     holdoutBars: number;
     delta: number;
+    /** Raw (friction-free) forward mean of the selected top-K picks in this file. */
+    selectedMean: number;
 }
 
 function getArgument(argv: string[], flag: string): string | undefined {
@@ -220,7 +222,7 @@ function blockDelta(
     frictionPct = 0,
     control: "baseline" | "random_pool" = "baseline",
     poolBaselines?: Map<number, Map<number, number>>,
-): number | null {
+): { delta: number; selectedMean: number } | null {
     let baseline: number | undefined;
     if (control === "random_pool") {
         baseline = poolBaselines?.get(block.holdoutBars)?.get(horizonBars);
@@ -240,8 +242,13 @@ function blockDelta(
     }
     if (values.length === 0) return null;
     const selectedMean = values.reduce((sum, value) => sum + value, 0) / values.length;
-    const netSelectedMean = selectedMean - frictionPct;
-    return netSelectedMean - baseline;
+    // Friction is charged to BOTH arms — the control pick is the same kind of
+    // trade and pays the same cost, so the cost cancels in the delta. The raw
+    // selected mean is returned separately; the report's AbsNet column applies
+    // friction to it, which is the number that answers "does the pick clear
+    // costs in absolute terms".
+    const delta = (selectedMean - frictionPct) - (baseline - frictionPct);
+    return { delta, selectedMean };
 }
 
 function mean(values: number[]): number {
@@ -322,15 +329,15 @@ function main(): void {
     for (const block of blocks) {
         for (const topK of topKList) {
             for (const horizon of horizons) {
-                const delta = blockDelta(block, topK, horizon, frictionPct, control, poolBaselines);
-                if (delta === null) continue;
+                const outcome = blockDelta(block, topK, horizon, frictionPct, control, poolBaselines);
+                if (outcome === null) continue;
                 let bySort = samples.get(block.sortMetric);
                 if (!bySort) samples.set(block.sortMetric, bySort = new Map());
                 let byK = bySort.get(topK);
                 if (!byK) bySort.set(topK, byK = new Map());
                 let list = byK.get(horizon);
                 if (!list) byK.set(horizon, list = []);
-                list.push({ holdoutBars: block.holdoutBars, delta });
+                list.push({ holdoutBars: block.holdoutBars, delta: outcome.delta, selectedMean: outcome.selectedMean });
             }
         }
     }
@@ -356,15 +363,16 @@ function main(): void {
     lines.push("Asset Opportunity Decision-Rule Stability");
     lines.push("==========================================");
     lines.push(`Batch run: ${blocks[0]?.batchRunId} | files: ${holdoutBarsSet.length} of ${allHoldoutBarsSet.length} (holdouts ${holdoutBarsSet[holdoutBarsSet.length - 1]}..${holdoutBarsSet[0]})`);
-    lines.push(`Stride: ${strideBars > 1 ? `${strideBars} bars (non-overlapping windows)` : "1 bar (all holdouts)"} | Friction: ${frictionBps > 0 ? `${frictionBps} bps (${(frictionBps / 100).toFixed(2)}%)` : "0 bps"}`);
+    lines.push(`Stride: ${strideBars > 1 ? `${strideBars} bars (non-overlapping windows)` : "1 bar (all holdouts)"} | Friction: ${frictionBps > 0 ? `${frictionBps} bps (${(frictionBps / 100).toFixed(2)}%) — charged to BOTH arms, cancels in deltas` : "0 bps"}`);
     lines.push(`Control: ${control === "random_pool" ? "Unique active candidate pool average" : "Universe all-candidate baseline"}`);
     lines.push(`Bootstrap: ${iterations} shuffles x ${Math.min(sampleSize, holdoutBarsSet.length)} random files (seed ${seed}) | primary horizon: ${primaryHorizon} bars | top-K: ${topKList.join("/")}`);
-    lines.push(`Delta = top-K selected forward PnL (net of friction) minus ${control === "random_pool" ? "pool average" : "all-candidate baseline"}, per file.`);
+    lines.push(`Delta = top-K selected forward PnL minus ${control === "random_pool" ? "pool average" : "all-candidate baseline"}, per file. Identical trades pay identical costs, so friction cancels in Delta.`);
+    lines.push(`AbsNet = selected forward mean NET of friction — the absolute "does the pick clear costs" reading.`);
     lines.push(`Pre-stated verdict: STABLE+ = boot p5>0 AND >=60% files positive; WEAK+ = boot p50>0 AND >=55%; else UNSTABLE.`);
     lines.push(`Caveat: ${strideBars >= primaryHorizon ? "non-overlapping holdouts eliminate serial price overlap" : "holdout windows overlap; stability indicators, not independent p-values"}.`);
     lines.push("");
     lines.push(`RULE STABILITY (primary horizon ${primaryHorizon} bars)`);
-    lines.push("Sort | K | Files | Mean | Median | %Files+ | Trim10 | Boot p5 | Boot p50 | Boot p95 | Boot %+ | Verdict");
+    lines.push("Sort | K | Files | Mean | Median | %Files+ | Trim10 | Boot p5 | Boot p50 | Boot p95 | Boot %+ | AbsNet | Verdict");
 
     const rng = createRng(seed);
     const bootstrapStats = (deltas: number[]) => {
@@ -396,6 +404,8 @@ function main(): void {
         trim10: number;
         boot: { p5: number; p50: number; p95: number; positiveRate: number };
         verdict: string;
+        /** Selected forward mean net of friction — the absolute "clears costs?" number. */
+        absNetMean: number;
     }
     const ruleRows: RuleRow[] = [];
     for (const sort of sorts) {
@@ -419,6 +429,7 @@ function main(): void {
                 trim10: trimmedMean(deltas, 0.1),
                 boot,
                 verdict,
+                absNetMean: mean(list.map((sample) => sample.selectedMean)) - frictionPct,
             });
         }
     }
@@ -444,12 +455,13 @@ function main(): void {
             formatDelta(row.boot.p50),
             formatDelta(row.boot.p95),
             formatRate(row.boot.positiveRate),
+            formatDelta(row.absNetMean),
             row.verdict,
         ].join(" | "));
         (json.cells as Array<Record<string, unknown>>).push({
             sort: row.sort, topK: row.topK, horizon: primaryHorizon, files: row.files,
             mean: row.meanDelta, median: row.medianDelta, signStability: row.signStability,
-            trimmedMean: row.trim10, bootstrap: row.boot, verdict: row.verdict,
+            trimmedMean: row.trim10, bootstrap: row.boot, absNetMean: row.absNetMean, verdict: row.verdict,
         });
     }
 
