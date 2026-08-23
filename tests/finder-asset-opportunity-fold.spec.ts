@@ -4,6 +4,7 @@ import type { OHLCVData } from "../lib/types/strategies";
 import {
     assertFinderAssetDataAtOrBeforeFoldEnd,
     assertFinderAssetDataStrictlyAfterFoldEnd,
+    normalizeFinderAssetFreshFoldSchedule,
     normalizeFinderAssetFoldEnd,
     sliceFinderAssetDataAtFoldEnd,
     sliceFinderAssetDataStrictlyAfterFoldEnd,
@@ -27,6 +28,22 @@ describe("Asset Opportunity point-in-time fold contract", () => {
         expect(normalizeFinderAssetFoldEnd(1_700_000_000)).to.equal(1_700_000_000);
         expect(() => normalizeFinderAssetFoldEnd(0)).to.throw(/positive finite timestamp/);
         expect(() => normalizeFinderAssetFoldEnd("not-a-time")).to.throw(/positive finite timestamp/);
+    });
+
+    it("requires the explicit 25-fold stride-12 schedule", () => {
+        const schedule = Array.from({ length: 25 }, (_, index) => ({
+            holdoutBars: (index + 1) * 12,
+            foldEnd: 1_700_000_000 + ((index + 1) * 300),
+        }));
+        expect(normalizeFinderAssetFreshFoldSchedule(schedule)).to.deep.equal(schedule);
+        expect(() => normalizeFinderAssetFreshFoldSchedule(schedule.slice(0, 24)))
+            .to.throw(/exactly 25 entries/);
+        expect(() => normalizeFinderAssetFreshFoldSchedule(
+            schedule.map((entry, index) => index === 1 ? { ...entry, holdoutBars: 13 } : entry),
+        )).to.throw(/holdoutBars 24/);
+        expect(() => normalizeFinderAssetFreshFoldSchedule(
+            schedule.map((entry, index) => index === 1 ? { ...entry, foldEnd: schedule[0]!.foldEnd } : entry),
+        )).to.throw(/strictly ascending/);
     });
 
     it("keeps the fold boundary inclusive and makes the forward window strictly later", () => {

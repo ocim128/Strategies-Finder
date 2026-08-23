@@ -94,6 +94,13 @@ function makeCandles(closes: number[]): OHLCVData[] {
     }));
 }
 
+function freshFoldSchedule(): Array<{ holdoutBars: number; foldEnd: number }> {
+    return Array.from({ length: 25 }, (_, index) => ({
+        holdoutBars: (index + 1) * 12,
+        foldEnd: 1_700_000_000 + ((100 + index) * 300),
+    }));
+}
+
 // Batch holdouts reserve trailing bars; 40 candles comfortably cover the
 // tested ranges (2..4).
 const longUpDownDatasets = (): Map<string, OHLCVData[]> => new Map<string, OHLCVData[]>([
@@ -244,6 +251,19 @@ async function runAssetBatch(
     const events: FinderAssetOpportunityBatchStreamEvent[] = [];
     const appended: string[] = [];
     const contents: string[] = [];
+    const runSettings = args.researchProgram === "fresh-window"
+        ? {
+            ...settings,
+            executionModel: "next_open" as const,
+            allowSameBarExit: false,
+            riskMode: "percentage" as const,
+            stopLossEnabled: true,
+            stopLossPercent: 2,
+            takeProfitEnabled: true,
+            takeProfitPercent: 2,
+        }
+        : settings;
+    const fresh = args.researchProgram === "fresh-window";
     setRunOwnerForTests(args.owner);
     await processFinderAssetOpportunityBatchRun(
         {
@@ -251,7 +271,7 @@ async function runAssetBatch(
             interval: "5m",
             symbols,
             options: makeBatchOptions(symbols, args.optionsOverrides),
-            settings,
+            settings: runSettings,
             capitalSettings,
             selectedStrategies: [{ key: STRATEGY_KEY, name: batchStrategy.name, strategy: batchStrategy }],
             useRustEnginePreference: false,
@@ -261,9 +281,15 @@ async function runAssetBatch(
             minFreshSupport: 1,
             archiveSort: null,
             runLog: args.runLog ?? null,
-            batch: { startHoldoutBars: args.start, endHoldoutBars: args.end },
+            batch: {
+                startHoldoutBars: fresh ? 12 : args.start,
+                endHoldoutBars: fresh ? 300 : args.end,
+            },
             ...(args.factory ? { batchTaskRunnerFactory: args.factory } : {}),
-            ...(args.researchProgram ? { researchProgram: args.researchProgram } : {}),
+            ...(args.researchProgram ? {
+                researchProgram: args.researchProgram,
+                ...(fresh ? { foldSchedule: freshFoldSchedule() } : {}),
+            } : {}),
         },
         (event) => events.push(event),
         args.owner,
@@ -337,10 +363,28 @@ describe("finder Asset Opportunity batch parallel execution", () => {
             researchProgram: "fresh-window",
             factory: createInProcessRunnerFactory({ datasets: longUpDownDatasets() }),
         });
-        expect(run.appended).to.include("oos-fold-identities-2-bars.txt");
-        const identityContent = run.contents[run.appended.indexOf("oos-fold-identities-2-bars.txt")]!;
+        expect(run.appended).to.include("oos-fold-identities-12-bars.txt");
+        const identityContent = run.contents[run.appended.indexOf("oos-fold-identities-12-bars.txt")]!;
         expect(identityContent).to.contain("Declared row count:");
         expect(identityContent).to.contain("identityHash");
+    });
+
+    it("passes a distinct foldEnd from every schedule entry to every worker task", async () => {
+        const seen = new Map<number, number>();
+        await runAssetBatch({
+            owner: 8113,
+            start: 2,
+            end: 2,
+            runId: "fresh-fold-schedule-tasks",
+            researchProgram: "fresh-window",
+            factory: createInProcessRunnerFactory({
+                datasets: longUpDownDatasets(),
+                onTaskStart: (task) => seen.set(task.holdoutBars, task.foldEnd ?? 0),
+            }),
+        });
+        expect(seen.size).to.equal(25);
+        expect(seen.get(12)).to.equal(1_700_030_000);
+        expect(seen.get(300)).to.equal(1_700_037_200);
     });
 
     it("resolves the worker count from env override, holdout count, cores, and the system-memory ceiling", () => {

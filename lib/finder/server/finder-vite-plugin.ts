@@ -65,9 +65,11 @@ import type { FinderSelectedStrategy } from "../finder-runner";
 import { FinderParamSpace } from "../finder-param-space";
 import { sliceFinderDataWindow } from "../finder-manager-logic";
 import {
+    normalizeFinderAssetFreshFoldSchedule,
     normalizeFinderAssetFoldEnd,
     sliceFinderAssetDataAtFoldEnd,
     sliceFinderAssetDataStrictlyAfterFoldEnd,
+    type FinderAssetOpportunityFoldScheduleEntry,
 } from "../finder-asset-opportunity-fold";
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../../types/backtest";
 import type {
@@ -1224,6 +1226,8 @@ interface FinderAssetOpportunityRequestBody {
     researchProgram?: unknown;
     /** Optional point-in-time fold boundary (last usable candle timestamp). */
     foldEnd?: unknown;
+    /** Explicit 25-entry fresh-window fold schedule. */
+    foldSchedule?: unknown;
 }
 
 /**
@@ -1649,7 +1653,8 @@ function buildFreshWindowIdentity(
             effective: "typescript",
             rustEquivalent: false,
         },
-        foldEnd: input.foldEnd ?? null,
+        foldSchedule: input.foldSchedule ?? null,
+        foldScheduleDigest: sha256Json(input.foldSchedule ?? null),
         dataSyncSnapshot,
         gitCommit,
         evalLastBars,
@@ -1658,7 +1663,9 @@ function buildFreshWindowIdentity(
     };
     const invalidReasons: string[] = [];
     invalidReasons.push(...validateFreshWindowExecutionSettings(input.settings));
-    if (input.foldEnd === undefined) invalidReasons.push("foldEnd is missing");
+    if (!input.foldSchedule || input.foldSchedule.length !== 25) {
+        invalidReasons.push("foldSchedule must contain exactly 25 entries");
+    }
     if (dataSyncSnapshot === "unknown") invalidReasons.push("dataSyncSnapshot is missing");
     if (gitCommit === "unknown") invalidReasons.push("gitCommit is missing");
     if (evalLastBars !== 1000) invalidReasons.push(`evalLastBars must be 1000 (got ${String(evalLastBars)})`);
@@ -1711,10 +1718,22 @@ export async function processFinderAssetOpportunityBatchRun(
 ): Promise<void> {
     const { symbols, selectedStrategies, batch } = input;
     const totalAssets = symbols.length;
-    const holdoutValues = buildAssetOpportunityBatchHoldoutValues(
+    const legacyHoldoutValues = buildAssetOpportunityBatchHoldoutValues(
         batch.startHoldoutBars,
         batch.endHoldoutBars,
     );
+    const foldEntries: FinderAssetOpportunityFoldScheduleEntry[] = input.researchProgram === "fresh-window"
+        ? input.foldSchedule ?? (() => {
+            throw new Error("Fresh-window batch requires an explicit foldSchedule.");
+        })()
+        : legacyHoldoutValues.map((holdoutBars) => ({
+            holdoutBars,
+            foldEnd: input.foldEnd ?? 0,
+        }));
+    if (input.researchProgram === "fresh-window" && foldEntries.length !== 25) {
+        throw new Error("Fresh-window batch requires exactly 25 fold schedule entries.");
+    }
+    const holdoutValues = foldEntries.map((entry) => entry.holdoutBars);
     const totalIterations = holdoutValues.length;
     assertAssetOpportunityStrategySelection(selectedStrategies);
     const freshWindowIdentity = buildFreshWindowIdentity(input, selectedStrategies);
@@ -1801,6 +1820,7 @@ export async function processFinderAssetOpportunityBatchRun(
                 interval: input.interval,
                 strategyKeys: selectedStrategies.map((strategy) => strategy.key),
                 batch: { startHoldoutBars: batch.startHoldoutBars, endHoldoutBars: batch.endHoldoutBars },
+                ...(input.foldSchedule ? { foldSchedule: input.foldSchedule } : {}),
                 ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
                 finder: {
                     ...input.options,
@@ -2107,6 +2127,7 @@ export async function processFinderAssetOpportunityBatchRun(
             )
             : null;
         const tasks: AssetOpportunityBatchWorkerTask[] = holdoutValues.flatMap((holdoutBars, iterationIndex) => {
+            const foldEntry = foldEntries[iterationIndex]!;
             const chunkSize = Math.ceil(totalAssets / assetChunkCount);
             return Array.from({ length: assetChunkCount }, (_, assetChunkIndex) => {
                 const start = assetChunkIndex * chunkSize;
@@ -2129,7 +2150,11 @@ export async function processFinderAssetOpportunityBatchRun(
                     providerBySymbol: providerRecord,
                     candidatePoolSize: input.candidatePoolSize,
                     minFreshSupport: input.minFreshSupport,
-                    ...(input.foldEnd !== undefined ? { foldEnd: input.foldEnd } : {}),
+                    ...(input.researchProgram === "fresh-window"
+                        ? { foldEnd: foldEntry.foldEnd, loadDatasetIsRaw: true }
+                        : input.foldEnd !== undefined
+                            ? { foldEnd: input.foldEnd }
+                            : {}),
                     ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
                 };
             });
@@ -2250,6 +2275,7 @@ export async function processFinderAssetOpportunityBatchRun(
         for (let iterationIndex = 0; iterationIndex < totalIterations; iterationIndex += 1) {
             if (isCancelled()) break;
             const holdoutBars = holdoutValues[iterationIndex]!;
+            const foldEntry = foldEntries[iterationIndex]!;
             snapshot.batch = {
                 ...snapshot.batch!,
                 currentHoldoutBars: holdoutBars,
@@ -2279,6 +2305,9 @@ export async function processFinderAssetOpportunityBatchRun(
                     {
                         ...input,
                         options: buildIterationOptions(holdoutBars),
+                        ...(input.researchProgram === "fresh-window"
+                            ? { foldEnd: foldEntry.foldEnd, loadDatasetIsRaw: true }
+                            : {}),
                         assetLoadContext,
                         rustBatchDatasetCache,
                         paramSetCache,
@@ -2427,9 +2456,14 @@ async function prepareAssetOpportunityRunPayload(
     researchProgram?: AssetOpportunityResearchProgram;
     /** Present when the request declares a point-in-time fold boundary. */
     foldEnd?: number;
+    /** Present for fresh-window batch requests: one explicit entry per fold. */
+    foldSchedule?: FinderAssetOpportunityFoldScheduleEntry[];
 }> {
     const researchProgram = parseAssetOpportunityResearchProgram(body.researchProgram);
     const foldEnd = parseAssetOpportunityFoldEnd(body.foldEnd);
+    const foldSchedule = researchProgram === "fresh-window"
+        ? parseAssetOpportunityFreshFoldSchedule(body.foldSchedule)
+        : undefined;
     if (runOwner !== RUN_OWNER_NONE) {
         throw new HttpStatusError(409, "A Finder run is already running. Use Stop first.");
     }
@@ -2500,6 +2534,13 @@ async function prepareAssetOpportunityRunPayload(
         if (range.error !== null) {
             throw new HttpStatusError(400, range.error);
         }
+        if (researchProgram === "fresh-window"
+            && (range.start !== 12 || range.end !== 300)) {
+            throw new HttpStatusError(400, "Fresh-window batch must use holdout range 12..300 at stride 12.");
+        }
+        if (researchProgram === "fresh-window" && !foldSchedule) {
+            throw new HttpStatusError(400, "Fresh-window batch requires an explicit 25-entry foldSchedule.");
+        }
         batchRange = { start: range.start, end: range.end };
         archiveSort = normalizeAssetOpportunityArchiveSort(body.archiveSort);
     }
@@ -2540,6 +2581,7 @@ async function prepareAssetOpportunityRunPayload(
         minFreshSupport,
         ...(researchProgram ? { researchProgram } : {}),
         ...(foldEnd !== undefined ? { foldEnd } : {}),
+        ...(foldSchedule ? { foldSchedule } : {}),
         ...(batch ? { batchRange, archiveSort } : {}),
     };
 }
@@ -2555,6 +2597,19 @@ function parseAssetOpportunityResearchProgram(raw: unknown): AssetOpportunityRes
 function parseAssetOpportunityFoldEnd(raw: unknown): number | undefined {
     try {
         return normalizeFinderAssetFoldEnd(raw);
+    } catch (error) {
+        throw new HttpStatusError(400, error instanceof Error ? error.message : String(error));
+    }
+}
+
+function parseAssetOpportunityFreshFoldSchedule(
+    raw: unknown,
+): FinderAssetOpportunityFoldScheduleEntry[] | undefined {
+    if (raw === undefined || raw === null) {
+        return undefined;
+    }
+    try {
+        return normalizeFinderAssetFreshFoldSchedule(raw);
     } catch (error) {
         throw new HttpStatusError(400, error instanceof Error ? error.message : String(error));
     }
@@ -2659,14 +2714,18 @@ async function handleAssetOpportunityRunRequest(
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
     ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context).then((data) =>
-        prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd));
+        prepared.researchProgram === "fresh-window"
+            ? data
+            : prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd));
     const loadForwardDataset = (
         sym: string,
         intv: string,
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
     ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context).then((data) =>
-        sliceFinderAssetDataStrictlyAfterFoldEnd(data, prepared.foldEnd));
+        prepared.researchProgram === "fresh-window"
+            ? data
+            : sliceFinderAssetDataStrictlyAfterFoldEnd(data, prepared.foldEnd));
     const resolvedCapitalSettings = resolveCapitalSettingsFromRaw(
         prepared.capitalSettings as unknown as Record<string, unknown>,
     );
@@ -2710,9 +2769,12 @@ async function handleAssetOpportunityRunRequest(
                 useRustEnginePreference: prepared.useRustEnginePreference,
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
-                ...(prepared.foldEnd !== undefined ? { foldEnd: prepared.foldEnd, loadForwardDataset } : {}),
+                ...((prepared.foldEnd !== undefined || prepared.researchProgram === "fresh-window")
+                    ? { ...(prepared.foldEnd !== undefined ? { foldEnd: prepared.foldEnd } : {}), loadForwardDataset }
+                    : {}),
+                ...(prepared.researchProgram === "fresh-window" ? { loadDatasetIsRaw: true } : {}),
                 ...(prepared.researchProgram ? { researchProgram: prepared.researchProgram } : {}),
-                ...(prepared.foldEnd !== undefined
+                ...(prepared.foldEnd !== undefined || prepared.researchProgram === "fresh-window"
                     ? {
                         dataSyncSnapshot: process.env.FINDER_DATA_SYNC_SNAPSHOT ?? "unknown",
                         gitCommit: process.env.GIT_COMMIT ?? "unknown",
@@ -2720,7 +2782,9 @@ async function handleAssetOpportunityRunRequest(
                     : {}),
                 loadSecondaryDataset: (sym, intv, signal, context) =>
                     loadServerFinderDataset(sym, intv, signal, context).then((data) =>
-                        prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd)),
+                        prepared.researchProgram === "fresh-window"
+                            ? data
+                            : prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd)),
                 getProvider: (symbol) => resolveServerProvider(symbol, prepared.providerBySymbol),
                 candidatePoolSize: prepared.candidatePoolSize,
                 minFreshSupport: prepared.minFreshSupport,
@@ -2775,14 +2839,18 @@ async function handleAssetOpportunityBatchRunRequest(
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
     ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context).then((data) =>
-        prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd));
+        prepared.researchProgram === "fresh-window"
+            ? data
+            : prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd));
     const loadForwardDataset = (
         sym: string,
         intv: string,
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
     ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context).then((data) =>
-        sliceFinderAssetDataStrictlyAfterFoldEnd(data, prepared.foldEnd));
+        prepared.researchProgram === "fresh-window"
+            ? data
+            : sliceFinderAssetDataStrictlyAfterFoldEnd(data, prepared.foldEnd));
 
     await withFinderRunStream({
         res,
@@ -2810,9 +2878,12 @@ async function handleAssetOpportunityBatchRunRequest(
                 useRustEnginePreference: prepared.useRustEnginePreference,
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
-                ...(prepared.foldEnd !== undefined ? { foldEnd: prepared.foldEnd, loadForwardDataset } : {}),
+                ...((prepared.foldEnd !== undefined || prepared.researchProgram === "fresh-window")
+                    ? { ...(prepared.foldEnd !== undefined ? { foldEnd: prepared.foldEnd } : {}), loadForwardDataset }
+                    : {}),
+                ...(prepared.researchProgram === "fresh-window" ? { loadDatasetIsRaw: true } : {}),
                 ...(prepared.researchProgram ? { researchProgram: prepared.researchProgram } : {}),
-                ...(prepared.foldEnd !== undefined
+                ...(prepared.foldEnd !== undefined || prepared.researchProgram === "fresh-window"
                     ? {
                         dataSyncSnapshot: process.env.FINDER_DATA_SYNC_SNAPSHOT ?? "unknown",
                         gitCommit: process.env.GIT_COMMIT ?? "unknown",
@@ -2820,7 +2891,9 @@ async function handleAssetOpportunityBatchRunRequest(
                     : {}),
                 loadSecondaryDataset: (sym, intv, signal, context) =>
                     loadServerFinderDataset(sym, intv, signal, context).then((data) =>
-                        prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd)),
+                        prepared.researchProgram === "fresh-window"
+                            ? data
+                            : prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd)),
                 getProvider: (symbol) => resolveServerProvider(symbol, prepared.providerBySymbol),
                 candidatePoolSize: prepared.candidatePoolSize,
                 minFreshSupport: prepared.minFreshSupport,
@@ -2840,6 +2913,7 @@ async function handleAssetOpportunityBatchRunRequest(
                         .map(([symbol, provider]) => [symbol.trim().toUpperCase(), provider]),
                 ),
                 ...(prepared.researchProgram ? { researchProgram: prepared.researchProgram } : {}),
+                ...(prepared.foldSchedule ? { foldSchedule: prepared.foldSchedule } : {}),
             },
             safeWrite,
             owner,
@@ -3464,6 +3538,7 @@ export const __testInternals = {
     parseRunId,
     parseAssetOpportunityResearchProgram,
     parseAssetOpportunityFoldEnd,
+    parseAssetOpportunityFreshFoldSchedule,
     consumePendingStopForRun,
     writeStreamEventBestEffort,
     withCanonicalUniverseSymbols,

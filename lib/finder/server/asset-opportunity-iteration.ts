@@ -63,6 +63,9 @@ import {
     assertFinderAssetDataAtOrBeforeFoldEnd,
     assertFinderAssetDataStrictlyAfterFoldEnd,
     getFinderAssetDataBounds,
+    sliceFinderAssetDataAtFoldEnd,
+    sliceFinderAssetDataStrictlyAfterFoldEnd,
+    type FinderAssetOpportunityFoldScheduleEntry,
     type FinderAssetOpportunityFoldMetadata,
 } from "../finder-asset-opportunity-fold";
 
@@ -164,7 +167,11 @@ export interface FinderAssetOpportunityRunInput {
     minFreshSupport: number;
     /** Last candle timestamp allowed in the point-in-time search fold. */
     foldEnd?: number;
+    /** Explicit fresh-window fold schedule; one entry is used per batch task. */
+    foldSchedule?: FinderAssetOpportunityFoldScheduleEntry[];
     researchProgram?: AssetOpportunityResearchProgram;
+    /** When true, loaders/cache retain raw candles and this leaf slices per fold. */
+    loadDatasetIsRaw?: boolean;
     /** Operator/data provenance captured in fresh-window archive envelopes. */
     dataSyncSnapshot?: string;
     gitCommit?: string;
@@ -524,7 +531,7 @@ export async function runAssetOpportunityIteration(
             : null;
         const cached = cacheKey !== null ? datasetCache!.get(cacheKey) : undefined;
         const startedAt = performance.now();
-        const dataPromise = cached
+        const rawDataPromise = cached
             ? cached
             : input.loadDataset(symbol, input.interval, input.abortSignal, assetLoadContext).then((data) => {
                 if (cacheKey !== null && Array.isArray(data) && data.length > 0) {
@@ -532,13 +539,21 @@ export async function runAssetOpportunityIteration(
                 }
                 return data;
             });
-        const forwardPromise = input.foldEnd !== undefined && input.loadForwardDataset
+        const rawForwardPromise = input.foldEnd !== undefined && input.loadForwardDataset
             ? input.loadForwardDataset(symbol, input.interval, input.abortSignal, assetLoadContext)
             : Promise.resolve<OHLCVData[] | undefined>(undefined);
         const promise = Promise.resolve()
-            .then(() => Promise.all([dataPromise, forwardPromise]))
+            .then(() => Promise.all([rawDataPromise, rawForwardPromise]))
             .then(
-                ([data, forwardData]) => {
+                ([rawData, rawForwardData]) => {
+                    const data = input.loadDatasetIsRaw
+                        ? sliceFinderAssetDataAtFoldEnd(rawData, input.foldEnd)
+                        : rawData;
+                    const forwardData = rawForwardData === undefined
+                        ? undefined
+                        : input.loadDatasetIsRaw
+                            ? sliceFinderAssetDataStrictlyAfterFoldEnd(rawForwardData, input.foldEnd)
+                            : rawForwardData;
                     const finishedAt = performance.now();
                     return {
                         data,

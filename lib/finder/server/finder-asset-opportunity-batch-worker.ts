@@ -77,6 +77,8 @@ export interface AssetOpportunityBatchWorkerTask {
     candidatePoolSize: number;
     minFreshSupport: number;
     foldEnd?: number;
+    /** Fresh-window workers cache raw data and slice inside the iteration leaf. */
+    loadDatasetIsRaw?: boolean;
     researchProgram?: "fresh-window";
     /** Benchmark-only structured-clone data source; production workers load from the server loader. */
     inlineDatasets?: Record<string, OHLCVData[]>;
@@ -211,6 +213,7 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
             candidatePoolSize: task.candidatePoolSize,
             minFreshSupport: task.minFreshSupport,
             ...(task.foldEnd !== undefined ? { foldEnd: task.foldEnd } : {}),
+            ...(task.loadDatasetIsRaw === true ? { loadDatasetIsRaw: true } : {}),
             ...(task.researchProgram ? { researchProgram: task.researchProgram } : {}),
             ...(args.runLog ? { runLog: args.runLog } : {}),
         },
@@ -316,24 +319,28 @@ if (!isMainThread && parentPort) {
         runAssetOpportunityBatchWorkerTask({
             task,
             loadDataset: task.inlineDatasets
-                ? async (symbol) => sliceFinderAssetDataAtFoldEnd(task.inlineDatasets![symbol] ?? [], task.foldEnd)
+                ? async (symbol) => task.loadDatasetIsRaw === true
+                    ? (task.inlineDatasets![symbol] ?? [])
+                    : sliceFinderAssetDataAtFoldEnd(task.inlineDatasets![symbol] ?? [], task.foldEnd)
                 : async (symbol, interval, signal, context) =>
-                    sliceFinderAssetDataAtFoldEnd(
-                        await loadServerFinderDataset(symbol, interval, signal, context),
-                        task.foldEnd,
-                    ),
+                    task.loadDatasetIsRaw === true
+                        ? loadServerFinderDataset(symbol, interval, signal, context)
+                        : loadServerFinderDataset(symbol, interval, signal, context).then((data) =>
+                            sliceFinderAssetDataAtFoldEnd(data, task.foldEnd)),
             ...(task.foldEnd !== undefined
                 ? {
                     loadForwardDataset: task.inlineDatasets
-                        ? async (symbol) => sliceFinderAssetDataStrictlyAfterFoldEnd(
-                            task.inlineDatasets![symbol] ?? [],
-                            task.foldEnd,
-                        )
-                        : async (symbol, interval, signal, context) =>
-                            sliceFinderAssetDataStrictlyAfterFoldEnd(
-                                await loadServerFinderDataset(symbol, interval, signal, context),
+                        ? async (symbol) => task.loadDatasetIsRaw === true
+                            ? (task.inlineDatasets![symbol] ?? [])
+                            : sliceFinderAssetDataStrictlyAfterFoldEnd(
+                                task.inlineDatasets![symbol] ?? [],
                                 task.foldEnd,
-                            ),
+                            )
+                        : async (symbol, interval, signal, context) =>
+                            task.loadDatasetIsRaw === true
+                                ? loadServerFinderDataset(symbol, interval, signal, context)
+                                : loadServerFinderDataset(symbol, interval, signal, context).then((data) =>
+                                    sliceFinderAssetDataStrictlyAfterFoldEnd(data, task.foldEnd)),
                 }
                 : {}),
             assetLoadContext,

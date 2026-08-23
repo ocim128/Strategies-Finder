@@ -56,6 +56,7 @@ const {
     parseRunId,
     parseAssetOpportunityResearchProgram,
     parseAssetOpportunityFoldEnd,
+    parseAssetOpportunityFreshFoldSchedule,
     consumePendingStopForRun,
     writeStreamEventBestEffort,
     withCanonicalUniverseSymbols,
@@ -1409,6 +1410,12 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                 takeProfitPercent: 2,
             }
             : settings;
+        const freshFoldSchedule = Array.from({ length: 25 }, (_, index) => ({
+            holdoutBars: (index + 1) * 12,
+            foldEnd: 1_700_000_000 + ((100 + index) * 300),
+        }));
+        const runStart = args.freshWindow ? 12 : args.start;
+        const runEnd = args.freshWindow ? 300 : args.end;
         setRunOwnerForTests(args.owner);
         const run = (async () => {
             await processFinderAssetOpportunityBatchRun(
@@ -1426,10 +1433,10 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                     candidatePoolSize: 2,
                     minFreshSupport: 1,
                     archiveSort: args.archiveSort ?? null,
-                    batch: { startHoldoutBars: args.start, endHoldoutBars: args.end },
+                    batch: { startHoldoutBars: runStart, endHoldoutBars: runEnd },
                     ...(args.freshWindow ? {
                         researchProgram: "fresh-window" as const,
-                        foldEnd: 1_700_000_000 + (39 * 300),
+                        foldSchedule: freshFoldSchedule,
                         dataSyncSnapshot: args.freshWindow === "valid" ? "sync-2026-08-23" : undefined,
                         gitCommit: args.freshWindow === "valid" ? "abc123" : undefined,
                         providerBySymbol: { UP: "binance", DOWN: "binance" },
@@ -1547,7 +1554,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
             freshWindow: "valid",
         });
 
-        expect(appended).to.include("oos-fold-identities-2-bars.txt");
+        expect(appended).to.include("oos-fold-identities-12-bars.txt");
         const config = contents.find((content) => content.includes("Run configuration: JSON"))!;
         expect(config).to.contain('"judgmentStatus": "VALID"');
         expect(config).to.contain('"symbolDigest"');
@@ -1569,7 +1576,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
             freshWindow: "invalid",
         });
 
-        expect(appended).to.include("oos-fold-identities-2-bars.txt");
+        expect(appended).to.include("oos-fold-identities-12-bars.txt");
         const config = contents.find((content) => content.includes("Run configuration: JSON"))!;
         expect(config).to.contain('"judgmentStatus": "INVALID"');
         expect(config).to.contain("evalLastBars must be 1000");
@@ -2070,6 +2077,19 @@ describe("Asset Opportunity fold validation", () => {
         expect(() => parseAssetOpportunityFoldEnd(0)).to.throw(HttpStatusError);
         try {
             parseAssetOpportunityFoldEnd("bad");
+        } catch (error) {
+            expect((error as HttpStatusError).status).to.equal(400);
+        }
+    });
+
+    it("accepts only the explicit 25-entry schedule at the request boundary", () => {
+        const schedule = Array.from({ length: 25 }, (_, index) => ({
+            holdoutBars: (index + 1) * 12,
+            foldEnd: 1_700_000_000 + ((index + 1) * 300),
+        }));
+        expect(parseAssetOpportunityFreshFoldSchedule(schedule)).to.deep.equal(schedule);
+        try {
+            parseAssetOpportunityFreshFoldSchedule(schedule.slice(0, 24));
         } catch (error) {
             expect((error as HttpStatusError).status).to.equal(400);
         }
