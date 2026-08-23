@@ -63,6 +63,11 @@ import { runFinderUniverseExecution } from "../finder-runner-universe";
 import type { FinderSelectedStrategy } from "../finder-runner";
 import { FinderParamSpace } from "../finder-param-space";
 import { sliceFinderDataWindow } from "../finder-manager-logic";
+import {
+    normalizeFinderAssetFoldEnd,
+    sliceFinderAssetDataAtFoldEnd,
+    sliceFinderAssetDataStrictlyAfterFoldEnd,
+} from "../finder-asset-opportunity-fold";
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../../types/backtest";
 import type {
     FinderAssetOpportunityResult,
@@ -434,12 +439,39 @@ function mergeAssetOpportunityChunkResults(
         failedAssets: failedAssets.length,
         engineUsage,
     };
+    const foldMetadataValues = orderedEntries
+        .map(({ iteration }) => iteration.foldMetadata)
+        .filter((value): value is NonNullable<typeof value> => Boolean(value));
+    const foldMetadata = foldMetadataValues.length > 0
+        ? {
+            foldEnd: foldMetadataValues[0]!.foldEnd,
+            searchWindowEnd: foldMetadataValues.reduce<number | null>(
+                (current, value) => value.searchWindowEnd === null
+                    ? current
+                    : Math.max(current ?? value.searchWindowEnd, value.searchWindowEnd),
+                null,
+            ),
+            oosStart: foldMetadataValues.reduce<number | null>(
+                (current, value) => value.oosStart === null
+                    ? current
+                    : Math.min(current ?? value.oosStart, value.oosStart),
+                null,
+            ),
+            oosEnd: foldMetadataValues.reduce<number | null>(
+                (current, value) => value.oosEnd === null
+                    ? current
+                    : Math.max(current ?? value.oosEnd, value.oosEnd),
+                null,
+            ),
+        }
+        : undefined;
     return {
         results,
         cancelled: entries.some(({ iteration }) => iteration.cancelled),
         assetDiagnostics,
         totals: mergedTotals,
         summary: `Asset Opportunity complete: ${results.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`,
+        ...(foldMetadata ? { foldMetadata } : {}),
     };
 }
 
@@ -513,6 +545,8 @@ export type FinderRunSnapshot = {
     jobKind?: "symbol_universe" | "asset_opportunity" | "asset_opportunity_batch";
     /** Research archive namespace, present only for an explicit program. */
     researchProgram?: AssetOpportunityResearchProgram;
+    /** Point-in-time fold boundary, present only for a declared fold. */
+    foldEnd?: number;
     /** Ordered selected entry strategy keys for the whole job. */
     strategyKeys: string[];
     /** 0-based index of the strategy currently being evaluated. */
@@ -1178,6 +1212,8 @@ interface FinderAssetOpportunityRequestBody {
     archiveSort?: unknown;
     /** Optional allowlisted research archive program. */
     researchProgram?: unknown;
+    /** Optional point-in-time fold boundary (last usable candle timestamp). */
+    foldEnd?: unknown;
 }
 
 /**
@@ -1280,6 +1316,7 @@ async function runFinderAssetOpportunityWorkerSweep(
             providerBySymbol,
             candidatePoolSize: input.candidatePoolSize,
             minFreshSupport: input.minFreshSupport,
+            ...(input.foldEnd !== undefined ? { foldEnd: input.foldEnd } : {}),
         };
     });
     const completed: Array<{ task: AssetOpportunityBatchWorkerTask; iteration: AssetOpportunityIterationResult }> = [];
@@ -1416,6 +1453,7 @@ export async function processFinderAssetOpportunityRun(
         finishedAt: null,
         interval: input.interval,
         jobKind: "asset_opportunity",
+        ...(input.foldEnd !== undefined ? { foldEnd: input.foldEnd } : {}),
         strategyKeys: selectedStrategies.map((strategy) => strategy.key),
         strategyIndex: 0,
         strategyCount: selectedStrategies.length,
@@ -1609,6 +1647,7 @@ export async function processFinderAssetOpportunityBatchRun(
         interval: input.interval,
         jobKind: "asset_opportunity_batch",
         ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
+        ...(input.foldEnd !== undefined ? { foldEnd: input.foldEnd } : {}),
         strategyKeys: selectedStrategies.map((strategy) => strategy.key),
         strategyIndex: 0,
         strategyCount: selectedStrategies.length,
@@ -1686,6 +1725,11 @@ export async function processFinderAssetOpportunityBatchRun(
                 },
                 backtestSettings: input.settings,
                 capitalSettings: input.capitalSettings,
+                ...(input.foldEnd !== undefined ? {
+                    foldEnd: input.foldEnd,
+                    dataSyncSnapshot: input.dataSyncSnapshot ?? "unknown",
+                    gitCommit: input.gitCommit ?? "unknown",
+                } : {}),
             },
             ...(archiveAppend ? { append: archiveAppend } : {}),
         });
@@ -1793,6 +1837,9 @@ export async function processFinderAssetOpportunityBatchRun(
                     sortMetric,
                     topResults,
                     baseline,
+                    ...(iteration.foldMetadata ? { foldMetadata: iteration.foldMetadata } : {}),
+                    ...(input.dataSyncSnapshot ? { dataSyncSnapshot: input.dataSyncSnapshot } : {}),
+                    ...(input.gitCommit ? { gitCommit: input.gitCommit } : {}),
                     ...(archiveAppend ? { append: archiveAppend } : {}),
                 });
                 archiveFilename = path.basename(appended.path);
@@ -1962,6 +2009,7 @@ export async function processFinderAssetOpportunityBatchRun(
                     providerBySymbol: providerRecord,
                     candidatePoolSize: input.candidatePoolSize,
                     minFreshSupport: input.minFreshSupport,
+                    ...(input.foldEnd !== undefined ? { foldEnd: input.foldEnd } : {}),
                 };
             });
         });
@@ -2235,8 +2283,11 @@ async function prepareAssetOpportunityRunPayload(
     archiveSort?: FinderAssetOpportunityArchiveSort | null;
     /** Present when the request selects the fresh-window archive namespace. */
     researchProgram?: AssetOpportunityResearchProgram;
+    /** Present when the request declares a point-in-time fold boundary. */
+    foldEnd?: number;
 }> {
     const researchProgram = parseAssetOpportunityResearchProgram(body.researchProgram);
+    const foldEnd = parseAssetOpportunityFoldEnd(body.foldEnd);
     if (runOwner !== RUN_OWNER_NONE) {
         throw new HttpStatusError(409, "A Finder run is already running. Use Stop first.");
     }
@@ -2340,6 +2391,7 @@ async function prepareAssetOpportunityRunPayload(
         candidatePoolSize,
         minFreshSupport,
         ...(researchProgram ? { researchProgram } : {}),
+        ...(foldEnd !== undefined ? { foldEnd } : {}),
         ...(batch ? { batchRange, archiveSort } : {}),
     };
 }
@@ -2350,6 +2402,14 @@ function parseAssetOpportunityResearchProgram(raw: unknown): AssetOpportunityRes
         throw new HttpStatusError(400, "Invalid Asset Opportunity research program.");
     }
     return raw;
+}
+
+function parseAssetOpportunityFoldEnd(raw: unknown): number | undefined {
+    try {
+        return normalizeFinderAssetFoldEnd(raw);
+    } catch (error) {
+        throw new HttpStatusError(400, error instanceof Error ? error.message : String(error));
+    }
 }
 
 /**
@@ -2450,7 +2510,15 @@ async function handleAssetOpportunityRunRequest(
         intv: string,
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
-    ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context);
+    ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context).then((data) =>
+        prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd));
+    const loadForwardDataset = (
+        sym: string,
+        intv: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context).then((data) =>
+        sliceFinderAssetDataStrictlyAfterFoldEnd(data, prepared.foldEnd));
     const resolvedCapitalSettings = resolveCapitalSettingsFromRaw(
         prepared.capitalSettings as unknown as Record<string, unknown>,
     );
@@ -2494,8 +2562,16 @@ async function handleAssetOpportunityRunRequest(
                 useRustEnginePreference: prepared.useRustEnginePreference,
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
+                ...(prepared.foldEnd !== undefined ? { foldEnd: prepared.foldEnd, loadForwardDataset } : {}),
+                ...(prepared.foldEnd !== undefined
+                    ? {
+                        dataSyncSnapshot: process.env.FINDER_DATA_SYNC_SNAPSHOT ?? "unknown",
+                        gitCommit: process.env.GIT_COMMIT ?? "unknown",
+                    }
+                    : {}),
                 loadSecondaryDataset: (sym, intv, signal, context) =>
-                    loadServerFinderDataset(sym, intv, signal, context),
+                    loadServerFinderDataset(sym, intv, signal, context).then((data) =>
+                        prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd)),
                 getProvider: (symbol) => resolveServerProvider(symbol, prepared.providerBySymbol),
                 candidatePoolSize: prepared.candidatePoolSize,
                 minFreshSupport: prepared.minFreshSupport,
@@ -2549,7 +2625,15 @@ async function handleAssetOpportunityBatchRunRequest(
         intv: string,
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
-    ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context);
+    ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context).then((data) =>
+        prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd));
+    const loadForwardDataset = (
+        sym: string,
+        intv: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context).then((data) =>
+        sliceFinderAssetDataStrictlyAfterFoldEnd(data, prepared.foldEnd));
 
     await withFinderRunStream({
         res,
@@ -2577,8 +2661,16 @@ async function handleAssetOpportunityBatchRunRequest(
                 useRustEnginePreference: prepared.useRustEnginePreference,
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
+                ...(prepared.foldEnd !== undefined ? { foldEnd: prepared.foldEnd, loadForwardDataset } : {}),
+                ...(prepared.foldEnd !== undefined
+                    ? {
+                        dataSyncSnapshot: process.env.FINDER_DATA_SYNC_SNAPSHOT ?? "unknown",
+                        gitCommit: process.env.GIT_COMMIT ?? "unknown",
+                    }
+                    : {}),
                 loadSecondaryDataset: (sym, intv, signal, context) =>
-                    loadServerFinderDataset(sym, intv, signal, context),
+                    loadServerFinderDataset(sym, intv, signal, context).then((data) =>
+                        prepared.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, prepared.foldEnd)),
                 getProvider: (symbol) => resolveServerProvider(symbol, prepared.providerBySymbol),
                 candidatePoolSize: prepared.candidatePoolSize,
                 minFreshSupport: prepared.minFreshSupport,
@@ -2831,6 +2923,7 @@ function buildStatusSnapshot(): FinderRunStatusSnapshot {
         interval: state.interval,
         jobKind,
         ...(state.researchProgram ? { researchProgram: state.researchProgram } : {}),
+        ...(state.foldEnd !== undefined ? { foldEnd: state.foldEnd } : {}),
         strategyKeys: state.strategyKeys,
         strategyIndex: state.strategyIndex,
         strategyCount: state.strategyCount,
@@ -3218,6 +3311,7 @@ export const __testInternals = {
     parseStrategyKeys,
     parseRunId,
     parseAssetOpportunityResearchProgram,
+    parseAssetOpportunityFoldEnd,
     consumePendingStopForRun,
     writeStreamEventBestEffort,
     withCanonicalUniverseSymbols,

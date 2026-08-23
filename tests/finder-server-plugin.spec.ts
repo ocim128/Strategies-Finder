@@ -55,6 +55,7 @@ const {
     parseStrategyKeys,
     parseRunId,
     parseAssetOpportunityResearchProgram,
+    parseAssetOpportunityFoldEnd,
     consumePendingStopForRun,
     writeStreamEventBestEffort,
     withCanonicalUniverseSymbols,
@@ -1908,6 +1909,19 @@ describe("Asset Opportunity research program validation", () => {
             } catch (error) {
                 expect((error as HttpStatusError).status).to.equal(400);
             }
+        }
+    });
+});
+
+describe("Asset Opportunity fold validation", () => {
+    it("accepts an absent or numeric fold and rejects invalid timestamps before routing", () => {
+        expect(parseAssetOpportunityFoldEnd(undefined)).to.equal(undefined);
+        expect(parseAssetOpportunityFoldEnd("1700000000")).to.equal(1_700_000_000);
+        expect(() => parseAssetOpportunityFoldEnd(0)).to.throw(HttpStatusError);
+        try {
+            parseAssetOpportunityFoldEnd("bad");
+        } catch (error) {
+            expect((error as HttpStatusError).status).to.equal(400);
         }
     });
 });

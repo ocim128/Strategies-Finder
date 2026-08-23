@@ -52,6 +52,14 @@ describe("Asset Opportunity archive writer", () => {
                 batchRunId: "batch-1",
                 holdoutBars: 4,
                 topResults,
+                foldMetadata: {
+                    foldEnd: 1_700_000_000,
+                    searchWindowEnd: 1_700_000_000,
+                    oosStart: 1_700_001_000,
+                    oosEnd: 1_700_002_000,
+                },
+                dataSyncSnapshot: "sync-fixture",
+                gitCommit: "commit-fixture",
                 timestamp: "2026-01-01T00:00:00.000Z",
             });
 
@@ -63,6 +71,9 @@ describe("Asset Opportunity archive writer", () => {
             expect(content).to.contain("Batch run id: batch-1");
             expect(content).to.contain("OOS holdout: 4 bars");
             expect(content).to.contain("Archive sort: run_default");
+            expect(content).to.contain("Fold end: 1700000000");
+            expect(content).to.contain("Data sync snapshot: sync-fixture");
+            expect(content).to.contain("Git commit: commit-fixture");
             expect(content).to.contain(JSON.stringify(topResults));
             expect(content).to.match(/\n$/);
         } finally {

@@ -308,6 +308,8 @@ export interface AssetOpportunityFreshEntryBatchCandidate {
 
 export interface AssetOpportunityFreshEntryBatchInput {
     data: OHLCVData[];
+    /** Optional candles strictly after the declared point-in-time fold. */
+    forwardData?: OHLCVData[];
     /** Optional full prefix source already cached by the candidate batch. */
     cacheData?: OHLCVData[];
     datasetEndIndex?: number;

@@ -45,6 +45,10 @@ import {
     createAssetOpportunitySignalCache,
     type AssetOpportunitySignalCache,
 } from "../finder-asset-opportunity-search-cache";
+import {
+    sliceFinderAssetDataAtFoldEnd,
+    sliceFinderAssetDataStrictlyAfterFoldEnd,
+} from "../finder-asset-opportunity-fold";
 
 /**
  * One holdout iteration's full input, structured-clone-safe. `options` is the
@@ -71,6 +75,7 @@ export interface AssetOpportunityBatchWorkerTask {
     providerBySymbol: Record<string, string> | null;
     candidatePoolSize: number;
     minFreshSupport: number;
+    foldEnd?: number;
     /** Benchmark-only structured-clone data source; production workers load from the server loader. */
     inlineDatasets?: Record<string, OHLCVData[]>;
 }
@@ -132,6 +137,12 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
     ) => Promise<OHLCVData[]>;
+    loadForwardDataset?: (
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ) => Promise<OHLCVData[]>;
     /** Long-lived context reused across this worker's tasks; omitted on the first task. */
     assetLoadContext?: BatchDatasetLoadContext;
     /** Persistent full-signal cache reused across this worker's holdout tasks. */
@@ -181,6 +192,7 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
             ...(task.useRustEnginePreference === true ? { useRustEnginePreference: true } : {}),
             abortSignal: args.abortSignal,
             loadDataset: args.loadDataset,
+            ...(args.loadForwardDataset ? { loadForwardDataset: args.loadForwardDataset } : {}),
             ...(args.assetLoadContext ? { assetLoadContext: args.assetLoadContext } : {}),
             ...(args.rustBatchDatasetCache ? { rustBatchDatasetCache: args.rustBatchDatasetCache } : {}),
             ...(args.paramSetCache ? { paramSetCache: args.paramSetCache } : {}),
@@ -189,6 +201,7 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
             ...(getProvider ? { getProvider } : {}),
             candidatePoolSize: task.candidatePoolSize,
             minFreshSupport: task.minFreshSupport,
+            ...(task.foldEnd !== undefined ? { foldEnd: task.foldEnd } : {}),
             ...(args.runLog ? { runLog: args.runLog } : {}),
         },
         {
@@ -292,8 +305,26 @@ if (!isMainThread && parentPort) {
         runAssetOpportunityBatchWorkerTask({
             task,
             loadDataset: task.inlineDatasets
-                ? async (symbol) => task.inlineDatasets![symbol] ?? []
-                : loadServerFinderDataset,
+                ? async (symbol) => sliceFinderAssetDataAtFoldEnd(task.inlineDatasets![symbol] ?? [], task.foldEnd)
+                : async (symbol, interval, signal, context) =>
+                    sliceFinderAssetDataAtFoldEnd(
+                        await loadServerFinderDataset(symbol, interval, signal, context),
+                        task.foldEnd,
+                    ),
+            ...(task.foldEnd !== undefined
+                ? {
+                    loadForwardDataset: task.inlineDatasets
+                        ? async (symbol) => sliceFinderAssetDataStrictlyAfterFoldEnd(
+                            task.inlineDatasets![symbol] ?? [],
+                            task.foldEnd,
+                        )
+                        : async (symbol, interval, signal, context) =>
+                            sliceFinderAssetDataStrictlyAfterFoldEnd(
+                                await loadServerFinderDataset(symbol, interval, signal, context),
+                                task.foldEnd,
+                            ),
+                }
+                : {}),
             assetLoadContext,
             rustBatchDatasetCache,
             paramSetCache,

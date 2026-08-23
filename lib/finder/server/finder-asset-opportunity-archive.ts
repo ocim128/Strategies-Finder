@@ -6,6 +6,7 @@ import type {
     AssetOpportunityForwardOosBaseline,
     AssetOpportunityPairSummaryRow,
 } from "../finder-asset-opportunity-metadata";
+import type { FinderAssetOpportunityFoldMetadata } from "../finder-asset-opportunity-fold";
 
 /**
  * Server-side archive leaf for Asset Opportunity batch iterations.
@@ -73,6 +74,9 @@ export interface AssetOpportunityArchiveBlock {
     topResults: unknown;
     /** All-result baseline captured before the top-N slice, when available. */
     baseline?: AssetOpportunityForwardOosBaseline | null;
+    foldMetadata?: FinderAssetOpportunityFoldMetadata;
+    dataSyncSnapshot?: string;
+    gitCommit?: string;
 }
 
 export function buildAssetOpportunityArchiveBlockText(block: AssetOpportunityArchiveBlock): string {
@@ -83,6 +87,14 @@ export function buildAssetOpportunityArchiveBlockText(block: AssetOpportunityArc
         `Batch run id: ${block.batchRunId}`,
         `OOS holdout: ${block.holdoutBars} bars`,
         `Archive sort: ${block.sortMetric ?? "run_default"}`,
+        ...(block.foldMetadata ? [
+            `Fold end: ${block.foldMetadata.foldEnd}`,
+            `Search window end: ${block.foldMetadata.searchWindowEnd ?? "unknown"}`,
+            `OOS start: ${block.foldMetadata.oosStart ?? "unknown"}`,
+            `OOS end: ${block.foldMetadata.oosEnd ?? "unknown"}`,
+        ] : []),
+        ...(block.dataSyncSnapshot ? [`Data sync snapshot: ${block.dataSyncSnapshot}`] : []),
+        ...(block.gitCommit ? [`Git commit: ${block.gitCommit}`] : []),
         ...(block.baseline ? [`Archive baseline: ${JSON.stringify(block.baseline)}`] : []),
         separator,
         JSON.stringify(block.topResults),
@@ -112,6 +124,9 @@ export interface AppendAssetOpportunityArchiveBlockArgs {
     sortMetric?: FinderAssetOpportunityResortMetric | null;
     topResults: unknown;
     baseline?: AssetOpportunityForwardOosBaseline | null;
+    foldMetadata?: FinderAssetOpportunityFoldMetadata;
+    dataSyncSnapshot?: string;
+    gitCommit?: string;
     /** Optional deterministic timestamp for tests. */
     timestamp?: string;
     /** Optional injected append leaf for tests. */
@@ -137,6 +152,9 @@ export async function appendAssetOpportunityArchiveBlock(
         sortMetric: args.sortMetric ?? null,
         topResults: args.topResults,
         baseline: args.baseline,
+        ...(args.foldMetadata ? { foldMetadata: args.foldMetadata } : {}),
+        ...(args.dataSyncSnapshot ? { dataSyncSnapshot: args.dataSyncSnapshot } : {}),
+        ...(args.gitCommit ? { gitCommit: args.gitCommit } : {}),
     });
     const append = args.append ?? defaultAppend;
     await append(dir, filename, content);

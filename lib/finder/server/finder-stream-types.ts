@@ -348,6 +348,8 @@ export type FinderRunStatusSnapshot = {
     jobKind: FinderJobKind;
     /** Research archive namespace, present for explicitly selected programs. */
     researchProgram?: "fresh-window";
+    /** Point-in-time fold boundary, present for declared fresh-window folds. */
+    foldEnd?: number;
     /** Ordered selected entry strategy keys. */
     strategyKeys: string[];
     /** 0-based index of the strategy currently being evaluated. */

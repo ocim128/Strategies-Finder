@@ -57,6 +57,12 @@ import { createServerFinderAssetOpportunityLoadContext } from "./server-finder-d
 import { parseSyntheticPairToken } from "../../synthetic-pair-token";
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
+import {
+    assertFinderAssetDataAtOrBeforeFoldEnd,
+    assertFinderAssetDataStrictlyAfterFoldEnd,
+    getFinderAssetDataBounds,
+    type FinderAssetOpportunityFoldMetadata,
+} from "../finder-asset-opportunity-fold";
 
 const ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY = 12;
 const ASSET_OPPORTUNITY_RUST_EVALUATION_CONCURRENCY = 16;
@@ -133,6 +139,17 @@ export interface FinderAssetOpportunityRunInput {
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
     ) => Promise<OHLCVData[]>;
+    /**
+     * Optional point-in-time forward loader. When foldEnd is present this
+     * loader must return only candles strictly after the fold; the iteration
+     * guard verifies that contract before any candidate work starts.
+     */
+    loadForwardDataset?: (
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ) => Promise<OHLCVData[]>;
     /** Secondary cross-symbol data stays unsliced; the executor aligns it to the primary window. */
     loadSecondaryDataset?: (
         symbol: string,
@@ -143,6 +160,11 @@ export interface FinderAssetOpportunityRunInput {
     getProvider?: (symbol: string) => string;
     candidatePoolSize: number;
     minFreshSupport: number;
+    /** Last candle timestamp allowed in the point-in-time search fold. */
+    foldEnd?: number;
+    /** Operator/data provenance captured in fresh-window archive envelopes. */
+    dataSyncSnapshot?: string;
+    gitCommit?: string;
     /** Reusable caches for a multi-iteration Asset Opportunity batch. */
     assetLoadContext?: BatchDatasetLoadContext;
     /** Reuse Rust dataset cache IDs across sequential holdout iterations. */
@@ -205,6 +227,8 @@ export interface AssetOpportunityIterationResult {
     assetDiagnostics: FinderAssetOpportunityDiagnostics;
     totals: FinderAssetOpportunityTotals;
     summary: string;
+    /** Point-in-time bounds observed while loading the fold and its forward data. */
+    foldMetadata?: FinderAssetOpportunityFoldMetadata;
 }
 
 /**
@@ -326,6 +350,9 @@ export async function runAssetOpportunityIteration(
     let assetResults: FinderAssetOpportunityResult[] = [];
     let loadedSymbols = 0;
     let failedSymbols = 0;
+    let searchWindowEnd: number | null = null;
+    let oosStart: number | null = null;
+    let oosEnd: number | null = null;
     // Assets in a Rust wave finish out of order. Progress must therefore be
     // the aggregate of each asset's furthest strategy fraction, not a direct
     // projection of the callback's assetIndex. The latter made a late callback
@@ -463,6 +490,7 @@ export async function runAssetOpportunityIteration(
 
     type AssetLoadOutcome = {
         data?: OHLCVData[];
+        forwardData?: OHLCVData[];
         error?: unknown;
         startedAt: number;
         finishedAt: number;
@@ -495,12 +523,21 @@ export async function runAssetOpportunityIteration(
                 }
                 return data;
             });
+        const forwardPromise = input.foldEnd !== undefined && input.loadForwardDataset
+            ? input.loadForwardDataset(symbol, input.interval, input.abortSignal, assetLoadContext)
+            : Promise.resolve<OHLCVData[] | undefined>(undefined);
         const promise = Promise.resolve()
-            .then(() => dataPromise)
+            .then(() => Promise.all([dataPromise, forwardPromise]))
             .then(
-                (data) => {
+                ([data, forwardData]) => {
                     const finishedAt = performance.now();
-                    return { data, startedAt, finishedAt, durationMs: finishedAt - startedAt };
+                    return {
+                        data,
+                        ...(forwardData ? { forwardData } : {}),
+                        startedAt,
+                        finishedAt,
+                        durationMs: finishedAt - startedAt,
+                    };
                 },
                 (error) => {
                     const finishedAt = performance.now();
@@ -542,8 +579,28 @@ export async function runAssetOpportunityIteration(
         try {
             if (loadedAsset.error) throw loadedAsset.error;
             const data = loadedAsset.data ?? [];
+            assertFinderAssetDataAtOrBeforeFoldEnd(data, input.foldEnd, `Asset Opportunity ${symbol} search data`);
+            const forwardData = loadedAsset.forwardData ?? [];
+            assertFinderAssetDataStrictlyAfterFoldEnd(
+                forwardData,
+                input.foldEnd,
+                `Asset Opportunity ${symbol} forward data`,
+            );
             if (data.length === 0) {
                 throw new Error("no data");
+            }
+            if (input.foldEnd !== undefined) {
+                const searchBounds = getFinderAssetDataBounds(data);
+                const forwardBounds = getFinderAssetDataBounds(forwardData);
+                if (searchBounds.last !== null) {
+                    searchWindowEnd = Math.max(searchWindowEnd ?? searchBounds.last, searchBounds.last);
+                }
+                if (forwardBounds.first !== null) {
+                    oosStart = Math.min(oosStart ?? forwardBounds.first, forwardBounds.first);
+                }
+                if (forwardBounds.last !== null) {
+                    oosEnd = Math.max(oosEnd ?? forwardBounds.last, forwardBounds.last);
+                }
             }
             loadedBarsMin = Math.min(loadedBarsMin, data.length);
             loadedBarsMax = Math.max(loadedBarsMax, data.length);
@@ -583,7 +640,12 @@ export async function runAssetOpportunityIteration(
                         // builds the endpoint-adjusted selection result for
                         // every candidate, so a full winner rerun is redundant.
                         recomputeWinnerAnalytics: false,
-                        assets: [{ symbol, data, precomputedFullClosed: fullClosed }],
+                        assets: [{
+                            symbol,
+                            data,
+                            precomputedFullClosed: fullClosed,
+                            ...(forwardData.length > 0 ? { forwardData } : {}),
+                        }],
                         runIsSearch: isSearch,
                     },
                     {
@@ -950,5 +1012,15 @@ export async function runAssetOpportunityIteration(
         assetDiagnostics,
         totals,
         summary,
+        ...(input.foldEnd !== undefined
+            ? {
+                foldMetadata: {
+                    foldEnd: input.foldEnd,
+                    searchWindowEnd,
+                    oosStart,
+                    oosEnd,
+                } satisfies FinderAssetOpportunityFoldMetadata,
+            }
+            : {}),
     };
 }
