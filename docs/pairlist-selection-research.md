@@ -324,3 +324,21 @@ if CI95 lower bound > 0 AND ≥8/10 positive blocks. Interpretation ladder regis
 (a) T1 confirmed and T3 ≈ 0 → edge belongs to the set; (b) T1 fails → the single
 confirmation is not supported at set level — program state becomes "no demonstrated
 edge"; (c) T3 significantly ≠ 0 → halt interpretation, report for investigation.
+
+**2026-08-24 — Tied-set analysis outcome (append-only; §8 rules unchanged)**
+
+Run `sp500_top_mean_1787564851193_oas3` completed against `BAL679.v1`; the computed
+tied set contained every available TOP_MEAN engine pick. No run-directory files were
+modified. The deterministic TXT and JSON outputs were written under
+`archive/pool-analysis/`.
+
+Printed primary result: `T1 verdict @48/2026: NOT_CONFIRMED`; T1 primary accounting was
+`mean=+0.18% CI95=[-0.11%, +0.46%] positiveBlocks=7/10`. The primary exclusions were
+`tiedSetLt2Ok=21`, `t2TiedSetAllEligible=11`, and `missingTopMeanRow=26`.
+
+Printed T3 diagnostic: `mean=+3.08% CI95=[+0.72%, +6.33%]`; the analyzer reports the
+registered significance threshold as `AMBIGUOUS` because no numeric T3 significance
+threshold was registered. Printed program state: `no_demonstrated_edge`.
+
+Printed reconciliation accounting @48/2026: `archived=+3.48% = setComponent +0.40% +
+pickWithinSetComponent +3.08% = +3.48%; residual=-0.00%`.
