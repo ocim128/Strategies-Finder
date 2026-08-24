@@ -342,3 +342,41 @@ threshold was registered. Printed program state: `no_demonstrated_edge`.
 
 Printed reconciliation accounting @48/2026: `archived=+3.48% = setComponent +0.40% +
 pickWithinSetComponent +3.08% = +3.48%; residual=-0.00%`.
+
+## 13. Registered candidate: OPEN_SCORE_RAW_COUNT_LEX_V1 (2026-08-24)
+
+Pre-registered BEFORE any future-data evaluation, from the data-grounded thinker proposal;
+all load-bearing claims independently verified on the frozen discovery window (n=242).
+
+**Score**: rank positive candidates by the lexicographic key `(R_a, N_a)` descending —
+largest raw signed-vote total first; among equal R, largest active-pair count. Residual
+ties resolved ONLY by max_active_tie_v1 (FNV-1a-64, seed 1, smallest digest); the complete
+residual tied set is always recorded and the FNV winner is never presented as economically
+unique. Event timing, positive-candidate gate (>=2), costs (0.001/0.001), pool BAL679.v1,
+long side, and all frozen machinery (blocks/bootstrap/tie versions from
+`max-active-research-contract.ts`) are unchanged from §2.
+
+**Registration grounds (discovery 2025, frozen window, n=242, 48 bars ≈ median 34 days):**
+tie rate falls 100% → 17.4% (mean top-set 17.88 → 1.26); point delta +3.97 pp
+(thinker computed +3.94 on calendar-2025 n=247 — frozen windows govern); EX-dominant
+(LRCX, 17/242 picks) +4.30 pp. NOT validated: discovery CI crosses zero and blocks were
+6/10. Rationale is resolution plus preservation of TOP_RAW's consistently larger point
+deltas across archived configurations — NOT demonstrated predictive value of the count
+tie-break (its within-raw-tie increment measured +0.12 pp, CI [−2.83, +2.74]).
+
+**Rejected components (measured, thinker report of 2026-08-24):** age/recency (dispersion
+without return association), ratio drift (direction reverses between TOP_MEAN and TOP_RAW
+tie boundaries: +3.18 vs −1.06 pp), EMA200 state (−0.31 pp), breadth/regime (constant
+within event), static degree (only 19/20 in BAL679), Wilson/Laplace variants (dominated;
+unjustified independence assumption on dependent pair votes), current R/N (zero
+within-tie dispersion, 100% ties).
+
+**Evaluation protocol (LOCKED):** offline only, from future runs' `pool-snapshots.jsonl`
++ `candidate-outcomes.jsonl` (join eventId × asset; pick via the registered key + FNV;
+control = leave-one-out mean of the other positive candidates; long@48, ok-status only).
+No engine implementation. Evaluation window = decision timestamps strictly after
+registration (2026-08-24); earlier 2026 data is burned and descriptive only. Confirmation
+requires the standing frozen rule (CI95 lower bound > 0 AND >=8/10 positive blocks) on
+future data; every evaluation appends its date, n, and full result to this log regardless
+of outcome. Falsification: a future evaluation failing the rule, or EX-dominant turning
+negative at scale, retires the candidate.
