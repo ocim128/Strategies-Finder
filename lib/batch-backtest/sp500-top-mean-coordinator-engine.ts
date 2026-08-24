@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../types/backtest";
+import { timeToNumber } from "../strategies/backtest/backtest-utils";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import {
     EFFECTIVE_BACKTEST_DEFAULTS,
@@ -31,6 +32,8 @@ import {
     runOpenScoreUsdReplay,
     type OpenScoreUsdReplayResult,
     type OpenScoreUsdEventDetail,
+    type CandidateOutcomeRecord,
+    type PoolSnapshotRecord,
     type OpenScoreUsdLatestSelections,
     type AssetSelectionSummary,
     type ReplayComparison,
@@ -44,6 +47,23 @@ import {
     formatTopMeanPerformanceLines,
     type TopMeanPerformanceDiagnostic,
 } from "./sp500-top-mean-performance";
+import {
+    archiveCompletedTopMeanRun,
+    createTopMeanPhase0bArchiveWriter,
+    findRegistryPoolMatch,
+    resolveTopMeanArchiveLogDir,
+    resolveTopMeanWindowDesignation,
+    sha256LineList,
+    type TopMeanArchiveManifest,
+    type TopMeanPhase0bArchiveWriter,
+} from "./sp500-top-mean-archive-log";
+import { debugLogger } from "../debug-logger";
+import {
+    MAX_ACTIVE_BLOCK_COUNT,
+    MAX_ACTIVE_BOOTSTRAP_SAMPLES,
+    MAX_ACTIVE_BOOTSTRAP_SEED,
+    MAX_ACTIVE_TIE_VERSION,
+} from "./max-active-research-contract";
 
 export interface TopMeanCoordinatorRunRequest {
     runId: string;
@@ -91,12 +111,17 @@ export interface TopMeanAnnualReplaySummary extends TopMeanAnnualReplayWindow {
 export interface TopMeanResultSummary {
     runId: string;
     completed: boolean;
+    archiveComplete: boolean;
     counts: CoverageCounts;
     horizons: TopMeanHorizonSummary[];
     /** Calendar-year OPEN_SCORE USD reports clipped to the selected From/To range. */
     annualReports?: TopMeanAnnualReplaySummary[];
     /** Full selected-window scalar rows for the on-demand OPEN_SCORE details UI. */
     openScoreEventDetails?: OpenScoreUsdEventDetail[];
+    /** Full-window Phase 0b pool snapshots, coordinator-only diagnostics. */
+    poolSnapshots?: PoolSnapshotRecord[];
+    /** Full-window Phase 0b candidate outcomes, coordinator-only diagnostics. */
+    candidateOutcomes?: CandidateOutcomeRecord[];
     warnings: string[];
     reportLines: string[];
     /** Latest-event picks for the useful OPEN_SCORE selector arms. */
@@ -206,6 +231,21 @@ export class TopMeanCoordinatorEngine {
     private engineUsage: { rust: number; typescript: number } = { rust: 0, typescript: 0 };
     private performanceStartedAtMs = 0;
     private performanceDiagnostic: TopMeanPerformanceDiagnostic | null = null;
+    private canonicalAssets: string[] = [];
+    private runFingerprint: string | null = null;
+    private executionPairs: string[] = [];
+    private matchedPoolVersion: string | null = null;
+    private matchedPoolAlgorithm: string | null = null;
+    private matchedPoolSeed: number | null = null;
+    private resolvedBacktestSettings: BacktestSettings | null = null;
+    private resolvedCapitalSettings: CapitalSettings | null = null;
+    private latestTargetBarTimeSec: number | null = null;
+    private replayCosts = {
+        slippageRate: 0,
+        commissionRate: 0,
+        slippageBps: 0,
+        commissionPercent: 0,
+    };
 
     constructor(
         private readonly _request: TopMeanCoordinatorRunRequest,
@@ -299,10 +339,12 @@ export class TopMeanCoordinatorEngine {
         );
         settings.tradeDirection = settings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
         settings.executionModel = settings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
+        this.resolvedBacktestSettings = settings;
         const reasons = getTypescriptEngineRequirementReasons(settings);
         const capital = resolveCapitalSettingsFromRaw(
             this._request.capitalSettings as unknown as Record<string, unknown>,
         );
+        this.resolvedCapitalSettings = capital;
         if (!isRustSupportedTradeSizingMode(capital.sizingMode)) {
             reasons.push(`${capital.sizingMode} sizing is not supported by Rust`);
         }
@@ -314,6 +356,56 @@ export class TopMeanCoordinatorEngine {
         manifest.actualEngineMode = this.resolveActualEngineMode();
         manifest.engineUsage = { ...this.engineUsage };
         manifest.workerCount = resolveTopMeanWorkerCount(this._request.workerCount);
+    }
+
+    private async buildArchiveManifest(): Promise<TopMeanArchiveManifest> {
+        const sortedAssets = [...this.canonicalAssets].sort((a, b) => a.localeCompare(b));
+        const dataCutoff = this.latestTargetBarTimeSec === null
+            ? null
+            : new Date(this.latestTargetBarTimeSec * 1000).toISOString();
+        const { ensureBuiltInStrategyLoaded } = await import("../strategies/built-in-catalog");
+        const strategy = await ensureBuiltInStrategyLoaded(this._request.strategyKey);
+        const normalizeApplied = typeof strategy?.normalizeParams === "function";
+        return {
+            strategy: {
+                key: this._request.strategyKey,
+                params: normalizeApplied
+                    ? strategy!.normalizeParams!(this._request.strategyParams)
+                    : this._request.strategyParams,
+                normalizeApplied,
+            },
+            settings: {
+                backtest: this.resolvedBacktestSettings ?? this._request.backtestSettings,
+                capital: this.resolvedCapitalSettings ?? this._request.capitalSettings,
+            },
+            pairs: {
+                pairs: this.executionPairs,
+                executionOrderSha256: sha256LineList(this.executionPairs),
+                sortedSetSha256: sha256LineList([...this.executionPairs].sort((a, b) => a.localeCompare(b))),
+                source: {
+                    kind: this._request.pairListText?.trim() ? "custom_pair_list" : "sp500_default",
+                    poolVersion: this.matchedPoolVersion,
+                },
+                construction: {
+                    algorithm: this.matchedPoolAlgorithm,
+                    seed: this.matchedPoolSeed,
+                },
+            },
+            catalog: {
+                assets: sortedAssets,
+                sha256: sha256LineList(sortedAssets),
+                warmup: null,
+                dataCutoff,
+            },
+            costs: { ...this.replayCosts },
+            windowDesignation: resolveTopMeanWindowDesignation(this._request),
+            researchContract: {
+                tieVersion: MAX_ACTIVE_TIE_VERSION,
+                blockCount: MAX_ACTIVE_BLOCK_COUNT,
+                bootstrapSamples: MAX_ACTIVE_BOOTSTRAP_SAMPLES,
+                bootstrapSeed: MAX_ACTIVE_BOOTSTRAP_SEED,
+            },
+        };
     }
 
     public stop(): void {
@@ -368,6 +460,9 @@ export class TopMeanCoordinatorEngine {
         activeEngineInstance = this;
         reconcileInterruptedManifestsOnStartup(this.baseDir);
         cleanOldArtifacts(this.baseDir);
+        let phase0bWriter: TopMeanPhase0bArchiveWriter | null = null;
+        let phase0bFiles: TopMeanPhase0bArchiveWriter["files"] | undefined;
+        let phase0bWriterFailed = false;
 
         try {
             // 1. Enumeration & Preflight
@@ -383,6 +478,13 @@ export class TopMeanCoordinatorEngine {
             });
 
             this.counts = enumRes.counts;
+            this.executionPairs = [...enumRes.canonicalPairs];
+            const registryMatch = this._request.pairListText?.trim()
+                ? await findRegistryPoolMatch(this.baseDir ?? process.cwd(), this.executionPairs)
+                : null;
+            this.matchedPoolVersion = registryMatch?.poolVersion ?? null;
+            this.matchedPoolAlgorithm = registryMatch?.algorithm ?? null;
+            this.matchedPoolSeed = registryMatch?.seed ?? null;
             emitNdjson({ type: "preflight", counts: this.counts });
 
             if (enumRes.canonicalPairs.length === 0) {
@@ -398,6 +500,18 @@ export class TopMeanCoordinatorEngine {
                 useRustEnginePreference: this._request.useRustEnginePreference,
                 canonicalAssets: enumRes.eligibleAssets,
             });
+            this.canonicalAssets = [...enumRes.eligibleAssets];
+            this.runFingerprint = fingerprint;
+            if (resolveTopMeanArchiveLogDir(this.baseDir ?? process.cwd()) !== null) {
+                try {
+                    phase0bWriter = await createTopMeanPhase0bArchiveWriter(this.baseDir, this._request.runId);
+                } catch (error) {
+                    debugLogger.warn("sp500_top_mean.phase0b_writer_failed", {
+                        runId: this._request.runId,
+                        error: error instanceof Error ? error.message : String(error),
+                    });
+                }
+            }
             const resolvedWorkerCount = resolveTopMeanWorkerCount(this._request.workerCount);
             const resolvedShardSize = resolveTopMeanShardSize(
                 enumRes.canonicalPairs.length,
@@ -562,6 +676,7 @@ export class TopMeanCoordinatorEngine {
                 string,
                 Awaited<ReturnType<typeof loadServerBatchDataset>>
             >();
+            const coordinator = this;
             const targetLoader = (targets: readonly typeof eligibleTargets[number][]) => () => (async function* () {
                 for (let i = 0; i < targets.length; i++) {
                     const { asset, symbol } = targets[i]!;
@@ -575,6 +690,11 @@ export class TopMeanCoordinatorEngine {
                             targetPerformance.replay.targetLoadMs += completedAt - targetLoadStartedAt;
                         }
                         replayTargetCache.set(symbol, data);
+                        const lastBar = data[data.length - 1];
+                        const timeSec = lastBar ? timeToNumber(lastBar.time) : null;
+                        if (timeSec !== null && (coordinator.latestTargetBarTimeSec === null || timeSec > coordinator.latestTargetBarTimeSec)) {
+                            coordinator.latestTargetBarTimeSec = timeSec;
+                        }
                     }
                     targetPerformance.replay.targetDatasets += 1;
                     yield { asset, symbol, data };
@@ -585,12 +705,23 @@ export class TopMeanCoordinatorEngine {
             const commissionPct = Number(this._request.capitalSettings?.commission) || 0;
             const slippageRate = slippageBps / 10000;
             const commissionRate = commissionPct / 100;
+            this.replayCosts = {
+                slippageRate,
+                commissionRate,
+                slippageBps: Number.isFinite(Number(this.resolvedBacktestSettings?.slippageBps))
+                    ? Number(this.resolvedBacktestSettings?.slippageBps)
+                    : slippageBps,
+                commissionPercent: Number.isFinite(Number(this.resolvedCapitalSettings?.commission))
+                    ? Number(this.resolvedCapitalSettings?.commission)
+                    : commissionPct,
+            };
 
             let replayPassIndex = 0;
             const runReplayForWindow = (
                 sampleFromSec: number | undefined,
                 sampleToSec: number | undefined,
             ): Promise<OpenScoreUsdReplayResult> => {
+                const includePhase0bDiagnostics = replayPassIndex === 0 && phase0bWriter !== null && !phase0bWriterFailed;
                 const targets = orderTopMeanReplayTargets(eligibleTargets, replayPassIndex);
                 replayPassIndex += 1;
                 return runOpenScoreUsdReplay(
@@ -602,6 +733,38 @@ export class TopMeanCoordinatorEngine {
                         slippageRate,
                         commissionRate,
                         includeEventDetails: true,
+                        ...(includePhase0bDiagnostics
+                            ? {
+                                includePoolSnapshots: true,
+                                includeCandidateOutcomes: true,
+                                catalogAssets: this.canonicalAssets,
+                                poolVersion: this.matchedPoolVersion,
+                                onPoolSnapshot: async (row) => {
+                                    if (phase0bWriterFailed) return;
+                                    try {
+                                        await phase0bWriter?.onPoolSnapshot(row);
+                                    } catch (error) {
+                                        debugLogger.warn("sp500_top_mean.phase0b_writer_failed", {
+                                            runId: this._request.runId,
+                                            error: error instanceof Error ? error.message : String(error),
+                                        });
+                                        phase0bWriterFailed = true;
+                                    }
+                                },
+                                onCandidateOutcome: async (row) => {
+                                    if (phase0bWriterFailed) return;
+                                    try {
+                                        await phase0bWriter?.onCandidateOutcome(row);
+                                    } catch (error) {
+                                        debugLogger.warn("sp500_top_mean.phase0b_writer_failed", {
+                                            runId: this._request.runId,
+                                            error: error instanceof Error ? error.message : String(error),
+                                        });
+                                        phase0bWriterFailed = true;
+                                    }
+                                },
+                            }
+                            : {}),
                         shouldStop: () => this.isStopped,
                         onPhase: (phase) => {
                             if (phase === activeReplayPhase) return;
@@ -620,6 +783,18 @@ export class TopMeanCoordinatorEngine {
                 this._request.sampleToSec,
             );
             finishActiveReplayPhase();
+            if (phase0bWriter && !phase0bWriterFailed) {
+                try {
+                    await phase0bWriter.close();
+                    phase0bFiles = phase0bWriter.files;
+                } catch (error) {
+                    phase0bWriterFailed = true;
+                    debugLogger.warn("sp500_top_mean.phase0b_writer_failed", {
+                        runId: this._request.runId,
+                        error: error instanceof Error ? error.message : String(error),
+                    });
+                }
+            }
 
             if (this.isStopped) {
                 this.emitInterrupted(emitNdjson);
@@ -698,16 +873,29 @@ export class TopMeanCoordinatorEngine {
             this.resultSummary = {
                 runId: this._request.runId,
                 completed: true,
+                archiveComplete: false,
                 counts: this.counts,
                 horizons: horizonSummaries,
                 annualReports,
                 openScoreEventDetails: replayResult.eventDetails,
+                poolSnapshots: replayResult.poolSnapshots,
+                candidateOutcomes: replayResult.candidateOutcomes,
                 warnings: replayResult.warnings,
                 reportLines: [...replayResult.reportLines, ...annualReportLines, "", ...performanceLines],
                 latestSelections: replayResult.latestSelections,
                 performance: this.performanceDiagnostic,
                 currentSnapshot: currentSnapshotResult,
             };
+
+            const archiveComplete = await archiveCompletedTopMeanRun(this.resultSummary, this._request, {
+                root: this.baseDir,
+                canonicalAssets: this.canonicalAssets,
+                fingerprint: this.runFingerprint ?? this.manifest?.fingerprint,
+                warn: (event, data) => debugLogger.warn(event, data),
+                manifest: await this.buildArchiveManifest(),
+                ...(phase0bFiles ? { phase0bFiles } : {}),
+            });
+            this.resultSummary.archiveComplete = archiveComplete;
 
             this.currentPhase = "completed";
             this.progressText = "TOP_MEAN analysis completed successfully.";
@@ -753,6 +941,9 @@ export class TopMeanCoordinatorEngine {
                 ...(this.currentSnapshotResult ? { currentSnapshot: this.currentSnapshotResult } : {}),
             });
         } finally {
+            if (phase0bWriter) {
+                await phase0bWriter.dispose().catch(() => undefined);
+            }
             if (activeEngineInstance === this) {
                 activeEngineInstance = null;
             }

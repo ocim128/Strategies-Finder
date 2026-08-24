@@ -202,6 +202,44 @@ export interface OpenScoreUsdEventDetail {
     eligibleCandidates: number;
 }
 
+export type CandidateOutcomeStatus =
+    | "ok"
+    | "missing_target"
+    | "missing_entry"
+    | "right_censored"
+    | "invalid_price";
+
+export interface PoolSnapshotRecord {
+    eventId: string;
+    decisionTimeSec: number;
+    interval: string;
+    poolVersion: string | null;
+    asset: string;
+    inPool: boolean;
+    activePairCount: number;
+    signedVotes: number;
+    score: number | null;
+    longEligible: boolean;
+    shortEligible: boolean;
+    ema200Above: boolean;
+    breadth: number | null;
+    regime: "bullish" | "bearish" | "unavailable";
+}
+
+export interface CandidateOutcomeRecord {
+    eventId: string;
+    decisionTimeSec: number;
+    horizonBars: number;
+    direction: "long" | "short";
+    asset: string;
+    inPool: boolean;
+    eligible: boolean;
+    return: number | null;
+    entryTimeSec: number | null;
+    exitTimeSec: number | null;
+    status: CandidateOutcomeStatus;
+}
+
 export interface OpenScoreUsdReplayResult {
     pairs: number;
     assets: number;
@@ -450,6 +488,10 @@ export interface OpenScoreUsdReplayResult {
      * Never included in reportLines or either OPEN_SCORE copy path.
      */
     eventDetails?: OpenScoreUsdEventDetail[];
+    /** Full-window Phase 0b diagnostics; only populated by the coordinator. */
+    poolSnapshots?: PoolSnapshotRecord[];
+    /** Full-window Phase 0b diagnostics; only populated by the coordinator. */
+    candidateOutcomes?: CandidateOutcomeRecord[];
     degree: DegreeSummary;
     warnings: string[];
     reportLines: string[];
@@ -488,6 +530,18 @@ export interface RunOpenScoreUsdReplayOptions {
     submittedDegreeByAsset?: Record<string, number>;
     /** Include scalar per-event selector rows for the coordinator details UI. */
     includeEventDetails?: boolean;
+    /** Phase 0b: emit one pool snapshot per decision event and catalog asset. */
+    includePoolSnapshots?: boolean;
+    /** Phase 0b: emit one directional outcome per event/horizon/catalog asset. */
+    includeCandidateOutcomes?: boolean;
+    /** Frozen catalog used by the Phase 0b full-catalog diagnostics. */
+    catalogAssets?: readonly string[];
+    /** Static registry pool provenance carried into Phase 0b rows. */
+    poolVersion?: string | null;
+    /** Coordinator-only sink used to keep full-scale archive rows off the heap. */
+    onPoolSnapshot?: (row: PoolSnapshotRecord) => void | Promise<void>;
+    /** Coordinator-only sink used to keep full-scale archive rows off the heap. */
+    onCandidateOutcome?: (row: CandidateOutcomeRecord) => void | Promise<void>;
     /** Phase transition + bounded-chunk progress. */
     onPhase?: (phase: "scan" | "events" | "targets" | "outcomes" | "aggregate", detail: string, completed: number, total: number) => void;
     /** Polled between bounded chunks; return true to stop early (cancellation). */
@@ -541,6 +595,63 @@ function buildEma200(data: readonly OHLCVData[]): number[] {
         ema[i] = close * alpha + ema[i - 1]! * (1 - alpha);
     }
     return ema;
+}
+
+function phase0bEventId(interval: string | undefined, decisionTimeSec: number): string {
+    return `${interval ?? ""}:${decisionTimeSec}`;
+}
+
+interface DiagnosticDirectionalOutcome {
+    returnValue: number | null;
+    entryTimeSec: number | null;
+    exitTimeSec: number | null;
+    status: CandidateOutcomeStatus;
+}
+
+function computeDiagnosticOutcome(
+    data: readonly OHLCVData[],
+    times: readonly (number | null)[],
+    entryBar: number,
+    horizonBars: number,
+    direction: "long" | "short",
+    slippageRate: number,
+    commissionRate: number,
+): DiagnosticDirectionalOutcome {
+    if (entryBar < 0) {
+        return { returnValue: null, entryTimeSec: null, exitTimeSec: null, status: "missing_entry" };
+    }
+    const entryTimeSec = Number.isFinite(times[entryBar]) ? times[entryBar] : null;
+    const exitBar = entryBar + horizonBars - 1;
+    if (exitBar >= data.length) {
+        return { returnValue: null, entryTimeSec, exitTimeSec: null, status: "right_censored" };
+    }
+    const exitTimeSec = Number.isFinite(times[exitBar]) ? times[exitBar] : null;
+    const rawOpen = data[entryBar]?.open;
+    const exitClose = data[exitBar]?.close;
+    if (
+        !Number.isFinite(rawOpen)
+        || rawOpen <= 0
+        || !Number.isFinite(exitClose)
+        || exitClose <= 0
+    ) {
+        return { returnValue: null, entryTimeSec, exitTimeSec, status: "invalid_price" };
+    }
+    if (direction === "long") {
+        const entryPrice = applySlippage(rawOpen, "buy", slippageRate);
+        const exitPrice = applySlippage(exitClose, "sell", slippageRate);
+        const fees = (entryPrice + exitPrice) * commissionRate;
+        const returnValue = (exitPrice - entryPrice - fees) / entryPrice;
+        return Number.isFinite(returnValue)
+            ? { returnValue, entryTimeSec, exitTimeSec, status: "ok" }
+            : { returnValue: null, entryTimeSec, exitTimeSec, status: "invalid_price" };
+    }
+    const entryPrice = applySlippage(rawOpen, "sell", slippageRate);
+    const exitPrice = applySlippage(exitClose, "buy", slippageRate);
+    const fees = (entryPrice + exitPrice) * commissionRate;
+    const returnValue = (entryPrice - exitPrice - fees) / entryPrice;
+    return Number.isFinite(returnValue)
+        ? { returnValue, entryTimeSec, exitTimeSec, status: "ok" }
+        : { returnValue: null, entryTimeSec, exitTimeSec, status: "invalid_price" };
 }
 
 /**
@@ -1358,6 +1469,47 @@ export async function runOpenScoreUsdReplay(
         }
     }
 
+    const includePoolSnapshots = options.includePoolSnapshots === true;
+    const includeCandidateOutcomes = options.includeCandidateOutcomes === true;
+    const diagnosticsEnabled = includePoolSnapshots || includeCandidateOutcomes;
+    const diagnosticAssetNames = diagnosticsEnabled
+        ? (() => {
+            const seen = new Set<string>();
+            const names: string[] = [];
+            for (const rawName of options.catalogAssets ?? assetNames) {
+                const name = rawName.trim().toUpperCase();
+                if (!name || seen.has(name)) continue;
+                seen.add(name);
+                names.push(name);
+            }
+            return names;
+        })()
+        : [];
+    const diagnosticAssetIndexByName = diagnosticsEnabled ? new Map<string, number>() : null;
+    if (diagnosticAssetIndexByName) {
+        for (let i = 0; i < diagnosticAssetNames.length; i += 1) {
+            diagnosticAssetIndexByName.set(diagnosticAssetNames[i]!, i);
+        }
+    }
+    const poolSnapshots = includePoolSnapshots ? [] as PoolSnapshotRecord[] : undefined;
+    const candidateOutcomes = includeCandidateOutcomes ? [] as CandidateOutcomeRecord[] : undefined;
+    const emitPoolSnapshot = async (row: PoolSnapshotRecord): Promise<void> => {
+        if (options.onPoolSnapshot) await options.onPoolSnapshot(row);
+        else poolSnapshots?.push(row);
+    };
+    const emitCandidateOutcome = async (row: CandidateOutcomeRecord): Promise<void> => {
+        if (options.onCandidateOutcome) await options.onCandidateOutcome(row);
+        else candidateOutcomes?.push(row);
+    };
+    // EMA side state is compactly retained until all catalog targets have been
+    // consumed so breadth can be emitted consistently for every asset at an
+    // event.  0=unavailable, 1=above, 2=below.
+    const emaSideByEvent = diagnosticsEnabled
+        ? new Uint8Array(events.length * diagnosticAssetNames.length)
+        : null;
+    const emaObservedByEvent = diagnosticsEnabled ? new Uint16Array(events.length) : null;
+    const emaAboveByEvent = diagnosticsEnabled ? new Uint16Array(events.length) : null;
+
     // Conditional-split thresholds: medians of the per-view features. Computed
     // once across ALL views (horizon-independent) so every horizon splits at
     // the same cut. median() requires a sorted input; the source arrays are
@@ -1427,17 +1579,21 @@ export async function runOpenScoreUsdReplay(
     const latestEma200SideByAsset = new Map<number, "above" | "below">();
 
     let targetsSeen = 0;
-    const totalTargets = requestsByAsset.size;
+    const diagnosticTargetsSeen = diagnosticsEnabled ? new Set<number>() : null;
+    const totalTargets = diagnosticsEnabled ? diagnosticAssetNames.length : requestsByAsset.size;
     onPhase("outcomes", "evaluating USD outcomes", 0, totalTargets);
     for await (const target of targetLoader()) {
         if (shouldStop()) return emptyResult({ pairs: pairCount, assets: assetCount, totalEvents, reportLines: ["OPEN_SCORE USD | cancelled during outcome evaluation."] });
-        const aIdx = assetIndexByName.get(target.asset.trim().toUpperCase());
+        const targetAsset = target.asset.trim().toUpperCase();
+        const aIdx = assetIndexByName.get(targetAsset);
+        const diagnosticIdx = diagnosticAssetIndexByName?.get(targetAsset);
         const requests = aIdx === undefined ? undefined : requestsByAsset.get(aIdx);
-        if (aIdx === undefined || !requests || requests.length === 0) continue;
+        if ((!requests || requests.length === 0) && diagnosticIdx === undefined) continue;
         targetsSeen += 1;
+        if (diagnosticIdx !== undefined) diagnosticTargetsSeen?.add(diagnosticIdx);
         const times = target.data.map((b) => timeToNumber(b.time));
         const ema200 = buildEma200(target.data);
-        if (latestView && latestCandidateAssets.has(aIdx)) {
+        if (latestView && aIdx !== undefined && latestCandidateAssets.has(aIdx)) {
             const nextBar = firstBarAfter(times, latestView.timeSec);
             const lastKnownBar = nextBar < 0 ? target.data.length - 1 : nextBar - 1;
             const close = lastKnownBar >= 0 ? target.data[lastKnownBar]!.close : Number.NaN;
@@ -1447,6 +1603,83 @@ export async function runOpenScoreUsdReplay(
                 else if (close < ema) latestEma200SideByAsset.set(aIdx, "below");
             }
         }
+        if (diagnosticIdx !== undefined) {
+            let entryBar = 0;
+            for (let eventIdx = 0; eventIdx < events.length; eventIdx += 1) {
+                const event = events[eventIdx]!;
+                while (entryBar < times.length) {
+                    const barTime = times[entryBar];
+                    if (barTime === null || barTime <= event.timeSec) entryBar += 1;
+                    else break;
+                }
+                const resolvedEntryBar = entryBar < times.length ? entryBar : -1;
+                const trendBar = resolvedEntryBar - 1;
+                const trendClose = trendBar >= 0 ? target.data[trendBar]!.close : Number.NaN;
+                const trendEma = trendBar >= 0 ? ema200[trendBar]! : Number.NaN;
+                const emaSide = Number.isFinite(trendClose) && Number.isFinite(trendEma)
+                    ? trendClose > trendEma ? 1 : trendClose < trendEma ? 2 : 0
+                    : 0;
+                if (emaSideByEvent && emaObservedByEvent && emaAboveByEvent && emaSide !== 0) {
+                    const stateOffset = eventIdx * diagnosticAssetNames.length + diagnosticIdx;
+                    emaSideByEvent[stateOffset] = emaSide;
+                    emaObservedByEvent[eventIdx] += 1;
+                    if (emaSide === 1) emaAboveByEvent[eventIdx] += 1;
+                }
+                if (!candidateOutcomes) continue;
+                const rawScore = aIdx === undefined ? 0 : events[eventIdx]!.rawScore[aIdx] ?? 0;
+                const longEligible = rawScore > 0;
+                const shortEligible = rawScore < 0;
+                for (let hIdx = 0; hIdx < horizons.length; hIdx += 1) {
+                    const horizonBars = horizons[hIdx]!;
+                    const longOutcome = computeDiagnosticOutcome(
+                        target.data,
+                        times,
+                        resolvedEntryBar,
+                        horizonBars,
+                        "long",
+                        slippageRate,
+                        commissionRate,
+                    );
+                    const shortOutcome = computeDiagnosticOutcome(
+                        target.data,
+                        times,
+                        resolvedEntryBar,
+                        horizonBars,
+                        "short",
+                        slippageRate,
+                        commissionRate,
+                    );
+                    const eventId = phase0bEventId(options.interval, event.timeSec);
+                    await emitCandidateOutcome({
+                        eventId,
+                        decisionTimeSec: event.timeSec,
+                        horizonBars,
+                        direction: "long",
+                        asset: diagnosticAssetNames[diagnosticIdx]!,
+                        inPool: true,
+                        eligible: longEligible,
+                        return: longOutcome.returnValue,
+                        entryTimeSec: longOutcome.entryTimeSec,
+                        exitTimeSec: longOutcome.exitTimeSec,
+                        status: longOutcome.status,
+                    });
+                    await emitCandidateOutcome({
+                        eventId,
+                        decisionTimeSec: event.timeSec,
+                        horizonBars,
+                        direction: "short",
+                        asset: diagnosticAssetNames[diagnosticIdx]!,
+                        inPool: true,
+                        eligible: shortEligible,
+                        return: shortOutcome.returnValue,
+                        entryTimeSec: shortOutcome.entryTimeSec,
+                        exitTimeSec: shortOutcome.exitTimeSec,
+                        status: shortOutcome.status,
+                    });
+                }
+            }
+        }
+        if (aIdx === undefined || !requests || requests.length === 0) continue;
         for (const viewIdx of requests) {
             const view = views[viewIdx]!;
             // First target bar strictly after the decision timestamp.
@@ -1520,6 +1753,83 @@ export async function runOpenScoreUsdReplay(
         onPhase("outcomes", `evaluated ${target.asset} (${targetsSeen}/${totalTargets})`, targetsSeen, totalTargets);
         await yieldLoop();
         // target OHLCV reference released here (goes out of scope next iteration).
+    }
+
+    if (candidateOutcomes) {
+        for (let diagnosticIdx = 0; diagnosticIdx < diagnosticAssetNames.length; diagnosticIdx += 1) {
+            if (diagnosticTargetsSeen?.has(diagnosticIdx)) continue;
+            const asset = diagnosticAssetNames[diagnosticIdx]!;
+            const aIdx = assetIndexByName.get(asset);
+            for (const event of events) {
+                const rawScore = aIdx === undefined ? 0 : event.rawScore[aIdx] ?? 0;
+                for (const horizonBars of horizons) {
+                    const eventId = phase0bEventId(options.interval, event.timeSec);
+                    await emitCandidateOutcome({
+                        eventId,
+                        decisionTimeSec: event.timeSec,
+                        horizonBars,
+                        direction: "long",
+                        asset,
+                        inPool: true,
+                        eligible: rawScore > 0,
+                        return: null,
+                        entryTimeSec: null,
+                        exitTimeSec: null,
+                        status: "missing_target",
+                    });
+                    await emitCandidateOutcome({
+                        eventId,
+                        decisionTimeSec: event.timeSec,
+                        horizonBars,
+                        direction: "short",
+                        asset,
+                        inPool: true,
+                        eligible: rawScore < 0,
+                        return: null,
+                        entryTimeSec: null,
+                        exitTimeSec: null,
+                        status: "missing_target",
+                    });
+                }
+            }
+        }
+    }
+
+    if (poolSnapshots) {
+        const interval = options.interval ?? "";
+        const poolVersion = options.poolVersion ?? null;
+        for (let eventIdx = 0; eventIdx < events.length; eventIdx += 1) {
+            const event = events[eventIdx]!;
+            const observed = emaObservedByEvent?.[eventIdx] ?? 0;
+            const above = emaAboveByEvent?.[eventIdx] ?? 0;
+            const breadth = observed > 0 ? above / observed : null;
+            const regime: PoolSnapshotRecord["regime"] = observed >= 2
+                ? above / observed > 0.5 ? "bullish" : "bearish"
+                : "unavailable";
+            const eventId = phase0bEventId(options.interval, event.timeSec);
+            for (let diagnosticIdx = 0; diagnosticIdx < diagnosticAssetNames.length; diagnosticIdx += 1) {
+                const asset = diagnosticAssetNames[diagnosticIdx]!;
+                const aIdx = assetIndexByName.get(asset);
+                const activeCount = aIdx === undefined ? 0 : event.activePairCount[aIdx] ?? 0;
+                const signedVotes = aIdx === undefined ? 0 : event.rawScore[aIdx] ?? 0;
+                await emitPoolSnapshot({
+                    eventId,
+                    decisionTimeSec: event.timeSec,
+                    interval,
+                    poolVersion,
+                    asset,
+                    inPool: true,
+                    activePairCount: activeCount,
+                    signedVotes,
+                    score: activeCount > 0 ? signedVotes / activeCount : null,
+                    longEligible: signedVotes > 0,
+                    shortEligible: signedVotes < 0,
+                    ema200Above: emaSideByEvent?.[eventIdx * diagnosticAssetNames.length + diagnosticIdx] === 1,
+                    breadth,
+                    regime,
+                });
+            }
+        }
     }
 
     const latestSelections: OpenScoreUsdLatestSelections | null = (() => {
@@ -2599,6 +2909,8 @@ export async function runOpenScoreUsdReplay(
         horizons: horizonResults,
         latestSelections,
         ...(options.includeEventDetails ? { eventDetails } : {}),
+        ...(includePoolSnapshots ? { poolSnapshots: poolSnapshots ?? [] } : {}),
+        ...(includeCandidateOutcomes ? { candidateOutcomes: candidateOutcomes ?? [] } : {}),
         degree,
         warnings,
         reportLines,

@@ -326,6 +326,7 @@ async function testResultSummaryFieldIsOptional(): Promise<void> {
     const legacySummary: TopMeanResultSummary = {
         runId: "legacy",
         completed: true,
+        archiveComplete: false,
         counts: { pairCount: 0, sp500AssetsCount: 0, catalogAssetsCount: 0, usable30mSeedCount: 0, usableTargetIntervalCount: 0, excludedAssetsCount: 0, excludedPairsCount: 0 },
         horizons: [],
         warnings: [],

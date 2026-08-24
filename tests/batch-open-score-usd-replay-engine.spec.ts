@@ -166,6 +166,55 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(summaryOnly.eventDetails).to.equal(undefined);
     });
 
+    it("gates Phase 0b diagnostics and covers every catalog asset with explicit missing states", async () => {
+        const decision = T0 + 1000;
+        const markets = [
+            makeDirectMarket("AAA", [makeTrade("long", decision, null)]),
+            makeDirectMarket("BBB", [makeTrade("long", decision, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 4, (i) => 100 + i),
+            makeTarget("BBB", 4, (i) => 100 - i),
+            makeTarget("CCC", 4, () => 100),
+        ];
+        const baseline = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets.slice(0, 2)),
+            { horizons: [2, 5], interval: "1h", blockCount: 1 },
+        );
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            {
+                horizons: [2, 5],
+                interval: "1h",
+                blockCount: 1,
+                includePoolSnapshots: true,
+                includeCandidateOutcomes: true,
+                catalogAssets: ["AAA", "BBB", "CCC", "DDD"],
+                poolVersion: "BAL679.v1",
+            },
+        );
+
+        expect(result.reportLines).to.deep.equal(baseline.reportLines);
+        expect(result.poolSnapshots).to.have.length(result.totalEvents * 4);
+        expect(result.candidateOutcomes).to.have.length(result.totalEvents * 2 * 2 * 4);
+        expect(result.poolSnapshots!.every((row) => row.eventId === `1h:${decision}`)).to.equal(true);
+        expect(result.poolSnapshots!.map((row) => row.asset)).to.deep.equal(["AAA", "BBB", "CCC", "DDD"]);
+
+        const rows = result.candidateOutcomes!;
+        const ccc = rows.filter((row) => row.asset === "CCC");
+        expect(ccc).to.have.length(4);
+        expect(ccc.filter((row) => row.horizonBars === 2).every((row) => row.eligible === false && row.status === "ok" && row.return !== null)).to.equal(true);
+        const censored = rows.filter((row) => row.horizonBars === 5 && row.asset !== "DDD");
+        expect(censored.every((row) => row.status === "right_censored" && row.return === null)).to.equal(true);
+        const missing = rows.filter((row) => row.asset === "DDD");
+        expect(missing).to.have.length(4);
+        expect(missing.every((row) => row.status === "missing_target" && row.return === null && row.entryTimeSec === null)).to.equal(true);
+        expect(baseline.poolSnapshots).to.equal(undefined);
+        expect(baseline.candidateOutcomes).to.equal(undefined);
+    });
+
     it("replays direct crypto markets as one-asset signals", async () => {
         const markets = [
             makeDirectMarket("AAA", [makeTrade("long", T0 + 1000, null)]),

@@ -182,6 +182,11 @@ lever); Rust-engine runs prefer at most 2 workers. See
 
 Reattach after a tab reload is automatic (2s poll). The last completed Batch output is restored from a compact local snapshot after reload, and Copy summary in server-side mode preserves B&H and OPEN_SCORE sections through scalar summary fields; see [docs/batch-backtest-server-side.md](docs/batch-backtest-server-side.md).
 
+Completed S&P 500 TOP_MEAN coordinator runs are also archived permanently at
+`archive/batch-open-score/<runId>/` with report, metadata, and event JSONL
+files. `TOP_MEAN_ARCHIVE_LOG_DIR` overrides the directory and an empty value
+disables logging; the archive has no TTL.
+
 ## Important Contracts
 
 ### Strategy registration is split
