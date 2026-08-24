@@ -294,3 +294,33 @@ exact frozen windows and complete manifests; (b) P1/P2 repeated on a genuinely f
 validation window with any equivalence threshold registered before inspection; (c)
 preregistered paper-only forward evaluation recording every tie, stale event, skip, and
 fill at the modeled costs.
+
+**2026-08-24 — Tied-set analysis preregistration (append-only; §8 rules unchanged)**
+
+Arms (long side only; ok-status returns only; same frozen frame as the P1/P2 analyzer —
+windows 2026 primary / 2025 descriptive, 48 bars primary / 12+24 descriptive, 10 blocks,
+10,000 bootstrap, seed 1, all constants from `max-active-research-contract.ts`):
+
+- T1 (PRIMARY): `TIED_SET_EQUAL_WEIGHT − SAME_POOL_RANDOM`.
+  At each event: eligible pool = assets with `longEligible: true` in pool-snapshots;
+  tied set = every eligible asset sharing the MAXIMUM score; treatment = equal-weight
+  mean of tied-set long returns; control = equal-weight mean of ALL eligible long
+  returns (the same-pool-random expectation). Matched filter: both sides computable.
+- T2: `TIED_SET_EQUAL_WEIGHT − NON_TIE_ELIGIBLE_MEAN` (eligible positives NOT in the tied
+  set; events where both sides are non-empty only). Guards the case where the tied set
+  IS most of the pool.
+- T3 (diagnostic, no pass/fail): `FNV_PICK − TIED_SET_MEAN`. The engine pick (TOP_MEAN row
+  asset in events-full.jsonl) vs its own tie group. Expected ≈ 0 if the pick is
+  arbitrary; a significant non-zero value is reported, not interpreted.
+- Context reporting (no verdicts): tied-set size distribution, tied-set/eligible ratio
+  distribution, per-asset tied-set membership frequency, and an EX-dominant variant of
+  T1 excluding events whose most-frequent tie-set member is present.
+- Reconciliation: decompose the engine's TOP_MEAN delta (selected − leave-one-out
+  others) into set-edge and pick-within-set components; show the accounting against the
+  reported +3.48%.
+
+Decision rule (LOCKED at registration): T1 CONFIRMED at 48 bars in the 2026 window only
+if CI95 lower bound > 0 AND ≥8/10 positive blocks. Interpretation ladder registered:
+(a) T1 confirmed and T3 ≈ 0 → edge belongs to the set; (b) T1 fails → the single
+confirmation is not supported at set level — program state becomes "no demonstrated
+edge"; (c) T3 significantly ≠ 0 → halt interpretation, report for investigation.
