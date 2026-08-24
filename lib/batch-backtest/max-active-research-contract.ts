@@ -27,6 +27,23 @@ export const MAX_ACTIVE_BLOCK_COUNT = 10;
 export const MAX_ACTIVE_BOOTSTRAP_SAMPLES = 10_000;
 export const MAX_ACTIVE_BOOTSTRAP_SEED = 1;
 
+/** Phase 2 pool-rule analysis constants. Keep these beside the frozen
+ * bootstrap/tie rules so the offline analyzer cannot drift from registration. */
+export const PAIRLIST_POOL_RULE_LOOKBACK_BARS = 120;
+export const PAIRLIST_POOL_RULE_BREADTH_THRESHOLD = 0.5;
+export const PAIRLIST_POOL_RULE_PRIMARY_SIZE = 35;
+export const PAIRLIST_POOL_RULE_SECONDARY_SIZES = [21, 49] as const;
+export const PAIRLIST_POOL_RULE_HORIZONS = [12, 24, 48] as const;
+export const PAIRLIST_POOL_RULE_POOL_VERSION = "BAL679.v1" as const;
+export const PAIRLIST_POOL_RULE_EMA_SAMPLE_EVENTS = 50;
+export const PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC = Math.floor(Date.parse("2025-01-10T00:00:00.000Z") / 1000);
+export const PAIRLIST_POOL_RULE_DISCOVERY_TO_SEC = Math.floor(Date.parse("2025-12-31T23:59:59.999Z") / 1000);
+export const PAIRLIST_POOL_RULE_VALIDATION_FROM_SEC = Math.floor(Date.parse("2026-01-01T00:00:00.000Z") / 1000);
+export const PAIRLIST_POOL_RULE_VALIDATION_TO_SEC = Math.floor(Date.parse("2026-08-24T23:59:59.999Z") / 1000);
+export const PAIRLIST_POOL_RULE_CI_LOW_QUANTILE = 0.025;
+export const PAIRLIST_POOL_RULE_CI_HIGH_QUANTILE = 0.975;
+export const PAIRLIST_POOL_RULE_PAIRED_FLOOR = -0.005;
+
 // ---------------------------------------------------------------------------
 // FNV-1a 64-bit hash (deterministic; two uint32 halves)
 // ---------------------------------------------------------------------------
