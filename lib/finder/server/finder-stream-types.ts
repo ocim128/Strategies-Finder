@@ -346,13 +346,6 @@ export type FinderRunStatusSnapshot = {
      * report `symbol_universe` by default.
      */
     jobKind: FinderJobKind;
-    /** Research archive namespace, present for explicitly selected programs. */
-    researchProgram?: "fresh-window";
-    /** Fresh-window S0 identity gate result; invalid runs remain archived. */
-    judgmentStatus?: "VALID" | "INVALID";
-    judgmentInvalidReasons?: string[];
-    /** Point-in-time fold boundary, present for declared fresh-window folds. */
-    foldEnd?: number;
     /** Ordered selected entry strategy keys. */
     strategyKeys: string[];
     /** 0-based index of the strategy currently being evaluated. */

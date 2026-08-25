@@ -55,8 +55,7 @@ import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-fi
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 import { rustEngine } from "../../rust-engine-client";
 import { debugLogger } from "../../debug-logger";
-import { applySlippage, entrySideForDirection, timeKey } from "../../strategies/backtest/backtest-utils";
-import { resolveEntryRiskTargets } from "../../entry-risk-targets";
+import { timeKey } from "../../strategies/backtest/backtest-utils";
 import {
     dispatchAssetOpportunityRustBatch,
     buildAssetOpportunityRustDatasetCacheKey,
@@ -68,16 +67,6 @@ import {
     type AssetOpportunityRustBatchItem,
 } from "./finder-asset-opportunity-rust-batch";
 import type { AssetOpportunityRustMultiBatchCoordinator } from "./finder-asset-opportunity-multi-rust-batch";
-import {
-    FINDER_ASSET_OPPORTUNITY_RESEARCH_CHUNK_SIZE,
-    attachFinderAssetOpportunityPathScalars,
-    buildFinderAssetOpportunityCandidateFingerprint,
-    buildFinderAssetOpportunityCandidateSummaryRow,
-    type FinderAssetOpportunityCandidateSummaryRow,
-} from "./finder-asset-opportunity-research";
-import type { FinderAssetOpportunityCandidateSummaryRow as FinderAssetOpportunityCandidateSummaryRowType } from "../finder-asset-opportunity-research-types";
-import { simulateFinderAssetOpportunityForwardOutcome } from "../finder-asset-opportunity-forward-contract";
-import { FINDER_ASSET_FRESH_FOLD_STRIDE_BARS } from "../finder-asset-opportunity-fold";
 
 const ASSET_IS_SEARCH_YIELD_EVERY_RUNS = 256;
 const ASSET_IS_SEARCH_YIELD_MIN_MS = 1000;
@@ -98,10 +87,6 @@ export interface ServerAssetIsSearchInput {
     confirmationStrategiesLoaded?: boolean;
     /** Full closed series for batch-only signal reuse across holdout prefixes. */
     fullSignalData?: OHLCVData[];
-    /** Candles strictly after a declared point-in-time fold. */
-    forwardData?: OHLCVData[];
-    /** Fixed execution-unit horizons captured for the fresh research program. */
-    forwardHorizons?: number[];
     signalCache?: AssetOpportunitySignalCache;
     abortSignal?: AbortSignal;
     rustBatchClient?: AssetOpportunityRustBatchClient;
@@ -121,86 +106,6 @@ export interface ServerAssetIsSearchInput {
      * pass and released once the caller finishes the asset.
      */
     retainSignals?: boolean;
-    /** Fresh-window captures disable Rust until equivalent scalars exist there. */
-    researchProgram?: "fresh-window";
-    onCandidateSummaryChunk?: (
-        rows: FinderAssetOpportunityCandidateSummaryRowType[],
-    ) => void | Promise<void>;
-}
-
-type FreshForwardCapture = {
-    eligible: boolean;
-    outcomes?: NonNullable<FinderAssetOpportunityCandidateSummaryRowType["forwardOutcomes"]>;
-};
-
-function buildFreshForwardOutcomes(args: {
-    input: ServerAssetIsSearchInput;
-    signals: Signal[];
-    resolvedSettings: BacktestSettings;
-}): FreshForwardCapture {
-    const { input, signals, resolvedSettings } = args;
-    if (input.researchProgram !== "fresh-window" || !input.forwardData?.length) return { eligible: false };
-    const foldCandle = input.ohlcvData[input.ohlcvData.length - 1];
-    if (!foldCandle) return { eligible: false };
-    const boundarySignal = [...signals]
-        .filter((signal) => timeKey(signal.time) === timeKey(foldCandle.time))
-        .at(-1);
-    if (!boundarySignal || (boundarySignal.type !== "buy" && boundarySignal.type !== "sell")) {
-        return { eligible: false };
-    }
-    const direction = boundarySignal.type === "buy" ? "long" : "short";
-    const fullData = [...input.ohlcvData, ...input.forwardData];
-    const isNextEntry = resolvedSettings.executionModel !== "signal_close";
-    const entryBarIndex = isNextEntry ? input.ohlcvData.length : input.ohlcvData.length - 1;
-    const firstForward = input.forwardData[0];
-    if (!firstForward) return { eligible: false };
-    const rawEntryPrice = resolvedSettings.executionModel === "signal_close"
-        ? boundarySignal.price
-        : resolvedSettings.executionModel === "next_open"
-            ? firstForward.open
-            : firstForward.close;
-    const slippageRate = Math.max(0, Number(resolvedSettings.slippageBps ?? 0)) / 10_000;
-    const entryFillPrice = applySlippage(
-        rawEntryPrice,
-        entrySideForDirection(direction),
-        slippageRate,
-    );
-    const targets = resolveEntryRiskTargets({
-        candles: fullData,
-        entryTime: isNextEntry ? firstForward.time : foldCandle.time,
-        entryPrice: entryFillPrice,
-        direction,
-        settings: resolvedSettings,
-        entryBarIndex,
-    });
-    const horizons = input.forwardHorizons?.length ? input.forwardHorizons : [12, 18, 24];
-    const outcomes: NonNullable<FinderAssetOpportunityCandidateSummaryRowType["forwardOutcomes"]> = {};
-    for (const horizonBars of horizons) {
-        // Fresh folds declare one stride of calendar time. Longer configured
-        // horizons are intentionally excluded rather than pretending that a
-        // 12-bar slice contains 18/24 bars of evidence.
-        if (!Number.isInteger(horizonBars)
-            || horizonBars <= 0
-            || horizonBars > FINDER_ASSET_FRESH_FOLD_STRIDE_BARS) continue;
-        const outcome = simulateFinderAssetOpportunityForwardOutcome({
-            candles: fullData,
-            direction,
-            entryPrice: rawEntryPrice,
-            entryBarIndex,
-            takeProfitPrice: targets.takeProfitPrice,
-            stopLossPrice: targets.stopLossPrice,
-            horizonBars,
-            executionModel: resolvedSettings.executionModel ?? "signal_close",
-            allowSameBarExit: resolvedSettings.allowSameBarExit === true,
-            slippageBps: Number(resolvedSettings.slippageBps ?? 0),
-            commissionPercent: Number(input.capitalSettings.commission ?? 0),
-        });
-        if (outcome) outcomes[String(horizonBars)] = outcome;
-    }
-    return {
-        eligible: true,
-        ...(Object.keys(outcomes).length > 0 ? { outcomes } : {}),
-    };
 }
 
 function buildSignalCacheKey(input: ServerAssetIsSearchInput, params: StrategyParams): string {
@@ -350,7 +255,6 @@ export async function runServerAssetIsSearch(
     input: ServerAssetIsSearchInput,
 ): Promise<ServerAssetIsSearchOutput> {
     const { options, settings, capitalSettings, selectedStrategy } = input;
-    const freshResearchCapture = input.researchProgram === "fresh-window";
     // `executeBacktest` skips its own confirmation preload when this lean path
     // supplies pre-resolved settings, so load the configured libraries once
     // before the candidate loop.
@@ -412,7 +316,7 @@ export async function runServerAssetIsSearch(
         selectedStrategy,
         exitStrategyCandidates: input.exitStrategyCandidates,
     });
-    if (!freshResearchCapture && rustBatchEligibility.eligible && rustBatchDensityEligible) {
+    if (rustBatchEligibility.eligible && rustBatchDensityEligible) {
         return runServerAssetIsSearchWithRustBatch({
             input,
             paramSets,
@@ -439,11 +343,9 @@ export async function runServerAssetIsSearch(
     const rustBatchFallbackReason = input.useRustEnginePreference === true && !rustBatchEligibility.eligible
         ? `Asset Opportunity Rust batch ineligible: ${rustBatchEligibility.reason ?? "unknown"}`
         : undefined;
-    const executionUseRustEnginePreference = freshResearchCapture
+    const executionUseRustEnginePreference = rustBatchEligibility.eligible && !rustBatchDensityEligible
         ? false
-        : rustBatchEligibility.eligible && !rustBatchDensityEligible
-            ? false
-            : input.useRustEnginePreference;
+        : input.useRustEnginePreference;
 
     // Bounded top-K accumulation, mirroring the browser single-timeframe path
     // (FinderResultRanker). Keeping only the best `topN` candidates live means
@@ -480,16 +382,6 @@ export async function runServerAssetIsSearch(
     let rustFallbackRuns = 0;
     let typescriptCompletedRuns = 0;
     const typescriptReasonCounts = new Map<string, number>();
-    let researchSummaryChunk: FinderAssetOpportunityCandidateSummaryRow[] = [];
-    const emitResearchSummary = async (row: FinderAssetOpportunityCandidateSummaryRow): Promise<void> => {
-        if (!freshResearchCapture || !input.onCandidateSummaryChunk) return;
-        researchSummaryChunk.push(row);
-        if (researchSummaryChunk.length >= FINDER_ASSET_OPPORTUNITY_RESEARCH_CHUNK_SIZE) {
-            const chunk = researchSummaryChunk;
-            researchSummaryChunk = [];
-            await input.onCandidateSummaryChunk(chunk);
-        }
-    };
     // Cache each exit lib's normalized param space so the per-candidate loop
     // does not regenerate the full space (up to `maxRuns` param objects) once
     // per entry candidate — O(maxRuns^2) allocations otherwise. Generation is
@@ -537,7 +429,6 @@ export async function runServerAssetIsSearch(
         const combinedParams = exitParams
             ? withExitStrategyBaseParams(entryParams, exitParams)
             : entryParams;
-        const candidateFingerprint = buildFinderAssetOpportunityCandidateFingerprint(combinedParams);
         const signalCacheKey = canReuseFullSignals
             ? buildSignalCacheKey(input, entryParams)
             : null;
@@ -552,8 +443,6 @@ export async function runServerAssetIsSearch(
             else signalCacheMisses += 1;
         }
         const candidateStartedAt = performance.now();
-        let resolvedCandidateSettings = settings;
-        let candidateSignals: Signal[] = [];
         try {
             // Shared candidate execution (risk overrides, exit override
             // injection, executor settings, and the compact endpoint-selection
@@ -583,7 +472,7 @@ export async function runServerAssetIsSearch(
                 ...(preGeneratedSignals ? { preGeneratedSignals } : {}),
                 needs: {
                     compact: true,
-                    trades: freshResearchCapture,
+                    trades: false,
                     fullAnalytics: requiresFullAnalytics,
                     // Compact endpoint-adjusted selection scalars unless the
                     // resolved trade direction is "combined" (which retains
@@ -633,8 +522,6 @@ export async function runServerAssetIsSearch(
             // Keep the prepared-strategy settings provider aligned with the
             // settings the run actually used (risk overrides + exit override).
             currentBacktestSettings = output.backtestSettings;
-            resolvedCandidateSettings = output.backtestSettings;
-            candidateSignals = output.signals;
             backtestMs += performance.now() - candidateStartedAt;
             candidateEvaluationsCompleted += 1;
             if (output.engineDiagnostics?.rustAttempted) rustAttemptedRuns += 1;
@@ -676,33 +563,7 @@ export async function runServerAssetIsSearch(
                 endpointAdjusted: selection.adjusted,
                 endpointRemovedTrades: selection.removedTrades,
             };
-            const passesTradeFilter = matchesFinderTradeCountFilter(candidate.selectionResult.totalTrades, options);
-            if (freshResearchCapture) {
-                const summary = buildFinderAssetOpportunityCandidateSummaryRow({
-                    symbol: input.symbol,
-                    strategyKey: selectedStrategy.key,
-                    candidateIndex: index,
-                    candidateFingerprint,
-                    result: candidate.selectionResult,
-                    passesTradeFilter,
-                });
-                const pathSummary = attachFinderAssetOpportunityPathScalars(
-                    summary,
-                    candidate.selectionResult,
-                    input.ohlcvData,
-                );
-                const forwardCapture = buildFreshForwardOutcomes({
-                    input,
-                    signals: candidateSignals,
-                    resolvedSettings: resolvedCandidateSettings,
-                });
-                await emitResearchSummary({
-                    ...pathSummary,
-                    ...(forwardCapture.eligible ? { forwardOutcomeEligible: true } : {}),
-                    ...(forwardCapture.outcomes ? { forwardOutcomes: forwardCapture.outcomes } : {}),
-                });
-            }
-            if (!passesTradeFilter) {
+            if (!matchesFinderTradeCountFilter(candidate.selectionResult.totalTrades, options)) {
                 continue;
             }
             // Attach signals only when the candidate is actually retained:
@@ -713,14 +574,6 @@ export async function runServerAssetIsSearch(
                 signalsByResult.set(candidate, output.signals);
             }
         } catch {
-            if (freshResearchCapture) {
-                await emitResearchSummary(buildFinderAssetOpportunityCandidateSummaryRow({
-                    symbol: input.symbol,
-                    strategyKey: selectedStrategy.key,
-                    candidateIndex: index,
-                    candidateFingerprint,
-                }));
-            }
             backtestMs += performance.now() - candidateStartedAt;
             candidateEvaluationFailures += 1;
             // Skip failed candidates; the caller counts failures in diagnostics.
@@ -739,12 +592,6 @@ export async function runServerAssetIsSearch(
             await input.yieldControl();
             yieldingMs += performance.now() - yieldingStartedAt;
         }
-    }
-
-    if (researchSummaryChunk.length > 0 && input.onCandidateSummaryChunk) {
-        const chunk = researchSummaryChunk;
-        researchSummaryChunk = [];
-        await input.onCandidateSummaryChunk(chunk);
     }
 
     const topN = Math.max(1, options.topN);

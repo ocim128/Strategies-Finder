@@ -97,7 +97,6 @@ import { parseTimeToUnixSeconds } from "../time-normalization";
 import { timeKey } from "../strategies/backtest/backtest-utils";
 import { debugLogger } from "../debug-logger";
 import type { AssetOpportunitySignalCache } from "./finder-asset-opportunity-search-cache";
-import type { FinderAssetOpportunityCandidateSummaryRow } from "./finder-asset-opportunity-research-types";
 
 /**
  * Bounded concurrency for fresh-entry signal regeneration. The server clamps
@@ -214,13 +213,7 @@ export type AssetIsSearch = (args: {
     retainSignals?: boolean;
     /** Full closed data used only by the batch signal-reuse optimization. */
     fullSignalData?: OHLCVData[];
-    forwardData?: OHLCVData[];
-    forwardHorizons?: number[];
     signalCache?: AssetOpportunitySignalCache;
-    researchProgram?: "fresh-window";
-    onCandidateSummaryChunk?: (
-        rows: FinderAssetOpportunityCandidateSummaryRow[],
-    ) => void | Promise<void>;
 }) => Promise<{
     results: FinderResult[];
     /** Total candidates considered before the returned top-K reduction. */
@@ -296,8 +289,6 @@ export interface AssetOpportunityAssetInput {
     symbol: string;
     /** Raw OHLCV dataset for the asset (closed-candle selection happens inside). */
     data: OHLCVData[];
-    /** Optional candles strictly after the declared point-in-time fold. */
-    forwardData?: OHLCVData[];
     /**
      * Optional caller-supplied execution-aware closed-candle view of `data`.
      * When the caller runs multiple strategies over the same asset, hoisting
@@ -903,10 +894,6 @@ async function searchOneAsset(args: {
         yieldControl: callbacks.yieldControl,
         retainSignals: canReuseFreshSignals,
         fullSignalData: fullClosed,
-        ...(asset.forwardData ? { forwardData: asset.forwardData } : {}),
-        ...(input.options.assetOpportunity?.oosHorizons
-            ? { forwardHorizons: input.options.assetOpportunity.oosHorizons }
-            : {}),
         ...(input.signalCache ? { signalCache: input.signalCache } : {}),
     });
     diagnostics.timingsMs.inSampleSearch = performance.now() - inSampleStartedAt;

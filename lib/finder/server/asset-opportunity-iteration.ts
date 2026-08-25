@@ -27,8 +27,8 @@ import {
     createBatchDatasetLoadDiagnostics,
     type BatchDatasetLoadContext,
 } from "../../batch-backtest/batch-dataset-loader-core";
+import type { FinderAssetOpportunityArchiveSort } from "../finder-asset-opportunity-metrics";
 import type { FinderRunLogSink } from "./finder-run-log";
-import type { AssetOpportunityResearchProgram } from "./finder-asset-opportunity-archive";
 import {
     runAssetOpportunitySearch,
     assertAssetOpportunityStrategySelection,
@@ -57,17 +57,6 @@ import { createServerFinderAssetOpportunityLoadContext } from "./server-finder-d
 import { parseSyntheticPairToken } from "../../synthetic-pair-token";
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
-import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
-import {
-    assertFinderAssetDataAtOrBeforeFoldEnd,
-    assertFinderAssetDataStrictlyAfterFoldEnd,
-    getFinderAssetDataBounds,
-    sliceFinderAssetDataAtFoldEnd,
-    sliceFinderAssetDataStrictlyAfterFoldEnd,
-    sliceFinderAssetDataWithinFreshFoldWindow,
-    type FinderAssetOpportunityFreshFoldWindow,
-    type FinderAssetOpportunityFoldMetadata,
-} from "../finder-asset-opportunity-fold";
 
 const ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY = 12;
 const ASSET_OPPORTUNITY_RUST_EVALUATION_CONCURRENCY = 16;
@@ -144,17 +133,6 @@ export interface FinderAssetOpportunityRunInput {
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
     ) => Promise<OHLCVData[]>;
-    /**
-     * Optional point-in-time forward loader. When foldEnd is present this
-     * loader must return only candles strictly after the fold; the iteration
-     * guard verifies that contract before any candidate work starts.
-     */
-    loadForwardDataset?: (
-        symbol: string,
-        interval: string,
-        signal?: AbortSignal,
-        context?: BatchDatasetLoadContext,
-    ) => Promise<OHLCVData[]>;
     /** Secondary cross-symbol data stays unsliced; the executor aligns it to the primary window. */
     loadSecondaryDataset?: (
         symbol: string,
@@ -165,13 +143,6 @@ export interface FinderAssetOpportunityRunInput {
     getProvider?: (symbol: string) => string;
     candidatePoolSize: number;
     minFreshSupport: number;
-    /** Last candle timestamp allowed in the point-in-time search fold. */
-    foldEnd?: number;
-    /** Actual reference-bar window for the fresh forward slice. */
-    freshFoldWindow?: FinderAssetOpportunityFreshFoldWindow;
-    researchProgram?: AssetOpportunityResearchProgram;
-    /** When true, loaders/cache retain raw candles and this leaf slices per fold. */
-    loadDatasetIsRaw?: boolean;
     /** Reusable caches for a multi-iteration Asset Opportunity batch. */
     assetLoadContext?: BatchDatasetLoadContext;
     /** Reuse Rust dataset cache IDs across sequential holdout iterations. */
@@ -180,6 +151,8 @@ export interface FinderAssetOpportunityRunInput {
     paramSetCache?: Map<string, StrategyParams[]>;
     /** Chunked batch workers retain all strategy rows so the coordinator can rebuild top-10 diagnostics exactly. */
     includeFullStrategyBreakdown?: boolean;
+    /** Legacy compatibility field; automatic batch archives always use All Sorts. */
+    archiveSort?: FinderAssetOpportunityArchiveSort | null;
     /**
      * Optional fire-and-forget per-run diagnostics sink (JSONL run log). The
      * HTTP handlers build it from the resolved run-log root + run id; direct
@@ -223,8 +196,6 @@ export interface AssetOpportunityIterationCallbacks {
     onAssetResult: (asset: AssetOpportunityIterationAssetResult) => void;
     /** Status text updates that in single mode only mutate the snapshot. */
     onStatus?: (status: string) => void;
-    /** Bounded full-pool scalar chunks emitted before the ranker discards candidates. */
-    onCandidateSummaryChunk?: (rows: FinderAssetOpportunityCandidateSummaryRow[]) => void | Promise<void>;
 }
 
 export interface AssetOpportunityIterationResult {
@@ -234,12 +205,6 @@ export interface AssetOpportunityIterationResult {
     assetDiagnostics: FinderAssetOpportunityDiagnostics;
     totals: FinderAssetOpportunityTotals;
     summary: string;
-    /** Independent expected count from evaluation attempts, not archive rows. */
-    expectedCandidateSummaryRows?: number;
-    /** Candidates with a fresh signal and an entry inside the OOS window. */
-    expectedOutcomeSummaryRows?: number;
-    /** Point-in-time bounds observed while loading the fold and its forward data. */
-    foldMetadata?: FinderAssetOpportunityFoldMetadata;
 }
 
 /**
@@ -361,13 +326,6 @@ export async function runAssetOpportunityIteration(
     let assetResults: FinderAssetOpportunityResult[] = [];
     let loadedSymbols = 0;
     let failedSymbols = 0;
-    let searchWindowEnd: number | null = null;
-    const freshFoldWindow = input.researchProgram === "fresh-window"
-        ? input.freshFoldWindow ?? null
-        : null;
-    let oosStart: number | null = freshFoldWindow?.oosStart ?? null;
-    let oosEnd: number | null = freshFoldWindow?.oosEnd ?? null;
-    let expectedOutcomeSummaryRows = 0;
     // Assets in a Rust wave finish out of order. Progress must therefore be
     // the aggregate of each asset's furthest strategy fraction, not a direct
     // projection of the callback's assetIndex. The latter made a late callback
@@ -466,16 +424,7 @@ export async function runAssetOpportunityIteration(
             useRustEnginePreference: input.useRustEnginePreference,
             confirmationStrategiesLoaded: true,
             fullSignalData: args.fullSignalData,
-            forwardData: args.forwardData,
-            forwardHorizons: args.forwardHorizons,
             ...(args.signalCache ? { signalCache: args.signalCache } : {}),
-            ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
-            ...(callbacks.onCandidateSummaryChunk ? {
-                onCandidateSummaryChunk: async (rows: FinderAssetOpportunityCandidateSummaryRow[]) => {
-                    expectedOutcomeSummaryRows += rows.filter((row) => row.forwardOutcomeEligible === true).length;
-                    await callbacks.onCandidateSummaryChunk!(rows);
-                },
-            } : {}),
             ...(!input.generateParamSets
                 && input.paramSetCache
                 && input.options.mode === "random"
@@ -514,7 +463,6 @@ export async function runAssetOpportunityIteration(
 
     type AssetLoadOutcome = {
         data?: OHLCVData[];
-        forwardData?: OHLCVData[];
         error?: unknown;
         startedAt: number;
         finishedAt: number;
@@ -539,7 +487,7 @@ export async function runAssetOpportunityIteration(
             : null;
         const cached = cacheKey !== null ? datasetCache!.get(cacheKey) : undefined;
         const startedAt = performance.now();
-        const rawDataPromise = cached
+        const dataPromise = cached
             ? cached
             : input.loadDataset(symbol, input.interval, input.abortSignal, assetLoadContext).then((data) => {
                 if (cacheKey !== null && Array.isArray(data) && data.length > 0) {
@@ -547,37 +495,12 @@ export async function runAssetOpportunityIteration(
                 }
                 return data;
             });
-        const rawForwardPromise = input.foldEnd !== undefined && input.loadForwardDataset
-            ? input.loadForwardDataset(symbol, input.interval, input.abortSignal, assetLoadContext)
-            : Promise.resolve<OHLCVData[] | undefined>(undefined);
         const promise = Promise.resolve()
-            .then(() => Promise.all([rawDataPromise, rawForwardPromise]))
+            .then(() => dataPromise)
             .then(
-                ([rawData, rawForwardData]) => {
-                    const data = input.loadDatasetIsRaw
-                        ? sliceFinderAssetDataAtFoldEnd(rawData, input.foldEnd)
-                        : rawData;
-                    const forwardData = rawForwardData === undefined
-                        ? undefined
-                        : input.loadDatasetIsRaw
-                            ? input.researchProgram === "fresh-window"
-                                ? sliceFinderAssetDataWithinFreshFoldWindow(
-                                    rawForwardData,
-                                    freshFoldWindow ?? undefined,
-                                )
-                                : sliceFinderAssetDataStrictlyAfterFoldEnd(
-                                    rawForwardData,
-                                    input.foldEnd,
-                                )
-                            : rawForwardData;
+                (data) => {
                     const finishedAt = performance.now();
-                    return {
-                        data,
-                        ...(forwardData ? { forwardData } : {}),
-                        startedAt,
-                        finishedAt,
-                        durationMs: finishedAt - startedAt,
-                    };
+                    return { data, startedAt, finishedAt, durationMs: finishedAt - startedAt };
                 },
                 (error) => {
                     const finishedAt = performance.now();
@@ -619,30 +542,8 @@ export async function runAssetOpportunityIteration(
         try {
             if (loadedAsset.error) throw loadedAsset.error;
             const data = loadedAsset.data ?? [];
-            assertFinderAssetDataAtOrBeforeFoldEnd(data, input.foldEnd, `Asset Opportunity ${symbol} search data`);
-            const forwardData = loadedAsset.forwardData ?? [];
-            assertFinderAssetDataStrictlyAfterFoldEnd(
-                forwardData,
-                input.foldEnd,
-                `Asset Opportunity ${symbol} forward data`,
-            );
             if (data.length === 0) {
                 throw new Error("no data");
-            }
-            if (input.foldEnd !== undefined) {
-                const searchBounds = getFinderAssetDataBounds(data);
-                const forwardBounds = getFinderAssetDataBounds(forwardData);
-                if (searchBounds.last !== null) {
-                    searchWindowEnd = Math.max(searchWindowEnd ?? searchBounds.last, searchBounds.last);
-                }
-                if (freshFoldWindow === null) {
-                    if (forwardBounds.first !== null) {
-                        oosStart = Math.min(oosStart ?? forwardBounds.first, forwardBounds.first);
-                    }
-                    if (forwardBounds.last !== null) {
-                        oosEnd = Math.max(oosEnd ?? forwardBounds.last, forwardBounds.last);
-                    }
-                }
             }
             loadedBarsMin = Math.min(loadedBarsMin, data.length);
             loadedBarsMax = Math.max(loadedBarsMax, data.length);
@@ -682,12 +583,7 @@ export async function runAssetOpportunityIteration(
                         // builds the endpoint-adjusted selection result for
                         // every candidate, so a full winner rerun is redundant.
                         recomputeWinnerAnalytics: false,
-                        assets: [{
-                            symbol,
-                            data,
-                            precomputedFullClosed: fullClosed,
-                            ...(forwardData.length > 0 ? { forwardData } : {}),
-                        }],
+                        assets: [{ symbol, data, precomputedFullClosed: fullClosed }],
                         runIsSearch: isSearch,
                     },
                     {
@@ -1054,21 +950,5 @@ export async function runAssetOpportunityIteration(
         assetDiagnostics,
         totals,
         summary,
-        ...(input.researchProgram === "fresh-window"
-            ? { expectedCandidateSummaryRows: candidateEvaluationsAttempted }
-            : {}),
-        ...(input.researchProgram === "fresh-window"
-            ? { expectedOutcomeSummaryRows }
-            : {}),
-        ...(input.foldEnd !== undefined
-            ? {
-                foldMetadata: {
-                    foldEnd: input.foldEnd,
-                    searchWindowEnd,
-                    oosStart,
-                    oosEnd,
-                } satisfies FinderAssetOpportunityFoldMetadata,
-            }
-            : {}),
     };
 }

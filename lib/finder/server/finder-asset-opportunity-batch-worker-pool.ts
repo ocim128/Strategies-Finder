@@ -44,7 +44,6 @@ import type {
     AssetOpportunityBatchWorkerEvent,
     AssetOpportunityBatchWorkerTask,
 } from "./finder-asset-opportunity-batch-worker";
-import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
 
 export type {
     AssetOpportunityBatchWorkerCommand,
@@ -304,10 +303,6 @@ export interface AssetOpportunityBatchRunnerEvents {
         },
     ) => void;
     onRunLog: (event: string, payload: Record<string, unknown>) => void;
-    onCandidateSummaryChunk?: (
-        task: AssetOpportunityBatchWorkerTask,
-        rows: FinderAssetOpportunityCandidateSummaryRow[],
-    ) => void;
     onComplete: (task: AssetOpportunityBatchWorkerTask, iteration: AssetOpportunityIterationResult) => void;
     onFatal: (task: AssetOpportunityBatchWorkerTask, error: string) => void;
 }
@@ -367,12 +362,6 @@ export async function createRealWorkerAssetOpportunityBatchRunner(
             events.onRunLog(message.event, message.payload);
             return;
         }
-        if (message.type === "candidate_summary_chunk") {
-            if (currentTask && currentTask.taskIndex === message.taskIndex) {
-                events.onCandidateSummaryChunk?.(currentTask, message.rows);
-            }
-            return;
-        }
         if (message.type === "iteration_complete") {
             const task = takeCurrentTask();
             if (task && task.taskIndex === message.taskIndex) {
@@ -382,13 +371,6 @@ export async function createRealWorkerAssetOpportunityBatchRunner(
                     assetDiagnostics: message.assetDiagnostics,
                     totals: message.totals,
                     summary: "",
-                    ...(message.foldMetadata ? { foldMetadata: message.foldMetadata } : {}),
-                    ...(message.expectedCandidateSummaryRows !== undefined
-                        ? { expectedCandidateSummaryRows: message.expectedCandidateSummaryRows }
-                        : {}),
-                    ...(message.expectedOutcomeSummaryRows !== undefined
-                        ? { expectedOutcomeSummaryRows: message.expectedOutcomeSummaryRows }
-                        : {}),
                 });
             }
             return;
@@ -487,10 +469,6 @@ export interface AssetOpportunityBatchSweepArgs {
         aggregate: AssetOpportunityBatchSweepAggregate,
     ) => void;
     onRunLog: (event: string, payload: Record<string, unknown>) => void;
-    onCandidateSummaryChunk?: (
-        task: AssetOpportunityBatchWorkerTask,
-        rows: FinderAssetOpportunityCandidateSummaryRow[],
-    ) => void;
     isCancelled: () => boolean;
 }
 
@@ -713,7 +691,6 @@ export async function runAssetOpportunityBatchSweep(
                     args.onProgress(task, progress, aggregate());
                 },
                 onRunLog: args.onRunLog,
-                ...(args.onCandidateSummaryChunk ? { onCandidateSummaryChunk: args.onCandidateSummaryChunk } : {}),
                 onComplete: (task, iteration) => {
                     inFlight.delete(task.taskIndex);
                     percentByIndex.set(task.taskIndex, 100);

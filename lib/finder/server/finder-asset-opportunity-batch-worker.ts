@@ -45,12 +45,6 @@ import {
     createAssetOpportunitySignalCache,
     type AssetOpportunitySignalCache,
 } from "../finder-asset-opportunity-search-cache";
-import {
-    sliceFinderAssetDataAtFoldEnd,
-    sliceFinderAssetDataStrictlyAfterFoldEnd,
-} from "../finder-asset-opportunity-fold";
-import type { FinderAssetOpportunityFreshFoldWindow } from "../finder-asset-opportunity-fold";
-import type { FinderAssetOpportunityCandidateSummaryRow } from "../finder-asset-opportunity-research-types";
 
 /**
  * One holdout iteration's full input, structured-clone-safe. `options` is the
@@ -77,11 +71,6 @@ export interface AssetOpportunityBatchWorkerTask {
     providerBySymbol: Record<string, string> | null;
     candidatePoolSize: number;
     minFreshSupport: number;
-    foldEnd?: number;
-    freshFoldWindow?: FinderAssetOpportunityFreshFoldWindow;
-    /** Fresh-window workers cache raw data and slice inside the iteration leaf. */
-    loadDatasetIsRaw?: boolean;
-    researchProgram?: "fresh-window";
     /** Benchmark-only structured-clone data source; production workers load from the server loader. */
     inlineDatasets?: Record<string, OHLCVData[]>;
 }
@@ -114,20 +103,12 @@ export type AssetOpportunityBatchWorkerEvent =
         payload: Record<string, unknown>;
     }
     | {
-        type: "candidate_summary_chunk";
-        taskIndex: number;
-        rows: FinderAssetOpportunityCandidateSummaryRow[];
-    }
-    | {
         type: "iteration_complete";
         taskIndex: number;
         holdoutBars: number;
         results: AssetOpportunityIterationResult["results"];
         totals: AssetOpportunityIterationResult["totals"];
         assetDiagnostics: AssetOpportunityIterationResult["assetDiagnostics"];
-        foldMetadata?: AssetOpportunityIterationResult["foldMetadata"];
-        expectedCandidateSummaryRows?: number;
-        expectedOutcomeSummaryRows?: number;
         cancelled: boolean;
     }
     | {
@@ -146,12 +127,6 @@ export type AssetOpportunityBatchWorkerEvent =
 export async function runAssetOpportunityBatchWorkerTask(args: {
     task: AssetOpportunityBatchWorkerTask;
     loadDataset: (
-        symbol: string,
-        interval: string,
-        signal?: AbortSignal,
-        context?: BatchDatasetLoadContext,
-    ) => Promise<OHLCVData[]>;
-    loadForwardDataset?: (
         symbol: string,
         interval: string,
         signal?: AbortSignal,
@@ -178,7 +153,6 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
         failedSymbols: number;
         strategyIndex: number;
     }) => void;
-    onCandidateSummaryChunk?: (rows: FinderAssetOpportunityCandidateSummaryRow[]) => void;
     runLog?: FinderRunLogSink | null;
 }): Promise<AssetOpportunityIterationResult> {
     const { task } = args;
@@ -207,7 +181,6 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
             ...(task.useRustEnginePreference === true ? { useRustEnginePreference: true } : {}),
             abortSignal: args.abortSignal,
             loadDataset: args.loadDataset,
-            ...(args.loadForwardDataset ? { loadForwardDataset: args.loadForwardDataset } : {}),
             ...(args.assetLoadContext ? { assetLoadContext: args.assetLoadContext } : {}),
             ...(args.rustBatchDatasetCache ? { rustBatchDatasetCache: args.rustBatchDatasetCache } : {}),
             ...(args.paramSetCache ? { paramSetCache: args.paramSetCache } : {}),
@@ -216,10 +189,6 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
             ...(getProvider ? { getProvider } : {}),
             candidatePoolSize: task.candidatePoolSize,
             minFreshSupport: task.minFreshSupport,
-            ...(task.foldEnd !== undefined ? { foldEnd: task.foldEnd } : {}),
-            ...(task.freshFoldWindow ? { freshFoldWindow: task.freshFoldWindow } : {}),
-            ...(task.loadDatasetIsRaw === true ? { loadDatasetIsRaw: true } : {}),
-            ...(task.researchProgram ? { researchProgram: task.researchProgram } : {}),
             ...(args.runLog ? { runLog: args.runLog } : {}),
         },
         {
@@ -238,7 +207,6 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
                 // Batch orchestration renders only iteration_done rows; the
                 // sequential loop likewise ignores per-asset callbacks.
             },
-            onCandidateSummaryChunk: args.onCandidateSummaryChunk,
         },
         () => args.isCancelled() || args.abortSignal.aborted,
     );
@@ -324,30 +292,8 @@ if (!isMainThread && parentPort) {
         runAssetOpportunityBatchWorkerTask({
             task,
             loadDataset: task.inlineDatasets
-                ? async (symbol) => task.loadDatasetIsRaw === true
-                    ? (task.inlineDatasets![symbol] ?? [])
-                    : sliceFinderAssetDataAtFoldEnd(task.inlineDatasets![symbol] ?? [], task.foldEnd)
-                : async (symbol, interval, signal, context) =>
-                    task.loadDatasetIsRaw === true
-                        ? loadServerFinderDataset(symbol, interval, signal, context)
-                        : loadServerFinderDataset(symbol, interval, signal, context).then((data) =>
-                            sliceFinderAssetDataAtFoldEnd(data, task.foldEnd)),
-            ...(task.foldEnd !== undefined
-                ? {
-                    loadForwardDataset: task.inlineDatasets
-                        ? async (symbol) => task.loadDatasetIsRaw === true
-                            ? (task.inlineDatasets![symbol] ?? [])
-                            : sliceFinderAssetDataStrictlyAfterFoldEnd(
-                                task.inlineDatasets![symbol] ?? [],
-                                task.foldEnd,
-                            )
-                        : async (symbol, interval, signal, context) =>
-                            task.loadDatasetIsRaw === true
-                                ? loadServerFinderDataset(symbol, interval, signal, context)
-                                : loadServerFinderDataset(symbol, interval, signal, context).then((data) =>
-                                    sliceFinderAssetDataStrictlyAfterFoldEnd(data, task.foldEnd)),
-                }
-                : {}),
+                ? async (symbol) => task.inlineDatasets![symbol] ?? []
+                : loadServerFinderDataset,
             assetLoadContext,
             rustBatchDatasetCache,
             paramSetCache,
@@ -372,9 +318,6 @@ if (!isMainThread && parentPort) {
             runLog: (event, payload) => {
                 post({ type: "run_log", event, payload });
             },
-            onCandidateSummaryChunk: (rows) => {
-                post({ type: "candidate_summary_chunk", taskIndex: task.taskIndex, rows });
-            },
         }).then(
             (iteration) => {
                 post({
@@ -384,13 +327,6 @@ if (!isMainThread && parentPort) {
                     results: iteration.results,
                     totals: iteration.totals,
                     assetDiagnostics: iteration.assetDiagnostics,
-                    ...(iteration.foldMetadata ? { foldMetadata: iteration.foldMetadata } : {}),
-                    ...(iteration.expectedCandidateSummaryRows !== undefined
-                        ? { expectedCandidateSummaryRows: iteration.expectedCandidateSummaryRows }
-                        : {}),
-                    ...(iteration.expectedOutcomeSummaryRows !== undefined
-                        ? { expectedOutcomeSummaryRows: iteration.expectedOutcomeSummaryRows }
-                        : {}),
                     cancelled: iteration.cancelled,
                 });
             },

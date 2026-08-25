@@ -49,8 +49,6 @@
 import type { Plugin } from "vite";
 import { getHeapStatistics } from "node:v8";
 import { totalmem } from "node:os";
-import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { debugLogger } from "../../debug-logger";
 import {
@@ -65,17 +63,6 @@ import { runFinderUniverseExecution } from "../finder-runner-universe";
 import type { FinderSelectedStrategy } from "../finder-runner";
 import { FinderParamSpace } from "../finder-param-space";
 import { sliceFinderDataWindow } from "../finder-manager-logic";
-import {
-    FINDER_ASSET_FRESH_FOLD_COUNT,
-    FINDER_ASSET_FRESH_FOLD_STRIDE_BARS,
-    buildFreshFoldScheduleFromData,
-    getFinderAssetDataBounds,
-    normalizeFinderAssetFreshFoldSchedule,
-    normalizeFinderAssetFoldEnd,
-    sliceFinderAssetDataAtFoldEnd,
-    sliceFinderAssetDataStrictlyAfterFoldEnd,
-    type FinderAssetOpportunityFoldScheduleEntry,
-} from "../finder-asset-opportunity-fold";
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../../types/backtest";
 import type {
     FinderAssetOpportunityResult,
@@ -86,7 +73,6 @@ import type {
     FinderUniverseCandidate,
 } from "../../types/finder";
 import type { BacktestSettings, OHLCVData, Strategy, StrategyParams } from "../../types/strategies";
-import { validateFreshWindowExecutionSettings } from "../finder-asset-opportunity-forward-contract";
 import {
     type BatchDatasetLoadContext,
 } from "../../batch-backtest/batch-dataset-loader-core";
@@ -139,19 +125,9 @@ import {
 import {
     appendAssetOpportunityArchiveBlock,
     appendAssetOpportunityArchivePairSummary,
-    appendAssetOpportunityArchiveFoldIdentities,
     appendAssetOpportunityArchiveRunConfig,
-    isAssetOpportunityResearchProgram,
-    type AssetOpportunityResearchProgram,
     type AssetOpportunityArchiveAppend,
 } from "./finder-asset-opportunity-archive";
-import {
-    buildFinderAssetOpportunityPairContext,
-    type FinderAssetOpportunityCandidateSummaryRow,
-    type FinderFreshWindowJudgmentStatus,
-} from "./finder-asset-opportunity-research";
-import { buildFinderAssetOpportunityControlTrace } from "../finder-asset-opportunity-control-trace";
-import { isFinderFreshWindowBatchRole, type FinderFreshWindowBatchRole } from "../finder-asset-opportunity-research-types";
 import { captureTradeFilter } from "../finder-config-capture";
 import {
     createBufferedFinderRunLogSink,
@@ -220,22 +196,6 @@ const ASSET_OPPORTUNITY_BATCH_PARALLEL_TASK_TARGET = 8;
 const ASSET_OPPORTUNITY_BATCH_MIN_CHUNKED_ASSETS = 32;
 /** Chunked workers retain only their partition; the resolver still clamps to cores/memory. */
 const ASSET_OPPORTUNITY_BATCH_CHUNK_WORKER_TARGET = ASSET_OPPORTUNITY_BATCH_WORKER_COUNT_MAX;
-
-/**
- * Fresh-window identity rows are accumulated only until their ordered fold
- * can be archived. Keep that transient per-task retention bounded; overflow
- * is fatal so a partial identity archive can never be judged as complete.
- */
-export const FRESH_WINDOW_SUMMARY_ROWS_PER_TASK_CAP = 100_000;
-
-export function appendFreshWindowSummaryRowsWithinCap(
-    target: FinderAssetOpportunityCandidateSummaryRow[],
-    rows: readonly FinderAssetOpportunityCandidateSummaryRow[],
-): boolean {
-    if (target.length + rows.length > FRESH_WINDOW_SUMMARY_ROWS_PER_TASK_CAP) return false;
-    target.push(...rows);
-    return true;
-}
 
 function resolveAssetOpportunityChunkWorkerCount(
     totalIterations: number,
@@ -472,55 +432,12 @@ function mergeAssetOpportunityChunkResults(
         failedAssets: failedAssets.length,
         engineUsage,
     };
-    const foldMetadataValues = orderedEntries
-        .map(({ iteration }) => iteration.foldMetadata)
-        .filter((value): value is NonNullable<typeof value> => Boolean(value));
-    const foldMetadata = foldMetadataValues.length > 0
-        ? {
-            foldEnd: foldMetadataValues[0]!.foldEnd,
-            searchWindowEnd: foldMetadataValues.reduce<number | null>(
-                (current, value) => value.searchWindowEnd === null
-                    ? current
-                    : Math.max(current ?? value.searchWindowEnd, value.searchWindowEnd),
-                null,
-            ),
-            oosStart: foldMetadataValues.reduce<number | null>(
-                (current, value) => value.oosStart === null
-                    ? current
-                    : Math.min(current ?? value.oosStart, value.oosStart),
-                null,
-            ),
-            oosEnd: foldMetadataValues.reduce<number | null>(
-                (current, value) => value.oosEnd === null
-                    ? current
-                    : Math.max(current ?? value.oosEnd, value.oosEnd),
-                null,
-            ),
-        }
-        : undefined;
     return {
         results,
         cancelled: entries.some(({ iteration }) => iteration.cancelled),
         assetDiagnostics,
         totals: mergedTotals,
         summary: `Asset Opportunity complete: ${results.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`,
-        ...(entries.some(({ iteration }) => iteration.expectedCandidateSummaryRows !== undefined)
-            ? {
-                expectedCandidateSummaryRows: entries.reduce(
-                    (total, { iteration }) => total + (iteration.expectedCandidateSummaryRows ?? 0),
-                    0,
-                ),
-            }
-            : {}),
-        ...(entries.some(({ iteration }) => iteration.expectedOutcomeSummaryRows !== undefined)
-            ? {
-                expectedOutcomeSummaryRows: entries.reduce(
-                    (total, { iteration }) => total + (iteration.expectedOutcomeSummaryRows ?? 0),
-                    0,
-                ),
-            }
-            : {}),
-        ...(foldMetadata ? { foldMetadata } : {}),
     };
 }
 
@@ -592,12 +509,6 @@ export type FinderRunSnapshot = {
     interval: string;
     /** Job kind discriminator; defaults to symbol_universe for legacy state. */
     jobKind?: "symbol_universe" | "asset_opportunity" | "asset_opportunity_batch";
-    /** Research archive namespace, present only for an explicit program. */
-    researchProgram?: AssetOpportunityResearchProgram;
-    judgmentStatus?: FinderFreshWindowJudgmentStatus;
-    judgmentInvalidReasons?: string[];
-    /** Point-in-time fold boundary, present only for a declared fold. */
-    foldEnd?: number;
     /** Ordered selected entry strategy keys for the whole job. */
     strategyKeys: string[];
     /** 0-based index of the strategy currently being evaluated. */
@@ -1261,66 +1172,6 @@ interface FinderAssetOpportunityRequestBody {
     providerBySymbol?: unknown;
     /** Legacy field accepted for compatibility; batch archives always use All Sorts. */
     archiveSort?: unknown;
-    /** Optional allowlisted research archive program. */
-    researchProgram?: unknown;
-    /** Optional point-in-time fold boundary (last usable candle timestamp). */
-    foldEnd?: unknown;
-    /** Explicit 25-entry fresh-window fold schedule. */
-    foldSchedule?: unknown;
-    /** Let the server compose the schedule from the reference dataset. */
-    scheduleMode?: unknown;
-    /** Required role for a fresh-window batch budget. */
-    batchRole?: unknown;
-}
-
-type FinderFreshWindowScheduleMode = "auto";
-
-const FRESH_WINDOW_PROVENANCE_ERROR =
-    "Fresh-window requires real FINDER_DATA_SYNC_SNAPSHOT and GIT_COMMIT provenance.";
-
-let derivedFreshWindowGitCommit: string | null | undefined;
-
-function normalizeFreshWindowProvenanceValue(value: string | undefined): string | null {
-    const normalized = value?.trim();
-    return normalized && normalized !== "unknown" ? normalized : null;
-}
-
-function deriveFreshWindowGitCommit(): string | null {
-    if (derivedFreshWindowGitCommit !== undefined) return derivedFreshWindowGitCommit;
-    try {
-        const output = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "ignore"],
-        });
-        derivedFreshWindowGitCommit = normalizeFreshWindowProvenanceValue(output);
-    } catch {
-        derivedFreshWindowGitCommit = null;
-    }
-    return derivedFreshWindowGitCommit;
-}
-
-/** Resolve fresh provenance without weakening the fail-closed identity gate. */
-export function resolveFreshWindowProvenance(
-    referenceData: readonly OHLCVData[],
-    env: Partial<Pick<NodeJS.ProcessEnv, "FINDER_DATA_SYNC_SNAPSHOT" | "GIT_COMMIT">> = process.env,
-    gitCommitResolver?: () => string | null,
-): { dataSyncSnapshot: string; gitCommit: string } | null {
-    const dataSyncSnapshot = normalizeFreshWindowProvenanceValue(env.FINDER_DATA_SYNC_SNAPSHOT)
-        ?? (() => {
-            const latestTimestamp = getFinderAssetDataBounds(referenceData).last;
-            return latestTimestamp === null ? null : String(latestTimestamp);
-        })();
-    const gitCommit = normalizeFreshWindowProvenanceValue(env.GIT_COMMIT)
-        ?? normalizeFreshWindowProvenanceValue((gitCommitResolver ?? deriveFreshWindowGitCommit)() ?? undefined);
-    if (!dataSyncSnapshot || !gitCommit) return null;
-    return { dataSyncSnapshot, gitCommit };
-}
-
-/** Compose the registered fresh schedule from actual reference candles. */
-export function composeFreshWindowFoldSchedule(
-    referenceData: readonly OHLCVData[],
-): FinderAssetOpportunityFoldScheduleEntry[] {
-    return buildFreshFoldScheduleFromData(referenceData);
 }
 
 /**
@@ -1423,8 +1274,6 @@ async function runFinderAssetOpportunityWorkerSweep(
             providerBySymbol,
             candidatePoolSize: input.candidatePoolSize,
             minFreshSupport: input.minFreshSupport,
-            ...(input.foldEnd !== undefined ? { foldEnd: input.foldEnd } : {}),
-            ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
         };
     });
     const completed: Array<{ task: AssetOpportunityBatchWorkerTask; iteration: AssetOpportunityIterationResult }> = [];
@@ -1561,7 +1410,6 @@ export async function processFinderAssetOpportunityRun(
         finishedAt: null,
         interval: input.interval,
         jobKind: "asset_opportunity",
-        ...(input.foldEnd !== undefined ? { foldEnd: input.foldEnd } : {}),
         strategyKeys: selectedStrategies.map((strategy) => strategy.key),
         strategyIndex: 0,
         strategyCount: selectedStrategies.length,
@@ -1704,94 +1552,6 @@ export async function processFinderAssetOpportunityRun(
     });
 }
 
-type FreshWindowIdentity = {
-    identity: Record<string, unknown>;
-    judgmentStatus: FinderFreshWindowJudgmentStatus;
-    judgmentInvalidReasons: string[];
-};
-
-type FinderAssetOpportunityBatchInput = FinderAssetOpportunityRunInput & {
-    batch: { startHoldoutBars: number; endHoldoutBars: number };
-    /** Optional worker factory; omitted callers use the sequential path. */
-    batchTaskRunnerFactory?: AssetOpportunityBatchRunnerFactory;
-    /** Normalized symbol-to-provider map for worker task payloads. */
-    providerBySymbol?: Record<string, string>;
-    foldSchedule?: FinderAssetOpportunityFoldScheduleEntry[];
-    scheduleMode?: FinderFreshWindowScheduleMode;
-    batchRole?: FinderFreshWindowBatchRole;
-    dataSyncSnapshot?: string;
-    gitCommit?: string;
-    archiveSort?: FinderAssetOpportunityArchiveSort | null;
-};
-
-function sha256Json(value: unknown): string {
-    return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
-
-function buildFreshWindowIdentity(
-    input: FinderAssetOpportunityBatchInput,
-    selectedStrategies: FinderSelectedStrategy[],
-): FreshWindowIdentity | null {
-    if (input.researchProgram !== "fresh-window") return null;
-    const symbols = [...input.symbols];
-    const strategyKeys = selectedStrategies.map((strategy) => strategy.key);
-    const providerBySymbol = Object.fromEntries(
-        symbols.map((symbol) => [
-            symbol,
-            input.providerBySymbol?.[symbol.trim().toUpperCase()] ?? "binance",
-        ]),
-    );
-    const evalLastBars = input.options.assetOpportunity?.evalLastBars ?? null;
-    const oosIgnoreLastBars = input.options.assetOpportunity?.oosIgnoreLastBars ?? null;
-    const oosHorizons = input.options.assetOpportunity?.oosHorizons ?? [];
-    const dataSyncSnapshot = input.dataSyncSnapshot ?? "unknown";
-    const gitCommit = input.gitCommit ?? "unknown";
-    const identity: Record<string, unknown> = {
-        identityVersion: 1,
-        researchProgram: input.researchProgram,
-        batchRole: input.batchRole ?? null,
-        interval: input.interval,
-        symbols,
-        symbolDigest: sha256Json(symbols),
-        strategyKeys,
-        strategyDigest: sha256Json(strategyKeys),
-        providerBySymbol,
-        engine: {
-            requested: input.useRustEnginePreference === true ? "rust" : "typescript",
-            effective: "typescript",
-            rustEquivalent: false,
-        },
-        foldSchedule: input.foldSchedule ?? null,
-        foldScheduleDigest: sha256Json(input.foldSchedule ?? null),
-        controlSeed: 42,
-        dataSyncSnapshot,
-        gitCommit,
-        evalLastBars,
-        oosIgnoreLastBars,
-        oosHorizons,
-        ...(input.scheduleMode ? { scheduleMode: input.scheduleMode } : {}),
-    };
-    const invalidReasons: string[] = [];
-    invalidReasons.push(...validateFreshWindowExecutionSettings(input.settings));
-    if (!input.foldSchedule || input.foldSchedule.length !== FINDER_ASSET_FRESH_FOLD_COUNT) {
-        invalidReasons.push(`foldSchedule must contain exactly ${FINDER_ASSET_FRESH_FOLD_COUNT} entries`);
-    }
-    if (dataSyncSnapshot === "unknown") invalidReasons.push("dataSyncSnapshot is missing");
-    if (gitCommit === "unknown") invalidReasons.push("gitCommit is missing");
-    if (!isFinderFreshWindowBatchRole(input.batchRole)) invalidReasons.push("batchRole is missing or invalid");
-    if (evalLastBars !== 1000) invalidReasons.push(`evalLastBars must be 1000 (got ${String(evalLastBars)})`);
-    if (oosIgnoreLastBars !== 26) invalidReasons.push(`oosIgnoreLastBars must be 26 (got ${String(oosIgnoreLastBars)})`);
-    if (oosHorizons.length !== 3 || oosHorizons.some((value, index) => value !== [12, 18, 24][index])) {
-        invalidReasons.push(`oosHorizons must be [12,18,24] (got ${JSON.stringify(oosHorizons)})`);
-    }
-    identity.configIdentityDigest = sha256Json(identity);
-    return {
-        identity,
-        judgmentStatus: invalidReasons.length === 0 ? "VALID" : "INVALID",
-        judgmentInvalidReasons: invalidReasons,
-    };
-}
-
 /**
  * Process one Asset Opportunity BATCH job: runs the validated holdout sweep
  * (ascending) under ONE owner/run id. Each iteration clones the options with
@@ -1805,7 +1565,22 @@ function buildFreshWindowIdentity(
  * server job — Stop and reload reattach use the same owner/status machinery.
  */
 export async function processFinderAssetOpportunityBatchRun(
-    input: FinderAssetOpportunityBatchInput,
+    input: FinderAssetOpportunityRunInput & {
+        batch: { startHoldoutBars: number; endHoldoutBars: number };
+        /**
+         * Optional runner factory enabling the parallel worker sweep. The
+         * production HTTP handler wires real workers; direct callers without
+         * it keep the sequential in-process loop (also used when the
+         * resolved worker count is 1 — see resolveAssetOpportunityBatchWorkerCount
+         * and the FINDER_ASSET_BATCH_WORKERS rollback lever).
+         */
+        batchTaskRunnerFactory?: AssetOpportunityBatchRunnerFactory;
+        /**
+         * Normalized symbol -> provider map for worker task payloads
+         * (parallel path only; functions cannot cross the worker boundary).
+         */
+        providerBySymbol?: Record<string, string>;
+    },
     writer: (event: FinderAssetOpportunityBatchStreamEvent) => void,
     owner: number,
     archiveRoot: string,
@@ -1813,35 +1588,12 @@ export async function processFinderAssetOpportunityBatchRun(
 ): Promise<void> {
     const { symbols, selectedStrategies, batch } = input;
     const totalAssets = symbols.length;
-    const legacyHoldoutValues = buildAssetOpportunityBatchHoldoutValues(
+    const holdoutValues = buildAssetOpportunityBatchHoldoutValues(
         batch.startHoldoutBars,
         batch.endHoldoutBars,
     );
-    const foldEntries: FinderAssetOpportunityFoldScheduleEntry[] = input.researchProgram === "fresh-window"
-        ? input.foldSchedule ?? (() => {
-            throw new Error("Fresh-window batch requires an explicit foldSchedule.");
-        })()
-        : legacyHoldoutValues.map((holdoutBars) => ({
-            holdoutBars,
-            foldEnd: input.foldEnd ?? 0,
-            oosStart: 0,
-            oosEnd: 0,
-        }));
-    if (input.researchProgram === "fresh-window" && foldEntries.length !== FINDER_ASSET_FRESH_FOLD_COUNT) {
-        throw new Error(`Fresh-window batch requires exactly ${FINDER_ASSET_FRESH_FOLD_COUNT} fold schedule entries.`);
-    }
-    if (input.researchProgram === "fresh-window"
-        && (!input.dataSyncSnapshot || input.dataSyncSnapshot === "unknown"
-            || !input.gitCommit || input.gitCommit === "unknown")) {
-        throw new Error("Fresh-window batch requires real dataSyncSnapshot and gitCommit provenance.");
-    }
-    if (input.researchProgram === "fresh-window" && !isFinderFreshWindowBatchRole(input.batchRole)) {
-        throw new Error("Fresh-window batch requires a valid batchRole: collection, judged, or replication.");
-    }
-    const holdoutValues = foldEntries.map((entry) => entry.holdoutBars);
     const totalIterations = holdoutValues.length;
     assertAssetOpportunityStrategySelection(selectedStrategies);
-    const freshWindowIdentity = buildFreshWindowIdentity(input, selectedStrategies);
 
     runState = {
         runId: input.runId,
@@ -1849,12 +1601,6 @@ export async function processFinderAssetOpportunityBatchRun(
         finishedAt: null,
         interval: input.interval,
         jobKind: "asset_opportunity_batch",
-        ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
-        ...(freshWindowIdentity ? { judgmentStatus: freshWindowIdentity.judgmentStatus } : {}),
-        ...(freshWindowIdentity && freshWindowIdentity.judgmentInvalidReasons.length > 0
-            ? { judgmentInvalidReasons: freshWindowIdentity.judgmentInvalidReasons }
-            : {}),
-        ...(input.foldEnd !== undefined ? { foldEnd: input.foldEnd } : {}),
         strategyKeys: selectedStrategies.map((strategy) => strategy.key),
         strategyIndex: 0,
         strategyCount: selectedStrategies.length,
@@ -1918,41 +1664,22 @@ export async function processFinderAssetOpportunityBatchRun(
     try {
         await appendAssetOpportunityArchiveRunConfig({
             root: archiveRoot,
-            ...(input.researchProgram ? { program: input.researchProgram } : {}),
             batchRunId: input.runId,
             config: {
                 runId: input.runId,
                 interval: input.interval,
                 strategyKeys: selectedStrategies.map((strategy) => strategy.key),
                 batch: { startHoldoutBars: batch.startHoldoutBars, endHoldoutBars: batch.endHoldoutBars },
-                ...(input.foldSchedule ? { foldSchedule: input.foldSchedule } : {}),
-                ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
                 finder: {
                     ...input.options,
                     ...captureTradeFilter(input.options),
                 },
                 backtestSettings: input.settings,
                 capitalSettings: input.capitalSettings,
-                ...(freshWindowIdentity ? { freshWindowIdentity: freshWindowIdentity.identity } : {}),
-                ...(freshWindowIdentity ? { judgmentStatus: freshWindowIdentity.judgmentStatus } : {}),
-                ...(input.foldEnd !== undefined || input.researchProgram === "fresh-window" ? {
-                    ...(input.foldEnd !== undefined ? { foldEnd: input.foldEnd } : {}),
-                    dataSyncSnapshot: input.dataSyncSnapshot ?? "unknown",
-                    gitCommit: input.gitCommit ?? "unknown",
-                } : {}),
             },
             ...(archiveAppend ? { append: archiveAppend } : {}),
-            ...(freshWindowIdentity ? { judgmentStatus: freshWindowIdentity.judgmentStatus } : {}),
-            ...(freshWindowIdentity && freshWindowIdentity.judgmentInvalidReasons.length > 0
-                ? { judgmentInvalidReasons: freshWindowIdentity.judgmentInvalidReasons }
-                : {}),
         });
     } catch (error) {
-        if (input.researchProgram === "fresh-window") {
-            throw new Error(
-                `Fresh-window configuration archive failed: ${error instanceof Error ? error.message : String(error)}`,
-            );
-        }
         debugLogger.warn("finder.asset_opportunity_batch.config_archive_failed", {
             runId: input.runId,
             error: error instanceof Error ? error.message : String(error),
@@ -1966,8 +1693,6 @@ export async function processFinderAssetOpportunityBatchRun(
         totals: FinderAssetOpportunityTotals | null;
         holdoutBars: number | null;
     } = { results: [], assetDiagnostics: null, totals: null, holdoutBars: null };
-    const summaryRowsByTaskIndex = new Map<number, FinderAssetOpportunityCandidateSummaryRow[]>();
-    const summaryRowsOverflowByTaskIndex = new Set<number>();
 
     // Clone options for the current N; keep the same random seed so the only
     // difference between iterations is the holdout boundary.
@@ -2019,8 +1744,6 @@ export async function processFinderAssetOpportunityBatchRun(
         iterationIndex: number,
         holdoutBars: number,
         iteration: AssetOpportunityIterationResult,
-        summaryRows: FinderAssetOpportunityCandidateSummaryRow[] = [],
-        summaryRowsOverflow = false,
     ): Promise<void> => {
         snapshot.batch = {
             ...snapshot.batch!,
@@ -2034,52 +1757,13 @@ export async function processFinderAssetOpportunityBatchRun(
         // Pure function of the iteration's unchanged result set: compute once,
         // not once per sort metric.
         const baseline = buildAssetOpportunityForwardOosBaseline(iteration.results);
-        const fullPoolContext = input.researchProgram === "fresh-window"
-            ? buildFinderAssetOpportunityPairContext(summaryRows, selectedStrategies.length)
-            : undefined;
         try {
-            if (summaryRowsOverflow) {
-                throw new Error(
-                    `Fresh-window summary rows exceeded the per-task cap of ${FRESH_WINDOW_SUMMARY_ROWS_PER_TASK_CAP}.`,
-                );
-            }
-            if (input.researchProgram === "fresh-window") {
-                const controlTrace = buildFinderAssetOpportunityControlTrace(summaryRows, iterationIndex, 12, 42);
-                await appendAssetOpportunityArchiveFoldIdentities({
-                    root: archiveRoot,
-                    program: input.researchProgram,
-                    batchRunId: input.runId,
-                    batchRole: input.batchRole,
-                    holdoutBars,
-                    rows: summaryRows,
-                    expectedRowCount: iteration.expectedCandidateSummaryRows,
-                    expectedOutcomeRowCount: iteration.expectedOutcomeSummaryRows,
-                    outcomeRowCount: summaryRows.filter((row) => row.forwardOutcomes?.["12"] !== undefined).length,
-                    controlSeed: controlTrace.seed,
-                    controlDrawIdentities: controlTrace.draws,
-                    controlDrawDigest: controlTrace.digest,
-                    ...(iteration.foldMetadata ? { foldMetadata: iteration.foldMetadata } : {}),
-                    ...(input.dataSyncSnapshot ? { dataSyncSnapshot: input.dataSyncSnapshot } : {}),
-                    ...(input.gitCommit ? { gitCommit: input.gitCommit } : {}),
-                    ...(freshWindowIdentity ? { judgmentStatus: freshWindowIdentity.judgmentStatus } : {}),
-                    ...(freshWindowIdentity && freshWindowIdentity.judgmentInvalidReasons.length > 0
-                        ? { judgmentInvalidReasons: freshWindowIdentity.judgmentInvalidReasons }
-                        : {}),
-                    ...(archiveAppend ? { append: archiveAppend } : {}),
-                });
-            }
             const pairSummaries = buildAssetOpportunityPairSummaries(iteration.results);
             await appendAssetOpportunityArchivePairSummary({
                 root: archiveRoot,
-                ...(input.researchProgram ? { program: input.researchProgram } : {}),
                 batchRunId: input.runId,
                 holdoutBars,
                 pairSummaries,
-                ...(fullPoolContext ? { fullPoolContext } : {}),
-                ...(freshWindowIdentity ? { judgmentStatus: freshWindowIdentity.judgmentStatus } : {}),
-                ...(freshWindowIdentity && freshWindowIdentity.judgmentInvalidReasons.length > 0
-                    ? { judgmentInvalidReasons: freshWindowIdentity.judgmentInvalidReasons }
-                    : {}),
                 ...(archiveAppend ? { append: archiveAppend } : {}),
             });
             for (const sortMetric of resolveAssetOpportunityArchiveSorts()) {
@@ -2092,19 +1776,11 @@ export async function processFinderAssetOpportunityBatchRun(
                     }));
                 const appended = await appendAssetOpportunityArchiveBlock({
                     root: archiveRoot,
-                    ...(input.researchProgram ? { program: input.researchProgram } : {}),
                     batchRunId: input.runId,
                     holdoutBars,
                     sortMetric,
                     topResults,
                     baseline,
-                    ...(iteration.foldMetadata ? { foldMetadata: iteration.foldMetadata } : {}),
-                    ...(input.dataSyncSnapshot ? { dataSyncSnapshot: input.dataSyncSnapshot } : {}),
-                    ...(input.gitCommit ? { gitCommit: input.gitCommit } : {}),
-                    ...(freshWindowIdentity ? { judgmentStatus: freshWindowIdentity.judgmentStatus } : {}),
-                    ...(freshWindowIdentity && freshWindowIdentity.judgmentInvalidReasons.length > 0
-                        ? { judgmentInvalidReasons: freshWindowIdentity.judgmentInvalidReasons }
-                        : {}),
                     ...(archiveAppend ? { append: archiveAppend } : {}),
                 });
                 archiveFilename = path.basename(appended.path);
@@ -2252,7 +1928,6 @@ export async function processFinderAssetOpportunityBatchRun(
             )
             : null;
         const tasks: AssetOpportunityBatchWorkerTask[] = holdoutValues.flatMap((holdoutBars, iterationIndex) => {
-            const foldEntry = foldEntries[iterationIndex]!;
             const chunkSize = Math.ceil(totalAssets / assetChunkCount);
             return Array.from({ length: assetChunkCount }, (_, assetChunkIndex) => {
                 const start = assetChunkIndex * chunkSize;
@@ -2275,19 +1950,6 @@ export async function processFinderAssetOpportunityBatchRun(
                     providerBySymbol: providerRecord,
                     candidatePoolSize: input.candidatePoolSize,
                     minFreshSupport: input.minFreshSupport,
-                    ...(input.researchProgram === "fresh-window"
-                        ? {
-                            foldEnd: foldEntry.foldEnd,
-                            freshFoldWindow: {
-                                oosStart: foldEntry.oosStart,
-                                oosEnd: foldEntry.oosEnd,
-                            },
-                            loadDatasetIsRaw: true,
-                        }
-                        : input.foldEnd !== undefined
-                            ? { foldEnd: input.foldEnd }
-                            : {}),
-                    ...(input.researchProgram ? { researchProgram: input.researchProgram } : {}),
                 };
             });
         });
@@ -2308,10 +1970,7 @@ export async function processFinderAssetOpportunityBatchRun(
                 onIterationResult: async (task, iteration) => {
                     const iterationIndex = Math.floor(task.taskIndex / assetChunkCount);
                     if (assetChunkCount === 1) {
-                        const summaryRows = summaryRowsByTaskIndex.get(task.taskIndex) ?? [];
-                        summaryRowsByTaskIndex.delete(task.taskIndex);
-                        const summaryRowsOverflow = summaryRowsOverflowByTaskIndex.delete(task.taskIndex);
-                        await completeOrderedIteration(iterationIndex, task.holdoutBars, iteration, summaryRows, summaryRowsOverflow);
+                        await completeOrderedIteration(iterationIndex, task.holdoutBars, iteration);
                         return;
                     }
                     const entries = chunkResultsByIteration.get(iterationIndex) ?? [];
@@ -2319,22 +1978,10 @@ export async function processFinderAssetOpportunityBatchRun(
                     chunkResultsByIteration.set(iterationIndex, entries);
                     if (entries.length < assetChunkCount) return;
                     chunkResultsByIteration.delete(iterationIndex);
-                    let summaryRowsOverflow = false;
-                    const summaryRows = [...entries]
-                        .sort((left, right) => (left.task.assetChunkIndex ?? 0) - (right.task.assetChunkIndex ?? 0))
-                        .flatMap(({ task: chunkTask }) => {
-                            const rows = summaryRowsByTaskIndex.get(chunkTask.taskIndex) ?? [];
-                            summaryRowsByTaskIndex.delete(chunkTask.taskIndex);
-                            summaryRowsOverflow = summaryRowsOverflow
-                                || summaryRowsOverflowByTaskIndex.delete(chunkTask.taskIndex);
-                            return rows;
-                        });
                     await completeOrderedIteration(
                         iterationIndex,
                         task.holdoutBars,
                         mergeAssetOpportunityChunkResults(entries, selectedStrategies),
-                        summaryRows,
-                        summaryRowsOverflow,
                     );
                 },
                 onProgress: (task, progress, aggregateState) => {
@@ -2375,15 +2022,6 @@ export async function processFinderAssetOpportunityBatchRun(
                 onRunLog: (event, payload) => {
                     input.runLog?.(event, payload);
                 },
-                onCandidateSummaryChunk: input.researchProgram === "fresh-window"
-                    ? (task, rows) => {
-                        const existing = summaryRowsByTaskIndex.get(task.taskIndex) ?? [];
-                        if (!appendFreshWindowSummaryRowsWithinCap(existing, rows)) {
-                            summaryRowsOverflowByTaskIndex.add(task.taskIndex);
-                        }
-                        summaryRowsByTaskIndex.set(task.taskIndex, existing);
-                    }
-                    : undefined,
                 isCancelled,
             });
         } catch (error) {
@@ -2414,7 +2052,6 @@ export async function processFinderAssetOpportunityBatchRun(
         for (let iterationIndex = 0; iterationIndex < totalIterations; iterationIndex += 1) {
             if (isCancelled()) break;
             const holdoutBars = holdoutValues[iterationIndex]!;
-            const foldEntry = foldEntries[iterationIndex]!;
             snapshot.batch = {
                 ...snapshot.batch!,
                 currentHoldoutBars: holdoutBars,
@@ -2438,23 +2075,11 @@ export async function processFinderAssetOpportunityBatchRun(
             });
 
             let iteration: AssetOpportunityIterationResult;
-            const summaryRows: FinderAssetOpportunityCandidateSummaryRow[] = [];
-            let summaryRowsOverflow = false;
             try {
                 iteration = await runAssetOpportunityIteration(
                     {
                         ...input,
                         options: buildIterationOptions(holdoutBars),
-                        ...(input.researchProgram === "fresh-window"
-                            ? {
-                                foldEnd: foldEntry.foldEnd,
-                                freshFoldWindow: {
-                                    oosStart: foldEntry.oosStart,
-                                    oosEnd: foldEntry.oosEnd,
-                                },
-                                loadDatasetIsRaw: true,
-                            }
-                            : {}),
                         assetLoadContext,
                         rustBatchDatasetCache,
                         paramSetCache,
@@ -2495,11 +2120,6 @@ export async function processFinderAssetOpportunityBatchRun(
                         onStatus: (status) => {
                             snapshot.statusText = status;
                         },
-                        onCandidateSummaryChunk: input.researchProgram === "fresh-window"
-                            ? (rows) => {
-                                if (!appendFreshWindowSummaryRowsWithinCap(summaryRows, rows)) summaryRowsOverflow = true;
-                            }
-                            : undefined,
                     },
                     isCancelled,
                 );
@@ -2515,7 +2135,7 @@ export async function processFinderAssetOpportunityBatchRun(
             }
 
             try {
-                await completeOrderedIteration(iterationIndex, holdoutBars, iteration, summaryRows, summaryRowsOverflow);
+                await completeOrderedIteration(iterationIndex, holdoutBars, iteration);
             } catch (error) {
                 if (error instanceof BatchArchiveFatalSentinel) {
                     return;
@@ -2584,8 +2204,6 @@ export async function processFinderAssetOpportunityBatchRun(
 async function prepareAssetOpportunityRunPayload(
     body: FinderAssetOpportunityRequestBody & { batch?: unknown },
     batch?: { validate: true },
-    referenceDataLoader: (symbol: string, interval: string) => Promise<OHLCVData[]> =
-        (symbol, interval) => loadServerFinderDataset(symbol, interval),
 ): Promise<{
     runId: string;
     symbols: string[];
@@ -2603,31 +2221,7 @@ async function prepareAssetOpportunityRunPayload(
     batchRange?: { start: number; end: number };
     /** Present only for the batch route: normalized archive sort selection. */
     archiveSort?: FinderAssetOpportunityArchiveSort | null;
-    /** Present when the request selects the fresh-window archive namespace. */
-    researchProgram?: AssetOpportunityResearchProgram;
-    /** Present for fresh-window batches: the pre-registered budget role. */
-    batchRole?: FinderFreshWindowBatchRole;
-    /** Present for fresh-window batches that ask the server to compose folds. */
-    scheduleMode?: FinderFreshWindowScheduleMode;
-    /** Resolved fresh provenance persisted into the run identity. */
-    dataSyncSnapshot?: string;
-    gitCommit?: string;
-    /** Present when the request declares a point-in-time fold boundary. */
-    foldEnd?: number;
-    /** Present for fresh-window batch requests: one explicit entry per fold. */
-    foldSchedule?: FinderAssetOpportunityFoldScheduleEntry[];
 }> {
-    const researchProgram = parseAssetOpportunityResearchProgram(body.researchProgram);
-    const batchRole = researchProgram === "fresh-window"
-        ? parseAssetOpportunityFreshWindowBatchRole(body.batchRole)
-        : undefined;
-    const foldEnd = parseAssetOpportunityFoldEnd(body.foldEnd);
-    const scheduleMode = researchProgram === "fresh-window"
-        ? parseAssetOpportunityFreshWindowScheduleMode(body.scheduleMode)
-        : undefined;
-    let foldSchedule = researchProgram === "fresh-window"
-        ? parseAssetOpportunityFreshFoldSchedule(body.foldSchedule)
-        : undefined;
     if (runOwner !== RUN_OWNER_NONE) {
         throw new HttpStatusError(409, "A Finder run is already running. Use Stop first.");
     }
@@ -2698,20 +2292,6 @@ async function prepareAssetOpportunityRunPayload(
         if (range.error !== null) {
             throw new HttpStatusError(400, range.error);
         }
-        if (researchProgram === "fresh-window"
-            && (range.start !== FINDER_ASSET_FRESH_FOLD_STRIDE_BARS
-                || range.end !== FINDER_ASSET_FRESH_FOLD_COUNT * FINDER_ASSET_FRESH_FOLD_STRIDE_BARS)) {
-            throw new HttpStatusError(
-                400,
-                `Fresh-window batch must use holdout range ${FINDER_ASSET_FRESH_FOLD_STRIDE_BARS}..${FINDER_ASSET_FRESH_FOLD_COUNT * FINDER_ASSET_FRESH_FOLD_STRIDE_BARS} at stride ${FINDER_ASSET_FRESH_FOLD_STRIDE_BARS}.`,
-            );
-        }
-        if (researchProgram === "fresh-window" && foldSchedule && scheduleMode === "auto") {
-            throw new HttpStatusError(400, "Fresh-window batch must provide either foldSchedule or scheduleMode auto, not both.");
-        }
-        if (researchProgram === "fresh-window" && !foldSchedule && scheduleMode !== "auto") {
-            throw new HttpStatusError(400, "Fresh-window batch requires an explicit 25-entry foldSchedule.");
-        }
         batchRange = { start: range.start, end: range.end };
         archiveSort = normalizeAssetOpportunityArchiveSort(body.archiveSort);
     }
@@ -2720,37 +2300,6 @@ async function prepareAssetOpportunityRunPayload(
     const selectedStrategies = await resolveSelectedStrategies(strategyKeys);
     const settings = (body.settings ?? {}) as BacktestSettings;
     const capitalSettings = (body.capitalSettings ?? {}) as CapitalSettings;
-    let freshDataSyncSnapshot: string | undefined;
-    let freshGitCommit: string | undefined;
-    if (researchProgram === "fresh-window") {
-        const executionErrors = validateFreshWindowExecutionSettings(settings);
-        if (executionErrors.length > 0) {
-            throw new HttpStatusError(400, `Fresh-window execution contract rejected: ${executionErrors.join("; ")}`);
-        }
-        const needsReferenceData = scheduleMode === "auto"
-            || normalizeFreshWindowProvenanceValue(process.env.FINDER_DATA_SYNC_SNAPSHOT) === null;
-        let referenceData: OHLCVData[] = [];
-        if (needsReferenceData) {
-            try {
-                referenceData = await referenceDataLoader(symbols[0]!, interval);
-            } catch {
-                referenceData = [];
-            }
-        }
-        const provenance = resolveFreshWindowProvenance(referenceData);
-        if (!provenance) {
-            throw new HttpStatusError(400, FRESH_WINDOW_PROVENANCE_ERROR);
-        }
-        freshDataSyncSnapshot = provenance.dataSyncSnapshot;
-        freshGitCommit = provenance.gitCommit;
-        if (batch && scheduleMode === "auto") {
-            try {
-                foldSchedule = composeFreshWindowFoldSchedule(referenceData);
-            } catch (error) {
-                throw new HttpStatusError(400, error instanceof Error ? error.message : String(error));
-            }
-        }
-    }
     const useRustEnginePreference = body.useRustEnginePreference === true;
     const candidatePoolSize = clampCandidatePoolSize(options.assetOpportunity?.candidatePoolSize);
     const minFreshSupport = clampMinFreshSupport(options.assetOpportunity?.minFreshSupport);
@@ -2775,85 +2324,8 @@ async function prepareAssetOpportunityRunPayload(
         providerBySymbol,
         candidatePoolSize,
         minFreshSupport,
-        ...(researchProgram ? { researchProgram } : {}),
-        ...(batchRole ? { batchRole } : {}),
-        ...(scheduleMode ? { scheduleMode } : {}),
-        ...(freshDataSyncSnapshot ? { dataSyncSnapshot: freshDataSyncSnapshot } : {}),
-        ...(freshGitCommit ? { gitCommit: freshGitCommit } : {}),
-        ...(foldEnd !== undefined ? { foldEnd } : {}),
-        ...(foldSchedule ? { foldSchedule } : {}),
         ...(batch ? { batchRange, archiveSort } : {}),
     };
-}
-
-function parseAssetOpportunityResearchProgram(raw: unknown): AssetOpportunityResearchProgram | undefined {
-    if (raw === undefined || raw === null || raw === "") return undefined;
-    if (!isAssetOpportunityResearchProgram(raw)) {
-        throw new HttpStatusError(400, "Invalid Asset Opportunity research program.");
-    }
-    return raw;
-}
-
-function parseAssetOpportunityFreshWindowBatchRole(raw: unknown): FinderFreshWindowBatchRole {
-    if (!isFinderFreshWindowBatchRole(raw)) {
-        throw new HttpStatusError(400, "Fresh-window batchRole must be collection, judged, or replication.");
-    }
-    return raw;
-}
-
-function parseAssetOpportunityFreshWindowScheduleMode(raw: unknown): FinderFreshWindowScheduleMode | undefined {
-    if (raw === undefined || raw === null || raw === "") return undefined;
-    if (raw !== "auto") {
-        throw new HttpStatusError(400, "Fresh-window scheduleMode must be auto.");
-    }
-    return "auto";
-}
-
-function parseAssetOpportunityFoldEnd(raw: unknown): number | undefined {
-    try {
-        return normalizeFinderAssetFoldEnd(raw);
-    } catch (error) {
-        throw new HttpStatusError(400, error instanceof Error ? error.message : String(error));
-    }
-}
-
-function parseAssetOpportunityFreshFoldSchedule(
-    raw: unknown,
-): FinderAssetOpportunityFoldScheduleEntry[] | undefined {
-    if (raw === undefined || raw === null) {
-        return undefined;
-    }
-    try {
-        return normalizeFinderAssetFreshFoldSchedule(raw);
-    } catch (error) {
-        throw new HttpStatusError(400, error instanceof Error ? error.message : String(error));
-    }
-}
-
-function createAssetOpportunityDatasetLoaders(
-    input: Pick<FinderAssetOpportunityRunInput, "researchProgram" | "foldEnd">,
-) {
-    // Fresh-window iterations receive raw data and slice it inside the leaf;
-    // legacy runs keep the existing handler-side slice behavior.
-    const loadDatasetFullClosed = (
-        symbol: string,
-        interval: string,
-        signal?: AbortSignal,
-        context?: BatchDatasetLoadContext,
-    ): Promise<OHLCVData[]> => loadServerFinderDataset(symbol, interval, signal, context).then((data) =>
-        input.researchProgram === "fresh-window"
-            ? data
-            : input.foldEnd === undefined ? data : sliceFinderAssetDataAtFoldEnd(data, input.foldEnd));
-    const loadForwardDataset = (
-        symbol: string,
-        interval: string,
-        signal?: AbortSignal,
-        context?: BatchDatasetLoadContext,
-    ): Promise<OHLCVData[]> => loadServerFinderDataset(symbol, interval, signal, context).then((data) =>
-        input.researchProgram === "fresh-window"
-            ? data
-            : sliceFinderAssetDataStrictlyAfterFoldEnd(data, input.foldEnd));
-    return { loadDatasetFullClosed, loadForwardDataset };
 }
 
 /**
@@ -2945,7 +2417,16 @@ async function handleAssetOpportunityRunRequest(
     const runAbortController = new AbortController();
     abortController = runAbortController;
 
-    const { loadDatasetFullClosed, loadForwardDataset } = createAssetOpportunityDatasetLoaders(prepared);
+    // Asset Opportunity reserves the real latest closed candle inside the
+    // runner before applying options.dataSlice. Do not slice this loader;
+    // slicing here would make an old candle look current for half/fifth
+    // windows.
+    const loadDatasetFullClosed = (
+        sym: string,
+        intv: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context);
     const resolvedCapitalSettings = resolveCapitalSettingsFromRaw(
         prepared.capitalSettings as unknown as Record<string, unknown>,
     );
@@ -2989,12 +2470,8 @@ async function handleAssetOpportunityRunRequest(
                 useRustEnginePreference: prepared.useRustEnginePreference,
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
-                ...((prepared.foldEnd !== undefined || prepared.researchProgram === "fresh-window")
-                    ? { ...(prepared.foldEnd !== undefined ? { foldEnd: prepared.foldEnd } : {}), loadForwardDataset }
-                    : {}),
-                ...(prepared.researchProgram === "fresh-window" ? { loadDatasetIsRaw: true } : {}),
-                ...(prepared.researchProgram ? { researchProgram: prepared.researchProgram } : {}),
-                loadSecondaryDataset: loadDatasetFullClosed,
+                loadSecondaryDataset: (sym, intv, signal, context) =>
+                    loadServerFinderDataset(sym, intv, signal, context),
                 getProvider: (symbol) => resolveServerProvider(symbol, prepared.providerBySymbol),
                 candidatePoolSize: prepared.candidatePoolSize,
                 minFreshSupport: prepared.minFreshSupport,
@@ -3043,7 +2520,12 @@ async function handleAssetOpportunityBatchRunRequest(
     const runAbortController = new AbortController();
     abortController = runAbortController;
 
-    const { loadDatasetFullClosed, loadForwardDataset } = createAssetOpportunityDatasetLoaders(prepared);
+    const loadDatasetFullClosed = (
+        sym: string,
+        intv: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ): Promise<OHLCVData[]> => loadServerFinderDataset(sym, intv, signal, context);
 
     await withFinderRunStream({
         res,
@@ -3071,20 +2553,8 @@ async function handleAssetOpportunityBatchRunRequest(
                 useRustEnginePreference: prepared.useRustEnginePreference,
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
-                ...((prepared.foldEnd !== undefined || prepared.researchProgram === "fresh-window")
-                    ? { ...(prepared.foldEnd !== undefined ? { foldEnd: prepared.foldEnd } : {}), loadForwardDataset }
-                    : {}),
-                ...(prepared.researchProgram === "fresh-window" ? { loadDatasetIsRaw: true } : {}),
-                ...(prepared.researchProgram ? { researchProgram: prepared.researchProgram } : {}),
-                ...(prepared.batchRole ? { batchRole: prepared.batchRole } : {}),
-                ...(prepared.scheduleMode ? { scheduleMode: prepared.scheduleMode } : {}),
-                ...(prepared.foldEnd !== undefined || prepared.researchProgram === "fresh-window"
-                    ? {
-                        dataSyncSnapshot: prepared.dataSyncSnapshot ?? "unknown",
-                        gitCommit: prepared.gitCommit ?? "unknown",
-                    }
-                    : {}),
-                loadSecondaryDataset: loadDatasetFullClosed,
+                loadSecondaryDataset: (sym, intv, signal, context) =>
+                    loadServerFinderDataset(sym, intv, signal, context),
                 getProvider: (symbol) => resolveServerProvider(symbol, prepared.providerBySymbol),
                 candidatePoolSize: prepared.candidatePoolSize,
                 minFreshSupport: prepared.minFreshSupport,
@@ -3103,7 +2573,6 @@ async function handleAssetOpportunityBatchRunRequest(
                     [...prepared.providerBySymbol.entries()]
                         .map(([symbol, provider]) => [symbol.trim().toUpperCase(), provider]),
                 ),
-                ...(prepared.foldSchedule ? { foldSchedule: prepared.foldSchedule } : {}),
             },
             safeWrite,
             owner,
@@ -3336,10 +2805,6 @@ function buildStatusSnapshot(): FinderRunStatusSnapshot {
         phase: state.phase,
         interval: state.interval,
         jobKind,
-        ...(state.researchProgram ? { researchProgram: state.researchProgram } : {}),
-        ...(state.judgmentStatus ? { judgmentStatus: state.judgmentStatus } : {}),
-        ...(state.judgmentInvalidReasons ? { judgmentInvalidReasons: state.judgmentInvalidReasons } : {}),
-        ...(state.foldEnd !== undefined ? { foldEnd: state.foldEnd } : {}),
         strategyKeys: state.strategyKeys,
         strategyIndex: state.strategyIndex,
         strategyCount: state.strategyCount,
@@ -3726,21 +3191,6 @@ export const __testInternals = {
     assertUniverseOptions,
     parseStrategyKeys,
     parseRunId,
-    parseAssetOpportunityResearchProgram,
-    parseAssetOpportunityFreshWindowBatchRole,
-    parseAssetOpportunityFreshWindowScheduleMode,
-    parseAssetOpportunityFoldEnd,
-    parseAssetOpportunityFreshFoldSchedule,
-    composeFreshWindowFoldSchedule,
-    resolveFreshWindowProvenance,
-    prepareFreshWindowBatchForTests: (
-        body: FinderAssetOpportunityRequestBody & { batch?: unknown },
-        referenceData: OHLCVData[],
-    ) => prepareAssetOpportunityRunPayload(
-        body,
-        { validate: true },
-        async () => referenceData,
-    ),
     consumePendingStopForRun,
     writeStreamEventBestEffort,
     withCanonicalUniverseSymbols,
@@ -3753,9 +3203,6 @@ export const __testInternals = {
     flushPendingDatasetCacheInvalidation,
     acquireRunOwnershipForTests(): number {
         return acquireRunOwnership();
-    },
-    resetFreshWindowGitCommitForTests(): void {
-        derivedFreshWindowGitCommit = undefined;
     },
     setRunStateForTests(snapshot: FinderRunSnapshot | null): void {
         runState = snapshot;
