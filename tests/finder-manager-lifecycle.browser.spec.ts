@@ -323,8 +323,6 @@ beforeEach(() => {
     m.assetOpportunityRunResults = [];
     m.assetOpportunityDefaultResults = [];
     m.uiState.scope = "current_chart";
-    m.uiState.assetOpportunityFreshWindowResearchEnabled = false;
-    m.uiState.assetOpportunityFreshWindowBatchRole = "collection";
     (m.ui as any).statusElement = null;
     (m.ui as any).lastStatusText = "";
     elsById.clear();
@@ -433,55 +431,6 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
 });
 
 describe("FinderManager Asset Opportunity batch stream contracts", () => {
-    it("sends the persisted fresh-window role and server auto-schedule mode", async () => {
-        const runId = "batch-fresh-auto";
-        manager().activeServerRunId = runId;
-        manager().isRunning = true;
-        manager().uiState.assetOpportunityFreshWindowResearchEnabled = true;
-        manager().uiState.assetOpportunityFreshWindowBatchRole = "replication";
-        const request = manager().runAssetOpportunityBatchFinderServer(
-            {
-                mode: "random",
-                scope: "asset_opportunity",
-                topN: 1,
-                assetOpportunity: { symbols: ["AAA"] },
-            },
-            [],
-            undefined,
-            runId,
-            performance.now(),
-            { start: 12, end: 300 },
-        );
-
-        const submittedBody = JSON.parse(String(mockFetch.requests[0]?.init?.body));
-        expect(submittedBody.researchProgram).to.equal("fresh-window");
-        expect(submittedBody.batchRole).to.equal("replication");
-        expect(submittedBody.scheduleMode).to.equal("auto");
-
-        mockFetch.resolveFirst(makeNdjsonResponse([{
-            type: "asset_batch_done",
-            ok: true,
-            cancelled: false,
-            runId,
-            completedIterations: 25,
-            failedIterations: 0,
-            assets: [],
-            holdoutBars: 300,
-            totals: {
-                totalAssets: 1,
-                assetsWithFreshEntry: 0,
-                failedAssets: 0,
-                selectGradeAssets: 0,
-                watchGradeAssets: 0,
-                rejectGradeAssets: 0,
-            },
-            diagnostics: null,
-            assetDiagnostics: null,
-            summary: "done",
-        }]));
-        await request;
-    });
-
     it("does not turn a recovered batch fatal into a successful outcome", async () => {
         const runId = "batch-fatal-recovery";
         manager().activeServerRunId = runId;

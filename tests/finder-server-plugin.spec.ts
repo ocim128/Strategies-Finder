@@ -39,8 +39,6 @@ import {
 import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
 import { ensureConfirmationStrategiesLoaded } from "../lib/confirmation-signal-filter";
 import { getLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from "../lib/strategies/built-in-catalog";
-import { ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER } from "../lib/finder/server/finder-asset-opportunity-archive";
-import { buildFinderAssetOpportunityCandidateFingerprint } from "../lib/finder/server/finder-asset-opportunity-research";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions, FinderUniverseCandidate } from "../lib/types/finder";
 import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
@@ -56,12 +54,6 @@ const {
     assertUniverseOptions,
     parseStrategyKeys,
     parseRunId,
-    parseAssetOpportunityResearchProgram,
-    parseAssetOpportunityFreshWindowBatchRole,
-    parseAssetOpportunityFreshWindowScheduleMode,
-    parseAssetOpportunityFoldEnd,
-    parseAssetOpportunityFreshFoldSchedule,
-    resolveFreshWindowProvenance,
     consumePendingStopForRun,
     writeStreamEventBestEffort,
     withCanonicalUniverseSymbols,
@@ -1200,136 +1192,6 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
         expect(output.results[0]!.endpointRemovedTrades).to.equal(1);
     });
 
-    it("captures every fresh-window candidate before top-K reduction and disables Rust", async () => {
-        const chunks: Array<Array<Record<string, unknown>>> = [];
-        const output = await runServerAssetIsSearch({
-            ohlcvData: makeCandles([100, 101, 102, 103, 104, 105]),
-            symbol: "RESEARCH",
-            interval: "5m",
-            options: {
-                ...makeOptions(["RESEARCH"]),
-                scope: "asset_opportunity",
-                topN: 1,
-            },
-            settings,
-            capitalSettings,
-            selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
-            generateParamSets: () => [{ threshold: 1 }, { threshold: 2 }, { threshold: 3 }],
-            isCancelled: () => false,
-            yieldControl: async () => undefined,
-            researchProgram: "fresh-window",
-            onCandidateSummaryChunk: (rows) => { chunks.push(rows as Array<Record<string, unknown>>); },
-            useRustEnginePreference: true,
-        });
-
-        const rows = chunks.flat();
-        expect(output.results).to.have.length(1);
-        expect(rows).to.have.length(3);
-        expect(new Set(rows.map((row) => row.identityHash)).size).to.equal(3);
-        expect(rows.every((row) => typeof row.candidateFingerprint === "string")).to.equal(true);
-        expect(rows.every((row) => typeof row.netProfitPercent === "number" || row.netProfitPercent === null)).to.equal(true);
-    });
-
-    it("captures execution-unit forward outcomes for every fresh-window candidate", async () => {
-        const chunks: Array<Array<Record<string, unknown>>> = [];
-        const forwardData = makeCandles([102, 104, 106]);
-        const output = await runServerAssetIsSearch({
-            ohlcvData: makeCandles([100, 101, 102]),
-            forwardData,
-            forwardHorizons: [12, 18, 24],
-            symbol: "RESEARCH_FORWARD",
-            interval: "5m",
-            options: {
-                ...makeOptions(["RESEARCH_FORWARD"]),
-                scope: "asset_opportunity",
-                topN: 1,
-            },
-            settings: {
-                ...settings,
-                riskMode: "percentage",
-                takeProfitEnabled: true,
-                takeProfitPercent: 2,
-                stopLossEnabled: true,
-                stopLossPercent: 2,
-            },
-            capitalSettings,
-            selectedStrategy: {
-                key: "asset_opportunity_boundary",
-                name: assetOpportunityStrategy.name,
-                strategy: assetOpportunityStrategy,
-            },
-            generateParamSets: () => [{ threshold: 1 }, { threshold: 2 }],
-            isCancelled: () => false,
-            yieldControl: async () => undefined,
-            researchProgram: "fresh-window",
-            onCandidateSummaryChunk: (rows) => { chunks.push(rows as Array<Record<string, unknown>>); },
-        });
-
-        expect(output.results).to.have.length(1);
-        const rows = chunks.flat();
-        expect(rows).to.have.length(2);
-        expect(rows.every((row) => row.profitFactor !== undefined)).to.equal(true);
-        expect(rows.every((row) => row.forwardOutcomeEligible === true)).to.equal(true);
-        expect(rows.every((row) => {
-            const outcomes = row.forwardOutcomes as Record<string, { exitReason: string }> | undefined;
-            return outcomes !== undefined
-                && Object.keys(outcomes).join(",") === "12"
-                && outcomes["12"]?.exitReason === "take_profit";
-        })).to.equal(true);
-    });
-
-    it("loads historical and forward datasets together and preserves raw-fold slicing", async () => {
-        const raw = makeCandles([100, 101, 102, 103]);
-        const calls: string[] = [];
-        const foldEnd = Number(raw[1]!.time);
-        const output = await runAssetOpportunityIteration(
-            {
-                runId: "iteration-loader-parity",
-                interval: "5m",
-                symbols: ["PAIR"],
-                options: {
-                    ...makeOptions(["PAIR"]),
-                    scope: "asset_opportunity",
-                    topN: 1,
-                    maxRuns: 1,
-                    assetOpportunity: {
-                        symbols: ["PAIR"],
-                        candidatePoolSize: 1,
-                        minFreshSupport: 1,
-                        oosIgnoreLastBars: 1,
-                        oosHorizons: [1],
-                    },
-                },
-                settings,
-                capitalSettings,
-                selectedStrategies: [{ key: "asset_opportunity_test", name: assetOpportunityStrategy.name, strategy: assetOpportunityStrategy }],
-                abortSignal: new AbortController().signal,
-                loadDataset: async () => {
-                    calls.push("historical");
-                    return raw;
-                },
-                loadForwardDataset: async () => {
-                    calls.push("forward");
-                    return raw;
-                },
-                candidatePoolSize: 1,
-                minFreshSupport: 1,
-                foldEnd,
-                loadDatasetIsRaw: true,
-                generateParamSets: () => [{ threshold: 1 }],
-            },
-            {
-                onProgress: () => undefined,
-                onAssetResult: () => undefined,
-                onCandidateSummaryChunk: () => undefined,
-            },
-            () => false,
-        );
-
-        expect(calls).to.deep.equal(["historical", "forward"]);
-        expect(output.foldMetadata?.foldEnd).to.equal(foldEnd);
-    });
-
     it("caps the in-sample window to assetOpportunity.evalLastBars through the full server run", async () => {
         // The evaluation-window cap must survive the whole server pipeline
         // (route input → iteration → runner → IS search). The strategy records
@@ -1438,44 +1300,12 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         end: number;
         archiveSort?: FinderAssetOpportunityArchiveSort | null;
         datasets?: Map<string, OHLCVData[]>;
-        freshWindow?: "valid" | "invalid";
         append?: (dir: string, filename: string, content: string) => Promise<void>;
     }): Promise<{ events: FinderAssetOpportunityBatchStreamEvent[]; appended: string[]; contents: string[] }> {
         const datasets = args.datasets ?? longUpDownDatasets();
         const events: FinderAssetOpportunityBatchStreamEvent[] = [];
         const appended: string[] = [];
         const contents: string[] = [];
-        const freshOptions = args.freshWindow
-            ? {
-                ...makeBatchOptions(["UP", "DOWN"], args.start, args.end),
-                assetOpportunity: {
-                    ...makeBatchOptions(["UP", "DOWN"], args.start, args.end).assetOpportunity!,
-                    evalLastBars: args.freshWindow === "valid" ? 1000 : 0,
-                    oosIgnoreLastBars: args.freshWindow === "valid" ? 26 : 0,
-                    oosHorizons: args.freshWindow === "valid" ? [12, 18, 24] : [1, 3, 5],
-                },
-            }
-            : makeBatchOptions(["UP", "DOWN"], args.start, args.end);
-        const runSettings = args.freshWindow
-            ? {
-                ...settings,
-                executionModel: "next_open" as const,
-                allowSameBarExit: false,
-                riskMode: "percentage" as const,
-                stopLossEnabled: true,
-                stopLossPercent: 2,
-                takeProfitEnabled: true,
-                takeProfitPercent: 2,
-            }
-            : settings;
-        const freshFoldSchedule = Array.from({ length: 25 }, (_, index) => ({
-            holdoutBars: (index + 1) * 12,
-            foldEnd: 1_700_000_000 + ((100 + index) * 300),
-            oosStart: 1_700_000_000 + ((101 + index) * 300),
-            oosEnd: 1_700_000_000 + ((112 + index) * 300),
-        }));
-        const runStart = args.freshWindow ? 12 : args.start;
-        const runEnd = args.freshWindow ? 300 : args.end;
         setRunOwnerForTests(args.owner);
         const run = (async () => {
             await processFinderAssetOpportunityBatchRun(
@@ -1483,8 +1313,8 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                     runId: args.runId ?? "batch-run",
                     interval: "5m",
                     symbols: ["UP", "DOWN"],
-                    options: freshOptions,
-                    settings: runSettings,
+                    options: makeBatchOptions(["UP", "DOWN"], args.start, args.end),
+                    settings,
                     capitalSettings,
                     selectedStrategies: [batchStrategy],
                     useRustEnginePreference: true,
@@ -1493,15 +1323,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                     candidatePoolSize: 2,
                     minFreshSupport: 1,
                     archiveSort: args.archiveSort ?? null,
-                    batch: { startHoldoutBars: runStart, endHoldoutBars: runEnd },
-                    ...(args.freshWindow ? {
-                        researchProgram: "fresh-window" as const,
-                        batchRole: "collection" as const,
-                        foldSchedule: freshFoldSchedule,
-                        dataSyncSnapshot: "sync-2026-08-23",
-                        gitCommit: "abc123",
-                        providerBySymbol: { UP: "binance", DOWN: "binance" },
-                    } : {}),
+                    batch: { startHoldoutBars: args.start, endHoldoutBars: args.end },
                 },
                 (event) => events.push(event),
                 args.owner,
@@ -1515,10 +1337,6 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         })();
         return run.then(() => ({ events, appended, contents }));
     }
-
-    it("gives zero-parameter candidates a non-empty identity fingerprint", () => {
-        expect(buildFinderAssetOpportunityCandidateFingerprint({})).to.have.length.greaterThan(0);
-    });
 
     it("builds ascending holdout values for a validated range", () => {
         expect(buildAssetOpportunityBatchHoldoutValues(2, 4)).to.deep.equal([2, 3, 4]);
@@ -1581,9 +1399,8 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         const pairSummaryBlocks = contents.filter((content) => content.includes("Pair summaries: JSON\n"));
         expect(pairSummaryBlocks).to.have.length(3);
         for (const content of pairSummaryBlocks) {
-            const jsonStart = content.lastIndexOf("\n[") + 1;
-            const markerStart = content.indexOf(ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER);
-            expect(JSON.parse(content.slice(jsonStart, markerStart).trim())).to.be.an("array");
+            const jsonStart = content.lastIndexOf("\n[");
+            expect(JSON.parse(content.slice(jsonStart))).to.be.an("array");
         }
         // The archived run config carries the batch identity plus the trade
         // filter normalized so an inactive filter cannot read as enforced.
@@ -1609,48 +1426,6 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         expect(status.terminalAssets?.length).to.equal(iterations[2]!.assets.length);
         expect(status.assetTotals).to.not.equal(null);
         expect(status.assetDiagnostics).to.not.equal(null);
-    });
-
-    it("records a valid fresh-window identity and full-pool pair context", async () => {
-        const { contents, appended } = await runAssetBatch({
-            owner: 7310,
-            start: 2,
-            end: 2,
-            runId: "batch-fresh-valid",
-            freshWindow: "valid",
-        });
-
-        expect(appended).to.include("oos-fold-identities-12-bars.txt");
-        const config = contents.find((content) => content.includes("Run configuration: JSON"))!;
-        expect(config).to.contain('"judgmentStatus": "VALID"');
-        expect(config).to.contain('"symbolDigest"');
-        expect(config).to.contain('"strategyDigest"');
-        expect(config).to.contain('"configIdentityDigest"');
-        expect(contents.some((content) => content.includes("Full-pool pair context: JSON"))).to.equal(true);
-        expect(contents.filter((content) => content.includes("Judgment: VALID")).length).to.be.greaterThan(0);
-        const status = handleStatusRequest("batch-fresh-valid");
-        if (!status.ok) throw new Error(status.error);
-        expect(status.judgmentStatus).to.equal("VALID");
-    });
-
-    it("archives a fresh-window run but marks drifted identity INVALID", async () => {
-        const { contents, appended } = await runAssetBatch({
-            owner: 7311,
-            start: 2,
-            end: 2,
-            runId: "batch-fresh-invalid",
-            freshWindow: "invalid",
-        });
-
-        expect(appended).to.include("oos-fold-identities-12-bars.txt");
-        const config = contents.find((content) => content.includes("Run configuration: JSON"))!;
-        expect(config).to.contain('"judgmentStatus": "INVALID"');
-        expect(config).to.contain("evalLastBars must be 1000");
-        expect(contents.some((content) => content.includes("Judgment: INVALID"))).to.equal(true);
-        const status = handleStatusRequest("batch-fresh-invalid");
-        if (!status.ok) throw new Error(status.error);
-        expect(status.judgmentStatus).to.equal("INVALID");
-        expect(status.judgmentInvalidReasons).to.be.an("array").with.length.greaterThan(0);
     });
 
     it("always archives the default order and every resort metric", async () => {
@@ -2114,93 +1889,6 @@ describe("assertUniverseOptions nested validation", () => {
             scope: "symbol_universe",
             universe: { symbols: ["BTCUSDT", "ETHUSDT"] },
         } as FinderOptions)).to.not.throw();
-    });
-});
-
-describe("Asset Opportunity research program validation", () => {
-    it("keeps the absent program on the legacy path", () => {
-        expect(parseAssetOpportunityResearchProgram(undefined)).to.equal(undefined);
-        expect(parseAssetOpportunityResearchProgram("")).to.equal(undefined);
-        expect(parseAssetOpportunityResearchProgram("fresh-window")).to.equal("fresh-window");
-    });
-
-    it("rejects invalid and traversal-shaped program names with 400", () => {
-        for (const value of ["other", "fresh-window/../escape", "../escape"]) {
-            expect(() => parseAssetOpportunityResearchProgram(value)).to.throw(HttpStatusError);
-            try {
-                parseAssetOpportunityResearchProgram(value);
-            } catch (error) {
-                expect((error as HttpStatusError).status).to.equal(400);
-            }
-        }
-    });
-
-    it("requires an explicit fresh-window batch role", () => {
-        expect(parseAssetOpportunityFreshWindowBatchRole("collection")).to.equal("collection");
-        expect(parseAssetOpportunityFreshWindowBatchRole("judged")).to.equal("judged");
-        expect(parseAssetOpportunityFreshWindowBatchRole("replication")).to.equal("replication");
-        for (const value of [undefined, "", "other", "collection/../escape"]) {
-            expect(() => parseAssetOpportunityFreshWindowBatchRole(value)).to.throw(HttpStatusError);
-        }
-    });
-});
-
-describe("Asset Opportunity fold validation", () => {
-    it("accepts an absent or numeric fold and rejects invalid timestamps before routing", () => {
-        expect(parseAssetOpportunityFoldEnd(undefined)).to.equal(undefined);
-        expect(parseAssetOpportunityFoldEnd("1700000000")).to.equal(1_700_000_000);
-        expect(() => parseAssetOpportunityFoldEnd(0)).to.throw(HttpStatusError);
-        try {
-            parseAssetOpportunityFoldEnd("bad");
-        } catch (error) {
-            expect((error as HttpStatusError).status).to.equal(400);
-        }
-    });
-
-    it("accepts only the explicit 25-entry schedule at the request boundary", () => {
-        const schedule = Array.from({ length: 25 }, (_, index) => ({
-            holdoutBars: (index + 1) * 12,
-            foldEnd: 1_700_000_000 + ((index + 1) * 300),
-            oosStart: 1_700_000_000 + ((index + 2) * 300),
-            oosEnd: 1_700_000_000 + ((index + 13) * 300),
-        }));
-        expect(parseAssetOpportunityFreshFoldSchedule(schedule)).to.deep.equal(schedule);
-        try {
-            parseAssetOpportunityFreshFoldSchedule(schedule.slice(0, 24));
-        } catch (error) {
-            expect((error as HttpStatusError).status).to.equal(400);
-        }
-    });
-
-    it("accepts auto schedule mode and rejects other modes", () => {
-        expect(parseAssetOpportunityFreshWindowScheduleMode(undefined)).to.equal(undefined);
-        expect(parseAssetOpportunityFreshWindowScheduleMode("auto")).to.equal("auto");
-        expect(() => parseAssetOpportunityFreshWindowScheduleMode("wall-clock")).to.throw(HttpStatusError);
-    });
-});
-
-describe("Fresh-window provenance resolution", () => {
-    it("derives the newest reference candle and short git commit when env is absent", () => {
-        const referenceData = makeCandles([100, 101, 102]);
-        expect(resolveFreshWindowProvenance(referenceData, {}, () => "derived-commit")).to.deep.equal({
-            dataSyncSnapshot: "1700000600",
-            gitCommit: "derived-commit",
-        });
-    });
-
-    it("fails closed when both provenance sources are underivable", () => {
-        expect(resolveFreshWindowProvenance([], {}, () => null)).to.equal(null);
-    });
-
-    it("gives explicit environment provenance precedence over derivation", () => {
-        expect(resolveFreshWindowProvenance(
-            makeCandles([100, 101]),
-            { FINDER_DATA_SYNC_SNAPSHOT: "sync-override", GIT_COMMIT: "commit-override" },
-            () => "derived-commit",
-        )).to.deep.equal({
-            dataSyncSnapshot: "sync-override",
-            gitCommit: "commit-override",
-        });
     });
 });
 

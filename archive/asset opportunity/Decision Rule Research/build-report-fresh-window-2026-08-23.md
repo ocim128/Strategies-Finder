@@ -789,3 +789,47 @@ Additional UI and real-pipeline checks passed with 11 browser lifecycle tests
 and 4 fresh-window integration tests (sequential auto schedule, worker auto
 schedule, invalid judged role gating, and the old wall-clock negative case).
 `npm run typecheck` also passed. No real batch or push was performed.
+
+## Fresh-window removal (2026-08-25)
+
+The operator permanently cancelled the fresh-window research program. Removed:
+
+- Fresh-only fold scheduling/slicing, forward execution-contract simulation,
+  candidate-summary/control-trace capture, identity/provenance/schedule
+  plumbing, fresh archive namespace, fold metadata, and worker summary
+  retention/chunk transport.
+- The Finder Fresh-window toggle and batch-role selector, their DOM contract,
+  persistence, request fields, analyzer/operator scripts, fresh-only specs,
+  integration fixtures, scratch audit fixtures, docs, README index entry, and
+  AGENTS contract section.
+- The fresh-window analyzer launchers; `archive/fresh-window` remains absent.
+
+Kept unchanged: legacy AO/Finder execution and archives, auto `config.txt`
+capture, pair summaries, the `captureTradeFilter` fix, normal fresh-entry
+behavior (including its Rust batch seam), `analyze-asset-opportunity-stability.ts`,
+`start-fresh-server.bat`, the Decision Rule Research journal, and legacy
+archives.
+
+Final working-tree line-count delta from HEAD: **124 added, 6,868 removed,
+net -6,744 lines**.
+
+Validation transcript:
+
+```text
+npm run typecheck                              PASS
+npm run typecheck:tests                        PASS
+feature-dom-contracts                         48 passed
+finder-server-plugin                          73 passed
+finder-asset-opportunity-batch-parallel       14 passed
+finder-asset-opportunity-archive              12 passed
+vite-config-bundle                             1 passed
+finder-asset-opportunity-runner               35 passed
+finder-asset-opportunity-oos                  10 passed
+finder-asset-opportunity-metadata              6 passed
+finder-asset-opportunity-stream                2 passed
+finder-asset-opportunity-rust-batch           22 passed
+npm test -- --runInBand                       240 passed, 0 failed
+git diff --check                               PASS
+```
+
+No real batch or push was performed during removal.

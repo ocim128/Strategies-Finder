@@ -182,11 +182,6 @@ lever); Rust-engine runs prefer at most 2 workers. See
 
 Reattach after a tab reload is automatic (2s poll). The last completed Batch output is restored from a compact local snapshot after reload, and Copy summary in server-side mode preserves B&H and OPEN_SCORE sections through scalar summary fields; see [docs/batch-backtest-server-side.md](docs/batch-backtest-server-side.md).
 
-Completed S&P 500 TOP_MEAN coordinator runs are also archived permanently at
-`archive/batch-open-score/<runId>/` with report, metadata, and event JSONL
-files. `TOP_MEAN_ARCHIVE_LOG_DIR` overrides the directory and an empty value
-disables logging; the archive has no TTL.
-
 ## Important Contracts
 
 ### Strategy registration is split
@@ -379,7 +374,6 @@ These are intentionally narrower than the repo itself:
 - `docs/execution-lab-live-trading.md`: Execution Lab live-trade executor boundary, request/response schema, and safety rules
 - `docs/batch-backtest-server-side.md`: server-side Batch Backtest, artifact retention, OPEN_SCORE USD Replay, S&P 500 TOP_MEAN, and memory budget
 - `docs/finder-server-side.md`: server-owned Finder Symbol Universe (one server job owns all strategies + OOS), heap budget, scalar-only wire contract, Stop scoped by run id, and tab-reload reattach via `/api/finder/status`
-- `docs/fresh-window-research.md`: fresh-window research mode — hardened AO measurement (engine-parity execution outcomes, full-pool controls, point-in-time folds, fail-closed identity), collection/judged/replication roles, and the S0-first analyzer
 - `docs/alpaca-ibkr-sync.md`: Alpaca-backed IBKR Data workflow, source guards, and aggregation
 - `docs/cross-symbol.md`: cross-symbol strategy runtime and support matrix
 - `docs/synthetic-pairs.md`: synthetic pair generation and supported surfaces

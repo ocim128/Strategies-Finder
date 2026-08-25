@@ -30,8 +30,6 @@ import { strategyRegistry } from "../strategyRegistry";
 import {
     processFinderAssetOpportunityBatchRun,
     __testInternals,
-    appendFreshWindowSummaryRowsWithinCap,
-    FRESH_WINDOW_SUMMARY_ROWS_PER_TASK_CAP,
 } from "../lib/finder/server/finder-vite-plugin";
 import {
     resolveAssetOpportunityBatchWorkerCount,
@@ -47,8 +45,6 @@ import {
     runAssetOpportunityBatchWorkerTask,
     type AssetOpportunityBatchWorkerTask,
 } from "../lib/finder/server/finder-asset-opportunity-batch-worker";
-import { createServerFinderAssetOpportunityLoadContext } from "../lib/finder/server/server-finder-data-loader";
-import type { FinderSelectedStrategy } from "../lib/finder/finder-runner";
 import type { FinderAssetOpportunityBatchStreamEvent } from "../lib/finder/server/finder-stream-types";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions } from "../lib/types/finder";
@@ -95,15 +91,6 @@ function makeCandles(closes: number[]): OHLCVData[] {
         low: close - 1,
         close,
         volume: 1000,
-    }));
-}
-
-function freshFoldSchedule(): Array<{ holdoutBars: number; foldEnd: number; oosStart: number; oosEnd: number }> {
-    return Array.from({ length: 25 }, (_, index) => ({
-        holdoutBars: (index + 1) * 12,
-        foldEnd: 1_700_000_000 + ((100 + index) * 300),
-        oosStart: 1_700_000_000 + ((101 + index) * 300),
-        oosEnd: 1_700_000_000 + ((112 + index) * 300),
     }));
 }
 
@@ -171,12 +158,9 @@ function createInProcessRunnerFactory(options: FakeRunnerOptions): AssetOpportun
                 loadDataset: async (symbol) => options.datasets.get(symbol) ?? [],
                 abortSignal: signal,
                 isCancelled: () => signal.aborted,
-            onProgress: (progress) => {
-                events.onProgress(task, progress);
-            },
-            onCandidateSummaryChunk: (rows) => {
-                events.onCandidateSummaryChunk?.(task, rows);
-            },
+                onProgress: (progress) => {
+                    events.onProgress(task, progress);
+                },
                 runLog: (event, payload) => {
                     events.onRunLog(event, payload);
                 },
@@ -246,7 +230,6 @@ interface BatchRunArgs {
     optionsOverrides?: Partial<FinderOptions>;
     /** Capture sink for the JSONL run log; omitted disables logging. */
     runLog?: (event: string, payload: Record<string, unknown>) => void;
-    researchProgram?: "fresh-window";
 }
 
 async function runAssetBatch(
@@ -257,19 +240,6 @@ async function runAssetBatch(
     const events: FinderAssetOpportunityBatchStreamEvent[] = [];
     const appended: string[] = [];
     const contents: string[] = [];
-    const runSettings = args.researchProgram === "fresh-window"
-        ? {
-            ...settings,
-            executionModel: "next_open" as const,
-            allowSameBarExit: false,
-            riskMode: "percentage" as const,
-            stopLossEnabled: true,
-            stopLossPercent: 2,
-            takeProfitEnabled: true,
-            takeProfitPercent: 2,
-        }
-        : settings;
-    const fresh = args.researchProgram === "fresh-window";
     setRunOwnerForTests(args.owner);
     await processFinderAssetOpportunityBatchRun(
         {
@@ -277,7 +247,7 @@ async function runAssetBatch(
             interval: "5m",
             symbols,
             options: makeBatchOptions(symbols, args.optionsOverrides),
-            settings: runSettings,
+            settings,
             capitalSettings,
             selectedStrategies: [{ key: STRATEGY_KEY, name: batchStrategy.name, strategy: batchStrategy }],
             useRustEnginePreference: false,
@@ -287,17 +257,8 @@ async function runAssetBatch(
             minFreshSupport: 1,
             archiveSort: null,
             runLog: args.runLog ?? null,
-            batch: {
-                startHoldoutBars: fresh ? 12 : args.start,
-                endHoldoutBars: fresh ? 300 : args.end,
-            },
+            batch: { startHoldoutBars: args.start, endHoldoutBars: args.end },
             ...(args.factory ? { batchTaskRunnerFactory: args.factory } : {}),
-            ...(args.researchProgram ? {
-                researchProgram: args.researchProgram,
-                ...(fresh ? { batchRole: "collection" as const } : {}),
-                ...(fresh ? { foldSchedule: freshFoldSchedule() } : {}),
-                ...(fresh ? { dataSyncSnapshot: "sync-2026-08-23", gitCommit: "abc123" } : {}),
-            } : {}),
         },
         (event) => events.push(event),
         args.owner,
@@ -319,14 +280,6 @@ function extractIterations(events: FinderAssetOpportunityBatchStreamEvent[]): It
 }
 
 describe("finder Asset Opportunity batch parallel execution", () => {
-    it("bounds fresh-window summary retention per task and rejects overflow", () => {
-        const target: any[] = [];
-        const row = {} as any;
-        expect(appendFreshWindowSummaryRowsWithinCap(target, Array.from({ length: FRESH_WINDOW_SUMMARY_ROWS_PER_TASK_CAP }, () => row))).to.equal(true);
-        expect(target).to.have.length(FRESH_WINDOW_SUMMARY_ROWS_PER_TASK_CAP);
-        expect(appendFreshWindowSummaryRowsWithinCap(target, [row])).to.equal(false);
-        expect(target).to.have.length(FRESH_WINDOW_SUMMARY_ROWS_PER_TASK_CAP);
-    });
     before(() => {
         strategyRegistry.register(STRATEGY_KEY, batchStrategy);
     });
@@ -368,39 +321,6 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         });
 
         expect(output.assetDiagnostics.totalAssets).to.equal(1);
-    });
-
-    it("round-trips bounded fresh-window summary chunks through the worker protocol", async () => {
-        const run = await runAssetBatch({
-            owner: 8112,
-            start: 2,
-            end: 2,
-            runId: "fresh-worker-summary-chunks",
-            researchProgram: "fresh-window",
-            factory: createInProcessRunnerFactory({ datasets: longUpDownDatasets() }),
-        });
-        expect(run.appended).to.include("oos-fold-identities-12-bars.txt");
-        const identityContent = run.contents[run.appended.indexOf("oos-fold-identities-12-bars.txt")]!;
-        expect(identityContent).to.contain("Declared row count:");
-        expect(identityContent).to.contain("identityHash");
-    });
-
-    it("passes a distinct foldEnd from every schedule entry to every worker task", async () => {
-        const seen = new Map<number, number>();
-        await runAssetBatch({
-            owner: 8113,
-            start: 2,
-            end: 2,
-            runId: "fresh-fold-schedule-tasks",
-            researchProgram: "fresh-window",
-            factory: createInProcessRunnerFactory({
-                datasets: longUpDownDatasets(),
-                onTaskStart: (task) => seen.set(task.holdoutBars, task.foldEnd ?? 0),
-            }),
-        });
-        expect(seen.size).to.equal(25);
-        expect(seen.get(12)).to.equal(1_700_030_000);
-        expect(seen.get(300)).to.equal(1_700_037_200);
     });
 
     it("resolves the worker count from env override, holdout count, cores, and the system-memory ceiling", () => {
@@ -822,131 +742,6 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(iterations[2]!.assetDiagnostics!.failedAssets).to.deep.equal([]);
         const done = events[events.length - 1]!;
         expect(done.type).to.equal("asset_batch_done");
-    });
-
-    it("re-slices a cached raw dataset for each fold", async () => {
-        const cacheStrategy: FinderSelectedStrategy = {
-            key: "reaudit-cache",
-            name: "reaudit-cache",
-            strategy: {
-                name: "reaudit-cache",
-                description: "cache fold fixture",
-                defaultParams: {},
-                paramLabels: {},
-                execute(data: OHLCVData[]) {
-                    const last = data.at(-1);
-                    return last ? [{ time: last.time, type: "buy", price: last.close }] : [];
-                },
-            },
-        };
-        const options = {
-            mode: "random",
-            scope: "asset_opportunity",
-            sortPriority: ["netProfit"],
-            topN: 1,
-            maxRuns: 1,
-            dataSlice: "all",
-            assetOpportunity: {
-                symbols: ["PAIR"],
-                evalLastBars: 1000,
-                oosIgnoreLastBars: 12,
-                oosHorizons: [12, 18, 24],
-                candidatePoolSize: 1,
-                minFreshSupport: 1,
-            },
-        } as unknown as FinderOptions;
-        const cacheSettings: BacktestSettings = {
-            executionModel: "next_open",
-            tradeDirection: "long",
-            allowSameBarExit: false,
-            riskMode: "percentage",
-            stopLossEnabled: true,
-            stopLossPercent: 2,
-            takeProfitEnabled: true,
-            takeProfitPercent: 2,
-            slippageBps: 0,
-        };
-        const raw = Array.from({ length: 24 }, (_, index) => ({
-            time: (100 + index * 100) as Time,
-            open: 100 + index,
-            high: 101 + index,
-            low: 99 + index,
-            close: 100 + index,
-            volume: 1_000,
-        }));
-        const context = createServerFinderAssetOpportunityLoadContext(1);
-        let rawLoadCalls = 0;
-        const makeTask = (foldEnd: number, taskIndex: number): AssetOpportunityBatchWorkerTask => ({
-            taskIndex,
-            holdoutBars: taskIndex === 0 ? 12 : 24,
-            runId: "reaudit-cache",
-            interval: "100s",
-            symbols: ["PAIR"],
-            options,
-            settings: cacheSettings,
-            capitalSettings: { ...capitalSettings, commission: 0 },
-            strategyKeys: [],
-            exitStrategyKeys: [],
-            useRustEnginePreference: false,
-            providerBySymbol: null,
-            candidatePoolSize: 1,
-            minFreshSupport: 1,
-            foldEnd,
-            freshFoldWindow: {
-                oosStart: foldEnd + 100,
-                oosEnd: foldEnd + 1_200,
-            },
-            loadDatasetIsRaw: true,
-            researchProgram: "fresh-window",
-            inlineDatasets: { PAIR: raw },
-        });
-        const run = async (task: AssetOpportunityBatchWorkerTask) => {
-            const summaryRows: any[] = [];
-            const result = await runAssetOpportunityBatchWorkerTask({
-                task,
-                strategySelection: { selectedStrategies: [cacheStrategy] },
-                loadDataset: async () => {
-                    rawLoadCalls += 1;
-                    return raw;
-                },
-                loadForwardDataset: async () => raw,
-                assetLoadContext: context,
-                abortSignal: new AbortController().signal,
-                isCancelled: () => false,
-                onProgress: () => undefined,
-                onCandidateSummaryChunk: (rows) => summaryRows.push(...rows),
-            });
-            return { result, summaryRows };
-        };
-
-        const firstRun = await run(makeTask(1500, 0));
-        const secondRun = await run(makeTask(1700, 1));
-        const firstSlowest = firstRun.result.assetDiagnostics.slowestAssets?.[0];
-        const secondSlowest = secondRun.result.assetDiagnostics.slowestAssets?.[0];
-        expect(rawLoadCalls).to.equal(1);
-        expect(context.datasetCache).to.not.equal(undefined);
-        expect({
-            hits: context.datasetCache!.hitCount(),
-            misses: context.datasetCache!.missCount(),
-        }).to.deep.equal({ hits: 1, misses: 1 });
-        expect(firstRun.result.foldMetadata).to.deep.equal({
-            foldEnd: 1500,
-            searchWindowEnd: 1500,
-            oosStart: 1600,
-            oosEnd: 2700,
-        });
-        expect(secondRun.result.foldMetadata).to.deep.equal({
-            foldEnd: 1700,
-            searchWindowEnd: 1700,
-            oosStart: 1800,
-            oosEnd: 2900,
-        });
-        expect(firstRun.summaryRows[0]?.forwardOutcomes?.["12"]?.entryTimestamp).to.equal("1600");
-        expect(secondRun.summaryRows[0]?.forwardOutcomes?.["12"]?.entryTimestamp).to.equal("1800");
-        expect(firstSlowest?.historicalBars).to.equal(3);
-        expect(firstSlowest?.slicedHistoricalBars).to.equal(3);
-        expect(secondSlowest?.historicalBars).to.equal(5);
-        expect(secondSlowest?.slicedHistoricalBars).to.equal(5);
     });
 
     it("sizes the dataset LRU by the same memory budget as the worker pool", () => {

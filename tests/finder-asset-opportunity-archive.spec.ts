@@ -6,16 +6,11 @@ import path from "node:path";
 import {
     appendAssetOpportunityArchiveBlock,
     appendAssetOpportunityArchivePairSummary,
-    appendAssetOpportunityArchiveFoldIdentities,
     appendAssetOpportunityArchiveRunConfig,
     buildAssetOpportunityArchiveBlockText,
     buildAssetOpportunityArchiveFilename,
     buildAssetOpportunityPairSummaryBlockText,
     buildAssetOpportunityPairSummaryFilename,
-    buildAssetOpportunityFoldIdentityFilename,
-    buildAssetOpportunityFoldIdentityBlockText,
-    ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER,
-    isAssetOpportunityResearchProgram,
     resolveAssetOpportunityArchiveDir,
 } from "../lib/finder/server/finder-asset-opportunity-archive";
 
@@ -23,11 +18,6 @@ describe("Asset Opportunity archive writer", () => {
     it("derives the archive dir from the configured root only", () => {
         const dir = resolveAssetOpportunityArchiveDir("/repo/project");
         expect(dir).to.equal(path.join("/repo/project", "archive", "asset opportunity"));
-        expect(resolveAssetOpportunityArchiveDir("/repo/project", "fresh-window"))
-            .to.equal(path.join("/repo/project", "archive", "fresh-window"));
-        expect(isAssetOpportunityResearchProgram("fresh-window")).to.equal(true);
-        expect(isAssetOpportunityResearchProgram("fresh-window/../escape")).to.equal(false);
-        expect(isAssetOpportunityResearchProgram("../escape")).to.equal(false);
     });
 
     it("builds per-N filenames and rejects non-integer / non-positive N", () => {
@@ -47,56 +37,6 @@ describe("Asset Opportunity archive writer", () => {
         expect(() => buildAssetOpportunityPairSummaryFilename(Number.NaN)).to.throw();
     });
 
-    it("writes a scalar full-pool identity block with a declared row count", async () => {
-        const rows = [{
-            symbol: "PAIR_A",
-            strategyKey: "strategy-a",
-            candidateFingerprint: "{x:1}",
-            identityHash: "hash-a",
-            candidateIndex: 0,
-            evaluationOk: true,
-            passesTradeFilter: true,
-            netProfitPercent: 1,
-            totalTrades: 2,
-            tpHitCount: 1,
-            medianBarsToTP: 3,
-            medianBarsToTerminal: 4,
-            tpFirstShare: 0.5,
-        }];
-        expect(buildAssetOpportunityFoldIdentityFilename(12)).to.equal("oos-fold-identities-12-bars.txt");
-        expect(buildAssetOpportunityFoldIdentityBlockText({
-            timestamp: "t",
-            batchRunId: "b",
-            batchRole: "collection",
-            holdoutBars: 12,
-            declaredRowCount: 1,
-            controlSeed: 42,
-            controlDrawIdentities: [{ symbol: "PAIR_A", identityHash: "hash-a" }],
-            controlDrawDigest: "digest-a",
-            rows,
-        })).to.contain("Declared row count: 1");
-        const calls: Array<{ dir: string; filename: string; content: string }> = [];
-        await appendAssetOpportunityArchiveFoldIdentities({
-            root: "/virtual/root",
-            program: "fresh-window",
-            batchRunId: "b",
-            batchRole: "collection",
-            holdoutBars: 12,
-            rows,
-            controlSeed: 42,
-            controlDrawIdentities: [{ symbol: "PAIR_A", identityHash: "hash-a" }],
-            controlDrawDigest: "digest-a",
-            append: async (dir, filename, content) => { calls.push({ dir, filename, content }); },
-        });
-        expect(calls[0]!.dir).to.equal(path.join("/virtual/root", "archive", "fresh-window"));
-        expect(calls[0]!.filename).to.equal("oos-fold-identities-12-bars.txt");
-        expect(calls[0]!.content).to.contain("hash-a");
-        expect(calls[0]!.content).to.contain("Control draw digest: digest-a");
-        expect(calls[0]!.content).to.contain("Batch role: collection");
-        expect(calls[0]!.content).to.contain("Control draw identities: [{\"symbol\":\"PAIR_A\",\"identityHash\":\"hash-a\"}]");
-        expect(calls[0]!.content).to.contain(ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER);
-    });
-
     it("writes one delimited block containing timestamp, run id, holdout, and compact JSON", async () => {
         const root = mkdtempSync(path.join(tmpdir(), "finder-archive-"));
         try {
@@ -106,14 +46,6 @@ describe("Asset Opportunity archive writer", () => {
                 batchRunId: "batch-1",
                 holdoutBars: 4,
                 topResults,
-                foldMetadata: {
-                    foldEnd: 1_700_000_000,
-                    searchWindowEnd: 1_700_000_000,
-                    oosStart: 1_700_001_000,
-                    oosEnd: 1_700_002_000,
-                },
-                dataSyncSnapshot: "sync-fixture",
-                gitCommit: "commit-fixture",
                 timestamp: "2026-01-01T00:00:00.000Z",
             });
 
@@ -125,9 +57,6 @@ describe("Asset Opportunity archive writer", () => {
             expect(content).to.contain("Batch run id: batch-1");
             expect(content).to.contain("OOS holdout: 4 bars");
             expect(content).to.contain("Archive sort: run_default");
-            expect(content).to.contain("Fold end: 1700000000");
-            expect(content).to.contain("Data sync snapshot: sync-fixture");
-            expect(content).to.contain("Git commit: commit-fixture");
             expect(content).to.contain(JSON.stringify(topResults));
             expect(content).to.match(/\n$/);
         } finally {
@@ -195,8 +124,7 @@ describe("Asset Opportunity archive writer", () => {
         });
         expect(text.startsWith("=".repeat(80))).to.equal(true);
         const jsonStart = text.indexOf("[");
-        const markerStart = text.indexOf(ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER);
-        expect(JSON.parse(text.slice(jsonStart, markerStart).trim())).to.deep.equal([{ rank: 1 }]);
+        expect(JSON.parse(text.slice(jsonStart))).to.deep.equal([{ rank: 1 }]);
     });
 
     it("serializes the optional all-candidate baseline before the top results", () => {
@@ -242,9 +170,7 @@ describe("Asset Opportunity archive writer", () => {
         });
         expect(text).to.contain("Pair summaries: JSON");
         expect(text).to.contain("OOS holdout: 12 bars");
-        const jsonStart = text.lastIndexOf("\n[") + 1;
-        const markerStart = text.indexOf(ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER);
-        expect(JSON.parse(text.slice(jsonStart, markerStart).trim())).to.deep.equal(pairSummaries);
+        expect(JSON.parse(text.slice(text.lastIndexOf("\n[")))).to.deep.equal(pairSummaries);
 
         const calls: Array<{ dir: string; filename: string; content: string }> = [];
         const result = await appendAssetOpportunityArchivePairSummary({
@@ -288,7 +214,6 @@ describe("Asset Opportunity archive writer", () => {
             expect(content).to.contain("Batch run id: batch-1");
             expect(content).to.contain("Batch run id: batch-2");
             expect(content).to.contain("Run configuration: JSON");
-            expect(content.match(new RegExp(ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER, "g")) ?? []).to.have.length(2);
             // Each block's JSON body round-trips the full config; two blocks,
             // each delimited by an opening and closing separator line.
             const marker = `Run configuration: JSON\n${"=".repeat(80)}`;
@@ -300,7 +225,6 @@ describe("Asset Opportunity archive writer", () => {
                 let body = content.slice(start + marker.length);
                 const nextSeparator = body.indexOf("=".repeat(80));
                 if (nextSeparator !== -1) body = body.slice(0, nextSeparator);
-                body = body.slice(0, body.indexOf(ASSET_OPPORTUNITY_ARCHIVE_RECORD_COMPLETE_MARKER));
                 bodies.push(JSON.parse(body.trim()));
                 cursor = start + marker.length;
             }
