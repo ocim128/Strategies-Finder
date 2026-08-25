@@ -2840,7 +2840,7 @@ export class BatchBacktestService {
                 ),
             }];
         let html = `<div class="batch-open-score-details-heading">OPEN_SCORE Event Details — ${escapeHtml(selector)}</div>`;
-        html += `<div class="batch-open-score-details-note">Showing ${escapeHtml(selector)} only. Return is the selected asset's net USD return after configured slippage and commission; control is the mean return of the other eligible assets in that selector's pool. These rows are intentionally excluded from Copy OPEN_SCORE and Copy Result.</div>`;
+        html += `<div class="batch-open-score-details-note">Showing ${escapeHtml(selector)} only. Return is the selected asset's net USD return after configured slippage and commission; control is the selector-specific comparison pool (for TOP_MEAN_RAW_UNIQUE_V1, the TOP_MEAN tied set, including the selected asset). These rows are intentionally excluded from Copy OPEN_SCORE and Copy Result.</div>`;
         if (sections.length === 0 || sections.every((section) => section.rows.length === 0)) {
             html += `<div class="batch-open-score-details-empty">No eligible ${escapeHtml(selector)} events for this replay window.</div>`;
             return html;

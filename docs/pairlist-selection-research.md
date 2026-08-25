@@ -380,3 +380,66 @@ requires the standing frozen rule (CI95 lower bound > 0 AND >=8/10 positive bloc
 future data; every evaluation appends its date, n, and full result to this log regardless
 of outcome. Falsification: a future evaluation failing the rule, or EX-dominant turning
 negative at scale, retires the candidate.
+
+## 14. Registered experiment: TOP_MEAN_RAW_UNIQUE_WF_V1 (2026-08-25)
+
+This append-only preregistration recorded the outcome-blind walk-forward experiment.
+Its pool method was
+`CORR_SCALE_STABILITY35_V1`, contract revision
+`CORR_SCALE_STABILITY35_V1_RECOVERED_R1`, catalog `BAL679.v1`, and return transform
+`SIMPLE_CLOSE_TO_CLOSE_V1` (`close_t / close_(t-1) - 1`). Correlations, standard
+deviations, `z`, `v`, and pair scores use simple returns. The recovery artifact is
+behavioral evidence for method recovery, not profitability evidence; no outcomes
+were accessed before the correction. Log-return reconstruction is rejected and out
+of scope, not a diagnostic arm.
+
+The pinned artifact is
+`archive/pool-analysis/CORR_SCALE_STABILITY35_V1-1787529600.json` with SHA-256
+`d0f39911ef3e6475bf52e4c9fab802fe03d48b4daa8ed5fc7e02e9a426ed7215`. Its pinned
+identities are evidence
+`a49f7ecd4575a468fdebe63b1491be0fc9f28fab3d9ae3bbba5c96382bdd2177`, selected
+assets `6a8f1d8ad345412cd09933545ec7b733a26d518520fea5c070bda06646510d9c`, ordered
+pairs `f0bfdac1c686995a80705a2c4f08c6c23833815485453a3a19744da21f60a405`, and
+sorted pair set `11f30dd37269b303a7310904d95b443bd9aabfd37912a25f0854e716f87f9a65`.
+
+The frozen schedule was 36 quarterly cutoffs, with the exact TOP_MEAN tie-skip
+baseline, TOP_MEAN_RAW_UNIQUE_V1 candidate, matched uniform control, existing
+horizons/costs/bootstrap/information gate/pass-fail rules. Production TOP_MEAN is
+unchanged. Phase 0 parity passed; the formal outcome run and its disposition are
+recorded below.
+
+## 15. TOP_MEAN_RAW_UNIQUE_V1 final disposition (2026-08-25)
+
+The corrected R4 formal evaluation is valid but failed the preregistered adoption
+rule. The auditor independently reproduced the outcome calculations and confirmed
+`CORRECTED_FAIL_CONFIRMED`. This is a failure to qualify for adoption, not proof
+that the resolver has no edge.
+
+Corrected artifacts:
+
+- Freeze: `archive/pool-analysis/TOP_MEAN_RAW_UNIQUE_WF_V1_CORRECTED_R4/DECISIONS_FROZEN.json`
+- Result: `archive/pool-analysis/TOP_MEAN_RAW_UNIQUE_WF_V1_CORRECTED_R4_PHASE3_4/result.json`
+- Report: `archive/pool-analysis/TOP_MEAN_RAW_UNIQUE_WF_V1_CORRECTED_R4_PHASE3_4/report.txt`
+- Outcome manifest: `archive/pool-analysis/TOP_MEAN_RAW_UNIQUE_WF_V1_CORRECTED_R4_PHASE3_4/outcome-run-manifest.json`
+- Phase 1–2 implementation hash: `4f599561c1c4dda0fe4009af3f7d159089d2e0ca07a054144433120381b31bea`
+- Phase 3–4 implementation hash: `a8b5197cb2ef5e2ff438f148c552a3291da11d68fa463fb6f9ff4dc37b1043a5`
+
+The corrected result covered 36/36 folds and 1,224 mature H48 events. Deltas
+were H12 `+0.00127017` with CI `[-0.00044472, +0.00280604]`, H24 `+0.00244121`
+with CI `[-0.00006260, +0.00408738]`, and H48 `+0.00403653` with CI
+`[+0.00103146, +0.00756747]`. H48 therefore had a positive confidence interval,
+but missed the registered `>=0.005` threshold and had only 22/36 positive cutoffs
+instead of the required 24. Candidate incremental P&L was `$8,566.75`, below the
+uniform-control P95 of `$13,157.44`.
+
+The walk-forward implementation, plan, scripts, and focused tests are retired as
+completed research machinery; the immutable archive artifacts remain for audit and
+reproducibility. R3 artifacts remain preserved but are superseded by corrected R4.
+
+`TOP_MEAN_RAW_UNIQUE_V1` is nevertheless retained in OPEN_SCORE as an offline
+diagnostic arm. Its rule is: form the TOP_MEAN tied set, select its unique maximum
+raw score, and skip residual raw ties. Its comparison control is the mean return of
+that TOP_MEAN tied set, including the selected asset. OPEN_SCORE also exposes the
+arm's selected-asset breakdown and dominant-asset exclusion. This arm does not
+change the live/coordinator TOP_MEAN selector or promote the failed candidate to a
+production resolver.

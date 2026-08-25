@@ -201,6 +201,68 @@ describe("batch-open-score-usd-replay-engine Phase 3 MAX_ACTIVE extensions", () 
         expect(report).to.include(`MEAN_EX_${h.topMeanDominantAsset}`);
     });
 
+    it("TOP_MEAN_RAW_UNIQUE_V1 selects a unique raw maximum inside the TOP_MEAN tied set", async () => {
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)]),
+            makePair("AAA", "X2", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)]),
+            makePair("CCC", "Z1", [makeTrade("long", T0 + 1000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, (i) => i === 3 ? 110 : 100),
+            makeTarget("BBB", 10, (i) => i === 3 ? 90 : 100),
+            makeTarget("CCC", 10, () => 100),
+            makeTarget("X1", 10, () => 100),
+            makeTarget("X2", 10, () => 100),
+            makeTarget("Y1", 10, () => 100),
+            makeTarget("Z1", 10, () => 100),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        const h = result.horizons[0]!;
+        expect(h.topMeanRawUniqueV1.events).to.equal(1);
+        expect(h.topMeanRawUniqueV1.topMean).to.be.closeTo(0.1, 1e-12);
+        // The research control is the mean of the TOP_MEAN tied set, including
+        // the selected AAA return: (0.1 - 0.1 + 0) / 3 = 0.
+        expect(h.topMeanRawUniqueV1.randomMean).to.be.closeTo(0, 1e-12);
+        expect(h.topMeanRawUniqueV1.delta).to.be.closeTo(0.1, 1e-12);
+        expect(h.topMeanRawUniqueV1ByAsset[0]?.asset).to.equal("AAA");
+        expect(h.topMeanRawUniqueV1ExDominant.events).to.equal(0);
+        const detail = result.eventDetails?.find((row) => row.selector === "TOP_MEAN_RAW_UNIQUE_V1");
+        expect(detail?.asset).to.equal("AAA");
+        expect(detail?.eligibleCandidates).to.equal(3);
+        expect(detail?.controlReturn).to.be.closeTo(0, 1e-12);
+        const latest = result.latestSelections?.selections.find((selection) => selection.selector === "TOP_MEAN_RAW_UNIQUE_V1");
+        expect(latest?.asset).to.equal("AAA");
+        const report = result.reportLines.join("\n");
+        expect(report).to.include("TOP_MEAN_RAW_UNIQUE_V1");
+        expect(report).to.include("TOP_MEAN_RAW_UNIQUE_V1 selected assets =");
+        expect(report).to.include("TOP_MEAN_RAW_UNIQUE_V1_EX_AAA");
+    });
+
+    it("TOP_MEAN_RAW_UNIQUE_V1 skips residual raw ties", async () => {
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, () => 100),
+            makeTarget("BBB", 10, () => 100),
+            makeTarget("X1", 10, () => 100),
+            makeTarget("Y1", 10, () => 100),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        expect(result.horizons[0]!.topMeanRawUniqueV1.events).to.equal(0);
+        expect(result.latestSelections?.selections.find((selection) => selection.selector === "TOP_MEAN_RAW_UNIQUE_V1")?.reason).to.equal("tied");
+    });
+
     it("TOP_MEAN_EX_DOM drops the dominant asset's events, mirroring MAX_ACTIVE_EX_DOM", async () => {
         // Two events. At T1: AAA has 3 long pairs (raw=3, mean=1.0); BBB has
         //   1 long pair (raw=1, mean=1.0). TOP_MEAN ties AAA=BBB at 1.0 and
