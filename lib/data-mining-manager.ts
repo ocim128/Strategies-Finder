@@ -49,7 +49,7 @@ export class DataMiningManager {
         return getSyntheticPairMetadata();
     }
 
-    public async regenerateSyntheticPair(baseSymbol: string, quoteSymbol: string, interval: string): Promise<void> {
+    public async regenerateSyntheticPair(baseSymbol: string, quoteSymbol: string, interval: string): Promise<boolean> {
         const currentPair = getSyntheticPairMetadata();
         if (
             currentPair
@@ -60,7 +60,7 @@ export class DataMiningManager {
             && this.barsMatchInterval(state.ohlcvData, interval)
         ) {
             this.recordDiagnostic('synth_regenerate_skipped_current', { base: baseSymbol, quote: quoteSymbol, interval });
-            return;
+            return true;
         }
 
         this.recordDiagnostic('synth_regenerate_from_config', { base: baseSymbol, quote: quoteSymbol, interval });
@@ -72,7 +72,7 @@ export class DataMiningManager {
         if (this.dom) this.updateSynthDerivedSymbol();
 
         // Generate directly — bypasses DOM availability check
-        await this.executeSyntheticPairGeneration(baseSymbol, quoteSymbol, interval);
+        return this.executeSyntheticPairGeneration(baseSymbol, quoteSymbol, interval);
     }
 
     public init(): void {
@@ -722,8 +722,8 @@ export class DataMiningManager {
         await this.executeSyntheticPairGeneration(baseSymbol, quoteSymbol, interval);
     }
 
-    private async executeSyntheticPairGeneration(baseSymbol: string, quoteSymbol: string, interval: string): Promise<void> {
-        if (this.isGeneratingSynthetic) return;
+    private async executeSyntheticPairGeneration(baseSymbol: string, quoteSymbol: string, interval: string): Promise<boolean> {
+        if (this.isGeneratingSynthetic) return false;
 
         const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
         const available = resolveSyntheticAvailableIntervals(baseSymbol, quoteSymbol);
@@ -779,7 +779,7 @@ export class DataMiningManager {
                         `Loaded ${cached.length} cached synthetic bars for ${syntheticSymbol} (no re-fetch).`,
                         'success'
                     );
-                    return;
+                    return true;
                 }
             }
 
@@ -812,13 +812,13 @@ export class DataMiningManager {
                 this.recordDiagnostic('synth_zero_data', { leg: 'base', symbol: baseSymbol, sourceInterval });
                 uiManager.showToast(`No data for ${baseSymbol} on ${sourceInterval}.`, 'error');
                 this.setStatus(`No data for ${baseSymbol}.`, 'error');
-                return;
+                return false;
             }
             if (result.quote.length === 0) {
                 this.recordDiagnostic('synth_zero_data', { leg: 'quote', symbol: quoteSymbol, sourceInterval });
                 uiManager.showToast(`No data for ${quoteSymbol} on ${sourceInterval}.`, 'error');
                 this.setStatus(`No data for ${quoteSymbol}.`, 'error');
-                return;
+                return false;
             }
 
             if (!this.barsMatchInterval(syntheticBars, interval)) {
@@ -844,11 +844,13 @@ export class DataMiningManager {
                 `Loaded ${syntheticBars.length} synthetic bars for ${syntheticSymbol}${subBarNote} (dropped ${result.meta.droppedBars}).`,
                 'success'
             );
+            return true;
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.recordDiagnostic('synth_error', { error: message });
             uiManager.showToast(`Synthetic pair failed: ${message}`, 'error');
             this.setStatus(`Synthetic pair failed: ${message}`, 'error');
+            return false;
         } finally {
             this.isGeneratingSynthetic = false;
             if (this.dom?.synthGenerateButton) this.dom.synthGenerateButton.disabled = false;

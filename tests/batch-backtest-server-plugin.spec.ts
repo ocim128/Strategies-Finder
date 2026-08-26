@@ -27,7 +27,7 @@ const {
     getParsedArtifactCacheSizeForTests,
     setRunOwnerForTests,
     completeRunForTests,
-    setMinerOwnerForTests,
+    setAnalysisOwnerForTests,
     getRunStateForTests,
     setRunStateForTests,
     handleStatusRequest,
@@ -1739,11 +1739,11 @@ describe("batch-backtest server plugin processOpenScoreUsdReplay", () => {
     it("fatals when the fingerprint is stale (settings/symbols changed)", async () => {
         const { interval } = await setupOnePairArtifacts();
         try {
-            const minerOwner = 9052;
-            setMinerOwnerForTests(minerOwner);
+            const analysisOwner = 9052;
+            setAnalysisOwnerForTests(analysisOwner);
             const events: unknown[] = [];
-            await processOpenScoreUsdReplay("stale-fingerprint", interval, (e) => events.push(e), minerOwner, [12]);
-            setMinerOwnerForTests(0);
+            await processOpenScoreUsdReplay("stale-fingerprint", interval, (e) => events.push(e), analysisOwner, [12]);
+            setAnalysisOwnerForTests(0);
             const first = events[0] as { type: string; error?: string };
             expect(first.type).to.equal("fatal");
             expect(first.error).to.match(/rerun batch|fingerprint/i);
@@ -1757,16 +1757,16 @@ describe("batch-backtest server plugin processOpenScoreUsdReplay", () => {
     it("fatals when horizons are missing or invalid", async () => {
         const { fingerprint, interval } = await setupOnePairArtifacts();
         try {
-            const minerOwner = 9053;
-            setMinerOwnerForTests(minerOwner);
+            const analysisOwner = 9053;
+            setAnalysisOwnerForTests(analysisOwner);
             for (const bad of [null, [], [0], [-1, 0.5]] as Array<number[] | null>) {
                 const events: unknown[] = [];
-                await processOpenScoreUsdReplay(fingerprint, interval, (e) => events.push(e), minerOwner, bad);
+                await processOpenScoreUsdReplay(fingerprint, interval, (e) => events.push(e), analysisOwner, bad);
                 const first = events[0] as { type: string; error?: string };
                 expect(first.type).to.equal("fatal");
                 expect(first.error).to.match(/horizon/i);
             }
-            setMinerOwnerForTests(0);
+            setAnalysisOwnerForTests(0);
             expect(hasStoredMineArtifacts()).to.equal(true);
         } finally {
             await releaseLastResults("test_end");
@@ -1776,8 +1776,8 @@ describe("batch-backtest server plugin processOpenScoreUsdReplay", () => {
     it("completes a fixture run, preserves artifacts, and emits start -> phases -> done in order", async () => {
         const { fingerprint, interval } = await setupOnePairArtifacts();
         try {
-            const minerOwner = 9054;
-            setMinerOwnerForTests(minerOwner);
+            const analysisOwner = 9054;
+            setAnalysisOwnerForTests(analysisOwner);
             const events: unknown[] = [];
             // Target loader stub: UP/DOWN datasets are flat so the engine
             // produces finite returns; this is the smallest fixture that
@@ -1788,13 +1788,13 @@ describe("batch-backtest server plugin processOpenScoreUsdReplay", () => {
                 fingerprint,
                 interval,
                 (e) => events.push(e),
-                minerOwner,
+                analysisOwner,
                 [3, 5],
                 null,
                 null,
                 stubLoader,
             );
-            setMinerOwnerForTests(0);
+            setAnalysisOwnerForTests(0);
 
             const types = events.map((e) => (e as { type: string }).type);
             expect(types[0], "first event is start").to.equal("start");
@@ -1821,17 +1821,17 @@ describe("batch-backtest server plugin processOpenScoreUsdReplay", () => {
             const stubLoader = () => Promise.resolve(targetData);
 
             const ownerA = 9055;
-            setMinerOwnerForTests(ownerA);
+            setAnalysisOwnerForTests(ownerA);
             const eventsA: unknown[] = [];
             await processOpenScoreUsdReplay(fingerprint, interval, (e) => eventsA.push(e), ownerA, [3], null, null, stubLoader);
-            setMinerOwnerForTests(0);
+            setAnalysisOwnerForTests(0);
             expect(hasStoredMineArtifacts(), "artifacts retained after first OPEN_SCORE USD").to.equal(true);
 
             const ownerB = 9057;
-            setMinerOwnerForTests(ownerB);
+            setAnalysisOwnerForTests(ownerB);
             const eventsB: unknown[] = [];
             await processOpenScoreUsdReplay(fingerprint, interval, (e) => eventsB.push(e), ownerB, [3], null, null, stubLoader);
-            setMinerOwnerForTests(0);
+            setAnalysisOwnerForTests(0);
             const lastB = eventsB[eventsB.length - 1] as { type: string; ok?: boolean };
             expect(lastB.type).to.equal("done");
             expect(lastB.ok).to.equal(true);
@@ -1852,9 +1852,9 @@ describe("batch-backtest server plugin processOpenScoreUsdReplay", () => {
             // Run with owner=9070 but clobber the lock to a different owner
             // immediately so shouldStop() returns true on the first check.
             const runPromise = processOpenScoreUsdReplay(fingerprint, interval, (e) => events.push(e), 9070, [3], null, null, stubLoader);
-            setMinerOwnerForTests(99999); // different owner -> lostOwnership()=true
+            setAnalysisOwnerForTests(99999); // different owner -> lostOwnership()=true
             await runPromise;
-            setMinerOwnerForTests(0);
+            setAnalysisOwnerForTests(0);
             const last = events[events.length - 1] as { type: string; cancelled?: boolean; summary?: string };
             // Either a cancelled done (graceful observation) or a fatal — both
             // are acceptable Stop outcomes. The contract is "no hang + no

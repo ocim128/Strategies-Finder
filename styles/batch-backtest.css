@@ -530,6 +530,10 @@
     border-bottom: 1px solid hsl(var(--hsl-surface-3) / 0.4);
     font-size: var(--font-size-xs);
     line-height: var(--line-height-tight);
+    /* Progressive rendering hint for 1,000-2,000 row Batch results. The
+     * intrinsic size keeps the document height stable before a row is painted. */
+    content-visibility: auto;
+    contain-intrinsic-size: 0 56px;
 }
 
 .batch-result-row:last-child {

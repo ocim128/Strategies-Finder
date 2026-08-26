@@ -523,33 +523,38 @@ export class FinderUI {
             const summary = document.createElement("summary");
             summary.textContent = `Symbol Breakdown (${item.symbols.length})`;
             details.appendChild(summary);
-            for (const symbolResult of item.symbols) {
-                const line = document.createElement("div");
-                line.className = "finder-sub finder-symbol-row";
-                const badge = document.createElement("span");
-                badge.className = `finder-verdict finder-verdict-${symbolResult.status}`;
-                badge.textContent = this.formatUniverseStatus(symbolResult.status);
-                line.appendChild(badge);
+            let populated = false;
+            details.addEventListener("toggle", () => {
+                if (!details.open || populated) return;
+                populated = true;
+                for (const symbolResult of item.symbols) {
+                    const line = document.createElement("div");
+                    line.className = "finder-sub finder-symbol-row";
+                    const badge = document.createElement("span");
+                    badge.className = `finder-verdict finder-verdict-${symbolResult.status}`;
+                    badge.textContent = this.formatUniverseStatus(symbolResult.status);
+                    line.appendChild(badge);
 
-                const textParts = [symbolResult.symbol, `Bars ${symbolResult.barCount}`];
-                if (symbolResult.result) {
-                    const result = symbolResult.result;
-                    textParts.push(`PnL ${formatNullableCurrency(result.netProfit)}`);
-                    textParts.push(`Exp ${result.expectancy.toFixed(2)}`);
-                    textParts.push(`PF ${formatProfitFactor(result.profitFactor)}`);
-                    textParts.push(`Sharpe ${result.totalTrades >= 5 ? result.sharpeRatio.toFixed(2) : "--"}`);
-                    textParts.push(`Trades ${result.totalTrades}`);
+                    const textParts = [symbolResult.symbol, `Bars ${symbolResult.barCount}`];
+                    if (symbolResult.result) {
+                        const result = symbolResult.result;
+                        textParts.push(`PnL ${formatNullableCurrency(result.netProfit)}`);
+                        textParts.push(`Exp ${result.expectancy.toFixed(2)}`);
+                        textParts.push(`PF ${formatProfitFactor(result.profitFactor)}`);
+                        textParts.push(`Sharpe ${result.totalTrades >= 5 ? result.sharpeRatio.toFixed(2) : "--"}`);
+                        textParts.push(`Trades ${result.totalTrades}`);
+                    }
+                    if (symbolResult.oosResult) {
+                        textParts.push(`OOS PnL ${formatNullableCurrency(symbolResult.oosResult.netProfit)}`);
+                        textParts.push(`OOS PF ${formatProfitFactor(symbolResult.oosResult.profitFactor)}`);
+                    }
+                    if (symbolResult.error) textParts.push(symbolResult.error);
+                    const textSpan = document.createElement("span");
+                    textSpan.textContent = textParts.join(" | ");
+                    line.appendChild(textSpan);
+                    details.appendChild(line);
                 }
-                if (symbolResult.oosResult) {
-                    textParts.push(`OOS PnL ${formatNullableCurrency(symbolResult.oosResult.netProfit)}`);
-                    textParts.push(`OOS PF ${formatProfitFactor(symbolResult.oosResult.profitFactor)}`);
-                }
-                if (symbolResult.error) textParts.push(symbolResult.error);
-                const textSpan = document.createElement("span");
-                textSpan.textContent = textParts.join(" | ");
-                line.appendChild(textSpan);
-                details.appendChild(line);
-            }
+            });
 
             fragment.appendChild(this.createResultRow({
                 index,

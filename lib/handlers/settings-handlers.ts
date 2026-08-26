@@ -30,9 +30,17 @@ const SHARED_DEFAULT_INTERVAL = '120m';
 // Dynamic import keeps data-mining-manager (the entire Data Mining UI) out of
 // the startup chunk — see lib/synthetic-pair-session.ts. Both call sites are
 // async, so this thin wrapper is the only seam.
-async function regenerateSyntheticPair(baseSymbol: string, quoteSymbol: string, interval: string): Promise<void> {
+async function regenerateSyntheticPair(baseSymbol: string, quoteSymbol: string, interval: string): Promise<boolean> {
     const { dataMiningManager } = await import("../data-mining-manager");
-    await dataMiningManager.regenerateSyntheticPair(baseSymbol, quoteSymbol, interval);
+    return dataMiningManager.regenerateSyntheticPair(baseSymbol, quoteSymbol, interval);
+}
+
+let configApplyTail: Promise<void> = Promise.resolve();
+
+function enqueueConfigApply(work: () => Promise<void>): Promise<void> {
+    const next = configApplyTail.then(work, work);
+    configApplyTail = next.catch(() => undefined);
+    return next;
 }
 
 function notifyStrategyConfigsChanged(): void {
@@ -69,66 +77,72 @@ function getSyntheticReloadCount(context: { symbol: string | null; interval: str
     return (willChangeSymbol ? 1 : 0) + (willChangeInterval ? 1 : 0);
 }
 
-export async function applySharedStrategyConfig(
+export function applySharedStrategyConfig(
     config: StrategyConfig,
     context: SharedChartContext,
 ): Promise<void> {
-    await settingsManager.applyStrategyConfig(config);
+    return enqueueConfigApply(async () => {
+        await settingsManager.applyStrategyConfig(config);
 
-    const plan = buildSharedSyntheticApplyPlan({
-        config,
-        currentSymbol: state.currentSymbol,
-        currentInterval: state.currentInterval,
-        context,
+        const plan = buildSharedSyntheticApplyPlan({
+            config,
+            currentSymbol: state.currentSymbol,
+            currentInterval: state.currentInterval,
+            context,
+        });
+
+        if (plan.suppressCount > 0) {
+            dataManager.suppressNextAutoReload(plan.suppressCount);
+        }
+
+        if (state.currentSymbol !== plan.nextSymbol) {
+            setCurrentSymbol(plan.nextSymbol);
+        }
+        if (state.currentInterval !== plan.nextInterval) {
+            setCurrentInterval(plan.nextInterval);
+        }
+
+        if (plan.syntheticPair) {
+            const regenerated = await regenerateSyntheticPair(
+                plan.syntheticPair.baseSymbol,
+                plan.syntheticPair.quoteSymbol,
+                plan.nextInterval
+            );
+            if (!regenerated) throw new Error("Synthetic pair regeneration failed.");
+        }
     });
-
-    if (plan.suppressCount > 0) {
-        dataManager.suppressNextAutoReload(plan.suppressCount);
-    }
-
-    if (state.currentSymbol !== plan.nextSymbol) {
-        setCurrentSymbol(plan.nextSymbol);
-    }
-    if (state.currentInterval !== plan.nextInterval) {
-        setCurrentInterval(plan.nextInterval);
-    }
-
-    if (plan.syntheticPair) {
-        await regenerateSyntheticPair(
-            plan.syntheticPair.baseSymbol,
-            plan.syntheticPair.quoteSymbol,
-            plan.nextInterval
-        );
-    }
 }
 
-async function applyUserStrategyConfig(config: StrategyConfig): Promise<void> {
-    await settingsManager.applyStrategyConfig(config);
+function applyUserStrategyConfig(config: StrategyConfig): Promise<void> {
+    return enqueueConfigApply(async () => {
+        await settingsManager.applyStrategyConfig(config);
 
-    const context = getStrategyConfigChartContext(config);
-    // When the saved config carries a synthetic pair, the chart symbol is a
-    // derived key (e.g. ZECAPT) that the regular data-fetcher cannot load —
-    // it would route to Binance and fail with HTTP 400 + CORS. Suppress the
-    // auto-reload that the symbol/interval change would trigger, so the
-    // synthetic generator below is what actually populates the chart.
-    const hasSyntheticPair = Boolean(config.syntheticPair) && Boolean(context.interval);
-    if (hasSyntheticPair) {
-        // Each change fires its own subscriber → its own auto-reload attempt.
-        dataManager.suppressNextAutoReload(getSyntheticReloadCount(context));
-    }
-    if (context.symbol && context.symbol !== state.currentSymbol) {
-        setCurrentSymbol(context.symbol);
-    }
-    if (context.interval && context.interval !== state.currentInterval) {
-        setCurrentInterval(context.interval);
-    }
-    if (hasSyntheticPair) {
-        await regenerateSyntheticPair(
-            config.syntheticPair!.baseSymbol,
-            config.syntheticPair!.quoteSymbol,
-            context.interval!
-        );
-    }
+        const context = getStrategyConfigChartContext(config);
+        // When the saved config carries a synthetic pair, the chart symbol is a
+        // derived key (e.g. ZECAPT) that the regular data-fetcher cannot load —
+        // it would route to Binance and fail with HTTP 400 + CORS. Suppress the
+        // auto-reload that the symbol/interval change would trigger, so the
+        // synthetic generator below is what actually populates the chart.
+        const hasSyntheticPair = Boolean(config.syntheticPair) && Boolean(context.interval);
+        if (hasSyntheticPair) {
+            // Each change fires its own subscriber → its own auto-reload attempt.
+            dataManager.suppressNextAutoReload(getSyntheticReloadCount(context));
+        }
+        if (context.symbol && context.symbol !== state.currentSymbol) {
+            setCurrentSymbol(context.symbol);
+        }
+        if (context.interval && context.interval !== state.currentInterval) {
+            setCurrentInterval(context.interval);
+        }
+        if (hasSyntheticPair) {
+            const regenerated = await regenerateSyntheticPair(
+                config.syntheticPair!.baseSymbol,
+                config.syntheticPair!.quoteSymbol,
+                context.interval!
+            );
+            if (!regenerated) throw new Error("Synthetic pair regeneration failed.");
+        }
+    });
 }
 
 /**
@@ -216,10 +230,20 @@ export function setupSettingsHandlers() {
                 return;
             }
             const config = settingsManager.loadStrategyConfig(name);
-            if (config) {
+            if (!config) {
+                uiManager.showToast(`Configuration "${name}" was not found`, 'error');
+                return;
+            }
+            try {
                 await applyUserStrategyConfig(config);
                 uiManager.showToast(`Configuration "${name}" loaded`, 'success');
                 debugLogger.event('ui.config.loaded', { name });
+            } catch (error) {
+                debugLogger.error('ui.config.load_failed', {
+                    name,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                uiManager.showToast(`Failed to load configuration "${name}"`, 'error');
             }
         });
     }
@@ -270,11 +294,19 @@ export function setupSettingsHandlers() {
             return null;
         }
 
-        const persisted = settingsManager.upsertStrategyConfig(parsed);
-        void applyUserStrategyConfig(persisted);
+        let persisted: StrategyConfig;
+        try {
+            persisted = settingsManager.upsertStrategyConfig(parsed);
+        } catch (error) {
+            debugLogger.error('ui.config.shared.persist_failed', {
+                source,
+                error: error instanceof Error ? error.message : String(error),
+            });
+            uiManager.showToast('Failed to persist shared configuration', 'error');
+            return null;
+        }
         updateConfigDropdown(persisted.name);
         notifyStrategyConfigsChanged();
-        debugLogger.event('ui.config.shared.loaded', { name: persisted.name, source });
         return persisted;
     };
 
@@ -328,7 +360,7 @@ export function setupSettingsHandlers() {
     }
 
     if (loadShareLinkBtn && shareConfigImportInput) {
-        loadShareLinkBtn.addEventListener('click', () => {
+        loadShareLinkBtn.addEventListener('click', async () => {
             const sharedInput = shareConfigImportInput.value.trim();
             if (!sharedInput) {
                 uiManager.showToast('Paste a shared strategy link first', 'error');
@@ -338,9 +370,20 @@ export function setupSettingsHandlers() {
             const imported = importSharedConfig(sharedInput, 'manual');
             if (!imported) return;
 
-            shareConfigImportInput.value = '';
-            setShareLinkOutput('');
-            uiManager.showToast(`Shared configuration "${imported.name}" loaded`, 'success');
+            try {
+                await applyUserStrategyConfig(imported);
+                shareConfigImportInput.value = '';
+                setShareLinkOutput('');
+                uiManager.showToast(`Shared configuration "${imported.name}" loaded`, 'success');
+                debugLogger.event('ui.config.shared.loaded', { name: imported.name, source: 'manual' });
+            } catch (error) {
+                debugLogger.error('ui.config.shared.apply_failed', {
+                    name: imported.name,
+                    source: 'manual',
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                uiManager.showToast(`Failed to apply shared configuration "${imported.name}"`, 'error');
+            }
         });
     }
 
@@ -352,20 +395,42 @@ export function setupSettingsHandlers() {
             state.currentSymbol !== sharedChartContext.symbol ||
             state.currentInterval !== sharedChartContext.interval;
 
-        const imported = settingsManager.upsertStrategyConfig(sharedConfig);
-        void applySharedStrategyConfig(imported, sharedChartContext);
-        updateConfigDropdown(imported.name);
-        activateSharedLinkViewMode();
-        consumeSharedConfigFromUrl();
-        scheduleSharedAutoBacktest({
-            expectedSymbol: sharedChartContext.symbol,
-            expectedInterval: sharedChartContext.interval,
-            previousDataFingerprint,
-            requiresDataReload,
-            expectedConfig: imported,
-        });
-        uiManager.showToast(`Shared configuration "${imported.name}" loaded`, 'success');
-        debugLogger.event('ui.config.shared.loaded', { name: imported.name, source: 'url' });
+        let imported: StrategyConfig | null = null;
+        try {
+            imported = settingsManager.upsertStrategyConfig(sharedConfig);
+        } catch (error) {
+            debugLogger.error('ui.config.shared.persist_failed', {
+                source: 'url',
+                error: error instanceof Error ? error.message : String(error),
+            });
+            uiManager.showToast('Failed to persist shared configuration', 'error');
+        }
+        if (imported) {
+            const importedConfig = imported;
+            void applySharedStrategyConfig(importedConfig, sharedChartContext)
+                .then(() => {
+                    updateConfigDropdown(importedConfig.name);
+                    activateSharedLinkViewMode();
+                    consumeSharedConfigFromUrl();
+                    scheduleSharedAutoBacktest({
+                        expectedSymbol: sharedChartContext.symbol,
+                        expectedInterval: sharedChartContext.interval,
+                        previousDataFingerprint,
+                        requiresDataReload,
+                        expectedConfig: importedConfig,
+                    });
+                    uiManager.showToast(`Shared configuration "${importedConfig.name}" loaded`, 'success');
+                    debugLogger.event('ui.config.shared.loaded', { name: importedConfig.name, source: 'url' });
+                })
+                .catch((error) => {
+                    debugLogger.error('ui.config.shared.apply_failed', {
+                        name: importedConfig.name,
+                        source: 'url',
+                        error: error instanceof Error ? error.message : String(error),
+                    });
+                    uiManager.showToast(`Failed to apply shared configuration "${importedConfig.name}"`, 'error');
+                });
+        }
     }
 
 

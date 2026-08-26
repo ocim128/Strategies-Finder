@@ -528,8 +528,8 @@ let runOwnerGen = 0;
 // relying only on `runState.runId`, otherwise a Stop in that window can be
 // rejected as stale or clear the lock without preventing the run from starting.
 let runOwnerRunId: string | null = null;
-let minerOwner = RUN_OWNER_NONE;
-let minerOwnerGen = 0;
+let analysisOwner = RUN_OWNER_NONE;
+let analysisOwnerGen = 0;
 
 let runState: BatchRunSnapshot | null = null;
 /**
@@ -559,7 +559,7 @@ let abortController: AbortController | null = null;
 // which already accepts an optional AbortSignal — so Stop now cancels up to
 // `TARGET_LOAD_CONCURRENCY` (=8) target loads that would otherwise keep
 // running after the user clicks Stop.
-let minerAbortController: AbortController | null = null;
+let analysisAbortController: AbortController | null = null;
 let artifactReleaseTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
@@ -760,7 +760,7 @@ function clearArtifactReleaseTimer(): void {
 }
 
 /**
- * Release the per-row artifacts retained for Mine Timing. Mirrors the
+ * Release the per-row artifacts retained for OPEN_SCORE USD analysis. Mirrors the
  * browser-side post-Mine prune (commit 6401a53) plus the TTL defense-in-depth
  * the browser got for free via tab reload.
  *
@@ -1128,7 +1128,7 @@ export async function processRunBatch(
         // R-F1: only stamp the global run-provenance fields if THIS run still
         // owns the snapshot. An unwinding old run whose ownership was taken by
         // a newer run must not overwrite the newer run's fingerprint/interval/
-        // strategy — those gate Mine/Stability/OPEN_SCORE USD acceptance.
+        // strategy — those gate OPEN_SCORE USD acceptance.
         // Flush in-flight artifact writes before the `done` event so
         // `serverHasArtifacts` is truthful — the browser gates the Mine button
         // on that flag, and Mine reads the artifacts from disk (audit Finding 4).
@@ -1267,9 +1267,9 @@ export async function processRunBatch(
 export type MinerStreamWriter = (event: unknown) => void;
 
 function cancelMinerOnDisconnect(owner: number): void {
-    if (minerOwner !== owner) return;
-    minerAbortController?.abort();
-    minerOwner = RUN_OWNER_NONE;
+    if (analysisOwner !== owner) return;
+    analysisAbortController?.abort();
+    analysisOwner = RUN_OWNER_NONE;
 }
 
 // ---------------------------------------------------------------------------
@@ -1280,8 +1280,8 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     if (runOwner !== RUN_OWNER_NONE) {
         throw new HttpStatusError(409, "A batch backtest is already running. Use Stop first.");
     }
-    if (minerOwner !== RUN_OWNER_NONE) {
-        throw new HttpStatusError(409, "Mine Timing is currently running. Wait for it to finish before starting a new batch.");
+    if (analysisOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "OPEN_SCORE USD analysis is currently running. Stop it before starting another batch.");
     }
 
     const symbolsRaw = body.symbols;
@@ -1448,7 +1448,7 @@ async function handleStopRequest(rawRunId?: unknown): Promise<{ ok: boolean; sto
     // recovery path for a stuck analysis job.
     const requestedRunId = parseBatchRunId(rawRunId);
     const runWasActive = runOwner !== RUN_OWNER_NONE;
-    const minerWasActive = minerOwner !== RUN_OWNER_NONE;
+    const analysisWasActive = analysisOwner !== RUN_OWNER_NONE;
 
     // During preflight the new request has already claimed `runOwner`, but
     // `runState` may still belong to the prior generation. Prefer the explicit
@@ -1456,7 +1456,7 @@ async function handleStopRequest(rawRunId?: unknown): Promise<{ ok: boolean; sto
     const ownedRunId = runWasActive
         ? (runOwnerRunId ?? runState?.runId ?? "")
         : (runState?.runId ?? "");
-    if ((runWasActive || minerWasActive) && ownedRunId && requestedRunId !== ownedRunId) {
+    if ((runWasActive || analysisWasActive) && ownedRunId && requestedRunId !== ownedRunId) {
         return { ok: false, stopped: false };
     }
 
@@ -1485,15 +1485,15 @@ async function handleStopRequest(rawRunId?: unknown): Promise<{ ok: boolean; sto
     // Analysis force-reset: always cancels in-flight OPEN_SCORE USD so Stop
     // stays the recovery path for a stuck analysis job. Target loads swallow
     // AbortError via the per-target try/catch.
-    if (minerAbortController) {
+    if (analysisAbortController) {
         try {
-            minerAbortController.abort();
+            analysisAbortController.abort();
         } catch {
             /* best-effort */
         }
     }
-    minerOwner = RUN_OWNER_NONE;
-    return { ok: true, stopped: runWasActive || minerWasActive };
+    analysisOwner = RUN_OWNER_NONE;
+    return { ok: true, stopped: runWasActive || analysisWasActive };
 }
 
 
@@ -1552,7 +1552,7 @@ export async function processOpenScoreUsdReplay(
     const commissionRate = (lastRunCapitalSettings.commission ?? 0) / 100;
 
     clearArtifactReleaseTimer();
-    const lostOwnership = () => minerOwner !== owner;
+    const lostOwnership = () => analysisOwner !== owner;
     const startedAt = Date.now();
     debugLogger.info("batch.server.open_score_usd.start", { pairs: artifactMetas.length, horizons: validHorizons });
 
@@ -1566,7 +1566,7 @@ export async function processOpenScoreUsdReplay(
             try {
                 yield await loadStoredMineArtifact(meta);
             } catch (error) {
-                if (minerAbortController?.signal?.aborted || lostOwnership()) return;
+                if (analysisAbortController?.signal?.aborted || lostOwnership()) return;
                 debugLogger.warn("batch.server.open_score_usd.artifact_load_failed", {
                     symbol: meta.symbol, error: error instanceof Error ? error.message : String(error),
                 });
@@ -1606,12 +1606,12 @@ export async function processOpenScoreUsdReplay(
             if (lostOwnership()) return;
             const symbol = markedSymbolByAsset.get(asset) ?? `${asset.trim().toUpperCase()}USDT`;
             try {
-                const data = (await loadTargetDataset(symbol, runInterval, minerAbortController?.signal)) as OHLCVData[] | null;
+                const data = (await loadTargetDataset(symbol, runInterval, analysisAbortController?.signal)) as OHLCVData[] | null;
                 if (Array.isArray(data) && data.length > 0) {
                     yield { asset, symbol, data };
                 }
             } catch (error) {
-                if (minerAbortController?.signal?.aborted || lostOwnership()) return;
+                if (analysisAbortController?.signal?.aborted || lostOwnership()) return;
                 debugLogger.warn("batch.server.open_score_usd.target_load_failed", {
                     asset, symbol, error: error instanceof Error ? error.message : String(error),
                 });
@@ -1729,7 +1729,7 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
         validatedHorizons = cleaned;
     }
 
-    if (minerOwner !== RUN_OWNER_NONE) {
+    if (analysisOwner !== RUN_OWNER_NONE) {
         throw new HttpStatusError(409, "An analysis is already running. Use Stop first.");
     }
     if (runOwner !== RUN_OWNER_NONE) {
@@ -1738,9 +1738,9 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
     if (!hasStoredMineArtifacts()) {
         throw new HttpStatusError(400, "Run Batch before OPEN_SCORE USD; no artifacts on server.");
     }
-    const owner = ++minerOwnerGen;
-    minerOwner = owner;
-    minerAbortController = new AbortController();
+    const owner = ++analysisOwnerGen;
+    analysisOwner = owner;
+    analysisAbortController = new AbortController();
 
     let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
     try {
@@ -1764,10 +1764,10 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
             /* best-effort */
         }
     } finally {
-        if (minerOwner === owner) {
-            minerOwner = RUN_OWNER_NONE;
+        if (analysisOwner === owner) {
+            analysisOwner = RUN_OWNER_NONE;
         }
-        minerAbortController = null;
+        analysisAbortController = null;
     }
 }
 
@@ -1996,22 +1996,22 @@ function registerBatchRoutes(middlewares: any): void {
         // simultaneously; that coupling is expressed through the BatchOwnerLocks
         // adapter below instead of reaching across module scope.
         const batchOwnerLocks: BatchOwnerLocks = {
-            isBusy: () => runOwner !== RUN_OWNER_NONE || minerOwner !== RUN_OWNER_NONE,
+            isBusy: () => runOwner !== RUN_OWNER_NONE || analysisOwner !== RUN_OWNER_NONE,
             acquire: (runId) => {
                 const ownerGen = ++runOwnerGen;
-                const minerGen = ++minerOwnerGen;
+                const analysisGen = ++analysisOwnerGen;
                 runOwner = ownerGen;
                 runOwnerRunId = runId;
-                minerOwner = minerGen;
-                return { runOwner: ownerGen, minerOwner: minerGen };
+                analysisOwner = analysisGen;
+                return { runOwner: ownerGen, analysisOwner: analysisGen };
             },
             releaseIfStillOwner: (token) => {
                 if (runOwner === token.runOwner) {
                     runOwner = RUN_OWNER_NONE;
                     runOwnerRunId = null;
                 }
-                if (minerOwner === token.minerOwner) {
-                    minerOwner = RUN_OWNER_NONE;
+                if (analysisOwner === token.analysisOwner) {
+                    analysisOwner = RUN_OWNER_NONE;
                 }
             },
         };
@@ -2023,7 +2023,7 @@ function registerBatchRoutes(middlewares: any): void {
     }
 
 // Exported for tests only. `processRunBatch` and `processOpenScoreUsdReplay`
-// consult module-scope `runOwner` / `minerOwner` for cancellation, mirroring
+// consult module-scope `runOwner` / `analysisOwner` for cancellation, mirroring
 // the IBKR sync pattern. The HTTP handlers set those before invoking the
 // factored functions; tests need a way to do the same without spinning up Vite.
 export const __testInternals = {
@@ -2098,18 +2098,18 @@ export const __testInternals = {
         runOwner = RUN_OWNER_NONE;
         runOwnerRunId = null;
     },
-    setMinerOwnerForTests(owner: number): void {
-        minerOwner = owner;
+    setAnalysisOwnerForTests(owner: number): void {
+        analysisOwner = owner;
     },
     /**
      * Set the analysis abort controller during tests. The HTTP handlers create
-     * it (`minerAbortController = new AbortController()`), but tests that call
+     * it (`analysisAbortController = new AbortController()`), but tests that call
      * `processOpenScoreUsdReplay` directly bypass the handler, so they must
      * install one to exercise the Stop-aborts-target-loads path. Pass null to
      * clear.
      */
-    setMinerAbortControllerForTests(controller: AbortController | null): void {
-        minerAbortController = controller;
+    setAnalysisAbortControllerForTests(controller: AbortController | null): void {
+        analysisAbortController = controller;
     },
     getRunStateForTests(): BatchRunSnapshot | null {
         return runState;

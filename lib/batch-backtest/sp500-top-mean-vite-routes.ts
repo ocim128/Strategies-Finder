@@ -12,7 +12,7 @@
  * owner.
  *
  * Coupling note: `handleSp500TopMeanRunRequest` shares the Batch plugin's
- * owner-lock counters (`runOwner` / `minerOwner`) so a TOP_MEAN run and a
+ * owner-lock counters (`runOwner` / `analysisOwner`) so a TOP_MEAN run and a
  * Batch run cannot execute simultaneously. The locks live in the Batch plugin
  * (they predate this split and are touched by ~20 sites there); this file
  * consumes them through the {@link BatchOwnerLocks} adapter so no mutable
@@ -70,7 +70,7 @@ export interface BatchOwnerLocks {
 /** Opaque ownership token returned by {@link BatchOwnerLocks.acquire}. */
 export interface BatchOwnerToken {
     readonly runOwner: number;
-    readonly minerOwner: number;
+    readonly analysisOwner: number;
 }
 
 /**

@@ -592,6 +592,8 @@ function normalizeAdvancedOptionalSortMetrics(value: unknown): FinderMetric[] {
 
 export class FinderManager {
 	private isRunning = false;
+	private runStartupInFlight = false;
+	private applyInFlight = false;
 	private isCancelled = false;
 	private latestResults: FinderLatestResults = { scope: "current_chart", results: [] };
 	/** Full scalar Asset Opportunity rows for the current run. */
@@ -616,6 +618,7 @@ export class FinderManager {
 	private uiState: FinderPersistedUiState = normalizeFinderUiState(null);
 	private readonly ui = new FinderUI();
 	private readonly persistUiStateDebounced = debounce(() => this.saveUiState(), 300);
+	private finderPersistenceLifecycleBound = false;
 	private readonly paramSpace = new FinderParamSpace();
 	private readonly taskYielder = createTaskYielder();
 	private dom: FinderManagerDom | null = null;
@@ -648,16 +651,27 @@ export class FinderManager {
 		return this.dom ??= createFinderManagerDom();
 	}
 
-	public invalidateLocalDataCaches(): void {
+	public async invalidateLocalDataCaches(): Promise<boolean> {
 		// Universe synthetic leg/pair caches now live in the Vite server. Keep
 		// the existing invalidation contract used by IBKR/Crypto data sync so a
 		// subsequent Finder run cannot reuse an in-memory series built before the
 		// local files changed. Disk entries remain fingerprint-validated.
-		void fetch('/api/finder/invalidate-cache', { method: 'POST' }).catch((error) => {
+		try {
+			const response = await fetch('/api/finder/invalidate-cache', { method: 'POST' });
+			if (!response.ok) {
+				throw new Error(`Finder cache invalidation failed (${response.status}).`);
+			}
+			const payload = await response.json() as { ok?: unknown };
+			if (payload.ok !== true) {
+				throw new Error('Finder cache invalidation was not accepted by the server.');
+			}
+			return true;
+		} catch (error) {
 			debugLogger.warn('finder.server.dataset_cache_invalidation_failed', {
 				error: error instanceof Error ? error.message : String(error),
 			});
-		});
+			return false;
+		}
 	}
 
 	private getScope(): FinderScope {
@@ -997,6 +1011,10 @@ export class FinderManager {
 	public init() {
 		this.loadUiState();
 		const dom = this.getDom();
+		if (!this.finderPersistenceLifecycleBound && typeof window !== "undefined") {
+			window.addEventListener("pagehide", () => this.persistUiStateDebounced.flush());
+			this.finderPersistenceLifecycleBound = true;
+		}
 		dom.runFinder.addEventListener('click', () => {
 			void this.runFinder();
 		});
@@ -1048,14 +1066,14 @@ export class FinderManager {
 			if (this.latestResults.scope === "current_chart") {
 				const result = this.latestResults.results[index];
 				if (result) {
-					void this.applyCurrentChartResult(result);
+					void this.runFinderApply(() => this.applyCurrentChartResult(result));
 				}
 				return;
 			}
 			if (this.latestResults.scope === "asset_opportunity") {
 				const assetResult = this.latestResults.results[index];
 				if (assetResult) {
-					void this.applyAssetOpportunityResult(assetResult);
+					void this.runFinderApply(() => this.applyAssetOpportunityResult(assetResult));
 				}
 				return;
 			}
@@ -1064,7 +1082,7 @@ export class FinderManager {
 			}
 			const candidate = this.latestResults.results[index];
 			if (candidate) {
-				void this.applyUniverseCandidate(candidate);
+				void this.runFinderApply(() => this.applyUniverseCandidate(candidate));
 			}
 		});
 
@@ -1893,19 +1911,30 @@ export class FinderManager {
 	}
 
 	public async runFinder(): Promise<void> {
-		if (this.isRunning) return;
+		if (this.isRunning || this.runStartupInFlight) return;
+		this.runStartupInFlight = true;
 		// Starting a new run cancels any stale reattach poll before changing
 		// UI ownership so late poll updates cannot mutate the new run's state.
-		this.stopReattachPoll();
-		this.activeServerRunId = null;
-		if (!this.isUniverseScope() && !this.isAssetOpportunityScope() && !this.isStrategyQualityScope() && state.ohlcvData.length === 0) {
-			this.setStatus('Data not loaded. Attempting to load...');
-			await dataManager.loadData();
+		try {
+			this.stopReattachPoll();
+			this.activeServerRunId = null;
+			if (!this.isUniverseScope() && !this.isAssetOpportunityScope() && !this.isStrategyQualityScope() && state.ohlcvData.length === 0) {
+				this.setStatus('Data not loaded. Attempting to load...');
+				await dataManager.loadData();
 
-			if (state.ohlcvData.length === 0) {
-				this.setStatus('Load data before running the finder.');
-				return;
+				if (state.ohlcvData.length === 0) {
+					this.setStatus('Load data before running the finder.');
+					return;
+				}
 			}
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			debugLogger.error('finder.preflight_failed', { error: message });
+			this.setStatus(`Finder data load failed. ${message}`);
+			uiManager.showToast('Finder data load failed. Check the status panel for details.', 'error');
+			return;
+		} finally {
+			this.runStartupInFlight = false;
 		}
 
 		this.isCancelled = false;
@@ -4317,6 +4346,19 @@ export class FinderManager {
 		const strategy = strategyRegistry.get(strategyKey)
 			?? await loadBuiltInStrategyByKey(strategyKey);
 		return strategy ?? null;
+	}
+
+	private async runFinderApply(work: () => Promise<void>): Promise<void> {
+		if (this.applyInFlight) {
+			uiManager.showToast('A Finder result is already being applied. Wait for it to finish.', 'info');
+			return;
+		}
+		this.applyInFlight = true;
+		try {
+			await work();
+		} finally {
+			this.applyInFlight = false;
+		}
 	}
 
 	private async applyCurrentChartResult(result: FinderResult): Promise<void> {

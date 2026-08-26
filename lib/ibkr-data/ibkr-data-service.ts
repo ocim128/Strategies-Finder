@@ -89,7 +89,7 @@ class IbkrDataService {
                         // in-memory chart/Finder/Batch caches.
                         const completed = lastRunningSnapshot?.completedSymbols ?? [];
                         if (completed.length > 0) {
-                            this.invalidateSyncedData(completed, lastRunningSnapshot?.interval);
+                            await this.invalidateSyncedData(completed, lastRunningSnapshot?.interval);
                         }
                         const provider = lastRunningSnapshot?.source === "alpaca" ? "Alpaca" : "IBKR";
                         this.setStatus(`${provider} sync finished (reattached).`, "success");
@@ -416,7 +416,7 @@ class IbkrDataService {
                     ? markedSymbolsAcc
                     : this.captureMarkedSymbols(aggregated);
                 if (markedSymbols.length > 0) {
-                    this.invalidateSyncedData(markedSymbols, body.interval);
+                    await this.invalidateSyncedData(markedSymbols, body.interval);
                 }
             }
             this.setBusy(false);
@@ -459,12 +459,12 @@ class IbkrDataService {
         return Array.from(symbols);
     }
 
-    private invalidateSyncedData(symbols: readonly string[], interval: unknown): void {
+    private async invalidateSyncedData(symbols: readonly string[], interval: unknown): Promise<void> {
         if (symbols.length === 0) return;
         const normalizedInterval = String(interval ?? "").trim().toLowerCase();
         clearLocalDailyAssetCaches();
         dataManager.invalidateLocalSeries(symbols, normalizedInterval ? [normalizedInterval] : undefined);
-        finderManager.invalidateLocalDataCaches();
+        await finderManager.invalidateLocalDataCaches();
         clearBatchDatasetCaches();
         clearRankPairsRecentLoaderCache();
     }

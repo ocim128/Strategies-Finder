@@ -94,7 +94,9 @@ const STRATEGY_CONFIGS_STORAGE = {
 // ============================================================================
 
 class SettingsManager {
-    private autoSaveEnabled: boolean = true;
+    private autoSaveSuppressionDepth = 0;
+    private autoSaveDirty = false;
+    private autoSaveListenersAttached = false;
     private readonly debouncedSaveSettings = debounce(() => this.saveSettings(), 500);
 
     private dom: SettingsManagerDom | null = null;
@@ -138,7 +140,10 @@ class SettingsManager {
 
 
     public saveSettings(): void {
-        if (!this.autoSaveEnabled) return;
+        if (this.autoSaveSuppressionDepth > 0) {
+            this.autoSaveDirty = true;
+            return;
+        }
 
         const settings = this.getCurrentSettings();
         const saved = writePersistedJson({
@@ -154,19 +159,31 @@ class SettingsManager {
     }
 
     public saveSettingsDebounced(): void {
-        if (!this.autoSaveEnabled) {
+        if (this.autoSaveSuppressionDepth > 0) {
+            this.autoSaveDirty = true;
             return;
         }
         this.debouncedSaveSettings();
     }
 
     public async runWithoutAutoSave<T>(work: () => Promise<T> | T): Promise<T> {
-        const previous = this.autoSaveEnabled;
-        this.autoSaveEnabled = false;
+        this.beginAutoSaveSuppression();
         try {
             return await work();
         } finally {
-            this.autoSaveEnabled = previous;
+            this.endAutoSaveSuppression();
+        }
+    }
+
+    private beginAutoSaveSuppression(): void {
+        this.autoSaveSuppressionDepth += 1;
+    }
+
+    private endAutoSaveSuppression(): void {
+        this.autoSaveSuppressionDepth = Math.max(0, this.autoSaveSuppressionDepth - 1);
+        if (this.autoSaveSuppressionDepth === 0 && this.autoSaveDirty) {
+            this.autoSaveDirty = false;
+            this.debouncedSaveSettings();
         }
     }
 
@@ -186,7 +203,7 @@ class SettingsManager {
     }
 
     public applySettings(settings: AppSettings): void {
-        this.autoSaveEnabled = false;
+        this.beginAutoSaveSuppression();
         try {
             // Apply backtest settings to UI
             this.applyBacktestSettings(settings.backtestSettings);
@@ -205,7 +222,7 @@ class SettingsManager {
 
             debugLogger.event('settings.applied', { strategy: settings.currentStrategyKey });
         } finally {
-            this.autoSaveEnabled = true;
+            this.endAutoSaveSuppression();
         }
     }
 
@@ -290,13 +307,17 @@ class SettingsManager {
             configs.push(normalized);
         }
 
-        writePersistedJson({
+        const saved = writePersistedJson({
             ...STRATEGY_CONFIGS_STORAGE,
             data: configs,
             onError: (error) => {
                 debugLogger.error('settings.config_save_failed', { error: error instanceof Error ? error.message : String(error), name: config.name });
             },
         });
+
+        if (!saved) {
+            throw new Error(`Strategy configuration "${config.name}" could not be persisted.`);
+        }
 
         return normalized;
     }
@@ -327,18 +348,21 @@ class SettingsManager {
     }
 
     public async applyStrategyConfig(config: StrategyConfig): Promise<void> {
-        this.autoSaveEnabled = false;
+        this.beginAutoSaveSuppression();
         try {
             // Regenerate synthetic pair first if needed (loads chart data).
             // Dynamic import keeps data-mining-manager (the entire Data Mining
             // UI) out of the startup chunk — see lib/synthetic-pair-session.ts.
             if (config.syntheticPair && config.interval) {
                 const { dataMiningManager } = await import("./data-mining-manager");
-                await dataMiningManager.regenerateSyntheticPair(
+                const regenerated = await dataMiningManager.regenerateSyntheticPair(
                     config.syntheticPair.baseSymbol,
                     config.syntheticPair.quoteSymbol,
                     config.interval
                 );
+                if (!regenerated) {
+                    throw new Error(`Synthetic pair ${config.syntheticPair.baseSymbol}/${config.syntheticPair.quoteSymbol} could not be generated.`);
+                }
             }
 
             // Apply backtest settings
@@ -360,7 +384,7 @@ class SettingsManager {
 
             debugLogger.event('settings.config.applied', { name: config.name, strategy: config.strategyKey });
         } finally {
-            this.autoSaveEnabled = true;
+            this.endAutoSaveSuppression();
         }
     }
 
@@ -417,8 +441,10 @@ class SettingsManager {
     // ========================================================================
 
     public setupAutoSave(): void {
+        if (this.autoSaveListenersAttached) return;
         // Listen for input changes on settings panel
         const { settingsTab } = this.getDom();
+        this.autoSaveListenersAttached = true;
         const shouldAutoSave = (event: Event): boolean => {
             return !(event.target instanceof HTMLElement && event.target.closest('#strategyParams'));
         };
@@ -435,6 +461,10 @@ class SettingsManager {
         state.subscribe('currentInterval', () => this.saveSettingsDebounced());
         state.subscribe('binanceMarketType', () => this.saveSettingsDebounced());
         state.subscribe('isDarkTheme', () => this.saveSettingsDebounced());
+
+        if (typeof window !== 'undefined') {
+            window.addEventListener('pagehide', () => this.debouncedSaveSettings.flush());
+        }
     }
 
     // ========================================================================

@@ -3,9 +3,8 @@
  *
  * Extracted from `batch-synthetic-state-miner.ts` so the data contract used by
  * OPEN_SCORE USD Replay, S&P 500 TOP_MEAN, and spread-quality can be imported
- * without pulling in the (now removed) Mine Timing engine. The miner engine
- * and its `prepareBatchSynthetic*Artifacts` helpers were removed alongside
- * Mine Timing / Stability Mine; the artifacts themselves are still produced
+ * without pulling in a separate analysis engine. The OPEN_SCORE USD analysis
+ * uses these artifacts; the artifacts themselves are still produced
  * by the Batch server plugin's per-symbol artifact store and consumed by the
  * surviving analysis features.
  */
