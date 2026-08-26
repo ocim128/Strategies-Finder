@@ -19,7 +19,11 @@ import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metr
 import { ASSET_OPPORTUNITY_ALL_SORTS } from "../lib/finder/finder-asset-opportunity-metrics";
 import { createFakeFinderElement } from "./helpers/fake-finder-manager-dom";
 import type { FinderRunStatusSnapshot } from "../lib/finder/server/finder-stream-types";
-import type { FinderUniverseCandidate, FinderUniverseSymbolResult } from "../lib/types/finder";
+import type {
+    FinderStrategyQualityResult,
+    FinderUniverseCandidate,
+    FinderUniverseSymbolResult,
+} from "../lib/types/finder";
 import type { Time } from "../lib/types/strategies";
 
 // ---------------------------------------------------------------------------
@@ -623,6 +627,51 @@ describe("FinderUI lazy Universe symbol breakdowns (audit Finding 6)", () => {
         expect(symbolRowCount(details)).to.equal(2);
 
         // A second toggle must not duplicate rows.
+        details.dispatchEvent({ type: "toggle" });
+        expect(symbolRowCount(details)).to.equal(2);
+    });
+
+    it("defers Strategy Quality symbol rows until the breakdown is opened", () => {
+        const ui = new FinderUI();
+        const result = {
+            strategyKey: "quality_test",
+            strategyName: "Quality Test",
+            params: {},
+            symbols: [
+                { symbol: "AAA", status: "profitable", barCount: 100 },
+                { symbol: "BBB", status: "no_trades", barCount: 100 },
+            ],
+            requestedSymbols: 2,
+            loadedSymbols: 2,
+            failedSymbols: 0,
+            activeSymbols: 1,
+            profitableSymbols: 1,
+            losingSymbols: 0,
+            noTradeSymbols: 1,
+            totalTrades: 10,
+            totalNetProfit: 10,
+            averageNetProfit: 10,
+            averageExpectancy: 1,
+            medianExpectancy: 1,
+            averageProfitFactor: 2,
+            profitFactor: 2,
+            averageSharpe: 1,
+            sharpeAvailableSymbols: 1,
+            weightedWinRate: 100,
+            worstMaxDrawdownPercent: 0,
+        } as FinderStrategyQualityResult;
+
+        ui.renderStrategyQualityResults([result]);
+
+        const list = elsById.get("finderList");
+        const details = findByTag(list, "details");
+        expect(details, "a Strategy Quality breakdown exists").to.not.equal(null);
+        expect(symbolRowCount(details), "no rows are built while closed").to.equal(0);
+
+        details.open = true;
+        details.dispatchEvent({ type: "toggle" });
+        expect(symbolRowCount(details)).to.equal(2);
+
         details.dispatchEvent({ type: "toggle" });
         expect(symbolRowCount(details)).to.equal(2);
     });

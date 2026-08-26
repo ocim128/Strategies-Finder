@@ -32,6 +32,20 @@ describe("render scheduling helpers", () => {
         }
     });
 
+    it("debounce flush runs the latest pending call immediately", () => {
+        const calls: string[] = [];
+        const schedule = debounce((value: string) => calls.push(value), 10);
+        mock.timers.enable({ apis: ["setTimeout"] });
+        try {
+            schedule("latest");
+            schedule.flush();
+            mock.timers.tick(10);
+            expect(calls).to.deep.equal(["latest"]);
+        } finally {
+            mock.timers.reset();
+        }
+    });
+
     it("coalesces multiple schedules into one frame callback", async () => {
         let calls = 0;
         const frame = coalesceAnimationFrame(() => { calls += 1; });

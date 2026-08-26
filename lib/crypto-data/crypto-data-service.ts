@@ -88,7 +88,7 @@ class CryptoDataService {
                             ?? [];
                         if (!invalidatedFinal && finalTargets.length > 0) {
                             invalidatedFinal = true;
-                            this.invalidateCompletedTargets(finalTargets);
+                            await this.invalidateCompletedTargets(finalTargets);
                         }
                         this.setStatus("Crypto sync finished (reattached).", "success");
                     }
@@ -119,7 +119,7 @@ class CryptoDataService {
      * the reattach path which otherwise sees only the status snapshot
      * (audit Finding 1).
      */
-    private invalidateCompletedTargets(targets: readonly CryptoCompletedTarget[]): void {
+    private async invalidateCompletedTargets(targets: readonly CryptoCompletedTarget[]): Promise<void> {
         if (targets.length === 0) return;
         const byInterval = new Map<string, Set<string>>();
         for (const target of targets) {
@@ -131,7 +131,7 @@ class CryptoDataService {
             byInterval.set(interval, set);
         }
         for (const [interval, symbols] of byInterval) {
-            this.invalidateSyncedData(Array.from(symbols), interval);
+            await this.invalidateSyncedData(Array.from(symbols), interval);
         }
     }
 
@@ -253,7 +253,7 @@ class CryptoDataService {
             }
 
             for (const [interval, symbols] of syncedByInterval) {
-                this.invalidateSyncedData(Array.from(symbols), interval);
+                await this.invalidateSyncedData(Array.from(symbols), interval);
             }
             this.writeOutput(aggregated);
             if (aggregated.error) {
@@ -273,12 +273,12 @@ class CryptoDataService {
         }
     }
 
-    private invalidateSyncedData(symbols: readonly string[], interval: unknown): void {
+    private async invalidateSyncedData(symbols: readonly string[], interval: unknown): Promise<void> {
         if (symbols.length === 0) return;
         const normalizedInterval = String(interval ?? "").trim().toLowerCase();
         clearLocalDailyAssetCaches();
         dataManager.invalidateLocalSeries(symbols, normalizedInterval ? [normalizedInterval] : undefined);
-        finderManager.invalidateLocalDataCaches();
+        await finderManager.invalidateLocalDataCaches();
         clearBatchDatasetCaches();
         clearRankPairsRecentLoaderCache();
     }

@@ -182,7 +182,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                 );
             }
 
-            // Mine/Stability load each synthetic leg again as a standalone target.
+            // OPEN_SCORE USD analysis loads each synthetic leg again as a standalone target.
             // Keep those targets on the same canonical source as the pair build:
             // ratio pairs use 30m legs and 1h/2h target series are aggregated from
             // those same 30m candles. Otherwise Batch succeeds while the miner

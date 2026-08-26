@@ -183,7 +183,7 @@ describe("postBatchNdjson (audit NDJSON-POST-helper finding)", () => {
     });
 
     it("onNonOkResponse fires before the error is thrown and receives the parsed payload", async () => {
-        // Intent being locked: Stability and Portfolio Fit flip
+        // Intent being locked: analysis payloads remain scalar-only
         // serverHasArtifacts=false on a 400 "no artifacts" so the next click
         // short-circuits. The hook receives the parsed error payload so they
         // can match structurally without re-reading the body.
