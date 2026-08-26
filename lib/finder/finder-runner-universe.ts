@@ -62,6 +62,7 @@ import {
     isSyntheticPairFinderSymbol,
     type FinderPairNeutralMetrics,
 } from "./finder-pair-neutral";
+import { computeExitAlpha } from "./finder-exit-alpha";
 
 const UNIVERSE_DATA_LOAD_CONCURRENCY = 12;
 const UNIVERSE_DATA_LOAD_YIELD_EVERY = 64;
@@ -267,6 +268,7 @@ function buildUniverseSymbolMetrics(
         drawdownAvailable?: boolean;
         pairNeutralMetrics?: FinderPairNeutralMetrics;
         metricBasis?: typeof FINDER_PAIR_NEUTRAL_METRIC_BASIS;
+        exitAlpha?: number;
     } = {}
 ): NonNullable<FinderUniverseSymbolResult["result"]> {
     const metricResult = options.pairNeutralMetrics
@@ -291,6 +293,9 @@ function buildUniverseSymbolMetrics(
         ...(options.metricBasis ? { metricBasis: options.metricBasis } : {}),
         ...(typeof options.compositeEdgeRatio === "number" && Number.isFinite(options.compositeEdgeRatio)
             ? { compositeEdgeRatio: options.compositeEdgeRatio }
+            : {}),
+        ...(typeof options.exitAlpha === "number" && Number.isFinite(options.exitAlpha)
+            ? { exitAlpha: options.exitAlpha }
             : {}),
     };
 }
@@ -754,6 +759,7 @@ export async function runFinderUniverseExecution(
 
     const evaluationStart = performance.now();
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
+    const requiresExitAlpha = universe.sortPriority.includes("medianExitAlpha");
     const requiresSharpeRatio = universe.sortPriority.includes("medianSharpe");
     const requiresDrawdown = universe.sortPriority.some((metric) =>
         metric === "worstMaxDrawdownPercent"
@@ -850,6 +856,9 @@ export async function runFinderUniverseExecution(
         if (!isRustSupportedTradeSizingMode(preResolvedCapital.sizingMode)) {
             typescriptRequirementReasons.push(`${preResolvedCapital.sizingMode} position sizing requires TypeScript`);
         }
+        if (requiresExitAlpha) {
+            typescriptRequirementReasons.push("Exit Alpha requires paired TypeScript backtests");
+        }
 
         const symbolResults = new Map<string, FinderUniverseSymbolResult>();
         let evaluationStoppedEarly = false;
@@ -905,7 +914,7 @@ export async function runFinderUniverseExecution(
                     context: {
                         blockRange: null,
                         annotatePolymarket: false,
-                        engineMode: "auto",
+                        engineMode: requiresExitAlpha ? "typescript" : "auto",
                         // Thread the server-side Rust preference through. In the
                         // browser this is undefined (shouldAttemptRust reads the
                         // DOM); in Node it's the only signal that opts in to
@@ -970,8 +979,55 @@ export async function runFinderUniverseExecution(
                 const pairNeutralMetrics = isSyntheticPair
                     ? buildFinderPairNeutralMetrics(output.result, preResolvedCapital)
                     : null;
+                let exitAlpha: number | undefined;
+                if (requiresExitAlpha) {
+                    try {
+                        const controlOutput = await executeBacktest({
+                            ohlcvData: symbol.data,
+                            closedCandleDataOverride: hasCrossSymbol ? undefined : closedDataBySymbol.get(symbol.symbol),
+                            interval: input.interval,
+                            primarySymbol: symbol.symbol,
+                            strategyKey: input.selectedStrategy.key,
+                            strategy: preparedStrategy,
+                            strategyParams: entryParams,
+                            backtestSettings,
+                            capitalSettings: input.capitalSettings,
+                            preResolvedSettings,
+                            preResolvedCapital,
+                            dataFetcher: crossSymbolDataFetcher,
+                            preGeneratedSignals: output.signals,
+                            context: {
+                                blockRange: null,
+                                annotatePolymarket: false,
+                                engineMode: "typescript",
+                                useRustEnginePreference: input.useRustEnginePreference,
+                                nowSec: runNowSec,
+                            },
+                            backtestRunOptions: {
+                                includeAdvancedAnalytics: false,
+                                includeSharpeRatio: requiresSharpeRatio,
+                                omitEquityCurve: true,
+                                skipDrawdown: !requiresDrawdown,
+                                skipResultPostProcessing: true,
+                                forceDisableSignalExits: true,
+                                ...(isSyntheticPair ? { useCompactBacktest: false } : {}),
+                            },
+                        });
+                        const controlPairNeutralMetrics = isSyntheticPair
+                            ? buildFinderPairNeutralMetrics(controlOutput.result, preResolvedCapital)
+                            : null;
+                        exitAlpha = isSyntheticPair
+                            ? pairNeutralMetrics && controlPairNeutralMetrics
+                                ? computeExitAlpha(pairNeutralMetrics, controlPairNeutralMetrics)
+                                : undefined
+                            : computeExitAlpha(output.result, controlOutput.result);
+                    } catch {
+                        // A failed counterfactual is missing, not zero.
+                    }
+                }
                 const symbolResult = buildSymbolResult(symbol, output.result, {
                     compositeEdgeRatio: symbolEdgeRatio,
+                    exitAlpha,
                     // Pair-neutral Sharpe is calculated from completed-trade
                     // returns. Below the metric's minimum sample count, zero is
                     // a sentinel rather than an observed Sharpe and must not

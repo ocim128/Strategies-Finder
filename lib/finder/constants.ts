@@ -23,6 +23,7 @@ export const FINDER_SORT_OPTIONS: FinderMetric[] = [
 	'compositeEdgeRatio',
 	'entryScore',
 	'exitScore',
+	'exitAlpha',
 	'profitFactor',
 	'totalTrades',
 	'maxDrawdownPercent',
@@ -31,6 +32,12 @@ export const FINDER_SORT_OPTIONS: FinderMetric[] = [
 	'winRate',
 	'netProfitPercent',
 	'netProfit'
+];
+
+export const ADVANCED_OPTIONAL_SORT_METRICS: readonly FinderMetric[] = [
+	'entryScore',
+	'exitScore',
+	'exitAlpha',
 ];
 
 export const METRIC_LABELS: Record<FinderMetric, string> = {
@@ -44,6 +51,7 @@ export const METRIC_LABELS: Record<FinderMetric, string> = {
 	compositeEdgeRatio: 'Comp ER',
 	entryScore: 'Entry',
 	exitScore: 'Exit',
+	exitAlpha: 'Exit α',
 	averageGain: 'Avg Gain',
 	payoffRatio: 'Payoff',
 	totalTrades: 'Trades',
@@ -70,6 +78,7 @@ export const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
 	compositeEdgeRatio: 'Composite Edge Ratio',
 	entryScore: 'Entry Score',
 	exitScore: 'Exit Score',
+	exitAlpha: 'Exit Alpha',
 	averageGain: 'Average Gain',
 	payoffRatio: 'Payoff Ratio (Avg Win / Avg Loss)',
 	totalTrades: 'Total Trades',
@@ -108,6 +117,7 @@ export const UNIVERSE_METRIC_FULL_LABELS: Record<FinderUniverseMetric, string> =
     medianProfitFactor: 'Median Profit Factor',
     medianProfitFactorWeightedTrades: 'Median Profit Factor × Total Trades',
     medianCompositeEdgeRatio: 'Median Composite Edge Ratio',
+    medianExitAlpha: 'Median Exit Alpha',
     worstMaxDrawdownPercent: 'Worst-Symbol Max Drawdown',
     medianMaxDrawdownPercent: 'Median Max Drawdown',
     medianReturnDrawdownRatio: 'Median Return / Drawdown Ratio',

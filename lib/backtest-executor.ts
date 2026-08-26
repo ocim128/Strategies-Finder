@@ -111,6 +111,8 @@ export interface BacktestExecutorRequest {
         /** Generate signals without running trade simulation. */
         signalsOnly?: boolean;
         skipResultPostProcessing?: boolean;
+        /** Internal Finder control-run option; applied after settings normalization. */
+        forceDisableSignalExits?: boolean;
     };
     dataFetcher?: CrossSymbolDataFetcher;
     crossSymbolInput?: {
@@ -388,12 +390,16 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     }
 
     const exitStrategyStartedAt = executorTimings ? performance.now() : 0;
+    const primarySignals = req.backtestRunOptions?.forceDisableSignalExits === true
+        ? signals.filter((signal) => signal.exitOnly !== true)
+        : signals;
     const exitOverrideResolution = await resolveExitStrategyOverrideSignals({
         data: backtestData,
         interval,
         settings: resolvedSettings,
         blockRange,
         executionContext,
+        forceDisableSignalExits: req.backtestRunOptions?.forceDisableSignalExits === true,
         collectTimings: executorTimings !== undefined,
     });
     if (executorTimings) {
@@ -409,7 +415,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         executorTimings.exitOverrideSignals += exitOverrideSignals.length;
     }
     const exitMergeStartedAt = executorTimings ? performance.now() : 0;
-    const mergedSignals = mergeExitStrategySignals(signals, exitOverrideSignals);
+    const mergedSignals = mergeExitStrategySignals(primarySignals, exitOverrideSignals);
     if (executorTimings) {
         const elapsed = performance.now() - exitMergeStartedAt;
         executorTimings.exitMergeMs += elapsed;
@@ -419,7 +425,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     const exitControlDiagnostics = buildExitControlDiagnostics({
         requestedSettings: backtestSettings as Record<string, unknown>,
         resolvedSettings,
-        primarySignals: signals.length,
+        primarySignals: primarySignals.length,
         exitOverrideSignals: exitOverrideSignals.length,
         mergedSignals,
         mergedExitOnlySignals: exitOverrideSignals.length,
@@ -436,7 +442,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         const result = createEmptyBacktestResult();
         result.exitControlDiagnostics = exitControlDiagnostics;
         registerBacktestEdgeAnalysisInput(result, backtestData);
-        return finish(result, "typescript", signals, {
+        return finish(result, "typescript", primarySignals, {
             rustAttempted: false,
             typescriptReason: "signal-only execution",
         });
@@ -481,6 +487,9 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     const resolvedCapital = req.preResolvedCapital ?? resolveCapitalSettingsFromRaw(capitalSettings as Record<string, unknown>);
 
     const typescriptRequirementReasons = getTypescriptEngineRequirementReasons(resolvedSettings);
+    if (req.backtestRunOptions?.forceDisableSignalExits === true) {
+        typescriptRequirementReasons.push("Exit Alpha control run requires TypeScript");
+    }
     if (!isRustSupportedTradeSizingMode(resolvedCapital.sizingMode)) {
         typescriptRequirementReasons.push(`${resolvedCapital.sizingMode} position sizing requires TypeScript`);
     }
@@ -516,7 +525,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
                 result = annotatedResult;
             }
             registerBacktestEdgeAnalysisInput(result, backtestData);
-            return finish(result, "rust", signals, { rustAttempted: true });
+            return finish(result, "rust", primarySignals, { rustAttempted: true });
         }
         rustFailureReason = rustResult.result ? "inconsistent_result" : rustResult.reason;
     }
@@ -560,7 +569,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         ? rustFailureReason ?? "Rust backend was unavailable or rejected the result"
         : typescriptRequirementReasons[0]
             ?? "Rust was not requested";
-    return finish(result, "typescript", signals, {
+    return finish(result, "typescript", primarySignals, {
         rustAttempted,
         typescriptReason,
     }, endpointSelection);
@@ -749,6 +758,7 @@ async function resolveExitStrategyOverrideSignals(args: {
     settings: BacktestSettings;
     blockRange: { from: number; to: number } | null;
     executionContext?: StrategyExecutionContext;
+    forceDisableSignalExits?: boolean;
     collectTimings?: boolean;
 }): Promise<ExitStrategyOverrideSignalResolution> {
     const timings = {
@@ -758,6 +768,9 @@ async function resolveExitStrategyOverrideSignals(args: {
     };
     if (!args.settings.exitStrategyOverrideEnabled) {
         return { signals: [], strategyLoaded: false, skippedReason: "override_disabled", timings };
+    }
+    if (args.forceDisableSignalExits === true) {
+        return { signals: [], strategyLoaded: false, skippedReason: "forced_control_run", timings };
     }
     if (!args.settings.disableSignalExits) {
         return { signals: [], strategyLoaded: false, skippedReason: "disable_signal_exits_off", timings };

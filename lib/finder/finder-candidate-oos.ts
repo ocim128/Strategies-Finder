@@ -47,6 +47,7 @@ import {
     computeFinderOosVerdict,
     resolveOosDataSlice,
 } from "./finder-manager-logic";
+import { finderSortRequiresExitAlpha } from "./finder-exit-alpha";
 
 /**
  * Strategy + exit-strategy resolution for the candidate OOS pass. Built once by
@@ -120,6 +121,7 @@ export async function runCandidateOosPass(deps: CandidateOosDeps): Promise<Candi
     const rustSettings = sanitizeBacktestSettingsForRust(settings);
     const precomputed = precomputeIndicators(deps.oosData, settings);
     const minTrades = options.tradeFilterEnabled ? options.minTrades : 0;
+    const requiresExitAlpha = finderSortRequiresExitAlpha(options.sortPriority);
     // Reuse prepared Finder data across OOS survivors (mirrors the IS path in
     // finder-runner-single.ts). Without this, generateSignalsForJob falls back
     // to executeBacktestStrategySignals and re-does any strategy-internal
@@ -163,6 +165,7 @@ export async function runCandidateOosPass(deps: CandidateOosDeps): Promise<Candi
                     : {}),
             };
             const signals = generateSignalsForJob(job, deps.oosData, deps.interval, preparedDataCache, settings);
+            let oosExitAlpha: number | undefined;
             const oosResult = runStrategyBacktest({
                 strategy,
                 data: deps.oosData,
@@ -173,8 +176,17 @@ export async function runCandidateOosPass(deps: CandidateOosDeps): Promise<Candi
                 backtestFn: runBacktest,
                 precomputed,
                 ...(exitStrategy ? { exitStrategy } : {}),
+                exitAlphaEnabled: requiresExitAlpha,
+                onExitAlpha: (value) => {
+                    oosExitAlpha = value;
+                },
             });
             candidate.oosResult = oosResult;
+            if (Number.isFinite(oosExitAlpha)) {
+                candidate.oosExitAlpha = oosExitAlpha;
+            } else {
+                delete candidate.oosExitAlpha;
+            }
             candidate.oosVerdict = computeFinderOosVerdict({
                 oosNetProfit: oosResult.netProfit,
                 oosProfitFactor: oosResult.profitFactor,

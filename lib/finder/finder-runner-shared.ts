@@ -28,6 +28,7 @@ import { executeBacktestStrategySignals } from "../strategy-signal-execution";
 import type { CapitalSettings } from "../types/backtest";
 import type { FinderOptions, FinderResult } from "../types/finder";
 import type { StrategyExecutionContext } from "../types/strategies";
+import { computeExitAlpha, filterStrategyExitSignals } from "./finder-exit-alpha";
 
 export function buildFinderEvaluationData(
     data: OHLCVData[],
@@ -141,6 +142,7 @@ export const runFinderCandidateBacktest: typeof runBacktest = (
         collectDiagnostics: options?.collectDiagnostics,
         omitEquityCurve: options?.omitEquityCurve,
         skipDrawdown: options?.skipDrawdown,
+        forceDisableSignalExits: options?.forceDisableSignalExits,
     },
 );
 
@@ -222,6 +224,9 @@ export function runStrategyBacktest(args: {
     /** Pre-loaded exit strategy. When present, its params (under `_exit__` prefix in args.params) are split out, its signals generated and tagged exitOnly, and merged into args.signals. */
     exitStrategy?: Strategy;
     executionContext?: StrategyExecutionContext;
+    /** Calculate the raw normal-vs-control Exit Alpha pair when enabled. */
+    exitAlphaEnabled?: boolean;
+    onExitAlpha?: (value: number | undefined) => void;
 }): BacktestResult {
     const {
         strategy,
@@ -246,8 +251,8 @@ export function runStrategyBacktest(args: {
         ? mergeExitStrategySignals(signals, generateExitStrategySignals(exitStrategy, params, data, backtestSettings, executionContext))
         : signals;
 
-    return strategy.metadata?.role === "entry" && entryStats
-        ? buildEntryBacktestResult(
+    if (strategy.metadata?.role === "entry" && entryStats) {
+        return buildEntryBacktestResult(
             entryStats,
             args.backtestOptions?.collectDiagnostics
                 ? buildEntryBacktestDiagnostics({
@@ -257,18 +262,46 @@ export function runStrategyBacktest(args: {
                     elapsedMs: evaluationMs,
                 })
                 : undefined
-        )
-        : backtestFn(
-            data,
-            effectiveSignals,
-            initialCapital,
-            positionSize,
-            commission,
-            backtestSettings,
-            { mode: sizingMode, fixedTradeAmount, advancedSizing },
-            precomputed,
-            args.backtestOptions
         );
+    }
+
+    const normalResult = backtestFn(
+        data,
+        effectiveSignals,
+        initialCapital,
+        positionSize,
+        commission,
+        backtestSettings,
+        { mode: sizingMode, fixedTradeAmount, advancedSizing },
+        precomputed,
+        args.backtestOptions
+    );
+    if (args.exitAlphaEnabled === true) {
+        try {
+            const controlOptions = {
+                ...(args.backtestOptions ?? {}),
+                endpointSelectionLastDataTime: undefined,
+                endpointSelectionInitialCapital: undefined,
+                forceDisableSignalExits: true,
+            };
+            const noStrategyExitResult = backtestFn(
+                data,
+                filterStrategyExitSignals(effectiveSignals),
+                initialCapital,
+                positionSize,
+                commission,
+                backtestSettings,
+                { mode: sizingMode, fixedTradeAmount, advancedSizing },
+                precomputed,
+                controlOptions,
+            );
+            args.onExitAlpha?.(computeExitAlpha(normalResult, noStrategyExitResult));
+        } catch {
+            // A failed counterfactual is intentionally missing, not zero.
+            args.onExitAlpha?.(undefined);
+        }
+    }
+    return normalResult;
 }
 
 /**
@@ -311,6 +344,7 @@ export function buildFinderResult(args: {
     exitStrategyKey?: string;
     selectionResult?: BacktestResult;
     compositeEdgeRatio?: number;
+    exitAlpha?: number;
     endpointAdjusted?: boolean;
     endpointRemovedTrades?: number;
 }): FinderResult {
@@ -322,6 +356,7 @@ export function buildFinderResult(args: {
         exitStrategyKey,
         selectionResult,
         compositeEdgeRatio,
+        exitAlpha,
         endpointAdjusted,
         endpointRemovedTrades,
     } = args;
@@ -336,6 +371,7 @@ export function buildFinderResult(args: {
         result,
         selectionResult: selectionResult ?? result,
         compositeEdgeRatio,
+        ...(Number.isFinite(exitAlpha) ? { exitAlpha } : {}),
         endpointAdjusted: endpointAdjusted ?? false,
         endpointRemovedTrades: endpointRemovedTrades ?? 0,
     };
@@ -351,9 +387,11 @@ export function runBacktestAndInsert(
     precomputed: ReturnType<typeof precomputeIndicators>,
     insertResult: (candidate: CandidateResult) => void,
     onResult?: (result: BacktestResult) => void,
-    onFailure?: (error: unknown) => void
+    onFailure?: (error: unknown) => void,
+    exitAlphaEnabled = false,
 ): boolean {
     try {
+        let exitAlpha: number | undefined;
         const result = runStrategyBacktest({
             strategy: job.strategy,
             data,
@@ -365,6 +403,10 @@ export function runBacktestAndInsert(
             precomputed,
             backtestOptions: { collectDiagnostics: true },
             exitStrategy: job.exitStrategy,
+            exitAlphaEnabled,
+            onExitAlpha: (value) => {
+                exitAlpha = value;
+            },
         });
         onResult?.(result);
         insertResult({
@@ -373,6 +415,7 @@ export function runBacktestAndInsert(
             params: job.params,
             exitStrategyKey: job.exitStrategyKey,
             result,
+            ...(Number.isFinite(exitAlpha) ? { exitAlpha } : {}),
         });
         return true;
     } catch (error) {

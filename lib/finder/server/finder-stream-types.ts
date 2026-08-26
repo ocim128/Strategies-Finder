@@ -434,16 +434,24 @@ export function toScalarCandidate(candidate: FinderUniverseCandidate): FinderUni
             delete (clone as unknown as Record<string, unknown>)[key];
         }
     }
+    if (!Number.isFinite(clone.medianExitAlpha)) delete clone.medianExitAlpha;
+    if (!Number.isFinite(clone.medianOosExitAlpha)) delete clone.medianOosExitAlpha;
     return clone;
 }
 
 function stripSymbolResultScalars(symbol: FinderUniverseSymbolResult): FinderUniverseSymbolResult {
-    const clone: FinderUniverseSymbolResult = { ...symbol };
+    const clone: FinderUniverseSymbolResult = {
+        ...symbol,
+        ...(symbol.result ? { result: { ...symbol.result } } : {}),
+        ...(symbol.oosResult ? { oosResult: { ...symbol.oosResult } } : {}),
+    };
     for (const key of FINDER_CANDIDATE_FORBIDDEN_ARRAY_FIELDS) {
         if (key in clone) {
             delete (clone as unknown as Record<string, unknown>)[key];
         }
     }
+    if (clone.result && !Number.isFinite(clone.result.exitAlpha)) delete clone.result.exitAlpha;
+    if (clone.oosResult && !Number.isFinite(clone.oosResult.exitAlpha)) delete clone.oosResult.exitAlpha;
     return clone;
 }
 

@@ -21,6 +21,7 @@ import {
 import { withExitStrategyBaseParams } from "./exit-strategy-param-prefix";
 import { createSeededRandom } from "../param-math-utils";
 import { finderSortRequiresTradeTimingQuality } from "../trade-timing-quality";
+import { finderSortRequiresExitAlpha } from "./finder-exit-alpha";
 import type { CapitalSettings } from "../types/backtest";
 import type { FinderDiagnostics, FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
 import { isSecondMarketPolymarketSupported } from "../second-market/evaluation";
@@ -78,6 +79,20 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     const rustSettings = sanitizeBacktestSettingsForRust(settings);
     const hasPolymarket1sStrategy = selectedStrategies.some((selection) => selection.strategy.polymarket1sConfig);
 
+    if (finderSortRequiresExitAlpha(options.sortPriority) && options.polymarketScoringEnabled) {
+        callbacks.setStatus("Exit Alpha sorting is not supported with Polymarket scoring.");
+        callbacks.setProgress(100, "Unsupported Exit Alpha sort");
+        return { results: [] };
+    }
+    if (finderSortRequiresExitAlpha(options.sortPriority)
+        && options.scope !== undefined
+        && options.scope !== "current_chart"
+        && options.scope !== "symbol_universe") {
+        callbacks.setStatus("Exit Alpha sorting is supported in Current Chart and Symbol Universe scopes only.");
+        callbacks.setProgress(100, "Unsupported Exit Alpha scope");
+        return { results: [] };
+    }
+
     // Polymarket classification mode intercepts before any backtest logic
     if (options.polymarketScoringEnabled) {
         const symbolForPolymarketCheck = settings.polymarketOutcomeSymbol?.trim() || input.symbol;
@@ -99,6 +114,11 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     }
 
     if (options.mode === "genetic") {
+        if (finderSortRequiresExitAlpha(options.sortPriority)) {
+            callbacks.setStatus("Exit Alpha sorting is not supported in genetic mode.");
+            callbacks.setProgress(100, "Unsupported Exit Alpha sort");
+            return { results: [] };
+        }
         if (finderSortRequiresTradeTimingQuality(options.sortPriority)) {
             callbacks.setStatus("Entry Score and Exit Score sorting are supported in grid and random modes only.");
             callbacks.setProgress(100, "Unsupported timing-score sort");

@@ -98,7 +98,15 @@ function computePolymarketProfitFactorBalance(evalResult: PolymarketEvalResult):
     return 0;
 }
 
-export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): number {
+export function getFinderMetricValue(
+    item: FinderResult,
+    metric: FinderMetric,
+    options?: { useOosValues?: boolean },
+): number {
+    if (metric === "exitAlpha") {
+        const value = options?.useOosValues === true ? item.oosExitAlpha : item.exitAlpha;
+        return Number.isFinite(value) ? value! : Number.NEGATIVE_INFINITY;
+    }
     // Polymarket metrics take priority when available
     if (item.polymarketEval) {
         switch (metric) {
@@ -172,10 +180,15 @@ export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): 
     }
 }
 
-export function compareFinderResults(a: FinderResult, b: FinderResult, sortPriority: FinderMetric[]): number {
+export function compareFinderResults(
+    a: FinderResult,
+    b: FinderResult,
+    sortPriority: FinderMetric[],
+    options?: { useOosValues?: boolean },
+): number {
     for (const metric of sortPriority) {
-        const valA = getFinderMetricValue(a, metric);
-        const valB = getFinderMetricValue(b, metric);
+        const valA = getFinderMetricValue(a, metric, options);
+        const valB = getFinderMetricValue(b, metric, options);
         if (Math.abs(valA - valB) > 0.0001) {
             return isAscendingMetric(metric) ? valA - valB : valB - valA;
         }
@@ -183,6 +196,10 @@ export function compareFinderResults(a: FinderResult, b: FinderResult, sortPrior
     return 0;
 }
 
-export function sortFinderResults(results: readonly FinderResult[], sortPriority: FinderMetric[]): FinderResult[] {
-    return [...results].sort((a, b) => compareFinderResults(a, b, sortPriority));
+export function sortFinderResults(
+    results: readonly FinderResult[],
+    sortPriority: FinderMetric[],
+    options?: { useOosValues?: boolean },
+): FinderResult[] {
+    return [...results].sort((a, b) => compareFinderResults(a, b, sortPriority, options));
 }

@@ -20,6 +20,7 @@ import {
 
 import {
 	FINDER_SORT_OPTIONS,
+	ADVANCED_OPTIONAL_SORT_METRICS,
 	METRIC_FULL_LABELS,
 	STRATEGY_QUALITY_METRIC_FULL_LABELS,
 	STRATEGY_QUALITY_SORT_OPTIONS,
@@ -245,6 +246,7 @@ type FinderPersistedUiState = {
 	useAdvancedSort: boolean;
 	advancedSortOrder: FinderMetric[];
 	advancedTimingSortEnabled: FinderMetric[];
+	advancedOptionalSortEnabled: FinderMetric[];
 	mode: FinderMode;
 	dataSlice: FinderDataSlice;
 	topN: number;
@@ -330,6 +332,7 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	useAdvancedSort: false,
 	advancedSortOrder: [...FINDER_SORT_OPTIONS],
 	advancedTimingSortEnabled: [],
+	advancedOptionalSortEnabled: [],
 	mode: "random",
 	dataSlice: "all",
 	topN: 10,
@@ -374,6 +377,7 @@ const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
     "medianProfitFactor",
     "medianProfitFactorWeightedTrades",
     "medianCompositeEdgeRatio",
+    "medianExitAlpha",
     "worstMaxDrawdownPercent",
     "medianMaxDrawdownPercent",
     "medianReturnDrawdownRatio",
@@ -385,6 +389,10 @@ const TIMING_SORT_METRICS: readonly FinderMetric[] = ["entryScore", "exitScore"]
 
 function isTimingSortMetric(value: unknown): value is FinderMetric {
 	return TIMING_SORT_METRICS.includes(value as FinderMetric);
+}
+
+function isAdvancedOptionalSortMetric(value: unknown): value is FinderMetric {
+	return ADVANCED_OPTIONAL_SORT_METRICS.includes(value as FinderMetric);
 }
 
 function normalizeStringArray(value: unknown): string[] {
@@ -535,6 +543,7 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		useAdvancedSort: source.useAdvancedSort === true,
 		advancedSortOrder: normalizeAdvancedSortOrder(source.advancedSortOrder),
 		advancedTimingSortEnabled: normalizeTimingSortMetrics(source.advancedTimingSortEnabled),
+		advancedOptionalSortEnabled: normalizeAdvancedOptionalSortMetrics(source.advancedOptionalSortEnabled),
 		mode: normalizeFinderMode(source.mode),
 		dataSlice: normalizeFinderDataSlice(source.dataSlice),
 		topN: Math.round(normalizeNumber(source.topN, DEFAULT_FINDER_UI_STATE.topN, 1)),
@@ -572,6 +581,13 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 			? batchRange.end
 			: DEFAULT_FINDER_UI_STATE.assetOpportunityOosBatchEndBars,
 	};
+}
+
+function normalizeAdvancedOptionalSortMetrics(value: unknown): FinderMetric[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.filter((metric): metric is FinderMetric => isAdvancedOptionalSortMetric(metric))
+		.filter((metric, index, metrics) => metrics.indexOf(metric) === index);
 }
 
 export class FinderManager {
@@ -1164,13 +1180,13 @@ export class FinderManager {
 		container.innerHTML = '';
 
 		this.uiState.advancedSortOrder.forEach(metric => {
-			const isTimingMetric = isTimingSortMetric(metric);
+			const isOptionalMetric = isAdvancedOptionalSortMetric(metric);
 			const div = document.createElement('div');
-			div.className = isTimingMetric ? 'finder-sort-item finder-sort-item--optional' : 'finder-sort-item';
+			div.className = isOptionalMetric ? 'finder-sort-item finder-sort-item--optional' : 'finder-sort-item';
 			div.dataset.value = metric;
 			div.innerHTML = `
 				<label class="finder-sort-label">
-					${isTimingMetric ? `<input type="checkbox" class="finder-sort-enabled" aria-label="Enable ${METRIC_FULL_LABELS[metric]}">` : ''}
+					${isOptionalMetric ? `<input type="checkbox" class="finder-sort-enabled" aria-label="Enable ${METRIC_FULL_LABELS[metric]}">` : ''}
 					<span class="sort-label">${METRIC_FULL_LABELS[metric]}</span>
 				</label>
 				<div class="finder-sort-actions">
@@ -1186,14 +1202,17 @@ export class FinderManager {
 	private applyAdvancedSortStateToDom(): void {
 		const { finderSortList: container } = this.getDom();
 		const enabledTimingMetrics = new Set(this.uiState.advancedTimingSortEnabled);
+		const enabledOptionalMetrics = new Set(this.uiState.advancedOptionalSortEnabled);
 		for (const item of Array.from(container.querySelectorAll<HTMLElement>(".finder-sort-item"))) {
 			const metric = item.dataset.value as FinderMetric | undefined;
-			if (!metric || !isTimingSortMetric(metric)) {
+			if (!metric || !isAdvancedOptionalSortMetric(metric)) {
 				continue;
 			}
 			const checkbox = item.querySelector<HTMLInputElement>(".finder-sort-enabled");
 			if (checkbox) {
-				checkbox.checked = enabledTimingMetrics.has(metric);
+				checkbox.checked = isTimingSortMetric(metric)
+					? enabledTimingMetrics.has(metric)
+					: enabledOptionalMetrics.has(metric);
 			}
 		}
 	}
@@ -1467,6 +1486,10 @@ export class FinderManager {
 			.filter((item) => item.querySelector<HTMLInputElement>(".finder-sort-enabled")?.checked === true)
 			.map((item) => item.dataset.value)
 			.filter((metric): metric is FinderMetric => isTimingSortMetric(metric));
+		this.uiState.advancedOptionalSortEnabled = sortItems
+			.filter((item) => item.querySelector<HTMLInputElement>(".finder-sort-enabled")?.checked === true)
+			.map((item) => item.dataset.value)
+			.filter((metric): metric is FinderMetric => isAdvancedOptionalSortMetric(metric));
 		this.uiState.mode = normalizeFinderMode(dom.finderMode.value);
 		this.uiState.dataSlice = normalizeFinderDataSlice(dom.finderDataSlice.value);
 		this.uiState.topN = Math.round(this.readFinderNumberInput(dom.finderTopN, DEFAULT_FINDER_UI_STATE.topN, 1));
@@ -1585,24 +1608,33 @@ export class FinderManager {
 			|| this.isStrategyQualityScope()
 			|| dom.finderPolymarketToggle.checked
 			|| dom.finderMode.value === "genetic";
+		const optionalSortDisabled = this.isUniverseScope()
+			|| this.isStrategyQualityScope()
+			|| dom.finderPolymarketToggle.checked
+			|| dom.finderMode.value === "genetic";
 
 		for (const select of [dom.finderSort, dom.finderSortSecondary]) {
 			for (const option of Array.from(select.options)) {
 				if (isTimingSortMetric(option.value)) {
 					option.disabled = timingSortDisabled;
+				} else if (isAdvancedOptionalSortMetric(option.value)) {
+					option.disabled = optionalSortDisabled;
 				}
 			}
 		}
 
 		for (const item of Array.from(dom.finderSortList.querySelectorAll<HTMLElement>(".finder-sort-item"))) {
-			const isTimingMetric = isTimingSortMetric(item.dataset.value);
-			if (!isTimingMetric) continue;
-			item.classList.toggle("is-disabled", timingSortDisabled);
+			const metric = item.dataset.value;
+			const isTimingMetric = isTimingSortMetric(metric);
+			const isOptionalMetric = isAdvancedOptionalSortMetric(metric);
+			if (!isTimingMetric && !isOptionalMetric) continue;
+			const disabled = isTimingMetric ? timingSortDisabled : optionalSortDisabled;
+			item.classList.toggle("is-disabled", disabled);
 			item.querySelectorAll<HTMLInputElement>(".finder-sort-enabled").forEach((checkbox) => {
-				checkbox.disabled = timingSortDisabled;
+				checkbox.disabled = disabled;
 			});
 			item.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
-				button.disabled = timingSortDisabled;
+				button.disabled = disabled;
 			});
 		}
 	}
@@ -2072,10 +2104,13 @@ export class FinderManager {
 			startTime,
 		});
 		const finalResults = oosReport?.filtered ?? sortedResults;
-		this.setLatestResults({ scope: 'current_chart', results: finalResults });
+		const finalSortedResults = oosReport
+			? sortFinderResults(finalResults, options.sortPriority, { useOosValues: true })
+			: finalResults;
+		this.setLatestResults({ scope: 'current_chart', results: finalSortedResults });
 		this.latestDiagnostics = output.diagnostics ?? this.buildFallbackDiagnostics({
 			options,
-			results: finalResults,
+			results: finalSortedResults,
 			selectedStrategies,
 			ohlcvData,
 			elapsedMs: performance.now() - startTime,
@@ -2083,6 +2118,7 @@ export class FinderManager {
 		});
 		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
 		this.stashAndResetResort();
+		this.populateResortOptions();
 		this.renderLatestResults();
 		this.ui.renderRandomBenchmark(options.mode, output.randomBenchmark);
 
@@ -3198,10 +3234,13 @@ export class FinderManager {
 					// the source of truth including OOS fields.
 					terminalCandidates = event.candidates ?? null;
 					if (terminalCandidates && isStillActive()) {
-						const displayed = sortFinderUniverseCandidates(terminalCandidates, sortPriority)
+						const displayed = sortFinderUniverseCandidates(terminalCandidates, sortPriority, {
+							useOosValues: terminalCandidates.some((candidate) => candidate.oosAggregate !== undefined),
+						})
 							.slice(0, options.topN);
 						this.setLatestResults({ scope: 'symbol_universe', results: displayed });
 						this.stashAndResetResort();
+						this.populateResortOptions();
 						this.renderLatestResults();
 					}
 					finalized = true;
@@ -3229,6 +3268,7 @@ export class FinderManager {
 				if (isStillActive()) {
 					this.setLatestResults({ scope: "symbol_universe", results: [...terminalCandidates] });
 					this.stashAndResetResort();
+					this.populateResortOptions();
 					this.renderLatestResults();
 				}
 			}
@@ -3401,7 +3441,7 @@ export class FinderManager {
 			.filter((el) => {
 				const item = el as HTMLElement;
 				const metric = item.dataset.value as FinderMetric | undefined;
-				if (!isTimingSortMetric(metric)) {
+				if (!isAdvancedOptionalSortMetric(metric)) {
 					return true;
 				}
 				return item.querySelector<HTMLInputElement>(".finder-sort-enabled")?.checked === true;
@@ -3479,6 +3519,9 @@ export class FinderManager {
 		});
 
 		options.scope = scope;
+		if (scope !== "current_chart" && scope !== "symbol_universe") {
+			options.sortPriority = options.sortPriority.filter((metric) => metric !== "exitAlpha");
+		}
 		if (scope === 'symbol_universe' || scope === 'strategy_quality') {
 			options.universe = buildFinderUniverseOptions({
 				symbols: this.parseUniverseSymbols(dom.finderUniverseSymbols.value),
@@ -3799,7 +3842,12 @@ export class FinderManager {
 		const scope = this.getScope();
 		const options: Array<{ value: string; label: string }> = [];
 		if (scope === 'symbol_universe') {
+			const results = this.latestResults.scope === "symbol_universe" ? this.latestResults.results : [];
+			const hasMedianExitAlpha = results.some((result) => result.oosAggregate !== undefined
+				? Number.isFinite(result.medianOosExitAlpha)
+				: Number.isFinite(result.medianExitAlpha));
 			for (const metric of UNIVERSE_SORT_OPTIONS) {
+				if (metric === "medianExitAlpha" && !hasMedianExitAlpha) continue;
 				options.push({ value: metric, label: UNIVERSE_METRIC_FULL_LABELS[metric] });
 			}
 		} else if (scope === 'asset_opportunity') {
@@ -3834,7 +3882,12 @@ export class FinderManager {
 				options.push({ value: metric, label: STRATEGY_QUALITY_METRIC_FULL_LABELS[metric] });
 			}
 		} else {
+			const results = this.latestResults.scope === "current_chart" ? this.latestResults.results : [];
+			const hasExitAlpha = results.some((result) => result.oosResult !== undefined
+				? Number.isFinite(result.oosExitAlpha)
+				: Number.isFinite(result.exitAlpha));
 			for (const metric of FINDER_SORT_OPTIONS) {
+				if (metric === "exitAlpha" && !hasExitAlpha) continue;
 				options.push({ value: metric, label: METRIC_FULL_LABELS[metric] });
 			}
 		}
@@ -3876,11 +3929,15 @@ export class FinderManager {
 
 		if (scope === 'current_chart') {
 			const results = this.latestResults.results;
-			const sorted = sortFinderResults(results, [metric as FinderMetric]);
+			const sorted = sortFinderResults(results, [metric as FinderMetric], {
+				useOosValues: metric === "exitAlpha" && results.some((result) => result.oosResult !== undefined),
+			});
 			this.setLatestResults({ scope: 'current_chart', results: sorted });
 		} else if (scope === 'symbol_universe') {
 			const results = this.latestResults.results;
-			const sorted = sortFinderUniverseCandidates(results, [metric as FinderUniverseMetric]);
+			const sorted = sortFinderUniverseCandidates(results, [metric as FinderUniverseMetric], {
+				useOosValues: metric === "medianExitAlpha" && results.some((result) => result.oosAggregate !== undefined),
+			});
 			this.setLatestResults({ scope: 'symbol_universe', results: sorted });
 		} else if (scope === 'asset_opportunity') {
 			if (metric === ASSET_OPPORTUNITY_ALL_SORTS) {
@@ -3967,6 +4024,8 @@ export class FinderManager {
 				avgWin: displayedResult.avgWin,
 				avgLoss: displayedResult.avgLoss,
 				sharpeRatio: displayedResult.sharpeRatio,
+				...(Number.isFinite(result.exitAlpha) ? { exitAlpha: result.exitAlpha } : {}),
+				...(Number.isFinite(result.oosExitAlpha) ? { oosExitAlpha: result.oosExitAlpha } : {}),
 			},
 			rawMetrics: {
 				netProfit: result.result.netProfit,
@@ -3982,6 +4041,7 @@ export class FinderManager {
 				avgWin: result.result.avgWin,
 				avgLoss: result.result.avgLoss,
 				sharpeRatio: result.result.sharpeRatio,
+				...(Number.isFinite(result.exitAlpha) ? { exitAlpha: result.exitAlpha } : {}),
 			},
 			selectionMetrics: {
 				netProfit: result.selectionResult.netProfit,
@@ -3997,6 +4057,7 @@ export class FinderManager {
 				avgWin: result.selectionResult.avgWin,
 				avgLoss: result.selectionResult.avgLoss,
 				sharpeRatio: result.selectionResult.sharpeRatio,
+				...(Number.isFinite(result.exitAlpha) ? { exitAlpha: result.exitAlpha } : {}),
 			},
 			endpointAdjusted: result.endpointAdjusted,
 			endpointRemovedTrades: result.endpointRemovedTrades,
@@ -4005,6 +4066,8 @@ export class FinderManager {
 				params: result.exitStrategyParams ?? {},
 			} : null,
 			polymarketEval: result.polymarketEval ?? null,
+			...(Number.isFinite(result.exitAlpha) ? { exitAlpha: result.exitAlpha } : {}),
+			...(Number.isFinite(result.oosExitAlpha) ? { oosExitAlpha: result.oosExitAlpha } : {}),
 		};
 	}
 
@@ -4033,6 +4096,8 @@ export class FinderManager {
 				medianNetProfit: result.medianNetProfit,
 				worstNetProfit: result.worstNetProfit,
 				bestNetProfit: result.bestNetProfit,
+				...(Number.isFinite(result.medianExitAlpha) ? { medianExitAlpha: result.medianExitAlpha } : {}),
+				...(Number.isFinite(result.medianOosExitAlpha) ? { medianOosExitAlpha: result.medianOosExitAlpha } : {}),
 				evaluationStoppedEarly: Boolean(result.evaluationStoppedEarly),
 				stoppedReason: result.stoppedReason ?? null,
 			},
@@ -4059,7 +4124,11 @@ export class FinderManager {
 					avgLoss: symbolResult.result.avgLoss,
 					sharpeRatio: symbolResult.result.sharpeRatio,
 					sharpeRatioAvailable: symbolResult.result.sharpeRatioAvailable === true,
+					...(Number.isFinite(symbolResult.result.exitAlpha) ? { exitAlpha: symbolResult.result.exitAlpha } : {}),
 				} : null,
+				oosExitAlpha: Number.isFinite(symbolResult.oosResult?.exitAlpha)
+					? symbolResult.oosResult?.exitAlpha
+					: null,
 			})),
 		};
 	}

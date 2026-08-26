@@ -69,6 +69,7 @@ import {
 } from "./finder-diagnostics";
 import { buildSelectionResult } from "./endpoint";
 import { withExitStrategyBaseParams } from "./exit-strategy-param-prefix";
+import { finderSortRequiresExitAlpha } from "./finder-exit-alpha";
 import type { FinderRunCallbacks, FinderRunInput, FinderRunOutput } from "./finder-runner";
 
 export { buildFinderEvaluationData } from "./finder-runner-shared";
@@ -82,7 +83,7 @@ async function getDataManager() {
 }
 
 type FinderCandidateForEnrichment = Pick<FinderResult, "key" | "name" | "params" | "result">
-    & Partial<Pick<FinderResult, "compositeEdgeRatio" | "exitStrategyKey" | "polymarketEval">>;
+    & Partial<Pick<FinderResult, "compositeEdgeRatio" | "exitStrategyKey" | "polymarketEval" | "exitAlpha">>;
 
 function enrichFinderCandidate(args: {
     candidate: FinderCandidateForEnrichment;
@@ -118,6 +119,7 @@ function enrichFinderCandidate(args: {
         compositeEdgeRatio: requiresCompositeEdgeRatioSort
             ? computeFinderCompositeEdgeRatio(normalizedResult, candidateData)
             : candidate.compositeEdgeRatio,
+        exitAlpha: Number.isFinite(candidate.exitAlpha) ? candidate.exitAlpha : undefined,
         endpointAdjusted: adjustment.adjusted,
         endpointRemovedTrades: adjustment.removedTrades,
     });
@@ -175,6 +177,7 @@ type BacktestFallbackRunnerOptions = {
     timing: FinderDiagnosticsTimings;
     onBacktestResult?: (job: ParamJob, result: BacktestResult) => void;
     onFailure?: (job: ParamJob, error?: unknown) => void;
+    exitAlphaEnabled?: boolean;
 };
 
 function createBacktestFallbackRunner(options: BacktestFallbackRunnerOptions): (run: PreparedRun) => void {
@@ -191,7 +194,8 @@ function createBacktestFallbackRunner(options: BacktestFallbackRunnerOptions): (
             options.getJobPrecomputed(run.job, options.defaultPrecomputed),
             options.insertResult,
             (result) => options.onBacktestResult?.(run.job, result),
-            (error) => options.onFailure?.(run.job, error)
+            (error) => options.onFailure?.(run.job, error),
+            options.exitAlphaEnabled,
         );
         options.timing.backtest += performance.now() - tTsStart;
     };
@@ -540,7 +544,11 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
     const ranker = new FinderResultRanker(Math.max(input.options.topN, 50), input.options.sortPriority);
     const requiresCompositeEdgeRatioSort = finderSortRequiresCompositeEdgeRatio(input.options.sortPriority);
     const requiresTradeTimingQualitySort = finderSortRequiresTradeTimingQuality(input.options.sortPriority);
-    const usingCompactBacktest = !requiresCompositeEdgeRatioSort && !requiresTradeTimingQualitySort && flags.shouldUseCompactBacktest;
+    const requiresExitAlphaSort = finderSortRequiresExitAlpha(input.options.sortPriority);
+    const usingCompactBacktest = !requiresCompositeEdgeRatioSort
+        && !requiresTradeTimingQualitySort
+        && !requiresExitAlphaSort
+        && flags.shouldUseCompactBacktest;
     let processedCount = 0;
     let filteredCount = 0;
     let endpointAdjustedCount = 0;
@@ -604,6 +612,11 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         useRustForFinder = false;
         cacheId = null;
         callbacks.setStatus("Using TypeScript engine (timing-score sort requires full trades)...");
+    }
+    if (requiresExitAlphaSort && useRustForFinder) {
+        useRustForFinder = false;
+        cacheId = null;
+        callbacks.setStatus("Using TypeScript engine (Exit Alpha requires paired raw backtests)...");
     }
 
     const insertResult = (candidate: CandidateResult): void => {
@@ -772,6 +785,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
     const useRandomFunnel =
         !requiresCompositeEdgeRatioSort &&
         !requiresTradeTimingQualitySort &&
+        !requiresExitAlphaSort &&
         input.options.mode === "random" &&
         (
             (!useRustForFinder && totalRuns >= 220) ||
@@ -893,6 +907,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 timing,
                 onBacktestResult: recordBacktestResult,
                 onFailure: recordFailure,
+                exitAlphaEnabled: requiresExitAlphaSort,
             });
 
             for (let i = 0; i < shortlisted.length; i++) {
@@ -966,6 +981,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             timing,
             onBacktestResult: recordBacktestResult,
             onFailure: recordFailure,
+            exitAlphaEnabled: requiresExitAlphaSort,
         });
 
         for (let batchIndex = 0; batchIndex < totalFunnelBatches; batchIndex++) {
@@ -1040,6 +1056,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         timing,
         onBacktestResult: recordBacktestResult,
         onFailure: recordFailure,
+        exitAlphaEnabled: requiresExitAlphaSort,
     });
     const rustRunBacktestFallback = createBacktestFallbackRunner({
         closedData,
@@ -1052,6 +1069,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         timing,
         onBacktestResult: recordBacktestResult,
         onFailure: recordFailure,
+        exitAlphaEnabled: requiresExitAlphaSort,
     });
 
     while (processedCount < totalRuns) {
@@ -1221,6 +1239,7 @@ async function reconcileSingleTimeframeTopResults(
     const strategyByKey = new Map(input.selectedStrategies.map((item) => [item.key, item.strategy]));
     const requiresCompositeEdgeRatioSort = finderSortRequiresCompositeEdgeRatio(input.options.sortPriority);
     const requiresTradeTimingQualitySort = finderSortRequiresTradeTimingQuality(input.options.sortPriority);
+    const requiresExitAlphaSort = finderSortRequiresExitAlpha(input.options.sortPriority);
     const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
     const rustSettings = sanitizeBacktestSettingsForRust(input.settings);
     const precomputed = existingPrecomputed ?? precomputeIndicators(closedData, input.settings);
@@ -1263,6 +1282,7 @@ async function reconcileSingleTimeframeTopResults(
                 exitStrategy,
                 exitStrategyKey: candidate.exitStrategyKey,
             }, jobData, input.interval, preparedDataCache, input.settings, jobCtx);
+            let exitAlpha: number | undefined;
             const rawResult = runStrategyBacktest({
                 strategy,
                 data: jobData,
@@ -1274,12 +1294,17 @@ async function reconcileSingleTimeframeTopResults(
                 precomputed: jobPrecomputed,
                 exitStrategy,
                 executionContext: jobCtx,
+                exitAlphaEnabled: requiresExitAlphaSort,
+                onExitAlpha: (value) => {
+                    exitAlpha = value;
+                },
             });
             reconciled.push(enrichFinderCandidate({
                 candidate: {
                     ...candidate,
                     params: normalizedParams,
                     result: rawResult,
+                    ...(Number.isFinite(exitAlpha) ? { exitAlpha } : {}),
                 },
                 candidateData: jobData,
                 lastDataTime,

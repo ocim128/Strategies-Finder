@@ -106,6 +106,7 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
     const sharpes: number[] = [];
     const profitFactors: number[] = [];
     const compositeEdgeRatios: number[] = [];
+    const exitAlphas: number[] = [];
     const maxDrawdownPercents: number[] = [];
     const returnDrawdownRatios: number[] = [];
 
@@ -133,6 +134,9 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
         profitFactors.push(result.profitFactor);
         if (typeof result.compositeEdgeRatio === "number" && Number.isFinite(result.compositeEdgeRatio)) {
             compositeEdgeRatios.push(result.compositeEdgeRatio);
+        }
+        if (typeof result.exitAlpha === "number" && Number.isFinite(result.exitAlpha)) {
+            exitAlphas.push(result.exitAlpha);
         }
         if (result.drawdownAvailable === true) {
             const maxDrawdownPercent = Math.max(0, result.maxDrawdownPercent);
@@ -162,6 +166,7 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
         medianProfitFactor: median(profitFactors),
         medianNetProfit: median(netProfits),
         medianCompositeEdgeRatio: compositeEdgeRatios.length > 0 ? median(compositeEdgeRatios) : 0,
+        ...(exitAlphas.length > 0 ? { medianExitAlpha: median(exitAlphas) } : {}),
         drawdownMetricsAvailable: maxDrawdownPercents.length > 0,
         worstMaxDrawdownPercent: maxDrawdownPercents.length > 0 ? Math.max(...maxDrawdownPercents) : 0,
         medianMaxDrawdownPercent: median(maxDrawdownPercents),
@@ -330,9 +335,22 @@ export function buildFinderUniverseCandidate(input: {
     return candidate;
 }
 
+export function updateFinderUniverseOosExitAlpha(candidate: FinderUniverseCandidate): void {
+    const values = candidate.symbols
+        .filter((symbol) => symbol.oosResult && symbol.oosResult.totalTrades > 0)
+        .map((symbol) => symbol.oosResult?.exitAlpha)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    if (values.length > 0) {
+        candidate.medianOosExitAlpha = median(values);
+    } else {
+        delete candidate.medianOosExitAlpha;
+    }
+}
+
 export function getFinderUniverseMetricValue(
     item: FinderUniverseCandidate,
-    metric: FinderUniverseMetric
+    metric: FinderUniverseMetric,
+    options?: { useOosValues?: boolean },
 ): number {
     switch (metric) {
         case "robustUniverseScore":
@@ -355,6 +373,10 @@ export function getFinderUniverseMetricValue(
             return item.medianProfitFactor * item.totalTrades;
         case "medianCompositeEdgeRatio":
             return item.medianCompositeEdgeRatio;
+        case "medianExitAlpha": {
+            const value = options?.useOosValues === true ? item.medianOosExitAlpha : item.medianExitAlpha;
+            return Number.isFinite(value) ? value! : Number.NEGATIVE_INFINITY;
+        }
         case "worstMaxDrawdownPercent":
             return item.worstMaxDrawdownPercent;
         case "medianMaxDrawdownPercent":
@@ -373,11 +395,16 @@ export function getFinderUniverseMetricValue(
 export function compareFinderUniverseCandidates(
     left: FinderUniverseCandidate,
     right: FinderUniverseCandidate,
-    sortPriority: readonly FinderUniverseMetric[]
+    sortPriority: readonly FinderUniverseMetric[],
+    options?: { useOosValues?: boolean },
 ): number {
     for (const metric of sortPriority) {
-        const leftValue = getFinderUniverseMetricValue(left, metric);
-        const rightValue = getFinderUniverseMetricValue(right, metric);
+        const leftValue = getFinderUniverseMetricValue(left, metric, options);
+        const rightValue = getFinderUniverseMetricValue(right, metric, options);
+        if (leftValue === Number.NEGATIVE_INFINITY || rightValue === Number.NEGATIVE_INFINITY) {
+            if (leftValue === rightValue) continue;
+            return leftValue === Number.NEGATIVE_INFINITY ? 1 : -1;
+        }
         if (Math.abs(leftValue - rightValue) > 0.0001) {
             return isAscendingUniverseMetric(metric)
                 ? leftValue - rightValue
@@ -394,9 +421,10 @@ export function compareFinderUniverseCandidates(
 
 export function sortFinderUniverseCandidates(
     results: readonly FinderUniverseCandidate[],
-    sortPriority: readonly FinderUniverseMetric[]
+    sortPriority: readonly FinderUniverseMetric[],
+    options?: { useOosValues?: boolean },
 ): FinderUniverseCandidate[] {
-    return [...results].sort((left, right) => compareFinderUniverseCandidates(left, right, sortPriority));
+    return [...results].sort((left, right) => compareFinderUniverseCandidates(left, right, sortPriority, options));
 }
 
 /**

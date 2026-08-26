@@ -45,6 +45,7 @@ import {
     computeUniverseOosAggregate,
     computeUniverseSymbolOosVerdict,
     sortFinderUniverseCandidates,
+    updateFinderUniverseOosExitAlpha,
     updateFinderUniverseCandidateScores,
 } from "./finder-universe-metrics";
 import { resolveFinderRiskOverrides } from "./finder-runner-core";
@@ -58,6 +59,7 @@ import {
     FINDER_PAIR_NEUTRAL_METRIC_BASIS,
     isSyntheticPairFinderSymbol,
 } from "./finder-pair-neutral";
+import { computeExitAlpha } from "./finder-exit-alpha";
 
 /**
  * Per-symbol trade floor for the Universe OOS pass. Mirrors the IS intent
@@ -74,6 +76,7 @@ const UNIVERSE_OOS_PER_SYMBOL_MIN_TRADES = 5;
 export function backtestResultToUniverseMetrics(
     result: BacktestResult,
     metricBasis?: typeof FINDER_PAIR_NEUTRAL_METRIC_BASIS,
+    exitAlpha?: number,
 ): FinderUniverseSymbolMetrics {
     return {
         netProfit: result.netProfit,
@@ -90,6 +93,7 @@ export function backtestResultToUniverseMetrics(
         avgLoss: result.avgLoss,
         sharpeRatio: result.sharpeRatio,
         ...(metricBasis ? { metricBasis } : {}),
+        ...(Number.isFinite(exitAlpha) ? { exitAlpha } : {}),
     };
 }
 
@@ -170,6 +174,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
 
     const minActiveSymbols = options.universe?.minActiveSymbols ?? 1;
     const perSymbolMinTrades = UNIVERSE_OOS_PER_SYMBOL_MIN_TRADES;
+    const requiresExitAlpha = options.universe?.sortPriority.includes("medianExitAlpha") === true;
     const rustSettings = sanitizeBacktestSettingsForRust(deps.settings);
     const preResolvedCapital = resolveCapitalSettingsFromRaw(
         deps.capitalSettings as unknown as Record<string, unknown>,
@@ -262,7 +267,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
                     context: {
                         blockRange: null,
                         annotatePolymarket: false,
-                        engineMode: "auto",
+                        engineMode: requiresExitAlpha ? "typescript" : "auto",
                         nowSec: runNowSec,
                         useRustEnginePreference: deps.useRustEnginePreference,
                     },
@@ -281,9 +286,55 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
                 const metricsResult = pairNeutralMetrics
                     ? { ...output.result, ...pairNeutralMetrics }
                     : output.result;
+                let exitAlpha: number | undefined;
+                if (requiresExitAlpha) {
+                    try {
+                        const controlOutput = await executeBacktest({
+                            ohlcvData: oosData,
+                            interval: deps.interval,
+                            primarySymbol: symbolResult.symbol,
+                            strategyKey: candidate.strategyKey,
+                            strategy,
+                            strategyParams: entryParams,
+                            backtestSettings: oosBacktestSettings,
+                            capitalSettings: deps.capitalSettings,
+                            preResolvedSettings,
+                            preResolvedCapital,
+                            dataFetcher: crossSymbolDataFetcher,
+                            preGeneratedSignals: output.signals,
+                            context: {
+                                blockRange: null,
+                                annotatePolymarket: false,
+                                engineMode: "typescript",
+                                nowSec: runNowSec,
+                                useRustEnginePreference: deps.useRustEnginePreference,
+                            },
+                            backtestRunOptions: {
+                                includeAdvancedAnalytics: false,
+                                includeSharpeRatio: true,
+                                omitEquityCurve: true,
+                                skipDrawdown: true,
+                                skipResultPostProcessing: true,
+                                forceDisableSignalExits: true,
+                                ...(isSyntheticPair ? { useCompactBacktest: false } : {}),
+                            },
+                        });
+                        const controlPairNeutralMetrics = isSyntheticPair
+                            ? buildFinderPairNeutralMetrics(controlOutput.result, preResolvedCapital)
+                            : null;
+                        exitAlpha = isSyntheticPair
+                            ? pairNeutralMetrics && controlPairNeutralMetrics
+                                ? computeExitAlpha(pairNeutralMetrics, controlPairNeutralMetrics)
+                                : undefined
+                            : computeExitAlpha(output.result, controlOutput.result);
+                    } catch {
+                        // A failed OOS counterfactual is missing, not zero.
+                    }
+                }
                 const oosMetrics = backtestResultToUniverseMetrics(
                     metricsResult,
                     pairNeutralMetrics ? FINDER_PAIR_NEUTRAL_METRIC_BASIS : undefined,
+                    exitAlpha,
                 );
                 symbolResult.oosResult = oosMetrics;
                 symbolResult.oosVerdict = computeUniverseSymbolOosVerdict({
@@ -304,6 +355,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
             isProfitableActiveRatio: candidate.profitableActiveRatio,
             minActiveSymbols,
         });
+        updateFinderUniverseOosExitAlpha(candidate);
         updateFinderUniverseCandidateScores(candidate);
     }
 
@@ -321,6 +373,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
     const sortedResults = sortFinderUniverseCandidates(
         results,
         options.universe?.sortPriority ?? [],
+        { useOosValues: true },
     ).slice(0, options.topN);
     results.length = 0;
     results.push(...sortedResults);

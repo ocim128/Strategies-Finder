@@ -45,6 +45,8 @@ function compactFinderResult(result: FinderResult): FinderResult {
         result: compactBacktestResult(result.result),
         selectionResult: compactBacktestResult(result.selectionResult),
         ...(Number.isFinite(result.compositeEdgeRatio) ? { compositeEdgeRatio: result.compositeEdgeRatio } : {}),
+        ...(Number.isFinite(result.exitAlpha) ? { exitAlpha: result.exitAlpha } : {}),
+        ...(Number.isFinite(result.oosExitAlpha) ? { oosExitAlpha: result.oosExitAlpha } : {}),
         endpointAdjusted: result.endpointAdjusted,
         endpointRemovedTrades: result.endpointRemovedTrades,
         ...(result.polymarketEval ? { polymarketEval: result.polymarketEval } : {}),
@@ -57,6 +59,7 @@ function compactUniverseMetrics(metrics: FinderUniverseSymbolMetrics): FinderUni
     const {
         netProfit, netProfitPercent, expectancy, avgTrade, winRate, profitFactor,
         totalTrades, maxDrawdownPercent, winningTrades, losingTrades, avgWin, avgLoss, sharpeRatio,
+        exitAlpha,
     } = metrics;
     return {
         netProfit, netProfitPercent, expectancy, avgTrade, winRate, profitFactor,
@@ -64,6 +67,7 @@ function compactUniverseMetrics(metrics: FinderUniverseSymbolMetrics): FinderUni
         ...(metrics.sharpeRatioAvailable !== undefined ? { sharpeRatioAvailable: metrics.sharpeRatioAvailable } : {}),
         ...(metrics.drawdownAvailable !== undefined ? { drawdownAvailable: metrics.drawdownAvailable } : {}),
         ...(Number.isFinite(metrics.compositeEdgeRatio) ? { compositeEdgeRatio: metrics.compositeEdgeRatio } : {}),
+        ...(Number.isFinite(exitAlpha) ? { exitAlpha } : {}),
     };
 }
 
@@ -106,6 +110,8 @@ function compactUniverseCandidate(candidate: FinderUniverseCandidate): FinderUni
         worstNetProfit: candidate.worstNetProfit,
         bestNetProfit: candidate.bestNetProfit,
         medianCompositeEdgeRatio: candidate.medianCompositeEdgeRatio,
+        ...(Number.isFinite(candidate.medianExitAlpha) ? { medianExitAlpha: candidate.medianExitAlpha } : {}),
+        ...(Number.isFinite(candidate.medianOosExitAlpha) ? { medianOosExitAlpha: candidate.medianOosExitAlpha } : {}),
         drawdownMetricsAvailable: candidate.drawdownMetricsAvailable === true,
         worstMaxDrawdownPercent: Number.isFinite(candidate.worstMaxDrawdownPercent) ? candidate.worstMaxDrawdownPercent : 0,
         medianMaxDrawdownPercent: Number.isFinite(candidate.medianMaxDrawdownPercent) ? candidate.medianMaxDrawdownPercent : 0,

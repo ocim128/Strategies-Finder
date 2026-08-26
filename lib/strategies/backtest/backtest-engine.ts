@@ -51,6 +51,8 @@ type BacktestRunOptions = {
     /** Build endpoint-adjusted selection metrics without allocating Trade objects. */
     endpointSelectionLastDataTime?: Time | null;
     endpointSelectionInitialCapital?: number;
+    /** Internal Finder control-run option; applied after settings normalization. */
+    forceDisableSignalExits?: boolean;
 };
 
 export interface BacktestEndpointSelection {
@@ -504,6 +506,20 @@ function canUseSignalOnlyFinderFastPath(
     return options?.skipDrawdown === true
         && options.includeSharpeRatio === false
         && !hasBarBasedExitRules(config);
+}
+
+function normalizeEngineSettings(
+    settings: BacktestSettings,
+    options?: BacktestRunOptions,
+): NormalizedSettings {
+    const config = normalizeBacktestSettings(settings);
+    if (options?.forceDisableSignalExits === true) {
+        // This is deliberately applied after normalizeBacktestSettings. The
+        // public disableSignalExits setting is otherwise cleared when no
+        // chart-managed alternative exit is enabled.
+        config.disableSignalExits = true;
+    }
+    return config;
 }
 
 type EndpointSelectionAccumulator = {
@@ -1606,7 +1622,7 @@ export function runBacktestCompact(
         ), runStartedAt);
     }
 
-    const config = normalizeBacktestSettings(settings);
+    const config = normalizeEngineSettings(settings, options);
     const omitEquityCurve = options?.omitEquityCurve === true && options?.includeSharpeRatio === false;
     const learningState: PathExitLearningState = {
         hazardSamples: new Map(),
@@ -2225,7 +2241,7 @@ export function runBacktest(
         ), runStartedAt);
     }
 
-    const config = normalizeBacktestSettings(settings);
+    const config = normalizeEngineSettings(settings, options);
     const omitEquityCurve = options?.omitEquityCurve === true && options?.includeSharpeRatio === false;
     const learningState: PathExitLearningState = {
         hazardSamples: new Map(),

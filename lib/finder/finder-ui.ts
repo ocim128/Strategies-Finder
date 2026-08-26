@@ -15,6 +15,10 @@ import { getFinderSelectionResult } from "./finder-engine";
 import { calculateFinderAssetOosAverageHorizonMetrics } from "./finder-asset-opportunity-oos";
 import { computePerformanceVerdict, computeStrategyVerdict } from "./finder-universe-metrics";
 
+function formatExitAlpha(value: number): string {
+    return `${value >= 0 ? "+" : ""}${value.toFixed(2)} pp`;
+}
+
 export function getFinderDisplayResult(item: FinderResult): BacktestResult {
     return getFinderSelectionResult(item);
 }
@@ -150,6 +154,9 @@ export class FinderUI {
                 if (Number.isFinite(item.compositeEdgeRatio)) {
                     metrics.appendChild(this.createMetricChip(`ER ${item.compositeEdgeRatio!.toFixed(2)}`));
                 }
+                if (Number.isFinite(item.exitAlpha)) {
+                    metrics.appendChild(this.createMetricChip(`Exit α ${formatExitAlpha(item.exitAlpha!)}`));
+                }
                 if (typeof result.tradeTimingQuality?.entryScore === "number") {
                     metrics.appendChild(this.createMetricChip(`Entry ${formatUiScore(result.tradeTimingQuality.entryScore)}`));
                 }
@@ -161,6 +168,9 @@ export class FinderUI {
                 if (item.oosResult && item.oosVerdict) {
                     const oos = item.oosResult;
                     metrics.appendChild(this.createOosMetricChip(oos.netProfit, oos.profitFactor, oos.totalTrades, item.oosVerdict));
+                }
+                if (Number.isFinite(item.oosExitAlpha)) {
+                    metrics.appendChild(this.createMetricChip(`OOS Exit α ${formatExitAlpha(item.oosExitAlpha!)}`));
                 }
                 if (item.endpointAdjusted) {
                     metrics.appendChild(this.createMetricChip(this.formatSelectionSummary(result)));
@@ -216,6 +226,12 @@ export class FinderUI {
             metrics.appendChild(this.createMetricChip(`Med PF ${formatProfitFactor(item.medianProfitFactor)}`));
             if (item.medianCompositeEdgeRatio > 0) {
                 metrics.appendChild(this.createMetricChip(`Med ER ${item.medianCompositeEdgeRatio.toFixed(2)}`));
+            }
+            if (Number.isFinite(item.medianExitAlpha)) {
+                metrics.appendChild(this.createMetricChip(`Med Exit α ${formatExitAlpha(item.medianExitAlpha!)}`));
+            }
+            if (Number.isFinite(item.medianOosExitAlpha)) {
+                metrics.appendChild(this.createMetricChip(`OOS Med Exit α ${formatExitAlpha(item.medianOosExitAlpha!)}`));
             }
             if (item.drawdownMetricsAvailable) {
                 metrics.appendChild(this.createMetricChip(`Worst DD ${item.worstMaxDrawdownPercent.toFixed(2)}%`));
@@ -298,6 +314,12 @@ export class FinderUI {
                             ? `DD ${r.maxDrawdownPercent.toFixed(2)}%`
                             : "DD --");
                         textParts.push(`Trades ${r.totalTrades}`);
+                        if (Number.isFinite(r.exitAlpha)) {
+                            textParts.push(`Exit α ${formatExitAlpha(r.exitAlpha!)}`);
+                        }
+                        if (Number.isFinite(symbolResult.oosResult?.exitAlpha)) {
+                            textParts.push(`OOS Exit α ${formatExitAlpha(symbolResult.oosResult!.exitAlpha!)}`);
+                        }
                     }
                     if (symbolResult.error) textParts.push(symbolResult.error);
                     const timeRange = this.formatUniverseTimeRange(symbolResult.firstTime, symbolResult.lastTime);

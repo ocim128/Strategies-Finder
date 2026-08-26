@@ -34,6 +34,7 @@ export type FinderMetric =
     | 'compositeEdgeRatio'
     | 'entryScore'
     | 'exitScore'
+    | 'exitAlpha'
     | 'averageGain'
     | 'payoffRatio'
     | 'totalTrades'
@@ -58,6 +59,7 @@ export type FinderUniverseMetric =
     | 'medianProfitFactor'
     | 'medianProfitFactorWeightedTrades'
     | 'medianCompositeEdgeRatio'
+    | 'medianExitAlpha'
     | 'worstMaxDrawdownPercent'
     | 'medianMaxDrawdownPercent'
     | 'medianReturnDrawdownRatio'
@@ -189,6 +191,10 @@ export interface FinderResult {
     oosResult?: BacktestResult;
     /** OOS gate verdict. Present iff oosResult is present. */
     oosVerdict?: FinderOosVerdict;
+    /** Raw IS Exit Alpha in percentage points. */
+    exitAlpha?: number;
+    /** Raw OOS Exit Alpha in percentage points. */
+    oosExitAlpha?: number;
 }
 
 export type FinderUniverseSymbolStatus =
@@ -237,6 +243,8 @@ export type FinderUniverseSymbolMetrics = Pick<BacktestResult,
      * Undefined otherwise; treat as 0/missing when not requested.
      */
     compositeEdgeRatio?: number;
+    /** Raw normal-policy net return minus the no-strategy-exit control return. */
+    exitAlpha?: number;
     };
 
 export interface FinderUniverseSymbolResult {
@@ -295,6 +303,10 @@ export interface FinderUniverseCandidate {
     bestNetProfit: number;
     /** Median per-symbol Composite Edge Ratio across active symbols (0 when never computed). */
     medianCompositeEdgeRatio: number;
+    /** Median raw Exit Alpha across active symbols with a finite value. */
+    medianExitAlpha?: number;
+    /** Median raw OOS Exit Alpha across active symbols with a finite value. */
+    medianOosExitAlpha?: number;
     /** True when the active Universe sort requested per-symbol drawdown computation. */
     drawdownMetricsAvailable: boolean;
     /** Largest max drawdown percentage across active symbols with computed drawdown. */
