@@ -4,7 +4,7 @@
     <div class="param-hint">
         Classify each synthetic pair (<code>BASE+QUOTE</code>) by the shape of
         its ratio path (base.close / quote.close). Full History uses fixed
-        calendar anchors; Latest 200 Bars groups charts into descriptive
+        calendar anchors; the Recent Window groups charts into descriptive
         <code>TYPE A</code> through <code>TYPE J</code>.
     </div>
     <div class="param-hint" style="margin-top: 4px; color: var(--color-warning, #b8860b);">
@@ -18,13 +18,27 @@
             <label class="param-label" for="rankPairsMode">Classification</label>
             <select class="param-input" id="rankPairsMode">
                 <option value="history">Full History Regime</option>
-                <option value="recent200">Latest 200 Bars (TYPE A–J)</option>
+                <option value="recent200">Recent Window (TYPE A–J, default 200 bars)</option>
             </select>
         </div>
         <div class="param-hint">
             Recent types: A Stable Range, B Expanding Range, C Compressing
             Range, D Base Trend, E Quote Trend, F Breakout, G Reversal,
             H Level Shift, I Mixed/Noisy, J Thin.
+        </div>
+        <div id="rankPairsRecentWindowSettings" style="margin-top: 12px;">
+            <div class="param-group">
+                <label class="param-label" for="rankPairsEvalWindowBars">Eval Window Bars</label>
+                <input type="number" class="param-input" id="rankPairsEvalWindowBars"
+                    value="200" min="0" max="100000" step="1">
+                <div class="param-hint">0 = all available bars before the OOS holdout.</div>
+            </div>
+            <div class="param-group" style="margin-top: 8px;">
+                <label class="param-label" for="rankPairsOosHoldoutBars">OOS Holdout Bars</label>
+                <input type="number" class="param-input" id="rankPairsOosHoldoutBars"
+                    value="0" min="0" max="100000" step="1">
+                <div class="param-hint">Reserved newest bars excluded from A&ndash;J classification; 0 = disabled.</div>
+            </div>
         </div>
         <div class="finder-strategy-actions" role="group" aria-label="Rank pairs helpers">
             <button class="btn btn-secondary btn-compact" id="rankPairsUseCurrent" type="button">Use Current</button>

@@ -28,6 +28,7 @@ export async function loadRecentRankPairDataset(
     symbol: string,
     interval: string,
     signal?: AbortSignal,
+    targetBars?: number,
 ): Promise<OHLCVData[] | null> {
-    return loader.load(symbol, interval, signal);
+    return loader.load(symbol, interval, signal, targetBars);
 }

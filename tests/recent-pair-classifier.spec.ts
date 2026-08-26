@@ -26,6 +26,17 @@ function series(logCloseAt: (index: number) => number, count = RECENT_PAIR_WINDO
     return Array.from({ length: count }, (_, index) => candle(index, Math.exp(logCloseAt(index))));
 }
 
+function datedSeries(logCloseAt: (index: number) => number, count: number): OHLCVData[] {
+    return Array.from({ length: count }, (_, index) => ({
+        time: (END + index * SPACING) as Time,
+        open: Math.exp(logCloseAt(index)),
+        high: Math.exp(logCloseAt(index)),
+        low: Math.exp(logCloseAt(index)),
+        close: Math.exp(logCloseAt(index)),
+        volume: 1,
+    }));
+}
+
 function sine(index: number, amplitude: number, offset = 0): number {
     return offset + amplitude * Math.sin((index * Math.PI) / 10);
 }
@@ -37,6 +48,29 @@ describe("recent-pair-classifier", () => {
         expect(result.reason).to.equal("OK");
         expect(result.metrics.barCount).to.equal(RECENT_PAIR_WINDOW_BARS);
         expect(result.metrics.asOf).to.equal(END + 50 * SPACING);
+    });
+
+    it("applies the evaluation cap after excluding the OOS holdout", () => {
+        const bars = datedSeries((index) => index * 0.004, 350);
+        const heldOut = classifyRecentPair(bars, {
+            evalLastBars: 200,
+            oosIgnoreLastBars: 25,
+        });
+        const explicitlyTrimmed = classifyRecentPair(bars.slice(0, -25), {
+            evalLastBars: 200,
+        });
+        expect(heldOut.metrics.barCount).to.equal(200);
+        expect(heldOut.metrics.asOf).to.equal(bars[324]!.time);
+        expect(heldOut).to.deep.equal(explicitlyTrimmed);
+    });
+
+    it("supports Finder-style zero evaluation bars for all pre-holdout data", () => {
+        const result = classifyRecentPair(datedSeries((index) => index * 0.001, 350), {
+            evalLastBars: 0,
+            oosIgnoreLastBars: 25,
+        });
+        expect(result.reason).to.equal("OK");
+        expect(result.metrics.barCount).to.equal(325);
     });
 
     it("classifies stable, expanding, and compressing ranges as A, B, and C", () => {

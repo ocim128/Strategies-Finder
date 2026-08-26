@@ -15,6 +15,8 @@ export type RankPairsStreamEvent =
         total: number;
         interval: string;
         mode: RankPairsMode;
+        evalLastBars: number;
+        oosIgnoreLastBars: number;
         workerConcurrency: number;
     }
     | {
@@ -33,6 +35,8 @@ export type RankPairsStreamEvent =
         runId: string;
         interval: string;
         mode: RankPairsMode;
+        evalLastBars: number;
+        oosIgnoreLastBars: number;
         total: number;
         resultCount: number;
         preview: RankPairsServerResult[];
@@ -58,6 +62,8 @@ export interface RankPairsRunStatusSnapshot {
     phase: RankPairsJobPhase;
     interval: string;
     mode: RankPairsMode;
+    evalLastBars: number;
+    oosIgnoreLastBars: number;
     total: number;
     completed: number;
     currentSymbol: string | null;

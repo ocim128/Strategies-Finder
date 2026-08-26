@@ -10,6 +10,30 @@ import { timeToNumber } from "../strategies/backtest/backtest-utils";
 
 export const RECENT_PAIR_WINDOW_BARS = 200;
 export const RECENT_SEGMENT_BARS = 50;
+export const MAX_RECENT_PAIR_WINDOW_BARS = 100_000;
+
+export interface RecentPairWindowOptions {
+    /** 0 means all available bars before the holdout. */
+    evalLastBars?: number;
+    /** 0 means no reserved holdout. */
+    oosIgnoreLastBars?: number;
+}
+
+export function normalizeRecentPairEvalLastBars(value: unknown): number {
+    const numeric = typeof value === "number" || typeof value === "string"
+        ? Number(value)
+        : Number.NaN;
+    if (!Number.isFinite(numeric)) return RECENT_PAIR_WINDOW_BARS;
+    return Math.min(MAX_RECENT_PAIR_WINDOW_BARS, Math.max(0, Math.round(numeric)));
+}
+
+export function normalizeRecentPairOosIgnoreLastBars(value: unknown): number {
+    const numeric = typeof value === "number" || typeof value === "string"
+        ? Number(value)
+        : Number.NaN;
+    if (!Number.isFinite(numeric)) return 0;
+    return Math.min(MAX_RECENT_PAIR_WINDOW_BARS, Math.max(0, Math.round(numeric)));
+}
 
 export type RecentPairType = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J";
 export type RecentPairDirection = "BASE" | "NEUTRAL" | "QUOTE" | "THIN";
@@ -185,10 +209,14 @@ function safeRatio(numerator: number, denominator: number): number {
 }
 
 /**
- * Classify only the latest 200 valid ratio closes after timestamp
- * normalization, deduplication, and chronological sorting.
+ * Classify the selected valid ratio closes after timestamp normalization,
+ * deduplication, and chronological sorting. The default is the latest 200
+ * bars; an optional holdout is removed before the evaluation-window cap.
  */
-export function classifyRecentPair(bars: OHLCVData[]): RecentPairResult {
+export function classifyRecentPair(
+    bars: OHLCVData[],
+    options: RecentPairWindowOptions = {},
+): RecentPairResult {
     const byTime = new Map<number, number>();
     let validCloseCount = 0;
     for (const bar of bars) {
@@ -205,9 +233,19 @@ export function classifyRecentPair(bars: OHLCVData[]): RecentPairResult {
         );
     }
     const points = Array.from(byTime.entries()).sort((a, b) => a[0] - b[0]);
-    const selected = points.slice(-RECENT_PAIR_WINDOW_BARS);
+    const evalLastBars = normalizeRecentPairEvalLastBars(options.evalLastBars);
+    const oosIgnoreLastBars = normalizeRecentPairOosIgnoreLastBars(options.oosIgnoreLastBars);
+    const visible = oosIgnoreLastBars > 0
+        ? points.slice(0, Math.max(0, points.length - oosIgnoreLastBars))
+        : points;
+    const selected = evalLastBars > 0
+        ? visible.slice(-evalLastBars)
+        : visible;
     const asOf = selected[selected.length - 1]?.[0] ?? null;
-    if (selected.length < RECENT_PAIR_WINDOW_BARS) {
+    if (
+        selected.length < 4
+        || (evalLastBars > 0 && selected.length < evalLastBars)
+    ) {
         return thinResult(
             "INSUFFICIENT_BARS",
             emptyMetrics(selected.length, asOf),
@@ -222,9 +260,16 @@ export function classifyRecentPair(bars: OHLCVData[]): RecentPairResult {
             { ...emptyMetrics(selected.length, asOf), ratioReturn: 0, logReturn: 0 },
         );
     }
-    const baseline = windowStats(logCloses.slice(0, RECENT_PAIR_WINDOW_BARS - RECENT_SEGMENT_BARS));
-    const recent = windowStats(logCloses.slice(-RECENT_SEGMENT_BARS));
-    const early = windowStats(logCloses.slice(0, RECENT_SEGMENT_BARS));
+    // Preserve the original 150/50 split at the default 200-bar window. For
+    // smaller explicit windows, scale the comparison blocks down so the
+    // early/late evidence remains disjoint from the baseline/recent split.
+    const segmentBars = Math.min(
+        RECENT_SEGMENT_BARS,
+        Math.max(2, Math.floor(selected.length / 4)),
+    );
+    const baseline = windowStats(logCloses.slice(0, -segmentBars));
+    const recent = windowStats(logCloses.slice(-segmentBars));
+    const early = windowStats(logCloses.slice(0, segmentBars));
     const volatilityRatio = safeRatio(recent.levelStd, early.levelStd);
     const pooledLevelStd = Math.sqrt((early.levelStd ** 2 + recent.levelStd ** 2) / 2);
     const levelShiftSigma = pooledLevelStd > 0
@@ -249,8 +294,8 @@ export function classifyRecentPair(bars: OHLCVData[]): RecentPairResult {
     const oppositeTrend = baselineTrend
         && recentTrend
         && Math.sign(baseline.slopeMove) !== Math.sign(recent.slopeMove);
-    const earlyBlock = windowStats(logCloses.slice(0, RECENT_PAIR_WINDOW_BARS / 2));
-    const lateBlock = windowStats(logCloses.slice(-RECENT_PAIR_WINDOW_BARS / 2));
+    const earlyBlock = windowStats(logCloses.slice(0, Math.floor(selected.length / 2)));
+    const lateBlock = windowStats(logCloses.slice(-Math.floor(selected.length / 2)));
     const stableEarlyLate = isRangeLike(earlyBlock)
         && isRangeLike(lateBlock)
         && levelShiftSigma >= LEVEL_SHIFT_SIGMA_THRESHOLD;

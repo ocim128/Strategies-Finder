@@ -63,6 +63,8 @@ function makeState(
         phase: "running",
         interval: "4h",
         mode: "history",
+        evalLastBars: 200,
+        oosIgnoreLastBars: 0,
         total: 124_000,
         completed: 321,
         currentSymbol: "BTC+ETH",

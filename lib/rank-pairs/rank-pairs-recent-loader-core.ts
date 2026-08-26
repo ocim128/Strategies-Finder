@@ -13,8 +13,8 @@ import {
     normalizeRecentSyntheticLeg,
     type RecentSyntheticLeg,
 } from "./recent-synthetic-pair";
+import { RECENT_PAIR_WINDOW_BARS } from "./recent-pair-classifier";
 
-const RECENT_TARGET_BARS = 200;
 const RECENT_LEG_CACHE_MAX = 512;
 
 export interface RankPairsRecentLoaderStats {
@@ -36,7 +36,12 @@ export type RankPairsHistoricalFetcher = (
 ) => Promise<OHLCVData[]>;
 
 export interface RankPairsRecentLoader {
-    load(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[] | null>;
+    load(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        targetBars?: number,
+    ): Promise<OHLCVData[] | null>;
     clear(): void;
     getStats(): RankPairsRecentLoaderStats;
 }
@@ -113,6 +118,7 @@ export function createRankPairsRecentLoader(
         symbol: string,
         interval: string,
         bars: number,
+        targetBars: number,
         signal?: AbortSignal,
     ): Promise<RecentSyntheticLeg> => {
         const key = cacheKey(symbol, interval);
@@ -126,7 +132,7 @@ export function createRankPairsRecentLoader(
                 offline: true,
             });
             if (signal?.aborted) return normalizeRecentSyntheticLeg([]);
-            const minHealthyBars = Math.max(RECENT_TARGET_BARS, Math.floor(bars * 0.25));
+            const minHealthyBars = Math.max(targetBars, Math.floor(bars * 0.25));
             let data = offline;
             if (offline.length < minHealthyBars) {
                 networkFallbacks += 1;
@@ -143,11 +149,12 @@ export function createRankPairsRecentLoader(
         interval: string,
         sourceInterval: string,
         sourceBars: number,
+        targetBars: number,
         signal?: AbortSignal,
     ): Promise<[RecentSyntheticLeg, RecentSyntheticLeg]> => {
         const [base, quote] = await Promise.all([
-            loadLeg(baseSymbol, sourceInterval, sourceBars, signal),
-            loadLeg(quoteSymbol, sourceInterval, sourceBars, signal),
+            loadLeg(baseSymbol, sourceInterval, sourceBars, targetBars, signal),
+            loadLeg(quoteSymbol, sourceInterval, sourceBars, targetBars, signal),
         ]);
         if (signal?.aborted) {
             return [normalizeRecentSyntheticLeg([]), normalizeRecentSyntheticLeg([])];
@@ -156,15 +163,15 @@ export function createRankPairsRecentLoader(
             return [base, quote];
         }
         return Promise.all([
-            loadLeg(baseSymbol, interval, sourceBars, signal),
-            loadLeg(quoteSymbol, interval, sourceBars, signal),
+            loadLeg(baseSymbol, interval, sourceBars, targetBars, signal),
+            loadLeg(quoteSymbol, interval, sourceBars, targetBars, signal),
         ]);
     };
 
-    const recentSourceBars = (interval: string, ratio: number): number => {
+    const recentSourceBars = (interval: string, ratio: number, targetBars: number): number => {
         const intervalSeconds = parseIntervalSeconds(interval) ?? 0;
         const targetSeconds = parseIntervalSeconds("1m") ?? 60;
-        const minimum = Math.max(RECENT_TARGET_BARS * 2, RECENT_TARGET_BARS * ratio);
+        const minimum = Math.max(targetBars * 2, targetBars * ratio);
         const gapCushion = intervalSeconds > targetSeconds ? 2 : 1;
         return Math.min(Math.max(minimum * gapCushion, 400), DATA_CHART_TOTAL_LIMIT);
     };
@@ -173,10 +180,12 @@ export function createRankPairsRecentLoader(
         symbol: string,
         interval: string,
         signal?: AbortSignal,
+        requestedTargetBars = RECENT_PAIR_WINDOW_BARS,
     ): Promise<OHLCVData[] | null> => {
         const parts = parseSyntheticPairToken(symbol);
         if (!parts) return null;
         if (signal?.aborted) return [];
+        const targetBars = Math.max(1, Math.floor(requestedTargetBars));
 
         const effectiveInterval = resolveEffectiveIntervalForSynthetic(
             symbol,
@@ -190,13 +199,14 @@ export function createRankPairsRecentLoader(
         const source = diamondLeg ? null : pickSourceInterval(effectiveInterval, 12, available);
         const sourceInterval = source?.sourceInterval ?? effectiveInterval;
         const ratio = source?.ratio ?? 1;
-        const shallowBars = recentSourceBars(effectiveInterval, ratio);
+        const shallowBars = recentSourceBars(effectiveInterval, ratio, targetBars);
         const [base, quote] = await loadPairLegs(
             parts.baseSymbol,
             parts.quoteSymbol,
             effectiveInterval,
             sourceInterval,
             shallowBars,
+            targetBars,
             signal,
         );
         let result = buildRecentSyntheticPairCloseBars(
@@ -204,12 +214,12 @@ export function createRankPairsRecentLoader(
             quote,
             sourceInterval,
             effectiveInterval,
-            RECENT_TARGET_BARS,
+            targetBars,
         );
 
-        if (result.length < RECENT_TARGET_BARS) {
+        if (result.length < targetBars) {
             const fullSourceBars = Math.min(
-                SYNTHETIC_TARGET_BARS * ratio,
+                Math.max(SYNTHETIC_TARGET_BARS * ratio, targetBars * ratio),
                 DATA_CHART_TOTAL_LIMIT,
             );
             if (fullSourceBars > shallowBars) {
@@ -220,6 +230,7 @@ export function createRankPairsRecentLoader(
                     effectiveInterval,
                     sourceInterval,
                     fullSourceBars,
+                    targetBars,
                     signal,
                 );
                 result = buildRecentSyntheticPairCloseBars(
@@ -227,7 +238,7 @@ export function createRankPairsRecentLoader(
                     deepQuote,
                     sourceInterval,
                     effectiveInterval,
-                    RECENT_TARGET_BARS,
+                    targetBars,
                 );
             }
         }

@@ -39,6 +39,8 @@ import {
 } from "./rank-pairs-result-store";
 import {
     formatRecentPairMetrics,
+    normalizeRecentPairEvalLastBars,
+    normalizeRecentPairOosIgnoreLastBars,
     type RecentPairResult,
 } from "./recent-pair-classifier";
 import type {
@@ -170,6 +172,7 @@ class RankPairsService {
         if (this.initialized) return;
         const dom = this.getDom();
         this.bindEvents(dom);
+        this.syncRecentWindowControls(dom);
         this.updateSummary(dom);
         this.resetProgress(dom);
         this.initialized = true;
@@ -203,6 +206,7 @@ class RankPairsService {
         });
         dom.rankPairsMode.addEventListener("change", () => {
             this.clearStaleResults(dom);
+            this.syncRecentWindowControls(dom);
             dom.rankPairsResults.replaceChildren();
             setVisible(dom.rankPairsEmpty, true);
             this.updateSummary(dom);
@@ -228,6 +232,8 @@ class RankPairsService {
         const interval = state.currentInterval;
         const mode: RankPairsMode =
             dom.rankPairsMode.value === "recent200" ? "recent200" : "history";
+        const evalLastBars = normalizeRecentPairEvalLastBars(dom.rankPairsEvalWindowBars.value);
+        const oosIgnoreLastBars = normalizeRecentPairOosIgnoreLastBars(dom.rankPairsOosHoldoutBars.value);
         const runId =
             `rank-pairs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
         this.runInFlight = true;
@@ -248,7 +254,9 @@ class RankPairsService {
         this.setServerBusy(dom, true);
         dom.rankPairsResults.replaceChildren();
         setVisible(dom.rankPairsEmpty, false);
-        dom.rankPairsStatus.textContent = "Starting server-owned Rank Pairs run...";
+        dom.rankPairsStatus.textContent = mode === "recent200"
+            ? `Starting server-owned Rank Pairs run (eval ${evalLastBars > 0 ? evalLastBars : "all"} bars, OOS ${oosIgnoreLastBars} bars)...`
+            : "Starting server-owned Rank Pairs run...";
         dom.rankPairsDiagnostics.textContent =
             "Server performance diagnostics appear after completion.";
 
@@ -256,7 +264,14 @@ class RankPairsService {
             const response = await fetch("/api/rank-pairs/run", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ runId, symbols: inputSymbols, interval, mode }),
+                body: JSON.stringify({
+                    runId,
+                    symbols: inputSymbols,
+                    interval,
+                    mode,
+                    evalLastBars,
+                    oosIgnoreLastBars,
+                }),
             });
             if (!response.ok || !response.body) {
                 const payload = await response.json().catch(() => null) as { error?: string } | null;
@@ -270,7 +285,10 @@ class RankPairsService {
                         dom.rankPairsStatus.textContent =
                             `Server: 0/${event.total.toLocaleString("en-US")}`
                             + ` • ${event.total.toLocaleString("en-US")} remaining`
-                            + ` • ${event.workerConcurrency} loaders`;
+                            + ` • ${event.workerConcurrency} loaders`
+                            + (event.mode === "recent200"
+                                ? ` • eval ${event.evalLastBars > 0 ? event.evalLastBars : "all"}, OOS ${event.oosIgnoreLastBars}`
+                                : "");
                     },
                     onProgress: (event: Extract<RankPairsStreamEvent, { type: "progress" }>) => {
                         if (token !== this.runToken) return;
@@ -282,6 +300,8 @@ class RankPairsService {
                         this.applyTerminalResult(dom, {
                             runId: event.runId,
                             mode: event.mode,
+                            evalLastBars: event.evalLastBars,
+                            oosIgnoreLastBars: event.oosIgnoreLastBars,
                             interval: event.interval,
                             total: event.total,
                             resultCount: event.resultCount,
@@ -331,6 +351,8 @@ class RankPairsService {
         result: {
             runId: string;
             mode: RankPairsMode;
+            evalLastBars: number;
+            oosIgnoreLastBars: number;
             interval: string;
             total: number;
             resultCount: number;
@@ -355,12 +377,17 @@ class RankPairsService {
         this.activeServerRunId = null;
         this.clearActiveServerRun(result.runId);
         dom.rankPairsMode.value = result.mode;
+        dom.rankPairsEvalWindowBars.value = String(result.evalLastBars);
+        dom.rankPairsOosHoldoutBars.value = String(result.oosIgnoreLastBars);
+        this.syncRecentWindowControls(dom);
         this.renderPreview(dom, result.preview, result.resultCount);
         dom.rankPairsSummary.textContent = result.summary;
         dom.rankPairsDiagnostics.textContent = result.diagnostics
             ? formatRankPairsPerformanceDiagnostics(result.diagnostics)
             : "No performance diagnostics available.";
-        dom.rankPairsStatus.textContent = result.statusText;
+        dom.rankPairsStatus.textContent = result.mode === "recent200"
+            ? `${result.statusText} (eval ${result.evalLastBars > 0 ? result.evalLastBars : "all"} bars, OOS ${result.oosIgnoreLastBars})`
+            : result.statusText;
         if (result.reciprocalDuplicates > 0 || result.selfPairs > 0) {
             dom.rankPairsStatus.textContent +=
                 `; ${result.reciprocalDuplicates} reciprocal duplicates skipped; ${result.selfPairs} self-pairs skipped`;
@@ -456,6 +483,8 @@ class RankPairsService {
                     this.applyTerminalResult(dom, {
                         runId: snapshot.runId,
                         mode: snapshot.mode,
+                        evalLastBars: snapshot.evalLastBars,
+                        oosIgnoreLastBars: snapshot.oosIgnoreLastBars,
                         interval: snapshot.interval,
                         total: snapshot.total,
                         resultCount: snapshot.resultCount,
@@ -476,6 +505,9 @@ class RankPairsService {
                 this.persistActiveServerRun(snapshot.runId);
                 this.setServerBusy(dom, true);
                 dom.rankPairsMode.value = snapshot.mode;
+                dom.rankPairsEvalWindowBars.value = String(snapshot.evalLastBars);
+                dom.rankPairsOosHoldoutBars.value = String(snapshot.oosIgnoreLastBars);
+                this.syncRecentWindowControls(dom);
                 dom.rankPairsStatus.textContent = snapshot.statusText;
                 this.setProgress(
                     dom,
@@ -572,6 +604,7 @@ class RankPairsService {
             this.serverResultRunId = null;
             this.serverCopyAvailable = false;
             dom.rankPairsMode.value = snapshot.mode;
+            this.syncRecentWindowControls(dom);
             this.renderPreview(dom, this.lastResults, snapshot.resultCount);
             dom.rankPairsSummary.textContent = snapshot.summaryText;
             dom.rankPairsDiagnostics.textContent = snapshot.diagnosticsText;
@@ -623,6 +656,8 @@ class RankPairsService {
     private setServerBusy(dom: RankPairsDom, busy: boolean): void {
         dom.rankPairsRunBtn.disabled = busy;
         dom.rankPairsMode.disabled = busy;
+        dom.rankPairsEvalWindowBars.disabled = busy;
+        dom.rankPairsOosHoldoutBars.disabled = busy;
         setVisible(dom.rankPairsStopBtn, busy);
         dom.rankPairsCopyBtn.disabled =
             busy || this.lastResultCount === 0 || (!this.serverCopyAvailable && !this.lastSnapshot);
@@ -636,6 +671,10 @@ class RankPairsService {
     private resetProgress(dom: RankPairsDom): void {
         this.setProgress(dom, 0, "Ready");
         dom.rankPairsStatus.textContent = "Idle";
+    }
+
+    private syncRecentWindowControls(dom: RankPairsDom): void {
+        setVisible(dom.rankPairsRecentWindowSettings, dom.rankPairsMode.value === "recent200");
     }
 
     private updateSummary(dom: RankPairsDom): void {

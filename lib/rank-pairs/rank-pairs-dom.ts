@@ -12,6 +12,9 @@ import { getRequiredElement } from "../dom-utils";
 export const RANK_PAIRS_REQUIRED_IDS = [
     "rankpairsTab",
     "rankPairsMode",
+    "rankPairsRecentWindowSettings",
+    "rankPairsEvalWindowBars",
+    "rankPairsOosHoldoutBars",
     "rankPairsSymbols",
     "rankPairsUseCurrent",
     "rankPairsClear",
@@ -32,6 +35,9 @@ export function createRankPairsDom() {
     return {
         rankpairsTab: getRequiredElement("rankpairsTab"),
         rankPairsMode: getRequiredElement<HTMLSelectElement>("rankPairsMode"),
+        rankPairsRecentWindowSettings: getRequiredElement<HTMLDivElement>("rankPairsRecentWindowSettings"),
+        rankPairsEvalWindowBars: getRequiredElement<HTMLInputElement>("rankPairsEvalWindowBars"),
+        rankPairsOosHoldoutBars: getRequiredElement<HTMLInputElement>("rankPairsOosHoldoutBars"),
         rankPairsSymbols: getRequiredElement<HTMLTextAreaElement>("rankPairsSymbols"),
         rankPairsUseCurrent: getRequiredElement<HTMLButtonElement>("rankPairsUseCurrent"),
         rankPairsClear: getRequiredElement<HTMLButtonElement>("rankPairsClear"),

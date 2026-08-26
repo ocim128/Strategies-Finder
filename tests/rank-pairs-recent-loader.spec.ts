@@ -18,6 +18,16 @@ function bars(count: number, offset = 0): OHLCVData[] {
 }
 
 describe("rank-pairs recent loader cache", () => {
+    it("loads the requested evaluation window plus holdout bars", async () => {
+        const loader = createRankPairsRecentLoader(
+            async () => bars(600),
+        );
+
+        const result = await loader.load("AAA+BBB", "1m", undefined, 250);
+
+        expect(result).to.have.length(250);
+    });
+
     it("deduplicates shared legs and reports bounded-cache eviction", async () => {
         const calls: string[] = [];
         const loader = createRankPairsRecentLoader(

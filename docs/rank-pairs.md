@@ -254,9 +254,19 @@ Its mutually exclusive groups are:
 - `TYPE I` Mixed/Noisy
 - `TYPE J` Thin
 
-The first 150 bars form the baseline and the latest 50 bars describe the
-recent segment for breakout/reversal decisions. The first and last 50-bar
-segments provide range-width and level-shift evidence. This remains
+By default, the first 150 bars form the baseline and the latest 50 bars
+describe the recent segment for breakout/reversal decisions. The first and
+last 50-bar segments provide range-width and level-shift evidence. In Latest
+200 Bars mode, the **Eval Window Bars** control changes the trailing window
+used by this classifier (`0` means all available bars), and **OOS Holdout
+Bars** excludes the newest N bars before that evaluation cap. Thus `200` eval
+bars with a `25`-bar holdout classifies bars `[-225, -26]`; the holdout is
+reserved for later validation and is not classified. Windows below 200 bars
+retain the A–J logic with proportionally smaller comparison blocks and still
+require enough data to classify.
+
+Rank Pairs has no strategy or entry signal, so its OOS control reserves data
+only; it does not calculate OOS PnL or an opportunity score. This remains
 classification only: it emits no opportunity, quality, entry, or profitability
 score.
 

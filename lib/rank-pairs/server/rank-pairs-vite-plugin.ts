@@ -38,7 +38,11 @@ import { createRankPairsRecentLoader } from "../rank-pairs-recent-loader-core";
 import {
     classifyPairRegime,
 } from "../pair-regime-classifier";
-import { classifyRecentPair } from "../recent-pair-classifier";
+import {
+    classifyRecentPair,
+    normalizeRecentPairEvalLastBars,
+    normalizeRecentPairOosIgnoreLastBars,
+} from "../recent-pair-classifier";
 import type {
     RankPairsMode,
     RankResult,
@@ -212,8 +216,11 @@ function emptyHistoryResult(symbol: string): RankResult {
     return { kind: "history", symbol, regime, status: "no_data" };
 }
 
-function emptyRecentResult(symbol: string): RecentRankResult {
-    const recent = classifyRecentPair([]);
+function emptyRecentResult(
+    symbol: string,
+    window: { evalLastBars: number; oosIgnoreLastBars: number },
+): RecentRankResult {
+    const recent = classifyRecentPair([], window);
     recent.symbol = symbol;
     return { kind: "recent", symbol, recent, status: "no_data" };
 }
@@ -224,13 +231,17 @@ async function processPair(
     interval: string,
     signal: AbortSignal,
     timings: ReturnType<typeof createRankPairsPerformanceTimings>,
+    window: { evalLastBars: number; oosIgnoreLastBars: number },
 ): Promise<{ result: AnyRankResult; barCount: number } | null> {
     try {
         const loadStartedAt = nowRankPairsMs();
         let bars: OHLCVData[];
         try {
-            const recent = mode === "recent200"
-                ? await serverRecentLoader.load(symbol, interval, signal)
+            const recentTargetBars = window.evalLastBars > 0
+                ? window.evalLastBars + window.oosIgnoreLastBars
+                : 0;
+            const recent = mode === "recent200" && recentTargetBars > 0
+                ? await serverRecentLoader.load(symbol, interval, signal, recentTargetBars)
                 : null;
             bars = recent ?? await loadServerBatchDataset(symbol, interval, signal);
         } finally {
@@ -243,13 +254,13 @@ async function processPair(
             if (bars.length === 0) {
                 return {
                     result: mode === "recent200"
-                        ? emptyRecentResult(symbol)
+                        ? emptyRecentResult(symbol, window)
                         : emptyHistoryResult(symbol),
                     barCount: 0,
                 };
             }
             if (mode === "recent200") {
-                const recent = classifyRecentPair(bars);
+                const recent = classifyRecentPair(bars, window);
                 recent.symbol = symbol;
                 return {
                     result: {
@@ -283,7 +294,7 @@ async function processPair(
         debugLogger.warn("rank_pairs.server.pair_failed", { symbol, error: message });
         return {
             result: mode === "recent200"
-                ? { ...emptyRecentResult(symbol), status: "failed", error: message }
+                ? { ...emptyRecentResult(symbol, window), status: "failed", error: message }
                 : { ...emptyHistoryResult(symbol), status: "failed", error: message },
             barCount: 0,
         };
@@ -298,6 +309,8 @@ async function processRun(
         symbols: string[];
         reciprocalDuplicates: number;
         selfPairs: number;
+        evalLastBars: number;
+        oosIgnoreLastBars: number;
     },
     writer: (event: RankPairsStreamEvent) => void,
     owner: number,
@@ -321,6 +334,8 @@ async function processRun(
         total: input.symbols.length,
         interval: input.interval,
         mode: input.mode,
+        evalLastBars: input.evalLastBars,
+        oosIgnoreLastBars: input.oosIgnoreLastBars,
         workerConcurrency,
     });
 
@@ -339,6 +354,7 @@ async function processRun(
                 input.interval,
                 controller.signal,
                 timings,
+                input,
             );
             if (!processed || isCancelled()) return;
             indexedResults[index] = processed.result;
@@ -448,6 +464,8 @@ async function processRun(
         runId: input.runId,
         interval: input.interval,
         mode: input.mode,
+        evalLastBars: input.evalLastBars,
+        oosIgnoreLastBars: input.oosIgnoreLastBars,
         total: input.symbols.length,
         resultCount: results.length,
         preview: snapshot.terminalPreview,
@@ -483,6 +501,8 @@ async function handleRunRequest(
     }
     const mode = parseMode(body.mode);
     const interval = parseInterval(body.interval);
+    const evalLastBars = normalizeRecentPairEvalLastBars(body.evalLastBars);
+    const oosIgnoreLastBars = normalizeRecentPairOosIgnoreLastBars(body.oosIgnoreLastBars);
     const prepared = prepareRankPairRelationships(parseSymbols(body.symbols));
     if (prepared.symbols.length === 0) {
         throw new HttpStatusError(400, "At least one non-self pair is required.");
@@ -512,6 +532,8 @@ async function handleRunRequest(
         phase: "running",
         interval,
         mode,
+        evalLastBars,
+        oosIgnoreLastBars,
         total: prepared.symbols.length,
         completed: 0,
         currentSymbol: null,
@@ -539,6 +561,8 @@ async function handleRunRequest(
                 symbols: prepared.symbols,
                 reciprocalDuplicates: prepared.reciprocalDuplicates,
                 selfPairs: prepared.selfPairs,
+                evalLastBars,
+                oosIgnoreLastBars,
             },
             (event) => stream.write(event),
             owner,
