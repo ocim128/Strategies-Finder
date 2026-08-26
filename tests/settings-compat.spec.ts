@@ -316,6 +316,10 @@ describe('Backtest settings compatibility', () => {
             'veto_within_window'
         )).to.equal('veto_within_window');
         expect(coerceBacktestDomSettingValue(
+            modeContract!,
+            'disagree'
+        )).to.equal('disagree');
+        expect(coerceBacktestDomSettingValue(
             windowContract!,
             '2'
         )).to.equal(2);
@@ -351,6 +355,11 @@ describe('Backtest settings compatibility', () => {
             entropy_ratio_regime_alignment: { slowWindow: 21 },
             close_location_median_alignment: { lookback: 34 },
         });
+        expect(resolveBacktestSettingsFromRaw({
+            confirmationStrategiesToggle: true,
+            confirmationStrategies: ['ema_confirmation'],
+            confirmationMode: 'disagree',
+        } as unknown as BacktestSettings).confirmationMode).to.equal('disagree');
         expect('confirmationStrategies' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
         expect('confirmationMode' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
         expect('confirmationWindowBars' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);

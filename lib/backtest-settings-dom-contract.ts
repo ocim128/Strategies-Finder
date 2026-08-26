@@ -571,6 +571,7 @@ export function coerceBacktestDomSettingValue(
                 const normalized = value.trim().toLowerCase();
                 if (
                     normalized === "agree"
+                    || normalized === "disagree"
                     || normalized === "veto_opposite"
                     || normalized === "confirm_within_window"
                     || normalized === "veto_within_window"

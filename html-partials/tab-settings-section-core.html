@@ -59,11 +59,12 @@
                         <label class="param-label">Mode</label>
                         <select class="param-input" id="confirmationMode">
                             <option value="agree" selected>Agree</option>
+                            <option value="disagree">Disagree</option>
                             <option value="veto_opposite">Veto Opposite</option>
                             <option value="confirm_within_window">Confirm Within Window</option>
                             <option value="veto_within_window">Veto Within Window</option>
                         </select>
-                        <div class="param-hint">`agree` requires matching same-bar direction. `veto_opposite` blocks only same-bar opposite signals. Window modes use the chart-bar radius below.</div>
+                        <div class="param-hint">`agree` requires matching same-bar direction. `disagree` requires the opposite same-bar direction. `veto_opposite` blocks only same-bar opposite signals. Window modes use the chart-bar radius below.</div>
                     </div>
                     <div class="param-group">
                         <label class="param-label">Window Bars</label>

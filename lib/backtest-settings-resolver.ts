@@ -407,6 +407,7 @@ function resolveBooleanSettingRules(
 const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_no_flip", "combined"]);
 const VALID_CONFIRMATION_MODES = new Set<ConfirmationMode>([
     "agree",
+    "disagree",
     "veto_opposite",
     "confirm_within_window",
     "veto_within_window",

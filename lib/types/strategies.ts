@@ -269,7 +269,7 @@ export interface StrategyParams {
 
 export type TradeDirection = 'long' | 'short' | 'both' | 'both_no_flip' | 'combined';
 export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
-export type ConfirmationMode = 'agree' | 'veto_opposite' | 'confirm_within_window' | 'veto_within_window';
+export type ConfirmationMode = 'agree' | 'disagree' | 'veto_opposite' | 'confirm_within_window' | 'veto_within_window';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';
 export type PercentageTakeProfitMode =
     | 'fixed'

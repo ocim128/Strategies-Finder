@@ -26,7 +26,8 @@ const dataIndexByTimeCache = new WeakMap<OHLCVData[], Map<number, number>>();
 function resolveConfirmationMode(settings: BacktestSettings): ConfirmationMode {
     const mode = settings.confirmationMode;
     if (
-        mode === "veto_opposite"
+        mode === "disagree"
+        || mode === "veto_opposite"
         || mode === "confirm_within_window"
         || mode === "veto_within_window"
     ) {
@@ -134,6 +135,8 @@ function hasConfirmationMatch(
     }
 
     switch (mode) {
+        case "disagree":
+            return hasOpposite;
         case "veto_opposite":
             return !hasOpposite;
         case "confirm_within_window":
@@ -155,7 +158,7 @@ function mergeConfirmationSignals(
     if (baseSignals.length === 0) return baseSignals;
 
     const mode = resolveConfirmationMode(settings);
-    const windowBars = mode === "agree" || mode === "veto_opposite"
+    const windowBars = mode === "agree" || mode === "disagree" || mode === "veto_opposite"
         ? 0
         : resolveConfirmationWindowBars(settings);
     const dataIndexByTime = buildDataIndexByTime(data);
