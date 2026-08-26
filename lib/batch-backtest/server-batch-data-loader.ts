@@ -22,6 +22,7 @@ import {
 import { clearServerDataCache, createServerDataFetcher } from "../data/server-data-fetcher-factory";
 import { resolveServerBatchCacheBudget } from "./server-batch-cache-budget";
 import { clearParsedIbkrCsvCache, loadFreshIbkrCandlesFromDisk } from "./server-ibkr-csv-loader";
+import { clearParsedCryptoCsvCache, getCryptoCsvMtimeMs, loadFreshCryptoCandlesFromDisk } from "./server-crypto-csv-loader";
 
 // Reuse a single long-lived DataFetcher for the whole server loader (Finding 8).
 const serverDataFetcher = createServerDataFetcher();
@@ -48,18 +49,36 @@ export async function fetchServerHistoricalData(
         if (!candles) return [];
         return candles.length > limit ? candles.slice(-limit) : candles;
     }
+    if (options?.offline === true) {
+        const cryptoCandles = await loadFreshCryptoCandlesFromDisk(symbol, interval, options.signal);
+        if (cryptoCandles) {
+            return cryptoCandles.length > limit ? cryptoCandles.slice(-limit) : cryptoCandles;
+        }
+    }
     return serverDataFetcher.fetchHistoricalData(symbol, interval, limit, options);
+}
+
+async function fetchServerDetachedData(
+    symbol: string,
+    interval: string,
+    options?: { signal?: AbortSignal; offline?: boolean },
+): Promise<OHLCVData[]> {
+    if (options?.offline === true) {
+        const cryptoCandles = await loadFreshCryptoCandlesFromDisk(symbol, interval, options.signal);
+        if (cryptoCandles) return cryptoCandles;
+    }
+    return serverDataFetcher.fetchDataDetached(symbol, interval, options);
 }
 
 const loader = createBatchDatasetLoaderCore({
     logPrefix: "batch.server",
     legCacheMaxEntries: cacheBudget.legCacheMaxEntries,
     pairCacheMaxEntries: cacheBudget.pairCacheMaxEntries,
-    fetchDetached: (symbol, interval, options) =>
-        serverDataFetcher.fetchDataDetached(symbol, interval, options),
+    fetchDetached: fetchServerDetachedData,
     fetchHistorical: fetchServerHistoricalData,
-    // Server-side disk cache. File-backed legs use seed CSV mtimes; Binance
-    // legs use SQLite series metadata as the fingerprint.
+    acceptOfflineThinData: (symbol, interval) => getCryptoCsvMtimeMs(symbol, interval) !== null,
+    // Server-side disk cache. File-backed IBKR legs and synced crypto legs use
+    // CSV mtimes; crypto without a CSV uses SQLite series metadata.
     computeSyntheticPairFingerprint: (args) =>
         fingerprintMemo.compute(args.baseSymbol, args.quoteSymbol, args.sourceInterval),
     loadCachedSyntheticPair: (args, fingerprint) => loadCachedSyntheticPair(args, fingerprint),
@@ -89,6 +108,7 @@ export function clearServerBatchDatasetCaches(): void {
     // mtime cannot be paired with stale in-memory candles in the disk cache.
     clearLocalDailyCsvCachesForSymbols();
     clearParsedIbkrCsvCache();
+    clearParsedCryptoCsvCache();
 }
 
 export function getServerBatchDatasetCacheStats(): BatchDatasetCacheStats {

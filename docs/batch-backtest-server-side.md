@@ -220,10 +220,10 @@ normalized run-manifest provenance; the streamed result exposes `archiveComplete
 and the terminal event is emitted only after the archive attempt resolves. The
 archive has no TTL or cleanup sweep.
 
-For IBKR cold runs, worker threads read seed CSVs directly from disk rather
-than routing local files through the Vite HTTP server. Worker-thread reads and
-synthetic-cache writes use their thread as the blocking boundary, avoiding
-Node's shared filesystem thread-pool bottleneck. Hosts with at least 48 GiB of
+For cold runs, worker threads read synced IBKR and crypto CSVs directly from
+disk rather than routing local files through the Vite HTTP server. Worker-thread
+reads and synthetic-cache writes use their thread as the blocking boundary,
+avoiding Node's shared filesystem thread-pool bottleneck. Hosts with at least 48 GiB of
 RAM automatically raise each server loader's leg/pair LRUs from the 24/16
 defaults to 128/32; lower-memory hosts retain the defaults. An empty Workers
 field uses every available logical core up to the tuned 24-worker cap. Enter a lower

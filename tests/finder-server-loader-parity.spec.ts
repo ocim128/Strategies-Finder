@@ -37,10 +37,25 @@ describe("finder server loader parity", () => {
 
     it("finder server loader reuses the same disk-cache hooks as batch", () => {
         const finderLoader = readSource(SERVER_FINDER_LOADER);
+        const batchLoader = readSource(SERVER_BATCH_LOADER);
         expect(finderLoader).to.include("loadCachedSyntheticPair");
         expect(finderLoader).to.include("storeSyntheticPair");
         // Imports the SAME disk-cache module as the batch loader (not a fork).
         expect(finderLoader).to.include("synthetic-pair-disk-cache");
+        // Both loaders must use the synced crypto CSV fast path before the
+        // generic DataFetcher, or Finder silently regresses to SQLite/network
+        // work while Batch remains fast.
+        for (const symbol of [
+            "loadFreshCryptoCandlesFromDisk",
+            "getCryptoCsvMtimeMs",
+            "fetchServerDetachedData",
+            "fetchServerHistoricalData",
+            "acceptOfflineThinData",
+            "clearParsedCryptoCsvCache()",
+        ]) {
+            expect(finderLoader, `finder loader must include ${symbol}`).to.include(symbol);
+            expect(batchLoader, `batch loader must include ${symbol}`).to.include(symbol);
+        }
     });
 
     it("finder server loader bypasses browser-bound modules (config bundle trap)", () => {
@@ -153,6 +168,8 @@ describe("finder server loader parity", () => {
             "fingerprintMemo.clear()",
             "clearServerDataCache()",
             "clearLocalDailyCsvCachesForSymbols()",
+            "clearParsedIbkrCsvCache()",
+            "clearParsedCryptoCsvCache()",
         ]) {
             expect(finderLoader, `finder invalidation must call ${symbol}`).to.include(symbol);
             expect(batchLoader, `batch invalidation must call ${symbol}`).to.include(symbol);

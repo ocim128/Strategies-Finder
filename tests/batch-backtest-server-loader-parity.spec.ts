@@ -95,6 +95,35 @@ describe("batch-backtest server loader parity", () => {
         expect(context.diagnostics.legCacheHits).to.equal(1);
     });
 
+    it("accepts a valid authoritative offline leg below the generic deep-history threshold", async () => {
+        const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
+            time: time as Time,
+            open: 100,
+            high: 102,
+            low: 99,
+            close: 101,
+            volume: 10,
+        }));
+        const calls: Array<{ symbol: string; offline: boolean }> = [];
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async (symbol, _interval, _limit, options) => {
+                calls.push({ symbol, offline: options?.offline === true });
+                return source;
+            },
+            acceptOfflineThinData: () => true,
+        });
+
+        const data = await loader.load("BASE+QUOTE", "4h");
+
+        expect(data).to.have.length(1);
+        expect(calls).to.deep.equal([
+            { symbol: "BASEUSDT", offline: true },
+            { symbol: "QUOTEUSDT", offline: true },
+        ]);
+    });
+
     it("shares a supplied pair cache across repeated batch iterations", async () => {
         const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
             time: time as Time,
@@ -187,6 +216,12 @@ describe("batch-backtest server loader parity", () => {
 
         expect(readSource(BROWSER_LOADER)).to.include("createBatchDatasetLoaderCore");
         expect(readSource(SERVER_LOADER)).to.include("createBatchDatasetLoaderCore");
+    });
+
+    it("keeps synced crypto CSVs authoritative for thin offline legs", () => {
+        const server = readSource(SERVER_LOADER);
+        expect(server).to.include("getCryptoCsvMtimeMs");
+        expect(server).to.include("acceptOfflineThinData");
     });
 
     it("lets browser IBKR batches bypass redundant cache reads", () => {

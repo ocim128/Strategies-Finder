@@ -305,6 +305,12 @@ OOS pass (loads complementary datasets through the same loader, sliced at the
 caller), and releases datasets when the job ends. There is no Mine artifact
 directory or TTL. The browser loads **no** Universe OHLCV for IS or OOS.
 
+For offline-first leg and target loads, the server wrapper reads synced IBKR
+and crypto CSVs directly with bounded mtime-aware parsed-file caches. Missing
+crypto files retain the existing `DataFetcher` fallback path. A present crypto
+CSV is also accepted when its history is naturally shorter than the generic
+deep-history threshold, avoiding a redundant SQLite/provider retry.
+
 Diagnostics are combined server-side by the leaf
 `buildCombinedUniverseDiagnostics(...)` (the prior `FinderManager` combiners,
 extracted verbatim). The OOS pass is the leaf `runUniverseOosPass(...)`

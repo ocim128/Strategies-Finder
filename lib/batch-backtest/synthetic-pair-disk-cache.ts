@@ -2,11 +2,11 @@
  * Server-side disk cache for synthetic pair OHLCV series.
  *
  * Caches pairs whose legs are file-backed OR Binance-backed (i.e. almost every
- * realistic pair). For file-backed legs (IBKR `•` / stock-market `♦`), the
- * seed CSV mtimes give the invalidation signal. For Binance legs, the SQLite
- * `series_meta.last_time` (last bar's unix seconds) is the content fingerprint
- * — if the last bar hasn't moved since the pair was cached, the upstream
- * series is unchanged for backtesting purposes.
+ * realistic pair). For file-backed legs (IBKR `•` / stock-market `♦` / synced
+ * crypto), the seed CSV mtime gives the invalidation signal. Binance legs
+ * without a synced crypto CSV use SQLite `series_meta` as the content
+ * fingerprint — if the source has not changed since the pair was cached, the
+ * upstream series is unchanged for backtesting purposes.
  *
  * Server-side only. Imported transitively by `batch-backtest-vite-plugin.ts`,
  * so it MUST NOT import any browser-bound module (no `vite`, no
@@ -52,6 +52,7 @@ import {
     stripMarkedLocalStockSymbol,
 } from "../local-daily-datasets";
 import { fetchLocalApi } from "../local-api-transport";
+import { getCryptoCsvMtimeMs } from "./server-crypto-csv-loader";
 import type { SyntheticPairDiskCacheArgs } from "./batch-dataset-loader-core";
 
 /**
@@ -209,6 +210,16 @@ export function createSeedFingerprintMemo(): SeedFingerprintMemo {
 async function legFingerprintSegment(symbol: string, sourceInterval: string): Promise<string | null> {
     if (isIbkrSymbol(symbol) || isStockMarketSymbol(symbol)) {
         return fileBackedSegment(symbol, sourceInterval);
+    }
+    // Crypto Data writes an inspectable CSV alongside SQLite. When present,
+    // its mtime is both cheaper than a per-leg HTTP metadata request and the
+    // same freshness signal used by the direct worker loader below. Test
+    // metadata seams intentionally remain authoritative for existing specs.
+    if (!__seriesMetaFetcherForTests) {
+        const mtime = getCryptoCsvMtimeMs(symbol, sourceInterval);
+        if (mtime !== null) {
+            return `file:crypto:${symbol}:${sourceInterval}:${mtime}`;
+        }
     }
     return binanceBackedSegment(symbol, sourceInterval);
 }

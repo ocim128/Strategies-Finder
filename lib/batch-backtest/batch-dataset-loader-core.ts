@@ -128,6 +128,12 @@ interface BatchDatasetLoaderCoreOptions {
     fetchDetached(symbol: string, interval: string, options?: { signal?: AbortSignal; offline?: boolean }): Promise<OHLCVData[]>;
     fetchHistorical(symbol: string, interval: string, limit: number, options?: { signal?: AbortSignal; offline?: boolean }): Promise<OHLCVData[]>;
     /**
+     * Optional source-specific override for a present offline dataset that is
+     * valid but naturally shorter than the generic deep-history threshold.
+     * The callback is consulted only after an offline fetch returns data.
+     */
+    acceptOfflineThinData?(symbol: string, interval: string): boolean;
+    /**
      * Optional server-side disk cache hook. When set, the loader consults the
      * disk cache before rebuilding a synthetic pair in-memory. Returns null on
      * miss / invalid fingerprint / browser mode (no hook supplied). Async
@@ -391,6 +397,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
             ? fetchLeg(true)
             : fetchLeg(true).then((data) =>
                     data.length >= minHealthyLegBars
+                        || options.acceptOfflineThinData?.(sourceSymbol, sourceInterval) === true
                         ? data
                         : (debugLogger.warn(`${options.logPrefix}.synthetic_leg_offline_thin`, {
                                 sourceSymbol,

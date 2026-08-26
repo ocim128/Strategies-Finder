@@ -38,6 +38,7 @@ import { clearServerDataCache, createServerDataFetcher } from "../../data/server
 import { isIbkrSymbol } from "../../local-daily-datasets";
 import { resolveServerBatchCacheBudget } from "../../batch-backtest/server-batch-cache-budget";
 import { clearParsedIbkrCsvCache, loadFreshIbkrCandlesFromDisk } from "../../batch-backtest/server-ibkr-csv-loader";
+import { clearParsedCryptoCsvCache, getCryptoCsvMtimeMs, loadFreshCryptoCandlesFromDisk } from "../../batch-backtest/server-crypto-csv-loader";
 import { resolveAssetOpportunityDatasetCacheCapacity } from "./finder-asset-opportunity-batch-worker-pool";
 
 // Reuse a single long-lived DataFetcher for the whole server loader (Finding 8).
@@ -77,20 +78,45 @@ export function resolveAssetOpportunityPairCacheCapacity(
 // import time. Running it at import time would prune the real cache directory
 // as a side-effect of importing this module in tests.
 
+async function fetchServerDetachedData(
+    symbol: string,
+    interval: string,
+    options?: { signal?: AbortSignal; offline?: boolean },
+): Promise<OHLCVData[]> {
+    if (options?.offline === true) {
+        const cryptoCandles = await loadFreshCryptoCandlesFromDisk(symbol, interval, options.signal);
+        if (cryptoCandles) return cryptoCandles;
+    }
+    return serverDataFetcher.fetchDataDetached(symbol, interval, options);
+}
+
+async function fetchServerHistoricalData(
+    symbol: string,
+    interval: string,
+    limit: number,
+    options?: { signal?: AbortSignal; offline?: boolean },
+): Promise<OHLCVData[]> {
+    if (isIbkrSymbol(symbol)) {
+        const candles = await loadFreshIbkrCandlesFromDisk(symbol, interval, options?.signal);
+        if (!candles) return [];
+        return candles.length > limit ? candles.slice(-limit) : candles;
+    }
+    if (options?.offline === true) {
+        const cryptoCandles = await loadFreshCryptoCandlesFromDisk(symbol, interval, options.signal);
+        if (cryptoCandles) {
+            return cryptoCandles.length > limit ? cryptoCandles.slice(-limit) : cryptoCandles;
+        }
+    }
+    return serverDataFetcher.fetchHistoricalData(symbol, interval, limit, options);
+}
+
 const loader = createBatchDatasetLoaderCore({
     logPrefix: "finder.server",
     legCacheMaxEntries: cacheBudget.legCacheMaxEntries,
     pairCacheMaxEntries: cacheBudget.pairCacheMaxEntries,
-    fetchDetached: (symbol, interval, options) =>
-        serverDataFetcher.fetchDataDetached(symbol, interval, options),
-    fetchHistorical: async (symbol, interval, limit, options) => {
-        if (isIbkrSymbol(symbol)) {
-            const candles = await loadFreshIbkrCandlesFromDisk(symbol, interval, options?.signal);
-            if (!candles) return [];
-            return candles.length > limit ? candles.slice(-limit) : candles;
-        }
-        return serverDataFetcher.fetchHistoricalData(symbol, interval, limit, options);
-    },
+    fetchDetached: fetchServerDetachedData,
+    fetchHistorical: fetchServerHistoricalData,
+    acceptOfflineThinData: (symbol, interval) => getCryptoCsvMtimeMs(symbol, interval) !== null,
     // Server-side disk cache. Same hooks as the Batch server loader so a
     // synthetic pair built once is reused across FINDER runs. NOTE: the Finder
     // and Batch loaders construct SEPARATE in-memory `loader` cores, so a pair
@@ -174,6 +200,7 @@ export function clearServerFinderDatasetCaches(): void {
     // be paired with stale in-memory candles in the disk cache.
     clearLocalDailyCsvCachesForSymbols();
     clearParsedIbkrCsvCache();
+    clearParsedCryptoCsvCache();
 }
 
 export function getServerFinderDatasetCacheStats(): BatchDatasetCacheStats {
