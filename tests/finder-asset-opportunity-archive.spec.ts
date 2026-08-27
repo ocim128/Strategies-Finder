@@ -151,6 +151,27 @@ describe("Asset Opportunity archive writer", () => {
         expect(text.lastIndexOf("\n[")).to.be.greaterThan(text.indexOf("Archive baseline:"));
     });
 
+    it("serializes the next-exit mode and its separate baseline", () => {
+        const baseline = {
+            eligibleCandidateCount: 4,
+            observedExits: 2,
+            censoredResults: 1,
+            unavailableResults: 1,
+            averagePnlPercent: 0.75,
+            exitReasonCounts: { take_profit: 2, end_of_data: 1 },
+        };
+        const text = buildAssetOpportunityArchiveBlockText({
+            timestamp: "t",
+            batchRunId: "b",
+            holdoutBars: 4,
+            measurementMode: "next_exit",
+            nextExitBaseline: baseline,
+            topResults: [{ rank: 1 }],
+        });
+        expect(text).to.contain("Forward measurement: next_exit");
+        expect(text).to.contain(`Next-exit archive baseline: ${JSON.stringify(baseline)}`);
+    });
+
     it("appends a pair-summary block with round-trippable JSON", async () => {
         const pairSummaries = [{
             symbol: "PAIR_A",

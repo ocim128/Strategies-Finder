@@ -2,12 +2,14 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
     calculateFinderAssetOosAverageHorizonMetrics,
+    calculateFinderAssetOosNextExitMetrics,
     calculateFinderAssetOosSignalMetrics,
     DEFAULT_FINDER_ASSET_OOS_HORIZONS,
     MAX_FINDER_ASSET_OOS_BATCH_VALUES,
     MAX_FINDER_ASSET_OOS_VALUE,
     normalizeFinderAssetEvalLastBars,
     normalizeFinderAssetOosBatchHoldoutRange,
+    normalizeFinderAssetOosMeasurementMode,
     normalizeFinderAssetOosHorizons,
 } from "../lib/finder/finder-asset-opportunity-oos";
 import type { OHLCVData, Time } from "../lib/types/strategies";
@@ -125,5 +127,100 @@ describe("Asset Opportunity fixed-horizon OOS metrics", () => {
             { bars: 3, pnlPercent: -5, averagePnlPercent: -5, winRatePercent: 0, sampleSize: 1 },
             { bars: 5, pnlPercent: null, averagePnlPercent: null, winRatePercent: null, sampleSize: 0 },
         ]);
+    });
+});
+
+describe("Asset Opportunity next-exit OOS metrics", () => {
+    it("defaults invalid measurement modes to fixed horizons", () => {
+        expect(normalizeFinderAssetOosMeasurementMode(undefined)).to.equal("fixed_horizon");
+        expect(normalizeFinderAssetOosMeasurementMode("legacy")).to.equal("fixed_horizon");
+        expect(normalizeFinderAssetOosMeasurementMode("next_exit")).to.equal("next_exit");
+    });
+
+    it("reports the first matching exit with realized engine PnL", () => {
+        const candles = makeCandles([100, 101, 102, 103]);
+        const entryTime = candles[1]!.time;
+        const exitTime = candles[2]!.time;
+        const metrics = calculateFinderAssetOosNextExitMetrics({
+            candles,
+            boundaryEntryTime: entryTime,
+            direction: "long",
+            ignoreLastBars: 2,
+            trades: [
+                {
+                    id: 1,
+                    type: "long",
+                    entryTime,
+                    entryPrice: 101,
+                    exitTime,
+                    exitPrice: 102,
+                    pnl: 9.5,
+                    pnlPercent: 9.5,
+                    size: 1,
+                    exitReason: "take_profit",
+                },
+                {
+                    id: 2,
+                    type: "long",
+                    entryTime,
+                    entryPrice: 101,
+                    exitTime: candles[3]!.time,
+                    exitPrice: 103,
+                    pnl: 19,
+                    pnlPercent: 19,
+                    size: 1,
+                    exitReason: "signal",
+                },
+            ],
+        });
+
+        expect(metrics).to.deep.equal({
+            ignoreLastBars: 2,
+            status: "exited",
+            pnlPercent: 9.5,
+            exitReason: "take_profit",
+            barsHeld: 1,
+            exitTime,
+        });
+    });
+
+    it("censors end-of-data and does not invent a PnL observation", () => {
+        const candles = makeCandles([100, 101, 102]);
+        const metrics = calculateFinderAssetOosNextExitMetrics({
+            candles,
+            boundaryEntryTime: candles[1]!.time,
+            direction: "short",
+            ignoreLastBars: 1,
+            trades: [{
+                id: 1,
+                type: "short",
+                entryTime: candles[1]!.time,
+                entryPrice: 101,
+                exitTime: candles[2]!.time,
+                exitPrice: 102,
+                pnl: -1,
+                pnlPercent: -1,
+                size: 1,
+                exitReason: "end_of_data",
+            }],
+        });
+
+        expect(metrics.status).to.equal("censored");
+        expect(metrics.pnlPercent).to.equal(null);
+        expect(metrics.exitReason).to.equal("end_of_data");
+        expect(metrics.barsHeld).to.equal(1);
+    });
+
+    it("returns unavailable when the boundary entry is not present", () => {
+        const metrics = calculateFinderAssetOosNextExitMetrics({
+            candles: makeCandles([100, 101]),
+            boundaryEntryTime: 1_600_000_000 as Time,
+            direction: "long",
+            ignoreLastBars: 1,
+            trades: [],
+        });
+        expect(metrics.status).to.equal("unavailable");
+        expect(metrics.pnlPercent).to.equal(null);
+        expect(metrics.exitReason).to.equal(null);
     });
 });

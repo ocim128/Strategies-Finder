@@ -48,6 +48,7 @@ export interface AssetOpportunityMetadataPayload {
         verdict: NonNullable<FinderAssetOpportunityResult["oosVerdict"]>;
     } | null;
     oosHorizonMetrics: FinderAssetOpportunityResult["oosHorizonMetrics"] | null;
+    oosNextExitMetrics: FinderAssetOpportunityResult["oosNextExitMetrics"] | null;
     exitStrategy: {
         key: string;
         name: string | null;
@@ -85,6 +86,7 @@ export function buildAssetOpportunityMetadataPayload(args: {
             ? { metrics: result.oosResult, verdict: result.oosVerdict }
             : null,
         oosHorizonMetrics: result.oosHorizonMetrics ?? null,
+        oosNextExitMetrics: result.oosNextExitMetrics ?? null,
         exitStrategy: result.exitStrategyKey
             ? {
                 key: result.exitStrategyKey,
@@ -131,6 +133,7 @@ export interface AssetOpportunityPerformancePayload {
         metrics: AssetOpportunityPerformanceMetrics;
     } | null;
     forwardOosPerformance: FinderAssetOpportunityResult["oosHorizonMetrics"] | null;
+    nextExitOosPerformance: FinderAssetOpportunityResult["oosNextExitMetrics"] | null;
 }
 
 function signalCandleHours(latestSignalTime: FinderAssetOpportunityResult["latestSignalTime"]): {
@@ -168,6 +171,15 @@ export interface AssetOpportunityForwardOosBaseline {
     horizons: AssetOpportunityForwardOosBaselineHorizon[];
 }
 
+export interface AssetOpportunityNextExitOosBaseline {
+    eligibleCandidateCount: number;
+    observedExits: number;
+    censoredResults: number;
+    unavailableResults: number;
+    averagePnlPercent: number | null;
+    exitReasonCounts: Record<string, number>;
+}
+
 export interface AssetOpportunityPairSummaryRow {
     symbol: string;
     candidateCount: number;
@@ -177,6 +189,9 @@ export interface AssetOpportunityPairSummaryRow {
     medianExpectancy: number;
     topNetProfit: number;
     forwardPnlPercentByHorizon: Record<number, number | null>;
+    nextExitPnlPercent?: number | null;
+    nextExitStatusCounts?: Record<string, number>;
+    nextExitReasonCounts?: Record<string, number>;
 }
 
 /**
@@ -240,6 +255,7 @@ export function buildAssetOpportunityPerformancePayload(args: {
             }
             : null,
         forwardOosPerformance: result.oosHorizonMetrics ?? null,
+        nextExitOosPerformance: result.oosNextExitMetrics ?? null,
     };
 }
 
@@ -292,6 +308,40 @@ export function buildAssetOpportunityForwardOosBaseline(
     };
 }
 
+export function buildAssetOpportunityNextExitOosBaseline(
+    results: FinderAssetOpportunityResult[],
+): AssetOpportunityNextExitOosBaseline | null {
+    const exitReasonCounts: Record<string, number> = {};
+    let observedExits = 0;
+    let censoredResults = 0;
+    let unavailableResults = 0;
+    let pnlTotal = 0;
+    let pnlSamples = 0;
+    for (const result of results) {
+        const metrics = result.oosNextExitMetrics;
+        if (!metrics) continue;
+        if (metrics.status === "exited") observedExits += 1;
+        else if (metrics.status === "censored") censoredResults += 1;
+        else unavailableResults += 1;
+        if (metrics.pnlPercent !== null && Number.isFinite(metrics.pnlPercent)) {
+            pnlTotal += metrics.pnlPercent;
+            pnlSamples += 1;
+        }
+        if (metrics.exitReason) {
+            exitReasonCounts[metrics.exitReason] = (exitReasonCounts[metrics.exitReason] ?? 0) + 1;
+        }
+    }
+    if (observedExits + censoredResults + unavailableResults === 0) return null;
+    return {
+        eligibleCandidateCount: results.length,
+        observedExits,
+        censoredResults,
+        unavailableResults,
+        averagePnlPercent: pnlSamples > 0 ? pnlTotal / pnlSamples : null,
+        exitReasonCounts,
+    };
+}
+
 function quantile(values: number[], fraction: number): number {
     if (values.length === 0) return Number.NaN;
     const sorted = [...values].sort((left, right) => left - right);
@@ -313,6 +363,9 @@ export function buildAssetOpportunityPairSummaries(
         avgTrades: number[];
         topNetProfit: number;
         forwardByHorizon: Map<number, number[]>;
+        nextExitPnl: number[];
+        nextExitStatusCounts: Record<string, number>;
+        nextExitReasonCounts: Record<string, number>;
     }
 
     const aggregates = new Map<string, PairAggregate>();
@@ -327,6 +380,9 @@ export function buildAssetOpportunityPairSummaries(
                 avgTrades: [],
                 topNetProfit: Number.NaN,
                 forwardByHorizon: new Map(),
+                nextExitPnl: [],
+                nextExitStatusCounts: {},
+                nextExitReasonCounts: {},
             };
             aggregates.set(result.symbol, aggregate);
         }
@@ -355,6 +411,16 @@ export function buildAssetOpportunityPairSummaries(
             values.push(horizon.averagePnlPercent);
             aggregate.forwardByHorizon.set(horizon.bars, values);
         }
+        const nextExit = result.oosNextExitMetrics;
+        if (nextExit) {
+            aggregate.nextExitStatusCounts[nextExit.status] = (aggregate.nextExitStatusCounts[nextExit.status] ?? 0) + 1;
+            if (nextExit.pnlPercent !== null && Number.isFinite(nextExit.pnlPercent)) {
+                aggregate.nextExitPnl.push(nextExit.pnlPercent);
+            }
+            if (nextExit.exitReason) {
+                aggregate.nextExitReasonCounts[nextExit.exitReason] = (aggregate.nextExitReasonCounts[nextExit.exitReason] ?? 0) + 1;
+            }
+        }
     }
 
     return [...aggregates.entries()]
@@ -369,6 +435,7 @@ export function buildAssetOpportunityPairSummaries(
                     ? values.reduce((sum, value) => sum + value, 0) / values.length
                     : null;
             }
+            const nextExitPresent = Object.keys(aggregate.nextExitStatusCounts).length > 0;
             return {
                 symbol,
                 candidateCount: aggregate.candidateCount,
@@ -378,6 +445,15 @@ export function buildAssetOpportunityPairSummaries(
                 medianExpectancy: quantile(aggregate.avgTrades, 0.5),
                 topNetProfit: aggregate.topNetProfit,
                 forwardPnlPercentByHorizon,
+                ...(nextExitPresent
+                    ? {
+                        nextExitPnlPercent: aggregate.nextExitPnl.length > 0
+                            ? aggregate.nextExitPnl.reduce((sum, value) => sum + value, 0) / aggregate.nextExitPnl.length
+                            : null,
+                        nextExitStatusCounts: aggregate.nextExitStatusCounts,
+                        nextExitReasonCounts: aggregate.nextExitReasonCounts,
+                    }
+                    : {}),
             };
         });
 }

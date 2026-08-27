@@ -9,8 +9,9 @@
  *     non-`signal_close` execution model, the in-sample search includes it so
  *     fresh detection can reuse the search run's signals; the winner's
  *     displayed metrics still exclude it.
- *  3. Reserve the optional last-N historical candles for fixed-horizon OOS,
- *     then apply the existing Finder data-slice behavior to the IS window.
+ *  3. Reserve the optional last-N historical candles for forward OOS
+ *     measurement, then apply the existing Finder data-slice behavior to the
+ *     IS window.
  *  4. Run the existing random Finder search (`runFinderExecution`) with the
  *     selected strategy library and a deterministic seed derived from
  *     `(runSeed, canonicalSymbol)`.
@@ -22,8 +23,9 @@
  *     in-sample run's retained signals are reused; otherwise the candidates
  *     are re-executed on the boundary data.
  *  7. Select the highest-ranked fresh candidate within the top-K pool.
- *  8. Measure the selected candidate's forward OOS PnL at each configured
- *     horizon, then build one scalar asset result + decision grade.
+ *  8. Measure the selected candidate's forward OOS PnL using the configured
+ *     fixed-horizon or next-exit mode, then build one scalar asset result +
+ *     decision grade.
  *
  * Memory budget: candidates are executed via the existing Finder runner, which
  * holds per-strategy state for the duration of one asset's run. The runner
@@ -88,8 +90,10 @@ import {
     type AssetPoolCandidate,
 } from "./finder-asset-opportunity-metrics";
 import {
+    calculateFinderAssetOosNextExitMetrics,
     calculateFinderAssetOosSignalMetrics,
     normalizeFinderAssetEvalLastBars,
+    normalizeFinderAssetOosMeasurementMode,
     normalizeFinderAssetOosHorizons,
     normalizeFinderAssetOosIgnoreLastBars,
 } from "./finder-asset-opportunity-oos";
@@ -765,6 +769,9 @@ async function searchOneAsset(args: {
     const oosIgnoreLastBars = normalizeFinderAssetOosIgnoreLastBars(
         input.options.assetOpportunity?.oosIgnoreLastBars,
     );
+    const oosMeasurementMode = normalizeFinderAssetOosMeasurementMode(
+        input.options.assetOpportunity?.oosMeasurementMode,
+    );
     const oosHorizons = normalizeFinderAssetOosHorizons(input.options.assetOpportunity?.oosHorizons);
     const evalLastBars = normalizeFinderAssetEvalLastBars(input.options.assetOpportunity?.evalLastBars);
     if (oosIgnoreLastBars > 0 && fullClosed.length - oosIgnoreLastBars < 2) {
@@ -1176,7 +1183,7 @@ async function searchOneAsset(args: {
     // the other K-1 OOS backtests were computed and discarded. The grade is
     // recomputed here with the winner's verdict attached.
     let finalResult = result;
-    if (fixedOosBars.length > 0) {
+    if (fixedOosBars.length > 0 && oosMeasurementMode === "fixed_horizon") {
         const winnerIndex = result.historicalRank - 1;
         const winnerCandidate = topK[winnerIndex];
         const winnerFresh = freshEvaluations[winnerIndex];
@@ -1199,6 +1206,45 @@ async function searchOneAsset(args: {
             finalResult = {
                 ...finalResult,
                 oosHorizonMetrics,
+            };
+        }
+    }
+    if (fixedOosBars.length > 0 && oosMeasurementMode === "next_exit") {
+        const winnerIndex = result.historicalRank - 1;
+        const winnerCandidate = topK[winnerIndex];
+        const winnerFresh = freshEvaluations[winnerIndex];
+        if (winnerCandidate && winnerFresh?.direction) {
+            diagnostics.oosEvaluations += 1;
+            const boundaryEntryTime = winnerFresh.fillTiming === "signal_close"
+                ? winnerFresh.latestSignalTime
+                : fixedOosBars[0]?.time ?? null;
+            const winnerNextExit = await runCandidateNextExitOnAsset({
+                candidate: winnerCandidate,
+                strategy: preparedStrategy,
+                symbol,
+                fullClosed,
+                boundaryEntryTime,
+                direction: winnerFresh.direction,
+                interval: input.interval,
+                settings: input.settings,
+                capitalSettings: input.capitalSettings,
+                options: assetOptions,
+                exitStrategyCandidates: input.exitStrategyCandidates,
+                dataFetcher: input.dataFetcher,
+                useRustEnginePreference: input.useRustEnginePreference,
+            });
+            mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
+                rustAttemptedRuns: winnerNextExit.rustAttempted ? 1 : 0,
+                rustCompletedRuns: winnerNextExit.engineUsed === "rust" ? 1 : 0,
+                rustFallbackRuns: winnerNextExit.engineUsed === "typescript" && winnerNextExit.rustAttempted ? 1 : 0,
+                typescriptCompletedRuns: winnerNextExit.engineUsed === "typescript" ? 1 : 0,
+                typescriptReasons: winnerNextExit.typescriptReason
+                    ? [{ reason: winnerNextExit.typescriptReason, runs: 1 }]
+                    : [],
+            });
+            finalResult = {
+                ...finalResult,
+                oosNextExitMetrics: winnerNextExit.metrics,
             };
         }
     }
@@ -1625,6 +1671,67 @@ async function executeAssetCandidate(args: {
         engineUsed: output.engineUsed,
         engineDiagnostics: output.engineDiagnostics,
     };
+}
+
+async function runCandidateNextExitOnAsset(args: {
+    candidate: FinderResult;
+    strategy: Strategy;
+    symbol: string;
+    fullClosed: OHLCVData[];
+    boundaryEntryTime: Time | null;
+    direction: FinderAssetDirection;
+    interval: string;
+    settings: BacktestSettings;
+    capitalSettings: CapitalSettings;
+    options: FinderOptions;
+    exitStrategyCandidates?: FinderSelectedStrategy[];
+    dataFetcher?: CrossSymbolDataFetcher;
+    useRustEnginePreference?: boolean;
+}): Promise<{
+    metrics: import("./finder-asset-opportunity-oos").FinderAssetOosNextExitMetrics;
+    engineUsed?: "rust" | "typescript";
+    rustAttempted?: boolean;
+    typescriptReason?: string;
+}> {
+    try {
+        const { result, engineUsed, engineDiagnostics } = await executeAssetCandidate({
+            candidate: args.candidate,
+            strategy: args.strategy,
+            data: args.fullClosed,
+            symbol: args.symbol,
+            interval: args.interval,
+            settings: args.settings,
+            capitalSettings: args.capitalSettings,
+            options: args.options,
+            exitStrategyCandidates: args.exitStrategyCandidates,
+            dataFetcher: args.dataFetcher,
+            useRustEnginePreference: args.useRustEnginePreference,
+        });
+        return {
+            metrics: calculateFinderAssetOosNextExitMetrics({
+                candles: args.fullClosed,
+                boundaryEntryTime: args.boundaryEntryTime,
+                direction: args.direction,
+                ignoreLastBars: args.options.assetOpportunity?.oosIgnoreLastBars ?? 0,
+                trades: result.trades,
+            }),
+            engineUsed,
+            rustAttempted: engineDiagnostics?.rustAttempted === true,
+            ...(engineDiagnostics?.typescriptReason
+                ? { typescriptReason: engineDiagnostics.typescriptReason }
+                : {}),
+        };
+    } catch {
+        return {
+            metrics: calculateFinderAssetOosNextExitMetrics({
+                candles: args.fullClosed,
+                boundaryEntryTime: null,
+                direction: args.direction,
+                ignoreLastBars: args.options.assetOpportunity?.oosIgnoreLastBars ?? 0,
+                trades: [],
+            }),
+        };
+    }
 }
 
 /**

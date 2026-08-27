@@ -12,7 +12,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AssetOpportunityForwardOosBaseline } from "../lib/finder/finder-asset-opportunity-metadata";
+import type {
+    AssetOpportunityForwardOosBaseline,
+    AssetOpportunityNextExitOosBaseline,
+} from "../lib/finder/finder-asset-opportunity-metadata";
 
 const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 const BLOCK_SEPARATOR = "=".repeat(80);
@@ -37,6 +40,13 @@ const REPORT_QUESTIONS = [
     "Which signal-candle hours have the best and worst forward OOS performance?",
 ] as const;
 
+const NEXT_EXIT_REPORT_QUESTIONS = [
+    "How often do the selected opportunities exit, censor, or become unavailable within the holdout window?",
+    "What is the realized PnL of observed next exits, and is it positive?",
+    "Which configured exit reasons account for the observed outcomes?",
+    "Does the selected top-K group differ from the all-candidate next-exit baseline?",
+] as const;
+
 interface ArchiveHorizon {
     bars: number;
     averagePnlPercent: number | null;
@@ -56,6 +66,13 @@ export interface AssetOpportunityArchiveRow {
         ignoreLastBars?: number;
         horizons?: ArchiveHorizon[];
     } | null;
+    nextExitOosPerformance?: {
+        ignoreLastBars?: number;
+        status?: "exited" | "censored" | "unavailable";
+        pnlPercent?: number | null;
+        exitReason?: string | null;
+        barsHeld?: number | null;
+    } | null;
 }
 
 export interface AssetOpportunityArchiveRecord {
@@ -64,8 +81,10 @@ export interface AssetOpportunityArchiveRecord {
     batchRunId: string;
     holdoutBars: number;
     sortMetric: string;
+    measurementMode?: string;
     topResults: AssetOpportunityArchiveRow[];
     baseline?: AssetOpportunityForwardOosBaseline | null;
+    nextExitBaseline?: AssetOpportunityNextExitOosBaseline | null;
 }
 
 interface CandidateObservation {
@@ -238,6 +257,36 @@ export interface BaselineHorizonAnalysis {
     totalSamples: number;
 }
 
+export interface NextExitOutcomeAnalysis {
+    totalRows: number;
+    observedRows: number;
+    positiveRows: number;
+    censoredRows: number;
+    unavailableRows: number;
+    positiveRatePercent: number | null;
+    averagePnlPercent: number | null;
+    medianPnlPercent: number | null;
+    p10PnlPercent: number | null;
+    worstPnlPercent: number | null;
+    averageBarsHeld: number | null;
+    exitReasonCounts: Record<string, number>;
+}
+
+export interface NextExitSortAnalysis extends NextExitOutcomeAnalysis {
+    sortMetric: string;
+    holdoutBars: number[];
+}
+
+export interface NextExitBaselineAnalysis {
+    observedHoldouts: number;
+    averageEligibleCandidateCount: number | null;
+    observedExits: number;
+    censoredResults: number;
+    unavailableResults: number;
+    averagePnlPercent: number | null;
+    exitReasonCounts: Record<string, number>;
+}
+
 export interface AssetOpportunityHoldoutAnalysisReport {
     schemaVersion: number;
     generatedAt: string;
@@ -249,12 +298,17 @@ export interface AssetOpportunityHoldoutAnalysisReport {
     sourceBlockCount: number;
     selectedBlockCount: number;
     analyzedBlockCount: number;
+    measurementMode: "fixed_horizon" | "next_exit";
     excludedRedundantSortMetrics: string[];
     topK: number;
     candidateIdentity: "symbol+strategyId" | "symbol+strategyId+candidateFingerprint";
     parameterFingerprintAvailable: boolean;
     baselineAvailable: boolean;
     baseline: BaselineHorizonAnalysis[];
+    nextExit: {
+        baseline: NextExitBaselineAnalysis | null;
+        sorts: NextExitSortAnalysis[];
+    } | null;
     questionsAnswered: string[];
     notes: string[];
     sorts: SortHoldoutAnalysis[];
@@ -348,6 +402,37 @@ function parseArchiveBaseline(value: unknown, sourceFile: string): AssetOpportun
     return { eligibleCandidateCount, horizons };
 }
 
+function parseNextExitBaseline(value: unknown, sourceFile: string): AssetOpportunityNextExitOosBaseline | null {
+    if (value === undefined) return null;
+    if (!isRecord(value) || !isRecord(value.exitReasonCounts)) {
+        throw new Error(`Invalid next-exit archive baseline in ${sourceFile}`);
+    }
+    const eligibleCandidateCount = asNonNegativeInteger(value.eligibleCandidateCount);
+    const observedExits = asNonNegativeInteger(value.observedExits);
+    const censoredResults = asNonNegativeInteger(value.censoredResults);
+    const unavailableResults = asNonNegativeInteger(value.unavailableResults);
+    const averagePnlPercent = value.averagePnlPercent === null ? null : asFiniteNumber(value.averagePnlPercent);
+    if (eligibleCandidateCount === null || observedExits === null || censoredResults === null
+        || unavailableResults === null
+        || (averagePnlPercent === null && value.averagePnlPercent !== null)) {
+        throw new Error(`Invalid next-exit archive baseline values in ${sourceFile}`);
+    }
+    const exitReasonCounts: Record<string, number> = {};
+    for (const [reason, count] of Object.entries(value.exitReasonCounts)) {
+        const parsed = asNonNegativeInteger(count);
+        if (parsed === null) throw new Error(`Invalid next-exit reason count in ${sourceFile}`);
+        exitReasonCounts[reason] = parsed;
+    }
+    return {
+        eligibleCandidateCount,
+        observedExits,
+        censoredResults,
+        unavailableResults,
+        averagePnlPercent,
+        exitReasonCounts,
+    };
+}
+
 function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityArchiveRow[] {
     if (!Array.isArray(value)) {
         throw new Error(`Expected a JSON array in ${sourceFile}`);
@@ -379,6 +464,30 @@ function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityA
                 horizons,
             };
         }
+        const nextExit = row.nextExitOosPerformance;
+        let nextExitOosPerformance: AssetOpportunityArchiveRow["nextExitOosPerformance"] = null;
+        if (isRecord(nextExit)) {
+            const status = nextExit.status === "exited"
+                || nextExit.status === "censored"
+                || nextExit.status === "unavailable"
+                ? nextExit.status
+                : undefined;
+            nextExitOosPerformance = {
+                ignoreLastBars: asPositiveInteger(nextExit.ignoreLastBars) ?? undefined,
+                status,
+                pnlPercent: nextExit.pnlPercent === null
+                    ? null
+                    : asFiniteNumber(nextExit.pnlPercent),
+                exitReason: nextExit.exitReason === null
+                    ? null
+                    : typeof nextExit.exitReason === "string"
+                        ? nextExit.exitReason
+                        : null,
+                barsHeld: nextExit.barsHeld === null
+                    ? null
+                    : asNonNegativeInteger(nextExit.barsHeld),
+            };
+        }
         return {
             scope: typeof row.scope === "string" ? row.scope : undefined,
             rank: asPositiveInteger(row.rank) ?? undefined,
@@ -393,6 +502,7 @@ function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityA
                 ? null
                 : asHour(row.signalCandleHourJakarta),
             forwardOosPerformance,
+            nextExitOosPerformance,
         };
     });
 }
@@ -401,7 +511,7 @@ function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityA
 export function parseAssetOpportunityArchiveText(text: string, sourceFile = "archive file"): AssetOpportunityArchiveRecord[] {
     const normalized = text.replace(/\r\n?/g, "\n").trimEnd();
     const blockPattern = new RegExp(
-        `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Archive baseline: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
+        `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Forward measurement: ([^\\n]+)\\n)?(?:Archive baseline: ([^\\n]+)\\n)?(?:Next-exit archive baseline: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
         "gm",
     );
     const records: AssetOpportunityArchiveRecord[] = [];
@@ -412,7 +522,7 @@ export function parseAssetOpportunityArchiveText(text: string, sourceFile = "arc
         }
         let parsedRows: unknown;
         try {
-            parsedRows = JSON.parse(match[6]!);
+            parsedRows = JSON.parse(match[8]!);
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             throw new Error(`Invalid JSON in ${sourceFile}: ${detail}`);
@@ -423,8 +533,10 @@ export function parseAssetOpportunityArchiveText(text: string, sourceFile = "arc
             batchRunId: match[2]!,
             holdoutBars,
             sortMetric: match[4]!,
+            measurementMode: match[5] || undefined,
             topResults: parseArchiveRows(parsedRows, sourceFile),
-            baseline: match[5] ? parseArchiveBaseline(JSON.parse(match[5]), sourceFile) : null,
+            baseline: match[6] ? parseArchiveBaseline(JSON.parse(match[6]), sourceFile) : null,
+            nextExitBaseline: match[7] ? parseNextExitBaseline(JSON.parse(match[7]), sourceFile) : null,
         });
     }
     if (records.length === 0 && normalized.length > 0) {
@@ -719,6 +831,107 @@ function buildBaselineHorizonAnalysis(
             ? values.reduce((sum, value) => sum + value.eligibleCandidateCount, 0) / values.length
             : null,
         totalSamples,
+    };
+}
+
+function calculateNextExitAnalysis(rows: AssetOpportunityArchiveRow[]): NextExitOutcomeAnalysis {
+    const pnlValues: number[] = [];
+    const barsHeldValues: number[] = [];
+    const exitReasonCounts: Record<string, number> = {};
+    let observedRows = 0;
+    let positiveRows = 0;
+    let censoredRows = 0;
+    let unavailableRows = 0;
+
+    for (const row of rows) {
+        const outcome = row.nextExitOosPerformance;
+        if (!outcome) {
+            unavailableRows += 1;
+            continue;
+        }
+        if (outcome.exitReason) {
+            exitReasonCounts[outcome.exitReason] = (exitReasonCounts[outcome.exitReason] ?? 0) + 1;
+        }
+        if (outcome.status === "censored") {
+            censoredRows += 1;
+            continue;
+        }
+        if (outcome.status !== "exited"
+            || outcome.pnlPercent === null
+            || outcome.pnlPercent === undefined
+            || !Number.isFinite(outcome.pnlPercent)) {
+            unavailableRows += 1;
+            continue;
+        }
+        observedRows += 1;
+        if (outcome.pnlPercent > 0) positiveRows += 1;
+        pnlValues.push(outcome.pnlPercent);
+        if (outcome.barsHeld !== null
+            && outcome.barsHeld !== undefined
+            && Number.isFinite(outcome.barsHeld)) {
+            barsHeldValues.push(outcome.barsHeld);
+        }
+    }
+
+    return {
+        totalRows: rows.length,
+        observedRows,
+        positiveRows,
+        censoredRows,
+        unavailableRows,
+        positiveRatePercent: observedRows > 0 ? (positiveRows / observedRows) * 100 : null,
+        averagePnlPercent: pnlValues.length > 0
+            ? pnlValues.reduce((sum, value) => sum + value, 0) / pnlValues.length
+            : null,
+        medianPnlPercent: median(pnlValues),
+        p10PnlPercent: quantile(pnlValues, 0.10),
+        worstPnlPercent: pnlValues.length > 0 ? Math.min(...pnlValues) : null,
+        averageBarsHeld: barsHeldValues.length > 0
+            ? barsHeldValues.reduce((sum, value) => sum + value, 0) / barsHeldValues.length
+            : null,
+        exitReasonCounts,
+    };
+}
+
+function buildNextExitSortAnalysis(
+    records: AssetOpportunityArchiveRecord[],
+    topK: number,
+): NextExitSortAnalysis {
+    const rows = records.flatMap((record) => record.topResults.slice(0, topK));
+    return {
+        sortMetric: records[0]!.sortMetric,
+        holdoutBars: [...new Set(records.map((record) => record.holdoutBars))].sort((left, right) => left - right),
+        ...calculateNextExitAnalysis(rows),
+    };
+}
+
+function buildNextExitBaselineAnalysis(
+    records: AssetOpportunityArchiveRecord[],
+): NextExitBaselineAnalysis | null {
+    const baselineByHoldout = new Map<number, AssetOpportunityNextExitOosBaseline>();
+    for (const record of records) {
+        if (record.nextExitBaseline) baselineByHoldout.set(record.holdoutBars, record.nextExitBaseline);
+    }
+    const baselines = [...baselineByHoldout.values()];
+    if (baselines.length === 0) return null;
+    const observedExits = baselines.reduce((sum, baseline) => sum + baseline.observedExits, 0);
+    const pnlTotal = baselines.reduce((sum, baseline) => {
+        return sum + (baseline.averagePnlPercent ?? 0) * baseline.observedExits;
+    }, 0);
+    const exitReasonCounts: Record<string, number> = {};
+    for (const baseline of baselines) {
+        for (const [reason, count] of Object.entries(baseline.exitReasonCounts)) {
+            exitReasonCounts[reason] = (exitReasonCounts[reason] ?? 0) + count;
+        }
+    }
+    return {
+        observedHoldouts: baselines.length,
+        averageEligibleCandidateCount: baselines.reduce((sum, baseline) => sum + baseline.eligibleCandidateCount, 0) / baselines.length,
+        observedExits,
+        censoredResults: baselines.reduce((sum, baseline) => sum + baseline.censoredResults, 0),
+        unavailableResults: baselines.reduce((sum, baseline) => sum + baseline.unavailableResults, 0),
+        averagePnlPercent: observedExits > 0 ? pnlTotal / observedExits : null,
+        exitReasonCounts,
     };
 }
 
@@ -1207,6 +1420,11 @@ export function analyzeAssetOpportunityArchive(
 ): AssetOpportunityHoldoutAnalysisReport {
     if (records.length === 0) throw new Error("The archive contains no records");
     const { selected, excludedBatchRunIds } = selectBatchRun(records, options.batchRunId);
+    const measurementModes = new Set(selected.records.map((record) => record.measurementMode === "next_exit" ? "next_exit" : "fixed_horizon"));
+    if (measurementModes.size > 1) {
+        throw new Error(`Selected batch run contains mixed forward measurement modes: ${[...measurementModes].sort().join(", ")}`);
+    }
+    const measurementMode = measurementModes.has("next_exit") ? "next_exit" : "fixed_horizon";
     const availableSortMetrics = new Set(selected.records.map((record) => record.sortMetric));
     const excludedRedundantSortMetrics = availableSortMetrics.has("netProfit") && availableSortMetrics.has("netProfitPercent")
         ? ["netProfit"]
@@ -1228,24 +1446,32 @@ export function analyzeAssetOpportunityArchive(
         .filter((value): value is BaselineHorizonAnalysis => value !== null);
     const baselineByHorizon = new Map(baseline.map((value) => [value.horizonBars, value]));
     const parameterFingerprintAvailable = selected.records.some((record) => record.topResults.some((row) => Boolean(row.candidateFingerprint)));
-    const sorts = [...recordsBySort.values()]
-        .sort((left, right) => left[0]!.sortMetric.localeCompare(right[0]!.sortMetric))
-        .map((sortRecords) => buildSortAnalysis(sortRecords, topK, holdoutBars.length, baselineByHorizon));
+    const sorts: SortHoldoutAnalysis[] = measurementMode === "fixed_horizon"
+        ? [...recordsBySort.values()]
+            .sort((left, right) => left[0]!.sortMetric.localeCompare(right[0]!.sortMetric))
+            .map((sortRecords) => buildSortAnalysis(sortRecords, topK, holdoutBars.length, baselineByHorizon))
+        : [];
+    const nextExitSorts: NextExitSortAnalysis[] = measurementMode === "next_exit"
+        ? [...recordsBySort.values()]
+            .sort((left, right) => left[0]!.sortMetric.localeCompare(right[0]!.sortMetric))
+            .map((sortRecords) => buildNextExitSortAnalysis(sortRecords, topK))
+        : [];
     const crossSortAgreement = buildCrossSortAgreement(analysisRecords, topK, holdoutBars.length, sortMetrics.length);
     const parameterVariants = parameterFingerprintAvailable
         ? buildParameterVariantAnalysis(crossSortAgreement, holdoutBars.length, sortMetrics.length)
         : [];
     const horizonBars = [...new Set(sorts.flatMap((sort) => sort.horizons.map((horizon) => horizon.horizonBars)))]
         .sort((left, right) => left - right);
-    const strategyPerformance = buildStrategyPerformance(analysisRecords, topK, horizonBars);
-    const oosWithoutWorstStrategy = buildOosWithoutWorstStrategy(
-        strategyPerformance,
-        analysisRecords,
-        topK,
-        horizonBars,
-    );
-    const oosWithoutWorstStrategyPerSort = buildOosWithoutWorstStrategyPerSort(analysisRecords, topK, horizonBars);
-    const signalCandleHoursAvailable = analysisRecords.some((record) => record.topResults.some((row) => (
+    const strategyPerformance = measurementMode === "fixed_horizon"
+        ? buildStrategyPerformance(analysisRecords, topK, horizonBars)
+        : [];
+    const oosWithoutWorstStrategy = measurementMode === "fixed_horizon"
+        ? buildOosWithoutWorstStrategy(strategyPerformance, analysisRecords, topK, horizonBars)
+        : null;
+    const oosWithoutWorstStrategyPerSort = measurementMode === "fixed_horizon"
+        ? buildOosWithoutWorstStrategyPerSort(analysisRecords, topK, horizonBars)
+        : [];
+    const signalCandleHoursAvailable = measurementMode === "fixed_horizon" && analysisRecords.some((record) => record.topResults.some((row) => (
         row.signalCandleHourUtc !== null && row.signalCandleHourUtc !== undefined
     ) || (
         row.signalCandleHourJakarta !== null && row.signalCandleHourJakarta !== undefined
@@ -1261,6 +1487,7 @@ export function analyzeAssetOpportunityArchive(
         sourceBlockCount: records.length,
         selectedBlockCount: selected.records.length,
         analyzedBlockCount: analysisRecords.length,
+        measurementMode,
         excludedRedundantSortMetrics,
         topK,
         candidateIdentity: parameterFingerprintAvailable
@@ -1269,20 +1496,32 @@ export function analyzeAssetOpportunityArchive(
         parameterFingerprintAvailable,
         baselineAvailable: baseline.length > 0,
         baseline,
-        questionsAnswered: [...REPORT_QUESTIONS],
+        nextExit: measurementMode === "next_exit"
+            ? {
+                baseline: buildNextExitBaselineAnalysis(selected.records),
+                sorts: nextExitSorts,
+            }
+            : null,
+        questionsAnswered: measurementMode === "next_exit"
+            ? [...NEXT_EXIT_REPORT_QUESTIONS]
+            : [...REPORT_QUESTIONS],
         notes: [
             "Forward OOS metrics are descriptive evidence, not a trading rule or probability.",
             "Holdout values are overlapping/nested windows and must not be treated as independent experiments.",
             parameterFingerprintAvailable
                 ? "Candidate fingerprints include entry and optional exit parameters; they are reproducibility keys, not security hashes."
                 : "No parameter fingerprints are present in the selected archive; candidate persistence is symbol+strategyId only.",
-            baseline.length > 0
-                ? "The all-candidate baseline uses every result row before the top-N archive slice; it is not a random-trade simulation."
-                : "The all-candidate baseline is unavailable because older archive blocks contain only top-N rows.",
+            measurementMode === "next_exit"
+                ? "Next-exit PnL uses only observed exits; censored and unavailable rows are reported separately and are not treated as zero PnL."
+                : baseline.length > 0
+                    ? "The all-candidate baseline uses every result row before the top-N archive slice; it is not a random-trade simulation."
+                    : "The all-candidate baseline is unavailable because older archive blocks contain only top-N rows.",
             ...(excludedRedundantSortMetrics.length > 0
                 ? ["netProfit was omitted from the detailed analysis because it duplicates netProfitPercent in the selected archive."]
                 : []),
-            "Each archive sort and forward horizon is analyzed independently; freshSignalLibraries is not pooled with performance sorts.",
+            measurementMode === "next_exit"
+                ? "Each archive sort is analyzed independently; holdout bars are the maximum observation window, not a fixed exit horizon."
+                : "Each archive sort and forward horizon is analyzed independently; freshSignalLibraries is not pooled with performance sorts.",
             "The JSON report stores each candidate's per-holdout series; aggregate rows must not be treated as independent samples.",
             "Strategy contribution and worst-strategy removal are calculated from archived selected rows; removal does not rerun Finder or simulate capital, position sizing, or trade overlap.",
             signalCandleHoursAvailable
@@ -1379,17 +1618,95 @@ function primaryCandidateHorizon(sort: SortHoldoutAnalysis): number {
         : sort.horizons[0]?.horizonBars ?? 0;
 }
 
+function formatExitReasonCounts(exitReasonCounts: Record<string, number>): string {
+    const entries = Object.entries(exitReasonCounts).sort(([left], [right]) => left.localeCompare(right));
+    return entries.length > 0 ? entries.map(([reason, count]) => `${reason}=${count}`).join(", ") : "none";
+}
+
+function renderNextExitReport(
+    report: AssetOpportunityHoldoutAnalysisReport,
+    headerLines: string[],
+): string {
+    const lines = [
+        ...headerLines,
+        "",
+        "Interpretation: next-exit results are descriptive evidence only. Censored and unavailable outcomes are not zero-PnL exits.",
+        "",
+        "QUESTIONS ANSWERED BY THIS REPORT",
+        ...report.questionsAnswered.map((question, index) => `${index + 1}. ${question}`),
+        "",
+        "NEXT EXIT OOS SUMMARY",
+        "Sort | Holdouts | Exits | Positive exits | Censored | Unavailable | Avg PnL | Median PnL | P10 PnL | Worst PnL | Avg bars held | Exit reasons",
+    ];
+    const baselineAverage = report.nextExit?.baseline?.averagePnlPercent ?? null;
+    for (const sort of report.nextExit?.sorts ?? []) {
+        const delta = sort.averagePnlPercent !== null && baselineAverage !== null
+            ? sort.averagePnlPercent - baselineAverage
+            : null;
+        lines.push([
+            sort.sortMetric,
+            sort.holdoutBars.join(", "),
+            `${sort.observedRows}/${sort.totalRows}`,
+            `${sort.positiveRows}/${sort.observedRows}`,
+            String(sort.censoredRows),
+            String(sort.unavailableRows),
+            formatPercent(sort.averagePnlPercent),
+            formatPercent(sort.medianPnlPercent),
+            formatPercent(sort.p10PnlPercent),
+            formatPercent(sort.worstPnlPercent),
+            formatNumber(sort.averageBarsHeld),
+            formatExitReasonCounts(sort.exitReasonCounts),
+        ].join(" | ") + ` | delta vs baseline=${formatPercent(delta)}`);
+    }
+    if ((report.nextExit?.sorts.length ?? 0) === 0) {
+        lines.push("Unavailable: no selected top-K next-exit rows were found.");
+    }
+    lines.push(
+        "",
+        "ALL-CANDIDATE NEXT-EXIT BASELINE",
+    );
+    const baseline = report.nextExit?.baseline;
+    if (!baseline) {
+        lines.push("Unavailable: archive blocks do not contain a next-exit baseline.");
+    } else {
+        lines.push("Holdouts | Avg eligible candidates | Observed exits | Censored | Unavailable | Avg PnL | Exit reasons");
+        lines.push([
+            String(baseline.observedHoldouts),
+            formatNumber(baseline.averageEligibleCandidateCount),
+            String(baseline.observedExits),
+            String(baseline.censoredResults),
+            String(baseline.unavailableResults),
+            formatPercent(baseline.averagePnlPercent),
+            formatExitReasonCounts(baseline.exitReasonCounts),
+        ].join(" | "));
+    }
+    lines.push(
+        "",
+        "Selection persistence and concentration diagnostics are available in the JSON report; their repeated holdout/sort appearances are not independent observations.",
+        "Excluded batch runs: " + (report.excludedBatchRunIds.length > 0 ? report.excludedBatchRunIds.join(", ") : "none"),
+    );
+    for (const note of report.notes) lines.push(`- ${note}`);
+    return `${lines.join("\n")}\n`;
+}
+
 export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHoldoutAnalysisReport): string {
-    const lines: string[] = [
+    const headerLines: string[] = [
         "Asset Opportunity Holdout Evidence Report",
         "===========================================",
         `Generated: ${report.generatedAt}`,
         `Selected batch run: ${report.selectedBatchRunId}`,
         `Holdout bars: ${report.holdoutBars.join(", ")}`,
         `Archive blocks analyzed: ${report.analyzedBlockCount} of ${report.selectedBlockCount} selected (${report.sourceBlockCount} source)`,
+        `Forward measurement: ${report.measurementMode}`,
         `Candidate identity: ${report.candidateIdentity}`,
         `Parameter fingerprints: ${report.parameterFingerprintAvailable ? "available" : "not available in this archive"}`,
-        `All-candidate baseline: ${report.baselineAvailable ? "available" : "not available in this archive"}`,
+        `All-candidate baseline: ${report.baselineAvailable || report.nextExit?.baseline ? "available" : "not available in this archive"}`,
+    ];
+    if (report.measurementMode === "next_exit") {
+        return renderNextExitReport(report, headerLines);
+    }
+    const lines: string[] = [
+        ...headerLines,
         "",
         "Interpretation: forward OOS results are descriptive evidence only. Holdout windows overlap, so positive percentages are not independent predictive probabilities.",
         "",

@@ -89,6 +89,8 @@ export interface FinderAssetOpportunityOptions {
     symbols: string[];
     candidatePoolSize: number;
     minFreshSupport: number;
+    /** Forward OOS measurement; omitted/invalid values use fixed horizons. */
+    oosMeasurementMode?: "fixed_horizon" | "next_exit";
     /** Number of historical bars reserved for fixed-horizon OOS measurement. */
     oosIgnoreLastBars?: number;
     /**
@@ -436,6 +438,8 @@ export interface FinderAssetOpportunityResult {
     oosVerdict?: FinderOosVerdict;
     /** Fixed-horizon forward PnL measured inside the reserved OOS holdout. */
     oosHorizonMetrics?: import('../finder/finder-asset-opportunity-oos').FinderAssetOosMetrics;
+    /** First configured exit after the fresh boundary entry, when selected. */
+    oosNextExitMetrics?: import('../finder/finder-asset-opportunity-oos').FinderAssetOosNextExitMetrics;
     /** Distinct selected strategy libraries with a fresh entry for this symbol. */
     freshSignalLibraryCount?: number;
     support: FinderAssetSupportCounts;

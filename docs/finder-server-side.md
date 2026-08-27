@@ -18,13 +18,16 @@ historical candidates without that candle. With a fixed holdout, the visible
 prefix is used for both candidate search and the boundary signal, while the
 final N candles remain hidden for validation.
 
-Asset Opportunity can reserve the last N historical bars as a fixed OOS
-holdout. In that mode, candidate ranking and the Finder data slice use only
-the visible prefix, the signal is generated at its latest visible modeled fill boundary
-(the preceding candle for `next_open`/`next_close`), and the hidden bars validate that one boundary prediction. Its signed
-close-to-entry forward PnL is reported at three horizons (default `1,3,5`),
-with horizon 1 targeting the first hidden candle. The setting is disabled when
-N is `0`, which retains the normal latest-closed-candle opportunity behavior.
+Asset Opportunity can reserve the last N historical bars as an OOS holdout.
+Candidate ranking and the Finder data slice use only the visible prefix, while
+the hidden bars validate the boundary opportunity. `Fixed horizons` preserves
+the existing signed close-to-entry forward PnL at three horizons (default
+`1,3,5`). `Next configured exit` replays the selected winner across the full
+execution-aware timeline and reports the first engine exit for the boundary
+entry, including TP/SL, signal exits, exit-strategy overrides, trailing/path
+exits, and max-hold time stops. A forced `end_of_data` close is reported as
+`censored` without a realized PnL. The setting is disabled when N is `0`,
+which retains the normal latest-closed-candle opportunity behavior.
 
 The server caps a run at 1,000 symbols. It records an estimated candidate-work
 count as a diagnostic, but does not reject a run based on that estimate. The
@@ -81,7 +84,10 @@ request can never supply a filesystem path. Each block records the selected
 metric as `Archive sort: <metric>` (`run_default` for the normal run order),
 which makes repeated appends with different rankings auditable. The archive
 JSON is compact and contains only row identity plus selection/OOS performance
-metrics and forward OOS performance. New blocks also include a stable
+metrics and the selected forward measurement. Next-exit rows use
+`nextExitOosPerformance` and the archive adds a mode-specific baseline and
+pair-summary status/reason counts; they are never combined with horizon data.
+New blocks also include a stable
 `candidateFingerprint`, the latest signal-candle hour in UTC and Asia/Jakarta,
 and an all-candidate forward-OOS baseline captured before the top-N slice.
 Older blocks remain readable but cannot answer fingerprint, baseline, or

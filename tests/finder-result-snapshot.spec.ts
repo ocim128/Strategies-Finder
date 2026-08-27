@@ -175,6 +175,14 @@ describe("Finder result snapshots", () => {
                         { bars: 5, pnlPercent: -2, averagePnlPercent: -2, winRatePercent: 0, sampleSize: 1 },
                     ],
                 },
+                oosNextExitMetrics: {
+                    ignoreLastBars: 20,
+                    status: "censored",
+                    pnlPercent: null,
+                    exitReason: "end_of_data",
+                    barsHeld: 4,
+                    exitTime: 200 as Time,
+                },
             })),
         });
 
@@ -185,6 +193,14 @@ describe("Finder result snapshots", () => {
         expect(compact.results[0]!.selectionResult.equityCurve).to.deep.equal([]);
         expect(compact.results[0]!.oosHorizonMetrics?.ignoreLastBars).to.equal(20);
         expect(compact.results[0]!.oosHorizonMetrics?.horizons[2]?.pnlPercent).to.equal(-2);
+        expect(compact.results[0]!.oosNextExitMetrics).to.deep.equal({
+            ignoreLastBars: 20,
+            status: "censored",
+            pnlPercent: null,
+            exitReason: "end_of_data",
+            barsHeld: 4,
+            exitTime: 200,
+        });
     });
 
     it("defaults new drawdown aggregates when restoring an older universe snapshot", () => {

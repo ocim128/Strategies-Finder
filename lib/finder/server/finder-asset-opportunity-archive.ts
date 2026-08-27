@@ -4,6 +4,7 @@ import { formatCapturedConfiguration } from "../finder-config-capture";
 import type { FinderAssetOpportunityResortMetric } from "../finder-asset-opportunity-metrics";
 import type {
     AssetOpportunityForwardOosBaseline,
+    AssetOpportunityNextExitOosBaseline,
     AssetOpportunityPairSummaryRow,
 } from "../finder-asset-opportunity-metadata";
 
@@ -60,6 +61,8 @@ export interface AssetOpportunityArchiveBlock {
     topResults: unknown;
     /** All-result baseline captured before the top-N slice, when available. */
     baseline?: AssetOpportunityForwardOosBaseline | null;
+    measurementMode?: "fixed_horizon" | "next_exit";
+    nextExitBaseline?: AssetOpportunityNextExitOosBaseline | null;
 }
 
 export function buildAssetOpportunityArchiveBlockText(block: AssetOpportunityArchiveBlock): string {
@@ -70,7 +73,9 @@ export function buildAssetOpportunityArchiveBlockText(block: AssetOpportunityArc
         `Batch run id: ${block.batchRunId}`,
         `OOS holdout: ${block.holdoutBars} bars`,
         `Archive sort: ${block.sortMetric ?? "run_default"}`,
+        ...(block.measurementMode ? [`Forward measurement: ${block.measurementMode}`] : []),
         ...(block.baseline ? [`Archive baseline: ${JSON.stringify(block.baseline)}`] : []),
+        ...(block.nextExitBaseline ? [`Next-exit archive baseline: ${JSON.stringify(block.nextExitBaseline)}`] : []),
         separator,
         JSON.stringify(block.topResults),
         "",
@@ -98,6 +103,8 @@ export interface AppendAssetOpportunityArchiveBlockArgs {
     sortMetric?: FinderAssetOpportunityResortMetric | null;
     topResults: unknown;
     baseline?: AssetOpportunityForwardOosBaseline | null;
+    measurementMode?: "fixed_horizon" | "next_exit";
+    nextExitBaseline?: AssetOpportunityNextExitOosBaseline | null;
     /** Optional deterministic timestamp for tests. */
     timestamp?: string;
     /** Optional injected append leaf for tests. */
@@ -123,6 +130,8 @@ export async function appendAssetOpportunityArchiveBlock(
         sortMetric: args.sortMetric ?? null,
         topResults: args.topResults,
         baseline: args.baseline,
+        measurementMode: args.measurementMode,
+        nextExitBaseline: args.nextExitBaseline,
     });
     const append = args.append ?? defaultAppend;
     await append(dir, filename, content);

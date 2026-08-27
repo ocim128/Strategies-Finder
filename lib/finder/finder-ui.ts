@@ -10,6 +10,7 @@ import {
     formatSignedCompactDollar,
 } from "../ui-formatters";
 import type { FinderAssetOpportunityResult, FinderMode, FinderOosVerdict, FinderRandomBenchmark, FinderResult, FinderStrategyQualityResult, FinderUniverseCandidate, FinderUniverseOosAggregate, FinderUniverseSymbolMetrics } from "../types/finder";
+import type { FinderAssetOosNextExitMetrics } from "./finder-asset-opportunity-oos";
 import type { BacktestResult, StrategyParams, Time } from "../types/strategies";
 import { getFinderSelectionResult } from "./finder-engine";
 import { calculateFinderAssetOosAverageHorizonMetrics } from "./finder-asset-opportunity-oos";
@@ -414,6 +415,51 @@ export class FinderUI {
             fragment.appendChild(summary);
         }
 
+        const nextExitMetrics = results
+            .map((result) => result.oosNextExitMetrics)
+            .filter((metrics): metrics is FinderAssetOosNextExitMetrics => metrics !== undefined);
+        if (nextExitMetrics.length > 0) {
+            const observed = nextExitMetrics.filter((metrics) => metrics.status === "exited");
+            const censored = nextExitMetrics.filter((metrics) => metrics.status === "censored").length;
+            const unavailable = nextExitMetrics.filter((metrics) => metrics.status === "unavailable").length;
+            const pnlValues = observed
+                .map((metrics) => metrics.pnlPercent)
+                .filter((value): value is number => value !== null && Number.isFinite(value));
+            const averagePnl = pnlValues.length > 0
+                ? pnlValues.reduce((sum, value) => sum + value, 0) / pnlValues.length
+                : null;
+            const reasonCounts = new Map<string, number>();
+            for (const metrics of observed) {
+                if (metrics.exitReason) {
+                    reasonCounts.set(metrics.exitReason, (reasonCounts.get(metrics.exitReason) ?? 0) + 1);
+                }
+            }
+            const reasonText = [...reasonCounts.entries()]
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(([reason, count]) => `${reason} ${count}`)
+                .join(" · ");
+
+            const summary = document.createElement("div");
+            summary.className = "finder-asset-validation finder-asset-validation-overview";
+            const heading = document.createElement("div");
+            heading.className = "finder-asset-validation-heading";
+            const title = document.createElement("span");
+            title.className = "finder-asset-validation-title";
+            title.textContent = "Average Next configured exit";
+            heading.appendChild(title);
+            const source = document.createElement("span");
+            source.className = "finder-asset-validation-summary";
+            source.textContent = `${observed.length} exited · ${censored} censored · ${unavailable} unavailable`;
+            heading.appendChild(source);
+            summary.appendChild(heading);
+
+            const detail = document.createElement("div");
+            detail.className = "finder-asset-validation-summary";
+            detail.textContent = `${formatNullableSignedPercentPoints(averagePnl)} realized PnL${reasonText ? ` · ${reasonText}` : ""}`;
+            summary.appendChild(detail);
+            fragment.appendChild(summary);
+        }
+
         results.forEach((item, index) => {
             const title = document.createElement("div");
             title.className = "finder-title";
@@ -448,12 +494,32 @@ export class FinderUI {
                     item.oosVerdict,
                 ));
             }
+            if (item.oosNextExitMetrics) {
+                const nextExit = item.oosNextExitMetrics;
+                const pnl = nextExit.pnlPercent === null
+                    ? nextExit.status
+                    : `${formatNullableSignedPercentPoints(nextExit.pnlPercent)} ${nextExit.status}`;
+                metrics.appendChild(this.createMetricChip(
+                    `Exit ${nextExit.exitReason ?? "unavailable"} · ${pnl}`,
+                ));
+            }
             const signalTime = item.latestSignalTime ? this.formatTime(item.latestSignalTime) : "none";
             const detailLines = [
                 `Signal ${signalTime} · ${item.fillTiming}`,
             ];
             if (item.exitStrategyKey) {
                 detailLines.push(`Exit · ${item.exitStrategyName ?? item.exitStrategyKey}`);
+            }
+
+            let details: HTMLElement | undefined;
+            if (item.oosHorizonMetrics && item.oosNextExitMetrics) {
+                details = document.createElement("div");
+                details.appendChild(this.createAssetOosPanel(item.oosHorizonMetrics));
+                details.appendChild(this.createAssetNextExitPanel(item.oosNextExitMetrics));
+            } else if (item.oosNextExitMetrics) {
+                details = this.createAssetNextExitPanel(item.oosNextExitMetrics);
+            } else if (item.oosHorizonMetrics) {
+                details = this.createAssetOosPanel(item.oosHorizonMetrics);
             }
 
             fragment.appendChild(this.createResultRow({
@@ -463,9 +529,7 @@ export class FinderUI {
                 paramsText: this.formatParams(item.params),
                 detailLines,
                 metrics,
-                details: item.oosHorizonMetrics
-                    ? this.createAssetOosPanel(item.oosHorizonMetrics)
-                    : undefined,
+                details,
             }));
         });
         list.appendChild(fragment);
@@ -695,6 +759,30 @@ export class FinderUI {
             horizons.appendChild(cell);
         }
         panel.appendChild(horizons);
+        return panel;
+    }
+
+    private createAssetNextExitPanel(metrics: FinderAssetOosNextExitMetrics): HTMLDivElement {
+        const panel = document.createElement("div");
+        panel.className = "finder-asset-validation";
+        const heading = document.createElement("div");
+        heading.className = "finder-asset-validation-heading";
+        const title = document.createElement("span");
+        title.className = "finder-asset-validation-title";
+        title.textContent = "Next configured exit";
+        heading.appendChild(title);
+        const summary = document.createElement("span");
+        summary.className = "finder-asset-validation-summary";
+        summary.textContent = `${metrics.ignoreLastBars} max wait bars · ${metrics.status}`;
+        heading.appendChild(summary);
+        panel.appendChild(heading);
+
+        const body = document.createElement("div");
+        body.className = "finder-asset-validation-summary";
+        body.textContent = metrics.pnlPercent === null
+            ? `No realized PnL${metrics.exitReason ? ` · ${metrics.exitReason}` : ""}`
+            : `${formatNullableSignedPercentPoints(metrics.pnlPercent)} realized PnL · ${metrics.exitReason ?? "exit"} · ${metrics.barsHeld ?? "?"} bars held`;
+        panel.appendChild(body);
         return panel;
     }
 

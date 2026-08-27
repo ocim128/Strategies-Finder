@@ -40,6 +40,14 @@ function makeAssetResult(): FinderAssetOpportunityResult {
         signalAgeBars: 0,
         fillTiming: "signal_close",
         selectionResult: backtest,
+        oosNextExitMetrics: {
+            ignoreLastBars: 4,
+            status: "exited",
+            pnlPercent: 1.25,
+            exitReason: "take_profit",
+            barsHeld: 2,
+            exitTime: 3 as Time,
+        },
         support: {
             freshLongCandidates: 2,
             freshShortCandidates: 0,
@@ -58,6 +66,14 @@ describe("Asset Opportunity scalar stream contract", () => {
 
         expect(scalar.selectionResult.trades).to.deep.equal([]);
         expect(scalar.selectionResult.equityCurve).to.deep.equal([]);
+        expect(scalar.oosNextExitMetrics).to.deep.equal({
+            ignoreLastBars: 4,
+            status: "exited",
+            pnlPercent: 1.25,
+            exitReason: "take_profit",
+            barsHeld: 2,
+            exitTime: 3,
+        });
         expect(() => assertAssetResultIsScalar(scalar)).to.not.throw();
     });
 

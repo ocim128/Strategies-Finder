@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
     buildAssetOpportunityCandidateFingerprint,
     buildAssetOpportunityForwardOosBaseline,
+    buildAssetOpportunityNextExitOosBaseline,
     buildAssetOpportunityPairSummaries,
     buildAssetOpportunityMetadataPayload,
     buildAssetOpportunityPerformancePayload,
@@ -145,6 +146,7 @@ describe("Asset Opportunity metadata payload serializer", () => {
                     { bars: 1, pnlPercent: 1, averagePnlPercent: 1, winRatePercent: 100, sampleSize: 1 },
                 ],
             },
+            oosNextExitMetrics: null,
             exitStrategy: {
                 key: "trailing_exit",
                 name: "Trailing Exit",
@@ -229,6 +231,7 @@ describe("Asset Opportunity metadata payload serializer", () => {
                     { bars: 1, pnlPercent: 1, averagePnlPercent: 1, winRatePercent: 100, sampleSize: 1 },
                 ],
             },
+            nextExitOosPerformance: null,
         });
         expect(JSON.stringify(payload)).to.not.contain("lookback");
         expect(JSON.stringify(payload)).to.not.contain("trades");
@@ -268,6 +271,45 @@ describe("Asset Opportunity metadata payload serializer", () => {
             observedResults: 2,
             totalSamples: 2,
         }]);
+    });
+
+    it("keeps next-exit archive metrics separate from fixed horizons", () => {
+        const result = makeAssetResult({
+            oosHorizonMetrics: undefined,
+            oosNextExitMetrics: {
+                ignoreLastBars: 5,
+                status: "exited",
+                pnlPercent: 1.5,
+                exitReason: "take_profit",
+                barsHeld: 2,
+                exitTime: 1_700_000_600 as Time,
+            },
+        });
+        const payload = buildAssetOpportunityPerformancePayload({ result, rank: 1 });
+        expect(payload.forwardOosPerformance).to.equal(null);
+        expect(payload.nextExitOosPerformance).to.deep.equal(result.oosNextExitMetrics);
+        expect(buildAssetOpportunityNextExitOosBaseline([
+            result,
+            makeAssetResult({
+                symbol: "ETHUSDT",
+                oosHorizonMetrics: undefined,
+                oosNextExitMetrics: {
+                    ignoreLastBars: 5,
+                    status: "censored",
+                    pnlPercent: null,
+                    exitReason: "end_of_data",
+                    barsHeld: 5,
+                    exitTime: 1_700_001_500 as Time,
+                },
+            }),
+        ])).to.deep.equal({
+            eligibleCandidateCount: 2,
+            observedExits: 1,
+            censoredResults: 1,
+            unavailableResults: 0,
+            averagePnlPercent: 1.5,
+            exitReasonCounts: { take_profit: 1, end_of_data: 1 },
+        });
     });
 
     it("builds sorted per-symbol summaries and keeps forward metrics target-only", () => {

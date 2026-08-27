@@ -114,12 +114,14 @@ import {
 import {
     normalizeFinderAssetEvalLastBars,
     normalizeFinderAssetOosBatchHoldoutRange,
+    normalizeFinderAssetOosMeasurementMode,
     normalizeFinderAssetOosHorizons,
     normalizeFinderAssetOosIgnoreLastBars,
 } from "../finder-asset-opportunity-oos";
 import {
     buildAssetOpportunityPairSummaries,
     buildAssetOpportunityForwardOosBaseline,
+    buildAssetOpportunityNextExitOosBaseline,
     buildAssetOpportunityPerformancePayload,
 } from "../finder-asset-opportunity-metadata";
 import {
@@ -1702,6 +1704,7 @@ export async function processFinderAssetOpportunityBatchRun(
             symbols: input.options.assetOpportunity?.symbols ?? [],
             candidatePoolSize: input.candidatePoolSize,
             minFreshSupport: input.minFreshSupport,
+            oosMeasurementMode: input.options.assetOpportunity?.oosMeasurementMode,
             oosHorizons: input.options.assetOpportunity?.oosHorizons,
             oosIgnoreLastBars: holdoutBars,
             evalLastBars: input.options.assetOpportunity?.evalLastBars,
@@ -1756,7 +1759,13 @@ export async function processFinderAssetOpportunityBatchRun(
         let archiveFilename = "";
         // Pure function of the iteration's unchanged result set: compute once,
         // not once per sort metric.
-        const baseline = buildAssetOpportunityForwardOosBaseline(iteration.results);
+        const measurementMode = input.options.assetOpportunity?.oosMeasurementMode ?? "fixed_horizon";
+        const baseline = measurementMode === "fixed_horizon"
+            ? buildAssetOpportunityForwardOosBaseline(iteration.results)
+            : null;
+        const nextExitBaseline = measurementMode === "next_exit"
+            ? buildAssetOpportunityNextExitOosBaseline(iteration.results)
+            : null;
         try {
             const pairSummaries = buildAssetOpportunityPairSummaries(iteration.results);
             await appendAssetOpportunityArchivePairSummary({
@@ -1781,6 +1790,8 @@ export async function processFinderAssetOpportunityBatchRun(
                     sortMetric,
                     topResults,
                     baseline,
+                    measurementMode,
+                    nextExitBaseline,
                     ...(archiveAppend ? { append: archiveAppend } : {}),
                 });
                 archiveFilename = path.basename(appended.path);
@@ -2259,6 +2270,9 @@ async function prepareAssetOpportunityRunPayload(
             ? {
                 assetOpportunity: {
                     ...parsedOptions.assetOpportunity,
+                    oosMeasurementMode: normalizeFinderAssetOosMeasurementMode(
+                        parsedOptions.assetOpportunity.oosMeasurementMode,
+                    ),
                     oosIgnoreLastBars: normalizeFinderAssetOosIgnoreLastBars(
                         parsedOptions.assetOpportunity.oosIgnoreLastBars,
                     ),

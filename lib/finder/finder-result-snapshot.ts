@@ -155,6 +155,11 @@ function compactAssetOpportunityResult(result: FinderAssetOpportunityResult): Fi
                 },
             }
             : {}),
+        ...(result.oosNextExitMetrics
+            ? {
+                oosNextExitMetrics: { ...result.oosNextExitMetrics },
+            }
+            : {}),
         support: { ...result.support },
         grade: result.grade,
     };

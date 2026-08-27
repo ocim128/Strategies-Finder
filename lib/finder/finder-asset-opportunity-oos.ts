@@ -1,4 +1,5 @@
-import type { OHLCVData } from "../types/strategies";
+import type { OHLCVData, Time, Trade } from "../types/strategies";
+import { parseTimeToUnixSeconds } from "../time-normalization";
 
 export const DEFAULT_FINDER_ASSET_OOS_HORIZONS = [1, 3, 5] as const;
 export const MAX_FINDER_ASSET_OOS_VALUE = 100_000;
@@ -21,10 +22,28 @@ export interface FinderAssetOosMetrics {
     horizons: FinderAssetOosHorizonMetric[];
 }
 
+export type FinderAssetOosNextExitStatus = "exited" | "censored" | "unavailable";
+export type FinderAssetOosMeasurementMode = "fixed_horizon" | "next_exit";
+
+export interface FinderAssetOosNextExitMetrics {
+    /** Number of hidden candles available as the maximum observation window. */
+    ignoreLastBars: number;
+    status: FinderAssetOosNextExitStatus;
+    /** Realized engine PnL, including modeled costs; null when censored/unavailable. */
+    pnlPercent: number | null;
+    exitReason: NonNullable<Trade["exitReason"]> | null;
+    barsHeld: number | null;
+    exitTime: Time | null;
+}
+
 export interface FinderAssetOosAverageHorizonMetric {
     bars: number;
     averagePnlPercent: number | null;
     sampleSize: number;
+}
+
+export function normalizeFinderAssetOosMeasurementMode(value: unknown): FinderAssetOosMeasurementMode {
+    return value === "next_exit" ? "next_exit" : "fixed_horizon";
 }
 
 /**
@@ -201,5 +220,57 @@ export function calculateFinderAssetOosSignalMetrics(args: {
     return {
         ignoreLastBars: normalizeFinderAssetOosIgnoreLastBars(args.ignoreLastBars),
         horizons: buildHorizonMetrics(args),
+    };
+}
+
+/**
+ * Extract the first engine-recorded exit for the boundary entry. The caller
+ * replays the complete timeline; this leaf only matches the entry and turns
+ * its first trade event into a scalar OOS observation.
+ */
+export function calculateFinderAssetOosNextExitMetrics(args: {
+    candles: readonly OHLCVData[];
+    boundaryEntryTime: Time | null;
+    direction: "long" | "short";
+    ignoreLastBars: number;
+    trades: readonly Trade[];
+}): FinderAssetOosNextExitMetrics {
+    const ignoreLastBars = normalizeFinderAssetOosIgnoreLastBars(args.ignoreLastBars);
+    const boundaryEntrySeconds = parseTimeToUnixSeconds(args.boundaryEntryTime);
+    const trade = boundaryEntrySeconds === null
+        ? undefined
+        : args.trades.find((candidate) => (
+            candidate.type === args.direction
+            && parseTimeToUnixSeconds(candidate.entryTime) === boundaryEntrySeconds
+        ));
+    if (!trade || !trade.exitReason) {
+        return {
+            ignoreLastBars,
+            status: "unavailable",
+            pnlPercent: null,
+            exitReason: null,
+            barsHeld: null,
+            exitTime: null,
+        };
+    }
+
+    const entryIndex = boundaryEntrySeconds === null
+        ? -1
+        : args.candles.findIndex((candle) => parseTimeToUnixSeconds(candle.time) === boundaryEntrySeconds);
+    const exitSeconds = parseTimeToUnixSeconds(trade.exitTime);
+    const exitIndex = exitSeconds === null
+        ? -1
+        : args.candles.findIndex((candle) => parseTimeToUnixSeconds(candle.time) === exitSeconds);
+    const barsHeld = entryIndex >= 0 && exitIndex >= entryIndex
+        ? exitIndex - entryIndex
+        : null;
+    const censored = trade.exitReason === "end_of_data";
+    return {
+        ignoreLastBars,
+        status: censored ? "censored" : "exited",
+        pnlPercent: censored || !Number.isFinite(trade.pnlPercent) ? null : trade.pnlPercent,
+        exitReason: trade.exitReason,
+        barsHeld,
+        exitTime: trade.exitTime,
     };
 }

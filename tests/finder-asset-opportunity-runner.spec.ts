@@ -598,6 +598,91 @@ describe("Asset Opportunity runner", () => {
         expect(output.outcomes[0]!.diagnostics?.oosBars).to.equal(4);
     });
 
+    it("replays the winner through the engine and reports its next configured exit", async () => {
+        const strategy: Strategy = {
+            name: "NextExitSignal",
+            description: "enters at the visible boundary and exits later by signal",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                if (data.length < 5) return [];
+                const boundaryIndex = data.length < 8 ? data.length - 1 : data.length - 4;
+                const signals: Array<{ time: Time; type: "buy" | "sell"; price: number }> = [
+                    { time: data[boundaryIndex]!.time, type: "buy", price: data[boundaryIndex]!.close },
+                ];
+                if (data.length >= 8) {
+                    const exit = data[data.length - 2]!;
+                    signals.push({ time: exit.time, type: "sell", price: exit.close });
+                }
+                return signals;
+            },
+        };
+        const candles = makeCandles([100, 101, 102, 103, 100, 101, 110, 95]);
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({
+                assetOpportunity: {
+                    symbols: ["NEXT_EXIT"],
+                    candidatePoolSize: 1,
+                    minFreshSupport: 1,
+                    oosMeasurementMode: "next_exit",
+                    oosIgnoreLastBars: 3,
+                },
+            }),
+            selectedStrategy: { key: "next_exit_signal", name: strategy.name, strategy },
+            assets: [{ symbol: "NEXT_EXIT", data: candles }],
+        }), makeCallbacks());
+
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.oosHorizonMetrics).to.equal(undefined);
+        expect(output.results[0]!.oosNextExitMetrics).to.deep.include({
+            ignoreLastBars: 3,
+            status: "exited",
+            exitReason: "signal",
+            barsHeld: 2,
+        });
+        expect(output.results[0]!.oosNextExitMetrics?.pnlPercent).to.be.greaterThan(0);
+        expect(output.outcomes[0]!.diagnostics?.oosEvaluations).to.equal(1);
+    });
+
+    it("includes the engine max-hold time stop in next-exit measurement", async () => {
+        const strategy: Strategy = {
+            name: "NextExitMaxHold",
+            description: "opens at the boundary and has no signal exit",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                if (data.length < 5) return [];
+                const boundaryIndex = data.length < 8 ? data.length - 1 : data.length - 4;
+                return [{ time: data[boundaryIndex]!.time, type: "buy", price: data[boundaryIndex]!.close }];
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({
+                assetOpportunity: {
+                    symbols: ["NEXT_EXIT_MAX_HOLD"],
+                    candidatePoolSize: 1,
+                    minFreshSupport: 1,
+                    oosMeasurementMode: "next_exit",
+                    oosIgnoreLastBars: 3,
+                },
+            }),
+            settings: {
+                ...settings,
+                riskMaxHoldEnabled: true,
+                riskMaxHoldBars: 1,
+            },
+            selectedStrategy: { key: "next_exit_max_hold", name: strategy.name, strategy },
+            assets: [{ symbol: "NEXT_EXIT_MAX_HOLD", data: makeCandles([100, 101, 102, 103, 100, 101, 102, 103]) }],
+        }), makeCallbacks());
+
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.oosNextExitMetrics).to.deep.include({
+            status: "exited",
+            exitReason: "time_stop",
+            barsHeld: 1,
+        });
+    });
+
     it("runs OOS only for the winner, not for every top-K candidate", async () => {
         // Intent lock: OOS is the largest CPU bucket per asset, and the
         // reducer only consumes the winner's verdict in `decideAssetGrade`.

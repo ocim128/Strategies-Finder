@@ -97,6 +97,7 @@ import {
 	DEFAULT_FINDER_ASSET_OOS_HORIZONS,
 	normalizeFinderAssetEvalLastBars,
 	normalizeFinderAssetOosBatchHoldoutRange,
+	normalizeFinderAssetOosMeasurementMode,
 	normalizeFinderAssetOosHorizons,
 	normalizeFinderAssetOosIgnoreLastBars,
 } from "./finder/finder-asset-opportunity-oos";
@@ -249,6 +250,7 @@ type FinderPersistedUiState = {
 	universeSortSecondary: FinderUniverseMetric;
 	assetOpportunityCandidatePoolSize: number;
 	assetOpportunityMinFreshSupport: number;
+	assetOpportunityOosMeasurementMode: "fixed_horizon" | "next_exit";
 	assetOpportunityOosIgnoreLastBars: number;
 	assetOpportunityOosHorizons: string;
 	/** Cap the in-sample evaluation window to the last N bars; 0 = all bars. */
@@ -334,6 +336,7 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	universeSortSecondary: "windowStabilityScore",
 	assetOpportunityCandidatePoolSize: 10,
 	assetOpportunityMinFreshSupport: 2,
+	assetOpportunityOosMeasurementMode: "fixed_horizon",
 	assetOpportunityOosIgnoreLastBars: 0,
 	assetOpportunityOosHorizons: DEFAULT_FINDER_ASSET_OOS_HORIZONS.join(","),
 	assetOpportunityEvalWindowBars: 0,
@@ -486,6 +489,9 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 	const assetOpportunityMinFreshSupport = typeof source.assetOpportunityMinFreshSupport === "number"
 		? Math.max(1, Math.min(50, Math.round(source.assetOpportunityMinFreshSupport)))
 		: DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport;
+	const assetOpportunityOosMeasurementMode = normalizeFinderAssetOosMeasurementMode(
+		source.assetOpportunityOosMeasurementMode,
+	);
 	const assetOpportunityOosIgnoreLastBars = normalizeFinderAssetOosIgnoreLastBars(
 		source.assetOpportunityOosIgnoreLastBars,
 	);
@@ -545,6 +551,7 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		universeSortSecondary: normalizeFinderUniverseMetric(source.universeSortSecondary, DEFAULT_FINDER_UI_STATE.universeSortSecondary),
 		assetOpportunityCandidatePoolSize,
 		assetOpportunityMinFreshSupport,
+		assetOpportunityOosMeasurementMode,
 		assetOpportunityOosIgnoreLastBars,
 		assetOpportunityOosHorizons,
 		assetOpportunityEvalWindowBars,
@@ -973,6 +980,7 @@ export class FinderManager {
 		dom.finderUniverseMinProfitableActiveRatio.value = String(this.uiState.universeMinProfitableActiveRatio);
 		dom.finderAssetCandidatePoolSize.value = String(this.uiState.assetOpportunityCandidatePoolSize);
 		dom.finderAssetMinFreshSupport.value = String(this.uiState.assetOpportunityMinFreshSupport);
+		dom.finderAssetOosMeasurementMode.value = this.uiState.assetOpportunityOosMeasurementMode;
 		dom.finderAssetOosIgnoreLastBars.value = String(this.uiState.assetOpportunityOosIgnoreLastBars);
 		dom.finderAssetOosHorizons.value = this.uiState.assetOpportunityOosHorizons;
 		dom.finderAssetEvalWindowBars.value = String(this.uiState.assetOpportunityEvalWindowBars);
@@ -1456,6 +1464,7 @@ export class FinderManager {
 			dom.finderOosValidationToggle,
 			dom.finderAssetCandidatePoolSize,
 			dom.finderAssetMinFreshSupport,
+			dom.finderAssetOosMeasurementMode,
 			dom.finderAssetOosIgnoreLastBars,
 			dom.finderAssetOosHorizons,
 			dom.finderAssetEvalWindowBars,
@@ -1515,6 +1524,9 @@ export class FinderManager {
 			DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport,
 			1,
 		))));
+		this.uiState.assetOpportunityOosMeasurementMode = normalizeFinderAssetOosMeasurementMode(
+			dom.finderAssetOosMeasurementMode.value,
+		);
 		this.uiState.assetOpportunityOosIgnoreLastBars = normalizeFinderAssetOosIgnoreLastBars(
 			this.readFinderNumberInput(
 				dom.finderAssetOosIgnoreLastBars,
@@ -1555,9 +1567,16 @@ export class FinderManager {
 	private syncAssetOosBatchControls(): void {
 		const dom = this.getDom();
 		const batchEnabled = dom.finderAssetOosBatchToggle.checked;
+		const nextExitEnabled = normalizeFinderAssetOosMeasurementMode(
+			dom.finderAssetOosMeasurementMode.value,
+		) === "next_exit";
 		setVisible(dom.finderAssetOosBatchSettings, batchEnabled);
 		dom.finderAssetOosIgnoreLastBars.disabled = batchEnabled;
 		dom.finderAssetOosIgnoreLastBars.closest(".param-group")?.classList.toggle("is-disabled", batchEnabled);
+		dom.finderAssetOosHorizons.disabled = nextExitEnabled;
+		dom.finderAssetOosHorizons.closest(".param-group")?.classList.toggle("is-disabled", nextExitEnabled);
+		const holdoutLabel = dom.finderAssetOosIgnoreLastBars.closest(".param-group")?.querySelector("label");
+		if (holdoutLabel) holdoutLabel.textContent = nextExitEnabled ? "OOS Max Wait Bars" : "OOS Holdout Bars";
 	}
 
 	private resetFinderSettings(): void {
@@ -3552,6 +3571,9 @@ export class FinderManager {
 					DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport,
 					1,
 				)))),
+				oosMeasurementMode: normalizeFinderAssetOosMeasurementMode(
+					dom.finderAssetOosMeasurementMode.value,
+				),
 				oosIgnoreLastBars: normalizeFinderAssetOosIgnoreLastBars(this.readFinderNumberInput(
 					dom.finderAssetOosIgnoreLastBars,
 					DEFAULT_FINDER_UI_STATE.assetOpportunityOosIgnoreLastBars,

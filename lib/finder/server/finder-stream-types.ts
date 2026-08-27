@@ -507,6 +507,7 @@ export function toScalarAssetResult(asset: FinderAssetOpportunityResult): Finder
         ...(asset.exitStrategyParams ? { exitStrategyParams: { ...(asset.exitStrategyParams as StrategyParams) } } : {}),
         selectionResult: stripHeavyBacktestResultArrays(asset.selectionResult),
         ...(asset.oosResult ? { oosResult: stripHeavyBacktestResultArrays(asset.oosResult) } : {}),
+        ...(asset.oosNextExitMetrics ? { oosNextExitMetrics: { ...asset.oosNextExitMetrics } } : {}),
         support: { ...asset.support },
     };
     for (const key of FINDER_CANDIDATE_FORBIDDEN_ARRAY_FIELDS) {

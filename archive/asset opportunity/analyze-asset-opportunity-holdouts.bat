@@ -32,7 +32,10 @@ if not defined NON_ZERO (
 )
 
 set "OUTPUT_PREFIX=%ARCHIVE_DIR%\holdout-analysis-top-%TOP_K%"
-call "%ESNO%" "%REPO_ROOT%\scripts\analyze-asset-opportunity-holdouts.ts" --archive-dir "%ARCHIVE_DIR%" --top-k "%TOP_K%" --output-prefix "%OUTPUT_PREFIX%"
+rem The analyzer reads Forward measurement from each archive block and emits
+rem a next-exit report for next_exit runs or the existing horizon report for
+rem fixed_horizon/legacy runs. Extra arguments can select a batch run.
+call "%ESNO%" "%REPO_ROOT%\scripts\analyze-asset-opportunity-holdouts.ts" --archive-dir "%ARCHIVE_DIR%" --top-k "%TOP_K%" --output-prefix "%OUTPUT_PREFIX%" %*
 set "EXIT_CODE=%ERRORLEVEL%"
 
 if "%EXIT_CODE%"=="0" (

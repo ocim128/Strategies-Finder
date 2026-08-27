@@ -16,6 +16,8 @@ function block(args: {
     sortMetric: string;
     rows: unknown[];
     baseline?: unknown;
+    measurementMode?: string;
+    nextExitBaseline?: unknown;
 }): string {
     return [
         "=".repeat(80),
@@ -23,7 +25,9 @@ function block(args: {
         `Batch run id: ${args.runId}`,
         `OOS holdout: ${args.holdoutBars} bars`,
         `Archive sort: ${args.sortMetric}`,
+        ...(args.measurementMode === undefined ? [] : [`Forward measurement: ${args.measurementMode}`]),
         ...(args.baseline === undefined ? [] : [`Archive baseline: ${JSON.stringify(args.baseline)}`]),
+        ...(args.nextExitBaseline === undefined ? [] : [`Next-exit archive baseline: ${JSON.stringify(args.nextExitBaseline)}`]),
         "=".repeat(80),
         JSON.stringify(args.rows),
         "=".repeat(80),
@@ -82,6 +86,93 @@ describe("Asset Opportunity holdout analysis", () => {
         expect(records[0]!.topResults[0]!.candidateFingerprint).to.equal("fp-1");
         expect(records[0]!.baseline?.eligibleCandidateCount).to.equal(25);
         expect(records[0]!.baseline?.horizons[0]!.averagePnlPercent).to.equal(0.5);
+    });
+
+    it("parses next-exit archive headers and baseline separately from horizons", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-08-11T00:00:00.000Z",
+            runId: "run-next-exit",
+            holdoutBars: 5,
+            sortMetric: "expectancy",
+            measurementMode: "next_exit",
+            rows: [{
+                ...row(1, 0, 0),
+                forwardOosPerformance: null,
+                nextExitOosPerformance: {
+                    status: "exited",
+                    pnlPercent: 1.25,
+                    exitReason: "take_profit",
+                },
+            }],
+            nextExitBaseline: {
+                eligibleCandidateCount: 1,
+                observedExits: 1,
+                censoredResults: 0,
+                unavailableResults: 0,
+                averagePnlPercent: 1.25,
+                exitReasonCounts: { take_profit: 1 },
+            },
+        }), "next-exit.txt");
+
+        expect(records[0]!.measurementMode).to.equal("next_exit");
+        expect(records[0]!.baseline).to.equal(null);
+        expect(records[0]!.nextExitBaseline?.averagePnlPercent).to.equal(1.25);
+        expect(records[0]!.topResults[0]!.nextExitOosPerformance?.status).to.equal("exited");
+        expect(records[0]!.topResults[0]!.nextExitOosPerformance?.pnlPercent).to.equal(1.25);
+    });
+
+    it("analyzes next-exit rows separately from fixed horizons", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-08-11T00:00:00.000Z",
+            runId: "run-next-exit",
+            holdoutBars: 5,
+            sortMetric: "expectancy",
+            measurementMode: "next_exit",
+            rows: [
+                {
+                    ...row(1, 0, 0),
+                    forwardOosPerformance: null,
+                    nextExitOosPerformance: { status: "exited", pnlPercent: 2, exitReason: "take_profit", barsHeld: 2 },
+                },
+                {
+                    ...row(2, 0, 0),
+                    forwardOosPerformance: null,
+                    nextExitOosPerformance: { status: "exited", pnlPercent: -2, exitReason: "stop_loss", barsHeld: 1 },
+                },
+                {
+                    ...row(3, 0, 0),
+                    forwardOosPerformance: null,
+                    nextExitOosPerformance: { status: "censored", pnlPercent: null, exitReason: "end_of_data" },
+                },
+                {
+                    ...row(4, 0, 0),
+                    forwardOosPerformance: null,
+                    nextExitOosPerformance: { status: "unavailable", pnlPercent: null, exitReason: null },
+                },
+            ],
+            nextExitBaseline: {
+                eligibleCandidateCount: 4,
+                observedExits: 2,
+                censoredResults: 1,
+                unavailableResults: 1,
+                averagePnlPercent: 0,
+                exitReasonCounts: { take_profit: 1, stop_loss: 1, end_of_data: 1 },
+            },
+        }));
+        const report = analyzeAssetOpportunityArchive(records, { topK: 4 });
+        const sort = report.nextExit?.sorts[0]!;
+
+        expect(report.measurementMode).to.equal("next_exit");
+        expect(report.sorts).to.deep.equal([]);
+        expect(sort.totalRows).to.equal(4);
+        expect(sort.observedRows).to.equal(2);
+        expect(sort.positiveRows).to.equal(1);
+        expect(sort.censoredRows).to.equal(1);
+        expect(sort.unavailableRows).to.equal(1);
+        expect(sort.averagePnlPercent).to.equal(0);
+        expect(sort.averageBarsHeld).to.equal(1.5);
+        expect(sort.exitReasonCounts).to.deep.equal({ end_of_data: 1, stop_loss: 1, take_profit: 1 });
+        expect(renderAssetOpportunityHoldoutReport(report)).to.contain("NEXT EXIT OOS SUMMARY");
     });
 
     it("selects the most complete run and calculates descriptive OOS averages", () => {
