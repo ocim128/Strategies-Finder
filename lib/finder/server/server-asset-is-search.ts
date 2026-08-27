@@ -589,14 +589,17 @@ export async function runServerAssetIsSearch(
         evaluationsSinceYield += 1;
         const now = performance.now();
         if (
-            evaluationsSinceYield >= ASSET_IS_SEARCH_YIELD_EVERY_RUNS
-            || now - lastYieldAt >= ASSET_IS_SEARCH_YIELD_MIN_MS
+            index + 1 < paramSets.length
+            && (
+                evaluationsSinceYield >= ASSET_IS_SEARCH_YIELD_EVERY_RUNS
+                || now - lastYieldAt >= ASSET_IS_SEARCH_YIELD_MIN_MS
+            )
         ) {
             evaluationsSinceYield = 0;
-            lastYieldAt = now;
             const yieldingStartedAt = performance.now();
             await input.yieldControl();
             yieldingMs += performance.now() - yieldingStartedAt;
+            lastYieldAt = performance.now();
         }
     }
 
@@ -849,14 +852,17 @@ async function runServerAssetIsSearchWithRustBatch(
         evaluationsSinceYield += 1;
         const now = performance.now();
         if (
-            evaluationsSinceYield >= ASSET_IS_SEARCH_YIELD_EVERY_RUNS
-            || now - lastYieldAt >= ASSET_IS_SEARCH_YIELD_MIN_MS
+            index + 1 < paramSets.length
+            && (
+                evaluationsSinceYield >= ASSET_IS_SEARCH_YIELD_EVERY_RUNS
+                || now - lastYieldAt >= ASSET_IS_SEARCH_YIELD_MIN_MS
+            )
         ) {
             evaluationsSinceYield = 0;
-            lastYieldAt = now;
             const yieldingStartedAt = performance.now();
             await input.yieldControl();
             yieldingMs += performance.now() - yieldingStartedAt;
+            lastYieldAt = performance.now();
         }
     }
 

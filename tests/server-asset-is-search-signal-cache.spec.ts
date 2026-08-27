@@ -59,6 +59,47 @@ function makeOptions(evalLastBars = 0): FinderOptions {
 }
 
 describe("server Asset Opportunity signal cache", () => {
+    it("does not yield after the final slow candidate", async () => {
+        let yields = 0;
+        const strategy: Strategy = {
+            name: "Final Candidate Strategy",
+            description: "Keeps the regression test above the cooperative-yield threshold.",
+            defaultParams: { marker: 1 },
+            paramLabels: { marker: "Marker" },
+            execute(data) {
+                const startedAt = performance.now();
+                while (performance.now() - startedAt < 1_100) {
+                    // Simulate a candidate backtest that already monopolizes
+                    // the event loop; yielding after its final result adds no
+                    // responsiveness and can wait behind other workers.
+                }
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy", price: latest.close }] : [];
+            },
+        };
+
+        const output = await runServerAssetIsSearch({
+            ohlcvData: makeCandles(40),
+            symbol: "FINAL",
+            interval: "5m",
+            options: makeOptions(),
+            settings,
+            capitalSettings,
+            selectedStrategy: { key: "final_candidate_strategy", name: strategy.name, strategy },
+            generateParamSets: () => [{ marker: 1 }],
+            useRustEnginePreference: false,
+            confirmationStrategiesLoaded: true,
+            isCancelled: () => false,
+            yieldControl: async () => {
+                yields += 1;
+            },
+        });
+
+        expect(output.candidateEvaluationsCompleted).to.equal(1);
+        expect(yields).to.equal(0);
+        expect(output.timingsMs.yielding).to.equal(0);
+    });
+
     it("reuses normalized single-run params across holdout searches", async () => {
         let generatorCalls = 0;
         const paramSetCache = new Map<string, StrategyParams[]>();

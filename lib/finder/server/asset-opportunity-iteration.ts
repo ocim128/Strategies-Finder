@@ -47,6 +47,7 @@ import {
 import { runServerAssetIsSearch } from "./server-asset-is-search";
 import { runServerAssetOpportunityFreshRustBatch } from "./finder-asset-opportunity-fresh-rust-batch";
 import {
+    resolveAssetOpportunityRustBatchEligibility,
     resolveAssetOpportunityRustBatchFeatureConfig,
     shouldUseRustAssetOpportunityBatch,
 } from "./finder-asset-opportunity-rust-batch";
@@ -375,7 +376,22 @@ export async function runAssetOpportunityIteration(
         && rustBatchFeatureConfig.enabled
         && rustBatchDensityEligible
         && (input.exitStrategyCandidates?.length ?? 0) === 0;
-    const evaluationConcurrency = rustEvaluationEligible
+    // The coordinator below also fans out strategy passes. Use the exact
+    // per-strategy capability fence before enabling that Rust-sized wave;
+    // otherwise one unsupported setting turns a 16 x 16 wave into hundreds of
+    // overlapping TypeScript backtests.
+    const rustEvaluationSettingsEligible = rustEvaluationEligible
+        && selectedStrategies.every((selectedStrategy) =>
+            resolveAssetOpportunityRustBatchEligibility({
+                featureConfig: rustBatchFeatureConfig,
+                useRustEnginePreference: input.useRustEnginePreference,
+                settings: input.settings,
+                capitalSettings: input.capitalSettings,
+                selectedStrategy,
+                exitStrategyCandidates: input.exitStrategyCandidates,
+            }).eligible,
+        );
+    const evaluationConcurrency = rustEvaluationSettingsEligible
         ? ASSET_OPPORTUNITY_RUST_EVALUATION_CONCURRENCY
         : 1;
     const rustMultiAssetBatch = evaluationConcurrency > 1
