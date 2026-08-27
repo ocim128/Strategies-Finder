@@ -23,6 +23,10 @@ export interface FinderAssetOosMetrics {
 }
 
 export type FinderAssetOosNextExitStatus = "exited" | "censored" | "unavailable";
+export type FinderAssetOosNextExitUnavailableReason =
+    | "no_boundary_trade"
+    | "missing_exit_reason"
+    | "replay_error";
 export type FinderAssetOosMeasurementMode = "fixed_horizon" | "next_exit";
 
 export interface FinderAssetOosNextExitMetrics {
@@ -32,6 +36,8 @@ export interface FinderAssetOosNextExitMetrics {
     /** Realized engine PnL, including modeled costs; null when censored/unavailable. */
     pnlPercent: number | null;
     exitReason: NonNullable<Trade["exitReason"]> | null;
+    /** Why the next-exit observation could not be classified, when unavailable. */
+    unavailableReason: FinderAssetOosNextExitUnavailableReason | null;
     barsHeld: number | null;
     exitTime: Time | null;
 }
@@ -234,6 +240,7 @@ export function calculateFinderAssetOosNextExitMetrics(args: {
     direction: "long" | "short";
     ignoreLastBars: number;
     trades: readonly Trade[];
+    unavailableReason?: FinderAssetOosNextExitUnavailableReason;
 }): FinderAssetOosNextExitMetrics {
     const ignoreLastBars = normalizeFinderAssetOosIgnoreLastBars(args.ignoreLastBars);
     const boundaryEntrySeconds = parseTimeToUnixSeconds(args.boundaryEntryTime);
@@ -249,6 +256,8 @@ export function calculateFinderAssetOosNextExitMetrics(args: {
             status: "unavailable",
             pnlPercent: null,
             exitReason: null,
+            unavailableReason: args.unavailableReason
+                ?? (trade ? "missing_exit_reason" : "no_boundary_trade"),
             barsHeld: null,
             exitTime: null,
         };
@@ -270,6 +279,7 @@ export function calculateFinderAssetOosNextExitMetrics(args: {
         status: censored ? "censored" : "exited",
         pnlPercent: censored || !Number.isFinite(trade.pnlPercent) ? null : trade.pnlPercent,
         exitReason: trade.exitReason,
+        unavailableReason: null,
         barsHeld,
         exitTime: trade.exitTime,
     };

@@ -159,6 +159,7 @@ describe("Asset Opportunity archive writer", () => {
             unavailableResults: 1,
             averagePnlPercent: 0.75,
             exitReasonCounts: { take_profit: 2, end_of_data: 1 },
+            unavailableReasonCounts: { no_boundary_trade: 1 },
         };
         const text = buildAssetOpportunityArchiveBlockText({
             timestamp: "t",

@@ -16,10 +16,11 @@ import type {
     AssetOpportunityForwardOosBaseline,
     AssetOpportunityNextExitOosBaseline,
 } from "../lib/finder/finder-asset-opportunity-metadata";
+import type { FinderAssetOosNextExitUnavailableReason } from "../lib/finder/finder-asset-opportunity-oos";
 
 const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 const BLOCK_SEPARATOR = "=".repeat(80);
-const REPORT_SCHEMA_VERSION = 1;
+const REPORT_SCHEMA_VERSION = 2;
 const DEFAULT_TOP_K = 10;
 const DEFAULT_REPORT_CANDIDATES = 15;
 const REPORT_QUESTIONS = [
@@ -44,6 +45,7 @@ const NEXT_EXIT_REPORT_QUESTIONS = [
     "How often do the selected opportunities exit, censor, or become unavailable within the holdout window?",
     "What is the realized PnL of observed next exits, and is it positive?",
     "Which configured exit reasons account for the observed outcomes?",
+    "Why are unavailable observations missing a boundary trade, exit reason, or replay result?",
     "Does the selected top-K group differ from the all-candidate next-exit baseline?",
 ] as const;
 
@@ -71,6 +73,7 @@ export interface AssetOpportunityArchiveRow {
         status?: "exited" | "censored" | "unavailable";
         pnlPercent?: number | null;
         exitReason?: string | null;
+        unavailableReason?: FinderAssetOosNextExitUnavailableReason | null;
         barsHeld?: number | null;
     } | null;
 }
@@ -270,6 +273,7 @@ export interface NextExitOutcomeAnalysis {
     worstPnlPercent: number | null;
     averageBarsHeld: number | null;
     exitReasonCounts: Record<string, number>;
+    unavailableReasonCounts: Record<string, number>;
 }
 
 export interface NextExitSortAnalysis extends NextExitOutcomeAnalysis {
@@ -285,6 +289,7 @@ export interface NextExitBaselineAnalysis {
     unavailableResults: number;
     averagePnlPercent: number | null;
     exitReasonCounts: Record<string, number>;
+    unavailableReasonCounts: Record<string, number>;
 }
 
 export interface AssetOpportunityHoldoutAnalysisReport {
@@ -423,6 +428,19 @@ function parseNextExitBaseline(value: unknown, sourceFile: string): AssetOpportu
         if (parsed === null) throw new Error(`Invalid next-exit reason count in ${sourceFile}`);
         exitReasonCounts[reason] = parsed;
     }
+    const unavailableReasonCounts: Record<string, number> = {};
+    if (value.unavailableReasonCounts !== undefined) {
+        if (!isRecord(value.unavailableReasonCounts)) {
+            throw new Error(`Invalid next-exit unavailable reason counts in ${sourceFile}`);
+        }
+        for (const [reason, count] of Object.entries(value.unavailableReasonCounts)) {
+            const parsed = asNonNegativeInteger(count);
+            if (parsed === null) throw new Error(`Invalid next-exit unavailable reason count in ${sourceFile}`);
+            unavailableReasonCounts[reason] = parsed;
+        }
+    } else if (unavailableResults > 0) {
+        unavailableReasonCounts.unknown_legacy = unavailableResults;
+    }
     return {
         eligibleCandidateCount,
         observedExits,
@@ -430,6 +448,7 @@ function parseNextExitBaseline(value: unknown, sourceFile: string): AssetOpportu
         unavailableResults,
         averagePnlPercent,
         exitReasonCounts,
+        unavailableReasonCounts,
     };
 }
 
@@ -483,6 +502,11 @@ function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityA
                     : typeof nextExit.exitReason === "string"
                         ? nextExit.exitReason
                         : null,
+                unavailableReason: nextExit.unavailableReason === "no_boundary_trade"
+                    || nextExit.unavailableReason === "missing_exit_reason"
+                    || nextExit.unavailableReason === "replay_error"
+                    ? nextExit.unavailableReason
+                    : null,
                 barsHeld: nextExit.barsHeld === null
                     ? null
                     : asNonNegativeInteger(nextExit.barsHeld),
@@ -838,6 +862,7 @@ function calculateNextExitAnalysis(rows: AssetOpportunityArchiveRow[]): NextExit
     const pnlValues: number[] = [];
     const barsHeldValues: number[] = [];
     const exitReasonCounts: Record<string, number> = {};
+    const unavailableReasonCounts: Record<string, number> = {};
     let observedRows = 0;
     let positiveRows = 0;
     let censoredRows = 0;
@@ -847,6 +872,7 @@ function calculateNextExitAnalysis(rows: AssetOpportunityArchiveRow[]): NextExit
         const outcome = row.nextExitOosPerformance;
         if (!outcome) {
             unavailableRows += 1;
+            unavailableReasonCounts.unknown_legacy = (unavailableReasonCounts.unknown_legacy ?? 0) + 1;
             continue;
         }
         if (outcome.exitReason) {
@@ -861,6 +887,10 @@ function calculateNextExitAnalysis(rows: AssetOpportunityArchiveRow[]): NextExit
             || outcome.pnlPercent === undefined
             || !Number.isFinite(outcome.pnlPercent)) {
             unavailableRows += 1;
+            const reason = outcome.status === "unavailable"
+                ? outcome.unavailableReason ?? "unknown_legacy"
+                : "unknown_legacy";
+            unavailableReasonCounts[reason] = (unavailableReasonCounts[reason] ?? 0) + 1;
             continue;
         }
         observedRows += 1;
@@ -890,6 +920,7 @@ function calculateNextExitAnalysis(rows: AssetOpportunityArchiveRow[]): NextExit
             ? barsHeldValues.reduce((sum, value) => sum + value, 0) / barsHeldValues.length
             : null,
         exitReasonCounts,
+        unavailableReasonCounts,
     };
 }
 
@@ -919,9 +950,13 @@ function buildNextExitBaselineAnalysis(
         return sum + (baseline.averagePnlPercent ?? 0) * baseline.observedExits;
     }, 0);
     const exitReasonCounts: Record<string, number> = {};
+    const unavailableReasonCounts: Record<string, number> = {};
     for (const baseline of baselines) {
         for (const [reason, count] of Object.entries(baseline.exitReasonCounts)) {
             exitReasonCounts[reason] = (exitReasonCounts[reason] ?? 0) + count;
+        }
+        for (const [reason, count] of Object.entries(baseline.unavailableReasonCounts ?? {})) {
+            unavailableReasonCounts[reason] = (unavailableReasonCounts[reason] ?? 0) + count;
         }
     }
     return {
@@ -932,6 +967,7 @@ function buildNextExitBaselineAnalysis(
         unavailableResults: baselines.reduce((sum, baseline) => sum + baseline.unavailableResults, 0),
         averagePnlPercent: observedExits > 0 ? pnlTotal / observedExits : null,
         exitReasonCounts,
+        unavailableReasonCounts,
     };
 }
 
@@ -1556,6 +1592,21 @@ function formatPercent(value: number | null): string {
     return value === null || !Number.isFinite(value) ? "n/a" : `${value.toFixed(2)}%`;
 }
 
+function formatHoldoutWindows(values: number[]): string {
+    const sorted = [...new Set(values)].sort((left, right) => left - right);
+    if (sorted.length === 0) return "n/a";
+    const contiguous = sorted.every((value, index) => index === 0 || value === sorted[index - 1]! + 1);
+    let label: string;
+    if (sorted.length === 1) {
+        label = String(sorted[0]);
+    } else if (contiguous) {
+        label = `${sorted[0]}–${sorted[sorted.length - 1]}`;
+    } else {
+        label = sorted.join(", ");
+    }
+    return `${label} (${sorted.length})`;
+}
+
 function formatCandidateHorizon(candidate: CandidateHoldoutAnalysis, horizonBars: number): string {
     const horizon = candidate.horizons[String(horizonBars)];
     if (!horizon) return "n/a";
@@ -1631,32 +1682,41 @@ function renderNextExitReport(
         ...headerLines,
         "",
         "Interpretation: next-exit results are descriptive evidence only. Censored and unavailable outcomes are not zero-PnL exits.",
+        "Unavailable reasons: no_boundary_trade means no exact entry matched; missing_exit_reason means a trade matched without an exit reason; replay_error means the full replay failed; unknown_legacy means the archive predates this diagnostic.",
         "",
         "QUESTIONS ANSWERED BY THIS REPORT",
         ...report.questionsAnswered.map((question, index) => `${index + 1}. ${question}`),
         "",
-        "NEXT EXIT OOS SUMMARY",
-        "Sort | Holdouts | Exits | Positive exits | Censored | Unavailable | Avg PnL | Median PnL | P10 PnL | Worst PnL | Avg bars held | Exit reasons",
+        "NEXT EXIT OOS SUMMARY — BEST TO WORST BY OBSERVED AVG PNL",
+        "Sort | Holdout coverage | Exits | Positive exits | Censored | Unavailable | Unavailable reasons | Avg PnL | Median PnL | P10 PnL | Worst PnL | Avg bars held | Exit reasons | Delta vs baseline",
     ];
     const baselineAverage = report.nextExit?.baseline?.averagePnlPercent ?? null;
-    for (const sort of report.nextExit?.sorts ?? []) {
+    const orderedSorts = [...(report.nextExit?.sorts ?? [])].sort((left, right) => {
+        return (right.averagePnlPercent ?? Number.NEGATIVE_INFINITY) - (left.averagePnlPercent ?? Number.NEGATIVE_INFINITY)
+            || (right.positiveRatePercent ?? Number.NEGATIVE_INFINITY) - (left.positiveRatePercent ?? Number.NEGATIVE_INFINITY)
+            || right.observedRows - left.observedRows
+            || left.sortMetric.localeCompare(right.sortMetric);
+    });
+    for (const sort of orderedSorts) {
         const delta = sort.averagePnlPercent !== null && baselineAverage !== null
             ? sort.averagePnlPercent - baselineAverage
             : null;
         lines.push([
             sort.sortMetric,
-            sort.holdoutBars.join(", "),
+            `${sort.holdoutBars.length}/${report.holdoutBars.length}`,
             `${sort.observedRows}/${sort.totalRows}`,
             `${sort.positiveRows}/${sort.observedRows}`,
             String(sort.censoredRows),
             String(sort.unavailableRows),
+            formatExitReasonCounts(sort.unavailableReasonCounts),
             formatPercent(sort.averagePnlPercent),
             formatPercent(sort.medianPnlPercent),
             formatPercent(sort.p10PnlPercent),
             formatPercent(sort.worstPnlPercent),
             formatNumber(sort.averageBarsHeld),
             formatExitReasonCounts(sort.exitReasonCounts),
-        ].join(" | ") + ` | delta vs baseline=${formatPercent(delta)}`);
+            formatPercent(delta),
+        ].join(" | "));
     }
     if ((report.nextExit?.sorts.length ?? 0) === 0) {
         lines.push("Unavailable: no selected top-K next-exit rows were found.");
@@ -1669,13 +1729,14 @@ function renderNextExitReport(
     if (!baseline) {
         lines.push("Unavailable: archive blocks do not contain a next-exit baseline.");
     } else {
-        lines.push("Holdouts | Avg eligible candidates | Observed exits | Censored | Unavailable | Avg PnL | Exit reasons");
+        lines.push("Holdouts | Avg eligible candidates | Observed exits | Censored | Unavailable | Unavailable reasons | Avg PnL | Exit reasons");
         lines.push([
             String(baseline.observedHoldouts),
             formatNumber(baseline.averageEligibleCandidateCount),
             String(baseline.observedExits),
             String(baseline.censoredResults),
             String(baseline.unavailableResults),
+            formatExitReasonCounts(baseline.unavailableReasonCounts),
             formatPercent(baseline.averagePnlPercent),
             formatExitReasonCounts(baseline.exitReasonCounts),
         ].join(" | "));
@@ -1695,7 +1756,7 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
         "===========================================",
         `Generated: ${report.generatedAt}`,
         `Selected batch run: ${report.selectedBatchRunId}`,
-        `Holdout bars: ${report.holdoutBars.join(", ")}`,
+        `Holdout windows: ${formatHoldoutWindows(report.holdoutBars)}`,
         `Archive blocks analyzed: ${report.analyzedBlockCount} of ${report.selectedBlockCount} selected (${report.sourceBlockCount} source)`,
         `Forward measurement: ${report.measurementMode}`,
         `Candidate identity: ${report.candidateIdentity}`,
@@ -1713,10 +1774,20 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
         "QUESTIONS ANSWERED BY THIS REPORT",
         ...report.questionsAnswered.map((question, index) => `${index + 1}. ${question}`),
         "",
-        "FORWARD OOS SUMMARY",
+        "FORWARD OOS SUMMARY — BEST TO WORST BY PRIMARY HORIZON AVG PNL",
         "Sort | Horizon | Positive rows | Average PnL | Median PnL | P10 PnL | Worst PnL | All-candidate avg | Delta | Samples",
     ];
-    for (const sort of report.sorts) {
+    const primarySummaryHorizon = report.sorts.some((sort) => sort.horizons.some((horizon) => horizon.horizonBars === 12))
+        ? 12
+        : report.sorts.flatMap((sort) => sort.horizons.map((horizon) => horizon.horizonBars)).sort((left, right) => left - right)[0] ?? 0;
+    const orderedSorts = [...report.sorts].sort((left, right) => {
+        return (analysisHorizonValue(right, primarySummaryHorizon) ?? Number.NEGATIVE_INFINITY)
+            - (analysisHorizonValue(left, primarySummaryHorizon) ?? Number.NEGATIVE_INFINITY)
+            || (right.horizons.find((horizon) => horizon.horizonBars === primarySummaryHorizon)?.positiveRatePercent ?? Number.NEGATIVE_INFINITY)
+                - (left.horizons.find((horizon) => horizon.horizonBars === primarySummaryHorizon)?.positiveRatePercent ?? Number.NEGATIVE_INFINITY)
+            || left.sortMetric.localeCompare(right.sortMetric);
+    });
+    for (const sort of orderedSorts) {
         for (const horizon of sort.horizons) {
             const delta = horizon.averagePnlPercent !== null && horizon.baselineAveragePnlPercent !== null
                 ? horizon.averagePnlPercent - horizon.baselineAveragePnlPercent
@@ -1873,6 +1944,29 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
     return `${lines.join("\n")}\n`;
 }
 
+export function colorizeAssetOpportunityHoldoutReport(
+    reportText: string,
+    useColor = process.stdout.isTTY === true && process.env.NO_COLOR === undefined,
+): string {
+    if (!useColor) return reportText;
+    const cyan = "\u001b[96m";
+    const green = "\u001b[92m";
+    const red = "\u001b[91m";
+    const yellow = "\u001b[93m";
+    const reset = "\u001b[0m";
+    const sectionPattern = /^(QUESTIONS ANSWERED|NEXT EXIT OOS SUMMARY|ALL-CANDIDATE NEXT-EXIT BASELINE|FORWARD OOS SUMMARY|STRATEGY LIBRARY|OOS COUNTERFACTUAL|SIGNAL CANDLE HOUR|PERSISTENT CANDIDATES|CROSS-SORT AGREEMENT|SELECTION CONCENTRATION|PARAMETER FINGERPRINT)/;
+    return reportText.split("\n").map((line) => {
+        const coloredLine = line.replace(/[-+]?\d+(?:\.\d+)?%/g, (match) => {
+            const value = Number.parseFloat(match);
+            const color = value > 0 ? green : value < 0 ? red : yellow;
+            return `${color}${match}${reset}`;
+        });
+        return sectionPattern.test(line.trim())
+            ? `${cyan}${coloredLine}${reset}`
+            : coloredLine;
+    }).join("\n");
+}
+
 function getArgument(argv: string[], flag: string): string | undefined {
     const index = argv.indexOf(flag);
     return index >= 0 ? argv[index + 1] : undefined;
@@ -1895,11 +1989,12 @@ function main(): void {
             batchRunId: requestedBatchRunId,
             topK,
         });
+        const renderedReport = renderAssetOpportunityHoldoutReport(report);
         const textPath = `${outputPrefix}.txt`;
         const jsonPath = `${outputPrefix}.json`;
-        fs.writeFileSync(textPath, renderAssetOpportunityHoldoutReport(report), "utf8");
+        fs.writeFileSync(textPath, renderedReport, "utf8");
         fs.writeFileSync(jsonPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-        console.log(renderAssetOpportunityHoldoutReport(report));
+        console.log(colorizeAssetOpportunityHoldoutReport(renderedReport));
         console.log(`Wrote:\n  ${textPath}\n  ${jsonPath}`);
     } catch (error) {
         console.error(`[asset-opportunity-holdouts] ${error instanceof Error ? error.message : String(error)}`);

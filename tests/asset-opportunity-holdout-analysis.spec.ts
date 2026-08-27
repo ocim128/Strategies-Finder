@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import path from "node:path";
 import {
     analyzeAssetOpportunityArchive,
+    colorizeAssetOpportunityHoldoutReport,
     parseAssetOpportunityArchiveText,
     readAssetOpportunityArchive,
     renderAssetOpportunityHoldoutReport,
@@ -111,12 +112,14 @@ describe("Asset Opportunity holdout analysis", () => {
                 unavailableResults: 0,
                 averagePnlPercent: 1.25,
                 exitReasonCounts: { take_profit: 1 },
+                unavailableReasonCounts: {},
             },
         }), "next-exit.txt");
 
         expect(records[0]!.measurementMode).to.equal("next_exit");
         expect(records[0]!.baseline).to.equal(null);
         expect(records[0]!.nextExitBaseline?.averagePnlPercent).to.equal(1.25);
+        expect(records[0]!.nextExitBaseline?.unavailableReasonCounts).to.deep.equal({});
         expect(records[0]!.topResults[0]!.nextExitOosPerformance?.status).to.equal("exited");
         expect(records[0]!.topResults[0]!.nextExitOosPerformance?.pnlPercent).to.equal(1.25);
     });
@@ -147,7 +150,12 @@ describe("Asset Opportunity holdout analysis", () => {
                 {
                     ...row(4, 0, 0),
                     forwardOosPerformance: null,
-                    nextExitOosPerformance: { status: "unavailable", pnlPercent: null, exitReason: null },
+                    nextExitOosPerformance: {
+                        status: "unavailable",
+                        pnlPercent: null,
+                        exitReason: null,
+                        unavailableReason: "no_boundary_trade",
+                    },
                 },
             ],
             nextExitBaseline: {
@@ -172,7 +180,53 @@ describe("Asset Opportunity holdout analysis", () => {
         expect(sort.averagePnlPercent).to.equal(0);
         expect(sort.averageBarsHeld).to.equal(1.5);
         expect(sort.exitReasonCounts).to.deep.equal({ end_of_data: 1, stop_loss: 1, take_profit: 1 });
+        expect(sort.unavailableReasonCounts).to.deep.equal({ no_boundary_trade: 1 });
+        expect(report.nextExit?.baseline?.unavailableReasonCounts).to.deep.equal({ unknown_legacy: 1 });
         expect(renderAssetOpportunityHoldoutReport(report)).to.contain("NEXT EXIT OOS SUMMARY");
+        expect(renderAssetOpportunityHoldoutReport(report)).to.contain("no_boundary_trade=1");
+    });
+
+    it("renders next-exit sorts best to worst and colorizes console output only", () => {
+        const records = parseAssetOpportunityArchiveText([
+            block({
+                timestamp: "2026-08-11T00:00:00.000Z",
+                runId: "run-next-exit",
+                holdoutBars: 5,
+                sortMetric: "worst_sort",
+                measurementMode: "next_exit",
+                rows: [{
+                    ...row(1, 0, 0),
+                    forwardOosPerformance: null,
+                    nextExitOosPerformance: { status: "exited", pnlPercent: -1, exitReason: "stop_loss" },
+                }],
+            }),
+            block({
+                timestamp: "2026-08-11T00:00:01.000Z",
+                runId: "run-next-exit",
+                holdoutBars: 5,
+                sortMetric: "best_sort",
+                measurementMode: "next_exit",
+                rows: [{
+                    ...row(1, 0, 0),
+                    forwardOosPerformance: null,
+                    nextExitOosPerformance: { status: "exited", pnlPercent: 2, exitReason: "take_profit" },
+                }],
+            }),
+        ].join("\n"));
+        const report = analyzeAssetOpportunityArchive(records);
+        const text = renderAssetOpportunityHoldoutReport(report);
+        const bestIndex = text.indexOf("best_sort |");
+        const worstIndex = text.indexOf("worst_sort |");
+
+        expect(bestIndex).to.be.greaterThan(-1);
+        expect(bestIndex).to.be.lessThan(worstIndex);
+        expect(text).to.contain("Holdout windows: 5 (1)");
+
+        const colored = colorizeAssetOpportunityHoldoutReport(text, true);
+        expect(colored).to.contain("\u001b[92m2.00%\u001b[0m");
+        expect(colored).to.contain("\u001b[91m-1.00%\u001b[0m");
+        expect(colored).to.contain("\u001b[96mNEXT EXIT OOS SUMMARY");
+        expect(colorizeAssetOpportunityHoldoutReport(text, false)).to.equal(text);
     });
 
     it("selects the most complete run and calculates descriptive OOS averages", () => {

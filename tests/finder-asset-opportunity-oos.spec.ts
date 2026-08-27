@@ -179,6 +179,7 @@ describe("Asset Opportunity next-exit OOS metrics", () => {
             status: "exited",
             pnlPercent: 9.5,
             exitReason: "take_profit",
+            unavailableReason: null,
             barsHeld: 1,
             exitTime,
         });
@@ -208,6 +209,7 @@ describe("Asset Opportunity next-exit OOS metrics", () => {
         expect(metrics.status).to.equal("censored");
         expect(metrics.pnlPercent).to.equal(null);
         expect(metrics.exitReason).to.equal("end_of_data");
+        expect(metrics.unavailableReason).to.equal(null);
         expect(metrics.barsHeld).to.equal(1);
     });
 
@@ -222,5 +224,44 @@ describe("Asset Opportunity next-exit OOS metrics", () => {
         expect(metrics.status).to.equal("unavailable");
         expect(metrics.pnlPercent).to.equal(null);
         expect(metrics.exitReason).to.equal(null);
+        expect(metrics.unavailableReason).to.equal("no_boundary_trade");
+    });
+
+    it("distinguishes a matching trade without an exit reason", () => {
+        const candles = makeCandles([100, 101, 102]);
+        const metrics = calculateFinderAssetOosNextExitMetrics({
+            candles,
+            boundaryEntryTime: candles[1]!.time,
+            direction: "long",
+            ignoreLastBars: 1,
+            trades: [{
+                id: 1,
+                type: "long",
+                entryTime: candles[1]!.time,
+                entryPrice: 101,
+                exitTime: candles[2]!.time,
+                exitPrice: 102,
+                pnl: 1,
+                pnlPercent: 1,
+                size: 1,
+            }],
+        });
+
+        expect(metrics.status).to.equal("unavailable");
+        expect(metrics.unavailableReason).to.equal("missing_exit_reason");
+    });
+
+    it("preserves the runner's explicit replay-failure classification", () => {
+        const metrics = calculateFinderAssetOosNextExitMetrics({
+            candles: makeCandles([100, 101]),
+            boundaryEntryTime: null,
+            direction: "long",
+            ignoreLastBars: 1,
+            trades: [],
+            unavailableReason: "replay_error",
+        });
+
+        expect(metrics.status).to.equal("unavailable");
+        expect(metrics.unavailableReason).to.equal("replay_error");
     });
 });

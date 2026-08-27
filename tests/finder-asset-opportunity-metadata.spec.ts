@@ -281,6 +281,7 @@ describe("Asset Opportunity metadata payload serializer", () => {
                 status: "exited",
                 pnlPercent: 1.5,
                 exitReason: "take_profit",
+                unavailableReason: null,
                 barsHeld: 2,
                 exitTime: 1_700_000_600 as Time,
             },
@@ -298,17 +299,32 @@ describe("Asset Opportunity metadata payload serializer", () => {
                     status: "censored",
                     pnlPercent: null,
                     exitReason: "end_of_data",
+                    unavailableReason: null,
                     barsHeld: 5,
                     exitTime: 1_700_001_500 as Time,
                 },
             }),
+            makeAssetResult({
+                symbol: "BTCUSDT",
+                oosHorizonMetrics: undefined,
+                oosNextExitMetrics: {
+                    ignoreLastBars: 5,
+                    status: "unavailable",
+                    pnlPercent: null,
+                    exitReason: null,
+                    unavailableReason: "no_boundary_trade",
+                    barsHeld: null,
+                    exitTime: null,
+                },
+            }),
         ])).to.deep.equal({
-            eligibleCandidateCount: 2,
+            eligibleCandidateCount: 3,
             observedExits: 1,
             censoredResults: 1,
-            unavailableResults: 0,
+            unavailableResults: 1,
             averagePnlPercent: 1.5,
             exitReasonCounts: { take_profit: 1, end_of_data: 1 },
+            unavailableReasonCounts: { no_boundary_trade: 1 },
         });
     });
 

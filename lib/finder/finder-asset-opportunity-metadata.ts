@@ -178,6 +178,7 @@ export interface AssetOpportunityNextExitOosBaseline {
     unavailableResults: number;
     averagePnlPercent: number | null;
     exitReasonCounts: Record<string, number>;
+    unavailableReasonCounts: Record<string, number>;
 }
 
 export interface AssetOpportunityPairSummaryRow {
@@ -317,12 +318,17 @@ export function buildAssetOpportunityNextExitOosBaseline(
     let unavailableResults = 0;
     let pnlTotal = 0;
     let pnlSamples = 0;
+    const unavailableReasonCounts: Record<string, number> = {};
     for (const result of results) {
         const metrics = result.oosNextExitMetrics;
         if (!metrics) continue;
         if (metrics.status === "exited") observedExits += 1;
         else if (metrics.status === "censored") censoredResults += 1;
-        else unavailableResults += 1;
+        else {
+            unavailableResults += 1;
+            const reason = metrics.unavailableReason ?? "unknown_legacy";
+            unavailableReasonCounts[reason] = (unavailableReasonCounts[reason] ?? 0) + 1;
+        }
         if (metrics.pnlPercent !== null && Number.isFinite(metrics.pnlPercent)) {
             pnlTotal += metrics.pnlPercent;
             pnlSamples += 1;
@@ -339,6 +345,7 @@ export function buildAssetOpportunityNextExitOosBaseline(
         unavailableResults,
         averagePnlPercent: pnlSamples > 0 ? pnlTotal / pnlSamples : null,
         exitReasonCounts,
+        unavailableReasonCounts,
     };
 }
 

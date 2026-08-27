@@ -92,6 +92,7 @@ import {
 import {
     calculateFinderAssetOosNextExitMetrics,
     calculateFinderAssetOosSignalMetrics,
+    type FinderAssetOosNextExitUnavailableReason,
     normalizeFinderAssetEvalLastBars,
     normalizeFinderAssetOosMeasurementMode,
     normalizeFinderAssetOosHorizons,
@@ -1721,7 +1722,12 @@ async function runCandidateNextExitOnAsset(args: {
                 ? { typescriptReason: engineDiagnostics.typescriptReason }
                 : {}),
         };
-    } catch {
+    } catch (error) {
+        debugLogger.warn("finder.asset_opportunity.next_exit_replay_failed", {
+            symbol: args.symbol,
+            strategyKey: args.candidate.key,
+            reason: error instanceof Error ? error.message : String(error),
+        });
         return {
             metrics: calculateFinderAssetOosNextExitMetrics({
                 candles: args.fullClosed,
@@ -1729,6 +1735,7 @@ async function runCandidateNextExitOnAsset(args: {
                 direction: args.direction,
                 ignoreLastBars: args.options.assetOpportunity?.oosIgnoreLastBars ?? 0,
                 trades: [],
+                unavailableReason: "replay_error" satisfies FinderAssetOosNextExitUnavailableReason,
             }),
         };
     }

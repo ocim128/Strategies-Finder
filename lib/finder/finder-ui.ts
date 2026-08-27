@@ -434,6 +434,12 @@ export class FinderUI {
                     reasonCounts.set(metrics.exitReason, (reasonCounts.get(metrics.exitReason) ?? 0) + 1);
                 }
             }
+            const unavailableReasonCounts = new Map<string, number>();
+            for (const metrics of nextExitMetrics) {
+                if (metrics.status !== "unavailable") continue;
+                const reason = metrics.unavailableReason ?? "unknown_legacy";
+                unavailableReasonCounts.set(reason, (unavailableReasonCounts.get(reason) ?? 0) + 1);
+            }
             const reasonText = [...reasonCounts.entries()]
                 .sort(([left], [right]) => left.localeCompare(right))
                 .map(([reason, count]) => `${reason} ${count}`)
@@ -452,6 +458,15 @@ export class FinderUI {
             source.textContent = `${observed.length} exited · ${censored} censored · ${unavailable} unavailable`;
             heading.appendChild(source);
             summary.appendChild(heading);
+            if (unavailableReasonCounts.size > 0) {
+                const unavailableDetail = document.createElement("div");
+                unavailableDetail.className = "finder-asset-validation-summary";
+                unavailableDetail.textContent = `Unavailable reasons: ${[...unavailableReasonCounts.entries()]
+                    .sort(([left], [right]) => left.localeCompare(right))
+                    .map(([reason, count]) => `${reason} ${count}`)
+                    .join(" Â· ")}`;
+                summary.appendChild(unavailableDetail);
+            }
 
             const detail = document.createElement("div");
             detail.className = "finder-asset-validation-summary";
@@ -782,6 +797,9 @@ export class FinderUI {
         body.textContent = metrics.pnlPercent === null
             ? `No realized PnL${metrics.exitReason ? ` · ${metrics.exitReason}` : ""}`
             : `${formatNullableSignedPercentPoints(metrics.pnlPercent)} realized PnL · ${metrics.exitReason ?? "exit"} · ${metrics.barsHeld ?? "?"} bars held`;
+        if (metrics.status === "unavailable") {
+            body.textContent = `Unavailable: ${metrics.unavailableReason ?? "unknown_legacy"}`;
+        }
         panel.appendChild(body);
         return panel;
     }

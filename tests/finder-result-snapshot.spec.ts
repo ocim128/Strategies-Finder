@@ -180,6 +180,7 @@ describe("Finder result snapshots", () => {
                     status: "censored",
                     pnlPercent: null,
                     exitReason: "end_of_data",
+                    unavailableReason: null,
                     barsHeld: 4,
                     exitTime: 200 as Time,
                 },
@@ -198,6 +199,7 @@ describe("Finder result snapshots", () => {
             status: "censored",
             pnlPercent: null,
             exitReason: "end_of_data",
+            unavailableReason: null,
             barsHeld: 4,
             exitTime: 200,
         });

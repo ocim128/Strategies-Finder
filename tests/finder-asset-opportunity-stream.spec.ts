@@ -45,6 +45,7 @@ function makeAssetResult(): FinderAssetOpportunityResult {
             status: "exited",
             pnlPercent: 1.25,
             exitReason: "take_profit",
+            unavailableReason: null,
             barsHeld: 2,
             exitTime: 3 as Time,
         },
@@ -71,6 +72,7 @@ describe("Asset Opportunity scalar stream contract", () => {
             status: "exited",
             pnlPercent: 1.25,
             exitReason: "take_profit",
+            unavailableReason: null,
             barsHeld: 2,
             exitTime: 3,
         });
