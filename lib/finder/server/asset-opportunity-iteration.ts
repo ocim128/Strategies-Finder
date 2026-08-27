@@ -57,6 +57,7 @@ import { createServerFinderAssetOpportunityLoadContext } from "./server-finder-d
 import { parseSyntheticPairToken } from "../../synthetic-pair-token";
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
+import type { AssetCandidateExitSignalCache } from "../finder-asset-candidate-execution";
 
 const ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY = 12;
 const ASSET_OPPORTUNITY_RUST_EVALUATION_CONCURRENCY = 16;
@@ -366,9 +367,15 @@ export async function runAssetOpportunityIteration(
         && freshEntryBatchDenseEnough
         && process.env.FINDER_ASSET_OPPORTUNITY_RUST_FRESH_BATCH !== "0"
         && (input.exitStrategyCandidates?.length ?? 0) === 0;
-    const evaluationConcurrency = input.useRustEnginePreference === true
+    // Exit Strategy Override is currently a TypeScript-only batch path. Do
+    // not fan out its work using the Rust coordinator: every candidate falls
+    // back to TypeScript, so the Rust-sized Promise pool oversubscribes the
+    // CPU and turns cooperative yields into long waits.
+    const rustEvaluationEligible = input.useRustEnginePreference === true
         && rustBatchFeatureConfig.enabled
         && rustBatchDensityEligible
+        && (input.exitStrategyCandidates?.length ?? 0) === 0;
+    const evaluationConcurrency = rustEvaluationEligible
         ? ASSET_OPPORTUNITY_RUST_EVALUATION_CONCURRENCY
         : 1;
     const rustMultiAssetBatch = evaluationConcurrency > 1
@@ -425,6 +432,7 @@ export async function runAssetOpportunityIteration(
             confirmationStrategiesLoaded: true,
             fullSignalData: args.fullSignalData,
             ...(args.signalCache ? { signalCache: args.signalCache } : {}),
+            ...(args.exitSignalCache ? { exitSignalCache: args.exitSignalCache } : {}),
             ...(!input.generateParamSets
                 && input.paramSetCache
                 && input.options.mode === "random"
@@ -556,6 +564,7 @@ export async function runAssetOpportunityIteration(
             // building it once per asset avoids N re-walks of the dataset to
             // find the latest closed bar (selectExecutionAwareClosedCandles).
             const fullClosed = prepareClosedCandleData(data, input.interval, input.settings);
+            const exitSignalCache: AssetCandidateExitSignalCache = new Map();
             const runStrategy = async (selectedStrategy: FinderSelectedStrategy, strategyIndex: number): Promise<void> => {
                 if (isCancelled()) return;
                 const runOutput = await runAssetOpportunitySearch(
@@ -579,6 +588,7 @@ export async function runAssetOpportunityIteration(
                             : {}),
                         ...(freshEntryBatchEnabled ? { freshEntryBatch } : {}),
                         ...(input.signalCache ? { signalCache: input.signalCache } : {}),
+                        exitSignalCache,
                         // The server IS pass retains compact trade history and
                         // builds the endpoint-adjusted selection result for
                         // every candidate, so a full winner rerun is redundant.

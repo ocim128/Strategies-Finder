@@ -73,7 +73,10 @@ import {
 import { withExitStrategyBaseParams, splitExitStrategyParams } from "./exit-strategy-param-prefix";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import type { CrossSymbolDataFetcher } from "../cross-symbol-runtime";
-import { runAssetCandidateBacktest } from "./finder-asset-candidate-execution";
+import {
+    runAssetCandidateBacktest,
+    type AssetCandidateExitSignalCache,
+} from "./finder-asset-candidate-execution";
 import { createEmptyBacktestResult } from "../strategies/index";
 import { buildSelectionResult } from "./endpoint";
 import {
@@ -136,11 +139,45 @@ function resolveFreshSignalWarmupBars(
 }
 
 /**
- * Build the smallest useful signal-generation window for a bounded Asset
- * Opportunity evaluation. The boundary data remains full-sized for Rust
- * replay; only TypeScript strategy signal generation is shortened. The
- * warmup is deliberately conservative because Strategy has no universal
- * lookback contract and several built-ins use EMA/rolling state.
+ * A finite max-hold makes a recent next-exit replay exact: no position from
+ * before this window can still be open at the freshness boundary. Include
+ * cooldown time as well because a recently closed position can still block a
+ * later entry. Return null when the execution state is not safely bounded.
+ */
+function resolveBoundedNextExitReplayBars(
+    settings: BacktestSettings,
+    candidates: readonly FinderResult[],
+): number | null {
+    if (
+        settings.riskMaxHoldEnabled !== true
+        || settings.strategyTimeframeEnabled === true
+        || (settings.confirmationStrategies?.length ?? 0) > 0
+        || settings.riskWinStreakStopLossEnabled === true
+    ) return null;
+    let maxHoldBars = Number(settings.riskMaxHoldBars);
+    for (const candidate of candidates) {
+        const candidateMaxHoldBars = Number(candidate.params.riskMaxHoldBars);
+        if (Number.isFinite(candidateMaxHoldBars)) {
+            maxHoldBars = Math.max(maxHoldBars, Math.max(1, Math.round(candidateMaxHoldBars)));
+        }
+    }
+    if (!Number.isFinite(maxHoldBars) || maxHoldBars < 1) return null;
+    const cooldownEnabled = settings.riskCooldownEnabled !== false;
+    const cooldownBars = cooldownEnabled
+        ? Number.isFinite(settings.riskCooldownBars)
+            ? Math.max(0, Math.ceil(Number(settings.riskCooldownBars)))
+            : 1
+        : 0;
+    return Math.max(4, Math.ceil(maxHoldBars) + cooldownBars + 3);
+}
+
+/**
+ * Build the smallest useful recent window for a bounded Asset Opportunity
+ * evaluation. Fixed-horizon paths use it for signal-only detection; bounded
+ * next-exit paths also use it for the replay because their finite execution
+ * state makes older candles irrelevant. The warmup is deliberately
+ * conservative because Strategy has no universal lookback contract and
+ * several built-ins use EMA/rolling state.
  */
 function resolveFreshSignalWindow(args: {
     boundaryData: OHLCVData[];
@@ -219,6 +256,8 @@ export type AssetIsSearch = (args: {
     /** Full closed data used only by the batch signal-reuse optimization. */
     fullSignalData?: OHLCVData[];
     signalCache?: AssetOpportunitySignalCache;
+    /** Per-asset cache for deterministic Exit Strategy Override signals. */
+    exitSignalCache?: AssetCandidateExitSignalCache;
 }) => Promise<{
     results: FinderResult[];
     /** Total candidates considered before the returned top-K reduction. */
@@ -369,6 +408,8 @@ export interface AssetOpportunityRunInput {
     freshEntryUseRustEnginePreference?: boolean;
     /** Worker-local cache for full-series signals reused across batch holdouts. */
     signalCache?: AssetOpportunitySignalCache;
+    /** Per-asset cache for deterministic Exit Strategy Override signals. */
+    exitSignalCache?: AssetCandidateExitSignalCache;
     /** Optional server-side batch executor for signal_close fresh rechecks. */
     freshEntryBatch?: AssetOpportunityFreshEntryBatchExecutor;
     /** Recompute full scalar analytics once for the selected winner. */
@@ -699,6 +740,7 @@ async function searchOneAsset(args: {
 }): Promise<AssetOpportunityAssetResult> {
     const { asset, input, selectedStrategy, callbacks } = args;
     const symbol = asset.symbol;
+    const exitSignalCache = input.exitSignalCache ?? new Map();
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
     const preparedStrategy = createPreparedFinderStrategy(
         selectedStrategy.key,
@@ -794,9 +836,8 @@ async function searchOneAsset(args: {
     // `signalsOnly`, so `detectFreshEntry` sees an empty-trades result that
     // the retained in-sample signals reproduce exactly. `signal_close` and
     // `next_exit` need the re-simulated trade list (`next_exit` must honor
-    // max-open-trades and other execution gates), so both keep the
-    // application candle out of the search window and use an execution-aware
-    // recheck.
+    // max-open-trades and other execution gates); next_exit can use a recent
+    // execution-aware replay only when max-hold/cooldown bound that state.
     const executionModel = input.settings.executionModel ?? "signal_close";
     const canReuseIsSignalsForFreshModel = executionModel !== "signal_close"
         && !needsExecutableFreshRecheck;
@@ -872,6 +913,9 @@ async function searchOneAsset(args: {
         && recheckData.length > slicedHistorical.length
         && timeKey(slicedHistorical[slicedHistorical.length - 1]!.time)
             === timeKey(recheckData[recheckData.length - 1]!.time);
+    // Exit overrides affect trade exits, while the retained signals exposed by
+    // the IS search are primary entry signals. They therefore do not prevent
+    // this signal-only freshness reuse.
     const canReuseCappedNextBarSignals = executionModel !== "signal_close"
         && !needsExecutableFreshRecheck
         && oosIgnoreLastBars > 0
@@ -881,7 +925,6 @@ async function searchOneAsset(args: {
         && !input.dataFetcher
         && !selectedStrategy.strategy.crossSymbolConfig
         && !selectedStrategy.strategy.polymarket1sConfig
-        && !input.exitStrategyCandidates?.length
         && input.settings.strategyTimeframeEnabled !== true
         && !(input.settings.confirmationStrategies?.length);
     const canReuseFreshSignals = (input.options.dataSlice ?? "all") === "all"
@@ -906,6 +949,7 @@ async function searchOneAsset(args: {
         retainSignals: canReuseFreshSignals,
         fullSignalData: fullClosed,
         ...(input.signalCache ? { signalCache: input.signalCache } : {}),
+        exitSignalCache,
     });
     diagnostics.timingsMs.inSampleSearch = performance.now() - inSampleStartedAt;
     diagnostics.candidatesEvaluated = finderOutput.totalCandidatesEvaluated ?? finderOutput.results.length;
@@ -939,18 +983,24 @@ async function searchOneAsset(args: {
     // With an explicit recency-bounded evaluation, the historical ranking
     // window is intentionally shorter than the visible boundary. Generate
     // fresh signals on that recent window plus conservative indicator warmup,
-    // then replay those signals across the full boundary in Rust. Cross-symbol
-    // strategies stay on the exact full-data path because their secondary
-    // alignment has no equivalent bounded-window contract.
+    // then replay them on either the full boundary or a safely bounded recent
+    // window. Cross-symbol strategies stay on the exact full-data path because
+    // their secondary alignment has no equivalent bounded-window contract.
+    const boundedNextExitReplayBars = needsExecutableFreshRecheck
+        ? resolveBoundedNextExitReplayBars(input.settings, topK)
+        : null;
     const freshSignalData = resolveFreshSignalWindow({
         boundaryData: recheckData,
         slicedHistorical,
         // signal_close and next_exit replay need the full boundary timeline
-        // to reconstruct the latest trade. Fixed-horizon next-bar detection
-        // only needs the accepted freshness range (0..1 bars) plus warmup.
-        signalLookbackBars: executionModel === "signal_close"
-            ? evalLastBars
-            : Math.max(2, resolveAssetOpportunityFreshnessBars(input.settings) + 1),
+        // to reconstruct the latest trade unless a finite max-hold bounds the
+        // required execution state. Fixed-horizon next-bar detection only
+        // needs the accepted freshness range (0..1 bars) plus warmup.
+        signalLookbackBars: needsExecutableFreshRecheck
+            ? (boundedNextExitReplayBars ?? 0)
+            : executionModel === "signal_close"
+                ? evalLastBars
+                : Math.max(2, resolveAssetOpportunityFreshnessBars(input.settings) + 1),
         dataSlice: input.options.dataSlice ?? "all",
         candidates: topK,
         settings: input.settings,
@@ -958,10 +1008,14 @@ async function searchOneAsset(args: {
         // signal_close and next_exit consume replayed trades. Fixed-horizon
         // next_open/next_close only consume generated signals, so their
         // signal-only recheck can safely use the same bounded recent window
-        // even without a Rust batch executor.
-        canUseBoundedSignalWindow: !needsExecutableFreshRecheck && (
-            executionModel !== "signal_close"
-            || Boolean(input.freshEntryBatch)
+        // even without a Rust batch executor. A bounded next-exit replay is
+        // also exact when max-hold/cooldown bound all prior execution state.
+        canUseBoundedSignalWindow: (
+            !needsExecutableFreshRecheck
+            && (executionModel !== "signal_close" || Boolean(input.freshEntryBatch))
+        ) || (
+            needsExecutableFreshRecheck
+            && boundedNextExitReplayBars !== null
         ),
     });
     diagnostics.freshSignalWindowBars = freshSignalData?.length ?? 0;
@@ -1019,6 +1073,7 @@ async function searchOneAsset(args: {
                             }
                             : {}),
                         dataFetcher: input.dataFetcher,
+                        exitSignalCache,
                         useRustEnginePreference: input.useRustEnginePreference,
                         closedCandleDataOverride: freshSignalData ?? recheckData,
                         ...(retainedFreshSignals
@@ -1102,12 +1157,16 @@ async function searchOneAsset(args: {
                     strategy: preparedStrategy,
                     fullClosed: recheckData,
                     ...(freshSignalData ? { signalData: freshSignalData } : {}),
+                    ...(needsExecutableFreshRecheck && freshSignalData
+                        ? { replayData: freshSignalData }
+                        : {}),
                     symbol,
                     interval: input.interval,
                     settings: input.settings,
                     capitalSettings: input.capitalSettings,
                     options: assetOptions,
                     exitStrategyCandidates: input.exitStrategyCandidates,
+                    exitSignalCache,
                     dataFetcher: input.dataFetcher,
                     useRustEnginePreference: input.freshEntryUseRustEnginePreference
                         ?? input.useRustEnginePreference,
@@ -1249,6 +1308,7 @@ async function searchOneAsset(args: {
                 capitalSettings: input.capitalSettings,
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
+                exitSignalCache,
                 dataFetcher: input.dataFetcher,
                 useRustEnginePreference: input.useRustEnginePreference,
             });
@@ -1284,6 +1344,7 @@ async function searchOneAsset(args: {
                 capitalSettings: input.capitalSettings,
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
+                exitSignalCache,
                 dataFetcher: input.dataFetcher,
                 useRustEnginePreference: input.useRustEnginePreference,
             });
@@ -1519,7 +1580,8 @@ function buildFreshEntryEvaluation(args: {
  * fresh-entry status. Fixed-horizon non-signal-close paths may generate
  * signals on a bounded recent window first; next-exit always replays the full
  * boundary timeline so execution gates and the existing position state are
- * included in freshness.
+ * included in freshness, unless a finite max-hold/cooldown bound makes a
+ * recent replay exact.
  *
  * Returns the parallel-array entry consumed by `reduceAssetTopKToResult`.
  */
@@ -1528,27 +1590,31 @@ function regenerateSignalsAndDetectFresh(args: {
     strategy: Strategy;
     fullClosed: OHLCVData[];
     signalData?: OHLCVData[];
+    replayData?: OHLCVData[];
     symbol: string;
     interval: string;
     settings: BacktestSettings;
     capitalSettings: CapitalSettings;
     options: FinderOptions;
     exitStrategyCandidates?: FinderSelectedStrategy[];
+    exitSignalCache?: AssetCandidateExitSignalCache;
     dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
 }): Promise<AssetFreshEvaluation> {
     const needsExecutableFreshRecheck = args.options.assetOpportunity?.oosMeasurementMode === "next_exit";
     const signalData = args.signalData ?? args.fullClosed;
+    const replayData = args.replayData ?? signalData;
     return executeAssetCandidate({
         candidate: args.candidate,
         strategy: args.strategy,
-        data: signalData,
+        data: replayData,
         symbol: args.symbol,
         interval: args.interval,
         settings: args.settings,
         capitalSettings: args.capitalSettings,
         options: args.options,
         exitStrategyCandidates: args.exitStrategyCandidates,
+        exitSignalCache: args.exitSignalCache,
         dataFetcher: args.dataFetcher,
         useRustEnginePreference: args.useRustEnginePreference,
         signalOnly: args.settings.executionModel !== "signal_close" && !needsExecutableFreshRecheck,
@@ -1619,6 +1685,7 @@ async function executeAssetCandidate(args: {
     capitalSettings: CapitalSettings;
     options: FinderOptions;
     exitStrategyCandidates?: FinderSelectedStrategy[];
+    exitSignalCache?: AssetCandidateExitSignalCache;
     dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
     signalOnly?: boolean;
@@ -1668,6 +1735,7 @@ async function executeAssetCandidate(args: {
             }
             : {}),
         ...(args.dataFetcher ? { dataFetcher: args.dataFetcher } : {}),
+        ...(args.exitSignalCache ? { exitSignalCache: args.exitSignalCache } : {}),
         useRustEnginePreference: args.useRustEnginePreference,
         ...(args.strategy.crossSymbolConfig ? {} : { closedCandleDataOverride: args.data }),
         needs: {
@@ -1706,6 +1774,7 @@ async function runCandidateNextExitOnAsset(args: {
     capitalSettings: CapitalSettings;
     options: FinderOptions;
     exitStrategyCandidates?: FinderSelectedStrategy[];
+    exitSignalCache?: AssetCandidateExitSignalCache;
     dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
 }): Promise<{
@@ -1725,6 +1794,7 @@ async function runCandidateNextExitOnAsset(args: {
             capitalSettings: args.capitalSettings,
             options: args.options,
             exitStrategyCandidates: args.exitStrategyCandidates,
+            exitSignalCache: args.exitSignalCache,
             dataFetcher: args.dataFetcher,
             useRustEnginePreference: args.useRustEnginePreference,
         });
@@ -1776,6 +1846,7 @@ async function runCandidateOosOnAsset(args: {
     capitalSettings: CapitalSettings;
     options: FinderOptions;
     exitStrategyCandidates?: FinderSelectedStrategy[];
+    exitSignalCache?: AssetCandidateExitSignalCache;
     dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
 }): Promise<AssetOpportunityOosEvaluation> {
@@ -1790,6 +1861,7 @@ async function runCandidateOosOnAsset(args: {
             capitalSettings: args.capitalSettings,
             options: args.options,
             exitStrategyCandidates: args.exitStrategyCandidates,
+            exitSignalCache: args.exitSignalCache,
             dataFetcher: args.dataFetcher,
             useRustEnginePreference: args.useRustEnginePreference,
         });

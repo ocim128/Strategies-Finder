@@ -50,7 +50,10 @@ import { withExitStrategyBaseParams, splitExitStrategyParams } from "../exit-str
 import { FinderResultRanker } from "../finder-result-ranker";
 import { buildSelectionResult } from "../endpoint";
 import { matchesFinderTradeCountFilter } from "../finder-manager-logic";
-import { runAssetCandidateBacktest } from "../finder-asset-candidate-execution";
+import {
+    runAssetCandidateBacktest,
+    type AssetCandidateExitSignalCache,
+} from "../finder-asset-candidate-execution";
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 import { rustEngine } from "../../rust-engine-client";
@@ -88,6 +91,8 @@ export interface ServerAssetIsSearchInput {
     /** Full closed series for batch-only signal reuse across holdout prefixes. */
     fullSignalData?: OHLCVData[];
     signalCache?: AssetOpportunitySignalCache;
+    /** Per-asset cache for deterministic Exit Strategy Override signals. */
+    exitSignalCache?: AssetCandidateExitSignalCache;
     abortSignal?: AbortSignal;
     rustBatchClient?: AssetOpportunityRustBatchClient;
     rustMultiAssetBatch?: AssetOpportunityRustMultiBatchCoordinator;
@@ -470,6 +475,7 @@ export async function runServerAssetIsSearch(
                 // data and executor-side caches can be reused per asset.
                 closedCandleDataOverride: input.ohlcvData,
                 ...(preGeneratedSignals ? { preGeneratedSignals } : {}),
+                ...(input.exitSignalCache ? { exitSignalCache: input.exitSignalCache } : {}),
                 needs: {
                     compact: true,
                     trades: false,

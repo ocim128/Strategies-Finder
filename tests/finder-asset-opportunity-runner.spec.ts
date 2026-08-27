@@ -470,12 +470,14 @@ describe("Asset Opportunity runner", () => {
     });
 
     it("reuses capped in-sample signals for fixed-holdout next_open freshness", async () => {
+        let executeCalls = 0;
         const strategy: Strategy = {
             name: "Fixed Holdout Next Open Reuse",
             description: "emits one entry at the visible boundary",
             defaultParams: {},
             paramLabels: {},
             execute(data) {
+                executeCalls += 1;
                 const latest = data[data.length - 1];
                 return latest
                     ? [{ time: latest.time, type: "buy", price: latest.close }]
@@ -497,6 +499,17 @@ describe("Asset Opportunity runner", () => {
                     },
                 }),
                 selectedStrategy: { key: "fixed_reuse", name: strategy.name, strategy },
+                exitStrategyCandidates: [{
+                    key: "fixed_reuse_exit",
+                    name: "Fixed Reuse Exit",
+                    strategy: {
+                        name: "Fixed Reuse Exit",
+                        description: "exit override should not disable primary signal reuse",
+                        defaultParams: {},
+                        paramLabels: {},
+                        execute: () => [],
+                    },
+                }],
                 assets: [{ symbol: "FIXED_REUSE", data }],
                 runIsSearch: async (args) => {
                     retainSignals = args.retainSignals === true;
@@ -511,6 +524,7 @@ describe("Asset Opportunity runner", () => {
         expect(output.results[0]!.latestSignalTime).to.equal(data[6]!.time);
         expect(output.outcomes[0]!.diagnostics?.freshEntryRechecks).to.equal(1);
         expect(output.outcomes[0]!.diagnostics?.timingsMs.freshEntryRechecks).to.be.lessThan(5);
+        expect(executeCalls, "retained primary signals avoid the redundant fresh recheck").to.equal(1);
     });
 
     it("reserves the real latest candle before slicing and exposes OOS evidence", async () => {
@@ -779,6 +793,49 @@ describe("Asset Opportunity runner", () => {
                 barsHeld: 2,
             });
         }
+    });
+
+    it("bounds next-exit freshness replay when max-hold closes prior positions", async () => {
+        const observedLengths: number[] = [];
+        const strategy: Strategy = {
+            name: "Bounded Next Exit Replay",
+            description: "records the replay window used for freshness detection",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                observedLengths.push(data.length);
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy", price: latest.close }] : [];
+            },
+        };
+        const fullLength = 200;
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({
+                assetOpportunity: {
+                    symbols: ["BOUNDED_NEXT_EXIT"],
+                    candidatePoolSize: 1,
+                    minFreshSupport: 1,
+                    oosMeasurementMode: "next_exit",
+                    oosIgnoreLastBars: 3,
+                    evalLastBars: 20,
+                },
+            }),
+            settings: {
+                ...settings,
+                executionModel: "next_open",
+                riskMaxHoldEnabled: true,
+                riskMaxHoldBars: 2,
+            },
+            selectedStrategy: { key: "bounded_next_exit", name: strategy.name, strategy },
+            generateParamSets: () => [{ riskMaxHoldBars: 20 }],
+            assets: [{ symbol: "BOUNDED_NEXT_EXIT", data: makeCandles(Array.from({ length: fullLength }, (_, i) => 100 + i)) }],
+        }), makeCallbacks());
+
+        expect(output.results).to.have.length(1);
+        expect(observedLengths[0]).to.equal(20, "in-sample search uses the configured evaluation cap");
+        expect(observedLengths.slice(1, -1)[0]).to.be.at.least(87, "candidate max-hold extends the bounded replay window");
+        expect(observedLengths.slice(1, -1)[0]).to.be.lessThan(fullLength - 3, "freshness replay uses the bounded recent window");
+        expect(observedLengths.at(-1)).to.equal(fullLength, "winner next-exit measurement keeps the authoritative full replay");
     });
 
     it("runs OOS only for the winner, not for every top-K candidate", async () => {

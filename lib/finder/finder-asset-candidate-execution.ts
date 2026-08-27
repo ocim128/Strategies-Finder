@@ -48,7 +48,11 @@ import type {
 import type { CapitalSettings } from "../types/backtest";
 import type { CrossSymbolDataFetcher } from "../cross-symbol-runtime";
 import type { FinderOptions } from "../types/finder";
-import { executeBacktest, resolveExecutorBacktestSettings } from "../backtest-executor";
+import {
+    executeBacktest,
+    resolveExecutorBacktestSettings,
+    type BacktestExitSignalCache,
+} from "../backtest-executor";
 import type { BacktestExecutorRequest } from "../backtest-executor";
 import type { BacktestEndpointSelection } from "../strategies/backtest/backtest-engine";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
@@ -82,6 +86,8 @@ export interface AssetCandidateExitOverride {
     key: string;
     params: StrategyParams;
 }
+
+export type AssetCandidateExitSignalCache = BacktestExitSignalCache;
 
 export interface AssetCandidateBacktestOutput {
     result: BacktestResult;
@@ -170,6 +176,8 @@ export async function runAssetCandidateBacktest(args: {
     closedCandleDataOverride?: OHLCVData[];
     /** Fully prepared primary signals; skips strategy signal generation. */
     preGeneratedSignals?: Signal[];
+    /** Per-asset cache for deterministic Exit Strategy Override signals. */
+    exitSignalCache?: AssetCandidateExitSignalCache;
     needs: AssetCandidateBacktestNeeds;
 }): Promise<AssetCandidateBacktestOutput> {
     const rustSettings = sanitizeBacktestSettingsForRust(args.settings);
@@ -229,6 +237,7 @@ export async function runAssetCandidateBacktest(args: {
         ...(args.dataFetcher ? { dataFetcher: args.dataFetcher } : {}),
         ...(args.closedCandleDataOverride ? { closedCandleDataOverride: args.closedCandleDataOverride } : {}),
         ...(args.preGeneratedSignals ? { preGeneratedSignals: args.preGeneratedSignals } : {}),
+        ...(args.exitSignalCache ? { exitSignalCache: args.exitSignalCache } : {}),
         backtestRunOptions,
     });
     return {

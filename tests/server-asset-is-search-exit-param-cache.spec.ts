@@ -22,6 +22,7 @@
 import { expect } from "chai";
 import { describe, it, before, after } from "node:test";
 import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
+import type { AssetCandidateExitSignalCache } from "../lib/finder/finder-asset-candidate-execution";
 import {
     registerLoadedBuiltInStrategy,
     unregisterLoadedBuiltInStrategy,
@@ -33,6 +34,7 @@ import type { BacktestSettings, OHLCVData, Strategy, StrategyParams, Time } from
 const ENTRY_KEY = "asset_is_exit_cache_entry";
 const EXIT_A_KEY = "asset_is_exit_cache_exit_a";
 const EXIT_B_KEY = "asset_is_exit_cache_exit_b";
+let exitSignalExecuteCalls = 0;
 
 const entryStrategy: Strategy = {
     name: "Exit Cache Entry",
@@ -50,7 +52,10 @@ const exitStrategyA: Strategy = {
     description: "Never exits; param sampling test.",
     defaultParams: { exitMarkerA: 1 },
     paramLabels: { exitMarkerA: "Marker A" },
-    execute: () => [],
+    execute: () => {
+        exitSignalExecuteCalls += 1;
+        return [];
+    },
 };
 
 const exitStrategyB: Strategy = {
@@ -58,7 +63,10 @@ const exitStrategyB: Strategy = {
     description: "Never exits; param sampling test.",
     defaultParams: { exitMarkerB: 1 },
     paramLabels: { exitMarkerB: "Marker B" },
-    execute: () => [],
+    execute: () => {
+        exitSignalExecuteCalls += 1;
+        return [];
+    },
 };
 
 const settings: BacktestSettings = {
@@ -134,9 +142,13 @@ function createCountingGenerator() {
     return { generator, calls };
 }
 
-async function runSearch(generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[]): Promise<FinderResult[]> {
+async function runSearch(
+    generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[],
+    data: OHLCVData[] = makeCandles(),
+    exitSignalCache?: AssetCandidateExitSignalCache,
+): Promise<FinderResult[]> {
     const output = await runServerAssetIsSearch({
-        ohlcvData: makeCandles(),
+        ohlcvData: data,
         symbol: "TEST",
         interval: "5m",
         options: makeOptions(),
@@ -148,6 +160,7 @@ async function runSearch(generateParamSets: (defaultParams: StrategyParams, opti
             { key: EXIT_B_KEY, name: exitStrategyB.name, strategy: exitStrategyB },
         ],
         generateParamSets,
+        ...(exitSignalCache ? { exitSignalCache } : {}),
         isCancelled: () => false,
         yieldControl: async () => {},
     });
@@ -202,5 +215,24 @@ describe("server Asset IS search exit-param caching", () => {
         const first = await runSearch(createCountingGenerator().generator);
         const second = await runSearch(createCountingGenerator().generator);
         expect(second).to.deep.equal(first);
+    });
+
+    it("reuses deterministic exit signals for repeated candidate passes on the same data", async () => {
+        const { generator } = createCountingGenerator();
+        const data = makeCandles();
+        const exitSignalCache: AssetCandidateExitSignalCache = new Map();
+        const before = exitSignalExecuteCalls;
+
+        await runSearch(generator, data, exitSignalCache);
+        const afterFirstPass = exitSignalExecuteCalls;
+        // A separate slice can represent the same candle window for another
+        // selected entry strategy; reuse must not depend on array identity.
+        await runSearch(generator, makeCandles(), exitSignalCache);
+
+        // Each of the six candidates has a distinct sampled exit parameter;
+        // the second pass must reuse all six generated exit series rather than
+        // evaluating the exit strategies again.
+        expect(afterFirstPass - before).to.equal(ENTRY_SETS);
+        expect(exitSignalExecuteCalls - afterFirstPass).to.equal(0);
     });
 });

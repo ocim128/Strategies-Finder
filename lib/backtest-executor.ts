@@ -127,7 +127,16 @@ export interface BacktestExecutorRequest {
     preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
     /** Fully prepared primary signals; skips strategy signal generation. */
     preGeneratedSignals?: Signal[];
+    /**
+     * Per-run cache for deterministic Exit Strategy Override signals. The
+     * cache is keyed by candle-window fingerprint and resolved exit
+     * parameters, so callers can reuse the same exit series across candidate
+     * replays even when each caller owns a sliced array instance.
+     */
+    exitSignalCache?: BacktestExitSignalCache;
 }
+
+export type BacktestExitSignalCache = Map<string, Map<string, Signal[]>>;
 
 export interface BacktestExecutorTimings {
     signalGenerationMs: number;
@@ -164,6 +173,31 @@ interface ExitStrategyOverrideSignalResolution {
         normalizeMs: number;
         signalGenerationMs: number;
     };
+}
+
+function buildExitSignalCacheKey(args: {
+    interval: string;
+    exitKey: string;
+    exitParams: StrategyParams;
+    settings: BacktestSettings;
+}): string {
+    return JSON.stringify([
+        args.interval,
+        args.exitKey,
+        args.exitParams,
+        args.settings.tradeDirection,
+        args.settings.invertSignals === true,
+    ]);
+}
+
+function buildExitSignalDataCacheKey(data: OHLCVData[]): string {
+    const first = data[0]?.time;
+    const last = data[data.length - 1]?.time;
+    return JSON.stringify([
+        data.length,
+        first === undefined ? null : timeKey(first),
+        last === undefined ? null : timeKey(last),
+    ]);
 }
 
 function mergeStrategyExecutionContext(
@@ -401,6 +435,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         executionContext,
         forceDisableSignalExits: req.backtestRunOptions?.forceDisableSignalExits === true,
         collectTimings: executorTimings !== undefined,
+        exitSignalCache: req.exitSignalCache,
     });
     if (executorTimings) {
         const elapsed = performance.now() - exitStrategyStartedAt;
@@ -760,6 +795,7 @@ async function resolveExitStrategyOverrideSignals(args: {
     executionContext?: StrategyExecutionContext;
     forceDisableSignalExits?: boolean;
     collectTimings?: boolean;
+    exitSignalCache?: BacktestExitSignalCache;
 }): Promise<ExitStrategyOverrideSignalResolution> {
     const timings = {
         loadMs: 0,
@@ -789,6 +825,40 @@ async function resolveExitStrategyOverrideSignals(args: {
         return { signals: [], strategyLoaded: false, skippedReason: "exit_strategy_not_loaded", timings };
     }
 
+    const canReuseSignals = Boolean(
+        args.exitSignalCache
+        && args.blockRange === null
+        && !args.executionContext
+        && args.settings.strategyTimeframeEnabled !== true
+        && !(args.settings.confirmationStrategies?.length)
+        && !exitStrategy.crossSymbolConfig
+        && !exitStrategy.polymarket1sConfig,
+    );
+    const cacheKey = canReuseSignals
+        ? buildExitSignalCacheKey({
+            interval: args.interval,
+            exitKey,
+            exitParams: args.settings.exitStrategyParams ?? {},
+            settings: args.settings,
+        })
+        : null;
+    const dataCacheKey = canReuseSignals ? buildExitSignalDataCacheKey(args.data) : null;
+    const datasetCache = dataCacheKey
+        ? args.exitSignalCache!.get(dataCacheKey)
+        : undefined;
+    const cachedSignals = cacheKey && datasetCache
+        ? datasetCache.get(cacheKey)
+        : undefined;
+    if (cachedSignals !== undefined) {
+        const signals = filterSignalsByBlockRange(cachedSignals, args.blockRange);
+        return {
+            signals,
+            strategyLoaded: true,
+            skippedReason: signals.length === 0 ? "exit_strategy_zero_signals" : undefined,
+            timings,
+        };
+    }
+
     const exitParams = args.settings.exitStrategyParams ?? {};
     const normalizeStartedAt = args.collectTimings ? performance.now() : 0;
     const normalizedExitParams = exitStrategy.normalizeParams
@@ -807,6 +877,11 @@ async function resolveExitStrategyOverrideSignals(args: {
         executionContext: args.executionContext,
     });
     if (args.collectTimings) timings.signalGenerationMs += performance.now() - signalGenerationStartedAt;
+    if (cacheKey) {
+        const targetCache = datasetCache ?? new Map<string, Signal[]>();
+        targetCache.set(cacheKey, signals);
+        if (!datasetCache && dataCacheKey) args.exitSignalCache!.set(dataCacheKey, targetCache);
+    }
     return {
         signals,
         strategyLoaded: true,
