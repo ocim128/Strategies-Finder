@@ -9,7 +9,7 @@ import { setVisible } from "./dom-utils";
 import { dataManager } from "./data-manager";
 import { settingsManager } from "./settings-manager";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
-import { getLocalDailyAssets, isMarkedLocalStockSymbol } from "./local-daily-datasets";
+import { getLocalDailyAssets } from "./local-daily-datasets";
 import { cloneJsonCompatible, parseJsonPreservingNonFinite } from "./json-utils";
 import { debounce } from "./debounce";
 import { coalesceAnimationFrame } from "./render-scheduler";
@@ -121,7 +121,6 @@ import type {
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "./types/backtest";
 import type { BacktestSettings } from "./types/strategies";
 
-const QUOTE_SUFFIXES = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'BRL'];
 const MAJOR_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT"] as const;
 const FINDER_FOLLOW_STRATEGY_KEYS = [
 	"decay_momentum_alignment",
@@ -168,30 +167,6 @@ function createFinderStatusRequestSignal(parentSignal: AbortSignal): {
 			clearTimeout(timer);
 			parentSignal.removeEventListener("abort", abortFromParent);
 		},
-	};
-}
-
-function resolveToBinanceSymbol(token: string): string {
-	const upper = token.toUpperCase();
-	if (QUOTE_SUFFIXES.some((s) => upper.endsWith(s) && upper.length > s.length)) {
-		return upper;
-	}
-	return `${upper}USDT`;
-}
-
-export function parseSyntheticPairToken(symbol: string): { baseSymbol: string; quoteSymbol: string } | null {
-	const plusIdx = symbol.indexOf('+');
-	if (plusIdx < 1 || plusIdx === symbol.length - 1) return null;
-	const baseRaw = symbol.slice(0, plusIdx).trim().toUpperCase();
-	const quoteRaw = symbol.slice(plusIdx + 1).trim().toUpperCase();
-	if (!baseRaw || !quoteRaw) return null;
-	// Diamond-marked legs are offline stock_market_data tickers and must NOT
-	// be funneled through resolveToBinanceSymbol, which appends `USDT` to
-	// bare tokens — that would strip the marker's self-resolving provider
-	// hint and route the fetch to Binance.
-	return {
-		baseSymbol: isMarkedLocalStockSymbol(baseRaw) ? baseRaw : resolveToBinanceSymbol(baseRaw),
-		quoteSymbol: isMarkedLocalStockSymbol(quoteRaw) ? quoteRaw : resolveToBinanceSymbol(quoteRaw),
 	};
 }
 

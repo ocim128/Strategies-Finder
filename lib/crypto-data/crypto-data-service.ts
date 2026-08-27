@@ -12,12 +12,8 @@
  *   - reattach to a sync still running after a tab reload
  */
 
-import { clearLocalDailyAssetCaches } from "../local-daily-datasets";
-import { dataManager } from "../data-manager";
-import { finderManager } from "../finder-manager";
 import { uiManager } from "../ui-manager";
-import { clearBatchDatasetCaches } from "../batch-backtest/batch-backtest-loader";
-import { clearRankPairsRecentLoaderCache } from "../rank-pairs/rank-pairs-recent-loader";
+import { invalidateLocalMarketData } from "../local-data-cache-invalidation";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { createCryptoDataDom, type CryptoDataDom } from "./crypto-data-dom";
 import type { CryptoCompletedTarget, CryptoStreamEvent, CryptoSyncRunSnapshot } from "./crypto-data-stream-types";
@@ -158,9 +154,10 @@ class CryptoDataService {
     private getRequestBody(): Record<string, unknown> {
         const dom = this.getDom();
         const raw = dom.cryptoDataSymbols.value;
-        const symbols = expandCryptoSymbols(raw);
+        const plans = buildCryptoSyncRequestPlans(raw, dom.cryptoDataInterval.value);
+        const symbols = Array.from(new Set(plans.flatMap((plan) => plan.symbols)));
         if (symbols.length > 0) this.lastSyncedSymbols = symbols;
-        const targets = buildCryptoSyncRequestPlans(raw, dom.cryptoDataInterval.value)
+        const targets = plans
             .flatMap((plan) => plan.symbols.map((symbol) => ({
                 symbol,
                 interval: plan.interval,
@@ -274,13 +271,7 @@ class CryptoDataService {
     }
 
     private async invalidateSyncedData(symbols: readonly string[], interval: unknown): Promise<void> {
-        if (symbols.length === 0) return;
-        const normalizedInterval = String(interval ?? "").trim().toLowerCase();
-        clearLocalDailyAssetCaches();
-        dataManager.invalidateLocalSeries(symbols, normalizedInterval ? [normalizedInterval] : undefined);
-        await finderManager.invalidateLocalDataCaches();
-        clearBatchDatasetCaches();
-        clearRankPairsRecentLoaderCache();
+        await invalidateLocalMarketData(symbols, interval);
     }
 
     private async stopSync(): Promise<void> {

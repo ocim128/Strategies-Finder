@@ -39,7 +39,7 @@ import { isIbkrSymbol } from "../../local-daily-datasets";
 import { resolveServerBatchCacheBudget } from "../../batch-backtest/server-batch-cache-budget";
 import { clearParsedIbkrCsvCache, loadFreshIbkrCandlesFromDisk } from "../../batch-backtest/server-ibkr-csv-loader";
 import { clearParsedCryptoCsvCache, getCryptoCsvMtimeMs, loadFreshCryptoCandlesFromDisk } from "../../batch-backtest/server-crypto-csv-loader";
-import { resolveAssetOpportunityDatasetCacheCapacity } from "./finder-asset-opportunity-batch-worker-pool";
+import { resolveAssetOpportunityDatasetCacheCapacity } from "./finder-asset-opportunity-capacity";
 
 // Reuse a single long-lived DataFetcher for the whole server loader (Finding 8).
 const serverDataFetcher = createServerDataFetcher();

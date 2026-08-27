@@ -38,6 +38,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { debugLogger } from "../../debug-logger";
+import {
+    ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL,
+    resolveAssetOpportunityMemoryBudgetBytes,
+} from "./finder-asset-opportunity-capacity";
+
+// Keep the existing worker-pool export stable for callers while the pure
+// capacity policy remains independent of worker orchestration.
+export { resolveAssetOpportunityDatasetCacheCapacity } from "./finder-asset-opportunity-capacity";
 import type { AssetOpportunityIterationResult } from "./asset-opportunity-iteration";
 import type {
     AssetOpportunityBatchWorkerCommand,
@@ -66,41 +74,6 @@ export const ASSET_OPPORTUNITY_BATCH_WORKER_COUNT_MAX = 32;
  * separate isolates, so `--max-old-space-size` (per-isolate) cannot bound the
  * SUM of their footprints — only this budget does.
  */
-const ASSET_OPPORTUNITY_BATCH_MEMORY_BUDGET_FRACTION = 0.75;
-const ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL = 9 * 1024 * 1024;
-
-/** 75% of ACTUAL system RAM budgeted for dataset copies (injectable for tests). */
-function resolveAssetOpportunityMemoryBudgetBytes(systemMemoryBytes: number): number {
-    return Math.max(
-        1,
-        Math.floor(
-            (Number.isFinite(systemMemoryBytes) && systemMemoryBytes > 0
-                ? systemMemoryBytes
-                : 8 * 1024 * 1024 * 1024)
-            * ASSET_OPPORTUNITY_BATCH_MEMORY_BUDGET_FRACTION,
-        ),
-    );
-}
-
-/**
- * Capacity for a run-scoped PLAIN-dataset LRU that retains one copy of every
- * symbol's series across batch holdout iterations (~9 MB/symbol at the 100k-bar
- * cap). Uses the SAME memory budget as the worker-count policy so the retention
- * a pool of N workers can afford is the retention the cache allows: bounded by
- * the symbol count (never more entries than symbols exist) and by
- * floor(budget / 9MB).
- */
-export function resolveAssetOpportunityDatasetCacheCapacity(
-    symbolCount: number,
-    systemMemoryBytes: number = totalmem(),
-): number {
-    const memoryCeilingEntries = Math.floor(
-        resolveAssetOpportunityMemoryBudgetBytes(systemMemoryBytes)
-        / ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL,
-    );
-    return Math.max(1, Math.min(Math.max(1, Math.floor(symbolCount)), memoryCeilingEntries));
-}
-
 /**
  * Auto-pool cap when the Rust engine is preferred: its external HTTP server
  * serializes execution, so a large pool only multiplies queued requests.
