@@ -442,6 +442,8 @@ export interface FinderAssetOpportunityResult {
     oosNextExitMetrics?: import('../finder/finder-asset-opportunity-oos').FinderAssetOosNextExitMetrics;
     /** Distinct selected strategy libraries with a fresh entry for this symbol. */
     freshSignalLibraryCount?: number;
+    /** Median in-sample bars from entry to take-profit across qualifying trades. */
+    medianBarsToTp?: number | null;
     support: FinderAssetSupportCounts;
     grade: FinderAssetDecisionGrade;
 }

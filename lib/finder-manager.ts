@@ -61,6 +61,7 @@ import {
 	TOTAL_TRADES_CAPPED_METRIC,
 	TOTAL_TRADES_SATURATION_PERCENTILE,
 	T_STAT_EDGE_METRIC,
+	MEDIAN_BARS_TO_TP_METRIC,
 	INVERTED_NET_PROFIT_METRIC,
 	INVERTED_EXPECTANCY_METRIC,
 	INVERTED_AVERAGE_GAIN_METRIC,
@@ -3898,6 +3899,8 @@ export class FinderManager {
 										? `Total Trades (P${Math.round(TOTAL_TRADES_SATURATION_PERCENTILE * 100)} saturation)`
 									: metric === T_STAT_EDGE_METRIC
 										? "T-Stat of Edge (significance)"
+										: metric === MEDIAN_BARS_TO_TP_METRIC
+											? "Median Bars To Take Profit (lower first)"
 										// Safe cast: the inverted labels map above covers every
 										// non-FinderMetric member left in the union here.
 										: METRIC_FULL_LABELS[metric as FinderMetric]),

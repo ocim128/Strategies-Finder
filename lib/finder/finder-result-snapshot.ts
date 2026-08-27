@@ -160,6 +160,7 @@ function compactAssetOpportunityResult(result: FinderAssetOpportunityResult): Fi
                 oosNextExitMetrics: { ...result.oosNextExitMetrics },
             }
             : {}),
+        ...(result.medianBarsToTp !== undefined ? { medianBarsToTp: result.medianBarsToTp } : {}),
         support: { ...result.support },
         grade: result.grade,
     };

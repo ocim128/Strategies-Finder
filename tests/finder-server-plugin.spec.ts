@@ -34,6 +34,7 @@ import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metr
 import {
     ASSET_OPPORTUNITY_ALL_SORTS,
     getAssetOpportunityResortMetrics,
+    MEDIAN_BARS_TO_TP_METRIC,
     type FinderAssetOpportunityArchiveSort,
 } from "../lib/finder/finder-asset-opportunity-metrics";
 import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
@@ -1446,6 +1447,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
             "run_default",
             ...getAssetOpportunityResortMetrics(),
         ];
+        expect(expectedSortLabels).to.include(MEDIAN_BARS_TO_TP_METRIC);
         // +1 for the run-config block archived before the sweep.
         expect(contents).to.have.length(1 + 2 * (1 + expectedSortLabels.length));
         for (const sortLabel of expectedSortLabels) {

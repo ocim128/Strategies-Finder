@@ -12,6 +12,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
+    calculateMedianBarsToTp,
     computeAssetSupportCounts,
     decideAssetGrade,
     compareAssetOpportunityResults,
@@ -19,12 +20,14 @@ import {
     sortAssetOpportunityResults,
     sortAssetOpportunityResultsByMetric,
     getAssetOpportunityResortMetrics,
+    MEDIAN_BARS_TO_TP_METRIC,
     TOTAL_TRADES_CAPPED_METRIC,
     retainAssetOpportunityResultsForSymbols,
     type AssetPoolCandidate,
 } from "../lib/finder/finder-asset-opportunity-metrics";
 import { calculateFinderAssetOosAverageHorizonMetrics } from "../lib/finder/finder-asset-opportunity-oos";
 import type { FinderAssetOpportunityResult } from "../lib/types/finder";
+import type { OHLCVData, Time } from "../lib/types/strategies";
 
 function assetResultForSymbol(symbol: string): FinderAssetOpportunityResult {
     return { symbol } as FinderAssetOpportunityResult;
@@ -252,6 +255,8 @@ describe("Asset Opportunity post-run re-sort", () => {
      */
     function makeResortResult(args: {
         symbol: string;
+        strategyKey?: string;
+        params?: Record<string, unknown>;
         grade?: FinderAssetOpportunityResult["grade"];
         netProfit?: number;
         netProfitPercent?: number;
@@ -263,12 +268,13 @@ describe("Asset Opportunity post-run re-sort", () => {
         avgWin?: number;
         avgLoss?: number;
         totalTrades?: number;
+        medianBarsToTp?: number | null;
     }): FinderAssetOpportunityResult {
         return {
             symbol: args.symbol,
-            strategyKey: "k",
+            strategyKey: args.strategyKey ?? "k",
             strategyName: "K",
-            params: {},
+            params: args.params ?? {},
             historicalRank: 1,
             totalCandidatesEvaluated: 10,
             isHistoricalBest: true,
@@ -295,6 +301,7 @@ describe("Asset Opportunity post-run re-sort", () => {
                 sharpeRatio: args.sharpeRatio ?? 0,
                 equityCurve: [],
             },
+            ...(args.medianBarsToTp !== undefined ? { medianBarsToTp: args.medianBarsToTp } : {}),
             support: {
                 freshLongCandidates: 1,
                 freshShortCandidates: 0,
@@ -328,6 +335,79 @@ describe("Asset Opportunity post-run re-sort", () => {
         const shallow = makeResortResult({ symbol: "B", maxDrawdownPercent: 5 });
         const sorted = sortAssetOpportunityResultsByMetric([deep, shallow], "maxDrawdownPercent");
         expect(sorted.map((r) => r.symbol)).to.deep.equal(["B", "A"]);
+    });
+
+    describe("medianBarsToTp", () => {
+        function candles(count: number): OHLCVData[] {
+            return Array.from({ length: count }, (_, index) => ({
+                time: (1_700_000_000 + index * 60) as Time,
+                open: 100,
+                high: 101,
+                low: 99,
+                close: 100,
+                volume: 1,
+            }));
+        }
+
+        it("calculates the median from in-sample TP-hit trade bar distances", () => {
+            const data = candles(12);
+            const result = {
+                totalTrades: 4,
+                trades: [
+                    { entryTime: data[0]!.time, exitTime: data[2]!.time, exitReason: "take_profit" },
+                    { entryTime: data[1]!.time, exitTime: data[5]!.time, exitReason: "take_profit" },
+                    { entryTime: data[2]!.time, exitTime: data[8]!.time, exitReason: "take_profit" },
+                    { entryTime: data[3]!.time, exitTime: data[4]!.time, exitReason: "signal" },
+                ],
+            } as any;
+            expect(calculateMedianBarsToTp(result, data)).to.equal(4);
+        });
+
+        it("returns null for insufficient or invalid TP-hit observations", () => {
+            const data = candles(6);
+            const twoHits = {
+                totalTrades: 2,
+                trades: [
+                    { entryTime: data[0]!.time, exitTime: data[1]!.time, exitReason: "take_profit" },
+                    { entryTime: data[1]!.time, exitTime: data[3]!.time, exitReason: "take_profit" },
+                ],
+            } as any;
+            const invalid = {
+                totalTrades: 3,
+                trades: [
+                    { entryTime: data[0]!.time, exitTime: data[1]!.time, exitReason: "take_profit" },
+                    { entryTime: data[3]!.time, exitTime: data[2]!.time, exitReason: "take_profit" },
+                    { entryTime: data[1]!.time, exitTime: data[4]!.time, exitReason: "take_profit" },
+                ],
+            } as any;
+            expect(calculateMedianBarsToTp(twoHits, data)).to.equal(null);
+            expect(calculateMedianBarsToTp(invalid, data)).to.equal(null);
+        });
+
+        it("sorts quantified rows fast-first, invalid rows last, and ties by candidate tuple", () => {
+            const fast = makeResortResult({ symbol: "PAIR", strategyKey: "z", medianBarsToTp: 2 });
+            const slow = makeResortResult({ symbol: "PAIR", strategyKey: "z", medianBarsToTp: 5 });
+            const tupleEarly = makeResortResult({ symbol: "pair", strategyKey: "a", medianBarsToTp: 2 });
+            const missing = makeResortResult({ symbol: "MISSING" });
+            const nan = makeResortResult({ symbol: "NAN", medianBarsToTp: Number.NaN });
+            const original = [missing, slow, nan, fast, tupleEarly];
+            const sorted = sortAssetOpportunityResultsByMetric(original, MEDIAN_BARS_TO_TP_METRIC);
+
+            expect(sorted.map((result) => result.strategyKey + ":" + result.symbol)).to.deep.equal([
+                "a:pair",
+                "z:PAIR",
+                "z:PAIR",
+                "k:MISSING",
+                "k:NAN",
+            ]);
+            expect(original.map((result) => result.symbol)).to.deep.equal([
+                "MISSING", "PAIR", "NAN", "PAIR", "pair",
+            ]);
+        });
+
+        it("exposes the metric in the shared resort inventory", () => {
+            expect(getAssetOpportunityResortMetrics()).to.include(MEDIAN_BARS_TO_TP_METRIC);
+        });
     });
 
     describe("totalTradesCapped", () => {

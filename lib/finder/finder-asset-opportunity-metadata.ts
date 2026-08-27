@@ -113,7 +113,10 @@ export type AssetOpportunityPerformanceMetrics = Pick<BacktestResult,
     | "avgWin"
     | "avgLoss"
     | "sharpeRatio"
->;
+> & {
+    /** Optional for compatibility with archives written before this sort. */
+    medianBarsToTp?: number | null;
+};
 
 export interface AssetOpportunityPerformancePayload {
     scope: "asset_opportunity";
@@ -213,6 +216,7 @@ export function buildAssetOpportunityCandidateFingerprint(
 
 function selectAssetOpportunityPerformanceMetrics(
     result: BacktestResult,
+    medianBarsToTp?: number | null,
 ): AssetOpportunityPerformanceMetrics {
     return {
         netProfit: result.netProfit,
@@ -229,6 +233,7 @@ function selectAssetOpportunityPerformanceMetrics(
         avgWin: result.avgWin,
         avgLoss: result.avgLoss,
         sharpeRatio: result.sharpeRatio,
+        ...(medianBarsToTp !== undefined ? { medianBarsToTp } : {}),
     };
 }
 
@@ -248,7 +253,10 @@ export function buildAssetOpportunityPerformancePayload(args: {
         candidateFingerprint: buildAssetOpportunityCandidateFingerprint(result),
         signalCandleHourUtc: hours.utc,
         signalCandleHourJakarta: hours.jakarta,
-        selectionPerformance: selectAssetOpportunityPerformanceMetrics(result.selectionResult),
+        selectionPerformance: selectAssetOpportunityPerformanceMetrics(
+            result.selectionResult,
+            result.medianBarsToTp,
+        ),
         oosPerformance: result.oosResult && result.oosVerdict
             ? {
                 verdict: result.oosVerdict,

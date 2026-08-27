@@ -125,6 +125,15 @@ describe("Asset Opportunity archive writer", () => {
         expect(text.startsWith("=".repeat(80))).to.equal(true);
         const jsonStart = text.indexOf("[");
         expect(JSON.parse(text.slice(jsonStart))).to.deep.equal([{ rank: 1 }]);
+
+        const medianText = buildAssetOpportunityArchiveBlockText({
+            timestamp: "t",
+            batchRunId: "b",
+            holdoutBars: 1,
+            sortMetric: "medianBarsToTp",
+            topResults: [{ rank: 1 }],
+        });
+        expect(medianText).to.contain("Archive sort: medianBarsToTp");
     });
 
     it("serializes the optional all-candidate baseline before the top results", () => {

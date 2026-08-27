@@ -37,6 +37,9 @@ import type {
     FinderMetric,
     FinderOosVerdict,
 } from "../types/finder";
+import type { BacktestResult, OHLCVData } from "../types/strategies";
+import { buildAssetOpportunityCandidateFingerprint } from "./finder-asset-opportunity-metadata";
+import { timeKey } from "../strategies/backtest/backtest-utils";
 
 /**
  * Keep displayed Asset Opportunity rows bounded to the submitted asset
@@ -283,6 +286,12 @@ export const TOTAL_TRADES_SATURATION_PERCENTILE = 0.9;
  */
 export const T_STAT_EDGE_METRIC = "tstatEdge" as const;
 /**
+ * Median candle distance from entry to an in-sample take-profit exit. A
+ * minimum of three qualifying trades is fixed by the research idea.
+ */
+export const MEDIAN_BARS_TO_TP_METRIC = "medianBarsToTp" as const;
+export const MEDIAN_BARS_TO_TP_MIN_HITS = 3;
+/**
  * Inverted (worst-first) archive sorts: rank by the base metric ASCENDING so the
  * top slot is the WORST candidate (e.g. most negative netProfit). Research purpose:
  * test whether in-search FAILURE carries forward information (fade candidates) —
@@ -308,6 +317,7 @@ export type FinderAssetOpportunityResortMetric =
     | typeof FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
     | typeof TOTAL_TRADES_CAPPED_METRIC
     | typeof T_STAT_EDGE_METRIC
+    | typeof MEDIAN_BARS_TO_TP_METRIC
     | typeof INVERTED_NET_PROFIT_METRIC
     | typeof INVERTED_EXPECTANCY_METRIC
     | typeof INVERTED_AVERAGE_GAIN_METRIC
@@ -336,6 +346,7 @@ const ASSET_RESORT_METRICS: readonly FinderAssetOpportunityResortMetric[] = [
     FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC,
     TOTAL_TRADES_CAPPED_METRIC,
     T_STAT_EDGE_METRIC,
+    MEDIAN_BARS_TO_TP_METRIC,
     INVERTED_NET_PROFIT_METRIC,
     INVERTED_EXPECTANCY_METRIC,
     INVERTED_AVERAGE_GAIN_METRIC,
@@ -347,6 +358,41 @@ const ASSET_RESORT_METRICS: readonly FinderAssetOpportunityResortMetric[] = [
 
 export function getAssetOpportunityResortMetrics(): readonly FinderAssetOpportunityResortMetric[] {
     return ASSET_RESORT_METRICS;
+}
+
+/**
+ * Calculate the row-level in-sample median bars to take profit. Trade times
+ * are mapped to the exact candles used for the selection result, so this
+ * remains a bar-count metric across all supported time representations.
+ */
+export function calculateMedianBarsToTp(
+    result: Pick<BacktestResult, "trades" | "totalTrades">,
+    candles: readonly OHLCVData[],
+): number | null {
+    if (!Number.isFinite(result.totalTrades) || result.totalTrades < MEDIAN_BARS_TO_TP_MIN_HITS) return null;
+
+    const indexByTime = new Map<string, number>();
+    for (let index = 0; index < candles.length; index += 1) {
+        indexByTime.set(timeKey(candles[index]!.time), index);
+    }
+
+    const barsToTakeProfit: number[] = [];
+    for (const trade of result.trades) {
+        if (trade.exitReason !== "take_profit") continue;
+        const entryIndex = indexByTime.get(timeKey(trade.entryTime));
+        const exitIndex = indexByTime.get(timeKey(trade.exitTime));
+        if (entryIndex === undefined || exitIndex === undefined) return null;
+        const bars = exitIndex - entryIndex;
+        if (!Number.isFinite(bars) || bars < 0) return null;
+        barsToTakeProfit.push(bars);
+    }
+
+    if (barsToTakeProfit.length < MEDIAN_BARS_TO_TP_MIN_HITS) return null;
+    barsToTakeProfit.sort((a, b) => a - b);
+    const middle = Math.floor(barsToTakeProfit.length / 2);
+    return barsToTakeProfit.length % 2 === 1
+        ? barsToTakeProfit[middle]!
+        : (barsToTakeProfit[middle - 1]! + barsToTakeProfit[middle]!) / 2;
 }
 
 /** Linear-interpolated quantile of an ascending-sorted number array. */
@@ -512,6 +558,30 @@ export function sortAssetOpportunityResultsByMetric(
             if (gainA !== gainB) return gainB - gainA;
             if (a.symbol < b.symbol) return -1;
             if (a.symbol > b.symbol) return 1;
+            return 0;
+        });
+    }
+    if (metric === MEDIAN_BARS_TO_TP_METRIC) {
+        return [...results].sort((a, b) => {
+            const medianA = a.medianBarsToTp;
+            const medianB = b.medianBarsToTp;
+            const validA = typeof medianA === "number" && Number.isFinite(medianA) && medianA >= 0;
+            const validB = typeof medianB === "number" && Number.isFinite(medianB) && medianB >= 0;
+            if (validA !== validB) return validA ? -1 : 1;
+            if (validA && validB && medianA !== medianB) return medianA - medianB;
+
+            const symbolA = a.symbol.trim().toUpperCase();
+            const symbolB = b.symbol.trim().toUpperCase();
+            if (symbolA < symbolB) return -1;
+            if (symbolA > symbolB) return 1;
+            const strategyA = a.strategyKey.trim();
+            const strategyB = b.strategyKey.trim();
+            if (strategyA < strategyB) return -1;
+            if (strategyA > strategyB) return 1;
+            const fingerprintA = buildAssetOpportunityCandidateFingerprint(a);
+            const fingerprintB = buildAssetOpportunityCandidateFingerprint(b);
+            if (fingerprintA < fingerprintB) return -1;
+            if (fingerprintA > fingerprintB) return 1;
             return 0;
         });
     }

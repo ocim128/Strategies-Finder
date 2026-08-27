@@ -63,10 +63,13 @@ function makeAssetResult(): FinderAssetOpportunityResult {
 
 describe("Asset Opportunity scalar stream contract", () => {
     it("strips nested trade and equity arrays before streaming", () => {
-        const scalar = toScalarAssetResult(makeAssetResult());
+        const source = makeAssetResult();
+        source.medianBarsToTp = 3.5;
+        const scalar = toScalarAssetResult(source);
 
         expect(scalar.selectionResult.trades).to.deep.equal([]);
         expect(scalar.selectionResult.equityCurve).to.deep.equal([]);
+        expect(scalar.medianBarsToTp).to.equal(3.5);
         expect(scalar.oosNextExitMetrics).to.deep.equal({
             ignoreLastBars: 4,
             status: "exited",

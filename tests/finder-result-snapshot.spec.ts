@@ -106,6 +106,7 @@ function makeAssetOpportunityResult(index: number): FinderAssetOpportunityResult
         signalAgeBars: 0,
         fillTiming: "signal_close",
         selectionResult: makeBacktestResult(),
+        medianBarsToTp: 3.5,
         support: {
             freshLongCandidates: 2,
             freshShortCandidates: 0,
@@ -192,6 +193,7 @@ describe("Finder result snapshots", () => {
         expect(compact.results).to.have.length(FINDER_RESULT_SNAPSHOT_LIMIT);
         expect(compact.results[0]!.selectionResult.trades).to.deep.equal([]);
         expect(compact.results[0]!.selectionResult.equityCurve).to.deep.equal([]);
+        expect(compact.results[0]!.medianBarsToTp).to.equal(3.5);
         expect(compact.results[0]!.oosHorizonMetrics?.ignoreLastBars).to.equal(20);
         expect(compact.results[0]!.oosHorizonMetrics?.horizons[2]?.pnlPercent).to.equal(-2);
         expect(compact.results[0]!.oosNextExitMetrics).to.deep.equal({

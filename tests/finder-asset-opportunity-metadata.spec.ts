@@ -238,6 +238,21 @@ describe("Asset Opportunity metadata payload serializer", () => {
         expect(JSON.stringify(payload)).to.not.contain("equityCurve");
     });
 
+    it("persists medianBarsToTp when present and leaves legacy rows missing", () => {
+        const withMetric = buildAssetOpportunityPerformancePayload({
+            result: makeAssetResult({ medianBarsToTp: 4.5 }),
+            rank: 1,
+        });
+        expect(withMetric.selectionPerformance.medianBarsToTp).to.equal(4.5);
+
+        const legacy = buildAssetOpportunityPerformancePayload({
+            result: makeAssetResult(),
+            rank: 1,
+        });
+        expect(Object.prototype.hasOwnProperty.call(legacy.selectionPerformance, "medianBarsToTp")).to.equal(false);
+        expect(legacy.selectionPerformance.medianBarsToTp).to.not.equal(0);
+    });
+
     it("ranks are passed through 1-based per displayed row", () => {
         const rows = [makeAssetResult(), makeAssetResult({ symbol: "ETHUSDT" })];
         const payloads = rows.map((result, index) => buildAssetOpportunityMetadataPayload({

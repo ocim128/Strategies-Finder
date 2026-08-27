@@ -305,6 +305,77 @@ describe("Asset Opportunity runner", () => {
         expect(() => assertAssetOpportunityStrategySelection(selection)).to.not.throw();
     });
 
+    it("replays a compact winner to capture median in-sample TP speed", async () => {
+        const data = makeCandles(Array.from({ length: 16 }, () => 100)).map((candle) => ({
+            ...candle,
+            high: 102,
+        }));
+        const strategy: Strategy = {
+            name: "Take Profit Timing",
+            description: "creates three historical TP exits and a fresh boundary entry",
+            defaultParams: {},
+            paramLabels: {},
+            execute(candles) {
+                const signals = [1, 5, 9]
+                    .filter((index) => index < candles.length)
+                    .map((index) => ({ time: candles[index]!.time, type: "buy" as const, price: 100 }));
+                if (candles.length >= 16) {
+                    signals.push({ time: candles[candles.length - 1]!.time, type: "buy", price: 100 });
+                }
+                return signals;
+            },
+        };
+        const compactSelection = {
+            trades: [],
+            netProfit: 3,
+            netProfitPercent: 0,
+            winRate: 100,
+            expectancy: 1,
+            avgTrade: 1,
+            profitFactor: Number.POSITIVE_INFINITY,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 3,
+            winningTrades: 3,
+            losingTrades: 0,
+            avgWin: 1,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+        } as BacktestResult;
+        const output = await runAssetOpportunitySearch(makeInput({
+            settings: {
+                ...settings,
+                riskMode: "percentage",
+                executionModel: "next_open",
+                takeProfitEnabled: true,
+                takeProfitMode: "fixed",
+                takeProfitPercent: 1,
+            },
+            selectedStrategy: { key: "tp_timing", name: strategy.name, strategy },
+            assets: [{ symbol: "TP_TIMING", data }],
+            runIsSearch: async () => ({
+                results: [{
+                    key: "tp_timing",
+                    name: strategy.name,
+                    params: {},
+                    result: compactSelection,
+                    selectionResult: compactSelection,
+                    endpointAdjusted: false,
+                    endpointRemovedTrades: 0,
+                }],
+                totalCandidatesEvaluated: 1,
+            }),
+        }), makeCallbacks());
+
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.medianBarsToTp).to.equal(1);
+        expect(output.results[0]!.selectionResult.trades).to.deep.equal(
+            [],
+            "trade history is used transiently and is not attached to the scalar result",
+        );
+    });
+
     it("splitApplicationCandle reserves the latest closed candle", () => {
         const data = makeCandles([100, 101, 102, 103]);
         const { historical, applicationCandle, fullClosed } = splitApplicationCandle(data);

@@ -88,8 +88,10 @@ import {
 import { deriveStrategySeed } from "./finder-runner-shared";
 import { detectFreshEntry } from "./finder-fresh-entry";
 import {
+    calculateMedianBarsToTp,
     computeAssetSupportCounts,
     decideAssetGrade,
+    MEDIAN_BARS_TO_TP_MIN_HITS,
     type AssetPoolCandidate,
 } from "./finder-asset-opportunity-metrics";
 import {
@@ -1243,14 +1245,73 @@ async function searchOneAsset(args: {
         });
     }
 
+    // The server IS path intentionally keeps candidate results scalar. When
+    // that compact result has enough trades to qualify for the metric, replay
+    // only the selected winner on the exact IS window with trade history
+    // retained long enough to calculate the historical TP timing scalar.
+    let medianBarsToTp = calculateMedianBarsToTp(result.selectionResult, slicedHistorical);
+    const winnerIndex = result.historicalRank - 1;
+    const winnerCandidate = topK[winnerIndex];
+    const selectionTrades = Array.isArray(result.selectionResult.trades)
+        ? result.selectionResult.trades
+        : [];
+    if (
+        medianBarsToTp === null
+        && selectionTrades.length === 0
+        && result.selectionResult.totalTrades >= MEDIAN_BARS_TO_TP_MIN_HITS
+        && winnerCandidate
+    ) {
+        try {
+            const winnerSelection = await executeAssetCandidate({
+                candidate: winnerCandidate,
+                strategy: preparedStrategy,
+                data: slicedHistorical,
+                symbol,
+                interval: input.interval,
+                settings: input.settings,
+                capitalSettings: input.capitalSettings,
+                options: assetOptions,
+                exitStrategyCandidates: input.exitStrategyCandidates,
+                dataFetcher: input.dataFetcher,
+                useRustEnginePreference: input.useRustEnginePreference,
+            });
+            const preResolvedCapital = resolveCapitalSettingsFromRaw(
+                input.capitalSettings as unknown as Record<string, unknown>,
+            );
+            const selection = buildSelectionResult(
+                winnerSelection.result,
+                slicedHistorical[slicedHistorical.length - 1]?.time ?? null,
+                preResolvedCapital.initialCapital,
+            );
+            medianBarsToTp = calculateMedianBarsToTp(selection.result, slicedHistorical);
+            mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
+                rustAttemptedRuns: winnerSelection.engineDiagnostics?.rustAttempted ? 1 : 0,
+                rustCompletedRuns: winnerSelection.engineUsed === "rust" ? 1 : 0,
+                rustFallbackRuns: winnerSelection.engineUsed === "typescript"
+                    && winnerSelection.engineDiagnostics?.rustAttempted === true
+                    ? 1
+                    : 0,
+                typescriptCompletedRuns: winnerSelection.engineUsed === "typescript" ? 1 : 0,
+                typescriptReasons: winnerSelection.engineUsed === "typescript"
+                    && winnerSelection.engineDiagnostics?.typescriptReason
+                    ? [{ reason: winnerSelection.engineDiagnostics.typescriptReason, runs: 1 }]
+                    : [],
+            });
+        } catch (error) {
+            debugLogger.warn("finder.asset_opportunity.median_bars_to_tp_failed", {
+                symbol,
+                strategyKey: winnerCandidate.key,
+                reason: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+
     // Run OOS only for the winner. The reducer previously ran OOS for all K
     // candidates but only consumed the winner's verdict in `decideAssetGrade`;
     // the other K-1 OOS backtests were computed and discarded. The grade is
     // recomputed here with the winner's verdict attached.
-    let finalResult = result;
+    let finalResult = { ...result, medianBarsToTp };
     if (fixedOosBars.length > 0 && oosMeasurementMode === "fixed_horizon") {
-        const winnerIndex = result.historicalRank - 1;
-        const winnerCandidate = topK[winnerIndex];
         const winnerFresh = freshEvaluations[winnerIndex];
         if (winnerCandidate && winnerFresh?.direction && winnerFresh.latestSignalPrice !== null) {
             diagnostics.oosEvaluations += 1;
@@ -1275,8 +1336,6 @@ async function searchOneAsset(args: {
         }
     }
     if (fixedOosBars.length > 0 && oosMeasurementMode === "next_exit") {
-        const winnerIndex = result.historicalRank - 1;
-        const winnerCandidate = topK[winnerIndex];
         const winnerFresh = freshEvaluations[winnerIndex];
         if (winnerCandidate && winnerFresh?.direction) {
             diagnostics.oosEvaluations += 1;
@@ -1328,8 +1387,6 @@ async function searchOneAsset(args: {
         }
     }
     if (oosWindowData.length > 0) {
-        const winnerIndex = result.historicalRank - 1;
-        const winnerCandidate = topK[winnerIndex];
         if (winnerCandidate) {
             // Additive: a fixed-holdout evaluation may already have been
             // counted above; both modes can be active for the same asset.
