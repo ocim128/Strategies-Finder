@@ -1,9 +1,6 @@
-import { clearLocalDailyAssetCaches, markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
-import { dataManager } from "../data-manager";
-import { finderManager } from "../finder-manager";
+import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import { uiManager } from "../ui-manager";
-import { clearBatchDatasetCaches } from "../batch-backtest/batch-backtest-loader";
-import { clearRankPairsRecentLoaderCache } from "../rank-pairs/rank-pairs-recent-loader";
+import { invalidateLocalMarketData } from "../local-data-cache-invalidation";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { createIbkrDataDom, type IbkrDataDom } from "./ibkr-data-dom";
 import type { IbkrStreamEvent, IbkrSyncRunSnapshot } from "./ibkr-data-stream-types";
@@ -460,13 +457,7 @@ class IbkrDataService {
     }
 
     private async invalidateSyncedData(symbols: readonly string[], interval: unknown): Promise<void> {
-        if (symbols.length === 0) return;
-        const normalizedInterval = String(interval ?? "").trim().toLowerCase();
-        clearLocalDailyAssetCaches();
-        dataManager.invalidateLocalSeries(symbols, normalizedInterval ? [normalizedInterval] : undefined);
-        await finderManager.invalidateLocalDataCaches();
-        clearBatchDatasetCaches();
-        clearRankPairsRecentLoaderCache();
+        await invalidateLocalMarketData(symbols, interval);
     }
 
     private async copySymbols(): Promise<void> {

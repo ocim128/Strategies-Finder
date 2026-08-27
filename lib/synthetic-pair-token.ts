@@ -7,17 +7,14 @@
  * package), which fails to load when esbuild bundles `vite.config.ts` for the
  * Node dev server.
  *
- * Browser-side consumers continue to import `parseSyntheticPairToken` from
- * `lib/finder-manager.ts` (re-exported there for backward compat). New
- * server-side consumers should import from here directly.
+ * Browser and server consumers import this leaf directly so the parser does
+ * not pull browser-bound Finder state into the Vite config bundle.
  */
 
 import { isMarkedLocalStockSymbol } from "./local-daily-datasets";
 
-// Quote suffix list verbatim from `lib/finder-manager.ts` so this leaf produces
-// identical symbol resolution to the browser-side batch loader, which imports
-// `parseSyntheticPairToken` from finder-manager. Keep in sync if you change
-// either copy. (`lib/synthetic-pair-parser.ts` has its own
+// Quote suffix list used by the batch/Finder synthetic-pair contract.
+// (`lib/synthetic-pair-parser.ts` has its own
 // shorter list — that's a pre-existing duplication, intentionally untouched
 // here; do not "fix" it without auditing every synthetic-pair-parser caller.)
 const QUOTE_SUFFIXES = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'BRL'];

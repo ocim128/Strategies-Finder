@@ -24,7 +24,7 @@
  */
 
 import type { Plugin } from "vite";
-import { getHeapStatistics, deserialize, serialize } from "node:v8";
+import { deserialize, serialize } from "node:v8";
 import { mkdtempSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -52,6 +52,7 @@ import { runOpenScoreUsdReplay, type OpenScoreUsdTarget } from "./batch-open-sco
 import { createEmptyBacktestResult } from "../strategies/backtest/position-stats";
 import { registerSp500TopMeanRoutes, type BatchOwnerLocks } from "./sp500-top-mean-vite-routes";
 import { isValidRunId } from "./sp500-top-mean-artifact-store";
+import { getV8HeapLimitMb, resolveServerHeapWarning } from "../server-heap-guard";
 
 /**
  * Phase 3 MAX_ACTIVE: compute canonical universe counts from the submitted
@@ -117,10 +118,6 @@ const DEFAULT_ARTIFACT_RETENTION_MS = 10 * 60 * 1000;
  */
 const ORPHAN_SWEEP_STALE_MS = DEFAULT_ARTIFACT_RETENTION_MS + 60 * 60 * 1000;
 const HEAP_MB = 1024 * 1024;
-const LARGE_RUN_SYMBOL_THRESHOLD = 400;
-const VERY_LARGE_RUN_SYMBOL_THRESHOLD = 800;
-const LARGE_RUN_MIN_HEAP_MB = 8192;
-const VERY_LARGE_RUN_MIN_HEAP_MB = 12288;
 
 /**
  * Pagination cap for `GET /api/batch-backtest/status` row payloads. A tab that
@@ -932,28 +929,13 @@ function shouldSweepOrphanEntry(entry: string, now: number): boolean {
     }
 }
 
-function getV8HeapLimitMb(): number {
-    return Math.floor(getHeapStatistics().heap_size_limit / HEAP_MB);
-}
-
 export function resolveServerBatchHeapWarning(symbolCount: number, heapLimitMb = getV8HeapLimitMb()): string | null {
-    const normalizedCount = Math.max(0, Math.floor(Number.isFinite(symbolCount) ? symbolCount : 0));
-    const normalizedHeap = Math.max(0, Math.floor(Number.isFinite(heapLimitMb) ? heapLimitMb : 0));
-    const requiredHeapMb = normalizedCount >= VERY_LARGE_RUN_SYMBOL_THRESHOLD
-        ? VERY_LARGE_RUN_MIN_HEAP_MB
-        : normalizedCount >= LARGE_RUN_SYMBOL_THRESHOLD
-            ? LARGE_RUN_MIN_HEAP_MB
-            : 0;
-
-    if (requiredHeapMb === 0 || normalizedHeap >= requiredHeapMb) {
-        return null;
-    }
-
-    return [
-        `Server-side Batch needs more Node heap for ${normalizedCount} symbols.`,
-        `Current V8 heap limit is ~${normalizedHeap} MB; this run needs at least ${requiredHeapMb} MB.`,
+    return resolveServerHeapWarning(
+        symbolCount,
+        heapLimitMb,
+        "Batch",
         "Restart the app with run_playground.bat, or run: set NODE_OPTIONS=--max-old-space-size=16384 && npm run dev",
-    ].join(" ");
+    );
 }
 
 // ---------------------------------------------------------------------------
