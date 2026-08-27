@@ -683,6 +683,58 @@ describe("Asset Opportunity runner", () => {
         });
     });
 
+    it("matches a next-bar fill on the last visible holdout candle", async () => {
+        const strategy: Strategy = {
+            name: "NextExitVisibleBoundaryFill",
+            description: "signals one bar before the visible boundary",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                const signalCandle = data.find((candle) => candle.close === 103);
+                return signalCandle
+                    ? [{ time: signalCandle.time, type: "buy" as const, price: signalCandle.close }]
+                    : [];
+            },
+        };
+        for (const executionModel of ["next_open", "next_close"] as const) {
+            const symbol = `NEXT_EXIT_VISIBLE_BOUNDARY_${executionModel}`;
+            const output = await runAssetOpportunitySearch(makeInput({
+                options: makeOptions({
+                    assetOpportunity: {
+                        symbols: [symbol],
+                        candidatePoolSize: 1,
+                        minFreshSupport: 1,
+                        oosMeasurementMode: "next_exit",
+                        oosIgnoreLastBars: 3,
+                    },
+                }),
+                settings: {
+                    ...settings,
+                    executionModel,
+                    disableSignalExits: true,
+                    riskMaxHoldEnabled: true,
+                    riskMaxHoldBars: 2,
+                },
+                selectedStrategy: {
+                    key: "next_exit_visible_boundary",
+                    name: strategy.name,
+                    strategy,
+                },
+                assets: [{
+                    symbol,
+                    data: makeCandles([100, 101, 102, 103, 104, 105, 106, 107]),
+                }],
+            }), makeCallbacks());
+
+            expect(output.results).to.have.length(1);
+            expect(output.results[0]!.oosNextExitMetrics).to.deep.include({
+                status: "exited",
+                exitReason: "time_stop",
+                barsHeld: 2,
+            });
+        }
+    });
+
     it("runs OOS only for the winner, not for every top-K candidate", async () => {
         // Intent lock: OOS is the largest CPU bucket per asset, and the
         // reducer only consumes the winner's verdict in `decideAssetGrade`.

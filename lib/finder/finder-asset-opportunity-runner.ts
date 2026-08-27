@@ -1216,9 +1216,22 @@ async function searchOneAsset(args: {
         const winnerFresh = freshEvaluations[winnerIndex];
         if (winnerCandidate && winnerFresh?.direction) {
             diagnostics.oosEvaluations += 1;
-            const boundaryEntryTime = winnerFresh.fillTiming === "signal_close"
-                ? winnerFresh.latestSignalTime
-                : fixedOosBars[0]?.time ?? null;
+            // The fresh-entry detector accepts a one-bar-old signal for
+            // next-bar execution. That signal can fill on the last visible
+            // candle, so the boundary entry is the signal candle plus the
+            // model's execution shift rather than always the first hidden
+            // candle.
+            const latestSignalSeconds = parseTimeToUnixSeconds(winnerFresh.latestSignalTime);
+            const signalIndex = latestSignalSeconds === null
+                ? -1
+                : fullClosed.findIndex((candle) =>
+                    parseTimeToUnixSeconds(candle.time) === latestSignalSeconds);
+            const fillIndex = signalIndex >= 0
+                ? signalIndex + (winnerFresh.fillTiming === "signal_close" ? 0 : 1)
+                : -1;
+            const boundaryEntryTime = fillIndex >= 0
+                ? fullClosed[fillIndex]?.time ?? null
+                : null;
             const winnerNextExit = await runCandidateNextExitOnAsset({
                 candidate: winnerCandidate,
                 strategy: preparedStrategy,
