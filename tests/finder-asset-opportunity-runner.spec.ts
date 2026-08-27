@@ -683,6 +683,52 @@ describe("Asset Opportunity runner", () => {
         });
     });
 
+    it("does not treat a repeated next-exit signal as fresh while max-open-trades is full", async () => {
+        const strategy: Strategy = {
+            name: "NextExitBlockedRepeat",
+            description: "repeats a signal while the existing position reaches max hold",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                return data
+                    .filter((candle) => candle.close === 103 || candle.close === 104)
+                    .map((candle) => ({
+                        time: candle.time,
+                        type: "buy" as const,
+                        price: candle.close,
+                    }));
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({
+                assetOpportunity: {
+                    symbols: ["NEXT_EXIT_BLOCKED_REPEAT"],
+                    candidatePoolSize: 1,
+                    minFreshSupport: 1,
+                    oosMeasurementMode: "next_exit",
+                    oosIgnoreLastBars: 2,
+                },
+            }),
+            settings: {
+                ...settings,
+                executionModel: "next_open",
+                disableSignalExits: true,
+                maxOpenTrades: 1,
+                riskMaxHoldEnabled: true,
+                riskMaxHoldBars: 2,
+            },
+            selectedStrategy: { key: "next_exit_blocked_repeat", name: strategy.name, strategy },
+            assets: [{
+                symbol: "NEXT_EXIT_BLOCKED_REPEAT",
+                data: makeCandles([100, 101, 102, 103, 104, 105, 106, 107]),
+            }],
+        }), makeCallbacks());
+
+        expect(output.results).to.have.length(0);
+        expect(output.outcomes[0]!.kind).to.equal("no_fresh_entry");
+        expect(output.outcomes[0]!.diagnostics?.freshEntryRechecks).to.equal(1);
+    });
+
     it("matches a next-bar fill on the last visible holdout candle", async () => {
         const strategy: Strategy = {
             name: "NextExitVisibleBoundaryFill",

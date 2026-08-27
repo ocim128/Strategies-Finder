@@ -773,6 +773,7 @@ async function searchOneAsset(args: {
     const oosMeasurementMode = normalizeFinderAssetOosMeasurementMode(
         input.options.assetOpportunity?.oosMeasurementMode,
     );
+    const needsExecutableFreshRecheck = oosMeasurementMode === "next_exit";
     const oosHorizons = normalizeFinderAssetOosHorizons(input.options.assetOpportunity?.oosHorizons);
     const evalLastBars = normalizeFinderAssetEvalLastBars(input.options.assetOpportunity?.evalLastBars);
     if (oosIgnoreLastBars > 0 && fullClosed.length - oosIgnoreLastBars < 2) {
@@ -789,16 +790,16 @@ async function searchOneAsset(args: {
         ? fullClosed.slice(0, -oosIgnoreLastBars)
         : fullClosed;
     // Retained-signal reuse for fresh-entry detection is only parity-safe for
-    // non-`signal_close` execution models: their recheck runs `signalsOnly`,
-    // so `detectFreshEntry` sees an empty-trades result that the retained
-    // in-sample signals reproduce exactly. A `signal_close` recheck instead
-    // needs the re-simulated trade list (the compact in-sample fast path
-    // drops trades), so `signal_close` still uses the Rust fresh batch path
-    // or the full-data TypeScript fallback — and
-    // keeps the application candle out of the search window, since including
-    // it only exists to enable reuse.
+    // the non-`signal_close` fixed-horizon paths: their recheck runs
+    // `signalsOnly`, so `detectFreshEntry` sees an empty-trades result that
+    // the retained in-sample signals reproduce exactly. `signal_close` and
+    // `next_exit` need the re-simulated trade list (`next_exit` must honor
+    // max-open-trades and other execution gates), so both keep the
+    // application candle out of the search window and use an execution-aware
+    // recheck.
     const executionModel = input.settings.executionModel ?? "signal_close";
-    const canReuseIsSignalsForFreshModel = executionModel !== "signal_close";
+    const canReuseIsSignalsForFreshModel = executionModel !== "signal_close"
+        && !needsExecutableFreshRecheck;
     // With no fixed holdout, no data slice, and no evaluation window, the
     // in-sample search includes the reserved application candle so the
     // fresh-entry check below can reuse the candidate run's retained signals
@@ -860,17 +861,19 @@ async function searchOneAsset(args: {
     // also matches the recheck window (always in fixed-holdout mode; in
     // no-holdout mode when the application candle was included above), the
     // retained in-sample signals are sufficient and the re-execution is
-    // skipped. A fixed holdout with a recency cap is also safe for next-bar
-    // models: the capped in-sample window is a suffix ending at the same
-    // boundary, and fresh detection only reads signals from the latest one or
-    // two boundary bars. Any other data slice or execution model keeps the
-    // existing recheck path.
+    // skipped. A fixed holdout with a recency cap is also safe for fixed-horizon
+    // next-bar models: the capped in-sample window is a suffix ending at the
+    // same boundary, and fresh detection only reads signals from the latest
+    // one or two boundary bars. `next_exit` intentionally keeps the full
+    // execution-aware recheck path because signal-only reuse cannot see
+    // position-capacity or cooldown gates.
     const recheckData = oosIgnoreLastBars > 0 ? visibleValidationData : fullClosed;
     const sameSignalBoundary = slicedHistorical.length > 0
         && recheckData.length > slicedHistorical.length
         && timeKey(slicedHistorical[slicedHistorical.length - 1]!.time)
             === timeKey(recheckData[recheckData.length - 1]!.time);
     const canReuseCappedNextBarSignals = executionModel !== "signal_close"
+        && !needsExecutableFreshRecheck
         && oosIgnoreLastBars > 0
         && evalLastBars > 0
         && (input.options.dataSlice ?? "all") === "all"
@@ -942,9 +945,9 @@ async function searchOneAsset(args: {
     const freshSignalData = resolveFreshSignalWindow({
         boundaryData: recheckData,
         slicedHistorical,
-        // signal_close replay needs the full capped evaluation window to
-        // reconstruct the latest trade. Signal-only next-bar detection only
-        // needs the accepted freshness range (0..1 bars) plus warmup.
+        // signal_close and next_exit replay need the full boundary timeline
+        // to reconstruct the latest trade. Fixed-horizon next-bar detection
+        // only needs the accepted freshness range (0..1 bars) plus warmup.
         signalLookbackBars: executionModel === "signal_close"
             ? evalLastBars
             : Math.max(2, resolveAssetOpportunityFreshnessBars(input.settings) + 1),
@@ -952,12 +955,14 @@ async function searchOneAsset(args: {
         candidates: topK,
         settings: input.settings,
         crossSymbol: Boolean(input.dataFetcher || selectedStrategy.strategy.crossSymbolConfig),
-        // signal_close needs the batch path because its fresh check consumes
-        // replayed trades. next_open/next_close only consume generated
-        // signals, so their signal-only recheck can safely use the same
-        // bounded recent window even without a Rust batch executor.
-        canUseBoundedSignalWindow: executionModel !== "signal_close"
-            || Boolean(input.freshEntryBatch),
+        // signal_close and next_exit consume replayed trades. Fixed-horizon
+        // next_open/next_close only consume generated signals, so their
+        // signal-only recheck can safely use the same bounded recent window
+        // even without a Rust batch executor.
+        canUseBoundedSignalWindow: !needsExecutableFreshRecheck && (
+            executionModel !== "signal_close"
+            || Boolean(input.freshEntryBatch)
+        ),
     });
     diagnostics.freshSignalWindowBars = freshSignalData?.length ?? 0;
 
@@ -1511,9 +1516,10 @@ function buildFreshEntryEvaluation(args: {
 
 /**
  * Re-run one candidate's strategy on the boundary data and detect the
- * fresh-entry status. Non-signal-close paths may generate signals on a
- * bounded recent window first; detection still runs against the full boundary
- * timeline so signal age and fill timing retain their original meaning.
+ * fresh-entry status. Fixed-horizon non-signal-close paths may generate
+ * signals on a bounded recent window first; next-exit always replays the full
+ * boundary timeline so execution gates and the existing position state are
+ * included in freshness.
  *
  * Returns the parallel-array entry consumed by `reduceAssetTopKToResult`.
  */
@@ -1531,6 +1537,7 @@ function regenerateSignalsAndDetectFresh(args: {
     dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
 }): Promise<AssetFreshEvaluation> {
+    const needsExecutableFreshRecheck = args.options.assetOpportunity?.oosMeasurementMode === "next_exit";
     const signalData = args.signalData ?? args.fullClosed;
     return executeAssetCandidate({
         candidate: args.candidate,
@@ -1544,7 +1551,7 @@ function regenerateSignalsAndDetectFresh(args: {
         exitStrategyCandidates: args.exitStrategyCandidates,
         dataFetcher: args.dataFetcher,
         useRustEnginePreference: args.useRustEnginePreference,
-        signalOnly: args.settings.executionModel !== "signal_close",
+        signalOnly: args.settings.executionModel !== "signal_close" && !needsExecutableFreshRecheck,
     }).then(({ result, signals, engineUsed, engineDiagnostics }) => {
         const boundarySignals = args.signalData
             ? alignSignalsToBoundary(signals, args.fullClosed)

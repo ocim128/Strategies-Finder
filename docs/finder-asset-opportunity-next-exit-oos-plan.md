@@ -74,6 +74,12 @@ state, adaptive state, future signal exits, and max-hold timing remain
 consistent with normal backtesting. It runs only after the winner is selected;
 hidden data therefore cannot influence candidate ranking.
 
+Next-exit freshness is execution-aware as well: the candidate recheck must use
+the full visible boundary timeline and retain trades before reduction. A raw
+repeated signal is not a fresh opportunity when the normal engine rejects its
+entry because `maxOpenTrades`, cooldown, or another execution gate is active.
+Fixed-horizon next-bar freshness keeps its existing signal-only optimization.
+
 ## Phase 1 — Add the mode and result contracts
 
 ### Objective
@@ -127,7 +133,7 @@ snapshot/stream type updates.
 The new mode can be represented end-to-end in types, while a request with no
 mode produces exactly the current fixed-horizon contract.
 
-## Phase 2 — Implement winner-only next-exit replay
+## Phase 2 — Implement execution-aware next-exit replay
 
 ### Objective
 
@@ -144,6 +150,12 @@ without duplicating exit logic or allowing hidden data to affect selection.
   parameter normalization, Finder risk overrides, exit-strategy candidate,
   `dataFetcher`, and `useRustEnginePreference` already used by
   `executeAssetCandidate(...)`.
+- When `oosMeasurementMode` is `next_exit`, use this execution-aware replay for
+  each top-K fresh-entry recheck before reduction. Do not reuse retained signals
+  or a bounded signal-only window, because the recheck must preserve the
+  existing position state and normal entry gates. The additional work is
+  limited to the configured top-K pool; fixed-horizon paths retain their
+  existing reuse/bounded-window behavior.
 - Retain trade history and identify the boundary entry by direction and the
   expected modeled entry time: the visible signal time for `signal_close`, or
   the first hidden candle for `next_open`/`next_close`. Use existing time

@@ -22,9 +22,11 @@
  *   sort priority requires them.
  * - Fresh-entry recheck (signal_close): full engine, trade history retained
  *   (`detectFreshEntry` reads `latestTrade`), no full analytics.
- * - Fresh-entry recheck (next_open/next_close): same as above plus
- *   `signalsOnly` (trades are empty; retained in-sample signals drive fresh
- *   detection).
+ * - Fresh-entry recheck (next_open/next_close, fixed-horizon mode): same as
+ *   above plus `signalsOnly` (trades are empty; retained in-sample signals
+ *   drive fresh detection).
+ * - Fresh-entry recheck (next_exit): full engine replay with trade history;
+ *   freshness must honor execution gates such as max-open-trades and cooldown.
  * - OOS validation pass: full engine, trade history retained.
  * - Winner analytics recompute: compact engine, trade history, Sharpe +
  *   drawdown.
