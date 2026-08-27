@@ -501,6 +501,14 @@ export class FinderUI {
             metrics.appendChild(this.createMetricChip(`DD ${selection.maxDrawdownPercent.toFixed(2)}%`));
             metrics.appendChild(this.createMetricChip(`Sharpe ${selection.sharpeRatio.toFixed(2)}`));
             metrics.appendChild(this.createMetricChip(`Trades ${selection.totalTrades}`));
+            const medianBarsToTp = item.medianBarsToTp;
+            metrics.appendChild(this.createMetricChip(
+                typeof medianBarsToTp === "number"
+                    && Number.isFinite(medianBarsToTp)
+                    && medianBarsToTp >= 0
+                    ? `Median TP ${Number.isInteger(medianBarsToTp) ? medianBarsToTp : medianBarsToTp.toFixed(1)} bars`
+                    : "Median TP --",
+            ));
             if (item.oosResult && item.oosVerdict) {
                 metrics.appendChild(this.createOosMetricChip(
                     item.oosResult.netProfit,

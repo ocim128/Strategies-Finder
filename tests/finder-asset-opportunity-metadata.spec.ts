@@ -176,6 +176,16 @@ describe("Asset Opportunity metadata payload serializer", () => {
         expect(payload.exitStrategy).to.equal(null);
     });
 
+    it("includes the median TP scalar in Copy Top Results when available", () => {
+        const payload = buildAssetOpportunityMetadataPayload({
+            result: makeAssetResult({ medianBarsToTp: 4.5 }),
+            rank: 1,
+            interval: "1h",
+            strategyMetadata: null,
+        });
+        expect(payload.medianBarsToTp).to.equal(4.5);
+    });
+
     it("builds a compact performance-only archive row", () => {
         const payload = buildAssetOpportunityPerformancePayload({
             result: makeAssetResult(),
@@ -418,4 +428,3 @@ describe("Asset Opportunity metadata payload serializer", () => {
         expect(summaries[1]!.forwardPnlPercentByHorizon).to.deep.equal({ 1: null, 3: null });
     });
 });
-

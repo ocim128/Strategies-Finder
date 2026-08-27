@@ -41,6 +41,8 @@ export interface AssetOpportunityMetadataPayload {
     historicalRank: number;
     totalCandidatesEvaluated: number;
     selectionMetrics: FinderAssetOpportunityResult["selectionResult"];
+    /** Optional because older persisted snapshots predate this metric. */
+    medianBarsToTp?: FinderAssetOpportunityResult["medianBarsToTp"];
     support: FinderAssetOpportunityResult["support"];
     grade: FinderAssetOpportunityResult["grade"];
     oos: {
@@ -80,6 +82,7 @@ export function buildAssetOpportunityMetadataPayload(args: {
         historicalRank: result.historicalRank,
         totalCandidatesEvaluated: result.totalCandidatesEvaluated,
         selectionMetrics: result.selectionResult,
+        ...(result.medianBarsToTp !== undefined ? { medianBarsToTp: result.medianBarsToTp } : {}),
         support: result.support,
         grade: result.grade,
         oos: result.oosResult && result.oosVerdict

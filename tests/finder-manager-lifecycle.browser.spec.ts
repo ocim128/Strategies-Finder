@@ -20,6 +20,7 @@ import { ASSET_OPPORTUNITY_ALL_SORTS } from "../lib/finder/finder-asset-opportun
 import { createFakeFinderElement } from "./helpers/fake-finder-manager-dom";
 import type { FinderRunStatusSnapshot } from "../lib/finder/server/finder-stream-types";
 import type {
+    FinderAssetOpportunityResult,
     FinderStrategyQualityResult,
     FinderUniverseCandidate,
     FinderUniverseSymbolResult,
@@ -674,5 +675,72 @@ describe("FinderUI lazy Universe symbol breakdowns (audit Finding 6)", () => {
 
         details.dispatchEvent({ type: "toggle" });
         expect(symbolRowCount(details)).to.equal(2);
+    });
+});
+
+describe("FinderUI Asset Opportunity metric presentation", () => {
+    function makeAssetResult(medianBarsToTp: number | null): FinderAssetOpportunityResult {
+        const backtest = {
+            trades: [],
+            equityCurve: [],
+            netProfit: 10,
+            netProfitPercent: 1,
+            winRate: 50,
+            expectancy: 1,
+            avgTrade: 1,
+            profitFactor: 2,
+            maxDrawdown: 1,
+            maxDrawdownPercent: 1,
+            totalTrades: 10,
+            winningTrades: 5,
+            losingTrades: 5,
+            avgWin: 2,
+            avgLoss: 1,
+            sharpeRatio: 1,
+        };
+        return {
+            symbol: medianBarsToTp === null ? "MISSING" : "FAST",
+            strategyKey: "ui_test",
+            strategyName: "UI Test",
+            params: {},
+            historicalRank: 1,
+            totalCandidatesEvaluated: 1,
+            isHistoricalBest: true,
+            freshStatus: "fresh",
+            direction: "long",
+            latestSignalTime: null,
+            signalAgeBars: 0,
+            fillTiming: "signal_close",
+            selectionResult: backtest,
+            medianBarsToTp,
+            support: {
+                freshLongCandidates: 1,
+                freshShortCandidates: 0,
+                freshSameDirection: 1,
+                poolSize: 1,
+                bestFreshRank: 1,
+                directionAgreementRatio: 1,
+            },
+            grade: "select",
+        };
+    }
+
+    function collectText(root: any): string {
+        return [
+            root.textContent ?? "",
+            ...(root.children ?? []).map((child: any) => collectText(child)),
+        ].join(" ");
+    }
+
+    it("renders the median TP value and makes missing legacy values explicit", () => {
+        const ui = new FinderUI();
+        ui.renderAssetOpportunityResults([
+            makeAssetResult(3.5),
+            makeAssetResult(null),
+        ]);
+
+        const text = collectText(elsById.get("finderList"));
+        expect(text).to.include("Median TP 3.5 bars");
+        expect(text).to.include("Median TP --");
     });
 });
