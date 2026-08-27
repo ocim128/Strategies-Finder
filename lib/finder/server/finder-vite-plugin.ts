@@ -128,6 +128,10 @@ import {
     appendAssetOpportunityArchiveBlock,
     appendAssetOpportunityArchivePairSummary,
     appendAssetOpportunityArchiveRunConfig,
+    buildAssetOpportunityTupleKey,
+    countPriorAssetOpportunityTupleRecurrence,
+    readAssetOpportunityArchiveTupleSnapshots,
+    type AssetOpportunityArchiveTupleSnapshot,
     type AssetOpportunityArchiveAppend,
 } from "./finder-asset-opportunity-archive";
 import { captureTradeFilter } from "../finder-config-capture";
@@ -1688,6 +1692,20 @@ export async function processFinderAssetOpportunityBatchRun(
         });
     }
 
+    // Recurrence is point-in-time: only snapshots whose reserved holdout is
+    // larger (therefore whose data cutoff is earlier under the pinned batch
+    // convention) can contribute to the current row. Load the archive once so
+    // every resort sees the same historical evidence.
+    let archiveTupleSnapshots: AssetOpportunityArchiveTupleSnapshot[] = [];
+    try {
+        archiveTupleSnapshots = await readAssetOpportunityArchiveTupleSnapshots(archiveRoot);
+    } catch (error) {
+        debugLogger.warn("finder.asset_opportunity_batch.recurrence_archive_read_failed", {
+            runId: input.runId,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+
     const isCancelled = () => runOwner !== owner || input.abortSignal.aborted;
     const lastIteration: {
         results: FinderAssetOpportunityResult[];
@@ -1748,6 +1766,17 @@ export async function processFinderAssetOpportunityBatchRun(
         holdoutBars: number,
         iteration: AssetOpportunityIterationResult,
     ): Promise<void> => {
+        iteration = {
+            ...iteration,
+            results: iteration.results.map((result) => ({
+                ...result,
+                priorTupleRecurrenceCount: countPriorAssetOpportunityTupleRecurrence({
+                    result,
+                    currentHoldoutBars: holdoutBars,
+                    snapshots: archiveTupleSnapshots,
+                }),
+            })),
+        };
         snapshot.batch = {
             ...snapshot.batch!,
             currentHoldoutBars: holdoutBars,
@@ -1832,6 +1861,13 @@ export async function processFinderAssetOpportunityBatchRun(
             });
             throw new BatchArchiveFatalSentinel(message);
         }
+
+        archiveTupleSnapshots.push({
+            timestamp: new Date().toISOString(),
+            batchRunId: input.runId,
+            holdoutBars,
+            tupleKeys: new Set(iteration.results.map(buildAssetOpportunityTupleKey)),
+        });
 
         // Retain ONLY a successfully archived iteration for re-sort + terminal
         // view. A failed archive must not expose rows that have no durable

@@ -713,6 +713,19 @@ describe("FinderUI Asset Opportunity metric presentation", () => {
             fillTiming: "signal_close",
             selectionResult: backtest,
             medianBarsToTp,
+            ...(medianBarsToTp !== null
+                ? {
+                    priorTupleRecurrenceCount: 2,
+                    strategyCoverageCount: 3,
+                    barrierExitShare: 0.8,
+                    entryHourConcentration: 0.75,
+                    tradeGapUniformity: 1.25,
+                    topDecileProfitShare: 0.4,
+                    winnerLoserHoldGapBars: -2,
+                    entryPriceRegimeMembership: 0.9,
+                    equityPathLinearity: 0.85,
+                }
+                : {}),
             support: {
                 freshLongCandidates: 1,
                 freshShortCandidates: 0,
@@ -742,5 +755,15 @@ describe("FinderUI Asset Opportunity metric presentation", () => {
         const text = collectText(elsById.get("finderList"));
         expect(text).to.include("Median TP 3.5 bars");
         expect(text).to.include("Median TP --");
+        expect(text).to.include("Recurrence 2");
+        expect(text).to.include("Coverage 3 strategies");
+        expect(text).to.include("Barrier 80%");
+        expect(text).to.include("Hour 0.75");
+        expect(text).to.include("Gap 1.25");
+        expect(text).to.include("Top Decile 40%");
+        expect(text).to.include("Win-Lose Hold -2.0 bars");
+        expect(text).to.include("Price Regime 0.90");
+        expect(text).to.include("Path R² 0.85");
+        expect(text).to.include("Coverage --");
     });
 });

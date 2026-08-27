@@ -88,7 +88,7 @@ import {
 import { deriveStrategySeed } from "./finder-runner-shared";
 import { detectFreshEntry } from "./finder-fresh-entry";
 import {
-    calculateMedianBarsToTp,
+    calculateAssetOpportunityDerivedMetrics,
     computeAssetSupportCounts,
     decideAssetGrade,
     MEDIAN_BARS_TO_TP_MIN_HITS,
@@ -1249,15 +1249,19 @@ async function searchOneAsset(args: {
     // that compact result has enough trades to qualify for the metric, replay
     // only the selected winner on the exact IS window with trade history
     // retained long enough to calculate the historical TP timing scalar.
-    let medianBarsToTp = calculateMedianBarsToTp(result.selectionResult, slicedHistorical);
     const winnerIndex = result.historicalRank - 1;
     const winnerCandidate = topK[winnerIndex];
+    const winnerFresh = freshEvaluations[winnerIndex];
     const selectionTrades = Array.isArray(result.selectionResult.trades)
         ? result.selectionResult.trades
         : [];
+    let derivedMetrics = calculateAssetOpportunityDerivedMetrics({
+        result: result.selectionResult,
+        candles: slicedHistorical,
+        freshEntryPrice: winnerFresh?.freshEntryPrice ?? null,
+    });
     if (
-        medianBarsToTp === null
-        && selectionTrades.length === 0
+        selectionTrades.length === 0
         && result.selectionResult.totalTrades >= MEDIAN_BARS_TO_TP_MIN_HITS
         && winnerCandidate
     ) {
@@ -1283,7 +1287,11 @@ async function searchOneAsset(args: {
                 slicedHistorical[slicedHistorical.length - 1]?.time ?? null,
                 preResolvedCapital.initialCapital,
             );
-            medianBarsToTp = calculateMedianBarsToTp(selection.result, slicedHistorical);
+            derivedMetrics = calculateAssetOpportunityDerivedMetrics({
+                result: selection.result,
+                candles: slicedHistorical,
+                freshEntryPrice: winnerFresh?.freshEntryPrice ?? null,
+            });
             mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
                 rustAttemptedRuns: winnerSelection.engineDiagnostics?.rustAttempted ? 1 : 0,
                 rustCompletedRuns: winnerSelection.engineUsed === "rust" ? 1 : 0,
@@ -1298,7 +1306,7 @@ async function searchOneAsset(args: {
                     : [],
             });
         } catch (error) {
-            debugLogger.warn("finder.asset_opportunity.median_bars_to_tp_failed", {
+            debugLogger.warn("finder.asset_opportunity.derived_metrics_failed", {
                 symbol,
                 strategyKey: winnerCandidate.key,
                 reason: error instanceof Error ? error.message : String(error),
@@ -1310,7 +1318,11 @@ async function searchOneAsset(args: {
     // candidates but only consumed the winner's verdict in `decideAssetGrade`;
     // the other K-1 OOS backtests were computed and discarded. The grade is
     // recomputed here with the winner's verdict attached.
-    let finalResult = { ...result, medianBarsToTp };
+    let finalResult = {
+        ...result,
+        ...derivedMetrics,
+        priorTupleRecurrenceCount: 0,
+    };
     if (fixedOosBars.length > 0 && oosMeasurementMode === "fixed_horizon") {
         const winnerFresh = freshEvaluations[winnerIndex];
         if (winnerCandidate && winnerFresh?.direction && winnerFresh.latestSignalPrice !== null) {
@@ -1537,6 +1549,8 @@ type AssetFreshEvaluation = {
     isOpen: boolean;
     latestTradeEntryTime: number | null;
     latestSignalPrice: number | null;
+    /** Modeled fill price of the fresh entry, when the fill candle exists. */
+    freshEntryPrice: number | null;
     engineUsed: "rust" | "typescript";
     rustAttempted: boolean;
     typescriptReason?: string;
@@ -1587,6 +1601,19 @@ function detectFreshFromRetainedSignals(args: {
             signalTime: detected.latestSignalTime,
             fallback: detected.latestTrade?.entryPrice ?? null,
         }),
+        freshEntryPrice: resolveFreshEntryPrice({
+            latestTrade: detected.latestTrade,
+            candles: args.candles,
+            settings: args.settings,
+            signalTime: detected.latestSignalTime,
+            signalPrice: resolveLatestSignalPrice({
+                signals: args.signals,
+                candle: args.candles[args.candles.length - 1]!,
+                direction: detected.direction,
+                signalTime: detected.latestSignalTime,
+                fallback: null,
+            }),
+        }),
         engineUsed: "typescript",
         rustAttempted: false,
         signalsReused: true,
@@ -1625,6 +1652,19 @@ function buildFreshEntryEvaluation(args: {
             direction: detected.direction,
             signalTime: detected.latestSignalTime,
             fallback: detected.latestTrade?.entryPrice ?? null,
+        }),
+        freshEntryPrice: resolveFreshEntryPrice({
+            latestTrade: detected.latestTrade,
+            candles: args.candles,
+            settings: args.settings,
+            signalTime: detected.latestSignalTime,
+            signalPrice: resolveLatestSignalPrice({
+                signals: args.signals,
+                candle: args.candles[args.candles.length - 1]!,
+                direction: detected.direction,
+                signalTime: detected.latestSignalTime,
+                fallback: null,
+            }),
         }),
         engineUsed: args.engineUsed,
         rustAttempted: args.rustAttempted,
@@ -1703,6 +1743,19 @@ function regenerateSignalsAndDetectFresh(args: {
                 signalTime: detected.latestSignalTime,
                 fallback: detected.latestTrade?.entryPrice ?? null,
             }),
+            freshEntryPrice: resolveFreshEntryPrice({
+                latestTrade: detected.latestTrade,
+                candles: args.fullClosed,
+                settings: args.settings,
+                signalTime: detected.latestSignalTime,
+                signalPrice: resolveLatestSignalPrice({
+                    signals: boundarySignals,
+                    candle: args.fullClosed[args.fullClosed.length - 1]!,
+                    direction: detected.direction,
+                    signalTime: detected.latestSignalTime,
+                    fallback: null,
+                }),
+            }),
             engineUsed,
             rustAttempted: engineDiagnostics?.rustAttempted === true,
             ...(engineDiagnostics?.typescriptReason
@@ -1730,6 +1783,39 @@ function resolveLatestSignalPrice(args: {
         }
     }
     return args.fallback;
+}
+
+function resolveFreshEntryPrice(args: {
+    latestTrade: BacktestResult["trades"][number] | null;
+    candles: OHLCVData[];
+    settings: BacktestSettings;
+    signalTime: Time | null;
+    signalPrice: number | null;
+}): number | null {
+    if (args.signalTime === null) {
+        return args.latestTrade && Number.isFinite(args.latestTrade.entryPrice)
+            ? args.latestTrade.entryPrice
+            : null;
+    }
+    const signalSeconds = parseTimeToUnixSeconds(args.signalTime);
+    if (signalSeconds === null) return null;
+    const signalIndex = args.candles.findIndex((candle) => parseTimeToUnixSeconds(candle.time) === signalSeconds);
+    if (signalIndex < 0) return null;
+    const fillIndex = signalIndex + (args.settings.executionModel === "signal_close" ? 0 : 1);
+    const entryIndex = args.latestTrade
+        ? args.candles.findIndex((candle) =>
+            parseTimeToUnixSeconds(candle.time) === parseTimeToUnixSeconds(args.latestTrade!.entryTime))
+        : -1;
+    if (args.latestTrade && entryIndex === fillIndex && Number.isFinite(args.latestTrade.entryPrice)) {
+        return args.latestTrade.entryPrice;
+    }
+    if (args.settings.executionModel === "signal_close") {
+        return args.signalPrice !== null && Number.isFinite(args.signalPrice) ? args.signalPrice : null;
+    }
+    const fillCandle = args.candles[fillIndex];
+    if (!fillCandle) return null;
+    const price = args.settings.executionModel === "next_open" ? fillCandle.open : fillCandle.close;
+    return Number.isFinite(price) ? price : null;
 }
 
 async function executeAssetCandidate(args: {

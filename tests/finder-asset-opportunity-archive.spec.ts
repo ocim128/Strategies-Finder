@@ -11,6 +11,7 @@ import {
     buildAssetOpportunityArchiveFilename,
     buildAssetOpportunityPairSummaryBlockText,
     buildAssetOpportunityPairSummaryFilename,
+    readAssetOpportunityArchiveTupleSnapshots,
     resolveAssetOpportunityArchiveDir,
 } from "../lib/finder/server/finder-asset-opportunity-archive";
 
@@ -88,6 +89,38 @@ describe("Asset Opportunity archive writer", () => {
             // so two blocks produce four separator lines and the first block is
             // never overwritten.
             expect(content.match(/^={80}$/gm) ?? []).to.have.length(4);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("reads one tuple snapshot across all sort blocks for a holdout", async () => {
+        const root = mkdtempSync(path.join(tmpdir(), "finder-archive-"));
+        try {
+            const tuple = {
+                symbol: "AAA",
+                strategyId: "strategy",
+                candidateFingerprint: "fp",
+            };
+            await appendAssetOpportunityArchiveBlock({
+                root,
+                batchRunId: "batch-1",
+                holdoutBars: 10,
+                sortMetric: "expectancy",
+                topResults: [tuple],
+                timestamp: "2026-01-01T00:00:00.000Z",
+            });
+            await appendAssetOpportunityArchiveBlock({
+                root,
+                batchRunId: "batch-1",
+                holdoutBars: 10,
+                sortMetric: "netProfit",
+                topResults: [tuple],
+                timestamp: "2026-01-01T00:00:00.000Z",
+            });
+            const snapshots = await readAssetOpportunityArchiveTupleSnapshots(root);
+            expect(snapshots).to.have.length(1);
+            expect([...snapshots[0]!.tupleKeys]).to.deep.equal(["AAA|strategy|fp"]);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

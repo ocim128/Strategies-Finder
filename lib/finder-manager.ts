@@ -62,6 +62,15 @@ import {
 	TOTAL_TRADES_SATURATION_PERCENTILE,
 	T_STAT_EDGE_METRIC,
 	MEDIAN_BARS_TO_TP_METRIC,
+	PRIOR_TUPLE_RECURRENCE_METRIC,
+	STRATEGY_COVERAGE_GATE_METRIC,
+	BARRIER_EXIT_SHARE_METRIC,
+	ENTRY_HOUR_CONCENTRATION_METRIC,
+	TRADE_GAP_UNIFORMITY_METRIC,
+	TOP_DECILE_PROFIT_SHARE_METRIC,
+	WINNER_LOSER_HOLD_GAP_BARS_METRIC,
+	ENTRY_PRICE_REGIME_MEMBERSHIP_METRIC,
+	EQUITY_PATH_LINEARITY_METRIC,
 	INVERTED_NET_PROFIT_METRIC,
 	INVERTED_EXPECTANCY_METRIC,
 	INVERTED_AVERAGE_GAIN_METRIC,
@@ -3901,6 +3910,24 @@ export class FinderManager {
 										? "T-Stat of Edge (significance)"
 										: metric === MEDIAN_BARS_TO_TP_METRIC
 											? "Median Bars To Take Profit (lower first)"
+										: metric === PRIOR_TUPLE_RECURRENCE_METRIC
+											? "Prior Fold Tuple Recurrence"
+										: metric === STRATEGY_COVERAGE_GATE_METRIC
+											? "Strategy Coverage Gate (PF first)"
+										: metric === BARRIER_EXIT_SHARE_METRIC
+											? "Barrier Exit Dominance Share"
+										: metric === ENTRY_HOUR_CONCENTRATION_METRIC
+											? "Entry-Hour Schedule Concentration"
+										: metric === TRADE_GAP_UNIFORMITY_METRIC
+											? "Trade Gap Uniformity Score"
+										: metric === TOP_DECILE_PROFIT_SHARE_METRIC
+											? "Top Decile Profit Concentration (lower first)"
+										: metric === WINNER_LOSER_HOLD_GAP_BARS_METRIC
+											? "Winner Vs Loser Holding Gap (lower first)"
+										: metric === ENTRY_PRICE_REGIME_MEMBERSHIP_METRIC
+											? "Fresh Entry Price Regime Membership"
+										: metric === EQUITY_PATH_LINEARITY_METRIC
+											? "Equity Path Linearity"
 										// Safe cast: the inverted labels map above covers every
 										// non-FinderMetric member left in the union here.
 										: METRIC_FULL_LABELS[metric as FinderMetric]),
@@ -3974,7 +4001,8 @@ export class FinderManager {
 				return;
 			}
 			const isConsensusMetric = metric === FRESH_SIGNAL_LIBRARIES_METRIC
-				|| metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC;
+				|| metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
+				|| metric === STRATEGY_COVERAGE_GATE_METRIC;
 			const results = isConsensusMetric && this.assetOpportunityDefaultResults.length > 0
 				? this.assetOpportunityDefaultResults
 				: this.assetOpportunityRunResults.length > 0
@@ -3984,7 +4012,7 @@ export class FinderManager {
 				results,
 				metric as FinderAssetOpportunityResortMetric,
 			);
-			// Consensus mode returns one representative row per symbol. Keep the
+			// Grouped modes return one representative row per symbol. Keep the
 			// full strategy-level result set intact so another re-sort can still
 			// inspect every strategy row.
 			if (!isConsensusMetric) {

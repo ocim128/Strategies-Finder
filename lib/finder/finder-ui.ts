@@ -509,6 +509,39 @@ export class FinderUI {
                     ? `Median TP ${Number.isInteger(medianBarsToTp) ? medianBarsToTp : medianBarsToTp.toFixed(1)} bars`
                     : "Median TP --",
             ));
+            const formatAssetMetric = (
+                value: number | null | undefined,
+                label: string,
+                decimals = 2,
+                suffix = "",
+            ): string => {
+                if (typeof value !== "number" || (!Number.isFinite(value) && value !== Number.POSITIVE_INFINITY)) {
+                    return `${label} --`;
+                }
+                const rendered = value === Number.POSITIVE_INFINITY
+                    ? "∞"
+                    : Number.isInteger(value) && decimals === 0 ? String(value) : value.toFixed(decimals);
+                return `${label} ${rendered}${suffix}`;
+            };
+            metrics.appendChild(this.createMetricChip(formatAssetMetric(item.priorTupleRecurrenceCount, "Recurrence", 0)));
+            metrics.appendChild(this.createMetricChip(formatAssetMetric(item.strategyCoverageCount, "Coverage", 0, " strategies")));
+            metrics.appendChild(this.createMetricChip(formatAssetMetric(
+                typeof item.barrierExitShare === "number" ? item.barrierExitShare * 100 : item.barrierExitShare,
+                "Barrier",
+                0,
+                "%",
+            )));
+            metrics.appendChild(this.createMetricChip(formatAssetMetric(item.entryHourConcentration, "Hour", 2)));
+            metrics.appendChild(this.createMetricChip(formatAssetMetric(item.tradeGapUniformity, "Gap", 2)));
+            metrics.appendChild(this.createMetricChip(formatAssetMetric(
+                typeof item.topDecileProfitShare === "number" ? item.topDecileProfitShare * 100 : item.topDecileProfitShare,
+                "Top Decile",
+                0,
+                "%",
+            )));
+            metrics.appendChild(this.createMetricChip(formatAssetMetric(item.winnerLoserHoldGapBars, "Win-Lose Hold", 1, " bars")));
+            metrics.appendChild(this.createMetricChip(formatAssetMetric(item.entryPriceRegimeMembership, "Price Regime", 2)));
+            metrics.appendChild(this.createMetricChip(formatAssetMetric(item.equityPathLinearity, "Path R²", 2)));
             if (item.oosResult && item.oosVerdict) {
                 metrics.appendChild(this.createOosMetricChip(
                     item.oosResult.netProfit,

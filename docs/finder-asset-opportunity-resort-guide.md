@@ -1,12 +1,18 @@
 # Finder Asset Opportunity Re-Sort Implementation Guide
 
-This guide is for implementing one selected experimental re-sort idea in the
+This guide is for implementing the complete experimental thesis set in the
 existing Finder Asset Opportunity feature. It covers the browser `Re-Sort`
 control and the server-owned batch archive contract under
 `archive/asset opportunity/`.
 
+When a request supplies an ideas/theses array, implementation means every idea
+in that array. Do not stop after the first key appears in the dropdown. The
+dropdown is only a registry symptom; each thesis needs its calculation,
+invalid-value policy, visible result value, copy/archive field, and regression
+test. A grouped thesis also needs its full-pool preservation rule.
+
 This is an implementation guide only. It does not prescribe how to compare,
-judge, or promote a sort after it has been implemented. The selected sort must
+judge, or promote a sort after it has been implemented. Every implemented sort must
 choose candidates only from historical or otherwise available-at-ranking
 fields; forward evaluation results must never be used as sort inputs.
 
@@ -17,8 +23,8 @@ must identify any scalar/archive data it needs.
 
 ## Scope
 
-This guide covers the code and archive changes required to add one
-experimental ranking metric. It does not define a deployment rule or change
+This guide covers the code and archive changes required to add the complete
+experimental ranking set. It does not define a deployment rule or change
 the Asset Opportunity evaluator.
 
 The sort may use only historical or otherwise available-at-ranking fields. Do
@@ -26,6 +32,34 @@ not use `oosResult`, `oosVerdict`, `oosHorizonMetrics`, or
 `oosNextExitMetrics` as inputs. Preserve `nextExitOosPerformance` as an output
 of the existing evaluator so the forward result remains available to archive
 consumers.
+
+## Required thesis inventory
+
+The current ten-idea inventory is the reference shape for the implementation
+that motivated this guide. Keep the keys and directions aligned with the idea
+specification; do not silently implement only the first row.
+
+| Key | Unit and formula | Direction / fixed gate |
+| --- | --- | --- |
+| `medianBarsToTp` | Median candle distance from entry to `take_profit` exits | Lower first; at least 3 TP hits |
+| `priorTupleRecurrence` | Count earlier archived fold snapshots containing the exact `(symbol, strategyId, candidateFingerprint)` tuple | Higher first; earlier cutoff only |
+| `strategyCoverageGate` | Keep normalized symbols represented by at least 3 distinct strategies; representative is the grade winner, ordered by resolved PF | PF descending; minimum 3 strategies |
+| `barrierExitShare` | `(take_profit + stop_loss) exits / completed IS trades` | Higher first; at least 10 trades |
+| `entryHourConcentration` | Circular resultant length of completed IS entry hours in UTC | Higher first; at least 8 entries |
+| `tradeGapUniformity` | Mean completed-entry bar gap divided by gap standard deviation | Higher first; at least 3 gaps; regular gaps may be `+Infinity` |
+| `topDecileProfitShare` | PnL of the top `ceil(10% of trades)` divided by total absolute PnL | Lower first; at least 10 trades |
+| `winnerLoserHoldGapBars` | Median winner hold bars minus median loser hold bars | Lower first; at least 3 winners and 3 losers |
+| `entryPriceRegimeMembership` | `1 - abs(2 * empiricalCDF(freshEntryPrice) - 1)` over historical entry prices | Higher first; at least 8 historical entries |
+| `equityPathLinearity` | Pearson `r²` between trade ordinal and cumulative completed-trade PnL | Higher first; at least 8 trades |
+
+The invalid policy is part of the thesis, not an implementation detail: the
+row-level metrics above sort missing/insufficient/non-finite values last, while
+`strategyCoverageGate` excludes symbols below its gate only for that grouped
+view. The underlying strategy-level pool remains unchanged. `priorTupleRecurrence`
+uses only snapshots with a strictly earlier data cutoff; under the pinned batch
+convention this is a larger reserved-holdout value. The fixed recurrence
+density threshold (`0.05`) belongs to inference/reporting, not to silently
+zero-filling a missing row.
 
 ## Current data flow
 
@@ -48,7 +82,10 @@ terminal run. `assetOpportunityRunResults` retains that full pool, but
 `setAssetOpportunityLatestResults()` deduplicates the ranked rows by normalized
 symbol and applies `topN` for display and Copy Top Results. A new metric must
 rank first, then let the UI select the representative row; applying the limit
-or deduplicating before sorting can hide the metric's intended winner.
+or deduplicating before sorting can hide the metric's intended winner. This is
+especially important for `strategyCoverageGate`: it is a grouped display view,
+but `assetOpportunityRunResults` must continue to hold the complete
+strategy-level pool so a later sort can inspect it.
 
 For a new scalar, the visible result row must show both states:
 
@@ -63,10 +100,12 @@ unavailable marker.
 
 ## Definition of done
 
-A selected sort is complete only when all of these are true:
+A thesis set is complete only when every supplied idea—and every key in the
+inventory above when that inventory is the requested scope—meets all of these
+conditions:
 
-- It has one new, descriptive metric key and a clear high-first or low-first
-  direction.
+- Each thesis has one descriptive metric key and a clear high-first or
+  low-first direction.
 - Its input fields are available on the browser result and, when the batch
   archive needs them, on the compact archive row.
 - It is deterministic for invalid values, ties, repeated strategy rows, and
@@ -86,7 +125,7 @@ A selected sort is complete only when all of these are true:
 
 ## Step 1: Freeze the sort specification
 
-Before editing code, copy the selected idea into a short run card. Record:
+Before editing code, copy every supplied idea into a short run card. Record:
 
 - metric key and human label;
 - unit of analysis: one strategy row or a normalized-symbol group;
@@ -99,7 +138,9 @@ Before editing code, copy the selected idea into a short run card. Record:
 
 Do not add a UI parameter merely to make an experiment configurable. If a
 threshold, weight, minimum count, or percentile is part of the idea, freeze it
-in the run card first.
+in the run card first. Before coding, reconcile the run-card keys against the
+inventory, and after coding reconcile them against the metric list, result
+fields, UI chips, copy/archive fields, and tests.
 
 ## Step 2: Classify the data requirement
 
@@ -270,12 +311,19 @@ snapshot/wire payload.
 Keep the existing scalar-wire contract. Never add heavy arrays to
 `FinderAssetOpportunityResult` on the stream or to automatic archive rows.
 
+For `priorTupleRecurrence`, the server must load existing holdout blocks before
+the batch loop, match the exact normalized tuple using the persisted
+`candidateFingerprint`, and compare only strictly earlier cutoffs. Because
+All-Sorts appends one block per metric, collapse blocks by `(batchRunId,
+holdoutBars)` before counting; otherwise one fold is incorrectly counted once
+per sort. A new/current row starts at zero when no prior snapshot matches.
+
 ## Step 6: Add focused tests
 
 Start with `tests/finder-asset-opportunity-metrics.spec.ts`. Tests should encode
 the implementation contract, not only that JavaScript `.sort()` returns an
 order.
-Include the cases relevant to the selected idea:
+Include the cases relevant to every supplied idea:
 
 - the intended mechanism ranks the correct synthetic rows;
 - fixed constants and direction are applied exactly;
@@ -284,7 +332,7 @@ Include the cases relevant to the selected idea:
 - ties use the documented deterministic rule;
 - symbol grouping and representative selection are correct if applicable;
 - the input array remains unchanged;
-- the new key is returned by `getAssetOpportunityResortMetrics()`.
+- every supplied key is returned by `getAssetOpportunityResortMetrics()`.
 
 Add or update these tests when their contracts are touched:
 
@@ -344,7 +392,8 @@ The new block must remain distinguishable from the existing next-exit output.
 
 ## Final implementation checklist
 
-- [ ] The idea's key is absent from the existing metric inventory.
+- [ ] The supplied idea list has been reconciled against the metric inventory;
+      no thesis is left as a dropdown-only placeholder.
 - [ ] Formula, direction, constants, missing-value policy, grouping, and ties
       are frozen in a run card.
 - [ ] The comparator is pure and does not read OOS or future outcomes.
@@ -366,3 +415,6 @@ The new block must remain distinguishable from the existing next-exit output.
 - [ ] Focused tests cover the reason the metric exists and its failure modes.
 - [ ] Typecheck, test suite, and feature contracts pass.
 - [ ] Existing next-exit target fields remain separate from the sort inputs.
+- [ ] Grouped sorts preserve the complete strategy-level pool for later
+      re-sorts, even when their displayed result is one representative per
+      normalized symbol.

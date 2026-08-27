@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { formatCapturedConfiguration } from "../finder-config-capture";
 import type { FinderAssetOpportunityResortMetric } from "../finder-asset-opportunity-metrics";
@@ -7,6 +7,8 @@ import type {
     AssetOpportunityNextExitOosBaseline,
     AssetOpportunityPairSummaryRow,
 } from "../finder-asset-opportunity-metadata";
+import { buildAssetOpportunityCandidateFingerprint } from "../finder-asset-opportunity-metadata";
+import type { FinderAssetOpportunityResult } from "../../types/finder";
 
 /**
  * Server-side archive leaf for Asset Opportunity batch iterations.
@@ -63,6 +65,114 @@ export interface AssetOpportunityArchiveBlock {
     baseline?: AssetOpportunityForwardOosBaseline | null;
     measurementMode?: "fixed_horizon" | "next_exit";
     nextExitBaseline?: AssetOpportunityNextExitOosBaseline | null;
+}
+
+export interface AssetOpportunityArchiveTupleSnapshot {
+    timestamp: string;
+    batchRunId: string;
+    holdoutBars: number;
+    tupleKeys: Set<string>;
+}
+
+function assetOpportunityTupleKey(args: {
+    symbol: string;
+    strategyId: string;
+    candidateFingerprint: string;
+}): string {
+    return `${args.symbol.trim().toUpperCase()}|${args.strategyId.trim()}|${args.candidateFingerprint.trim()}`;
+}
+
+export function buildAssetOpportunityTupleKey(result: FinderAssetOpportunityResult): string {
+    return assetOpportunityTupleKey({
+        symbol: result.symbol,
+        strategyId: result.strategyKey,
+        candidateFingerprint: buildAssetOpportunityCandidateFingerprint(result),
+    });
+}
+
+/**
+ * Read the tuple identities from existing holdout blocks. A sort writes one
+ * block per metric, so blocks sharing timestamp/run/holdout are collapsed into
+ * one snapshot and a tuple is counted at most once per archived fold.
+ */
+export async function readAssetOpportunityArchiveTupleSnapshots(
+    root: string,
+): Promise<AssetOpportunityArchiveTupleSnapshot[]> {
+    const dir = resolveAssetOpportunityArchiveDir(root);
+    let filenames: string[];
+    try {
+        filenames = (await readdir(dir)).filter((filename) => /^oos-holdout-\d+-bars\.txt$/.test(filename));
+    } catch {
+        return [];
+    }
+    const snapshots = new Map<string, AssetOpportunityArchiveTupleSnapshot>();
+    for (const filename of filenames) {
+        const holdoutBars = Number(filename.match(/^(?:oos-holdout-)(\d+)-bars\.txt$/)?.[1]);
+        if (!Number.isInteger(holdoutBars) || holdoutBars <= 0) continue;
+        let text: string;
+        try {
+            text = await readFile(path.join(dir, filename), "utf8");
+        } catch {
+            continue;
+        }
+        const separator = "=".repeat(80);
+        const segments = text.split(separator);
+        for (let index = 1; index + 1 < segments.length; index += 2) {
+            const header = segments[index]!.trim();
+            if (!header.includes("Archive sort:")) continue;
+            const timestamp = header.match(/^Timestamp: ([^\n]+)$/m)?.[1];
+            const batchRunId = header.match(/^Batch run id: ([^\n]+)$/m)?.[1];
+            if (!timestamp || !batchRunId) continue;
+            let rows: unknown;
+            try {
+                rows = JSON.parse(segments[index + 1]!.trim());
+            } catch {
+                continue;
+            }
+            if (!Array.isArray(rows)) continue;
+            // Each sort append receives its own wall-clock timestamp, so the
+            // fold identity is the run/holdout pair rather than the timestamp.
+            const snapshotKey = `${batchRunId}|${holdoutBars}`;
+            const snapshot = snapshots.get(snapshotKey) ?? {
+                timestamp,
+                batchRunId,
+                holdoutBars,
+                tupleKeys: new Set<string>(),
+            };
+            for (const row of rows) {
+                if (!row || typeof row !== "object") continue;
+                const value = row as Record<string, unknown>;
+                if (typeof value.symbol !== "string"
+                    || typeof value.strategyId !== "string"
+                    || typeof value.candidateFingerprint !== "string") continue;
+                snapshot.tupleKeys.add(assetOpportunityTupleKey({
+                    symbol: value.symbol,
+                    strategyId: value.strategyId,
+                    candidateFingerprint: value.candidateFingerprint,
+                }));
+            }
+            snapshots.set(snapshotKey, snapshot);
+        }
+    }
+    return [...snapshots.values()].sort((left, right) =>
+        left.holdoutBars - right.holdoutBars
+        || left.timestamp.localeCompare(right.timestamp)
+        || left.batchRunId.localeCompare(right.batchRunId));
+}
+
+export function countPriorAssetOpportunityTupleRecurrence(args: {
+    result: FinderAssetOpportunityResult;
+    currentHoldoutBars: number;
+    snapshots: readonly AssetOpportunityArchiveTupleSnapshot[];
+}): number {
+    const tuple = assetOpportunityTupleKey({
+        symbol: args.result.symbol,
+        strategyId: args.result.strategyKey,
+        candidateFingerprint: buildAssetOpportunityCandidateFingerprint(args.result),
+    });
+    return args.snapshots.filter((snapshot) =>
+        snapshot.holdoutBars > args.currentHoldoutBars
+        && snapshot.tupleKeys.has(tuple)).length;
 }
 
 export function buildAssetOpportunityArchiveBlockText(block: AssetOpportunityArchiveBlock): string {

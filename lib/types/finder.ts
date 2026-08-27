@@ -444,6 +444,24 @@ export interface FinderAssetOpportunityResult {
     freshSignalLibraryCount?: number;
     /** Median in-sample bars from entry to take-profit across qualifying trades. */
     medianBarsToTp?: number | null;
+    /** Count of earlier archived snapshots containing the same candidate tuple. */
+    priorTupleRecurrenceCount?: number | null;
+    /** Distinct strategy-library count attached by the coverage-gate resort. */
+    strategyCoverageCount?: number | null;
+    /** Share of completed trades closed by a take-profit or stop-loss barrier. */
+    barrierExitShare?: number | null;
+    /** Circular concentration of completed-trade entry hours in UTC. */
+    entryHourConcentration?: number | null;
+    /** Inverse coefficient of variation of completed-trade entry gaps. */
+    tradeGapUniformity?: number | null;
+    /** Share of absolute completed-trade PnL produced by the top decile. */
+    topDecileProfitShare?: number | null;
+    /** Median winner hold bars minus median loser hold bars. */
+    winnerLoserHoldGapBars?: number | null;
+    /** Fresh entry price's empirical-regime membership score. */
+    entryPriceRegimeMembership?: number | null;
+    /** R-squared of the cumulative completed-trade PnL path. */
+    equityPathLinearity?: number | null;
     support: FinderAssetSupportCounts;
     grade: FinderAssetDecisionGrade;
 }

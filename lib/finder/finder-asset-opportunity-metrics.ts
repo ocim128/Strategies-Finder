@@ -40,6 +40,7 @@ import type {
 import type { BacktestResult, OHLCVData } from "../types/strategies";
 import { buildAssetOpportunityCandidateFingerprint } from "./finder-asset-opportunity-metadata";
 import { timeKey } from "../strategies/backtest/backtest-utils";
+import { parseTimeToUnixSeconds } from "../time-normalization";
 
 /**
  * Keep displayed Asset Opportunity rows bounded to the submitted asset
@@ -291,6 +292,26 @@ export const T_STAT_EDGE_METRIC = "tstatEdge" as const;
  */
 export const MEDIAN_BARS_TO_TP_METRIC = "medianBarsToTp" as const;
 export const MEDIAN_BARS_TO_TP_MIN_HITS = 3;
+export const PRIOR_TUPLE_RECURRENCE_METRIC = "priorTupleRecurrence" as const;
+export const MIN_RECURRENCE_DENSITY_FOR_INFERENCE = 0.05;
+export const BARRIER_EXIT_SHARE_METRIC = "barrierExitShare" as const;
+export const ENTRY_HOUR_CONCENTRATION_METRIC = "entryHourConcentration" as const;
+export const ENTRY_HOUR_CONCENTRATION_HOUR_RESOLUTION = 24;
+export const TRADE_GAP_UNIFORMITY_METRIC = "tradeGapUniformity" as const;
+export const TOP_DECILE_PROFIT_SHARE_METRIC = "topDecileProfitShare" as const;
+export const TOP_DECILE_PROFIT_SHARE_FRACTION = 0.1;
+export const WINNER_LOSER_HOLD_GAP_BARS_METRIC = "winnerLoserHoldGapBars" as const;
+export const ENTRY_PRICE_REGIME_MEMBERSHIP_METRIC = "entryPriceRegimeMembership" as const;
+export const EQUITY_PATH_LINEARITY_METRIC = "equityPathLinearity" as const;
+export const STRATEGY_COVERAGE_GATE_METRIC = "strategyCoverageGate" as const;
+export const BARRIER_EXIT_SHARE_MIN_TRADES = 10;
+export const ENTRY_HOUR_CONCENTRATION_MIN_ENTRIES = 8;
+export const TRADE_GAP_UNIFORMITY_MIN_GAPS = 3;
+export const TOP_DECILE_PROFIT_SHARE_MIN_TRADES = 10;
+export const WINNER_LOSER_HOLD_GAP_MIN_GROUP = 3;
+export const ENTRY_PRICE_REGIME_MEMBERSHIP_MIN_ENTRIES = 8;
+export const EQUITY_PATH_LINEARITY_MIN_TRADES = 8;
+export const STRATEGY_COVERAGE_GATE_MIN_STRATEGIES = 3;
 /**
  * Inverted (worst-first) archive sorts: rank by the base metric ASCENDING so the
  * top slot is the WORST candidate (e.g. most negative netProfit). Research purpose:
@@ -318,6 +339,15 @@ export type FinderAssetOpportunityResortMetric =
     | typeof TOTAL_TRADES_CAPPED_METRIC
     | typeof T_STAT_EDGE_METRIC
     | typeof MEDIAN_BARS_TO_TP_METRIC
+    | typeof PRIOR_TUPLE_RECURRENCE_METRIC
+    | typeof BARRIER_EXIT_SHARE_METRIC
+    | typeof ENTRY_HOUR_CONCENTRATION_METRIC
+    | typeof TRADE_GAP_UNIFORMITY_METRIC
+    | typeof TOP_DECILE_PROFIT_SHARE_METRIC
+    | typeof WINNER_LOSER_HOLD_GAP_BARS_METRIC
+    | typeof ENTRY_PRICE_REGIME_MEMBERSHIP_METRIC
+    | typeof EQUITY_PATH_LINEARITY_METRIC
+    | typeof STRATEGY_COVERAGE_GATE_METRIC
     | typeof INVERTED_NET_PROFIT_METRIC
     | typeof INVERTED_EXPECTANCY_METRIC
     | typeof INVERTED_AVERAGE_GAIN_METRIC
@@ -347,6 +377,15 @@ const ASSET_RESORT_METRICS: readonly FinderAssetOpportunityResortMetric[] = [
     TOTAL_TRADES_CAPPED_METRIC,
     T_STAT_EDGE_METRIC,
     MEDIAN_BARS_TO_TP_METRIC,
+    PRIOR_TUPLE_RECURRENCE_METRIC,
+    STRATEGY_COVERAGE_GATE_METRIC,
+    BARRIER_EXIT_SHARE_METRIC,
+    ENTRY_HOUR_CONCENTRATION_METRIC,
+    TRADE_GAP_UNIFORMITY_METRIC,
+    TOP_DECILE_PROFIT_SHARE_METRIC,
+    WINNER_LOSER_HOLD_GAP_BARS_METRIC,
+    ENTRY_PRICE_REGIME_MEMBERSHIP_METRIC,
+    EQUITY_PATH_LINEARITY_METRIC,
     INVERTED_NET_PROFIT_METRIC,
     INVERTED_EXPECTANCY_METRIC,
     INVERTED_AVERAGE_GAIN_METRIC,
@@ -393,6 +432,179 @@ export function calculateMedianBarsToTp(
     return barsToTakeProfit.length % 2 === 1
         ? barsToTakeProfit[middle]!
         : (barsToTakeProfit[middle - 1]! + barsToTakeProfit[middle]!) / 2;
+}
+
+type AssetOpportunityMetricFields = Pick<FinderAssetOpportunityResult,
+    | "medianBarsToTp"
+    | "priorTupleRecurrenceCount"
+    | "barrierExitShare"
+    | "entryHourConcentration"
+    | "tradeGapUniformity"
+    | "topDecileProfitShare"
+    | "winnerLoserHoldGapBars"
+    | "entryPriceRegimeMembership"
+    | "equityPathLinearity"
+>;
+
+function completedTrades(result: Pick<BacktestResult, "trades">) {
+    return result.trades.filter((trade) => trade.exitReason !== "end_of_data");
+}
+
+function candleIndexByTime(candles: readonly OHLCVData[]): Map<string, number> {
+    const indexByTime = new Map<string, number>();
+    for (let index = 0; index < candles.length; index += 1) {
+        indexByTime.set(timeKey(candles[index]!.time), index);
+    }
+    return indexByTime;
+}
+
+function completedTradeBarPairs(
+    result: Pick<BacktestResult, "trades">,
+    candles: readonly OHLCVData[],
+): Array<{ entryIndex: number; exitIndex: number; pnl: number }> | null {
+    const indexByTime = candleIndexByTime(candles);
+    const pairs: Array<{ entryIndex: number; exitIndex: number; pnl: number }> = [];
+    for (const trade of completedTrades(result)) {
+        const entryIndex = indexByTime.get(timeKey(trade.entryTime));
+        const exitIndex = indexByTime.get(timeKey(trade.exitTime));
+        if (entryIndex === undefined || exitIndex === undefined || !Number.isFinite(trade.pnl)) return null;
+        const holdBars = exitIndex - entryIndex;
+        if (!Number.isFinite(holdBars) || holdBars < 0) return null;
+        pairs.push({ entryIndex, exitIndex, pnl: trade.pnl });
+    }
+    return pairs;
+}
+
+function medianValue(values: readonly number[]): number {
+    const sorted = [...values].sort((left, right) => left - right);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 1
+        ? sorted[middle]!
+        : (sorted[middle - 1]! + sorted[middle]!) / 2;
+}
+
+export function calculateBarrierExitShare(result: Pick<BacktestResult, "trades">): number | null {
+    const trades = completedTrades(result);
+    if (trades.length < BARRIER_EXIT_SHARE_MIN_TRADES) return null;
+    const barrierExits = trades.filter((trade) =>
+        trade.exitReason === "take_profit" || trade.exitReason === "stop_loss").length;
+    return barrierExits / trades.length;
+}
+
+export function calculateEntryHourConcentration(result: Pick<BacktestResult, "trades">): number | null {
+    const hours = completedTrades(result).map((trade) => {
+        const seconds = parseTimeToUnixSeconds(trade.entryTime);
+        if (seconds === null) return null;
+        const date = new Date(seconds * 1000);
+        return Number.isFinite(date.getTime()) ? date.getUTCHours() : null;
+    });
+    if (hours.length < ENTRY_HOUR_CONCENTRATION_MIN_ENTRIES || hours.some((hour) => hour === null)) return null;
+    let real = 0;
+    let imaginary = 0;
+    for (const hour of hours as number[]) {
+        const angle = (2 * Math.PI * hour) / ENTRY_HOUR_CONCENTRATION_HOUR_RESOLUTION;
+        real += Math.cos(angle);
+        imaginary += Math.sin(angle);
+    }
+    return Math.hypot(real / hours.length, imaginary / hours.length);
+}
+
+export function calculateTradeGapUniformity(
+    result: Pick<BacktestResult, "trades">,
+    candles: readonly OHLCVData[],
+): number | null {
+    const pairs = completedTradeBarPairs(result, candles);
+    if (!pairs || pairs.length - 1 < TRADE_GAP_UNIFORMITY_MIN_GAPS) return null;
+    const entryIndexes = pairs.map((pair) => pair.entryIndex).sort((left, right) => left - right);
+    const gaps = entryIndexes.slice(1).map((entryIndex, index) => entryIndex - entryIndexes[index]!);
+    const mean = gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length;
+    const variance = gaps.reduce((sum, gap) => sum + (gap - mean) ** 2, 0) / gaps.length;
+    const standardDeviation = Math.sqrt(variance);
+    if (!Number.isFinite(mean) || !Number.isFinite(standardDeviation)) return null;
+    if (standardDeviation === 0) return mean > 0 ? Number.POSITIVE_INFINITY : null;
+    return mean / standardDeviation;
+}
+
+export function calculateTopDecileProfitShare(result: Pick<BacktestResult, "trades">): number | null {
+    const pnls = completedTrades(result).map((trade) => trade.pnl);
+    if (pnls.length < TOP_DECILE_PROFIT_SHARE_MIN_TRADES || pnls.some((pnl) => !Number.isFinite(pnl))) return null;
+    const denominator = pnls.reduce((sum, pnl) => sum + Math.abs(pnl), 0);
+    if (denominator === 0) return null;
+    const topCount = Math.ceil(pnls.length * TOP_DECILE_PROFIT_SHARE_FRACTION);
+    const topPnl = [...pnls].sort((left, right) => right - left).slice(0, topCount)
+        .reduce((sum, pnl) => sum + pnl, 0);
+    return topPnl / denominator;
+}
+
+export function calculateWinnerLoserHoldGapBars(
+    result: Pick<BacktestResult, "trades">,
+    candles: readonly OHLCVData[],
+): number | null {
+    const pairs = completedTradeBarPairs(result, candles);
+    if (!pairs) return null;
+    const winners = pairs.filter((pair) => pair.pnl > 0).map((pair) => pair.exitIndex - pair.entryIndex);
+    const losers = pairs.filter((pair) => pair.pnl <= 0).map((pair) => pair.exitIndex - pair.entryIndex);
+    if (winners.length < WINNER_LOSER_HOLD_GAP_MIN_GROUP || losers.length < WINNER_LOSER_HOLD_GAP_MIN_GROUP) return null;
+    return medianValue(winners) - medianValue(losers);
+}
+
+export function calculateEntryPriceRegimeMembership(
+    result: Pick<BacktestResult, "trades">,
+    freshEntryPrice: number | null,
+): number | null {
+    const prices = completedTrades(result).map((trade) => trade.entryPrice);
+    if (prices.length < ENTRY_PRICE_REGIME_MEMBERSHIP_MIN_ENTRIES
+        || prices.some((price) => !Number.isFinite(price))
+        || freshEntryPrice === null
+        || !Number.isFinite(freshEntryPrice)) return null;
+    if (prices.every((price) => price === prices[0])) return freshEntryPrice === prices[0] ? 1 : 0;
+    const atOrBelow = prices.filter((price) => price <= freshEntryPrice).length;
+    const percentile = atOrBelow / prices.length;
+    return 1 - Math.abs(2 * percentile - 1);
+}
+
+export function calculateEquityPathLinearity(result: Pick<BacktestResult, "trades">): number | null {
+    const pnls = completedTrades(result).map((trade) => trade.pnl);
+    if (pnls.length < EQUITY_PATH_LINEARITY_MIN_TRADES || pnls.some((pnl) => !Number.isFinite(pnl))) return null;
+    const equity: number[] = [];
+    let cumulative = 0;
+    for (const pnl of pnls) {
+        cumulative += pnl;
+        equity.push(cumulative);
+    }
+    const meanX = (pnls.length - 1) / 2;
+    const meanY = equity.reduce((sum, value) => sum + value, 0) / equity.length;
+    let covariance = 0;
+    let varianceX = 0;
+    let varianceY = 0;
+    for (let index = 0; index < equity.length; index += 1) {
+        const dx = index - meanX;
+        const dy = equity[index]! - meanY;
+        covariance += dx * dy;
+        varianceX += dx * dx;
+        varianceY += dy * dy;
+    }
+    if (varianceY === 0 || !Number.isFinite(covariance) || !Number.isFinite(varianceY)) return null;
+    const correlation = covariance / Math.sqrt(varianceX * varianceY);
+    return Number.isFinite(correlation) ? correlation ** 2 : null;
+}
+
+/** Calculate every row-level thesis from one retained winner trade list. */
+export function calculateAssetOpportunityDerivedMetrics(args: {
+    result: Pick<BacktestResult, "trades" | "totalTrades">;
+    candles: readonly OHLCVData[];
+    freshEntryPrice: number | null;
+}): AssetOpportunityMetricFields {
+    return {
+        medianBarsToTp: calculateMedianBarsToTp(args.result, args.candles),
+        barrierExitShare: calculateBarrierExitShare(args.result),
+        entryHourConcentration: calculateEntryHourConcentration(args.result),
+        tradeGapUniformity: calculateTradeGapUniformity(args.result, args.candles),
+        topDecileProfitShare: calculateTopDecileProfitShare(args.result),
+        winnerLoserHoldGapBars: calculateWinnerLoserHoldGapBars(args.result, args.candles),
+        entryPriceRegimeMembership: calculateEntryPriceRegimeMembership(args.result, args.freshEntryPrice),
+        equityPathLinearity: calculateEquityPathLinearity(args.result),
+    };
 }
 
 /** Linear-interpolated quantile of an ascending-sorted number array. */
@@ -481,6 +693,42 @@ function getTStatEdgeValue(result: FinderAssetOpportunityResult): number {
     return (mean * Math.sqrt(trades)) / Math.sqrt(variance);
 }
 
+function compareAssetOpportunityCandidateTuple(
+    a: FinderAssetOpportunityResult,
+    b: FinderAssetOpportunityResult,
+): number {
+    const symbolA = a.symbol.trim().toUpperCase();
+    const symbolB = b.symbol.trim().toUpperCase();
+    if (symbolA < symbolB) return -1;
+    if (symbolA > symbolB) return 1;
+    const strategyA = a.strategyKey.trim();
+    const strategyB = b.strategyKey.trim();
+    if (strategyA < strategyB) return -1;
+    if (strategyA > strategyB) return 1;
+    const fingerprintA = buildAssetOpportunityCandidateFingerprint(a);
+    const fingerprintB = buildAssetOpportunityCandidateFingerprint(b);
+    if (fingerprintA < fingerprintB) return -1;
+    if (fingerprintA > fingerprintB) return 1;
+    return 0;
+}
+
+function sortOptionalAssetMetric(
+    results: readonly FinderAssetOpportunityResult[],
+    read: (result: FinderAssetOpportunityResult) => number | null | undefined,
+    descending: boolean,
+    tieBreak: (a: FinderAssetOpportunityResult, b: FinderAssetOpportunityResult) => number = compareAssetOpportunityCandidateTuple,
+): FinderAssetOpportunityResult[] {
+    return [...results].sort((a, b) => {
+        const valueA = read(a) ?? Number.NaN;
+        const valueB = read(b) ?? Number.NaN;
+        const validA = Number.isFinite(valueA) || valueA === Number.POSITIVE_INFINITY;
+        const validB = Number.isFinite(valueB) || valueB === Number.POSITIVE_INFINITY;
+        if (validA !== validB) return validA ? -1 : 1;
+        if (validA && validB && valueA !== valueB) return descending ? valueB! - valueA! : valueA! - valueB!;
+        return tieBreak(a, b);
+    });
+}
+
 /**
  * Sort a copy of Asset Opportunity results by a single metric for the post-run
  * re-sort dropdown. When `metric` is null, falls back to the existing
@@ -537,6 +785,34 @@ export function sortAssetOpportunityResultsByMetric(
                 return a.symbol.localeCompare(b.symbol);
             });
     }
+    if (metric === STRATEGY_COVERAGE_GATE_METRIC) {
+        const strategiesBySymbol = new Map<string, Set<string>>();
+        const representatives = new Map<string, FinderAssetOpportunityResult>();
+        for (const result of results) {
+            const symbol = result.symbol.trim().toUpperCase();
+            const strategyKey = result.strategyKey.trim();
+            if (!symbol || !strategyKey) continue;
+            const strategies = strategiesBySymbol.get(symbol) ?? new Set<string>();
+            strategies.add(strategyKey);
+            strategiesBySymbol.set(symbol, strategies);
+            const current = representatives.get(symbol);
+            if (!current || compareAssetOpportunityResults(result, current) < 0) {
+                representatives.set(symbol, result);
+            }
+        }
+        return [...representatives.entries()]
+            .filter(([symbol]) => (strategiesBySymbol.get(symbol)?.size ?? 0) >= STRATEGY_COVERAGE_GATE_MIN_STRATEGIES)
+            .map(([symbol, result]) => ({
+                ...result,
+                strategyCoverageCount: strategiesBySymbol.get(symbol)!.size,
+            }))
+            .sort((a, b) => {
+                const pfA = getAssetOpportunityMetricValue(a, "profitFactor");
+                const pfB = getAssetOpportunityMetricValue(b, "profitFactor");
+                if (pfA !== pfB) return pfB - pfA;
+                return compareAssetOpportunityCandidateTuple(a, b);
+            });
+    }
     if (metric === TOTAL_TRADES_CAPPED_METRIC) {
         // Percentile saturation: cap = P90 of totalTrades within this result
         // set (auto-fits the run config; a fixed cap saturates everything on
@@ -570,20 +846,74 @@ export function sortAssetOpportunityResultsByMetric(
             if (validA !== validB) return validA ? -1 : 1;
             if (validA && validB && medianA !== medianB) return medianA - medianB;
 
-            const symbolA = a.symbol.trim().toUpperCase();
-            const symbolB = b.symbol.trim().toUpperCase();
-            if (symbolA < symbolB) return -1;
-            if (symbolA > symbolB) return 1;
-            const strategyA = a.strategyKey.trim();
-            const strategyB = b.strategyKey.trim();
-            if (strategyA < strategyB) return -1;
-            if (strategyA > strategyB) return 1;
-            const fingerprintA = buildAssetOpportunityCandidateFingerprint(a);
-            const fingerprintB = buildAssetOpportunityCandidateFingerprint(b);
-            if (fingerprintA < fingerprintB) return -1;
-            if (fingerprintA > fingerprintB) return 1;
-            return 0;
+            return compareAssetOpportunityCandidateTuple(a, b);
         });
+    }
+    if (metric === PRIOR_TUPLE_RECURRENCE_METRIC) {
+        return sortOptionalAssetMetric(results, (result) => result.priorTupleRecurrenceCount, true);
+    }
+    if (metric === BARRIER_EXIT_SHARE_METRIC) {
+        return sortOptionalAssetMetric(
+            results,
+            (result) => result.barrierExitShare,
+            true,
+            (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
+                || compareAssetOpportunityCandidateTuple(a, b),
+        );
+    }
+    if (metric === ENTRY_HOUR_CONCENTRATION_METRIC) {
+        return sortOptionalAssetMetric(
+            results,
+            (result) => result.entryHourConcentration,
+            true,
+            (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
+                || compareAssetOpportunityCandidateTuple(a, b),
+        );
+    }
+    if (metric === TRADE_GAP_UNIFORMITY_METRIC) {
+        return sortOptionalAssetMetric(
+            results,
+            (result) => result.tradeGapUniformity,
+            true,
+            (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
+                || compareAssetOpportunityCandidateTuple(a, b),
+        );
+    }
+    if (metric === TOP_DECILE_PROFIT_SHARE_METRIC) {
+        return sortOptionalAssetMetric(
+            results,
+            (result) => result.topDecileProfitShare,
+            false,
+            (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
+                || compareAssetOpportunityCandidateTuple(a, b),
+        );
+    }
+    if (metric === WINNER_LOSER_HOLD_GAP_BARS_METRIC) {
+        return sortOptionalAssetMetric(
+            results,
+            (result) => result.winnerLoserHoldGapBars,
+            false,
+            (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
+                || compareAssetOpportunityCandidateTuple(a, b),
+        );
+    }
+    if (metric === ENTRY_PRICE_REGIME_MEMBERSHIP_METRIC) {
+        return sortOptionalAssetMetric(
+            results,
+            (result) => result.entryPriceRegimeMembership,
+            true,
+            (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
+                || compareAssetOpportunityCandidateTuple(a, b),
+        );
+    }
+    if (metric === EQUITY_PATH_LINEARITY_METRIC) {
+        return sortOptionalAssetMetric(
+            results,
+            (result) => result.equityPathLinearity,
+            true,
+            (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
+                || compareAssetOpportunityCandidateTuple(a, b),
+        );
     }
     const SECONDARY_TIEBREAK_METRICS: readonly FinderMetric[] = ["expectancy", "netProfitPercent", "totalTrades"];
     if (metric === T_STAT_EDGE_METRIC) {

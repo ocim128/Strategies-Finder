@@ -186,6 +186,49 @@ describe("Asset Opportunity metadata payload serializer", () => {
         expect(payload.medianBarsToTp).to.equal(4.5);
     });
 
+    it("carries every thesis scalar through Copy Top Results and the archive row", () => {
+        const result = makeAssetResult({
+            medianBarsToTp: 4.5,
+            priorTupleRecurrenceCount: 2,
+            barrierExitShare: 0.8,
+            entryHourConcentration: 0.75,
+            tradeGapUniformity: 1.25,
+            topDecileProfitShare: 0.4,
+            winnerLoserHoldGapBars: -2,
+            entryPriceRegimeMembership: 0.9,
+            equityPathLinearity: 0.85,
+        });
+        const copy = buildAssetOpportunityMetadataPayload({
+            result,
+            rank: 1,
+            interval: "1h",
+            strategyMetadata: null,
+        });
+        expect(copy).to.include({
+            medianBarsToTp: 4.5,
+            priorTupleRecurrenceCount: 2,
+            barrierExitShare: 0.8,
+            entryHourConcentration: 0.75,
+            tradeGapUniformity: 1.25,
+            topDecileProfitShare: 0.4,
+            winnerLoserHoldGapBars: -2,
+            entryPriceRegimeMembership: 0.9,
+            equityPathLinearity: 0.85,
+        });
+        const archive = buildAssetOpportunityPerformancePayload({ result, rank: 1 });
+        expect(archive.selectionPerformance).to.include({
+            medianBarsToTp: 4.5,
+            priorTupleRecurrenceCount: 2,
+            barrierExitShare: 0.8,
+            entryHourConcentration: 0.75,
+            tradeGapUniformity: 1.25,
+            topDecileProfitShare: 0.4,
+            winnerLoserHoldGapBars: -2,
+            entryPriceRegimeMembership: 0.9,
+            equityPathLinearity: 0.85,
+        });
+    });
+
     it("builds a compact performance-only archive row", () => {
         const payload = buildAssetOpportunityPerformancePayload({
             result: makeAssetResult(),

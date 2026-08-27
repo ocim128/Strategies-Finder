@@ -41,8 +41,17 @@ export interface AssetOpportunityMetadataPayload {
     historicalRank: number;
     totalCandidatesEvaluated: number;
     selectionMetrics: FinderAssetOpportunityResult["selectionResult"];
-    /** Optional because older persisted snapshots predate this metric. */
+    /** Optional because older persisted snapshots predate these metrics. */
     medianBarsToTp?: FinderAssetOpportunityResult["medianBarsToTp"];
+    priorTupleRecurrenceCount?: FinderAssetOpportunityResult["priorTupleRecurrenceCount"];
+    strategyCoverageCount?: FinderAssetOpportunityResult["strategyCoverageCount"];
+    barrierExitShare?: FinderAssetOpportunityResult["barrierExitShare"];
+    entryHourConcentration?: FinderAssetOpportunityResult["entryHourConcentration"];
+    tradeGapUniformity?: FinderAssetOpportunityResult["tradeGapUniformity"];
+    topDecileProfitShare?: FinderAssetOpportunityResult["topDecileProfitShare"];
+    winnerLoserHoldGapBars?: FinderAssetOpportunityResult["winnerLoserHoldGapBars"];
+    entryPriceRegimeMembership?: FinderAssetOpportunityResult["entryPriceRegimeMembership"];
+    equityPathLinearity?: FinderAssetOpportunityResult["equityPathLinearity"];
     support: FinderAssetOpportunityResult["support"];
     grade: FinderAssetOpportunityResult["grade"];
     oos: {
@@ -83,6 +92,15 @@ export function buildAssetOpportunityMetadataPayload(args: {
         totalCandidatesEvaluated: result.totalCandidatesEvaluated,
         selectionMetrics: result.selectionResult,
         ...(result.medianBarsToTp !== undefined ? { medianBarsToTp: result.medianBarsToTp } : {}),
+        ...(result.priorTupleRecurrenceCount !== undefined ? { priorTupleRecurrenceCount: result.priorTupleRecurrenceCount } : {}),
+        ...(result.strategyCoverageCount !== undefined ? { strategyCoverageCount: result.strategyCoverageCount } : {}),
+        ...(result.barrierExitShare !== undefined ? { barrierExitShare: result.barrierExitShare } : {}),
+        ...(result.entryHourConcentration !== undefined ? { entryHourConcentration: result.entryHourConcentration } : {}),
+        ...(result.tradeGapUniformity !== undefined ? { tradeGapUniformity: result.tradeGapUniformity } : {}),
+        ...(result.topDecileProfitShare !== undefined ? { topDecileProfitShare: result.topDecileProfitShare } : {}),
+        ...(result.winnerLoserHoldGapBars !== undefined ? { winnerLoserHoldGapBars: result.winnerLoserHoldGapBars } : {}),
+        ...(result.entryPriceRegimeMembership !== undefined ? { entryPriceRegimeMembership: result.entryPriceRegimeMembership } : {}),
+        ...(result.equityPathLinearity !== undefined ? { equityPathLinearity: result.equityPathLinearity } : {}),
         support: result.support,
         grade: result.grade,
         oos: result.oosResult && result.oosVerdict
@@ -119,6 +137,14 @@ export type AssetOpportunityPerformanceMetrics = Pick<BacktestResult,
 > & {
     /** Optional for compatibility with archives written before this sort. */
     medianBarsToTp?: number | null;
+    priorTupleRecurrenceCount?: number | null;
+    barrierExitShare?: number | null;
+    entryHourConcentration?: number | null;
+    tradeGapUniformity?: number | null;
+    topDecileProfitShare?: number | null;
+    winnerLoserHoldGapBars?: number | null;
+    entryPriceRegimeMembership?: number | null;
+    equityPathLinearity?: number | null;
 };
 
 export interface AssetOpportunityPerformancePayload {
@@ -129,6 +155,8 @@ export interface AssetOpportunityPerformancePayload {
     strategyName: string;
     /** Stable identity for the sampled entry/exit parameters. */
     candidateFingerprint: string;
+    /** Present on the grouped strategy-coverage resort representative. */
+    strategyCoverageCount?: number | null;
     /** Hour of the latest signal candle; null for date-only/no signal times. */
     signalCandleHourUtc: number | null;
     /** Hour of the latest signal candle in the app's Asia/Jakarta display zone. */
@@ -219,7 +247,17 @@ export function buildAssetOpportunityCandidateFingerprint(
 
 function selectAssetOpportunityPerformanceMetrics(
     result: BacktestResult,
-    medianBarsToTp?: number | null,
+    derived?: Pick<FinderAssetOpportunityResult,
+        | "medianBarsToTp"
+        | "priorTupleRecurrenceCount"
+        | "barrierExitShare"
+        | "entryHourConcentration"
+        | "tradeGapUniformity"
+        | "topDecileProfitShare"
+        | "winnerLoserHoldGapBars"
+        | "entryPriceRegimeMembership"
+        | "equityPathLinearity"
+    >,
 ): AssetOpportunityPerformanceMetrics {
     return {
         netProfit: result.netProfit,
@@ -236,7 +274,15 @@ function selectAssetOpportunityPerformanceMetrics(
         avgWin: result.avgWin,
         avgLoss: result.avgLoss,
         sharpeRatio: result.sharpeRatio,
-        ...(medianBarsToTp !== undefined ? { medianBarsToTp } : {}),
+        ...(derived?.medianBarsToTp !== undefined ? { medianBarsToTp: derived.medianBarsToTp } : {}),
+        ...(derived?.priorTupleRecurrenceCount !== undefined ? { priorTupleRecurrenceCount: derived.priorTupleRecurrenceCount } : {}),
+        ...(derived?.barrierExitShare !== undefined ? { barrierExitShare: derived.barrierExitShare } : {}),
+        ...(derived?.entryHourConcentration !== undefined ? { entryHourConcentration: derived.entryHourConcentration } : {}),
+        ...(derived?.tradeGapUniformity !== undefined ? { tradeGapUniformity: derived.tradeGapUniformity } : {}),
+        ...(derived?.topDecileProfitShare !== undefined ? { topDecileProfitShare: derived.topDecileProfitShare } : {}),
+        ...(derived?.winnerLoserHoldGapBars !== undefined ? { winnerLoserHoldGapBars: derived.winnerLoserHoldGapBars } : {}),
+        ...(derived?.entryPriceRegimeMembership !== undefined ? { entryPriceRegimeMembership: derived.entryPriceRegimeMembership } : {}),
+        ...(derived?.equityPathLinearity !== undefined ? { equityPathLinearity: derived.equityPathLinearity } : {}),
     };
 }
 
@@ -254,11 +300,12 @@ export function buildAssetOpportunityPerformancePayload(args: {
         strategyId: result.strategyKey,
         strategyName: result.strategyName,
         candidateFingerprint: buildAssetOpportunityCandidateFingerprint(result),
+        ...(result.strategyCoverageCount !== undefined ? { strategyCoverageCount: result.strategyCoverageCount } : {}),
         signalCandleHourUtc: hours.utc,
         signalCandleHourJakarta: hours.jakarta,
         selectionPerformance: selectAssetOpportunityPerformanceMetrics(
             result.selectionResult,
-            result.medianBarsToTp,
+            result,
         ),
         oosPerformance: result.oosResult && result.oosVerdict
             ? {
