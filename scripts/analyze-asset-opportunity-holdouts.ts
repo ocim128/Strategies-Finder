@@ -16,13 +16,26 @@ import type {
     AssetOpportunityForwardOosBaseline,
     AssetOpportunityNextExitOosBaseline,
 } from "../lib/finder/finder-asset-opportunity-metadata";
+import { MIN_RECURRENCE_DENSITY_FOR_INFERENCE } from "../lib/finder/finder-asset-opportunity-metrics";
 import type { FinderAssetOosNextExitUnavailableReason } from "../lib/finder/finder-asset-opportunity-oos";
 
 const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 const BLOCK_SEPARATOR = "=".repeat(80);
-const REPORT_SCHEMA_VERSION = 2;
+const REPORT_SCHEMA_VERSION = 3;
 const DEFAULT_TOP_K = 10;
 const DEFAULT_REPORT_CANDIDATES = 15;
+const THESIS_SORT_FIELDS: Readonly<Record<string, string>> = {
+    medianBarsToTp: "medianBarsToTp",
+    priorTupleRecurrence: "priorTupleRecurrenceCount",
+    strategyCoverageGate: "strategyCoverageCount",
+    barrierExitShare: "barrierExitShare",
+    entryHourConcentration: "entryHourConcentration",
+    tradeGapUniformity: "tradeGapUniformity",
+    topDecileProfitShare: "topDecileProfitShare",
+    winnerLoserHoldGapBars: "winnerLoserHoldGapBars",
+    entryPriceRegimeMembership: "entryPriceRegimeMembership",
+    equityPathLinearity: "equityPathLinearity",
+};
 const REPORT_QUESTIONS = [
     "Which archive sort has the highest average forward PnL at each tested horizon?",
     "How often are the selected observations positive for each sort and horizon?",
@@ -64,6 +77,9 @@ export interface AssetOpportunityArchiveRow {
     candidateFingerprint?: string;
     signalCandleHourUtc?: number | null;
     signalCandleHourJakarta?: number | null;
+    /** Compact in-sample scalars used to verify whether a thesis sort had data. */
+    selectionPerformance?: Record<string, number | null>;
+    strategyCoverageCount?: number | null;
     forwardOosPerformance?: {
         ignoreLastBars?: number;
         horizons?: ArchiveHorizon[];
@@ -279,6 +295,23 @@ export interface NextExitOutcomeAnalysis {
 export interface NextExitSortAnalysis extends NextExitOutcomeAnalysis {
     sortMetric: string;
     holdoutBars: number[];
+    thesisMetricEvidence: ThesisSortEvidence;
+}
+
+export type ThesisSortEvidenceStatus =
+    | "measured"
+    | "unavailable"
+    | "insufficient_data"
+    | "degenerate"
+    | "not_persisted";
+
+export interface ThesisSortEvidence {
+    status: ThesisSortEvidenceStatus;
+    totalRows: number;
+    validRows: number;
+    distinctValues: number;
+    /** Only populated for priorTupleRecurrence, whose inference gate is density-based. */
+    positiveRows: number | null;
 }
 
 export interface NextExitBaselineAnalysis {
@@ -452,6 +485,20 @@ function parseNextExitBaseline(value: unknown, sourceFile: string): AssetOpportu
     };
 }
 
+function parseArchiveScalarRecord(value: unknown): Record<string, number | null> | undefined {
+    if (!isRecord(value)) return undefined;
+    const parsed: Record<string, number | null> = {};
+    for (const [key, raw] of Object.entries(value)) {
+        if (raw === null) {
+            parsed[key] = null;
+            continue;
+        }
+        const number = asFiniteNumber(raw);
+        if (number !== null) parsed[key] = number;
+    }
+    return parsed;
+}
+
 function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityArchiveRow[] {
     if (!Array.isArray(value)) {
         throw new Error(`Expected a JSON array in ${sourceFile}`);
@@ -525,6 +572,10 @@ function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityA
             signalCandleHourJakarta: row.signalCandleHourJakarta === null
                 ? null
                 : asHour(row.signalCandleHourJakarta),
+            selectionPerformance: parseArchiveScalarRecord(row.selectionPerformance),
+            strategyCoverageCount: row.strategyCoverageCount === null
+                ? null
+                : asFiniteNumber(row.strategyCoverageCount),
             forwardOosPerformance,
             nextExitOosPerformance,
         };
@@ -924,6 +975,62 @@ function calculateNextExitAnalysis(rows: AssetOpportunityArchiveRow[]): NextExit
     };
 }
 
+function getThesisSortMetricValue(row: AssetOpportunityArchiveRow, sortMetric: string): number | null | undefined {
+    const field = THESIS_SORT_FIELDS[sortMetric];
+    if (!field) return undefined;
+    const raw = field === "strategyCoverageCount"
+        ? row.strategyCoverageCount
+        : row.selectionPerformance?.[field];
+    if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+    if (sortMetric === "medianBarsToTp" && raw < 0) return null;
+    if (sortMetric === "priorTupleRecurrence" && (!Number.isInteger(raw) || raw < 0)) return null;
+    if (sortMetric === "strategyCoverageGate" && (!Number.isInteger(raw) || raw < 3)) return null;
+    if ((sortMetric === "barrierExitShare"
+        || sortMetric === "entryHourConcentration"
+        || sortMetric === "entryPriceRegimeMembership"
+        || sortMetric === "equityPathLinearity")
+        && (raw < 0 || raw > 1)) {
+        return null;
+    }
+    return raw;
+}
+
+function buildThesisSortEvidence(rows: AssetOpportunityArchiveRow[], sortMetric: string): ThesisSortEvidence {
+    if (!THESIS_SORT_FIELDS[sortMetric]) {
+        return {
+            status: "not_persisted",
+            totalRows: rows.length,
+            validRows: 0,
+            distinctValues: 0,
+            positiveRows: null,
+        };
+    }
+    const values = rows
+        .map((row) => getThesisSortMetricValue(row, sortMetric))
+        .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value));
+    const distinctValues = new Set(values).size;
+    const positiveRows = sortMetric === "priorTupleRecurrence"
+        ? values.filter((value) => value > 0).length
+        : null;
+    const density = positiveRows === null || values.length === 0
+        ? null
+        : positiveRows / values.length;
+    const status: ThesisSortEvidenceStatus = values.length === 0
+        ? "unavailable"
+        : density !== null && density < MIN_RECURRENCE_DENSITY_FOR_INFERENCE
+            ? "insufficient_data"
+            : distinctValues < 2
+                ? "degenerate"
+                : "measured";
+    return {
+        status,
+        totalRows: rows.length,
+        validRows: values.length,
+        distinctValues,
+        positiveRows,
+    };
+}
+
 function buildNextExitSortAnalysis(
     records: AssetOpportunityArchiveRecord[],
     topK: number,
@@ -932,6 +1039,7 @@ function buildNextExitSortAnalysis(
     return {
         sortMetric: records[0]!.sortMetric,
         holdoutBars: [...new Set(records.map((record) => record.holdoutBars))].sort((left, right) => left - right),
+        thesisMetricEvidence: buildThesisSortEvidence(rows, records[0]!.sortMetric),
         ...calculateNextExitAnalysis(rows),
     };
 }
@@ -1492,6 +1600,9 @@ export function analyzeAssetOpportunityArchive(
             .sort((left, right) => left[0]!.sortMetric.localeCompare(right[0]!.sortMetric))
             .map((sortRecords) => buildNextExitSortAnalysis(sortRecords, topK))
         : [];
+    const thesisEvidenceNotes = measurementMode === "next_exit"
+        ? buildThesisEvidenceNotes(nextExitSorts)
+        : [];
     const crossSortAgreement = buildCrossSortAgreement(analysisRecords, topK, holdoutBars.length, sortMetrics.length);
     const parameterVariants = parameterFingerprintAvailable
         ? buildParameterVariantAnalysis(crossSortAgreement, holdoutBars.length, sortMetrics.length)
@@ -1560,6 +1671,9 @@ export function analyzeAssetOpportunityArchive(
                 : "Each archive sort and forward horizon is analyzed independently; freshSignalLibraries is not pooled with performance sorts.",
             "The JSON report stores each candidate's per-holdout series; aggregate rows must not be treated as independent samples.",
             "Strategy contribution and worst-strategy removal are calculated from archived selected rows; removal does not rerun Finder or simulate capital, position sizing, or trade overlap.",
+            ...(measurementMode === "next_exit"
+                ? ["A thesis sort with unavailable, insufficient, or degenerate archived values falls back to its deterministic tie order; its forward result is not evidence that the thesis differentiated candidates.", ...thesisEvidenceNotes]
+                : []),
             signalCandleHoursAvailable
                 ? "Signal candle hour is derived from latestSignalTime and reported in UTC and Asia/Jakarta; it is not necessarily the eventual trade-entry hour."
                 : "Signal candle-hour analysis is unavailable because the selected archive predates signalCandleHourUtc and signalCandleHourJakarta fields.",
@@ -1674,6 +1788,23 @@ function formatExitReasonCounts(exitReasonCounts: Record<string, number>): strin
     return entries.length > 0 ? entries.map(([reason, count]) => `${reason}=${count}`).join(", ") : "none";
 }
 
+function formatThesisSortEvidence(evidence: ThesisSortEvidence): string {
+    if (evidence.status === "not_persisted") return "not archived";
+    const recurrence = evidence.positiveRows === null
+        ? ""
+        : `, recurring=${evidence.positiveRows}/${evidence.validRows}`;
+    const status = evidence.status.toUpperCase().replace("_", " ");
+    return `${evidence.validRows}/${evidence.totalRows} valid${recurrence}, distinct=${evidence.distinctValues} (${status})`;
+}
+
+function buildThesisEvidenceNotes(sorts: readonly NextExitSortAnalysis[]): string[] {
+    return sorts
+        .filter((sort) => sort.thesisMetricEvidence.status === "unavailable"
+            || sort.thesisMetricEvidence.status === "insufficient_data"
+            || sort.thesisMetricEvidence.status === "degenerate")
+        .map((sort) => `${sort.sortMetric} has ${formatThesisSortEvidence(sort.thesisMetricEvidence)}; its forward result is a fallback/diagnostic result, not evidence that the thesis differentiated candidates.`);
+}
+
 function renderNextExitReport(
     report: AssetOpportunityHoldoutAnalysisReport,
     headerLines: string[],
@@ -1688,7 +1819,7 @@ function renderNextExitReport(
         ...report.questionsAnswered.map((question, index) => `${index + 1}. ${question}`),
         "",
         "NEXT EXIT OOS SUMMARY — BEST TO WORST BY OBSERVED AVG PNL",
-        "Sort | Holdout coverage | Exits | Positive exits | Censored | Unavailable | Unavailable reasons | Avg PnL | Median PnL | P10 PnL | Worst PnL | Avg bars held | Exit reasons | Delta vs baseline",
+        "Sort | Thesis metric evidence | Holdout coverage | Exits | Positive exits | Censored | Unavailable | Unavailable reasons | Avg PnL | Median PnL | P10 PnL | Worst PnL | Avg bars held | Exit reasons | Delta vs baseline",
     ];
     const baselineAverage = report.nextExit?.baseline?.averagePnlPercent ?? null;
     const orderedSorts = [...(report.nextExit?.sorts ?? [])].sort((left, right) => {
@@ -1703,6 +1834,7 @@ function renderNextExitReport(
             : null;
         lines.push([
             sort.sortMetric,
+            formatThesisSortEvidence(sort.thesisMetricEvidence),
             `${sort.holdoutBars.length}/${report.holdoutBars.length}`,
             `${sort.observedRows}/${sort.totalRows}`,
             `${sort.positiveRows}/${sort.observedRows}`,
@@ -1759,6 +1891,7 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
         `Holdout windows: ${formatHoldoutWindows(report.holdoutBars)}`,
         `Archive blocks analyzed: ${report.analyzedBlockCount} of ${report.selectedBlockCount} selected (${report.sourceBlockCount} source)`,
         `Forward measurement: ${report.measurementMode}`,
+        `Top-K measured: ${report.topK}`,
         `Candidate identity: ${report.candidateIdentity}`,
         `Parameter fingerprints: ${report.parameterFingerprintAvailable ? "available" : "not available in this archive"}`,
         `All-candidate baseline: ${report.baselineAvailable || report.nextExit?.baseline ? "available" : "not available in this archive"}`,

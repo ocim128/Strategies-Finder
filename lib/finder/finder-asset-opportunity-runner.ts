@@ -1325,14 +1325,17 @@ async function searchOneAsset(args: {
     };
     if (fixedOosBars.length > 0 && oosMeasurementMode === "fixed_horizon") {
         const winnerFresh = freshEvaluations[winnerIndex];
-        if (winnerCandidate && winnerFresh?.direction && winnerFresh.latestSignalPrice !== null) {
-            diagnostics.oosEvaluations += 1;
-            const firstHiddenBar = fixedOosBars[0];
-            const entryPrice = input.settings.executionModel === "signal_close"
-                ? winnerFresh.latestSignalPrice
+        const firstHiddenBar = fixedOosBars[0];
+        const freshEntryPrice = winnerFresh?.freshEntryPrice ?? Number.NaN;
+        const entryPrice = input.settings.executionModel === "signal_close"
+            ? winnerFresh?.latestSignalPrice ?? Number.NaN
+            : Number.isFinite(freshEntryPrice)
+                ? freshEntryPrice
                 : input.settings.executionModel === "next_open"
                     ? firstHiddenBar?.open ?? Number.NaN
                     : firstHiddenBar?.close ?? Number.NaN;
+        if (winnerCandidate && winnerFresh?.direction && Number.isFinite(entryPrice)) {
+            diagnostics.oosEvaluations += 1;
             const oosHorizonMetrics = calculateFinderAssetOosSignalMetrics({
                 candles: fullClosed,
                 signalIndex: fixedOosSignalIndex,

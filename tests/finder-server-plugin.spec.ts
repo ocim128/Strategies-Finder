@@ -883,8 +883,63 @@ describe("finder server plugin processFinderUniverseRun", () => {
 });
 
 describe("finder server plugin Asset Opportunity multi-strategy execution", () => {
+    it("retains a shared-stream fatal failure in status for Asset Opportunity reattach", async () => {
+        const runId = "asset-fatal-status";
+        const owner = 7098;
+        setRunOwnerForTests(owner);
+        __testInternals.setRunStateForTests({
+            runId,
+            startedAt: Date.now(),
+            finishedAt: null,
+            interval: "5m",
+            jobKind: "asset_opportunity",
+            strategyKeys: ["asset_opportunity_test_a"],
+            strategyIndex: 0,
+            strategyCount: 1,
+            phase: "evaluating",
+            totalSymbols: 1,
+            progressPercent: 50,
+            statusText: "Evaluating",
+            loadedSymbols: 0,
+            failedSymbols: 0,
+            candidates: [],
+            assetResults: [],
+            diagnostics: null,
+            cancelled: false,
+            summary: null,
+            error: null,
+            totals: null,
+            assetTotals: null,
+            assetDiagnostics: null,
+        });
+        const response = {
+            statusCode: 0,
+            setHeader: () => undefined,
+            write: () => true,
+            end: () => undefined,
+        };
+
+        await __testInternals.withFinderRunStreamForTests({
+            res: response,
+            runId,
+            owner,
+            abortController: new AbortController(),
+            buildFatal: (message) => ({ type: "asset_fatal" as const, runId, error: message }),
+            run: async () => {
+                throw new Error("single asset worker exploded");
+            },
+        });
+
+        const status = handleStatusRequest(runId);
+        if (!status.ok) throw new Error(status.error);
+        expect(status.terminal).to.equal(true);
+        expect(status.phase).to.equal("fatal");
+        expect(status.error).to.equal("single asset worker exploded");
+        expect(status.summary).to.contain("Asset Opportunity failed");
+    });
+
     it("maps worker-chunk progress to the asset index, not the strategy index", async () => {
-        const symbols = ["UP", "DOWN"];
+        const symbols = ["MISSING", "DOWN"];
         const datasets = upDownDatasets();
         const selectedStrategies = [{
             key: "asset_opportunity_test_a",
@@ -905,7 +960,12 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
                         selectedStrategies,
                         useRustEnginePreference: false,
                         abortSignal: abort.signal,
-                        loadDataset: async (symbol) => datasets.get(symbol) ?? [],
+                        loadDataset: async (symbol) => {
+                            if (symbol === "DOWN") {
+                                await new Promise<void>((resolve) => setTimeout(resolve, 20));
+                            }
+                            return datasets.get(symbol) ?? [];
+                        },
                         candidatePoolSize: task.candidatePoolSize,
                         minFreshSupport: task.minFreshSupport,
                     },
@@ -959,6 +1019,9 @@ describe("finder server plugin Asset Opportunity multi-strategy execution", () =
             .map((event) => event.assetIndex);
         expect(progressAssetIndexes).to.include(1);
         expect(progressAssetIndexes.every((index) => index >= 0 && index < symbols.length)).to.equal(true);
+        const status = handleStatusRequest("asset-worker-progress");
+        if (!status.ok) throw new Error(status.error);
+        expect(status.failedSymbols).to.equal(1);
         expect(events[events.length - 1]!.type).to.equal("asset_done");
     });
 

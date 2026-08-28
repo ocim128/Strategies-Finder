@@ -61,6 +61,34 @@ convention this is a larger reserved-holdout value. The fixed recurrence
 density threshold (`0.05`) belongs to inference/reporting, not to silently
 zero-filling a missing row.
 
+### Run data prerequisites and degenerate-sort guard
+
+Registering a thesis in the dropdown and archive does not guarantee that a
+particular run can measure it. Before interpreting an All-Sorts archive, check
+the captured run configuration and the persisted `selectionPerformance` fields:
+
+- `medianBarsToTp` needs at least three in-sample `take_profit` exits. It will
+  be unavailable when take-profit exits are disabled, when a maximum hold closes
+  trades first, or when the candidate has fewer than three qualifying hits.
+- `barrierExitShare` needs at least ten completed trades and is uninformative
+  when every qualifying row has the same barrier share, especially when both
+  TP and SL are disabled.
+- `priorTupleRecurrence` needs an earlier archived run with matching
+  `(normalized symbol, strategyId, candidateFingerprint)` tuples. A first run
+  correctly has zero prior recurrence; the current run is not allowed to count
+  itself.
+- The other scalar theses have their minimum observations in the inventory
+  above. A finite value that is identical for every selected row is a
+  `DEGENERATE` sort, not evidence that the thesis worked.
+
+The holdout analyzer must report the thesis scalar coverage beside each
+next-exit result: valid rows, distinct values, and (for recurrence) the count
+with a positive prior match. `UNAVAILABLE`, `INSUFFICIENT DATA`, and
+`DEGENERATE` rows may still show forward PnL because the deterministic fallback
+order is useful for debugging, but that PnL must not be attributed to the
+thesis. A report with no valid or no varying thesis values requires a rerun with
+appropriate settings/data before the thesis can be evaluated.
+
 ## Current data flow
 
 | Surface | Source of truth | Responsibility |

@@ -1283,6 +1283,8 @@ async function runFinderAssetOpportunityWorkerSweep(
         };
     });
     const completed: Array<{ task: AssetOpportunityBatchWorkerTask; iteration: AssetOpportunityIterationResult }> = [];
+    const failedSymbolsByChunk = new Map<number, number>();
+    let failedSymbolsTotal = 0;
     const sweep = await runAssetOpportunityBatchSweep({
         tasks,
         runnerCount: chunkCount,
@@ -1292,6 +1294,9 @@ async function runFinderAssetOpportunityWorkerSweep(
         },
         onProgress: (task, progress, aggregate) => {
             const chunkStart = (task.assetChunkIndex ?? 0) * chunkSize;
+            const chunkIndex = task.assetChunkIndex ?? 0;
+            failedSymbolsTotal += progress.failedSymbols - (failedSymbolsByChunk.get(chunkIndex) ?? 0);
+            failedSymbolsByChunk.set(chunkIndex, progress.failedSymbols);
             callbacks.onProgress({
                 percent: aggregate.percent,
                 text: progress.status,
@@ -1302,7 +1307,7 @@ async function runFinderAssetOpportunityWorkerSweep(
                 totalAssets,
                 strategyIndex: progress.strategyIndex,
                 loadedSymbols: Math.min(totalAssets, chunkStart + progress.loadedSymbols),
-                failedSymbols: progress.failedSymbols,
+                failedSymbols: failedSymbolsTotal,
             });
         },
         onRunLog: (event, payload) => input.runLog?.(event, payload),
@@ -2423,8 +2428,9 @@ async function withFinderRunStream<TEvent extends AnyFinderStreamEvent>(args: {
             }
         }
     } catch (error) {
-        if (!stream) throw error;
         const message = error instanceof Error ? error.message : String(error);
+        markFinderRunFatal(args.runId, message);
+        if (!stream) throw error;
         if (args.debugEvent) {
             debugLogger.event(args.debugEvent, {
                 runId: args.runId,
@@ -2449,6 +2455,21 @@ async function withFinderRunStream<TEvent extends AnyFinderStreamEvent>(args: {
             abortController = null;
         }
     }
+}
+
+function markFinderRunFatal(runId: string, message: string): void {
+    const snapshot = runState;
+    if (!snapshot || snapshot.runId !== runId || snapshot.finishedAt !== null) return;
+    const jobLabel = snapshot.jobKind === "asset_opportunity_batch"
+        ? "Asset Opportunity batch"
+        : snapshot.jobKind === "asset_opportunity"
+            ? "Asset Opportunity"
+            : "Finder";
+    snapshot.phase = "fatal";
+    snapshot.finishedAt = Date.now();
+    snapshot.statusText = `${jobLabel} failed: ${message}`;
+    snapshot.summary = snapshot.statusText;
+    snapshot.error = message;
 }
 
 /**
@@ -3243,6 +3264,7 @@ export const __testInternals = {
     parseRunId,
     consumePendingStopForRun,
     writeStreamEventBestEffort,
+    withFinderRunStreamForTests: withFinderRunStream,
     withCanonicalUniverseSymbols,
     setRunOwnerForTests(owner: number): void {
         runOwner = owner;

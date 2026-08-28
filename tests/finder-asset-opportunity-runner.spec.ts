@@ -683,6 +683,58 @@ describe("Asset Opportunity runner", () => {
         expect(output.outcomes[0]!.diagnostics?.oosBars).to.equal(4);
     });
 
+    it("uses the actual visible-boundary fill for fixed-horizon next-bar OOS", async () => {
+        const closes = [100, 101, 102, 103, 104, 105, 106, 120, 121];
+        const candles = makeCandles(closes).map((candle, index) => ({
+            ...candle,
+            open: index === 7 ? 200 : candle.open,
+        }));
+        const strategy: Strategy = {
+            name: "Fixed Horizon Boundary Fill",
+            description: "signals one bar before the visible boundary",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                const signalCandle = data[data.length - 2];
+                return signalCandle
+                    ? [{ time: signalCandle.time, type: "buy" as const, price: signalCandle.close }]
+                    : [];
+            },
+        };
+
+        for (const executionModel of ["next_open", "next_close"] as const) {
+            const output = await runAssetOpportunitySearch(makeInput({
+                options: makeOptions({
+                    assetOpportunity: {
+                        symbols: [`FIXED_BOUNDARY_${executionModel}`],
+                        candidatePoolSize: 1,
+                        minFreshSupport: 1,
+                        oosIgnoreLastBars: 2,
+                        oosHorizons: [1, 3, 5],
+                    },
+                }),
+                settings: { ...settings, executionModel, tradeDirection: "long" },
+                selectedStrategy: {
+                    key: "fixed_boundary_fill",
+                    name: strategy.name,
+                    strategy,
+                },
+                assets: [{ symbol: `FIXED_BOUNDARY_${executionModel}`, data: candles }],
+                runIsSearch: makeRetainingStubIsSearch(),
+            }), makeCallbacks());
+
+            expect(output.results).to.have.length(1);
+            expect(output.results[0]!.signalAgeBars).to.equal(1);
+            expect(output.results[0]!.oosHorizonMetrics?.horizons[0]).to.deep.equal({
+                bars: 1,
+                pnlPercent: ((120 - 106) / 106) * 100,
+                averagePnlPercent: ((120 - 106) / 106) * 100,
+                winRatePercent: 100,
+                sampleSize: 1,
+            });
+        }
+    });
+
     it("replays the winner through the engine and reports its next configured exit", async () => {
         const strategy: Strategy = {
             name: "NextExitSignal",

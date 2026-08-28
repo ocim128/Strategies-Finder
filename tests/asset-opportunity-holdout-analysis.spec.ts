@@ -186,6 +186,71 @@ describe("Asset Opportunity holdout analysis", () => {
         expect(renderAssetOpportunityHoldoutReport(report)).to.contain("no_boundary_trade=1");
     });
 
+    it("marks unavailable and degenerate thesis sorts instead of presenting fallback PnL as measured evidence", () => {
+        const records = parseAssetOpportunityArchiveText([
+            block({
+                timestamp: "2026-08-11T00:00:00.000Z",
+                runId: "run-next-exit",
+                holdoutBars: 5,
+                sortMetric: "medianBarsToTp",
+                measurementMode: "next_exit",
+                rows: [{
+                    ...row(1, 2, 1),
+                    selectionPerformance: { medianBarsToTp: null },
+                    nextExitOosPerformance: { status: "exited", pnlPercent: 2, exitReason: "time_stop" },
+                }],
+            }),
+            block({
+                timestamp: "2026-08-11T00:00:01.000Z",
+                runId: "run-next-exit",
+                holdoutBars: 5,
+                sortMetric: "priorTupleRecurrence",
+                measurementMode: "next_exit",
+                rows: [{
+                    ...row(1, 2, 1),
+                    selectionPerformance: { priorTupleRecurrenceCount: 0 },
+                    nextExitOosPerformance: { status: "exited", pnlPercent: 2, exitReason: "time_stop" },
+                }],
+            }),
+            block({
+                timestamp: "2026-08-11T00:00:02.000Z",
+                runId: "run-next-exit",
+                holdoutBars: 5,
+                sortMetric: "barrierExitShare",
+                measurementMode: "next_exit",
+                rows: [{
+                    ...row(1, 2, 1),
+                    selectionPerformance: { barrierExitShare: 0 },
+                    nextExitOosPerformance: { status: "exited", pnlPercent: 2, exitReason: "time_stop" },
+                }],
+            }),
+        ].join("\n"));
+        const report = analyzeAssetOpportunityArchive(records, { topK: 1 });
+        const sorts = report.nextExit!.sorts;
+
+        expect(sorts.find((sort) => sort.sortMetric === "medianBarsToTp")!.thesisMetricEvidence).to.deep.equal({
+            status: "unavailable",
+            totalRows: 1,
+            validRows: 0,
+            distinctValues: 0,
+            positiveRows: null,
+        });
+        expect(sorts.find((sort) => sort.sortMetric === "priorTupleRecurrence")!.thesisMetricEvidence).to.deep.equal({
+            status: "insufficient_data",
+            totalRows: 1,
+            validRows: 1,
+            distinctValues: 1,
+            positiveRows: 0,
+        });
+        expect(sorts.find((sort) => sort.sortMetric === "barrierExitShare")!.thesisMetricEvidence.status).to.equal("degenerate");
+
+        const text = renderAssetOpportunityHoldoutReport(report);
+        expect(text).to.contain("Top-K measured: 1");
+        expect(text).to.contain("medianBarsToTp | 0/1 valid, distinct=0 (UNAVAILABLE)");
+        expect(text).to.contain("priorTupleRecurrence | 1/1 valid, recurring=0/1, distinct=1 (INSUFFICIENT DATA)");
+        expect(text).to.contain("fallback/diagnostic result");
+    });
+
     it("renders next-exit sorts best to worst and colorizes console output only", () => {
         const records = parseAssetOpportunityArchiveText([
             block({
