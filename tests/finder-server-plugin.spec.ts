@@ -1448,24 +1448,14 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
             }
         }
         // The run config is archived first (one config.txt block), then one
-        // pair-summary block plus one block per archive sort for each N, in
-        // ascending N order.
+        // block per archive sort for each N, in ascending N order.
         const archiveSortBlockCount = 1 + getAssetOpportunityResortMetrics().length;
         expect(appended).to.deep.equal([
             "config.txt",
             ...[2, 3, 4].flatMap((holdout) =>
-                [
-                    `oos-pair-summary-${holdout}-bars.txt`,
-                    ...Array.from({ length: archiveSortBlockCount }, () => `oos-holdout-${holdout}-bars.txt`),
-                ],
+                Array.from({ length: archiveSortBlockCount }, () => `oos-holdout-${holdout}-bars.txt`),
             ),
         ]);
-        const pairSummaryBlocks = contents.filter((content) => content.includes("Pair summaries: JSON\n"));
-        expect(pairSummaryBlocks).to.have.length(3);
-        for (const content of pairSummaryBlocks) {
-            const jsonStart = content.lastIndexOf("\n[");
-            expect(JSON.parse(content.slice(jsonStart))).to.be.an("array");
-        }
         // The archived run config carries the batch identity plus the trade
         // filter normalized so an inactive filter cannot read as enforced.
         const configBlock = contents[0]!;
@@ -1512,7 +1502,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         ];
         expect(expectedSortLabels).to.include(MEDIAN_BARS_TO_TP_METRIC);
         // +1 for the run-config block archived before the sweep.
-        expect(contents).to.have.length(1 + 2 * (1 + expectedSortLabels.length));
+        expect(contents).to.have.length(1 + 2 * expectedSortLabels.length);
         for (const sortLabel of expectedSortLabels) {
             expect(contents.filter((content) => content.includes(`Archive sort: ${sortLabel}\n`))).to.have.length(2);
         }
@@ -1534,7 +1524,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
             ...getAssetOpportunityResortMetrics(),
         ];
         // +1 for the run-config block archived before the sweep.
-        expect(contents).to.have.length(1 + 2 * (1 + expectedSortLabels.length));
+        expect(contents).to.have.length(1 + 2 * expectedSortLabels.length);
         for (const sortLabel of expectedSortLabels) {
             expect(contents.filter((content) => content.includes(`Archive sort: ${sortLabel}\n`))).to.have.length(2);
         }
@@ -1567,7 +1557,6 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         expect(iterations.map((event) => event.holdoutBars)).to.deep.equal([1]);
         expect(appended).to.deep.equal([
             "config.txt",
-            "oos-pair-summary-1-bars.txt",
             ...Array.from({ length: 1 + getAssetOpportunityResortMetrics().length }, () => "oos-holdout-1-bars.txt"),
         ]);
         const done = events[events.length - 1]!;
@@ -1598,7 +1587,7 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         // The run-config block is best-effort (its append failure only warns),
         // then the first iteration's holdout append throws; the batch must not
         // start the second iteration and must emit asset_batch_fatal.
-        expect(appended).to.deep.equal(["config.txt", "oos-pair-summary-1-bars.txt"]);
+        expect(appended).to.deep.equal(["config.txt", "oos-holdout-1-bars.txt"]);
         const fatal = events.find((event) => event.type === "asset_batch_fatal") as
             Extract<FinderAssetOpportunityBatchStreamEvent, { type: "asset_batch_fatal" }> | undefined;
         expect(fatal).to.not.equal(undefined);
@@ -1623,12 +1612,9 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         });
 
         expect(appended).to.deep.equal(["config.txt", ...[2, 3].flatMap((holdout) =>
-            [
-                `oos-pair-summary-${holdout}-bars.txt`,
-                ...Array.from({ length: 1 + getAssetOpportunityResortMetrics().length }, () => `oos-holdout-${holdout}-bars.txt`),
-            ],
+            Array.from({ length: 1 + getAssetOpportunityResortMetrics().length }, () => `oos-holdout-${holdout}-bars.txt`),
         )]);
-        expect(contents).to.have.length(1 + 2 * (2 + getAssetOpportunityResortMetrics().length));
+        expect(contents).to.have.length(1 + 2 * (1 + getAssetOpportunityResortMetrics().length));
         // The +1 leading config block is the only non-empty-payload append.
         expect(contents.slice(1).every((content) => content.includes("\n[]\n"))).to.equal(true);
 
@@ -1658,7 +1644,6 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         expect(iterations[0]!.holdoutBars).to.equal(5);
         expect(appended).to.deep.equal([
             "config.txt",
-            "oos-pair-summary-5-bars.txt",
             ...Array.from({ length: 1 + getAssetOpportunityResortMetrics().length }, () => "oos-holdout-5-bars.txt"),
         ]);
     });

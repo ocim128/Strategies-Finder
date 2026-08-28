@@ -5,7 +5,6 @@ import type { FinderAssetOpportunityResortMetric } from "../finder-asset-opportu
 import type {
     AssetOpportunityForwardOosBaseline,
     AssetOpportunityNextExitOosBaseline,
-    AssetOpportunityPairSummaryRow,
 } from "../finder-asset-opportunity-metadata";
 import { buildAssetOpportunityCandidateFingerprint } from "../finder-asset-opportunity-metadata";
 import type { FinderAssetOpportunityResult } from "../../types/finder";
@@ -42,13 +41,6 @@ export function buildAssetOpportunityArchiveFilename(holdoutBars: number): strin
         throw new Error(`Invalid holdout bars for archive filename: ${String(holdoutBars)}.`);
     }
     return `oos-holdout-${holdoutBars}-bars.txt`;
-}
-
-export function buildAssetOpportunityPairSummaryFilename(holdoutBars: number): string {
-    if (!Number.isInteger(holdoutBars) || holdoutBars <= 0) {
-        throw new Error(`Invalid holdout bars for pair summary archive filename: ${String(holdoutBars)}.`);
-    }
-    return `oos-pair-summary-${holdoutBars}-bars.txt`;
 }
 
 export interface AssetOpportunityArchiveBlock {
@@ -242,57 +234,6 @@ export async function appendAssetOpportunityArchiveBlock(
         baseline: args.baseline,
         measurementMode: args.measurementMode,
         nextExitBaseline: args.nextExitBaseline,
-    });
-    const append = args.append ?? defaultAppend;
-    await append(dir, filename, content);
-    return {
-        path: path.join(dir, filename),
-        bytes: Buffer.byteLength(content, "utf8"),
-    };
-}
-
-export interface AssetOpportunityPairSummaryBlock {
-    timestamp: string;
-    batchRunId: string;
-    holdoutBars: number;
-    pairSummaries: AssetOpportunityPairSummaryRow[];
-}
-
-export function buildAssetOpportunityPairSummaryBlockText(
-    block: AssetOpportunityPairSummaryBlock,
-): string {
-    const separator = "=".repeat(80);
-    return [
-        separator,
-        `Timestamp: ${block.timestamp}`,
-        `Batch run id: ${block.batchRunId}`,
-        `OOS holdout: ${block.holdoutBars} bars`,
-        "Pair summaries: JSON",
-        separator,
-        JSON.stringify(block.pairSummaries),
-        "",
-    ].join("\n");
-}
-
-export interface AppendAssetOpportunityArchivePairSummaryArgs {
-    root: string;
-    batchRunId: string;
-    holdoutBars: number;
-    pairSummaries: AssetOpportunityPairSummaryRow[];
-    timestamp?: string;
-    append?: AssetOpportunityArchiveAppend;
-}
-
-export async function appendAssetOpportunityArchivePairSummary(
-    args: AppendAssetOpportunityArchivePairSummaryArgs,
-): Promise<AssetOpportunityArchiveAppendResult> {
-    const filename = buildAssetOpportunityPairSummaryFilename(args.holdoutBars);
-    const dir = resolveAssetOpportunityArchiveDir(args.root);
-    const content = buildAssetOpportunityPairSummaryBlockText({
-        timestamp: args.timestamp ?? new Date().toISOString(),
-        batchRunId: args.batchRunId,
-        holdoutBars: args.holdoutBars,
-        pairSummaries: args.pairSummaries,
     });
     const append = args.append ?? defaultAppend;
     await append(dir, filename, content);

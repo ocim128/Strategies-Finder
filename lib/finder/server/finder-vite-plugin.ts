@@ -119,14 +119,12 @@ import {
     normalizeFinderAssetOosIgnoreLastBars,
 } from "../finder-asset-opportunity-oos";
 import {
-    buildAssetOpportunityPairSummaries,
     buildAssetOpportunityForwardOosBaseline,
     buildAssetOpportunityNextExitOosBaseline,
     buildAssetOpportunityPerformancePayload,
 } from "../finder-asset-opportunity-metadata";
 import {
     appendAssetOpportunityArchiveBlock,
-    appendAssetOpportunityArchivePairSummary,
     appendAssetOpportunityArchiveRunConfig,
     buildAssetOpportunityTupleKey,
     countPriorAssetOpportunityTupleRecurrence,
@@ -1801,14 +1799,6 @@ export async function processFinderAssetOpportunityBatchRun(
             ? buildAssetOpportunityNextExitOosBaseline(iteration.results)
             : null;
         try {
-            const pairSummaries = buildAssetOpportunityPairSummaries(iteration.results);
-            await appendAssetOpportunityArchivePairSummary({
-                root: archiveRoot,
-                batchRunId: input.runId,
-                holdoutBars,
-                pairSummaries,
-                ...(archiveAppend ? { append: archiveAppend } : {}),
-            });
             for (const sortMetric of resolveAssetOpportunityArchiveSorts()) {
                 const archiveResults = sortAssetOpportunityResultsByMetric(iteration.results, sortMetric);
                 const topResults = archiveResults

@@ -4,7 +4,6 @@ import {
     buildAssetOpportunityCandidateFingerprint,
     buildAssetOpportunityForwardOosBaseline,
     buildAssetOpportunityNextExitOosBaseline,
-    buildAssetOpportunityPairSummaries,
     buildAssetOpportunityMetadataPayload,
     buildAssetOpportunityPerformancePayload,
 } from "../lib/finder/finder-asset-opportunity-metadata";
@@ -396,78 +395,4 @@ describe("Asset Opportunity metadata payload serializer", () => {
         });
     });
 
-    it("builds sorted per-symbol summaries and keeps forward metrics target-only", () => {
-        expect(buildAssetOpportunityPairSummaries([])).to.deep.equal([]);
-
-        const base = makeAssetResult();
-        const result = (overrides: Partial<FinderAssetOpportunityResult>): FinderAssetOpportunityResult => ({
-            ...base,
-            ...overrides,
-            selectionResult: {
-                ...base.selectionResult,
-                ...(overrides.selectionResult ?? {}),
-            },
-        });
-        const summaries = buildAssetOpportunityPairSummaries([
-            result({
-                symbol: "PAIR_B",
-                selectionResult: { ...base.selectionResult, netProfit: 5, netProfitPercent: 5, avgTrade: 2 },
-                oosHorizonMetrics: undefined,
-            }),
-            result({
-                symbol: "PAIR_B",
-                selectionResult: { ...base.selectionResult, netProfit: 5, netProfitPercent: 5, avgTrade: 2 },
-                oosHorizonMetrics: undefined,
-            }),
-            result({
-                symbol: "PAIR_A",
-                selectionResult: { ...base.selectionResult, netProfit: 10, netProfitPercent: 10, avgTrade: 3 },
-                oosHorizonMetrics: {
-                    ignoreLastBars: 12,
-                    horizons: [
-                        { bars: 1, pnlPercent: 1, averagePnlPercent: 1, winRatePercent: 100, sampleSize: 1 },
-                        { bars: 3, pnlPercent: null, averagePnlPercent: null, winRatePercent: null, sampleSize: 0 },
-                    ],
-                },
-            }),
-            result({
-                symbol: "PAIR_A",
-                selectionResult: { ...base.selectionResult, netProfit: -2, netProfitPercent: 20, avgTrade: 1 },
-                oosHorizonMetrics: {
-                    ignoreLastBars: 12,
-                    horizons: [
-                        { bars: 1, pnlPercent: 3, averagePnlPercent: 3, winRatePercent: 100, sampleSize: 1 },
-                        { bars: 3, pnlPercent: null, averagePnlPercent: Number.NaN, winRatePercent: null, sampleSize: 1 },
-                    ],
-                },
-            }),
-            result({
-                symbol: "PAIR_A",
-                selectionResult: { ...base.selectionResult, netProfit: 0, netProfitPercent: Number.NaN, avgTrade: Number.POSITIVE_INFINITY },
-                oosHorizonMetrics: undefined,
-            }),
-        ]);
-
-        expect(summaries).to.have.length(2);
-        expect(summaries[0]).to.deep.include({
-            symbol: "PAIR_A",
-            candidateCount: 3,
-            profitableShare: 1 / 3,
-            medianNetProfitPercent: 15,
-            netProfitP75MinusP25: 5,
-            medianExpectancy: 2,
-            topNetProfit: 10,
-        });
-        expect(summaries[0]!.forwardPnlPercentByHorizon).to.deep.equal({ 1: 2, 3: null });
-        expect(summaries[1]).to.deep.include({
-            symbol: "PAIR_B",
-            candidateCount: 2,
-            profitableShare: 1,
-            medianNetProfitPercent: 5,
-            netProfitP75MinusP25: 0,
-            medianExpectancy: 2,
-            topNetProfit: 5,
-        });
-        expect(summaries[1]!.forwardPnlPercentByHorizon).to.deep.equal({ 1: null, 3: null });
-    });
 });

@@ -246,7 +246,7 @@ routes, ownership, security, or storage infrastructure.
   retain the new field.
 - Extend `lib/finder/finder-asset-opportunity-metadata.ts` and
   `lib/finder/server/finder-asset-opportunity-archive.ts` with explicit
-  `nextExitOosPerformance` and a mode-specific all-result baseline/pair-summary
+  `nextExitOosPerformance` and a mode-specific all-result baseline
   payload. Preserve existing fixed-horizon archive fields and filenames so old
   archive blocks remain readable; include the mode in new config/payload data.
 - Keep batch holdout filenames and run-id/loopback authorization unchanged.

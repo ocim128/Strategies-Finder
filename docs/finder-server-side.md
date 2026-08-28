@@ -85,8 +85,8 @@ metric as `Archive sort: <metric>` (`run_default` for the normal run order),
 which makes repeated appends with different rankings auditable. The archive
 JSON is compact and contains only row identity plus selection/OOS performance
 metrics and the selected forward measurement. Next-exit rows use
-`nextExitOosPerformance` and the archive adds a mode-specific baseline and
-pair-summary status/reason counts; they are never combined with horizon data.
+`nextExitOosPerformance` and the archive adds a mode-specific baseline; those
+are never combined with horizon data.
 New blocks also include a stable
 `candidateFingerprint`, the latest signal-candle hour in UTC and Asia/Jakarta,
 and an all-candidate forward-OOS baseline captured before the top-N slice.

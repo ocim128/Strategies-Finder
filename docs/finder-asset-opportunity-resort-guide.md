@@ -385,7 +385,6 @@ The server-owned Asset Opportunity batch writes to:
 
 ```text
 archive/asset opportunity/oos-holdout-<N>-bars.txt
-archive/asset opportunity/oos-pair-summary-<N>-bars.txt
 archive/asset opportunity/config.txt
 ```
 
