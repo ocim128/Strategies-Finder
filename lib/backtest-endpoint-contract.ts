@@ -13,6 +13,7 @@ import type {
     BacktestResult,
 } from "./types/strategies";
 import type { CapitalSettings } from "./types/backtest";
+import type { RustCapabilities, RustDiagnosticPhase } from "./rust-engine-client";
 import { buildBacktestPolymarketPerformanceSummary, type BacktestPolymarketPerformanceSummary } from "./polymarket-diagnostics-utils";
 
 // ============================================================================
@@ -20,6 +21,17 @@ import { buildBacktestPolymarketPerformanceSummary, type BacktestPolymarketPerfo
 // ============================================================================
 
 export type EngineMode = "auto" | "typescript" | "rust_preferred";
+
+/** Serializes TypeScript simulations that follow a failed Rust attempt. */
+export interface TypescriptFallbackGate {
+    run<T>(operation: () => T | Promise<T>, signal?: AbortSignal): Promise<T>;
+}
+
+/** Optional diagnostic hook for measuring active TypeScript simulations. */
+export interface TypescriptSimulationConcurrencyTracker {
+    enter(): void;
+    leave(): void;
+}
 
 /**
  * Intentional endpoint simplification: every HTTP backtest uses the same
@@ -74,6 +86,21 @@ export interface BacktestExecutionContext {
      * still wins there.
      */
     useRustEnginePreference?: boolean;
+
+    /** Capabilities reported by the Rust health handshake for this run. */
+    rustCapabilities?: RustCapabilities;
+
+    /** Internal phase label for production-shaped transport diagnostics. */
+    rustDiagnosticPhase?: RustDiagnosticPhase;
+
+    /** Cancels health probes and Rust requests without falling back to TS. */
+    signal?: AbortSignal;
+
+    /** Optional run-scoped gate for bounded Rust-failure TypeScript fallback. */
+    typescriptFallbackGate?: TypescriptFallbackGate;
+
+    /** Optional run-scoped diagnostic counter for TypeScript engine work. */
+    typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
 }
 
 // ============================================================================

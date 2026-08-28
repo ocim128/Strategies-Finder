@@ -27,6 +27,7 @@ import type { FinderSelectedStrategy } from "../lib/finder/finder-runner";
 import type { FinderOptions, FinderResult, FinderAssetOpportunityOptions } from "../lib/types/finder";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { BacktestResult, BacktestSettings, OHLCVData, Signal, Strategy, Time } from "../lib/types/strategies";
+import { rustEngine } from "../lib/rust-engine-client";
 
 function makeCandles(closes: number[]): OHLCVData[] {
     return closes.map((close, index) => ({
@@ -254,6 +255,30 @@ function runBacktestForAssetTest(data: OHLCVData[], signals: { time: Time; type:
     };
 }
 
+function makeConsistentRustResult(
+    data: OHLCVData[],
+    signals: { time: Time; type: "buy" | "sell"; price: number }[],
+    settings: BacktestSettings,
+): BacktestResult {
+    const result = runBacktestForAssetTest(data, signals, settings);
+    const trade = result.trades[0];
+    if (!trade) return result;
+    trade.pnl = 1;
+    trade.pnlPercent = 1;
+    result.netProfit = 1;
+    result.netProfitPercent = 1;
+    result.winRate = 100;
+    result.expectancy = 1;
+    result.avgTrade = 1;
+    result.totalTrades = 1;
+    result.winningTrades = 1;
+    result.losingTrades = 0;
+    result.avgWin = 1;
+    result.avgLoss = 0;
+    result.profitFactor = Number.POSITIVE_INFINITY;
+    return result;
+}
+
 function makeInput(overrides: Partial<AssetOpportunityRunInput>): AssetOpportunityRunInput {
     return {
         interval: "1h",
@@ -374,6 +399,7 @@ describe("Asset Opportunity runner", () => {
             [],
             "trade history is used transiently and is not attached to the scalar result",
         );
+        expect(output.outcomes[0]!.diagnostics?.winnerAnalyticsRecomputations).to.equal(1);
     });
 
     it("splitApplicationCandle reserves the latest closed candle", () => {
@@ -1790,5 +1816,127 @@ describe("Asset Opportunity evaluation window (evalLastBars)", () => {
         expect(output.results).to.have.length(1);
         expect(output.results[0]!.freshStatus).to.equal("fresh");
         expect(output.results[0]!.latestSignalTime).to.equal(candles[candles.length - 1]!.time);
+    });
+
+    it("forwards the runner abort signal to generic Rust freshness and skips TypeScript simulation", async () => {
+        const controller = new AbortController();
+        const candles = makeCandles([100, 101, 102, 103, 104, 105]);
+        let strategyCalls = 0;
+        let observedSignal: AbortSignal | undefined;
+        let resolveObserved!: () => void;
+        const observed = new Promise<void>((resolve) => { resolveObserved = resolve; });
+        const strategy: Strategy = {
+            name: "Cancellation Freshness",
+            description: "emits the current signal so freshness reaches Rust",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                strategyCalls += 1;
+                const latest = data.at(-1);
+                return latest ? [{ time: latest.time, type: "buy" as const, price: latest.close }] : [];
+            },
+        };
+        const original = rustEngine.runBacktestWithStatus;
+        rustEngine.runBacktestWithStatus = async (...args) => {
+            observedSignal = args[8]?.signal;
+            resolveObserved();
+            return new Promise((resolve) => {
+                observedSignal?.addEventListener("abort", () => resolve({ ok: false, reason: "cancelled" as const }), { once: true });
+            });
+        };
+        const run = runAssetOpportunitySearch(makeInput({
+            signal: controller.signal,
+            settings: { ...settings, executionModel: "signal_close" },
+            selectedStrategy: { key: "cancel_freshness", name: strategy.name, strategy },
+            assets: [{ symbol: "CANCEL_FRESHNESS", data: candles }],
+            runIsSearch: makeStubIsSearch(),
+            rustCapabilities: [],
+            useRustEnginePreference: true,
+        }), makeCallbacks());
+
+        try {
+            await observed;
+            expect(observedSignal).to.equal(controller.signal);
+            controller.abort();
+            let caught: unknown;
+            try {
+                await run;
+            } catch (error) {
+                caught = error;
+            }
+            expect(caught).to.be.instanceOf(Error);
+            expect((caught as Error).name).to.equal("AbortError");
+            expect(strategyCalls).to.equal(2, "IS signal generation plus freshness generation; no TS simulation after Rust cancellation");
+        } finally {
+            rustEngine.runBacktestWithStatus = original;
+        }
+    });
+
+    it("forwards the same signal into generic Rust OOS replay and cancels before fallback", async () => {
+        const controller = new AbortController();
+        const candles = makeCandles(Array.from({ length: 12 }, (_, index) => 100 + index));
+        let observedSignal: AbortSignal | undefined;
+        let resolveObserved!: () => void;
+        const observed = new Promise<void>((resolve) => { resolveObserved = resolve; });
+        let rustCalls = 0;
+        const strategy: Strategy = {
+            name: "Cancellation OOS",
+            description: "emits the current signal for a generic OOS replay",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                const latest = data.at(-1);
+                return latest ? [{ time: latest.time, type: "buy" as const, price: latest.close }] : [];
+            },
+        };
+        const original = rustEngine.runBacktestWithStatus;
+        rustEngine.runBacktestWithStatus = async (...args) => {
+            rustCalls += 1;
+            observedSignal = args[8]?.signal;
+            if (rustCalls === 1) {
+                return { ok: true as const, result: makeConsistentRustResult(args[0], args[1], args[5]) };
+            }
+            resolveObserved();
+            return new Promise((resolve) => {
+                observedSignal?.addEventListener("abort", () => resolve({ ok: false, reason: "cancelled" as const }), { once: true });
+            });
+        };
+        const run = runAssetOpportunitySearch(makeInput({
+            signal: controller.signal,
+            options: makeOptions({
+                oosValidationEnabled: true,
+                dataSlice: "half_oldest",
+                assetOpportunity: {
+                    symbols: ["CANCEL_OOS"],
+                    candidatePoolSize: 1,
+                    minFreshSupport: 1,
+                    oosIgnoreLastBars: 3,
+                },
+            }),
+            settings: { ...settings, executionModel: "signal_close" },
+            selectedStrategy: { key: "cancel_oos", name: strategy.name, strategy },
+            assets: [{ symbol: "CANCEL_OOS", data: candles }],
+            candidatePoolSize: 1,
+            runIsSearch: makeStubIsSearch(),
+            rustCapabilities: [],
+            useRustEnginePreference: true,
+        }), makeCallbacks());
+
+        try {
+            await observed;
+            expect(observedSignal).to.equal(controller.signal);
+            controller.abort();
+            let caught: unknown;
+            try {
+                await run;
+            } catch (error) {
+                caught = error;
+            }
+            expect(caught).to.be.instanceOf(Error);
+            expect((caught as Error).name).to.equal("AbortError");
+            expect(rustCalls).to.equal(2, "fresh Rust replay plus OOS Rust replay; cancellation prevents TypeScript fallback");
+        } finally {
+            rustEngine.runBacktestWithStatus = original;
+        }
     });
 });

@@ -1,7 +1,8 @@
 # Finder Asset Opportunity Multi-Asset Rust Batch Plan
 
-Status: Implemented and enabled by default when Rust is selected; set
-`FINDER_ASSET_OPPORTUNITY_RUST_BATCH=0` to roll back to TypeScript batching
+Status: Implemented as an explicitly staged opt-in; set
+`FINDER_ASSET_OPPORTUNITY_RUST_BATCH=1` to enable it. Unset or any value other
+than `1` leaves TypeScript batching enabled.
 Date: 2026-08-18  
 Scope: server-side Finder Asset Opportunity in-sample candidate simulation for
 single runs and batch OOS holdout iterations. The existing TypeScript path,
@@ -79,15 +80,16 @@ The capability matrix is therefore:
 | Asset Opportunity setting | Rust batch decision | Reason |
 | --- | --- | --- |
 | `signal_close` | supported by the new seam | Rust consumes signals at their candle time |
-| `next_open`, `next_close` | TypeScript fallback | not represented by the Rust settings model |
-| zero slippage | supported by the new seam | the Rust settings model has no slippage field |
-| non-zero slippage | TypeScript fallback | silently ignoring slippage would change fills |
+| `next_open` | supported when protocol capabilities are advertised | Rust preserves shifted fills and exit reasons |
+| `next_close` | TypeScript fallback | not represented by the Rust settings model |
+| zero/non-zero slippage | supported by the new seam | slippage is passed through to the Rust execution model |
 | `allowSameBarExit: true` | supported by the new seam | passed through to Rust signal processing |
 | `allowSameBarExit: false` | supported by the new seam | passed through to Rust signal processing |
 | long / short | supported by the new seam | both are implemented by Rust |
 | combined / both directions | TypeScript fallback | Rust normalizes `Both` to long |
 | one open position | supported by the new seam | Rust runs one position |
-| multiple positions / hold / path controls | TypeScript fallback | not represented by Rust |
+| multiple positions / min-hold / cooldown / path controls | TypeScript fallback | not represented by the eligible Rust contract |
+| maximum hold | supported when protocol capabilities are advertised | Rust preserves the time-stop boundary and exit reason |
 | percent / fixed sizing | supported by the new seam | both are accepted by the batch API |
 | `kelly_criterion` sizing | supported by the new seam | Rust mirrors the rolling 100-trade Kelly state, caps, fraction, and fixed/percent fallback |
 | other smart sizing | TypeScript fallback | volatility, parity, martingale, and optimal/secure-f sizing still depend on TypeScript-only rolling state |
@@ -125,10 +127,25 @@ internally, then returns only raw and endpoint-adjusted scalar metrics plus the
 removed-trade count. The generic `/api/backtest/batch` contract remains
 unchanged for callers that require full histories.
 
+### Performance benchmark service
+
+Performance measurements must use the current optimized Rust binary. From the
+`rust-engine` directory, run:
+
+```powershell
+cargo build --release --bin trading-engine-server
+$env:RUST_ENGINE_PORT = "3031"
+.\target\release\trading-engine-server.exe
+```
+
+The benchmark accepts only a health response with `buildProfile="release"`.
+Debug binaries remain valid for semantic parity tests, but they are rejected
+for performance conclusions before measurement begins.
+
 The checked-in benchmark harnesses measure both the isolated engine and the
-production-shaped Finder path. The isolated harness shows that Rust's scalar
-summary kernel can be faster, while the full Finder result also includes
-TypeScript signal generation, batching, serialization, and cache transport.
+production-shaped Finder path. The full Finder result also includes TypeScript
+signal generation, batching, serialization, and cache transport, so isolated
+kernel timings must not be used as an end-to-end speed claim.
 
 | Workload | TypeScript | Forced Rust | Result |
 | --- | ---: | ---: | --- |
@@ -142,15 +159,17 @@ eight candidates per asset on TypeScript and retains Rust for dense or
 uncapped workloads. The benchmark also verifies the compact and fresh-entry
 contracts separately.
 
-The server gate is enabled unless `FINDER_ASSET_OPPORTUNITY_RUST_BATCH=0`; the
+The server gate is enabled only when `FINDER_ASSET_OPPORTUNITY_RUST_BATCH=1`;
+unset or any other value leaves the staged path off. The
 request budget can be adjusted with `FINDER_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES` (default
 16 MiB, bounded to 1-128 MiB). The response budget can be adjusted with
 `FINDER_ASSET_OPPORTUNITY_RUST_BATCH_MAX_RESPONSE_BYTES` (default 128 MiB,
 bounded to 4-512 MiB). The UI Rust preference must also be enabled.
-The bounded Rust path is now the default for Rust-eligible runs. The existing
-TypeScript path remains the authority for unsupported settings and whole-batch
-fallbacks, and setting `FINDER_ASSET_OPPORTUNITY_RUST_BATCH=0` or disabling the
-UI Rust preference provides an independent rollback.
+The bounded Rust path is not enabled by default. TypeScript remains the
+semantic and rollout default for all runs; setting
+`FINDER_ASSET_OPPORTUNITY_RUST_BATCH=1` opts eligible runs into the staged
+path, while disabling the UI Rust preference or using any other environment
+value provides an independent TypeScript route.
 
 The Phase 0 go/no-go decision is **go** for bounded cross-asset candidate and
 fresh-entry batching. The adjacent Rust service now accepts one dataset
@@ -414,8 +433,8 @@ Make Rust an acceleration layer rather than a correctness dependency.
    in-flight Rust request must be bounded by timeout and must not prevent the
    worker pool from terminating.
 4. Keep `FINDER_ASSET_BATCH_WORKERS=1` as the complete worker-pool rollback.
-   Keep the Rust batch feature gate independently disableable; it is enabled by
-   default after the compatibility validation documented above.
+   Keep the Rust batch feature gate independently disableable; it remains
+   explicitly opt-in with `FINDER_ASSET_OPPORTUNITY_RUST_BATCH=1`.
 5. Preserve existing loopback authorization. No Rust endpoint is exposed to
    the browser or to remote callers; worker threads remain internal to the
    Vite process.
@@ -493,7 +512,8 @@ data/cache setup used for the baseline diagnostic.
 
 - A before/after benchmark record for the exact workload.
 - Updated Rust/Finder documentation only after the behavior is enabled.
-- Feature activation decision: enabled by default with an environment rollback.
+- Feature activation decision: staged/off by default; enable explicitly with
+  `FINDER_ASSET_OPPORTUNITY_RUST_BATCH=1` after parity validation.
 
 ### Validation/testing
 
@@ -506,16 +526,18 @@ data/cache setup used for the baseline diagnostic.
 
 ### Exit criteria
 
-The feature remains enabled as an adaptive acceleration layer when parity and
-fallback tests are green and memory remains within the existing worker budget.
-Low-density capped runs intentionally select TypeScript. If a dense Rust path
-regresses or parity fails, set `FINDER_ASSET_OPPORTUNITY_RUST_BATCH=0` and
-retain the TypeScript implementation while investigating.
+The feature remains staged/off by default because the measured complete Finder
+path is currently slower with Rust after signal generation, transport, and
+coordination costs. Low-density capped runs intentionally select TypeScript.
+If the staged path regresses or parity fails, unset the flag or set it to any
+value other than `1` and retain the TypeScript implementation while
+investigating.
 
 ## Rollback
 
-The first rollback is the Rust batch feature gate, which returns all Asset
-Opportunity candidate simulations to the current TypeScript path. The existing
+The first rollback is removing `FINDER_ASSET_OPPORTUNITY_RUST_BATCH=1` (or
+changing it to any other value), which returns all Asset Opportunity candidate
+simulations to the current TypeScript path. The existing
 `FINDER_ASSET_BATCH_WORKERS=1` switch remains the independent worker-pool
 rollback. A code revert must not be required to recover normal operation, and
 no archive, localStorage, SQLite, or other persisted schema changes are part of

@@ -54,9 +54,14 @@ import {
     type BacktestExitSignalCache,
 } from "../backtest-executor";
 import type { BacktestExecutorRequest } from "../backtest-executor";
+import type {
+    TypescriptFallbackGate,
+    TypescriptSimulationConcurrencyTracker,
+} from "../backtest-endpoint-contract";
 import type { BacktestEndpointSelection } from "../strategies/backtest/backtest-engine";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
+import type { RustCapabilities, RustDiagnosticPhase } from "../rust-engine-client";
 import { resolveFinderRiskOverrides } from "./finder-runner-core";
 
 export type AssetCandidateEndpointSelection = "auto" | boolean;
@@ -169,6 +174,11 @@ export async function runAssetCandidateBacktest(args: {
     exitOverride?: AssetCandidateExitOverride;
     dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
+    rustCapabilities?: RustCapabilities;
+    rustDiagnosticPhase?: RustDiagnosticPhase;
+    signal?: AbortSignal;
+    typescriptFallbackGate?: TypescriptFallbackGate;
+    typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
     /**
      * Closed-candle view the executor should use. Omitted for cross-symbol
      * strategies (the cross-symbol runtime owns its closed view).
@@ -180,7 +190,7 @@ export async function runAssetCandidateBacktest(args: {
     exitSignalCache?: AssetCandidateExitSignalCache;
     needs: AssetCandidateBacktestNeeds;
 }): Promise<AssetCandidateBacktestOutput> {
-    const rustSettings = sanitizeBacktestSettingsForRust(args.settings);
+    const rustSettings = sanitizeBacktestSettingsForRust(args.settings, args.rustCapabilities);
     const { backtestSettings: riskAdjustedSettings } = resolveFinderRiskOverrides(
         args.settings,
         rustSettings,
@@ -233,6 +243,11 @@ export async function runAssetCandidateBacktest(args: {
             engineMode: "auto",
             nowSec: Math.floor(Date.now() / 1000),
             useRustEnginePreference: args.useRustEnginePreference,
+            rustCapabilities: args.rustCapabilities,
+            rustDiagnosticPhase: args.rustDiagnosticPhase ?? "is_candidate",
+            signal: args.signal,
+            typescriptFallbackGate: args.typescriptFallbackGate,
+            typescriptSimulationConcurrency: args.typescriptSimulationConcurrency,
         },
         ...(args.dataFetcher ? { dataFetcher: args.dataFetcher } : {}),
         ...(args.closedCandleDataOverride ? { closedCandleDataOverride: args.closedCandleDataOverride } : {}),

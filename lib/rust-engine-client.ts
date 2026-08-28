@@ -2,7 +2,7 @@
  * Rust Trading Engine Client
  *
  * Provides interface to the high-performance Rust backend for:
- * - Backtesting (100x faster than TypeScript)
+ * - Backtesting through the optional Rust service
  *
  * Falls back to TypeScript implementation when Rust server is unavailable.
  */
@@ -20,7 +20,24 @@ export type RustBatchRequestOptions = {
     timeoutMs?: number;
     /** A caller that already serialized this exact request can reuse it. */
     preparedRequest?: PreparedRustRequest;
+    /** Internal benchmark label; never serialized into the Rust request body. */
+    rustDiagnosticPhase?: RustDiagnosticPhase;
+    /** Preserve the TypeScript compact-engine option when drawdown is unused. */
+    skipDrawdown?: boolean;
+    /** Preserve the TypeScript compact-engine option when Sharpe is unused. */
+    skipSharpeRatio?: boolean;
 };
+
+export type RustDiagnosticPhase =
+    | "is_candidate"
+    | "fresh_entry"
+    | "winner_analytics"
+    | "next_exit"
+    | "complementary_oos"
+    | "cache_bootstrap";
+
+export type RustCapabilities = ReadonlySet<string> | readonly string[];
+export const RUST_PROTOCOL_VERSION = 2;
 
 export interface PreparedRustRequest {
     body: string;
@@ -30,11 +47,14 @@ export interface PreparedRustRequest {
 export type RustOutputOptions = {
     compact?: boolean;
     retainTrades?: boolean;
+    skipDrawdown?: boolean;
+    skipSharpeRatio?: boolean;
 };
 
 export type RustBatchTransportFailureReason =
     | 'health_unavailable'
     | 'unsupported_sizing'
+    | 'unsupported_signal_shape'
     | 'request_too_large'
     | 'response_too_large'
     | 'http_error'
@@ -59,6 +79,20 @@ export type RustBatchTransportResult =
         message?: string;
     };
 
+function rejectUnsupportedRustBatchSignals(
+    items: readonly { signals: readonly Signal[] }[],
+    signal?: AbortSignal,
+): RustBatchTransportResult | null {
+    if (signal?.aborted) return { ok: false, reason: 'cancelled' };
+    return items.some((item) => hasUnsupportedRustSignalShape(item.signals))
+        ? {
+            ok: false,
+            reason: 'unsupported_signal_shape',
+            message: 'Rust batches cannot represent behavior-bearing signal fields',
+        }
+        : null;
+}
+
 export type RustBacktestFailureReason =
     | 'health_unavailable'
     | 'unsupported_sizing'
@@ -66,10 +100,12 @@ export type RustBacktestFailureReason =
     | 'timeout'
     | 'network_error'
     | 'malformed_response'
+    | 'cancelled'
+    | 'unsupported_signal_shape'
     | 'inconsistent_result';
 
 export type RustBacktestTransportResult =
-    | { ok: true; result: BacktestResult }
+    | { ok: true; result: BacktestResult; processingTimeMs?: number }
     | { ok: false; reason: RustBacktestFailureReason; message?: string };
 
 export interface RustFreshEntryTradeSummary {
@@ -180,6 +216,7 @@ export function packMultiAssetSignals(signals: Signal[]): number[] | null {
             || signal.triggerPrice !== undefined
             || signal.sizeFraction !== undefined
             || signal.exitOnly === true
+            || isBehaviorBearingRustSignalReason(signal.reason)
         ) return null;
         packed.push(time, signal.type === 'buy' ? 0 : 1, signal.price, barIndex);
     }
@@ -255,10 +292,38 @@ const rustLog = {
 // Types
 // ============================================================================
 
+export type RustBuildProfile = 'debug' | 'release';
+
 interface RustHealthResponse {
     status: string;
     version?: string;
     engine: string;
+    protocolVersion?: number;
+    buildProfile?: RustBuildProfile;
+    capabilities?: Record<string, boolean> | string[];
+}
+
+export function hasUnsupportedRustSignalShape(signals: readonly Signal[]): boolean {
+    return signals.some((signal) => signal.triggerPrice !== undefined
+        || signal.sizeFraction !== undefined
+        || signal.exitOnly === true
+        || isBehaviorBearingRustSignalReason(signal.reason));
+}
+
+/** Reasons whose meaning is not represented by the Rust signal contract. */
+export function isBehaviorBearingRustSignalReason(reason: unknown): boolean {
+    return reason === "polymarket_take_profit" || reason === "polymarket_stop_loss";
+}
+
+function parseRustCapabilities(value: unknown, protocolVersion: unknown): Set<string> {
+    if (protocolVersion !== RUST_PROTOCOL_VERSION) return new Set();
+    if (Array.isArray(value)) {
+        return new Set(value.filter((capability): capability is string => typeof capability === 'string'));
+    }
+    if (!value || typeof value !== 'object') return new Set();
+    return new Set(Object.entries(value as Record<string, unknown>)
+        .filter(([, supported]) => supported === true)
+        .map(([capability]) => capability));
 }
 
 interface RustBacktestRequest {
@@ -275,17 +340,29 @@ interface RustBacktestRequest {
     };
     compact?: boolean;
     retainTrades?: boolean;
+    skipDrawdown?: boolean;
+    skipSharpeRatio?: boolean;
 }
 
 // ============================================================================
 // Rust Engine Client
 // ============================================================================
 
+const DEFAULT_RUST_ENGINE_URL = 'http://127.0.0.1:3030';
+
+function resolveDefaultRustEngineUrl(): string {
+    const configured = typeof process !== 'undefined' ? process.env.RUST_ENGINE_URL?.trim() : undefined;
+    return configured ? configured.replace(/\/+$/, '') : DEFAULT_RUST_ENGINE_URL;
+}
+
 export class RustEngineClient {
     private readonly baseUrl: string;
     private readonly fetchImpl: RustFetch;
     private isAvailable: boolean = false;
     private engineVersion: string | null = null;
+    private engineProtocolVersion: number | null = null;
+    private engineBuildProfile: RustBuildProfile | null = null;
+    private engineCapabilities = new Set<string>();
     private lastHealthCheck: number = 0;
     private readonly healthCheckInterval = 30000; // 30 seconds
     private readonly healthCheckFailureBackoff = 5000; // 5 seconds negative cache
@@ -301,7 +378,7 @@ export class RustEngineClient {
     private readonly maxCachedDataEntries = 4;
     private readonly cachedDataIdsByHash = new Map<string, string>();
 
-    constructor(baseUrl: string = 'http://127.0.0.1:3030', fetchImpl: RustFetch = fetch) {
+    constructor(baseUrl: string = resolveDefaultRustEngineUrl(), fetchImpl: RustFetch = fetch) {
         this.baseUrl = baseUrl;
         this.fetchImpl = fetchImpl;
     }
@@ -452,6 +529,13 @@ export class RustEngineClient {
                 const data = await response.json() as Partial<RustHealthResponse>;
                 this.isAvailable = data.status === 'healthy' && data.engine === 'trading-engine-rust';
                 this.engineVersion = typeof data.version === 'string' ? data.version : null;
+                this.engineProtocolVersion = typeof data.protocolVersion === 'number' ? data.protocolVersion : null;
+                this.engineBuildProfile = data.buildProfile === 'debug' || data.buildProfile === 'release'
+                    ? data.buildProfile
+                    : null;
+                this.engineCapabilities = this.isAvailable
+                    ? parseRustCapabilities(data.capabilities, data.protocolVersion)
+                    : new Set();
                 this.lastHealthCheckFailed = !this.isAvailable;
                 this.lastHealthCheck = Date.now();
                 this.lastHealthLatencyMs = performance.now() - startedAt;
@@ -469,6 +553,9 @@ export class RustEngineClient {
             }
             this.isAvailable = false;
             this.engineVersion = null;
+            this.engineProtocolVersion = null;
+            this.engineBuildProfile = null;
+            this.engineCapabilities = new Set();
             this.lastHealthCheckFailed = true;
             this.lastHealthCheck = Date.now();
             this.lastHealthLatencyMs = performance.now() - startedAt;
@@ -477,6 +564,9 @@ export class RustEngineClient {
             if (signal?.aborted) return false;
             this.isAvailable = false;
             this.engineVersion = null;
+            this.engineProtocolVersion = null;
+            this.engineBuildProfile = null;
+            this.engineCapabilities = new Set();
             this.lastHealthCheckFailed = true;
             this.lastHealthCheck = Date.now();
             this.lastHealthLatencyMs = performance.now() - startedAt;
@@ -496,6 +586,22 @@ export class RustEngineClient {
 
     get version(): string | null {
         return this.engineVersion;
+    }
+
+    get protocolVersion(): number | null {
+        return this.engineProtocolVersion;
+    }
+
+    get buildProfile(): RustBuildProfile | null {
+        return this.engineBuildProfile;
+    }
+
+    get capabilities(): ReadonlySet<string> {
+        return this.engineCapabilities;
+    }
+
+    supportsCapabilities(required: readonly string[]): boolean {
+        return required.every((capability) => this.engineCapabilities.has(capability));
     }
 
     get healthDiagnostics(): { latencyMs: number | null; failureReason: string | null } {
@@ -521,8 +627,14 @@ export class RustEngineClient {
         settings: BacktestSettings,
         sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
         outputOptions?: RustOutputOptions,
+        requestOptions?: RustBatchRequestOptions,
     ): Promise<RustBacktestTransportResult> {
-        if (!await this.checkHealth()) {
+        if (requestOptions?.signal?.aborted) return { ok: false, reason: 'cancelled' };
+        if (hasUnsupportedRustSignalShape(signals)) {
+            return { ok: false, reason: 'unsupported_signal_shape' };
+        }
+        if (!await this.checkHealth(requestOptions?.signal)) {
+            if (requestOptions?.signal?.aborted) return { ok: false, reason: 'cancelled' };
             return { ok: false, reason: 'health_unavailable' };
         }
         if (sizing && !isRustSupportedTradeSizingMode(sizing.mode)) {
@@ -541,41 +653,68 @@ export class RustEngineClient {
                 sizing,
                 compact: outputOptions?.compact ?? false,
                 retainTrades: outputOptions?.retainTrades ?? false,
+                ...(outputOptions?.skipDrawdown === true ? { skipDrawdown: true } : {}),
+                ...(outputOptions?.skipSharpeRatio === true ? { skipSharpeRatio: true } : {}),
             };
 
             const startTime = performance.now();
 
             const timeoutSignal = AbortSignal.timeout(this.backtestTimeoutMs);
+            const requestSignal = requestOptions?.signal
+                ? AbortSignal.any([requestOptions.signal, timeoutSignal])
+                : timeoutSignal;
             const response = await this.fetchImpl(`${this.baseUrl}/api/backtest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(request),
-                signal: timeoutSignal,
+                signal: requestSignal,
             });
+
+            if (requestOptions?.signal?.aborted) return { ok: false, reason: 'cancelled' };
 
             if (!response.ok) {
                 rustLog.error('[RustEngine] Backtest failed:', response.statusText);
                 return { ok: false, reason: 'http_error', message: response.statusText };
             }
 
-            const validation = validateRustBacktestResult(await response.json());
+            const responseJson = await response.json();
+            if (requestOptions?.signal?.aborted) return { ok: false, reason: 'cancelled' };
+            const validation = validateRustBacktestResult(responseJson, {
+                // Protocol v2 makes exitReason part of the generic trade
+                // contract. Older healthy services remain usable only for
+                // legacy signal_close requests, which do not require the
+                // newly capability-gated execution semantics.
+                requireExitReason: this.engineProtocolVersion === RUST_PROTOCOL_VERSION,
+            });
             if (!validation.ok) {
                 rustLog.error('[RustEngine] Backtest returned malformed output:', validation.message);
                 return { ok: false, reason: 'malformed_response', message: validation.message };
             }
             const result = validation.result;
             const elapsed = performance.now() - startTime;
+            const processingTimeMs = responseJson && typeof responseJson === 'object'
+                ? (responseJson as { processingTimeMs?: unknown }).processingTimeMs
+                : undefined;
 
-            rustLog.info(`[RustEngine] Backtest completed in ${elapsed.toFixed(2)}ms (${data.length} bars)`);
+            rustLog.info(`[RustEngine] Backtest completed in ${elapsed.toFixed(2)}ms (Rust: ${String(processingTimeMs ?? 'unknown')}ms, ${data.length} bars)`);
 
-            return { ok: true, result };
+            return {
+                ok: true,
+                result,
+                ...(typeof processingTimeMs === 'number' && Number.isFinite(processingTimeMs)
+                    ? { processingTimeMs }
+                    : {}),
+            };
         } catch (error) {
             rustLog.error('[RustEngine] Backtest error:', error);
             return {
                 ok: false,
-                reason: error instanceof DOMException && error.name === 'TimeoutError'
-                    ? 'timeout'
-                    : 'network_error',
+                reason: requestOptions?.signal?.aborted
+                    || (error instanceof DOMException && error.name === 'AbortError')
+                    ? 'cancelled'
+                    : error instanceof DOMException && error.name === 'TimeoutError'
+                        ? 'timeout'
+                        : 'network_error',
                 message: error instanceof Error ? error.message : String(error),
             };
         }
@@ -605,11 +744,10 @@ export class RustEngineClient {
     }
 
     /**
-     * Run batch backtests on Rust engine - all backtests run in parallel
-     * This is MUCH faster than individual backtest calls due to:
-     * 1. Single HTTP request (no per-request overhead)
-     * 2. OHLCV data sent only once
-     * 3. All backtests run in parallel using Rayon
+     * Run batch backtests on Rust engine - all backtests run in parallel.
+     * The batch contract reduces repeated request/data overhead and lets the
+     * Rust service schedule the items with Rayon; end-to-end performance still
+     * depends on signal generation, serialization, transport, and validation.
      */
     async runBatchBacktest(
         data: OHLCVData[],
@@ -660,6 +798,8 @@ export class RustEngineClient {
         compact: boolean = true,
         requestOptions?: RustBatchRequestOptions,
     ): Promise<RustBatchTransportResult> {
+        const unsupportedSignals = rejectUnsupportedRustBatchSignals(items, requestOptions?.signal);
+        if (unsupportedSignals) return unsupportedSignals;
         const request = {
             data,
             items,
@@ -669,6 +809,8 @@ export class RustEngineClient {
             baseSettings,
             sizing,
             compact,
+            ...(requestOptions?.skipDrawdown === true ? { skipDrawdown: true } : {}),
+            ...(requestOptions?.skipSharpeRatio === true ? { skipSharpeRatio: true } : {}),
         };
         return this.runBatchRequestWithStatus(
             '/api/backtest/batch',
@@ -723,6 +865,8 @@ export class RustEngineClient {
         compact: boolean = true,
         requestOptions?: RustBatchRequestOptions,
     ): Promise<RustBatchTransportResult> {
+        const unsupportedSignals = rejectUnsupportedRustBatchSignals(items, requestOptions?.signal);
+        if (unsupportedSignals) return unsupportedSignals;
         const request = {
             cacheId,
             items,
@@ -732,6 +876,8 @@ export class RustEngineClient {
             baseSettings,
             sizing,
             compact,
+            ...(requestOptions?.skipDrawdown === true ? { skipDrawdown: true } : {}),
+            ...(requestOptions?.skipSharpeRatio === true ? { skipSharpeRatio: true } : {}),
         };
         const outcome = await this.runBatchRequestWithStatus(
             '/api/backtest/batch/cached',
@@ -779,6 +925,8 @@ export class RustEngineClient {
         sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
         requestOptions?: RustBatchRequestOptions,
     ): Promise<RustBatchTransportResult> {
+        const unsupportedSignals = rejectUnsupportedRustBatchSignals(items, requestOptions?.signal);
+        if (unsupportedSignals) return unsupportedSignals;
         const request = {
             data,
             items,
@@ -830,6 +978,8 @@ export class RustEngineClient {
         sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
         requestOptions?: RustBatchRequestOptions,
     ): Promise<RustBatchTransportResult> {
+        const unsupportedSignals = rejectUnsupportedRustBatchSignals(items, requestOptions?.signal);
+        if (unsupportedSignals) return unsupportedSignals;
         const request = {
             cacheId,
             items,
@@ -884,6 +1034,8 @@ export class RustEngineClient {
         sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
         requestOptions?: RustBatchRequestOptions,
     ): Promise<RustBatchTransportResult> {
+        const unsupportedSignals = rejectUnsupportedRustBatchSignals(items, requestOptions?.signal);
+        if (unsupportedSignals) return unsupportedSignals;
         const request = {
             data,
             items,
@@ -893,6 +1045,8 @@ export class RustEngineClient {
             baseSettings,
             sizing,
             lastDataTime,
+            ...(requestOptions?.skipDrawdown === true ? { skipDrawdown: true } : {}),
+            ...(requestOptions?.skipSharpeRatio === true ? { skipSharpeRatio: true } : {}),
         };
         return this.runBatchRequestWithStatus(
             '/api/backtest/asset-opportunity/batch',
@@ -939,6 +1093,8 @@ export class RustEngineClient {
         sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
         requestOptions?: RustBatchRequestOptions,
     ): Promise<RustBatchTransportResult> {
+        const unsupportedSignals = rejectUnsupportedRustBatchSignals(items, requestOptions?.signal);
+        if (unsupportedSignals) return unsupportedSignals;
         const request = {
             cacheId,
             items,
@@ -948,6 +1104,8 @@ export class RustEngineClient {
             baseSettings,
             sizing,
             lastDataTime,
+            ...(requestOptions?.skipDrawdown === true ? { skipDrawdown: true } : {}),
+            ...(requestOptions?.skipSharpeRatio === true ? { skipSharpeRatio: true } : {}),
         };
         const outcome = await this.runBatchRequestWithStatus(
             '/api/backtest/asset-opportunity/batch/cached',
@@ -971,6 +1129,11 @@ export class RustEngineClient {
         sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
         requestOptions?: RustBatchRequestOptions,
     ): Promise<RustBatchTransportResult> {
+        const unsupportedSignals = rejectUnsupportedRustBatchSignals(
+            workloads.flatMap((workload) => workload.items),
+            requestOptions?.signal,
+        );
+        if (unsupportedSignals) return unsupportedSignals;
         const request = {
             workloads: workloads.map(compactMultiAssetWorkload),
             initialCapital,
@@ -978,6 +1141,8 @@ export class RustEngineClient {
             commissionPercent,
             baseSettings,
             sizing,
+            ...(requestOptions?.skipDrawdown === true ? { skipDrawdown: true } : {}),
+            ...(requestOptions?.skipSharpeRatio === true ? { skipSharpeRatio: true } : {}),
         };
         const itemCount = workloads.reduce((total, workload) => total + workload.items.length, 0);
         return this.runBatchRequestWithStatus(
@@ -998,6 +1163,11 @@ export class RustEngineClient {
         sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
         requestOptions?: RustBatchRequestOptions,
     ): Promise<RustBatchTransportResult> {
+        const unsupportedSignals = rejectUnsupportedRustBatchSignals(
+            workloads.flatMap((workload) => workload.items),
+            requestOptions?.signal,
+        );
+        if (unsupportedSignals) return unsupportedSignals;
         const request = {
             workloads: workloads.map(compactMultiAssetWorkload),
             initialCapital,
@@ -1067,6 +1237,10 @@ export class RustEngineClient {
                 signal: requestSignal,
             });
 
+            if (requestOptions?.signal?.aborted) {
+                return { ok: false, reason: 'cancelled', requestBytes };
+            }
+
             if (!response.ok) {
                 rustLog.error('[RustEngine] Batch backtest failed:', response.statusText);
                 return { ok: false, reason: 'http_error', requestBytes, message: response.statusText };
@@ -1097,6 +1271,9 @@ export class RustEngineClient {
                     responseBytes,
                     message: error instanceof Error ? error.message : String(error),
                 };
+            }
+            if (requestOptions?.signal?.aborted) {
+                return { ok: false, reason: 'cancelled', requestBytes, responseBytes };
             }
             const elapsed = performance.now() - startTime;
             const processingTimeMs = responseJson && typeof responseJson === 'object'
@@ -1167,6 +1344,8 @@ export class RustEngineClient {
                 signal: requestSignal,
             });
 
+            if (requestOptions?.signal?.aborted) return null;
+
             if (!response.ok) {
                 rustLog.error('[RustEngine] Cache data failed:', response.statusText);
                 return null;
@@ -1184,8 +1363,10 @@ export class RustEngineClient {
             if (!responseTextResult.ok) {
                 return null;
             }
+            if (requestOptions?.signal?.aborted) return null;
             const responseText = responseTextResult.text;
             const result = JSON.parse(responseText) as { cacheId?: unknown; barCount?: unknown };
+            if (requestOptions?.signal?.aborted) return null;
             const elapsed = performance.now() - startTime;
             const cacheId = typeof result?.cacheId === "string" && result.cacheId.length > 0
                 ? result.cacheId

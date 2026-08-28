@@ -1,10 +1,45 @@
 import type { BacktestSettings } from "./types/strategies";
+import type { RustCapabilities } from "./rust-engine-client";
 import { isSameEventPolymarketExitMode } from "./polymarket-exit-mode";
 
-export function getTypescriptEngineRequirementReasons(settings: BacktestSettings): string[] {
+export const RUST_NEXT_OPEN_CAPABILITY = "backtest.next_open.v1";
+export const RUST_RISK_MAX_HOLD_CAPABILITY = "backtest.risk_max_hold.v1";
+export const RUST_EXIT_REASON_CAPABILITY = "backtest.exit_reason.v1";
+
+export function hasRustCapability(capabilities: RustCapabilities | undefined, capability: string): boolean {
+    return capabilities instanceof Set
+        ? capabilities.has(capability)
+        : Array.isArray(capabilities)
+            ? capabilities.includes(capability)
+            : false;
+}
+
+export function hasRequiredRustCapabilities(
+    capabilities: RustCapabilities | undefined,
+    settings: BacktestSettings,
+): boolean {
+    return getRequiredRustCapabilities(settings).every((capability) => hasRustCapability(capabilities, capability));
+}
+
+export function getRequiredRustCapabilities(settings: BacktestSettings): string[] {
+    const required = new Set<string>();
+    if (settings.executionModel === "next_open") {
+        required.add(RUST_NEXT_OPEN_CAPABILITY);
+        required.add(RUST_EXIT_REASON_CAPABILITY);
+    }
+    if (settings.riskMaxHoldEnabled === true && (settings.riskMaxHoldBars ?? 0) > 0) {
+        required.add(RUST_RISK_MAX_HOLD_CAPABILITY);
+        required.add(RUST_EXIT_REASON_CAPABILITY);
+    }
+    return [...required];
+}
+
+export function getTypescriptEngineRequirementReasons(
+    settings: BacktestSettings,
+    capabilities?: RustCapabilities,
+): string[] {
     const executionModel = settings.executionModel ?? 'signal_close';
-    const slippageBps = settings.slippageBps ?? 0;
-    const marketMode = 'all';
+    const marketMode = settings.marketMode ?? 'all';
 
     const usesCombinedDirection =
         settings.tradeDirection === 'both'
@@ -41,13 +76,26 @@ export function getTypescriptEngineRequirementReasons(settings: BacktestSettings
         settings.pathExitEnabled === true
         && settings.pathExitMode !== undefined
         && settings.pathExitMode !== 'off';
+    const usesSlippage = (settings.slippageBps ?? 0) > 0;
 
     const reasons: string[] = [];
-    if (executionModel !== 'signal_close') reasons.push('execution model is not signal_close');
-    if (slippageBps > 0) reasons.push('slippage is enabled');
+    if (executionModel !== 'signal_close') {
+        if (executionModel === "next_open") {
+            if (!hasRustCapability(capabilities, RUST_NEXT_OPEN_CAPABILITY)
+                || !hasRustCapability(capabilities, RUST_EXIT_REASON_CAPABILITY)) {
+                if (!reasons.includes('rust_capability_missing')) reasons.push('rust_capability_missing');
+            }
+        } else {
+            reasons.push('execution model is not signal_close');
+        }
+    }
     if (usesCombinedDirection) reasons.push('combined trade direction is enabled');
     if (usesNonAllMarketMode) reasons.push('market-mode filtering is enabled');
-    if (usesRiskMaxHold) reasons.push('maximum hold bars are enabled');
+    if (usesRiskMaxHold
+        && (!hasRustCapability(capabilities, RUST_RISK_MAX_HOLD_CAPABILITY)
+            || !hasRustCapability(capabilities, RUST_EXIT_REASON_CAPABILITY))) {
+        if (!reasons.includes('rust_capability_missing')) reasons.push('rust_capability_missing');
+    }
     if (usesRiskMinHold) reasons.push('minimum hold bars are enabled');
     if (usesRiskCooldown) reasons.push('entry cooldown is enabled');
     if (usesPercentageWinStreakStopLoss) reasons.push('win-streak stop loss is enabled');
@@ -57,11 +105,12 @@ export function getTypescriptEngineRequirementReasons(settings: BacktestSettings
     if (usesDisableSignalExits) reasons.push('signal exits are disabled');
     if (usesPolymarketProtection) reasons.push('Polymarket protection is enabled');
     if (usesPathExit) reasons.push('path exits are enabled');
+    if (usesSlippage) reasons.push('slippage is enabled');
     return reasons;
 }
 
-export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
-    return getTypescriptEngineRequirementReasons(settings).length > 0;
+export function requiresTypescriptEngine(settings: BacktestSettings, capabilities?: RustCapabilities): boolean {
+    return getTypescriptEngineRequirementReasons(settings, capabilities).length > 0;
 }
 
 export const SNAPSHOT_FILTER_SETTING_KEYS = [] as const;
@@ -76,14 +125,10 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "pathExitThreshold",
     "pathExitMinSamples",
     "pathExitHorizonBars",
-    "executionModel",
-    "slippageBps",
     "maxOpenTrades",
     "marketMode",
     "riskMinHoldBars",
     "riskMinHoldEnabled",
-    "riskMaxHoldBars",
-    "riskMaxHoldEnabled",
     "riskCooldownBars",
     "riskCooldownEnabled",
     "riskWinStreakStopLossEnabled",
@@ -173,8 +218,22 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
 
 const UNSUPPORTED_KEYS = new Set<string>(RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS);
 
-export function sanitizeBacktestSettingsForRust(settings: BacktestSettings): BacktestSettings {
-    const sanitizedEntries = Object.entries(settings).filter(([key]) => !UNSUPPORTED_KEYS.has(key));
+const CAPABILITY_GATED_KEYS = new Set(["executionModel", "riskMaxHoldBars", "riskMaxHoldEnabled"]);
+
+export function sanitizeBacktestSettingsForRust(
+    settings: BacktestSettings,
+    capabilities?: RustCapabilities,
+): BacktestSettings {
+    const canPreserveNextOpen = hasRustCapability(capabilities, RUST_NEXT_OPEN_CAPABILITY)
+        && hasRustCapability(capabilities, RUST_EXIT_REASON_CAPABILITY);
+    const canPreserveMaxHold = hasRustCapability(capabilities, RUST_RISK_MAX_HOLD_CAPABILITY)
+        && hasRustCapability(capabilities, RUST_EXIT_REASON_CAPABILITY);
+    const sanitizedEntries = Object.entries(settings).filter(([key]) => {
+        if (UNSUPPORTED_KEYS.has(key)) return false;
+        if (!CAPABILITY_GATED_KEYS.has(key)) return true;
+        if (key === "executionModel") return canPreserveNextOpen && settings.executionModel === "next_open";
+        return canPreserveMaxHold;
+    });
     return Object.fromEntries(sanitizedEntries) as BacktestSettings;
 }
 

@@ -2,9 +2,9 @@
  * Server-side Rust batching for Asset Opportunity fresh-entry rechecks.
  *
  * Signal generation remains in the shared TypeScript executor. This leaf only
- * batches the resulting signal sets for the trade simulation that
- * `signal_close` fresh detection needs, then returns only the latest-entry
- * summary required by the existing detector.
+ * batches the resulting signal sets for the capability-gated execution models
+ * that fresh detection supports, then returns only the latest-entry summary
+ * required by the existing detector.
  */
 
 import type { BacktestResult } from "../../types/strategies";
@@ -22,6 +22,7 @@ import type {
     AssetOpportunityFreshEntryBatchEvaluation,
     AssetOpportunityFreshEntryBatchInput,
 } from "../finder-asset-opportunity-runner";
+import { hasRequiredRustCapabilities } from "../../rust-settings-sanitizer";
 
 export async function runServerAssetOpportunityFreshRustBatch(args: {
     input: AssetOpportunityFreshEntryBatchInput;
@@ -31,6 +32,7 @@ export async function runServerAssetOpportunityFreshRustBatch(args: {
     signal?: AbortSignal;
 }): Promise<Map<string, AssetOpportunityFreshEntryBatchEvaluation> | null> {
     const { input } = args;
+    const signal = args.signal ?? input.signal;
     if (input.candidates.length === 0) return new Map();
 
     const featureConfig = resolveAssetOpportunityRustBatchFeatureConfig();
@@ -41,8 +43,18 @@ export async function runServerAssetOpportunityFreshRustBatch(args: {
         capitalSettings: input.capitalSettings,
         selectedStrategy: input.selectedStrategy,
         exitStrategyCandidates: input.exitStrategyCandidates,
+        rustCapabilities: input.rustCapabilities,
     });
     if (!eligibility.eligible) return null;
+    const candidateRequiresUnavailableCapability = input.candidates.some((candidate) =>
+        !hasRequiredRustCapabilities(input.rustCapabilities, {
+            ...candidate.backtestSettings,
+            executionModel: input.settings.executionModel,
+            riskMaxHoldEnabled: candidate.backtestSettings.riskMaxHoldEnabled ?? input.settings.riskMaxHoldEnabled,
+            riskMaxHoldBars: candidate.backtestSettings.riskMaxHoldBars ?? input.settings.riskMaxHoldBars,
+        })
+    );
+    if (candidateRequiresUnavailableCapability) return null;
 
     const client = args.client ?? rustEngine;
     let cacheId: string | undefined;
@@ -57,7 +69,7 @@ export async function runServerAssetOpportunityFreshRustBatch(args: {
         let cachePromise = args.datasetCache.get(cacheKey);
         if (!cachePromise) {
             cachePromise = client.cacheData(input.data, {
-                signal: args.signal,
+                signal,
                 maxRequestBytes: featureConfig.maxRequestBytes,
                 maxResponseBytes: 1 * 1024 * 1024,
             }).catch(() => null);
@@ -82,6 +94,8 @@ export async function runServerAssetOpportunityFreshRustBatch(args: {
                 slippageBps: input.settings.slippageBps,
                 riskCooldownEnabled: input.settings.riskCooldownEnabled,
                 riskCooldownBars: input.settings.riskCooldownBars,
+                riskMaxHoldEnabled: candidate.backtestSettings.riskMaxHoldEnabled ?? input.settings.riskMaxHoldEnabled,
+                riskMaxHoldBars: candidate.backtestSettings.riskMaxHoldBars ?? input.settings.riskMaxHoldBars,
             },
         })),
         initialCapital: input.capitalSettings.initialCapital,
@@ -93,6 +107,8 @@ export async function runServerAssetOpportunityFreshRustBatch(args: {
             slippageBps: input.settings.slippageBps,
             riskCooldownEnabled: input.settings.riskCooldownEnabled,
             riskCooldownBars: input.settings.riskCooldownBars,
+            riskMaxHoldEnabled: input.candidates[0]!.backtestSettings.riskMaxHoldEnabled ?? input.settings.riskMaxHoldEnabled,
+            riskMaxHoldBars: input.candidates[0]!.backtestSettings.riskMaxHoldBars ?? input.settings.riskMaxHoldBars,
         },
         sizing: {
             mode: input.capitalSettings.sizingMode,
@@ -102,10 +118,16 @@ export async function runServerAssetOpportunityFreshRustBatch(args: {
         maxRequestBytes: featureConfig.maxRequestBytes,
         maxResponseBytes: featureConfig.maxResponseBytes,
         ...(cacheId ? { cacheId } : {}),
-        signal: args.signal,
+        signal,
+        rustCapabilities: input.rustCapabilities,
     });
     if (dispatched.status !== "completed") {
         if (cacheKey) args.datasetCache?.delete(cacheKey);
+        if (dispatched.status === "cancelled") {
+            const error = new Error("Rust fresh-entry batch cancelled");
+            error.name = "AbortError";
+            throw error;
+        }
         return null;
     }
 
@@ -128,6 +150,7 @@ function buildFreshSummaryBacktestResult(summary: {
         type: "long" | "short";
         entryTime: BacktestResult["trades"][number]["entryTime"];
         entryPrice: number;
+        exitReason: string;
     } | null;
     isOpen: boolean;
 }): BacktestResult {
@@ -144,7 +167,7 @@ function buildFreshSummaryBacktestResult(summary: {
             pnl: 0,
             pnlPercent: 0,
             size: 0,
-            exitReason: summary.isOpen ? "end_of_data" : "signal",
+            exitReason: summary.latestTrade.exitReason as BacktestResult["trades"][number]["exitReason"],
         }];
     }
     return result;

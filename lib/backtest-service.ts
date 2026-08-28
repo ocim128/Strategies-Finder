@@ -1,5 +1,4 @@
 ﻿import { state } from "./state";
-import { uiManager } from "./ui-manager";
 import { dataManager } from "./data-manager";
 
 import {
@@ -13,7 +12,6 @@ import type { OHLCVData, Strategy } from "./strategies/index";
 import { loadBuiltInStrategyByKey, strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
-import { shouldUseRustEngine } from "./engine-preferences";
 
 import {
     calculateAdvancedPerformanceAnalyticsFromEquityCurve,
@@ -30,7 +28,7 @@ import {
     resolveBacktestSettingsFromRaw
 } from "./backtest-settings-resolver";
 import { resolveSubscriptionExecutionBacktestSettings } from "./alert-subscription-utils";
-import { isRustSupportedTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
+import type { CapitalSettings } from "./types/backtest";
 import {
     createDomBacktestRunHandle,
     delayBacktestUi,
@@ -85,7 +83,6 @@ type RunCurrentBacktestOptions = {
 };
 
 export class BacktestService {
-    private warnedStrictEngine = false;
     private timingBreakdownSampleCount = 0;
     private interactiveRunSequence = 0;
 
@@ -134,7 +131,6 @@ export class BacktestService {
             const sourceData = options.dataOverride ?? state.ohlcvData;
             const sourceSymbol = state.currentSymbol;
             const sourceInterval = state.currentInterval;
-            const requiresTsEngine = this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode);
             await updateDomBacktestRunProgress(runUi, '40%', 'Generating signals...', 100);
 
             let { result, engineUsed, signals, requestContext } = await this.executeBacktest(
@@ -143,7 +139,7 @@ export class BacktestService {
                 params,
                 settings,
                 capitalSettings,
-                requiresTsEngine,
+                false,
                 sourceData,
                 sourceSymbol,
                 sourceInterval,
@@ -272,7 +268,6 @@ export class BacktestService {
         mergedSettings.tradeDirection = mergedSettings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
         mergedSettings.executionModel = mergedSettings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
 
-        const requiresTsEngine = this.requiresTypescriptEngine(mergedSettings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode);
         const run = await this.runBacktestForData(
             state.ohlcvData,
             state.currentSymbol,
@@ -282,7 +277,7 @@ export class BacktestService {
             params,
             mergedSettings,
             capitalSettings,
-            requiresTsEngine
+            false
         );
 
         return run.result;
@@ -294,7 +289,7 @@ export class BacktestService {
         params: StrategyParams,
         settings: BacktestSettings,
         capitalSettings: CapitalSettings,
-        requiresTsEngine: boolean,
+        forceTypescript: boolean,
         ohlcvData: OHLCVData[] = state.ohlcvData,
         symbol: string = state.currentSymbol,
         interval: string = state.currentInterval,
@@ -310,7 +305,7 @@ export class BacktestService {
             params,
             settings,
             capitalSettings,
-            requiresTsEngine
+            forceTypescript
         );
 
         return {
@@ -330,7 +325,7 @@ export class BacktestService {
         params: StrategyParams,
         settings: BacktestSettings,
         capitalSettings: CapitalSettings,
-        requiresTsEngine: boolean
+        forceTypescript: boolean
     ): Promise<{
         result: BacktestResult;
         engineUsed: 'rust' | 'typescript';
@@ -342,11 +337,6 @@ export class BacktestService {
     }> {
         const captureTiming = this.shouldCaptureTimingBreakdown();
         const runStart = captureTiming ? performance.now() : 0;
-        if (requiresTsEngine && shouldUseRustEngine() && !this.warnedStrictEngine) {
-            this.warnedStrictEngine = true;
-            uiManager.showToast('Current sizing or realism settings require TypeScript engine (Rust skipped).', 'info');
-        }
-
         const nowSec = Math.floor(Date.now() / 1000);
         const blockRange = state.blockRange ? { ...state.blockRange } : null;
         const run = await executeBacktest({
@@ -366,7 +356,10 @@ export class BacktestService {
                 nowSec,
                 blockRange,
                 annotatePolymarket: false,
-                engineMode: requiresTsEngine ? 'typescript' : 'auto',
+                // The shared executor performs the capability-aware Rust
+                // preflight. Keep this context automatic so next_open and
+                // max-hold can use Rust when the health handshake supports them.
+                engineMode: forceTypescript ? 'typescript' : 'auto',
             },
             backtestRunOptions: {
                 collectDiagnostics: true,
@@ -399,13 +392,8 @@ export class BacktestService {
         signals: Signal[],
         settings: BacktestSettings,
         capitalSettings: CapitalSettings,
-        requiresTsEngine: boolean
+        forceTypescript: boolean
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
-        if (requiresTsEngine && shouldUseRustEngine() && !this.warnedStrictEngine) {
-            this.warnedStrictEngine = true;
-            uiManager.showToast('Current sizing or realism settings require TypeScript engine (Rust skipped).', 'info');
-        }
-
         return executeBacktestFromSignals(
             ohlcvData,
             interval,
@@ -420,7 +408,7 @@ export class BacktestService {
                 nowSec: Math.floor(Date.now() / 1000),
                 blockRange: state.blockRange,
                 annotatePolymarket: false,
-                engineMode: requiresTsEngine ? 'typescript' : 'auto',
+                engineMode: forceTypescript ? 'typescript' : 'auto',
             }
         );
     }
@@ -700,10 +688,6 @@ export class BacktestService {
         return readBacktestSettings();
     }
 
-    private requiresTypescriptSizingMode(sizingMode: TradeSizingMode): boolean {
-        return !isRustSupportedTradeSizingMode(sizingMode);
-    }
-
     private resolveSubscriptionCapitalSettings(backtestSettings: BacktestSettings): CapitalSettings {
         return resolveSubCapitalSettings(backtestSettings);
     }
@@ -766,7 +750,7 @@ export class BacktestService {
             params,
             settings,
             capitalSettings,
-            this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode)
+            false
         );
     }
 
@@ -799,7 +783,7 @@ export class BacktestService {
             params,
             effectiveSettings,
             capitalSettings,
-            this.requiresTypescriptEngine(effectiveSettings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode)
+            false
         );
 
         let result = await this.annotatePolymarketResult(run.result, effectiveSettings, ohlcvData, symbol, interval);
@@ -853,7 +837,7 @@ export class BacktestService {
             signals,
             settings,
             capitalSettings,
-            this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode)
+            false
         );
     }
 
@@ -880,8 +864,6 @@ export class BacktestService {
 
         const capitalSettings = this.resolveSubscriptionCapitalSettings(effectiveBacktestSettings);
         // Keep Alerts "Last Trade" aligned with Worker evaluation (TypeScript engine path).
-        const requiresTsEngine = true;
-
         // Run the backtest
         const runResult = await this.runBacktestForData(
             ohlcvData,
@@ -892,7 +874,7 @@ export class BacktestService {
             strategyParams,
             effectiveBacktestSettings,
             capitalSettings,
-            requiresTsEngine
+            true
         );
 
         return runResult.result;

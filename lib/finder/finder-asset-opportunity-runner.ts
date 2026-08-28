@@ -56,6 +56,12 @@ import type {
 } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import type {
+    TypescriptFallbackGate,
+    TypescriptSimulationConcurrencyTracker,
+} from "../backtest-endpoint-contract";
+import type { AssetOpportunityRustMultiBatchCoordinator } from "./server/finder-asset-opportunity-multi-rust-batch";
+import type { RustCapabilities, RustDiagnosticPhase } from "../rust-engine-client";
+import type {
     FinderAssetDirection,
     FinderAssetOpportunityResult,
     FinderOosVerdict,
@@ -242,6 +248,7 @@ export type AssetIsSearch = (args: {
     options: FinderOptions;
     settings: BacktestSettings;
     capitalSettings: CapitalSettings;
+    rustCapabilities?: RustCapabilities;
     selectedStrategies: FinderSelectedStrategy[];
     exitStrategyCandidates?: FinderSelectedStrategy[];
     generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[];
@@ -260,6 +267,9 @@ export type AssetIsSearch = (args: {
     signalCache?: AssetOpportunitySignalCache;
     /** Per-asset cache for deterministic Exit Strategy Override signals. */
     exitSignalCache?: AssetCandidateExitSignalCache;
+    signal?: AbortSignal;
+    typescriptFallbackGate?: TypescriptFallbackGate;
+    rustMultiAssetBatch?: AssetOpportunityRustMultiBatchCoordinator;
 }) => Promise<{
     results: FinderResult[];
     /** Total candidates considered before the returned top-K reduction. */
@@ -304,7 +314,11 @@ export interface AssetOpportunitySearchDiagnostics {
     signalCacheHits: number;
     signalCacheMisses: number;
     freshEntryRechecks: number;
+    freshEntryExecutions: number;
     oosEvaluations: number;
+    fixedHorizonEvaluations: number;
+    nextExitEvaluations: number;
+    complementaryOosEvaluations: number;
     winnerAnalyticsRecomputations: number;
     timingsMs: {
         total: number;
@@ -366,6 +380,10 @@ export interface AssetOpportunityFreshEntryBatchInput {
     exitStrategyCandidates?: FinderSelectedStrategy[];
     dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
+    rustCapabilities?: RustCapabilities;
+    typescriptFallbackGate?: TypescriptFallbackGate;
+    typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
+    signal?: AbortSignal;
     candidates: AssetOpportunityFreshEntryBatchCandidate[];
 }
 
@@ -406,8 +424,14 @@ export interface AssetOpportunityRunInput {
     dataFetcher?: CrossSymbolDataFetcher;
     /** Matches the server's explicit Rust preference for replay execution. */
     useRustEnginePreference?: boolean;
-    /** Optional engine override for the non-batched fresh-entry replay. */
-    freshEntryUseRustEnginePreference?: boolean;
+    /** Optional routing experiment: keep IS on Rust while replay phases use TS. */
+    useRustEngineForFollowups?: boolean;
+    rustCapabilities?: RustCapabilities;
+    typescriptFallbackGate?: TypescriptFallbackGate;
+    typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
+    rustMultiAssetBatch?: AssetOpportunityRustMultiBatchCoordinator;
+    /** Cancels every in-flight candidate, freshness, and OOS replay. */
+    signal?: AbortSignal;
     /** Worker-local cache for full-series signals reused across batch holdouts. */
     signalCache?: AssetOpportunitySignalCache;
     /** Per-asset cache for deterministic Exit Strategy Override signals. */
@@ -679,6 +703,7 @@ export async function runAssetOpportunitySearch(
     input: AssetOpportunityRunInput,
     callbacks: AssetOpportunityRunCallbacks,
 ): Promise<AssetOpportunityRunOutput> {
+    throwIfAborted(input.signal);
     const outcomes: AssetOpportunityAssetResult[] = [];
     const results: FinderAssetOpportunityResult[] = [];
     const totalAssets = input.assets.length;
@@ -687,6 +712,7 @@ export async function runAssetOpportunitySearch(
     callbacks.setProgress(0, `Asset Opportunity: 0/${totalAssets} assets`);
 
     for (let assetIndex = 0; assetIndex < totalAssets; assetIndex++) {
+        throwIfAborted(input.signal);
         if (callbacks.isCancelled()) break;
         const asset = input.assets[assetIndex]!;
         const symbol = asset.symbol;
@@ -712,6 +738,9 @@ export async function runAssetOpportunitySearch(
                 callbacks.onAssetComplete?.(outcome);
             }
         } catch (error) {
+            if (input.signal?.aborted || isAbortError(error)) {
+                throw error;
+            }
             if (callbacks.isCancelled()) {
                 break;
             }
@@ -742,6 +771,8 @@ async function searchOneAsset(args: {
 }): Promise<AssetOpportunityAssetResult> {
     const { asset, input, selectedStrategy, callbacks } = args;
     const symbol = asset.symbol;
+    const followupUseRustEnginePreference = input.useRustEngineForFollowups
+        ?? input.useRustEnginePreference;
     const exitSignalCache = input.exitSignalCache ?? new Map();
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
     const preparedStrategy = createPreparedFinderStrategy(
@@ -765,7 +796,11 @@ async function searchOneAsset(args: {
         signalCacheHits: 0,
         signalCacheMisses: 0,
         freshEntryRechecks: 0,
+        freshEntryExecutions: 0,
         oosEvaluations: 0,
+        fixedHorizonEvaluations: 0,
+        nextExitEvaluations: 0,
+        complementaryOosEvaluations: 0,
         winnerAnalyticsRecomputations: 0,
         timingsMs: {
             total: 0,
@@ -952,6 +987,9 @@ async function searchOneAsset(args: {
         fullSignalData: fullClosed,
         ...(input.signalCache ? { signalCache: input.signalCache } : {}),
         exitSignalCache,
+        signal: input.signal,
+        ...(input.typescriptFallbackGate ? { typescriptFallbackGate: input.typescriptFallbackGate } : {}),
+        ...(input.rustMultiAssetBatch ? { rustMultiAssetBatch: input.rustMultiAssetBatch } : {}),
     });
     diagnostics.timingsMs.inSampleSearch = performance.now() - inSampleStartedAt;
     diagnostics.candidatesEvaluated = finderOutput.totalCandidatesEvaluated ?? finderOutput.results.length;
@@ -1034,12 +1072,20 @@ async function searchOneAsset(args: {
         : undefined;
     const retainedSignals = canReuseIsSignalsForFresh ? retainedFreshSignals : undefined;
     let batchedFreshEvaluations: AssetFreshEvaluation[] | null = null;
-    if (!retainedSignals && input.freshEntryBatch && executionModel === "signal_close") {
+    if (!retainedSignals
+        && input.freshEntryBatch
+        // The callback itself is the server-side Rust gate. Preserve the
+        // legacy injected-executor contract when no preference was supplied,
+        // while allowing the routing experiment to force TypeScript.
+        && followupUseRustEnginePreference !== false
+        && (executionModel === "signal_close" || executionModel === "next_open")
+    ) {
         try {
             const preparedFreshCandidates = await mapWithConcurrencyLimit(
                 topK,
                 ASSET_FRESH_RECHECK_CONCURRENCY,
                 async (candidate, candidateIndex) => {
+                    if (input.signal?.aborted) throwAbortError();
                     if (callbacks.isCancelled()) throw new Error("Finder stopped.");
                     const combinedParams = withExitStrategyBaseParams(
                         candidate.params,
@@ -1076,7 +1122,12 @@ async function searchOneAsset(args: {
                             : {}),
                         dataFetcher: input.dataFetcher,
                         exitSignalCache,
-                        useRustEnginePreference: input.useRustEnginePreference,
+                        rustCapabilities: input.rustCapabilities,
+                        useRustEnginePreference: followupUseRustEnginePreference,
+                        rustDiagnosticPhase: "fresh_entry",
+                        typescriptFallbackGate: input.typescriptFallbackGate,
+                        typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
+                        signal: input.signal,
                         closedCandleDataOverride: freshSignalData ?? recheckData,
                         ...(retainedFreshSignals
                             ? { preGeneratedSignals: retainedFreshSignals[candidateIndex] ?? [] }
@@ -1111,7 +1162,11 @@ async function searchOneAsset(args: {
                 selectedStrategy,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 dataFetcher: input.dataFetcher,
-                useRustEnginePreference: input.useRustEnginePreference,
+                useRustEnginePreference: followupUseRustEnginePreference,
+                rustCapabilities: input.rustCapabilities,
+                typescriptFallbackGate: input.typescriptFallbackGate,
+                typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
+                signal: input.signal,
                 candidates: preparedFreshCandidates,
             });
             if (batchResults) {
@@ -1129,7 +1184,7 @@ async function searchOneAsset(args: {
                 });
             }
         } catch (error) {
-            if (callbacks.isCancelled()) throw error;
+            if (callbacks.isCancelled() || (error instanceof Error && error.name === "AbortError")) throw error;
             debugLogger.warn("finder.asset_opportunity.fresh_batch_fallback", {
                 symbol,
                 reason: error instanceof Error ? error.message : String(error),
@@ -1149,8 +1204,15 @@ async function searchOneAsset(args: {
         : batchedFreshEvaluations
             ?? await mapWithConcurrencyLimit(
             topK,
-            ASSET_FRESH_RECHECK_CONCURRENCY,
+            // next_exit always uses the generic execution-aware replay. A
+            // fresh-entry batch callback may exist for another execution
+            // model, but it is not used here and must not widen this replay
+            // into a TypeScript fallback wave.
+            needsExecutableFreshRecheck
+                ? 1
+                : ASSET_FRESH_RECHECK_CONCURRENCY,
             (candidate) => {
+                if (input.signal?.aborted) throwAbortError();
                 if (callbacks.isCancelled()) {
                     throw new Error("Finder stopped.");
                 }
@@ -1170,8 +1232,11 @@ async function searchOneAsset(args: {
                     exitStrategyCandidates: input.exitStrategyCandidates,
                     exitSignalCache,
                     dataFetcher: input.dataFetcher,
-                    useRustEnginePreference: input.freshEntryUseRustEnginePreference
-                        ?? input.useRustEnginePreference,
+                    useRustEnginePreference: followupUseRustEnginePreference,
+                    rustDiagnosticPhase: "fresh_entry",
+                    rustCapabilities: input.rustCapabilities,
+                    typescriptFallbackGate: input.typescriptFallbackGate,
+                    signal: input.signal,
                 });
             },
         );
@@ -1181,6 +1246,7 @@ async function searchOneAsset(args: {
         // Reused detections executed nothing; they must not inflate the
         // engine-usage counters.
         if (evaluation.signalsReused !== true) {
+            diagnostics.freshEntryExecutions += 1;
             mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
                 rustAttemptedRuns: evaluation.rustAttempted ? 1 : 0,
                 rustCompletedRuns: evaluation.engineUsed === "rust" ? 1 : 0,
@@ -1266,6 +1332,7 @@ async function searchOneAsset(args: {
         && winnerCandidate
     ) {
         try {
+            const winnerStartedAt = performance.now();
             const winnerSelection = await executeAssetCandidate({
                 candidate: winnerCandidate,
                 strategy: preparedStrategy,
@@ -1277,7 +1344,12 @@ async function searchOneAsset(args: {
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 dataFetcher: input.dataFetcher,
-                useRustEnginePreference: input.useRustEnginePreference,
+                useRustEnginePreference: followupUseRustEnginePreference,
+                rustDiagnosticPhase: "winner_analytics",
+                rustCapabilities: input.rustCapabilities,
+                typescriptFallbackGate: input.typescriptFallbackGate,
+                typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
+                signal: input.signal,
             });
             const preResolvedCapital = resolveCapitalSettingsFromRaw(
                 input.capitalSettings as unknown as Record<string, unknown>,
@@ -1292,6 +1364,8 @@ async function searchOneAsset(args: {
                 candles: slicedHistorical,
                 freshEntryPrice: winnerFresh?.freshEntryPrice ?? null,
             });
+            diagnostics.winnerAnalyticsRecomputations += 1;
+            diagnostics.timingsMs.winnerAnalytics += performance.now() - winnerStartedAt;
             mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
                 rustAttemptedRuns: winnerSelection.engineDiagnostics?.rustAttempted ? 1 : 0,
                 rustCompletedRuns: winnerSelection.engineUsed === "rust" ? 1 : 0,
@@ -1306,6 +1380,7 @@ async function searchOneAsset(args: {
                     : [],
             });
         } catch (error) {
+            if (input.signal?.aborted || isAbortError(error)) throw error;
             debugLogger.warn("finder.asset_opportunity.derived_metrics_failed", {
                 symbol,
                 strategyKey: winnerCandidate.key,
@@ -1336,6 +1411,7 @@ async function searchOneAsset(args: {
                     : firstHiddenBar?.close ?? Number.NaN;
         if (winnerCandidate && winnerFresh?.direction && Number.isFinite(entryPrice)) {
             diagnostics.oosEvaluations += 1;
+            diagnostics.fixedHorizonEvaluations += 1;
             const oosHorizonMetrics = calculateFinderAssetOosSignalMetrics({
                 candles: fullClosed,
                 signalIndex: fixedOosSignalIndex,
@@ -1354,6 +1430,7 @@ async function searchOneAsset(args: {
         const winnerFresh = freshEvaluations[winnerIndex];
         if (winnerCandidate && winnerFresh?.direction) {
             diagnostics.oosEvaluations += 1;
+            diagnostics.nextExitEvaluations += 1;
             // The fresh-entry detector accepts a one-bar-old signal for
             // next-bar execution. That signal can fill on the last visible
             // candle, so the boundary entry is the signal candle plus the
@@ -1384,7 +1461,12 @@ async function searchOneAsset(args: {
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 exitSignalCache,
                 dataFetcher: input.dataFetcher,
-                useRustEnginePreference: input.useRustEnginePreference,
+                useRustEnginePreference: followupUseRustEnginePreference,
+                rustDiagnosticPhase: "next_exit",
+                rustCapabilities: input.rustCapabilities,
+                typescriptFallbackGate: input.typescriptFallbackGate,
+                typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
+                signal: input.signal,
             });
             mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
                 rustAttemptedRuns: winnerNextExit.rustAttempted ? 1 : 0,
@@ -1406,6 +1488,7 @@ async function searchOneAsset(args: {
             // Additive: a fixed-holdout evaluation may already have been
             // counted above; both modes can be active for the same asset.
             diagnostics.oosEvaluations += 1;
+            diagnostics.complementaryOosEvaluations += 1;
             const winnerOos = await runCandidateOosOnAsset({
                 candidate: winnerCandidate,
                 strategy: preparedStrategy,
@@ -1418,7 +1501,12 @@ async function searchOneAsset(args: {
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 exitSignalCache,
                 dataFetcher: input.dataFetcher,
-                useRustEnginePreference: input.useRustEnginePreference,
+                useRustEnginePreference: followupUseRustEnginePreference,
+                rustDiagnosticPhase: "complementary_oos",
+                rustCapabilities: input.rustCapabilities,
+                typescriptFallbackGate: input.typescriptFallbackGate,
+                typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
+                signal: input.signal,
             });
             mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
                 rustAttemptedRuns: winnerOos.rustAttempted ? 1 : 0,
@@ -1475,7 +1563,11 @@ async function searchOneAsset(args: {
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 dataFetcher: input.dataFetcher,
-                useRustEnginePreference: input.useRustEnginePreference,
+                useRustEnginePreference: followupUseRustEnginePreference,
+                rustDiagnosticPhase: "winner_analytics",
+                rustCapabilities: input.rustCapabilities,
+                typescriptFallbackGate: input.typescriptFallbackGate,
+                signal: input.signal,
                 fullAnalytics: true,
             });
             const preResolvedCapital = resolveCapitalSettingsFromRaw(
@@ -1494,7 +1586,7 @@ async function searchOneAsset(args: {
                 selectionResult: selection.result,
             };
             diagnostics.winnerAnalyticsRecomputations += 1;
-            diagnostics.timingsMs.winnerAnalytics = performance.now() - winnerStartedAt;
+            diagnostics.timingsMs.winnerAnalytics += performance.now() - winnerStartedAt;
             mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
                 rustAttemptedRuns: winnerEvaluation.engineDiagnostics?.rustAttempted ? 1 : 0,
                 rustCompletedRuns: winnerEvaluation.engineUsed === "rust" ? 1 : 0,
@@ -1700,6 +1792,10 @@ function regenerateSignalsAndDetectFresh(args: {
     exitSignalCache?: AssetCandidateExitSignalCache;
     dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
+    rustDiagnosticPhase?: RustDiagnosticPhase;
+    rustCapabilities?: RustCapabilities;
+    typescriptFallbackGate?: TypescriptFallbackGate;
+    signal?: AbortSignal;
 }): Promise<AssetFreshEvaluation> {
     const needsExecutableFreshRecheck = args.options.assetOpportunity?.oosMeasurementMode === "next_exit";
     const signalData = args.signalData ?? args.fullClosed;
@@ -1717,6 +1813,9 @@ function regenerateSignalsAndDetectFresh(args: {
         exitSignalCache: args.exitSignalCache,
         dataFetcher: args.dataFetcher,
         useRustEnginePreference: args.useRustEnginePreference,
+        rustDiagnosticPhase: args.rustDiagnosticPhase,
+        rustCapabilities: args.rustCapabilities,
+        signal: args.signal,
         signalOnly: args.settings.executionModel !== "signal_close" && !needsExecutableFreshRecheck,
     }).then(({ result, signals, engineUsed, engineDiagnostics }) => {
         const boundarySignals = args.signalData
@@ -1834,6 +1933,11 @@ async function executeAssetCandidate(args: {
     exitSignalCache?: AssetCandidateExitSignalCache;
     dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
+    rustDiagnosticPhase?: RustDiagnosticPhase;
+    rustCapabilities?: RustCapabilities;
+    signal?: AbortSignal;
+    typescriptFallbackGate?: TypescriptFallbackGate;
+    typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
     signalOnly?: boolean;
     fullAnalytics?: boolean;
 }): Promise<{
@@ -1882,7 +1986,12 @@ async function executeAssetCandidate(args: {
             : {}),
         ...(args.dataFetcher ? { dataFetcher: args.dataFetcher } : {}),
         ...(args.exitSignalCache ? { exitSignalCache: args.exitSignalCache } : {}),
+        signal: args.signal,
         useRustEnginePreference: args.useRustEnginePreference,
+        rustDiagnosticPhase: args.rustDiagnosticPhase,
+        rustCapabilities: args.rustCapabilities,
+        typescriptFallbackGate: args.typescriptFallbackGate,
+        typescriptSimulationConcurrency: args.typescriptSimulationConcurrency,
         ...(args.strategy.crossSymbolConfig ? {} : { closedCandleDataOverride: args.data }),
         needs: {
             // Asset Opportunity retains scalar winner metrics plus trades for
@@ -1923,6 +2032,11 @@ async function runCandidateNextExitOnAsset(args: {
     exitSignalCache?: AssetCandidateExitSignalCache;
     dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
+    rustDiagnosticPhase?: RustDiagnosticPhase;
+    rustCapabilities?: RustCapabilities;
+    typescriptFallbackGate?: TypescriptFallbackGate;
+    typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
+    signal?: AbortSignal;
 }): Promise<{
     metrics: import("./finder-asset-opportunity-oos").FinderAssetOosNextExitMetrics;
     engineUsed?: "rust" | "typescript";
@@ -1943,6 +2057,11 @@ async function runCandidateNextExitOnAsset(args: {
             exitSignalCache: args.exitSignalCache,
             dataFetcher: args.dataFetcher,
             useRustEnginePreference: args.useRustEnginePreference,
+            rustDiagnosticPhase: args.rustDiagnosticPhase,
+            rustCapabilities: args.rustCapabilities,
+            typescriptFallbackGate: args.typescriptFallbackGate,
+            typescriptSimulationConcurrency: args.typescriptSimulationConcurrency,
+            signal: args.signal,
         });
         return {
             metrics: calculateFinderAssetOosNextExitMetrics({
@@ -1959,6 +2078,7 @@ async function runCandidateNextExitOnAsset(args: {
                 : {}),
         };
     } catch (error) {
+        if (isAbortError(error) || args.signal?.aborted) throw error;
         debugLogger.warn("finder.asset_opportunity.next_exit_replay_failed", {
             symbol: args.symbol,
             strategyKey: args.candidate.key,
@@ -1995,6 +2115,11 @@ async function runCandidateOosOnAsset(args: {
     exitSignalCache?: AssetCandidateExitSignalCache;
     dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
+    rustDiagnosticPhase?: RustDiagnosticPhase;
+    rustCapabilities?: RustCapabilities;
+    typescriptFallbackGate?: TypescriptFallbackGate;
+    typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
+    signal?: AbortSignal;
 }): Promise<AssetOpportunityOosEvaluation> {
     try {
         const { result, engineUsed, engineDiagnostics } = await executeAssetCandidate({
@@ -2010,6 +2135,11 @@ async function runCandidateOosOnAsset(args: {
             exitSignalCache: args.exitSignalCache,
             dataFetcher: args.dataFetcher,
             useRustEnginePreference: args.useRustEnginePreference,
+            rustDiagnosticPhase: args.rustDiagnosticPhase,
+            rustCapabilities: args.rustCapabilities,
+            typescriptFallbackGate: args.typescriptFallbackGate,
+            typescriptSimulationConcurrency: args.typescriptSimulationConcurrency,
+            signal: args.signal,
         });
         return {
             result,
@@ -2025,10 +2155,25 @@ async function runCandidateOosOnAsset(args: {
                 ? { typescriptReason: engineDiagnostics.typescriptReason }
                 : {}),
         };
-    } catch {
+    } catch (error) {
+        if (isAbortError(error) || args.signal?.aborted) throw error;
         return {
             result: createEmptyBacktestResult(),
             verdict: "inconclusive",
         };
     }
+}
+
+function isAbortError(error: unknown): boolean {
+    return error instanceof Error && error.name === "AbortError";
+}
+
+function throwAbortError(): never {
+    const error = new Error("Asset Opportunity cancelled");
+    error.name = "AbortError";
+    throw error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+    if (signal?.aborted) throwAbortError();
 }

@@ -25,6 +25,7 @@
  */
 
 import { expect } from "chai";
+import { strict as assert } from "node:assert";
 import { describe, it, before, after, afterEach } from "node:test";
 import { strategyRegistry } from "../strategyRegistry";
 import {
@@ -45,6 +46,7 @@ import {
     runAssetOpportunityBatchWorkerTask,
     type AssetOpportunityBatchWorkerTask,
 } from "../lib/finder/server/finder-asset-opportunity-batch-worker";
+import { createTypescriptFallbackGate } from "../lib/finder/server/asset-opportunity-iteration";
 import type { FinderAssetOpportunityBatchStreamEvent } from "../lib/finder/server/finder-stream-types";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions } from "../lib/types/finder";
@@ -431,6 +433,30 @@ describe("finder Asset Opportunity batch parallel execution", () => {
             64 * GIB,
             { rustEngine: true },
         )).to.equal(16);
+    });
+
+    it("serializes TypeScript fallback work and drops an aborted queued operation", async () => {
+        const gate = createTypescriptFallbackGate();
+        const controller = new AbortController();
+        let active = 0;
+        let maxActive = 0;
+        let completed = 0;
+        const operation = async (): Promise<void> => {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            active -= 1;
+            completed += 1;
+        };
+
+        const first = gate.run(operation);
+        const second = gate.run(operation, controller.signal);
+        controller.abort();
+        await first;
+        await assert.rejects(second, /Asset Opportunity cancelled/);
+
+        expect(maxActive).to.equal(1);
+        expect(completed).to.equal(1);
     });
 
     it("produces identical ordered results, archives, and totals as the sequential loop", async () => {

@@ -1,0 +1,273 @@
+{
+  "cases": [
+    {
+      "name": "long_next_open_max_hold_1",
+      "data": [
+        { "time": 0, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000 },
+        { "time": 1, "open": 110, "high": 111, "low": 109, "close": 110, "volume": 1000 },
+        { "time": 2, "open": 120, "high": 121, "low": 119, "close": 120, "volume": 1000 },
+        { "time": 3, "open": 130, "high": 131, "low": 129, "close": 130, "volume": 1000 },
+        { "time": 4, "open": 130, "high": 131, "low": 129, "close": 130, "volume": 1000 }
+      ],
+      "signals": [{ "time": 0, "type": "buy", "price": 100 }],
+      "settings": {
+        "executionModel": "next_open",
+        "tradeDirection": "long",
+        "riskMaxHoldEnabled": true,
+        "riskMaxHoldBars": 1,
+        "slippageBps": 100
+      },
+      "capital": {
+        "initialCapital": 1000,
+        "positionSizePercent": 100,
+        "commissionPercent": 1,
+        "sizing": { "mode": "fixed", "fixedTradeAmount": 1000 }
+      },
+      "expected": {
+        "trades": [{ "id": 1, "type": "long", "entryTime": 1, "entryPrice": 111.1, "exitTime": 2, "exitPrice": 118.8, "pnl": 48.132536025879816, "pnlPercent": 4.861386138613861, "size": 8.911782267335644, "fees": 20.488187432604647, "exitReason": "time_stop" }],
+        "netProfit": 48.13253602587997,
+        "netProfitPercent": 4.813253602587998,
+        "totalTrades": 1,
+        "winningTrades": 1,
+        "losingTrades": 0,
+        "maxDrawdown": 19.703950593078957,
+        "maxDrawdownPercent": 1.9703950593078958
+      }
+    },
+    {
+      "name": "short_next_open_max_hold_2",
+      "data": [
+        { "time": 0, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000 },
+        { "time": 1, "open": 90, "high": 91, "low": 89, "close": 90, "volume": 1000 },
+        { "time": 2, "open": 80, "high": 81, "low": 79, "close": 80, "volume": 1000 },
+        { "time": 3, "open": 70, "high": 71, "low": 69, "close": 70, "volume": 1000 },
+        { "time": 4, "open": 70, "high": 71, "low": 69, "close": 70, "volume": 1000 }
+      ],
+      "signals": [{ "time": 0, "type": "sell", "price": 100 }],
+      "settings": {
+        "executionModel": "next_open",
+        "tradeDirection": "short",
+        "riskMaxHoldEnabled": true,
+        "riskMaxHoldBars": 2,
+        "slippageBps": 100
+      },
+      "capital": {
+        "initialCapital": 1000,
+        "positionSizePercent": 100,
+        "commissionPercent": 1,
+        "sizing": { "mode": "fixed", "fixedTradeAmount": 1000 }
+      },
+      "expected": {
+        "trades": [{ "id": 1, "type": "short", "entryTime": 1, "entryPrice": 89.1, "exitTime": 3, "exitPrice": 70.7, "pnl": 186.7075596448533, "pnlPercent": 18.857463524130182, "size": 11.112222333344446, "fees": 17.757331288684426, "exitReason": "time_stop" }],
+        "netProfit": 186.7075596448533,
+        "netProfitPercent": 18.670755964485327,
+        "totalTrades": 1,
+        "winningTrades": 1,
+        "losingTrades": 0,
+        "maxDrawdown": 19.901990199019906,
+        "maxDrawdownPercent": 1.9901990199019906
+      }
+    },
+    {
+      "name": "signal_exit_on_max_hold_boundary",
+      "data": [
+        { "time": 0, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000 },
+        { "time": 1, "open": 110, "high": 112, "low": 108, "close": 111, "volume": 1000 },
+        { "time": 2, "open": 120, "high": 121, "low": 119, "close": 120, "volume": 1000 },
+        { "time": 3, "open": 130, "high": 131, "low": 129, "close": 130, "volume": 1000 }
+      ],
+      "signals": [
+        { "time": 0, "type": "buy", "price": 100 },
+        { "time": 1, "type": "sell", "price": 111 }
+      ],
+      "settings": {
+        "executionModel": "next_open",
+        "tradeDirection": "long",
+        "riskMaxHoldEnabled": true,
+        "riskMaxHoldBars": 1
+      },
+      "capital": {
+        "initialCapital": 1000,
+        "positionSizePercent": 100,
+        "commissionPercent": 0,
+        "sizing": { "mode": "fixed", "fixedTradeAmount": 1000 }
+      },
+      "expected": {
+        "trades": [{ "id": 1, "type": "long", "entryTime": 1, "entryPrice": 110, "exitTime": 2, "exitPrice": 120, "pnl": 90.90909090909088, "pnlPercent": 9.090909090909086, "size": 9.090909090909092, "fees": 0, "exitReason": "signal" }],
+        "netProfit": 90.90909090909099,
+        "netProfitPercent": 9.090909090909099,
+        "totalTrades": 1,
+        "winningTrades": 1,
+        "losingTrades": 0,
+        "maxDrawdown": 0,
+        "maxDrawdownPercent": 0
+      }
+    },
+    {
+      "name": "partial_exit_on_max_hold_boundary",
+      "data": [
+        { "time": 0, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000 },
+        { "time": 1, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000 },
+        { "time": 2, "open": 100, "high": 112, "low": 99, "close": 105, "volume": 1000 },
+        { "time": 3, "open": 105, "high": 106, "low": 104, "close": 105, "volume": 1000 }
+      ],
+      "signals": [{ "time": 0, "type": "buy", "price": 100 }],
+      "settings": {
+        "executionModel": "next_open",
+        "tradeDirection": "long",
+        "riskMode": "percentage",
+        "stopLossEnabled": true,
+        "stopLossPercent": 10,
+        "partialTakeProfitAtR": 1,
+        "partialTakeProfitPercent": 50,
+        "riskMaxHoldEnabled": true,
+        "riskMaxHoldBars": 1
+      },
+      "capital": {
+        "initialCapital": 1000,
+        "positionSizePercent": 100,
+        "commissionPercent": 0,
+        "sizing": { "mode": "fixed", "fixedTradeAmount": 1000 }
+      },
+      "rustDirectParity": false,
+      "expected": {
+        "trades": [{ "id": 1, "type": "long", "entryTime": 1, "entryPrice": 100, "exitTime": 2, "exitPrice": 105, "pnl": 50, "pnlPercent": 5, "size": 10, "fees": 0, "exitReason": "time_stop" }],
+        "netProfit": 50,
+        "netProfitPercent": 5,
+        "totalTrades": 1,
+        "winningTrades": 1,
+        "losingTrades": 0,
+        "maxDrawdown": 0,
+        "maxDrawdownPercent": 0
+      }
+    },
+    {
+      "name": "entry_bar_stop_precedes_take_profit",
+      "data": [
+        { "time": 0, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000 },
+        { "time": 1, "open": 100, "high": 105, "low": 98, "close": 100, "volume": 1000 },
+        { "time": 2, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000 }
+      ],
+      "signals": [{ "time": 0, "type": "buy", "price": 100 }],
+      "settings": {
+        "executionModel": "next_open",
+        "tradeDirection": "long",
+        "riskMode": "percentage",
+        "stopLossEnabled": true,
+        "stopLossPercent": 1,
+        "takeProfitEnabled": true,
+        "takeProfitPercent": 1
+      },
+      "capital": {
+        "initialCapital": 1000,
+        "positionSizePercent": 100,
+        "commissionPercent": 0,
+        "sizing": { "mode": "fixed", "fixedTradeAmount": 1000 }
+      },
+      "expected": {
+        "trades": [{ "id": 1, "type": "long", "entryTime": 1, "entryPrice": 100, "exitTime": 1, "exitPrice": 99, "pnl": -10, "pnlPercent": -1, "size": 10, "fees": 0, "exitReason": "stop_loss" }],
+        "netProfit": -10,
+        "netProfitPercent": -1,
+        "totalTrades": 1,
+        "winningTrades": 0,
+        "losingTrades": 1,
+        "maxDrawdown": 10,
+        "maxDrawdownPercent": 1
+      }
+    },
+    {
+      "name": "eod_raw_close_fees_and_slippage",
+      "data": [
+        { "time": 0, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000 },
+        { "time": 1, "open": 110, "high": 111, "low": 109, "close": 110, "volume": 1000 }
+      ],
+      "signals": [{ "time": 0, "type": "buy", "price": 100 }],
+      "settings": {
+        "executionModel": "next_open",
+        "tradeDirection": "long",
+        "slippageBps": 100
+      },
+      "capital": {
+        "initialCapital": 1000,
+        "positionSizePercent": 100,
+        "commissionPercent": 1,
+        "sizing": { "mode": "fixed", "fixedTradeAmount": 1000 }
+      },
+      "expected": {
+        "trades": [{ "id": 1, "type": "long", "entryTime": 1, "entryPrice": 111.1, "exitTime": 1, "exitPrice": 110, "pnl": -29.50691108714834, "pnlPercent": -2.9801980198019824, "size": 8.911782267335644, "fees": 19.70395059307911, "exitReason": "end_of_data" }],
+        "netProfit": -29.506911087148296,
+        "netProfitPercent": -2.9506911087148295,
+        "totalTrades": 1,
+        "winningTrades": 0,
+        "losingTrades": 1,
+        "maxDrawdown": 29.506911087148296,
+        "maxDrawdownPercent": 2.9506911087148295
+      }
+    },
+    {
+      "name": "occupied_and_duplicate_entry_signals",
+      "data": [
+        { "time": 0, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000 },
+        { "time": 1, "open": 101, "high": 102, "low": 100, "close": 101, "volume": 1000 },
+        { "time": 2, "open": 102, "high": 103, "low": 101, "close": 102, "volume": 1000 },
+        { "time": 3, "open": 103, "high": 104, "low": 102, "close": 103, "volume": 1000 }
+      ],
+      "signals": [
+        { "time": 0, "type": "buy", "price": 100 },
+        { "time": 0, "type": "buy", "price": 100 },
+        { "time": 1, "type": "buy", "price": 101 },
+        { "time": 2, "type": "sell", "price": 102 }
+      ],
+      "settings": {
+        "executionModel": "next_open",
+        "tradeDirection": "long",
+        "maxOpenTrades": 1
+      },
+      "capital": {
+        "initialCapital": 1000,
+        "positionSizePercent": 100,
+        "commissionPercent": 0,
+        "sizing": { "mode": "fixed", "fixedTradeAmount": 1000 }
+      },
+      "expected": {
+        "trades": [{ "id": 1, "type": "long", "entryTime": 1, "entryPrice": 101, "exitTime": 3, "exitPrice": 103, "pnl": 19.801980198019805, "pnlPercent": 1.9801980198019806, "size": 9.900990099009901, "fees": 0, "exitReason": "signal" }],
+        "netProfit": 19.801980198019805,
+        "netProfitPercent": 1.9801980198019806,
+        "totalTrades": 1,
+        "winningTrades": 1,
+        "losingTrades": 0,
+        "maxDrawdown": 0,
+        "maxDrawdownPercent": 0
+      }
+    },
+    {
+      "name": "next_open_position_open_at_dataset_end",
+      "data": [
+        { "time": 0, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000 },
+        { "time": 1, "open": 110, "high": 111, "low": 109, "close": 110, "volume": 1000 },
+        { "time": 2, "open": 120, "high": 121, "low": 119, "close": 120, "volume": 1000 }
+      ],
+      "signals": [{ "time": 1, "type": "buy", "price": 110 }],
+      "settings": {
+        "executionModel": "next_open",
+        "tradeDirection": "long"
+      },
+      "capital": {
+        "initialCapital": 1000,
+        "positionSizePercent": 100,
+        "commissionPercent": 0,
+        "sizing": { "mode": "fixed", "fixedTradeAmount": 1000 }
+      },
+      "expected": {
+        "trades": [{ "id": 1, "type": "long", "entryTime": 2, "entryPrice": 120, "exitTime": 2, "exitPrice": 120, "pnl": 0, "pnlPercent": 0, "size": 8.333333333333334, "fees": 0, "exitReason": "end_of_data" }],
+        "netProfit": 0,
+        "netProfitPercent": 0,
+        "totalTrades": 1,
+        "winningTrades": 0,
+        "losingTrades": 1,
+        "maxDrawdown": 0,
+        "maxDrawdownPercent": 0
+      }
+    }
+  ]
+}

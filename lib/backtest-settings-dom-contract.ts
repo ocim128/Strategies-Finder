@@ -262,12 +262,12 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         legacyAliases: ["riskMinHoldEnabled"],
         rustSupport: "unsupported",
     }),
-    createField("riskMaxHoldBars", { rustSupport: "unsupported" }),
+    createField("riskMaxHoldBars", { rustSupport: "conditional" }),
     createField("riskMaxHoldToggle", {
         settingKey: "riskMaxHoldEnabled",
         parser: "boolean",
         legacyAliases: ["riskMaxHoldEnabled"],
-        rustSupport: "unsupported",
+        rustSupport: "conditional",
     }),
     createField("riskCooldownBars", { rustSupport: "unsupported" }),
     createField("riskCooldownToggle", {
@@ -326,10 +326,10 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
 
     createField("executionModel", {
         parser: "executionModel",
-        rustSupport: "unsupported",
+        rustSupport: "conditional",
         readFromSettings: (settings) => resolveExecutionModelValue(settings.executionModel, DEFAULT_BACKTEST_SETTINGS),
     }),
-    createField("slippageBps", { rustSupport: "unsupported" }),
+    createField("slippageBps", { rustSupport: "conditional" }),
     createField("maxOpenTrades", { rustSupport: "unsupported" }),
     createField("strategyTimeframeToggle", {
         settingKey: "strategyTimeframeEnabled",

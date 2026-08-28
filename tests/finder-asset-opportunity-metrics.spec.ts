@@ -27,7 +27,7 @@ import {
 } from "../lib/finder/finder-asset-opportunity-metrics";
 import { calculateFinderAssetOosAverageHorizonMetrics } from "../lib/finder/finder-asset-opportunity-oos";
 import type { FinderAssetOpportunityResult } from "../lib/types/finder";
-import type { OHLCVData, Time } from "../lib/types/strategies";
+import type { OHLCVData, StrategyParams, Time } from "../lib/types/strategies";
 
 function assetResultForSymbol(symbol: string): FinderAssetOpportunityResult {
     return { symbol } as FinderAssetOpportunityResult;
@@ -256,7 +256,7 @@ describe("Asset Opportunity post-run re-sort", () => {
     function makeResortResult(args: {
         symbol: string;
         strategyKey?: string;
-        params?: Record<string, unknown>;
+        params?: StrategyParams;
         grade?: FinderAssetOpportunityResult["grade"];
         netProfit?: number;
         netProfitPercent?: number;

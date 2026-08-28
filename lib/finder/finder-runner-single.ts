@@ -8,7 +8,7 @@ import {
     runBacktestCompact,
 } from "../strategies/index";
 import type { BacktestResult, StrategyExecutionContext } from "../types/strategies";
-import { rustEngine } from "../rust-engine-client";
+import { hasUnsupportedRustSignalShape, rustEngine } from "../rust-engine-client";
 import { shouldUseRustEngine } from "../engine-preferences";
 import { debugLogger } from "../debug-logger";
 import { isCrossSymbolStrategy, resolveCrossSymbolExecution } from "../cross-symbol-runtime";
@@ -288,6 +288,16 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
         runBacktestFallback(run);
     };
     if (batchRuns.length === 0) {
+        return stats;
+    }
+
+    // Do not compact away behavior-bearing Polymarket reasons before the
+    // shared Rust client can reject them. Their exit semantics exist only in
+    // the TypeScript engine, so the whole batch must stay on that path.
+    if (batchRuns.some((run) => hasUnsupportedRustSignalShape(run.signals))) {
+        for (const run of batchRuns) runFallback(run);
+        for (const run of batchRuns) run.signals.length = 0;
+        batchRuns.length = 0;
         return stats;
     }
 
