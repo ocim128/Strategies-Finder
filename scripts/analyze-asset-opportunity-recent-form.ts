@@ -33,7 +33,7 @@ import path from "node:path";
 const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 const BLOCK_SEPARATOR = "=".repeat(80);
 const BLOCK_PATTERN = new RegExp(
-    `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Archive baseline: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
+    `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Forward measurement: ([^\\n]+)\\n)?(?:Archive baseline: ([^\\n]+)\\n)?(?:Next-exit archive baseline: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
     "gm",
 );
 const MIN_MARGINAL_TRADES = 3;
@@ -114,9 +114,9 @@ function loadFiles(archiveDirectory: string): FileData[] {
             timestamp = match[1]!;
             batchRunId = match[2]!;
             const sortName = match[4]!;
-            if (match[5] && baselineByHorizon.size === 0) {
+            if (match[6] && baselineByHorizon.size === 0) {
                 try {
-                    const baseline = JSON.parse(match[5]) as { horizons?: Array<{ bars: number; averagePnlPercent?: number | null }> };
+                    const baseline = JSON.parse(match[6]) as { horizons?: Array<{ bars: number; averagePnlPercent?: number | null }> };
                     for (const horizon of baseline.horizons ?? []) {
                         if (typeof horizon.averagePnlPercent === "number") baselineByHorizon.set(horizon.bars, horizon.averagePnlPercent);
                     }
@@ -126,7 +126,7 @@ function loadFiles(archiveDirectory: string): FileData[] {
             }
             let rows: Row[] = [];
             try {
-                rows = JSON.parse(match[6]!) as Row[];
+                rows = JSON.parse(match[8]!) as Row[];
             } catch {
                 continue;
             }

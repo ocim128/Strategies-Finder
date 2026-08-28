@@ -33,7 +33,7 @@ import path from "node:path";
 const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 const BLOCK_SEPARATOR = "=".repeat(80);
 const BLOCK_PATTERN = new RegExp(
-    `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Archive baseline: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
+    `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Forward measurement: ([^\\n]+)\\n)?(?:Archive baseline: ([^\\n]+)\\n)?(?:Next-exit archive baseline: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
     "gm",
 );
 
@@ -54,6 +54,7 @@ interface ParsedBlock {
     batchRunId: string;
     holdoutBars: number;
     sortMetric: string;
+    measurementMode?: string;
     baselineByHorizon: Map<number, number>;
     rows: ArchiveRow[];
 }
@@ -90,9 +91,9 @@ function parseBlocks(text: string, holdoutBars: number): ParsedBlock[] {
     const blocks: ParsedBlock[] = [];
     for (const match of text.matchAll(BLOCK_PATTERN)) {
         const baselineByHorizon = new Map<number, number>();
-        if (match[5]) {
+        if (match[6]) {
             try {
-                const baseline = JSON.parse(match[5]) as { horizons?: ArchiveHorizon[] };
+                const baseline = JSON.parse(match[6]) as { horizons?: ArchiveHorizon[] };
                 for (const horizon of baseline.horizons ?? []) {
                     if (typeof horizon.averagePnlPercent === "number") {
                         baselineByHorizon.set(horizon.bars, horizon.averagePnlPercent);
@@ -104,7 +105,7 @@ function parseBlocks(text: string, holdoutBars: number): ParsedBlock[] {
         }
         let rows: ArchiveRow[] = [];
         try {
-            rows = JSON.parse(match[6]!) as ArchiveRow[];
+            rows = JSON.parse(match[8]!) as ArchiveRow[];
         } catch {
             continue;
         }
@@ -113,6 +114,7 @@ function parseBlocks(text: string, holdoutBars: number): ParsedBlock[] {
             batchRunId: match[2]!,
             holdoutBars,
             sortMetric: match[4]!,
+            measurementMode: match[5] || undefined,
             baselineByHorizon,
             rows,
         });
@@ -302,7 +304,25 @@ function main(): void {
     const minHoldoutBars = Math.floor(Number(getArgument(argv, "--min-holdout") ?? 0) || 0);
     const maxHoldoutBars = Math.floor(Number(getArgument(argv, "--max-holdout") ?? Number.POSITIVE_INFINITY) || Number.POSITIVE_INFINITY);
     let rawBlocks = loadBlocks(archiveDirectory).filter((block) => block.holdoutBars >= minHoldoutBars && block.holdoutBars <= maxHoldoutBars);
-    
+
+    // This analyzer's whole methodology is fixed-horizon deltas; next_exit
+    // archives carry no forward-horizon rows and no horizon baselines, so fail
+    // loudly instead of printing empty tables.
+    const hasForwardHorizonData = rawBlocks.some((block) =>
+        block.baselineByHorizon.size > 0
+        || block.rows.some((row) => row.forwardOosPerformance?.horizons?.some(
+            (horizon) => typeof horizon.pnlPercent === "number" && (horizon.sampleSize ?? 1) > 0,
+        )));
+    if (!hasForwardHorizonData) {
+        const mode = rawBlocks.find((block) => block.measurementMode)?.measurementMode ?? "unknown";
+        throw new Error(
+            `No fixed-horizon forward OOS data found (batch run ${rawBlocks[0]?.batchRunId ?? "?"}, measurement mode: ${mode}). `
+            + "The stability analyzer compares top-K forward-horizon PnL against a fixed_horizon baseline, and next_exit "
+            + "archives carry no forward-horizon data. Run the batch in fixed_horizon mode, or analyze next-exit archives "
+            + "with analyze-asset-opportunity-holdouts.",
+        );
+    }
+
     const horizons = [...new Set(rawBlocks.flatMap((block) => [...block.baselineByHorizon.keys()]))].sort((left, right) => left - right);
     const primaryHorizonFallback = horizons[0] ?? 12;
     const primaryHorizon = Math.max(1, Math.floor(Number(getArgument(argv, "--horizon") ?? primaryHorizonFallback) || primaryHorizonFallback));
