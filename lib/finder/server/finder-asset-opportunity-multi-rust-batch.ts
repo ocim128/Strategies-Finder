@@ -6,6 +6,7 @@ import type {
     PreparedRustRequest,
     RustMultiAssetBatchWorkload,
     RustEngineClient,
+    RustBatchTransportFailureReason,
 } from "../../rust-engine-client";
 import type {
     AssetOpportunityRustBatchDispatch,
@@ -18,8 +19,7 @@ import type {
 } from "./finder-asset-opportunity-rust-batch";
 import type { OHLCVData } from "../../types/strategies";
 import {
-    dispatchAssetOpportunityRustBatch,
-    dispatchAssetOpportunityRustFreshEntryBatch,
+    hasUnsupportedRustSignalShape,
     normalizeAssetOpportunityRustSummaryCandidateResult,
     validateAssetOpportunityRustFreshBatchResponse,
     validateAssetOpportunityRustSummaryBatchResponse,
@@ -32,7 +32,6 @@ import {
 const MAX_WORKLOADS_PER_REQUEST = 128;
 const MAX_CACHE_WORKLOADS_PER_REQUEST = 32;
 const MAX_BATCH_WAIT_MS = 12;
-const DIRECT_FALLBACK_CONCURRENCY = 8;
 
 type MultiAssetBatchClient = Pick<
     RustEngineClient,
@@ -78,12 +77,13 @@ function resolveTransportFallback(
     reason: AssetOpportunityRustBatchFailureReason,
     requestBytes: number,
     message?: string,
+    requests = 1,
 ): void {
     for (const entry of entries) {
         entry.resolve({
             status: reason === "cancelled" ? "cancelled" : "fallback",
             reason,
-            requests: 1,
+            requests,
             requestBytes,
             latencyMs: 0,
             ...(message ? { message } : {}),
@@ -91,20 +91,36 @@ function resolveTransportFallback(
     }
 }
 
-async function resolveDirectCandidateFallbacks(entries: CandidateQueueEntry[]): Promise<void> {
-    for (let start = 0; start < entries.length; start += DIRECT_FALLBACK_CONCURRENCY) {
-        await Promise.all(entries.slice(start, start + DIRECT_FALLBACK_CONCURRENCY).map(async (entry) => {
-            entry.resolve(await dispatchAssetOpportunityRustBatch(entry.input));
-        }));
-    }
+function mapTransportFailure(reason: RustBatchTransportFailureReason): AssetOpportunityRustBatchFailureReason {
+    if (reason === "unsupported_sizing") return "smart_sizing_unsupported";
+    if (reason === "unsupported_signal_shape") return "signal_shape_unsupported";
+    return reason === "cancelled"
+        ? "cancelled"
+        : reason === "health_unavailable"
+            ? "health_unavailable"
+            : reason === "request_too_large"
+                ? "request_too_large"
+                : reason === "response_too_large"
+                    ? "response_too_large"
+                    : reason === "http_error"
+                        ? "http_error"
+                        : reason === "timeout"
+                            ? "timeout"
+                            : reason === "network_error"
+                                ? "network_error"
+                                : "malformed_response";
 }
 
-async function resolveDirectFreshFallbacks(entries: FreshQueueEntry[]): Promise<void> {
-    for (let start = 0; start < entries.length; start += DIRECT_FALLBACK_CONCURRENCY) {
-        await Promise.all(entries.slice(start, start + DIRECT_FALLBACK_CONCURRENCY).map(async (entry) => {
-            entry.resolve(await dispatchAssetOpportunityRustFreshEntryBatch(entry.input));
-        }));
+function keepLiveEntries<T extends CandidateQueueEntry | FreshQueueEntry>(entries: T[]): T[] {
+    const live: T[] = [];
+    for (const entry of entries) {
+        if (entry.input.signal?.aborted) {
+            entry.resolve({ status: "cancelled", reason: "cancelled", requests: 0, requestBytes: 0, latencyMs: 0 });
+        } else {
+            live.push(entry);
+        }
     }
+    return live;
 }
 
 export interface AssetOpportunityRustMultiBatchCoordinator {
@@ -196,6 +212,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
                             signal: entries[0]!.signal,
                             maxRequestBytes,
                             maxResponseBytes: 1 * 1024 * 1024,
+                            rustDiagnosticPhase: "cache_bootstrap",
                         },
                     );
                     if (response.ok) {
@@ -264,6 +281,8 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
     }
 
     async function sendCandidateGroup(entries: CandidateQueueEntry[]): Promise<void> {
+        entries = keepLiveEntries(entries);
+        if (entries.length === 0) return;
         const maxRequestBytes = Math.min(...entries.map((entry) => entry.input.maxRequestBytes));
         const maxResponseBytes = Math.min(...entries.map((entry) => entry.input.maxResponseBytes ?? Number.MAX_SAFE_INTEGER));
         const workloads: RustMultiAssetBatchWorkload[] = entries.map((entry) => ({
@@ -285,6 +304,8 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
             commissionPercent: entries[0]!.input.commissionPercent,
             baseSettings: entries[0]!.input.baseSettings,
             sizing: entries[0]!.input.sizing,
+            ...(entries[0]!.input.skipDrawdown === true ? { skipDrawdown: true } : {}),
+            ...(entries[0]!.input.skipSharpeRatio === true ? { skipSharpeRatio: true } : {}),
         };
         const executionWorkloads = await resolveCachedWorkloads(
             workloads,
@@ -296,7 +317,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
         const preparedRequest = prepareMultiRequest(request);
         const requestBytes = preparedRequest.requestBytes;
         if (requestBytes > maxRequestBytes) {
-            await resolveDirectCandidateFallbacks(entries);
+            resolveTransportFallback(entries, "request_too_large", requestBytes, undefined, 0);
             return;
         }
         const transport = await withRustRequestSlot(() => client.runMultiAssetAssetOpportunityBatchBacktestWithStatus(
@@ -311,6 +332,11 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
                 maxRequestBytes,
                 maxResponseBytes: Number.isFinite(maxResponseBytes) ? maxResponseBytes : undefined,
                 preparedRequest,
+                ...(entries[0]!.input.rustDiagnosticPhase
+                    ? { rustDiagnosticPhase: entries[0]!.input.rustDiagnosticPhase }
+                    : {}),
+                ...(entries[0]!.input.skipDrawdown === true ? { skipDrawdown: true } : {}),
+                ...(entries[0]!.input.skipSharpeRatio === true ? { skipSharpeRatio: true } : {}),
             },
         ));
         if (!transport.ok) {
@@ -329,13 +355,18 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
                 return;
             }
             if (transport.reason === "http_error") invalidateCachedWorkloads(entries, workloads);
-            await resolveDirectCandidateFallbacks(entries);
+            resolveTransportFallback(
+                entries,
+                mapTransportFailure(transport.reason),
+                transport.requestBytes ?? requestBytes,
+                transport.message,
+            );
             return;
         }
         const expectedIds = workloads.flatMap((workload) => workload.items.map((item) => item.id));
         const validated = validateAssetOpportunityRustSummaryBatchResponse(transport.response, expectedIds);
         if (!validated.ok) {
-            await resolveDirectCandidateFallbacks(entries);
+            resolveTransportFallback(entries, validated.reason, requestBytes, validated.message);
             return;
         }
         rememberResponseCacheIds(transport.response, entries, workloads);
@@ -345,7 +376,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
                 const wireId = `${entry.token}:${item.id}`;
                 const result = validated.results.get(wireId);
                 if (!result) {
-                    await resolveDirectCandidateFallbacks(entries);
+                    resolveTransportFallback(entries, "missing_result_id", requestBytes, `Rust multi-asset response omitted ${wireId}`);
                     return;
                 }
                 const normalized = normalizeAssetOpportunityRustSummaryCandidateResult(result.summary);
@@ -368,6 +399,8 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
     }
 
     async function sendFreshGroup(entries: FreshQueueEntry[]): Promise<void> {
+        entries = keepLiveEntries(entries);
+        if (entries.length === 0) return;
         const maxRequestBytes = Math.min(...entries.map((entry) => entry.input.maxRequestBytes));
         const maxResponseBytes = Math.min(...entries.map((entry) => entry.input.maxResponseBytes ?? Number.MAX_SAFE_INTEGER));
         const workloads: RustMultiAssetBatchWorkload[] = entries.map((entry) => ({
@@ -395,7 +428,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
         const preparedRequest = prepareMultiRequest(request);
         const requestBytes = preparedRequest.requestBytes;
         if (requestBytes > maxRequestBytes) {
-            await resolveDirectFreshFallbacks(entries);
+            resolveTransportFallback(entries, "request_too_large", requestBytes, undefined, 0);
             return;
         }
         const transport = await withRustRequestSlot(() => client.runMultiAssetFreshEntryBatchBacktestWithStatus(
@@ -410,6 +443,9 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
                 maxRequestBytes,
                 maxResponseBytes: Number.isFinite(maxResponseBytes) ? maxResponseBytes : undefined,
                 preparedRequest,
+                ...(entries[0]!.input.rustDiagnosticPhase
+                    ? { rustDiagnosticPhase: entries[0]!.input.rustDiagnosticPhase }
+                    : {}),
             },
         ));
         if (!transport.ok) {
@@ -428,13 +464,18 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
                 return;
             }
             if (transport.reason === "http_error") invalidateCachedWorkloads(entries, workloads);
-            await resolveDirectFreshFallbacks(entries);
+            resolveTransportFallback(
+                entries,
+                mapTransportFailure(transport.reason),
+                transport.requestBytes ?? requestBytes,
+                transport.message,
+            );
             return;
         }
         const expectedIds = workloads.flatMap((workload) => workload.items.map((item) => item.id));
         const validated = validateAssetOpportunityRustFreshBatchResponse(transport.response, expectedIds);
         if (!validated.ok) {
-            await resolveDirectFreshFallbacks(entries);
+            resolveTransportFallback(entries, validated.reason, requestBytes, validated.message);
             return;
         }
         for (const entry of entries) {
@@ -443,7 +484,7 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
                 const wireId = `${entry.token}:${item.id}`;
                 const result = validated.results.get(wireId);
                 if (!result) {
-                    await resolveDirectFreshFallbacks(entries);
+                    resolveTransportFallback(entries, "missing_result_id", requestBytes, `Rust multi-asset response omitted ${wireId}`);
                     return;
                 }
                 results.set(item.id, { id: item.id, summary: result.summary });
@@ -600,6 +641,16 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
 
     return {
         dispatchCandidate(input) {
+            if (input.items.some((item) => hasUnsupportedRustSignalShape(item.signals))) {
+                return Promise.resolve({
+                    status: "fallback" as const,
+                    reason: "signal_shape_unsupported" as const,
+                    requests: 0,
+                    requestBytes: 0,
+                    latencyMs: 0,
+                    message: "Rust Asset Opportunity batches cannot represent behavior-bearing signal fields",
+                });
+            }
             return new Promise((resolve) => {
                 candidateQueue.push({ token: `candidate-${sequence++}`, input, resolve });
                 if (candidateQueue.length >= MAX_WORKLOADS_PER_REQUEST) void flushCandidates();
@@ -607,6 +658,16 @@ export function createAssetOpportunityRustMultiBatchCoordinator(
             });
         },
         dispatchFresh(input) {
+            if (input.items.some((item) => hasUnsupportedRustSignalShape(item.signals))) {
+                return Promise.resolve({
+                    status: "fallback" as const,
+                    reason: "signal_shape_unsupported" as const,
+                    requests: 0,
+                    requestBytes: 0,
+                    latencyMs: 0,
+                    message: "Rust Asset Opportunity batches cannot represent behavior-bearing signal fields",
+                });
+            }
             return new Promise((resolve) => {
                 freshQueue.push({ token: `fresh-${sequence++}`, input, resolve });
                 if (freshQueue.length >= MAX_WORKLOADS_PER_REQUEST) void flushFresh();

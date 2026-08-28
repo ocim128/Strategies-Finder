@@ -25,7 +25,10 @@ function invalid(message: string): RustBacktestResultValidation {
  * Validate and normalize the generic Rust backtest wire result before it can
  * reach renderers or the TypeScript/Rust parity checks.
  */
-export function validateRustBacktestResult(value: unknown): RustBacktestResultValidation {
+export function validateRustBacktestResult(
+    value: unknown,
+    options: { requireExitReason?: boolean } = {},
+): RustBacktestResultValidation {
     if (!value || typeof value !== "object") {
         return invalid("Rust backtest result is not an object");
     }
@@ -48,6 +51,11 @@ export function validateRustBacktestResult(value: unknown): RustBacktestResultVa
     }
     if ((totalTrades as number) !== (winningTrades as number) + (losingTrades as number)) {
         return invalid("Rust backtest result trade counts do not reconcile");
+    }
+    if (options.requireExitReason && raw.trades.some((trade) => {
+        return !trade || typeof trade !== "object" || typeof (trade as Record<string, unknown>).exitReason !== "string";
+    })) {
+        return invalid("Rust backtest result trade is missing exitReason");
     }
 
     const profitFactor = raw.profitFactor;

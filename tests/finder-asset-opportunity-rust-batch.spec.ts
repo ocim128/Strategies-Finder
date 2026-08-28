@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import {
     DEFAULT_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES,
     DEFAULT_ASSET_OPPORTUNITY_RUST_BATCH_MAX_RESPONSE_BYTES,
@@ -16,8 +16,14 @@ import {
 } from "../lib/finder/server/finder-asset-opportunity-rust-batch";
 import { runServerAssetOpportunityFreshRustBatch } from "../lib/finder/server/finder-asset-opportunity-fresh-rust-batch";
 import { createAssetOpportunityRustMultiBatchCoordinator } from "../lib/finder/server/finder-asset-opportunity-multi-rust-batch";
+import { createAssetOpportunitySignalCache } from "../lib/finder/finder-asset-opportunity-search-cache";
 import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
 import { RustEngineClient } from "../lib/rust-engine-client";
+import {
+    RUST_EXIT_REASON_CAPABILITY,
+    RUST_NEXT_OPEN_CAPABILITY,
+    RUST_RISK_MAX_HOLD_CAPABILITY,
+} from "../lib/rust-settings-sanitizer";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions, FinderResult } from "../lib/types/finder";
 import type { BacktestResult, BacktestSettings, OHLCVData, Signal, Strategy, Time } from "../lib/types/strategies";
@@ -182,8 +188,20 @@ function makeFreshClient(response: unknown): AssetOpportunityRustFreshBatchClien
 }
 
 describe("Asset Opportunity Rust batch contract", () => {
+    const originalBatchFlag = process.env.FINDER_ASSET_OPPORTUNITY_RUST_BATCH;
+    before(() => {
+        process.env.FINDER_ASSET_OPPORTUNITY_RUST_BATCH = "1";
+    });
+    after(() => {
+        if (originalBatchFlag === undefined) delete process.env.FINDER_ASSET_OPPORTUNITY_RUST_BATCH;
+        else process.env.FINDER_ASSET_OPPORTUNITY_RUST_BATCH = originalBatchFlag;
+    });
+
     it("keeps the feature independently disableable and clamps request-size settings", () => {
-        expect(resolveAssetOpportunityRustBatchFeatureConfig({}).enabled).to.equal(true);
+        expect(resolveAssetOpportunityRustBatchFeatureConfig({}).enabled).to.equal(false);
+        expect(resolveAssetOpportunityRustBatchFeatureConfig({
+            FINDER_ASSET_OPPORTUNITY_RUST_BATCH: "1",
+        }).enabled).to.equal(true);
         expect(resolveAssetOpportunityRustBatchFeatureConfig({
             FINDER_ASSET_OPPORTUNITY_RUST_BATCH: "0",
             FINDER_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES: "999999999",
@@ -206,6 +224,7 @@ describe("Asset Opportunity Rust batch contract", () => {
             settings: eligibleSettings,
             capitalSettings,
             selectedStrategy: { key: "entry", name: "Entry", strategy: {} as Strategy },
+            rustCapabilities: [RUST_NEXT_OPEN_CAPABILITY, RUST_RISK_MAX_HOLD_CAPABILITY, RUST_EXIT_REASON_CAPABILITY],
         } as const;
         expect(resolveAssetOpportunityRustBatchEligibility(base).eligible).to.equal(true);
         expect(resolveAssetOpportunityRustBatchEligibility({
@@ -218,6 +237,16 @@ describe("Asset Opportunity Rust batch contract", () => {
                 riskCooldownBars: 1,
             },
         }).eligible).to.equal(true);
+        expect(resolveAssetOpportunityRustBatchEligibility({
+            ...base,
+            rustCapabilities: [],
+            settings: { ...eligibleSettings, executionModel: "next_open" },
+        }).reason).to.equal("rust_capability_missing");
+        expect(resolveAssetOpportunityRustBatchEligibility({
+            ...base,
+            rustCapabilities: [],
+            settings: { ...eligibleSettings, riskMaxHoldEnabled: true, riskMaxHoldBars: 2 },
+        }).reason).to.equal("rust_capability_missing");
         expect(resolveAssetOpportunityRustBatchEligibility({
             ...base,
             selectedStrategy: {
@@ -514,6 +543,70 @@ describe("Asset Opportunity Rust batch contract", () => {
         expect(client.calls).to.equal(1);
     });
 
+    it("falls back the whole batch before transport for behavior-bearing signals", async () => {
+        const client = makeClient(makeRustResponse(["a"]));
+        const result = await dispatchAssetOpportunityRustBatch({
+            client,
+            data: makeCandles(4),
+            items: [{
+                id: "a",
+                signals: [{ ...makeSignals()[0]!, triggerPrice: 100 }],
+                settings: eligibleSettings,
+            }],
+            initialCapital: 10_000,
+            positionSizePercent: 100,
+            commissionPercent: 0,
+            baseSettings: eligibleSettings,
+            maxRequestBytes: DEFAULT_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES,
+        });
+        expect(result).to.include({ status: "fallback", reason: "signal_shape_unsupported", requests: 0 });
+        expect(client.calls).to.equal(0);
+    });
+
+    it("rejects both behavior-bearing Polymarket reasons across direct and multi-asset gates", async () => {
+        for (const reason of ["polymarket_take_profit", "polymarket_stop_loss"] as const) {
+            const directClient = makeClient(makeRustResponse(["a"]));
+            const direct = await dispatchAssetOpportunityRustBatch({
+                client: directClient,
+                data: makeCandles(4),
+                items: [{
+                    id: "a",
+                    signals: [{ ...makeSignals()[0]!, reason }],
+                    settings: eligibleSettings,
+                }],
+                initialCapital: 10_000,
+                positionSizePercent: 100,
+                commissionPercent: 0,
+                baseSettings: eligibleSettings,
+                maxRequestBytes: DEFAULT_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES,
+            });
+            expect(direct).to.include({ status: "fallback", reason: "signal_shape_unsupported", requests: 0 });
+            expect(directClient.calls).to.equal(0);
+
+            let multiCalls = 0;
+            const client = {
+                getDataCacheKey: () => "polymarket-reason",
+                runMultiAssetAssetOpportunityBatchBacktestWithStatus: async () => {
+                    multiCalls += 1;
+                    throw new Error("unsupported reason reached multi-asset Rust");
+                },
+            } as any;
+            const coordinator = createAssetOpportunityRustMultiBatchCoordinator(client);
+            const grouped = await coordinator.dispatchCandidate({
+                client,
+                data: makeCandles(4),
+                items: [{ id: "a", signals: [{ ...makeSignals()[0]!, reason }], settings: eligibleSettings }],
+                initialCapital: 10_000,
+                positionSizePercent: 100,
+                commissionPercent: 0,
+                baseSettings: eligibleSettings,
+                maxRequestBytes: DEFAULT_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES,
+            });
+            expect(grouped).to.include({ status: "fallback", reason: "signal_shape_unsupported", requests: 0 });
+            expect(multiCalls).to.equal(0);
+        }
+    });
+
     it("keeps Rust-ranked candidates deterministic and records batch completion", async () => {
         const previous = process.env.FINDER_ASSET_OPPORTUNITY_RUST_BATCH;
         process.env.FINDER_ASSET_OPPORTUNITY_RUST_BATCH = "1";
@@ -561,11 +654,11 @@ describe("Asset Opportunity Rust batch contract", () => {
             execute: () => makeSignals(),
         };
         let capturedBaseSettings: BacktestSettings | undefined;
-        let capturedItemSettings: BacktestSettings | undefined;
+        let capturedItemSettings: BacktestSettings[] = [];
         const client: AssetOpportunityRustBatchClient = {
             async runBatchBacktestWithStatus(_data, items, _initialCapital, _positionSize, _commission, baseSettings) {
                 capturedBaseSettings = baseSettings;
-                capturedItemSettings = items[0]?.settings;
+                capturedItemSettings = items.map((item) => item.settings!);
                 return { ok: true, response: makeRustResponse(items.map((item) => item.id)), requestBytes: 100, elapsedMs: 2 };
             },
         };
@@ -580,11 +673,14 @@ describe("Asset Opportunity Rust batch contract", () => {
                 slippageBps: 5,
                 riskCooldownEnabled: true,
                 riskCooldownBars: 1,
+                riskMaxHoldEnabled: true,
+                riskMaxHoldBars: 2,
             },
             capitalSettings,
             selectedStrategy: { key: "realistic_rust_batch_fixture", name: strategy.name, strategy },
-            generateParamSets: () => [{ marker: 1 }, { marker: 2 }],
+            generateParamSets: () => [{ marker: 1, riskMaxHoldBars: 1 }, { marker: 2, riskMaxHoldBars: 2 }],
             useRustEnginePreference: true,
+            rustCapabilities: [RUST_NEXT_OPEN_CAPABILITY, RUST_RISK_MAX_HOLD_CAPABILITY, RUST_EXIT_REASON_CAPABILITY],
             // Asset Opportunity shares one secondary-data helper across the
             // selected strategy set. A plain strategy must remain Rust-eligible
             // when that helper exists for a different selected strategy.
@@ -602,10 +698,13 @@ describe("Asset Opportunity Rust batch contract", () => {
         expect(capturedBaseSettings?.slippageBps).to.equal(5);
         expect(capturedBaseSettings?.riskCooldownEnabled).to.equal(true);
         expect(capturedBaseSettings?.riskCooldownBars).to.equal(1);
-        expect(capturedItemSettings?.executionModel).to.equal("next_open");
-        expect(capturedItemSettings?.slippageBps).to.equal(5);
-        expect(capturedItemSettings?.riskCooldownEnabled).to.equal(true);
-        expect(capturedItemSettings?.riskCooldownBars).to.equal(1);
+        expect(capturedItemSettings).to.have.length(2);
+        expect(capturedItemSettings.map((settings) => settings.executionModel)).to.deep.equal(["next_open", "next_open"]);
+        expect(capturedItemSettings.map((settings) => settings.slippageBps)).to.deep.equal([5, 5]);
+        expect(capturedItemSettings.map((settings) => settings.riskCooldownEnabled)).to.deep.equal([true, true]);
+        expect(capturedItemSettings.map((settings) => settings.riskCooldownBars)).to.deep.equal([1, 1]);
+        expect(capturedItemSettings.map((settings) => settings.riskMaxHoldEnabled)).to.deep.equal([true, true]);
+        expect(capturedItemSettings.map((settings) => settings.riskMaxHoldBars)).to.deep.equal([1, 2]);
     });
 
     it("uploads one dataset and reuses its cache for the Rust candidate batch", async () => {
@@ -814,6 +913,36 @@ describe("Asset Opportunity Rust batch contract", () => {
         expect(executionGroupSizes).to.deep.equal([2]);
     });
 
+    it("rejects behavior-bearing signals before multi-asset queueing", async () => {
+        let executionCalls = 0;
+        const client = {
+            getDataCacheKey: () => "signals",
+            runMultiAssetAssetOpportunityBatchBacktestWithStatus: async () => {
+                executionCalls += 1;
+                throw new Error("multi-asset Rust should not receive this signal");
+            },
+        } as any;
+        const coordinator = createAssetOpportunityRustMultiBatchCoordinator(client);
+
+        const result = await coordinator.dispatchCandidate({
+            client,
+            data: makeCandles(8),
+            items: [{
+                id: "behavior-bearing",
+                signals: [{ ...makeSignals()[0]!, sizeFraction: 0.5 }],
+                settings: eligibleSettings,
+            }],
+            initialCapital: 10_000,
+            positionSizePercent: 100,
+            commissionPercent: 0,
+            baseSettings: eligibleSettings,
+            maxRequestBytes: DEFAULT_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES,
+        });
+
+        expect(result).to.include({ status: "fallback", reason: "signal_shape_unsupported", requests: 0 });
+        expect(executionCalls).to.equal(0);
+    });
+
     it("does not reuse a grouped cache ID after an in-place dataset mutation", async () => {
         let cacheCalls = 0;
         const metric = makeMetricSummary(0);
@@ -992,6 +1121,73 @@ describe("Asset Opportunity Rust batch contract", () => {
         expect(capturedInput.datasetEndIndex).to.equal(6);
     });
 
+    it("keeps exact-window signals authoritative before warming the full-series signal cache", async () => {
+        const dataLengths: number[] = [];
+        const strategy: Strategy = {
+            name: "Exact-window signal fixture",
+            description: "signal price depends on the input window",
+            defaultParams: { marker: 1 },
+            paramLabels: { marker: "Marker" },
+            execute: (data) => {
+                dataLengths.push(data.length);
+                const candle = data[2];
+                return candle
+                    ? [{ time: candle.time, type: "buy", price: data.length, barIndex: 2 }]
+                    : [];
+            },
+        };
+        const fullData = makeCandles(8);
+        const windowData = fullData.slice(2, 6);
+        let capturedSignals: Signal[] | undefined;
+        const rustMultiAssetBatch = {
+            dispatchCandidate: async (input: any) => {
+                capturedSignals = input.items[0]?.signals;
+                const result = makeResult(0);
+                const candidate = input.items[0];
+                return {
+                    status: "completed" as const,
+                    results: new Map([[candidate.id, {
+                        id: candidate.id,
+                        result,
+                        selectionResult: result,
+                        endpointAdjusted: false,
+                        endpointRemovedTrades: 0,
+                    }]]),
+                    requests: 1,
+                    requestBytes: 1,
+                    latencyMs: 1,
+                };
+            },
+            dispatchFresh: async () => ({ status: "cancelled" as const, reason: "cancelled" as const, requests: 0, requestBytes: 0, latencyMs: 0 }),
+        };
+        await runServerAssetIsSearch({
+            ohlcvData: windowData,
+            fullSignalData: fullData,
+            symbol: "RUST",
+            interval: "5m",
+            options: makeOptions(),
+            settings: eligibleSettings,
+            capitalSettings,
+            selectedStrategy: { key: "exact_window_fixture", name: strategy.name, strategy },
+            generateParamSets: () => [{ marker: 1 }],
+            useRustEnginePreference: true,
+            confirmationStrategiesLoaded: true,
+            rustBatchClient: {} as AssetOpportunityRustBatchClient,
+            rustMultiAssetBatch: rustMultiAssetBatch as any,
+            signalCache: createAssetOpportunitySignalCache(),
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+        });
+
+        expect(dataLengths).to.deep.equal([4, 8]);
+        expect(capturedSignals).to.deep.equal([{
+            time: windowData[2]!.time,
+            type: "buy",
+            price: 4,
+            barIndex: 2,
+        }]);
+    });
+
     it("reuses the shared dataset cache across holdout coordinators", async () => {
         const cacheGroupSizes: number[] = [];
         const metric = {
@@ -1069,7 +1265,6 @@ describe("Asset Opportunity Rust batch contract", () => {
     it("drops a shared cache ID after multi-batch eviction", async () => {
         let cacheCalls = 0;
         let multiCalls = 0;
-        let rawCalls = 0;
         const data = makeCandles(8);
         const client = {
             getDataCacheKey: () => "same-dataset",
@@ -1085,10 +1280,6 @@ describe("Asset Opportunity Rust batch contract", () => {
             runMultiAssetAssetOpportunityBatchBacktestWithStatus: async () => {
                 multiCalls += 1;
                 return { ok: false as const, reason: "http_error" as const, requestBytes: 1 };
-            },
-            runBatchBacktestWithStatus: async () => {
-                rawCalls += 1;
-                return { ok: true as const, response: makeRustResponse(["candidate"]), requestBytes: 1, elapsedMs: 1 };
             },
         } as any;
         const sharedDatasetCache = new Map<string, Promise<string | null>>();
@@ -1112,7 +1303,6 @@ describe("Asset Opportunity Rust batch contract", () => {
 
         expect(cacheCalls).to.equal(2);
         expect(multiCalls).to.equal(2);
-        expect(rawCalls).to.equal(2);
     });
 
     it("does not fan out direct Rust retries after a grouped timeout", async () => {
@@ -1146,5 +1336,71 @@ describe("Asset Opportunity Rust batch contract", () => {
 
         expect(result).to.include({ status: "fallback", reason: "timeout" });
         expect(directCalls).to.equal(0);
+    });
+
+    it("falls back the whole grouped workload after a malformed response", async () => {
+        let directCalls = 0;
+        const client = {
+            getDataCacheKey: (data: OHLCVData[]) => String(data[0]?.time ?? "empty"),
+            invalidateCachedDataId: () => undefined,
+            runMultiAssetAssetOpportunityBatchBacktestWithStatus: async () => ({
+                ok: true as const,
+                response: { results: [], processingTimeMs: 1 },
+                requestBytes: 1,
+                elapsedMs: 1,
+            }),
+            runBatchBacktestWithStatus: async () => {
+                directCalls += 1;
+                throw new Error("malformed grouped work must not retry per asset");
+            },
+        } as any;
+        const coordinator = createAssetOpportunityRustMultiBatchCoordinator(client);
+        const result = await coordinator.dispatchCandidate({
+            client,
+            data: makeCandles(8),
+            items: [{ id: "malformed", signals: [] }],
+            initialCapital: 10_000,
+            positionSizePercent: 100,
+            commissionPercent: 0,
+            baseSettings: eligibleSettings,
+            lastDataTime: makeCandles(8).at(-1)?.time ?? null,
+            maxRequestBytes: 16 * 1024 * 1024,
+            maxResponseBytes: 128 * 1024 * 1024,
+        });
+
+        expect(result).to.include({ status: "fallback", reason: "missing_result_id" });
+        expect(directCalls).to.equal(0);
+    });
+
+    it("resolves queued cancelled grouped work without transport or retry", async () => {
+        const controller = new AbortController();
+        let transportCalls = 0;
+        const client = {
+            getDataCacheKey: () => "cancelled-dataset",
+            runMultiAssetAssetOpportunityBatchBacktestWithStatus: async () => {
+                transportCalls += 1;
+                throw new Error("cancelled queued work must not reach Rust");
+            },
+        } as any;
+        const coordinator = createAssetOpportunityRustMultiBatchCoordinator(client);
+        const data = makeCandles(8);
+        const pending = coordinator.dispatchCandidate({
+            client,
+            data,
+            items: [{ id: "queued-cancel", signals: [] }],
+            initialCapital: 10_000,
+            positionSizePercent: 100,
+            commissionPercent: 0,
+            baseSettings: eligibleSettings,
+            lastDataTime: data.at(-1)?.time ?? null,
+            maxRequestBytes: 16 * 1024 * 1024,
+            maxResponseBytes: 128 * 1024 * 1024,
+            signal: controller.signal,
+        });
+        controller.abort();
+
+        const result = await pending;
+        expect(result).to.include({ status: "cancelled", reason: "cancelled", requests: 0 });
+        expect(transportCalls).to.equal(0);
     });
 });

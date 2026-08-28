@@ -6,6 +6,9 @@ import {
     sanitizeBacktestSettingsForRust,
     requiresTypescriptEngine,
     getTypescriptEngineRequirementReasons,
+    RUST_EXIT_REASON_CAPABILITY,
+    RUST_NEXT_OPEN_CAPABILITY,
+    RUST_RISK_MAX_HOLD_CAPABILITY,
     RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS,
 } from '../lib/rust-settings-sanitizer';
 import type { BacktestSettings } from '../lib/types/strategies';
@@ -493,12 +496,30 @@ describe('Backtest settings compatibility', () => {
         expect(requiresTypescriptEngine({ executionModel: 'signal_close', slippageBps: 0, allowSameBarExit: true })).to.equal(false);
         expect(getTypescriptEngineRequirementReasons({})).to.deep.equal([]);
 
-        // Non-signal_close execution model requires TS
+        // Non-signal_close execution models require TS until a capability
+        // handshake proves the Rust implementation is compatible.
         expect(requiresTypescriptEngine({ executionModel: 'next_open' })).to.equal(true);
         expect(requiresTypescriptEngine({ executionModel: 'next_close' })).to.equal(true);
 
-        // Slippage requires TS
+        // The generic single-run endpoint keeps its historical compatibility
+        // fence until a dedicated slippage capability is negotiated.
         expect(requiresTypescriptEngine({ slippageBps: 5 })).to.equal(true);
+        expect(getTypescriptEngineRequirementReasons(
+            { executionModel: 'next_open', riskMaxHoldEnabled: true, riskMaxHoldBars: 4 },
+            new Set([RUST_NEXT_OPEN_CAPABILITY, RUST_RISK_MAX_HOLD_CAPABILITY, RUST_EXIT_REASON_CAPABILITY]),
+        )).to.deep.equal([]);
+        expect(requiresTypescriptEngine(
+            { executionModel: 'next_open', riskMaxHoldEnabled: true, riskMaxHoldBars: 4 },
+            new Set([RUST_NEXT_OPEN_CAPABILITY, RUST_RISK_MAX_HOLD_CAPABILITY, RUST_EXIT_REASON_CAPABILITY]),
+        )).to.equal(false);
+        const capabilitySettings = sanitizeBacktestSettingsForRust(
+            { executionModel: 'next_open', riskMaxHoldEnabled: true, riskMaxHoldBars: 4, slippageBps: 5 },
+            new Set([RUST_NEXT_OPEN_CAPABILITY, RUST_RISK_MAX_HOLD_CAPABILITY, RUST_EXIT_REASON_CAPABILITY]),
+        );
+        expect(capabilitySettings.executionModel).to.equal('next_open');
+        expect(capabilitySettings.riskMaxHoldEnabled).to.equal(true);
+        expect(capabilitySettings.riskMaxHoldBars).to.equal(4);
+        expect(capabilitySettings.slippageBps).to.equal(5);
 
         expect(requiresTypescriptEngine({ allowSameBarExit: false })).to.equal(false);
     });
@@ -857,6 +878,10 @@ describe('Backtest settings compatibility', () => {
         expect(getBacktestDomSettingContract('polymarketEntryPriceFilterCents')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('riskMinHoldToggle')?.settingKey).to.equal('riskMinHoldEnabled');
         expect(getBacktestDomSettingContract('riskMinHoldBars')?.rustSupport).to.equal('unsupported');
+        expect(getBacktestDomSettingContract('riskMaxHoldBars')?.rustSupport).to.equal('conditional');
+        expect(getBacktestDomSettingContract('riskMaxHoldToggle')?.rustSupport).to.equal('conditional');
+        expect(getBacktestDomSettingContract('executionModel')?.rustSupport).to.equal('conditional');
+        expect(getBacktestDomSettingContract('slippageBps')?.rustSupport).to.equal('conditional');
         expect(getBacktestDomSettingContract('allowSameBarExitToggle')).to.equal(undefined);
         expect(getBacktestDomSettingContract('marketMode')).to.equal(undefined);
         expect(getBacktestDomSettingContract('tradeFilterMode')).to.equal(undefined);

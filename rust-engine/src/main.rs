@@ -108,8 +108,9 @@ async fn main() {
         .with_state(state)
         .layer(DefaultBodyLimit::max(MAX_JSON_BODY_BYTES))
         .layer(cors);
-    // Start server
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3030));
+    // Start server. Keep the historical default, but allow an isolated local
+    // instance for smoke tests when another engine owns 3030.
+    let addr = SocketAddr::from(([127, 0, 0, 1], server_port()));
     tracing::info!("🚀 Trading Engine server starting on http://{}", addr);
     tracing::info!("📊 Endpoints:");
     tracing::info!("   POST /api/backtest            - Run single backtest");
@@ -137,12 +138,31 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
+
+fn server_port() -> u16 {
+    server_port_from(std::env::var("RUST_ENGINE_PORT").ok().as_deref())
+}
+
+fn server_port_from(value: Option<&str>) -> u16 {
+    value
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .unwrap_or(3030)
+}
+
 /// Health check endpoint
 async fn health_check() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "healthy",
         "version": env!("CARGO_PKG_VERSION"),
-        "engine": "trading-engine-rust"
+        "engine": "trading-engine-rust",
+        "protocolVersion": 2,
+        "buildProfile": if cfg!(debug_assertions) { "debug" } else { "release" },
+        "capabilities": {
+            "backtest.next_open.v1": true,
+            "backtest.risk_max_hold.v1": true,
+            "backtest.exit_reason.v1": true
+        }
     }))
 }
 
@@ -165,5 +185,36 @@ mod tests {
         assert!(!origins
             .iter()
             .any(|origin| origin == "https://evil.example"));
+    }
+
+    #[tokio::test]
+    async fn health_advertises_the_versioned_backtest_capabilities() {
+        let Json(payload) = health_check().await;
+        assert_eq!(payload["status"], "healthy");
+        assert_eq!(payload["engine"], "trading-engine-rust");
+        assert_eq!(payload["protocolVersion"], 2);
+        assert_eq!(
+            payload["buildProfile"],
+            if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            }
+        );
+        for capability in [
+            "backtest.next_open.v1",
+            "backtest.risk_max_hold.v1",
+            "backtest.exit_reason.v1",
+        ] {
+            assert_eq!(payload["capabilities"][capability], true);
+        }
+    }
+
+    #[test]
+    fn server_port_uses_a_valid_nonzero_override() {
+        assert_eq!(server_port_from(Some("3031")), 3031);
+        assert_eq!(server_port_from(Some("0")), 3030);
+        assert_eq!(server_port_from(Some("not-a-port")), 3030);
+        assert_eq!(server_port_from(None), 3030);
     }
 }

@@ -1,7 +1,5 @@
 //! API Routes and Handlers
-use crate::backtest::{
-    build_market_series, run_backtest_with_market_series, run_backtest_with_market_series_options,
-};
+use crate::backtest::{build_market_series, run_backtest_with_market_series_options};
 use crate::types::{
     BacktestRequest, BacktestResult, BatchBacktestRequest, BatchBacktestResponse,
     BatchBacktestResultItem, FinderRequest, FinderResult, MultiAssetBatchBacktestRequest,
@@ -111,6 +109,12 @@ pub struct CachedBatchBacktestRequest {
     pub base_settings: crate::types::BacktestSettings,
     #[serde(default)]
     pub sizing: crate::types::TradeSizingConfig,
+    /// When true, omit drawdown calculation from compact results.
+    #[serde(default)]
+    pub skip_drawdown: bool,
+    /// When true, omit Sharpe ratio calculation from compact results.
+    #[serde(default)]
+    pub skip_sharpe_ratio: bool,
     /// When true, omit heavy payloads (trades, equity curve) from results
     #[serde(default)]
     pub compact: bool,
@@ -189,6 +193,14 @@ pub struct AssetOpportunityBatchResponse {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cache_ids: Vec<MultiAssetCacheResult>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BacktestResponse {
+    #[serde(flatten)]
+    result: BacktestResult,
+    processing_time_ms: u64,
+}
 /// Proxy request structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyRequest {
@@ -213,7 +225,8 @@ where
 /// Handle backtest request
 pub async fn backtest_handler(
     Json(req): Json<BacktestRequest>,
-) -> Result<Json<BacktestResult>, (StatusCode, String)> {
+) -> Result<Json<BacktestResponse>, (StatusCode, String)> {
+    let start = Instant::now();
     let result = run_on_blocking_pool(move || {
         let market_series = build_market_series(&req.data);
         run_backtest_with_market_series_options(
@@ -226,11 +239,16 @@ pub async fn backtest_handler(
             Some(&req.sizing),
             req.compact,
             req.retain_trades,
+            req.skip_drawdown,
+            req.skip_sharpe_ratio,
             &market_series,
         )
     })
     .await?;
-    Ok(Json(result))
+    Ok(Json(BacktestResponse {
+        result,
+        processing_time_ms: start.elapsed().as_millis() as u64,
+    }))
 }
 /// Handle batch backtest request - runs multiple backtests in parallel
 pub async fn batch_backtest_handler(
@@ -249,7 +267,7 @@ pub async fn batch_backtest_handler(
                     .settings
                     .clone()
                     .unwrap_or_else(|| req.base_settings.clone());
-                let result = run_backtest_with_market_series(
+                let result = run_backtest_with_market_series_options(
                     &req.data,
                     &item.signals,
                     req.initial_capital,
@@ -258,6 +276,9 @@ pub async fn batch_backtest_handler(
                     &settings,
                     Some(&req.sizing),
                     req.compact,
+                    false,
+                    req.skip_drawdown,
+                    req.skip_sharpe_ratio,
                     &market_series,
                 );
                 BatchBacktestResultItem {
@@ -506,7 +527,7 @@ pub async fn cached_batch_backtest_handler(
                     .settings
                     .clone()
                     .unwrap_or_else(|| req.base_settings.clone());
-                let result = run_backtest_with_market_series(
+                let result = run_backtest_with_market_series_options(
                     data.as_slice(),
                     &item.signals,
                     req.initial_capital,
@@ -515,6 +536,9 @@ pub async fn cached_batch_backtest_handler(
                     &settings,
                     Some(&req.sizing),
                     req.compact,
+                    false,
+                    req.skip_drawdown,
+                    req.skip_sharpe_ratio,
                     &market_series,
                 );
                 BatchBacktestResultItem {
@@ -642,71 +666,118 @@ fn epoch_milliseconds(time: Time) -> f64 {
         numeric
     }
 }
-fn selection_sharpe_ratio(trades: &[&Trade], initial_capital: f64) -> f64 {
-    if trades.len() < 2 || !initial_capital.is_finite() || initial_capital <= 0.0 {
-        return 0.0;
+
+fn median_sorted(values: &mut [f64]) -> f64 {
+    values.sort_by(|left, right| left.total_cmp(right));
+    let middle = values.len() / 2;
+    if values.len() % 2 == 1 {
+        values[middle]
+    } else {
+        (values[middle - 1] + values[middle]) / 2.0
     }
-    const MILLIS_PER_YEAR: f64 = 365.2425 * 24.0 * 60.0 * 60.0 * 1000.0;
-    const MILLIS_PER_DAY: f64 = 24.0 * 60.0 * 60.0 * 1000.0;
-    let mut deltas = Vec::with_capacity(trades.len().saturating_sub(1));
-    for pair in trades.windows(2) {
-        let delta = epoch_milliseconds(pair[1].exit_time) - epoch_milliseconds(pair[0].exit_time);
+}
+
+fn periods_per_year(samples: &[(Time, f64)]) -> f64 {
+    let mut deltas = Vec::with_capacity(samples.len().saturating_sub(1));
+    for pair in samples.windows(2) {
+        let delta = epoch_milliseconds(pair[1].0) - epoch_milliseconds(pair[0].0);
         if delta > 0.0 && delta.is_finite() {
             deltas.push(delta);
         }
     }
     if deltas.is_empty() {
+        return 1.0;
+    }
+    const MILLIS_PER_YEAR: f64 = 365.2425 * 24.0 * 60.0 * 60.0 * 1000.0;
+    (MILLIS_PER_YEAR / median_sorted(&mut deltas)).max(1.0)
+}
+
+fn sharpe_from_returns(returns: &[f64], periods_per_year: f64) -> f64 {
+    let finite_returns: Vec<f64> = returns
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .collect();
+    if finite_returns.len() < 5 {
         return 0.0;
     }
-    deltas.sort_by(|a, b| a.total_cmp(b));
-    let median_delta = deltas[deltas.len() / 2];
-    let periods_per_year = (MILLIS_PER_YEAR / median_delta).max(1.0);
-    let collapse_intraday = MILLIS_PER_YEAR / periods_per_year < MILLIS_PER_DAY;
+    let mean = finite_returns.iter().sum::<f64>() / finite_returns.len() as f64;
+    let variance = finite_returns
+        .iter()
+        .map(|value| (value - mean).powi(2))
+        .sum::<f64>()
+        / (finite_returns.len() - 1) as f64;
+    let std_dev = variance.max(0.0).sqrt();
+    if !std_dev.is_finite() || std_dev < 1.0e-4 {
+        return 0.0;
+    }
+    ((mean / std_dev) * periods_per_year.max(1.0).sqrt()).clamp(-8.0, 8.0)
+}
+
+fn selection_sharpe_ratio(trades: &[&Trade], initial_capital: f64) -> f64 {
+    if trades.len() < 2 || !initial_capital.is_finite() || initial_capital <= 0.0 {
+        return 0.0;
+    }
+    const MILLIS_PER_DAY: f64 = 24.0 * 60.0 * 60.0 * 1000.0;
     let mut equity_samples: Vec<(Time, f64)> = Vec::with_capacity(trades.len());
     let mut equity = initial_capital;
     for trade in trades {
-        equity += trade.pnl;
-        if equity.is_finite() {
-            equity_samples.push((trade.exit_time, equity));
+        if !trade.pnl.is_finite() {
+            continue;
         }
+        equity += trade.pnl;
+        equity_samples.push((trade.exit_time, equity));
     }
+    if equity_samples.len() < 2 {
+        return sharpe_from_returns(
+            &trades
+                .iter()
+                .map(|trade| trade.pnl_percent)
+                .collect::<Vec<_>>(),
+            1.0,
+        );
+    }
+
+    // TypeScript decides whether to collapse from the source timestamps, then
+    // recalculates annualization from the timestamps that survived collapse.
+    let source_periods_per_year = periods_per_year(&equity_samples);
+    let source_typical_delta_ms = if source_periods_per_year > 0.0 {
+        (365.2425 * 24.0 * 60.0 * 60.0 * 1000.0) / source_periods_per_year
+    } else {
+        f64::INFINITY
+    };
+    let collapse_intraday =
+        source_typical_delta_ms.is_finite() && source_typical_delta_ms < MILLIS_PER_DAY;
     if collapse_intraday {
-        let mut collapsed: Vec<(i64, f64)> = Vec::new();
+        let mut collapsed: Vec<(i64, Time, f64)> = Vec::new();
         for (time, value) in equity_samples {
+            if !value.is_finite() {
+                continue;
+            }
             let day = (epoch_milliseconds(time) / MILLIS_PER_DAY).floor() as i64;
             if let Some(last) = collapsed.last_mut() {
                 if last.0 == day {
-                    last.1 = value;
+                    // Keep the final valid equity sample in each UTC day.
+                    last.1 = time;
+                    last.2 = value;
                     continue;
                 }
             }
-            collapsed.push((day, value));
+            collapsed.push((day, time, value));
         }
         equity_samples = collapsed
             .into_iter()
-            .map(|(day, value)| ((day * 86_400) as Time, value))
+            .map(|(_day, time, value)| (time, value))
             .collect();
     }
+    let periods_per_year = periods_per_year(&equity_samples);
     let mut returns = Vec::with_capacity(equity_samples.len().saturating_sub(1));
     for pair in equity_samples.windows(2) {
         if pair[0].1 > 0.0 && pair[0].1.is_finite() && pair[1].1.is_finite() {
             returns.push((pair[1].1 - pair[0].1) / pair[0].1);
         }
     }
-    if returns.len() < 5 {
-        return 0.0;
-    }
-    let mean = returns.iter().sum::<f64>() / returns.len() as f64;
-    let variance = returns
-        .iter()
-        .map(|value| (value - mean).powi(2))
-        .sum::<f64>()
-        / (returns.len() - 1) as f64;
-    let std_dev = variance.max(0.0).sqrt();
-    if !std_dev.is_finite() || std_dev < 1.0e-4 {
-        return 0.0;
-    }
-    ((mean / std_dev) * periods_per_year.sqrt()).clamp(-8.0, 8.0)
+    sharpe_from_returns(&returns, periods_per_year)
 }
 fn summarize_asset_opportunity_result(
     result: BacktestResult,
@@ -753,11 +824,7 @@ fn summarize_fresh_entry_result(result: BacktestResult) -> FreshEntrySummary {
         trade_type: trade.trade_type,
         entry_time: trade.entry_time,
         entry_price: trade.entry_price,
-        exit_reason: if is_open {
-            "end_of_data".to_string()
-        } else {
-            "signal".to_string()
-        },
+        exit_reason: trade.exit_reason.clone(),
     });
     FreshEntrySummary {
         total_trades: result.total_trades,
@@ -793,6 +860,8 @@ fn run_fresh_entry_batch(
                 Some(&sizing),
                 true,
                 true,
+                false,
+                false,
                 &market_series,
             );
             FreshEntryBatchResultItem {
@@ -882,6 +951,8 @@ fn run_asset_opportunity_batch(
     base_settings: crate::types::BacktestSettings,
     sizing: crate::types::TradeSizingConfig,
     last_data_time: Option<Time>,
+    skip_drawdown: bool,
+    skip_sharpe_ratio: bool,
 ) -> AssetOpportunityBatchResponse {
     let start = Instant::now();
     let market_series = build_market_series(data);
@@ -902,6 +973,8 @@ fn run_asset_opportunity_batch(
                 Some(&sizing),
                 true,
                 true,
+                skip_drawdown,
+                skip_sharpe_ratio,
                 &market_series,
             );
             summarize_asset_opportunity_result(
@@ -931,6 +1004,8 @@ pub async fn asset_opportunity_batch_handler(
         base_settings,
         sizing,
         last_data_time,
+        skip_drawdown,
+        skip_sharpe_ratio,
         ..
     } = req;
     let response = run_on_blocking_pool(move || {
@@ -943,6 +1018,8 @@ pub async fn asset_opportunity_batch_handler(
             base_settings,
             sizing,
             last_data_time,
+            skip_drawdown,
+            skip_sharpe_ratio,
         )
     })
     .await?;
@@ -971,6 +1048,8 @@ pub async fn cached_asset_opportunity_batch_handler(
         base_settings,
         sizing,
         last_data_time,
+        skip_drawdown,
+        skip_sharpe_ratio,
         ..
     } = req;
     let response = run_on_blocking_pool(move || {
@@ -983,6 +1062,8 @@ pub async fn cached_asset_opportunity_batch_handler(
             base_settings,
             sizing,
             last_data_time,
+            skip_drawdown,
+            skip_sharpe_ratio,
         )
     })
     .await?;
@@ -1154,6 +1235,9 @@ pub async fn multi_asset_opportunity_batch_handler(
         commission_percent,
         base_settings,
         sizing,
+        skip_drawdown,
+        skip_sharpe_ratio,
+        ..
     } = req;
     let (workloads, cache_ids) = resolve_multi_asset_workloads(&state, requested_workloads).await?;
     let results = run_on_blocking_pool(move || {
@@ -1189,6 +1273,8 @@ pub async fn multi_asset_opportunity_batch_handler(
                         Some(&sizing),
                         true,
                         true,
+                        skip_drawdown,
+                        skip_sharpe_ratio,
                         &context.market_series,
                     );
                     summarize_asset_opportunity_result(
@@ -1221,6 +1307,7 @@ pub async fn multi_asset_fresh_entry_batch_handler(
         commission_percent,
         base_settings,
         sizing,
+        ..
     } = req;
     let (workloads, _) = resolve_multi_asset_workloads(&state, requested_workloads).await?;
     let results = run_on_blocking_pool(move || {
@@ -1249,6 +1336,8 @@ pub async fn multi_asset_fresh_entry_batch_handler(
                             Some(&sizing),
                             true,
                             true,
+                            false,
+                            false,
                             &market_series,
                         );
                         FreshEntryBatchResultItem {
@@ -1401,6 +1490,7 @@ pub async fn proxy_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backtest::run_backtest;
 
     fn make_backtest_request(compact: bool, retain_trades: bool) -> BacktestRequest {
         BacktestRequest {
@@ -1417,6 +1507,8 @@ mod tests {
             sizing: crate::types::TradeSizingConfig::default(),
             compact,
             retain_trades,
+            skip_drawdown: false,
+            skip_sharpe_ratio: false,
         }
     }
 
@@ -1425,14 +1517,16 @@ mod tests {
         let full = backtest_handler(Json(make_backtest_request(false, false)))
             .await
             .expect("generic backtest worker should complete")
-            .0;
+            .0
+            .result;
         assert!(!full.equity_curve.is_empty());
         assert_eq!(full.trades.len(), 1);
 
         let compact = backtest_handler(Json(make_backtest_request(true, false)))
             .await
             .expect("generic compact backtest worker should complete")
-            .0;
+            .0
+            .result;
         assert!(compact.equity_curve.is_empty());
         assert!(compact.trades.is_empty());
         assert_eq!(compact.total_trades, full.total_trades);
@@ -1440,7 +1534,8 @@ mod tests {
         let compact_with_trades = backtest_handler(Json(make_backtest_request(true, true)))
             .await
             .expect("generic compact trade backtest worker should complete")
-            .0;
+            .0
+            .result;
         assert!(compact_with_trades.equity_curve.is_empty());
         assert_eq!(compact_with_trades.trades.len(), 1);
         assert_eq!(compact_with_trades.total_trades, full.total_trades);
@@ -1463,6 +1558,8 @@ mod tests {
             base_settings: request.settings,
             sizing: request.sizing,
             compact: request.compact,
+            skip_drawdown: false,
+            skip_sharpe_ratio: false,
             last_data_time: None,
         }))
         .await
@@ -1472,6 +1569,174 @@ mod tests {
         assert_eq!(response.results.len(), 1);
         assert_eq!(response.results[0].id, "candidate-1");
         assert_eq!(response.results[0].result.total_trades, 1);
+    }
+
+    #[test]
+    fn asset_opportunity_summary_honors_metric_skip_flags() {
+        let data = vec![
+            OHLCV::new(0, 100.0, 100.0, 100.0, 100.0, 1000.0),
+            OHLCV::new(60000, 110.0, 110.0, 110.0, 110.0, 1000.0),
+            OHLCV::new(120000, 90.0, 90.0, 90.0, 90.0, 1000.0),
+            OHLCV::new(180000, 80.0, 80.0, 80.0, 80.0, 1000.0),
+        ];
+        let item = crate::types::BatchBacktestItem {
+            id: "metrics".to_string(),
+            signals: vec![
+                Signal::buy(0, 100.0),
+                Signal::sell(60000, 110.0),
+                Signal::buy(120000, 90.0),
+                Signal::sell(180000, 80.0),
+            ],
+            packed_signals: None,
+            settings: None,
+        };
+        let base = crate::types::BacktestSettings::default();
+        let sizing = crate::types::TradeSizingConfig::default();
+        let full = run_asset_opportunity_batch(
+            &data,
+            std::slice::from_ref(&item),
+            10000.0,
+            100.0,
+            0.0,
+            base.clone(),
+            sizing.clone(),
+            None,
+            false,
+            false,
+        );
+        let skipped = run_asset_opportunity_batch(
+            &data,
+            std::slice::from_ref(&item),
+            10000.0,
+            100.0,
+            0.0,
+            base,
+            sizing,
+            None,
+            true,
+            true,
+        );
+        let full_result = &full.results[0].result;
+        let skipped_result = &skipped.results[0].result;
+        assert!(full_result.max_drawdown > 0.0);
+        assert_ne!(full_result.sharpe_ratio, 0.0);
+        assert_eq!(skipped_result.max_drawdown, 0.0);
+        assert_eq!(skipped_result.max_drawdown_percent, 0.0);
+        assert_eq!(skipped_result.sharpe_ratio, 0.0);
+    }
+
+    fn make_sharpe_trade(id: u32, exit_time: Time, pnl: f64) -> Trade {
+        Trade {
+            id,
+            trade_type: TradeType::Long,
+            entry_time: exit_time - 3_600,
+            entry_price: 100.0,
+            exit_time,
+            exit_price: 100.0,
+            pnl,
+            pnl_percent: pnl / 100.0,
+            size: 1.0,
+            exit_reason: "signal".to_string(),
+            fees: None,
+        }
+    }
+
+    fn selection_sharpe_for_case(times: &[Time], pnls: &[f64]) -> f64 {
+        let trades = pnls
+            .iter()
+            .enumerate()
+            .map(|(index, pnl)| make_sharpe_trade(index as u32, times[index], *pnl))
+            .collect::<Vec<_>>();
+        let references = trades.iter().collect::<Vec<_>>();
+        selection_sharpe_ratio(&references, 10_000.0)
+    }
+
+    #[test]
+    fn selection_sharpe_matches_typescript_golden_cases() {
+        const BASE_TIME: Time = 1_700_006_400;
+        const DAY_SECONDS: Time = 86_400;
+        let intraday_times = (0..6)
+            .flat_map(|day| {
+                [
+                    BASE_TIME + day * DAY_SECONDS + 3_600,
+                    BASE_TIME + day * DAY_SECONDS + 7_200,
+                ]
+            })
+            .collect::<Vec<_>>();
+        let intraday = selection_sharpe_for_case(
+            &intraday_times,
+            &[
+                0.0, 10.0, 0.0, -10.0, 0.0, 5.0, 0.0, -5.0, 0.0, 2.0, 0.0, 0.0,
+            ],
+        );
+        assert!((intraday - (-5.14196462274892)).abs() < 1e-10);
+
+        let even_times = [0, 1, 3, 4, 6, 7, 9].map(|days| BASE_TIME + days * DAY_SECONDS);
+        let even = selection_sharpe_for_case(
+            &even_times,
+            &[100.0, -50.0, 200.0, -100.0, 150.0, -75.0, 125.0],
+        );
+        assert!((even - 5.019908766701721).abs() < 1e-10);
+
+        let few_times = [0, 1, 2, 3, 4].map(|days| BASE_TIME + days * DAY_SECONDS);
+        assert_eq!(
+            selection_sharpe_for_case(&few_times, &[100.0, -50.0, 100.0, -50.0, 100.0]),
+            0.0
+        );
+
+        let clamp_times = [0, 1, 2, 3, 4, 5, 6].map(|days| BASE_TIME + days * DAY_SECONDS);
+        assert_eq!(
+            selection_sharpe_for_case(
+                &clamp_times,
+                &[1_000.0, 2_000.0, 1_000.0, 2_000.0, 1_000.0, 2_000.0, 1_000.0],
+            ),
+            8.0
+        );
+
+        let non_collapsed_times = [0, 2, 4, 6, 8, 10].map(|days| BASE_TIME + days * DAY_SECONDS);
+        let non_collapsed = selection_sharpe_for_case(
+            &non_collapsed_times,
+            &[50.0, -25.0, 100.0, -40.0, 60.0, -20.0],
+        );
+        assert!((non_collapsed - 3.3246899796067604).abs() < 1e-10);
+
+        let mut fallback_trades = (0..6)
+            .map(|index| make_sharpe_trade(index, BASE_TIME + index as i64 * DAY_SECONDS, 0.0))
+            .collect::<Vec<_>>();
+        let fallback_pnl_percent = [0.01, -0.005, 0.02, -0.01, 0.015, -0.0075];
+        for (trade, pnl_percent) in fallback_trades.iter_mut().zip(fallback_pnl_percent) {
+            trade.pnl = f64::NAN;
+            trade.pnl_percent = pnl_percent;
+        }
+        let fallback_references = fallback_trades.iter().collect::<Vec<_>>();
+        let fallback = selection_sharpe_ratio(&fallback_references, 10_000.0);
+        assert!((fallback - 0.29249159098763694).abs() < 1e-12);
+    }
+
+    #[test]
+    fn fresh_entry_summary_preserves_authoritative_exit_reason() {
+        let mut request = make_backtest_request(false, true);
+        request.settings.execution_model = crate::types::ExecutionModel::NextOpen;
+        request.settings.risk_max_hold_enabled = true;
+        request.settings.risk_max_hold_bars = 1;
+        let result = run_backtest(
+            &request.data,
+            &request.signals[..1],
+            request.initial_capital,
+            request.position_size_percent,
+            request.commission_percent,
+            &request.settings,
+            Some(&request.sizing),
+            false,
+        );
+
+        let summary = summarize_fresh_entry_result(result);
+        assert_eq!(summary.total_trades, 1);
+        assert_eq!(
+            summary.latest_trade.map(|trade| trade.exit_reason),
+            Some("time_stop".to_string())
+        );
+        assert!(!summary.is_open);
     }
 
     #[tokio::test(flavor = "current_thread")]

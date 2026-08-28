@@ -111,6 +111,8 @@ struct NormalizedSettings {
     partial_take_profit_percent: f64,
     break_even_at_r: f64,
     time_stop_bars: u32,
+    risk_max_hold_bars: u32,
+    risk_max_hold_enabled: bool,
     risk_mode: RiskMode,
     stop_loss_percent: f64,
     take_profit_percent: f64,
@@ -172,6 +174,8 @@ fn normalize_settings(settings: &BacktestSettings) -> NormalizedSettings {
         ),
         break_even_at_r: settings.break_even_at_r.max(0.0),
         time_stop_bars: settings.time_stop_bars,
+        risk_max_hold_bars: settings.risk_max_hold_bars,
+        risk_max_hold_enabled: settings.risk_max_hold_enabled,
         risk_mode: settings.risk_mode,
         stop_loss_percent: settings.stop_loss_percent.max(0.0),
         take_profit_percent: settings.take_profit_percent.max(0.0),
@@ -539,6 +543,7 @@ fn process_position_exits(
                 size,
                 commission_rate,
                 config.slippage_rate,
+                "stop_loss",
                 kelly_state,
             );
         }
@@ -578,6 +583,7 @@ fn process_position_exits(
                 size,
                 commission_rate,
                 config.slippage_rate,
+                "take_profit",
                 kelly_state,
             );
         }
@@ -587,6 +593,7 @@ fn process_position_exits(
         return;
     }
 
+    let mut partial_exit_taken = false;
     if position.as_ref().is_some_and(|pos| !pos.partial_taken) {
         if let Some(partial_target) = position.as_ref().and_then(|pos| pos.partial_target_price) {
             let partial_hit = if is_short {
@@ -610,24 +617,27 @@ fn process_position_exits(
                         partial_size,
                         commission_rate,
                         config.slippage_rate,
+                        "partial",
                         kelly_state,
                     );
                     if let Some(pos) = position.as_mut() {
                         pos.partial_taken = true;
                     }
+                    partial_exit_taken = true;
                 }
             }
         }
     }
 
-    if let Some(pos) = position.as_ref() {
-        if config.time_stop_bars > 0 && pos.bars_in_trade >= config.time_stop_bars {
-            let is_losing = if is_short {
-                candle.close >= pos.entry_price
-            } else {
-                candle.close <= pos.entry_price
-            };
-            if !pos.partial_taken && is_losing {
+    // TypeScript returns the first partial trigger for the bar. Do not let
+    // max-hold or the legacy time stop immediately close the remainder, but
+    // continue through position-state updates below.
+    if !partial_exit_taken {
+        if let Some(pos) = position.as_ref() {
+            if config.risk_max_hold_enabled
+                && config.risk_max_hold_bars > 0
+                && pos.bars_in_trade >= config.risk_max_hold_bars
+            {
                 let size = pos.size;
                 exit_position(
                     position,
@@ -639,8 +649,35 @@ fn process_position_exits(
                     size,
                     commission_rate,
                     config.slippage_rate,
+                    "time_stop",
                     kelly_state,
                 );
+            }
+        }
+
+        if let Some(pos) = position.as_ref() {
+            if config.time_stop_bars > 0 && pos.bars_in_trade >= config.time_stop_bars {
+                let is_losing = if is_short {
+                    candle.close >= pos.entry_price
+                } else {
+                    candle.close <= pos.entry_price
+                };
+                if !pos.partial_taken && is_losing {
+                    let size = pos.size;
+                    exit_position(
+                        position,
+                        trades,
+                        capital,
+                        trade_id,
+                        candle.close,
+                        candle.time,
+                        size,
+                        commission_rate,
+                        config.slippage_rate,
+                        "time_stop",
+                        kelly_state,
+                    );
+                }
             }
         }
     }
@@ -708,6 +745,7 @@ fn exit_position(
     exit_size: f64,
     commission_rate: f64,
     slippage_rate: f64,
+    exit_reason: &str,
     kelly_state: &mut Option<KellySizingState>,
 ) {
     let Some(mut pos) = position.take() else {
@@ -734,7 +772,7 @@ fn exit_position(
     let raw_pnl = (exit_value - entry_value) * direction_factor;
     let total_pnl = raw_pnl - entry_commission - commission;
     let pnl_percent = if entry_value > 0.0 {
-        (raw_pnl / entry_value) * 100.0
+        (total_pnl / entry_value) * 100.0
     } else {
         0.0
     };
@@ -750,6 +788,7 @@ fn exit_position(
         pnl: total_pnl,
         pnl_percent,
         size,
+        exit_reason: exit_reason.to_string(),
         fees: Some(entry_commission + commission),
     });
     pos.realized_pnl += total_pnl;
@@ -903,6 +942,8 @@ pub(crate) fn run_backtest_with_market_series(
         sizing,
         compact,
         false,
+        false,
+        false,
         market_series,
     )
 }
@@ -917,6 +958,8 @@ pub(crate) fn run_backtest_with_market_series_options(
     sizing: Option<&TradeSizingConfig>,
     compact: bool,
     retain_trades: bool,
+    skip_drawdown: bool,
+    skip_sharpe_ratio: bool,
     market_series: &MarketSeries,
 ) -> BacktestResult {
     if data.is_empty() {
@@ -1098,7 +1141,9 @@ pub(crate) fn run_backtest_with_market_series_options(
                     && position.is_none()
                     && !is_entry_cooldown_active(signal_exit_reentry_cooldown_until_bar_index, i)
                 {
-                    let atr_value = get_series_value(&indicators.atr, i);
+                    let atr_index = if next_open { i.checked_sub(1) } else { Some(i) };
+                    let atr_value =
+                        atr_index.and_then(|index| get_series_value(&indicators.atr, index));
                     let requires_atr_for_entry = config.stop_loss_atr > 0.0
                         || config.take_profit_atr > 0.0
                         || config.trailing_atr > 0.0
@@ -1238,6 +1283,7 @@ pub(crate) fn run_backtest_with_market_series_options(
                         size,
                         commission_rate,
                         config.slippage_rate,
+                        "signal",
                         &mut kelly_state,
                     );
                     arm_entry_cooldown_if_closed(
@@ -1311,7 +1357,8 @@ pub(crate) fn run_backtest_with_market_series_options(
             last_candle.time,
             size,
             commission_rate,
-            config.slippage_rate,
+            0.0,
+            "end_of_data",
             &mut kelly_state,
         );
         if compact {
@@ -1320,7 +1367,9 @@ pub(crate) fn run_backtest_with_market_series_options(
             last_point.value = capital;
         }
     }
-    let (max_dd, max_dd_pct) = if compact {
+    let (max_dd, max_dd_pct) = if skip_drawdown {
+        (0.0, 0.0)
+    } else if compact {
         (max_drawdown, max_drawdown_percent)
     } else {
         calculate_max_drawdown(&equity_curve, initial_capital)
@@ -1333,6 +1382,9 @@ pub(crate) fn run_backtest_with_market_series_options(
         max_dd,
         max_dd_pct,
     );
+    if skip_sharpe_ratio {
+        result.sharpe_ratio = 0.0;
+    }
     result.final_position_open = final_position_open;
     if compact {
         if !retain_trades {
@@ -1468,6 +1520,7 @@ fn calculate_sharpe_ratio(trades: &[Trade]) -> f64 {
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
     fn create_test_data(n: usize) -> Vec<OHLCV> {
         (0..n)
             .map(|i| {
@@ -1482,6 +1535,201 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct ParityFixture {
+        cases: Vec<ParityCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct ParityCase {
+        name: String,
+        data: Vec<OHLCV>,
+        signals: Vec<Signal>,
+        settings: BacktestSettings,
+        capital: ParityCapital,
+        #[serde(rename = "rustDirectParity", default = "default_true")]
+        rust_direct_parity: bool,
+        expected: ParityExpected,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ParityCapital {
+        initial_capital: f64,
+        position_size_percent: f64,
+        commission_percent: f64,
+        sizing: TradeSizingConfig,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ParityExpected {
+        trades: Vec<ParityTrade>,
+        net_profit: f64,
+        net_profit_percent: f64,
+        total_trades: u32,
+        winning_trades: u32,
+        losing_trades: u32,
+        max_drawdown: f64,
+        max_drawdown_percent: f64,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ParityTrade {
+        id: u32,
+        #[serde(rename = "type")]
+        trade_type: TradeType,
+        entry_time: Time,
+        entry_price: f64,
+        exit_time: Time,
+        exit_price: f64,
+        pnl: f64,
+        pnl_percent: f64,
+        size: f64,
+        fees: f64,
+        exit_reason: String,
+    }
+
+    const fn default_true() -> bool {
+        true
+    }
+
+    fn assert_close(actual: f64, expected: f64, label: &str) {
+        let tolerance = 1e-9 * actual.abs().max(expected.abs()).max(1.0);
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "{label}: actual {actual} expected {expected} tolerance {tolerance}"
+        );
+    }
+
+    #[test]
+    fn shared_typescript_golden_fixture_covers_next_open_execution_contract() {
+        let fixture: ParityFixture = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/rust-next-open-parity.json"
+        ))
+        .expect("shared Rust/TypeScript parity fixture must deserialize");
+
+        for case in fixture.cases {
+            if !case.rust_direct_parity {
+                // TypeScript currently normalizes partial-take-profit fields
+                // out of the public engine settings. The Rust kernel still
+                // carries the ordering regression test below, but this case
+                // is intentionally not admitted as a cross-engine workload.
+                continue;
+            }
+            let result = run_backtest(
+                &case.data,
+                &case.signals,
+                case.capital.initial_capital,
+                case.capital.position_size_percent,
+                case.capital.commission_percent,
+                &case.settings,
+                Some(&case.capital.sizing),
+                false,
+            );
+            assert_eq!(
+                result.trades.len(),
+                case.expected.trades.len(),
+                "{} trade count",
+                case.name
+            );
+            for (index, (actual, expected)) in result
+                .trades
+                .iter()
+                .zip(case.expected.trades.iter())
+                .enumerate()
+            {
+                assert_eq!(actual.id, expected.id, "{} trade {index} id", case.name);
+                assert_eq!(
+                    actual.trade_type, expected.trade_type,
+                    "{} trade {index} type",
+                    case.name
+                );
+                assert_eq!(
+                    actual.entry_time, expected.entry_time,
+                    "{} trade {index} entry time",
+                    case.name
+                );
+                assert_close(
+                    actual.entry_price,
+                    expected.entry_price,
+                    &format!("{} trade {index} entry price", case.name),
+                );
+                assert_eq!(
+                    actual.exit_time, expected.exit_time,
+                    "{} trade {index} exit time",
+                    case.name
+                );
+                assert_close(
+                    actual.exit_price,
+                    expected.exit_price,
+                    &format!("{} trade {index} exit price", case.name),
+                );
+                assert_close(
+                    actual.pnl,
+                    expected.pnl,
+                    &format!("{} trade {index} pnl", case.name),
+                );
+                assert_close(
+                    actual.pnl_percent,
+                    expected.pnl_percent,
+                    &format!("{} trade {index} pnl percent", case.name),
+                );
+                assert_close(
+                    actual.size,
+                    expected.size,
+                    &format!("{} trade {index} size", case.name),
+                );
+                assert_close(
+                    actual.fees.unwrap_or(0.0),
+                    expected.fees,
+                    &format!("{} trade {index} fees", case.name),
+                );
+                assert_eq!(
+                    actual.exit_reason, expected.exit_reason,
+                    "{} trade {index} exit reason",
+                    case.name
+                );
+            }
+            assert_close(
+                result.net_profit,
+                case.expected.net_profit,
+                &format!("{} net profit", case.name),
+            );
+            assert_close(
+                result.net_profit_percent,
+                case.expected.net_profit_percent,
+                &format!("{} net profit percent", case.name),
+            );
+            assert_eq!(
+                result.total_trades, case.expected.total_trades,
+                "{} total trades",
+                case.name
+            );
+            assert_eq!(
+                result.winning_trades, case.expected.winning_trades,
+                "{} winning trades",
+                case.name
+            );
+            assert_eq!(
+                result.losing_trades, case.expected.losing_trades,
+                "{} losing trades",
+                case.name
+            );
+            assert_close(
+                result.max_drawdown,
+                case.expected.max_drawdown,
+                &format!("{} max drawdown", case.name),
+            );
+            assert_close(
+                result.max_drawdown_percent,
+                case.expected.max_drawdown_percent,
+                &format!("{} max drawdown percent", case.name),
+            );
+        }
     }
     #[test]
     fn test_backtest_no_trades() {
@@ -1641,6 +1889,235 @@ mod tests {
         assert_eq!(result.trades[0].exit_time, 2);
         assert!((result.trades[0].exit_price - 105.0).abs() < 1e-9);
     }
+
+    #[test]
+    fn max_hold_closes_long_and_short_positions_at_the_boundary() {
+        let data = vec![
+            OHLCV::new(0, 100.0, 101.0, 99.0, 100.0, 1000.0),
+            OHLCV::new(1, 100.0, 103.0, 99.0, 102.0, 1000.0),
+            OHLCV::new(2, 104.0, 106.0, 103.0, 105.0, 1000.0),
+            OHLCV::new(3, 106.0, 108.0, 105.0, 107.0, 1000.0),
+        ];
+        let mut long_settings = BacktestSettings::default();
+        long_settings.risk_max_hold_enabled = true;
+        long_settings.risk_max_hold_bars = 1;
+        long_settings.trade_direction = TradeDirection::Long;
+        let long = run_backtest(
+            &data,
+            &[Signal::buy(0, 100.0)],
+            10_000.0,
+            100.0,
+            0.0,
+            &long_settings,
+            None,
+            false,
+        );
+        assert_eq!(long.total_trades, 1);
+        assert_eq!(long.trades[0].entry_time, 0);
+        assert_eq!(long.trades[0].exit_time, 1);
+        assert_eq!(long.trades[0].exit_reason, "time_stop");
+
+        let mut short_settings = long_settings;
+        short_settings.trade_direction = TradeDirection::Short;
+        let short = run_backtest(
+            &data,
+            &[Signal::sell(0, 100.0)],
+            10_000.0,
+            100.0,
+            0.0,
+            &short_settings,
+            None,
+            false,
+        );
+        assert_eq!(short.total_trades, 1);
+        assert_eq!(short.trades[0].entry_time, 0);
+        assert_eq!(short.trades[0].exit_time, 1);
+        assert_eq!(short.trades[0].exit_reason, "time_stop");
+    }
+
+    #[test]
+    fn max_hold_signal_exit_wins_at_the_boundary_and_suppresses_entry_bar_exit() {
+        let data = vec![
+            OHLCV::new(0, 100.0, 101.0, 99.0, 100.0, 1000.0),
+            OHLCV::new(1, 100.0, 103.0, 99.0, 102.0, 1000.0),
+            OHLCV::new(2, 110.0, 111.0, 109.0, 110.0, 1000.0),
+            OHLCV::new(3, 110.0, 111.0, 109.0, 110.0, 1000.0),
+        ];
+        let mut settings = BacktestSettings::default();
+        settings.execution_model = ExecutionModel::NextOpen;
+        settings.risk_max_hold_enabled = true;
+        settings.risk_max_hold_bars = 1;
+        settings.trade_direction = TradeDirection::Long;
+        let result = run_backtest(
+            &data,
+            &[Signal::buy(0, 100.0), Signal::sell(1, 100.0)],
+            10_000.0,
+            100.0,
+            0.0,
+            &settings,
+            None,
+            false,
+        );
+        assert_eq!(result.total_trades, 1);
+        assert_eq!(result.trades[0].entry_time, 1);
+        assert_eq!(result.trades[0].exit_time, 2);
+        assert_eq!(result.trades[0].exit_reason, "signal");
+        assert_eq!(result.trades[0].exit_price, 110.0);
+
+        let mut entry_bar_settings = settings;
+        entry_bar_settings.risk_max_hold_bars = 0;
+        entry_bar_settings.take_profit_enabled = true;
+        entry_bar_settings.risk_mode = RiskMode::Percentage;
+        entry_bar_settings.take_profit_percent = 1.0;
+        let entry_bar = run_backtest(
+            &data,
+            &[Signal::buy(0, 100.0)],
+            10_000.0,
+            100.0,
+            0.0,
+            &entry_bar_settings,
+            None,
+            false,
+        );
+        assert_eq!(entry_bar.total_trades, 1);
+        assert_eq!(entry_bar.trades[0].entry_time, 1);
+        assert_eq!(entry_bar.trades[0].exit_time, 2);
+        assert_eq!(entry_bar.trades[0].exit_reason, "take_profit");
+    }
+
+    #[test]
+    fn partial_exit_returns_before_max_hold_on_the_same_bar() {
+        let data = vec![
+            OHLCV::new(0, 100.0, 100.0, 100.0, 100.0, 1000.0),
+            OHLCV::new(1, 100.0, 100.0, 100.0, 100.0, 1000.0),
+            OHLCV::new(2, 100.0, 112.0, 99.0, 105.0, 1000.0),
+        ];
+        let mut settings = BacktestSettings::default();
+        settings.atr_period = 1;
+        settings.risk_mode = RiskMode::Percentage;
+        settings.stop_loss_enabled = true;
+        settings.stop_loss_percent = 10.0;
+        settings.partial_take_profit_at_r = 1.0;
+        settings.partial_take_profit_percent = 50.0;
+        settings.risk_max_hold_enabled = true;
+        settings.risk_max_hold_bars = 1;
+        settings.trade_direction = TradeDirection::Long;
+
+        let result = run_backtest(
+            &data,
+            &[Signal::buy(1, 100.0)],
+            10_000.0,
+            100.0,
+            0.0,
+            &settings,
+            None,
+            false,
+        );
+
+        assert_eq!(result.total_trades, 2);
+        assert_eq!(result.trades[0].exit_reason, "partial");
+        assert_eq!(result.trades[0].exit_time, 2);
+        assert_eq!(result.trades[1].exit_reason, "end_of_data");
+        assert_eq!(result.trades[1].exit_time, 2);
+
+        settings.partial_take_profit_percent = 100.0;
+        let fully_partial_result = run_backtest(
+            &data,
+            &[Signal::buy(1, 100.0)],
+            10_000.0,
+            100.0,
+            0.0,
+            &settings,
+            None,
+            false,
+        );
+
+        assert_eq!(fully_partial_result.total_trades, 1);
+        assert_eq!(fully_partial_result.trades[0].exit_reason, "partial");
+        assert_eq!(fully_partial_result.trades[0].exit_time, 2);
+    }
+
+    #[test]
+    fn next_open_atr_risk_uses_the_signal_bar_atr_source() {
+        let data = vec![
+            OHLCV::new(0, 100.0, 101.0, 100.0, 100.0, 1000.0),
+            OHLCV::new(1, 100.0, 110.0, 95.0, 100.0, 1000.0),
+            OHLCV::new(2, 100.0, 101.0, 99.0, 100.0, 1000.0),
+        ];
+        let mut settings = BacktestSettings::default();
+        settings.execution_model = ExecutionModel::NextOpen;
+        settings.atr_period = 1;
+        settings.stop_loss_atr = 1.0;
+        settings.trade_direction = TradeDirection::Long;
+        let result = run_backtest(
+            &data,
+            &[Signal::buy(0, 100.0)],
+            10_000.0,
+            100.0,
+            0.0,
+            &settings,
+            None,
+            false,
+        );
+        assert_eq!(result.total_trades, 1);
+        assert_eq!(result.trades[0].exit_reason, "stop_loss");
+        assert_eq!(result.trades[0].exit_price, 99.0);
+    }
+
+    #[test]
+    fn end_of_data_uses_raw_close_and_trade_pnl_percent_includes_fees() {
+        let data = vec![
+            OHLCV::new(0, 100.0, 101.0, 99.0, 100.0, 1000.0),
+            OHLCV::new(1, 110.0, 111.0, 109.0, 110.0, 1000.0),
+        ];
+        let mut settings = BacktestSettings::default();
+        settings.slippage_bps = 100.0;
+        let eod = run_backtest(
+            &data,
+            &[Signal::buy(0, 100.0)],
+            10_000.0,
+            100.0,
+            1.0,
+            &settings,
+            None,
+            false,
+        );
+        assert_eq!(eod.total_trades, 1);
+        assert_eq!(eod.trades[0].exit_price, 110.0);
+        assert_eq!(eod.trades[0].exit_reason, "end_of_data");
+        let entry_value = eod.trades[0].entry_price * eod.trades[0].size;
+        assert!(
+            (eod.trades[0].pnl_percent - (eod.trades[0].pnl / entry_value * 100.0)).abs() < 1e-9
+        );
+    }
+
+    #[test]
+    fn occupied_position_ignores_additional_entry_signals() {
+        let data = vec![
+            OHLCV::new(0, 100.0, 101.0, 99.0, 100.0, 1000.0),
+            OHLCV::new(1, 101.0, 102.0, 100.0, 101.0, 1000.0),
+            OHLCV::new(2, 102.0, 103.0, 101.0, 102.0, 1000.0),
+        ];
+        let mut settings = BacktestSettings::default();
+        settings.trade_direction = TradeDirection::Long;
+        let result = run_backtest(
+            &data,
+            &[
+                Signal::buy(0, 100.0),
+                Signal::buy(1, 101.0),
+                Signal::sell(2, 102.0),
+            ],
+            10_000.0,
+            100.0,
+            0.0,
+            &settings,
+            None,
+            false,
+        );
+        assert_eq!(result.total_trades, 1);
+        assert_eq!(result.trades[0].entry_time, 0);
+        assert_eq!(result.trades[0].exit_time, 2);
+    }
     #[test]
     fn entry_cooldown_blocks_same_bar_reentry_after_signal_exit() {
         let data = vec![
@@ -1719,6 +2196,7 @@ mod tests {
                 pnl: 2.0,
                 pnl_percent: 2.0,
                 size: 1.0,
+                exit_reason: "signal".to_string(),
                 fees: None,
             },
             Trade {
@@ -1731,6 +2209,7 @@ mod tests {
                 pnl: 1.0,
                 pnl_percent: 1.0,
                 size: 1.0,
+                exit_reason: "signal".to_string(),
                 fees: None,
             },
             Trade {
@@ -1743,6 +2222,7 @@ mod tests {
                 pnl: -1.0,
                 pnl_percent: -1.0,
                 size: 1.0,
+                exit_reason: "signal".to_string(),
                 fees: None,
             },
         ];

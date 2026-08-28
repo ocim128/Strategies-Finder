@@ -33,6 +33,10 @@ import type {
     StrategyParams,
 } from "../../types/strategies";
 import type { CapitalSettings } from "../../types/backtest";
+import type {
+    TypescriptFallbackGate,
+    TypescriptSimulationConcurrencyTracker,
+} from "../../backtest-endpoint-contract";
 import type { FinderOptions, FinderResult } from "../../types/finder";
 import type { FinderSelectedStrategy } from "../finder-runner";
 import type { CrossSymbolDataFetcher } from "../../cross-symbol-runtime";
@@ -57,6 +61,8 @@ import {
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 import { rustEngine } from "../../rust-engine-client";
+import type { RustCapabilities } from "../../rust-engine-client";
+import { hasRequiredRustCapabilities } from "../../rust-settings-sanitizer";
 import { debugLogger } from "../../debug-logger";
 import { timeKey } from "../../strategies/backtest/backtest-utils";
 import {
@@ -85,6 +91,10 @@ export interface ServerAssetIsSearchInput {
     exitStrategyCandidates?: FinderSelectedStrategy[];
     generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[];
     useRustEnginePreference?: boolean;
+    rustCapabilities?: RustCapabilities;
+    typescriptFallbackGate?: TypescriptFallbackGate;
+    typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
+    signal?: AbortSignal;
     dataFetcher?: CrossSymbolDataFetcher;
     /** Caller already preloaded the configured confirmation libraries for this task. */
     confirmationStrategiesLoaded?: boolean;
@@ -259,6 +269,7 @@ export interface ServerAssetIsSearchOutput {
 export async function runServerAssetIsSearch(
     input: ServerAssetIsSearchInput,
 ): Promise<ServerAssetIsSearchOutput> {
+    throwIfAborted(input.abortSignal);
     const { options, settings, capitalSettings, selectedStrategy } = input;
     // `executeBacktest` skips its own confirmation preload when this lean path
     // supplies pre-resolved settings, so load the configured libraries once
@@ -320,6 +331,7 @@ export async function runServerAssetIsSearch(
         capitalSettings,
         selectedStrategy,
         exitStrategyCandidates: input.exitStrategyCandidates,
+        rustCapabilities: input.rustCapabilities,
     });
     if (rustBatchEligibility.eligible && rustBatchDensityEligible) {
         return runServerAssetIsSearchWithRustBatch({
@@ -413,6 +425,7 @@ export async function runServerAssetIsSearch(
     const canReuseFullSignals = canReuseFullSignalsForWindow(input, signalWindow);
 
     for (let index = 0; index < paramSets.length; index++) {
+        throwIfAborted(input.abortSignal);
         if (input.isCancelled()) break;
         candidateEvaluationsAttempted += 1;
         const entryParams = paramSets[index]!;
@@ -470,6 +483,10 @@ export async function runServerAssetIsSearch(
                     : {}),
                 ...(input.dataFetcher ? { dataFetcher: input.dataFetcher } : {}),
                 useRustEnginePreference: executionUseRustEnginePreference,
+                rustCapabilities: input.rustCapabilities,
+                typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
+                signal: input.abortSignal,
+                typescriptFallbackGate: input.typescriptFallbackGate,
                 // The caller has already supplied the historical closed
                 // window. Keep its array identity stable so prepared Finder
                 // data and executor-side caches can be reused per asset.
@@ -504,6 +521,10 @@ export async function runServerAssetIsSearch(
                         capitalSettings,
                         options,
                         useRustEnginePreference: executionUseRustEnginePreference,
+                        rustCapabilities: input.rustCapabilities,
+                        signal: input.abortSignal,
+                        typescriptFallbackGate: input.typescriptFallbackGate,
+                        typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
                         closedCandleDataOverride: input.fullSignalData,
                         needs: {
                             compact: false,
@@ -520,7 +541,8 @@ export async function runServerAssetIsSearch(
                     if (cachedSignals !== null) {
                         input.signalCache!.set(signalCacheKey, fullSignalOutput.signals);
                     }
-                } catch {
+                } catch (error) {
+                    if (input.abortSignal?.aborted || isAbortError(error)) throw error;
                     // Signal reuse is an optimization only; keep the current
                     // candidate result authoritative if the warm pass fails.
                 }
@@ -579,7 +601,8 @@ export async function runServerAssetIsSearch(
             if (input.retainSignals === true && retained) {
                 signalsByResult.set(candidate, output.signals);
             }
-        } catch {
+        } catch (error) {
+            if (input.abortSignal?.aborted || isAbortError(error)) throw error;
             backtestMs += performance.now() - candidateStartedAt;
             candidateEvaluationFailures += 1;
             // Skip failed candidates; the caller counts failures in diagnostics.
@@ -752,6 +775,10 @@ async function runServerAssetIsSearchWithRustBatch(
                     capitalSettings,
                     options,
                     useRustEnginePreference: input.useRustEnginePreference,
+                    rustCapabilities: input.rustCapabilities,
+                    signal: input.abortSignal,
+                    typescriptFallbackGate: input.typescriptFallbackGate,
+                    typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
                     closedCandleDataOverride: input.ohlcvData,
                     preGeneratedSignals,
                     needs: {
@@ -765,8 +792,12 @@ async function runServerAssetIsSearchWithRustBatch(
                 signals = output.signals;
                 backtestSettings = output.backtestSettings;
             } else if (canReuseFullSignals && signalCacheKey && input.fullSignalData) {
-                const fullOutput = await runAssetCandidateBacktest({
-                    data: input.fullSignalData,
+                // The current capped IS evaluation must use the exact window,
+                // just like the TypeScript path. A full-series pass is only a
+                // cache warm-up and must never become the candidate's source
+                // of truth merely because its signals can be timestamp-sliced.
+                const output = await runAssetCandidateBacktest({
+                    data: input.ohlcvData,
                     symbol: input.symbol,
                     interval: input.interval,
                     strategy: preparedStrategy,
@@ -777,7 +808,11 @@ async function runServerAssetIsSearchWithRustBatch(
                     capitalSettings,
                     options,
                     useRustEnginePreference: input.useRustEnginePreference,
-                    closedCandleDataOverride: input.fullSignalData,
+                    rustCapabilities: input.rustCapabilities,
+                    signal: input.abortSignal,
+                    typescriptFallbackGate: input.typescriptFallbackGate,
+                    typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
+                    closedCandleDataOverride: input.ohlcvData,
                     needs: {
                         compact: false,
                         trades: false,
@@ -786,17 +821,11 @@ async function runServerAssetIsSearchWithRustBatch(
                         endpointSelection: false,
                     },
                 });
-                const cachedSignals = resolveCachedSignalsForWindow(
-                    fullOutput.signals,
-                    signalWindow,
-                );
-                if (cachedSignals !== null) {
-                    input.signalCache!.set(signalCacheKey, fullOutput.signals);
-                    signals = cachedSignals;
-                    backtestSettings = fullOutput.backtestSettings;
-                } else {
-                    const output = await runAssetCandidateBacktest({
-                        data: input.ohlcvData,
+                signals = output.signals;
+                backtestSettings = output.backtestSettings;
+                try {
+                    const fullOutput = await runAssetCandidateBacktest({
+                        data: input.fullSignalData,
                         symbol: input.symbol,
                         interval: input.interval,
                         strategy: preparedStrategy,
@@ -807,7 +836,11 @@ async function runServerAssetIsSearchWithRustBatch(
                         capitalSettings,
                         options,
                         useRustEnginePreference: input.useRustEnginePreference,
-                        closedCandleDataOverride: input.ohlcvData,
+                        rustCapabilities: input.rustCapabilities,
+                        signal: input.abortSignal,
+                        typescriptFallbackGate: input.typescriptFallbackGate,
+                        typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
+                        closedCandleDataOverride: input.fullSignalData,
                         needs: {
                             compact: false,
                             trades: false,
@@ -816,8 +849,13 @@ async function runServerAssetIsSearchWithRustBatch(
                             endpointSelection: false,
                         },
                     });
-                    signals = output.signals;
-                    backtestSettings = output.backtestSettings;
+                    if (resolveCachedSignalsForWindow(fullOutput.signals, signalWindow) !== null) {
+                        input.signalCache!.set(signalCacheKey, fullOutput.signals);
+                    }
+                } catch (error) {
+                    if (input.abortSignal?.aborted || isAbortError(error)) throw error;
+                    // Signal reuse is an optimization only; the exact-window
+                    // signals above remain authoritative if warm-up fails.
                 }
             } else {
                 const output = await runAssetCandidateBacktest({
@@ -832,6 +870,10 @@ async function runServerAssetIsSearchWithRustBatch(
                     capitalSettings,
                     options,
                     useRustEnginePreference: input.useRustEnginePreference,
+                    rustCapabilities: input.rustCapabilities,
+                    signal: input.abortSignal,
+                    typescriptFallbackGate: input.typescriptFallbackGate,
+                    typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
                     closedCandleDataOverride: input.ohlcvData,
                     needs: {
                         compact: false,
@@ -846,7 +888,8 @@ async function runServerAssetIsSearchWithRustBatch(
             }
             args.setCurrentBacktestSettings(backtestSettings);
             preparedCandidates.push({ id: candidateId, entryParams, signals, backtestSettings });
-        } catch {
+        } catch (error) {
+            if (input.abortSignal?.aborted || isAbortError(error)) throw error;
             candidateEvaluationFailures += 1;
         }
         evaluationsSinceYield += 1;
@@ -897,6 +940,8 @@ async function runServerAssetIsSearchWithRustBatch(
             slippageBps: settings.slippageBps,
             riskCooldownEnabled: settings.riskCooldownEnabled,
             riskCooldownBars: settings.riskCooldownBars,
+            riskMaxHoldEnabled: candidate.backtestSettings.riskMaxHoldEnabled ?? settings.riskMaxHoldEnabled,
+            riskMaxHoldBars: candidate.backtestSettings.riskMaxHoldBars ?? settings.riskMaxHoldBars,
         });
         const baseSettings = rustSettingsFor(preparedCandidates[0]!);
         let cacheId: string | undefined;
@@ -907,7 +952,11 @@ async function runServerAssetIsSearchWithRustBatch(
         const rustDataset = rustDatasetWindow && input.fullSignalData
             ? input.fullSignalData
             : input.ohlcvData;
-        if (!args.rustMultiAssetBatch
+        const candidateCapabilityMissing = preparedCandidates.some((candidate) =>
+            !hasRequiredRustCapabilities(input.rustCapabilities, rustSettingsFor(candidate))
+        );
+        if (!candidateCapabilityMissing
+            && !args.rustMultiAssetBatch
             && args.rustBatchDatasetCache
             && args.rustBatchClient.cacheData
             && args.rustBatchClient.runCachedBatchBacktestWithStatus) {
@@ -923,43 +972,59 @@ async function runServerAssetIsSearchWithRustBatch(
                     signal: input.abortSignal,
                     maxRequestBytes: args.rustBatchFeatureConfig.maxRequestBytes,
                     maxResponseBytes: 1 * 1024 * 1024,
-                }).catch(() => null);
+                }).catch((error) => {
+                    if (input.abortSignal?.aborted || isAbortError(error)) throw error;
+                    return null;
+                });
                 args.rustBatchDatasetCache.set(cacheKey, cachePromise);
             }
             cacheId = (await cachePromise) ?? undefined;
         }
-        const dispatched = await (args.rustMultiAssetBatch
-            ? args.rustMultiAssetBatch.dispatchCandidate
-            : dispatchAssetOpportunityRustBatch)({
-            client: args.rustBatchClient,
-            data: input.ohlcvData,
-            ...(rustDatasetWindow && input.fullSignalData
-                ? {
-                    cacheData: input.fullSignalData,
-                    datasetStartIndex: rustDatasetWindow.startIndex,
-                    datasetEndIndex: rustDatasetWindow.endIndex,
-                }
-                : {}),
-            items: preparedCandidates.map<AssetOpportunityRustBatchItem>((candidate) => ({
-                id: candidate.id,
-                signals: candidate.signals,
-                settings: rustSettingsFor(candidate),
-            })),
-            initialCapital: capitalSettings.initialCapital,
-            positionSizePercent: capitalSettings.positionSize,
-            commissionPercent: capitalSettings.commission,
-            baseSettings,
-            lastDataTime: input.ohlcvData[input.ohlcvData.length - 1]?.time ?? null,
-            sizing: {
-                mode: capitalSettings.sizingMode,
-                fixedTradeAmount: capitalSettings.fixedTradeAmount,
-                advancedSizing: capitalSettings.advancedSizing,
-            },
-            maxRequestBytes: args.rustBatchFeatureConfig.maxRequestBytes,
-            maxResponseBytes: args.rustBatchFeatureConfig.maxResponseBytes,
-            ...(cacheId ? { cacheId } : {}),
-            signal: input.abortSignal,
-        });
+        const dispatched = candidateCapabilityMissing
+            ? {
+                status: "fallback" as const,
+                reason: "rust_capability_missing" as const,
+                requests: 0,
+                requestBytes: 0,
+                latencyMs: 0,
+                message: "A Finder candidate requires an unavailable Rust capability",
+            }
+            : await (args.rustMultiAssetBatch
+                ? args.rustMultiAssetBatch.dispatchCandidate
+                : dispatchAssetOpportunityRustBatch)({
+                client: args.rustBatchClient,
+                data: input.ohlcvData,
+                ...(rustDatasetWindow && input.fullSignalData
+                    ? {
+                        cacheData: input.fullSignalData,
+                        datasetStartIndex: rustDatasetWindow.startIndex,
+                        datasetEndIndex: rustDatasetWindow.endIndex,
+                    }
+                    : {}),
+                items: preparedCandidates.map<AssetOpportunityRustBatchItem>((candidate) => ({
+                    id: candidate.id,
+                    signals: candidate.signals,
+                    settings: rustSettingsFor(candidate),
+                })),
+                initialCapital: capitalSettings.initialCapital,
+                positionSizePercent: capitalSettings.positionSize,
+                commissionPercent: capitalSettings.commission,
+                baseSettings,
+                lastDataTime: input.ohlcvData[input.ohlcvData.length - 1]?.time ?? null,
+                sizing: {
+                    mode: capitalSettings.sizingMode,
+                    fixedTradeAmount: capitalSettings.fixedTradeAmount,
+                    advancedSizing: capitalSettings.advancedSizing,
+                },
+                maxRequestBytes: args.rustBatchFeatureConfig.maxRequestBytes,
+                maxResponseBytes: args.rustBatchFeatureConfig.maxResponseBytes,
+                ...(cacheId ? { cacheId } : {}),
+                signal: input.abortSignal,
+                rustCapabilities: input.rustCapabilities,
+                rustDiagnosticPhase: "is_candidate",
+                skipDrawdown: !requiresFullAnalytics,
+                skipSharpeRatio: !requiresFullAnalytics,
+            });
 
         if (dispatched.status === "completed") {
             candidateBacktestMs += dispatched.latencyMs;
@@ -1003,6 +1068,7 @@ async function runServerAssetIsSearchWithRustBatch(
                 offer(finderResult, candidate.signals);
             }
         } else if (dispatched.status === "cancelled") {
+            if (input.abortSignal?.aborted || input.isCancelled()) throwAbortError();
             debugLogger.event("finder.asset_opportunity.rust_batch", {
                 symbol: input.symbol,
                 status: dispatched.status,
@@ -1033,8 +1099,10 @@ async function runServerAssetIsSearchWithRustBatch(
             const reason = `Rust batch fallback: ${dispatched.reason}`;
             for (const candidate of preparedCandidates) {
                 if (input.isCancelled()) break;
-                rustAttemptedRuns += 1;
-                rustFallbackRuns += 1;
+                if (dispatched.requests > 0) {
+                    rustAttemptedRuns += 1;
+                    rustFallbackRuns += 1;
+                }
                 const startedAt = performance.now();
                 try {
                     const output = await runAssetCandidateBacktest({
@@ -1048,7 +1116,14 @@ async function runServerAssetIsSearchWithRustBatch(
                         settings,
                         capitalSettings,
                         options,
-                        useRustEnginePreference: input.useRustEnginePreference,
+                        // The failed batch is a whole-dispatch TypeScript
+                        // fallback. Do not replay the same candidate through
+                        // the generic Rust path and mix engine results.
+                        useRustEnginePreference: false,
+                        rustCapabilities: input.rustCapabilities,
+                        signal: input.abortSignal,
+                        typescriptFallbackGate: input.typescriptFallbackGate,
+                        typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
                         closedCandleDataOverride: input.ohlcvData,
                         preGeneratedSignals: candidate.signals,
                         needs: {
@@ -1075,7 +1150,8 @@ async function runServerAssetIsSearchWithRustBatch(
                     candidateEvaluationsCompleted += 1;
                     typescriptCompletedRuns += 1;
                     addTypescriptReason(reason);
-                } catch {
+                } catch (error) {
+                    if (input.abortSignal?.aborted || isAbortError(error)) throw error;
                     candidateEvaluationFailures += 1;
                 }
                 candidateBacktestMs += performance.now() - startedAt;
@@ -1111,4 +1187,18 @@ async function runServerAssetIsSearchWithRustBatch(
                 .sort((a, b) => b.runs - a.runs || a.reason.localeCompare(b.reason)),
         },
     };
+}
+
+function isAbortError(error: unknown): boolean {
+    return error instanceof Error && error.name === "AbortError";
+}
+
+function throwAbortError(): never {
+    const error = new Error("Asset Opportunity cancelled");
+    error.name = "AbortError";
+    throw error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+    if (signal?.aborted) throwAbortError();
 }

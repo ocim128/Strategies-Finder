@@ -797,7 +797,11 @@ export interface FinderAssetOpportunityDiagnostics {
         signalCacheHits: number;
         signalCacheMisses: number;
         freshEntryRechecks: number;
+        freshEntryExecutions?: number;
         oosEvaluations: number;
+        fixedHorizonEvaluations?: number;
+        nextExitEvaluations?: number;
+        complementaryOosEvaluations?: number;
         winnerAnalyticsRecomputations: number;
         loadedBars: {
             min: number;
@@ -842,7 +846,11 @@ export interface FinderAssetOpportunityDiagnostics {
         candidateEvaluationsCompleted: number;
         candidateEvaluationFailures: number;
         freshEntryRechecks: number;
+        freshEntryExecutions?: number;
         oosEvaluations: number;
+        fixedHorizonEvaluations?: number;
+        nextExitEvaluations?: number;
+        complementaryOosEvaluations?: number;
         durationMs: number;
     }>;
     /** The slowest asset/strategy passes, retained for actionable diagnosis. */
@@ -857,7 +865,11 @@ export interface FinderAssetOpportunityDiagnostics {
         dataLoadingMs: number;
         candidatesEvaluated: number;
         freshEntryRechecks: number;
+        freshEntryExecutions?: number;
         oosEvaluations: number;
+        fixedHorizonEvaluations?: number;
+        nextExitEvaluations?: number;
+        complementaryOosEvaluations?: number;
         timingsMs: {
             total: number;
             preparation: number;

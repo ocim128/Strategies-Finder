@@ -16,12 +16,21 @@ import { buildSelectionResult } from "../endpoint";
 import { isSameEventPolymarketExitMode } from "../../polymarket-exit-mode";
 import { validateRustBacktestResult } from "../../rust-backtest-result-validator";
 import {
+    hasUnsupportedRustSignalShape,
     type RustEngineClient,
     type RustAssetOpportunityCandidateSummary,
     type RustFreshEntrySummary,
     type RustBatchTransportFailureReason,
     type RustBatchTransportResult,
+    type RustDiagnosticPhase,
 } from "../../rust-engine-client";
+import type { RustCapabilities } from "../../rust-engine-client";
+export { hasUnsupportedRustSignalShape } from "../../rust-engine-client";
+import {
+    getRequiredRustCapabilities,
+    hasRustCapability,
+    RUST_EXIT_REASON_CAPABILITY,
+} from "../../rust-settings-sanitizer";
 
 export const FINDER_ASSET_OPPORTUNITY_RUST_BATCH_ENV = "FINDER_ASSET_OPPORTUNITY_RUST_BATCH";
 export const FINDER_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES_ENV = "FINDER_ASSET_OPPORTUNITY_RUST_BATCH_MAX_BYTES";
@@ -41,10 +50,12 @@ export type AssetOpportunityRustBatchFailureReason =
     | "feature_disabled"
     | "rust_preference_disabled"
     | "execution_model_unsupported"
+    | "rust_capability_missing"
     | "slippage_unsupported"
     | "direction_unsupported"
     | "multiple_positions_unsupported"
     | "risk_control_unsupported"
+    | "signal_shape_unsupported"
     | "smart_sizing_unsupported"
     | "cross_symbol_unsupported"
     | "exit_override_unsupported"
@@ -141,6 +152,7 @@ export interface AssetOpportunityRustBatchEligibilityInput {
     capitalSettings: CapitalSettings;
     selectedStrategy: FinderSelectedStrategy;
     exitStrategyCandidates?: FinderSelectedStrategy[];
+    rustCapabilities?: RustCapabilities;
 }
 
 export interface AssetOpportunityRustBatchEligibility {
@@ -166,6 +178,10 @@ export interface AssetOpportunityRustBatchDispatchInput {
     datasetStartIndex?: number;
     datasetEndIndex?: number;
     signal?: AbortSignal;
+    rustCapabilities?: RustCapabilities;
+    rustDiagnosticPhase?: RustDiagnosticPhase;
+    skipDrawdown?: boolean;
+    skipSharpeRatio?: boolean;
 }
 
 export type AssetOpportunityRustBatchDispatch =
@@ -201,6 +217,8 @@ export interface AssetOpportunityRustFreshBatchDispatchInput {
     cacheId?: string;
     datasetStartIndex?: number;
     signal?: AbortSignal;
+    rustCapabilities?: RustCapabilities;
+    rustDiagnosticPhase?: RustDiagnosticPhase;
 }
 
 export type AssetOpportunityRustFreshBatchDispatch =
@@ -234,7 +252,10 @@ function parseBoundedPositiveInteger(
 export function resolveAssetOpportunityRustBatchFeatureConfig(
     env: NodeJS.ProcessEnv = process.env,
 ): AssetOpportunityRustBatchFeatureConfig {
-    const enabled = env[FINDER_ASSET_OPPORTUNITY_RUST_BATCH_ENV] !== "0";
+    // Rust is capability-complete but not yet faster on the production-shaped
+    // Finder workload. Keep the rollout staged until a parity-safe benchmark
+    // justifies enabling it explicitly.
+    const enabled = env[FINDER_ASSET_OPPORTUNITY_RUST_BATCH_ENV] === "1";
     return {
         enabled,
         maxRequestBytes: parseBoundedPositiveInteger(
@@ -270,6 +291,14 @@ export function resolveAssetOpportunityRustBatchEligibility(
     if (input.exitStrategyCandidates && input.exitStrategyCandidates.length > 0) {
         return { eligible: false, reason: "exit_override_unsupported" };
     }
+    const executionModel = input.settings.executionModel ?? "signal_close";
+    if (executionModel === "next_close") {
+        return { eligible: false, reason: "execution_model_unsupported" };
+    }
+    const requiredCapabilities = getRequiredRustCapabilities(input.settings);
+    if (requiredCapabilities.some((capability) => !hasRustCapability(input.rustCapabilities, capability))) {
+        return { eligible: false, reason: "rust_capability_missing" };
+    }
     const direction = input.settings.tradeDirection ?? "long";
     if (direction !== "long" && direction !== "short") {
         return { eligible: false, reason: "direction_unsupported" };
@@ -279,7 +308,6 @@ export function resolveAssetOpportunityRustBatchEligibility(
     }
     if (
         input.settings.riskMinHoldEnabled === true
-        || input.settings.riskMaxHoldEnabled === true
         || input.settings.riskWinStreakStopLossEnabled === true
         || input.settings.disableSignalExits === true
         || input.settings.pathExitEnabled === true
@@ -312,6 +340,8 @@ export function estimateAssetOpportunityRustBatchRequestBytes(args: {
     baseSettings: BacktestSettings;
     sizing?: AssetOpportunityRustBatchDispatchInput["sizing"];
     compact: boolean;
+    skipDrawdown?: boolean;
+    skipSharpeRatio?: boolean;
     cacheId?: string;
 }): number {
     const request = {
@@ -323,6 +353,8 @@ export function estimateAssetOpportunityRustBatchRequestBytes(args: {
         baseSettings: args.baseSettings,
         ...(args.sizing ? { sizing: args.sizing } : {}),
         compact: args.compact,
+        ...(args.skipDrawdown === true ? { skipDrawdown: true } : {}),
+        ...(args.skipSharpeRatio === true ? { skipSharpeRatio: true } : {}),
     };
     return jsonByteLength(request);
 }
@@ -336,6 +368,8 @@ export function partitionAssetOpportunityRustBatchItems(args: {
     baseSettings: BacktestSettings;
     sizing?: AssetOpportunityRustBatchDispatchInput["sizing"];
     maxRequestBytes: number;
+    skipDrawdown?: boolean;
+    skipSharpeRatio?: boolean;
     cacheId?: string;
 }): { chunks: AssetOpportunityRustBatchItem[][]; tooLargeItemId?: string } {
     const chunks: AssetOpportunityRustBatchItem[][] = [];
@@ -351,6 +385,8 @@ export function partitionAssetOpportunityRustBatchItems(args: {
             baseSettings: args.baseSettings,
             ...(args.sizing ? { sizing: args.sizing } : {}),
             compact: false,
+            ...(args.skipDrawdown === true ? { skipDrawdown: true } : {}),
+            ...(args.skipSharpeRatio === true ? { skipSharpeRatio: true } : {}),
             ...(args.cacheId ? { cacheId: args.cacheId } : {}),
         });
         if (bytes > args.maxRequestBytes && current.length === 0) {
@@ -367,14 +403,17 @@ export function partitionAssetOpportunityRustBatchItems(args: {
     return { chunks };
 }
 
-function normalizeBacktestResult(value: unknown): BacktestResult | null {
-    const validation = validateRustBacktestResult(value);
+function normalizeBacktestResult(value: unknown, rustCapabilities?: RustCapabilities): BacktestResult | null {
+    const validation = validateRustBacktestResult(value, {
+        requireExitReason: hasRustCapability(rustCapabilities, RUST_EXIT_REASON_CAPABILITY),
+    });
     return validation.ok ? validation.result : null;
 }
 
 export function validateAssetOpportunityRustBatchResponse(
     response: unknown,
     expectedIds: readonly string[],
+    rustCapabilities?: RustCapabilities,
 ): { ok: true; results: Map<string, RustAssetOpportunityCandidateResult>; processingTimeMs: number } | {
     ok: false;
     reason: Extract<AssetOpportunityRustBatchFailureReason, "malformed_response" | "missing_result_id" | "unknown_result_id" | "duplicate_result_id" | "inconsistent_result">;
@@ -403,7 +442,7 @@ export function validateAssetOpportunityRustBatchResponse(
         if (results.has(item.id)) {
             return { ok: false, reason: "duplicate_result_id", message: `Rust batch returned duplicate id ${item.id}` };
         }
-        const normalizedResult = normalizeBacktestResult(item.result);
+        const normalizedResult = normalizeBacktestResult(item.result, rustCapabilities);
         if (!normalizedResult) {
             return { ok: false, reason: "inconsistent_result", message: `Rust batch returned inconsistent result for ${item.id}` };
         }
@@ -644,6 +683,7 @@ function mapTransportFailure(reason: RustBatchTransportFailureReason): AssetOppo
     if (reason === "response_too_large") return "response_too_large";
     if (reason === "cancelled") return "cancelled";
     if (reason === "health_unavailable") return "health_unavailable";
+    if (reason === "unsupported_signal_shape") return "signal_shape_unsupported";
     if (reason === "timeout") return "timeout";
     if (reason === "network_error") return "network_error";
     if (reason === "http_error") return "http_error";
@@ -655,6 +695,19 @@ export async function dispatchAssetOpportunityRustBatch(
     args: AssetOpportunityRustBatchDispatchInput,
 ): Promise<AssetOpportunityRustBatchDispatch> {
     const startedAt = performance.now();
+    if (args.signal?.aborted) {
+        return { status: "cancelled", reason: "cancelled", requests: 0, requestBytes: 0, latencyMs: 0 };
+    }
+    if (args.items.some((item) => hasUnsupportedRustSignalShape(item.signals))) {
+        return {
+            status: "fallback",
+            reason: "signal_shape_unsupported",
+            requests: 0,
+            requestBytes: 0,
+            latencyMs: performance.now() - startedAt,
+            message: "Rust Asset Opportunity batches cannot represent behavior-bearing signal fields",
+        };
+    }
     const partition = partitionAssetOpportunityRustBatchItems({
         ...args,
         ...(args.cacheId ? { cacheId: args.cacheId } : {}),
@@ -681,6 +734,9 @@ export async function dispatchAssetOpportunityRustBatch(
             signal: args.signal,
             maxRequestBytes: args.maxRequestBytes,
             maxResponseBytes: args.maxResponseBytes ?? DEFAULT_ASSET_OPPORTUNITY_RUST_BATCH_MAX_RESPONSE_BYTES,
+            ...(args.rustDiagnosticPhase ? { rustDiagnosticPhase: args.rustDiagnosticPhase } : {}),
+            ...(args.skipDrawdown === true ? { skipDrawdown: true } : {}),
+            ...(args.skipSharpeRatio === true ? { skipSharpeRatio: true } : {}),
         };
         const useSummaryEndpoint = args.lastDataTime !== undefined
             && Boolean(args.client.runAssetOpportunityBatchBacktestWithStatus);
@@ -802,7 +858,11 @@ export async function dispatchAssetOpportunityRustBatch(
                 });
             }
         } else {
-            const validated = validateAssetOpportunityRustBatchResponse(transport.response, chunk.map((item) => item.id));
+            const validated = validateAssetOpportunityRustBatchResponse(
+                transport.response,
+                chunk.map((item) => item.id),
+                args.rustCapabilities,
+            );
             if (!validated.ok) {
                 return {
                     status: "fallback",
@@ -829,6 +889,19 @@ export async function dispatchAssetOpportunityRustFreshEntryBatch(
     args: AssetOpportunityRustFreshBatchDispatchInput,
 ): Promise<AssetOpportunityRustFreshBatchDispatch> {
     const startedAt = performance.now();
+    if (args.signal?.aborted) {
+        return { status: "cancelled", reason: "cancelled", requests: 0, requestBytes: 0, latencyMs: 0 };
+    }
+    if (args.items.some((item) => hasUnsupportedRustSignalShape(item.signals))) {
+        return {
+            status: "fallback",
+            reason: "signal_shape_unsupported",
+            requests: 0,
+            requestBytes: 0,
+            latencyMs: performance.now() - startedAt,
+            message: "Rust Asset Opportunity batches cannot represent behavior-bearing signal fields",
+        };
+    }
     const partition = partitionAssetOpportunityRustBatchItems({
         ...args,
         ...(args.cacheId ? { cacheId: args.cacheId } : {}),
@@ -855,6 +928,7 @@ export async function dispatchAssetOpportunityRustFreshEntryBatch(
             signal: args.signal,
             maxRequestBytes: args.maxRequestBytes,
             maxResponseBytes: args.maxResponseBytes ?? DEFAULT_ASSET_OPPORTUNITY_RUST_BATCH_MAX_RESPONSE_BYTES,
+            ...(args.rustDiagnosticPhase ? { rustDiagnosticPhase: args.rustDiagnosticPhase } : {}),
         };
         let transport: RustBatchTransportResult = args.cacheId && args.client.runCachedFreshEntryBatchBacktestWithStatus
             ? await args.client.runCachedFreshEntryBatchBacktestWithStatus(

@@ -128,6 +128,8 @@ pub struct Trade {
     #[serde(rename = "pnlPercent")]
     pub pnl_percent: f64,
     pub size: f64,
+    #[serde(rename = "exitReason")]
+    pub exit_reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fees: Option<f64>,
 }
@@ -285,6 +287,11 @@ pub struct BacktestSettings {
     pub break_even_at_r: f64,
     #[serde(default)]
     pub time_stop_bars: u32,
+    // Maximum bars a position may remain open.
+    #[serde(default)]
+    pub risk_max_hold_bars: u32,
+    #[serde(default)]
+    pub risk_max_hold_enabled: bool,
     // Percentage-based risk management
     #[serde(default)]
     pub risk_mode: RiskMode,
@@ -378,6 +385,8 @@ impl Default for BacktestSettings {
             partial_take_profit_percent: 0.0,
             break_even_at_r: 0.0,
             time_stop_bars: 0,
+            risk_max_hold_bars: 0,
+            risk_max_hold_enabled: false,
             risk_mode: RiskMode::Simple,
             stop_loss_percent: 0.0,
             take_profit_percent: 0.0,
@@ -623,6 +632,12 @@ pub struct BacktestRequest {
     /// When true in compact mode, retain the full trade history.
     #[serde(default)]
     pub retain_trades: bool,
+    /// When true, omit drawdown calculation from compact results.
+    #[serde(default)]
+    pub skip_drawdown: bool,
+    /// When true, omit Sharpe ratio calculation from compact results.
+    #[serde(default)]
+    pub skip_sharpe_ratio: bool,
 }
 /// Single item in a batch backtest request
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -653,6 +668,12 @@ pub struct BatchBacktestRequest {
     pub base_settings: BacktestSettings,
     #[serde(default)]
     pub sizing: TradeSizingConfig,
+    /// When true, omit drawdown calculation from compact results.
+    #[serde(default)]
+    pub skip_drawdown: bool,
+    /// When true, omit Sharpe ratio calculation from compact results.
+    #[serde(default)]
+    pub skip_sharpe_ratio: bool,
     /// When true, omit heavy payloads (trades, equity curve) from results
     #[serde(default)]
     pub compact: bool,
@@ -699,6 +720,12 @@ pub struct MultiAssetBatchBacktestRequest {
     pub base_settings: BacktestSettings,
     #[serde(default)]
     pub sizing: TradeSizingConfig,
+    /// When true, omit drawdown calculation from compact results.
+    #[serde(default)]
+    pub skip_drawdown: bool,
+    /// When true, omit Sharpe ratio calculation from compact results.
+    #[serde(default)]
+    pub skip_sharpe_ratio: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -803,6 +830,7 @@ mod tests {
             pnl: 10.0,
             pnl_percent: 10.0,
             size: 1.0,
+            exit_reason: "signal".to_string(),
             fees: Some(0.1),
         };
         assert!(trade.is_winner());

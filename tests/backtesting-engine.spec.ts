@@ -610,6 +610,86 @@ describe('Backtesting Engine', () => {
         expect(new Set(result.trades.map((trade) => trade.exitTime as number))).to.deep.equal(new Set([12, 13]));
     });
 
+    it('freezes next-open max-hold bars, prices, reasons, and fees for both directions', () => {
+        const data: OHLCVData[] = [
+            { time: 0 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 1 as Time, open: 110, high: 112, low: 108, close: 111, volume: 1000 },
+            { time: 2 as Time, open: 112, high: 113, low: 111, close: 112, volume: 1000 },
+            { time: 3 as Time, open: 114, high: 115, low: 113, close: 114, volume: 1000 },
+            { time: 4 as Time, open: 114, high: 115, low: 113, close: 114, volume: 1000 },
+        ];
+        for (const direction of ['long', 'short'] as const) {
+            const signalType = direction === 'long' ? 'buy' : 'sell';
+            for (const maxHoldBars of [1, 2] as const) {
+                const result = runBacktest(data, [
+                    { time: data[0]!.time, type: signalType, price: data[0]!.close },
+                ], 1000, 100, 1, {
+                    executionModel: 'next_open',
+                    tradeDirection: direction,
+                    riskMaxHoldEnabled: true,
+                    riskMaxHoldBars: maxHoldBars,
+                    slippageBps: 100,
+                });
+                const trade = result.trades[0]!;
+                const exitIndex = maxHoldBars === 1 ? 2 : 3;
+                const expectedEntryPrice = direction === 'long' ? 111.1 : 108.9;
+                const expectedExitPrice = direction === 'long'
+                    ? data[exitIndex]!.close * 0.99
+                    : data[exitIndex]!.close * 1.01;
+
+                expect(result.trades, `${direction} max hold ${maxHoldBars} trade count`).to.have.length(1);
+                expect(trade.entryTime).to.equal(data[1]!.time);
+                expect(trade.exitTime).to.equal(data[exitIndex]!.time);
+                expect(trade.entryPrice).to.be.closeTo(expectedEntryPrice, 1e-12);
+                expect(trade.exitPrice).to.be.closeTo(expectedExitPrice, 1e-12);
+                expect(trade.exitReason).to.equal('time_stop');
+                expect(trade.fees).to.be.greaterThan(0);
+                expect(trade.pnlPercent).to.be.closeTo(
+                    (trade.pnl / (trade.entryPrice * trade.size)) * 100,
+                    1e-12,
+                );
+            }
+        }
+    });
+
+    it('gives next-open boundary signals priority and discards occupied entries', () => {
+        const data: OHLCVData[] = [
+            { time: 0 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 1 as Time, open: 110, high: 112, low: 108, close: 111, volume: 1000 },
+            { time: 2 as Time, open: 120, high: 121, low: 119, close: 120, volume: 1000 },
+            { time: 3 as Time, open: 130, high: 131, low: 129, close: 130, volume: 1000 },
+            { time: 4 as Time, open: 130, high: 131, low: 129, close: 130, volume: 1000 },
+        ];
+        const boundary = runBacktest(data, [
+            { time: data[0]!.time, type: 'buy', price: data[0]!.close },
+            { time: data[1]!.time, type: 'sell', price: data[1]!.close },
+        ], 1000, 100, 0, {
+            executionModel: 'next_open',
+            tradeDirection: 'long',
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 1,
+        });
+        expect(boundary.trades).to.have.length(1);
+        expect(boundary.trades[0]!.exitTime).to.equal(data[2]!.time);
+        expect(boundary.trades[0]!.exitReason).to.equal('signal');
+        expect(boundary.trades[0]!.exitPrice).to.equal(data[2]!.open);
+
+        const occupied = runBacktest(data, [
+            { time: data[0]!.time, type: 'buy', price: data[0]!.close },
+            { time: data[1]!.time, type: 'buy', price: data[1]!.close },
+        ], 1000, 100, 0, {
+            executionModel: 'next_open',
+            tradeDirection: 'long',
+            maxOpenTrades: 1,
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 1,
+        });
+        expect(occupied.trades).to.have.length(1);
+        expect(occupied.trades[0]!.entryTime).to.equal(data[1]!.time);
+        expect(occupied.trades[0]!.exitTime).to.equal(data[2]!.time);
+        expect(occupied.trades[0]!.exitReason).to.equal('time_stop');
+    });
+
     it('preserves next-open entry-bar stop behavior on the Finder fast path', () => {
         const data: OHLCVData[] = [
             { time: 1 as Time, open: 100, high: 100.5, low: 99.5, close: 100, volume: 1000 },

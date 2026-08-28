@@ -33,12 +33,18 @@ import {
     type CrossSymbolDataFetcher,
 } from "./cross-symbol-runtime";
 import { shouldUseRustEngine } from "./engine-preferences";
-import { rustEngine, type RustBacktestFailureReason, type RustOutputOptions } from "./rust-engine-client";
+import {
+    hasUnsupportedRustSignalShape,
+    rustEngine,
+    type RustBacktestFailureReason,
+    type RustCapabilities,
+    type RustOutputOptions,
+} from "./rust-engine-client";
 import { validateRustBacktestResult } from "./rust-backtest-result-validator";
 import {
     getTypescriptEngineRequirementReasons,
+    getRequiredRustCapabilities,
     sanitizeBacktestSettingsForRust,
-    requiresTypescriptEngine,
 } from "./rust-settings-sanitizer";
 import { mergeExitStrategySignals } from "./exit-strategy-merge";
 import {
@@ -226,6 +232,7 @@ function mergeStrategyExecutionContext(
  * shortcut, post-processing) flows through shared helpers.
  */
 export async function executeBacktest(req: BacktestExecutorRequest): Promise<BacktestExecutorResult> {
+    throwIfBacktestCancelled(req.context.signal);
     const executorTimings = req.backtestRunOptions?.collectExecutorTimings === true
         ? {
             signalGenerationMs: 0,
@@ -521,7 +528,24 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
 
     const resolvedCapital = req.preResolvedCapital ?? resolveCapitalSettingsFromRaw(capitalSettings as Record<string, unknown>);
 
-    const typescriptRequirementReasons = getTypescriptEngineRequirementReasons(resolvedSettings);
+    let rustCapabilities = req.context.rustCapabilities;
+    let rustHealthUnavailable = false;
+    const signalShapeUnsupported = hasUnsupportedRustSignalShape(mergedSignals);
+    const requiredRustCapabilities = getRequiredRustCapabilities(resolvedSettings);
+    if (!signalShapeUnsupported
+        && !rustCapabilities
+        && requiredRustCapabilities.length > 0
+        && shouldAttemptRust(req.context.engineMode ?? "auto", false, req.context.useRustEnginePreference)) {
+        if (await rustEngine.checkHealth(req.context.signal)) {
+            rustCapabilities = rustEngine.capabilities;
+        } else if (!req.context.signal?.aborted) {
+            rustHealthUnavailable = true;
+        }
+    }
+    throwIfBacktestCancelled(req.context.signal);
+    const typescriptRequirementReasons = getTypescriptEngineRequirementReasons(resolvedSettings, rustCapabilities);
+    if (rustHealthUnavailable) typescriptRequirementReasons.unshift("health_unavailable");
+    if (signalShapeUnsupported) typescriptRequirementReasons.push("signal_shape_unsupported");
     if (req.backtestRunOptions?.forceDisableSignalExits === true) {
         typescriptRequirementReasons.push("Exit Alpha control run requires TypeScript");
     }
@@ -545,9 +569,15 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             {
                 compact: shouldUseCompactBacktest(req),
                 retainTrades: req.backtestRunOptions?.requireTradeHistory === true,
+                skipDrawdown: req.backtestRunOptions?.skipDrawdown === true,
+                skipSharpeRatio: req.backtestRunOptions?.includeSharpeRatio === false,
             },
+            rustCapabilities,
+            req.context.signal,
+            req.context.rustDiagnosticPhase,
         );
         if (executorTimings) executorTimings.engineMs += performance.now() - engineStartedAt;
+        throwIfBacktestCancelled(req.context.signal);
         if (rustResult.result && isResultConsistent(rustResult.result)) {
             let result = rustResult.result;
             result.exitControlDiagnostics = exitControlDiagnostics;
@@ -562,6 +592,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             registerBacktestEdgeAnalysisInput(result, backtestData);
             return finish(result, "rust", primarySignals, { rustAttempted: true });
         }
+        if (rustResult.reason === "cancelled") throwBacktestCancelled();
         rustFailureReason = rustResult.result ? "inconsistent_result" : rustResult.reason;
     }
 
@@ -569,21 +600,32 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         ? runBacktestCompact
         : runBacktest;
     const engineStartedAt = executorTimings ? performance.now() : 0;
-    let result = runBacktestImpl(
-        backtestData,
-        mergedSignals,
-        resolvedCapital.initialCapital,
-        resolvedCapital.positionSize,
-        resolvedCapital.commission,
-        resolvedSettings,
-        {
-            mode: resolvedCapital.sizingMode,
-            fixedTradeAmount: resolvedCapital.fixedTradeAmount,
-            advancedSizing: resolvedCapital.advancedSizing,
-        },
-        undefined,
-        req.backtestRunOptions
-    );
+    const runTypescriptBacktest = (): BacktestResult => {
+        req.context.typescriptSimulationConcurrency?.enter();
+        try {
+            return runBacktestImpl(
+                backtestData,
+                mergedSignals,
+                resolvedCapital.initialCapital,
+                resolvedCapital.positionSize,
+                resolvedCapital.commission,
+                resolvedSettings,
+                {
+                    mode: resolvedCapital.sizingMode,
+                    fixedTradeAmount: resolvedCapital.fixedTradeAmount,
+                    advancedSizing: resolvedCapital.advancedSizing,
+                },
+                undefined,
+                req.backtestRunOptions
+            );
+        } finally {
+            req.context.typescriptSimulationConcurrency?.leave();
+        }
+    };
+    let result = req.context.typescriptFallbackGate
+        ? await req.context.typescriptFallbackGate.run(runTypescriptBacktest, req.context.signal)
+        : runTypescriptBacktest();
+    throwIfBacktestCancelled(req.context.signal);
     const endpointSelection = (result as BacktestResultWithEndpointSelection).endpointSelection;
     if (endpointSelection) {
         delete (result as BacktestResultWithEndpointSelection).endpointSelection;
@@ -640,6 +682,7 @@ export async function executeBacktestFromSignals(
     capitalSettings: CapitalSettings | Record<string, unknown>,
     context: BacktestExecutionContext
 ): Promise<BacktestExecutorResult> {
+    throwIfBacktestCancelled(context.signal);
     const nowSec = context.nowSec ?? Math.floor(Date.now() / 1000);
     const blockRange = context.blockRange ?? null;
     const annotatePolymarket = context.annotatePolymarket ?? false;
@@ -655,14 +698,39 @@ export async function executeBacktestFromSignals(
     let filteredSignals = signals;
     filteredSignals = filterSignalsByBlockRange(filteredSignals, blockRange);
 
-    const requireTs = requiresTypescriptEngine(resolvedSettings) || !isRustSupportedTradeSizingMode(resolvedCapital.sizingMode);
+    let rustCapabilities = context.rustCapabilities;
+    let rustHealthUnavailable = false;
+    const signalShapeUnsupported = hasUnsupportedRustSignalShape(filteredSignals);
+    const requiredRustCapabilities = getRequiredRustCapabilities(resolvedSettings);
+    if (!signalShapeUnsupported
+        && !rustCapabilities
+        && requiredRustCapabilities.length > 0
+        && shouldAttemptRust(context.engineMode ?? "auto", false, context.useRustEnginePreference)) {
+        if (await rustEngine.checkHealth(context.signal)) {
+            rustCapabilities = rustEngine.capabilities;
+        } else if (!context.signal?.aborted) {
+            rustHealthUnavailable = true;
+        }
+    }
+    throwIfBacktestCancelled(context.signal);
+    const typescriptRequirementReasons = getTypescriptEngineRequirementReasons(resolvedSettings, rustCapabilities);
+    if (rustHealthUnavailable) typescriptRequirementReasons.unshift("health_unavailable");
+    if (signalShapeUnsupported) typescriptRequirementReasons.push("signal_shape_unsupported");
+    const requireTs = typescriptRequirementReasons.length > 0
+        || !isRustSupportedTradeSizingMode(resolvedCapital.sizingMode);
     if (shouldAttemptRust(context.engineMode ?? "auto", requireTs, context.useRustEnginePreference)) {
         const rustResult = await tryRustBacktest(
             backtestData,
             filteredSignals,
             resolvedCapital,
-            resolvedSettings
+            resolvedSettings,
+            undefined,
+            rustCapabilities,
+            context.signal,
+            context.rustDiagnosticPhase,
         );
+        throwIfBacktestCancelled(context.signal);
+        if (rustResult.reason === "cancelled") throwBacktestCancelled();
         if (rustResult.result && isResultConsistent(rustResult.result)) {
             let result = rustResult.result;
             finalizeResult(result, backtestData, interval, settings);
@@ -676,15 +744,26 @@ export async function executeBacktestFromSignals(
         }
     }
 
-    let result = runBacktest(
-        backtestData,
-        filteredSignals,
-        resolvedCapital.initialCapital,
-        resolvedCapital.positionSize,
-        resolvedCapital.commission,
-        resolvedSettings,
-        { mode: resolvedCapital.sizingMode, fixedTradeAmount: resolvedCapital.fixedTradeAmount, advancedSizing: resolvedCapital.advancedSizing }
-    );
+    const runTypescriptBacktest = (): BacktestResult => {
+        context.typescriptSimulationConcurrency?.enter();
+        try {
+            return runBacktest(
+                backtestData,
+                filteredSignals,
+                resolvedCapital.initialCapital,
+                resolvedCapital.positionSize,
+                resolvedCapital.commission,
+                resolvedSettings,
+                { mode: resolvedCapital.sizingMode, fixedTradeAmount: resolvedCapital.fixedTradeAmount, advancedSizing: resolvedCapital.advancedSizing }
+            );
+        } finally {
+            context.typescriptSimulationConcurrency?.leave();
+        }
+    };
+    let result = context.typescriptFallbackGate
+        ? await context.typescriptFallbackGate.run(runTypescriptBacktest, context.signal)
+        : runTypescriptBacktest();
+    throwIfBacktestCancelled(context.signal);
     finalizeResult(result, backtestData, interval, settings);
     if (annotatePolymarket) {
         const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
@@ -1094,6 +1173,9 @@ async function tryRustBacktest(
     capitalSettings: CapitalSettings,
     settings: BacktestSettings,
     outputOptions?: RustOutputOptions,
+    rustCapabilities?: RustCapabilities,
+    signal?: AbortSignal,
+    rustDiagnosticPhase?: BacktestExecutionContext["rustDiagnosticPhase"],
 ): Promise<{ result: BacktestResult | null; reason?: RustBacktestFailureReason }> {
     const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = capitalSettings;
     const outcome = await rustEngine.runBacktestWithStatus(
@@ -1102,13 +1184,24 @@ async function tryRustBacktest(
         initialCapital,
         positionSize,
         commission,
-        sanitizeBacktestSettingsForRust(settings),
+        sanitizeBacktestSettingsForRust(settings, rustCapabilities),
         { mode: sizingMode, fixedTradeAmount, advancedSizing: capitalSettings.advancedSizing },
         outputOptions,
+        { signal, ...(rustDiagnosticPhase ? { rustDiagnosticPhase } : {}) },
     );
     return outcome.ok
         ? { result: outcome.result }
         : { result: null, reason: outcome.reason };
+}
+
+function throwBacktestCancelled(): never {
+    const error = new Error("Backtest cancelled");
+    error.name = "AbortError";
+    throw error;
+}
+
+function throwIfBacktestCancelled(signal?: AbortSignal): void {
+    if (signal?.aborted) throwBacktestCancelled();
 }
 
 function finalizeResult(
