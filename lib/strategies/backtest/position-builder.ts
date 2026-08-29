@@ -27,6 +27,94 @@ export interface SmartSizingState {
     optimalFState?: OptimalFState;
 }
 
+/**
+ * Initial stop/target levels and per-share risk armed at entry, exactly as
+ * `buildPositionFromSignal` computes them. Extracted so the trade-ledger
+ * as-if engine (trade-ledger-asif.ts) reuses THE SAME arming math instead of
+ * duplicating it — there is exactly one source for entry-level semantics.
+ */
+export interface InitialExitLevels {
+    stopLossPrice: number | null;
+    takeProfitPrice: number | null;
+    riskPerShare: number;
+    partialTargetPrice: number | null;
+}
+
+export function resolveInitialExitLevels(args: {
+    config: NormalizedSettings;
+    entryFillPrice: number;
+    directionFactor: number;
+    atrValue: number | null | undefined;
+    effectiveStopLossPercent?: number;
+    enablePercentageStopLoss?: boolean;
+    effectiveTakeProfitPercent?: number | null;
+}): InitialExitLevels {
+    const {
+        config,
+        entryFillPrice,
+        directionFactor,
+        atrValue,
+        effectiveStopLossPercent,
+        enablePercentageStopLoss,
+        effectiveTakeProfitPercent,
+    } = args;
+
+    const stopLossPrice = (atrValue !== null && atrValue !== undefined)
+        ? (config.stopLossAtr > 0
+            ? entryFillPrice - directionFactor * config.stopLossAtr * atrValue
+            : config.trailingAtr > 0
+                ? entryFillPrice - directionFactor * config.trailingAtr * atrValue
+                : null)
+        : null;
+
+    const takeProfitPrice = (atrValue !== null && atrValue !== undefined && config.takeProfitAtr > 0)
+        ? entryFillPrice + directionFactor * config.takeProfitAtr * atrValue
+        : null;
+
+    let riskPerShare = 0;
+    if (config.riskMode === 'percentage') {
+        const activeStopLossPercent = Math.max(0, effectiveStopLossPercent ?? config.stopLossPercent);
+        const stopLossIsEnabled = enablePercentageStopLoss ?? config.stopLossEnabled;
+        const percentRiskPerShare = activeStopLossPercent > 0
+            ? entryFillPrice * (activeStopLossPercent / 100)
+            : 0;
+        if (stopLossIsEnabled && percentRiskPerShare > 0) {
+            riskPerShare = percentRiskPerShare;
+        }
+    } else if (atrValue !== null && atrValue !== undefined && config.stopLossAtr > 0) {
+        riskPerShare = config.stopLossAtr * atrValue;
+    }
+
+    const partialTargetPrice = (riskPerShare > 0 && config.partialTakeProfitAtR > 0)
+        ? entryFillPrice + directionFactor * riskPerShare * config.partialTakeProfitAtR
+        : null;
+
+    let finalStopLossPrice = stopLossPrice;
+    let finalTakeProfitPrice = takeProfitPrice;
+
+    if (config.riskMode === 'percentage') {
+        const activeStopLossPercent = Math.max(0, effectiveStopLossPercent ?? config.stopLossPercent);
+        const stopLossIsEnabled = enablePercentageStopLoss ?? config.stopLossEnabled;
+        if (stopLossIsEnabled && activeStopLossPercent > 0) {
+            finalStopLossPrice = entryFillPrice * (1 - directionFactor * (activeStopLossPercent / 100));
+        }
+        if (effectiveTakeProfitPercent !== undefined) {
+            finalTakeProfitPrice = effectiveTakeProfitPercent !== null && effectiveTakeProfitPercent > 0
+                ? entryFillPrice * (1 + directionFactor * (effectiveTakeProfitPercent / 100))
+                : null;
+        } else if (config.takeProfitEnabled && config.takeProfitPercent > 0) {
+            finalTakeProfitPrice = entryFillPrice * (1 + directionFactor * (config.takeProfitPercent / 100));
+        }
+    }
+
+    return {
+        stopLossPrice: finalStopLossPrice,
+        takeProfitPrice: finalTakeProfitPrice,
+        riskPerShare,
+        partialTargetPrice,
+    };
+}
+
 export interface PositionBuilderParams {
     signal: Signal;
     barIndex: number;
@@ -311,53 +399,16 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
     const entryFillPrice = applySlippage(signal.price, entrySide, slippageRate);
     if (!Number.isFinite(entryFillPrice) || entryFillPrice <= 0) return null;
 
-    const stopLossPrice = (atrValue !== null && atrValue !== undefined)
-        ? (config.stopLossAtr > 0
-            ? entryFillPrice - directionFactor * config.stopLossAtr * atrValue
-            : config.trailingAtr > 0
-                ? entryFillPrice - directionFactor * config.trailingAtr * atrValue
-                : null)
-        : null;
-
-    const takeProfitPrice = (atrValue !== null && atrValue !== undefined && config.takeProfitAtr > 0)
-        ? entryFillPrice + directionFactor * config.takeProfitAtr * atrValue
-        : null;
-
-    let riskPerShare = 0;
-    if (config.riskMode === 'percentage') {
-        const activeStopLossPercent = Math.max(0, effectiveStopLossPercent ?? config.stopLossPercent);
-        const stopLossIsEnabled = enablePercentageStopLoss ?? config.stopLossEnabled;
-        const percentRiskPerShare = activeStopLossPercent > 0
-            ? entryFillPrice * (activeStopLossPercent / 100)
-            : 0;
-        if (stopLossIsEnabled && percentRiskPerShare > 0) {
-            riskPerShare = percentRiskPerShare;
-        }
-    } else if (atrValue !== null && atrValue !== undefined && config.stopLossAtr > 0) {
-        riskPerShare = config.stopLossAtr * atrValue;
-    }
-
-    const partialTargetPrice = (riskPerShare > 0 && config.partialTakeProfitAtR > 0)
-        ? entryFillPrice + directionFactor * riskPerShare * config.partialTakeProfitAtR
-        : null;
-
-    let finalStopLossPrice = stopLossPrice;
-    let finalTakeProfitPrice = takeProfitPrice;
-
-    if (config.riskMode === 'percentage') {
-        const activeStopLossPercent = Math.max(0, effectiveStopLossPercent ?? config.stopLossPercent);
-        const stopLossIsEnabled = enablePercentageStopLoss ?? config.stopLossEnabled;
-        if (stopLossIsEnabled && activeStopLossPercent > 0) {
-            finalStopLossPrice = entryFillPrice * (1 - directionFactor * (activeStopLossPercent / 100));
-        }
-        if (effectiveTakeProfitPercent !== undefined) {
-            finalTakeProfitPrice = effectiveTakeProfitPercent !== null && effectiveTakeProfitPercent > 0
-                ? entryFillPrice * (1 + directionFactor * (effectiveTakeProfitPercent / 100))
-                : null;
-        } else if (config.takeProfitEnabled && config.takeProfitPercent > 0) {
-            finalTakeProfitPrice = entryFillPrice * (1 + directionFactor * (config.takeProfitPercent / 100));
-        }
-    }
+    const { stopLossPrice: finalStopLossPrice, takeProfitPrice: finalTakeProfitPrice, riskPerShare, partialTargetPrice } =
+        resolveInitialExitLevels({
+            config,
+            entryFillPrice,
+            directionFactor,
+            atrValue,
+            effectiveStopLossPercent,
+            enablePercentageStopLoss,
+            effectiveTakeProfitPercent,
+        });
 
     const allocatedCapital = resolveAllocatedCapital(
         sizingMode,

@@ -25,6 +25,7 @@ import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { copyToClipboard } from "../browser-transfer";
 import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { parseJsonPreservingNonFinite } from "../json-utils";
+import { buildBatchRunLedgerBodyField } from "./trade-ledger-wire";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
 import { getBatchDatasetCacheStats } from "./batch-backtest-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
@@ -89,6 +90,41 @@ const BATCH_ACTIVE_SERVER_RUN_STORAGE = {
     schema: "batch_backtest.active_server_run",
     version: 1,
 } as const;
+
+/**
+ * Trade-ledger export toggle + output folder (Batch menu). Persisted across
+ * reloads and threaded into the `/api/batch-backtest/run` body so the
+ * server-side plugin writes the per-run ledger folder. These are BATCH-RUN
+ * options, not backtest settings — deliberately NOT registered in
+ * BACKTEST_SETTINGS_DOM_CONTRACTS (the settings-manager round-trips that
+ * contract through engine settings, and its "string" parser uppercases
+ * values, which would corrupt the folder path).
+ */
+const BATCH_TRADE_LEDGER_STORAGE = {
+    key: "playground_batch_backtest_trade_ledger",
+    schema: "batch_backtest.trade_ledger",
+    version: 1,
+} as const;
+
+const BATCH_TRADE_LEDGER_DEFAULT_FOLDER = "archive/mining-ledger";
+
+type BatchTradeLedgerOptions = { enabled: boolean; folder: string };
+
+function readPersistedTradeLedgerOptions(): BatchTradeLedgerOptions {
+    return readPersistedJson<BatchTradeLedgerOptions>({
+        ...BATCH_TRADE_LEDGER_STORAGE,
+        fallback: { enabled: false, folder: BATCH_TRADE_LEDGER_DEFAULT_FOLDER },
+        migrate: (ctx) => {
+            const data = ctx.data;
+            if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+            const source = data as Partial<BatchTradeLedgerOptions>;
+            const folder = typeof source.folder === "string" && source.folder.trim()
+                ? source.folder.trim()
+                : BATCH_TRADE_LEDGER_DEFAULT_FOLDER;
+            return { enabled: source.enabled === true, folder };
+        },
+    });
+}
 
 type BatchPersistedActiveServerRun = {
     runId: string;
@@ -324,6 +360,7 @@ export class BatchBacktestService {
         }
         const dom = this.getDom();
         this.bindEvents(dom);
+        this.restoreTradeLedgerOptions(dom);
         this.resetProgress(dom);
         this.loadPersistedLatestResults(dom);
         this.loadPersistedLatestTopMeanResult(dom);
@@ -443,6 +480,39 @@ export class BatchBacktestService {
         });
         dom.batchBacktestBalancedCopyBtn.addEventListener("click", () => {
             void this.copyBalancedPairList();
+        });
+        dom.batchBacktestTradeLedgerToggle.addEventListener("change", () => {
+            this.persistTradeLedgerOptions(dom);
+        });
+        dom.batchBacktestTradeLedgerFolder.addEventListener("change", () => {
+            this.persistTradeLedgerOptions(dom);
+        });
+    }
+
+    /** Restore the persisted trade-ledger toggle + folder into the DOM. */
+    private restoreTradeLedgerOptions(dom: BatchBacktestDom): void {
+        const options = readPersistedTradeLedgerOptions();
+        dom.batchBacktestTradeLedgerToggle.checked = options.enabled;
+        if (options.folder) {
+            dom.batchBacktestTradeLedgerFolder.value = options.folder;
+        }
+    }
+
+    /** Read the trade-ledger options from the DOM (defaults applied). */
+    private readTradeLedgerOptions(dom: BatchBacktestDom): BatchTradeLedgerOptions {
+        return {
+            enabled: dom.batchBacktestTradeLedgerToggle.checked,
+            folder: dom.batchBacktestTradeLedgerFolder.value.trim() || BATCH_TRADE_LEDGER_DEFAULT_FOLDER,
+        };
+    }
+
+    private persistTradeLedgerOptions(dom: BatchBacktestDom): void {
+        writePersistedJson({
+            ...BATCH_TRADE_LEDGER_STORAGE,
+            data: this.readTradeLedgerOptions(dom),
+            onError: (error) => debugLogger.warn("batch_backtest.trade_ledger_save_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            }),
         });
     }
 
@@ -641,6 +711,11 @@ export class BatchBacktestService {
             this.serverRunActive = true;
             this.persistActiveServerRun(runId);
         }
+        // Trade-ledger export (server-side only). Omitted entirely when the
+        // toggle is off so default requests stay unchanged. The wire shape
+        // lives in the leaf exporter (buildBatchRunLedgerBodyField) so the
+        // ON/OFF contract is unit-testable without importing this service.
+        const tradeLedgerOptions = this.readTradeLedgerOptions(dom);
         const response = await fetch("/api/batch-backtest/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -653,6 +728,7 @@ export class BatchBacktestService {
                 capitalSettings,
                 useRustEnginePreference: shouldUseRustEngine(),
                 runId,
+                ...buildBatchRunLedgerBodyField(tradeLedgerOptions),
                 // Phase 3 MAX_ACTIVE: attach the active pair-list provenance
                 // (and null registration — Phase 4 commits it server-side).
                 // The server verifies the hash, retains the meta on the run

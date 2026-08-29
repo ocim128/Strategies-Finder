@@ -34,6 +34,23 @@ import { createDisconnectSafeStream, HttpStatusError, registerLocalJsonRoute, se
 import { FINDER_BATCH_MAX_BODY_BYTES } from "../server-request-limits";
 import { runBatchBacktest, type BatchBacktestRunInput, type BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import { clearServerBatchDatasetCaches, getServerBatchDatasetCacheStats, loadServerBatchDataset } from "./server-batch-data-loader";
+import {
+    TRADE_LEDGER_DEFAULT_FOLDER,
+    TRADE_LEDGER_FEATURE_VERSION,
+    TRADE_LEDGER_VERSION,
+    buildTradeLedgerRowsForPair,
+    sanitizeTradeLedgerFolder,
+    TradeLedgerWriter,
+    type TradeLedgerFinalizeResult,
+    type TradeLedgerProvenance,
+    type TradeLedgerRowContext,
+    type TradeLedgerRunOptions,
+} from "./trade-ledger-exporter";
+import {
+    buildAsIfPairModel,
+    evaluateReplayEligibility,
+} from "./trade-ledger-asif";
+import { resolveExecutorBacktestSettings } from "../backtest-executor";
 import type {
     BatchSyntheticPairArtifact,
 } from "./batch-synthetic-artifact";
@@ -558,6 +575,14 @@ let abortController: AbortController | null = null;
 // running after the user clicks Stop.
 let analysisAbortController: AbortController | null = null;
 let artifactReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * Root directory for trade-ledger export folders (Batch "Save trade ledger").
+ * Set from `server.config.root` at plugin registration so launching Vite from
+ * another working directory cannot write the ledger into the wrong archive;
+ * falls back to the process working directory for direct `processRunBatch`
+ * test invocations.
+ */
+let ledgerRootDir: string | null = null;
 
 /**
  * Stop-before-ownership race closer (audit Finding 5). When Stop arrives BEFORE
@@ -939,6 +964,110 @@ export function resolveServerBatchHeapWarning(symbolCount: number, heapLimitMb =
 }
 
 // ---------------------------------------------------------------------------
+// Trade ledger (Batch "Save trade ledger" toggle — pure side artifact)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the optional `tradeLedger` body field. Null when absent/disabled. A
+ * PRESENT enabled toggle with an unsafe folder is a client error (400) rather
+ * than a silent fallback so a typo'd path is visible.
+ */
+function parseTradeLedgerOptions(raw: unknown): TradeLedgerRunOptions | null {
+    if (!raw || typeof raw !== "object") return null;
+    const enabled = (raw as { enabled?: unknown }).enabled === true;
+    if (!enabled) return null;
+    const folderRaw = (raw as { folder?: unknown }).folder;
+    const folder = typeof folderRaw === "string" && folderRaw.trim()
+        ? sanitizeTradeLedgerFolder(folderRaw)
+        : TRADE_LEDGER_DEFAULT_FOLDER;
+    if (!folder) {
+        throw new HttpStatusError(400, `Invalid tradeLedger folder: ${String(folderRaw)}.`);
+    }
+    return { enabled: true, folder };
+}
+
+/**
+ * Per-run trade-ledger context: the executor-resolved settings plus the replay
+ * eligibility guard (adaptive TP / path exits / partials / win-streak stops /
+ * dynamic sizing / regime filters / both-direction reversals block replay;
+ * cooldown + maxOpenTrades are position-state and stay replayable).
+ */
+interface TradeLedgerRunContext {
+    resolvedSettings: BacktestSettings;
+    eligibility: ReturnType<typeof evaluateReplayEligibility>;
+    rowContext: TradeLedgerRowContext;
+}
+
+function resolveTradeLedgerRunContext(input: {
+    backtestSettings: BacktestSettings;
+    capitalSettings: CapitalSettings;
+    interval: string;
+}): TradeLedgerRunContext {
+    const resolved = resolveExecutorBacktestSettings(
+        { ...input.backtestSettings, interval: input.interval } as BacktestSettings,
+        input.interval,
+    );
+    const eligibility = evaluateReplayEligibility(resolved, input.capitalSettings);
+    return {
+        resolvedSettings: resolved,
+        eligibility,
+        rowContext: {
+            tradeDirection: eligibility.params.tradeDirection,
+            executionModel: eligibility.params.executionModel,
+            maxOpenTrades: eligibility.params.maxOpenTrades,
+            cooldownBars: eligibility.params.cooldownBars,
+            slippageRate: eligibility.params.slippageRate,
+        },
+    };
+}
+
+function buildTradeLedgerProvenance(
+    input: BatchBacktestRunInput,
+    runId: string,
+    startedAtMs: number,
+    context: TradeLedgerRunContext,
+): TradeLedgerProvenance {
+    // References only (no copies of OHLCV/config objects beyond what the run
+    // already holds); serializeJson runs once at write time.
+    const params = context.eligibility.params;
+    return {
+        ledgerVersion: TRADE_LEDGER_VERSION,
+        featureVersion: TRADE_LEDGER_FEATURE_VERSION,
+        runId,
+        startedAt: new Date(startedAtMs).toISOString(),
+        interval: input.interval,
+        strategyKey: input.strategyKey,
+        strategyParams: input.strategyParams as Record<string, unknown>,
+        backtestSettings: input.backtestSettings as Record<string, unknown>,
+        capitalSettings: input.capitalSettings as unknown as Record<string, unknown>,
+        engineMode: input.useRustEnginePreference ? "rust_preferred" : "typescript",
+        executionModel: params.executionModel,
+        tradeDirection: params.tradeDirection,
+        riskMode: String((input.backtestSettings as Record<string, unknown>).riskMode ?? ""),
+        fees: {
+            commissionPercent: Number(input.capitalSettings?.commission ?? 0),
+            slippageBps: Number((input.backtestSettings as Record<string, unknown>).slippageBps ?? 0),
+        },
+        pairCount: input.symbols.length,
+        symbols: input.symbols,
+        // Replay contract for the offline checker. The checker refuses replay
+        // when replayEligible is false (see evaluateReplayEligibility).
+        replay: {
+            replayEligible: context.eligibility.eligible,
+            replayBlockers: context.eligibility.reasons,
+            maxOpenTrades: Number.isFinite(params.maxOpenTrades) ? params.maxOpenTrades : "unlimited",
+            cooldownBars: params.cooldownBars,
+            executionModel: params.executionModel,
+            tradeDirection: params.tradeDirection,
+            allowSameBarExit: params.allowSameBarExit,
+            disableSignalExits: params.disableSignalExits,
+            slippageRate: params.slippageRate,
+            commissionRate: params.commissionRate,
+        },
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Run + Miner core (factored out of the HTTP handlers for testability)
 // ---------------------------------------------------------------------------
 
@@ -954,7 +1083,7 @@ type StreamWriter = (event: BatchStreamEvent) => void;
  * `abortController` cancels in-flight dataset loads.
  */
 export async function processRunBatch(
-    input: BatchBacktestRunInput,
+    input: BatchBacktestRunInput & { tradeLedger?: TradeLedgerRunOptions | null },
     writer: StreamWriter,
     owner: number,
     runId: string = "",
@@ -989,6 +1118,20 @@ export async function processRunBatch(
     // contaminating the new generation's globals.
     const store = new ArtifactStore();
     currentArtifactStore = store;
+    // Trade-ledger export (Batch "Save trade ledger" toggle). Pure side
+    // artifact: created per run, written inside the awaited onSymbolComplete
+    // path (audit F2 shape), and never allowed to fail the run.
+    const tradeLedgerRequested = input.tradeLedger?.enabled === true;
+    const ledgerRunContext = tradeLedgerRequested ? resolveTradeLedgerRunContext(input) : null;
+    const ledger = tradeLedgerRequested
+        ? await TradeLedgerWriter.create({
+            rootDir: ledgerRootDir ?? process.cwd(),
+            folder: input.tradeLedger?.folder ?? TRADE_LEDGER_DEFAULT_FOLDER,
+            runId,
+            startedAtMs: snapshot.startedAt,
+            provenance: buildTradeLedgerProvenance(input, runId, snapshot.startedAt, ledgerRunContext!),
+        })
+        : null;
     // Phase 3 MAX_ACTIVE: verify pair-list provenance against the canonical
     // submitted symbols. The fingerprint includes the verified provenance so
     // a manual textarea edit (which clears the provenance client-side) also
@@ -1057,7 +1200,7 @@ export async function processRunBatch(
                     snapshot.currentSymbol = symbol;
                 }
             },
-            onSymbolComplete: async (index, result) => {
+            onSymbolComplete: async (index, result, completionContext) => {
                 if (lostOwnership()) return;
                 const scalarRow = toScalarRow(result);
                 if (runState === snapshot) {
@@ -1071,6 +1214,29 @@ export async function processRunBatch(
                 // generation after Stop + new Run detached it.
                 await storeMineArtifact(index, result, store);
                 if (store.isDetached()) return;
+                // Trade-ledger appends ride the same awaited completion path
+                // (incremental, one write per pair) and only read the row.
+                // The as-if model is per-pair streaming data — built here and
+                // dropped when the callback returns, never accumulated.
+                if (ledger && completionContext?.signals && result.data && ledgerRunContext) {
+                    const asIfModel = ledgerRunContext.eligibility.eligible
+                        ? await buildAsIfPairModel({
+                            data: result.data,
+                            primarySignals: completionContext.signals,
+                            resolvedSettings: ledgerRunContext.resolvedSettings,
+                            eligibility: ledgerRunContext.eligibility,
+                        })
+                        : null;
+                    const pairRows = buildTradeLedgerRowsForPair({
+                        pair: result.symbol,
+                        data: result.data,
+                        signals: completionContext.signals,
+                        trades: result.result?.trades,
+                        context: ledgerRunContext.rowContext,
+                        asIfModel,
+                    });
+                    await ledger.appendPairRows(pairRows);
+                }
                 writer({ type: "symbol", index, total, row: scalarRow });
                 await new Promise<void>((resolve) => setImmediate(resolve));
             },
@@ -1120,6 +1286,24 @@ export async function processRunBatch(
         if (store.isDetached() || currentArtifactStore !== store) return;
         await store.flush();
         if (store.isDetached() || currentArtifactStore !== store) return;
+        // Finalize the trade ledger (ranks + summary) BEFORE the done event so
+        // the folder is complete when the browser learns the run finished.
+        // Skipped for a detached generation — a stale run must not write.
+        let ledgerResult: TradeLedgerFinalizeResult | null = null;
+        let ledgerRunDir: string | null = null;
+        if (ledger) {
+            ledgerRunDir = ledger.runDir;
+            // W4 pair accounting: provenance.pairCount stays "submitted";
+            // summary.json carries the full submitted/loaded/row-bearing split.
+            ledgerResult = await ledger.finalize({
+                cancelled,
+                finishedAtMs: Date.now(),
+                accounting: {
+                    submittedPairs: input.symbols.length,
+                    loadedPairs: output.loadedSymbols,
+                },
+            });
+        }
         const artifactsAvailable = store.hasStored();
         const artifactStats = store.artifactStats();
         const parsedCacheStats = store.parsedCacheStats();
@@ -1146,6 +1330,12 @@ export async function processRunBatch(
         // (true iff `stored > 0`) so the Mine button stays enabled.
         if (artifactStats.failed > 0) {
             terminalSummary += ` — artifacts ${artifactStats.stored}/${artifactStats.eligible}; Mine will omit ${artifactStats.failed} failed write${artifactStats.failed === 1 ? "" : "s"}.`;
+        }
+        // Fail loud: a ledger that was requested but incomplete (setup failed
+        // or any write failed) is visible in the run's terminal summary. A
+        // healthy ledger leaves the summary unchanged.
+        if (tradeLedgerRequested && (ledger === null || ledgerResult === null || !ledgerResult.ledgerComplete)) {
+            terminalSummary += ` — trade ledger incomplete (${ledgerResult?.failedWrites ?? 0} failed write${(ledgerResult?.failedWrites ?? 0) === 1 ? "" : "s"}).`;
         }
         // Audit Finding 6: stamp the terminal snapshot fields BEFORE releasing
         // ownership so /status can recover a terminal failure even if the run
@@ -1222,6 +1412,13 @@ export async function processRunBatch(
             // the heap-bound + partial-write behavior is observable in logs.
             artifactStats,
             parsedCacheStats,
+            // Trade-ledger outcome (present only when the toggle was on).
+            tradeLedger: ledgerResult
+                ? {
+                    runDir: ledgerRunDir,
+                    ...ledgerResult,
+                }
+                : undefined,
         });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1236,6 +1433,15 @@ export async function processRunBatch(
             snapshot.error = message;
         }
         writer({ type: "fatal", error: message, runId });
+        // Best-effort ledger finalize on the fatal path too: the partial
+        // ledger stays on disk with ledgerComplete=false. Never mask the fatal.
+        if (ledger) {
+            try {
+                await ledger.finalize({ cancelled: true, finishedAtMs: Date.now() });
+            } catch {
+                /* best-effort */
+            }
+        }
         if (currentArtifactStore === store) {
             await releaseLastResults("run_fatal");
         }
@@ -1344,11 +1550,14 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
         if (runOwner !== owner) {
             throw new HttpStatusError(409, "Batch run was stopped before it started.");
         }
-        const strategyParams = (body.strategyParams ?? {}) as StrategyParams;
-        const backtestSettings = (body.backtestSettings ?? {}) as BacktestSettings;
-        const capitalSettings = (body.capitalSettings ?? {}) as CapitalSettings;
-        const useRustEnginePreference = body.useRustEnginePreference === true;
-        await releaseLastResults("new_run");
+    const strategyParams = (body.strategyParams ?? {}) as StrategyParams;
+    const backtestSettings = (body.backtestSettings ?? {}) as BacktestSettings;
+    const capitalSettings = (body.capitalSettings ?? {}) as CapitalSettings;
+    const useRustEnginePreference = body.useRustEnginePreference === true;
+    // Trade-ledger export options (optional; null when the toggle is off or
+    // the field is absent).
+    const tradeLedger = parseTradeLedgerOptions(body.tradeLedger);
+    await releaseLastResults("new_run");
         if (runOwner !== owner) {
             throw new HttpStatusError(409, "Batch run was stopped before it started.");
         }
@@ -1376,6 +1585,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
                     capitalSettings,
                     symbols,
                     useRustEnginePreference,
+                    tradeLedger,
                     // Phase 3 MAX_ACTIVE: carry the verified pair-list provenance
                     // and the research registration into the run so the snapshot
                     // and the OPEN_SCORE USD report can name the provenance status
@@ -1894,12 +2104,14 @@ export function batchBacktestVitePlugin(): Plugin {
     return {
         name: "batch-backtest",
         configureServer(server) {
+            ledgerRootDir = server.config.root ?? process.cwd();
             // Best-effort: sweep orphaned dirs from a prior crash without
             // blocking dev-server registration (audit Finding 4).
             void sweepOrphanedMineArtifactDirs();
             registerBatchRoutes(server.middlewares);
         },
         configurePreviewServer(server) {
+            ledgerRootDir = server.config.root ?? process.cwd();
             void sweepOrphanedMineArtifactDirs();
             registerBatchRoutes(server.middlewares);
         },
@@ -2132,4 +2344,13 @@ export const __testInternals = {
     ensureMineArtifactDirForTests(): string {
         return ensureCurrentArtifactStoreDir();
     },
+    // --- Trade-ledger test seams ---
+    /** Point the ledger root at a temp dir for the duration of a test. */
+    setLedgerRootDirForTests(dir: string | null): void {
+        ledgerRootDir = dir;
+    },
+    getLedgerRootDirForTests(): string | null {
+        return ledgerRootDir;
+    },
+    parseTradeLedgerOptionsForTests: parseTradeLedgerOptions,
 };

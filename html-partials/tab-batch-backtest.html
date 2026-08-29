@@ -58,6 +58,23 @@
             </div>
             <div class="batch-miner-status batch-miner-status--multiline batch-balanced-generator-status" id="batchBacktestBalancedSummary"></div>
         </div>
+
+        <div class="batch-balanced-generator" aria-label="Trade ledger export">
+            <div class="batch-balanced-generator-heading">
+                <span class="batch-balanced-generator-label">Save Trade Ledger</span>
+                <span class="batch-balanced-generator-note">Server-side mode only: while the batch runs, write one folder per run (provenance, one row per entry signal, cross-signal ranks, summary) under the app root for offline rule mining. Batch results are unchanged.</span>
+            </div>
+            <div class="batch-balanced-generator-controls">
+                <div class="batch-field batch-field--inline" title="Write the trade ledger for this run. Toggle default off.">
+                    <input id="batchBacktestTradeLedgerToggle" type="checkbox">
+                    <label class="batch-field-label" for="batchBacktestTradeLedgerToggle">Save trade ledger</label>
+                </div>
+                <div class="batch-field batch-field--inline" title="Output folder, relative to the app root. One timestamped subfolder is created per run.">
+                    <label class="batch-field-label" for="batchBacktestTradeLedgerFolder">Folder</label>
+                    <input class="batch-field-input" id="batchBacktestTradeLedgerFolder" type="text" value="archive/mining-ledger" spellcheck="false">
+                </div>
+            </div>
+        </div>
     </section>
 
     <div class="batch-actions">

@@ -83,6 +83,17 @@ export interface BatchBacktestSymbolResult {
     error?: string;
 }
 
+/**
+ * Per-symbol context handed to `onSymbolComplete` alongside the row. The row's
+ * `signals` field is dropped for non-synthetic pairs (memory contract), but the
+ * trade-ledger exporter needs the pair's engine-consumed signals for every
+ * pair, so the runner passes them here without retaining them on the row.
+ * The reference dies as soon as the completion callback returns.
+ */
+export interface BatchSymbolCompletionContext {
+    signals?: Signal[];
+}
+
 export interface BatchBacktestTradeSummary {
     avgHoldBars: number | null;
     maxHoldBars: number | null;
@@ -148,8 +159,16 @@ export interface BatchBacktestRunCallbacks {
      * next symbol so a slow consumer (e.g. server-side artifact persistence)
      * can apply backpressure instead of unbounded queueing (audit Finding 2).
      * Synchronous return values remain valid; the await is a no-op for them.
+     *
+     * The third argument carries the pair's engine-consumed signals even when
+     * the row itself dropped them (non-synthetic rows, see
+     * {@link BatchSymbolCompletionContext}).
      */
-    onSymbolComplete?: (index: number, result: BatchBacktestSymbolResult) => void | Promise<void>;
+    onSymbolComplete?: (
+        index: number,
+        result: BatchBacktestSymbolResult,
+        context?: BatchSymbolCompletionContext,
+    ) => void | Promise<void>;
     /**
      * Fired once per attempted symbol at the top of the iteration, before
      * load/backtest. Lets a caller (the server-side plugin) surface which pair
@@ -192,9 +211,13 @@ export async function runBatchBacktest(
         resultProjectionMs: 0,
         completionCallbackMs: 0,
     };
-    const notifyComplete = async (index: number, row: BatchBacktestSymbolResult): Promise<void> => {
+    const notifyComplete = async (
+        index: number,
+        row: BatchBacktestSymbolResult,
+        context?: BatchSymbolCompletionContext,
+    ): Promise<void> => {
         const startedAt = performance.now();
-        await callbacks.onSymbolComplete?.(index, row);
+        await callbacks.onSymbolComplete?.(index, row, context);
         timings.completionCallbackMs += performance.now() - startedAt;
     };
 
@@ -352,7 +375,7 @@ export async function runBatchBacktest(
             const projectionStartedAt = performance.now();
             const result = buildSymbolResult(symbol, data, output.result, output.signals, preResolvedCapital);
             timings.resultProjectionMs += performance.now() - projectionStartedAt;
-            await notifyComplete(i, result);
+            await notifyComplete(i, result, { signals: output.signals });
             results[i] = input.pruneResultArtifacts ? pruneResultArtifacts(result) : result;
         } catch (error) {
             if (cancelCheck()) break;

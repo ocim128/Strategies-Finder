@@ -1,0 +1,10 @@
+# IDEA LOG — append-only, ONE line per idea.
+# Before proposing: grep this file for your feature names. Same feature + same gate direction = clone, do not propose.
+# After every checker run: append one line. Never edit or delete old lines.
+# Format: Q<id>|<surface>|<thesis (short)>|<verdict> <IS delta>pp hold<delta>pp
+# Surfaces: F1=1859_batch-mtebv74c (RETIRED, buy&hold) | F2=1936_batch-mted6ti8 (ACTIVE, 12-bar hold)
+# Lessons: F2 accept-all = -0.10%/trade net; generic single-feature gates so far = noise
+Q1|F2|no-chase: feat_entryRangePosition<=100|NO-EDGE +0.05 hold-0.01
+Q2|F2|vol-band: 1<feat_atrPct<5|NO-EDGE +0.10 hold+0.00
+Q3|F1|no-chase: feat_entryRangePosition<=100|NO-EDGE mean-tail-only
+Q4|F1|vol-band: 1<feat_atrPct<5|NO-EDGE mean-tail-only

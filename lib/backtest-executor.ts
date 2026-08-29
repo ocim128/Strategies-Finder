@@ -897,8 +897,12 @@ function resolveBacktestSignalsForData(args: {
  * or when the configured strategy key cannot be resolved.
  *
  * Returned signals are NOT tagged here; mergeExitStrategySignals tags them exitOnly.
+ *
+ * Exported for the trade-ledger as-if engine (trade-ledger-asif.ts): the per-pair
+ * exit-signal series must come from THIS resolution — the same one a real run
+ * performs — never from a parallel reimplementation.
  */
-async function resolveExitStrategyOverrideSignals(args: {
+export async function resolveExitStrategyOverrideSignals(args: {
     data: OHLCVData[];
     interval: string;
     settings: BacktestSettings;
