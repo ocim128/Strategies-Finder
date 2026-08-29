@@ -10,6 +10,7 @@ import {
 import { createSeededRandom } from "../param-math-utils";
 import { SHARPE_MIN_SAMPLES } from "../strategies/performance-metrics";
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../types/backtest";
+import type { RustCapabilities } from "../rust-engine-client";
 import type {
     FinderOptions,
     FinderDiagnostics,
@@ -126,6 +127,8 @@ export interface FinderUniverseRunInput {
      * the browser caller; set by the server plugin from the request body.
      */
     useRustEnginePreference?: boolean;
+    /** Capabilities from the server run's single Rust health handshake. */
+    rustCapabilities?: RustCapabilities;
 }
 
 export interface FinderUniverseRunCallbacks {
@@ -710,7 +713,7 @@ export async function runFinderUniverseExecution(
         throw err;
     }
 
-    const rustSettings = sanitizeBacktestSettingsForRust(input.settings);
+    const rustSettings = sanitizeBacktestSettingsForRust(input.settings, input.rustCapabilities);
     const paramGenerationStartedAt = performance.now();
     const candidatePlans = buildUniverseCandidatePlans({
         selectedStrategy: input.selectedStrategy,
@@ -852,7 +855,10 @@ export async function runFinderUniverseExecution(
             { ...(backtestSettings as Record<string, unknown>), interval: input.interval } as BacktestSettings,
             input.interval,
         );
-        const typescriptRequirementReasons = getTypescriptEngineRequirementReasons(preResolvedSettings);
+        const typescriptRequirementReasons = getTypescriptEngineRequirementReasons(
+            preResolvedSettings,
+            input.rustCapabilities,
+        );
         if (!isRustSupportedTradeSizingMode(preResolvedCapital.sizingMode)) {
             typescriptRequirementReasons.push(`${preResolvedCapital.sizingMode} position sizing requires TypeScript`);
         }
@@ -920,6 +926,7 @@ export async function runFinderUniverseExecution(
                         // DOM); in Node it's the only signal that opts in to
                         // Rust (the documented Rust-engine trap fix).
                         useRustEnginePreference: input.useRustEnginePreference,
+                        rustCapabilities: input.rustCapabilities,
                         nowSec: runNowSec,
                     },
                     backtestRunOptions: {
@@ -1001,6 +1008,7 @@ export async function runFinderUniverseExecution(
                                 annotatePolymarket: false,
                                 engineMode: "typescript",
                                 useRustEnginePreference: input.useRustEnginePreference,
+                                rustCapabilities: input.rustCapabilities,
                                 nowSec: runNowSec,
                             },
                             backtestRunOptions: {

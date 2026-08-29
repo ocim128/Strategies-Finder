@@ -7,6 +7,14 @@ setlocal enabledelayedexpansion
 :: killing ports and starting the gateway.
 if /i "%~1"=="_CERT_INSTALL" goto :do_cert_install
 
+:: Load Rust startup preference before cleanup and startup checks. The local
+:: .env is ignored by Git and can keep Rust enabled for the normal launcher.
+if exist "%~dp0.env" (
+    for /f "usebackq tokens=1,* delims==" %%a in ("%~dp0.env") do (
+        if /i "%%a"=="START_RUST_ENGINE" set "START_RUST_ENGINE=%%b"
+    )
+)
+
 echo Cleaning up existing processes...
 
 :: Kill port 5173 (Vite)
@@ -15,10 +23,13 @@ for /f "tokens=5" %%i in ('netstat -aon ^| findstr :5173 ^| findstr LISTENING') 
     taskkill /f /pid %%i >nul 2>&1
 )
 
-:: Kill port 3030 (Rust Engine)
-for /f "tokens=5" %%i in ('netstat -aon ^| findstr :3030 ^| findstr LISTENING') do (
-    echo Killing Rust Engine process PID: %%i
-    taskkill /f /pid %%i >nul 2>&1
+:: Rust starts when START_RUST_ENGINE=1 is set in .env (or the environment).
+:: It remains optional when that setting is absent.
+if /i "%START_RUST_ENGINE%"=="1" (
+    for /f "tokens=5" %%i in ('netstat -aon ^| findstr :3030 ^| findstr LISTENING') do (
+        echo Killing Rust Engine process PID: %%i
+        taskkill /f /pid %%i >nul 2>&1
+    )
 )
 
 :: Kill port 5000 (IBKR Client Portal Gateway)
@@ -67,8 +78,12 @@ if defined IBKR_GATEWAY_PID (
     )
 )
 
-echo Starting Rust Trading Engine...
-start "Rust Trading Engine" cmd /k "cd /d "%~dp0rust-engine" && cargo run --release --bin trading-engine-server"
+if /i "%START_RUST_ENGINE%"=="1" (
+    echo Starting Rust Trading Engine...
+    start "Rust Trading Engine" cmd /k "cd /d "%~dp0rust-engine" && cargo run --release --bin trading-engine-server"
+) else (
+    echo Rust Trading Engine disabled. Set START_RUST_ENGINE=1 to enable it.
+)
 
 :: --- Optional cloudflared tunnel ------------------------------------------
 :: Exposes the local Vite server (port 5173) to a stable public URL so the

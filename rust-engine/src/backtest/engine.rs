@@ -907,31 +907,6 @@ pub fn run_backtest(
     compact: bool,
 ) -> BacktestResult {
     let market_series = build_market_series(data);
-    run_backtest_with_market_series(
-        data,
-        signals,
-        initial_capital,
-        position_size_percent,
-        commission_percent,
-        settings,
-        sizing,
-        compact,
-        &market_series,
-    )
-}
-#[must_use]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_backtest_with_market_series(
-    data: &[OHLCV],
-    signals: &[Signal],
-    initial_capital: f64,
-    position_size_percent: f64,
-    commission_percent: f64,
-    settings: &BacktestSettings,
-    sizing: Option<&TradeSizingConfig>,
-    compact: bool,
-    market_series: &MarketSeries,
-) -> BacktestResult {
     run_backtest_with_market_series_options(
         data,
         signals,
@@ -944,9 +919,10 @@ pub(crate) fn run_backtest_with_market_series(
         false,
         false,
         false,
-        market_series,
+        &market_series,
     )
 }
+#[must_use]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_backtest_with_market_series_options(
     data: &[OHLCV],

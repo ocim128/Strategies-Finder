@@ -2,10 +2,7 @@
 name = "trading-engine"
 version = "0.1.0"
 edition = "2021"
-description = "High-performance trading backtest engine for 5M+ candle bars"
-
-[lib]
-crate-type = ["cdylib", "rlib"]
+description = "Rust backtest kernel for the local trading-engine server"
 
 [[bin]]
 name = "trading-engine-server"
@@ -13,8 +10,8 @@ path = "src/main.rs"
 
 [dependencies]
 # Web framework
-axum = { version = "0.7", features = ["ws"] }
-tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync"] }
 tower-http = { version = "0.5", features = ["cors"] }
 
 # Serialization
@@ -24,22 +21,9 @@ serde_json = "1"
 # Parallelism
 rayon = "1.8"
 
-# Random number generation
-rand = "0.8"
-
-# HTTP client for external APIs
-reqwest = { version = "0.11", features = ["json"] }
-
 # Utilities
-thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# WebSocket support
-futures-util = "0.3"
-
-[dev-dependencies]
-# For benchmarks later
 
 [profile.release]
 opt-level = 3

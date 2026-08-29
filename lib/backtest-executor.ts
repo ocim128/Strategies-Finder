@@ -658,9 +658,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             req.context.typescriptSimulationConcurrency?.leave();
         }
     };
-    let result = req.context.typescriptFallbackGate
-        ? await req.context.typescriptFallbackGate.run(runTypescriptBacktest, req.context.signal)
-        : runTypescriptBacktest();
+    let result = runTypescriptBacktest();
     throwIfBacktestCancelled(req.context.signal);
     const endpointSelection = (result as BacktestResultWithEndpointSelection).endpointSelection;
     if (endpointSelection) {
@@ -796,9 +794,7 @@ export async function executeBacktestFromSignals(
             context.typescriptSimulationConcurrency?.leave();
         }
     };
-    let result = context.typescriptFallbackGate
-        ? await context.typescriptFallbackGate.run(runTypescriptBacktest, context.signal)
-        : runTypescriptBacktest();
+    let result = runTypescriptBacktest();
     throwIfBacktestCancelled(context.signal);
     finalizeResult(result, backtestData, interval, settings);
     if (annotatePolymarket) {

@@ -22,11 +22,6 @@ import { buildBacktestPolymarketPerformanceSummary, type BacktestPolymarketPerfo
 
 export type EngineMode = "auto" | "typescript" | "rust_preferred";
 
-/** Serializes TypeScript simulations that follow a failed Rust attempt. */
-export interface TypescriptFallbackGate {
-    run<T>(operation: () => T | Promise<T>, signal?: AbortSignal): Promise<T>;
-}
-
 /** Optional diagnostic hook for measuring active TypeScript simulations. */
 export interface TypescriptSimulationConcurrencyTracker {
     enter(): void;
@@ -95,9 +90,6 @@ export interface BacktestExecutionContext {
 
     /** Cancels health probes and Rust requests without falling back to TS. */
     signal?: AbortSignal;
-
-    /** Optional run-scoped gate for bounded Rust-failure TypeScript fallback. */
-    typescriptFallbackGate?: TypescriptFallbackGate;
 
     /** Optional run-scoped diagnostic counter for TypeScript engine work. */
     typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;

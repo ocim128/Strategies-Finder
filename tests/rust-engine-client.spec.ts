@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { packMultiAssetSignals, RustEngineClient } from "../lib/rust-engine-client";
+import { RustEngineClient } from "../lib/rust-engine-client";
 import type { BacktestSettings, OHLCVData, Signal, Time } from "../lib/types/strategies";
 
 const data: OHLCVData[] = [{
@@ -54,7 +54,7 @@ describe("Rust generic backtest output options", () => {
         let requestBody: Record<string, unknown> | undefined;
         const client = createClient((body) => { requestBody = body; });
 
-        await client.runBacktest(
+        await client.runBacktestWithStatus(
             data,
             [],
             10_000,
@@ -73,7 +73,7 @@ describe("Rust generic backtest output options", () => {
         let requestBody: Record<string, unknown> | undefined;
         const client = createClient((body) => { requestBody = body; });
 
-        await client.runBacktest(data, [], 10_000, 100, 0.1, settings);
+        await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
 
         expect(requestBody?.compact).to.equal(false);
         expect(requestBody?.retainTrades).to.equal(false);
@@ -93,9 +93,9 @@ describe("Rust generic backtest output options", () => {
         };
         const client = new RustEngineClient("http://127.0.0.1:3030", fetchImpl);
 
-        const result = await client.runBacktest(data, [], 10_000, 100, 0.1, settings);
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
 
-        expect(result).to.equal(null);
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
     });
 
     it("hashes every candle so an unsampled mutation cannot reuse a cache key", () => {
@@ -233,8 +233,8 @@ describe("Rust generic backtest output options", () => {
             return new Response(JSON.stringify(malformed), { status: 200 });
         });
 
-        const result = await client.runBacktest(data, [], 10_000, 100, 0.1, settings);
-        expect(result).to.equal(null);
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
     });
 
     it("returns cancellation distinctly so callers do not silently retry in TypeScript", async () => {
@@ -271,12 +271,11 @@ describe("Rust generic backtest output options", () => {
                 settings,
             );
             expect(result).to.deep.include({ ok: false, reason: "unsupported_signal_shape" });
-            expect(packMultiAssetSignals([signal])).to.equal(null);
         }
         expect(transportCalls).to.equal(0);
     });
 
-    it("rejects behavior-bearing reasons at every batch endpoint boundary", async () => {
+    it("rejects behavior-bearing reasons at every generic batch endpoint boundary", async () => {
         let transportCalls = 0;
         const client = createClient(() => { transportCalls += 1; });
         const signal: Signal = {
@@ -286,16 +285,9 @@ describe("Rust generic backtest output options", () => {
             reason: "polymarket_stop_loss",
         };
         const items = [{ id: "behavior", signals: [signal] }];
-        const workload = [{ id: "workload", items }];
         const results = await Promise.all([
             client.runBatchBacktestWithStatus(data, items, 10_000, 100, 0.1, settings, undefined, false),
             client.runCachedBatchBacktestWithStatus("cache", items, 10_000, 100, 0.1, settings, undefined, false),
-            client.runFreshEntryBatchBacktestWithStatus(data, items, 10_000, 100, 0.1, settings),
-            client.runCachedFreshEntryBatchBacktestWithStatus("cache", items, 10_000, 100, 0.1, settings),
-            client.runAssetOpportunityBatchBacktestWithStatus(data, items, 10_000, 100, 0.1, settings, data[0]!.time),
-            client.runCachedAssetOpportunityBatchBacktestWithStatus("cache", items, 10_000, 100, 0.1, settings, data[0]!.time),
-            client.runMultiAssetAssetOpportunityBatchBacktestWithStatus(workload, 10_000, 100, 0.1, settings),
-            client.runMultiAssetFreshEntryBatchBacktestWithStatus(workload, 10_000, 100, 0.1, settings),
         ]);
 
         for (const result of results) {

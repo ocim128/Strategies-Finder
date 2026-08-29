@@ -3,7 +3,6 @@
 //! These types mirror the TypeScript definitions in `types.ts` for seamless
 //! interoperability between the frontend and Rust backend.
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 // ============================================================================
 // Time Types
 // ============================================================================
@@ -39,18 +38,6 @@ impl OHLCV {
             close,
             volume,
         }
-    }
-    /// Typical price: (high + low + close) / 3
-    #[inline]
-    #[must_use]
-    pub fn typical_price(&self) -> f64 {
-        (self.high + self.low + self.close) / 3.0
-    }
-    /// HL2: (high + low) / 2
-    #[inline]
-    #[must_use]
-    pub fn hl2(&self) -> f64 {
-        (self.high + self.low) / 2.0
     }
 }
 // ============================================================================
@@ -95,10 +82,6 @@ impl Signal {
             reason: None,
         }
     }
-    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
-        self.reason = Some(reason.into());
-        self
-    }
 }
 // ============================================================================
 // Trade Types
@@ -140,15 +123,6 @@ impl Trade {
     #[must_use]
     pub const fn is_winner(&self) -> bool {
         self.pnl > 0.0
-    }
-    /// Get the R-multiple (return / risk)
-    #[inline]
-    #[must_use]
-    pub fn r_multiple(&self, risk_per_share: f64) -> f64 {
-        if risk_per_share == 0.0 {
-            return 0.0;
-        }
-        self.pnl / (self.size * risk_per_share)
     }
 }
 // ============================================================================
@@ -196,8 +170,7 @@ pub struct BacktestResult {
     pub sharpe_ratio: f64,
     #[serde(rename = "equityCurve")]
     pub equity_curve: Vec<EquityPoint>,
-    /// Internal execution metadata used by the compact fresh-entry API.
-    /// It is deliberately not part of the normal backtest wire contract.
+    /// Internal execution metadata, deliberately omitted from the wire contract.
     #[serde(skip)]
     pub final_position_open: bool,
 }
@@ -224,11 +197,6 @@ impl Default for BacktestResult {
         }
     }
 }
-// ============================================================================
-// Strategy Parameters
-// ============================================================================
-/// Dynamic strategy parameters (matches TypeScript Record<string, number>)
-pub type StrategyParams = HashMap<String, f64>;
 /// Entry confirmation mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -481,136 +449,6 @@ impl Default for TradeSizingConfig {
     }
 }
 // ============================================================================
-// Walk-Forward Types
-// ============================================================================
-/// Parameter range for optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParameterRange {
-    pub name: String,
-    pub min: f64,
-    pub max: f64,
-    pub step: f64,
-}
-/// Walk-forward configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WalkForwardConfig {
-    pub optimization_window: usize,
-    pub test_window: usize,
-    pub step_size: usize,
-    pub parameter_ranges: Vec<ParameterRange>,
-    #[serde(default = "default_top_n")]
-    pub top_n: usize,
-    #[serde(default = "default_min_trades")]
-    pub min_trades: u32,
-}
-const fn default_top_n() -> usize {
-    5
-}
-const fn default_min_trades() -> u32 {
-    20
-}
-/// Single walk-forward window result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WalkForwardWindow {
-    pub window_index: usize,
-    pub optimization_start: usize,
-    pub optimization_end: usize,
-    pub test_start: usize,
-    pub test_end: usize,
-    pub optimized_params: StrategyParams,
-    pub in_sample_result: BacktestResult,
-    pub out_of_sample_result: BacktestResult,
-    pub sharpe_degradation: f64,
-    pub performance_degradation_percent: f64,
-}
-/// Complete walk-forward analysis result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WalkForwardResult {
-    pub windows: Vec<WalkForwardWindow>,
-    pub combined_oos_trades: BacktestResult,
-    pub avg_in_sample_sharpe: f64,
-    pub avg_out_of_sample_sharpe: f64,
-    pub walk_forward_efficiency: f64,
-    pub robustness_score: f64,
-    pub total_windows: usize,
-    pub optimization_time_ms: u64,
-    pub parameter_stability: f64,
-}
-// ============================================================================
-// Finder Types
-// ============================================================================
-/// Finder search mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum FinderMode {
-    #[default]
-    Grid,
-    Random,
-}
-/// Metric for sorting finder results
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum FinderMetric {
-    NetProfit,
-    ProfitFactor,
-    SharpeRatio,
-    WinRate,
-    MaxDrawdownPercent,
-    Expectancy,
-    AverageGain,
-    TotalTrades,
-    NetProfitPercent,
-}
-/// Finder search options
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FinderOptions {
-    pub mode: FinderMode,
-    pub sort_priority: Vec<FinderMetric>,
-    #[serde(default)]
-    pub use_advanced_sort: bool,
-    #[serde(default = "default_finder_top_n")]
-    pub top_n: usize,
-    #[serde(default = "default_finder_steps")]
-    pub steps: usize,
-    #[serde(default = "default_range_percent")]
-    pub range_percent: f64,
-    #[serde(default = "default_max_runs")]
-    pub max_runs: usize,
-    #[serde(default)]
-    pub trade_filter_enabled: bool,
-    #[serde(default = "default_min_trades")]
-    pub min_trades: u32,
-    #[serde(default = "default_max_trades")]
-    pub max_trades: u32,
-}
-const fn default_finder_top_n() -> usize {
-    10
-}
-const fn default_finder_steps() -> usize {
-    5
-}
-const fn default_range_percent() -> f64 {
-    50.0
-}
-const fn default_max_runs() -> usize {
-    1000
-}
-const fn default_max_trades() -> u32 {
-    u32::MAX
-}
-/// Single finder result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FinderResult {
-    pub key: String,
-    pub name: String,
-    pub params: StrategyParams,
-    pub result: BacktestResult,
-}
-// ============================================================================
 // API Request/Response Types
 // ============================================================================
 /// Backtest request
@@ -677,81 +515,6 @@ pub struct BatchBacktestRequest {
     /// When true, omit heavy payloads (trades, equity curve) from results
     #[serde(default)]
     pub compact: bool,
-    /// Optional last candle time used by the Asset Opportunity summary route
-    /// to apply endpoint selection without returning trade history.
-    #[serde(default)]
-    pub last_data_time: Option<Time>,
-}
-/// One independently priced asset in a multi-asset batch request.
-///
-/// Keeping the OHLCV series at the workload boundary lets the server build
-/// one market index per asset while the HTTP request amortizes routing and
-/// JSON overhead across many assets.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MultiAssetBatchWorkload {
-    pub id: String,
-    #[serde(default)]
-    pub data: Vec<OHLCV>,
-    /// Compact row-major OHLCV values: time, open, high, low, close, volume.
-    /// Used by the multi-asset transport to avoid repeating JSON object keys.
-    #[serde(default)]
-    pub packed_data: Option<Vec<f64>>,
-    pub items: Vec<BatchBacktestItem>,
-    #[serde(default)]
-    pub last_data_time: Option<Time>,
-    #[serde(default)]
-    pub cache_id: Option<String>,
-    #[serde(default)]
-    pub data_start_index: Option<usize>,
-    #[serde(default)]
-    pub data_end_index: Option<usize>,
-}
-/// Multi-asset batch request. Each workload has its own OHLCV data and item
-/// set; the execution and sizing settings are shared across workloads.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MultiAssetBatchBacktestRequest {
-    pub workloads: Vec<MultiAssetBatchWorkload>,
-    pub initial_capital: f64,
-    pub position_size_percent: f64,
-    pub commission_percent: f64,
-    #[serde(default)]
-    pub base_settings: BacktestSettings,
-    #[serde(default)]
-    pub sizing: TradeSizingConfig,
-    /// When true, omit drawdown calculation from compact results.
-    #[serde(default)]
-    pub skip_drawdown: bool,
-    /// When true, omit Sharpe ratio calculation from compact results.
-    #[serde(default)]
-    pub skip_sharpe_ratio: bool,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MultiAssetCacheWorkload {
-    pub id: String,
-    #[serde(default)]
-    pub data: Vec<OHLCV>,
-    #[serde(default)]
-    pub packed_data: Option<Vec<f64>>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MultiAssetCacheRequest {
-    pub workloads: Vec<MultiAssetCacheWorkload>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MultiAssetCacheResult {
-    pub id: String,
-    pub cache_id: String,
-    pub bar_count: usize,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MultiAssetCacheResponse {
-    pub datasets: Vec<MultiAssetCacheResult>,
 }
 /// Single result in a batch backtest response
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -767,54 +530,13 @@ pub struct BatchBacktestResponse {
     pub results: Vec<BatchBacktestResultItem>,
     pub processing_time_ms: u64,
 }
-/// Walk-forward request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WalkForwardRequest {
-    pub data: Vec<OHLCV>,
-    pub strategy_name: String,
-    pub base_params: StrategyParams,
-    pub initial_capital: f64,
-    pub position_size_percent: f64,
-    pub commission_percent: f64,
-    pub settings: BacktestSettings,
-    pub config: WalkForwardConfig,
-}
-/// Finder request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FinderRequest {
-    pub data: Vec<OHLCV>,
-    pub strategy_name: String,
-    pub base_params: StrategyParams,
-    pub initial_capital: f64,
-    pub position_size_percent: f64,
-    pub commission_percent: f64,
-    pub settings: BacktestSettings,
-    pub options: FinderOptions,
-}
-/// Progress update for WebSocket streaming
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProgressUpdate {
-    pub percent: f64,
-    pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub current_window: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_windows: Option<usize>,
-}
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn test_ohlcv_typical_price() {
-        let candle = OHLCV::new(1000, 100.0, 110.0, 95.0, 105.0, 1000.0);
-        let expected = (110.0 + 95.0 + 105.0) / 3.0;
-        assert!((candle.typical_price() - expected).abs() < 1e-10);
-    }
-    #[test]
     fn test_signal_creation() {
-        let buy = Signal::buy(1000, 100.0).with_reason("Test signal");
+        let mut buy = Signal::buy(1000, 100.0);
+        buy.reason = Some("Test signal".to_string());
         assert_eq!(buy.signal_type, SignalType::Buy);
         assert_eq!(buy.reason, Some("Test signal".to_string()));
     }

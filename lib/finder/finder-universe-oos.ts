@@ -35,6 +35,7 @@
 
 import type { OHLCVData, BacktestResult, BacktestSettings, Strategy } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
+import type { RustCapabilities } from "../rust-engine-client";
 import type {
     FinderDataSlice,
     FinderOptions,
@@ -134,6 +135,8 @@ export interface UniverseOosDeps {
     getProvider?: (symbol: string) => string;
     /** Rust preference threaded into `executeBacktest` context. */
     useRustEnginePreference?: boolean;
+    /** Capabilities from the server run's single Rust health handshake. */
+    rustCapabilities?: RustCapabilities;
     /** Cooperative cancellation — polled per candidate and per symbol. */
     isCancelled: () => boolean;
     /** Progress reporter (percent 0-100, status text). */
@@ -175,7 +178,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
     const minActiveSymbols = options.universe?.minActiveSymbols ?? 1;
     const perSymbolMinTrades = UNIVERSE_OOS_PER_SYMBOL_MIN_TRADES;
     const requiresExitAlpha = options.universe?.sortPriority.includes("medianExitAlpha") === true;
-    const rustSettings = sanitizeBacktestSettingsForRust(deps.settings);
+    const rustSettings = sanitizeBacktestSettingsForRust(deps.settings, deps.rustCapabilities);
     const preResolvedCapital = resolveCapitalSettingsFromRaw(
         deps.capitalSettings as unknown as Record<string, unknown>,
     );
@@ -270,6 +273,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
                         engineMode: requiresExitAlpha ? "typescript" : "auto",
                         nowSec: runNowSec,
                         useRustEnginePreference: deps.useRustEnginePreference,
+                        rustCapabilities: deps.rustCapabilities,
                     },
                     backtestRunOptions: {
                         includeAdvancedAnalytics: false,
@@ -308,6 +312,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
                                 engineMode: "typescript",
                                 nowSec: runNowSec,
                                 useRustEnginePreference: deps.useRustEnginePreference,
+                                rustCapabilities: deps.rustCapabilities,
                             },
                             backtestRunOptions: {
                                 includeAdvancedAnalytics: false,

@@ -13,7 +13,6 @@ import {
 } from "../strategies/index";
 import { calculateSharpeRatioFromEquityCurve, calculateSharpeRatioFromReturns } from "../strategies/performance-metrics";
 
-import { hasNonZeroSnapshotFilter } from "../rust-settings-sanitizer";
 import { selectExecutionAwareClosedCandles } from "../alert-evaluation-window";
 import { debugLogger } from "../debug-logger";
 import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
@@ -427,22 +426,16 @@ export function runBacktestAndInsert(
     }
 }
 
-function hasHeavySnapshotFilters(settings: BacktestSettings): boolean {
-    return hasNonZeroSnapshotFilter(settings);
-}
-
 export function computeDatasetFlags(
     dataSize: number,
-    settings: BacktestSettings,
     options: FinderOptions,
     hasConfirmationStrategies: boolean
 ): FinderDatasetFlags {
     const isLargeDataset = dataSize > 500_000;
     const isVeryLargeDataset = dataSize > 2_000_000;
     const isExtremeDataset = dataSize > 4_000_000;
-    const hasSnapshotFilters = hasHeavySnapshotFilters(settings);
     const hasHeavyTradeFiltering = options.tradeFilterEnabled && options.minTrades >= 1_000;
-    const isHeavyFinderConfig = hasSnapshotFilters || hasHeavyTradeFiltering || hasConfirmationStrategies;
+    const isHeavyFinderConfig = hasHeavyTradeFiltering || hasConfirmationStrategies;
     const compactBacktestThreshold = options.mode === "random"
         ? (isHeavyFinderConfig ? 50_000 : 100_000)
         : (isHeavyFinderConfig ? 50_000 : 500_000);

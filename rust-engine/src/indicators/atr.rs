@@ -42,20 +42,6 @@ pub fn calculate_atr(high: &[f64], low: &[f64], close: &[f64], period: usize) ->
     }
     result
 }
-/// Calculate True Range for a single bar
-#[inline]
-#[must_use]
-pub fn true_range(high: f64, low: f64, prev_close: Option<f64>) -> f64 {
-    let hl = high - low;
-    match prev_close {
-        Some(pc) => {
-            let hc = (high - pc).abs();
-            let lc = (low - pc).abs();
-            hl.max(hc).max(lc)
-        }
-        None => hl,
-    }
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,17 +57,6 @@ mod tests {
         // 5th value should be valid
         assert!(atr[4].is_finite());
         assert!(atr[4] > 0.0);
-    }
-    #[test]
-    fn test_true_range() {
-        // Normal case: high - low is largest
-        assert!((true_range(110.0, 100.0, Some(105.0)) - 10.0).abs() < 1e-10);
-        // Gap up: high - prev_close is largest
-        assert!((true_range(120.0, 115.0, Some(100.0)) - 20.0).abs() < 1e-10);
-        // Gap down: prev_close - low is largest
-        assert!((true_range(95.0, 90.0, Some(110.0)) - 20.0).abs() < 1e-10);
-        // No previous close
-        assert!((true_range(110.0, 100.0, None) - 10.0).abs() < 1e-10);
     }
     #[test]
     fn test_atr_smoothing() {

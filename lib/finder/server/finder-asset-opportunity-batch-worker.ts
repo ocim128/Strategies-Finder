@@ -28,6 +28,7 @@ import { parentPort, isMainThread } from "node:worker_threads";
 import type { FinderSelectedStrategy } from "../finder-runner";
 import type { BacktestSettings, OHLCVData, Strategy, StrategyParams } from "../../types/strategies";
 import type { CapitalSettings } from "../../types/backtest";
+import type { RustCapabilities } from "../../rust-engine-client";
 import type { FinderOptions } from "../../types/finder";
 import type { BatchDatasetLoadContext } from "../../batch-backtest/batch-dataset-loader-core";
 import { loadBuiltInStrategyByKey } from "../../../strategyRegistry";
@@ -67,6 +68,7 @@ export interface AssetOpportunityBatchWorkerTask {
     strategyKeys: string[];
     exitStrategyKeys: string[];
     useRustEnginePreference: boolean;
+    rustCapabilities?: RustCapabilities;
     /** Symbol (trim+upper) -> provider label; null when no provider map was supplied. */
     providerBySymbol: Record<string, string> | null;
     candidatePoolSize: number;
@@ -136,8 +138,6 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
     assetLoadContext?: BatchDatasetLoadContext;
     /** Persistent full-signal cache reused across this worker's holdout tasks. */
     signalCache?: AssetOpportunitySignalCache;
-    /** Persistent Rust dataset cache reused across this worker's holdout tasks. */
-    rustBatchDatasetCache?: Map<string, Promise<string | null>>;
     /** Worker-local strategy objects reused across persistent holdout tasks. */
     strategySelection?: AssetOpportunityWorkerStrategySelection;
     /** Worker-local normalized candidate parameter sets reused across tasks. */
@@ -179,10 +179,10 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
             selectedStrategies,
             ...(exitStrategyCandidates ? { exitStrategyCandidates } : {}),
             ...(task.useRustEnginePreference === true ? { useRustEnginePreference: true } : {}),
+            ...(task.rustCapabilities ? { rustCapabilities: task.rustCapabilities } : {}),
             abortSignal: args.abortSignal,
             loadDataset: args.loadDataset,
             ...(args.assetLoadContext ? { assetLoadContext: args.assetLoadContext } : {}),
-            ...(args.rustBatchDatasetCache ? { rustBatchDatasetCache: args.rustBatchDatasetCache } : {}),
             ...(args.paramSetCache ? { paramSetCache: args.paramSetCache } : {}),
             ...(args.signalCache ? { signalCache: args.signalCache } : {}),
             ...(task.includeFullStrategyBreakdown === true ? { includeFullStrategyBreakdown: true } : {}),
@@ -248,7 +248,6 @@ if (!isMainThread && parentPort) {
     // every holdout this worker processes.
     let assetLoadContext: BatchDatasetLoadContext | null = null;
     let signalCache: AssetOpportunitySignalCache | null = null;
-    const rustBatchDatasetCache = new Map<string, Promise<string | null>>();
     const paramSetCache = new Map<string, StrategyParams[]>();
     let strategySelectionKey = "";
     let strategySelection: AssetOpportunityWorkerStrategySelection | null = null;
@@ -295,7 +294,6 @@ if (!isMainThread && parentPort) {
                 ? async (symbol) => task.inlineDatasets![symbol] ?? []
                 : loadServerFinderDataset,
             assetLoadContext,
-            rustBatchDatasetCache,
             paramSetCache,
             signalCache,
             strategySelection: strategySelection!,

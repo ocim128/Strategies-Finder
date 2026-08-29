@@ -1,9 +1,7 @@
-//! Trading Engine HTTP/WebSocket Server
+//! Trading Engine HTTP Server
 //!
-//! Provides REST API and WebSocket endpoints for:
+//! Provides REST API endpoints for:
 //! - Single backtests
-//! - Walk-forward optimization
-//! - Strategy finder
 use axum::{
     extract::DefaultBodyLimit,
     http::{header, HeaderValue, Method},
@@ -62,49 +60,13 @@ async fn main() {
         // Backtest endpoints
         .route("/api/backtest", post(routes::backtest_handler))
         .route("/api/backtest/batch", post(routes::batch_backtest_handler))
-        .route(
-            "/api/backtest/fresh-entry/batch",
-            post(routes::fresh_entry_batch_handler),
-        )
-        .route(
-            "/api/backtest/asset-opportunity/batch",
-            post(routes::asset_opportunity_batch_handler),
-        )
         // Cached data endpoints (for large datasets)
         .route("/api/data/cache", post(routes::cache_data_handler))
-        .route(
-            "/api/data/multi-cache",
-            post(routes::multi_cache_data_handler),
-        )
         .route("/api/data/clear", post(routes::clear_cache_handler))
         .route(
             "/api/backtest/batch/cached",
             post(routes::cached_batch_backtest_handler),
         )
-        .route(
-            "/api/backtest/fresh-entry/batch/cached",
-            post(routes::cached_fresh_entry_batch_handler),
-        )
-        .route(
-            "/api/backtest/asset-opportunity/batch/cached",
-            post(routes::cached_asset_opportunity_batch_handler),
-        )
-        .route(
-            "/api/backtest/asset-opportunity/multi-batch",
-            post(routes::multi_asset_opportunity_batch_handler),
-        )
-        .route(
-            "/api/backtest/fresh-entry/multi-batch",
-            post(routes::multi_asset_fresh_entry_batch_handler),
-        )
-        // Walk-forward endpoints
-        .route("/api/walk-forward", post(routes::walk_forward_handler))
-        // Finder endpoints
-        .route("/api/finder", post(routes::finder_handler))
-        // Proxy endpoint for external APIs (CORS bypass)
-        .route("/api/proxy", post(routes::proxy_handler))
-        // WebSocket for progress streaming
-        .route("/ws/optimizer", get(routes::ws_handler))
         .with_state(state)
         .layer(DefaultBodyLimit::max(MAX_JSON_BODY_BYTES))
         .layer(cors);
@@ -115,26 +77,8 @@ async fn main() {
     tracing::info!("📊 Endpoints:");
     tracing::info!("   POST /api/backtest            - Run single backtest");
     tracing::info!("   POST /api/backtest/batch      - Run parallel batch backtests");
-    tracing::info!("   POST /api/backtest/fresh-entry/batch - Run compact fresh-entry summaries");
-    tracing::info!(
-        "   POST /api/backtest/asset-opportunity/batch - Run scalar Asset Opportunity batches"
-    );
     tracing::info!("   POST /api/data/cache          - Cache OHLCV data (returns cache_id)");
-    tracing::info!(
-        "   POST /api/data/multi-cache     - Cache multiple OHLCV datasets (returns cache_ids)"
-    );
     tracing::info!("   POST /api/backtest/batch/cached - Run batch with cached data");
-    tracing::info!(
-        "   POST /api/backtest/fresh-entry/batch/cached - Run cached fresh-entry summaries"
-    );
-    tracing::info!("   POST /api/backtest/asset-opportunity/batch/cached - Run cached scalar Asset Opportunity batches");
-    tracing::info!("   POST /api/backtest/asset-opportunity/multi-batch - Run multi-asset scalar Asset Opportunity batches");
-    tracing::info!(
-        "   POST /api/backtest/fresh-entry/multi-batch - Run multi-asset fresh-entry summaries"
-    );
-    tracing::info!("   POST /api/walk-forward        - Run walk-forward analysis");
-    tracing::info!("   POST /api/finder              - Run strategy finder");
-    tracing::info!("   WS   /ws/optimizer            - Stream progress updates");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
@@ -161,6 +105,7 @@ async fn health_check() -> Json<serde_json::Value> {
         "capabilities": {
             "backtest.next_open.v1": true,
             "backtest.risk_max_hold.v1": true,
+            "backtest.risk_cooldown.v1": true,
             "backtest.exit_reason.v1": true
         }
     }))
@@ -204,6 +149,7 @@ mod tests {
         for capability in [
             "backtest.next_open.v1",
             "backtest.risk_max_hold.v1",
+            "backtest.risk_cooldown.v1",
             "backtest.exit_reason.v1",
         ] {
             assert_eq!(payload["capabilities"][capability], true);

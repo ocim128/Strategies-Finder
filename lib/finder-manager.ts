@@ -587,6 +587,7 @@ export class FinderManager {
 	private runStartupInFlight = false;
 	private applyInFlight = false;
 	private isCancelled = false;
+	private finderRunAbortController: AbortController | null = null;
 	private latestResults: FinderLatestResults = { scope: "current_chart", results: [] };
 	/** Full scalar Asset Opportunity rows for the current run. */
 	private assetOpportunityRunResults: FinderAssetOpportunityResult[] = [];
@@ -1014,6 +1015,7 @@ export class FinderManager {
 
 		dom.stopFinder.addEventListener('click', () => {
 			this.isCancelled = true;
+			this.finderRunAbortController?.abort();
 			// Cancel any in-flight reattach poll immediately so Stop changes UI
 			// ownership before the next poll iteration.
 			this.stopReattachPoll();
@@ -1941,6 +1943,8 @@ export class FinderManager {
 			this.runStartupInFlight = false;
 		}
 
+		this.finderRunAbortController?.abort();
+		this.finderRunAbortController = new AbortController();
 		this.isCancelled = false;
 		this.isRunning = true;
 		const startTime = performance.now();
@@ -2060,6 +2064,8 @@ export class FinderManager {
 				finalizeProgress(0, '');
 			}
 			this.isCancelled = false;
+			this.finderRunAbortController?.abort();
+			this.finderRunAbortController = null;
 			setRunningUI(false);
 			this.isRunning = false;
 		}
@@ -2109,6 +2115,7 @@ export class FinderManager {
 				selectedStrategies,
 				capitalSettings,
 				exitStrategyCandidates,
+				signal: this.finderRunAbortController?.signal,
 				generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
 			},
 			{

@@ -4,6 +4,7 @@ import { isSameEventPolymarketExitMode } from "./polymarket-exit-mode";
 
 export const RUST_NEXT_OPEN_CAPABILITY = "backtest.next_open.v1";
 export const RUST_RISK_MAX_HOLD_CAPABILITY = "backtest.risk_max_hold.v1";
+export const RUST_RISK_COOLDOWN_CAPABILITY = "backtest.risk_cooldown.v1";
 export const RUST_EXIT_REASON_CAPABILITY = "backtest.exit_reason.v1";
 
 export function hasRustCapability(capabilities: RustCapabilities | undefined, capability: string): boolean {
@@ -31,6 +32,9 @@ export function getRequiredRustCapabilities(settings: BacktestSettings): string[
         required.add(RUST_RISK_MAX_HOLD_CAPABILITY);
         required.add(RUST_EXIT_REASON_CAPABILITY);
     }
+    if (settings.riskCooldownEnabled === true && (settings.riskCooldownBars ?? 0) > 0) {
+        required.add(RUST_RISK_COOLDOWN_CAPABILITY);
+    }
     return [...required];
 }
 
@@ -57,7 +61,6 @@ export function getTypescriptEngineRequirementReasons(
     const usesRiskCooldown =
         settings.riskCooldownEnabled === true
         && (settings.riskCooldownBars ?? 0) > 0;
-    const usesPercentageWinStreakStopLoss = false;
     const usesAdaptivePercentageTakeProfit =
         settings.riskMode === 'percentage'
         && settings.takeProfitEnabled === true
@@ -97,8 +100,9 @@ export function getTypescriptEngineRequirementReasons(
         if (!reasons.includes('rust_capability_missing')) reasons.push('rust_capability_missing');
     }
     if (usesRiskMinHold) reasons.push('minimum hold bars are enabled');
-    if (usesRiskCooldown) reasons.push('entry cooldown is enabled');
-    if (usesPercentageWinStreakStopLoss) reasons.push('win-streak stop loss is enabled');
+    if (usesRiskCooldown && !hasRustCapability(capabilities, RUST_RISK_COOLDOWN_CAPABILITY)) {
+        if (!reasons.includes('rust_capability_missing')) reasons.push('rust_capability_missing');
+    }
     if (usesAdaptivePercentageTakeProfit) reasons.push('adaptive take profit is enabled');
     if (usesMultiPosition) reasons.push('multiple open positions are enabled');
     if (usesSignalExitMode) reasons.push('same-event Polymarket exits are enabled');
@@ -112,8 +116,6 @@ export function getTypescriptEngineRequirementReasons(
 export function requiresTypescriptEngine(settings: BacktestSettings, capabilities?: RustCapabilities): boolean {
     return getTypescriptEngineRequirementReasons(settings, capabilities).length > 0;
 }
-
-export const SNAPSHOT_FILTER_SETTING_KEYS = [] as const;
 
 export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "pathExitEnabled",
@@ -129,8 +131,6 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "marketMode",
     "riskMinHoldBars",
     "riskMinHoldEnabled",
-    "riskCooldownBars",
-    "riskCooldownEnabled",
     "riskWinStreakStopLossEnabled",
     "riskWinStreakStopLossAfterWins",
     "riskWinStreakStopLossPercent",
@@ -218,7 +218,13 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
 
 const UNSUPPORTED_KEYS = new Set<string>(RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS);
 
-const CAPABILITY_GATED_KEYS = new Set(["executionModel", "riskMaxHoldBars", "riskMaxHoldEnabled"]);
+const CAPABILITY_GATED_KEYS = new Set([
+    "executionModel",
+    "riskMaxHoldBars",
+    "riskMaxHoldEnabled",
+    "riskCooldownBars",
+    "riskCooldownEnabled",
+]);
 
 export function sanitizeBacktestSettingsForRust(
     settings: BacktestSettings,
@@ -228,15 +234,13 @@ export function sanitizeBacktestSettingsForRust(
         && hasRustCapability(capabilities, RUST_EXIT_REASON_CAPABILITY);
     const canPreserveMaxHold = hasRustCapability(capabilities, RUST_RISK_MAX_HOLD_CAPABILITY)
         && hasRustCapability(capabilities, RUST_EXIT_REASON_CAPABILITY);
+    const canPreserveRiskCooldown = hasRustCapability(capabilities, RUST_RISK_COOLDOWN_CAPABILITY);
     const sanitizedEntries = Object.entries(settings).filter(([key]) => {
         if (UNSUPPORTED_KEYS.has(key)) return false;
         if (!CAPABILITY_GATED_KEYS.has(key)) return true;
         if (key === "executionModel") return canPreserveNextOpen && settings.executionModel === "next_open";
-        return canPreserveMaxHold;
+        if (key === "riskMaxHoldBars" || key === "riskMaxHoldEnabled") return canPreserveMaxHold;
+        return canPreserveRiskCooldown;
     });
     return Object.fromEntries(sanitizedEntries) as BacktestSettings;
-}
-
-export function hasNonZeroSnapshotFilter(_settings: BacktestSettings): boolean {
-    return false;
 }

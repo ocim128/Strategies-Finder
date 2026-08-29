@@ -1,8 +1,6 @@
-import { SNAPSHOT_FILTER_SETTING_KEYS } from "./rust-settings-sanitizer";
 import { BacktestSettings } from "./types/strategies";
 
 export const ENDPOINT_IGNORED_BACKTEST_SETTING_KEYS = [
-    ...SNAPSHOT_FILTER_SETTING_KEYS,
     "allowSameBarExit",
     "partialTakeProfitAtR",
     "partialTakeProfitPercent",

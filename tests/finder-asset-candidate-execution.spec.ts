@@ -1,7 +1,18 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { resolveAssetCandidateBacktestRunOptions } from "../lib/finder/finder-asset-candidate-execution";
-import type { OHLCVData, Time } from "../lib/types/strategies";
+import {
+    resolveAssetCandidateBacktestRunOptions,
+    runAssetCandidateBacktest,
+} from "../lib/finder/finder-asset-candidate-execution";
+import { rustEngine } from "../lib/rust-engine-client";
+import {
+    RUST_EXIT_REASON_CAPABILITY,
+    RUST_NEXT_OPEN_CAPABILITY,
+    RUST_RISK_MAX_HOLD_CAPABILITY,
+} from "../lib/rust-settings-sanitizer";
+import type { CapitalSettings } from "../lib/types/backtest";
+import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
+import type { FinderOptions } from "../lib/types/finder";
 
 const data: OHLCVData[] = [
     { time: 1_700_000_000 as Time, open: 10, high: 11, low: 9, close: 10.5, volume: 100 },
@@ -24,6 +35,174 @@ const data: OHLCVData[] = [
  * the new flag must land here too.
  */
 describe("Asset Opportunity candidate execution run options", () => {
+    it("keeps endpoint-selection candidates on TypeScript and preserves final-bar removal", async () => {
+        const strategy: Strategy = {
+            name: "Endpoint Selection Test",
+            description: "Produces a trade that exits on the final bar.",
+            defaultParams: {},
+            paramLabels: {},
+            execute(candles) {
+                const first = candles[0];
+                const last = candles.at(-1);
+                return first && last
+                    ? [
+                        { time: first.time, type: "buy", price: first.close },
+                        { time: last.time, type: "sell", price: last.close },
+                    ]
+                    : [];
+            },
+        };
+        const backtestSettings: BacktestSettings = {
+            executionModel: "signal_close",
+            tradeDirection: "long",
+            allowSameBarExit: true,
+            slippageBps: 0,
+            marketMode: "all",
+        };
+        const capitalSettings: CapitalSettings = {
+            initialCapital: 10_000,
+            positionSize: 100,
+            commission: 0,
+            sizingMode: "percent",
+            fixedTradeAmount: 1_000,
+        };
+        const options = {
+            scope: "asset_opportunity",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 1,
+            steps: 1,
+            rangePercent: 0,
+            maxRuns: 1,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+        } satisfies FinderOptions;
+        const originalRunBacktest = rustEngine.runBacktestWithStatus;
+        let rustCalls = 0;
+        rustEngine.runBacktestWithStatus = async () => {
+            rustCalls += 1;
+            throw new Error("Rust must not receive endpoint-selection candidates");
+        };
+
+        try {
+            const output = await runAssetCandidateBacktest({
+                data,
+                symbol: "TEST",
+                interval: "1m",
+                strategy,
+                strategyKey: "endpoint_selection_test",
+                strategyParams: {},
+                riskOverrideParams: {},
+                settings: backtestSettings,
+                capitalSettings,
+                options,
+                useRustEnginePreference: true,
+                needs: {
+                    compact: true,
+                    trades: false,
+                    fullAnalytics: false,
+                    endpointSelection: "auto",
+                },
+            });
+            expect(rustCalls).to.equal(0);
+            expect(output.engineUsed).to.equal("typescript");
+            expect(output.engineDiagnostics?.typescriptReason).to.equal("endpoint selection requires TypeScript");
+            expect(output.endpointSelection?.adjusted).to.equal(true);
+            expect(output.endpointSelection?.removedTrades).to.equal(1);
+            expect(output.endpointSelection?.result.totalTrades).to.equal(0);
+        } finally {
+            rustEngine.runBacktestWithStatus = originalRunBacktest;
+        }
+    });
+
+    it("preserves capability-gated settings before a Rust fallback", async () => {
+        const strategy: Strategy = {
+            name: "Capability Preservation Test",
+            description: "Produces one simple next-open trade.",
+            defaultParams: {},
+            paramLabels: {},
+            execute(candles) {
+                const first = candles[0];
+                const last = candles.at(-1);
+                return first && last
+                    ? [
+                        { time: first.time, type: "buy", price: first.close },
+                        { time: last.time, type: "sell", price: last.close },
+                    ]
+                    : [];
+            },
+        };
+        const backtestSettings: BacktestSettings = {
+            executionModel: "next_open",
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 2,
+            tradeDirection: "long",
+            allowSameBarExit: true,
+            slippageBps: 0,
+            marketMode: "all",
+        };
+        const capitalSettings: CapitalSettings = {
+            initialCapital: 10_000,
+            positionSize: 100,
+            commission: 0,
+            sizingMode: "percent",
+            fixedTradeAmount: 1_000,
+        };
+        const options = {
+            scope: "asset_opportunity",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 1,
+            steps: 1,
+            rangePercent: 0,
+            maxRuns: 1,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+        } satisfies FinderOptions;
+        const originalRunBacktest = rustEngine.runBacktestWithStatus;
+        let sanitizedSettings: BacktestSettings | undefined;
+        rustEngine.runBacktestWithStatus = async (...args) => {
+            sanitizedSettings = args[5];
+            return { ok: false, reason: "health_unavailable" };
+        };
+
+        try {
+            await runAssetCandidateBacktest({
+                data,
+                symbol: "TEST",
+                interval: "1m",
+                strategy,
+                strategyKey: "capability_preservation_test",
+                strategyParams: {},
+                riskOverrideParams: {},
+                settings: backtestSettings,
+                capitalSettings,
+                options,
+                useRustEnginePreference: true,
+                rustCapabilities: new Set([
+                    RUST_NEXT_OPEN_CAPABILITY,
+                    RUST_RISK_MAX_HOLD_CAPABILITY,
+                    RUST_EXIT_REASON_CAPABILITY,
+                ]),
+                needs: {
+                    compact: false,
+                    trades: true,
+                    fullAnalytics: false,
+                    endpointSelection: false,
+                },
+            });
+            expect(sanitizedSettings?.executionModel).to.equal("next_open");
+            expect(sanitizedSettings?.riskMaxHoldEnabled).to.equal(true);
+            expect(sanitizedSettings?.riskMaxHoldBars).to.equal(2);
+        } finally {
+            rustEngine.runBacktestWithStatus = originalRunBacktest;
+        }
+    });
+
     it("IS search on a non-combined direction uses compact endpoint selection without trades", () => {
         const options = resolveAssetCandidateBacktestRunOptions(
             { compact: true, trades: false, fullAnalytics: false, endpointSelection: "auto" },

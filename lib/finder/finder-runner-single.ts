@@ -141,7 +141,6 @@ interface SingleTimeframeRunParams {
 type FinderEngineDecision = {
     useRustForFinder: boolean;
     useRustCached: boolean;
-    canTryNativeFinder: boolean;
     cacheId: string | null;
     statusMessage: string;
     cacheRequested: boolean;
@@ -157,6 +156,8 @@ type RustBatchDispatchArgs = {
     insertResult: (candidate: CandidateResult) => void;
     runBacktestFallback: (run: PreparedRun) => void;
     timing: FinderDiagnosticsTimings;
+    signal?: AbortSignal;
+    isCancelled?: () => boolean;
     onUnknownRunId?: (id: string) => void;
     onInconsistentResult?: (run: PreparedRun) => void;
 };
@@ -276,6 +277,8 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
         insertResult,
         runBacktestFallback,
         timing,
+        signal,
+        isCancelled,
         onUnknownRunId,
         onInconsistentResult,
     } = args;
@@ -289,6 +292,11 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
     };
     if (batchRuns.length === 0) {
         return stats;
+    }
+    if (signal?.aborted || isCancelled?.()) {
+        const error = new Error("Finder cancelled");
+        error.name = "AbortError";
+        throw error;
     }
 
     // Do not compact away behavior-bearing Polymarket reasons before the
@@ -310,7 +318,7 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
     const tRustStart = performance.now();
     try {
         const batchResult = cacheId
-            ? await rustEngine.runCachedBatchBacktest(
+            ? await rustEngine.runCachedBatchBacktestWithStatus(
                 cacheId,
                 batchItems,
                 capitalSettings.initialCapital,
@@ -322,9 +330,10 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
                     fixedTradeAmount: capitalSettings.fixedTradeAmount,
                     advancedSizing: capitalSettings.advancedSizing,
                 },
-                rustCompactMode
+                rustCompactMode,
+                signal ? { signal } : undefined,
             )
-            : await rustEngine.runBatchBacktest(
+            : await rustEngine.runBatchBacktestWithStatus(
                 closedData,
                 batchItems,
                 capitalSettings.initialCapital,
@@ -336,14 +345,23 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
                     fixedTradeAmount: capitalSettings.fixedTradeAmount,
                     advancedSizing: capitalSettings.advancedSizing,
                 },
-                rustCompactMode
+                rustCompactMode,
+                signal ? { signal } : undefined,
             );
 
-        if (batchResult && batchResult.results.length > 0) {
+        if (signal?.aborted || isCancelled?.() || (!batchResult.ok && batchResult.reason === "cancelled")) {
+            const error = new Error("Finder cancelled");
+            error.name = "AbortError";
+            throw error;
+        }
+        const batchResponse = batchResult.ok
+            ? batchResult.response as { results: Array<{ id: string; result: BacktestResult }> }
+            : null;
+        if (batchResponse && batchResponse.results.length > 0) {
             const runById = new Map(batchRuns.map((run) => [run.id, run]));
             const handledRunIds = new Set<string>();
 
-            for (const batchEntry of batchResult.results) {
+            for (const batchEntry of batchResponse.results) {
                 const run = runById.get(batchEntry.id);
                 if (!run) {
                     onUnknownRunId?.(batchEntry.id);
@@ -378,7 +396,10 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
                 runFallback(run);
             }
         }
-    } catch (_error) {
+    } catch (error) {
+        if (signal?.aborted || isCancelled?.() || (error instanceof Error && error.name === "AbortError")) {
+            throw error;
+        }
         for (const run of batchRuns) {
             runFallback(run);
         }
@@ -402,28 +423,29 @@ async function resolveFinderEngineDecision(args: {
 }): Promise<FinderEngineDecision> {
     const { input, callbacks, flags, totalRuns, closedData, requiresCompositeEdgeRatioSort } = args;
     const rustPreferred = !requiresCompositeEdgeRatioSort && !input.requiresTsEngine && shouldUseRustEngine();
-    const rustHealthy = rustPreferred && await rustEngine.checkHealth();
+    const rustHealthy = rustPreferred && await rustEngine.checkHealth(input.signal);
     const rustUnavailableReason = requiresCompositeEdgeRatioSort
         ? "Composite Edge Ratio sort requires full TypeScript trade paths"
         : !rustPreferred
             ? (input.requiresTsEngine ? "current sizing or realism settings require TypeScript" : "engine preference is TypeScript")
             : "Rust health check failed";
-    const canTryNativeFinder = false;
-
     if (input.requiresTsEngine && !rustHealthy) {
         debugLogger.info("[Finder] TypeScript-only sizing or realism settings enabled - forcing TypeScript engine.");
     }
 
     const cacheDecision = shouldUseRustCachedMode(flags.dataSize, totalRuns, flags.batchSize);
     let cacheId: string | null = null;
-    const useCachedMode = canTryNativeFinder ? false : cacheDecision.useCache;
+    const useCachedMode = cacheDecision.useCache;
     if (useCachedMode && rustHealthy) {
         const cacheReasonText = cacheDecision.reason === "large_dataset"
             ? `large dataset (${flags.dataSize} bars)`
             : `high batch count (${Math.ceil(totalRuns / flags.batchSize)} batches)`;
         callbacks.setStatus(`Caching data on Rust engine (${cacheReasonText})...`);
         callbacks.setProgress(8, "Uploading data to Rust...");
-        cacheId = await rustEngine.cacheData(closedData);
+        cacheId = await rustEngine.cacheData(
+            closedData,
+            input.signal ? { signal: input.signal } : undefined,
+        );
         if (cacheId) {
             debugLogger.info(`[Finder] Data cached with ID: ${cacheId} (${cacheReasonText})`);
         } else {
@@ -461,7 +483,6 @@ async function resolveFinderEngineDecision(args: {
     return {
         useRustForFinder,
         useRustCached,
-        canTryNativeFinder,
         cacheId,
         statusMessage,
         cacheRequested: cacheDecision.useCache,
@@ -1024,6 +1045,8 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 insertResult,
                 runBacktestFallback,
                 timing,
+                signal: input.signal,
+                isCancelled: callbacks.isCancelled,
             });
             recordRustDispatchStats(dispatchStats);
             const avgBatchMs = (performance.now() - batchStartedAt) / Math.max(1, batchJobs.length);
@@ -1183,6 +1206,8 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             insertResult,
             runBacktestFallback: rustRunBacktestFallback,
             timing,
+            signal: input.signal,
+            isCancelled: callbacks.isCancelled,
             onUnknownRunId: (id) => {
                 debugLogger.warn("[Finder] Rust batch returned unknown run id", { id });
             },

@@ -29,10 +29,7 @@ import {
 } from "../../batch-backtest/batch-dataset-loader-core";
 import type { FinderAssetOpportunityArchiveSort } from "../finder-asset-opportunity-metrics";
 import type { FinderRunLogSink } from "./finder-run-log";
-import type {
-    TypescriptFallbackGate,
-    TypescriptSimulationConcurrencyTracker,
-} from "../../backtest-endpoint-contract";
+import type { TypescriptSimulationConcurrencyTracker } from "../../backtest-endpoint-contract";
 import {
     runAssetOpportunitySearch,
     assertAssetOpportunityStrategySelection,
@@ -50,81 +47,15 @@ import {
     sortAssetOpportunityResults,
 } from "../finder-asset-opportunity-metrics";
 import { runServerAssetIsSearch } from "./server-asset-is-search";
-import { runServerAssetOpportunityFreshRustBatch } from "./finder-asset-opportunity-fresh-rust-batch";
-import {
-    resolveAssetOpportunityRustBatchFeatureConfig,
-    resolveAssetOpportunityRustBatchEligibility,
-    shouldUseRustAssetOpportunityBatch,
-} from "./finder-asset-opportunity-rust-batch";
-import {
-    createAssetOpportunityRustMultiBatchCoordinator,
-    type AssetOpportunityRustMultiBatchCoordinator,
-} from "./finder-asset-opportunity-multi-rust-batch";
-import { rustEngine, type RustCapabilities } from "../../rust-engine-client";
+import type { RustCapabilities } from "../../rust-engine-client";
 import { prepareClosedCandleData } from "../../backtest-executor";
 import { createServerFinderAssetOpportunityLoadContext } from "./server-finder-data-loader";
 import { parseSyntheticPairToken } from "../../synthetic-pair-token";
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 import type { AssetCandidateExitSignalCache } from "../finder-asset-candidate-execution";
-import {
-    getTypescriptEngineRequirementReasons,
-    hasRequiredRustCapabilities,
-} from "../../rust-settings-sanitizer";
 
 const ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY = 12;
-const ASSET_OPPORTUNITY_EVALUATION_CONCURRENCY = 4;
-const ASSET_OPPORTUNITY_STRATEGY_CONCURRENCY = 4;
-
-/**
- * Multi-asset batching is safe only when every execution phase can stay on
- * the Rust path. The specialized IS endpoint has a narrower contract than
- * the generic fresh/next-exit/OOS executor, so both fences are required
- * before concurrent asset/strategy fan-out is enabled.
- */
-export function resolveAssetOpportunityRustAllPathEligibility(input: {
-    featureConfig: ReturnType<typeof resolveAssetOpportunityRustBatchFeatureConfig>;
-    useRustEnginePreference?: boolean;
-    settings: BacktestSettings;
-    capitalSettings: CapitalSettings;
-    selectedStrategies: FinderSelectedStrategy[];
-    exitStrategyCandidates?: FinderSelectedStrategy[];
-    rustCapabilities?: RustCapabilities;
-}): boolean {
-    if (!input.selectedStrategies.every((selectedStrategy) => resolveAssetOpportunityRustBatchEligibility({
-        featureConfig: input.featureConfig,
-        useRustEnginePreference: input.useRustEnginePreference,
-        settings: input.settings,
-        capitalSettings: input.capitalSettings,
-        selectedStrategy,
-        exitStrategyCandidates: input.exitStrategyCandidates,
-        rustCapabilities: input.rustCapabilities,
-    }).eligible)) {
-        return false;
-    }
-    return getTypescriptEngineRequirementReasons(input.settings, input.rustCapabilities).length === 0;
-}
-
-export function createTypescriptFallbackGate(): TypescriptFallbackGate {
-    let tail = Promise.resolve();
-    return {
-        run<T>(operation: () => T | Promise<T>, signal?: AbortSignal): Promise<T> {
-            const previous = tail;
-            let release!: () => void;
-            tail = new Promise<void>((resolve) => {
-                release = resolve;
-            });
-            return previous.then(async () => {
-                if (signal?.aborted) {
-                    const error = new Error("Asset Opportunity cancelled");
-                    error.name = "AbortError";
-                    throw error;
-                }
-                return operation();
-            }).finally(() => release());
-        },
-    };
-}
 
 function mergeTimingIntervals(intervals: Array<readonly [number, number]>): number {
     if (intervals.length === 0) return 0;
@@ -188,8 +119,6 @@ export interface FinderAssetOpportunityRunInput {
     selectedStrategies: FinderSelectedStrategy[];
     exitStrategyCandidates?: FinderSelectedStrategy[];
     useRustEnginePreference?: boolean;
-    /** Optional benchmark route: keep the IS path on Rust but replay followups in TS. */
-    useRustEngineForFollowups?: boolean;
     /** Enable the bounded single-candidate freshness probe on server runs. */
     precheckFreshEntry?: boolean;
     rustCapabilities?: RustCapabilities;
@@ -215,8 +144,6 @@ export interface FinderAssetOpportunityRunInput {
     minFreshSupport: number;
     /** Reusable caches for a multi-iteration Asset Opportunity batch. */
     assetLoadContext?: BatchDatasetLoadContext;
-    /** Reuse Rust dataset cache IDs across sequential holdout iterations. */
-    rustBatchDatasetCache?: Map<string, Promise<string | null>>;
     /** Reuse normalized candidate parameter sets across batch holdout tasks. */
     paramSetCache?: Map<string, StrategyParams[]>;
     /** Chunked batch workers retain all strategy rows so the coordinator can rebuild top-10 diagnostics exactly. */
@@ -432,62 +359,7 @@ export async function runAssetOpportunityIteration(
         callbacks.onProgress({ ...progress, percent });
     };
     const secondaryDataCache = new Map<string, Promise<OHLCVData[]>>();
-    const rustBatchDatasetCache = input.rustBatchDatasetCache ?? new Map<string, Promise<string | null>>();
-    const rustBatchFeatureConfig = resolveAssetOpportunityRustBatchFeatureConfig();
-    let rustCapabilities = input.rustCapabilities;
-    let rustHealthAvailable = rustCapabilities !== undefined;
-    if (!rustHealthAvailable && input.useRustEnginePreference === true && rustBatchFeatureConfig.enabled) {
-        rustHealthAvailable = await rustEngine.checkHealth(input.abortSignal);
-        if (rustHealthAvailable) rustCapabilities = rustEngine.capabilities;
-    }
-    const rustBatchDensityEligible = shouldUseRustAssetOpportunityBatch(
-        input.candidatePoolSize,
-        Number(input.options.assetOpportunity?.evalLastBars ?? 0),
-    );
-    // Fresh-entry batching has one extra signal-generation phase per
-    // candidate. Keep that HTTP round trip for dense pools where it amortizes;
-    // sparse capped searches still use Rust for the in-sample scalar replay.
-    const freshEntryBatchDenseEnough = input.candidatePoolSize >= 8;
-    const freshEntryBatchEnabled = rustHealthAvailable
-        && input.useRustEnginePreference === true
-        && rustBatchFeatureConfig.enabled
-        && rustBatchDensityEligible
-        && freshEntryBatchDenseEnough
-        && input.settings.executionModel !== "next_close"
-        && hasRequiredRustCapabilities(rustCapabilities, input.settings)
-        && process.env.FINDER_ASSET_OPPORTUNITY_RUST_FRESH_BATCH !== "0"
-        && (input.exitStrategyCandidates?.length ?? 0) === 0;
-    // Every selected strategy must pass the same static fence before any
-    // concurrent fan-out is enabled. Runtime signal shape remains a dynamic
-    // gate in the dispatcher; the shared TypeScript gate below serializes any
-    // fallback caused by that shape or by a Rust transport/response failure.
-    const rustMultiAssetBatchEligible = process.env.FINDER_ASSET_OPPORTUNITY_RUST_MULTI_BATCH !== "0"
-        && rustHealthAvailable
-        && resolveAssetOpportunityRustAllPathEligibility({
-            featureConfig: rustBatchFeatureConfig,
-            useRustEnginePreference: input.useRustEnginePreference,
-            settings: input.settings,
-            capitalSettings: input.capitalSettings,
-            selectedStrategies,
-            exitStrategyCandidates: input.exitStrategyCandidates,
-            rustCapabilities,
-        });
-    const rustMultiAssetBatch: AssetOpportunityRustMultiBatchCoordinator | undefined = rustMultiAssetBatchEligible
-        ? createAssetOpportunityRustMultiBatchCoordinator(rustEngine, { datasetCache: rustBatchDatasetCache })
-        : undefined;
-    const typescriptFallbackGate = rustMultiAssetBatch
-        ? createTypescriptFallbackGate()
-        : undefined;
-    const evaluationConcurrency = rustMultiAssetBatch
-        ? ASSET_OPPORTUNITY_EVALUATION_CONCURRENCY
-        : 1;
-    const freshEntryBatch = (batchInput: Parameters<typeof runServerAssetOpportunityFreshRustBatch>[0]["input"]) =>
-        runServerAssetOpportunityFreshRustBatch({
-            input: batchInput,
-            datasetCache: rustBatchDatasetCache,
-            signal: input.abortSignal,
-            ...(rustMultiAssetBatch ? { rustMultiAssetBatch } : {}),
-        });
+    const rustCapabilities = input.rustCapabilities;
     const assetDataFetcher = selectedStrategies.some((strategy) => strategy.strategy.crossSymbolConfig) && input.getProvider
         ? {
             getProvider: input.getProvider,
@@ -532,8 +404,6 @@ export async function runAssetOpportunityIteration(
             rustCapabilities,
             typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
             ...(args.signal ? { abortSignal: args.signal } : {}),
-            ...(args.typescriptFallbackGate ? { typescriptFallbackGate: args.typescriptFallbackGate } : {}),
-            ...(args.rustMultiAssetBatch ? { rustMultiAssetBatch: args.rustMultiAssetBatch } : {}),
             confirmationStrategiesLoaded: true,
             fullSignalData: args.fullSignalData,
             ...(args.signalCache ? { signalCache: args.signalCache } : {}),
@@ -547,7 +417,6 @@ export async function runAssetOpportunityIteration(
                 : {}),
             ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
             ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
-            rustBatchDatasetCache,
             isCancelled: args.isCancelled,
             yieldControl: args.yieldControl,
             ...(args.retainSignals === true ? { retainSignals: true } : {}),
@@ -805,13 +674,9 @@ export async function runAssetOpportunityIteration(
                         minFreshSupport: input.minFreshSupport,
                         ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
                         useRustEnginePreference: input.useRustEnginePreference,
-                        useRustEngineForFollowups: input.useRustEngineForFollowups,
                         rustCapabilities,
                         typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
                         signal: input.abortSignal,
-                        ...(typescriptFallbackGate ? { typescriptFallbackGate } : {}),
-                        ...(rustMultiAssetBatch ? { rustMultiAssetBatch } : {}),
-                        ...(freshEntryBatchEnabled ? { freshEntryBatch } : {}),
                         ...(input.precheckFreshEntry !== false ? { precheckFreshEntry: true } : {}),
                         ...(input.signalCache ? { signalCache: input.signalCache } : {}),
                         exitSignalCache,
@@ -855,9 +720,7 @@ export async function runAssetOpportunityIteration(
                 );
                 return completedOutcome ?? runOutput.outcomes[0];
             };
-            const strategyConcurrency = rustMultiAssetBatch
-                ? ASSET_OPPORTUNITY_STRATEGY_CONCURRENCY
-                : 1;
+            const strategyConcurrency = 1;
             for (let strategyStart = 0; strategyStart < selectedStrategies.length; strategyStart += strategyConcurrency) {
                 const strategyEnd = Math.min(selectedStrategies.length, strategyStart + strategyConcurrency);
                 const outcomes = await Promise.all(
@@ -926,37 +789,25 @@ export async function runAssetOpportunityIteration(
         }
     };
 
-    // Evaluate bounded asset waves. Any later signal-shape or transport
-    // fallback is serialized by the shared TypeScript gate; dataset loads
-    // remain prefetched above.
-    for (let waveStart = 0; waveStart < totalAssets; waveStart += evaluationConcurrency) {
+    // Dataset loads remain prefetched above; evaluate assets in input order so
+    // progress and result emission stay deterministic.
+    for (let assetIndex = 0; assetIndex < totalAssets; assetIndex += 1) {
         if (isCancelled()) break;
-        const waveEvaluations: Promise<void>[] = [];
-        const waveEnd = Math.min(totalAssets, waveStart + evaluationConcurrency);
-        for (let assetIndex = waveStart; assetIndex < waveEnd; assetIndex += 1) {
-            if (isCancelled()) break;
-            const loadPromise = pendingAssetLoads.get(assetIndex);
-            if (!loadPromise) break;
-            const loadedAsset = await loadPromise;
-            pendingAssetLoads.delete(assetIndex);
-            completedAssetLoadIntervals.push([loadedAsset.startedAt, loadedAsset.finishedAt]);
-            if (!isCancelled()) scheduleAssetLoad(assetIndex + ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY);
-            waveEvaluations.push(processLoadedAsset(assetIndex, loadedAsset));
-        }
-        await Promise.all(waveEvaluations);
-        // Promise completion order is intentionally ignored. Emit each
-        // completed wave in input order so callers retain incremental updates
-        // without allowing concurrent assets to reorder the public stream.
-        for (let assetIndex = waveStart; assetIndex < waveEnd; assetIndex += 1) {
-            for (const result of assetResultsByIndex.get(assetIndex) ?? []) {
-                assetResults.push(result);
-                callbacks.onAssetResult({
-                    result,
-                    assetIndex,
-                    totalAssets,
-                    results: assetResults,
-                });
-            }
+        const loadPromise = pendingAssetLoads.get(assetIndex);
+        if (!loadPromise) break;
+        const loadedAsset = await loadPromise;
+        pendingAssetLoads.delete(assetIndex);
+        completedAssetLoadIntervals.push([loadedAsset.startedAt, loadedAsset.finishedAt]);
+        if (!isCancelled()) scheduleAssetLoad(assetIndex + ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY);
+        await processLoadedAsset(assetIndex, loadedAsset);
+        for (const result of assetResultsByIndex.get(assetIndex) ?? []) {
+            assetResults.push(result);
+            callbacks.onAssetResult({
+                result,
+                assetIndex,
+                totalAssets,
+                results: assetResults,
+            });
         }
     }
 

@@ -78,6 +78,7 @@ import {
 } from "../../batch-backtest/batch-dataset-loader-core";
 import { loadBuiltInStrategyByKey } from "../../../strategyRegistry";
 import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
+import { rustEngine, type RustCapabilities } from "../../rust-engine-client";
 import { requiresTypescriptEngine } from "../../rust-settings-sanitizer";
 import {
     clearServerFinderDatasetCaches,
@@ -618,6 +619,8 @@ export interface FinderUniverseServerRunInput {
      * See `shouldAttemptRust` for the Node-path semantics.
      */
     useRustEnginePreference?: boolean;
+    /** Rust health capabilities resolved once by the production HTTP handler. */
+    rustCapabilities?: RustCapabilities;
     /** Server owner abort signal, used by the post-IS OOS loader. */
     abortSignal?: AbortSignal;
     /**
@@ -860,6 +863,7 @@ export async function processFinderUniverseRun(
                     generateParamSets: input.generateParamSets ?? (() => []),
                     exitStrategyCandidates: input.exitStrategyCandidates,
                     useRustEnginePreference: input.useRustEnginePreference,
+                    rustCapabilities: input.rustCapabilities,
                 },
                 {
                     setProgress: (percent, text) => {
@@ -1006,6 +1010,7 @@ export async function processFinderUniverseRun(
                     loadOosData: loadOosSliced,
                     getProvider: input.getProvider,
                     useRustEnginePreference: input.useRustEnginePreference,
+                    rustCapabilities: input.rustCapabilities,
                     isCancelled: () => {
                         if (lostOwnership()) {
                             cancelled = true;
@@ -1279,6 +1284,7 @@ async function runFinderAssetOpportunityWorkerSweep(
             strategyKeys: input.selectedStrategies.map((strategy) => strategy.key),
             exitStrategyKeys: (input.exitStrategyCandidates ?? []).map((strategy) => strategy.key),
             useRustEnginePreference: input.useRustEnginePreference === true,
+            ...(input.rustCapabilities ? { rustCapabilities: input.rustCapabilities } : {}),
             providerBySymbol,
             candidatePoolSize: input.candidatePoolSize,
             minFreshSupport: input.minFreshSupport,
@@ -1913,7 +1919,7 @@ export async function processFinderAssetOpportunityBatchRun(
         input.capitalSettings as unknown as Record<string, unknown>,
     );
     const rustCanRun = input.useRustEnginePreference === true
-        && !requiresTypescriptEngine(input.settings)
+        && !requiresTypescriptEngine(input.settings, input.rustCapabilities)
         && isRustSupportedTradeSizingMode(resolvedCapitalSettings.sizingMode);
     const workerCapacity = input.batchTaskRunnerFactory
         ? canChunkAssets
@@ -1996,6 +2002,7 @@ export async function processFinderAssetOpportunityBatchRun(
                     strategyKeys: selectedStrategies.map((strategy) => strategy.key),
                     exitStrategyKeys: (input.exitStrategyCandidates ?? []).map((strategy) => strategy.key),
                     useRustEnginePreference: input.useRustEnginePreference === true,
+                    ...(input.rustCapabilities ? { rustCapabilities: input.rustCapabilities } : {}),
                     providerBySymbol: providerRecord,
                     candidatePoolSize: input.candidatePoolSize,
                     minFreshSupport: input.minFreshSupport,
@@ -2094,7 +2101,6 @@ export async function processFinderAssetOpportunityBatchRun(
         // runner above. symbolCount attaches the plain-dataset LRU so each
         // symbol loads once for the whole sequential sweep.
         const assetLoadContext = createServerFinderAssetOpportunityLoadContext(totalAssets);
-        const rustBatchDatasetCache = new Map<string, Promise<string | null>>();
         const paramSetCache = new Map<string, StrategyParams[]>();
         const throttleProgressWrite = createProgressEventThrottle();
 
@@ -2130,7 +2136,6 @@ export async function processFinderAssetOpportunityBatchRun(
                         ...input,
                         options: buildIterationOptions(holdoutBars),
                         assetLoadContext,
-                        rustBatchDatasetCache,
                         paramSetCache,
                     },
                     {
@@ -2484,6 +2489,10 @@ async function handleAssetOpportunityRunRequest(
     const owner = acquireRunOwnership();
     const runAbortController = new AbortController();
     abortController = runAbortController;
+    const rustCapabilities = await resolveServerRustCapabilities(
+        prepared.useRustEnginePreference,
+        runAbortController.signal,
+    );
 
     // Asset Opportunity reserves the real latest closed candle inside the
     // runner before applying options.dataSlice. Do not slice this loader;
@@ -2499,7 +2508,7 @@ async function handleAssetOpportunityRunRequest(
         prepared.capitalSettings as unknown as Record<string, unknown>,
     );
     const rustCanRunInWorkers = prepared.useRustEnginePreference === true
-        && !requiresTypescriptEngine(prepared.settings)
+        && !requiresTypescriptEngine(prepared.settings, rustCapabilities)
         && isRustSupportedTradeSizingMode(resolvedCapitalSettings.sizingMode);
     const singleRunWorkerCount = rustCanRunInWorkers && prepared.symbols.length >= 32
         ? Math.min(
@@ -2536,6 +2545,7 @@ async function handleAssetOpportunityRunRequest(
                 selectedStrategies: prepared.selectedStrategies,
                 exitStrategyCandidates: prepared.exitStrategyCandidates,
                 useRustEnginePreference: prepared.useRustEnginePreference,
+                rustCapabilities,
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
                 loadSecondaryDataset: (sym, intv, signal, context) =>
@@ -2587,6 +2597,10 @@ async function handleAssetOpportunityBatchRunRequest(
     const owner = acquireRunOwnership();
     const runAbortController = new AbortController();
     abortController = runAbortController;
+    const rustCapabilities = await resolveServerRustCapabilities(
+        prepared.useRustEnginePreference,
+        runAbortController.signal,
+    );
 
     const loadDatasetFullClosed = (
         sym: string,
@@ -2619,6 +2633,7 @@ async function handleAssetOpportunityBatchRunRequest(
                 selectedStrategies: prepared.selectedStrategies,
                 exitStrategyCandidates: prepared.exitStrategyCandidates,
                 useRustEnginePreference: prepared.useRustEnginePreference,
+                rustCapabilities,
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
                 loadSecondaryDataset: (sym, intv, signal, context) =>
@@ -2682,6 +2697,21 @@ function normalizeAssetOpportunityArchiveSort(
 
 function resolveAssetOpportunityArchiveSorts(): Array<FinderAssetOpportunityResortMetric | null> {
     return [null, ...getAssetOpportunityResortMetrics()];
+}
+
+/**
+ * Resolve Rust's advertised capabilities once per server-owned Finder run.
+ * Candidate execution must receive these capabilities before sanitizing
+ * settings; otherwise supported execution modes such as `next_open` are
+ * incorrectly stripped and every candidate is forced through TypeScript.
+ */
+async function resolveServerRustCapabilities(
+    useRustEnginePreference: boolean | undefined,
+    signal: AbortSignal,
+): Promise<RustCapabilities | undefined> {
+    if (useRustEnginePreference !== true) return undefined;
+    if (!await rustEngine.checkHealth(signal)) return undefined;
+    return rustEngine.capabilities;
 }
 
 // ---------------------------------------------------------------------------
@@ -2757,6 +2787,10 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
     const owner = acquireRunOwnership();
     const runAbortController = new AbortController();
     abortController = runAbortController;
+    const rustCapabilities = await resolveServerRustCapabilities(
+        useRustEnginePreference,
+        runAbortController.signal,
+    );
 
     // The browser `FinderManager.runUniverseFinder` loadDataset wrapper
     // applies sliceFinderDataWindow(data, options.dataSlice) before IS
@@ -2785,6 +2819,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
                 selectedStrategies,
                 exitStrategyCandidates,
                 useRustEnginePreference,
+                rustCapabilities,
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetWithSlice,
                 // OOS loads the RAW series and slices inside the wrapper

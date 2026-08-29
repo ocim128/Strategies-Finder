@@ -52,6 +52,8 @@ export interface FinderRunInput {
     exitStrategy?: Strategy;
     /** Candidate exit strategies Finder may sample for Exit Strategy Override. */
     exitStrategyCandidates?: FinderSelectedStrategy[];
+    /** Aborts an in-flight Rust batch when the current-chart run is stopped. */
+    signal?: AbortSignal;
 }
 
 export interface FinderRunCallbacks {
@@ -134,7 +136,7 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
 
     const confirmationStrategyKeys = readConfirmationStrategyKeys(settings.confirmationStrategies);
     await ensureConfirmationStrategiesLoaded(settings);
-    const flags = computeDatasetFlags(input.ohlcvData.length, settings, options, confirmationStrategyKeys.length > 0);
+    const flags = computeDatasetFlags(input.ohlcvData.length, options, confirmationStrategyKeys.length > 0);
 
     callbacks.setProgress(5, "Preparing parameter combinations...");
 

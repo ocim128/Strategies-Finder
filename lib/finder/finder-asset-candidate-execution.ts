@@ -54,10 +54,7 @@ import {
     type BacktestExitSignalCache,
 } from "../backtest-executor";
 import type { BacktestExecutorRequest } from "../backtest-executor";
-import type {
-    TypescriptFallbackGate,
-    TypescriptSimulationConcurrencyTracker,
-} from "../backtest-endpoint-contract";
+import type { TypescriptSimulationConcurrencyTracker } from "../backtest-endpoint-contract";
 import type { BacktestEndpointSelection } from "../strategies/backtest/backtest-engine";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
@@ -177,7 +174,6 @@ export async function runAssetCandidateBacktest(args: {
     rustCapabilities?: RustCapabilities;
     rustDiagnosticPhase?: RustDiagnosticPhase;
     signal?: AbortSignal;
-    typescriptFallbackGate?: TypescriptFallbackGate;
     typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
     /**
      * Closed-candle view the executor should use. Omitted for cross-symbol
@@ -220,6 +216,12 @@ export async function runAssetCandidateBacktest(args: {
         args.data,
         preResolvedSettings.tradeDirection,
     );
+    // Rust does not implement endpoint selection, and compact Rust results
+    // may omit trades. Keep the historical ranking path on TypeScript when it
+    // needs the capital-aware end-of-data adjustment; follow-up replays that
+    // retain trades can still use the generic Rust kernel.
+    const requiresTypescriptEndpointSelection =
+        backtestRunOptions.endpointSelectionLastDataTime !== undefined;
     if (args.needs.endpointSelection === true || args.needs.endpointSelection === "auto") {
         // Only the "auto" path can enable endpoint selection here; the
         // resolved-options builder decides. Attach initial capital so the
@@ -248,13 +250,12 @@ export async function runAssetCandidateBacktest(args: {
         context: {
             blockRange: null,
             annotatePolymarket: false,
-            engineMode: "auto",
+            engineMode: requiresTypescriptEndpointSelection ? "typescript" : "auto",
             nowSec: Math.floor(Date.now() / 1000),
             useRustEnginePreference: args.useRustEnginePreference,
             rustCapabilities: args.rustCapabilities,
             rustDiagnosticPhase: args.rustDiagnosticPhase ?? "is_candidate",
             signal: args.signal,
-            typescriptFallbackGate: args.typescriptFallbackGate,
             typescriptSimulationConcurrency: args.typescriptSimulationConcurrency,
         },
         ...(args.dataFetcher ? { dataFetcher: args.dataFetcher } : {}),
@@ -263,11 +264,20 @@ export async function runAssetCandidateBacktest(args: {
         ...(args.exitSignalCache ? { exitSignalCache: args.exitSignalCache } : {}),
         backtestRunOptions,
     });
+    const engineDiagnostics = args.useRustEnginePreference === true
+        && requiresTypescriptEndpointSelection
+        && output.engineUsed === "typescript"
+        && output.engineDiagnostics?.typescriptReason === "Rust was not requested"
+        ? {
+            ...(output.engineDiagnostics ?? { rustAttempted: false }),
+            typescriptReason: "endpoint selection requires TypeScript",
+        }
+        : output.engineDiagnostics;
     return {
         result: output.result,
         signals: output.signals,
         engineUsed: output.engineUsed,
-        engineDiagnostics: output.engineDiagnostics,
+        engineDiagnostics,
         backtestSettings,
         ...(output.endpointSelection ? { endpointSelection: output.endpointSelection } : {}),
     };

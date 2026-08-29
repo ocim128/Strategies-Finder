@@ -8,6 +8,7 @@ import {
     getTypescriptEngineRequirementReasons,
     RUST_EXIT_REASON_CAPABILITY,
     RUST_NEXT_OPEN_CAPABILITY,
+    RUST_RISK_COOLDOWN_CAPABILITY,
     RUST_RISK_MAX_HOLD_CAPABILITY,
     RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS,
 } from '../lib/rust-settings-sanitizer';
@@ -520,6 +521,22 @@ describe('Backtest settings compatibility', () => {
         expect(capabilitySettings.riskMaxHoldEnabled).to.equal(true);
         expect(capabilitySettings.riskMaxHoldBars).to.equal(4);
         expect(capabilitySettings.slippageBps).to.equal(5);
+
+        const cooldownSettings = {
+            riskCooldownEnabled: true,
+            riskCooldownBars: 2,
+        } as BacktestSettings;
+        expect(requiresTypescriptEngine(cooldownSettings)).to.equal(true);
+        expect(getTypescriptEngineRequirementReasons(
+            cooldownSettings,
+            new Set([RUST_RISK_COOLDOWN_CAPABILITY]),
+        )).to.deep.equal([]);
+        const capabilityCooldownSettings = sanitizeBacktestSettingsForRust(
+            cooldownSettings,
+            new Set([RUST_RISK_COOLDOWN_CAPABILITY]),
+        );
+        expect(capabilityCooldownSettings.riskCooldownEnabled).to.equal(true);
+        expect(capabilityCooldownSettings.riskCooldownBars).to.equal(2);
 
         expect(requiresTypescriptEngine({ allowSameBarExit: false })).to.equal(false);
     });
