@@ -31,6 +31,21 @@ design — that is the anti-leakage guard. Do not try to bypass it.
                              PAIR NAME ALPHABETICALLY - it carries NO information.
                              Do not mine it. candidatesAtTime (breadth) is fine to use.
 
+## Measured value scales on F2 (calibrate thresholds against these)
+    feat_hour    bars exist ONLY at hours {12: 99.9%, 16: ~0.07%, 20: ~0.003%}.
+                 "overnight/session" hour gates are meaningless on this surface.
+    feat_dow     getUTCDay(): 1=Monday ... 5=Friday. Values present are 1,2,3,4,5
+                 (no weekend bars). Monday=1, Friday=5.
+    feat_gapPct  p1 -11.8 | p10 -4.6 | p50 -1.4 | p90 -0.5 | p99 -0.25.
+                 Mostly NEGATIVE (median -1.4%). Thresholds like "< -0.2" keep 99.8%
+                 of rows; ">= 0.2" keeps ~0%. Selective gap gates need values like
+                 "< -3" (deep gap) or "> -0.6" (unusually small gap).
+    feat_atrPct  p50 ~2.1, p90 ~5.7 (see earlier smoke).
+    feat_candidatesAtTime  populated by the checker's rank join; sample showed ~5.
+    A rule matching ~0% or ~100% of candidates tests nothing - the checker will
+    report it, but the IDEA AGENT must calibrate thresholds to the scales above
+    BEFORE proposing.
+
 ## Running + reading the report
 - One checker run per rule; takes seconds to ~1 min.
 - PRIMARY comparison: the "rule vs control (per-trade, primary)" line - isMeanPnlDelta,
@@ -72,6 +87,29 @@ positive. On a candidate EDGE: stop mining that family, log it as EDGE, and hand
 the human for certification - the final strategy+rule must be re-run once from raw data
 through the real engine (see docs/trade-ledger.md, Discipline section). A checker EDGE
 is a candidate, never a conclusion.
+
+## Rule files across surfaces
+- Rule files are strategy-agnostic predicates over ledger features. The same q-file can
+  be re-run on any ledger folder (the folder is a CLI argument).
+- Verdicts are SURFACE-specific: NO-EDGE on F2 does not clone-block the same thesis on
+  a different surface - test it there and log it fresh under that surface's tag.
+- If featureVersion changes, old verdicts describe the old feature definitions; re-test
+  before trusting an old rule on a new featureVersion.
+
+## Long-horizon discipline (many batches)
+- Holdout budget: at most TWO finalist holdout views per batch, and at most ~30 TOTAL
+  on the same surface. Past ~15 views the surface's holdout is half-spent (treat
+  results as weak); past ~30 it is spent - confirm surviving rules on a NEW surface
+  instead of re-viewing this one.
+- The EDGE bar rises with testing volume: after ~50 logged ideas on one surface, a
+  candidate EDGE needs IS delta >= +0.5pp (not +0.3pp) to qualify as a finalist.
+  Testing hundreds of theses guarantees some pass any fixed bar by luck.
+- Family cap: at most 10 ideas per batch from the same feature pair (e.g. breadth x
+  drawdown). An edge that only exists at one exact threshold setting is suspicion of
+  noise; an edge with coherent neighbors is research.
+- Cross-surface replication: a rule family is only believable after it also tests
+  positive on at least one other surface (different strategy and/or config). Until
+  then it is a candidate, whatever the holdout said.
 
 ## Hygiene
 - Never edit or delete old idea-log lines. Never delete rule files of tested ideas.

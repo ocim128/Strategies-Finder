@@ -8,3 +8,13 @@ Q1|F2|no-chase: feat_entryRangePosition<=100|NO-EDGE +0.05 hold-0.01
 Q2|F2|vol-band: 1<feat_atrPct<5|NO-EDGE +0.10 hold+0.00
 Q3|F1|no-chase: feat_entryRangePosition<=100|NO-EDGE mean-tail-only
 Q4|F1|vol-band: 1<feat_atrPct<5|NO-EDGE mean-tail-only
+Q5|F2|quiet pair history with low breadth|NO-EDGE -0.1945pp hold-
+Q6|F2|high volatility plus gap down|NO-EDGE -1.7679pp hold-
+Q7|F2|session downside-gap dislocation|NO-EDGE -0.0004pp hold-
+Q9|F2|strong rally without positive gap|NO-EDGE -0.1985pp hold-
+Q10|F2|extended close with proven pair|NO-EDGE -0.1384pp hold-
+Q11|F2|weak pair history plus positive gap|NO-EDGE n/a hold-
+Q12|F2|quiet overnight breadth|NO-EDGE n/a hold-
+Q13|F2|compressed volatility after strength|NO-EDGE -0.2316pp hold-
+Q8|F2|crowded deep drawdown reversal|EDGE +1.2034pp hold+0.1106pp
+Q14|F2|week-edge drawdown|NO-EDGE -0.4125pp hold-
