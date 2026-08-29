@@ -334,6 +334,17 @@ describe("Asset Opportunity Rust batch contract", () => {
         expect(partition.tooLargeItemId).to.equal(undefined);
         expect(partition.chunks.length).to.be.greaterThan(1);
         expect(partition.chunks.flat().map((item) => item.id)).to.deep.equal(["0", "1", "2", "3"]);
+        for (const chunk of partition.chunks) {
+            expect(estimateAssetOpportunityRustBatchRequestBytes({
+                data,
+                items: chunk,
+                initialCapital: 10_000,
+                positionSizePercent: 100,
+                commissionPercent: 0,
+                baseSettings: eligibleSettings,
+                compact: false,
+            })).to.be.at.most(oneItemBytes * 2);
+        }
     });
 
     it("rejects missing, duplicate, unknown, and inconsistent result ids", () => {
