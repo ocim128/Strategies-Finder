@@ -100,6 +100,104 @@ describe("server Asset Opportunity signal cache", () => {
         expect(output.timingsMs.yielding).to.equal(0);
     });
 
+    it("skips the historical pass after a definitive non-fresh precheck", async () => {
+        let executeCalls = 0;
+        let precheckCalls = 0;
+        const strategy: Strategy = {
+            name: "Freshness Precheck Strategy",
+            description: "The precheck rejects the only candidate before history is evaluated.",
+            defaultParams: { marker: 1 },
+            paramLabels: { marker: "Marker" },
+            execute(data) {
+                executeCalls += 1;
+                const latest = data[data.length - 1];
+                return latest ? [{ time: latest.time, type: "buy", price: latest.close }] : [];
+            },
+        };
+
+        const output = await runServerAssetIsSearch({
+            ohlcvData: makeCandles(40),
+            symbol: "PRECHeck",
+            interval: "5m",
+            options: makeOptions(),
+            settings,
+            capitalSettings,
+            selectedStrategy: { key: "freshness_precheck_strategy", name: strategy.name, strategy },
+            generateParamSets: () => [{ marker: 1 }],
+            freshEntryPrecheck: async () => {
+                precheckCalls += 1;
+                return {
+                    fresh: false,
+                    engineUsed: "typescript" as const,
+                    rustAttempted: false,
+                };
+            },
+            useRustEnginePreference: false,
+            confirmationStrategiesLoaded: true,
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+        });
+
+        expect(precheckCalls).to.equal(1);
+        expect(executeCalls).to.equal(0);
+        expect(output.results).to.have.length(0);
+        expect(output.totalCandidatesEvaluated).to.equal(1);
+        expect(output.candidateEvaluationsAttempted).to.equal(0);
+        expect(output.freshEntryPrecheck?.fresh).to.equal(false);
+    });
+
+    it("skips trade simulation when the signal count cannot reach minTrades", async () => {
+        let executeCalls = 0;
+        let exitExecuteCalls = 0;
+        const strategy: Strategy = {
+            name: "Sparse Signal Strategy",
+            description: "Produces fewer possible entries than the configured trade floor.",
+            defaultParams: { marker: 1 },
+            paramLabels: { marker: "Marker" },
+            execute() {
+                executeCalls += 1;
+                return [];
+            },
+        };
+        const exitStrategy: Strategy = {
+            name: "Exit Strategy",
+            description: "Would be evaluated only after the entry signal floor is reached.",
+            defaultParams: { marker: 1 },
+            paramLabels: { marker: "Marker" },
+            execute() {
+                exitExecuteCalls += 1;
+                return [];
+            },
+        };
+
+        const output = await runServerAssetIsSearch({
+            ohlcvData: makeCandles(1_000),
+            symbol: "SPARSE",
+            interval: "5m",
+            options: {
+                ...makeOptions(),
+                tradeFilterEnabled: true,
+                minTrades: 10,
+            },
+            settings,
+            capitalSettings,
+            selectedStrategy: { key: "sparse_signal_strategy", name: strategy.name, strategy },
+            exitStrategyCandidates: [{ key: "exit_strategy", name: exitStrategy.name, strategy: exitStrategy }],
+            generateParamSets: () => [{ marker: 1 }],
+            useRustEnginePreference: false,
+            confirmationStrategiesLoaded: true,
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+        });
+
+        expect(executeCalls, "the strategy is generated once before the executor skips simulation").to.equal(1);
+        expect(exitExecuteCalls, "the exit override is not needed for a rejected candidate").to.equal(0);
+        expect(output.results).to.have.length(0);
+        expect(output.candidateEvaluationsAttempted).to.equal(1);
+        expect(output.candidateEvaluationsCompleted).to.equal(1);
+        expect(output.candidateEvaluationFailures).to.equal(0);
+    });
+
     it("reuses normalized single-run params across holdout searches", async () => {
         let generatorCalls = 0;
         const paramSetCache = new Map<string, StrategyParams[]>();

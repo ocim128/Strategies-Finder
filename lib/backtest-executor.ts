@@ -73,7 +73,11 @@ import {
     ensureConfirmationStrategiesLoaded,
 } from "./confirmation-signal-filter";
 import { executeBacktestStrategySignals } from "./strategy-signal-execution";
-import { timeKey } from "./strategies/backtest/backtest-utils";
+import {
+    allowsSignalAsEntry,
+    normalizeTradeDirection,
+    timeKey,
+} from "./strategies/backtest/backtest-utils";
 import {
     registerBacktestEdgeAnalysisInput,
     transferBacktestEdgeAnalysisInput,
@@ -119,6 +123,8 @@ export interface BacktestExecutorRequest {
         skipResultPostProcessing?: boolean;
         /** Internal Finder control-run option; applied after settings normalization. */
         forceDisableSignalExits?: boolean;
+        /** Skip trade simulation when primary signals cannot reach this entry count. */
+        minimumPotentialEntrySignals?: number;
     };
     dataFetcher?: CrossSymbolDataFetcher;
     crossSymbolInput?: {
@@ -434,6 +440,36 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     const primarySignals = req.backtestRunOptions?.forceDisableSignalExits === true
         ? signals.filter((signal) => signal.exitOnly !== true)
         : signals;
+
+    const minimumPotentialEntrySignals = req.backtestRunOptions?.minimumPotentialEntrySignals;
+    if (typeof minimumPotentialEntrySignals === "number"
+        && Number.isFinite(minimumPotentialEntrySignals)
+        && minimumPotentialEntrySignals > 0) {
+        const tradeDirection = normalizeTradeDirection(resolvedSettings);
+        let potentialEntrySignals = 0;
+        for (const signal of primarySignals) {
+            if (allowsSignalAsEntry(signal.type, tradeDirection)) potentialEntrySignals += 1;
+        }
+        if (potentialEntrySignals < minimumPotentialEntrySignals) {
+            const result = createEmptyBacktestResult();
+            result.exitControlDiagnostics = buildExitControlDiagnostics({
+                requestedSettings: backtestSettings as Record<string, unknown>,
+                resolvedSettings,
+                primarySignals: primarySignals.length,
+                exitOverrideSignals: 0,
+                mergedSignals: primarySignals,
+                mergedExitOnlySignals: 0,
+                exitStrategyLoaded: false,
+                skippedReason: "minimum_potential_entry_signals",
+            });
+            registerBacktestEdgeAnalysisInput(result, backtestData);
+            return finish(result, "typescript", primarySignals, {
+                rustAttempted: false,
+                typescriptReason: "minimum potential entry signals not reached",
+            });
+        }
+    }
+
     const exitOverrideResolution = await resolveExitStrategyOverrideSignals({
         data: backtestData,
         interval,

@@ -330,6 +330,65 @@ describe("Asset Opportunity runner", () => {
         expect(() => assertAssetOpportunityStrategySelection(selection)).to.not.throw();
     });
 
+    it("uses a bounded freshness probe before a single-candidate historical search", async () => {
+        const executedDataLengths: number[] = [];
+        const strategy: Strategy = {
+            name: "Bounded Freshness Probe",
+            description: "Never emits a signal, so the historical pass is unnecessary.",
+            defaultParams: { marker: 1 },
+            paramLabels: { marker: "Marker" },
+            execute(data) {
+                executedDataLengths.push(data.length);
+                return [];
+            },
+        };
+        const probeSettings: BacktestSettings = {
+            ...settings,
+            executionModel: "next_open",
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 12,
+            riskCooldownEnabled: true,
+            riskCooldownBars: 2,
+            maxOpenTrades: 1,
+        };
+        const data = makeCandles(Array.from({ length: 200 }, (_, index) => 100 + index));
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({
+                maxRuns: 1,
+                assetOpportunity: {
+                    evalLastBars: 20,
+                    oosIgnoreLastBars: 0,
+                    oosMeasurementMode: "next_exit",
+                } as FinderAssetOpportunityOptions,
+            }),
+            settings: probeSettings,
+            selectedStrategy: { key: "bounded_probe", name: strategy.name, strategy },
+            precheckFreshEntry: true,
+            assets: [{ symbol: "PROBE", data }],
+            runIsSearch: async (args) => {
+                const empty = runBacktestForAssetTest(args.ohlcvData, [], args.settings);
+                return {
+                    results: [{
+                        key: "bounded_probe",
+                        name: strategy.name,
+                        params: { marker: 1 },
+                        result: empty,
+                        selectionResult: empty,
+                        endpointAdjusted: false,
+                        endpointRemovedTrades: 0,
+                    }],
+                    totalCandidatesEvaluated: 1,
+                };
+            },
+        }), makeCallbacks());
+
+        expect(output.results).to.have.length(0);
+        expect(output.outcomes[0]!.kind).to.equal("no_fresh_entry");
+        expect(executedDataLengths).to.have.length(1);
+        expect(executedDataLengths[0]).to.be.lessThan(data.length);
+        expect(output.outcomes[0]!.diagnostics?.freshEntryRechecks).to.equal(1);
+    });
+
     it("replays a compact winner to capture median in-sample TP speed", async () => {
         const data = makeCandles(Array.from({ length: 16 }, () => 100)).map((candle) => ({
             ...candle,
@@ -944,7 +1003,7 @@ describe("Asset Opportunity runner", () => {
         }
     });
 
-    it("bounds next-exit freshness replay when max-hold closes prior positions", async () => {
+    it("bounds next-exit freshness and OOS replay when max-hold closes prior positions", async () => {
         const observedLengths: number[] = [];
         const strategy: Strategy = {
             name: "Bounded Next Exit Replay",
@@ -984,7 +1043,7 @@ describe("Asset Opportunity runner", () => {
         expect(observedLengths[0]).to.equal(20, "in-sample search uses the configured evaluation cap");
         expect(observedLengths.slice(1, -1)[0]).to.be.at.least(87, "candidate max-hold extends the bounded replay window");
         expect(observedLengths.slice(1, -1)[0]).to.be.lessThan(fullLength - 3, "freshness replay uses the bounded recent window");
-        expect(observedLengths.at(-1)).to.equal(fullLength, "winner next-exit measurement keeps the authoritative full replay");
+        expect(observedLengths.at(-1)).to.be.lessThan(fullLength, "winner next-exit measurement uses the bounded OOS replay");
     });
 
     it("runs OOS only for the winner, not for every top-K candidate", async () => {

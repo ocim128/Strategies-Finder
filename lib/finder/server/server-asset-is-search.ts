@@ -39,6 +39,10 @@ import type {
 } from "../../backtest-endpoint-contract";
 import type { FinderOptions, FinderResult } from "../../types/finder";
 import type { FinderSelectedStrategy } from "../finder-runner";
+import type {
+    AssetOpportunityFreshEntryPrecheck,
+    AssetOpportunityFreshEntryPrecheckResult,
+} from "../finder-asset-opportunity-runner";
 import type { CrossSymbolDataFetcher } from "../../cross-symbol-runtime";
 import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
 import { serializeParams } from "../finder-param-math";
@@ -103,6 +107,8 @@ export interface ServerAssetIsSearchInput {
     signalCache?: AssetOpportunitySignalCache;
     /** Per-asset cache for deterministic Exit Strategy Override signals. */
     exitSignalCache?: AssetCandidateExitSignalCache;
+    /** Optional bounded probe used to reject a single-candidate search early. */
+    freshEntryPrecheck?: AssetOpportunityFreshEntryPrecheck;
     abortSignal?: AbortSignal;
     rustBatchClient?: AssetOpportunityRustBatchClient;
     rustMultiAssetBatch?: AssetOpportunityRustMultiBatchCoordinator;
@@ -207,6 +213,20 @@ function canReuseFullSignalsForWindow(
     );
 }
 
+function canUseSignalTradeCountPrefilter(input: ServerAssetIsSearchInput): boolean {
+    return input.options.tradeFilterEnabled === true
+        && Number.isFinite(input.options.minTrades)
+        && Math.max(0, input.options.minTrades) > 0
+        && !input.dataFetcher
+        && !input.selectedStrategy.strategy.crossSymbolConfig
+        && !input.selectedStrategy.strategy.polymarket1sConfig
+        && input.settings.strategyTimeframeEnabled !== true
+        && !(input.settings.confirmationStrategies?.length)
+        // Entry-evaluation strategies can produce trades without primary
+        // entry signals, so a signal-count upper bound is not valid for them.
+        && !input.selectedStrategy.strategy.evaluate;
+}
+
 function buildParamSetCacheKey(
     selectedStrategy: FinderSelectedStrategy,
     entryDefaults: StrategyParams,
@@ -255,6 +275,8 @@ export interface ServerAssetIsSearchOutput {
         typescriptCompletedRuns: number;
         typescriptReasons: Array<{ reason: string; runs: number }>;
     };
+    /** Present when the bounded freshness probe rejected the only candidate. */
+    freshEntryPrecheck?: AssetOpportunityFreshEntryPrecheckResult;
 }
 
 /**
@@ -318,6 +340,63 @@ export async function runServerAssetIsSearch(
         if (paramCacheKey) input.paramSetCache!.set(paramCacheKey, paramSets);
     }
     const parameterGenerationMs = performance.now() - parameterGenerationStartedAt;
+
+    // Cache each exit lib's normalized param space so both the freshness
+    // precheck and the per-candidate loop use the same deterministic choice.
+    const exitParamSetsByKey = new Map<string, StrategyParams[]>();
+    const getExitParamSets = (selection: FinderSelectedStrategy): StrategyParams[] => {
+        const cached = exitParamSetsByKey.get(selection.key);
+        if (cached) return cached;
+        const exitDefaults = getFinderStrategyParamDefaults(selection.strategy);
+        const exitGenerated = input.generateParamSets(exitDefaults, options);
+        const exitNormalized = normalizeFinderCandidateParamSets(selection.strategy, exitGenerated);
+        const exitParamSets = exitNormalized.length > 0
+            ? exitNormalized
+            : [{ ...selection.strategy.defaultParams }];
+        exitParamSetsByKey.set(selection.key, exitParamSets);
+        return exitParamSets;
+    };
+
+    if (input.freshEntryPrecheck && paramSets.length === 1) {
+        const exitStrategy = input.exitStrategyCandidates?.[0];
+        const exitParams = exitStrategy
+            ? getExitParamSets(exitStrategy)[0]
+            : undefined;
+        const precheckStartedAt = performance.now();
+        const precheck = await input.freshEntryPrecheck({
+            entryParams: paramSets[0]!,
+            ...(exitStrategy ? { exitStrategyKey: exitStrategy.key } : {}),
+            ...(exitStrategy ? { exitStrategyParams: exitParams ?? {} } : {}),
+        });
+        if (!precheck.skipped && !precheck.fresh) {
+            const backtestMs = performance.now() - precheckStartedAt;
+            return {
+                results: [],
+                totalCandidatesEvaluated: paramSets.length,
+                candidateEvaluationsAttempted: 0,
+                candidateEvaluationsCompleted: 0,
+                candidateEvaluationFailures: 0,
+                signalCacheHits: 0,
+                signalCacheMisses: 0,
+                freshEntryPrecheck: precheck,
+                timingsMs: {
+                    total: performance.now() - totalStartedAt,
+                    parameterGeneration: parameterGenerationMs,
+                    backtest: backtestMs,
+                    yielding: 0,
+                },
+                engineUsage: {
+                    rustAttemptedRuns: precheck.rustAttempted ? 1 : 0,
+                    rustCompletedRuns: precheck.engineUsed === "rust" ? 1 : 0,
+                    rustFallbackRuns: precheck.engineUsed === "typescript" && precheck.rustAttempted ? 1 : 0,
+                    typescriptCompletedRuns: precheck.engineUsed === "typescript" ? 1 : 0,
+                    typescriptReasons: precheck.typescriptReason
+                        ? [{ reason: precheck.typescriptReason, runs: 1 }]
+                        : [],
+                },
+            };
+        }
+    }
 
     const rustBatchFeatureConfig = resolveAssetOpportunityRustBatchFeatureConfig();
     const rustBatchDensityEligible = shouldUseRustAssetOpportunityBatch(
@@ -399,35 +478,18 @@ export async function runServerAssetIsSearch(
     let rustFallbackRuns = 0;
     let typescriptCompletedRuns = 0;
     const typescriptReasonCounts = new Map<string, number>();
-    // Cache each exit lib's normalized param space so the per-candidate loop
-    // does not regenerate the full space (up to `maxRuns` param objects) once
-    // per entry candidate — O(maxRuns^2) allocations otherwise. Generation is
-    // deterministic here because the Asset path always sets a finite
-    // `options.randomSeed`, so the cached list equals what every in-loop call
-    // would produce. Mirrors `exitParamSetsByKey` in the browser
-    // `finder-runner.ts` and `finder-runner-universe.ts` runners.
-    const exitParamSetsByKey = new Map<string, StrategyParams[]>();
-    const getExitParamSets = (selection: FinderSelectedStrategy): StrategyParams[] => {
-        const cached = exitParamSetsByKey.get(selection.key);
-        if (cached) return cached;
-        const exitDefaults = getFinderStrategyParamDefaults(selection.strategy);
-        const exitGenerated = input.generateParamSets(exitDefaults, options);
-        const exitNormalized = normalizeFinderCandidateParamSets(selection.strategy, exitGenerated);
-        const exitParamSets = exitNormalized.length > 0
-            ? exitNormalized
-            : [{ ...selection.strategy.defaultParams }];
-        exitParamSetsByKey.set(selection.key, exitParamSets);
-        return exitParamSets;
-    };
     const signalWindow = input.fullSignalData
         ? resolveSignalWindow(input.fullSignalData, input.ohlcvData)
         : null;
     const canReuseFullSignals = canReuseFullSignalsForWindow(input, signalWindow);
+    const canPrefilterTradeCount = canUseSignalTradeCountPrefilter(input);
+    const minimumTrades = canPrefilterTradeCount
+        ? Math.max(0, input.options.minTrades)
+        : 0;
 
     for (let index = 0; index < paramSets.length; index++) {
         throwIfAborted(input.abortSignal);
         if (input.isCancelled()) break;
-        candidateEvaluationsAttempted += 1;
         const entryParams = paramSets[index]!;
 
         // Exit Strategy Override: sample one exit strategy + param set per
@@ -462,6 +524,7 @@ export async function runServerAssetIsSearch(
         }
         const candidateStartedAt = performance.now();
         try {
+            candidateEvaluationsAttempted += 1;
             // Shared candidate execution (risk overrides, exit override
             // injection, executor settings, and the compact endpoint-selection
             // / trade-history option matrix) lives in
@@ -493,6 +556,9 @@ export async function runServerAssetIsSearch(
                 closedCandleDataOverride: input.ohlcvData,
                 ...(preGeneratedSignals ? { preGeneratedSignals } : {}),
                 ...(input.exitSignalCache ? { exitSignalCache: input.exitSignalCache } : {}),
+                ...(canPrefilterTradeCount
+                    ? { minimumPotentialEntrySignals: minimumTrades }
+                    : {}),
                 needs: {
                     compact: true,
                     trades: false,

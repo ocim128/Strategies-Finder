@@ -139,7 +139,10 @@ function resolveFreshSignalWarmupBars(
         }
     };
     inspect(settings as unknown as Record<string, unknown>);
-    for (const candidate of candidates) inspect(candidate.params);
+    for (const candidate of candidates) {
+        inspect(candidate.params);
+        if (candidate.exitStrategyParams) inspect(candidate.exitStrategyParams);
+    }
     return Math.min(
         FRESH_SIGNAL_WARMUP_MAX_BARS,
         Math.max(FRESH_SIGNAL_WARMUP_MIN_BARS, Math.ceil(largestPeriod * 3)),
@@ -177,6 +180,28 @@ function resolveBoundedNextExitReplayBars(
             : 1
         : 0;
     return Math.max(4, Math.ceil(maxHoldBars) + cooldownBars + 3);
+}
+
+/**
+ * A bounded next-exit OOS replay needs the indicator warmup before the last
+ * bounded execution-state window, followed by the hidden holdout itself.
+ * Keep the full series available to the metrics extractor, but avoid sending
+ * all historical candles through the strategy and trade engine.
+ */
+function resolveBoundedNextExitOosReplayData(args: {
+    fullClosed: OHLCVData[];
+    hiddenBars: number;
+    candidates: readonly FinderResult[];
+    settings: BacktestSettings;
+}): OHLCVData[] | undefined {
+    const boundedExecutionBars = resolveBoundedNextExitReplayBars(args.settings, args.candidates);
+    if (boundedExecutionBars === null) return undefined;
+    const hiddenBars = Math.max(0, Math.ceil(args.hiddenBars));
+    const replayBars = boundedExecutionBars
+        + resolveFreshSignalWarmupBars(args.candidates, args.settings)
+        + hiddenBars;
+    if (replayBars >= args.fullClosed.length) return undefined;
+    return args.fullClosed.slice(-replayBars);
 }
 
 /**
@@ -270,6 +295,8 @@ export type AssetIsSearch = (args: {
     signal?: AbortSignal;
     typescriptFallbackGate?: TypescriptFallbackGate;
     rustMultiAssetBatch?: AssetOpportunityRustMultiBatchCoordinator;
+    /** Optional bounded probe used to reject a single-candidate search early. */
+    freshEntryPrecheck?: AssetOpportunityFreshEntryPrecheck;
 }) => Promise<{
     results: FinderResult[];
     /** Total candidates considered before the returned top-K reduction. */
@@ -299,6 +326,8 @@ export type AssetIsSearch = (args: {
         typescriptCompletedRuns: number;
         typescriptReasons: Array<{ reason: string; runs: number }>;
     };
+    /** Present when the bounded freshness probe rejected the only candidate. */
+    freshEntryPrecheck?: AssetOpportunityFreshEntryPrecheckResult;
 }>;
 
 export interface AssetOpportunitySearchDiagnostics {
@@ -397,6 +426,21 @@ export type AssetOpportunityFreshEntryBatchExecutor = (
     input: AssetOpportunityFreshEntryBatchInput,
 ) => Promise<Map<string, AssetOpportunityFreshEntryBatchEvaluation> | null>;
 
+export interface AssetOpportunityFreshEntryPrecheckResult {
+    fresh: boolean;
+    /** True when the bounded probe could not be formed; the full search runs. */
+    skipped?: boolean;
+    engineUsed: "rust" | "typescript";
+    rustAttempted: boolean;
+    typescriptReason?: string;
+}
+
+export type AssetOpportunityFreshEntryPrecheck = (args: {
+    entryParams: StrategyParams;
+    exitStrategyKey?: string;
+    exitStrategyParams?: StrategyParams;
+}) => Promise<AssetOpportunityFreshEntryPrecheckResult>;
+
 /**
  * The full per-run input.
  */
@@ -438,6 +482,8 @@ export interface AssetOpportunityRunInput {
     exitSignalCache?: AssetCandidateExitSignalCache;
     /** Optional server-side batch executor for signal_close fresh rechecks. */
     freshEntryBatch?: AssetOpportunityFreshEntryBatchExecutor;
+    /** Enable the bounded single-candidate freshness probe on server runs. */
+    precheckFreshEntry?: boolean;
     /** Recompute full scalar analytics once for the selected winner. */
     recomputeWinnerAnalytics?: boolean;
     /** Asset list (each independently searched). */
@@ -968,6 +1014,93 @@ async function searchOneAsset(args: {
         && (recheckData.length === slicedHistorical.length || canReuseCappedNextBarSignals);
     const canReuseIsSignalsForFresh = canReuseIsSignalsForFreshModel && canReuseFreshSignals;
 
+    // A random search with one candidate has no ranking decision to preserve.
+    // Probe that candidate on the same bounded freshness window used by the
+    // later recheck first; a non-fresh probe proves that the historical pass
+    // cannot produce an Asset Opportunity result. Keep this server-only and
+    // execution-aware so the browser path and multi-candidate ranking remain
+    // unchanged.
+    const canPrecheckFreshEntry = input.precheckFreshEntry === true
+        && input.options.mode === "random"
+        && Number(input.options.maxRuns) <= 1
+        && executionModel !== "signal_close"
+        && (input.options.dataSlice ?? "all") === "all"
+        && !input.dataFetcher
+        && !selectedStrategy.strategy.crossSymbolConfig
+        && !selectedStrategy.strategy.polymarket1sConfig
+        && input.settings.strategyTimeframeEnabled !== true
+        && !(input.settings.confirmationStrategies?.length);
+    const freshEntryPrecheck: AssetOpportunityFreshEntryPrecheck | undefined = canPrecheckFreshEntry
+        ? async ({ entryParams, exitStrategyKey, exitStrategyParams }) => {
+            const candidate: FinderResult = {
+                key: selectedStrategy.key,
+                name: selectedStrategy.name,
+                params: entryParams,
+                ...(exitStrategyKey
+                    ? { exitStrategyKey, exitStrategyParams: exitStrategyParams ?? {} }
+                    : {}),
+                result: createEmptyBacktestResult(),
+                selectionResult: createEmptyBacktestResult(),
+                endpointAdjusted: false,
+                endpointRemovedTrades: 0,
+            };
+            const boundedNextExitReplayBars = needsExecutableFreshRecheck
+                ? resolveBoundedNextExitReplayBars(input.settings, [candidate])
+                : null;
+            const signalData = resolveFreshSignalWindow({
+                boundaryData: recheckData,
+                slicedHistorical,
+                signalLookbackBars: needsExecutableFreshRecheck
+                    ? (boundedNextExitReplayBars ?? 0)
+                    : Math.max(2, resolveAssetOpportunityFreshnessBars(input.settings) + 1),
+                dataSlice: input.options.dataSlice ?? "all",
+                candidates: [candidate],
+                settings: input.settings,
+                crossSymbol: false,
+                canUseBoundedSignalWindow: (
+                    !needsExecutableFreshRecheck
+                    || boundedNextExitReplayBars !== null
+                ),
+            });
+            if (!signalData) {
+                return {
+                    fresh: true,
+                    skipped: true,
+                    engineUsed: "typescript",
+                    rustAttempted: false,
+                };
+            }
+            const evaluation = await regenerateSignalsAndDetectFresh({
+                candidate,
+                strategy: preparedStrategy,
+                fullClosed: recheckData,
+                signalData,
+                ...(needsExecutableFreshRecheck ? { replayData: signalData } : {}),
+                symbol,
+                interval: input.interval,
+                settings: input.settings,
+                capitalSettings: input.capitalSettings,
+                options: assetOptions,
+                exitStrategyCandidates: input.exitStrategyCandidates,
+                exitSignalCache,
+                useRustEnginePreference: followupUseRustEnginePreference,
+                rustDiagnosticPhase: "fresh_entry",
+                rustCapabilities: input.rustCapabilities,
+                typescriptFallbackGate: input.typescriptFallbackGate,
+                signal: input.signal,
+                primarySignalPrefilter: true,
+            });
+            return {
+                fresh: evaluation.freshStatus === "fresh",
+                engineUsed: evaluation.engineUsed,
+                rustAttempted: evaluation.rustAttempted,
+                ...(evaluation.typescriptReason
+                    ? { typescriptReason: evaluation.typescriptReason }
+                    : {}),
+            };
+        }
+        : undefined;
+
     // 5. Run the in-sample search on the historical window. The `runIsSearch`
     // seam decouples this leaf from the browser-bound `finder-runner` module.
     const inSampleStartedAt = performance.now();
@@ -990,6 +1123,7 @@ async function searchOneAsset(args: {
         signal: input.signal,
         ...(input.typescriptFallbackGate ? { typescriptFallbackGate: input.typescriptFallbackGate } : {}),
         ...(input.rustMultiAssetBatch ? { rustMultiAssetBatch: input.rustMultiAssetBatch } : {}),
+        ...(freshEntryPrecheck ? { freshEntryPrecheck } : {}),
     });
     diagnostics.timingsMs.inSampleSearch = performance.now() - inSampleStartedAt;
     diagnostics.candidatesEvaluated = finderOutput.totalCandidatesEvaluated ?? finderOutput.results.length;
@@ -1005,6 +1139,21 @@ async function searchOneAsset(args: {
     }
     if (finderOutput.engineUsage) {
         mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, finderOutput.engineUsage);
+    }
+    if (finderOutput.freshEntryPrecheck && !finderOutput.freshEntryPrecheck.fresh) {
+        diagnostics.freshEntryRechecks = 1;
+        diagnostics.freshEntryExecutions = 1;
+        diagnostics.timingsMs.freshEntryRechecks = finderOutput.timingsMs?.backtest ?? 0;
+        const precheck = finderOutput.freshEntryPrecheck;
+        mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
+            rustAttemptedRuns: precheck.rustAttempted ? 1 : 0,
+            rustCompletedRuns: precheck.engineUsed === "rust" ? 1 : 0,
+            rustFallbackRuns: precheck.engineUsed === "typescript" && precheck.rustAttempted ? 1 : 0,
+            typescriptCompletedRuns: precheck.engineUsed === "typescript" ? 1 : 0,
+            typescriptReasons: precheck.typescriptReason
+                ? [{ reason: precheck.typescriptReason, runs: 1 }]
+                : [],
+        });
     }
 
     const eligibleCandidateIndexes = finderOutput.results
@@ -1447,11 +1596,26 @@ async function searchOneAsset(args: {
             const boundaryEntryTime = fillIndex >= 0
                 ? fullClosed[fillIndex]?.time ?? null
                 : null;
+            const boundedNextExitOosReplayData = !input.dataFetcher
+                && !selectedStrategy.strategy.crossSymbolConfig
+                && !selectedStrategy.strategy.polymarket1sConfig
+                && input.settings.strategyTimeframeEnabled !== true
+                && !(input.settings.confirmationStrategies?.length)
+                ? resolveBoundedNextExitOosReplayData({
+                    fullClosed,
+                    hiddenBars: oosIgnoreLastBars,
+                    candidates: [winnerCandidate],
+                    settings: input.settings,
+                })
+                : undefined;
             const winnerNextExit = await runCandidateNextExitOnAsset({
                 candidate: winnerCandidate,
                 strategy: preparedStrategy,
                 symbol,
                 fullClosed,
+                ...(boundedNextExitOosReplayData
+                    ? { replayData: boundedNextExitOosReplayData }
+                    : {}),
                 boundaryEntryTime,
                 direction: winnerFresh.direction,
                 interval: input.interval,
@@ -1777,7 +1941,7 @@ function buildFreshEntryEvaluation(args: {
  *
  * Returns the parallel-array entry consumed by `reduceAssetTopKToResult`.
  */
-function regenerateSignalsAndDetectFresh(args: {
+async function regenerateSignalsAndDetectFresh(args: {
     candidate: FinderResult;
     strategy: Strategy;
     fullClosed: OHLCVData[];
@@ -1796,10 +1960,59 @@ function regenerateSignalsAndDetectFresh(args: {
     rustCapabilities?: RustCapabilities;
     typescriptFallbackGate?: TypescriptFallbackGate;
     signal?: AbortSignal;
+    /** Generate primary signals first so exit override work can be skipped. */
+    primarySignalPrefilter?: boolean;
 }): Promise<AssetFreshEvaluation> {
     const needsExecutableFreshRecheck = args.options.assetOpportunity?.oosMeasurementMode === "next_exit";
     const signalData = args.signalData ?? args.fullClosed;
     const replayData = args.replayData ?? signalData;
+    const primarySignalPrefilter = args.primarySignalPrefilter === true && args.signalData !== undefined;
+    let preGeneratedSignals: Signal[] | undefined;
+    if (primarySignalPrefilter) {
+        const primary = await executeAssetCandidate({
+            candidate: args.candidate,
+            strategy: args.strategy,
+            data: signalData,
+            symbol: args.symbol,
+            interval: args.interval,
+            settings: args.settings,
+            capitalSettings: args.capitalSettings,
+            options: args.options,
+            exitStrategyCandidates: args.exitStrategyCandidates,
+            exitSignalCache: args.exitSignalCache,
+            dataFetcher: args.dataFetcher,
+            useRustEnginePreference: args.useRustEnginePreference,
+            rustDiagnosticPhase: args.rustDiagnosticPhase,
+            rustCapabilities: args.rustCapabilities,
+            signal: args.signal,
+            signalOnly: true,
+            ignoreExitOverride: true,
+        });
+        const primarySignals = alignSignalsToBoundary(primary.signals, args.fullClosed);
+        const possibleFreshEntry = detectFreshEntry({
+            result: createEmptyBacktestResult(),
+            candles: args.fullClosed,
+            settings: args.settings,
+            signals: primarySignals,
+            freshnessBars: resolveAssetOpportunityFreshnessBars(args.settings),
+        });
+        if (possibleFreshEntry.freshStatus !== "fresh") {
+            return buildFreshEntryEvaluation({
+                result: createEmptyBacktestResult(),
+                candles: args.fullClosed,
+                settings: args.settings,
+                signals: primarySignals,
+                engineUsed: primary.engineUsed,
+                rustAttempted: primary.engineDiagnostics?.rustAttempted === true,
+                ...(primary.engineDiagnostics?.typescriptReason
+                    ? { typescriptReason: primary.engineDiagnostics.typescriptReason }
+                    : {}),
+            });
+        }
+        if (replayData === signalData) {
+            preGeneratedSignals = primary.signals;
+        }
+    }
     return executeAssetCandidate({
         candidate: args.candidate,
         strategy: args.strategy,
@@ -1816,6 +2029,7 @@ function regenerateSignalsAndDetectFresh(args: {
         rustDiagnosticPhase: args.rustDiagnosticPhase,
         rustCapabilities: args.rustCapabilities,
         signal: args.signal,
+        ...(preGeneratedSignals ? { preGeneratedSignals } : {}),
         signalOnly: args.settings.executionModel !== "signal_close" && !needsExecutableFreshRecheck,
     }).then(({ result, signals, engineUsed, engineDiagnostics }) => {
         const boundarySignals = args.signalData
@@ -1939,6 +2153,8 @@ async function executeAssetCandidate(args: {
     typescriptFallbackGate?: TypescriptFallbackGate;
     typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
     signalOnly?: boolean;
+    ignoreExitOverride?: boolean;
+    preGeneratedSignals?: Signal[];
     fullAnalytics?: boolean;
 }): Promise<{
     result: BacktestResult;
@@ -1950,9 +2166,13 @@ async function executeAssetCandidate(args: {
         typescriptReason?: string;
     };
 }> {
-    const combinedParams = withExitStrategyBaseParams(args.candidate.params, args.candidate.exitStrategyParams ?? {});
-    const exitStrategy = args.candidate.exitStrategyKey
-        ? args.exitStrategyCandidates?.find((candidate) => candidate.key === args.candidate.exitStrategyKey)?.strategy
+    const exitStrategyKey = args.candidate.exitStrategyKey;
+    const useExitOverride = args.ignoreExitOverride !== true && exitStrategyKey !== undefined;
+    const combinedParams = args.ignoreExitOverride === true
+        ? args.candidate.params
+        : withExitStrategyBaseParams(args.candidate.params, args.candidate.exitStrategyParams ?? {});
+    const exitStrategy = useExitOverride
+        ? args.exitStrategyCandidates?.find((candidate) => candidate.key === exitStrategyKey)?.strategy
         : undefined;
     const normalizedParams = normalizeFinderCandidateParams(
         args.strategy,
@@ -1976,10 +2196,10 @@ async function executeAssetCandidate(args: {
         settings: args.settings,
         capitalSettings: args.capitalSettings,
         options: args.options,
-        ...(args.candidate.exitStrategyKey
+        ...(useExitOverride
             ? {
                 exitOverride: {
-                    key: args.candidate.exitStrategyKey,
+                    key: exitStrategyKey,
                     params: args.candidate.exitStrategyParams ?? {},
                 },
             }
@@ -1993,6 +2213,7 @@ async function executeAssetCandidate(args: {
         typescriptFallbackGate: args.typescriptFallbackGate,
         typescriptSimulationConcurrency: args.typescriptSimulationConcurrency,
         ...(args.strategy.crossSymbolConfig ? {} : { closedCandleDataOverride: args.data }),
+        ...(args.preGeneratedSignals ? { preGeneratedSignals: args.preGeneratedSignals } : {}),
         needs: {
             // Asset Opportunity retains scalar winner metrics plus trades for
             // endpoint adjustment. The compact engine avoids constructing the
@@ -2022,6 +2243,7 @@ async function runCandidateNextExitOnAsset(args: {
     strategy: Strategy;
     symbol: string;
     fullClosed: OHLCVData[];
+    replayData?: OHLCVData[];
     boundaryEntryTime: Time | null;
     direction: FinderAssetDirection;
     interval: string;
@@ -2047,7 +2269,7 @@ async function runCandidateNextExitOnAsset(args: {
         const { result, engineUsed, engineDiagnostics } = await executeAssetCandidate({
             candidate: args.candidate,
             strategy: args.strategy,
-            data: args.fullClosed,
+            data: args.replayData ?? args.fullClosed,
             symbol: args.symbol,
             interval: args.interval,
             settings: args.settings,

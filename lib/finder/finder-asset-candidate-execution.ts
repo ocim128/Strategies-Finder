@@ -186,6 +186,8 @@ export async function runAssetCandidateBacktest(args: {
     closedCandleDataOverride?: OHLCVData[];
     /** Fully prepared primary signals; skips strategy signal generation. */
     preGeneratedSignals?: Signal[];
+    /** Skip trade simulation when primary signals cannot reach this count. */
+    minimumPotentialEntrySignals?: number;
     /** Per-asset cache for deterministic Exit Strategy Override signals. */
     exitSignalCache?: AssetCandidateExitSignalCache;
     needs: AssetCandidateBacktestNeeds;
@@ -225,6 +227,12 @@ export async function runAssetCandidateBacktest(args: {
         if (backtestRunOptions.endpointSelectionLastDataTime !== undefined) {
             backtestRunOptions.endpointSelectionInitialCapital = preResolvedCapital.initialCapital;
         }
+    }
+    const minimumPotentialEntrySignals = args.minimumPotentialEntrySignals;
+    if (typeof minimumPotentialEntrySignals === "number"
+        && Number.isFinite(minimumPotentialEntrySignals)
+        && minimumPotentialEntrySignals > 0) {
+        backtestRunOptions.minimumPotentialEntrySignals = minimumPotentialEntrySignals;
     }
     const output = await executeBacktest({
         ohlcvData: args.data,

@@ -190,6 +190,8 @@ export interface FinderAssetOpportunityRunInput {
     useRustEnginePreference?: boolean;
     /** Optional benchmark route: keep the IS path on Rust but replay followups in TS. */
     useRustEngineForFollowups?: boolean;
+    /** Enable the bounded single-candidate freshness probe on server runs. */
+    precheckFreshEntry?: boolean;
     rustCapabilities?: RustCapabilities;
     typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
     /** Worker-local full-signal cache shared by the batch holdout tasks. */
@@ -536,6 +538,7 @@ export async function runAssetOpportunityIteration(
             fullSignalData: args.fullSignalData,
             ...(args.signalCache ? { signalCache: args.signalCache } : {}),
             ...(args.exitSignalCache ? { exitSignalCache: args.exitSignalCache } : {}),
+            ...(args.freshEntryPrecheck ? { freshEntryPrecheck: args.freshEntryPrecheck } : {}),
             ...(!input.generateParamSets
                 && input.paramSetCache
                 && input.options.mode === "random"
@@ -809,6 +812,7 @@ export async function runAssetOpportunityIteration(
                         ...(typescriptFallbackGate ? { typescriptFallbackGate } : {}),
                         ...(rustMultiAssetBatch ? { rustMultiAssetBatch } : {}),
                         ...(freshEntryBatchEnabled ? { freshEntryBatch } : {}),
+                        ...(input.precheckFreshEntry !== false ? { precheckFreshEntry: true } : {}),
                         ...(input.signalCache ? { signalCache: input.signalCache } : {}),
                         exitSignalCache,
                         // The server IS pass retains compact trade history and
