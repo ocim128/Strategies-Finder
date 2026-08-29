@@ -328,8 +328,10 @@ export function resolveAssetOpportunityRustBatchEligibility(
 }
 
 function jsonByteLength(value: unknown): number {
-    return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    return JSON_TEXT_ENCODER.encode(JSON.stringify(value)).byteLength;
 }
+
+const JSON_TEXT_ENCODER = new TextEncoder();
 
 export function estimateAssetOpportunityRustBatchRequestBytes(args: {
     data: OHLCVData[];
@@ -374,30 +376,35 @@ export function partitionAssetOpportunityRustBatchItems(args: {
 }): { chunks: AssetOpportunityRustBatchItem[][]; tooLargeItemId?: string } {
     const chunks: AssetOpportunityRustBatchItem[][] = [];
     let current: AssetOpportunityRustBatchItem[] = [];
-    for (const item of args.items) {
-        const candidate = [...current, item];
-        const bytes = estimateAssetOpportunityRustBatchRequestBytes({
-            data: args.data,
-            items: candidate,
-            initialCapital: args.initialCapital,
-            positionSizePercent: args.positionSizePercent,
-            commissionPercent: args.commissionPercent,
-            baseSettings: args.baseSettings,
-            ...(args.sizing ? { sizing: args.sizing } : {}),
-            compact: false,
-            ...(args.skipDrawdown === true ? { skipDrawdown: true } : {}),
-            ...(args.skipSharpeRatio === true ? { skipSharpeRatio: true } : {}),
-            ...(args.cacheId ? { cacheId: args.cacheId } : {}),
-        });
-        if (bytes > args.maxRequestBytes && current.length === 0) {
+    const scaffoldBytes = estimateAssetOpportunityRustBatchRequestBytes({
+        data: args.data,
+        items: [],
+        initialCapital: args.initialCapital,
+        positionSizePercent: args.positionSizePercent,
+        commissionPercent: args.commissionPercent,
+        baseSettings: args.baseSettings,
+        ...(args.sizing ? { sizing: args.sizing } : {}),
+        compact: false,
+        ...(args.skipDrawdown === true ? { skipDrawdown: true } : {}),
+        ...(args.skipSharpeRatio === true ? { skipSharpeRatio: true } : {}),
+        ...(args.cacheId ? { cacheId: args.cacheId } : {}),
+    });
+    let currentBytes = scaffoldBytes;
+    const itemBytes = args.items.map((item) => jsonByteLength(item));
+    for (let index = 0; index < args.items.length; index += 1) {
+        const item = args.items[index]!;
+        const candidateBytes = currentBytes + itemBytes[index]! + (current.length > 0 ? 1 : 0);
+        if (candidateBytes > args.maxRequestBytes && current.length === 0) {
             return { chunks: [], tooLargeItemId: item.id };
         }
-        if (bytes > args.maxRequestBytes) {
+        if (candidateBytes > args.maxRequestBytes) {
             chunks.push(current);
             current = [item];
-        } else {
-            current = candidate;
+            currentBytes = scaffoldBytes + itemBytes[index]!;
+            continue;
         }
+        current.push(item);
+        currentBytes = candidateBytes;
     }
     if (current.length > 0) chunks.push(current);
     return { chunks };
