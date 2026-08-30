@@ -70,6 +70,7 @@ import { createEmptyBacktestResult } from "../strategies/backtest/position-stats
 import { registerSp500TopMeanRoutes, type BatchOwnerLocks } from "./sp500-top-mean-vite-routes";
 import { isValidRunId } from "./sp500-top-mean-artifact-store";
 import { getV8HeapLimitMb, resolveServerHeapWarning } from "../server-heap-guard";
+import { releaseIfOwner as releaseResearchWorkloadIfOwner, tryAcquire as tryAcquireResearchWorkload } from "../server-research-job-coordinator";
 
 /**
  * Phase 3 MAX_ACTIVE: compute canonical universe counts from the submitted
@@ -1532,6 +1533,11 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     // (synchronously, after the cheap input validation) makes the gate
     // authoritative; the `try/finally` releases ownership if a later step
     // throws before `processRunBatch` takes over.
+    const nextOwner = runOwnerGen + 1;
+    const coordinatorToken = tryAcquireResearchWorkload("batch", runId || `batch-${nextOwner}`);
+    if (!coordinatorToken) {
+        throw new HttpStatusError(409, "A Ledger Sweep is running. Stop it before starting Batch.");
+    }
     const owner = ++runOwnerGen;
     runOwner = owner;
     runOwnerRunId = runId;
@@ -1623,6 +1629,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
             runOwnerRunId = null;
         }
         if (abortController === runAbort) abortController = null;
+        releaseResearchWorkloadIfOwner(coordinatorToken);
     }
 }
 
@@ -1930,6 +1937,11 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
     if (!hasStoredMineArtifacts()) {
         throw new HttpStatusError(400, "Run Batch before OPEN_SCORE USD; no artifacts on server.");
     }
+    const nextOwner = analysisOwnerGen + 1;
+    const coordinatorToken = tryAcquireResearchWorkload("batch", `batch-analysis-${nextOwner}`);
+    if (!coordinatorToken) {
+        throw new HttpStatusError(409, "A Ledger Sweep is running. Stop it before starting analysis.");
+    }
     const owner = ++analysisOwnerGen;
     analysisOwner = owner;
     analysisAbortController = new AbortController();
@@ -1960,6 +1972,7 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
             analysisOwner = RUN_OWNER_NONE;
         }
         analysisAbortController = null;
+        releaseResearchWorkloadIfOwner(coordinatorToken);
     }
 }
 
@@ -2192,12 +2205,16 @@ function registerBatchRoutes(middlewares: any): void {
         const batchOwnerLocks: BatchOwnerLocks = {
             isBusy: () => runOwner !== RUN_OWNER_NONE || analysisOwner !== RUN_OWNER_NONE,
             acquire: (runId) => {
+                const researchToken = tryAcquireResearchWorkload("batch", runId || `batch-analysis-${runOwnerGen + 1}`);
+                if (!researchToken) {
+                    throw new HttpStatusError(409, "A Ledger Sweep is running. Stop it before starting TOP_MEAN.");
+                }
                 const ownerGen = ++runOwnerGen;
                 const analysisGen = ++analysisOwnerGen;
                 runOwner = ownerGen;
                 runOwnerRunId = runId;
                 analysisOwner = analysisGen;
-                return { runOwner: ownerGen, analysisOwner: analysisGen };
+                return { runOwner: ownerGen, analysisOwner: analysisGen, researchToken };
             },
             releaseIfStillOwner: (token) => {
                 if (runOwner === token.runOwner) {
@@ -2207,6 +2224,7 @@ function registerBatchRoutes(middlewares: any): void {
                 if (analysisOwner === token.analysisOwner) {
                     analysisOwner = RUN_OWNER_NONE;
                 }
+                if (token.researchToken) releaseResearchWorkloadIfOwner(token.researchToken);
             },
         };
         registerSp500TopMeanRoutes(middlewares, {

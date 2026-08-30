@@ -27,6 +27,7 @@ import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { parseJsonPreservingNonFinite } from "../json-utils";
 import { buildBatchRunLedgerBodyField } from "./trade-ledger-wire";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
+import { tradeLedgerSweepService } from "./trade-ledger-sweep-service";
 import { getBatchDatasetCacheStats } from "./batch-backtest-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { extractBatchServerError, postBatchNdjson } from "./batch-ndjson-post";
@@ -368,6 +369,7 @@ export class BatchBacktestService {
         this.serverRunActive = this.activeServerRunId !== null;
         this.updateSummary(dom);
         this.initialized = true;
+        tradeLedgerSweepService.init();
         // Reattach to a server-side run that started before page load.
         void this.reattachToInProgressServerRun();
         void this.reattachToInProgressTopMeanRun();

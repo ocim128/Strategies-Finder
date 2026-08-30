@@ -1,0 +1,1 @@
+export default (row) => row.feat_candidatesAtTime >= 25 && row.feat_candidatesAtTime <= 50 && row.feat_return20 <= -2.5 && row.feat_return20 >= -6.0 && row.feat_atrPct >= 1.8 && row.feat_atrPct <= 3.5;

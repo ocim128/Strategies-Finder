@@ -43,6 +43,7 @@ import {
 } from "./sp500-top-mean-coordinator-engine";
 import { getRunDir, isValidRunId, loadManifest } from "./sp500-top-mean-artifact-store";
 import { validateTopMeanRequestLimits } from "./sp500-top-mean-request-limits";
+import type { ResearchWorkloadToken } from "../server-research-job-coordinator";
 
 /**
  * Adapter over the Batch plugin's owner-lock counters. The TOP_MEAN run handler
@@ -71,6 +72,7 @@ export interface BatchOwnerLocks {
 export interface BatchOwnerToken {
     readonly runOwner: number;
     readonly analysisOwner: number;
+    readonly researchToken?: ResearchWorkloadToken;
 }
 
 /**

@@ -36,6 +36,21 @@ candidates — the replay checker replaced that approach entirely.
   `tests/feature-dom-contracts.spec.ts` enforces against the partial like every other
   Batch id.
 
+## Ledger Rule Sweep
+
+The Batch tab also provides a server-owned **Ledger Rule Sweep** section. Select a
+completed, replay-eligible ledger folder to replay every trusted rule in
+`archive/mining-ledger/rules/` without sending ledger rows, reports, or rule source
+to the browser. The UI exposes only scalar verdicts and bounded diagnostics; the
+full reports and durable diagnostics remain under the selected folder's
+`sweeps/<timestamp>_<runId>/` directory.
+
+The sweep's routes, load-once versus isolated-per-rule memory decision, artifact
+schemas, run ownership, and operational limits are documented in
+[`docs/trade-ledger-sweep.md`](trade-ledger-sweep.md). The existing checker and
+[`archive/mining-ledger/test-all-rules.bat`](../archive/mining-ledger/test-all-rules.bat)
+remain the CLI fallback and regression oracle.
+
 ## Run folder layout
 
 ```

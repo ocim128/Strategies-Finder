@@ -138,3 +138,113 @@ Q131|F2|quality carry trio|NO-EDGE -0.1237pp hold-
 Q132|F2|young pair clean gap|NO-EDGE -0.0878pp hold-
 Q133|F2|quiet instrument sigma event|NO-EDGE -0.3035pp hold-
 Q134|F2|crowd laggard close|NO-EDGE -0.6309pp hold-
+Q135|F2|proven pair midweek volatility|NO-EDGE -0.2237pp hold-
+Q136|F2|weak pair week-edge volatility|NO-EDGE -0.3713pp hold-
+Q137|F2|experienced extended quiet|NO-EDGE -0.4437pp hold-
+Q138|F2|experienced midweek drawdown|NO-EDGE -0.1688pp hold-
+Q139|F2|small gap Friday calm|NO-EDGE -0.2460pp hold-
+Q140|F2|deep gap week edges|NO-EDGE -0.2340pp hold-
+Q141|F2|quiet moderate volatility midweek|NO-EDGE -0.2729pp hold-
+Q142|F2|broad calm week edges|NO-EDGE -0.0468pp hold-
+Q143|F2|extended close experienced weekday|NO-EDGE -0.2007pp hold-
+Q144|F2|proven pair positive trend|NO-EDGE -0.2880pp hold-
+Q145|F2|churning volatility no trend|NO-EDGE +0.0507pp hold-
+Q146|F2|ensemble vote two of three|NO-EDGE -0.2298pp hold-
+Q147|F2|conviction scaling piecewise|NO-EDGE +0.0761pp hold-
+Q148|F2|noise drowned gap|NO-EDGE -0.2555pp hold-
+Q149|F2|failed gap distribution|NO-EDGE -0.1022pp hold-
+Q150|F2|extreme record crowd|NO-EDGE -0.3563pp hold-
+Q151|F2|violent Monday reprice|NO-EDGE +0.5922pp hold-
+Q152|F2|cursed pair capitulation|NO-EDGE +1.6554pp hold-
+Q153|F2|veteran rally momentum|NO-EDGE -0.3840pp hold-
+Q154|F2|quality or confirmation union|NO-EDGE -0.1737pp hold-
+Q155|F2|quiet middle breadth volatility|NO-EDGE -0.1133pp hold-
+Q156|F2|lower wick discount pinbar|EDGE +0.8138pp hold+0.3086pp
+Q157|F2|unbiased coinflip pair breadth|NO-EDGE n/a hold-
+Q158|F2|Tuesday trendless compression|NO-EDGE -0.1500pp hold-
+Q159|F2|gap against uptrend rubberband|NO-EDGE -0.1604pp hold-
+Q160|F2|veteran pair idiosyncratic signal|NO-EDGE -0.0829pp hold-
+Q161|F2|Wednesday midpoint equilibrium|NO-EDGE -0.6239pp hold-
+Q162|F2|compressed ATR relative gap shock|NO-EDGE -0.0182pp hold-
+Q163|F2|macro breadth contained range absorption|NO-EDGE -0.1739pp hold-
+Q164|F2|low beta high sample mild dip|NO-EDGE -0.1646pp hold-
+Q165|F2|volume surge range absorption|NO-EDGE -0.2336pp hold-
+Q166|F2|high pair volume low market flow|NO-EDGE -0.1253pp hold-
+Q167|F2|signal volume volatility expansion|NO-EDGE -0.3677pp hold-
+Q168|F2|midweek volume surge seasoned pairs|NO-EDGE -0.4370pp hold-
+Q169|F2|compressed volatility moderate volume flow|NO-EDGE -0.1954pp hold-
+Q170|F2|volume flush stationary spread|NO-EDGE -0.2446pp hold-
+Q171|F2|Monday volume orderly gap|NO-EDGE -0.1707pp hold-
+Q172|F2|extreme volume low turnover pairs|NO-EDGE -1.0045pp hold-
+Q173|F2|high volume cushioned gap thrust|NO-EDGE -0.2771pp hold-
+Q174|F2|active volume orderly pullback|NO-EDGE -0.4855pp hold-
+Q175|F2|Monday controlled volatility envelope|NO-EDGE -0.2533pp hold-
+Q176|F2|volatility-scaled drawdown depth|NO-EDGE -0.1363pp hold-
+Q177|F2|volatility compression thrust expansion|NO-EDGE -0.0262pp hold-
+Q178|F2|proven pair steady volatility band|NO-EDGE -0.2462pp hold-
+Q179|F2|low volatility macro dispersion reversion|NO-EDGE -0.2788pp hold-
+Q180|F2|midweek elevated volatility absorption|NO-EDGE +0.0940pp hold-
+Q181|F2|gap to ATR stretch in breadth|NO-EDGE -0.3715pp hold-
+Q182|F2|Friday low volatility squaring|NO-EDGE -0.1907pp hold-
+Q183|F2|seasoned pair trend volatility channel|NO-EDGE -0.5185pp hold-
+Q184|F2|interquartile volatility orderly absorption|NO-EDGE -0.5237pp hold-
+Q185|F2|Monday controlled volatility envelope|NO-EDGE -0.2533pp hold-
+Q186|F2|volatility-scaled drawdown depth|NO-EDGE -0.1363pp hold-
+Q187|F2|volatility compression thrust expansion|NO-EDGE -0.0262pp hold-
+Q188|F2|proven pair steady volatility band|NO-EDGE -0.2462pp hold-
+Q189|F2|low volatility macro dispersion reversion|NO-EDGE -0.2788pp hold-
+Q190|F2|midweek elevated volatility absorption|NO-EDGE +0.0940pp hold-
+Q191|F2|gap to ATR stretch in breadth|NO-EDGE -0.3715pp hold-
+Q192|F2|Friday low volatility squaring|NO-EDGE -0.1907pp hold-
+Q193|F2|seasoned pair trend volatility channel|NO-EDGE -0.5185pp hold-
+Q194|F2|interquartile volatility orderly absorption|NO-EDGE -0.5237pp hold-
+Q195|F2|primitive breadth thrust|NO-EDGE -0.3150pp hold-
+Q196|F2|primitive quiet stationary|NO-EDGE +0.2586pp hold-
+Q197|F2|primitive seasoned low volatility|NO-EDGE -0.1538pp hold-
+Q198|F2|primitive Wednesday drawdown|NO-EDGE -0.3730pp hold-
+Q199|F2|primitive gap reversal thrust|NO-EDGE -0.5444pp hold-
+Q200|F2|primitive Tuesday breadth|NO-EDGE -0.3474pp hold-
+Q201|F2|primitive low volatility drawdown|NO-EDGE -0.1806pp hold-
+Q202|F2|primitive experienced uptrend|NO-EDGE -0.2349pp hold-
+Q203|F2|primitive calm gap and volatility|NO-EDGE -0.0961pp hold-
+Q204|F2|primitive Thursday inside close|NO-EDGE -0.0998pp hold-
+Q205|F2|wednesday calm sweet spot|NO-EDGE -0.1796pp hold-
+Q206|F2|trend pullback crack|NO-EDGE -0.8354pp hold-
+Q207|F2|calm overnight shock|NO-EDGE -0.3281pp hold-
+Q208|F2|unproven deep decline|EDGE +4.2597pp hold+0.3360pp
+Q209|F2|failing pair late week|NO-EDGE -0.0719pp hold-
+Q210|F2|aged trend exhaustion|NO-EDGE -0.2180pp hold-
+Q211|F2|quality without crowd|NO-EDGE -0.1955pp hold-
+Q212|F2|midlife clean gap|NO-EDGE +0.0358pp hold-
+Q213|F2|strength confirmation ignition|NO-EDGE -0.5112pp hold-
+Q214|F2|blank record dislocation|NO-EDGE n/a hold-
+Q215|F2|close above prior high primitive|NO-EDGE -0.1459pp hold-
+Q216|F2|deep decline primitive|EDGE +3.5203pp hold+0.1078pp
+Q217|F2|crowded primitive|NO-EDGE -0.4038pp hold-
+Q218|F2|quiet primitive|NO-EDGE -0.0977pp hold-
+Q219|F2|proven record primitive|NO-EDGE -0.1707pp hold-
+Q220|F2|failing record primitive|NO-EDGE +1.3675pp hold-
+Q221|F2|veteran primitive|NO-EDGE -0.2362pp hold-
+Q222|F2|deep gap primitive|EDGE +0.7848pp hold-0.0001pp
+Q223|F2|high vol primitive|NO-EDGE -1.8054pp hold-
+Q224|F2|wednesday primitive|NO-EDGE -0.2487pp hold-
+Q225|F2|storm survivor momentum|NO-EDGE -2.8413pp hold-
+Q226|F2|quality momentum|NO-EDGE -0.4263pp hold-
+Q227|F2|gap and go continuation|NO-EDGE -0.3838pp hold-
+Q228|F2|grind not blowoff band|NO-EDGE -0.1431pp hold-
+Q229|F2|idiosyncratic momentum quiet|NO-EDGE -0.6174pp hold-
+Q230|F2|early week momentum|NO-EDGE +0.1166pp hold-
+Q231|F2|normal vol momentum|NO-EDGE -0.3276pp hold-
+Q232|F2|quality momentum clean sessions|NO-EDGE -0.3248pp hold-
+Q233|F2|any horizon momentum union|NO-EDGE -0.2098pp hold-
+Q234|F2|overnight strength primitive|NO-EDGE -0.0773pp hold-
+Q235|F2|overnight z positive|NO-EDGE n/a hold-
+Q236|F2|both horizon dislocation|NO-EDGE -0.0687pp hold-
+Q237|F2|win rate z significance|NO-EDGE -0.1661pp hold-
+Q238|F2|momentum sharpe positive|NO-EDGE -0.1108pp hold-
+Q239|F2|crash speed extreme|NO-EDGE -1.1678pp hold-
+Q240|F2|extreme crowd tail|NO-EDGE -0.4923pp hold-
+Q241|F2|four marker three vote|NO-EDGE -0.0955pp hold-
+Q242|F2|pre breakout band|NO-EDGE -0.0747pp hold-
+Q243|F2|absolute move tail|NO-EDGE +0.4498pp hold-
+Q244|F2|collapse efficiency ratio|NO-EDGE n/a hold-

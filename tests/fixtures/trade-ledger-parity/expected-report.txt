@@ -1,0 +1,24 @@
+trade-ledger-checker (replay, ledger v2)
+folder: tests/fixtures/trade-ledger-parity
+ledgerVersion: 2 featureVersion: 2
+candidates: total=6 admitted=3 rejectedByRule=3 blocked=0 rightCensored=0
+note: per-pair replay admits trades from ALL candidates (rule applied before ordering); pairs are independent in the engine — there is NO global cross-pair capital replay.
+note: the PRIMARY rule-vs-control comparison is per-trade pnl deltas; compounded total return and max drawdown are scale-dependent at large per-trade means and are informational only.
+ranks joined: 0/6 rows matched signal-ranks.jsonl
+rule: golden-rule.ts
+kept: 3/6 (50.0000% of candidates)
+RULE golden-rule.ts kept=3/6 (50.0000%) isMeanPnl=3.5000% isMedianPnl=3.5000% isHitRate=100.0000% isMeanPnlVsControl=+1.5150pp isMedianPnlVsControl=+1.5150pp
+
+IS slice (first 60% of global calendar range; split at 1970-01-01T00:50:00.000Z): trades=2
+  meanPnl=3.5000% medianPnl=3.5000% hitRate=100.0000%
+  scale-dependent (compounded): totalReturn=7.1000% maxDrawdown=0.0000%
+HOLDOUT slice (last 40%) — sealed - finalists only: trades=1
+  meanPnl=-2.0000% medianPnl=-2.0000% hitRate=0.0000%
+  scale-dependent (compounded): totalReturn=-2.0000% maxDrawdown=2.0000%
+random control: 200 seeded replay filters (base seed 42; two-pass keep-rate calibration targeting 3 admits)
+  controlIsMeanPnl=1.9850% controlIsMedianPnl=1.9850% (per-trade, mean across controls)
+  scale-dependent (compounded): meanIsTotalReturn=5.8689% medianIsTotalReturn=6.0076%
+rule vs control (per-trade, primary): isMeanPnlDelta=+1.5150pp isMedianPnlDelta=+1.5150pp holdoutMeanPnlDelta=-2.6524pp holdoutMedianPnlDelta=-2.7753pp
+
+per-pair admitted vs total candidates:
+  GOLDEN+PAIR: candidates=6 admitted=3 rejectedByRule=3 blocked=0 rightCensored=0

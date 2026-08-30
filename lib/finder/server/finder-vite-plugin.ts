@@ -94,6 +94,11 @@ import {
     type FinderStreamEvent,
 } from "./finder-stream-types";
 import { resolveFinderUniverseHeapWarning } from "./finder-server-heap-guard";
+import {
+    releaseIfOwner as releaseResearchWorkloadIfOwner,
+    tryAcquire as tryAcquireResearchWorkload,
+    type ResearchWorkloadToken,
+} from "../../server-research-job-coordinator";
 import { rememberLoopbackOriginFromRequest } from "../../local-api-transport";
 import {
     clampFinderOptions,
@@ -2486,7 +2491,9 @@ async function handleAssetOpportunityRunRequest(
 ): Promise<void> {
     const prepared = await prepareAssetOpportunityRunPayload(body);
 
-    const owner = acquireRunOwnership();
+    const reservation = acquireFinderRunOwnership(prepared.runId);
+    const owner = reservation.owner;
+    try {
     const runAbortController = new AbortController();
     abortController = runAbortController;
     const rustCapabilities = await resolveServerRustCapabilities(
@@ -2569,6 +2576,9 @@ async function handleAssetOpportunityRunRequest(
             owner,
         ),
     });
+    } finally {
+        releaseResearchWorkloadIfOwner(reservation.researchToken);
+    }
 }
 
 interface FinderAssetOpportunityBatchRequestBody extends FinderAssetOpportunityRequestBody {
@@ -2594,7 +2604,9 @@ async function handleAssetOpportunityBatchRunRequest(
     const batchRange = prepared.batchRange!;
     const archiveSort = ASSET_OPPORTUNITY_ALL_SORTS;
 
-    const owner = acquireRunOwnership();
+    const reservation = acquireFinderRunOwnership(prepared.runId);
+    const owner = reservation.owner;
+    try {
     const runAbortController = new AbortController();
     abortController = runAbortController;
     const rustCapabilities = await resolveServerRustCapabilities(
@@ -2662,6 +2674,9 @@ async function handleAssetOpportunityBatchRunRequest(
             archiveRoot,
         ),
     });
+    } finally {
+        releaseResearchWorkloadIfOwner(reservation.researchToken);
+    }
 }
 
 /**
@@ -2697,6 +2712,22 @@ function normalizeAssetOpportunityArchiveSort(
 
 function resolveAssetOpportunityArchiveSorts(): Array<FinderAssetOpportunityResortMetric | null> {
     return [null, ...getAssetOpportunityResortMetrics()];
+}
+
+function acquireFinderRunOwnership(runId: string): { owner: number; researchToken: ResearchWorkloadToken } {
+    if (runOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "A Finder run is already running. Use Stop first.");
+    }
+    const researchToken = tryAcquireResearchWorkload("finder", runId);
+    if (!researchToken) {
+        throw new HttpStatusError(409, "A Ledger Sweep is running. Stop it before starting Finder.");
+    }
+    try {
+        return { owner: acquireRunOwnership(), researchToken };
+    } catch (error) {
+        releaseResearchWorkloadIfOwner(researchToken);
+        throw error;
+    }
 }
 
 /**
@@ -2784,7 +2815,9 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
         throw new HttpStatusError(409, "Finder run was stopped before it started.");
     }
 
-    const owner = acquireRunOwnership();
+    const reservation = acquireFinderRunOwnership(runId);
+    const owner = reservation.owner;
+    try {
     const runAbortController = new AbortController();
     abortController = runAbortController;
     const rustCapabilities = await resolveServerRustCapabilities(
@@ -2834,6 +2867,9 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
             owner,
         ),
     });
+    } finally {
+        releaseResearchWorkloadIfOwner(reservation.researchToken);
+    }
 }
 
 function rememberLocalApiOriginFromRequest(req: { headers?: Record<string, unknown>; socket?: { localAddress?: string; localPort?: number } | null }): void {

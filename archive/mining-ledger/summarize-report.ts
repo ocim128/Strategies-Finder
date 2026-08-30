@@ -1,32 +1,19 @@
 /**
  * Summarize a test-all-rules sweep report into a plain verdict table.
- * Classification mirrors archive/mining-ledger/mining-loop-guide.md:
- *   EDGE-CANDIDATE : IS mean delta >= +0.3pp AND kept >= 2% AND holdout mean delta > 0
- *   HOLDOUT-NEG    : passes the IS bar but the sealed holdout said no
- *   TOO-RARE       : passes the IS bar but keeps < 2% of candidates (fragile sample)
- *   NO-EDGE        : below the IS bar
- *   ERROR          : checker refused or failed for this rule
- * Median delta is shown because a positive median is the trust signal;
- * an "EDGE-CANDIDATE (weak)" flag is added when the IS median is negative.
+ * Classification and ordering are delegated to the shared verdict leaf.
  *
  * Usage: esno summarize-report.ts <report.txt>
  * Writes <report.txt>.summary.txt next to the input.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-
-const EDGE_BAR_PP = 0.3;
-const EDGE_MIN_KEPT_PCT = 2;
-
-interface Row {
-    name: string;
-    verdict: string;
-    keptPct: number | null;
-    isMean: number | null;
-    isMedian: number | null;
-    holdMean: number | null;
-    holdMedian: number | null;
-    note: string;
-}
+import {
+    TRADE_LEDGER_EDGE_BAR_PP,
+    TRADE_LEDGER_EDGE_MIN_KEPT_PCT,
+    classifyTradeLedgerVerdict,
+    countTradeLedgerVerdicts,
+    sortTradeLedgerVerdicts,
+    type TradeLedgerVerdictRow,
+} from "../../lib/batch-backtest/trade-ledger-verdict";
 
 function parseNum(text: string, pattern: RegExp): number | null {
     const m = text.match(pattern);
@@ -35,35 +22,30 @@ function parseNum(text: string, pattern: RegExp): number | null {
     return Number.isFinite(v) ? v : null;
 }
 
-function classify(block: string): Row {
+function classify(block: string): TradeLedgerVerdictRow {
     const nameMatch = block.match(/^===== (.+?) =====$/m);
-    const name = nameMatch ? nameMatch[1]! : "(unknown)";
+    const ruleName = nameMatch ? nameMatch[1]! : "(unknown)";
     const failMatch = block.match(/trade-ledger-checker failed: (.+)/);
     if (failMatch) {
-        return { name, verdict: "ERROR", keptPct: null, isMean: null, isMedian: null, holdMean: null, holdMedian: null, note: failMatch[1]!.slice(0, 90) };
+        return classifyTradeLedgerVerdict({
+            ruleName,
+            keptPct: null,
+            isMeanPnlDeltaPp: null,
+            isMedianPnlDeltaPp: null,
+            holdoutMeanPnlDeltaPp: null,
+            holdoutMedianPnlDeltaPp: null,
+            error: failMatch[1]!,
+        });
     }
     const keptMatch = block.match(/kept=(\d+)\/(\d+) \(([\d.]+)%/);
-    const isMean = parseNum(block, /isMeanPnlVsControl=([+-][\d.]+)pp/);
-    const isMedian = parseNum(block, /isMedianPnlVsControl=([+-][\d.]+)pp/);
-    const holdMean = parseNum(block, /holdoutMeanPnlDelta=([+-][\d.]+)pp/);
-    const holdMedian = parseNum(block, /holdoutMedianPnlDelta=([+-][\d.]+)pp/);
-    if (!keptMatch || isMean === null || isMedian === null || holdMean === null || holdMedian === null) {
-        return { name, verdict: "ERROR", keptPct: null, isMean, isMedian, holdMean, holdMedian, note: "no RULE summary found in block" };
-    }
-    const keptPct = Number.parseFloat(keptMatch[3]!);
-
-    let verdict: string;
-    let note = "";
-    if (isMean >= EDGE_BAR_PP && keptPct >= EDGE_MIN_KEPT_PCT) {
-        verdict = holdMean > 0 ? "EDGE-CANDIDATE" : "HOLDOUT-NEG";
-        if (isMedian < 0) note = "weak: IS median negative";
-    } else if (isMean >= EDGE_BAR_PP) {
-        verdict = "TOO-RARE";
-        note = "passes delta bar but kept < 2%";
-    } else {
-        verdict = "NO-EDGE";
-    }
-    return { name, verdict, keptPct, isMean, isMedian, holdMean, holdMedian, note };
+    return classifyTradeLedgerVerdict({
+        ruleName,
+        keptPct: keptMatch ? Number.parseFloat(keptMatch[3]!) : null,
+        isMeanPnlDeltaPp: parseNum(block, /isMeanPnlVsControl=([+-][\d.]+)pp/),
+        isMedianPnlDeltaPp: parseNum(block, /isMedianPnlVsControl=([+-][\d.]+)pp/),
+        holdoutMeanPnlDeltaPp: parseNum(block, /holdoutMeanPnlDelta=([+-][\d.]+)pp/),
+        holdoutMedianPnlDeltaPp: parseNum(block, /holdoutMedianPnlDelta=([+-][\d.]+)pp/),
+    });
 }
 
 function fmt(v: number | null, digits = 2): string {
@@ -83,13 +65,7 @@ for (const line of text.split(/\r?\n/)) {
     if (/^===== .+ =====$/.test(line)) blocks.push(line + "\n");
     else if (blocks.length > 0) blocks[blocks.length - 1] += line + "\n";
 }
-const rows = blocks.map(classify);
-
-const order: Record<string, number> = { "EDGE-CANDIDATE": 0, "HOLDOUT-NEG": 1, "TOO-RARE": 2, "NO-EDGE": 3, "ERROR": 4 };
-rows.sort((a, b) =>
-    (order[a.verdict]! - order[b.verdict]!)
-    || (b.holdMean ?? -Infinity) - (a.holdMean ?? -Infinity)
-    || (b.isMean ?? -Infinity) - (a.isMean ?? -Infinity));
+const rows = sortTradeLedgerVerdicts(blocks.map(classify));
 
 const header = [
     "verdict".padEnd(15),
@@ -101,7 +77,7 @@ const header = [
     "  rule",
 ];
 const lines: string[] = [];
-lines.push(`SWEEP SUMMARY — ${rows.length} rules — bar: IS >= +${EDGE_BAR_PP}pp & kept >= ${EDGE_MIN_KEPT_PCT}% & holdout > 0`);
+lines.push(`SWEEP SUMMARY — ${rows.length} rules — bar: IS >= +${TRADE_LEDGER_EDGE_BAR_PP}pp & kept >= ${TRADE_LEDGER_EDGE_MIN_KEPT_PCT}% & holdout > 0`);
 lines.push("=".repeat(100));
 lines.push(header.join(""));
 lines.push("-".repeat(100));
@@ -109,16 +85,15 @@ for (const r of rows) {
     lines.push([
         r.verdict.padEnd(15),
         r.keptPct === null ? "n/a".padStart(8) : `${r.keptPct.toFixed(2)}%`.padStart(8),
-        fmt(r.isMean).padStart(9),
-        fmt(r.isMedian).padStart(9),
-        fmt(r.holdMean).padStart(10),
-        fmt(r.holdMedian).padStart(9),
-        `  ${r.name}${r.note ? `   [${r.note}]` : ""}`,
+        fmt(r.isMeanPnlDeltaPp).padStart(9),
+        fmt(r.isMedianPnlDeltaPp).padStart(9),
+        fmt(r.holdoutMeanPnlDeltaPp).padStart(10),
+        fmt(r.holdoutMedianPnlDeltaPp).padStart(9),
+        `  ${r.ruleName}${r.note ? `   [${r.note}]` : ""}`,
     ].join(""));
 }
 lines.push("-".repeat(100));
-const counts = new Map<string, number>();
-for (const r of rows) counts.set(r.verdict, (counts.get(r.verdict) ?? 0) + 1);
+const counts = countTradeLedgerVerdicts(rows);
 lines.push([...counts.entries()].map(([v, c]) => `${v}: ${c}`).join(" | "));
 lines.push("NOTE: verdicts are specific to THIS ledger folder. EDGE-CANDIDATE still needs cross-surface replication.");
 lines.push("NOTE: 'weak' = the typical (median) trade is not better than control; the mean is carried by big winners.");
