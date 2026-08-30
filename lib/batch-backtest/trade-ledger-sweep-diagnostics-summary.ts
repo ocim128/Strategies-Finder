@@ -8,6 +8,8 @@ export interface LedgerSweepDiagnosticsSummaryV1 {
     runId: string;
     mode: LedgerSweepMode;
     terminalPhase: "done" | "cancelled" | "fatal";
+    controlExecution: "synchronous" | "server_worker_threads";
+    controlWorkers: number;
     phases: {
         load: {
             ledgerMs: number;
@@ -15,6 +17,7 @@ export interface LedgerSweepDiagnosticsSummaryV1 {
             joinMs: number;
             totalMs: number;
         };
+        ruleLoading: { totalMs: number };
         prepare: { totalMs: number };
         ruleReplay: { totalMs: number };
         controls: { totalMs: number };
@@ -92,11 +95,16 @@ export function buildTradeLedgerSweepDiagnosticsSummary(
     const ledgerMs = phaseTotal(diagnostics, "loading_ledger");
     const ranksMs = phaseTotal(diagnostics, "loading_ranks");
     const joinMs = phaseTotal(diagnostics, "joining_ranks");
+    const ruleLoadingMs = phaseTotal(diagnostics, "loading_rules");
     const prepareMs = phaseTotal(diagnostics, "preparing");
     const ruleReplayMs = sum(diagnostics.perRule.map((row) => row.ruleReplayMs));
     const controlsMs = sum(diagnostics.perRule.map((row) => row.controlReplayMs));
     const reportWritingMs = sum(diagnostics.perRule.map((row) => row.reportFormatMs + row.reportWriteMs));
     const wallMs = throughputNumber(diagnostics, "elapsedMs");
+    const controlExecution = diagnostics.input.controlExecution === "server_worker_threads"
+        ? "server_worker_threads"
+        : "synchronous";
+    const controlWorkers = Math.max(0, Math.floor(finiteNumber(diagnostics.input.controlWorkers)));
     const computeMs = ruleReplayMs + controlsMs;
     const aggregateRuleRows = sum(diagnostics.perRule.map((row) => row.ledgerRows));
     const aggregateControlRows = sum(diagnostics.perRule.map((row) => row.controlCandidateVisits));
@@ -115,15 +123,18 @@ export function buildTradeLedgerSweepDiagnosticsSummary(
             controlReplayMs: row.controlReplayMs,
         }));
     const errors = diagnostics.errors.slice(0, 10);
-    const accountedMs = ledgerMs + ranksMs + joinMs + prepareMs + ruleReplayMs + controlsMs + reportWritingMs;
+    const accountedMs = ledgerMs + ranksMs + joinMs + ruleLoadingMs + prepareMs + ruleReplayMs + controlsMs + reportWritingMs;
 
     return {
         schema: "trade_ledger_sweep.diagnostics-summary.v1",
         runId: diagnostics.runId,
         mode: diagnostics.mode,
         terminalPhase,
+        controlExecution,
+        controlWorkers,
         phases: {
             load: { ledgerMs, ranksMs, joinMs, totalMs: ledgerMs + ranksMs + joinMs },
+            ruleLoading: { totalMs: ruleLoadingMs },
             prepare: { totalMs: prepareMs },
             ruleReplay: { totalMs: ruleReplayMs },
             controls: { totalMs: controlsMs },

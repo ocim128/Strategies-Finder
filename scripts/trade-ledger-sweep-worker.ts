@@ -9,10 +9,11 @@ import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-    evaluateTradeLedgerRuleWithReport,
+    evaluateTradeLedgerRuleWithReportAsync,
     prepareTradeLedgerReplay,
     type LedgerRule,
 } from "../lib/batch-backtest/trade-ledger-replay-core";
+import { createTradeLedgerControlPool, type TradeLedgerControlPool } from "../lib/batch-backtest/trade-ledger-control-pool";
 import { loadLedgerForReplay } from "../lib/batch-backtest/trade-ledger-replay-loader";
 import { classifyTradeLedgerVerdict } from "../lib/batch-backtest/trade-ledger-verdict";
 import type { TradeLedgerSweepManifest } from "../lib/batch-backtest/trade-ledger-sweep-artifacts";
@@ -157,6 +158,28 @@ async function resolveRule(options: WorkerOptions, manifest: TradeLedgerSweepMan
     return { ...catalogRule, filePath: canonicalFile, rule: loaded.default as LedgerRule };
 }
 
+type ResolvedRule = Awaited<ReturnType<typeof resolveRule>>;
+
+interface RuleLoadResult {
+    entry: TradeLedgerSweepManifest["rules"][number];
+    loadedRule: ResolvedRule | null;
+    error: unknown | null;
+}
+
+async function preloadRules(
+    options: WorkerOptions,
+    manifest: TradeLedgerSweepManifest,
+    ruleEntries: readonly TradeLedgerSweepManifest["rules"][number][],
+): Promise<RuleLoadResult[]> {
+    return Promise.all(ruleEntries.map(async (entry) => {
+        try {
+            return { entry, loadedRule: await resolveRule(options, manifest, entry.ruleId), error: null };
+        } catch (error) {
+            return { entry, loadedRule: null, error };
+        }
+    }));
+}
+
 async function writeRuleReport(outputDir: string, ruleId: string, reportLines: readonly string[]): Promise<string> {
     const text = reportLines.join("\n");
     const reportPath = path.join(outputDir, "reports", `${ruleId}.txt`);
@@ -218,6 +241,7 @@ async function runWorker(options: WorkerOptions): Promise<void> {
     let currentPhase: LedgerSweepPhase = "starting_worker";
     let currentRuleId: string | null = null;
     let runtimeGuardError: Error | null = null;
+    let controlPool: TradeLedgerControlPool | null = null;
     const addEntry = (entry: LedgerSweepDiagnosticEntry): void => {
         diagnostics.errors = diagnostics.errors;
         if (entry.group === "memory") {
@@ -367,6 +391,12 @@ async function runWorker(options: WorkerOptions): Promise<void> {
         phase("preparing", "building sorted pair buckets and guarded views", null, 0);
         const prepareStartedAt = performance.now();
         const prepared = prepareTradeLedgerReplay({ rows: loaded.rows, joinedRankCount: loaded.joinedRankCount, replayParams: loaded.replayParams });
+        controlPool = createTradeLedgerControlPool(prepared);
+        diagnostics.input = {
+            ...diagnostics.input,
+            controlExecution: "server_worker_threads",
+            controlWorkers: controlPool.workerCount,
+        };
         const prepareMs = performance.now() - prepareStartedAt;
         observeRuntimeHeap(captureMemory("preparing", null));
         assertRuntimeHeapSafe();
@@ -383,10 +413,34 @@ async function runWorker(options: WorkerOptions): Promise<void> {
             pairBuckets: prepared.pairBuckets,
             sortedRows: prepared.sortedRows,
             proxyCount: prepared.proxyCount,
+            controlExecution: "server_worker_threads",
+            controlWorkers: controlPool.workerCount,
         } });
-        const ruleEntries = options.mode === "isolated_rule"
-            ? [manifest.rules.find((rule) => rule.ruleId === options.ruleId)!]
-            : manifest.rules;
+        const isolatedRule = options.mode === "isolated_rule"
+            ? manifest.rules.find((rule) => rule.ruleId === options.ruleId)
+            : undefined;
+        if (options.mode === "isolated_rule" && !isolatedRule) fail(`Missing frozen rule ${options.ruleId}.`);
+        const ruleEntries = isolatedRule ? [isolatedRule] : manifest.rules;
+        phase("loading_rules", `loading ${ruleEntries.length} rule modules`, null, 0);
+        const ruleLoadingStartedAt = Date.now();
+        const ruleLoadingPerfStartedAt = performance.now();
+        const loadedRuleResults = await preloadRules(options, manifest, ruleEntries);
+        const ruleLoadingMs = performance.now() - ruleLoadingPerfStartedAt;
+        const ruleLoadingFinishedAt = Date.now();
+        const loadedRules = new Map(loadedRuleResults.map((result) => [result.entry.ruleId, result]));
+        diagnostics.input = {
+            ...diagnostics.input,
+            ruleLoading: "parallel",
+            ruleLoadMs: ruleLoadingMs,
+            rulesLoaded: loadedRuleResults.filter((result) => result.loadedRule !== null).length,
+        };
+        diagnostics.phases.push({ phase: "loading_rules", startedAt: ruleLoadingStartedAt, finishedAt: ruleLoadingFinishedAt, elapsedMs: ruleLoadingMs });
+        addEntry({ at: ruleLoadingFinishedAt, group: "rule_loading", phase: "loading_rules", ruleId: null, metrics: {
+            ruleLoadMs: ruleLoadingMs,
+            rulesRequested: ruleEntries.length,
+            rulesLoaded: loadedRuleResults.filter((result) => result.loadedRule !== null).length,
+            execution: "parallel",
+        } });
         const results: LedgerSweepRuleResult[] = [];
         for (const [ruleIndex, entry] of ruleEntries.entries()) {
             if (!entry) fail(`Missing frozen rule ${options.ruleId}.`);
@@ -396,8 +450,12 @@ async function runWorker(options: WorkerOptions): Promise<void> {
             phase("rule_replay", `replaying ${entry.ruleName}`, entry.ruleId, results.length);
             let ruleResult: LedgerSweepRuleResult;
             try {
-                const loadedRule = await resolveRule(options, manifest, entry.ruleId);
-                const evaluated = evaluateTradeLedgerRuleWithReport({
+                const loadedRuleResult = loadedRules.get(entry.ruleId);
+                if (!loadedRuleResult) fail(`Rule ${entry.ruleId} was not preloaded.`);
+                if (loadedRuleResult.error) throw loadedRuleResult.error;
+                const loadedRule = loadedRuleResult.loadedRule;
+                if (!loadedRule) fail(`Rule ${entry.ruleId} was not loaded.`);
+                const evaluated = await evaluateTradeLedgerRuleWithReportAsync({
                     folder: manifest.ledgerFolder,
                     ruleName: entry.ruleName,
                     rows: loaded.rows,
@@ -405,7 +463,7 @@ async function runWorker(options: WorkerOptions): Promise<void> {
                     rule: loadedRule.rule,
                     replay: loaded.replayParams,
                     prepared,
-                });
+                }, controlPool!.run);
                 const resultInput = evaluated.resultInput;
                 const classified = classifyTradeLedgerVerdict({
                     ruleName: entry.ruleName,
@@ -518,6 +576,7 @@ async function runWorker(options: WorkerOptions): Promise<void> {
     } finally {
         clearInterval(memorySampler);
         eventLoopDelay.disable();
+        await controlPool?.close();
     }
 }
 

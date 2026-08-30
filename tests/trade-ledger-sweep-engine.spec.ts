@@ -162,12 +162,13 @@ describe("trade-ledger sweep engine", () => {
         diagnostics.perRule.push({ ruleId: "r", ruleName: "r.ts", sourceHash: "", ruleReplayMs: 100, ledgerRows: 1, eligibleCandidates: 1, predicateCalls: 1, admitted: 1, rejectedByRule: 0, blocked: 0, rightCensored: 0, controlReplayMs: 900, controlRuns: 200, calibrationReplays: 200, controlCandidateVisits: 1, controlsPerSecond: 1, candidateVisitsPerSecond: 1, reportFormatMs: 0, reportWriteMs: 0, reportBytes: 0 });
         diagnostics.throughput = { elapsedMs: 1000 };
         expect(buildTradeLedgerSweepDiagnosticsFooter(diagnostics)).to.contain("random controls = 90.000% of aggregate replay+controls and 90.000% of total wall");
-        expect(buildTradeLedgerSweepDiagnosticsFooter(diagnostics)).to.contain("trade-ledger-replay-core.ts:466-502");
+        expect(buildTradeLedgerSweepDiagnosticsFooter(diagnostics)).to.contain("trade-ledger-replay-core.ts:replayRandomControlRows");
     });
 
     it("builds a bounded summary from the existing diagnostics aggregate", () => {
         const preflight = resolveLedgerSweepPreflight(1, Number.MAX_SAFE_INTEGER);
         const diagnostics = createEmptyLedgerSweepDiagnostics({ runId: "summary", mode: "load_once", preflight });
+        diagnostics.input = { controlExecution: "server_worker_threads", controlWorkers: 4 };
         diagnostics.phases = [
             { phase: "loading_ledger", startedAt: 0, finishedAt: 10, elapsedMs: 10 },
             { phase: "loading_ranks", startedAt: 10, finishedAt: 20, elapsedMs: 10 },
@@ -212,6 +213,8 @@ describe("trade-ledger sweep engine", () => {
         diagnostics.errors = Array.from({ length: 25 }, (_, index) => `error-${index}`);
 
         const summary = buildTradeLedgerSweepDiagnosticsSummary(diagnostics, "done");
+        expect(summary.controlExecution).to.equal("server_worker_threads");
+        expect(summary.controlWorkers).to.equal(4);
         expect(summary.phases.load).to.deep.equal({ ledgerMs: 10, ranksMs: 10, joinMs: 5, totalMs: 25 });
         expect(summary.phases.ruleReplay.totalMs).to.equal(20_100);
         expect(summary.phases.controls.totalMs).to.equal(199_000);

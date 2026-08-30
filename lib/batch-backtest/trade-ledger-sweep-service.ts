@@ -234,6 +234,7 @@ export class TradeLedgerSweepService {
         const summary = buildTradeLedgerSweepDiagnosticsSummary(diagnostics, this.diagnosticsTerminalPhase);
         const phaseRows: Array<[string, string]> = [
             ["Load (ledger / ranks / join)", `${summary.phases.load.totalMs.toFixed(1)} ms`],
+            ["Rule module loading", `${summary.phases.ruleLoading.totalMs.toFixed(1)} ms`],
             ["Prepare", `${summary.phases.prepare.totalMs.toFixed(1)} ms`],
             ["Rule replay", `${summary.phases.ruleReplay.totalMs.toFixed(1)} ms`],
             ["Controls", `${summary.phases.controls.totalMs.toFixed(1)} ms`],
@@ -241,6 +242,7 @@ export class TradeLedgerSweepService {
             ["Other", `${summary.phases.other.totalMs.toFixed(1)} ms`],
             ["Wall", `${summary.wallMs.toFixed(1)} ms`],
             ["Controls share", `${summary.controlsShareOfCompute?.toFixed(2) ?? "n/a"}% compute / ${summary.controlsShareOfWall?.toFixed(2) ?? "n/a"}% wall`],
+            ["Control execution", `${summary.controlExecution}${summary.controlWorkers > 0 ? ` (${summary.controlWorkers} workers)` : ""}`],
         ];
         const throughputRows: Array<[string, string]> = [
             ["Rules", String(summary.throughput.rulesCompleted)],

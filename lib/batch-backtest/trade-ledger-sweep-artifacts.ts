@@ -155,7 +155,7 @@ export function buildTradeLedgerSweepDiagnosticsFooter(diagnostics: LedgerSweepD
     const controlsOfReplay = replayPlusControlsMs > 0 ? controlsMs / replayPlusControlsMs * 100 : null;
     const controlsOfWall = wallMs > 0 ? controlsMs / wallMs * 100 : null;
     const format = (value: number | null): string => value === null || !Number.isFinite(value) ? "n/a" : `${value.toFixed(3)}%`;
-    return `DIAGNOSTIC BOTTLENECK: random controls = ${format(controlsOfReplay)} of aggregate replay+controls and ${format(controlsOfWall)} of total wall; optimization target: lib/batch-backtest/trade-ledger-replay-core.ts:466-502; preserve calibration, seeds, and exact replay math.`;
+    return `DIAGNOSTIC BOTTLENECK: random controls = ${format(controlsOfReplay)} of aggregate replay+controls and ${format(controlsOfWall)} of total wall; optimization target: lib/batch-backtest/trade-ledger-replay-core.ts:replayRandomControlRows; preserve calibration, seeds, and exact replay math.`;
 }
 
 function normalizedIdeaLogVerdict(value: string): string {

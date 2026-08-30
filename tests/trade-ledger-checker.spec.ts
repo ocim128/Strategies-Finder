@@ -3,6 +3,7 @@ import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { TradeLedgerProvenance, TradeLedgerRankRow, TradeLedgerRow } from "../lib/batch-backtest/trade-ledger-exporter";
+import { createTradeLedgerControlPool } from "../lib/batch-backtest/trade-ledger-control-pool";
 import {
     TRADE_LEDGER_CONTROL_RUNS,
     TRADE_LEDGER_CONTROL_SEED,
@@ -10,13 +11,17 @@ import {
     computeTimeSplit,
     createRuleRowProxy,
     calibratedRandomRule,
+    evaluateTradeLedgerRule,
+    evaluateTradeLedgerRuleAsync,
     joinSignalRanks,
     loadLedgerForReplay,
     loadLedgerRows,
     mulberry32,
+    prepareTradeLedgerReplay,
     replayPair,
     runChecker,
     type LedgerRule,
+    type TradeLedgerRuleRow,
     type ReplayParams,
 } from "../scripts/trade-ledger-checker";
 
@@ -101,6 +106,7 @@ describe("trade ledger checker rule proxy (W1)", () => {
         expect(() => JSON.stringify(proxy)).to.throw();
     });
 });
+
 
 // ============================================================================
 // Replay semantics (W2)
@@ -249,6 +255,108 @@ describe("trade ledger checker random control (seeded, calibrated)", () => {
     it("runs the full control count with the documented base seed", () => {
         expect(TRADE_LEDGER_CONTROL_RUNS).to.equal(200);
         expect(TRADE_LEDGER_CONTROL_SEED).to.equal(42);
+    });
+
+    it("keeps the optimized control replay identical to the generic replay", () => {
+        const rows = Array.from({ length: 24 }, (_, i) => candidateRow({
+            pair: i % 2 === 0 ? "P1" : "P2",
+            signalBarIndex: i,
+            signalTime: i * 1000,
+            asIf: i === 23
+                ? null
+                : { fillTime: i, fillPrice: 10, exitTime: i + 1, exitPrice: 11, pnlPercent: i - 8, barsHeld: i % 4, exitReason: "signal" },
+            asIfReason: i === 23 ? "right_censored" : null,
+        }));
+        const replay = { maxOpenTrades: 2, cooldownBars: 2, shift: 0 };
+        const prepared = prepareTradeLedgerReplay({ rows, replayParams: replay });
+        const input = {
+            folder: "fixture",
+            ruleName: "optimized-control-parity",
+            rows,
+            joinedRankCount: 0,
+            rule: (row: TradeLedgerRuleRow) => row.signalBarIndex % 3 !== 0,
+            replay,
+            controlRuns: 9,
+            prepared,
+        };
+        const optimized = evaluateTradeLedgerRule(input);
+
+        const pairResults = [...prepared.pairs.entries()].map(([pair, pairRows]) =>
+            replayPair(pair, pairRows, input.rule, replay, 0, prepared.ruleRows, true));
+        const admitted = pairResults.flatMap((result) => result.trades);
+        const controlTotalReturns: number[] = [];
+        const controlIsMeanPnls: number[] = [];
+        const controlIsMedianPnls: number[] = [];
+        const controlHoldoutMeanPnls: number[] = [];
+        const controlHoldoutMedianPnls: number[] = [];
+        const average = (values: readonly number[]): number | null => values.length > 0
+            ? values.reduce((sum, value) => sum + value, 0) / values.length
+            : null;
+        for (let k = 0; k < input.controlRuns; k += 1) {
+            const random = calibratedRandomRule(rows, admitted.length, replay, 0, TRADE_LEDGER_CONTROL_SEED + 1 + k, prepared.ruleRows, true);
+            let equity = 1;
+            const isPnls: number[] = [];
+            const holdoutPnls: number[] = [];
+            for (const [pair, pairRows] of prepared.pairs) {
+                const result = replayPair(pair, pairRows, random.rule, replay, 0, prepared.ruleRows, true);
+                for (const trade of result.trades) {
+                    const pnl = trade.asIf?.pnlPercent ?? 0;
+                    equity *= 1 + pnl / 100;
+                    if (trade.signalTime < prepared.split.splitTime) isPnls.push(pnl);
+                    else holdoutPnls.push(pnl);
+                }
+            }
+            controlTotalReturns.push((equity - 1) * 100);
+            const isStats = computeSliceStats(isPnls);
+            if (isStats.meanPnlPercent !== null) controlIsMeanPnls.push(isStats.meanPnlPercent);
+            if (isStats.medianPnlPercent !== null) controlIsMedianPnls.push(isStats.medianPnlPercent);
+            const holdoutStats = computeSliceStats(holdoutPnls);
+            if (holdoutStats.meanPnlPercent !== null) controlHoldoutMeanPnls.push(holdoutStats.meanPnlPercent);
+            if (holdoutStats.medianPnlPercent !== null) controlHoldoutMedianPnls.push(holdoutStats.medianPnlPercent);
+        }
+        const median = (values: readonly number[]): number | null => {
+            if (values.length === 0) return null;
+            const sorted = [...values].sort((a, b) => a - b);
+            const middle = Math.floor(sorted.length / 2);
+            return sorted.length % 2 === 1 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
+        };
+        expect(optimized.controlMean).to.equal(average(controlTotalReturns));
+        expect(optimized.controlMedian).to.equal(median(controlTotalReturns));
+        expect(optimized.controlIsMeanPnl).to.equal(average(controlIsMeanPnls));
+        expect(optimized.controlIsMedianPnl).to.equal(average(controlIsMedianPnls));
+        expect(optimized.controlHoldoutMeanPnl).to.equal(average(controlHoldoutMeanPnls));
+        expect(optimized.controlHoldoutMedianPnl).to.equal(average(controlHoldoutMedianPnls));
+        expect(optimized.controlCandidateVisits).to.equal(prepared.candidateRows * input.controlRuns);
+    });
+
+    it("keeps the server worker control replay identical to the synchronous replay", async () => {
+        const replay = { maxOpenTrades: 2, cooldownBars: 2, shift: 0 };
+        const prepared = prepareTradeLedgerReplay({ rows, replayParams: replay });
+        const input = {
+            folder: "fixture",
+            ruleName: "worker-control-parity",
+            rows,
+            joinedRankCount: 0,
+            rule: (row: TradeLedgerRuleRow) => row.signalBarIndex % 3 !== 0,
+            replay,
+            controlRuns: 9,
+            prepared,
+        };
+        const expected = evaluateTradeLedgerRule(input);
+        const pool = createTradeLedgerControlPool(prepared, { workerCount: 2 });
+        try {
+            const actual = await evaluateTradeLedgerRuleAsync(input, pool.run);
+            expect(actual.controlRuns).to.equal(expected.controlRuns);
+            expect(actual.controlMean).to.equal(expected.controlMean);
+            expect(actual.controlMedian).to.equal(expected.controlMedian);
+            expect(actual.controlIsMeanPnl).to.equal(expected.controlIsMeanPnl);
+            expect(actual.controlIsMedianPnl).to.equal(expected.controlIsMedianPnl);
+            expect(actual.controlHoldoutMeanPnl).to.equal(expected.controlHoldoutMeanPnl);
+            expect(actual.controlHoldoutMedianPnl).to.equal(expected.controlHoldoutMedianPnl);
+            expect(actual.controlCandidateVisits).to.equal(expected.controlCandidateVisits);
+        } finally {
+            await pool.close();
+        }
     });
 });
 
@@ -567,4 +675,3 @@ describe("trade ledger checker incomplete-ledger guard (W1)", () => {
         expect(loaded[2]!.feat_atrPct).to.equal(0.5);
     });
 });
-
