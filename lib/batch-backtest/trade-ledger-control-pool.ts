@@ -18,6 +18,8 @@ export interface SharedTradeLedgerControlDataset {
     pnlPercents: SharedArrayBuffer;
     pairOffsets: SharedArrayBuffer;
     pairIndices: SharedArrayBuffer;
+    pairSignalBarsMonotonic: SharedArrayBuffer;
+    pairNextCursors: SharedArrayBuffer;
 }
 
 export interface TradeLedgerControlWorkerRunMessage {
@@ -66,7 +68,11 @@ export interface TradeLedgerControlPool {
     close(): Promise<void>;
 }
 
-const DEFAULT_WORKER_COUNT = 4;
+const SMALL_DATASET_WORKER_COUNT = 4;
+const LARGE_DATASET_THRESHOLD = 250_000;
+const RESERVED_LOGICAL_CPUS = 1;
+const MAX_WORKER_COUNT = Math.max(1, availableParallelism() - RESERVED_LOGICAL_CPUS);
+const LARGE_DATASET_WORKER_COUNT = Math.min(20, MAX_WORKER_COUNT);
 
 function sharedFloat64Buffer(length: number): SharedArrayBuffer {
     return new SharedArrayBuffer(length * Float64Array.BYTES_PER_ELEMENT);
@@ -74,6 +80,10 @@ function sharedFloat64Buffer(length: number): SharedArrayBuffer {
 
 function sharedUint32Buffer(length: number): SharedArrayBuffer {
     return new SharedArrayBuffer(length * Uint32Array.BYTES_PER_ELEMENT);
+}
+
+function sharedUint8Buffer(length: number): SharedArrayBuffer {
+    return new SharedArrayBuffer(length * Uint8Array.BYTES_PER_ELEMENT);
 }
 
 function buildSharedDataset(prepared: PreparedTradeLedgerReplay): SharedTradeLedgerControlDataset {
@@ -101,17 +111,38 @@ function buildSharedDataset(prepared: PreparedTradeLedgerReplay): SharedTradeLed
 
     const pairOffsetsBuffer = sharedUint32Buffer(prepared.controlPairs.size + 1);
     const pairIndicesBuffer = sharedUint32Buffer(rows.length);
+    const pairSignalBarsMonotonicBuffer = sharedUint8Buffer(prepared.controlPairs.size);
+    const pairNextCursorsBuffer = sharedUint32Buffer(rows.length);
     const pairOffsets = new Uint32Array(pairOffsetsBuffer);
     const pairIndices = new Uint32Array(pairIndicesBuffer);
+    const pairSignalBarsMonotonic = new Uint8Array(pairSignalBarsMonotonicBuffer);
+    const pairNextCursors = new Uint32Array(pairNextCursorsBuffer);
     let cursor = 0;
     let pairIndex = 0;
     for (const pairRows of prepared.controlPairs.values()) {
         pairOffsets[pairIndex] = cursor;
+        let previousSignalBar = Number.NEGATIVE_INFINITY;
+        let monotonic = true;
         for (const row of pairRows) {
             const index = rowIndexes.get(row);
             if (index === undefined) throw new Error("Control pair index is missing from the candidate index.");
+            if (!Number.isFinite(row.signalBarIndex) || !Number.isFinite(row.asIf!.barsHeld) || row.signalBarIndex < previousSignalBar) monotonic = false;
+            previousSignalBar = row.signalBarIndex;
             pairIndices[cursor] = index;
             cursor += 1;
+        }
+        pairSignalBarsMonotonic[pairIndex] = monotonic ? 1 : 0;
+        let nextCursor = pairOffsets[pairIndex]!;
+        for (let pairCursor = pairOffsets[pairIndex]!; pairCursor < cursor; pairCursor += 1) {
+            const rowIndex = pairIndices[pairCursor]!;
+            const blockedThrough = signalBarIndices[rowIndex]! + barsHeld[rowIndex]!;
+            if (nextCursor < pairCursor + 1) nextCursor = pairCursor + 1;
+            while (nextCursor < cursor) {
+                const nextRowIndex = pairIndices[nextCursor]!;
+                if (signalBarIndices[nextRowIndex]! > blockedThrough) break;
+                nextCursor += 1;
+            }
+            pairNextCursors[pairCursor] = nextCursor;
         }
         pairIndex += 1;
     }
@@ -126,13 +157,16 @@ function buildSharedDataset(prepared: PreparedTradeLedgerReplay): SharedTradeLed
         pnlPercents: pnlPercentsBuffer,
         pairOffsets: pairOffsetsBuffer,
         pairIndices: pairIndicesBuffer,
+        pairSignalBarsMonotonic: pairSignalBarsMonotonicBuffer,
+        pairNextCursors: pairNextCursorsBuffer,
     };
 }
 
-function requestedWorkerCount(): number {
+function requestedWorkerCount(candidateCount: number): number {
     const configured = Number(process.env.TRADE_LEDGER_SWEEP_CONTROL_WORKERS);
     if (Number.isFinite(configured) && configured >= 1) return Math.floor(configured);
-    return Math.max(1, Math.min(DEFAULT_WORKER_COUNT, availableParallelism() - 1));
+    if (candidateCount >= LARGE_DATASET_THRESHOLD) return LARGE_DATASET_WORKER_COUNT;
+    return Math.min(SMALL_DATASET_WORKER_COUNT, MAX_WORKER_COUNT);
 }
 
 function defaultWorkerPath(): string {
@@ -149,7 +183,10 @@ export function createTradeLedgerControlPool(
     options: { workerCount?: number; workerPath?: string } = {},
 ): TradeLedgerControlPool {
     const dataset = buildSharedDataset(prepared);
-    const workerCount = Math.max(1, Math.min(options.workerCount ?? requestedWorkerCount(), DEFAULT_WORKER_COUNT));
+    const workerCount = Math.max(1, Math.min(
+        options.workerCount ?? requestedWorkerCount(prepared.controlRows.length),
+        MAX_WORKER_COUNT,
+    ));
     const workers = Array.from({ length: workerCount }, () => new Worker(options.workerPath ?? defaultWorkerPath(), {
         workerData: { dataset },
     }));

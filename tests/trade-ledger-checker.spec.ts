@@ -354,6 +354,32 @@ describe("trade ledger checker random control (seeded, calibrated)", () => {
             expect(actual.controlHoldoutMeanPnl).to.equal(expected.controlHoldoutMeanPnl);
             expect(actual.controlHoldoutMedianPnl).to.equal(expected.controlHoldoutMedianPnl);
             expect(actual.controlCandidateVisits).to.equal(expected.controlCandidateVisits);
+
+            const singleSlotReplay = { maxOpenTrades: 1, cooldownBars: 0, shift: 0 };
+            const singleSlotInput = { ...input, replay: singleSlotReplay };
+            const singleSlotExpected = evaluateTradeLedgerRule(singleSlotInput);
+            const singleSlotActual = await evaluateTradeLedgerRuleAsync(singleSlotInput, pool.run);
+            expect(singleSlotActual.controlMean).to.equal(singleSlotExpected.controlMean);
+            expect(singleSlotActual.controlMedian).to.equal(singleSlotExpected.controlMedian);
+            expect(singleSlotActual.controlIsMeanPnl).to.equal(singleSlotExpected.controlIsMeanPnl);
+            expect(singleSlotActual.controlHoldoutMeanPnl).to.equal(singleSlotExpected.controlHoldoutMeanPnl);
+            expect(singleSlotActual.controlCandidateVisits).to.equal(singleSlotExpected.controlCandidateVisits);
+
+            const busyRows = rows.map((row) => ({ ...row, asIf: { ...row.asIf!, barsHeld: 2 } }));
+            const busyPrepared = prepareTradeLedgerReplay({ rows: busyRows, replayParams: singleSlotReplay });
+            const busyInput = { ...singleSlotInput, ruleName: "worker-control-busy-parity", rows: busyRows, prepared: busyPrepared };
+            const busyExpected = evaluateTradeLedgerRule(busyInput);
+            const busyPool = createTradeLedgerControlPool(busyPrepared, { workerCount: 2 });
+            try {
+                const busyActual = await evaluateTradeLedgerRuleAsync(busyInput, busyPool.run);
+                expect(busyActual.controlMean).to.equal(busyExpected.controlMean);
+                expect(busyActual.controlMedian).to.equal(busyExpected.controlMedian);
+                expect(busyActual.controlIsMeanPnl).to.equal(busyExpected.controlIsMeanPnl);
+                expect(busyActual.controlHoldoutMeanPnl).to.equal(busyExpected.controlHoldoutMeanPnl);
+                expect(busyActual.controlCandidateVisits).to.equal(busyExpected.controlCandidateVisits);
+            } finally {
+                await busyPool.close();
+            }
         } finally {
             await pool.close();
         }

@@ -300,6 +300,25 @@ trade-ledger-sweep-worker.ts
 `--rule-id` is required only for `isolated_rule`. The worker verifies all
 canonical path boundaries again; controller validation is not sufficient.
 
+### Large-ledger control parallelism
+
+The load-once worker uses a bounded `worker_threads` pool over compact shared
+numeric columns for the 200 seeded controls. Small datasets use four workers;
+datasets with at least 250,000 replay candidates use up to 20 workers by
+default, reserving one logical processor for the server and UI. Set
+`TRADE_LEDGER_SWEEP_CONTROL_WORKERS` before starting Vite to tune the pool;
+the value is capped at `availableParallelism() - 1`. The diagnostic summary
+reports the selected worker count as `controlWorkers`. The common
+`maxOpenTrades=1`, no-cooldown path also precomputes the next row after each
+trade’s exit, so blocked rows are skipped in constant time; non-chronological
+pair data and other replay settings use the exact general path.
+
+For multi-GB ledgers, start the server with the documented larger child heap:
+
+```powershell
+$env:NODE_OPTIONS="--max-old-space-size=16384"; npm run dev
+```
+
 ## Shared workload coordinator
 
 The proposed `lib/server-research-job-coordinator.ts` is a Node/TypeScript leaf

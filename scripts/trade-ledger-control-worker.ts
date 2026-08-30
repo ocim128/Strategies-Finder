@@ -17,6 +17,8 @@ const barsHeld = new Float64Array(dataset.barsHeld);
 const pnlPercents = new Float64Array(dataset.pnlPercents);
 const pairOffsets = new Uint32Array(dataset.pairOffsets);
 const pairIndices = new Uint32Array(dataset.pairIndices);
+const pairSignalBarsMonotonic = new Uint8Array(dataset.pairSignalBarsMonotonic);
+const pairNextCursors = new Uint32Array(dataset.pairNextCursors);
 
 function mean(values: readonly number[]): number | null {
     if (values.length === 0) return null;
@@ -45,7 +47,28 @@ function runControl(k: number, input: TradeLedgerControlWorkerRunMessage): Trade
         for (let pair = 0; pair < dataset.pairCount; pair += 1) {
             let slotUntil = Number.NEGATIVE_INFINITY;
             let cooldownUntilBar = -1;
-            for (let cursor = pairOffsets[pair]!; cursor < pairOffsets[pair + 1]!; cursor += 1) {
+            const pairStart = pairOffsets[pair]!;
+            const pairEnd = pairOffsets[pair + 1]!;
+            let cursor = pairStart;
+            if (pairSignalBarsMonotonic[pair] === 1 && cooldownBars === 0) {
+                while (cursor < pairEnd) {
+                    const index = pairIndices[cursor]!;
+                    const fillBar = signalBarIndices[index]! + input.shift;
+                    if (!(rng() < input.calibratedP)) {
+                        cursor += 1;
+                        continue;
+                    }
+                    const pnl = pnlPercents[index]!;
+                    const exitBar = fillBar + barsHeld[index]!;
+                    slotUntil = exitBar;
+                    equity *= 1 + pnl / 100;
+                    if (signalTimes[index]! < input.splitTime) isPnls.push(pnl);
+                    else holdoutPnls.push(pnl);
+                    cursor = pairNextCursors[cursor]!;
+                }
+                continue;
+            }
+            for (; cursor < pairEnd; cursor += 1) {
                 const index = pairIndices[cursor]!;
                 const fillBar = signalBarIndices[index]! + input.shift;
                 const cooling = cooldownBars > 0 && cooldownUntilBar >= fillBar;
