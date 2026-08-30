@@ -69,19 +69,24 @@ export async function* iterateJsonlLines(filePath: string): AsyncGenerator<strin
     }
 }
 
-async function readJsonl<T>(filePath: string): Promise<{ values: T[]; diagnostics: LedgerJsonlDiagnostics }> {
+async function readJsonl<T>(
+    filePath: string,
+    consume?: (value: T) => void,
+): Promise<{ values: T[]; diagnostics: LedgerJsonlDiagnostics }> {
     const diagnostics = emptyJsonlDiagnostics(statSync(filePath).size);
-    const values: T[] = [];
+    const values: T[] | null = consume ? null : [];
     const startedAt = nowMs();
     for await (const line of iterateJsonlLines(filePath)) {
         const parseStartedAt = nowMs();
-        values.push(JSON.parse(line) as T);
+        const value = JSON.parse(line) as T;
+        if (consume) consume(value);
+        else values!.push(value);
         diagnostics.jsonParseMs += nowMs() - parseStartedAt;
         diagnostics.rowsParsed += 1;
     }
     diagnostics.streamWallMs = nowMs() - startedAt;
     diagnostics.readResidualMs = Math.max(0, diagnostics.streamWallMs - diagnostics.jsonParseMs);
-    return { values, diagnostics };
+    return { values: values ?? [], diagnostics };
 }
 
 export async function loadLedgerRows(folder: string): Promise<TradeLedgerRow[]> {
@@ -93,8 +98,9 @@ export async function loadSignalRanks(folder: string): Promise<Map<string, Trade
     const ranksFile = path.join(folder, RANKS_FILE);
     const map = new Map<string, TradeLedgerRankRow>();
     if (!existsSync(ranksFile)) return map;
-    const loaded = await readJsonl<TradeLedgerRankRow>(ranksFile);
-    for (const rank of loaded.values) map.set(`${rank.signalTime}|${rank.pair}`, rank);
+    await readJsonl<TradeLedgerRankRow>(ranksFile, (rank) => {
+        map.set(`${rank.signalTime}|${rank.pair}`, rank);
+    });
     return map;
 }
 
@@ -197,11 +203,12 @@ export async function loadLedgerForReplay(folder: string, options: LoadLedgerOpt
     const loadedRows = await readJsonl<TradeLedgerRow>(ledgerPath);
     const rows = loadedRows.values;
     const ranksFile = path.join(folder, RANKS_FILE);
-    const loadedRanks = existsSync(ranksFile)
-        ? await readJsonl<TradeLedgerRankRow>(ranksFile)
-        : { values: [], diagnostics: emptyJsonlDiagnostics() };
     const ranks = new Map<string, TradeLedgerRankRow>();
-    for (const rank of loadedRanks.values) ranks.set(`${rank.signalTime}|${rank.pair}`, rank);
+    const loadedRanks = existsSync(ranksFile)
+        ? await readJsonl<TradeLedgerRankRow>(ranksFile, (rank) => {
+            ranks.set(`${rank.signalTime}|${rank.pair}`, rank);
+        })
+        : { values: [], diagnostics: emptyJsonlDiagnostics() };
     const joinStartedAt = nowMs();
     const joinedRankCount = joinSignalRanks(rows, ranks);
     const rankJoinMs = nowMs() - joinStartedAt;

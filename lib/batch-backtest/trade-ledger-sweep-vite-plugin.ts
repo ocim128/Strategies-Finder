@@ -176,23 +176,17 @@ function acceptJobEvent(generation: number, event: LedgerSweepStreamEvent): void
         updateState(generation, { completedRules: runState.results.length, currentRuleId: null });
     } else if (event.type === "diagnostics") {
         const sample = event.entry.metrics.sample;
-        const nextMemory = sample && typeof sample === "object"
-            ? {
-                ...runState.diagnostics.memory,
-                samples: [...runState.diagnostics.memory.samples, sample as typeof runState.diagnostics.memory.samples[number]],
-                workerPeak: event.entry.group === "memory"
-                    && (!runState.diagnostics.memory.workerPeak || (sample as { maxRss: number }).maxRss > runState.diagnostics.memory.workerPeak.maxRss)
-                    ? sample as typeof runState.diagnostics.memory.samples[number]
-                    : runState.diagnostics.memory.workerPeak,
+        if (sample && typeof sample === "object") {
+            const typedSample = sample as typeof runState.diagnostics.memory.samples[number];
+            runState.diagnostics.memory.samples.push(typedSample);
+            if (event.entry.group === "memory"
+                && (!runState.diagnostics.memory.workerPeak || typedSample.maxRss > runState.diagnostics.memory.workerPeak.maxRss)) {
+                runState.diagnostics.memory.workerPeak = typedSample;
             }
-            : runState.diagnostics.memory;
-        runState.diagnostics = {
-            ...runState.diagnostics,
-            memory: nextMemory,
-            errors: event.entry.group === "progress" && Array.isArray(event.entry.metrics.errors)
-                ? [...runState.diagnostics.errors, ...(event.entry.metrics.errors as string[])]
-                : runState.diagnostics.errors,
-        };
+        }
+        if (event.entry.group === "progress" && Array.isArray(event.entry.metrics.errors)) {
+            runState.diagnostics.errors.push(...event.entry.metrics.errors as string[]);
+        }
     } else if (event.type === "done" || event.type === "cancelled" || event.type === "fatal") {
         updateState(generation, {
             phase: event.type,
@@ -229,10 +223,10 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
         throw new HttpStatusError(400, "folderId must be a non-empty string.");
     }
     const root = serverRoot ?? process.cwd();
-    const folder = await resolveLedgerSweepFolder(root, body.folderId.trim());
+    const catalog = await discoverLedgerSweepCatalog(root);
+    const folder = await resolveLedgerSweepFolder(root, body.folderId.trim(), catalog);
     if (!folder) throw new HttpStatusError(400, "Unknown or unsafe ledger folder.");
     if (!folder.entry.runnable) throw new HttpStatusError(400, folder.entry.refusalReason ?? "Ledger folder is not runnable.");
-    const catalog = await discoverLedgerSweepCatalog(root);
     if (catalog.rules.length === 0) throw new HttpStatusError(400, "No valid TypeScript rules were discovered.");
     const output = await buildOutputPaths(folder.absolutePath, runId);
 

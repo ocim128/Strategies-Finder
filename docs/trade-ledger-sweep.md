@@ -1072,7 +1072,7 @@ existing final directory; never overwrite or merge runs.
 
 | Artifact | Write contract |
 | --- | --- |
-| `manifest.json` | Write at Start with schema `trade_ledger_sweep.manifest.v1`; update atomically at terminal. Contains run/folder identity, ledger and rank size/mtime, hashes of small provenance/summary files, frozen rule IDs/names/hashes, replay constants, preflight decision, mode, start/finish times, terminal phase, and error. Do not hash the multi-GB JSONL files in v1. |
+| `manifest.json` | Write at Start with schema `trade_ledger_sweep.manifest.v1`; update atomically at terminal. Contains run/folder identity, ledger and rank size/mtime, hashes of small provenance/summary files, frozen rule IDs/names/hashes, replay constants, preflight decision, mode, start/finish times, terminal phase, and error. The worker revalidates the ledger/rank size+mtime and small-file hashes before and after loading. Do not hash the multi-GB JSONL files in v1. |
 | `rule-results.jsonl` | Await one append per completed or errored rule in frozen order. Each line is exactly `LedgerSweepRuleResult`. This is partial-run recovery evidence. |
 | `diagnostics.jsonl` | Await one append per phase boundary, per-rule replay/control/report completion, and terminal event. It is authoritative when final JSON is absent. |
 | `reports/<ruleId>.txt` | Stable checker report for a successful evaluation; for `ERROR`, a standard checker-style failure report containing the full bounded stack/message. Write via same-directory temp file plus rename. |
@@ -1080,7 +1080,7 @@ existing final directory; never overwrite or merge runs.
 | `summary.txt` | Canonical verdict table with the existing EDGE bar, counts, surface-specific warning, and weak-note explanation. Atomic final write. |
 | `summary.json` | Schema `trade_ledger_sweep.summary.v1`; run metadata, terminal phase, `complete`, sorted scalar results, verdict counts, `diagnosticFooter`, `artifactVsIdeaLogVerdictDifferences`, output paths, and error. Atomic final write. |
 | `diagnostics.json` | Schema `trade_ledger_sweep.diagnostics.v1`; final aggregate described below. Atomic final write. |
-| `diagnostics-summary.json` | Schema `trade_ledger_sweep.diagnostics-summary.v1`; bounded phase, throughput, memory, slow-rule, verdict/error, and optimization-target summary. Atomic final write. |
+| `diagnostics-summary.json` | Schema `trade_ledger_sweep.diagnostics-summary.v1`; bounded phase, throughput, memory, persistence, slow-rule, verdict/error, and optimization-target summary. Atomic final write. |
 
 Append calls are awaited; do not accumulate unbounded pending filesystem
 promises. Final JSON/text writes use a unique same-directory `.tmp` name and
@@ -1125,6 +1125,7 @@ I/O + UTF-8 + readline residual; do not call it pure disk time.
   phases: PhaseDiagnostic[],
   memory: { samples, workerPeak, controllerPeak },
   cpu: CpuDiagnostic[],
+  persistence: { resultAppendMs, diagnosticAppendMs, summaryBuildMs, summaryWriteMs },
   perRule: RuleDiagnostic[],
   throughput,
   verdictCounts,
@@ -1185,6 +1186,7 @@ by fixed top-rule and error-sample limits, so it remains under approximately
     aggregateRowsPerSecond, aggregateRuleRowsPerSecond,
     aggregateControlRowsPerSecond },
   memory: { peakHeapUsed, peakRss, maxRss },
+  persistence: { resultAppendMs, diagnosticAppendMs, summaryBuildMs, summaryWriteMs },
   topSlowestRules: [{ ruleId, name, candidates, kept, controlReplayMs }],
   verdictCounts,
   errors: { count, samples, omitted },

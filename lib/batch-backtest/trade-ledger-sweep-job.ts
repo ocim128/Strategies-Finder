@@ -111,6 +111,7 @@ function runWorkerChild(
     return new Promise<WorkerRunResult>((resolve, reject) => {
         const abort = (): void => { child.kill(); };
         args.signal.addEventListener("abort", abort, { once: true });
+        if (args.signal.aborted) abort();
         child.stdout?.setEncoding("utf8");
         child.stderr?.setEncoding("utf8");
         child.stdout?.on("data", (chunk: string) => {
@@ -142,19 +143,30 @@ function runWorkerChild(
 }
 
 function mergeDiagnostics(current: LedgerSweepDiagnosticsV1, next: LedgerSweepDiagnosticsV1): LedgerSweepDiagnosticsV1 {
-    return {
-        ...next,
-        phases: [...current.phases, ...next.phases],
-        memory: {
-            samples: [...current.memory.samples, ...next.memory.samples],
-            workerPeak: !current.memory.workerPeak || (next.memory.workerPeak && next.memory.workerPeak.maxRss > current.memory.workerPeak.maxRss) ? next.memory.workerPeak : current.memory.workerPeak,
-            controllerPeak: current.memory.controllerPeak,
-            runtimeGuard: next.memory.runtimeGuard.tripped ? next.memory.runtimeGuard : current.memory.runtimeGuard,
-        },
-        cpu: [...current.cpu, ...next.cpu],
-        perRule: [...current.perRule, ...next.perRule.filter((row) => !current.perRule.some((existing) => existing.ruleId === row.ruleId))],
-        errors: [...current.errors, ...next.errors],
-    };
+    current.input = { ...current.input, ...next.input };
+    current.phases.push(...next.phases);
+    current.memory.samples.push(...next.memory.samples);
+    if (!current.memory.workerPeak
+        || (next.memory.workerPeak && next.memory.workerPeak.maxRss > current.memory.workerPeak.maxRss)) {
+        current.memory.workerPeak = next.memory.workerPeak;
+    }
+    if (next.memory.runtimeGuard.tripped) current.memory.runtimeGuard = next.memory.runtimeGuard;
+    current.cpu.push(...next.cpu);
+    current.persistence.resultAppendMs += next.persistence.resultAppendMs;
+    current.persistence.diagnosticAppendMs += next.persistence.diagnosticAppendMs;
+    current.persistence.summaryBuildMs += next.persistence.summaryBuildMs;
+    current.persistence.summaryWriteMs += next.persistence.summaryWriteMs;
+    const existingRuleIds = new Set(current.perRule.map((row) => row.ruleId));
+    for (const row of next.perRule) {
+        if (!existingRuleIds.has(row.ruleId)) {
+            existingRuleIds.add(row.ruleId);
+            current.perRule.push(row);
+        }
+    }
+    current.throughput = { ...current.throughput, ...next.throughput };
+    current.verdictCounts = { ...current.verdictCounts, ...next.verdictCounts };
+    current.errors.push(...next.errors);
+    return current;
 }
 
 function controllerMemoryEntry(phase: LedgerSweepPhase, ruleId: string | null): LedgerSweepDiagnosticEntry {
@@ -190,6 +202,24 @@ export async function runTradeLedgerSweepJob(args: TradeLedgerSweepJobArgs): Pro
     let firstStart = true;
     let terminalFailure: string | null = null;
     const controllerStart = performance.now();
+    const appendDiagnostic = async (entry: LedgerSweepDiagnosticEntry, failurePrefix = "diagnostic append failed"): Promise<void> => {
+        const startedAt = performance.now();
+        try {
+            await artifacts.appendDiagnostic(entry);
+        } catch (error) {
+            diagnostics.errors.push(`${failurePrefix}: ${errorMessage(error)}`);
+        } finally {
+            diagnostics.persistence.diagnosticAppendMs += performance.now() - startedAt;
+        }
+    };
+    const appendRuleResult = async (result: LedgerSweepRuleResult): Promise<void> => {
+        const startedAt = performance.now();
+        try {
+            await artifacts.appendRuleResult(result);
+        } finally {
+            diagnostics.persistence.resultAppendMs += performance.now() - startedAt;
+        }
+    };
     const accept = async (rawEvent: LedgerSweepStreamEvent): Promise<void> => {
         const event = displayEvent(rawEvent, args.outputDir);
         if (event.type === "start") {
@@ -200,7 +230,7 @@ export async function runTradeLedgerSweepJob(args: TradeLedgerSweepJobArgs): Pro
             return;
         }
         if (event.type === "diagnostics") {
-            try { await artifacts.appendDiagnostic(event.entry); } catch (error) { diagnostics.errors.push(`diagnostic append failed: ${errorMessage(error)}`); }
+            await appendDiagnostic(event.entry);
             if (event.entry.group === "memory") {
                 const sample = event.entry.metrics.sample;
                 if (sample && typeof sample === "object") {
@@ -213,7 +243,7 @@ export async function runTradeLedgerSweepJob(args: TradeLedgerSweepJobArgs): Pro
             return;
         }
         if (event.type === "rule_result") {
-            await artifacts.appendRuleResult(event.result);
+            await appendRuleResult(event.result);
             const index = results.findIndex((result) => result.ruleId === event.result.ruleId);
             if (index >= 0) results[index] = event.result; else results.push(event.result);
             args.update({ completedRules: results.length, currentRuleId: null });
@@ -233,7 +263,7 @@ export async function runTradeLedgerSweepJob(args: TradeLedgerSweepJobArgs): Pro
     };
     const appendControllerMemory = async (phase: LedgerSweepPhase): Promise<void> => {
         const entry = controllerMemoryEntry(phase, null);
-        try { await artifacts.appendDiagnostic(entry); } catch (error) { diagnostics.errors.push(`controller diagnostic append failed: ${errorMessage(error)}`); }
+        await appendDiagnostic(entry, "controller diagnostic append failed");
         const sample = entry.metrics.sample as LedgerSweepDiagnosticsV1["memory"]["samples"][number];
         diagnostics.memory.samples.push(sample);
         diagnostics.memory.controllerPeak = !diagnostics.memory.controllerPeak || sample.maxRss > diagnostics.memory.controllerPeak.maxRss ? sample : diagnostics.memory.controllerPeak;
@@ -260,7 +290,7 @@ export async function runTradeLedgerSweepJob(args: TradeLedgerSweepJobArgs): Pro
                 freeSystemMemoryBytes: args.preflight.freeSystemMemoryBytes,
             },
         };
-        try { await artifacts.appendDiagnostic(preflightEntry); } catch (error) { diagnostics.errors.push(`catalog diagnostic append failed: ${errorMessage(error)}`); }
+        await appendDiagnostic(preflightEntry, "catalog diagnostic append failed");
         args.emit({ type: "diagnostics", runId: args.runId, entry: preflightEntry });
         await appendControllerMemory("starting_worker");
         if (args.signal.aborted) throw new Error("Ledger Sweep worker cancelled.");
@@ -283,8 +313,10 @@ export async function runTradeLedgerSweepJob(args: TradeLedgerSweepJobArgs): Pro
         const aggregateControlVisits = diagnostics.perRule.reduce((sum, row) => sum + row.controlCandidateVisits, 0);
         const aggregateControlMs = diagnostics.perRule.reduce((sum, row) => sum + row.controlReplayMs, 0);
         diagnostics.throughput = { elapsedMs, rulesCompleted: finalResults.length, rulesPerHour: elapsedMs > 0 ? finalResults.length / (elapsedMs / 3_600_000) : 0, rowsLoadedPerSecond: elapsedMs > 0 ? (args.folder.rows ?? 0) / (elapsedMs / 1000) : 0, aggregateRuleRowsPerSecond: aggregateRuleMs > 0 ? aggregateRuleRows / (aggregateRuleMs / 1000) : 0, aggregateControlRowsPerSecond: aggregateControlMs > 0 ? aggregateControlVisits / (aggregateControlMs / 1000) : 0, verdictCounts: diagnostics.verdictCounts, errors: diagnostics.errors };
+        const summaryBuildStartedAt = performance.now();
         const summary = buildTradeLedgerSweepSummary(finalResults, undefined, diagnostics);
-        try { await artifacts.appendDiagnostic({ at: Date.now(), group: "progress", phase: "done", ruleId: null, metrics: { elapsedMs, rulesCompleted: finalResults.length, rulesPerHour: diagnostics.throughput.rulesPerHour, rowsLoadedPerSecond: diagnostics.throughput.rowsLoadedPerSecond, aggregateRuleRowsPerSecond: diagnostics.throughput.aggregateRuleRowsPerSecond, aggregateControlRowsPerSecond: diagnostics.throughput.aggregateControlRowsPerSecond, verdictCounts: diagnostics.verdictCounts, errors: diagnostics.errors } }); } catch (diagnosticError) { diagnostics.errors.push(`terminal diagnostic append failed: ${errorMessage(diagnosticError)}`); }
+        diagnostics.persistence.summaryBuildMs += performance.now() - summaryBuildStartedAt;
+        await appendDiagnostic({ at: Date.now(), group: "progress", phase: "done", ruleId: null, metrics: { elapsedMs, rulesCompleted: finalResults.length, rulesPerHour: diagnostics.throughput.rulesPerHour, rowsLoadedPerSecond: diagnostics.throughput.rowsLoadedPerSecond, aggregateRuleRowsPerSecond: diagnostics.throughput.aggregateRuleRowsPerSecond, aggregateControlRowsPerSecond: diagnostics.throughput.aggregateControlRowsPerSecond, verdictCounts: diagnostics.verdictCounts, errors: diagnostics.errors } }, "terminal diagnostic append failed");
         await artifacts.finalize({ terminalPhase: "done", finishedAt: Date.now(), results: finalResults, diagnostics, summary, error: null });
         args.emit({ type: "done", runId: args.runId, ok: true, cancelled: false, finishedAt: Date.now(), summary, results: finalResults, diagnostics, outputDir: args.outputDir });
     } catch (error) {
@@ -295,7 +327,7 @@ export async function runTradeLedgerSweepJob(args: TradeLedgerSweepJobArgs): Pro
         diagnostics.verdictCounts = Object.fromEntries(finalResults.reduce((counts, result) => counts.set(result.verdict, (counts.get(result.verdict) ?? 0) + 1), new Map<string, number>()));
         const terminalPhase = cancelled ? "cancelled" : "fatal";
         const summary = cancelled ? `Cancelled after ${finalResults.length} of ${args.rules.length} rules.` : null;
-        try { await artifacts.appendDiagnostic({ at: Date.now(), group: "progress", phase: terminalPhase, ruleId: null, metrics: { elapsedMs: performance.now() - controllerStart, rulesCompleted: finalResults.length, rulesPerHour: 0, rowsLoadedPerSecond: 0, aggregateRuleRowsPerSecond: 0, aggregateControlRowsPerSecond: 0, verdictCounts: diagnostics.verdictCounts, errors: diagnostics.errors } }); } catch (diagnosticError) { diagnostics.errors.push(`terminal diagnostic append failed: ${errorMessage(diagnosticError)}`); }
+        await appendDiagnostic({ at: Date.now(), group: "progress", phase: terminalPhase, ruleId: null, metrics: { elapsedMs: performance.now() - controllerStart, rulesCompleted: finalResults.length, rulesPerHour: 0, rowsLoadedPerSecond: 0, aggregateRuleRowsPerSecond: 0, aggregateControlRowsPerSecond: 0, verdictCounts: diagnostics.verdictCounts, errors: diagnostics.errors } }, "terminal diagnostic append failed");
         try { await artifacts.finalize({ terminalPhase, finishedAt: Date.now(), results: finalResults, diagnostics, summary, error: cancelled ? null : message }); } catch (finalizeError) { diagnostics.errors.push(`terminal artifact finalization failed: ${errorMessage(finalizeError)}`); }
         if (cancelled) args.emit({ type: "cancelled", runId: args.runId, ok: false, cancelled: true, finishedAt: Date.now(), summary: summary!, results: finalResults, diagnostics, outputDir: args.outputDir });
         else args.emit({ type: "fatal", runId: args.runId, ok: false, cancelled: false, finishedAt: Date.now(), error: message, summary: null, results: finalResults, diagnostics, outputDir: args.outputDir });

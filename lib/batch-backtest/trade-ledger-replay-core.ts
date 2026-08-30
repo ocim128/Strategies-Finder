@@ -407,6 +407,20 @@ function replayRandomControlRows(
     return admitted;
 }
 
+function replayRandomControlPairs(
+    pairRows: Iterable<readonly TradeLedgerRow[]>,
+    rng: () => number,
+    keepProbability: number,
+    params: ReplayParams,
+    shift: number,
+): number {
+    let admitted = 0;
+    for (const rows of pairRows) {
+        admitted += replayRandomControlRows(rows, rng, keepProbability, params, shift);
+    }
+    return admitted;
+}
+
 /**
  * Build a seeded random RULE under the replay: keep a candidate when
  * rng() < p. p is calibrated in TWO DETERMINISTIC PASSES so the random filter
@@ -423,15 +437,19 @@ export function calibratedRandomRule(
     preparedRuleRows?: ReadonlyMap<TradeLedgerRow, TradeLedgerRuleRow>,
     alreadySorted = false,
     candidateRowsOverride?: readonly TradeLedgerRow[],
+    candidatePairsOverride?: ReadonlyMap<string, readonly TradeLedgerRow[]>,
 ): { rule: LedgerRule; calibratedP: number } {
-    const candidateRows = candidateRowsOverride ?? rows.filter(isReplayCandidate);
+    const candidateRows = candidateRowsOverride
+        ?? (candidatePairsOverride ? [...candidatePairsOverride.values()].flat() : rows.filter(isReplayCandidate));
     const makeRule = (seed: number, p: number): LedgerRule => {
         const rng = mulberry32(seed);
         return () => rng() < p;
     };
     const baseline = Math.max(1, candidateRows.length);
     const p0 = Math.min(1, Math.max(0, targetCount / baseline));
-    const firstAdmitted = candidateRowsOverride
+    const firstAdmitted = candidatePairsOverride
+        ? replayRandomControlPairs(candidatePairsOverride.values(), mulberry32(TRADE_LEDGER_CONTROL_SEED), p0, params, shift)
+        : candidateRowsOverride
         ? replayRandomControlRows(candidateRows, mulberry32(TRADE_LEDGER_CONTROL_SEED), p0, params, shift)
         : replayPair(
             "__calibration",
@@ -710,7 +728,8 @@ function runControlReplaySync(
             controlSeed + 1,
             prepared.ruleRows,
             true,
-            prepared.controlRows,
+            undefined,
+            prepared.controlPairs,
         ).calibratedP;
         calibrationReplays = 1;
     }
@@ -768,7 +787,8 @@ export async function evaluateTradeLedgerRuleAsync(
             controlSeed + 1,
             prepared.ruleRows,
             true,
-            prepared.controlRows,
+            undefined,
+            prepared.controlPairs,
         ).calibratedP;
         calibrationReplays = 1;
     }

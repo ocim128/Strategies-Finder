@@ -244,6 +244,28 @@ describe("trade ledger checker random control (seeded, calibrated)", () => {
         expect(Math.abs(resultA.admitted - 5)).to.be.at.most(2);
     });
 
+    it("calibrates with independent admission state for each pair", () => {
+        const multiPairRows = ["P1", "P2"].flatMap((pair) => Array.from({ length: 5 }, (_, i) => candidateRow({
+            pair,
+            signalBarIndex: i,
+            signalTime: i,
+            asIf: { fillTime: i, fillPrice: 10, exitTime: i + 1, exitPrice: 11, pnlPercent: 1, barsHeld: 1, exitReason: "signal" },
+        })));
+        const prepared = prepareTradeLedgerReplay({ rows: multiPairRows, replayParams: replayParams });
+        const calibrated = calibratedRandomRule(
+            multiPairRows,
+            3,
+            replayParams,
+            0,
+            TRADE_LEDGER_CONTROL_SEED + 1,
+            undefined,
+            true,
+            undefined,
+            prepared.controlPairs,
+        );
+        expect(calibrated.calibratedP).to.be.closeTo(0.45, Number.EPSILON);
+    });
+
     it("mulberry32 sequences are seed-stable", () => {
         const r1 = mulberry32(123);
         const r2 = mulberry32(123);
@@ -293,7 +315,7 @@ describe("trade ledger checker random control (seeded, calibrated)", () => {
             ? values.reduce((sum, value) => sum + value, 0) / values.length
             : null;
         for (let k = 0; k < input.controlRuns; k += 1) {
-            const random = calibratedRandomRule(rows, admitted.length, replay, 0, TRADE_LEDGER_CONTROL_SEED + 1 + k, prepared.ruleRows, true);
+            const random = calibratedRandomRule(rows, admitted.length, replay, 0, TRADE_LEDGER_CONTROL_SEED + 1 + k, prepared.ruleRows, true, undefined, prepared.controlPairs);
             let equity = 1;
             const isPnls: number[] = [];
             const holdoutPnls: number[] = [];

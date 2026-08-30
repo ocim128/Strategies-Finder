@@ -53,11 +53,11 @@ function isStrictChild(parent: string, child: string): boolean {
         && !path.isAbsolute(relative);
 }
 
-async function canonicalContained(parent: string, candidate: string): Promise<string | null> {
+async function canonicalContained(parent: string, candidate: string, canonicalParent?: string): Promise<string | null> {
     try {
-        const canonicalParent = await realpath(parent);
+        const resolvedParent = canonicalParent ?? await realpath(parent);
         const canonicalCandidate = await realpath(candidate);
-        return isStrictChild(canonicalParent, canonicalCandidate) ? canonicalCandidate : null;
+        return isStrictChild(resolvedParent, canonicalCandidate) ? canonicalCandidate : null;
     } catch {
         return null;
     }
@@ -111,12 +111,18 @@ async function discoverFolders(
     } catch {
         return [];
     }
+    let canonicalCatalogRoot: string;
+    try {
+        canonicalCatalogRoot = await realpath(catalogRoot);
+    } catch {
+        return [];
+    }
     const folders: LedgerSweepFolderCatalogEntry[] = [];
     for (const entry of entries) {
         if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
         const folderId = entry.name;
         const folderPath = path.join(catalogRoot, folderId);
-        const containedFolder = await canonicalContained(catalogRoot, folderPath);
+        const containedFolder = await canonicalContained(catalogRoot, folderPath, canonicalCatalogRoot);
         if (!containedFolder) continue;
         const ledger = await fileBytes(path.join(containedFolder, "ledger.jsonl"));
         if (!ledger) continue;
@@ -172,6 +178,12 @@ async function discoverRules(rulesRoot: string): Promise<LedgerSweepRuleCatalogE
     } catch {
         return [];
     }
+    let canonicalRulesRoot: string;
+    try {
+        canonicalRulesRoot = await realpath(rulesRoot);
+    } catch {
+        return [];
+    }
     const rules: LedgerSweepRuleCatalogEntry[] = [];
     const seen = new Set<string>();
     for (const entry of entries) {
@@ -179,7 +191,7 @@ async function discoverRules(rulesRoot: string): Promise<LedgerSweepRuleCatalogE
         const ruleId = entry.name.slice(0, -3);
         if (seen.has(ruleId)) throw new Error(`Duplicate rule id: ${ruleId}`);
         const filePath = path.join(rulesRoot, entry.name);
-        const contained = await canonicalContained(rulesRoot, filePath);
+        const contained = await canonicalContained(rulesRoot, filePath, canonicalRulesRoot);
         if (!contained) continue;
         const info = await fileBytes(contained);
         if (!info) continue;
@@ -219,13 +231,14 @@ export async function discoverLedgerSweepCatalog(
 export async function resolveLedgerSweepFolder(
     serverRoot: string,
     folderId: string,
+    catalogOverride?: LedgerSweepCatalog,
 ): Promise<{ entry: LedgerSweepFolderCatalogEntry; absolutePath: string } | null> {
     if (!folderId || folderId.includes("/") || folderId.includes("\\") || folderId === "." || folderId === "..") return null;
     const catalogRoot = path.resolve(serverRoot, "archive", "mining-ledger");
     const candidate = path.join(catalogRoot, folderId);
     const contained = await canonicalContained(catalogRoot, candidate);
     if (!contained || path.basename(contained) !== folderId) return null;
-    const catalog = await discoverLedgerSweepCatalog(serverRoot);
+    const catalog = catalogOverride ?? await discoverLedgerSweepCatalog(serverRoot);
     const entry = catalog.folders.find((folder) => folder.folderId === folderId);
     return entry ? { entry, absolutePath: contained } : null;
 }

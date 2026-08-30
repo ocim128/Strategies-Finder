@@ -27,13 +27,13 @@ function mean(values: readonly number[]): number | null {
     return total / values.length;
 }
 
-function median(values: readonly number[]): number | null {
+function median(values: number[]): number | null {
     if (values.length === 0) return null;
-    const sorted = [...values].sort((a, b) => a - b);
-    const middle = sorted.length / 2;
-    return sorted.length % 2 === 1
-        ? sorted[Math.floor(middle)]!
-        : (sorted[middle - 1]! + sorted[middle]!) / 2;
+    values.sort((a, b) => a - b);
+    const middle = values.length / 2;
+    return values.length % 2 === 1
+        ? values[Math.floor(middle)]!
+        : (values[middle - 1]! + values[middle]!) / 2;
 }
 
 function runControl(k: number, input: TradeLedgerControlWorkerRunMessage): TradeLedgerControlRunResult {

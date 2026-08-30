@@ -16,7 +16,11 @@ import {
 import { createTradeLedgerControlPool, type TradeLedgerControlPool } from "../lib/batch-backtest/trade-ledger-control-pool";
 import { loadLedgerForReplay } from "../lib/batch-backtest/trade-ledger-replay-loader";
 import { classifyTradeLedgerVerdict } from "../lib/batch-backtest/trade-ledger-verdict";
-import type { TradeLedgerSweepManifest } from "../lib/batch-backtest/trade-ledger-sweep-artifacts";
+import {
+    assertTradeLedgerSweepInputSnapshot,
+    type TradeLedgerSweepInputSnapshot,
+    type TradeLedgerSweepManifest,
+} from "../lib/batch-backtest/trade-ledger-sweep-artifacts";
 import {
     createEmptyLedgerSweepDiagnostics,
     type LedgerSweepDiagnosticEntry,
@@ -135,6 +139,50 @@ async function sourceHash(filePath: string): Promise<string> {
     return createHash("sha256").update(await readFile(filePath)).digest("hex");
 }
 
+interface InputFileSnapshot {
+    bytes: number;
+    modifiedAt: number;
+}
+
+async function inputFileSnapshot(filePath: string, required: boolean): Promise<InputFileSnapshot | null> {
+    try {
+        const info = await stat(filePath);
+        if (!info.isFile()) fail(`Ledger input is not a regular file: ${filePath}`);
+        return { bytes: info.size, modifiedAt: info.mtimeMs };
+    } catch (error) {
+        if (!required && error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+        throw error;
+    }
+}
+
+async function optionalSourceHash(filePath: string): Promise<string | null> {
+    try {
+        return await sourceHash(filePath);
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+        throw error;
+    }
+}
+
+async function assertInputSnapshot(manifest: TradeLedgerSweepManifest, folder: string): Promise<void> {
+    const [ledger, rank, provenanceSha256, summarySha256] = await Promise.all([
+        inputFileSnapshot(path.join(folder, "ledger.jsonl"), true),
+        inputFileSnapshot(path.join(folder, "signal-ranks.jsonl"), false),
+        optionalSourceHash(path.join(folder, "provenance.json")),
+        optionalSourceHash(path.join(folder, "summary.json")),
+    ]);
+    if (!ledger) fail("Ledger input is missing.");
+    const snapshot: TradeLedgerSweepInputSnapshot = {
+        ledgerBytes: ledger.bytes,
+        ledgerModifiedAt: ledger.modifiedAt,
+        rankBytes: rank?.bytes ?? 0,
+        rankModifiedAt: rank?.modifiedAt ?? null,
+        provenanceSha256,
+        summarySha256,
+    };
+    assertTradeLedgerSweepInputSnapshot(manifest, snapshot);
+}
+
 async function resolveRule(options: WorkerOptions, manifest: TradeLedgerSweepManifest, ruleId: string): Promise<{
     ruleId: string;
     ruleName: string;
@@ -180,8 +228,7 @@ async function preloadRules(
     }));
 }
 
-async function writeRuleReport(outputDir: string, ruleId: string, reportLines: readonly string[]): Promise<string> {
-    const text = reportLines.join("\n");
+async function writeRuleReport(outputDir: string, ruleId: string, text: string): Promise<string> {
     const reportPath = path.join(outputDir, "reports", `${ruleId}.txt`);
     await atomicWrite(reportPath, `${text}\n`);
     await appendFile(path.join(outputDir, "full-report.txt"), `===== ${ruleId} =====\n${text}\n\n`, "utf8");
@@ -225,6 +272,7 @@ async function runWorker(options: WorkerOptions): Promise<void> {
     const manifest = await loadManifest(options.outputDir);
     if (manifest.runId !== options.runId) fail("Worker run id does not match the manifest.");
     await assertWorkerPaths(options);
+    await assertInputSnapshot(manifest, options.ledgerFolder);
     const totalRules = manifest.rules.length;
     const startedAt = Date.now();
     const diagnostics = createEmptyLedgerSweepDiagnostics({
@@ -243,7 +291,6 @@ async function runWorker(options: WorkerOptions): Promise<void> {
     let runtimeGuardError: Error | null = null;
     let controlPool: TradeLedgerControlPool | null = null;
     const addEntry = (entry: LedgerSweepDiagnosticEntry): void => {
-        diagnostics.errors = diagnostics.errors;
         if (entry.group === "memory") {
             const sample = entry.metrics.sample as LedgerSweepMemorySample | undefined;
             if (sample) {
@@ -361,6 +408,7 @@ async function runWorker(options: WorkerOptions): Promise<void> {
         phase("loading_ledger", "loading ledger.jsonl", null, 0);
         const loadStartedAt = Date.now();
         const loaded = await loadLedgerForReplay(options.ledgerFolder);
+        await assertInputSnapshot(manifest, options.ledgerFolder);
         assertRuntimeHeapSafe();
         const loadFinishedAt = Date.now();
         diagnostics.input = {
@@ -478,7 +526,7 @@ async function runWorker(options: WorkerOptions): Promise<void> {
                 const reportText = evaluated.reportLines.join("\n");
                 const reportFormatMs = performance.now() - reportStartedAt;
                 const writeStartedAt = performance.now();
-                const reportPath = await writeRuleReport(options.outputDir, entry.ruleId, evaluated.reportLines);
+                const reportPath = await writeRuleReport(options.outputDir, entry.ruleId, reportText);
                 const reportWriteMs = performance.now() - writeStartedAt;
                 ruleResult = {
                     ruleId: entry.ruleId,
@@ -519,10 +567,6 @@ async function runWorker(options: WorkerOptions): Promise<void> {
                     reportFormatMs,
                     reportWriteMs,
                     reportBytes: Buffer.byteLength(reportText),
-                    resultAppendMs: 0,
-                    diagnosticAppendMs: 0,
-                    summaryBuildMs: 0,
-                    summaryWriteMs: 0,
                 } });
                 const replayFinishedAt = ruleStartedAt + evaluated.evaluation.ruleReplayMs;
                 const controlsFinishedAt = replayFinishedAt + evaluated.evaluation.controlReplayMs;
@@ -533,7 +577,7 @@ async function runWorker(options: WorkerOptions): Promise<void> {
                 );
             } catch (error) {
                 if (runtimeGuardError) throw runtimeGuardError;
-                const reportPath = await writeRuleReport(options.outputDir, entry.ruleId, [`trade-ledger-checker failed: ${errorText(error)}`]);
+                const reportPath = await writeRuleReport(options.outputDir, entry.ruleId, `trade-ledger-checker failed: ${errorText(error)}`);
                 ruleResult = { ...errorResult(entry, error, prepared.candidateRows), reportPath };
                 addEntry({ at: Date.now(), group: "rule_replay", phase: "rule_replay", ruleId: entry.ruleId, metrics: {
                     ruleName: entry.ruleName,

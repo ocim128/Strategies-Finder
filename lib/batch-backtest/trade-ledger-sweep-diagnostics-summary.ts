@@ -40,6 +40,12 @@ export interface LedgerSweepDiagnosticsSummaryV1 {
         peakRss: number | null;
         maxRss: number | null;
     };
+    persistence: {
+        resultAppendMs: number;
+        diagnosticAppendMs: number;
+        summaryBuildMs: number;
+        summaryWriteMs: number;
+    };
     topSlowestRules: Array<{
         ruleId: string;
         name: string;
@@ -157,6 +163,7 @@ export function buildTradeLedgerSweepDiagnosticsSummary(
             peakRss: peakSampleValue(diagnostics, "rss"),
             maxRss: peakSampleValue(diagnostics, "maxRss"),
         },
+        persistence: { ...diagnostics.persistence },
         topSlowestRules,
         verdictCounts: { ...diagnostics.verdictCounts },
         errors: {

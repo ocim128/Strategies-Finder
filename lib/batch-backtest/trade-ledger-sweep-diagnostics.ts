@@ -114,6 +114,12 @@ export interface LedgerSweepDiagnosticsV1 {
         runtimeGuard: LedgerSweepRuntimeMemoryGuard;
     };
     cpu: LedgerSweepCpuDiagnostic[];
+    persistence: {
+        resultAppendMs: number;
+        diagnosticAppendMs: number;
+        summaryBuildMs: number;
+        summaryWriteMs: number;
+    };
     perRule: LedgerSweepRuleDiagnostic[];
     throughput: Record<string, unknown>;
     verdictCounts: Record<string, number>;
@@ -147,6 +153,12 @@ export function createEmptyLedgerSweepDiagnostics(args: {
             },
         },
         cpu: [],
+        persistence: {
+            resultAppendMs: 0,
+            diagnosticAppendMs: 0,
+            summaryBuildMs: 0,
+            summaryWriteMs: 0,
+        },
         perRule: [],
         throughput: {},
         verdictCounts: {},

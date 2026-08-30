@@ -2,6 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { performance } from "node:perf_hooks";
 import path from "node:path";
 import {
     TRADE_LEDGER_CONTROL_RUNS,
@@ -43,6 +44,34 @@ export interface TradeLedgerSweepManifest {
     error: string | null;
 }
 
+export interface TradeLedgerSweepInputSnapshot {
+    ledgerBytes: number;
+    ledgerModifiedAt: number;
+    rankBytes: number;
+    rankModifiedAt: number | null;
+    provenanceSha256: string | null;
+    summarySha256: string | null;
+}
+
+export function assertTradeLedgerSweepInputSnapshot(
+    manifest: Pick<TradeLedgerSweepManifest, keyof TradeLedgerSweepInputSnapshot>,
+    snapshot: TradeLedgerSweepInputSnapshot,
+): void {
+    if (snapshot.ledgerBytes !== manifest.ledgerBytes || snapshot.ledgerModifiedAt !== manifest.ledgerModifiedAt) {
+        throw new Error("Ledger input changed after the sweep snapshot was created.");
+    }
+    if (snapshot.rankBytes !== manifest.rankBytes
+        || (manifest.rankBytes > 0 && snapshot.rankModifiedAt !== manifest.rankModifiedAt)) {
+        throw new Error("Signal-ranks input changed after the sweep snapshot was created.");
+    }
+    if (snapshot.provenanceSha256 !== manifest.provenanceSha256) {
+        throw new Error("Provenance input changed after the sweep snapshot was created.");
+    }
+    if (snapshot.summarySha256 !== manifest.summarySha256) {
+        throw new Error("Summary input changed after the sweep snapshot was created.");
+    }
+}
+
 export interface CreateSweepArtifactsArgs {
     outputAbsolutePath: string;
     outputDir: string;
@@ -69,7 +98,6 @@ export interface TradeLedgerSweepArtifacts {
     readonly manifest: TradeLedgerSweepManifest;
     appendRuleResult(result: LedgerSweepRuleResult): Promise<void>;
     appendDiagnostic(entry: LedgerSweepDiagnosticEntry): Promise<void>;
-    writeRuleReport(ruleId: string, reportText: string): Promise<string>;
     finalize(args: FinalizeSweepArtifactsArgs): Promise<void>;
 }
 
@@ -229,12 +257,6 @@ export async function createTradeLedgerSweepArtifacts(args: CreateSweepArtifacts
         manifest,
         appendRuleResult: (result) => appendFile(path.join(args.outputAbsolutePath, "rule-results.jsonl"), jsonLine(result), "utf8"),
         appendDiagnostic: (entry) => appendFile(path.join(args.outputAbsolutePath, "diagnostics.jsonl"), jsonLine(entry), "utf8"),
-        async writeRuleReport(ruleId, reportText) {
-            const reportPath = path.join(args.outputAbsolutePath, "reports", `${ruleId}.txt`);
-            await atomicWrite(reportPath, reportText.endsWith("\n") ? reportText : `${reportText}\n`);
-            await appendFile(path.join(args.outputAbsolutePath, "full-report.txt"), `===== ${ruleId} =====\n${reportText}\n\n`, "utf8");
-            return path.posix.join("reports", `${ruleId}.txt`);
-        },
         async finalize(finalArgs) {
             manifest.finishedAt = finalArgs.finishedAt;
             manifest.terminalPhase = finalArgs.terminalPhase;
@@ -242,7 +264,13 @@ export async function createTradeLedgerSweepArtifacts(args: CreateSweepArtifacts
             manifest.error = finalArgs.error;
             const diagnosticFooter = buildTradeLedgerSweepDiagnosticsFooter(finalArgs.diagnostics);
             const verdictDifferences = await readVerdictDifferences(args.folderAbsolutePath, finalArgs.results);
-            const summaryText = finalArgs.summary ?? buildTradeLedgerSweepSummary(finalArgs.results, undefined, finalArgs.diagnostics);
+            let summaryText = finalArgs.summary;
+            if (summaryText === null) {
+                const summaryBuildStartedAt = performance.now();
+                summaryText = buildTradeLedgerSweepSummary(finalArgs.results, undefined, finalArgs.diagnostics);
+                finalArgs.diagnostics.persistence.summaryBuildMs += performance.now() - summaryBuildStartedAt;
+            }
+            const summaryWriteStartedAt = performance.now();
             await atomicWrite(path.join(args.outputAbsolutePath, "summary.txt"), `${summaryText}\n`);
             await atomicWrite(path.join(args.outputAbsolutePath, "summary.json"), JSON.stringify({
                 schema: "trade_ledger_sweep.summary.v1",
@@ -257,6 +285,7 @@ export async function createTradeLedgerSweepArtifacts(args: CreateSweepArtifacts
                 outputDir: args.outputDir,
                 error: finalArgs.error,
             }, null, 2) + "\n");
+            finalArgs.diagnostics.persistence.summaryWriteMs += performance.now() - summaryWriteStartedAt;
             await atomicWrite(path.join(args.outputAbsolutePath, "diagnostics.json"), JSON.stringify(finalArgs.diagnostics, null, 2) + "\n");
             await atomicWrite(path.join(args.outputAbsolutePath, "diagnostics-summary.json"), JSON.stringify(buildTradeLedgerSweepDiagnosticsSummary(finalArgs.diagnostics, finalArgs.terminalPhase), null, 2) + "\n");
             await atomicWrite(path.join(args.outputAbsolutePath, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");

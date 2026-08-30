@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { runChecker } from "../scripts/trade-ledger-checker";
@@ -12,7 +12,7 @@ import {
 } from "../lib/batch-backtest/trade-ledger-sweep-preflight";
 import { runTradeLedgerSweepJob, type TradeLedgerSweepJobArgs } from "../lib/batch-backtest/trade-ledger-sweep-job";
 import { classifyTradeLedgerVerdict } from "../lib/batch-backtest/trade-ledger-verdict";
-import { buildTradeLedgerSweepDiagnosticsFooter } from "../lib/batch-backtest/trade-ledger-sweep-artifacts";
+import { assertTradeLedgerSweepInputSnapshot, buildTradeLedgerSweepDiagnosticsFooter } from "../lib/batch-backtest/trade-ledger-sweep-artifacts";
 import { createEmptyLedgerSweepDiagnostics } from "../lib/batch-backtest/trade-ledger-sweep-diagnostics";
 import { buildTradeLedgerSweepDiagnosticsSummary } from "../lib/batch-backtest/trade-ledger-sweep-diagnostics-summary";
 import type { LedgerSweepStreamEvent } from "../lib/batch-backtest/trade-ledger-sweep-stream-types";
@@ -20,6 +20,14 @@ import type { LedgerSweepStreamEvent } from "../lib/batch-backtest/trade-ledger-
 const ROOT = process.cwd();
 const FOLDER_ID = "2026-08-29_1851_batch-smoke-v2";
 const RULE_IDS = ["smoke-restrictive-rule", "smoke-trivial-rule"];
+const testSweepOutputs = new Set<string>();
+
+afterEach(async () => {
+    for (const outputAbsolutePath of testSweepOutputs) {
+        await rm(outputAbsolutePath, { recursive: true, force: true });
+    }
+    testSweepOutputs.clear();
+});
 
 async function runInjectedWorker(source: string): Promise<{ outputAbsolutePath: string; events: LedgerSweepStreamEvent[] }> {
     const catalog = await discoverLedgerSweepCatalog(ROOT);
@@ -32,6 +40,7 @@ async function runInjectedWorker(source: string): Promise<{ outputAbsolutePath: 
     await writeFile(workerPath, source, "utf8");
     const runId = `phase2audit-w3-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const outputAbsolutePath = path.join(folder.absolutePath, "sweeps", `20260830_000000_${runId}`);
+    testSweepOutputs.add(outputAbsolutePath);
     const outputDir = path.relative(ROOT, outputAbsolutePath).replace(/\\/g, "/");
     const preflight = resolveLedgerSweepPreflight(folder.entry.rows!, Number.MAX_SAFE_INTEGER);
     const events: LedgerSweepStreamEvent[] = [];
@@ -75,6 +84,7 @@ async function runMode(mode: "load_once" | "isolated_per_rule", suffix: string):
     const rules = catalog.rules.filter((rule) => RULE_IDS.includes(rule.ruleId));
     const runId = `phase3-${suffix}-${Date.now()}`;
     const outputAbsolutePath = path.join(folder.absolutePath, "sweeps", `20260830_000000_${runId}`);
+    testSweepOutputs.add(outputAbsolutePath);
     const outputDir = path.relative(ROOT, outputAbsolutePath).replace(/\\/g, "/");
     const preflight = resolveLedgerSweepPreflight(folder.entry.rows!, mode === "load_once" ? Number.MAX_SAFE_INTEGER : 1_500_000_000);
     if (preflight.decision !== mode) throw new Error(`fixture preflight selected ${preflight.decision}`);
@@ -101,6 +111,20 @@ async function runMode(mode: "load_once" | "isolated_per_rule", suffix: string):
 }
 
 describe("trade-ledger sweep engine", () => {
+    it("rejects input snapshots that no longer match the manifest", () => {
+        const manifest = {
+            ledgerBytes: 10,
+            ledgerModifiedAt: 20,
+            rankBytes: 30,
+            rankModifiedAt: 40,
+            provenanceSha256: "provenance",
+            summarySha256: "summary",
+        };
+        expect(() => assertTradeLedgerSweepInputSnapshot(manifest, { ...manifest })).to.not.throw();
+        expect(() => assertTradeLedgerSweepInputSnapshot(manifest, { ...manifest, ledgerBytes: 11 })).to.throw(/Ledger input changed/);
+        expect(() => assertTradeLedgerSweepInputSnapshot(manifest, { ...manifest, summarySha256: "changed" })).to.throw(/Summary input changed/);
+    });
+
     it("selects every fixed preflight branch at the documented boundaries", () => {
         const loadOnce = resolveLedgerSweepPreflight(1, Number.MAX_SAFE_INTEGER);
         expect(loadOnce.decision).to.equal("load_once");
@@ -138,6 +162,7 @@ describe("trade-ledger sweep engine", () => {
         const preflight = { ...basePreflight, decision: "load_once" as const, childHeapLimitBytes: 1_000 };
         const runId = `phase2audit-w1-guard-${Date.now()}`;
         const outputAbsolutePath = path.join(folder.absolutePath, "sweeps", `20260830_000000_${runId}`);
+        testSweepOutputs.add(outputAbsolutePath);
         const events: LedgerSweepStreamEvent[] = [];
         await runTradeLedgerSweepJob({ runId, folder: folder.entry, rules: [rule], mode: "load_once", modeReason: "injected low-heap runtime guard", preflight, folderAbsolutePath: folder.absolutePath, rulesAbsolutePath: path.join(ROOT, "archive", "mining-ledger", "rules"), outputAbsolutePath, outputDir: path.relative(ROOT, outputAbsolutePath).replace(/\\/g, "/"), signal: new AbortController().signal, emit: (event) => events.push(event), update: () => undefined, workerAbsolutePath: path.join(ROOT, "scripts", "trade-ledger-sweep-worker.ts") });
         const fatal = events.at(-1);
@@ -223,7 +248,7 @@ describe("trade-ledger sweep engine", () => {
         expect(summary.topSlowestRules).to.have.length(10);
         expect(summary.topSlowestRules[0]).to.deep.include({ ruleId: "q199", name: "rule-199.ts", candidates: 201, kept: 1, controlReplayMs: 1_990 });
         expect(summary.errors).to.deep.equal({ count: 25, samples: Array.from({ length: 10 }, (_, index) => `error-${index}`), omitted: 15 });
-        expect(JSON.stringify(summary, null, 2).split(/\r?\n/)).to.have.length.at.most(150);
+        expect(JSON.stringify(summary, null, 2).split(/\r?\n/)).to.have.length.at.most(160);
     });
 
     it("keeps load-once and isolated-per-rule report/result parity with the checker", async () => {
@@ -237,9 +262,13 @@ describe("trade-ledger sweep engine", () => {
             const report = await readFile(path.join(ROOT, loadOnce.outputDir, "reports", `${ruleId}.txt`), "utf8");
             expect(report).to.equal(`${legacy}\n`);
         }
-        const diagnosticsSummary = JSON.parse(await readFile(path.join(ROOT, loadOnce.outputDir, "diagnostics-summary.json"), "utf8")) as { schema: string; topSlowestRules: unknown[] };
+        const diagnosticsSummary = JSON.parse(await readFile(path.join(ROOT, loadOnce.outputDir, "diagnostics-summary.json"), "utf8")) as { schema: string; topSlowestRules: unknown[]; persistence: { resultAppendMs: number; diagnosticAppendMs: number; summaryBuildMs: number; summaryWriteMs: number } };
         expect(diagnosticsSummary.schema).to.equal("trade_ledger_sweep.diagnostics-summary.v1");
         expect(diagnosticsSummary.topSlowestRules).to.have.length(2);
+        expect(diagnosticsSummary.persistence.resultAppendMs).to.be.greaterThan(0);
+        expect(diagnosticsSummary.persistence.diagnosticAppendMs).to.be.greaterThan(0);
+        expect(diagnosticsSummary.persistence.summaryBuildMs).to.be.greaterThan(0);
+        expect(diagnosticsSummary.persistence.summaryWriteMs).to.be.greaterThan(0);
         expect(loadOnce.events.at(-1)?.type).to.equal("done");
         expect(isolated.events.at(-1)?.type).to.equal("done");
     });
@@ -254,6 +283,7 @@ describe("trade-ledger sweep engine", () => {
         ];
         const runId = `phase3-error-${Date.now()}`;
         const outputAbsolutePath = path.join(folder.absolutePath, "sweeps", `20260830_000000_${runId}`);
+        testSweepOutputs.add(outputAbsolutePath);
         const outputDir = path.relative(ROOT, outputAbsolutePath).replace(/\\/g, "/");
         const preflight = resolveLedgerSweepPreflight(folder.entry.rows!, Number.MAX_SAFE_INTEGER);
         const events: LedgerSweepStreamEvent[] = [];
@@ -303,6 +333,7 @@ describe("trade-ledger sweep engine", () => {
             };
             const runId = `phase2audit-w1-${Date.now()}`;
             const outputAbsolutePath = path.join(folder.absolutePath, "sweeps", runId);
+            testSweepOutputs.add(outputAbsolutePath);
             const outputDir = path.relative(ROOT, outputAbsolutePath).replace(/\\/g, "/");
             const events: LedgerSweepStreamEvent[] = [];
             await runTradeLedgerSweepJob({
