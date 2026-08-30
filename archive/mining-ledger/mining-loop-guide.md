@@ -32,16 +32,32 @@ design — that is the anti-leakage guard. Do not try to bypass it.
                              Do not mine it. candidatesAtTime (breadth) is fine to use.
 
 ## Measured value scales on F2 (calibrate thresholds against these)
-    feat_hour    bars exist ONLY at hours {12: 99.9%, 16: ~0.07%, 20: ~0.003%}.
-                 "overnight/session" hour gates are meaningless on this surface.
+    feat_hour    SESSION CONTEXT (US stock synthetic pairs, 4H aggregated from 30m):
+                 Data exists only during US regular hours, Mon-Fri, roughly
+                 13:30-20:00 UTC (DST-shifting to ~14:30-21:00 in winter).
+                 4H bars are fixed-UTC-bucket aggregates: normally TWO bars/day
+                 at 12:00 and 16:00 UTC, plus a winter-only 20:00 stub bar.
+                 Overnight is a gap, not a bar; bar content varies with DST, so
+                 a "4H" bar here is a session slice, not a uniform 4-hour packet.
+                 CONSEQUENCE: entry signals fire ~99.9% at hour 12 (session-open
+                 bar). Intraday hour-window theses (e.g. 06:00-10:00) match
+                 NOTHING; a 16:00/20:00 gate matches ~0.08% (too rare to mine).
+                 Do not propose feat_hour gates on this surface.
     feat_dow     getUTCDay(): 1=Monday ... 5=Friday. Values present are 1,2,3,4,5
-                 (no weekend bars). Monday=1, Friday=5.
+                 (no weekend bars). Monday=1, Friday=5. The ONLY live time
+                 dimension on this surface. Other seasonal theses (month,
+                 bar-of-day index) would need NEW exporter features first.
     feat_gapPct  p1 -11.8 | p10 -4.6 | p50 -1.4 | p90 -0.5 | p99 -0.25.
                  Mostly NEGATIVE (median -1.4%). Thresholds like "< -0.2" keep 99.8%
                  of rows; ">= 0.2" keeps ~0%. Selective gap gates need values like
                  "< -3" (deep gap) or "> -0.6" (unusually small gap).
     feat_atrPct  p50 ~2.1, p90 ~5.7 (see earlier smoke).
-    feat_candidatesAtTime  populated by the checker's rank join; sample showed ~5.
+    feat_candidatesAtTime  p10 11 | p25 18 | p50 31 | p75 50 | p90 82 | max 248.
+                           Breadth is HIGH on this surface (1410 pairs): <=2 = 0.4%,
+                           <=3 = 0.9%, <=5 = 2.5%, <=8 = 6.3%, >=20 = 72.7%, >=6 =
+                           97.5%. "Quiet" gates must use <=3..<=8 to be selective; a
+                           ">=6" gate is a no-op. Very tight gates (<1% kept) admit
+                           few trades - expect fragile verdicts.
     A rule matching ~0% or ~100% of candidates tests nothing - the checker will
     report it, but the IDEA AGENT must calibrate thresholds to the scales above
     BEFORE proposing.
