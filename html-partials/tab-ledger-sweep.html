@@ -30,6 +30,11 @@
         <div class="empty-state" id="tradeLedgerSweepEmpty">Select a runnable ledger folder to begin.</div>
         <details class="trade-ledger-sweep-diagnostics-details">
             <summary>Diagnostics</summary>
+            <div class="trade-ledger-sweep-diagnostics-tabs" role="tablist" aria-label="Diagnostics views">
+                <button class="btn btn-secondary btn-compact is-active" id="tradeLedgerSweepDiagnosticsSummaryTab" type="button" role="tab" aria-selected="true">Summary</button>
+                <button class="btn btn-secondary btn-compact" id="tradeLedgerSweepDiagnosticsRawTab" type="button" role="tab" aria-selected="false">Full JSON</button>
+            </div>
+            <div class="trade-ledger-sweep-diagnostics-summary" id="tradeLedgerSweepDiagnosticsSummary"></div>
             <pre class="batch-diagnostic-pre" id="tradeLedgerSweepDiagnostics"></pre>
         </details>
     </section>

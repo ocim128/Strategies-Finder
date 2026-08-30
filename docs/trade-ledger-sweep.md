@@ -196,6 +196,7 @@ existing.
 | `lib/batch-backtest/trade-ledger-sweep-catalog.ts` | Proposed | Safe folder/rule discovery and opaque catalog IDs. |
 | `lib/batch-backtest/trade-ledger-sweep-preflight.ts` | Proposed | v1 memory estimator, mode decision, and refusal reason. |
 | `lib/batch-backtest/trade-ledger-sweep-diagnostics.ts` | Proposed | Diagnostic types, clocks, memory/CPU/event-loop samplers, aggregation, and schema v1. |
+| `lib/batch-backtest/trade-ledger-sweep-diagnostics-summary.ts` | Proposed | Bounded summary projection from the final in-memory diagnostics aggregate. |
 | `lib/batch-backtest/trade-ledger-sweep-artifacts.ts` | Proposed | Safe output directory construction, incremental appenders, atomic final files, and terminal manifest update. |
 | `lib/batch-backtest/trade-ledger-sweep-job.ts` | Proposed | Vite-side child-process orchestration, worker protocol parsing, Stop, retained scalar state, and mode execution. |
 | `lib/batch-backtest/trade-ledger-sweep-stream-types.ts` | Proposed | Browser/server wire types and scalar guards. |
@@ -639,10 +640,13 @@ Proposed `TRADE_LEDGER_SWEEP_REQUIRED_IDS`:
 | `tradeLedgerSweepHoldoutWarning` | Permanent research warning above results. |
 | `tradeLedgerSweepOutput` | Relative artifact directory or terminal persistence error. |
 | `tradeLedgerSweepCopySummaryBtn` | Copy canonical `summary.txt` text; disabled until available. |
-| `tradeLedgerSweepCopyDiagnosticsBtn` | Copy pretty `diagnostics.json`; disabled until available. |
+| `tradeLedgerSweepCopyDiagnosticsBtn` | Copy compact `diagnostics-summary.json`; disabled until available. |
 | `tradeLedgerSweepResults` | Final/current scalar verdict table. |
 | `tradeLedgerSweepEmpty` | Empty-state text before results. |
-| `tradeLedgerSweepDiagnostics` | Collapsible/preformatted diagnostic summary. |
+| `tradeLedgerSweepDiagnosticsSummaryTab` | Default compact diagnostics Summary view. |
+| `tradeLedgerSweepDiagnosticsRawTab` | Secondary Full JSON diagnostics view. |
+| `tradeLedgerSweepDiagnosticsSummary` | Compact phase, throughput, memory, slow-rule, verdict/error, and optimization-target table. |
+| `tradeLedgerSweepDiagnostics` | Secondary collapsible/preformatted full `diagnostics.json` view. |
 
 The proposed `lib/batch-backtest/trade-ledger-sweep-dom.ts` owns these IDs and
 `createTradeLedgerSweepDom()`. Add it as its own `tradeLedgerSweep` group in
@@ -1038,6 +1042,7 @@ folder, never from an HTTP path:
       summary.txt
       summary.json
       diagnostics.json
+      diagnostics-summary.json
       reports/
         <ruleId>.txt
 ```
@@ -1056,6 +1061,7 @@ existing final directory; never overwrite or merge runs.
 | `summary.txt` | Canonical verdict table with the existing EDGE bar, counts, surface-specific warning, and weak-note explanation. Atomic final write. |
 | `summary.json` | Schema `trade_ledger_sweep.summary.v1`; run metadata, terminal phase, `complete`, sorted scalar results, verdict counts, `diagnosticFooter`, `artifactVsIdeaLogVerdictDifferences`, output paths, and error. Atomic final write. |
 | `diagnostics.json` | Schema `trade_ledger_sweep.diagnostics.v1`; final aggregate described below. Atomic final write. |
+| `diagnostics-summary.json` | Schema `trade_ledger_sweep.diagnostics-summary.v1`; bounded phase, throughput, memory, slow-rule, verdict/error, and optimization-target summary. Atomic final write. |
 
 Append calls are awaited; do not accumulate unbounded pending filesystem
 promises. Final JSON/text writes use a unique same-directory `.tmp` name and
@@ -1133,6 +1139,52 @@ LedgerSweepDiagnosticEntry = {
 
 Keep every metric group below. Names are wire/artifact names, not suggestions.
 
+`diagnostics-summary.json` is the primary human/agent read for bottleneck
+triage. It is projected from the final in-memory `diagnostics.json` aggregate
+and contains no trace arrays or ledger rows. Its pretty-printed form is capped
+by fixed top-rule and error-sample limits, so it remains under approximately
+150 lines regardless of the rule count:
+
+```text
+{
+  schema: "trade_ledger_sweep.diagnostics-summary.v1",
+  runId,
+  mode,
+  terminalPhase,
+  phases: {
+    load: { ledgerMs, ranksMs, joinMs, totalMs },
+    prepare: { totalMs },
+    ruleReplay: { totalMs },
+    controls: { totalMs },
+    reportWriting: { totalMs },
+    other: { totalMs }
+  },
+  wallMs,
+  controlsShareOfCompute,
+  controlsShareOfWall,
+  throughput: { rulesCompleted, rulesPerHour, rowsLoadedPerSecond,
+    aggregateRowsPerSecond, aggregateRuleRowsPerSecond,
+    aggregateControlRowsPerSecond },
+  memory: { peakHeapUsed, peakRss, maxRss },
+  topSlowestRules: [{ ruleId, name, candidates, kept, controlReplayMs }],
+  verdictCounts,
+  errors: { count, samples, omitted },
+  optimizationTarget: {
+    file: "lib/batch-backtest/trade-ledger-replay-core.ts",
+    symbol: "random controls loop",
+    constraint: "two-pass calibration, independent seeds, exact control math are frozen"
+  }
+}
+```
+
+The phase shares are percentages; compute is `ruleReplay + controls` to match
+the existing bottleneck footer. `aggregateRowsPerSecond` combines the known
+rule-replay row scans and control-candidate visits, while the two component
+rates remain alongside it for interpretation. `errors.samples` is bounded to
+the first ten messages and `errors.omitted` preserves the full count. The
+source `diagnostics.jsonl` remains the raw trace for deep dives and is not
+changed or sent to the browser.
+
 | Metric group and exact metrics | Phase and boundaries | Bottleneck question answered |
 | --- | --- | --- |
 | **Catalog/preflight:** `catalogMs`, `preflightMs`, `ledgerBytes`, `rankBytes`, `ledgerRows`, `pairCount`, `ruleCount`, `selectedMode`, `modeReason`, `estimatedHeapBytes`, `estimatedRssBytes`, `childHeapLimitBytes`, `freeSystemMemoryBytes` | Request receipt, catalog validation complete, coordinator acquired, authoritative preflight complete, immediately before child spawn. | Is startup metadata-bound, is the estimate credible, and exactly why was load-once, fallback, or refusal selected? |
@@ -1159,8 +1211,10 @@ Measurement rules:
 - Diagnostic collection must not throw into replay. A diagnostic persistence
   failure is recorded, but inability to persist the authoritative rule result
   is fatal.
-- The UI renders a compact phase/peak/throughput summary. Copy Diagnostics
-  uses the complete final `diagnostics.json` shape verbatim.
+- The UI renders the compact diagnostics summary by default. Full
+  `diagnostics.json` remains available in the secondary Full JSON view; Copy
+  Diagnostics copies the compact summary, while the raw `diagnostics.jsonl`
+  remains on disk for deep dives.
 
 ## Implementation phases
 
@@ -1336,7 +1390,10 @@ and `GET /status`; all are registered in dev and preview through
 files, a scoped `runId`, the additive research-job coordinator, and a
 disconnect-safe NDJSON stream. Browser state contains scalar rule results and
 diagnostics only. Durable output is written below the selected ledger folder:
-`sweeps/<YYYYMMDD_HHmmss>_<runId>/`, with no automatic cleanup.
+`sweeps/<YYYYMMDD_HHmmss>_<runId>/`, with no automatic cleanup. The terminal
+directory now includes `diagnostics-summary.json` as the primary compact read;
+`diagnostics.jsonl` remains the unchanged raw trace and `diagnostics.json`
+remains the complete aggregate.
 
 The fixed preflight estimator remains the production authority: child heap
 limit 12 GiB, `512 MiB + rows * 2,048` heap estimate, load-once at no more

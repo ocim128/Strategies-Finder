@@ -14,6 +14,7 @@ import { runTradeLedgerSweepJob, type TradeLedgerSweepJobArgs } from "../lib/bat
 import { classifyTradeLedgerVerdict } from "../lib/batch-backtest/trade-ledger-verdict";
 import { buildTradeLedgerSweepDiagnosticsFooter } from "../lib/batch-backtest/trade-ledger-sweep-artifacts";
 import { createEmptyLedgerSweepDiagnostics } from "../lib/batch-backtest/trade-ledger-sweep-diagnostics";
+import { buildTradeLedgerSweepDiagnosticsSummary } from "../lib/batch-backtest/trade-ledger-sweep-diagnostics-summary";
 import type { LedgerSweepStreamEvent } from "../lib/batch-backtest/trade-ledger-sweep-stream-types";
 
 const ROOT = process.cwd();
@@ -164,6 +165,64 @@ describe("trade-ledger sweep engine", () => {
         expect(buildTradeLedgerSweepDiagnosticsFooter(diagnostics)).to.contain("trade-ledger-replay-core.ts:466-502");
     });
 
+    it("builds a bounded summary from the existing diagnostics aggregate", () => {
+        const preflight = resolveLedgerSweepPreflight(1, Number.MAX_SAFE_INTEGER);
+        const diagnostics = createEmptyLedgerSweepDiagnostics({ runId: "summary", mode: "load_once", preflight });
+        diagnostics.phases = [
+            { phase: "loading_ledger", startedAt: 0, finishedAt: 10, elapsedMs: 10 },
+            { phase: "loading_ranks", startedAt: 10, finishedAt: 20, elapsedMs: 10 },
+            { phase: "joining_ranks", startedAt: 20, finishedAt: 25, elapsedMs: 5 },
+            { phase: "preparing", startedAt: 25, finishedAt: 35, elapsedMs: 10 },
+        ];
+        diagnostics.perRule = Array.from({ length: 200 }, (_, index) => ({
+            ruleId: `q${index}`,
+            ruleName: `rule-${index}.ts`,
+            sourceHash: "hash",
+            ruleReplayMs: index + 1,
+            ledgerRows: 100,
+            eligibleCandidates: index + 2,
+            predicateCalls: 1,
+            admitted: index % 3,
+            rejectedByRule: 0,
+            blocked: 0,
+            rightCensored: 0,
+            controlReplayMs: index * 10,
+            controlRuns: 200,
+            calibrationReplays: 200,
+            controlCandidateVisits: 1_000,
+            controlsPerSecond: 1,
+            candidateVisitsPerSecond: 1,
+            reportFormatMs: 1,
+            reportWriteMs: 2,
+            reportBytes: 3,
+        }));
+        diagnostics.throughput = {
+            elapsedMs: 10_000,
+            rulesCompleted: 200,
+            rulesPerHour: 72_000,
+            rowsLoadedPerSecond: 10,
+            aggregateRuleRowsPerSecond: 20,
+            aggregateControlRowsPerSecond: 30,
+        };
+        diagnostics.memory.samples = [
+            { at: 1, source: "worker", phase: "preparing", ruleId: null, heapUsed: 100, heapTotal: 200, rss: 300, external: 0, arrayBuffers: 0, maxRss: 350 },
+            { at: 2, source: "worker", phase: "random_controls", ruleId: "q1", heapUsed: 400, heapTotal: 500, rss: 600, external: 0, arrayBuffers: 0, maxRss: 700 },
+        ];
+        diagnostics.verdictCounts = { "NO-EDGE": 199, ERROR: 1 };
+        diagnostics.errors = Array.from({ length: 25 }, (_, index) => `error-${index}`);
+
+        const summary = buildTradeLedgerSweepDiagnosticsSummary(diagnostics, "done");
+        expect(summary.phases.load).to.deep.equal({ ledgerMs: 10, ranksMs: 10, joinMs: 5, totalMs: 25 });
+        expect(summary.phases.ruleReplay.totalMs).to.equal(20_100);
+        expect(summary.phases.controls.totalMs).to.equal(199_000);
+        expect(summary.controlsShareOfCompute).to.equal(199_000 / 219_100 * 100);
+        expect(summary.memory).to.deep.equal({ peakHeapUsed: 400, peakRss: 600, maxRss: 700 });
+        expect(summary.topSlowestRules).to.have.length(10);
+        expect(summary.topSlowestRules[0]).to.deep.include({ ruleId: "q199", name: "rule-199.ts", candidates: 201, kept: 1, controlReplayMs: 1_990 });
+        expect(summary.errors).to.deep.equal({ count: 25, samples: Array.from({ length: 10 }, (_, index) => `error-${index}`), omitted: 15 });
+        expect(JSON.stringify(summary, null, 2).split(/\r?\n/)).to.have.length.at.most(150);
+    });
+
     it("keeps load-once and isolated-per-rule report/result parity with the checker", async () => {
         const loadOnce = await runMode("load_once", "once");
         const isolated = await runMode("isolated_per_rule", "isolated");
@@ -175,6 +234,9 @@ describe("trade-ledger sweep engine", () => {
             const report = await readFile(path.join(ROOT, loadOnce.outputDir, "reports", `${ruleId}.txt`), "utf8");
             expect(report).to.equal(`${legacy}\n`);
         }
+        const diagnosticsSummary = JSON.parse(await readFile(path.join(ROOT, loadOnce.outputDir, "diagnostics-summary.json"), "utf8")) as { schema: string; topSlowestRules: unknown[] };
+        expect(diagnosticsSummary.schema).to.equal("trade_ledger_sweep.diagnostics-summary.v1");
+        expect(diagnosticsSummary.topSlowestRules).to.have.length(2);
         expect(loadOnce.events.at(-1)?.type).to.equal("done");
         expect(isolated.events.at(-1)?.type).to.equal("done");
     });

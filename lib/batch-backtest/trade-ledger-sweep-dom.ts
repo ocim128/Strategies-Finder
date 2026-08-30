@@ -17,6 +17,9 @@ export const TRADE_LEDGER_SWEEP_REQUIRED_IDS = [
     "tradeLedgerSweepCopyDiagnosticsBtn",
     "tradeLedgerSweepResults",
     "tradeLedgerSweepEmpty",
+    "tradeLedgerSweepDiagnosticsSummaryTab",
+    "tradeLedgerSweepDiagnosticsRawTab",
+    "tradeLedgerSweepDiagnosticsSummary",
     "tradeLedgerSweepDiagnostics",
 ] as const;
 
@@ -38,6 +41,9 @@ export function createTradeLedgerSweepDom() {
         tradeLedgerSweepCopyDiagnosticsBtn: getRequiredElement<HTMLButtonElement>("tradeLedgerSweepCopyDiagnosticsBtn"),
         tradeLedgerSweepResults: getRequiredElement<HTMLDivElement>("tradeLedgerSweepResults"),
         tradeLedgerSweepEmpty: getRequiredElement<HTMLDivElement>("tradeLedgerSweepEmpty"),
+        tradeLedgerSweepDiagnosticsSummaryTab: getRequiredElement<HTMLButtonElement>("tradeLedgerSweepDiagnosticsSummaryTab"),
+        tradeLedgerSweepDiagnosticsRawTab: getRequiredElement<HTMLButtonElement>("tradeLedgerSweepDiagnosticsRawTab"),
+        tradeLedgerSweepDiagnosticsSummary: getRequiredElement<HTMLDivElement>("tradeLedgerSweepDiagnosticsSummary"),
         tradeLedgerSweepDiagnostics: getRequiredElement<HTMLPreElement>("tradeLedgerSweepDiagnostics"),
     };
 }

@@ -111,6 +111,72 @@
     margin: var(--space-2) 0 0;
 }
 
+#ledgersweepTab .trade-ledger-sweep-diagnostics-tabs {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-tabs .btn {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    color: var(--text-secondary);
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-tabs .btn.is-active {
+    border-color: var(--glass-border);
+    color: var(--text-primary);
+    background: hsl(var(--hsl-surface-3) / 0.5);
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-summary {
+    margin-top: var(--space-2);
+    overflow-x: auto;
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-summary table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-xs);
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-summary th,
+#ledgersweepTab .trade-ledger-sweep-diagnostics-summary td {
+    padding: var(--space-1) var(--space-2);
+    border-bottom: 1px solid var(--border-subtle);
+    text-align: left;
+    white-space: nowrap;
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-summary th {
+    color: var(--text-tertiary);
+    font-weight: var(--font-weight-semibold);
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-summary td {
+    color: var(--text-secondary);
+    font-family: var(--font-family-mono);
+    text-align: right;
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-summary .trade-ledger-sweep-summary-section th {
+    padding-top: var(--space-2);
+    color: var(--text-primary);
+    text-align: left;
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-summary .trade-ledger-sweep-summary-rule td:first-child {
+    text-align: left;
+    font-family: var(--font-family-mono);
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-summary-note {
+    margin-top: var(--space-2);
+    color: var(--text-tertiary);
+    font-size: var(--font-size-xs);
+}
+
 #ledgersweepTab .trade-ledger-sweep-controls {
     display: grid;
     grid-template-columns: auto minmax(110px, auto) minmax(180px, 1fr);

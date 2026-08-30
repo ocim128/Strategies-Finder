@@ -16,6 +16,7 @@ import {
 import type { LedgerSweepFolderCatalogEntry, LedgerSweepRuleCatalogEntry } from "./trade-ledger-sweep-catalog";
 import type { LedgerSweepPreflightDecision } from "./trade-ledger-sweep-preflight";
 import type { LedgerSweepDiagnosticsV1, LedgerSweepDiagnosticEntry, LedgerSweepMode } from "./trade-ledger-sweep-diagnostics";
+import { buildTradeLedgerSweepDiagnosticsSummary } from "./trade-ledger-sweep-diagnostics-summary";
 import type { LedgerSweepRuleResult } from "./trade-ledger-sweep-stream-types";
 
 export interface TradeLedgerSweepManifest {
@@ -257,6 +258,7 @@ export async function createTradeLedgerSweepArtifacts(args: CreateSweepArtifacts
                 error: finalArgs.error,
             }, null, 2) + "\n");
             await atomicWrite(path.join(args.outputAbsolutePath, "diagnostics.json"), JSON.stringify(finalArgs.diagnostics, null, 2) + "\n");
+            await atomicWrite(path.join(args.outputAbsolutePath, "diagnostics-summary.json"), JSON.stringify(buildTradeLedgerSweepDiagnosticsSummary(finalArgs.diagnostics, finalArgs.terminalPhase), null, 2) + "\n");
             await atomicWrite(path.join(args.outputAbsolutePath, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
         },
     };
