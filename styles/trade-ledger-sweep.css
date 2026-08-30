@@ -1,4 +1,5 @@
-/* Ledger Rule Sweep tab. */
+/* Ledger Rule Sweep tab. Presentation owner for #ledgersweepTab; keeps
+ * shared buttons, inputs, and tokens from the global stylesheets. */
 
 #ledgersweepTab {
     display: flex;
@@ -7,82 +8,53 @@
     container-type: inline-size;
 }
 
-/* These Batch presentation classes are shared by the moved markup. Keep the
- * declarations local so visiting Ledger Sweep does not style other tabs. */
-#ledgersweepTab .batch-section {
+/* The shared .btn / .progress-container rules set `display`, which beats
+ * the UA stylesheet's [hidden] rule. Restore the expected semantics for
+ * every element in this tab so `hidden` toggling actually hides. */
+#ledgersweepTab [hidden] {
+    display: none !important;
+}
+
+/* ------------------------------------------------------------------
+ * Page header — same anchor pattern as the Batch tab.
+ * ------------------------------------------------------------------ */
+
+#ledgersweepTab .ledger-sweep-header {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
-    padding: var(--space-3) var(--space-3-5);
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-m);
-    background: hsl(var(--hsl-surface-2) / 0.35);
+    gap: var(--space-1);
 }
 
-#ledgersweepTab .batch-section-heading {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-3);
-    flex-wrap: wrap;
-}
-
-#ledgersweepTab .batch-section-title {
-    font-size: var(--font-size-sm);
-    font-weight: var(--font-weight-semibold);
+#ledgersweepTab .ledger-sweep-title {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-bold);
     color: var(--text-primary);
     margin: 0;
-    letter-spacing: var(--tracking-medium);
-}
-
-#ledgersweepTab .batch-section-note {
-    font-size: var(--font-size-xs);
-    color: var(--text-tertiary);
-    margin: 0;
-}
-
-#ledgersweepTab .batch-coordinator-actions {
-    display: flex;
-    gap: var(--space-2);
-    align-items: center;
-    flex-wrap: wrap;
-}
-
-#ledgersweepTab .batch-field-label {
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: var(--tracking-wide);
     line-height: var(--line-height-tight);
 }
 
-#ledgersweepTab .batch-action-group {
-    display: flex;
-    gap: var(--space-2);
-    align-items: center;
-    flex-wrap: wrap;
-}
-
-#ledgersweepTab .batch-action-group--exports {
-    flex: 0 1 auto;
-}
-
-#ledgersweepTab .batch-action-group--exports .btn,
-#ledgersweepTab .batch-action-group--analysis .btn:not(.run-btn):not(.stop-btn) {
-    background: transparent;
-    border-color: transparent;
-    box-shadow: none;
-    color: var(--text-secondary);
-    padding: var(--space-1-5) var(--space-2-5);
-    min-height: 0;
+#ledgersweepTab .ledger-sweep-subtitle {
     font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: var(--line-height-relaxed);
+    max-width: 72ch;
 }
 
-#ledgersweepTab .batch-action-group--exports .btn:not(:disabled):hover,
-#ledgersweepTab .batch-action-group--analysis .btn:not(:disabled):not(.run-btn):not(.stop-btn):hover {
-    color: var(--text-primary);
-    background: hsl(var(--hsl-surface-3) / 0.5);
+/* ------------------------------------------------------------------
+ * Section surface + Batch presentation classes shared by the moved
+ * markup. Keep the declarations local so visiting Ledger Sweep neither
+ * styles other tabs nor depends on the Batch stylesheet having loaded.
+ * ------------------------------------------------------------------ */
+
+#ledgersweepTab .batch-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-4-5);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    background: hsl(var(--hsl-surface-2) / 0.35);
 }
 
 #ledgersweepTab .batch-miner-status {
@@ -103,18 +75,388 @@
     overflow-y: auto;
 }
 
-#ledgersweepTab .batch-diagnostic-pre {
-    max-height: 240px;
-    overflow: auto;
-    white-space: pre-wrap;
-    font-size: var(--font-size-xs);
-    margin: var(--space-2) 0 0;
+/* ------------------------------------------------------------------
+ * Folder selection — label above the control, select + refresh on one
+ * row, structured meta panel below.
+ * ------------------------------------------------------------------ */
+
+#ledgersweepTab .trade-ledger-sweep-controls {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
 }
 
-#ledgersweepTab .trade-ledger-sweep-diagnostics-tabs {
+#ledgersweepTab .trade-ledger-sweep-folder-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1-5);
+}
+
+#ledgersweepTab .trade-ledger-sweep-folder-row {
     display: flex;
     gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+#ledgersweepTab .trade-ledger-sweep-folder-row .param-input {
+    flex: 1 1 260px;
+    max-width: 480px;
+}
+
+#ledgersweepTab .batch-field-label {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    line-height: var(--line-height-tight);
+}
+
+#ledgersweepTab .trade-ledger-sweep-folder-meta {
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-s);
+    background: hsl(var(--hsl-surface-2) / 0.5);
+}
+
+#ledgersweepTab .trade-ledger-sweep-folder-meta .ledger-sweep-meta-line {
+    display: block;
+}
+
+#ledgersweepTab .trade-ledger-sweep-folder-meta .ledger-sweep-meta-name {
+    display: block;
+    font-family: var(--font-family-mono);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin-bottom: 2px;
+}
+
+#ledgersweepTab .ledger-sweep-meta-badge {
+    display: inline-block;
+    padding: 1px var(--space-1-5);
+    border-radius: var(--radius-pill);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+}
+
+#ledgersweepTab .ledger-sweep-meta-badge.is-ok {
+    color: var(--green);
+    background: hsl(var(--hsl-success) / 0.14);
+}
+
+#ledgersweepTab .ledger-sweep-meta-badge.is-blocked {
+    color: var(--red);
+    background: hsl(var(--hsl-danger) / 0.14);
+}
+
+/* ------------------------------------------------------------------
+ * Run controls + status line.
+ * ------------------------------------------------------------------ */
+
+#ledgersweepTab .batch-coordinator-actions {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+#ledgersweepTab .trade-ledger-sweep-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1-5);
+    min-height: 32px;
+}
+
+#ledgersweepTab .trade-ledger-sweep-status::before {
+    content: "";
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-tertiary);
+    transition: background 0.2s ease;
+}
+
+#ledgersweepTab .trade-ledger-sweep-status[data-tone="running"]::before {
+    background: var(--accent-color);
+    animation: pulse 1.6s ease-in-out infinite;
+}
+
+#ledgersweepTab .trade-ledger-sweep-status[data-tone="success"]::before {
+    background: var(--green);
+}
+
+#ledgersweepTab .trade-ledger-sweep-status[data-tone="warning"]::before {
+    background: var(--warning);
+}
+
+#ledgersweepTab .trade-ledger-sweep-status[data-tone="danger"]::before {
+    background: var(--red);
+}
+
+/* ------------------------------------------------------------------
+ * Progress. The shared base class is display:none; this tab toggles
+ * visibility through [hidden], so re-enable display here. Static fill —
+ * motion is reserved for the running status dot.
+ * ------------------------------------------------------------------ */
+
+#ledgersweepTab .progress-container {
+    display: block;
+    margin-top: 0;
+}
+
+#ledgersweepTab .trade-ledger-sweep-progress .progress-fill::after {
+    animation: none;
+    background: none;
+}
+
+#ledgersweepTab .trade-ledger-sweep-progress .progress-text {
+    text-align: left;
+    font-family: var(--font-family-mono);
+    font-weight: var(--font-weight-normal);
+}
+
+/* ------------------------------------------------------------------
+ * Holdout warning callout.
+ * ------------------------------------------------------------------ */
+
+#ledgersweepTab .trade-ledger-sweep-callout {
+    display: flex;
+    gap: var(--space-2);
+    align-items: flex-start;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid hsl(var(--hsl-warning) / 0.3);
+    border-radius: var(--radius-s);
+    background: hsl(var(--hsl-warning) / 0.07);
+}
+
+#ledgersweepTab .trade-ledger-sweep-callout-icon {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    margin-top: 2px;
+    color: var(--warning);
+}
+
+#ledgersweepTab .trade-ledger-sweep-callout-icon svg {
+    width: 100%;
+    height: 100%;
+}
+
+/* ------------------------------------------------------------------
+ * Report output strip.
+ * ------------------------------------------------------------------ */
+
+#ledgersweepTab .trade-ledger-sweep-output {
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-s);
+    background: hsl(var(--hsl-surface-1) / 0.5);
+    color: var(--text-tertiary);
+}
+
+#ledgersweepTab .trade-ledger-sweep-output::before {
+    content: "Output";
+    display: block;
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-tertiary);
+    opacity: 0.8;
+}
+
+/* ------------------------------------------------------------------
+ * Action groups — quiet utility controls (copy buttons).
+ * ------------------------------------------------------------------ */
+
+#ledgersweepTab .batch-action-group {
+    display: flex;
+    gap: var(--space-1);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+#ledgersweepTab .batch-action-group--exports {
+    flex: 0 1 auto;
+}
+
+/* ------------------------------------------------------------------
+ * Results — verdict rows. Per-rule rows stream in during a run; the
+ * per-row containment keeps long lists cheap to paint.
+ * ------------------------------------------------------------------ */
+
+#ledgersweepTab .trade-ledger-sweep-results {
+    margin-top: var(--space-1);
+    display: flex;
+    flex-direction: column;
+}
+
+#ledgersweepTab .trade-ledger-sweep-result {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-2);
+    border-bottom: 1px solid hsl(var(--hsl-surface-3) / 0.4);
+    content-visibility: auto;
+    contain-intrinsic-size: 0 64px;
+}
+
+#ledgersweepTab .trade-ledger-sweep-result:last-child {
+    border-bottom: none;
+}
+
+#ledgersweepTab .trade-ledger-sweep-result:hover {
+    background: hsl(var(--hsl-surface-3) / 0.3);
+}
+
+#ledgersweepTab .trade-ledger-sweep-result .finder-result-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+}
+
+#ledgersweepTab .trade-ledger-sweep-result .finder-result-name {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#ledgersweepTab .trade-ledger-sweep-result .finder-result-verdict {
+    flex-shrink: 0;
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-pill);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-secondary);
+    background: hsl(var(--hsl-surface-3) / 0.6);
+}
+
+#ledgersweepTab .trade-ledger-sweep-result[data-verdict="EDGE-CANDIDATE"] .finder-result-verdict {
+    color: var(--green);
+    background: hsl(var(--hsl-success) / 0.14);
+}
+
+#ledgersweepTab .trade-ledger-sweep-result[data-verdict="HOLDOUT-NEG"] .finder-result-verdict {
+    color: var(--red);
+    background: hsl(var(--hsl-danger) / 0.12);
+}
+
+#ledgersweepTab .trade-ledger-sweep-result[data-verdict="TOO-RARE"] .finder-result-verdict {
+    color: var(--warning);
+    background: hsl(var(--hsl-warning) / 0.12);
+}
+
+#ledgersweepTab .trade-ledger-sweep-result[data-verdict="ERROR"] .finder-result-verdict {
+    color: var(--red);
+    background: hsl(var(--hsl-danger) / 0.2);
+}
+
+#ledgersweepTab .trade-ledger-sweep-result .finder-result-metrics {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    font-variant-numeric: tabular-nums;
+    word-break: break-word;
+}
+
+#ledgersweepTab .trade-ledger-sweep-result .finder-result-note {
+    font-size: var(--font-size-2xs);
+    color: var(--text-tertiary);
+    line-height: var(--line-height-normal);
+}
+
+/* ------------------------------------------------------------------
+ * Empty state — compact, static (no pulse; matches Batch).
+ * ------------------------------------------------------------------ */
+
+#ledgersweepTab .trade-ledger-sweep-empty .empty-state-icon {
+    width: 40px;
+    height: 40px;
+    margin-bottom: var(--space-3);
+    opacity: 0.35;
+    animation: none;
+}
+
+/* ------------------------------------------------------------------
+ * Diagnostics disclosure.
+ * ------------------------------------------------------------------ */
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-details {
+    margin-top: var(--space-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-s);
+    background: hsl(var(--hsl-surface-1) / 0.35);
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-details > summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-medium);
+    border-radius: var(--radius-s);
+    list-style: none;
+    user-select: none;
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-details > summary::before {
+    content: "";
+    width: 0;
+    height: 0;
+    border-left: 5px solid var(--text-tertiary);
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    transition: transform 0.15s ease;
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-details[open] > summary::before {
+    transform: rotate(90deg);
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-details > summary:hover {
+    color: var(--text-primary);
+    background: hsl(var(--hsl-surface-3) / 0.35);
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-details > summary:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring), var(--focus-ring-soft);
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-details > *:not(summary) {
+    margin: 0 var(--space-3) var(--space-3);
+}
+
+/* Segmented control for the Summary / Full JSON views. */
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-tabs {
+    display: inline-flex;
+    gap: 2px;
     margin-top: var(--space-2);
+    padding: 2px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-s);
+    background: hsl(var(--hsl-surface-1) / 0.6);
 }
 
 #ledgersweepTab .trade-ledger-sweep-diagnostics-tabs .btn {
@@ -122,13 +464,36 @@
     border-color: transparent;
     box-shadow: none;
     color: var(--text-secondary);
+    border-radius: calc(var(--radius-s) - 2px);
+    min-height: 26px;
+    padding: var(--space-1) var(--space-2-5);
+}
+
+#ledgersweepTab .trade-ledger-sweep-diagnostics-tabs .btn:not(:disabled):hover {
+    color: var(--text-primary);
+    background: hsl(var(--hsl-surface-3) / 0.5);
+    border-color: transparent;
 }
 
 #ledgersweepTab .trade-ledger-sweep-diagnostics-tabs .btn.is-active {
-    border-color: var(--glass-border);
     color: var(--text-primary);
-    background: hsl(var(--hsl-surface-3) / 0.5);
+    background: hsl(var(--hsl-surface-3) / 0.9);
+    box-shadow: var(--shadow-xs);
 }
+
+#ledgersweepTab .batch-diagnostic-pre {
+    max-height: 280px;
+    overflow: auto;
+    white-space: pre-wrap;
+    font-size: var(--font-size-xs);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-s);
+    background: hsl(var(--hsl-surface-1) / 0.6);
+    margin: var(--space-2) 0 0;
+}
+
+/* Summary tables. */
 
 #ledgersweepTab .trade-ledger-sweep-diagnostics-summary {
     margin-top: var(--space-2);
@@ -149,6 +514,10 @@
     white-space: nowrap;
 }
 
+#ledgersweepTab .trade-ledger-sweep-diagnostics-summary tbody tr:not(.trade-ledger-sweep-summary-section):hover {
+    background: hsl(var(--hsl-surface-3) / 0.3);
+}
+
 #ledgersweepTab .trade-ledger-sweep-diagnostics-summary th {
     color: var(--text-tertiary);
     font-weight: var(--font-weight-semibold);
@@ -157,18 +526,18 @@
 #ledgersweepTab .trade-ledger-sweep-diagnostics-summary td {
     color: var(--text-secondary);
     font-family: var(--font-family-mono);
+    font-variant-numeric: tabular-nums;
     text-align: right;
 }
 
 #ledgersweepTab .trade-ledger-sweep-diagnostics-summary .trade-ledger-sweep-summary-section th {
-    padding-top: var(--space-2);
+    padding-top: var(--space-2-5);
     color: var(--text-primary);
     text-align: left;
 }
 
 #ledgersweepTab .trade-ledger-sweep-diagnostics-summary .trade-ledger-sweep-summary-rule td:first-child {
     text-align: left;
-    font-family: var(--font-family-mono);
 }
 
 #ledgersweepTab .trade-ledger-sweep-diagnostics-summary-note {
@@ -177,37 +546,16 @@
     font-size: var(--font-size-xs);
 }
 
-#ledgersweepTab .trade-ledger-sweep-controls {
-    display: grid;
-    grid-template-columns: auto minmax(110px, auto) minmax(180px, 1fr);
-    gap: var(--space-2);
-    align-items: center;
-}
+/* ------------------------------------------------------------------
+ * Narrow containers.
+ * ------------------------------------------------------------------ */
 
-#ledgersweepTab .trade-ledger-sweep-controls .batch-miner-status {
-    grid-column: 1 / -1;
-}
+@container (max-width: 560px) {
+    #ledgersweepTab .trade-ledger-sweep-folder-row .param-input {
+        flex-basis: 100%;
+        max-width: none;
+    }
 
-#ledgersweepTab .trade-ledger-sweep-warning {
-    margin-top: var(--space-2);
-    border-left: 3px solid var(--orange);
-    padding-left: var(--space-2);
-}
-
-#ledgersweepTab .trade-ledger-sweep-results {
-    margin-top: var(--space-2);
-}
-
-#ledgersweepTab .trade-ledger-sweep-diagnostics-details {
-    margin-top: var(--space-2);
-}
-
-#ledgersweepTab .trade-ledger-sweep-diagnostics-details > summary {
-    cursor: pointer;
-    font-weight: var(--font-weight-semibold);
-}
-
-@container (max-width: 540px) {
     #ledgersweepTab .batch-coordinator-actions {
         flex-direction: column;
         align-items: stretch;
@@ -217,7 +565,13 @@
         width: 100%;
     }
 
-    #ledgersweepTab .batch-coordinator-actions .batch-action-group--exports {
-        margin-left: 0;
+    #ledgersweepTab .trade-ledger-sweep-status {
+        justify-content: center;
+    }
+
+    #ledgersweepTab .trade-ledger-sweep-result .finder-result-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-1);
     }
 }

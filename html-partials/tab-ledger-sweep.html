@@ -1,41 +1,56 @@
 <!-- Ledger Rule Sweep Tab -->
 <div id="ledgersweepTab">
+    <header class="ledger-sweep-header">
+        <h2 class="ledger-sweep-title">Ledger Rule Sweep</h2>
+        <p class="ledger-sweep-subtitle">Replay every saved ledger rule on the server. Reports and ledger rows remain in the selected folder; this tab shows scalar verdicts and diagnostics.</p>
+    </header>
     <section class="batch-section trade-ledger-sweep" id="tradeLedgerSweepSection" aria-label="Ledger Rule Sweep">
-        <div class="batch-section-heading">
-            <h3 class="batch-section-title">Ledger Rule Sweep</h3>
-            <p class="batch-section-note">Replay every saved ledger rule on the server. Reports and ledger rows remain in the selected folder; this tab shows scalar verdicts and diagnostics.</p>
-        </div>
         <div class="trade-ledger-sweep-controls">
-            <button class="btn btn-secondary btn-compact" id="tradeLedgerSweepRefreshBtn" type="button">Refresh Ledgers</button>
-            <label class="batch-field-label" for="tradeLedgerSweepFolderSelect">Ledger folder</label>
-            <select class="param-input" id="tradeLedgerSweepFolderSelect" aria-label="Ledger folder"></select>
-            <div class="batch-miner-status batch-miner-status--multiline" id="tradeLedgerSweepFolderMeta"></div>
+            <div class="trade-ledger-sweep-folder-field">
+                <label class="batch-field-label" for="tradeLedgerSweepFolderSelect">Ledger folder</label>
+                <div class="trade-ledger-sweep-folder-row">
+                    <select class="param-input" id="tradeLedgerSweepFolderSelect"></select>
+                    <button class="btn btn-secondary btn-compact" id="tradeLedgerSweepRefreshBtn" type="button" title="Rescan the ledger folder catalog">Refresh Ledgers</button>
+                </div>
+            </div>
+            <div class="batch-miner-status batch-miner-status--multiline trade-ledger-sweep-folder-meta" id="tradeLedgerSweepFolderMeta"></div>
         </div>
         <div class="batch-coordinator-actions">
             <button class="btn btn-primary btn-compact" id="tradeLedgerSweepRunBtn" type="button">Run Ledger Sweep</button>
-            <button class="btn btn-danger btn-compact" id="tradeLedgerSweepStopBtn" type="button" hidden>Stop Sweep</button>
-            <div class="batch-miner-status" id="tradeLedgerSweepStatus">Idle</div>
+            <button class="btn btn-danger btn-compact" id="tradeLedgerSweepStopBtn" type="button" title="Cancel the running sweep" hidden>Stop Sweep</button>
+            <div class="batch-miner-status trade-ledger-sweep-status" id="tradeLedgerSweepStatus" role="status" aria-live="polite">Idle</div>
         </div>
-        <div class="progress-container" id="tradeLedgerSweepProgress" hidden>
+        <div class="progress-container trade-ledger-sweep-progress" id="tradeLedgerSweepProgress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-label="Sweep progress" hidden>
             <div class="progress-bar"><div class="progress-fill" id="tradeLedgerSweepProgressFill"></div></div>
             <div class="progress-text" id="tradeLedgerSweepProgressText">Ready</div>
         </div>
-        <div class="batch-miner-status batch-miner-status--multiline trade-ledger-sweep-warning" id="tradeLedgerSweepHoldoutWarning">This sweep exposes holdout results for every rule. Treat verdicts as surface-specific audit evidence only; EDGE-CANDIDATE still requires a new surface and one raw-engine certification run.</div>
-        <div class="batch-miner-status batch-miner-status--multiline" id="tradeLedgerSweepOutput"></div>
+        <div class="trade-ledger-sweep-callout">
+            <span class="trade-ledger-sweep-callout-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" /></svg>
+            </span>
+            <div class="batch-miner-status batch-miner-status--multiline" id="tradeLedgerSweepHoldoutWarning">This sweep exposes holdout results for every rule. Treat verdicts as surface-specific audit evidence only; EDGE-CANDIDATE still requires a new surface and one raw-engine certification run.</div>
+        </div>
+        <div class="batch-miner-status batch-miner-status--multiline trade-ledger-sweep-output" id="tradeLedgerSweepOutput"></div>
         <div class="batch-action-group batch-action-group--exports">
-            <button class="btn btn-secondary btn-compact" id="tradeLedgerSweepCopySummaryBtn" type="button" disabled>Copy Summary</button>
-            <button class="btn btn-secondary btn-compact" id="tradeLedgerSweepCopyDiagnosticsBtn" type="button" disabled>Copy Diagnostics</button>
+            <button class="btn btn-quiet btn-compact" id="tradeLedgerSweepCopySummaryBtn" type="button" disabled>Copy Summary</button>
+            <button class="btn btn-quiet btn-compact" id="tradeLedgerSweepCopyDiagnosticsBtn" type="button" disabled>Copy Diagnostics</button>
         </div>
         <div class="finder-list trade-ledger-sweep-results" id="tradeLedgerSweepResults"></div>
-        <div class="empty-state" id="tradeLedgerSweepEmpty">Select a runnable ledger folder to begin.</div>
+        <div class="empty-state empty-state-compact trade-ledger-sweep-empty" id="tradeLedgerSweepEmpty">
+            <div class="empty-state-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z" /></svg>
+            </div>
+            <h3 class="empty-state-title">No sweep results yet</h3>
+            <p class="empty-state-description">Select a runnable ledger folder, then click <strong>Run Ledger Sweep</strong>. Per-rule verdicts stream in as the server replays each rule.</p>
+        </div>
         <details class="trade-ledger-sweep-diagnostics-details">
             <summary>Diagnostics</summary>
             <div class="trade-ledger-sweep-diagnostics-tabs" role="tablist" aria-label="Diagnostics views">
-                <button class="btn btn-secondary btn-compact is-active" id="tradeLedgerSweepDiagnosticsSummaryTab" type="button" role="tab" aria-selected="true">Summary</button>
-                <button class="btn btn-secondary btn-compact" id="tradeLedgerSweepDiagnosticsRawTab" type="button" role="tab" aria-selected="false">Full JSON</button>
+                <button class="btn btn-secondary btn-compact is-active" id="tradeLedgerSweepDiagnosticsSummaryTab" type="button" role="tab" aria-selected="true" aria-controls="tradeLedgerSweepDiagnosticsSummary">Summary</button>
+                <button class="btn btn-secondary btn-compact" id="tradeLedgerSweepDiagnosticsRawTab" type="button" role="tab" aria-selected="false" aria-controls="tradeLedgerSweepDiagnostics">Full JSON</button>
             </div>
-            <div class="trade-ledger-sweep-diagnostics-summary" id="tradeLedgerSweepDiagnosticsSummary"></div>
-            <pre class="batch-diagnostic-pre" id="tradeLedgerSweepDiagnostics"></pre>
+            <div class="trade-ledger-sweep-diagnostics-summary" id="tradeLedgerSweepDiagnosticsSummary" role="tabpanel"></div>
+            <pre class="batch-diagnostic-pre" id="tradeLedgerSweepDiagnostics" role="tabpanel"></pre>
         </details>
     </section>
 </div>

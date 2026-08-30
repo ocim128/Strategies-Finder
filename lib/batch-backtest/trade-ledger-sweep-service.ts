@@ -33,6 +33,7 @@ type LedgerSweepTerminalView = {
     outputDir: string;
     error?: string | null;
 };
+type LedgerSweepStatusTone = "neutral" | "running" | "success" | "warning" | "danger";
 
 export function isTradeLedgerSweepRunCurrent(activeRunId: string | null, eventRunId: string): boolean {
     return activeRunId !== null && activeRunId === eventRunId;
@@ -164,7 +165,7 @@ export class TradeLedgerSweepService {
             this.renderSelectedFolder();
             if (!this.activeServerRunId) this.setStatus("Idle");
         } catch (error) {
-            dom.tradeLedgerSweepStatus.textContent = `Catalog error: ${error instanceof Error ? error.message : String(error)}`;
+            this.setStatus(`Catalog error: ${error instanceof Error ? error.message : String(error)}`, "danger");
         }
     }
 
@@ -183,16 +184,18 @@ export class TradeLedgerSweepService {
         }
         const p = folder.preflight;
         dom.tradeLedgerSweepFolderMeta.innerHTML = [
-            `<strong>${escapeHtml(folder.name)}</strong>`,
-            `ledger ${formatBytes(folder.ledgerBytes)} · ranks ${formatBytes(folder.rankBytes)} · rows ${folder.rows ?? "n/a"} · pairs ${folder.pairs ?? "n/a"}`,
-            `versions ${folder.ledgerVersion ?? "n/a"}/${folder.featureVersion ?? "n/a"} · complete ${folder.complete ? "yes" : "no"} · replay ${folder.replayEligible ? "eligible" : "blocked"}`,
-            p ? `estimate heap ${formatBytes(p.estimatedHeapBytes)} · RSS ${formatBytes(p.estimatedRssBytes)} · mode ${p.decision}` : (folder.refusalReason ?? "No preflight available."),
-        ].join("<br>");
+            `<span class="ledger-sweep-meta-name">${escapeHtml(folder.name)}</span>`,
+            `<span class="ledger-sweep-meta-line">ledger ${formatBytes(folder.ledgerBytes)} · ranks ${formatBytes(folder.rankBytes)} · rows ${folder.rows ?? "n/a"} · pairs ${folder.pairs ?? "n/a"}</span>`,
+            `<span class="ledger-sweep-meta-line">versions ${folder.ledgerVersion ?? "n/a"}/${folder.featureVersion ?? "n/a"} · complete ${folder.complete ? "yes" : "no"} · replay <span class="ledger-sweep-meta-badge ${folder.replayEligible ? "is-ok" : "is-blocked"}">${folder.replayEligible ? "eligible" : "blocked"}</span></span>`,
+            p ? `<span class="ledger-sweep-meta-line">estimate heap ${formatBytes(p.estimatedHeapBytes)} · RSS ${formatBytes(p.estimatedRssBytes)} · mode ${escapeHtml(p.decision)}</span>` : `<span class="ledger-sweep-meta-line">${escapeHtml(folder.refusalReason ?? "No preflight available.")}</span>`,
+        ].join("");
         dom.tradeLedgerSweepRunBtn.disabled = this.running || !folder.runnable;
     }
 
-    private setStatus(text: string): void {
-        this.getDom().tradeLedgerSweepStatus.textContent = text;
+    private setStatus(text: string, tone: LedgerSweepStatusTone = "neutral"): void {
+        const dom = this.getDom();
+        dom.tradeLedgerSweepStatus.textContent = text;
+        dom.tradeLedgerSweepStatus.dataset.tone = tone;
     }
 
     private setBusy(): void {
@@ -207,7 +210,9 @@ export class TradeLedgerSweepService {
         const dom = this.getDom();
         if (event.type === "progress") {
             dom.tradeLedgerSweepProgress.hidden = false;
-            dom.tradeLedgerSweepProgressFill.style.width = `${Math.max(0, Math.min(100, event.percent))}%`;
+            const percent = Math.max(0, Math.min(100, event.percent));
+            dom.tradeLedgerSweepProgressFill.style.width = `${percent}%`;
+            dom.tradeLedgerSweepProgress.setAttribute("aria-valuenow", String(Math.round(percent)));
             dom.tradeLedgerSweepProgressText.textContent = `${event.detail} · ${event.elapsedMs.toFixed(0)} ms · ${event.rulesPerHour.toFixed(1)} rules/hour`;
         } else if (event.type === "phase") {
             dom.tradeLedgerSweepProgress.hidden = false;
@@ -255,19 +260,25 @@ export class TradeLedgerSweepService {
             ["Peak rss", formatBytes(summary.memory.peakRss)],
             ["maxRss", formatBytes(summary.memory.maxRss)],
         ];
+        const persistenceRows: Array<[string, string]> = [
+            ["Rule-result appends", `${summary.persistence.resultAppendMs.toFixed(1)} ms`],
+            ["Diagnostic appends", `${summary.persistence.diagnosticAppendMs.toFixed(1)} ms`],
+            ["Summary build", `${summary.persistence.summaryBuildMs.toFixed(1)} ms`],
+            ["Summary writes", `${summary.persistence.summaryWriteMs.toFixed(1)} ms`],
+        ];
         const verdicts = Object.entries(summary.verdictCounts).sort(([a], [b]) => a.localeCompare(b));
         const verdictText = verdicts.length > 0 ? verdicts.map(([verdict, count]) => `${escapeHtml(verdict)}: ${count}`).join(" · ") : "none";
         const topRules = summary.topSlowestRules.length > 0
             ? summary.topSlowestRules.map((rule) => `<tr class="trade-ledger-sweep-summary-rule"><td>${escapeHtml(rule.name)}</td><td>${rule.candidates}</td><td>${rule.kept}</td><td>${rule.controlReplayMs.toFixed(1)} ms</td></tr>`).join("")
             : `<tr><td colspan="4">No completed rule diagnostics.</td></tr>`;
         const renderRows = (rows: readonly (readonly [string, string])[]): string => rows.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`).join("");
-        dom.tradeLedgerSweepDiagnosticsSummary.innerHTML = `<table><tbody><tr class="trade-ledger-sweep-summary-section"><th colspan="2">Phase totals</th></tr>${renderRows(phaseRows)}<tr class="trade-ledger-sweep-summary-section"><th colspan="2">Throughput</th></tr>${renderRows(throughputRows)}<tr class="trade-ledger-sweep-summary-section"><th colspan="2">Memory</th></tr>${renderRows(memoryRows)}<tr class="trade-ledger-sweep-summary-section"><th colspan="2">Verdicts / errors</th></tr><tr><th>Verdicts</th><td>${verdictText}</td></tr><tr><th>Errors</th><td>${summary.errors.count}${summary.errors.omitted > 0 ? ` (${summary.errors.omitted} omitted)` : ""}</td></tr></tbody></table><table><thead><tr class="trade-ledger-sweep-summary-section"><th colspan="4">Top slowest rules by controls</th></tr><tr><th>Name</th><th>Candidates</th><th>Kept</th><th>Controls</th></tr></thead><tbody>${topRules}</tbody></table><div class="trade-ledger-sweep-diagnostics-summary-note">Optimization target: ${escapeHtml(summary.optimizationTarget.file)} · ${escapeHtml(summary.optimizationTarget.symbol)} · ${escapeHtml(summary.optimizationTarget.constraint)}</div>`;
+        dom.tradeLedgerSweepDiagnosticsSummary.innerHTML = `<table><tbody><tr class="trade-ledger-sweep-summary-section"><th colspan="2">Phase totals</th></tr>${renderRows(phaseRows)}<tr class="trade-ledger-sweep-summary-section"><th colspan="2">Throughput</th></tr>${renderRows(throughputRows)}<tr class="trade-ledger-sweep-summary-section"><th colspan="2">Memory</th></tr>${renderRows(memoryRows)}<tr class="trade-ledger-sweep-summary-section"><th colspan="2">Persistence</th></tr>${renderRows(persistenceRows)}<tr class="trade-ledger-sweep-summary-section"><th colspan="2">Verdicts / errors</th></tr><tr><th>Verdicts</th><td>${verdictText}</td></tr><tr><th>Errors</th><td>${summary.errors.count}${summary.errors.omitted > 0 ? ` (${summary.errors.omitted} omitted)` : ""}</td></tr></tbody></table><table><thead><tr class="trade-ledger-sweep-summary-section"><th colspan="4">Top slowest rules by controls</th></tr><tr><th>Name</th><th>Candidates</th><th>Kept</th><th>Controls</th></tr></thead><tbody>${topRules}</tbody></table><div class="trade-ledger-sweep-diagnostics-summary-note">Optimization target: ${escapeHtml(summary.optimizationTarget.file)} · ${escapeHtml(summary.optimizationTarget.symbol)} · ${escapeHtml(summary.optimizationTarget.constraint)}</div>`;
     }
 
     private renderResults(): void {
         const dom = this.getDom();
         const results = sortTradeLedgerSweepResults(this.results);
-        dom.tradeLedgerSweepResults.innerHTML = results.map((result) => `<div class="finder-result-row trade-ledger-sweep-result" data-rule-id="${escapeHtml(result.ruleId)}"><div class="finder-result-header"><span class="finder-result-name">${escapeHtml(result.ruleName)}</span><span class="finder-result-verdict">${escapeHtml(result.verdict)}</span></div><div class="finder-result-metrics">kept ${formatMetric(result.keptPct)}% · IS ${formatMetric(result.isMeanPnlDeltaPp)}pp · holdout ${formatMetric(result.holdoutMeanPnlDeltaPp)}pp · replay ${formatMetric(result.ruleReplayMs)}ms · controls ${formatMetric(result.controlReplayMs)}ms</div>${result.note ? `<div class="finder-result-note">${escapeHtml(result.note)}</div>` : ""}${result.error ? `<div class="finder-result-note">${escapeHtml(result.error)}</div>` : ""}</div>`).join("");
+        dom.tradeLedgerSweepResults.innerHTML = results.map((result) => `<div class="finder-result-row trade-ledger-sweep-result" data-rule-id="${escapeHtml(result.ruleId)}" data-verdict="${escapeHtml(result.verdict)}"><div class="finder-result-header"><span class="finder-result-name">${escapeHtml(result.ruleName)}</span><span class="finder-result-verdict">${escapeHtml(result.verdict)}</span></div><div class="finder-result-metrics">kept ${formatMetric(result.keptPct)}% · IS ${formatMetric(result.isMeanPnlDeltaPp)}pp · holdout ${formatMetric(result.holdoutMeanPnlDeltaPp)}pp · replay ${formatMetric(result.ruleReplayMs)}ms · controls ${formatMetric(result.controlReplayMs)}ms</div>${result.note ? `<div class="finder-result-note">${escapeHtml(result.note)}</div>` : ""}${result.error ? `<div class="finder-result-note">${escapeHtml(result.error)}</div>` : ""}</div>`).join("");
         dom.tradeLedgerSweepEmpty.hidden = results.length > 0;
     }
 
@@ -301,7 +312,7 @@ export class TradeLedgerSweepService {
         persistActiveRun({ runId, startedAt: Date.now() });
         this.setBusy();
         this.renderResults();
-        this.setStatus(`Starting ${folder.name}…`);
+        this.setStatus(`Starting ${folder.name}…`, "running");
         try {
             const response = await fetch("/api/trade-ledger-sweep/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ runId, folderId: folder.folderId }) });
             if (!response.ok) {
@@ -310,14 +321,14 @@ export class TradeLedgerSweepService {
                     this.running = false;
                     this.activeServerRunId = null;
                     persistActiveRun(null);
-                    this.setStatus(detail || `Sweep start failed: HTTP ${response.status}`);
+                    this.setStatus(detail || `Sweep start failed: HTTP ${response.status}`, "danger");
                     this.setBusy();
                 }
                 return;
             }
             if (!response.body) throw new Error("Sweep start failed: response body is missing.");
             await consumeNdjsonStream<LedgerSweepStreamEvent>(response.body, {
-                onStart: (event) => { if (!isTradeLedgerSweepRunCurrent(this.activeServerRunId, event.runId)) return; this.setStatus(`Running ${event.folderName}`); },
+                onStart: (event) => { if (!isTradeLedgerSweepRunCurrent(this.activeServerRunId, event.runId)) return; this.setStatus(`Running ${event.folderName}`, "running"); },
                 onPhase: (event) => { if (isTradeLedgerSweepRunCurrent(this.activeServerRunId, event.runId)) this.renderProgress(event); },
                 onProgress: (event) => { if (isTradeLedgerSweepRunCurrent(this.activeServerRunId, event.runId)) this.renderProgress(event); },
                 onRuleResult: (event) => { if (!isTradeLedgerSweepRunCurrent(this.activeServerRunId, event.runId)) return; this.results = upsertTradeLedgerSweepResult(this.results, event.result); this.renderResults(); },
@@ -328,7 +339,7 @@ export class TradeLedgerSweepService {
             }, { requireTerminal: true, terminalTypes: ["done", "cancelled", "fatal"] });
         } catch (error) {
             if (this.activeServerRunId === runId) {
-                this.setStatus(`Stream interrupted; reattaching (${error instanceof Error ? error.message : String(error)})`);
+                this.setStatus(`Stream interrupted; reattaching (${error instanceof Error ? error.message : String(error)})`, "warning");
                 await this.reattach(runId);
             }
         }
@@ -341,7 +352,7 @@ export class TradeLedgerSweepService {
         this.running = false;
         this.activeServerRunId = null;
         persistActiveRun(null);
-        this.setStatus(event.type === "done" ? "Done" : event.type === "cancelled" ? "Cancelled" : `Fatal: ${event.error}`);
+        this.setStatus(event.type === "done" ? "Done" : event.type === "cancelled" ? "Cancelled" : `Fatal: ${event.error}`, event.type === "done" ? "success" : event.type === "cancelled" ? "warning" : "danger");
         this.setBusy();
     }
 
@@ -350,9 +361,9 @@ export class TradeLedgerSweepService {
         if (!runId) return;
         try {
             await fetch("/api/trade-ledger-sweep/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ runId }) });
-            if (this.activeServerRunId === runId) this.setStatus("Stop requested…");
+            if (this.activeServerRunId === runId) this.setStatus("Stop requested…", "running");
         } catch (error) {
-            if (this.activeServerRunId === runId) this.setStatus(`Stop failed: ${error instanceof Error ? error.message : String(error)}`);
+            if (this.activeServerRunId === runId) this.setStatus(`Stop failed: ${error instanceof Error ? error.message : String(error)}`, "danger");
         }
     }
 
@@ -369,7 +380,7 @@ export class TradeLedgerSweepService {
                     this.running = false;
                     this.activeServerRunId = null;
                     persistActiveRun(null);
-                    this.setStatus("Sweep run is no longer retained by the server.");
+                    this.setStatus("Sweep run is no longer retained by the server.", "warning");
                     this.setBusy();
                     return;
                 }
@@ -379,7 +390,7 @@ export class TradeLedgerSweepService {
                     this.renderResults();
                     this.renderDiagnosticsSummary(payload.run.diagnostics);
                     this.getDom().tradeLedgerSweepDiagnostics.textContent = formatTradeLedgerSweepDiagnostics(payload.run.diagnostics);
-                    this.setStatus(`Reattached: ${payload.run.phase}`);
+                    this.setStatus(`Reattached: ${payload.run.phase}`, "running");
                     this.renderProgress({ type: "progress", runId, phase: payload.run.phase, percent: payload.run.percent, detail: payload.run.phase, completedRules: payload.run.completedRules, totalRules: payload.run.totalRules, currentRuleId: payload.run.currentRuleId, elapsedMs: payload.run.elapsedMs, controlCompleted: null, controlRuns: null, rulesPerHour: 0 });
                 } else if (payload.lastRun) {
                     const terminal: LedgerSweepTerminalEvent = payload.lastRun.phase === "done"
@@ -393,14 +404,14 @@ export class TradeLedgerSweepService {
             } catch (error) {
                 const failure = this.reattachBackoff.recordFailure();
                 if (failure.gaveUp || this.activeServerRunId !== runId) {
-                    this.setStatus("Reattach gave up; start a new sweep.");
+                    this.setStatus("Reattach gave up; start a new sweep.", "warning");
                     this.running = false;
                     this.activeServerRunId = null;
                     persistActiveRun(null);
                     this.setBusy();
                     return;
                 }
-                this.setStatus(`Reattaching (${failure.consecutive}/${failure.max})…`);
+                this.setStatus(`Reattaching (${failure.consecutive}/${failure.max})…`, "warning");
                 await this.delay(failure.backoffDelayMs);
                 continue;
             }
