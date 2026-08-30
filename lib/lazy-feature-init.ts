@@ -21,6 +21,7 @@ const TAB_TO_FEATURE: Record<string, string> = {
     alerts: "alerts",
     hunt: "hunt",
     batchbacktest: "batch-backtest",
+    ledgersweep: "ledger-sweep",
     walkforward: "walk-forward",
     montecarlo: "monte-carlo",
     polymarket: "polymarket-panel",

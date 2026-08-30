@@ -9,6 +9,7 @@ const LAZY_STRATEGY_PANEL_TAB_LOADERS = {
     cryptodata: () => import('../html-partials/tab-crypto-data.html?raw'),
     hunt: () => import('../html-partials/tab-hunt.html?raw'),
     batchbacktest: () => import('../html-partials/tab-batch-backtest.html?raw'),
+    ledgersweep: () => import('../html-partials/tab-ledger-sweep.html?raw'),
     polymarket: () => import('../html-partials/tab-polymarket.html?raw'),
     executionlab: () => import('../html-partials/tab-execution-lab.html?raw'),
     walkforward: () => import('../html-partials/tab-walkforward.html?raw'),

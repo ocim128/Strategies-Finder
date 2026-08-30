@@ -800,37 +800,6 @@
     margin: var(--space-2) 0 0;
 }
 
-/* Ledger Rule Sweep (feature-local scope). */
-.trade-ledger-sweep-controls {
-    display: grid;
-    grid-template-columns: auto minmax(110px, auto) minmax(180px, 1fr);
-    gap: var(--space-2);
-    align-items: center;
-}
-
-.trade-ledger-sweep-controls .batch-miner-status {
-    grid-column: 1 / -1;
-}
-
-.trade-ledger-sweep-warning {
-    margin-top: var(--space-2);
-    border-left: 3px solid var(--orange);
-    padding-left: var(--space-2);
-}
-
-.trade-ledger-sweep-results {
-    margin-top: var(--space-2);
-}
-
-.trade-ledger-sweep-diagnostics-details {
-    margin-top: var(--space-2);
-}
-
-.trade-ledger-sweep-diagnostics-details > summary {
-    cursor: pointer;
-    font-weight: var(--font-weight-semibold);
-}
-
 /* ------------------------------------------------------------------
  * Responsive (points 5, 6)
  * Collapse the metric grid to a compact card on narrow panels.

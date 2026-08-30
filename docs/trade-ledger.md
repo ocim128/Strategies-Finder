@@ -38,7 +38,7 @@ candidates — the replay checker replaced that approach entirely.
 
 ## Ledger Rule Sweep
 
-The Batch tab also provides a server-owned **Ledger Rule Sweep** section. Select a
+The top-level **Ledger Sweep** tab provides a server-owned Ledger Rule Sweep. Select a
 completed, replay-eligible ledger folder to replay every trusted rule in
 `archive/mining-ledger/rules/` without sending ledger rows, reports, or rule source
 to the browser. The UI exposes only scalar verdicts and bounded diagnostics; the

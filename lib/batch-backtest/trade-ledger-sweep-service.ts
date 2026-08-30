@@ -2,6 +2,7 @@ import { copyToClipboard } from "../browser-transfer";
 import { escapeHtml } from "../html-escape";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { readPersistedJson, writePersistedJson } from "../persisted-json";
+import { ensureLazyStylesheet } from "../lazy-styles";
 import { ReattachBackoffController } from "./reattach-backoff";
 import { createTradeLedgerSweepDom, type TradeLedgerSweepDom } from "./trade-ledger-sweep-dom";
 import type { LedgerSweepFolderCatalogEntry } from "./trade-ledger-sweep-catalog";
@@ -112,6 +113,7 @@ export class TradeLedgerSweepService {
     }
 
     public init(): void {
+        ensureLazyStylesheet("trade-ledger-sweep-styles", new URL("../../styles/trade-ledger-sweep.css", import.meta.url).href);
         if (this.initialized) return;
         const dom = this.getDom();
         this.initialized = true;

@@ -1,7 +1,8 @@
 # Ledger Rule Sweep
 
 Status: approved implementation plan. This document is the implementation
-contract for a new server-owned trade-ledger rule sweep and its Batch-tab UI.
+contract for a new server-owned trade-ledger rule sweep and its top-level
+Ledger Sweep tab UI.
 It is intentionally self-contained. The builder should also follow
 `AGENTS.md`, especially its Server-Side Batch Backtest, Server-Owned Finder
 Symbol Universe, audit F1-F7/F9, and Documentation Standard sections.
@@ -29,7 +30,7 @@ seeded random controls. Large ledgers therefore take hours.
 
 The feature succeeds when it:
 
-1. Lists saved ledger folders safely in the Batch Backtest tab and explains
+1. Lists saved ledger folders safely in the top-level Ledger Sweep tab and explains
    why an invalid folder cannot run.
 2. Runs every currently discovered rule as one server-owned, reattachable job.
 3. Preserves the checker's existing replay, anti-leakage, IS/holdout, seeded
@@ -89,10 +90,10 @@ The approved design is retained, with these repository-verified corrections:
 
 ## Decision record
 
-- **DECIDED — UI placement:** Add a full-width Ledger Rule Sweep section to
-  the existing Batch Backtest tab after normal Batch run state and before
-  TOP_MEAN, because saved ledgers are Batch artifacts and this is post-Batch
-  analysis rather than a new strategy mode.
+- **DECIDED — UI placement:** Add a full-width Ledger Sweep tab to the
+  top-level strategy-panel menu, because the sweep is an independent,
+  server-owned research workflow and its own menu entry makes it discoverable
+  without coupling initialization to the normal Batch Backtest feature.
 - **DECIDED — process boundary:** Vite owns routing, owner state, reattach, and
   child lifecycle, while replay runs in isolated Node child processes with the
   resolved TypeScript loader,
@@ -164,9 +165,9 @@ these existing contracts:
 | Disconnect-safe NDJSON response | `createDisconnectSafeStream` in `lib/vite-http-utils.ts` |
 | Strict browser NDJSON consumption | `consumeNdjsonStream` in `lib/ndjson-stream.ts` |
 | Persisted JSON envelopes | `readPersistedJson` and `writePersistedJson` in `lib/persisted-json.ts` |
-| Batch lazy initialization | `registerLazyFeature("batch-backtest", ...)` in `lib/app-bootstrap.ts` and `BatchBacktestService.init()` in `lib/batch-backtest/batch-backtest-service.ts` |
-| Runtime Batch markup | `html-partials/tab-batch-backtest.html`, loaded by `lib/strategy-panel-tab-markup.ts` |
-| Feature-local structural IDs | `lib/batch-backtest/batch-backtest-dom.ts` and `tests/feature-dom-contracts.spec.ts` |
+| Ledger Sweep lazy initialization | `registerLazyFeature("ledger-sweep", ...)` in `lib/app-bootstrap.ts`, mapped from the `ledgersweep` tab in `lib/lazy-feature-init.ts` |
+| Runtime Ledger Sweep markup | `html-partials/tab-ledger-sweep.html`, loaded by `lib/strategy-panel-tab-markup.ts` |
+| Feature-local structural IDs | `lib/batch-backtest/trade-ledger-sweep-dom.ts` and `tests/feature-dom-contracts.spec.ts` |
 | Vite plugin registration | `vite.config.ts` |
 | Safe child TypeScript-loader resolution pattern | `createRequire(import.meta.url).resolve("tsx")` in the sweep job; the installed `esno` launcher delegates to a secondary process that does not preserve the requested V8 heap flag. |
 
@@ -201,6 +202,8 @@ existing.
 | `lib/batch-backtest/trade-ledger-sweep-vite-plugin.ts` | Proposed | Dev/preview route registration, owner lock, `pendingStopRunId`, status, and coordinator integration. |
 | `lib/batch-backtest/trade-ledger-sweep-dom.ts` | Proposed | `TRADE_LEDGER_SWEEP_REQUIRED_IDS` plus `createTradeLedgerSweepDom()`. |
 | `lib/batch-backtest/trade-ledger-sweep-service.ts` | Proposed | Browser catalog, run/stop, stream consumption, status reattach, rendering, and copy actions. |
+| `html-partials/tab-ledger-sweep.html` | Proposed | Top-level Ledger Sweep tab markup; preserves the existing sweep section and IDs. |
+| `styles/trade-ledger-sweep.css` | Proposed | Ledger Sweep layout plus exact local copies of the Batch presentation classes used by the moved markup. |
 | `lib/server-research-job-coordinator.ts` | Proposed | Leaf singleton workload tokens and conflict matrix. |
 | `scripts/trade-ledger-sweep-worker.ts` | Proposed | Node child entry loaded through the resolved `tsx` loader for load-once or one-rule execution. |
 | `tests/trade-ledger-sweep-engine.spec.ts` | Proposed | Mode parity, replay parity, diagnostics, artifacts, and worker behavior. |
@@ -215,22 +218,27 @@ existing.
 | `lib/batch-backtest/batch-backtest-vite-plugin.ts` | Existing, modify | Acquire/release Batch coordinator tokens without changing local ownership. |
 | `lib/batch-backtest/sp500-top-mean-vite-routes.ts` | Existing, modify | Acquire/release a Batch coordinator token for TOP_MEAN. |
 | `lib/finder/server/finder-vite-plugin.ts` | Existing, modify | Acquire/release Finder coordinator tokens for all long-running Finder jobs. |
-| `lib/batch-backtest/batch-backtest-service.ts` | Existing, modify | Initialize the sweep service from the already-lazy Batch feature. |
-| `html-partials/tab-batch-backtest.html` | Existing, modify | Add the new section after normal Batch run state and before TOP_MEAN. |
-| `styles/batch-backtest.css` | Existing, modify | Add only scoped sweep styles, reusing existing Batch classes where possible. |
+| `lib/batch-backtest/batch-backtest-service.ts` | Existing, modify | Keep normal Batch initialization independent from the sweep service. |
+| `html-partials/tab-batch-backtest.html` | Existing, modify | Keep only normal Batch markup; the sweep section is removed. |
+| `styles/batch-backtest.css` | Existing, modify | Remove the moved sweep-only declarations; normal Batch styles remain unchanged. |
+| `lib/app-bootstrap.ts` | Existing, modify | Register the separate Ledger Sweep lazy feature. |
+| `lib/lazy-feature-init.ts` | Existing, modify | Map the top-level `ledgersweep` tab to its lazy feature. |
+| `lib/strategy-panel-tab-markup.ts` | Existing, modify | Load the new tab partial and its matching runtime root. |
+| `html-partials/strategy-panel-shell.html` | Existing, modify | Add the top-level Ledger Sweep menu button. |
 | `tests/feature-dom-contracts.spec.ts` | Existing, modify | Register the new feature-local ID group. |
 | `vite.config.ts` | Existing, modify | Register `tradeLedgerSweepVitePlugin()` for dev and preview. |
 | `docs/trade-ledger.md` | Existing, modify in Phase 5 | Add the UI sweep entry point and link back to this contract. |
 | `scripts/bench-trade-ledger-scale.ts` | Existing, modify in Phase 5 | Emit the same diagnostic schema and accept scale inputs used by validation. |
 
-Do not create a separate top-level UI tab or a second Batch-tab partial. The
-Batch tab already has one lazy-loaded source of truth:
-`html-partials/tab-batch-backtest.html`.
+The Ledger Sweep tab is a separate lazy-loaded source of truth:
+`html-partials/tab-ledger-sweep.html`. Keep the normal Batch Backtest markup in
+`html-partials/tab-batch-backtest.html`; the two features must not initialize
+one another.
 
 ## Architecture
 
 ```text
-Batch tab / trade-ledger-sweep-service
+Ledger Sweep tab / trade-ledger-sweep-service
         |  catalog JSON; run NDJSON; scoped stop/status
         v
 trade-ledger-sweep-vite-plugin (small Vite control plane)
@@ -605,14 +613,14 @@ Required behavior:
 8. Generation checks guard every child callback and finalizer so an old child
    cannot append results to a newer run.
 
-## Batch-tab UI contract
+## Top-level Ledger Sweep tab UI contract
 
 ### Markup and IDs
 
-Add one `<section>` to existing
-`html-partials/tab-batch-backtest.html`, after `.batch-run-state` and before the
-TOP_MEAN section. Reuse existing `batch-section`, button, progress, status,
-table/list, and diagnostic classes where they fit.
+The existing sweep `<section>` lives in
+`html-partials/tab-ledger-sweep.html` under the lazy root `#ledgersweepTab`.
+Reuse the existing `batch-section`, button, progress, status, table/list, and
+diagnostic classes without changing the section's IDs or content.
 
 Proposed `TRADE_LEDGER_SWEEP_REQUIRED_IDS`:
 
@@ -643,10 +651,12 @@ existing `tests/feature-dom-contracts.spec.ts`; do not merge the IDs into
 
 ### Initialization and persistence
 
-Existing `BatchBacktestService.init()` runs only after lazy Batch markup is
-loaded. At the end of that existing initialization, call
-`tradeLedgerSweepService.init()`. Do not add a second top-level lazy feature or
-modify `index.ts`.
+The `ledgersweep` menu button follows the existing lazy strategy-panel pattern:
+`lib/strategy-panel-tab-markup.ts` loads the matching partial,
+`lib/lazy-feature-init.ts` maps the tab to `ledger-sweep`, and
+`lib/app-bootstrap.ts` registers a dynamic import of
+`tradeLedgerSweepService.init()`. The normal `BatchBacktestService.init()` does
+not initialize the sweep. Do not modify `index.ts`.
 
 Persist only the active ownership record through existing
 `readPersistedJson`/`writePersistedJson`:
@@ -1238,7 +1248,7 @@ Phase 3 exit criteria: the server job can complete, cancel, fail, and reattach
 without UI; all wire payloads are bounded scalars; Vite never imports the
 replay core's child-only execution surface or rule modules.
 
-### Phase 4. Add the Batch-tab UI
+### Phase 4. Add the top-level Ledger Sweep UI
 
 **Deliverable:** Add the feature-local DOM contract, folder catalog,
 Start/Stop ownership, progress, reattachment, sorted verdict table, output
@@ -1319,7 +1329,7 @@ commands above pass without skips; docs links and paths validate.
 
 ## As built (Phase 5 validation, 2026-08-30)
 
-The implemented surface is the Batch-tab Ledger Rule Sweep. The four local
+The implemented surface is the top-level Ledger Sweep tab. The four local
 routes are `GET /api/trade-ledger-sweep/catalog`, `POST /run`, `POST /stop`,
 and `GET /status`; all are registered in dev and preview through
 `registerLocalJsonRoute`. Run uses a frozen catalog of trusted repository rule
@@ -1452,7 +1462,7 @@ wrapper commands are not marked green.
 - The memory formulas and thresholds match this document exactly.
 - The artifact directory is permanent, unique, path-contained, and never
   automatically deleted.
-- The Batch partial and feature-local sweep DOM contract change together.
+- The Ledger Sweep partial and feature-local sweep DOM contract change together.
 - Active browser ownership uses the persisted-json envelope and stale-event
   guards.
 - Diagnostics contain every metric group and are useful after a crash through
