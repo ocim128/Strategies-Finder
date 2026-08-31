@@ -22,7 +22,14 @@ export const TRADE_LEDGER_SWEEP_ACTIVE_RUN_STORAGE = {
     version: 1,
 } as const;
 
+export const TRADE_LEDGER_SWEEP_LAST_RUN_STORAGE = {
+    key: "playground_trade_ledger_sweep_last_server_run",
+    schema: "trade_ledger_sweep.last_server_run",
+    version: 1,
+} as const;
+
 type PersistedSweepRun = { runId: string; startedAt: number };
+type PersistedLastRun = { runId: string; phase: "done" | "cancelled" | "fatal"; finishedAt: number };
 type LedgerSweepTerminalEvent = Extract<LedgerSweepStreamEvent, { type: "done" | "cancelled" | "fatal" }>;
 type LedgerSweepTerminalView = {
     runId: string;
@@ -67,6 +74,17 @@ export function upsertTradeLedgerSweepResult(results: readonly LedgerSweepRuleRe
     return sortTradeLedgerSweepResults(next);
 }
 
+export function tradeLedgerSweepTerminalEventFromLastRun(runId: string, lastRun: LedgerSweepStatusRun): LedgerSweepTerminalEvent {
+    const finishedAt = lastRun.finishedAt ?? Date.now();
+    if (lastRun.phase === "done") {
+        return { type: "done", runId, ok: true, cancelled: false, finishedAt, summary: lastRun.summary ?? "", results: lastRun.results, diagnostics: lastRun.diagnostics, outputDir: lastRun.outputDir };
+    }
+    if (lastRun.phase === "cancelled") {
+        return { type: "cancelled", runId, ok: false, cancelled: true, finishedAt, summary: lastRun.summary ?? "", results: lastRun.results, diagnostics: lastRun.diagnostics, outputDir: lastRun.outputDir };
+    }
+    return { type: "fatal", runId, ok: false, cancelled: false, finishedAt, error: lastRun.error ?? "Ledger Sweep failed.", summary: lastRun.summary, results: lastRun.results, diagnostics: lastRun.diagnostics, outputDir: lastRun.outputDir };
+}
+
 function formatBytes(value: number | null): string {
     if (value === null || !Number.isFinite(value)) return "n/a";
     if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GiB`;
@@ -101,6 +119,24 @@ function readActiveRun(): PersistedSweepRun | null {
 
 function persistActiveRun(value: PersistedSweepRun | null): void {
     writePersistedJson({ ...TRADE_LEDGER_SWEEP_ACTIVE_RUN_STORAGE, data: value });
+}
+
+function readLastRun(): PersistedLastRun | null {
+    return readPersistedJson<PersistedLastRun | null>({
+        ...TRADE_LEDGER_SWEEP_LAST_RUN_STORAGE,
+        fallback: null,
+        migrate: ({ data }) => {
+            if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+            const value = data as Partial<PersistedLastRun>;
+            if (typeof value.runId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(value.runId)) return null;
+            if (value.phase !== "done" && value.phase !== "cancelled" && value.phase !== "fatal") return null;
+            return { runId: value.runId, phase: value.phase, finishedAt: typeof value.finishedAt === "number" ? value.finishedAt : Date.now() };
+        },
+    });
+}
+
+function persistLastRun(value: PersistedLastRun | null): void {
+    writePersistedJson({ ...TRADE_LEDGER_SWEEP_LAST_RUN_STORAGE, data: value });
 }
 
 export class TradeLedgerSweepService {
@@ -142,7 +178,7 @@ export class TradeLedgerSweepService {
         this.setBusy();
         void this.refreshCatalog().then(() => {
             if (this.activeServerRunId) return this.reattach(this.activeServerRunId);
-            return undefined;
+            return this.restoreLastRun();
         });
     }
 
@@ -352,6 +388,7 @@ export class TradeLedgerSweepService {
         this.running = false;
         this.activeServerRunId = null;
         persistActiveRun(null);
+        persistLastRun({ runId: event.runId, phase: event.type, finishedAt: event.finishedAt ?? Date.now() });
         this.setStatus(event.type === "done" ? "Done" : event.type === "cancelled" ? "Cancelled" : `Fatal: ${event.error}`, event.type === "done" ? "success" : event.type === "cancelled" ? "warning" : "danger");
         this.setBusy();
     }
@@ -393,12 +430,7 @@ export class TradeLedgerSweepService {
                     this.setStatus(`Reattached: ${payload.run.phase}`, "running");
                     this.renderProgress({ type: "progress", runId, phase: payload.run.phase, percent: payload.run.percent, detail: payload.run.phase, completedRules: payload.run.completedRules, totalRules: payload.run.totalRules, currentRuleId: payload.run.currentRuleId, elapsedMs: payload.run.elapsedMs, controlCompleted: null, controlRuns: null, rulesPerHour: 0 });
                 } else if (payload.lastRun) {
-                    const terminal: LedgerSweepTerminalEvent = payload.lastRun.phase === "done"
-                        ? { type: "done", runId, ok: true, cancelled: false, finishedAt: payload.lastRun.finishedAt ?? Date.now(), summary: payload.lastRun.summary ?? "", results: payload.lastRun.results, diagnostics: payload.lastRun.diagnostics, outputDir: payload.lastRun.outputDir }
-                        : payload.lastRun.phase === "cancelled"
-                            ? { type: "cancelled", runId, ok: false, cancelled: true, finishedAt: payload.lastRun.finishedAt ?? Date.now(), summary: payload.lastRun.summary ?? "", results: payload.lastRun.results, diagnostics: payload.lastRun.diagnostics, outputDir: payload.lastRun.outputDir }
-                            : { type: "fatal", runId, ok: false, cancelled: false, finishedAt: payload.lastRun.finishedAt ?? Date.now(), error: payload.lastRun.error ?? "Ledger Sweep failed.", summary: payload.lastRun.summary, results: payload.lastRun.results, diagnostics: payload.lastRun.diagnostics, outputDir: payload.lastRun.outputDir };
-                    this.adoptTerminal(terminal);
+                    this.adoptTerminal(tradeLedgerSweepTerminalEventFromLastRun(runId, payload.lastRun));
                     return;
                 }
             } catch (error) {
@@ -422,6 +454,24 @@ export class TradeLedgerSweepService {
     private delay(ms: number): Promise<void> {
         if (this.reattachTimer) clearTimeout(this.reattachTimer);
         return new Promise((resolve) => { this.reattachTimer = setTimeout(() => { this.reattachTimer = null; resolve(); }, ms); });
+    }
+
+    private async restoreLastRun(): Promise<void> {
+        const last = readLastRun();
+        if (!last) return;
+        try {
+            const response = await fetch(`/api/trade-ledger-sweep/status?runId=${encodeURIComponent(last.runId)}`, { cache: "no-store" });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const payload = await response.json() as LedgerSweepStatusResponse;
+            if (payload.runMismatch || !payload.lastRun) {
+                persistLastRun(null);
+                return;
+            }
+            this.activeServerRunId = last.runId;
+            this.adoptTerminal(tradeLedgerSweepTerminalEventFromLastRun(last.runId, payload.lastRun));
+        } catch {
+            // Server unreachable: keep the persisted record and retry on the next init.
+        }
     }
 
     private async copySummary(): Promise<void> {
