@@ -1,6 +1,6 @@
 import { createSeriesMarkers, ISeriesMarkersPluginApi, SeriesMarker, Time } from "lightweight-charts";
 import { state } from "./state";
-import { getRequiredElement, setVisible } from "./dom-utils";
+import { getOptionalElement, getRequiredElement, setVisible } from "./dom-utils";
 import { clearBlockRange, setBlockRange } from "./state-actions";
 
 type BlockSelectorDom = {
@@ -14,7 +14,7 @@ type BlockSelectorDom = {
     presetVisibleButton: HTMLButtonElement;
     badge: HTMLElement;
     badgeText: HTMLElement;
-    invertLabelText: Text | null;
+    invertLabelText: HTMLElement | null;
 };
 
 function fmtDate(ts: number): string {
@@ -45,7 +45,7 @@ export class BlockSelectorManager {
             presetVisibleButton: getRequiredElement<HTMLButtonElement>('blockPresetVisible'),
             badge: getRequiredElement<HTMLElement>('blockSelectorBadge'),
             badgeText: getRequiredElement<HTMLElement>('blockSelectorBadgeText'),
-            invertLabelText: Array.from(invertButton.childNodes).find((node): node is Text => node.nodeType === Node.TEXT_NODE) ?? null,
+            invertLabelText: getOptionalElement<HTMLElement>('blockSelectorInvertLabel'),
         };
 
         return this.dom;
@@ -271,7 +271,7 @@ export class BlockSelectorManager {
             ? 'Click again to restore original range'
             : 'Invert: OUT becomes new IN, last candle becomes new OUT';
         if (dom.invertLabelText) {
-            dom.invertLabelText.textContent = isInverted ? ' Restore' : ' Invert';
+            dom.invertLabelText.textContent = isInverted ? 'Restore' : 'Invert';
         }
         setVisible(dom.invertResetButton, isInverted);
 

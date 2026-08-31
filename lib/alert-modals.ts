@@ -217,22 +217,22 @@ function createOpenTradeFromSignalRecord(
 function getExitReasonBadge(exitReason: string | null | undefined): string {
     if (!exitReason) return "-";
 
-    const reasonMap: Record<string, { label: string; color: string }> = {
-        signal: { label: "Signal", color: "#3b82f6" },
-        stop_loss: { label: "Stop Loss", color: "#ef4444" },
-        take_profit: { label: "Take Profit", color: "#22c55e" },
-        trailing_stop: { label: "Trailing Stop", color: "#f59e0b" },
-        time_stop: { label: "Time Stop", color: "#8b5cf6" },
-        partial: { label: "Partial", color: "#06b6d4" },
-        probation_fail: { label: "Weak-Start Guard", color: "#ec4899" },
-        end_of_data: { label: "End of Data", color: "#f97316" },
-        path_exit: { label: "Path Exit", color: "#14b8a6" },
+    const reasonMap: Record<string, { label: string; className: string }> = {
+        signal: { label: "Signal", className: "exit-reason-badge--signal" },
+        stop_loss: { label: "Stop Loss", className: "exit-reason-badge--stop-loss" },
+        take_profit: { label: "Take Profit", className: "exit-reason-badge--take-profit" },
+        trailing_stop: { label: "Trailing Stop", className: "exit-reason-badge--trailing-stop" },
+        time_stop: { label: "Time Stop", className: "exit-reason-badge--time-stop" },
+        partial: { label: "Partial", className: "exit-reason-badge--partial" },
+        probation_fail: { label: "Weak-Start Guard", className: "exit-reason-badge--probation-fail" },
+        end_of_data: { label: "End of Data", className: "exit-reason-badge--end-of-data" },
+        path_exit: { label: "Path Exit", className: "exit-reason-badge--path-exit" },
     };
 
     const info = reasonMap[exitReason];
     if (!info) return exitReason;
 
-    return `<span style="background: ${info.color}20; color: ${info.color}; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;">${info.label}</span>`;
+    return `<span class="exit-reason-badge ${info.className}">${info.label}</span>`;
 }
 
 function formatDuration(ms: number): string {
@@ -282,7 +282,7 @@ function showLastTradeResult(
         : "Open";
 
     const exitReasonBadge = isOpenTrade
-        ? '<span style="background: #22c55e20; color: #22c55e; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;">Open Position</span>'
+        ? '<span class="exit-reason-badge exit-reason-badge--open">Open Position</span>'
         : getExitReasonBadge(trade.exitReason);
     const openTradeNote = openTrade
         ? `<div class="detail-row divider"></div>
@@ -295,7 +295,7 @@ function showLastTradeResult(
                 <span class="trade-type ${isLong ? "long" : "short"}">${isLong ? "LONG" : "SHORT"}</span>
                 <span class="trade-result ${isWin ? "win" : "loss"}">${isWin ? "+" : ""}${trade.pnl.toFixed(2)} (${trade.pnlPercent >= 0 ? "+" : ""}${trade.pnlPercent.toFixed(2)}%)</span>
             </div>
-            ${openTrade ? '<p class="no-trades" style="margin-top:8px;">Latest position is still open. Telegram alert is sent once per entry when the stream has no matching previous signal.</p>' : ""}
+            ${openTrade ? '<p class="no-trades">Latest position is still open. Telegram alert is sent once per entry when the stream has no matching previous signal.</p>' : ""}
         `;
     }
 

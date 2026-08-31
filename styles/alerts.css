@@ -297,6 +297,16 @@
     font-weight: var(--font-weight-medium);
 }
 
+/* Exit badges fill the value slot of a detail row; the trades-list
+   margin-left offset would misalign them against neighboring rows. */
+.detail-row .exit-reason-badge {
+    margin-left: 0;
+}
+
+.last-trade-summary .no-trades {
+    margin-top: var(--space-2);
+}
+
 .no-trades {
     text-align: center;
     color: var(--text-muted);

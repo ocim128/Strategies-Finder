@@ -875,9 +875,13 @@
 
 }
 
-.exit-reason-badge:hover {
+.exit-reason-badge--open {
 
-    transform: scale(1.1);
+    color: var(--green);
+
+    background: hsl(var(--hsl-success) / 0.16);
+
+    border: 1px solid hsl(var(--hsl-success) / 0.32);
 
 }
 

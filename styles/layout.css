@@ -214,7 +214,7 @@
     gap: var(--space-3);
     padding: var(--space-3) var(--space-3-5);
     border-bottom: 1px solid hsl(var(--hsl-border) / 0.2);
-    background: var(--bg-tertiary);
+    background: var(--panel-header-bg);
     position: relative;
     color: var(--panel-header-ink);
 }

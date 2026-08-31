@@ -169,6 +169,13 @@
     z-index: var(--z-raised);
     display: flex;
     gap: var(--space-3);
+    padding: var(--space-1-5) var(--space-3);
+    background: var(--glass-bg-strong);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    pointer-events: none;
 }
 
 .equity-stat {
