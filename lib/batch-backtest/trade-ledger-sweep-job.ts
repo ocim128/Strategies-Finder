@@ -18,6 +18,7 @@ import type {
 import { createEmptyLedgerSweepDiagnostics } from "./trade-ledger-sweep-diagnostics";
 import type { LedgerSweepFolderCatalogEntry, LedgerSweepRuleCatalogEntry } from "./trade-ledger-sweep-catalog";
 import type { LedgerSweepPreflightDecision } from "./trade-ledger-sweep-preflight";
+import { resolveLedgerSweepChildHeapLimitMib } from "./trade-ledger-sweep-preflight";
 import {
     assertLedgerSweepWireEventIsScalar,
     isLedgerSweepTerminalEvent,
@@ -26,7 +27,6 @@ import {
     type LedgerSweepStreamEvent,
 } from "./trade-ledger-sweep-stream-types";
 
-const CHILD_HEAP_LIMIT_MIB = 12_288;
 const STDERR_TAIL_BYTES = 64 * 1024;
 
 export interface TradeLedgerSweepJobArgs {
@@ -77,7 +77,7 @@ function runWorkerChild(
     const require = createRequire(import.meta.url);
     const tsxLoader = require.resolve("tsx");
     const childArgs = [
-        `--max-old-space-size=${CHILD_HEAP_LIMIT_MIB}`,
+        `--max-old-space-size=${resolveLedgerSweepChildHeapLimitMib()}`,
         "--import", pathToFileURL(tsxLoader).href,
         childPath(args),
         "--mode", mode,

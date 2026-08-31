@@ -147,6 +147,15 @@ if defined CLOUDFLARED_EXE (
 
 echo Starting Lightweight Charts Playground...
 cd /d "%~dp0"
+:: Export the Ledger Sweep child-heap override for large ledgers. Vite's .env
+:: loader only exposes VITE_-prefixed vars to the client, so server-side
+:: knobs must be mirrored into the shell environment (same as the Alpaca
+:: variables above). See docs/trade-ledger-sweep.md "Memory preflight constants".
+if exist "%~dp0.env" (
+    for /f "usebackq tokens=1,* delims==" %%a in ("%~dp0.env") do (
+        if /i "%%a"=="TRADE_LEDGER_SWEEP_CHILD_HEAP_MB" set "TRADE_LEDGER_SWEEP_CHILD_HEAP_MB=%%b"
+    )
+)
 echo !NODE_OPTIONS! | findstr /C:"--max-old-space-size" >nul 2>&1
 if errorlevel 1 (
     if defined NODE_OPTIONS (

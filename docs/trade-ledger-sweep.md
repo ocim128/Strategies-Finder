@@ -308,16 +308,25 @@ datasets with at least 250,000 replay candidates use up to 20 workers by
 default, reserving one logical processor for the server and UI. Set
 `TRADE_LEDGER_SWEEP_CONTROL_WORKERS` before starting Vite to tune the pool;
 the value is capped at `availableParallelism() - 1`. The diagnostic summary
-reports the selected worker count as `controlWorkers`. The common
+reports the selected worker count as `controlWorkers`. A worker that fails a
+control chunk surfaces the worker-side error stack, and the pool re-posts that
+chunk once to a different worker before failing the rule: control replay is
+deterministic (seeded PRNG over immutable shared columns), so the retry is
+result-identical and a genuine bug still fails the rule. The common
 `maxOpenTrades=1`, no-cooldown path also precomputes the next row after each
 trade’s exit, so blocked rows are skipped in constant time; non-chronological
 pair data and other replay settings use the exact general path.
 
-For multi-GB ledgers, start the server with the documented larger child heap:
+For multi-GB ledgers, start the server with a larger server heap and raise
+the sweep child heap (the child spawns its own `--max-old-space-size`; the
+server's `NODE_OPTIONS` alone does not raise it):
 
 ```powershell
-$env:NODE_OPTIONS="--max-old-space-size=16384"; npm run dev
+$env:NODE_OPTIONS="--max-old-space-size=16384"; $env:TRADE_LEDGER_SWEEP_CHILD_HEAP_MB="24576"; npm run dev
 ```
+
+Or set `TRADE_LEDGER_SWEEP_CHILD_HEAP_MB` in `.env` — `run_playground.bat`
+exports it into the Vite process environment.
 
 ## Shared workload coordinator
 
@@ -442,8 +451,15 @@ Rule discovery rules:
 > heap limit **or** estimated RSS exceeds **75%** of `os.freemem()`.
 >
 > All values between the load-once and refusal boundaries use
-> **isolated_per_rule**. There is no v1 UI, body, environment-variable, or
-> query-string override.
+> **isolated_per_rule**. There is no UI, body, or query-string override.
+>
+> **Operator child-heap override:** set `TRADE_LEDGER_SWEEP_CHILD_HEAP_MB`
+> (MiB, clamped to 2048..262144, default 12288) before starting Vite — the
+> launcher exports it from `.env`. The override is the operator's judgment
+> that the machine can hold the ledger: the preflight boundaries, the spawned
+> child's `--max-old-space-size`, and the 85% runtime guard all scale from
+> the same resolved value. The RSS boundaries still measure real
+> `os.freemem()` and refuse independently.
 
 > Runtime defense-in-depth: for a load-once worker only, sample `heapUsed` at
 > every phase boundary and in the existing one-second sampler. Abort with

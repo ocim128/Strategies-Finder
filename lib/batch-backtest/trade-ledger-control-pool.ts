@@ -60,6 +60,10 @@ interface PendingRun {
     results: Array<{ k: number; result: TradeLedgerControlRunResult }>;
     resolve: (results: readonly TradeLedgerControlRunResult[]) => void;
     reject: (error: Error) => void;
+    /** Task ids whose first attempt failed and were re-posted to another worker. */
+    retriedTasks: Set<string>;
+    firstError: string | null;
+    chunks: Map<string, TradeLedgerControlWorkerRunMessage>;
 }
 
 export interface TradeLedgerControlPool {
@@ -212,7 +216,7 @@ export function createTradeLedgerControlPool(
         }
     };
 
-    for (const worker of workers) {
+    workers.forEach((worker, workerIndex) => {
         worker.on("message", (message: TradeLedgerControlWorkerMessage) => {
             if (message.type === "ready") {
                 readyWorkers.add(worker);
@@ -220,7 +224,23 @@ export function createTradeLedgerControlPool(
                 return;
             }
             if (message.type === "error") {
-                fail(new Error(message.error));
+                // runControl is deterministic (seeded PRNG over immutable shared
+                // columns), so a failed chunk is safe to re-post once to a
+                // different worker. A genuine bug fails the retry identically.
+                const pending = activeRun;
+                const retried = pending?.retriedTasks.has(message.taskId) ?? true;
+                if (pending && !retried) {
+                    pending.retriedTasks.add(message.taskId);
+                    pending.firstError = message.error;
+                    const nextIndex = (workerIndex + 1) % workers.length;
+                    const chunk = pending.chunks.get(message.taskId);
+                    if (chunk) {
+                        workers[nextIndex]!.postMessage(chunk);
+                        return;
+                    }
+                }
+                const suffix = pending?.firstError && pending.firstError !== message.error ? `\nfirst attempt: ${pending.firstError}` : "";
+                fail(new Error(`${message.error}${suffix}`));
                 return;
             }
             const pending = activeRun;
@@ -238,7 +258,7 @@ export function createTradeLedgerControlPool(
         worker.on("exit", (code) => {
             if (!closed && code !== 0) fail(new Error(`Ledger control worker exited with code ${code}.`));
         });
-    }
+    });
 
     const run: TradeLedgerControlRunner = async (input) => {
         if (closed) throw new Error("Ledger control pool is closed.");
@@ -250,7 +270,7 @@ export function createTradeLedgerControlPool(
         if (input.controlRuns <= 0) return [];
         const partCount = Math.min(workerCount, input.controlRuns);
         const pending = await new Promise<readonly TradeLedgerControlRunResult[]>((resolve, reject) => {
-            const state: PendingRun = { remaining: partCount, results: [], resolve, reject };
+            const state: PendingRun = { remaining: partCount, results: [], resolve, reject, retriedTasks: new Set<string>(), firstError: null, chunks: new Map<string, TradeLedgerControlWorkerRunMessage>() };
             activeRun = state;
             const base = Math.floor(input.controlRuns / partCount);
             const remainder = input.controlRuns % partCount;
@@ -268,6 +288,7 @@ export function createTradeLedgerControlPool(
                     shift: input.shift,
                     splitTime: input.splitTime,
                 };
+                state.chunks.set(message.taskId, message);
                 try {
                     workers[part]!.postMessage(message);
                 } catch (error) {

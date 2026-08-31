@@ -7,6 +7,7 @@ import { discoverLedgerSweepCatalog, resolveLedgerSweepFolder } from "../lib/bat
 import {
     isLedgerSweepRuntimeHeapGuardTripped,
     ledgerSweepRuntimeHeapGuardLimitBytes,
+    resolveLedgerSweepChildHeapLimitMib,
     resolveLedgerSweepPreflight,
     TRADE_LEDGER_SWEEP_RUNTIME_HEAP_GUARD_FRACTION,
 } from "../lib/batch-backtest/trade-ledger-sweep-preflight";
@@ -141,6 +142,27 @@ describe("trade-ledger sweep engine", () => {
         expect(preflight.estimatedHeapBytes).to.be.at.least(f3ObservedHeapBytes);
         expect(preflight.decision).to.equal("refuse");
         expect(preflight.estimatedHeapBytes).to.be.below(preflight.childHeapLimitBytes);
+    });
+
+    it("raises the whole safety envelope from the child-heap operator override", () => {
+        expect(resolveLedgerSweepChildHeapLimitMib(undefined)).to.equal(12_288);
+        expect(resolveLedgerSweepChildHeapLimitMib("")).to.equal(12_288);
+        expect(resolveLedgerSweepChildHeapLimitMib("garbage")).to.equal(12_288);
+        expect(resolveLedgerSweepChildHeapLimitMib("512")).to.equal(2_048);
+        expect(resolveLedgerSweepChildHeapLimitMib("99999999")).to.equal(262_144);
+        expect(resolveLedgerSweepChildHeapLimitMib("24576")).to.equal(24_576);
+        // The measured F3 folder (5,412,528 rows, est. heap 10.82 GiB) is
+        // refused at the default 12 GiB child heap but becomes runnable once
+        // the operator raises it: load-once at 24 GiB (est. <= 50% boundary).
+        const f3Rows = 5_412_528;
+        const gib = 1024 * 1024 * 1024;
+        const raised = resolveLedgerSweepPreflight(f3Rows, 48 * gib, 24_576 * 1024 * 1024);
+        expect(raised.decision).to.equal("load_once");
+        expect(raised.childHeapLimitBytes).to.equal(24_576 * 1024 * 1024);
+        const raisedSmall = resolveLedgerSweepPreflight(f3Rows, 48 * gib, 16_384 * 1024 * 1024);
+        expect(raisedSmall.decision).to.equal("isolated_per_rule");
+        // Real free memory still refuses independently of the heap override.
+        expect(resolveLedgerSweepPreflight(f3Rows, 4 * gib, 24_576 * 1024 * 1024).decision).to.equal("refuse");
     });
 
     it("trips the runtime guard at the injected fixed heap limit", () => {

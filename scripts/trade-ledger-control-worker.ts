@@ -131,7 +131,10 @@ parentPort.on("message", (message: TradeLedgerControlWorkerRunMessage) => {
         }
         parentPort!.postMessage(response);
     } catch (error) {
-        parentPort!.postMessage({ type: "error", taskId: message.taskId, error: error instanceof Error ? error.message : String(error) });
+        // Post the full stack: the pool surfaces this string verbatim in the
+        // rule's ERROR note, and worker-side frames are otherwise lost.
+        const detail = error instanceof Error ? `${error.message}\n${error.stack}` : String(error);
+        parentPort!.postMessage({ type: "error", taskId: message.taskId, error: detail });
     }
 });
 
