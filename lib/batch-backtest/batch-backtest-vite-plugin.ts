@@ -1166,46 +1166,72 @@ function buildTradeLedgerProvenance(
 
 type StreamWriter = (event: BatchStreamEvent) => void;
 
-async function prepareTradeGateFeatureContexts(
-    input: BatchBacktestRunInput,
-    gate: TradeGate,
-    isCancelled: () => boolean,
-    writer: StreamWriter,
-): Promise<TradeGate> {
-    const ledgerContext = resolveTradeLedgerRunContext(input);
-    const rowsByPair = new Map<string, TradeLedgerRow[]>();
-    writer({ type: "progress", percent: 0, text: "Trade Gate: building causal feature pre-pass...", status: "Trade Gate: building causal feature pre-pass..." });
-    await runBatchBacktest({
-        ...input,
-        tradeGate: undefined,
-        useRustEnginePreference: false,
-        pruneResultArtifacts: true,
-    }, {
-        setProgress: (percent, text) => {
-            if (!isCancelled()) {
-                writer({ type: "progress", percent: percent * 0.5, text: `Trade Gate pre-pass: ${text}`, status: `Trade Gate pre-pass: ${text}` });
-            }
-        },
-        setStatus: () => {},
-        onSymbolComplete: (_index, result, completionContext) => {
-            if (isCancelled()) return;
-            if (!result.data || !result.result || !completionContext?.signals) return;
-            const pairRows = buildTradeLedgerRowsForPair({
-                pair: result.symbol,
-                data: result.data,
-                signals: completionContext.signals,
-                trades: result.result.trades,
-                context: ledgerContext.rowContext,
-            });
-            rowsByPair.set(result.symbol, pairRows.rows);
-        },
-        isCancelled,
-    });
-    if (isCancelled()) throw new Error("Trade Gate run was stopped during the feature pre-pass.");
+type BatchPairTimingLogger = {
+    start: (index: number, symbol: string) => void;
+    complete: (index: number, symbol: string) => void;
+    finish: () => void;
+};
 
+function createBatchPairTimingLogger(phase: "pre-pass" | "main"): BatchPairTimingLogger {
+    const starts = new Map<number, number>();
+    let completed = 0;
+    let totalMs = 0;
+    let maxMs = 0;
+    let finished = false;
+
+    return {
+        start(index, symbol) {
+            starts.set(index, performance.now());
+            debugLogger.event("batch.server.pair.start", { phase, index, symbol });
+        },
+        complete(index, symbol) {
+            const startedAt = starts.get(index);
+            if (startedAt === undefined) return;
+            starts.delete(index);
+            const durationMs = performance.now() - startedAt;
+            const runningAverageMs = completed > 0 ? totalMs / completed : null;
+            debugLogger.event("batch.server.pair.complete", {
+                phase,
+                index,
+                symbol,
+                durationMs: Math.round(durationMs),
+                runningAverageMs: runningAverageMs === null ? null : Math.round(runningAverageMs),
+            });
+            if (runningAverageMs !== null && runningAverageMs > 0 && durationMs > runningAverageMs * 10) {
+                debugLogger.warn("batch.server.pair.slow", {
+                    phase,
+                    index,
+                    symbol,
+                    durationMs: Math.round(durationMs),
+                    runningAverageMs: Math.round(runningAverageMs),
+                    multiple: Number((durationMs / runningAverageMs).toFixed(1)),
+                });
+            }
+            completed += 1;
+            totalMs += durationMs;
+            maxMs = Math.max(maxMs, durationMs);
+        },
+        finish() {
+            if (finished) return;
+            finished = true;
+            debugLogger.event("batch.server.phase.timing", {
+                phase,
+                completed,
+                averageMs: completed > 0 ? Math.round(totalMs / completed) : 0,
+                maxMs: Math.round(maxMs),
+            });
+        },
+    };
+}
+
+function buildTradeGatePairContexts(
+    rowsByPair: ReadonlyMap<string, readonly TradeLedgerRow[]>,
+    isCancelled?: () => boolean,
+): Map<string, TradeGatePairContext> {
     const pairsByTime = new Map<number, Set<string>>();
     for (const rows of rowsByPair.values()) {
         for (const row of rows) {
+            if (isCancelled?.()) throw new Error("Trade Gate run was stopped during feature assignment.");
             let pairs = pairsByTime.get(row.signalTime);
             if (!pairs) {
                 pairs = new Set<string>();
@@ -1214,12 +1240,21 @@ async function prepareTradeGateFeatureContexts(
             pairs.add(row.pair);
         }
     }
+
+    // Sort each timestamp bucket once. The feature currently consumes only
+    // the cardinality, but retaining the sorted bucket preserves the original
+    // deterministic candidate ordering for future feature consumers.
+    const sortedPairsByTime = new Map<number, readonly string[]>();
+    for (const [signalTime, pairs] of pairsByTime) {
+        sortedPairsByTime.set(signalTime, [...pairs].sort((a, b) => a < b ? -1 : a > b ? 1 : 0));
+    }
+
     const pairContexts = new Map<string, TradeGatePairContext>();
     for (const [pair, rows] of rowsByPair) {
         const featuresBySignalKey = new Map<string, TradeGateFeatureRow>();
         for (const row of rows) {
-            const pairs = [...(pairsByTime.get(row.signalTime) ?? [])]
-                .sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+            if (isCancelled?.()) throw new Error("Trade Gate run was stopped during feature assignment.");
+            const pairs = sortedPairsByTime.get(row.signalTime) ?? [];
             featuresBySignalKey.set(
                 tradeGateSignalKey(row.signalBarIndex, row.direction),
                 toTradeGateFeatureRow(row, pairs.length),
@@ -1227,6 +1262,57 @@ async function prepareTradeGateFeatureContexts(
         }
         pairContexts.set(pair, { pair, featuresBySignalKey });
     }
+    return pairContexts;
+}
+
+async function prepareTradeGateFeatureContexts(
+    input: BatchBacktestRunInput,
+    gate: TradeGate,
+    isCancelled: () => boolean,
+    writer: StreamWriter,
+): Promise<TradeGate> {
+    const ledgerContext = resolveTradeLedgerRunContext(input);
+    const rowsByPair = new Map<string, TradeLedgerRow[]>();
+    const timing = createBatchPairTimingLogger("pre-pass");
+    writer({ type: "progress", percent: 0, text: "Trade Gate: building causal feature pre-pass...", status: "Trade Gate: building causal feature pre-pass..." });
+    try {
+        await runBatchBacktest({
+            ...input,
+            tradeGate: undefined,
+            useRustEnginePreference: false,
+            pruneResultArtifacts: true,
+        }, {
+            setProgress: (percent, text) => {
+                if (!isCancelled()) {
+                    writer({ type: "progress", percent: percent * 0.5, text: `Trade Gate pre-pass: ${text}`, status: `Trade Gate pre-pass: ${text}` });
+                }
+            },
+            setStatus: () => {},
+            onSymbolStart: (index, symbol) => timing.start(index, symbol),
+            onSymbolComplete: (_index, result, completionContext) => {
+                try {
+                    if (isCancelled()) return;
+                    if (!result.data || !result.result || !completionContext?.signals) return;
+                    const pairRows = buildTradeLedgerRowsForPair({
+                        pair: result.symbol,
+                        data: result.data,
+                        signals: completionContext.signals,
+                        trades: result.result.trades,
+                        context: ledgerContext.rowContext,
+                    });
+                    rowsByPair.set(result.symbol, pairRows.rows);
+                } finally {
+                    timing.complete(_index, result.symbol);
+                }
+            },
+            isCancelled,
+        });
+    } finally {
+        timing.finish();
+    }
+    if (isCancelled()) throw new Error("Trade Gate run was stopped during the feature pre-pass.");
+
+    const pairContexts = buildTradeGatePairContexts(rowsByPair, isCancelled);
     writer({ type: "progress", percent: 50, text: "Trade Gate: causal feature pre-pass complete.", status: "Trade Gate: causal feature pre-pass complete." });
     return { ...gate, pairs: pairContexts };
 }
@@ -1351,6 +1437,7 @@ export async function processRunBatch(
     let lastProgressAt = 0;
     let lastProgressPercent = -1;
     let resolvedTradeGate: ResolvedTradeGate | null = null;
+    const mainTiming = createBatchPairTimingLogger("main");
     // setProgress already carries the status; do not emit it twice per symbol.
     try {
         resolvedTradeGate = input.tradeGateOptions?.enabled
@@ -1384,12 +1471,14 @@ export async function processRunBatch(
             },
             setStatus: () => {},
             onSymbolStart: (_index, symbol) => {
+                mainTiming.start(_index, symbol);
                 if (lostOwnership()) return;
                 if (runState === snapshot) {
                     snapshot.currentSymbol = symbol;
                 }
             },
             onSymbolComplete: async (index, result, completionContext) => {
+                try {
                 if (lostOwnership()) return;
                 const scalarRow = toScalarRow(result);
                 if (runState === snapshot) {
@@ -1428,6 +1517,9 @@ export async function processRunBatch(
                 }
                 writer({ type: "symbol", index, total, row: scalarRow });
                 await new Promise<void>((resolve) => setImmediate(resolve));
+                } finally {
+                    mainTiming.complete(index, result.symbol);
+                }
             },
             isCancelled: () => {
                 if (lostOwnership()) {
@@ -1437,6 +1529,7 @@ export async function processRunBatch(
                 return false;
             },
         });
+        mainTiming.finish();
 
         if (lostOwnership()) {
             cancelled = true;
@@ -1618,6 +1711,7 @@ export async function processRunBatch(
                 : undefined,
         });
     } catch (error) {
+        mainTiming.finish();
         const message = error instanceof Error ? error.message : String(error);
         debugLogger.warn("batch.server.run.fatal", { error: message });
         // Audit Finding 6: stamp the fatal snapshot BEFORE releaseLastResults
@@ -2443,6 +2537,7 @@ function registerBatchRoutes(middlewares: any): void {
 // the IBKR sync pattern. The HTTP handlers set those before invoking the
 // factored functions; tests need a way to do the same without spinning up Vite.
 export const __testInternals = {
+    buildTradeGatePairContextsForTests: buildTradeGatePairContexts,
     releaseLastResults,
     hasStoredMineArtifacts,
     getParsedArtifactCacheSizeForTests(): number {

@@ -84,6 +84,45 @@ is the causal feature pre-pass used to reproduce the cross-pair
 `candidatesAtTime` context. Optimization is deliberately deferred: parity and
 certification correctness come first.
 
+### TypeScript batch safety and timing
+
+The Trade Gate pre-pass intentionally uses the TypeScript engine, even when
+the requested main run prefers Rust, because the pre-pass must produce the
+same ledger features that the gate consumes. The TypeScript simulator now
+checks cancellation during bar and signal processing, and its compact
+end-of-data position-drain loop has a bound derived from the candle and signal
+counts in `lib/strategies/backtest/backtest-engine.ts`. If a position fails to
+drain, the run fails loudly instead of spinning forever. Rust did not hang
+because it uses a separate simulator implementation and never enters this
+TypeScript forced-close loop. Per-pair timing is logged for both the pre-pass and main pass; a pair
+over 10x the running average is warned. Stop is cooperative and is checked
+inside the synchronous simulator, so the server can observe it as soon as a
+bar-level checkpoint is reached.
+
+### F3 q114 certification record
+
+The gated F3 run was re-run through the production resolver and runner against
+`2026-08-30_0940_batch-mtf7c0sj-armf8vch`, selecting
+`q114-orderly_decline_no_gap` from the latest completed sweep. It completed
+2,000/2,000 pairs with 0 failures and 0 cancellations. The q114 source
+SHA-256 was `486153522481eb6b88537123f8dfbbaa28b581e34a0802c01f98a9dc287d7a77`.
+
+| Measure | Value |
+| --- | ---: |
+| Sweep kept | 111,891 (`2.0672595135%`) |
+| Sweep IS mean / median P&L delta | `+1.7605661017 pp` / `+0.1693454525 pp` |
+| Sweep holdout mean / median P&L delta | `+0.1393694737 pp` / `+0.1103947727 pp` |
+| Engine gate evaluated / admitted / blocked | 5,414,069 / 339,205 / 227,190 |
+| Engine actual opened trades | 112,015 |
+| Engine aggregate net profit | `$715,924.9315733875` |
+| Engine aggregate expectancy | `$6.39133090723017` per trade |
+
+The sweep's kept count is its replay statistic; the engine-actual opened count
+is `admitted - blocked`, so the two counts are reported separately. The
+completed-run pair timing was pre-pass **35,653 ms** total (**17.8265 ms/pair**,
+maximum **75 ms**) and main pass **48,927 ms** total (**24.4635 ms/pair**,
+maximum **334 ms**); three main-pass pairs exceeded the 10x warning threshold.
+
 ## Evidence status
 
 The automated gate suite proves engine OR/state/error behavior, shared-feature

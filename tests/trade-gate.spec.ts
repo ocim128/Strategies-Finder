@@ -144,6 +144,48 @@ describe("Trade Gate", () => {
         assert.equal(gateRow.feat_candidatesAtTime, 3);
     });
 
+    it("reuses the deterministic timestamp bucket when assigning candidate counts", () => {
+        const data = makeBars(32);
+        const context = {
+            tradeDirection: "long" as const,
+            executionModel: "signal_close" as const,
+            maxOpenTrades: 1,
+            cooldownBars: 0,
+            slippageRate: 0,
+        };
+        const first = buildTradeLedgerRowsForPair({
+            pair: "Z-PAIR",
+            data,
+            signals: [makeSignal(20)],
+            trades: [],
+            context,
+        });
+        const second = buildTradeLedgerRowsForPair({
+            pair: "A-PAIR",
+            data,
+            signals: [makeSignal(20)],
+            trades: [],
+            context,
+        });
+        const pairContexts = __testInternals.buildTradeGatePairContextsForTests(new Map([
+            ["Z-PAIR", first.rows],
+            ["A-PAIR", second.rows],
+        ]));
+
+        assert.equal(
+            pairContexts.get("Z-PAIR")?.featuresBySignalKey.get("20|long")?.feat_candidatesAtTime,
+            2,
+        );
+        assert.equal(
+            pairContexts.get("A-PAIR")?.featuresBySignalKey.get("20|long")?.feat_candidatesAtTime,
+            2,
+        );
+        assert.deepEqual(
+            pairContexts.get("Z-PAIR")?.featuresBySignalKey.get("20|long"),
+            toTradeGateFeatureRow(first.rows[0]!, 2),
+        );
+    });
+
     it("applies OR semantics and counts rejected entries before position state", () => {
         const data = makeBars(8);
         const rows = [makeFeatureRow(1), makeFeatureRow(2)];
@@ -209,6 +251,17 @@ describe("Trade Gate", () => {
         });
         assert.equal(JSON.stringify(explicitlyOff), JSON.stringify(ordinary));
         assert.equal("tradeGateStats" in ordinary, false);
+    });
+
+    it("checks cancellation inside the TypeScript bar scan", () => {
+        let checks = 0;
+        assert.throws(
+            () => runBacktest(makeBars(32), [makeSignal(20)], 1000, 100, 0, settings, undefined, undefined, {
+                isCancelled: () => ++checks >= 4,
+            }),
+            /cancelled during TypeScript simulation/,
+        );
+        assert.ok(checks >= 4);
     });
 
     it("fails loudly when a selected rule throws", () => {

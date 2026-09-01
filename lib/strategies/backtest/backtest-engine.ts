@@ -66,6 +66,8 @@ type BacktestRunOptions = {
     tradeGate?: TradeGate;
     /** Pair key used to select this run's gate feature context. */
     tradeGatePair?: string;
+    /** Cooperative cancellation hook for server-side batch execution. */
+    isCancelled?: () => boolean;
 };
 
 export interface BacktestEndpointSelection {
@@ -77,6 +79,18 @@ export interface BacktestEndpointSelection {
 export type BacktestResultWithEndpointSelection = BacktestResult & {
     endpointSelection?: BacktestEndpointSelection;
 };
+
+function throwIfBacktestEngineCancelled(options: BacktestRunOptions | undefined): void {
+    if (options?.isCancelled?.()) {
+        throw new Error("Backtest cancelled during TypeScript simulation.");
+    }
+}
+
+function assertBacktestLoopBound(iterations: number, maximum: number, phase: string): void {
+    if (iterations > maximum) {
+        throw new Error(`TypeScript backtest ${phase} exceeded its data-derived iteration bound (${maximum}).`);
+    }
+}
 
 function createBacktestDiagnostics(inputBars: number, inputSignals: number): BacktestDiagnostics {
     return {
@@ -988,7 +1002,11 @@ function runSinglePositionFinderFastPath(args: {
 
     const tradeSimulationStartedAt = performance.now();
     if (canUseSignalOnlyFinderFastPath(config, options)) {
+        let signalOnlyIterations = 0;
         for (let i = 0; i < preparedSignalCount; i++) {
+            throwIfBacktestEngineCancelled(options);
+            signalOnlyIterations += 1;
+            assertBacktestLoopBound(signalOnlyIterations, preparedSignalCount + 1, "signal-only scan");
             const barIndex = preparedSignalBarIndexes[i];
             if (barIndex < 0 || barIndex >= data.length) continue;
             const candle = data[barIndex];
@@ -1039,7 +1057,12 @@ function runSinglePositionFinderFastPath(args: {
         return result;
     }
 
+    let barIterations = 0;
+    let signalScanIterations = 0;
     for (let i = 0; i < data.length; i++) {
+        throwIfBacktestEngineCancelled(options);
+        barIterations += 1;
+        assertBacktestLoopBound(barIterations, data.length + 1, "fast-path bar scan");
         currentBarIndex = i;
         if (!position) {
             const nextSignalBarIndex = preparedSignalBarIndexes[signalIdx];
@@ -1066,6 +1089,9 @@ function runSinglePositionFinderFastPath(args: {
             processCurrentPositionExit(candle, i, OPEN_ONLY_POSITION_EXIT_OPTIONS);
 
             while (signalIdx < preparedSignalCount && preparedSignalBarIndexes[signalIdx] <= i) {
+                signalScanIterations += 1;
+                assertBacktestLoopBound(signalScanIterations, preparedSignalCount + 1, "fast-path signal scan");
+                throwIfBacktestEngineCancelled(options);
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
                 const signal = getPreparedSignal(signalIdx++, signalBarIndex);
                 if (signalBarIndex !== i) continue;
@@ -1086,6 +1112,9 @@ function runSinglePositionFinderFastPath(args: {
 
         if (config.executionModel !== "next_open") {
             while (signalIdx < preparedSignalCount && preparedSignalBarIndexes[signalIdx] <= i) {
+                signalScanIterations += 1;
+                assertBacktestLoopBound(signalScanIterations, preparedSignalCount + 1, "fast-path signal scan");
+                throwIfBacktestEngineCancelled(options);
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
                 const signal = getPreparedSignal(signalIdx++, signalBarIndex);
                 if (signalBarIndex !== i) continue;
@@ -2016,7 +2045,12 @@ export function runBacktestCompact(
     };
 
     const tradeSimulationStartedAt = performance.now();
+    let barIterations = 0;
+    let signalScanIterations = 0;
     for (let i = 0; i < data.length; i++) {
+        throwIfBacktestEngineCancelled(options);
+        barIterations += 1;
+        assertBacktestLoopBound(barIterations, data.length + 1, "compact bar scan");
         currentBarIndex = i;
         if (omitEquityCurve && positions.length === 0 && pendingAdaptiveTakeProfitExits.size === 0) {
             const nextSignalBarIndex = preparedSignalBarIndexes[signalIdx];
@@ -2065,6 +2099,9 @@ export function runBacktestCompact(
             }
 
             while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
+                signalScanIterations += 1;
+                assertBacktestLoopBound(signalScanIterations, preparedSignals.length + 1, "compact signal scan");
+                throwIfBacktestEngineCancelled(options);
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
                 const signal = preparedSignals[signalIdx++];
                 if (signalBarIndex !== i) {
@@ -2177,6 +2214,9 @@ export function runBacktestCompact(
 
         if (config.executionModel !== 'next_open') {
             while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
+                signalScanIterations += 1;
+                assertBacktestLoopBound(signalScanIterations, preparedSignals.length + 1, "compact signal scan");
+                throwIfBacktestEngineCancelled(options);
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
                 const signal = preparedSignals[signalIdx++];
                 if (signalBarIndex === i) {
@@ -2279,9 +2319,18 @@ export function runBacktestCompact(
     const forcedCloseStartedAt = performance.now();
     if (positions.length > 0 && data.length > 0) {
         const finalCandle = data[data.length - 1];
+        let forcedCloseIterations = 0;
+        const forcedCloseBound = data.length + preparedSignals.length + 1;
         while (positions.length > 0) {
+            forcedCloseIterations += 1;
+            assertBacktestLoopBound(forcedCloseIterations, forcedCloseBound, "compact forced-close");
+            throwIfBacktestEngineCancelled(options);
             diagnostics && diagnostics.counts.forcedEndOfDataExits++;
+            const positionsBefore = positions.length;
             recordExit(positions[0], finalCandle.close, positions[0].size, 'end_of_data');
+            if (positions.length >= positionsBefore) {
+                throw new Error("TypeScript backtest compact forced-close made no progress.");
+            }
         }
         if (compactEquity) {
             const finalEquity = capital;
@@ -2667,7 +2716,12 @@ export function runBacktest(
     };
 
     const tradeSimulationStartedAt = performance.now();
+    let barIterations = 0;
+    let signalScanIterations = 0;
     for (let i = 0; i < data.length; i++) {
+        throwIfBacktestEngineCancelled(options);
+        barIterations += 1;
+        assertBacktestLoopBound(barIterations, data.length + 1, "standard bar scan");
         currentBarIndex = i;
         if (omitEquityCurve && positions.length === 0 && pendingAdaptiveTakeProfitExits.size === 0) {
             const nextSignalBarIndex = preparedSignalBarIndexes[signalIdx];
@@ -2710,6 +2764,9 @@ export function runBacktest(
             }
 
             while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
+                signalScanIterations += 1;
+                assertBacktestLoopBound(signalScanIterations, preparedSignals.length + 1, "standard signal scan");
+                throwIfBacktestEngineCancelled(options);
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
                 const signal = preparedSignals[signalIdx++];
                 if (signalBarIndex !== i) {
@@ -2824,6 +2881,9 @@ export function runBacktest(
 
         if (config.executionModel !== 'next_open') {
             while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
+                signalScanIterations += 1;
+                assertBacktestLoopBound(signalScanIterations, preparedSignals.length + 1, "standard signal scan");
+                throwIfBacktestEngineCancelled(options);
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
                 const signal = preparedSignals[signalIdx++];
                 if (signalBarIndex === i) {
@@ -2928,7 +2988,12 @@ export function runBacktest(
     const forcedCloseStartedAt = performance.now();
     if (positions.length > 0 && data.length > 0) {
         const candle = data[data.length - 1];
+        let forcedCloseIterations = 0;
+        const forcedCloseBound = data.length + preparedSignals.length + 1;
         while (positions.length > 0) {
+            forcedCloseIterations += 1;
+            assertBacktestLoopBound(forcedCloseIterations, forcedCloseBound, "standard forced-close");
+            throwIfBacktestEngineCancelled(options);
             const pos = positions[0];
             const d = calculateTradeExitDetails(pos, candle.close, pos.size, commissionRate);
             capital += d.rawPnl - d.commission;

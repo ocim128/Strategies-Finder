@@ -112,6 +112,8 @@ export interface BacktestExecutorRequest {
         includeSharpeRatio?: boolean;
         collectDiagnostics?: boolean;
         collectExecutorTimings?: boolean;
+        /** Cooperative cancellation checked inside synchronous TS simulation loops. */
+        isCancelled?: () => boolean;
         useCompactBacktest?: boolean;
         omitEquityCurve?: boolean;
         skipDrawdown?: boolean;

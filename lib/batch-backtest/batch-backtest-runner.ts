@@ -226,7 +226,11 @@ export async function runBatchBacktest(
 
     const abort = new AbortController();
     const nowSec = Math.floor(Date.now() / 1000);
-    const cancelCheck = () => callbacks.isCancelled();
+    const cancelCheck = () => {
+        const cancelled = callbacks.isCancelled();
+        if (cancelled) abort.abort();
+        return cancelled;
+    };
     // Settings + capital are identical for every item in a batch (the contract
     // is "read once, replay everywhere"). Resolve them once so executeBacktest
     // skips per-item normalization (mirrors Finder universe's IS path).
@@ -364,6 +368,7 @@ export async function runBatchBacktest(
                     engineMode: "auto",
                     useRustEnginePreference: input.useRustEnginePreference,
                     nowSec,
+                    signal: abort.signal,
                     ...(input.tradeGate ? { tradeGate: input.tradeGate } : {}),
                 },
                 backtestRunOptions: {
@@ -371,6 +376,7 @@ export async function runBatchBacktest(
                     omitEquityCurve: true,
                     skipDrawdown: false,
                     skipResultPostProcessing: true,
+                    isCancelled: cancelCheck,
                 },
             }).finally(() => {
                 timings.executeMs += performance.now() - executeStartedAt;
