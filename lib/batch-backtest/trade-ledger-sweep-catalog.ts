@@ -10,6 +10,8 @@ import {
     resolveLedgerSweepPreflight,
     type LedgerSweepPreflightDecision,
 } from "./trade-ledger-sweep-preflight";
+import type { LedgerSweepRuleResult } from "./trade-ledger-sweep-stream-types";
+import { isCompletedTradeLedgerSweepSummary } from "./trade-ledger-sweep-contract";
 
 export interface LedgerSweepFolderCatalogEntry {
     folderId: string;
@@ -29,6 +31,8 @@ export interface LedgerSweepFolderCatalogEntry {
     runnable: boolean;
     refusalReason: string | null;
     preflight: LedgerSweepPreflightDecision | null;
+    /** Most recent completed sweep; only its EDGE-CANDIDATE rules are exposed. */
+    latestSweep: LedgerSweepLatestSweep | null;
 }
 
 export interface LedgerSweepRuleCatalogEntry {
@@ -37,6 +41,24 @@ export interface LedgerSweepRuleCatalogEntry {
     bytes: number;
     modifiedAt: number;
     sourceHash: string;
+}
+
+export type LedgerSweepEdgeRuleCatalogEntry = Pick<
+    LedgerSweepRuleResult,
+    | "ruleId"
+    | "ruleName"
+    | "sourceHash"
+    | "keptPct"
+    | "isMeanPnlDeltaPp"
+    | "holdoutMeanPnlDeltaPp"
+    | "isMedianPnlDeltaPp"
+    | "holdoutMedianPnlDeltaPp"
+> & { verdict: "EDGE-CANDIDATE" };
+
+export interface LedgerSweepLatestSweep {
+    sweepId: string;
+    modifiedAt: number;
+    edgeRules: LedgerSweepEdgeRuleCatalogEntry[];
 }
 
 export interface LedgerSweepCatalog {
@@ -78,6 +100,47 @@ async function fileBytes(filePath: string): Promise<{ bytes: number; modifiedAt:
     } catch {
         return null;
     }
+}
+
+async function discoverLatestSweep(folderPath: string): Promise<LedgerSweepLatestSweep | null> {
+    let entries: import("node:fs").Dirent[];
+    try {
+        entries = await readdir(path.join(folderPath, "sweeps"), { withFileTypes: true });
+    } catch {
+        return null;
+    }
+    const candidates: LedgerSweepLatestSweep[] = [];
+    for (const entry of entries) {
+        if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+        const summaryPath = path.join(folderPath, "sweeps", entry.name, "summary.json");
+        const summary = await readJson<Record<string, unknown>>(summaryPath);
+        if (!summary || !isCompletedTradeLedgerSweepSummary(summary) || !Array.isArray(summary.results)) continue;
+        const summaryInfo = await fileBytes(summaryPath);
+        if (!summaryInfo) continue;
+        const edgeRules = summary.results
+            .filter((value): value is LedgerSweepRuleResult => Boolean(
+                value
+                && typeof value === "object"
+                && (value as { verdict?: unknown }).verdict === "EDGE-CANDIDATE"
+                && typeof (value as { ruleId?: unknown }).ruleId === "string"
+                && typeof (value as { ruleName?: unknown }).ruleName === "string"
+                && typeof (value as { sourceHash?: unknown }).sourceHash === "string",
+            ))
+            .map((value) => ({
+                ruleId: value.ruleId,
+                ruleName: value.ruleName,
+                sourceHash: value.sourceHash,
+                verdict: "EDGE-CANDIDATE" as const,
+                keptPct: value.keptPct,
+                isMeanPnlDeltaPp: value.isMeanPnlDeltaPp,
+                holdoutMeanPnlDeltaPp: value.holdoutMeanPnlDeltaPp,
+                isMedianPnlDeltaPp: value.isMedianPnlDeltaPp,
+                holdoutMedianPnlDeltaPp: value.holdoutMedianPnlDeltaPp,
+            }));
+        candidates.push({ sweepId: entry.name, modifiedAt: summaryInfo.modifiedAt, edgeRules });
+    }
+    candidates.sort((a, b) => b.modifiedAt - a.modifiedAt || (a.sweepId < b.sweepId ? -1 : 1));
+    return candidates[0] ?? null;
 }
 
 function certifiedNumber(value: unknown): number | null {
@@ -135,6 +198,7 @@ async function discoverFolders(
         const ledgerVersion = certifiedNumber(provenance?.ledgerVersion ?? summary?.ledgerVersion);
         const featureVersion = certifiedNumber(provenance?.featureVersion ?? summary?.featureVersion);
         const refusal = refusalReason({ provenance, summary, ledgerVersion, featureVersion });
+        const latestSweep = await discoverLatestSweep(containedFolder);
         const rows = certifiedNumber(totals?.signals);
         const pairs = certifiedNumber(totals?.pairs);
         const modifiedAt = ledger.modifiedAt;
@@ -158,6 +222,7 @@ async function discoverFolders(
             preflight: refusal === null && rows !== null
                 ? resolveLedgerSweepPreflight(rows, freeSystemMemoryBytes)
                 : null,
+            latestSweep,
         });
     }
     folders.sort((a, b) => {

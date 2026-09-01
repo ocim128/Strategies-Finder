@@ -43,9 +43,15 @@ import {
     TradeLedgerWriter,
     type TradeLedgerFinalizeResult,
     type TradeLedgerProvenance,
+    type TradeLedgerRow,
     type TradeLedgerRowContext,
     type TradeLedgerRunOptions,
 } from "./trade-ledger-exporter";
+import { resolveLedgerSweepFolder, resolveLedgerSweepRule } from "./trade-ledger-sweep-catalog";
+import { toTradeGateFeatureRow, tradeGateSignalKey, type TradeGateFeatureRow } from "./trade-ledger-features";
+import { createTradeGateStats, addTradeGateStats, type TradeGate, type TradeGatePairContext, type TradeGateProvenance, type TradeGateStats } from "./trade-gate";
+import { createTradeGateRuleLoaderRun, type TradeGateRuleLoaderRun } from "./trade-gate-rule-loader";
+import type { TradeGateRunOptions } from "./trade-gate-wire";
 import {
     buildAsIfPairModel,
     evaluateReplayEligibility,
@@ -697,6 +703,10 @@ export type BatchRunSnapshot = {
      * "manual/unverified".
      */
     researchRegistrationMeta?: { registration: MaxActiveResearchRegistrationV1 | null; status: "verified" | "manual/unverified"; reason?: string } | null;
+    /** Gate folder/sweep/rule hashes used by the server-side run. */
+    tradeGateProvenance?: TradeGateProvenance | null;
+    /** Aggregate gate counters across completed pair results. */
+    tradeGateStats?: TradeGateStats | null;
 };
 
 interface StoredMineArtifactMeta {
@@ -973,6 +983,88 @@ export function resolveServerBatchHeapWarning(symbolCount: number, heapLimitMb =
  * PRESENT enabled toggle with an unsafe folder is a client error (400) rather
  * than a silent fallback so a typo'd path is visible.
  */
+const MAX_TRADE_GATE_RULES = 16;
+
+function parseTradeGateOptions(raw: unknown): TradeGateRunOptions | null {
+    if (!raw || typeof raw !== "object") return null;
+    if ((raw as { enabled?: unknown }).enabled !== true) return null;
+    const folderId = (raw as { folderId?: unknown }).folderId;
+    const ruleIds = (raw as { ruleIds?: unknown }).ruleIds;
+    if (typeof folderId !== "string" || !folderId.trim() || folderId.includes("/") || folderId.includes("\\")) {
+        throw new HttpStatusError(400, "Trade Gate requires a safe ledger folder id.");
+    }
+    if (!Array.isArray(ruleIds) || ruleIds.length < 1 || ruleIds.length > MAX_TRADE_GATE_RULES) {
+        throw new HttpStatusError(400, `Trade Gate requires 1-${MAX_TRADE_GATE_RULES} rule ids.`);
+    }
+    const cleaned: string[] = [];
+    for (const value of ruleIds) {
+        if (typeof value !== "string" || !/^[A-Za-z0-9._-]+$/.test(value) || cleaned.includes(value)) {
+            throw new HttpStatusError(400, "Trade Gate rule ids must be unique safe filenames.");
+        }
+        cleaned.push(value);
+    }
+    return { enabled: true, folderId: folderId.trim(), ruleIds: cleaned };
+}
+
+interface ResolvedTradeGate {
+    gate: TradeGate;
+    loaderRun: TradeGateRuleLoaderRun;
+}
+
+async function resolveTradeGate(
+    serverRoot: string,
+    options: TradeGateRunOptions,
+): Promise<ResolvedTradeGate> {
+    const loaderRun = await createTradeGateRuleLoaderRun();
+    try {
+        const folder = await resolveLedgerSweepFolder(serverRoot, options.folderId);
+        if (!folder) throw new Error(`Trade Gate ledger folder not found: ${options.folderId}.`);
+        if (!folder.entry.runnable) {
+            throw new Error(`Trade Gate ledger folder is not runnable: ${folder.entry.refusalReason ?? "unknown reason"}.`);
+        }
+        const latestSweep = folder.entry.latestSweep;
+        if (!latestSweep) throw new Error(`Trade Gate folder has no completed sweep: ${options.folderId}.`);
+        const edgeRules = new Map(latestSweep.edgeRules.map((rule) => [rule.ruleId, rule]));
+        const rules: Array<TradeGate["rules"][number]> = [];
+        for (const ruleId of options.ruleIds) {
+            const edgeRule = edgeRules.get(ruleId);
+            if (!edgeRule) {
+                throw new Error(`Trade Gate rule ${ruleId} is not an EDGE-CANDIDATE in the latest sweep ${latestSweep.sweepId}.`);
+            }
+            const resolved = await resolveLedgerSweepRule(serverRoot, ruleId);
+            if (!resolved || resolved.entry.sourceHash !== edgeRule.sourceHash) {
+                throw new Error(`Trade Gate rule ${ruleId} changed after sweep ${latestSweep.sweepId}; rerun the sweep.`);
+            }
+            const source = await readFile(resolved.absolutePath, "utf8");
+            if (/\bfeat_rank\b/.test(source)) {
+                throw new Error(`Trade Gate rule ${ruleId} reads feat_rank, which is not permitted for certification.`);
+            }
+            const evaluate = await loaderRun.loadRule({
+                ruleId,
+                sourcePath: resolved.absolutePath,
+                source,
+                sourceHash: edgeRule.sourceHash,
+            });
+            rules.push({
+                ruleId,
+                ruleName: edgeRule.ruleName,
+                sourceHash: edgeRule.sourceHash,
+                evaluate,
+            });
+        }
+        const provenance: TradeGateProvenance = {
+            schema: "batch.trade_gate.v1",
+            folderId: options.folderId,
+            sweepId: latestSweep.sweepId,
+            rules: rules.map(({ ruleId, ruleName, sourceHash }) => ({ ruleId, ruleName, sourceHash })),
+        };
+        return { gate: { enabled: true, provenance, rules, pairs: new Map() }, loaderRun };
+    } catch (error) {
+        await loaderRun.dispose();
+        throw error;
+    }
+}
+
 function parseTradeLedgerOptions(raw: unknown): TradeLedgerRunOptions | null {
     if (!raw || typeof raw !== "object") return null;
     const enabled = (raw as { enabled?: unknown }).enabled === true;
@@ -1074,6 +1166,82 @@ function buildTradeLedgerProvenance(
 
 type StreamWriter = (event: BatchStreamEvent) => void;
 
+async function prepareTradeGateFeatureContexts(
+    input: BatchBacktestRunInput,
+    gate: TradeGate,
+    isCancelled: () => boolean,
+    writer: StreamWriter,
+): Promise<TradeGate> {
+    const ledgerContext = resolveTradeLedgerRunContext(input);
+    const rowsByPair = new Map<string, TradeLedgerRow[]>();
+    writer({ type: "progress", percent: 0, text: "Trade Gate: building causal feature pre-pass...", status: "Trade Gate: building causal feature pre-pass..." });
+    await runBatchBacktest({
+        ...input,
+        tradeGate: undefined,
+        useRustEnginePreference: false,
+        pruneResultArtifacts: true,
+    }, {
+        setProgress: (percent, text) => {
+            if (!isCancelled()) {
+                writer({ type: "progress", percent: percent * 0.5, text: `Trade Gate pre-pass: ${text}`, status: `Trade Gate pre-pass: ${text}` });
+            }
+        },
+        setStatus: () => {},
+        onSymbolComplete: (_index, result, completionContext) => {
+            if (isCancelled()) return;
+            if (!result.data || !result.result || !completionContext?.signals) return;
+            const pairRows = buildTradeLedgerRowsForPair({
+                pair: result.symbol,
+                data: result.data,
+                signals: completionContext.signals,
+                trades: result.result.trades,
+                context: ledgerContext.rowContext,
+            });
+            rowsByPair.set(result.symbol, pairRows.rows);
+        },
+        isCancelled,
+    });
+    if (isCancelled()) throw new Error("Trade Gate run was stopped during the feature pre-pass.");
+
+    const pairsByTime = new Map<number, Set<string>>();
+    for (const rows of rowsByPair.values()) {
+        for (const row of rows) {
+            let pairs = pairsByTime.get(row.signalTime);
+            if (!pairs) {
+                pairs = new Set<string>();
+                pairsByTime.set(row.signalTime, pairs);
+            }
+            pairs.add(row.pair);
+        }
+    }
+    const pairContexts = new Map<string, TradeGatePairContext>();
+    for (const [pair, rows] of rowsByPair) {
+        const featuresBySignalKey = new Map<string, TradeGateFeatureRow>();
+        for (const row of rows) {
+            const pairs = [...(pairsByTime.get(row.signalTime) ?? [])]
+                .sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+            featuresBySignalKey.set(
+                tradeGateSignalKey(row.signalBarIndex, row.direction),
+                toTradeGateFeatureRow(row, pairs.length),
+            );
+        }
+        pairContexts.set(pair, { pair, featuresBySignalKey });
+    }
+    writer({ type: "progress", percent: 50, text: "Trade Gate: causal feature pre-pass complete.", status: "Trade Gate: causal feature pre-pass complete." });
+    return { ...gate, pairs: pairContexts };
+}
+
+function summarizeTradeGateStats(results: readonly BatchBacktestSymbolResult[]): TradeGateStats | null {
+    const stats = createTradeGateStats();
+    let present = false;
+    for (const row of results) {
+        if (!row.result?.tradeGateStats) continue;
+        present = true;
+        addTradeGateStats(stats, row.result.tradeGateStats);
+    }
+    return present ? stats : null;
+}
+
 /**
  * Core batch loop, factored out of the HTTP handler so it can be tested with a
  * stubbed loader and writer without spinning up Vite. Mirrors
@@ -1084,7 +1252,10 @@ type StreamWriter = (event: BatchStreamEvent) => void;
  * `abortController` cancels in-flight dataset loads.
  */
 export async function processRunBatch(
-    input: BatchBacktestRunInput & { tradeLedger?: TradeLedgerRunOptions | null },
+    input: BatchBacktestRunInput & {
+        tradeLedger?: TradeLedgerRunOptions | null;
+        tradeGateOptions?: TradeGateRunOptions | null;
+    },
     writer: StreamWriter,
     owner: number,
     runId: string = "",
@@ -1165,6 +1336,9 @@ export async function processRunBatch(
         backtestSettings: input.backtestSettings,
         capitalSettings: input.capitalSettings,
         interval: input.interval,
+        ...(input.tradeGateOptions?.enabled
+            ? { tradeGate: input.tradeGateOptions }
+            : {}),
         ...(pairListProvenanceMeta.status === "verified" && pairListProvenanceMeta.provenance
             ? { pairListProvenance: pairListProvenanceMeta.provenance }
             : {}),
@@ -1176,9 +1350,23 @@ export async function processRunBatch(
     let cancelled = false;
     let lastProgressAt = 0;
     let lastProgressPercent = -1;
+    let resolvedTradeGate: ResolvedTradeGate | null = null;
     // setProgress already carries the status; do not emit it twice per symbol.
     try {
-        const output = await runBatchBacktest({ ...input, pruneResultArtifacts: true }, {
+        resolvedTradeGate = input.tradeGateOptions?.enabled
+            ? await resolveTradeGate(ledgerRootDir ?? process.cwd(), input.tradeGateOptions)
+            : null;
+        const executionInput = resolvedTradeGate
+            ? await prepareTradeGateFeatureContexts(input, resolvedTradeGate.gate, lostOwnership, writer)
+            : null;
+        if (runState === snapshot && executionInput) {
+            snapshot.tradeGateProvenance = executionInput.provenance;
+        }
+        const output = await runBatchBacktest({
+            ...input,
+            ...(executionInput ? { tradeGate: executionInput } : {}),
+            pruneResultArtifacts: true,
+        }, {
             setProgress: (percent, text) => {
                 if (lostOwnership()) return;
                 const now = Date.now();
@@ -1268,11 +1456,14 @@ export async function processRunBatch(
             }
         }
 
+        const tradeGateStats = summarizeTradeGateStats(output.results);
+
         if (runState === snapshot) {
             snapshot.completed = attemptedSymbols;
             snapshot.failed = output.failedSymbols.length;
             snapshot.currentSymbol = null;
             snapshot.cancelled = cancelled;
+            snapshot.tradeGateStats = tradeGateStats;
         }
         // R-F1: only stamp the global run-provenance fields if THIS run still
         // owns the snapshot. An unwinding old run whose ownership was taken by
@@ -1323,6 +1514,9 @@ export async function processRunBatch(
             : `Done — ${attemptedSymbols} pairs`;
         if (output.failedSymbols.length > 0) {
             terminalSummary += `, ${output.failedSymbols.length} failed`;
+        }
+        if (tradeGateStats) {
+            terminalSummary += ` | Trade Gate evaluated ${tradeGateStats.signalsEvaluated}, admitted ${tradeGateStats.admitted}, rejected ${tradeGateStats.rejectedByGate}, blocked ${tradeGateStats.blocked}`;
         }
         // Audit artifact-stats finding: when a run retains some but not all
         // Mine artifacts (disk pressure on a 1000-pair run), surface the
@@ -1386,6 +1580,8 @@ export async function processRunBatch(
             verifiedPairListProvenance: snapshot.pairListProvenanceMeta?.status === "verified"
                 ? snapshot.pairListProvenanceMeta.provenance
                 : null,
+            tradeGateProvenance: snapshot.tradeGateProvenance ?? null,
+            tradeGateStats,
         });
 
         // Schedule the TTL release only if the run produced mineable
@@ -1446,6 +1642,8 @@ export async function processRunBatch(
         if (currentArtifactStore === store) {
             await releaseLastResults("run_fatal");
         }
+    } finally {
+        if (resolvedTradeGate) await resolvedTradeGate.loaderRun.dispose();
     }
 }
 
@@ -1563,6 +1761,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     // Trade-ledger export options (optional; null when the toggle is off or
     // the field is absent).
     const tradeLedger = parseTradeLedgerOptions(body.tradeLedger);
+    const tradeGateOptions = parseTradeGateOptions(body.tradeGate);
     await releaseLastResults("new_run");
         if (runOwner !== owner) {
             throw new HttpStatusError(409, "Batch run was stopped before it started.");
@@ -1592,6 +1791,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
                     symbols,
                     useRustEnginePreference,
                     tradeLedger,
+                    tradeGateOptions,
                     // Phase 3 MAX_ACTIVE: carry the verified pair-list provenance
                     // and the research registration into the run so the snapshot
                     // and the OPEN_SCORE USD report can name the provenance status
@@ -2034,6 +2234,8 @@ function handleStatusRequest(afterRow = 0, limitRaw?: number, requestedRunId?: s
                 // run completes. `phase === "running"` here.
                 phase: runState.phase,
                 summary: runState.summary,
+                tradeGateProvenance: runState.tradeGateProvenance ?? null,
+                tradeGateStats: runState.tradeGateStats ?? null,
                 // Audit Finding 5: runId lets a reloaded tab reconcile that
                 // THIS run is still the one it started.
                 runId: runState.runId,
@@ -2086,6 +2288,8 @@ function handleStatusRequest(afterRow = 0, limitRaw?: number, requestedRunId?: s
                 pairListProvenanceMeta: runState.pairListProvenanceMeta ?? null,
                 universeCounts: runState.universeCounts ?? null,
                 researchRegistrationMeta: runState.researchRegistrationMeta ?? null,
+                tradeGateProvenance: runState.tradeGateProvenance ?? null,
+                tradeGateStats: runState.tradeGateStats ?? null,
             }
             : null,
     };
@@ -2369,6 +2573,12 @@ export const __testInternals = {
     },
     getLedgerRootDirForTests(): string | null {
         return ledgerRootDir;
+    },
+    parseTradeGateOptionsForTests: parseTradeGateOptions,
+    async resolveTradeGateForTests(serverRoot: string, options: TradeGateRunOptions): Promise<TradeGate> {
+        const resolved = await resolveTradeGate(serverRoot, options);
+        await resolved.loaderRun.dispose();
+        return resolved.gate;
     },
     parseTradeLedgerOptionsForTests: parseTradeLedgerOptions,
 };

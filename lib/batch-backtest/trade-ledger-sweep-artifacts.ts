@@ -19,6 +19,7 @@ import type { LedgerSweepPreflightDecision } from "./trade-ledger-sweep-prefligh
 import type { LedgerSweepDiagnosticsV1, LedgerSweepDiagnosticEntry, LedgerSweepMode } from "./trade-ledger-sweep-diagnostics";
 import { buildTradeLedgerSweepDiagnosticsSummary } from "./trade-ledger-sweep-diagnostics-summary";
 import type { LedgerSweepRuleResult } from "./trade-ledger-sweep-stream-types";
+import { isCompletedTradeLedgerSweepTerminal } from "./trade-ledger-sweep-contract";
 
 export interface TradeLedgerSweepManifest {
     schema: "trade_ledger_sweep.manifest.v1";
@@ -260,7 +261,7 @@ export async function createTradeLedgerSweepArtifacts(args: CreateSweepArtifacts
         async finalize(finalArgs) {
             manifest.finishedAt = finalArgs.finishedAt;
             manifest.terminalPhase = finalArgs.terminalPhase;
-            manifest.complete = finalArgs.terminalPhase === "done";
+            manifest.complete = isCompletedTradeLedgerSweepTerminal(finalArgs.terminalPhase);
             manifest.error = finalArgs.error;
             const diagnosticFooter = buildTradeLedgerSweepDiagnosticsFooter(finalArgs.diagnostics);
             const verdictDifferences = await readVerdictDifferences(args.folderAbsolutePath, finalArgs.results);

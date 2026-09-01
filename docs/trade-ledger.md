@@ -38,6 +38,13 @@ candidates — the replay checker replaced that approach entirely.
 
 ## Ledger Rule Sweep
 
+After a rule is classified `EDGE-CANDIDATE`, use the Batch Trade Gate for the
+one-time real-engine certification pass documented in
+[`docs/trade-gate.md`](trade-gate.md). The gate shares the exporter feature
+leaf, runs a cross-pair causal pre-pass for `feat_candidatesAtTime`, and records
+its rule source hashes and engine-actual counters. It is server-only in v1 and
+does not support `feat_rank`.
+
 The top-level **Ledger Sweep** tab provides a server-owned Ledger Rule Sweep. Select a
 completed, replay-eligible ledger folder to replay every trusted rule in
 `archive/mining-ledger/rules/` without sending ledger rows, reports, or rule source

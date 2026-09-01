@@ -4,6 +4,7 @@ import type { PolymarketExitMode } from "../polymarket-exit-mode";
 import type { PolymarketEntrySelectionMode } from "../polymarket-entry-selection-mode";
 import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type { BinanceMarketType } from "../binance-market";
+import type { TradeGateStats } from "../batch-backtest/trade-gate";
 export type { Time };
 export type { EdgeStatistics, EdgeRatioHorizon, TTestResult, StreakAnalysis } from '../strategies/backtest/edge-statistics';
 
@@ -176,6 +177,7 @@ export interface BacktestResult {
     marketContext?: BacktestResultMarketContext;
     diagnostics?: BacktestDiagnostics;
     exitControlDiagnostics?: BacktestExitControlDiagnostics;
+    tradeGateStats?: TradeGateStats;
 }
 
 export interface TradeTimingEntryHorizon {

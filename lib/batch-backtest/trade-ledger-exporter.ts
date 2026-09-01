@@ -30,8 +30,12 @@
 
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { calculateATR } from "../strategies/indicators";
 import { parseTimeToUnixSeconds } from "../time-normalization";
+import {
+    buildTradeLedgerFeatureSeries,
+    buildTradeLedgerFeatureValues,
+    summarizePriorTrades,
+} from "./trade-ledger-features";
 import {
     allowsSignalAsEntry,
     getExecutionShift,
@@ -53,9 +57,6 @@ import type {
 
 import {
     TRADE_LEDGER_FEATURE_VERSION,
-    TRADE_LEDGER_FEATURE_ATR_PERIOD,
-    TRADE_LEDGER_FEATURE_RETURN_BARS,
-    TRADE_LEDGER_PAIR_WIN_RATE_MIN_PRIOR,
     TRADE_LEDGER_VERSION,
     type TradeLedgerFinalizeResult,
     type TradeLedgerNotExecutedReason,
@@ -161,18 +162,8 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
         return { rows: [], duplicatesCollapsed: 0, rightCensored: 0 };
     }
 
-    const closes: number[] = new Array(data.length);
-    const highs: number[] = new Array(data.length);
-    const lows: number[] = new Array(data.length);
-    const barSecs: (number | null)[] = new Array(data.length);
-    for (let i = 0; i < data.length; i += 1) {
-        const bar = data[i]!;
-        closes[i] = bar.close;
-        highs[i] = bar.high;
-        lows[i] = bar.low;
-        barSecs[i] = parseTimeToUnixSeconds(bar.time);
-    }
-    const atr = calculateATR(highs, lows, closes, TRADE_LEDGER_FEATURE_ATR_PERIOD);
+    const featureSeries = buildTradeLedgerFeatureSeries(data);
+    const { barSecs } = featureSeries;
 
     // Trade lookup: (direction | fill time) bucket, matched by entry price
     // within the run's slippage tolerance (the engine applies slippage to the
@@ -249,8 +240,7 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
             context.slippageRate,
         );
 
-        const prior = executedSoFar.length;
-        const wins = countWins(executedSoFar);
+        const prior = summarizePriorTrades(executedSoFar);
         const row: TradeLedgerRow = {
             ledgerVersion: TRADE_LEDGER_VERSION,
             pair,
@@ -272,32 +262,13 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
                     maxOpenTrades,
                     cooldownBars,
                 ),
-            feat_entryRangePosition:
-                signalBarIndex >= 1 && highs[signalBarIndex - 1]! > lows[signalBarIndex - 1]!
-                    ? (closes[signalBarIndex]! - lows[signalBarIndex - 1]!)
-                      / (highs[signalBarIndex - 1]! - lows[signalBarIndex - 1]!)
-                      * 100
-                    : null,
-            feat_atrPct:
-                atr[signalBarIndex] != null && closes[signalBarIndex]! > 0
-                    ? (atr[signalBarIndex]! / closes[signalBarIndex]!) * 100
-                    : null,
-            feat_return20:
-                signalBarIndex >= TRADE_LEDGER_FEATURE_RETURN_BARS
-                && closes[signalBarIndex - TRADE_LEDGER_FEATURE_RETURN_BARS]! > 0
-                    ? (closes[signalBarIndex]! - closes[signalBarIndex - TRADE_LEDGER_FEATURE_RETURN_BARS]!)
-                      / closes[signalBarIndex - TRADE_LEDGER_FEATURE_RETURN_BARS]!
-                      * 100
-                    : null,
-            feat_gapPct:
-                signalBarIndex >= 1 && closes[signalBarIndex - 1]! > 0
-                    ? (data[signalBarIndex]!.open - closes[signalBarIndex - 1]!) / closes[signalBarIndex - 1]! * 100
-                    : null,
-            feat_dow: utcField(signalSec, (d) => d.getUTCDay()),
-            feat_hour: utcField(signalSec, (d) => d.getUTCHours()),
-            feat_pairWinRatePrior:
-                prior >= TRADE_LEDGER_PAIR_WIN_RATE_MIN_PRIOR ? (wins / prior) * 100 : null,
-            feat_pairTradesPrior: prior,
+            ...buildTradeLedgerFeatureValues({
+                data,
+                series: featureSeries,
+                signalBarIndex,
+                signalSec,
+                prior,
+            }),
             feat_rank: null,
             feat_candidatesAtTime: null,
             asIf: null,
@@ -449,18 +420,6 @@ function classifyNotExecuted(
         return "cooldown";
     }
     return "match_missing";
-}
-
-function countWins(trades: readonly Trade[]): number {
-    let wins = 0;
-    for (const trade of trades) {
-        if (trade.pnlPercent > 0) wins += 1;
-    }
-    return wins;
-}
-
-function utcField(signalSec: number, read: (d: Date) => number): number {
-    return read(new Date(signalSec * 1000));
 }
 
 // ============================================================================

@@ -74,6 +74,22 @@
                     <input class="batch-field-input" id="batchBacktestTradeLedgerFolder" type="text" value="archive/mining-ledger" spellcheck="false">
                 </div>
             </div>
+            <div class="batch-balanced-generator-controls">
+                <div class="batch-field batch-field--inline" title="Apply trusted EDGE-CANDIDATE rules as an OR gate before new entries. Server-side only.">
+                    <input id="batchBacktestTradeGateToggle" type="checkbox">
+                    <label class="batch-field-label" for="batchBacktestTradeGateToggle">Apply Trade Gate</label>
+                </div>
+                <div class="batch-field batch-field--inline">
+                    <label class="batch-field-label" for="batchBacktestTradeGateFolder">Sweep folder</label>
+                    <select class="param-input" id="batchBacktestTradeGateFolder"></select>
+                </div>
+                <div class="batch-field">
+                    <label class="batch-field-label" for="batchBacktestTradeGateRules">EDGE-CANDIDATE rules (OR)</label>
+                    <select class="param-input" id="batchBacktestTradeGateRules" multiple size="4"></select>
+                </div>
+            </div>
+            <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestTradeGateEstimate" role="status"></div>
+            <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestTradeGateWarning" role="alert"></div>
         </div>
     </section>
 

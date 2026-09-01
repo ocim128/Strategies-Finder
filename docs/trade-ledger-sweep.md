@@ -1,5 +1,10 @@
 # Ledger Rule Sweep
 
+The sweep produces research candidates; it does not replace the real engine.
+For the follow-up certification workflow (selecting latest-sweep
+`EDGE-CANDIDATE` rules, applying them to Batch entries, and comparing replay
+predictions with engine-actual trades), see [`docs/trade-gate.md`](trade-gate.md).
+
 Status: approved implementation plan. This document is the implementation
 contract for a new server-owned trade-ledger rule sweep and its top-level
 Ledger Sweep tab UI.

@@ -10,6 +10,7 @@ import {
 import { computeBuyAndHoldPct, computeCurrentMaxActiveCandidates, computeOpenTradeAssetScores } from "./batch-row-scalars";
 import type { CurrentMaxActiveCandidate } from "./batch-row-scalars";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
+import type { TradeGateStats } from "./trade-gate";
 
 export { computeBuyAndHoldPct, computeCurrentMaxActiveCandidates, computeOpenTradeAssetScores } from "./batch-row-scalars";
 export type { CurrentMaxActiveCandidate } from "./batch-row-scalars";
@@ -33,6 +34,7 @@ interface BatchOverallStats {
     grossProfit: number;
     grossLossAbs: number;
     verdictCounts: Map<string, number>;
+    tradeGateStats: TradeGateStats | null;
 }
 
 export function formatBatchSummaryLine(results: readonly BatchBacktestSymbolResult[]): string {
@@ -61,7 +63,7 @@ export function buildBatchSummaryCells(
 ): ReadonlyArray<readonly [string, string]> | null {
     const stats = summarizeBatchResults(results);
     if (stats.resultRows.length === 0) return null;
-    return [
+    const cells: Array<readonly [string, string]> = [
         ["Tested", `${stats.resultRows.length}`],
         ["Profitable", `${stats.profitableCount}`],
         ["Losing", `${stats.losingCount}`],
@@ -69,6 +71,10 @@ export function buildBatchSummaryCells(
         ["Trades", `${stats.totalTrades}`],
         ["Avg/Trade", formatCurrency(resolveAggregateExpectancy(stats))],
     ];
+    if (stats.tradeGateStats) {
+        cells.push(["Gate", `${stats.tradeGateStats.admitted} admitted / ${stats.tradeGateStats.rejectedByGate} rejected / ${stats.tradeGateStats.blocked} blocked`]);
+    }
+    return cells;
 }
 
 export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolResult[]): string[] {
@@ -123,6 +129,9 @@ export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolR
             `Median Exposure ${formatPercent(medianMetric(stats.resultRows, (row) => row.tradeSummary?.exposurePercent ?? null))}`,
         ].join(" | "),
     ];
+    if (stats.tradeGateStats) {
+        lines.push(`TRADE_GATE | Evaluated ${stats.tradeGateStats.signalsEvaluated} | Admitted ${stats.tradeGateStats.admitted} | Rejected ${stats.tradeGateStats.rejectedByGate} | Blocked ${stats.tradeGateStats.blocked}`);
+    }
 
     const bhRows = buildBuyHoldRows(stats.resultRows);
     if (bhRows.length > 0) {
@@ -321,6 +330,9 @@ export function buildResultRowGrid(result: BatchBacktestSymbolResult): ResultRow
         secondary.push(["Exposure", formatPercent(result.tradeSummary?.exposurePercent)]);
         secondary.push(["AvgTrade", formatCurrency(r.avgTrade)]);
         secondary.push(["WR", `${r.winRate.toFixed(0)}%`]);
+        if (r.tradeGateStats) {
+            secondary.push(["Gate", `E${r.tradeGateStats.signalsEvaluated} / A${r.tradeGateStats.admitted} / R${r.tradeGateStats.rejectedByGate} / B${r.tradeGateStats.blocked}`]);
+        }
     }
     const range = formatTimeRange(result.firstTime, result.lastTime);
     if (range) secondary.push(["Range", range]);
@@ -513,6 +525,7 @@ function summarizeBatchResults(results: readonly BatchBacktestSymbolResult[]): B
     let grossProfit = 0;
     let grossLossAbs = 0;
     const verdictCounts = new Map<string, number>();
+    let tradeGateStats: TradeGateStats | null = null;
 
     for (const row of results) {
         if (row.status === "skipped") continue;
@@ -523,6 +536,13 @@ function summarizeBatchResults(results: readonly BatchBacktestSymbolResult[]): B
         if (!row.result) continue;
         resultRows.push(row);
         const result = row.result;
+        if (result.tradeGateStats) {
+            tradeGateStats ??= { signalsEvaluated: 0, admitted: 0, rejectedByGate: 0, blocked: 0 };
+            tradeGateStats.signalsEvaluated += result.tradeGateStats.signalsEvaluated;
+            tradeGateStats.admitted += result.tradeGateStats.admitted;
+            tradeGateStats.rejectedByGate += result.tradeGateStats.rejectedByGate;
+            tradeGateStats.blocked += result.tradeGateStats.blocked;
+        }
         if (result.netProfit > 0) profitableCount += 1;
         else if (result.netProfit < 0) losingCount += 1;
         totalNet += result.netProfit;
@@ -548,6 +568,7 @@ function summarizeBatchResults(results: readonly BatchBacktestSymbolResult[]): B
         grossProfit,
         grossLossAbs,
         verdictCounts,
+        tradeGateStats,
     };
 }
 

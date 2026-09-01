@@ -15,6 +15,7 @@ import type {
 import type { CapitalSettings } from "./types/backtest";
 import type { RustCapabilities, RustDiagnosticPhase } from "./rust-engine-client";
 import { buildBacktestPolymarketPerformanceSummary, type BacktestPolymarketPerformanceSummary } from "./polymarket-diagnostics-utils";
+import type { TradeGate } from "./batch-backtest/trade-gate";
 
 // ============================================================================
 // Engine mode
@@ -93,6 +94,9 @@ export interface BacktestExecutionContext {
 
     /** Optional run-scoped diagnostic counter for TypeScript engine work. */
     typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
+
+    /** Server-side Batch entry gate; absent for ordinary backtests. */
+    tradeGate?: TradeGate;
 }
 
 // ============================================================================

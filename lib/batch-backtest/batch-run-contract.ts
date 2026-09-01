@@ -18,6 +18,8 @@ export interface BatchRunFingerprintInput {
      * computed WITHOUT the registration itself to avoid a recursive hash.
      */
     pairListProvenance?: PairListProvenanceV1 | null;
+    /** Selected server-side Trade Gate folder/rule ids. */
+    tradeGate?: unknown;
 }
 
 /** Shared intake and snapshot ceiling for one Batch run. */
@@ -84,6 +86,7 @@ export function buildBatchRunFingerprint(args: BatchRunFingerprintInput): string
         backtestSettings: args.backtestSettings,
         capitalSettings: args.capitalSettings,
         interval: args.interval,
+        ...(args.tradeGate ? { tradeGate: args.tradeGate } : {}),
         ...(args.pairListProvenance ? { pairListProvenance: args.pairListProvenance } : {}),
     });
 }

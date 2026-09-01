@@ -26,6 +26,7 @@ import { copyToClipboard } from "../browser-transfer";
 import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { parseJsonPreservingNonFinite } from "../json-utils";
 import { buildBatchRunLedgerBodyField } from "./trade-ledger-wire";
+import { buildBatchRunTradeGateBodyField, type TradeGateRunOptions } from "./trade-gate-wire";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
 import { getBatchDatasetCacheStats } from "./batch-backtest-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
@@ -62,6 +63,7 @@ import {
 } from "./batch-benchmark-snapshot";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import type { BatchStatusResponse, BatchStreamEvent } from "./batch-backtest-stream-types";
+import type { LedgerSweepCatalogResponse } from "./trade-ledger-sweep-stream-types";
 import type { TopMeanCurrentSnapshot, TopMeanStreamEvent } from "./sp500-top-mean-stream-types";
 import type { CoverageCounts } from "./sp500-pair-enumerator";
 import type { TopMeanResultSummary, TopMeanStatusResponse } from "./sp500-top-mean-coordinator-engine";
@@ -109,6 +111,49 @@ const BATCH_TRADE_LEDGER_STORAGE = {
 const BATCH_TRADE_LEDGER_DEFAULT_FOLDER = "archive/mining-ledger";
 
 type BatchTradeLedgerOptions = { enabled: boolean; folder: string };
+
+const BATCH_TRADE_GATE_STORAGE = {
+    key: "playground_batch_backtest_trade_gate",
+    schema: "batch_backtest.trade_gate",
+    version: 1,
+} as const;
+
+type BatchTradeGateOptions = TradeGateRunOptions;
+
+function formatGatePercent(value: number | null): string {
+    return value !== null && Number.isFinite(value) ? value.toFixed(2) : "--";
+}
+
+function formatGateBytes(bytes: number): string {
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${Math.max(0, Math.round(bytes / 1024))} KB`;
+}
+
+function formatGateSweepDate(modifiedAt: number): string {
+    return Number.isFinite(modifiedAt) ? new Date(modifiedAt).toISOString().slice(0, 10) : "unknown date";
+}
+
+function readPersistedTradeGateOptions(): BatchTradeGateOptions {
+    return readPersistedJson<BatchTradeGateOptions>({
+        ...BATCH_TRADE_GATE_STORAGE,
+        fallback: { enabled: false, folderId: "", ruleIds: [] },
+        migrate: (ctx) => {
+            const data = ctx.data;
+            if (!data || typeof data !== "object" || Array.isArray(data)) {
+                return { enabled: false, folderId: "", ruleIds: [] };
+            }
+            const source = data as Partial<BatchTradeGateOptions>;
+            const ruleIds = Array.isArray(source.ruleIds)
+                ? source.ruleIds.filter((value): value is string => typeof value === "string").slice(0, 16)
+                : [];
+            return {
+                enabled: source.enabled === true,
+                folderId: typeof source.folderId === "string" ? source.folderId : "",
+                ruleIds,
+            };
+        },
+    });
+}
 
 function readPersistedTradeLedgerOptions(): BatchTradeLedgerOptions {
     return readPersistedJson<BatchTradeLedgerOptions>({
@@ -329,6 +374,8 @@ export class BatchBacktestService {
         resultProjectionMs: number;
         completionCallbackMs: number;
     } | null = null;
+    private tradeGateCatalog: LedgerSweepCatalogResponse | null = null;
+    private persistedTradeGateOptions = readPersistedTradeGateOptions();
 
     // Audit Finding 2: typed (was `any`) so a shape drift between the
     // coordinator engine emissions and the UI renderers is a compile failure.
@@ -361,6 +408,7 @@ export class BatchBacktestService {
         const dom = this.getDom();
         this.bindEvents(dom);
         this.restoreTradeLedgerOptions(dom);
+        this.restoreTradeGateOptions(dom);
         this.resetProgress(dom);
         this.loadPersistedLatestResults(dom);
         this.loadPersistedLatestTopMeanResult(dom);
@@ -368,6 +416,7 @@ export class BatchBacktestService {
         this.serverRunActive = this.activeServerRunId !== null;
         this.updateSummary(dom);
         this.initialized = true;
+        void this.refreshTradeGateCatalog();
         // Reattach to a server-side run that started before page load.
         void this.reattachToInProgressServerRun();
         void this.reattachToInProgressTopMeanRun();
@@ -487,6 +536,22 @@ export class BatchBacktestService {
         dom.batchBacktestTradeLedgerFolder.addEventListener("change", () => {
             this.persistTradeLedgerOptions(dom);
         });
+        dom.batchBacktestTradeGateToggle.addEventListener("change", () => {
+            this.persistTradeGateOptions(dom);
+            this.clearStaleResults(dom);
+            this.updateSummary(dom);
+            this.renderTradeGateSelection(dom);
+        });
+        dom.batchBacktestTradeGateFolder.addEventListener("change", () => {
+            this.persistTradeGateOptions(dom);
+            this.clearStaleResults(dom);
+            this.renderTradeGateSelection(dom);
+        });
+        dom.batchBacktestTradeGateRules.addEventListener("change", () => {
+            this.persistTradeGateOptions(dom);
+            this.clearStaleResults(dom);
+            this.renderTradeGateSelection(dom);
+        });
     }
 
     /** Restore the persisted trade-ledger toggle + folder into the DOM. */
@@ -514,6 +579,118 @@ export class BatchBacktestService {
                 error: error instanceof Error ? error.message : String(error),
             }),
         });
+    }
+
+    private restoreTradeGateOptions(dom: BatchBacktestDom): void {
+        dom.batchBacktestTradeGateToggle.checked = this.persistedTradeGateOptions.enabled;
+    }
+
+    private readTradeGateOptions(dom: BatchBacktestDom): BatchTradeGateOptions {
+        return {
+            enabled: dom.batchBacktestTradeGateToggle.checked,
+            folderId: dom.batchBacktestTradeGateFolder.value.trim(),
+            ruleIds: Array.from(dom.batchBacktestTradeGateRules.selectedOptions).map((option) => option.value),
+        };
+    }
+
+    private persistTradeGateOptions(dom: BatchBacktestDom): void {
+        this.persistedTradeGateOptions = this.readTradeGateOptions(dom);
+        writePersistedJson({
+            ...BATCH_TRADE_GATE_STORAGE,
+            data: this.persistedTradeGateOptions,
+            onError: (error) => debugLogger.warn("batch_backtest.trade_gate_save_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            }),
+        });
+    }
+
+    private async refreshTradeGateCatalog(): Promise<boolean> {
+        try {
+            const response = await fetch("/api/trade-ledger-sweep/catalog");
+            if (!response.ok) throw new Error(`catalog request failed (${response.status})`);
+            const payload = await response.json() as LedgerSweepCatalogResponse;
+            if (payload.ok !== true) throw new Error("catalog response was not successful");
+            this.tradeGateCatalog = payload;
+            const dom = this.dom;
+            if (dom) {
+                const eligibleFolders = payload.folders.filter((folder) => folder.runnable && folder.latestSweep !== null);
+                dom.batchBacktestTradeGateFolder.replaceChildren(...eligibleFolders.map((folder) => {
+                    const option = document.createElement("option");
+                    option.value = folder.folderId;
+                    option.textContent = `${folder.name} · ${formatGateBytes(folder.ledgerBytes)} · sweep ${formatGateSweepDate(folder.latestSweep?.modifiedAt ?? Number.NaN)} · ${folder.latestSweep?.edgeRules.length ?? 0} EDGE rules`;
+                    return option;
+                }));
+                if (eligibleFolders.some((folder) => folder.folderId === this.persistedTradeGateOptions.folderId)) {
+                    dom.batchBacktestTradeGateFolder.value = this.persistedTradeGateOptions.folderId;
+                } else if (eligibleFolders[0]) {
+                    dom.batchBacktestTradeGateFolder.value = eligibleFolders[0].folderId;
+                }
+                this.renderTradeGateSelection(dom);
+            }
+            return true;
+        } catch (error) {
+            this.tradeGateCatalog = null;
+            if (this.dom) {
+                this.getDom().batchBacktestTradeGateWarning.textContent = "Trade Gate is server-side only; the local sweep catalog is unavailable.";
+            }
+            debugLogger.warn("batch_backtest.trade_gate_catalog_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return false;
+        }
+    }
+
+    private renderTradeGateSelection(dom: BatchBacktestDom): void {
+        const folder = this.tradeGateCatalog?.folders.find((entry) => entry.folderId === dom.batchBacktestTradeGateFolder.value) ?? null;
+        const edgeRules = [...(folder?.latestSweep?.edgeRules ?? [])].sort((a, b) =>
+            (b.holdoutMeanPnlDeltaPp ?? Number.NEGATIVE_INFINITY) - (a.holdoutMeanPnlDeltaPp ?? Number.NEGATIVE_INFINITY)
+            || a.ruleId.localeCompare(b.ruleId));
+        const selectedRuleIds = new Set(this.persistedTradeGateOptions.ruleIds);
+        dom.batchBacktestTradeGateRules.replaceChildren(...edgeRules.map((rule) => {
+            const option = document.createElement("option");
+            option.value = rule.ruleId;
+            option.textContent = `${rule.ruleName} · kept ${formatGatePercent(rule.keptPct)}% · IS ${formatGatePercent(rule.isMeanPnlDeltaPp)}pp · holdout ${formatGatePercent(rule.holdoutMeanPnlDeltaPp)}pp`;
+            option.selected = selectedRuleIds.has(rule.ruleId);
+            return option;
+        }));
+        const selected = Array.from(dom.batchBacktestTradeGateRules.selectedOptions);
+        if (!dom.batchBacktestTradeGateToggle.checked) {
+            dom.batchBacktestTradeGateEstimate.textContent = "Trade Gate off. Batch results use the ordinary engine path.";
+            dom.batchBacktestTradeGateWarning.textContent = "";
+            return;
+        }
+        if (!folder || edgeRules.length === 0) {
+            dom.batchBacktestTradeGateEstimate.textContent = "No completed sweep with EDGE-CANDIDATE rules is available.";
+            dom.batchBacktestTradeGateWarning.textContent = "Enable the gate only after selecting a current local sweep folder and rule.";
+            return;
+        }
+        const selectedRules = edgeRules.filter((rule) => selected.some((option) => option.value === rule.ruleId));
+        if (selectedRules.length === 0) {
+            dom.batchBacktestTradeGateEstimate.textContent = "Select at least one EDGE-CANDIDATE rule.";
+            dom.batchBacktestTradeGateWarning.textContent = "The estimate is based on sweep kept rates and is not a measured admission rate.";
+            return;
+        }
+        const estimatedAdmission = 100 * (1 - selectedRules.reduce(
+            (product, rule) => product * (1 - Math.max(0, Math.min(100, rule.keptPct ?? 0)) / 100),
+            1,
+        ));
+        const estimatedRejection = Math.max(0, 100 - estimatedAdmission);
+        dom.batchBacktestTradeGateEstimate.textContent = `Rule rejects ~${estimatedRejection.toFixed(1)}% of signals (from sweep) · ${selectedRules.length} rule${selectedRules.length === 1 ? "" : "s"} selected.`;
+        dom.batchBacktestTradeGateWarning.textContent = selectedRules.length > 1
+            ? "OR semantics: a signal is admitted if any selected rule passes. Overlapping rules can stack admissions; this is not diversification."
+            : "Server-side only. The run performs a causal feature pre-pass and records gate counters.";
+    }
+
+    private validateTradeGateSelection(dom: BatchBacktestDom): BatchTradeGateOptions | null {
+        const options = this.readTradeGateOptions(dom);
+        if (!options.enabled) return options;
+        const folder = this.tradeGateCatalog?.folders.find((entry) => entry.folderId === options.folderId);
+        const edgeRuleIds = new Set(folder?.latestSweep?.edgeRules.map((rule) => rule.ruleId) ?? []);
+        if (!folder || options.ruleIds.length === 0 || options.ruleIds.some((ruleId) => !edgeRuleIds.has(ruleId))) {
+            dom.batchBacktestStatus.textContent = "Trade Gate is server-side only; select a current sweep folder and at least one EDGE-CANDIDATE rule.";
+            return null;
+        }
+        return options;
     }
 
     /**
@@ -580,7 +757,13 @@ export class BatchBacktestService {
         const backtestSettings = backtestService.getBacktestSettings();
         const capitalSettings = backtestService.getCapitalSettings();
         const interval = state.currentInterval;
-        const runFingerprint = this.buildRunFingerprint(symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, this.activePairListProvenance, interval);
+        let tradeGateOptions = this.validateTradeGateSelection(dom);
+        if (dom.batchBacktestTradeGateToggle.checked && !this.tradeGateCatalog) {
+            await this.refreshTradeGateCatalog();
+            tradeGateOptions = this.validateTradeGateSelection(dom);
+        }
+        if (tradeGateOptions === null) return;
+        const runFingerprint = this.buildRunFingerprint(symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, this.activePairListProvenance, interval, tradeGateOptions);
 
         // Invalidate any in-flight run and claim this one. The stale run will
         // see its token mismatch after its next await and stop mutating state.
@@ -633,7 +816,7 @@ export class BatchBacktestService {
         let runOutcome: BatchBenchmarkRunOutcome = "done";
         let reachedTerminal = false;
         try {
-            await this.runBatchServer(dom, token, symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, interval, runFingerprint, (finalOutcome) => {
+            await this.runBatchServer(dom, token, symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, interval, runFingerprint, tradeGateOptions, (finalOutcome) => {
                 // The server path resolves its terminal outcome AFTER all
                 // recovery attempts. Capture it here so the benchmark reflects
                 // what actually happened (done / cancelled) instead of guessing
@@ -700,6 +883,7 @@ export class BatchBacktestService {
         capitalSettings: CapitalSettings,
         interval: string,
         runFingerprint: string,
+        tradeGateOptions: BatchTradeGateOptions,
         onTerminal: (outcome: BatchBenchmarkRunOutcome) => void,
     ): Promise<void> {
         // Audit Finding 5: generate a per-run id and send it on the /run body
@@ -729,6 +913,7 @@ export class BatchBacktestService {
                 useRustEnginePreference: shouldUseRustEngine(),
                 runId,
                 ...buildBatchRunLedgerBodyField(tradeLedgerOptions),
+                ...buildBatchRunTradeGateBodyField(tradeGateOptions),
                 // Phase 3 MAX_ACTIVE: attach the active pair-list provenance
                 // (and null registration — Phase 4 commits it server-side).
                 // The server verifies the hash, retains the meta on the run
@@ -1871,7 +2056,8 @@ export class BatchBacktestService {
         backtestSettings: unknown,
         capitalSettings: unknown,
         pairListProvenance: PairListProvenanceV1 | null,
-        interval: string
+        interval: string,
+        tradeGate?: BatchTradeGateOptions | null,
     ): string {
         return buildBatchRunFingerprint({
             symbols,
@@ -1881,6 +2067,7 @@ export class BatchBacktestService {
             capitalSettings,
             interval,
             pairListProvenance,
+            ...(tradeGate?.enabled ? { tradeGate } : {}),
         });
     }
 

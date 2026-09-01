@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { afterEach, describe, it } from "node:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { runChecker } from "../scripts/trade-ledger-checker";
 import { discoverLedgerSweepCatalog, resolveLedgerSweepFolder } from "../lib/batch-backtest/trade-ledger-sweep-catalog";
@@ -13,15 +14,36 @@ import {
 } from "../lib/batch-backtest/trade-ledger-sweep-preflight";
 import { runTradeLedgerSweepJob, type TradeLedgerSweepJobArgs } from "../lib/batch-backtest/trade-ledger-sweep-job";
 import { classifyTradeLedgerVerdict } from "../lib/batch-backtest/trade-ledger-verdict";
-import { assertTradeLedgerSweepInputSnapshot, buildTradeLedgerSweepDiagnosticsFooter } from "../lib/batch-backtest/trade-ledger-sweep-artifacts";
+import { assertTradeLedgerSweepInputSnapshot, buildTradeLedgerSweepDiagnosticsFooter, createTradeLedgerSweepArtifacts } from "../lib/batch-backtest/trade-ledger-sweep-artifacts";
 import { createEmptyLedgerSweepDiagnostics } from "../lib/batch-backtest/trade-ledger-sweep-diagnostics";
 import { buildTradeLedgerSweepDiagnosticsSummary } from "../lib/batch-backtest/trade-ledger-sweep-diagnostics-summary";
-import type { LedgerSweepStreamEvent } from "../lib/batch-backtest/trade-ledger-sweep-stream-types";
+import type { LedgerSweepRuleResult, LedgerSweepStreamEvent } from "../lib/batch-backtest/trade-ledger-sweep-stream-types";
 
 const ROOT = process.cwd();
 const FOLDER_ID = "2026-08-29_1851_batch-smoke-v2";
 const RULE_IDS = ["smoke-restrictive-rule", "smoke-trivial-rule"];
 const testSweepOutputs = new Set<string>();
+
+const catalogCompletionResult: LedgerSweepRuleResult = {
+    ruleId: "q1-fixture",
+    ruleName: "q1-fixture.ts",
+    sourceHash: "fixture-hash",
+    verdict: "EDGE-CANDIDATE",
+    weak: false,
+    note: null,
+    candidates: 10,
+    kept: 2,
+    keptPct: 20,
+    isMeanPnlDeltaPp: 1,
+    isMedianPnlDeltaPp: 1,
+    holdoutMeanPnlDeltaPp: 1,
+    holdoutMedianPnlDeltaPp: 1,
+    ruleReplayMs: 1,
+    controlReplayMs: 1,
+    totalMs: 2,
+    reportPath: "reports/q1-fixture.txt",
+    error: null,
+};
 
 afterEach(async () => {
     for (const outputAbsolutePath of testSweepOutputs) {
@@ -112,6 +134,103 @@ async function runMode(mode: "load_once" | "isolated_per_rule", suffix: string):
 }
 
 describe("trade-ledger sweep engine", () => {
+    it("round-trips the engine writer's completed summary and excludes nonterminal sweeps", async () => {
+        const root = await mkdtemp(path.join(os.tmpdir(), "trade-ledger-sweep-completion-"));
+        try {
+            const catalogRoot = path.join(root, "archive", "mining-ledger");
+            const preflight = resolveLedgerSweepPreflight(1, Number.MAX_SAFE_INTEGER);
+            const createFixtureFolder = async (folderId: string): Promise<string> => {
+                const folderPath = path.join(catalogRoot, folderId);
+                await mkdir(folderPath, { recursive: true });
+                await writeFile(path.join(folderPath, "ledger.jsonl"), "{}\n", "utf8");
+                await writeFile(path.join(folderPath, "provenance.json"), JSON.stringify({ ledgerVersion: 2, featureVersion: 2, replay: { replayEligible: true } }), "utf8");
+                await writeFile(path.join(folderPath, "summary.json"), JSON.stringify({ ledgerComplete: true, failedWrites: 0, totals: { signals: 1, pairs: 1 } }), "utf8");
+                return folderPath;
+            };
+            const writerFolder = await createFixtureFolder("writer-fixture");
+            const writer = await createTradeLedgerSweepArtifacts({
+                outputAbsolutePath: path.join(writerFolder, "sweeps", "writer-done"),
+                outputDir: "archive/mining-ledger/writer-fixture/sweeps/writer-done",
+                runId: "writer-done",
+                folder: {
+                    folderId: "writer-fixture",
+                    name: "writer-fixture",
+                    startedAt: null,
+                    modifiedAt: Date.now(),
+                    ledgerBytes: 3,
+                    rankBytes: 0,
+                    rows: 1,
+                    pairs: 1,
+                    submittedPairs: 1,
+                    loadedPairs: 1,
+                    ledgerVersion: 2,
+                    featureVersion: 2,
+                    complete: true,
+                    replayEligible: true,
+                    runnable: true,
+                    refusalReason: null,
+                    preflight,
+                    latestSweep: null,
+                },
+                folderAbsolutePath: writerFolder,
+                rules: [],
+                mode: "load_once",
+                preflight,
+                startedAt: Date.now(),
+            });
+            if (!writer) throw new Error("fixture writer did not initialize");
+            await writer.finalize({
+                terminalPhase: "done",
+                finishedAt: Date.now(),
+                results: [catalogCompletionResult],
+                diagnostics: createEmptyLedgerSweepDiagnostics({ runId: "writer-done", mode: "load_once", preflight }),
+                summary: "done",
+                error: null,
+            });
+            const writtenSummary = JSON.parse(await readFile(path.join(writer.outputAbsolutePath, "summary.json"), "utf8")) as Record<string, unknown>;
+            expect(writtenSummary.complete).to.equal(true);
+            expect(writtenSummary.terminalPhase).to.equal("done");
+
+            for (const terminalPhase of ["running", "cancelled", "fatal"] as const) {
+                const folderPath = await createFixtureFolder(terminalPhase);
+                await mkdir(path.join(folderPath, "sweeps", "nonterminal"), { recursive: true });
+                await writeFile(path.join(folderPath, "sweeps", "nonterminal", "summary.json"), JSON.stringify({ terminalPhase, complete: terminalPhase === "running", results: [catalogCompletionResult] }), "utf8");
+            }
+
+            const catalog = await discoverLedgerSweepCatalog(root);
+            expect(catalog.folders.find((folder) => folder.folderId === "writer-fixture")?.latestSweep?.sweepId).to.equal("writer-done");
+            for (const terminalPhase of ["running", "cancelled", "fatal"] as const) {
+                expect(catalog.folders.find((folder) => folder.folderId === terminalPhase)?.latestSweep).to.equal(null);
+            }
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it("accepts the exact legacy F2 terminalPhase-only summary and exposes its eight EDGE rules", async () => {
+        const folderId = "2026-08-29_1936_batch-mted6ti8-ooajqsxc";
+        const sweepId = "20260830_140000_phase5-f2-load-once";
+        const summary = JSON.parse(await readFile(path.join(ROOT, "archive", "mining-ledger", folderId, "sweeps", sweepId, "summary.json"), "utf8")) as { complete?: unknown; terminalPhase?: string; results: Array<{ ruleId: string; verdict: string }> };
+        expect(summary.complete).to.equal(undefined);
+        expect(summary.terminalPhase).to.equal("done");
+        expect(summary.results).to.have.length(193);
+
+        const catalog = await discoverLedgerSweepCatalog(ROOT);
+        const folder = catalog.folders.find((entry) => entry.folderId === folderId);
+        expect(folder?.runnable).to.equal(true);
+        expect(folder?.latestSweep?.sweepId).to.equal(sweepId);
+        expect(folder?.latestSweep?.edgeRules.map((rule) => rule.ruleId)).to.deep.equal([
+            "q77-moderate_volatility_midweek",
+            "q108-panic_close_vol_expansion",
+            "q107-deep_gap_young_pair",
+            "q156-lower_wick_discount_pinbar",
+            "q90-deep_gap_broad_signal",
+            "q8-crowded_drawdown_reversal",
+            "q126-fresh_multihorizon_lows",
+            "q109-midweek_information_decline",
+        ]);
+    });
+
     it("rejects input snapshots that no longer match the manifest", () => {
         const manifest = {
             ledgerBytes: 10,

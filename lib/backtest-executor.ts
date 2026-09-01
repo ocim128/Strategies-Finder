@@ -125,6 +125,10 @@ export interface BacktestExecutorRequest {
         forceDisableSignalExits?: boolean;
         /** Skip trade simulation when primary signals cannot reach this entry count. */
         minimumPotentialEntrySignals?: number;
+        /** Server-side Batch entry gate. */
+        tradeGate?: import("./batch-backtest/trade-gate").TradeGate;
+        /** Pair key used to select the gate's causal feature context. */
+        tradeGatePair?: string;
     };
     dataFetcher?: CrossSymbolDataFetcher;
     crossSymbolInput?: {
@@ -268,6 +272,9 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         ...(executorTimings ? { executorTimings: { ...executorTimings } } : {}),
     });
     const { ohlcvData, interval, strategyKey, strategyParams, backtestSettings, capitalSettings } = req;
+    if (req.context.tradeGate && isBrowser()) {
+        throw new Error("Trade Gate is server-side only; run it through the Batch server route.");
+    }
     const nowSec = req.context.nowSec ?? Math.floor(Date.now() / 1000);
     const blockRange = req.context.blockRange ?? null;
     const annotatePolymarket = req.context.annotatePolymarket ?? false;
@@ -585,6 +592,9 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     if (req.backtestRunOptions?.forceDisableSignalExits === true) {
         typescriptRequirementReasons.push("Exit Alpha control run requires TypeScript");
     }
+    if (req.context.tradeGate) {
+        typescriptRequirementReasons.push("Trade Gate requires TypeScript");
+    }
     if (!isRustSupportedTradeSizingMode(resolvedCapital.sizingMode)) {
         typescriptRequirementReasons.push(`${resolvedCapital.sizingMode} position sizing requires TypeScript`);
     }
@@ -652,7 +662,13 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
                     advancedSizing: resolvedCapital.advancedSizing,
                 },
                 undefined,
-                req.backtestRunOptions
+                req.context.tradeGate
+                    ? {
+                        ...(req.backtestRunOptions ?? {}),
+                        tradeGate: req.context.tradeGate,
+                        tradeGatePair: req.primarySymbol,
+                    }
+                    : req.backtestRunOptions
             );
         } finally {
             req.context.typescriptSimulationConcurrency?.leave();
@@ -717,6 +733,9 @@ export async function executeBacktestFromSignals(
     context: BacktestExecutionContext
 ): Promise<BacktestExecutorResult> {
     throwIfBacktestCancelled(context.signal);
+    if (context.tradeGate) {
+        throw new Error("Trade Gate is supported only by the Batch server route.");
+    }
     const nowSec = context.nowSec ?? Math.floor(Date.now() / 1000);
     const blockRange = context.blockRange ?? null;
     const annotatePolymarket = context.annotatePolymarket ?? false;

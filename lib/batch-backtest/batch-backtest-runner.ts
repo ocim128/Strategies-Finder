@@ -29,6 +29,7 @@ import type { CapitalSettings } from "../types/backtest";
 import { compareTime } from "../strategies";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
+import { isTradeGateEvaluationError, type TradeGate } from "./trade-gate";
 export { parseBatchSymbols } from "./batch-run-contract";
 
 // ============================================================================
@@ -131,6 +132,8 @@ export interface BatchBacktestRunInput {
      * `shouldAttemptRust` in `lib/backtest-executor.ts` for the full rationale.
      */
     useRustEnginePreference?: boolean;
+    /** Server-side Trade Gate context. Omitted for ordinary Batch runs. */
+    tradeGate?: TradeGate;
     /** Loads one symbol's OHLCV series without touching the live chart. */
     loadDataset: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
     /**
@@ -361,6 +364,7 @@ export async function runBatchBacktest(
                     engineMode: "auto",
                     useRustEnginePreference: input.useRustEnginePreference,
                     nowSec,
+                    ...(input.tradeGate ? { tradeGate: input.tradeGate } : {}),
                 },
                 backtestRunOptions: {
                     includeAdvancedAnalytics: false,
@@ -379,6 +383,7 @@ export async function runBatchBacktest(
             results[i] = input.pruneResultArtifacts ? pruneResultArtifacts(result) : result;
         } catch (error) {
             if (cancelCheck()) break;
+            if (isTradeGateEvaluationError(error)) throw error;
             const message = error instanceof Error ? error.message : String(error);
             const failure: BatchBacktestSymbolResult = {
                 symbol,

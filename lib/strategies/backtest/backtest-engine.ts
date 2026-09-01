@@ -2,7 +2,7 @@
 import { BacktestDiagnostics, BacktestResult, BacktestSettings, OHLCVData, Signal, Time, Trade } from '../../types/index';
 import { ensureCleanData } from '../strategy-helpers';
 import { IndicatorSeries, NormalizedSettings, PositionState, PrecomputedIndicators, TradeSizingConfig, TradeSizingMode } from '../../types/backtest';
-import { applySlippage, compareTime, directionFactorFor, exitSideForDirection, getExecutionShift, getTimeIndex, getTimeIndexValue, normalizeBacktestSettings, normalizeTradeDirection, resolveExecutionPrice, signalToPositionDirection, timeKey } from './backtest-utils';
+import { allowsSignalAsEntry, applySlippage, compareTime, directionFactorFor, exitSideForDirection, getExecutionShift, getTimeIndex, getTimeIndexValue, normalizeBacktestSettings, normalizeTradeDirection, resolveExecutionPrice, signalToPositionDirection, timeKey } from './backtest-utils';
 import {
     calculateSharpeRatioFromEquitySamples,
     calculateSharpeRatioFromReturns,
@@ -30,6 +30,15 @@ import { PathExitEvaluationContext, PathExitLearningState, learnFromClosedTrade 
 import { createKellySizingState, updateKellyState } from '../sizing/kelly-criterion';
 import { createMartingaleState, updateMartingaleState } from '../sizing/martingale';
 import { createOptimalFState, updateOptimalFState } from '../sizing/optimal-f';
+import {
+    addTradeGateStats,
+    createTradeGateStats,
+    evaluateTradeGate,
+    TradeGateEvaluationError,
+    type TradeGate,
+    type TradeGateStats,
+} from '../../batch-backtest/trade-gate';
+import { tradeGateSignalKey } from '../../batch-backtest/trade-ledger-features';
 
 type AdaptiveTakeProfitHistoryUpdate = {
     position: PositionState;
@@ -53,6 +62,10 @@ type BacktestRunOptions = {
     endpointSelectionInitialCapital?: number;
     /** Internal Finder control-run option; applied after settings normalization. */
     forceDisableSignalExits?: boolean;
+    /** Server-side Batch entry gate. Absent for ordinary backtests. */
+    tradeGate?: TradeGate;
+    /** Pair key used to select this run's gate feature context. */
+    tradeGatePair?: string;
 };
 
 export interface BacktestEndpointSelection {
@@ -461,6 +474,7 @@ function getSinglePositionFinderFastPathBlockers(
     options: BacktestRunOptions | undefined
 ): string[] {
     const blockers: string[] = [];
+    if (options?.tradeGate) blockers.push("trade_gate");
     if (options?.omitEquityCurve !== true) blockers.push("equity_curve_required");
     if (config.maxOpenTrades !== 1) blockers.push("max_open_trades");
     if (tradeDirection !== "long" && tradeDirection !== "short" && tradeDirection !== "both") blockers.push(`trade_direction_${tradeDirection}`);
@@ -472,6 +486,71 @@ function getSinglePositionFinderFastPathBlockers(
     if (config.breakEvenPercent !== 0) blockers.push("break_even_percent");
     if (config.riskWinStreakStopLossEnabled) blockers.push("win_streak_stop_loss");
     return blockers;
+}
+
+type TradeGateController = {
+    stats?: TradeGateStats;
+    evaluateEntry: (signal: Signal, executionBarIndex: number) => boolean;
+    markBlocked: () => void;
+};
+
+function createTradeGateController(
+    options: BacktestRunOptions | undefined,
+    config: NormalizedSettings,
+    tradeDirection: ReturnType<typeof normalizeTradeDirection>,
+): TradeGateController {
+    const gate = options?.tradeGate;
+    if (!gate) {
+        return {
+            evaluateEntry: () => true,
+            markBlocked: () => {},
+        };
+    }
+    const stats = createTradeGateStats();
+    return {
+        stats,
+        evaluateEntry: (signal, executionBarIndex) => {
+            if (signal.exitOnly === true || !allowsSignalAsEntry(signal.type, tradeDirection)) return true;
+            const pair = options?.tradeGatePair?.trim();
+            if (!pair) {
+                throw new TradeGateEvaluationError(
+                    "feature context",
+                    new Error("Trade Gate execution is missing its pair context."),
+                );
+            }
+            const pairContext = gate.pairs.get(pair);
+            const decisionBarIndex = executionBarIndex - getExecutionShift(config);
+            const direction = signalToPositionDirection(signal.type);
+            const row = pairContext?.featuresBySignalKey.get(tradeGateSignalKey(decisionBarIndex, direction));
+            if (!row) {
+                throw new TradeGateEvaluationError(
+                    "feature context",
+                    new Error(`No causal feature row for ${pair} at decision bar ${decisionBarIndex}.`),
+                );
+            }
+            return evaluateTradeGate(gate, row, stats);
+        },
+        markBlocked: () => {
+            stats.blocked += 1;
+        },
+    };
+}
+
+function attachTradeGateStats(result: BacktestResult, stats: TradeGateStats | undefined): BacktestResult {
+    if (stats) result.tradeGateStats = stats;
+    return result;
+}
+
+function combineTradeGateStats(
+    options: BacktestRunOptions | undefined,
+    longResult: BacktestResult,
+    shortResult: BacktestResult,
+): TradeGateStats | undefined {
+    if (!options?.tradeGate) return undefined;
+    const stats = createTradeGateStats();
+    addTradeGateStats(stats, longResult.tradeGateStats);
+    addTradeGateStats(stats, shortResult.tradeGateStats);
+    return stats;
 }
 
 function hasActivePercentageTakeProfit(config: NormalizedSettings): boolean {
@@ -1344,6 +1423,7 @@ function combineCompactResults(
             .map((trade, index) => ({ ...trade, id: index + 1 }))
         : [];
 
+    const combinedTradeGateStats = combineTradeGateStats(options, longResult, shortResult);
     return {
         trades,
         netProfit,
@@ -1360,7 +1440,8 @@ function combineCompactResults(
         avgWin,
         avgLoss,
         sharpeRatio,
-        equityCurve: []
+        equityCurve: [],
+        ...(combinedTradeGateStats ? { tradeGateStats: combinedTradeGateStats } : {}),
     };
 }
 
@@ -1547,8 +1628,9 @@ function runCombinedBacktest(
         .map((trade, index) => ({ ...trade, id: index + 1 }));
 
     const finalCapital = initialCapital + longResult.netProfit + shortResult.netProfit;
+    const combinedTradeGateStats = combineTradeGateStats(options, longResult, shortResult);
     if (noEquityCombinedResult) {
-        return calculateBacktestStats(
+        return attachTradeGateStats(calculateBacktestStats(
             mergedTrades,
             [],
             initialCapital,
@@ -1556,7 +1638,7 @@ function runCombinedBacktest(
             0,
             0,
             options,
-        );
+        ), combinedTradeGateStats);
     }
 
     const equityCurve = buildCombinedEquityCurve(
@@ -1567,7 +1649,7 @@ function runCombinedBacktest(
         shortInitialCapital
     );
     const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(equityCurve, initialCapital);
-    return calculateBacktestStats(
+    return attachTradeGateStats(calculateBacktestStats(
         mergedTrades,
         equityCurve,
         initialCapital,
@@ -1575,7 +1657,7 @@ function runCombinedBacktest(
         maxDrawdown,
         maxDrawdownPercent,
         options
-    );
+    ), combinedTradeGateStats);
 }
 
 /**
@@ -1603,7 +1685,9 @@ export function runBacktestCompact(
         if (equityOut && options?.skipDrawdown !== true) {
             equityOut.fill(initialCapital);
         }
-        return finalizeBacktestDiagnostics(diagnostics, createEmptyBacktestResult(), runStartedAt);
+        const empty = createEmptyBacktestResult();
+        if (options?.tradeGate) empty.tradeGateStats = createTradeGateStats();
+        return finalizeBacktestDiagnostics(diagnostics, empty, runStartedAt);
     }
 
     const tradeDirection = normalizeTradeDirection(settings);
@@ -1692,6 +1776,7 @@ export function runBacktestCompact(
     let capital = initialCapital;
     const positions: PositionState[] = [];
     const maxOpenTrades = config.maxOpenTrades;
+    const tradeGate = createTradeGateController(options, config, tradeDirection);
     let totalTrades = 0, winningTrades = 0, totalProfit = 0, totalLoss = 0;
     let peakEquity = initialCapital, maxDrawdown = 0, maxDrawdownPercent = 0;
     let signalIdx = 0;
@@ -1905,6 +1990,31 @@ export function runBacktestCompact(
         return opened;
     };
 
+    const evaluateGateEntry = (
+        signal: Signal,
+        barIndex: number,
+        forcedExitReason: NonNullable<Trade['exitReason']> | null,
+        isExitOnly: boolean,
+    ) => {
+        const applicable = Boolean(
+            options?.tradeGate
+            && forcedExitReason === null
+            && !isExitOnly
+            && allowsSignalAsEntry(signal.type, tradeDirection),
+        );
+        return {
+            applicable,
+            admitted: !applicable || tradeGate.evaluateEntry(signal, barIndex),
+        };
+    };
+
+    const openGatedSignalPosition = (signal: Signal, barIndex: number, gateDecision: ReturnType<typeof evaluateGateEntry>) => {
+        if (!gateDecision.admitted) return null;
+        const opened = openSignalPosition(signal, barIndex);
+        if (!opened && gateDecision.applicable) tradeGate.markBlocked();
+        return opened;
+    };
+
     const tradeSimulationStartedAt = performance.now();
     for (let i = 0; i < data.length; i++) {
         currentBarIndex = i;
@@ -1963,6 +2073,7 @@ export function runBacktestCompact(
 
                 const forcedExitReason = getForcedPolymarketSignalExitReason(signal);
                 const isExitOnly = signal.exitOnly === true;
+                const gateDecision = evaluateGateEntry(signal, i, forcedExitReason, isExitOnly);
                 const exitTargets = config.disableSignalExits && forcedExitReason === null && !isExitOnly
                     ? undefined
                     : findSignalExitTargets(positions, signal, config.allowSameBarExit, isUnlimitedOverlap(config));
@@ -1971,13 +2082,18 @@ export function runBacktestCompact(
                     if (forcedExitReason !== null || isExitOnly) {
                         continue;
                     }
+                    if (!gateDecision.admitted) {
+                        continue;
+                    }
                     if (config.disableSignalExits && hasOppositePositionForSignal(positions, signal)) {
+                        if (gateDecision.applicable) tradeGate.markBlocked();
                         continue;
                     }
                     if (isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i)) {
+                        if (gateDecision.applicable) tradeGate.markBlocked();
                         continue;
                     }
-                    openSignalPosition(signal, i);
+                    openGatedSignalPosition(signal, i, gateDecision);
                 } else if (exitTargets && exitTargets.length > 0) {
                     let allTargetsFullyClosed = true;
                     let allExitOrdersFull = true;
@@ -2001,7 +2117,7 @@ export function runBacktestCompact(
                             finalizeClosedPosition(exitTarget, candle, exitPrice, forcedExitReason ?? 'signal');
                         }
                     }
-                    if (forcedExitReason === null && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
+                    if (gateDecision.admitted && forcedExitReason === null && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
                         fullyClosed: true,
                         wasPartial: !allExitOrdersFull,
                         tradeDirection,
@@ -2011,8 +2127,10 @@ export function runBacktestCompact(
                         signalExitReentryCooldownUntilBarIndex,
                         barIndex: i,
                     })) {
-                        openSignalPosition(signal, i);
+                        openGatedSignalPosition(signal, i, gateDecision);
                     }
+                } else if (gateDecision.applicable && gateDecision.admitted) {
+                    tradeGate.markBlocked();
                 }
             }
         }
@@ -2065,6 +2183,7 @@ export function runBacktestCompact(
                     // Check for signal exit: does this signal close an existing opposite-direction position?
                     const forcedExitReason = getForcedPolymarketSignalExitReason(signal);
                     const isExitOnly = signal.exitOnly === true;
+                    const gateDecision = evaluateGateEntry(signal, i, forcedExitReason, isExitOnly);
                     const exitTargets = config.disableSignalExits && forcedExitReason === null && !isExitOnly
                         ? undefined
                         : findSignalExitTargets(positions, signal, config.allowSameBarExit, isUnlimitedOverlap(config));
@@ -2074,14 +2193,19 @@ export function runBacktestCompact(
                         if (forcedExitReason !== null || isExitOnly) {
                             continue;
                         }
+                        if (!gateDecision.admitted) {
+                            continue;
+                        }
                         if (config.disableSignalExits && hasOppositePositionForSignal(positions, signal)) {
+                            if (gateDecision.applicable) tradeGate.markBlocked();
                             continue;
                         }
                         if (isEntryCooldownEnabled(config)
                             && isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i)) {
+                            if (gateDecision.applicable) tradeGate.markBlocked();
                             continue;
                         }
-                        const opened = openSignalPosition(signal, i);
+                        const opened = openGatedSignalPosition(signal, i, gateDecision);
                         if (opened) {
                             finalizeEntryBarState(opened.position, candle, i);
                         }
@@ -2109,7 +2233,7 @@ export function runBacktestCompact(
                                 finalizeClosedPosition(exitTarget, candle, exitPrice, forcedExitReason ?? 'signal');
                             }
                         }
-                        if (forcedExitReason === null && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
+                        if (gateDecision.admitted && forcedExitReason === null && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
                             fullyClosed: true,
                             wasPartial: !allExitOrdersFull,
                             tradeDirection,
@@ -2117,11 +2241,13 @@ export function runBacktestCompact(
                             positions,
                             maxOpenTrades,
                         })) {
-                            const opened = openSignalPosition(signal, i);
+                            const opened = openGatedSignalPosition(signal, i, gateDecision);
                             if (opened) {
                                 finalizeEntryBarState(opened.position, candle, i);
                             }
                         }
+                    } else if (gateDecision.applicable && gateDecision.admitted) {
+                        tradeGate.markBlocked();
                     }
                 }
             }
@@ -2188,7 +2314,7 @@ export function runBacktestCompact(
     }
     diagnostics && (diagnostics.counts.tradesClosed = totalTrades);
     addBacktestDiagnosticElapsed(diagnostics, "metrics", metricsStartedAt);
-    return finalizeBacktestDiagnostics(diagnostics, result, runStartedAt);
+    return finalizeBacktestDiagnostics(diagnostics, attachTradeGateStats(result, tradeGate.stats), runStartedAt);
 }
 
 /**
@@ -2313,6 +2439,7 @@ export function runBacktest(
     let peakEquity = initialCapital, maxDrawdown = 0, maxDrawdownPercent = 0;
     const positions: PositionState[] = [];
     const maxOpenTrades = config.maxOpenTrades;
+    const tradeGate = createTradeGateController(options, config, tradeDirection);
     const trades: Trade[] = [];
     const equityCurve: { time: Time; value: number }[] = [];
     const commissionRate = commissionPercent / 100;
@@ -2514,6 +2641,31 @@ export function runBacktest(
         return opened;
     };
 
+    const evaluateGateEntry = (
+        signal: Signal,
+        barIndex: number,
+        forcedExitReason: NonNullable<Trade['exitReason']> | null,
+        isExitOnly: boolean,
+    ) => {
+        const applicable = Boolean(
+            options?.tradeGate
+            && forcedExitReason === null
+            && !isExitOnly
+            && allowsSignalAsEntry(signal.type, tradeDirection),
+        );
+        return {
+            applicable,
+            admitted: !applicable || tradeGate.evaluateEntry(signal, barIndex),
+        };
+    };
+
+    const openGatedSignalPosition = (signal: Signal, barIndex: number, gateDecision: ReturnType<typeof evaluateGateEntry>) => {
+        if (!gateDecision.admitted) return null;
+        const opened = openSignalPosition(signal, barIndex);
+        if (!opened && gateDecision.applicable) tradeGate.markBlocked();
+        return opened;
+    };
+
     const tradeSimulationStartedAt = performance.now();
     for (let i = 0; i < data.length; i++) {
         currentBarIndex = i;
@@ -2566,6 +2718,7 @@ export function runBacktest(
 
                 const forcedExitReason = getForcedPolymarketSignalExitReason(signal);
                 const isExitOnly = signal.exitOnly === true;
+                const gateDecision = evaluateGateEntry(signal, i, forcedExitReason, isExitOnly);
                 const exitTargets = config.disableSignalExits && forcedExitReason === null && !isExitOnly
                     ? undefined
                     : findSignalExitTargets(positions, signal, config.allowSameBarExit, isUnlimitedOverlap(config));
@@ -2575,13 +2728,18 @@ export function runBacktest(
                     if (forcedExitReason !== null || isExitOnly) {
                         continue;
                     }
+                    if (!gateDecision.admitted) {
+                        continue;
+                    }
                     if (config.disableSignalExits && hasOppositePositionForSignal(positions, signal)) {
+                        if (gateDecision.applicable) tradeGate.markBlocked();
                         continue;
                     }
                     if (isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i)) {
+                        if (gateDecision.applicable) tradeGate.markBlocked();
                         continue;
                     }
-                    openSignalPosition(signal, i);
+                    openGatedSignalPosition(signal, i, gateDecision);
                 } else if (exitTargets && exitTargets.length > 0) {
                     // Signal exit
                     let allTargetsFullyClosed = true;
@@ -2606,7 +2764,7 @@ export function runBacktest(
                             finalizeClosedPositionFull(exitTarget, candle, exitPrice, forcedExitReason ?? 'signal');
                         }
                     }
-                    if (forcedExitReason === null && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
+                    if (gateDecision.admitted && forcedExitReason === null && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
                         fullyClosed: true,
                         wasPartial: !allExitOrdersFull,
                         tradeDirection,
@@ -2616,8 +2774,10 @@ export function runBacktest(
                         signalExitReentryCooldownUntilBarIndex,
                         barIndex: i,
                     })) {
-                        openSignalPosition(signal, i);
+                        openGatedSignalPosition(signal, i, gateDecision);
                     }
+                } else if (gateDecision.applicable && gateDecision.admitted) {
+                    tradeGate.markBlocked();
                 }
             }
         }
@@ -2669,6 +2829,7 @@ export function runBacktest(
                 if (signalBarIndex === i) {
                     const forcedExitReason = getForcedPolymarketSignalExitReason(signal);
                     const isExitOnly = signal.exitOnly === true;
+                    const gateDecision = evaluateGateEntry(signal, i, forcedExitReason, isExitOnly);
                     const exitTargets = config.disableSignalExits && forcedExitReason === null && !isExitOnly
                         ? undefined
                         : findSignalExitTargets(positions, signal, config.allowSameBarExit, isUnlimitedOverlap(config));
@@ -2678,14 +2839,19 @@ export function runBacktest(
                         if (forcedExitReason !== null || isExitOnly) {
                             continue;
                         }
+                        if (!gateDecision.admitted) {
+                            continue;
+                        }
                         if (config.disableSignalExits && hasOppositePositionForSignal(positions, signal)) {
+                            if (gateDecision.applicable) tradeGate.markBlocked();
                             continue;
                         }
                         if (isEntryCooldownEnabled(config)
                             && isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i)) {
+                            if (gateDecision.applicable) tradeGate.markBlocked();
                             continue;
                         }
-                        const opened = openSignalPosition(signal, i);
+                        const opened = openGatedSignalPosition(signal, i, gateDecision);
                         if (opened) {
                             finalizeEntryBarStateFull(opened.position, candle, i);
                         }
@@ -2713,7 +2879,7 @@ export function runBacktest(
                                 finalizeClosedPositionFull(exitTarget, candle, exitPrice, forcedExitReason ?? 'signal');
                             }
                         }
-                        if (forcedExitReason === null && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
+                        if (gateDecision.admitted && forcedExitReason === null && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
                             fullyClosed: true,
                             wasPartial: !allExitOrdersFull,
                             tradeDirection,
@@ -2721,11 +2887,13 @@ export function runBacktest(
                             positions,
                             maxOpenTrades,
                         })) {
-                            const opened = openSignalPosition(signal, i);
+                            const opened = openGatedSignalPosition(signal, i, gateDecision);
                             if (opened) {
                                 finalizeEntryBarStateFull(opened.position, candle, i);
                             }
                         }
+                    } else if (gateDecision.applicable && gateDecision.admitted) {
+                        tradeGate.markBlocked();
                     }
                 }
             }
@@ -2793,5 +2961,5 @@ export function runBacktest(
     const metricsStartedAt = performance.now();
     const result = calculateBacktestStats(trades, equityCurve, initialCapital, capital, maxDrawdown, maxDrawdownPercent, options);
     addBacktestDiagnosticElapsed(diagnostics, "metrics", metricsStartedAt);
-    return finalizeBacktestDiagnostics(diagnostics, result, runStartedAt);
+    return finalizeBacktestDiagnostics(diagnostics, attachTradeGateStats(result, tradeGate.stats), runStartedAt);
 }
