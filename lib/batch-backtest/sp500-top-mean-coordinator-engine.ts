@@ -32,6 +32,7 @@ import {
     runOpenScoreUsdReplay,
     type OpenScoreUsdReplayResult,
     type OpenScoreUsdEventDetail,
+    type OpenScoreUsdOngoingEventDetail,
     type CandidateOutcomeRecord,
     type PoolSnapshotRecord,
     type OpenScoreUsdLatestSelections,
@@ -118,6 +119,8 @@ export interface TopMeanResultSummary {
     annualReports?: TopMeanAnnualReplaySummary[];
     /** Full selected-window scalar rows for the on-demand OPEN_SCORE details UI. */
     openScoreEventDetails?: OpenScoreUsdEventDetail[];
+    /** TOP_MEAN selections whose requested horizons are not complete yet. */
+    ongoingEventDetails?: OpenScoreUsdOngoingEventDetail[];
     /** Full-window Phase 0b pool snapshots, coordinator-only diagnostics. */
     poolSnapshots?: PoolSnapshotRecord[];
     /** Full-window Phase 0b candidate outcomes, coordinator-only diagnostics. */
@@ -878,6 +881,7 @@ export class TopMeanCoordinatorEngine {
                 horizons: horizonSummaries,
                 annualReports,
                 openScoreEventDetails: replayResult.eventDetails,
+                ongoingEventDetails: replayResult.ongoingEventDetails,
                 poolSnapshots: replayResult.poolSnapshots,
                 candidateOutcomes: replayResult.candidateOutcomes,
                 warnings: replayResult.warnings,

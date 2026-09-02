@@ -78,6 +78,7 @@ import type {
     OpenScoreUsdEventDetail,
     OpenScoreUsdEventDetailSelector,
     OpenScoreUsdLatestSelections,
+    OpenScoreUsdOngoingEventDetail,
     OpenScoreUsdReplayResult,
 } from "./batch-open-score-usd-replay-engine";
 import type { OpenScoreUsdReplayStreamEvent } from "./batch-open-score-usd-replay-stream-types";
@@ -86,6 +87,14 @@ import type { CapitalSettings } from "../types/backtest";
 import { escapeHtml } from "../html-escape";
 import { debounce } from "../debounce";
 import { coalesceAnimationFrame } from "../render-scheduler";
+
+type OngoingTopMeanEventDetail = OpenScoreUsdOngoingEventDetail;
+
+interface TopMeanOpenScoreDetailSection {
+    label: string;
+    rows: OpenScoreUsdEventDetail[];
+    ongoingRows: OngoingTopMeanEventDetail[];
+}
 
 const BATCH_RESULTS_STORAGE = {
     key: "playground_batch_backtest_latest_results",
@@ -3150,10 +3159,11 @@ export class BatchBacktestService {
         const fullRangeHasDetails =
             Array.isArray(summary.openScoreEventDetails)
             && summary.openScoreEventDetails.length > 0;
+        const hasOngoingTopMean = this.buildOngoingTopMeanEventDetails(summary).length > 0;
         dom.batchBacktestSp500TopMeanDetailsBtn.disabled =
-            !annualHasDetails && !fullRangeHasDetails;
+            !annualHasDetails && !fullRangeHasDetails && !hasOngoingTopMean;
         dom.batchBacktestSp500TopMeanDetailsSelector.disabled =
-            !annualHasDetails && !fullRangeHasDetails;
+            !annualHasDetails && !fullRangeHasDetails && !hasOngoingTopMean;
         dom.batchBacktestSp500TopMeanDetailsBtn.textContent = "Show OPEN_SCORE Details";
         dom.batchBacktestSp500TopMeanDetails.hidden = true;
         dom.batchBacktestSp500TopMeanDetails.innerHTML = "";
@@ -3185,20 +3195,99 @@ export class BatchBacktestService {
             OpenScoreUsdEventDetailSelector;
     }
 
+    /**
+     * The historical replay intentionally omits right-censored horizons, but
+     * an unresolved selector pick is still useful before its holding period has
+     * completed. Keep these rows UI-only so incomplete returns never enter the
+     * research aggregates or either copy path.
+     */
+    private buildOngoingTopMeanEventDetails(
+        summary: TopMeanResultSummary,
+    ): OngoingTopMeanEventDetail[] {
+        if (Array.isArray(summary.ongoingEventDetails)) {
+            return summary.ongoingEventDetails.filter((row) => row.selector === "TOP_MEAN");
+        }
+
+        const latest = summary.latestSelections;
+        let decisionTime: number | null = null;
+        let asset: string | null = null;
+        let eligibleCandidates = 0;
+
+        if (latest) {
+            const selection = latest.selections.find((candidate) => candidate.selector === "TOP_MEAN");
+            if (selection?.reason !== "selected" || !selection.asset) return [];
+            decisionTime = latest.decisionTime;
+            asset = selection.asset;
+            eligibleCandidates = Number.isFinite(selection.eligibleCandidates)
+                ? Math.max(0, Math.floor(selection.eligibleCandidates))
+                : 0;
+        } else {
+            // Backward-compatible fallback for persisted results that have the
+            // current snapshot but predate latestSelections.
+            const decision = summary.currentSnapshot?.decision;
+            if (!decision?.asset || !Number.isFinite(decision.decisionTime)) return [];
+            decisionTime = decision.decisionTime;
+            asset = decision.asset;
+            eligibleCandidates = Array.isArray(decision.candidates)
+                ? decision.candidates.length
+                : 0;
+        }
+
+        if (decisionTime === null || asset === null) return [];
+
+        const horizonValues = summary.horizons
+            .map((horizon) => {
+                const source = horizon as unknown as { horizon?: unknown; bars?: unknown };
+                return Number(source.horizon ?? source.bars);
+            })
+            .filter((horizon) => Number.isFinite(horizon) && horizon >= 1)
+            .map((horizon) => Math.floor(horizon));
+        const horizons = [...new Set(horizonValues.length > 0 ? horizonValues : [24])];
+        const completedKeys = new Set(
+            [
+                ...(summary.openScoreEventDetails ?? []),
+                ...(summary.annualReports ?? []).flatMap((annual) => annual.eventDetails ?? []),
+            ]
+                .filter((row) => row.selector === "TOP_MEAN")
+                .map((row) => `${row.decisionTime}|${row.horizonBars}`),
+        );
+
+        return horizons
+            .filter((horizonBars) => !completedKeys.has(`${decisionTime}|${horizonBars}`))
+            .map((horizonBars) => ({
+                decisionTime: decisionTime!,
+                horizonBars,
+                selector: "TOP_MEAN" as const,
+                direction: "long" as const,
+                asset,
+                eligibleCandidates,
+                entryTime: null,
+            }));
+    }
+
     private renderTopMeanOpenScoreEventDetails(
         summary: TopMeanResultSummary,
         selector: OpenScoreUsdEventDetailSelector,
     ): string {
         const annualReports = summary.annualReports ?? [];
+        const ongoingTopMeanRows = selector === "TOP_MEAN"
+            ? this.buildOngoingTopMeanEventDetails(summary)
+            : [];
         const hasAnnualDetailData = annualReports.some(
             (annual) => Array.isArray(annual.eventDetails) && annual.eventDetails.length > 0,
         );
         const annualSections = annualReports
-            .map((annual) => ({
+            .map((annual): TopMeanOpenScoreDetailSection => ({
                 label: `Calendar Year ${annual.year}`,
                 rows: (annual.eventDetails ?? []).filter((row) => row.selector === selector),
+                ongoingRows: ongoingTopMeanRows.filter((row) => {
+                    const year = new Date(row.decisionTime * 1000).getUTCFullYear();
+                    return year === annual.year
+                        && row.decisionTime >= annual.sampleFromSec
+                        && row.decisionTime <= annual.sampleToSec;
+                }),
             }))
-            .filter((section) => section.rows.length > 0);
+            .filter((section) => section.rows.length > 0 || section.ongoingRows.length > 0);
         const sections = hasAnnualDetailData
             ? annualSections
             : [{
@@ -3206,20 +3295,32 @@ export class BatchBacktestService {
                 rows: (summary.openScoreEventDetails ?? []).filter(
                     (row) => row.selector === selector,
                 ),
-            }];
+                ongoingRows: ongoingTopMeanRows,
+            } satisfies TopMeanOpenScoreDetailSection];
         let html = `<div class="batch-open-score-details-heading">OPEN_SCORE Event Details — ${escapeHtml(selector)}</div>`;
-        html += `<div class="batch-open-score-details-note">Showing ${escapeHtml(selector)} only. Return is the selected asset's net USD return after configured slippage and commission; control is the selector-specific comparison pool (for TOP_MEAN_RAW_UNIQUE_V1, the TOP_MEAN tied set, including the selected asset). These rows are intentionally excluded from Copy OPEN_SCORE and Copy Result.</div>`;
-        if (sections.length === 0 || sections.every((section) => section.rows.length === 0)) {
+        html += `<div class="batch-open-score-details-note">Showing ${escapeHtml(selector)} only. Return is the selected asset's net USD return after configured slippage and commission; control is the selector-specific comparison pool (for TOP_MEAN_RAW_UNIQUE_V1, the TOP_MEAN tied set, including the selected asset). TOP_MEAN selections with incomplete horizons are shown as ONGOING; their outcome fields are intentionally n/a. These rows are intentionally excluded from Copy OPEN_SCORE and Copy Result.</div>`;
+        if (sections.length === 0 || sections.every((section) => section.rows.length === 0 && section.ongoingRows.length === 0)) {
             html += `<div class="batch-open-score-details-empty">No eligible ${escapeHtml(selector)} events for this replay window.</div>`;
             return html;
         }
         for (const section of sections) {
+            const rowCount = section.rows.length + section.ongoingRows.length;
             html += `<details open class="batch-open-score-details-section">`;
-            html += `<summary>${escapeHtml(section.label)} | ${escapeHtml(section.rows.length.toLocaleString())} selector rows</summary>`;
+            html += `<summary>${escapeHtml(section.label)} | ${escapeHtml(rowCount.toLocaleString())} selector rows</summary>`;
             html += `<div class="batch-open-score-details-scroll"><table class="finder-table batch-open-score-details-table">`;
             html += `<thead><tr><th>Decision UTC</th><th>Entry UTC</th><th>Exit UTC</th><th>Horizon</th><th>Selector</th><th>Side</th><th>Asset</th><th>Return</th><th>Control</th><th>Delta</th><th>Pool</th></tr></thead><tbody>`;
-            for (const row of section.rows) {
-                html += this.renderTopMeanOpenScoreEventDetailRow(row);
+            const detailRows = [
+                ...section.rows.map((row) => ({ row, ongoing: false as const })),
+                ...section.ongoingRows.map((row) => ({ row, ongoing: true as const })),
+            ].sort((a, b) =>
+                a.row.decisionTime - b.row.decisionTime
+                || a.row.horizonBars - b.row.horizonBars
+                || Number(a.ongoing) - Number(b.ongoing),
+            );
+            for (const detailRow of detailRows) {
+                html += detailRow.ongoing
+                    ? this.renderOngoingTopMeanEventDetailRow(detailRow.row)
+                    : this.renderTopMeanOpenScoreEventDetailRow(detailRow.row);
             }
             html += `</tbody></table></div></details>`;
         }
@@ -3245,6 +3346,27 @@ export class BatchBacktestService {
             `<td class="${returnClass}">${escapeHtml(formatReturn(row.selectedReturn))}</td>` +
             `<td>${escapeHtml(formatReturn(row.controlReturn))}</td>` +
             `<td class="${deltaClass}">${escapeHtml(formatReturn(row.delta))}</td>` +
+            `<td>${escapeHtml(row.eligibleCandidates)}</td>` +
+            `</tr>`;
+    }
+
+    private renderOngoingTopMeanEventDetailRow(row: OngoingTopMeanEventDetail): string {
+        const formatTime = (timeSec: number): string =>
+            new Date(timeSec * 1000).toISOString().slice(0, 19).replace("T", " ");
+        const entryLabel = row.entryTime !== null && Number.isFinite(row.entryTime)
+            ? formatTime(row.entryTime)
+            : "NEXT BAR";
+        return `<tr class="batch-open-score-details-row-ongoing">` +
+            `<td>${escapeHtml(formatTime(row.decisionTime))}</td>` +
+            `<td>${escapeHtml(entryLabel)}</td>` +
+            `<td><strong>${escapeHtml("ONGOING")}</strong></td>` +
+            `<td>${escapeHtml(row.horizonBars)}</td>` +
+            `<td><strong>${escapeHtml(row.selector)}</strong> <span class="batch-top-badge">ONGOING</span></td>` +
+            `<td class="is-positive">${escapeHtml(row.direction.toUpperCase())}</td>` +
+            `<td><strong>${escapeHtml(row.asset)}</strong></td>` +
+            `<td>${escapeHtml("n/a")}</td>` +
+            `<td>${escapeHtml("n/a")}</td>` +
+            `<td>${escapeHtml("n/a")}</td>` +
             `<td>${escapeHtml(row.eligibleCandidates)}</td>` +
             `</tr>`;
     }

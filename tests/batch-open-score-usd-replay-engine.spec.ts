@@ -390,11 +390,17 @@ describe("batch-open-score-usd-replay-engine", () => {
         const result = await runOpenScoreUsdReplay(
             () => fromArray(pairs),
             () => fromArray(targets),
-            { horizons: [5], blockCount: 1 },
+            { horizons: [5], blockCount: 1, includeEventDetails: true },
         );
         // No eligible events (all censored) and a warning is emitted — never a fake 0 return.
         expect(result.eligibleEvents).to.equal(0);
         expect(result.warnings.join(" ")).to.match(/right-censored/i);
+        expect(result.ongoingEventDetails).to.have.length(1);
+        expect(result.ongoingEventDetails![0]!.decisionTime).to.equal(T0 + 1000);
+        expect(result.ongoingEventDetails![0]!.entryTime).to.equal(T0 + 2000);
+        expect(result.ongoingEventDetails![0]!.horizonBars).to.equal(5);
+        expect(["AAA", "BBB"]).to.include(result.ongoingEventDetails![0]!.asset);
+        expect(result.ongoingEventDetails![0]!.eligibleCandidates).to.equal(2);
     });
 
     it("surfaces missing target datasets as incomplete, never as zero returns", async () => {

@@ -204,6 +204,17 @@ export interface OpenScoreUsdEventDetail {
     eligibleCandidates: number;
 }
 
+/** Scalar TOP_MEAN selections whose requested horizon is not complete yet. */
+export interface OpenScoreUsdOngoingEventDetail {
+    decisionTime: number;
+    entryTime: number | null;
+    horizonBars: number;
+    selector: "TOP_MEAN";
+    direction: "long";
+    asset: string;
+    eligibleCandidates: number;
+}
+
 export type CandidateOutcomeStatus =
     | "ok"
     | "missing_target"
@@ -503,6 +514,8 @@ export interface OpenScoreUsdReplayResult {
      * Never included in reportLines or either OPEN_SCORE copy path.
      */
     eventDetails?: OpenScoreUsdEventDetail[];
+    /** Scalar TOP_MEAN selections omitted from completed research by censoring. */
+    ongoingEventDetails?: OpenScoreUsdOngoingEventDetail[];
     /** Full-window Phase 0b diagnostics; only populated by the coordinator. */
     poolSnapshots?: PoolSnapshotRecord[];
     /** Full-window Phase 0b diagnostics; only populated by the coordinator. */
@@ -1734,10 +1747,11 @@ export async function runOpenScoreUsdReplay(
                 && trendClose < trendEma;
             for (const h of horizons) {
                 const exitBar = entryBar + h - 1; // h bars forward, close of that bar
+                const entryTime = times[entryBar] ?? Number.NaN;
                 if (exitBar >= target.data.length) {
                     longReturns.push(Number.NaN);
                     shortReturns.push(Number.NaN);
-                    entryTimes.push(Number.NaN);
+                    entryTimes.push(entryTime);
                     exitTimes.push(Number.NaN);
                     continue;
                 }
@@ -1746,11 +1760,11 @@ export async function runOpenScoreUsdReplay(
                 if (!Number.isFinite(rawOpen) || rawOpen <= 0 || !Number.isFinite(exitClose) || exitClose <= 0) {
                     longReturns.push(Number.NaN);
                     shortReturns.push(Number.NaN);
-                    entryTimes.push(Number.NaN);
+                    entryTimes.push(entryTime);
                     exitTimes.push(Number.NaN);
                     continue;
                 }
-                entryTimes.push(times[entryBar] ?? Number.NaN);
+                entryTimes.push(entryTime);
                 exitTimes.push(times[exitBar] ?? Number.NaN);
             // Long USD trade: buy at next bar open (slippage up), sell at
             // horizon close (slippage down), round-trip commission. Commission
@@ -1982,6 +1996,27 @@ export async function runOpenScoreUsdReplay(
     // event from BOTH arms — never substitute a different winner.
     const horizonResults: OpenScoreUsdReplayResult["horizons"] = [];
     const eventDetails: OpenScoreUsdEventDetail[] = [];
+    const ongoingEventDetails: OpenScoreUsdOngoingEventDetail[] = [];
+    type ViewReturns = NonNullable<(typeof returnsByView)[number]>;
+    const appendOngoingTopMeanEventDetail = (
+        view: EventView,
+        perAsset: ViewReturns | null | undefined,
+        hIdx: number,
+    ): void => {
+        if (!options.includeEventDetails || view.positives.length < 2) return;
+        const selected = view.positives.find((candidate) => candidate.assetIndex === view.topMean);
+        if (!selected) return;
+        const entryTime = perAsset?.get(selected.assetIndex)?.entryTimes[hIdx];
+        ongoingEventDetails.push({
+            decisionTime: view.timeSec,
+            entryTime: Number.isFinite(entryTime) ? entryTime! : null,
+            horizonBars: horizons[hIdx]!,
+            selector: "TOP_MEAN",
+            direction: "long",
+            asset: assetNames[selected.assetIndex]!,
+            eligibleCandidates: view.positives.length,
+        });
+    };
     let eligibleEventsMax = 0;
     for (let hIdx = 0; hIdx < horizons.length; hIdx += 1) {
         interface SelectorSeries {
@@ -2075,7 +2110,13 @@ export async function runOpenScoreUsdReplay(
         for (let v = 0; v < views.length; v += 1) {
             const view = views[v]!;
             const perAsset = returnsByView[v];
-            if (!perAsset) { noDataEvents.add(v); continue; }
+            if (!perAsset) {
+                noDataEvents.add(v);
+                for (let pendingHIdx = 0; pendingHIdx < horizons.length; pendingHIdx += 1) {
+                    appendOngoingTopMeanEventDetail(view, perAsset, pendingHIdx);
+                }
+                continue;
+            }
             const appendEventDetail = (
                 selector: OpenScoreUsdEventDetailSelector,
                 direction: "long" | "short",
@@ -2339,7 +2380,10 @@ export async function runOpenScoreUsdReplay(
                 retByAsset.set(c.assetIndex, r);
                 shortByAsset.set(c.assetIndex, shortReturn);
             }
-            if (!allValid) continue; // censored or missing -> omit from both arms
+            if (!allValid) {
+                appendOngoingTopMeanEventDetail(view, perAsset, hIdx);
+                continue; // censored or missing -> omit from both arms
+            }
 
             let totalReturn = 0;
             for (const r of retByAsset.values()) totalReturn += r;
@@ -2900,6 +2944,10 @@ export async function runOpenScoreUsdReplay(
         a.decisionTime - b.decisionTime
         || a.horizonBars - b.horizonBars
         || a.selector.localeCompare(b.selector));
+    ongoingEventDetails.sort((a, b) =>
+        a.decisionTime - b.decisionTime
+        || a.horizonBars - b.horizonBars
+        || a.asset.localeCompare(b.asset));
 
     // Count omitted assets (requested but with no usable dataset at all).
     const assetsWithData = new Set<number>();
@@ -2989,6 +3037,7 @@ export async function runOpenScoreUsdReplay(
         horizons: horizonResults,
         latestSelections,
         ...(options.includeEventDetails ? { eventDetails } : {}),
+        ...(options.includeEventDetails ? { ongoingEventDetails } : {}),
         ...(includePoolSnapshots ? { poolSnapshots: poolSnapshots ?? [] } : {}),
         ...(includeCandidateOutcomes ? { candidateOutcomes: candidateOutcomes ?? [] } : {}),
         degree,

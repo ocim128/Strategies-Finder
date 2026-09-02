@@ -520,6 +520,95 @@ describe("BatchBacktestService analysis lifecycle", () => {
         );
     });
 
+    it("shows the latest TOP_MEAN selection while its horizon is ongoing", () => {
+        const dom = setupForAnalysis();
+        const result = topMeanResultFixture();
+        const decisionTime = Math.floor(Date.parse("2026-08-21T16:00:00.000Z") / 1000);
+        result.annualReports = [{
+            year: 2026,
+            sampleFromSec: Math.floor(Date.parse("2026-01-01T00:00:00.000Z") / 1000),
+            sampleToSec: Math.floor(Date.parse("2026-12-31T23:59:59.000Z") / 1000),
+            horizons: [],
+            warnings: [],
+            reportLines: ["annual"],
+            eventDetails: [{
+                decisionTime: decisionTime - 7 * 24 * 3600,
+                entryTime: decisionTime - 6 * 24 * 3600,
+                exitTime: decisionTime,
+                horizonBars: 12,
+                selector: "TOP_MEAN",
+                direction: "long",
+                asset: "AMD",
+                selectedReturn: -0.0326,
+                controlReturn: -0.0169,
+                delta: -0.0157,
+                eligibleCandidates: 44,
+            }],
+        }];
+        result.latestSelections = {
+            decisionTime,
+            ema200ObservedAssets: 3,
+            ema200AssetsAbove: 2,
+            ema200Breadth: 2 / 3,
+            regime: "bullish",
+            selections: [{
+                selector: "TOP_MEAN",
+                direction: "long",
+                asset: "MU",
+                tiedAssets: [],
+                score: 18,
+                mean: 0.9,
+                activePairs: 20,
+                eligibleCandidates: 47,
+                reason: "selected",
+            }],
+        };
+
+        svc().latestTopMeanResult = result;
+        svc().renderTopMeanResults(dom, result);
+        svc().toggleSp500TopMeanOpenScoreDetails();
+
+        const details = dom.batchBacktestSp500TopMeanDetails.innerHTML;
+        expect(details).to.include("Calendar Year 2026 | 2 selector rows");
+        expect(details).to.include("2026-08-21 16:00:00");
+        expect(details).to.include("MU");
+        expect(details).to.include("NEXT BAR");
+        expect(details).to.include("ONGOING");
+        expect(details).to.include("n/a");
+        expect(details).to.include("AMD");
+    });
+
+    it("shows every ongoing TOP_MEAN selection between the last completed row and the latest data", () => {
+        const dom = setupForAnalysis();
+        const result = topMeanResultFixture();
+        const decisionTimes = [
+            Math.floor(Date.parse("2026-08-14T12:00:00.000Z") / 1000),
+            Math.floor(Date.parse("2026-08-17T12:00:00.000Z") / 1000),
+            Math.floor(Date.parse("2026-08-21T16:00:00.000Z") / 1000),
+        ];
+        result.latestSelections = null;
+        result.ongoingEventDetails = [
+            { decisionTime: decisionTimes[0], horizonBars: 12, selector: "TOP_MEAN", direction: "long", asset: "AMD", eligibleCandidates: 44 },
+            { decisionTime: decisionTimes[1], horizonBars: 12, selector: "TOP_MEAN", direction: "long", asset: "AMD", eligibleCandidates: 45 },
+            { decisionTime: decisionTimes[2], horizonBars: 12, selector: "TOP_MEAN", direction: "long", asset: "MU", eligibleCandidates: 47 },
+            { decisionTime: decisionTimes[2], horizonBars: 24, selector: "TOP_MEAN", direction: "long", asset: "MU", eligibleCandidates: 47 },
+        ];
+
+        svc().latestTopMeanResult = result;
+        svc().renderTopMeanResults(dom, result);
+        svc().toggleSp500TopMeanOpenScoreDetails();
+
+        const details = dom.batchBacktestSp500TopMeanDetails.innerHTML;
+        expect(details).to.include("Selected Window | 4 selector rows");
+        expect(details).to.include("2026-08-14 12:00:00");
+        expect(details).to.include("2026-08-17 12:00:00");
+        expect(details).to.include("2026-08-21 16:00:00");
+        expect(details).to.include("AMD");
+        expect(details).to.include("MU");
+        expect(details.indexOf("2026-08-14 12:00:00")).to.be.lessThan(details.indexOf("2026-08-17 12:00:00"));
+        expect(details.indexOf("2026-08-17 12:00:00")).to.be.lessThan(details.indexOf("2026-08-21 16:00:00"));
+    });
+
     it("keeps ownership after a rejected Stop and clears it after an accepted Stop", async () => {
         setupForAnalysis();
         svc().activeServerRunId = "batch-owned";
