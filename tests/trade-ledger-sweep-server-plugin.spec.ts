@@ -21,6 +21,7 @@ const {
     getRunStateForTests,
     getPendingStopRunIdForTests,
     acceptJobEventForTests,
+    projectRunningStatusForTests,
 } = __testInternals;
 
 type RouteHandler = (req: any, res: any) => Promise<void>;
@@ -198,6 +199,64 @@ describe("trade-ledger sweep server plugin", () => {
         expect(() => assertLedgerSweepWireEventIsScalar({ type: "start", runId: "x", ledgerRows: 10 })).to.not.throw();
         expect(() => assertLedgerSweepWireEventIsScalar({ type: "rule_result", runId: "x", result: { trades: [] } })).to.throw();
         expect(() => assertLedgerSweepWireEventIsScalar({ type: "phase", runId: "x", memory: { heapUsed: Number.NaN } })).to.throw();
+    });
+
+    it("projects running diagnostics to a bounded status payload without mutating the retained aggregate", () => {
+        const base = diagnostics("ledger-sweep-status-bounded", "load_once", {
+            decision: "load_once",
+            reason: "fits",
+            estimatedHeapBytes: 1,
+            estimatedRssBytes: 1,
+            childHeapLimitBytes: 1,
+        });
+        base.memory.samples = Array.from({ length: 10_000 }, (_, index) => ({
+            at: index,
+            source: "worker" as const,
+            phase: "rule_replay" as const,
+            ruleId: null,
+            heapUsed: index,
+            heapTotal: index,
+            rss: index,
+            external: 0,
+            arrayBuffers: 0,
+            maxRss: index,
+        }));
+        base.cpu = Array.from({ length: 100 }, () => ({
+            scope: "worker",
+            userCpuMs: 1,
+            systemCpuMs: 1,
+            eventLoopUtilization: 0,
+            eventLoopDelayP50Ms: 0,
+            eventLoopDelayP99Ms: 0,
+        }));
+        base.errors = Array.from({ length: 100 }, (_, index) => `error-${index}`);
+        const run = {
+            runId: "ledger-sweep-status-bounded",
+            folderId: "folder",
+            folderName: "folder",
+            mode: "load_once" as const,
+            modeReason: "fits",
+            phase: "rule_replay" as const,
+            startedAt: 1,
+            finishedAt: null,
+            totalRules: 1,
+            completedRules: 0,
+            currentRuleId: "rule",
+            elapsedMs: 1,
+            percent: 1,
+            results: [],
+            diagnostics: base,
+            summary: null,
+            outputDir: "archive/sweeps/run",
+            error: null,
+        };
+        const projected = projectRunningStatusForTests(run);
+        expect(projected.diagnostics.memory.samples).to.have.length(1);
+        expect(projected.diagnostics.cpu).to.have.length(1);
+        expect(projected.diagnostics.errors).to.have.length(20);
+        expect(projected.diagnostics.errorCount).to.equal(100);
+        expect(run.diagnostics.memory.samples).to.have.length(10_000);
+        expect(JSON.stringify(projected).length).to.be.lessThan(JSON.stringify(run).length / 10);
     });
 
     it("releases the coordinator only after an aborting Stop lets the job settle", async () => {

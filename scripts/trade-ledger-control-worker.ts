@@ -16,7 +16,6 @@ const signalBarIndices = new Float64Array(dataset.signalBarIndices);
 const barsHeld = new Float64Array(dataset.barsHeld);
 const pnlPercents = new Float64Array(dataset.pnlPercents);
 const pairOffsets = new Uint32Array(dataset.pairOffsets);
-const pairIndices = new Uint32Array(dataset.pairIndices);
 const pairSignalBarsMonotonic = new Uint8Array(dataset.pairSignalBarsMonotonic);
 const pairNextCursors = new Uint32Array(dataset.pairNextCursors);
 
@@ -52,33 +51,31 @@ function runControl(k: number, input: TradeLedgerControlWorkerRunMessage): Trade
             let cursor = pairStart;
             if (pairSignalBarsMonotonic[pair] === 1 && cooldownBars === 0) {
                 while (cursor < pairEnd) {
-                    const index = pairIndices[cursor]!;
-                    const fillBar = signalBarIndices[index]! + input.shift;
+                    const fillBar = signalBarIndices[cursor]! + input.shift;
                     if (!(rng() < input.calibratedP)) {
                         cursor += 1;
                         continue;
                     }
-                    const pnl = pnlPercents[index]!;
-                    const exitBar = fillBar + barsHeld[index]!;
+                    const pnl = pnlPercents[cursor]!;
+                    const exitBar = fillBar + barsHeld[cursor]!;
                     slotUntil = exitBar;
                     equity *= 1 + pnl / 100;
-                    if (signalTimes[index]! < input.splitTime) isPnls.push(pnl);
+                    if (signalTimes[cursor]! < input.splitTime) isPnls.push(pnl);
                     else holdoutPnls.push(pnl);
                     cursor = pairNextCursors[cursor]!;
                 }
                 continue;
             }
             for (; cursor < pairEnd; cursor += 1) {
-                const index = pairIndices[cursor]!;
-                const fillBar = signalBarIndices[index]! + input.shift;
+                const fillBar = signalBarIndices[cursor]! + input.shift;
                 const cooling = cooldownBars > 0 && cooldownUntilBar >= fillBar;
                 if (slotUntil >= fillBar || cooling || !(rng() < input.calibratedP)) continue;
-                const pnl = pnlPercents[index]!;
-                const exitBar = fillBar + barsHeld[index]!;
+                const pnl = pnlPercents[cursor]!;
+                const exitBar = fillBar + barsHeld[cursor]!;
                 slotUntil = exitBar;
                 if (cooldownBars > 0) cooldownUntilBar = Math.max(cooldownUntilBar, exitBar + cooldownBars - 1);
                 equity *= 1 + pnl / 100;
-                if (signalTimes[index]! < input.splitTime) isPnls.push(pnl);
+                if (signalTimes[cursor]! < input.splitTime) isPnls.push(pnl);
                 else holdoutPnls.push(pnl);
             }
         }
@@ -87,8 +84,7 @@ function runControl(k: number, input: TradeLedgerControlWorkerRunMessage): Trade
             const slots: number[] = [];
             let cooldownUntilBar = -1;
             for (let cursor = pairOffsets[pair]!; cursor < pairOffsets[pair + 1]!; cursor += 1) {
-                const index = pairIndices[cursor]!;
-                const fillBar = signalBarIndices[index]! + input.shift;
+                const fillBar = signalBarIndices[cursor]! + input.shift;
                 let openSlots = 0;
                 let freeIdx = -1;
                 for (let slot = 0; slot < slots.length; slot += 1) {
@@ -98,13 +94,13 @@ function runControl(k: number, input: TradeLedgerControlWorkerRunMessage): Trade
                 }
                 const cooling = cooldownBars > 0 && cooldownUntilBar >= fillBar;
                 if (openSlots >= input.replay.maxOpenTrades || cooling || !(rng() < input.calibratedP)) continue;
-                const pnl = pnlPercents[index]!;
-                const exitBar = fillBar + barsHeld[index]!;
+                const pnl = pnlPercents[cursor]!;
+                const exitBar = fillBar + barsHeld[cursor]!;
                 if (freeIdx >= 0) slots[freeIdx] = exitBar;
                 else slots.push(exitBar);
                 if (cooldownBars > 0) cooldownUntilBar = Math.max(cooldownUntilBar, exitBar + cooldownBars - 1);
                 equity *= 1 + pnl / 100;
-                if (signalTimes[index]! < input.splitTime) isPnls.push(pnl);
+                if (signalTimes[cursor]! < input.splitTime) isPnls.push(pnl);
                 else holdoutPnls.push(pnl);
             }
         }

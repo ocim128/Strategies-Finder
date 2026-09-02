@@ -124,6 +124,8 @@ export interface LedgerSweepDiagnosticsV1 {
     throughput: Record<string, unknown>;
     verdictCounts: Record<string, number>;
     errors: string[];
+    /** Optional aggregate count used by bounded live-status projections. */
+    errorCount?: number;
 }
 
 export function createEmptyLedgerSweepDiagnostics(args: {

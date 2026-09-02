@@ -17,7 +17,6 @@ export interface SharedTradeLedgerControlDataset {
     barsHeld: SharedArrayBuffer;
     pnlPercents: SharedArrayBuffer;
     pairOffsets: SharedArrayBuffer;
-    pairIndices: SharedArrayBuffer;
     pairSignalBarsMonotonic: SharedArrayBuffer;
     pairNextCursors: SharedArrayBuffer;
 }
@@ -103,22 +102,10 @@ function buildSharedDataset(prepared: PreparedTradeLedgerReplay): SharedTradeLed
     const signalBarIndices = new Float64Array(signalBarIndicesBuffer);
     const barsHeld = new Float64Array(barsHeldBuffer);
     const pnlPercents = new Float64Array(pnlPercentsBuffer);
-    const rowIndexes = new Map<PreparedTradeLedgerReplay["controlRows"][number], number>();
-    rows.forEach((row, index) => {
-        const asIf = row.asIf!;
-        signalTimes[index] = row.signalTime;
-        signalBarIndices[index] = row.signalBarIndex;
-        barsHeld[index] = asIf.barsHeld;
-        pnlPercents[index] = asIf.pnlPercent;
-        rowIndexes.set(row, index);
-    });
-
     const pairOffsetsBuffer = sharedUint32Buffer(prepared.controlPairs.size + 1);
-    const pairIndicesBuffer = sharedUint32Buffer(rows.length);
     const pairSignalBarsMonotonicBuffer = sharedUint8Buffer(prepared.controlPairs.size);
     const pairNextCursorsBuffer = sharedUint32Buffer(rows.length);
     const pairOffsets = new Uint32Array(pairOffsetsBuffer);
-    const pairIndices = new Uint32Array(pairIndicesBuffer);
     const pairSignalBarsMonotonic = new Uint8Array(pairSignalBarsMonotonicBuffer);
     const pairNextCursors = new Uint32Array(pairNextCursorsBuffer);
     let cursor = 0;
@@ -128,22 +115,22 @@ function buildSharedDataset(prepared: PreparedTradeLedgerReplay): SharedTradeLed
         let previousSignalBar = Number.NEGATIVE_INFINITY;
         let monotonic = true;
         for (const row of pairRows) {
-            const index = rowIndexes.get(row);
-            if (index === undefined) throw new Error("Control pair index is missing from the candidate index.");
+            const asIf = row.asIf!;
             if (!Number.isFinite(row.signalBarIndex) || !Number.isFinite(row.asIf!.barsHeld) || row.signalBarIndex < previousSignalBar) monotonic = false;
             previousSignalBar = row.signalBarIndex;
-            pairIndices[cursor] = index;
+            signalTimes[cursor] = row.signalTime;
+            signalBarIndices[cursor] = row.signalBarIndex;
+            barsHeld[cursor] = asIf.barsHeld;
+            pnlPercents[cursor] = asIf.pnlPercent;
             cursor += 1;
         }
         pairSignalBarsMonotonic[pairIndex] = monotonic ? 1 : 0;
         let nextCursor = pairOffsets[pairIndex]!;
         for (let pairCursor = pairOffsets[pairIndex]!; pairCursor < cursor; pairCursor += 1) {
-            const rowIndex = pairIndices[pairCursor]!;
-            const blockedThrough = signalBarIndices[rowIndex]! + barsHeld[rowIndex]!;
+            const blockedThrough = signalBarIndices[pairCursor]! + barsHeld[pairCursor]!;
             if (nextCursor < pairCursor + 1) nextCursor = pairCursor + 1;
             while (nextCursor < cursor) {
-                const nextRowIndex = pairIndices[nextCursor]!;
-                if (signalBarIndices[nextRowIndex]! > blockedThrough) break;
+                if (signalBarIndices[nextCursor]! > blockedThrough) break;
                 nextCursor += 1;
             }
             pairNextCursors[pairCursor] = nextCursor;
@@ -151,6 +138,7 @@ function buildSharedDataset(prepared: PreparedTradeLedgerReplay): SharedTradeLed
         pairIndex += 1;
     }
     pairOffsets[pairIndex] = cursor;
+    if (cursor !== rows.length) throw new Error("Control pair rows do not match the candidate row count.");
 
     return {
         count: rows.length,
@@ -160,7 +148,6 @@ function buildSharedDataset(prepared: PreparedTradeLedgerReplay): SharedTradeLed
         barsHeld: barsHeldBuffer,
         pnlPercents: pnlPercentsBuffer,
         pairOffsets: pairOffsetsBuffer,
-        pairIndices: pairIndicesBuffer,
         pairSignalBarsMonotonic: pairSignalBarsMonotonicBuffer,
         pairNextCursors: pairNextCursorsBuffer,
     };
@@ -180,7 +167,7 @@ function defaultWorkerPath(): string {
 /**
  * Create a bounded worker-thread pool over shared candidate columns. Workers
  * never receive the parsed ledger object graph; only the compact immutable
- * control columns and pair indexes are shared.
+ * control columns and pair offsets are shared.
  */
 export function createTradeLedgerControlPool(
     prepared: PreparedTradeLedgerReplay,

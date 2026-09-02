@@ -1489,10 +1489,10 @@ export class BatchBacktestService {
      * failure increments the shared `ReattachBackoffController` counter (audit
      * Finding 1), surfaces a "connection interrupted" status alongside the last
      * known snapshot, and retries with capped backoff (2s → 5s → 10s → 15s). A
-     * successful poll resets the counter. Only after the give-up threshold
-     * (~5 min at the 15s ceiling) does the loop give up and restore the Run
-     * button so the user can re-click to reattach — turning a single Vite
-     * restart from a fatal UI failure into a recoverable delay.
+     * successful poll resets the counter. After the bounded retry threshold,
+     * the loop resets its counter and retries at a 60s cadence while retaining
+     * the run id and Stop action; only an authoritative terminal/mismatch ends
+     * ownership.
      */
     private async reattachToInProgressServerRun(): Promise<void> {
         const POLL_INTERVAL_MS = 2000;
@@ -1502,6 +1502,15 @@ export class BatchBacktestService {
         // live in the shared ReattachBackoffController (reattach-backoff.ts).
         this.reattachPollingStopped = false;
         this.reattachBackoff.reset();
+        // A persisted run id means this tab already owns a reattach window;
+        // scope the initial busy UI to that case. With no id, the first poll is
+        // intentionally unscoped and may discover another tab's active run.
+        if (this.activeServerRunId) {
+            const reattachDom = this.getDom();
+            reattachDom.batchBacktestRunBtn.disabled = true;
+            setVisible(reattachDom.batchBacktestStopBtn, true);
+            this.setRunBusy(reattachDom, true);
+        }
         // Last snapshot rendered while the run was healthy, so the
         // "connection interrupted" branch can keep the last known progress
         // visible instead of blanking the status line.
@@ -1548,19 +1557,29 @@ export class BatchBacktestService {
                         error: error instanceof Error ? error.message : String(error),
                     });
                     if (outcome.gaveUp) {
-                        // Give up retrying but do NOT strand the UI: restore the
-                        // Run button so the tab isn't stuck on stale busy state.
-                        // The server may still own the run or have finished it
-                        // with retained artifacts; reloading the page re-runs
-                        // init()'s reattach, which picks up either outcome.
-                        // Mirrors the normal-completion DOM restore below.
-                        const dom = this.getDom();
-                        dom.batchBacktestRunBtn.disabled = false;
-                        setVisible(dom.batchBacktestStopBtn, false);
-                        this.setRunBusy(dom, false);
-                        this.updateSummary(dom);
-                        dom.batchBacktestStatus.textContent = "Server connection lost — reload to reattach, or click Run to start over.";
-                        return;
+                        if (!this.activeServerRunId) {
+                            // This was an unscoped discovery poll, not a
+                            // persisted ownership window. Leave normal Batch
+                            // actions available rather than polling forever.
+                            this.getDom().batchBacktestStatus.textContent
+                                = "Server connection unavailable; click Run to retry.";
+                            return;
+                        }
+                        // Do not clear ownership after a transient outage: the
+                        // server may still be executing and Stop must remain
+                        // available. Reset the bounded counter and retry at a
+                        // low cadence until status recovers or runId mismatches.
+                        this.reattachBackoff.reset();
+                        this.getDom().batchBacktestStatus.textContent
+                            = "Server connection lost — retrying status in 60s. Stop remains available.";
+                        await new Promise<void>((resolve) => {
+                            this.reattachTimerResolve = resolve;
+                            this.reattachTimer = setTimeout(resolve, 60_000);
+                        });
+                        this.reattachTimer = null;
+                        this.reattachTimerResolve = null;
+                        poll -= 1;
+                        continue;
                     }
                     // Keep the last known progress visible alongside the
                     // interrupted warning so the user can see the run is
@@ -1574,7 +1593,7 @@ export class BatchBacktestService {
                     });
                     this.reattachTimer = null;
                     this.reattachTimerResolve = null;
-                    // Don't advance `poll` into the long-poll step-down just
+                        // Don't advance `poll` into the long-poll step-down just
                     // because of retries — backoff already shed load.
                     poll -= 1;
                     continue;
@@ -1593,6 +1612,11 @@ export class BatchBacktestService {
                         this.updateSummary(dom);
                         dom.batchBacktestStatus.textContent = "Batch run was replaced by a newer run — click Run to start over.";
                     }
+                    // A mismatch is authoritative server-side loss/replacement;
+                    // clear this tab's persisted ownership after restoring the
+                    // controls so a reload does not retry a dead run id.
+                    const staleRunId = this.activeServerRunId;
+                    if (staleRunId) this.clearActiveServerRun(staleRunId);
                     return;
                 }
                 if (!payload.running || !payload.run) {
@@ -2222,6 +2246,7 @@ export class BatchBacktestService {
     private clearActiveServerRun(expectedRunId?: string, clearMemory = true): void {
         if (expectedRunId && this.activeServerRunId && this.activeServerRunId !== expectedRunId) return;
         if (clearMemory) {
+            this.stopReattachPoll();
             this.activeServerRunId = null;
             this.serverRunActive = false;
         }
@@ -3446,7 +3471,7 @@ export class BatchBacktestService {
         // also used a bare setTimeout with no cancellation hook (Stop had to
         // wait the full 2s delay before the loop noticed). Both gaps are
         // closed below by sharing the consecutive-failure backoff state machine
-        // (2s -> 5s -> 10s -> 15s, give up after ~5 min at the 15s ceiling) with
+        // (2s -> 5s -> 10s -> 15s, then a 60s low-cadence retry) with
         // `reattachToInProgressServerRun` via ReattachBackoffController.
         const healthyDelay = (): Promise<void> => new Promise<void>((resolve) => {
             this.topMeanReattachTimerResolve = resolve;
@@ -3518,17 +3543,19 @@ export class BatchBacktestService {
                         message: err instanceof Error ? err.message : String(err),
                     });
                     if (outcome.gaveUp) {
-                        // Give up retrying but do NOT strand the UI: restore
-                        // the run buttons and clear the persisted marker so a
-                        // reload can reattach if the server recovers. Mirrors
-                        // the normal-Batch give-up path.
-                        setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
-                        setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
-                        this.activeTopMeanRunId = null;
-                        clearTopMeanActiveRun();
+                        // Preserve ownership across a prolonged transient
+                        // outage. The server may still be running; only a
+                        // terminal response or HTTP 404 clears this marker.
+                        this.topMeanReattachBackoff.reset();
                         dom.batchBacktestSp500TopMeanProgressText.textContent =
-                            `Server connection lost — reload to reattach, or click TOP_MEAN to start over.`;
-                        return;
+                            `Server connection lost — retrying status in 60s. Stop remains available.`;
+                        await new Promise<void>((resolve) => {
+                            this.topMeanReattachTimerResolve = resolve;
+                            this.topMeanReattachTimer = setTimeout(resolve, 60_000);
+                        });
+                        this.topMeanReattachTimer = null;
+                        this.topMeanReattachTimerResolve = null;
+                        continue;
                     }
                     dom.batchBacktestSp500TopMeanProgressText.textContent =
                         `Server connection interrupted — retrying (${outcome.consecutive}/${outcome.max})`;

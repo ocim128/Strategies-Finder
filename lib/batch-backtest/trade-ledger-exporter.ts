@@ -29,6 +29,7 @@
  */
 
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { Buffer } from "node:buffer";
 import { join } from "node:path";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import {
@@ -485,6 +486,7 @@ const PROVENANCE_FILE = "provenance.json";
 const LEDGER_FILE = "ledger.jsonl";
 const RANKS_FILE = "signal-ranks.jsonl";
 const SUMMARY_FILE = "summary.json";
+const RANK_APPEND_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /**
  * Per-run ledger writer. `create` never throws — a setup failure returns null
@@ -602,21 +604,37 @@ export class TradeLedgerWriter {
         this.finalized = true;
 
         try {
+            const rankPath = join(this.runDir, RANKS_FILE);
             const rankLines: string[] = [];
+            let rankChunkBytes = 0;
+            let wroteRankLine = false;
+            const flushRankChunk = async (): Promise<void> => {
+                if (rankLines.length === 0) return;
+                await appendWithRetry(this.deps, rankPath, rankLines.join(""));
+                rankLines.length = 0;
+                rankChunkBytes = 0;
+            };
             const times = [...this.rankPairsByTime.keys()].sort((a, b) => a - b);
             for (const time of times) {
                 const pairs = [...this.rankPairsByTime.get(time)!].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-                pairs.forEach((pair, index) => {
-                    rankLines.push(JSON.stringify({
+                for (const [index, pair] of pairs.entries()) {
+                    const line = `${JSON.stringify({
                         signalTime: time,
                         pair,
                         rank: index + 1,
                         candidatesAtTime: pairs.length,
-                    }));
-                });
+                    })}\n`;
+                    rankLines.push(line);
+                    wroteRankLine = true;
+                    rankChunkBytes += Buffer.byteLength(line, "utf8");
+                    if (rankChunkBytes >= RANK_APPEND_CHUNK_BYTES) await flushRankChunk();
+                }
             }
-            rankLines.push("");
-            await appendWithRetry(this.deps, join(this.runDir, RANKS_FILE), rankLines.join("\n"));
+            // Each emitted line already carries the historical trailing
+            // newline. Keep the empty-rank append so the file is created just
+            // as it was by the former single-write implementation.
+            if (wroteRankLine) await flushRankChunk();
+            else await appendWithRetry(this.deps, rankPath, "");
         } catch (error) {
             this.recordFailure(error);
         }

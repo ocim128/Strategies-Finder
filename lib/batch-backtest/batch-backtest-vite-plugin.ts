@@ -47,7 +47,7 @@ import {
     type TradeLedgerRowContext,
     type TradeLedgerRunOptions,
 } from "./trade-ledger-exporter";
-import { resolveLedgerSweepFolder, resolveLedgerSweepRule } from "./trade-ledger-sweep-catalog";
+import { discoverLedgerSweepCatalog, resolveLedgerSweepFolder, resolveLedgerSweepRule } from "./trade-ledger-sweep-catalog";
 import { toTradeGateFeatureRow, tradeGateSignalKey, type TradeGateFeatureRow } from "./trade-ledger-features";
 import { createTradeGateStats, addTradeGateStats, type TradeGate, type TradeGatePairContext, type TradeGateProvenance, type TradeGateStats } from "./trade-gate";
 import { createTradeGateRuleLoaderRun, type TradeGateRuleLoaderRun } from "./trade-gate-rule-loader";
@@ -1017,7 +1017,11 @@ async function resolveTradeGate(
 ): Promise<ResolvedTradeGate> {
     const loaderRun = await createTradeGateRuleLoaderRun();
     try {
-        const folder = await resolveLedgerSweepFolder(serverRoot, options.folderId);
+        // Resolve the folder and all rules against one fresh catalog snapshot.
+        // A Gate run can select up to 16 rules; resolving each rule without the
+        // snapshot would rescan and rehash the entire ledger catalog per rule.
+        const catalog = await discoverLedgerSweepCatalog(serverRoot);
+        const folder = await resolveLedgerSweepFolder(serverRoot, options.folderId, catalog);
         if (!folder) throw new Error(`Trade Gate ledger folder not found: ${options.folderId}.`);
         if (!folder.entry.runnable) {
             throw new Error(`Trade Gate ledger folder is not runnable: ${folder.entry.refusalReason ?? "unknown reason"}.`);
@@ -1031,7 +1035,7 @@ async function resolveTradeGate(
             if (!edgeRule) {
                 throw new Error(`Trade Gate rule ${ruleId} is not an EDGE-CANDIDATE in the latest sweep ${latestSweep.sweepId}.`);
             }
-            const resolved = await resolveLedgerSweepRule(serverRoot, ruleId);
+            const resolved = await resolveLedgerSweepRule(serverRoot, ruleId, catalog);
             if (!resolved || resolved.entry.sourceHash !== edgeRule.sourceHash) {
                 throw new Error(`Trade Gate rule ${ruleId} changed after sweep ${latestSweep.sweepId}; rerun the sweep.`);
             }
@@ -1241,23 +1245,15 @@ function buildTradeGatePairContexts(
         }
     }
 
-    // Sort each timestamp bucket once. The feature currently consumes only
-    // the cardinality, but retaining the sorted bucket preserves the original
-    // deterministic candidate ordering for future feature consumers.
-    const sortedPairsByTime = new Map<number, readonly string[]>();
-    for (const [signalTime, pairs] of pairsByTime) {
-        sortedPairsByTime.set(signalTime, [...pairs].sort((a, b) => a < b ? -1 : a > b ? 1 : 0));
-    }
-
     const pairContexts = new Map<string, TradeGatePairContext>();
     for (const [pair, rows] of rowsByPair) {
         const featuresBySignalKey = new Map<string, TradeGateFeatureRow>();
         for (const row of rows) {
             if (isCancelled?.()) throw new Error("Trade Gate run was stopped during feature assignment.");
-            const pairs = sortedPairsByTime.get(row.signalTime) ?? [];
+            const pairs = pairsByTime.get(row.signalTime);
             featuresBySignalKey.set(
                 tradeGateSignalKey(row.signalBarIndex, row.direction),
-                toTradeGateFeatureRow(row, pairs.length),
+                toTradeGateFeatureRow(row, pairs?.size ?? 0),
             );
         }
         pairContexts.set(pair, { pair, featuresBySignalKey });

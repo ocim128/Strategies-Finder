@@ -145,11 +145,13 @@ export class TradeLedgerSweepService {
     private catalog: LedgerSweepCatalogResponse | null = null;
     private activeServerRunId: string | null = null;
     private running = false;
-    private results: LedgerSweepRuleResult[] = [];
+    private readonly results = new Map<string, LedgerSweepRuleResult>();
     private summary: string | null = null;
     private diagnostics: LedgerSweepDiagnosticsV1 | null = null;
     private diagnosticsTerminalPhase: LedgerSweepDiagnosticsSummaryV1["terminalPhase"] = "done";
     private reattachTimer: ReturnType<typeof setTimeout> | null = null;
+    private reattachTimerResolve: (() => void) | null = null;
+    private resultRenderTimer: ReturnType<typeof setTimeout> | null = null;
     private readonly reattachBackoff = new ReattachBackoffController();
 
     private getDom(): TradeLedgerSweepDom {
@@ -313,14 +315,31 @@ export class TradeLedgerSweepService {
 
     private renderResults(): void {
         const dom = this.getDom();
-        const results = sortTradeLedgerSweepResults(this.results);
+        const results = sortTradeLedgerSweepResults([...this.results.values()]);
         dom.tradeLedgerSweepResults.innerHTML = results.map((result) => `<div class="finder-result-row trade-ledger-sweep-result" data-rule-id="${escapeHtml(result.ruleId)}" data-verdict="${escapeHtml(result.verdict)}"><div class="finder-result-header"><span class="finder-result-name">${escapeHtml(result.ruleName)}</span><span class="finder-result-verdict">${escapeHtml(result.verdict)}</span></div><div class="finder-result-metrics">kept ${formatMetric(result.keptPct)}% · IS ${formatMetric(result.isMeanPnlDeltaPp)}pp · holdout ${formatMetric(result.holdoutMeanPnlDeltaPp)}pp · replay ${formatMetric(result.ruleReplayMs)}ms · controls ${formatMetric(result.controlReplayMs)}ms</div>${result.note ? `<div class="finder-result-note">${escapeHtml(result.note)}</div>` : ""}${result.error ? `<div class="finder-result-note">${escapeHtml(result.error)}</div>` : ""}</div>`).join("");
         dom.tradeLedgerSweepEmpty.hidden = results.length > 0;
     }
 
+    private scheduleResultsRender(): void {
+        if (this.resultRenderTimer !== null) return;
+        this.resultRenderTimer = setTimeout(() => {
+            this.resultRenderTimer = null;
+            this.renderResults();
+        }, 0);
+    }
+
+    private flushResultsRender(): void {
+        if (this.resultRenderTimer !== null) {
+            clearTimeout(this.resultRenderTimer);
+            this.resultRenderTimer = null;
+        }
+        this.renderResults();
+    }
+
     private renderTerminal(run: LedgerSweepStatusRun | LedgerSweepTerminalView): void {
         const dom = this.getDom();
-        this.results = [...run.results];
+        this.results.clear();
+        for (const result of run.results) this.results.set(result.ruleId, result);
         this.summary = run.summary;
         this.diagnostics = run.diagnostics;
         this.renderDiagnosticsSummary(run.diagnostics);
@@ -330,7 +349,7 @@ export class TradeLedgerSweepService {
         dom.tradeLedgerSweepDiagnostics.textContent = formatTradeLedgerSweepDiagnostics(run.diagnostics);
         dom.tradeLedgerSweepCopySummaryBtn.disabled = !this.summary;
         dom.tradeLedgerSweepCopyDiagnosticsBtn.disabled = false;
-        this.renderResults();
+        this.flushResultsRender();
     }
 
     private async startRun(): Promise<void> {
@@ -340,7 +359,7 @@ export class TradeLedgerSweepService {
         const runId = createTradeLedgerSweepRunId();
         this.activeServerRunId = runId;
         this.running = true;
-        this.results = [];
+        this.results.clear();
         this.summary = null;
         this.diagnostics = null;
         this.diagnosticsTerminalPhase = "done";
@@ -367,7 +386,7 @@ export class TradeLedgerSweepService {
                 onStart: (event) => { if (!isTradeLedgerSweepRunCurrent(this.activeServerRunId, event.runId)) return; this.setStatus(`Running ${event.folderName}`, "running"); },
                 onPhase: (event) => { if (isTradeLedgerSweepRunCurrent(this.activeServerRunId, event.runId)) this.renderProgress(event); },
                 onProgress: (event) => { if (isTradeLedgerSweepRunCurrent(this.activeServerRunId, event.runId)) this.renderProgress(event); },
-                onRuleResult: (event) => { if (!isTradeLedgerSweepRunCurrent(this.activeServerRunId, event.runId)) return; this.results = upsertTradeLedgerSweepResult(this.results, event.result); this.renderResults(); },
+                onRuleResult: (event) => { if (!isTradeLedgerSweepRunCurrent(this.activeServerRunId, event.runId)) return; this.results.set(event.result.ruleId, event.result); this.scheduleResultsRender(); },
                 onDiagnostics: (event) => { if (isTradeLedgerSweepRunCurrent(this.activeServerRunId, event.runId)) { this.getDom().tradeLedgerSweepDiagnostics.textContent = formatTradeLedgerSweepDiagnostics(event.entry); } },
                 onDone: (event) => this.adoptTerminal(event),
                 onCancelled: (event) => this.adoptTerminal(event),
@@ -396,6 +415,7 @@ export class TradeLedgerSweepService {
     private async stopRun(): Promise<void> {
         const runId = this.activeServerRunId;
         if (!runId) return;
+        this.wakeReattachDelay();
         try {
             await fetch("/api/trade-ledger-sweep/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ runId }) });
             if (this.activeServerRunId === runId) this.setStatus("Stop requested…", "running");
@@ -422,9 +442,10 @@ export class TradeLedgerSweepService {
                     return;
                 }
                 if (payload.run) {
-                    this.results = [...payload.run.results];
+                    this.results.clear();
+                    for (const result of payload.run.results) this.results.set(result.ruleId, result);
                     this.diagnostics = payload.run.diagnostics;
-                    this.renderResults();
+                    this.flushResultsRender();
                     this.renderDiagnosticsSummary(payload.run.diagnostics);
                     this.getDom().tradeLedgerSweepDiagnostics.textContent = formatTradeLedgerSweepDiagnostics(payload.run.diagnostics);
                     this.setStatus(`Reattached: ${payload.run.phase}`, "running");
@@ -436,12 +457,15 @@ export class TradeLedgerSweepService {
             } catch (error) {
                 const failure = this.reattachBackoff.recordFailure();
                 if (failure.gaveUp || this.activeServerRunId !== runId) {
-                    this.setStatus("Reattach gave up; start a new sweep.", "warning");
-                    this.running = false;
-                    this.activeServerRunId = null;
-                    persistActiveRun(null);
-                    this.setBusy();
-                    return;
+                    if (this.activeServerRunId !== runId) return;
+                    // A transient outage must not orphan a server-owned sweep.
+                    // Keep the run id and Stop button live, reset the counter,
+                    // and retry at a low cadence until the server answers or
+                    // explicitly reports a mismatch.
+                    this.reattachBackoff.reset();
+                    this.setStatus("Connection lost; retrying status in 60s. Stop remains available.", "warning");
+                    await this.delay(60_000);
+                    continue;
                 }
                 this.setStatus(`Reattaching (${failure.consecutive}/${failure.max})…`, "warning");
                 await this.delay(failure.backoffDelayMs);
@@ -452,8 +476,25 @@ export class TradeLedgerSweepService {
     }
 
     private delay(ms: number): Promise<void> {
-        if (this.reattachTimer) clearTimeout(this.reattachTimer);
-        return new Promise((resolve) => { this.reattachTimer = setTimeout(() => { this.reattachTimer = null; resolve(); }, ms); });
+        this.wakeReattachDelay();
+        return new Promise((resolve) => {
+            this.reattachTimerResolve = resolve;
+            this.reattachTimer = setTimeout(() => {
+                this.reattachTimer = null;
+                this.reattachTimerResolve = null;
+                resolve();
+            }, ms);
+        });
+    }
+
+    private wakeReattachDelay(): void {
+        if (this.reattachTimer !== null) {
+            clearTimeout(this.reattachTimer);
+            this.reattachTimer = null;
+        }
+        const resolve = this.reattachTimerResolve;
+        this.reattachTimerResolve = null;
+        resolve?.();
     }
 
     private async restoreLastRun(): Promise<void> {

@@ -109,14 +109,26 @@ async function discoverLatestSweep(folderPath: string): Promise<LedgerSweepLates
     } catch {
         return null;
     }
-    const candidates: LedgerSweepLatestSweep[] = [];
-    for (const entry of entries) {
-        if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
-        const summaryPath = path.join(folderPath, "sweeps", entry.name, "summary.json");
-        const summary = await readJson<Record<string, unknown>>(summaryPath);
+    const candidates: Array<{ sweepId: string; summaryPath: string; modifiedAt: number }> = [];
+    let nextEntry = 0;
+    const inspectEntry = async (): Promise<void> => {
+        while (nextEntry < entries.length) {
+            const entry = entries[nextEntry++];
+            if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+            const summaryPath = path.join(folderPath, "sweeps", entry.name, "summary.json");
+            const summaryInfo = await fileBytes(summaryPath);
+            if (summaryInfo) candidates.push({ sweepId: entry.name, summaryPath, modifiedAt: summaryInfo.modifiedAt });
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(16, entries.length) }, () => inspectEntry()));
+    candidates.sort((a, b) => b.modifiedAt - a.modifiedAt || (a.sweepId < b.sweepId ? -1 : 1));
+
+    // The newest completed summary is the only one needed. Stat all small
+    // metadata files first, then parse newest-first so historical sweeps do not
+    // all incur JSON reads on every catalog refresh.
+    for (const candidate of candidates) {
+        const summary = await readJson<Record<string, unknown>>(candidate.summaryPath);
         if (!summary || !isCompletedTradeLedgerSweepSummary(summary) || !Array.isArray(summary.results)) continue;
-        const summaryInfo = await fileBytes(summaryPath);
-        if (!summaryInfo) continue;
         const edgeRules = summary.results
             .filter((value): value is LedgerSweepRuleResult => Boolean(
                 value
@@ -137,10 +149,9 @@ async function discoverLatestSweep(folderPath: string): Promise<LedgerSweepLates
                 isMedianPnlDeltaPp: value.isMedianPnlDeltaPp,
                 holdoutMedianPnlDeltaPp: value.holdoutMedianPnlDeltaPp,
             }));
-        candidates.push({ sweepId: entry.name, modifiedAt: summaryInfo.modifiedAt, edgeRules });
+        return { sweepId: candidate.sweepId, modifiedAt: candidate.modifiedAt, edgeRules };
     }
-    candidates.sort((a, b) => b.modifiedAt - a.modifiedAt || (a.sweepId < b.sweepId ? -1 : 1));
-    return candidates[0] ?? null;
+    return null;
 }
 
 function certifiedNumber(value: unknown): number | null {
@@ -312,6 +323,7 @@ export async function resolveLedgerSweepFolder(
 export async function resolveLedgerSweepRule(
     serverRoot: string,
     ruleId: string,
+    catalogOverride?: LedgerSweepCatalog,
 ): Promise<{ entry: LedgerSweepRuleCatalogEntry; absolutePath: string } | null> {
     if (!ruleId || ruleId.includes("/") || ruleId.includes("\\") || ruleId === "." || ruleId === "..") return null;
     const catalogRoot = path.resolve(serverRoot, "archive", "mining-ledger");
@@ -319,7 +331,7 @@ export async function resolveLedgerSweepRule(
     const filePath = path.join(rulesRoot, `${ruleId}.ts`);
     const contained = await canonicalContained(rulesRoot, filePath);
     if (!contained || path.basename(contained) !== `${ruleId}.ts`) return null;
-    const catalog = await discoverLedgerSweepCatalog(serverRoot);
+    const catalog = catalogOverride ?? await discoverLedgerSweepCatalog(serverRoot);
     const entry = catalog.rules.find((rule) => rule.ruleId === ruleId);
     return entry ? { entry, absolutePath: contained } : null;
 }

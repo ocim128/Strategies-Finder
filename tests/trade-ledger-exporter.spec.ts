@@ -704,6 +704,39 @@ describe("trade ledger writer", () => {
         expect(summary.failedPairs).to.deep.equal([]);
     });
 
+    it("streams large rank output in bounded append chunks", async () => {
+        const { files, deps } = makeMemDeps();
+        const rankChunkSizes: number[] = [];
+        const trackedDeps: TradeLedgerWriterDeps = {
+            ...deps,
+            appendFile: (async (filePath: unknown, data: unknown) => {
+                if (String(filePath).endsWith("signal-ranks.jsonl")) rankChunkSizes.push(String(data).length);
+                await deps.appendFile(filePath, data);
+            }) as unknown as TradeLedgerWriterDeps["appendFile"],
+        };
+        const writer = await TradeLedgerWriter.create({
+            rootDir: "tmp-root",
+            folder: "led",
+            runId: "batch-large-ranks",
+            startedAtMs: STARTED_AT,
+            provenance: { ...sampleProvenance, runId: "batch-large-ranks" },
+            deps: trackedDeps,
+        });
+        expect(writer).to.not.equal(null);
+        const rows = Array.from({ length: 100_000 }, (_, index) => sampleRow({
+            signalTime: 1000 + index,
+            pair: "A+B",
+        }));
+        await writer!.appendPairRows({ rows, duplicatesCollapsed: 0, rightCensored: 0 });
+        await writer!.finalize({ cancelled: false, finishedAtMs: STARTED_AT + 5 });
+
+        expect(rankChunkSizes.length).to.be.greaterThan(1);
+        expect(Math.max(...rankChunkSizes)).to.be.lessThan(4 * 1024 * 1024 + 1024);
+        const rankText = files.get(path.join("tmp-root", "led", `${formatLedgerRunStamp(STARTED_AT)}_batch-large-ranks`, "signal-ranks.jsonl"))!;
+        expect(rankText.endsWith("\n")).to.equal(true);
+        expect(rankText.split("\n").filter((line) => line.trim()).length).to.equal(rows.length);
+    });
+
     it("records write failures instead of throwing, and marks ledgerComplete false", async () => {
         const { files, deps } = makeMemDeps();
         const failingAppend = (async () => {

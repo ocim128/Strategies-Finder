@@ -150,6 +150,30 @@ function updateState(generation: number, patch: Partial<LedgerSweepStatusRun>): 
     Object.assign(runState, patch);
 }
 
+/**
+ * Status is a live control-plane endpoint polled every couple of seconds. The
+ * worker emits one memory sample per second, so returning the complete history
+ * would make each poll retransmit an ever-growing payload. Keep the full
+ * diagnostics object in the job/artifact path and expose only the current
+ * sample plus bounded recent CPU/error context while a run is active.
+ */
+function projectRunningStatus(run: LedgerSweepStatusRun): LedgerSweepStatusRun {
+    return {
+        ...run,
+        results: [...run.results],
+        diagnostics: {
+            ...run.diagnostics,
+            memory: {
+                ...run.diagnostics.memory,
+                samples: run.diagnostics.memory.samples.slice(-1),
+            },
+            cpu: run.diagnostics.cpu.slice(-1),
+            errors: run.diagnostics.errors.slice(-20),
+            errorCount: run.diagnostics.errors.length,
+        },
+    };
+}
+
 function upsertResult(results: LedgerSweepStatusRun["results"], result: LedgerSweepStatusRun["results"][number]): void {
     const index = results.findIndex((current) => current.ruleId === result.ruleId);
     if (index >= 0) results[index] = result;
@@ -357,7 +381,7 @@ function handleStatusRequest(rawRunId: unknown): LedgerSweepStatusResponse {
         runMismatch: false,
         running,
         activeWorkloads: getActiveWorkloads(),
-        run: running ? runState : null,
+        run: running ? projectRunningStatus(runState) : null,
         lastRun: running ? null : runState,
     };
 }
@@ -413,6 +437,7 @@ export const __testInternals = {
     handleRunRequest,
     handleStopRequest,
     handleStatusRequest,
+    projectRunningStatusForTests: projectRunningStatus,
     acceptJobEventForTests: acceptJobEvent,
     parseSweepRunId,
     setServerRootForTests(root: string | null): void { serverRoot = root; },

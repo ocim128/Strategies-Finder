@@ -30,17 +30,16 @@
 export const REATTACH_FAILURE_BACKOFF_MS = [2_000, 5_000, 10_000, 15_000] as const;
 
 /**
- * After this many consecutive transient failures, stop retrying and surface the
- * "click Run / TOP_MEAN to reattach" state. ~5 min at the 15s ceiling
- * (20 × 15s) — comfortably longer than a Vite dev-server restart.
+ * After this many consecutive transient failures, the call site enters a
+ * low-cadence retry phase. The run id remains owned until an authoritative
+ * terminal or mismatch response arrives.
  */
 export const MAX_REATTACH_CONSECUTIVE_FAILURES = 20;
 
 /**
  * Result of {@link ReattachBackoffController.recordFailure}. The call site
- * branches on `gaveUp` (restore buttons + surface give-up status) vs. the
- * transient path (surface "retrying (n/max)" + wait `backoffDelayMs` via the
- * loop's own cancellable timer).
+ * branches on `gaveUp` (enter low-cadence retry) vs. the transient path (surface
+ * "retrying (n/max)" + wait `backoffDelayMs` via the loop's own cancellable timer).
  */
 export interface ReattachFailureOutcome {
     /** True when the consecutive-failure count exceeded the give-up threshold. */

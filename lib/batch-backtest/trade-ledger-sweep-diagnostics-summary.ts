@@ -88,10 +88,16 @@ function peakSampleValue(
     diagnostics: LedgerSweepDiagnosticsV1,
     key: "heapUsed" | "rss" | "maxRss",
 ): number | null {
-    const values = diagnostics.memory.samples
-        .map((sample) => sample[key])
-        .filter((value) => Number.isFinite(value));
-    return values.length > 0 ? Math.max(...values) : null;
+    let peak: number | null = null;
+    const consider = (value: unknown): void => {
+        if (!Number.isFinite(value)) return;
+        const numeric = value as number;
+        if (peak === null || numeric > peak) peak = numeric;
+    };
+    consider(diagnostics.memory.workerPeak?.[key]);
+    consider(diagnostics.memory.controllerPeak?.[key]);
+    for (const sample of diagnostics.memory.samples) consider(sample[key]);
+    return peak;
 }
 
 export function buildTradeLedgerSweepDiagnosticsSummary(
@@ -129,6 +135,9 @@ export function buildTradeLedgerSweepDiagnosticsSummary(
             controlReplayMs: row.controlReplayMs,
         }));
     const errors = diagnostics.errors.slice(0, 10);
+    const errorCount = Number.isFinite(diagnostics.errorCount) && diagnostics.errorCount! >= 0
+        ? Math.floor(diagnostics.errorCount!)
+        : diagnostics.errors.length;
     const accountedMs = ledgerMs + ranksMs + joinMs + ruleLoadingMs + prepareMs + ruleReplayMs + controlsMs + reportWritingMs;
 
     return {
@@ -167,9 +176,9 @@ export function buildTradeLedgerSweepDiagnosticsSummary(
         topSlowestRules,
         verdictCounts: { ...diagnostics.verdictCounts },
         errors: {
-            count: diagnostics.errors.length,
+            count: errorCount,
             samples: errors,
-            omitted: diagnostics.errors.length - errors.length,
+            omitted: Math.max(0, errorCount - errors.length),
         },
         optimizationTarget: {
             file: "lib/batch-backtest/trade-ledger-replay-core.ts",
