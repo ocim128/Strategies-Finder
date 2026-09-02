@@ -188,6 +188,7 @@ describe("batch-backtest server plugin processRunBatch", () => {
         const symbolEvent = events.find((e): e is Extract<BatchStreamEvent, { type: "symbol" }> => e.type === "symbol")!;
         expect(symbolEvent.row.data).to.equal(undefined);
         expect(symbolEvent.row.signals).to.equal(undefined);
+        expect(symbolEvent.row.yearlyPnl).to.match(/^\d{4}:[+-]\d+(?:\.\d+)?\(\d+\)$/);
         // result is sent (scalars), but its trades array is empty so the
         // wire stays small even for high-trade-count pairs.
         expect(symbolEvent.row.result).to.not.equal(undefined);

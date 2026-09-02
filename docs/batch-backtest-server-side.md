@@ -113,6 +113,9 @@ In server-side mode, the `symbol` event still strips `data`, `signals`, and
 
 - `buyHoldPct` preserves the B&H / alpha sections.
 - `openTradeAssetScores` preserves the OPEN_SCORE sections.
+- `yearlyPnl` preserves per-symbol exit-year PnL and trade counts as one compact
+  string (for example, `2020:+120.5(14)|2021:-31.0(9)`). It contains no arrays;
+  the browser parses it to build the portfolio yearly section.
 
 The OPEN_SCORE USD replay (POST `/api/batch-backtest/open-score-usd`) produces
 a `reportLines` text array that the engine builds. Both the dedicated
@@ -123,6 +126,11 @@ or service changes.
 
 The browser tab still avoids heavy per-row arrays, while copied summaries match
 the browser-side Batch path for these sections.
+
+Copy Results starts with a `PORTFOLIO YEARLY` line that aggregates the compact
+per-symbol values by exit year, followed by one `YEARLY | <symbol> | ...` line
+per symbol. Years are sorted ascending; rows from older runs without
+`yearlyPnl` are shown as `n/a`.
 
 ## Reload persistence
 
@@ -177,7 +185,9 @@ All endpoints live under `/api/batch-backtest/*`:
 
 The `row` sent in `symbol` events contains ONLY scalars — never `data`,
 `signals`, or `result.trades`. Those arrays stay server-side. This is the
-contract that keeps the browser tab bounded regardless of pair count.
+contract that keeps the browser tab bounded regardless of pair count. The
+optional scalar `yearlyPnl` field is the only per-trade-derived yearly payload
+and is encoded as a string; old rows may omit it and render as `n/a`.
 
 ## S&P 500 TOP_MEAN UI Coordinator
 

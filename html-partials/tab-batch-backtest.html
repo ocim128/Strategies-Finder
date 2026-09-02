@@ -221,6 +221,52 @@
     </section>
 
     <div class="finder-results">
+        <div class="batch-results-header" id="batchBacktestResultsHeader" role="row" aria-label="Sort batch results">
+            <span class="batch-results-header-label" role="columnheader">Pair</span>
+            <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="netProfit">
+                <button class="batch-results-sort-button" type="button" data-batch-sort-key="netProfit" aria-pressed="false">Net PnL</button>
+            </div>
+            <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="expectancy">
+                <button class="batch-results-sort-button" type="button" data-batch-sort-key="expectancy" aria-pressed="false">Expectancy</button>
+            </div>
+            <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="profitFactor">
+                <button class="batch-results-sort-button" type="button" data-batch-sort-key="profitFactor" aria-pressed="false">PF</button>
+            </div>
+            <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="sharpeRatio">
+                <button class="batch-results-sort-button" type="button" data-batch-sort-key="sharpeRatio" aria-pressed="false">Sharpe</button>
+            </div>
+            <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="maxDrawdownPercent">
+                <button class="batch-results-sort-button" type="button" data-batch-sort-key="maxDrawdownPercent" aria-pressed="false">Drawdown</button>
+            </div>
+            <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="totalTrades">
+                <button class="batch-results-sort-button" type="button" data-batch-sort-key="totalTrades" aria-pressed="false">Trades</button>
+            </div>
+            <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="winRate">
+                <button class="batch-results-sort-button" type="button" data-batch-sort-key="winRate" aria-pressed="false">Win Rate</button>
+            </div>
+            <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="avgTrade">
+                <button class="batch-results-sort-button" type="button" data-batch-sort-key="avgTrade" aria-pressed="false">Avg Trade</button>
+            </div>
+            <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="exposurePercent">
+                <button class="batch-results-sort-button" type="button" data-batch-sort-key="exposurePercent" aria-pressed="false">Exposure</button>
+            </div>
+            <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="barCount">
+                <button class="batch-results-sort-button" type="button" data-batch-sort-key="barCount" aria-pressed="false">Bars</button>
+            </div>
+            <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="avgHoldBars">
+                <button class="batch-results-sort-button" type="button" data-batch-sort-key="avgHoldBars" aria-pressed="false">Avg Hold</button>
+            </div>
+            <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="maxHoldBars">
+                <button class="batch-results-sort-button" type="button" data-batch-sort-key="maxHoldBars" aria-pressed="false">Max Hold</button>
+            </div>
+            <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="avgHoldDays">
+                <button class="batch-results-sort-button" type="button" data-batch-sort-key="avgHoldDays" aria-pressed="false">Avg Hold Days</button>
+            </div>
+            <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="maxHoldDays">
+                <button class="batch-results-sort-button" type="button" data-batch-sort-key="maxHoldDays" aria-pressed="false">Max Hold Days</button>
+            </div>
+            <button class="batch-results-sort-reset" type="button" data-batch-sort-key="reset">Reset</button>
+        </div>
         <div class="finder-list" id="batchBacktestResults">
         </div>
 

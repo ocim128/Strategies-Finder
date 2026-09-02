@@ -30,6 +30,7 @@ import { compareTime } from "../strategies";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { isTradeGateEvaluationError, type TradeGate } from "./trade-gate";
+import { formatYearlyPnl, groupTradesByExitYear } from "./batch-yearly-pnl";
 export { parseBatchSymbols } from "./batch-run-contract";
 
 // ============================================================================
@@ -81,6 +82,8 @@ export interface BatchBacktestSymbolResult {
      */
     strategyComparisonPct?: number;
     openTradeAssetScores?: { asset: string; score: number }[];
+    /** Compact per-exit-year PnL/trade-count summary for Copy Results. */
+    yearlyPnl?: string;
     error?: string;
 }
 
@@ -479,6 +482,7 @@ function buildSymbolResult(
         signals: isSyntheticPair ? signals : undefined,
         tradeSummary: buildTradeSummary(data, result),
         strategyComparisonPct: resolveStrategyComparisonPct(result, capitalSettings),
+        yearlyPnl: formatYearlyPnl(groupTradesByExitYear(result.trades)),
     };
 }
 

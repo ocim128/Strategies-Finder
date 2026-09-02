@@ -516,6 +516,67 @@
  * stay for clipboard output only.
  * ------------------------------------------------------------------ */
 
+.batch-results-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1) var(--space-2);
+    flex-wrap: wrap;
+    padding: var(--space-1) var(--space-2);
+    border-bottom: 1px solid var(--glass-border);
+    color: var(--text-tertiary);
+    font-size: var(--font-size-2xs);
+    line-height: var(--line-height-tight);
+}
+
+.batch-results-header-label {
+    margin-right: var(--space-1);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+}
+
+.batch-results-sort-column {
+    display: inline-flex;
+}
+
+.batch-results-sort-button,
+.batch-results-sort-reset {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-1-5);
+    border: 1px solid transparent;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--text-tertiary);
+    font: inherit;
+    cursor: pointer;
+}
+
+.batch-results-sort-button::after {
+    content: "↕";
+    color: var(--text-tertiary);
+}
+
+.batch-results-sort-button:hover,
+.batch-results-sort-reset:hover {
+    color: var(--text-primary);
+    background: hsl(var(--hsl-surface-3) / 0.5);
+}
+
+.batch-results-sort-button.is-active {
+    border-color: hsl(var(--hsl-accent) / 0.35);
+    color: var(--accent-color);
+}
+
+.batch-results-sort-button.is-ascending::after { content: "↑"; }
+.batch-results-sort-button.is-descending::after { content: "↓"; }
+
+.batch-results-sort-reset {
+    margin-left: auto;
+    color: var(--text-secondary);
+}
+
 .batch-result-row {
     display: grid;
     grid-template-columns:

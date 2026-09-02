@@ -31,6 +31,7 @@ export function createFakeBatchElement(): any {
         },
         replaceChildren: () => { el.children = []; },
         appendChild: (child: any) => { el.children = el.children ?? []; el.children.push(child); return child; },
+        querySelectorAll: () => [],
         addEventListener: (type: string, handler: () => void) => {
             const arr = listeners.get(type) ?? [];
             arr.push(handler);

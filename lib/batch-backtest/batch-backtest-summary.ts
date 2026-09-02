@@ -10,6 +10,7 @@ import {
 import { computeBuyAndHoldPct, computeCurrentMaxActiveCandidates, computeOpenTradeAssetScores } from "./batch-row-scalars";
 import type { CurrentMaxActiveCandidate } from "./batch-row-scalars";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
+import { aggregateYearlyPnl, formatYearlyPnl, getBatchRowYearlyPnl } from "./batch-yearly-pnl";
 import type { TradeGateStats } from "./trade-gate";
 
 export { computeBuyAndHoldPct, computeCurrentMaxActiveCandidates, computeOpenTradeAssetScores } from "./batch-row-scalars";
@@ -79,8 +80,18 @@ export function buildBatchSummaryCells(
 
 export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolResult[]): string[] {
     const stats = summarizeBatchResults(results);
+    const yearlyLines = [...stats.completedRows]
+        .sort((a, b) => a.symbol.localeCompare(b.symbol))
+        .map((row) => {
+            const yearlyPnl = formatYearlyPnl(getBatchRowYearlyPnl(row));
+            return `YEARLY | ${row.symbol} | ${yearlyPnl || "n/a"}`;
+    });
     if (stats.resultRows.length === 0) {
-        return [`SUMMARY | Pairs ${stats.completedRows.length} | No completed backtests`];
+        return [
+            ...(stats.completedRows.length > 0 ? ["PORTFOLIO YEARLY | n/a"] : []),
+            `SUMMARY | Pairs ${stats.completedRows.length} | No completed backtests`,
+            ...yearlyLines,
+        ];
     }
 
     const tradeWinRate = stats.totalTrades > 0
@@ -92,7 +103,11 @@ export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolR
     const best = maxBy(stats.resultRows, (row) => row.result?.netProfit ?? Number.NEGATIVE_INFINITY);
     const worst = minBy(stats.resultRows, (row) => row.result?.netProfit ?? Number.POSITIVE_INFINITY);
 
+    const portfolioYearlyPnl = formatYearlyPnl(
+        aggregateYearlyPnl(stats.resultRows.map((row) => getBatchRowYearlyPnl(row))),
+    );
     const lines = [
+        `PORTFOLIO YEARLY | ${portfolioYearlyPnl || "n/a"}`,
         [
             "SUMMARY",
             `Pairs ${stats.completedRows.length}`,
@@ -129,6 +144,7 @@ export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolR
             `Median Exposure ${formatPercent(medianMetric(stats.resultRows, (row) => row.tradeSummary?.exposurePercent ?? null))}`,
         ].join(" | "),
     ];
+    lines.push(...yearlyLines);
     if (stats.tradeGateStats) {
         lines.push(`TRADE_GATE | Evaluated ${stats.tradeGateStats.signalsEvaluated} | Admitted ${stats.tradeGateStats.admitted} | Rejected ${stats.tradeGateStats.rejectedByGate} | Blocked ${stats.tradeGateStats.blocked}`);
     }
@@ -318,6 +334,7 @@ export interface ResultRowGrid {
     sharpe: string;
     drawdown: string;
     trades: string;
+    yearlyPnl: string;
     secondary: ReadonlyArray<readonly [string, string]>;
     error: string | null;
 }
@@ -345,6 +362,10 @@ export function buildResultRowGrid(result: BatchBacktestSymbolResult): ResultRow
         sharpe: r && Number.isFinite(r.sharpeRatio) ? r.sharpeRatio.toFixed(2) : "--",
         drawdown: r && Number.isFinite(r.maxDrawdownPercent) ? `${r.maxDrawdownPercent.toFixed(2)}%` : "--",
         trades: r ? `${r.totalTrades}` : "--",
+        yearlyPnl: (() => {
+            const formatted = formatYearlyPnl(getBatchRowYearlyPnl(result));
+            return formatted || "n/a";
+        })(),
         secondary,
         error: result.error ?? null,
     };

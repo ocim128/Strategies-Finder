@@ -140,6 +140,7 @@ describe("runBatchBacktest", () => {
         expect(up.tradeSummary?.maxHoldDays).to.be.closeTo(20 / 1440, 0.000001);
         expect(up.tradeSummary?.exposurePercent).to.equal(100);
         expect(up.barCount).to.equal(5);
+        expect(up.yearlyPnl).to.match(/^\d{4}:\+/);
         expect(down.status).to.equal("losing");
         expect(missing.status).to.equal("load_failed");
         expect(missing.barCount).to.equal(0);

@@ -12,8 +12,8 @@
  * left `undefined`.
  *
  * Copy parity is preserved by adding tiny derived scalars (`buyHoldPct`,
- * `strategyComparisonPct`, and `openTradeAssetScores`) before stripping the
- * heavy arrays.
+ * `strategyComparisonPct`, `openTradeAssetScores`, and compact `yearlyPnl`)
+ * before stripping the heavy arrays.
  *
  * Failures (load_failed / run_failed) are transported as ordinary `symbol`
  * events with the failing `status` set on the row; there is no separate
@@ -26,6 +26,7 @@ import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import type { BatchRunPairListProvenanceMeta, BatchUniverseCounts } from "./batch-run-contract";
 import type { MaxActiveResearchRegistrationV1 } from "./max-active-research-contract";
 import { computeBuyAndHoldPct, computeOpenTradeAssetScores } from "./batch-row-scalars";
+import { formatYearlyPnl, groupTradesByExitYear } from "./batch-yearly-pnl";
 import type { BacktestResult } from "../types/strategies";
 import type { TradeGateProvenance, TradeGateStats } from "./trade-gate";
 
@@ -297,6 +298,11 @@ export function toScalarRow(row: BatchBacktestSymbolResult): BatchBacktestSymbol
         buyHoldPct: row.buyHoldPct ?? computeBuyAndHoldPct(row.data),
         strategyComparisonPct: row.strategyComparisonPct,
         openTradeAssetScores: row.openTradeAssetScores ?? computeOpenTradeAssetScores([row]),
+        ...(row.yearlyPnl !== undefined
+            ? { yearlyPnl: row.yearlyPnl }
+            : row.result?.trades?.length
+                ? { yearlyPnl: formatYearlyPnl(groupTradesByExitYear(row.result.trades)) }
+                : {}),
         error: row.error,
     };
 }

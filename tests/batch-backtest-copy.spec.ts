@@ -14,6 +14,8 @@ import {
     summarizeRobustness,
 } from "../lib/batch-backtest/batch-backtest-summary";
 import { containsNonEmptyNestedArrays, toScalarRow } from "../lib/batch-backtest/batch-backtest-stream-types";
+import { formatYearlyPnl, getBatchRowYearlyPnl, groupTradesByExitYear } from "../lib/batch-backtest/batch-yearly-pnl";
+import { sortBatchResults } from "../lib/batch-backtest/batch-results-sort";
 import type { BatchBacktestSymbolResult } from "../lib/batch-backtest/batch-backtest-runner";
 import type { OHLCVData, Time, Trade } from "../lib/types/strategies";
 
@@ -85,6 +87,21 @@ function resultRow(
             ? { strategyComparisonPct: fields.strategyComparisonPct }
             : {}),
     } as unknown as BatchBacktestSymbolResult;
+}
+
+function trade(id: number, exitYear: number, pnl: number): Trade {
+    return {
+        id,
+        type: "long",
+        entryTime: `${exitYear}-01-01T00:00:00Z` as Time,
+        entryPrice: 100,
+        exitTime: `${exitYear}-06-01T00:00:00Z` as Time,
+        exitPrice: 100 + pnl,
+        pnl,
+        pnlPercent: pnl,
+        size: 1,
+        exitReason: "signal",
+    };
 }
 
 function openTradeRow(
@@ -291,6 +308,80 @@ describe("buildBuyHoldRows", () => {
     });
 });
 
+describe("Batch yearly PnL", () => {
+    it("groups by UTC exit year, formats ascending, and preserves total PnL", () => {
+        const grouped = groupTradesByExitYear([
+            trade(1, 2021, -31),
+            trade(2, 2020, 100.25),
+            trade(3, 2020, 20.25),
+        ]);
+
+        expect(grouped).to.deep.equal({
+            "2020": { netPnl: 120.5, trades: 2 },
+            "2021": { netPnl: -31, trades: 1 },
+        });
+        expect(formatYearlyPnl(grouped)).to.equal("2020:+120.5(2)|2021:-31.0(1)");
+        expect(Object.values(grouped).reduce((sum, bucket) => sum + bucket.netPnl, 0)).to.equal(89.5);
+    });
+
+    it("copies portfolio and per-symbol yearly sections with deterministic years", () => {
+        const rows = [
+            resultRow("BBB", {
+                netProfit: 8,
+                totalTrades: 2,
+                trades: [trade(1, 2022, 2.75), trade(2, 2020, 5.25)],
+            }),
+            resultRow("AAA", {
+                netProfit: 89.5,
+                totalTrades: 2,
+                trades: [trade(3, 2021, -31), trade(4, 2020, 120.5)],
+            }),
+        ];
+        const lines = formatBatchOverallSummary(rows);
+
+        expect(lines[0]).to.equal("PORTFOLIO YEARLY | 2020:+125.75(2)|2021:-31.0(1)|2022:+2.75(1)");
+        expect(lines).to.contain("YEARLY | AAA | 2020:+120.5(1)|2021:-31.0(1)");
+        expect(lines).to.contain("YEARLY | BBB | 2020:+5.25(1)|2022:+2.75(1)");
+        const portfolio = getBatchRowYearlyPnl(rows[0]!);
+        const total = rows.reduce((sum, row) => sum + row.result!.netProfit, 0);
+        const yearlyTotal = Object.values(getBatchRowYearlyPnl(rows[0]!)).reduce((sum, bucket) => sum + bucket.netPnl, 0)
+            + Object.values(getBatchRowYearlyPnl(rows[1]!)).reduce((sum, bucket) => sum + bucket.netPnl, 0);
+        expect(Object.values(portfolio).reduce((sum, bucket) => sum + bucket.netPnl, 0)).to.equal(8);
+        expect(yearlyTotal).to.equal(total);
+    });
+
+    it("shows n/a for an old scalar row without yearly data", () => {
+        const oldRow = resultRow("OLD", { netProfit: 0, totalTrades: 0 });
+        oldRow.result!.trades = [];
+        const oldCopy = formatBatchOverallSummary([oldRow]);
+        expect(oldCopy[0]).to.equal("PORTFOLIO YEARLY | n/a");
+        expect(oldCopy).to.contain("YEARLY | OLD | n/a");
+
+        const oldFailedRow = {
+            symbol: "OLD-FAILED",
+            status: "load_failed" as const,
+            barCount: 0,
+        } as BatchBacktestSymbolResult;
+        const oldFailedCopy = formatBatchOverallSummary([oldFailedRow]);
+        expect(oldFailedCopy[0]).to.equal("PORTFOLIO YEARLY | n/a");
+        expect(oldFailedCopy).to.contain("YEARLY | OLD-FAILED | n/a");
+    });
+});
+
+describe("Batch results sorting", () => {
+    it("sorts numeric metrics descending/ascending, keeps missing values last, and preserves ties", () => {
+        const low = resultRow("LOW", { netProfit: 1, totalTrades: 1 });
+        const high = resultRow("HIGH", { netProfit: 10, totalTrades: 2 });
+        const missing = { ...resultRow("MISSING"), result: undefined };
+        expect(sortBatchResults([low, high, missing], { key: "netProfit", direction: "desc" }).map((row) => row.symbol))
+            .to.deep.equal(["HIGH", "LOW", "MISSING"]);
+        expect(sortBatchResults([low, high, missing], { key: "netProfit", direction: "asc" }).map((row) => row.symbol))
+            .to.deep.equal(["LOW", "HIGH", "MISSING"]);
+        expect(sortBatchResults([high, low], { key: "totalTrades", direction: "desc" }).map((row) => row.symbol))
+            .to.deep.equal(["HIGH", "LOW"]);
+    });
+});
+
 describe("server scalar batch rows", () => {
     it("toScalarRow drops nested analytics arrays even when present on the engine result", () => {
         const scalar = toScalarRow({
@@ -334,6 +425,7 @@ describe("server scalar batch rows", () => {
         });
 
         expect(scalar.data).to.equal(undefined);
+        expect(scalar.yearlyPnl).to.equal("1970:+1.0(1)");
         expect(scalar.result?.trades).to.deep.equal([]);
         expect(scalar.result?.equityCurve).to.deep.equal([]);
         // Explicit allowlist projection: no non-empty nested analytics arrays

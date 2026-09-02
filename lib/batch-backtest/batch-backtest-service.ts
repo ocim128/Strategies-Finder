@@ -44,6 +44,12 @@ import {
     buildResultRowGrid,
 } from "./batch-backtest-summary";
 import {
+    isBatchResultSortKey,
+    sortBatchResults,
+    type BatchResultSortKey,
+    type BatchResultSortState,
+} from "./batch-results-sort";
+import {
     compactBatchBacktestResultsSnapshot,
     normalizeBatchBacktestResultsSnapshot,
     BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT,
@@ -247,6 +253,7 @@ export class BatchBacktestService {
     private initialized = false;
     private cancelled = false;
     private lastResults: BatchBacktestSymbolResult[] = [];
+    private batchResultSort: BatchResultSortState | null = null;
     private lastOpenScoreUsdResult: OpenScoreUsdReplayResult | null = null;
     /**
      * Last successful Balanced Generator result. Used by Copy Generated so a
@@ -407,6 +414,7 @@ export class BatchBacktestService {
         }
         const dom = this.getDom();
         this.bindEvents(dom);
+        this.updateBatchResultSortHeader(dom);
         this.restoreTradeLedgerOptions(dom);
         this.restoreTradeGateOptions(dom);
         this.resetProgress(dom);
@@ -423,6 +431,24 @@ export class BatchBacktestService {
     }
 
     private bindEvents(dom: BatchBacktestDom): void {
+        dom.batchBacktestResultsHeader.addEventListener("click", (event) => {
+            if (!(event.target instanceof Element)) return;
+            const button = event.target.closest<HTMLButtonElement>("button[data-batch-sort-key]");
+            if (!button || !dom.batchBacktestResultsHeader.contains(button)) return;
+            const rawKey = button.dataset.batchSortKey;
+            if (rawKey === "reset") {
+                this.batchResultSort = null;
+            } else if (rawKey && isBatchResultSortKey(rawKey)) {
+                this.toggleBatchResultSort(dom, rawKey);
+                return;
+            } else {
+                return;
+            }
+            this.cancelLiveRenderRaf();
+            this.liveRenderQueue = [];
+            this.renderResultRows(dom);
+            this.updateBatchResultSortHeader(dom);
+        });
         dom.batchBacktestRunBtn.addEventListener("click", () => {
             void this.runBatch();
         });
@@ -551,6 +577,36 @@ export class BatchBacktestService {
             this.persistTradeGateOptions(dom);
             this.clearStaleResults(dom);
             this.renderTradeGateSelection(dom);
+        });
+    }
+
+    private toggleBatchResultSort(dom: BatchBacktestDom, key: BatchResultSortKey): void {
+        this.cancelLiveRenderRaf();
+        this.liveRenderQueue = [];
+        if (!this.batchResultSort || this.batchResultSort.key !== key) {
+            this.batchResultSort = { key, direction: "desc" };
+        } else if (this.batchResultSort.direction === "desc") {
+            this.batchResultSort = { key, direction: "asc" };
+        } else {
+            this.batchResultSort = null;
+        }
+        this.renderResultRows(dom);
+        this.updateBatchResultSortHeader(dom);
+    }
+
+    private updateBatchResultSortHeader(dom: BatchBacktestDom): void {
+        const active = this.batchResultSort;
+        dom.batchBacktestResultsHeader.querySelectorAll<HTMLButtonElement>("button[data-batch-sort-key]").forEach((button) => {
+            const rawKey = button.dataset.batchSortKey;
+            const isActive = Boolean(active && rawKey === active.key);
+            button.classList.toggle("is-active", isActive);
+            button.classList.toggle("is-ascending", isActive && active?.direction === "asc");
+            button.classList.toggle("is-descending", isActive && active?.direction === "desc");
+            button.setAttribute("aria-pressed", String(isActive));
+            const column = button.parentElement;
+            if (column?.getAttribute("role") === "columnheader") {
+                column.setAttribute("aria-sort", isActive ? active!.direction : "none");
+            }
         });
     }
 
@@ -776,6 +832,7 @@ export class BatchBacktestService {
         this.cancelled = false;
         this.analysisCancelRequested = false;
         this.lastResults = [];
+        this.batchResultSort = null;
         this.lastRunFingerprint = null;
         this.lastRunInterval = null;
         this.lastRunStrategyKey = null;
@@ -1261,7 +1318,11 @@ export class BatchBacktestService {
             this.lastResults.push(row);
             this.appendedCount += 1;
         }
-        this.appendResultRows(dom, accepted);
+        if (this.batchResultSort) {
+            this.renderResultRows(dom);
+        } else {
+            this.appendResultRows(dom, accepted);
+        }
         return accepted;
     }
 
@@ -2109,6 +2170,7 @@ export class BatchBacktestService {
         if (!snapshot) return;
 
         this.lastResults = snapshot.results;
+        this.batchResultSort = null;
         this.lastRunFingerprint = snapshot.fingerprint;
         this.lastRunInterval = snapshot.interval || null;
         // Restore the strategy that governed the Run so the persisted snapshot
@@ -2128,7 +2190,7 @@ export class BatchBacktestService {
         this.serverHasArtifacts = false;
 
         dom.batchBacktestResults.replaceChildren();
-        this.appendResultRows(dom, this.lastResults);
+        this.renderResultRows(dom);
         setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
         dom.batchBacktestCopyBtn.disabled = this.lastResults.length === 0;
         // Audit Mine-Prediction-gating finding: route every artifact-action
@@ -2311,7 +2373,11 @@ export class BatchBacktestService {
         if (this.liveRenderQueue.length === 0) return;
         const batch = this.liveRenderQueue;
         this.liveRenderQueue = [];
-        this.appendResultRows(dom, batch);
+        if (this.batchResultSort) {
+            this.renderResultRows(dom);
+        } else {
+            this.appendResultRows(dom, batch);
+        }
     }
 
     /**
@@ -2341,6 +2407,15 @@ export class BatchBacktestService {
         dom.batchBacktestResults.appendChild(fragment);
     }
 
+    private renderResultRows(dom: BatchBacktestDom): void {
+        dom.batchBacktestResults.replaceChildren();
+        const rows = this.batchResultSort
+            ? sortBatchResults(this.lastResults, this.batchResultSort)
+            : this.lastResults;
+        this.appendResultRows(dom, rows);
+        this.appendedCount = rows.length;
+    }
+
     private clearStaleResults(dom: BatchBacktestDom): void {
         this.lastOpenScoreUsdResult = null;
         dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
@@ -2349,6 +2424,8 @@ export class BatchBacktestService {
         this.lastRunInterval = null;
         this.lastRunStrategyKey = null;
         this.serverHasArtifacts = false;
+        this.batchResultSort = null;
+        this.updateBatchResultSortHeader(dom);
         // Audit Finding 5: a stale run id must not survive a results clear.
         this.activeServerRunId = null;
         this.clearPersistedLatestResults();
@@ -2405,6 +2482,9 @@ export class BatchBacktestService {
                 pair.textContent = `${label} ${value}`;
                 secondary.appendChild(pair);
             }
+            const yearly = document.createElement("span");
+            yearly.textContent = `Yearly ${grid.yearlyPnl}`;
+            secondary.appendChild(yearly);
             line.appendChild(secondary);
         }
 
