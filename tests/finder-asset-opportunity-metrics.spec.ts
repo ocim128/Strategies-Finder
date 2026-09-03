@@ -430,6 +430,7 @@ describe("Asset Opportunity post-run re-sort", () => {
                 TOTAL_TRADES_CAPPED_METRIC,
             );
             expect(sorted.map((r) => r.symbol)).to.deep.equal(["E2", "E1", "L3", "L2", "L1"]);
+            expect(sorted.map((r) => r.totalTradesCappedValue)).to.deep.equal([2000, 2000, 100, 90, 80]);
         });
 
         it("still ranks below-cap trade counts like totalTrades", () => {

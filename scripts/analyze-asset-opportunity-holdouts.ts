@@ -21,10 +21,29 @@ import type { FinderAssetOosNextExitUnavailableReason } from "../lib/finder/find
 
 const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 const BLOCK_SEPARATOR = "=".repeat(80);
-const REPORT_SCHEMA_VERSION = 3;
+const REPORT_SCHEMA_VERSION = 4;
 const DEFAULT_TOP_K = 10;
 const DEFAULT_REPORT_CANDIDATES = 15;
 const THESIS_SORT_FIELDS: Readonly<Record<string, string>> = {
+    netProfit: "netProfit",
+    netProfitPercent: "netProfitPercent",
+    expectancy: "expectancy",
+    averageGain: "avgWin",
+    winRate: "winRate",
+    sharpeRatio: "sharpeRatio",
+    profitFactor: "profitFactor",
+    maxDrawdownPercent: "maxDrawdownPercent",
+    totalTrades: "totalTrades",
+    invertedNetProfit: "netProfit",
+    invertedExpectancy: "expectancy",
+    invertedAverageGain: "avgWin",
+    invertedWinRate: "winRate",
+    invertedSharpeRatio: "sharpeRatio",
+    invertedProfitFactor: "profitFactor",
+    invertedMaxDrawdownPercent: "maxDrawdownPercent",
+    freshSignalLibraries: "freshSignalLibraryCount",
+    freshSignalLibrariesByTrades: "freshSignalLibraryCount",
+    totalTradesCapped: "totalTradesCappedValue",
     medianBarsToTp: "medianBarsToTp",
     priorTupleRecurrence: "priorTupleRecurrenceCount",
     strategyCoverageGate: "strategyCoverageCount",
@@ -36,6 +55,9 @@ const THESIS_SORT_FIELDS: Readonly<Record<string, string>> = {
     entryPriceRegimeMembership: "entryPriceRegimeMembership",
     equityPathLinearity: "equityPathLinearity",
 };
+const DERIVED_THESIS_SORTS = new Set(["payoffRatio", "tstatEdge"]);
+const CONTROL_SORT_METRICS = new Set(["run_default"]);
+const DISCOVERY_WARNING = "Research status: DISCOVERY ONLY — the same outcomes were inspected across many sorts. Freeze metric, direction, and K before a new confirmation run.";
 const REPORT_QUESTIONS = [
     "Which archive sort has the highest average forward PnL at each tested horizon?",
     "How often are the selected observations positive for each sort and horizon?",
@@ -60,6 +82,7 @@ const NEXT_EXIT_REPORT_QUESTIONS = [
     "Which configured exit reasons account for the observed outcomes?",
     "Why are unavailable observations missing a boundary trade, exit reason, or replay result?",
     "Does the selected top-K group differ from the all-candidate next-exit baseline?",
+    "Do next-exit outcomes differ by the latest signal-candle hour?",
 ] as const;
 
 interface ArchiveHorizon {
@@ -79,6 +102,10 @@ export interface AssetOpportunityArchiveRow {
     signalCandleHourJakarta?: number | null;
     /** Compact in-sample scalars used to verify whether a thesis sort had data. */
     selectionPerformance?: Record<string, number | null>;
+    /** Present on fresh-signal-library resort representatives in newer archives. */
+    freshSignalLibraryCount?: number | null;
+    /** Exact capped trade-count thesis value in newer archives. */
+    totalTradesCappedValue?: number | null;
     strategyCoverageCount?: number | null;
     forwardOosPerformance?: {
         ignoreLastBars?: number;
@@ -303,7 +330,9 @@ export type ThesisSortEvidenceStatus =
     | "unavailable"
     | "insufficient_data"
     | "degenerate"
-    | "not_persisted";
+    | "not_testable"
+    | "not_persisted"
+    | "control";
 
 export interface ThesisSortEvidence {
     status: ThesisSortEvidenceStatus;
@@ -312,6 +341,17 @@ export interface ThesisSortEvidence {
     distinctValues: number;
     /** Only populated for priorTupleRecurrence, whose inference gate is density-based. */
     positiveRows: number | null;
+    /** Holdouts whose archived rank 1 and rank 2 both contain valid values. */
+    comparableHoldouts: number;
+    /** Comparable holdouts where the thesis value differs between rank 1 and rank 2. */
+    differentiatedHoldouts: number;
+    totalHoldouts: number;
+}
+
+export interface NextExitSignalCandleHourAnalysis extends NextExitOutcomeAnalysis {
+    hour: number;
+    holdoutBars: number[];
+    strategyCount: number;
 }
 
 export interface NextExitBaselineAnalysis {
@@ -339,6 +379,7 @@ export interface AssetOpportunityHoldoutAnalysisReport {
     measurementMode: "fixed_horizon" | "next_exit";
     excludedRedundantSortMetrics: string[];
     topK: number;
+    archiveMaximumRank: number;
     candidateIdentity: "symbol+strategyId" | "symbol+strategyId+candidateFingerprint";
     parameterFingerprintAvailable: boolean;
     baselineAvailable: boolean;
@@ -346,6 +387,10 @@ export interface AssetOpportunityHoldoutAnalysisReport {
     nextExit: {
         baseline: NextExitBaselineAnalysis | null;
         sorts: NextExitSortAnalysis[];
+        signalCandleHourPerformance: {
+            utc: NextExitSignalCandleHourAnalysis[];
+            jakarta: NextExitSignalCandleHourAnalysis[];
+        };
     } | null;
     questionsAnswered: string[];
     notes: string[];
@@ -573,6 +618,16 @@ function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityA
                 ? null
                 : asHour(row.signalCandleHourJakarta),
             selectionPerformance: parseArchiveScalarRecord(row.selectionPerformance),
+            ...(row.freshSignalLibraryCount !== undefined ? {
+                freshSignalLibraryCount: row.freshSignalLibraryCount === null
+                    ? null
+                    : asNonNegativeInteger(row.freshSignalLibraryCount),
+            } : {}),
+            ...(row.totalTradesCappedValue !== undefined ? {
+                totalTradesCappedValue: row.totalTradesCappedValue === null
+                    ? null
+                    : asFiniteNumber(row.totalTradesCappedValue),
+            } : {}),
             strategyCoverageCount: row.strategyCoverageCount === null
                 ? null
                 : asFiniteNumber(row.strategyCoverageCount),
@@ -976,11 +1031,65 @@ function calculateNextExitAnalysis(rows: AssetOpportunityArchiveRow[]): NextExit
 }
 
 function getThesisSortMetricValue(row: AssetOpportunityArchiveRow, sortMetric: string): number | null | undefined {
+    const performance = row.selectionPerformance;
+    if (sortMetric === "payoffRatio") {
+        if (!performance
+            || !("avgWin" in performance)
+            || !("avgLoss" in performance)) {
+            return undefined;
+        }
+        const avgWin = performance?.avgWin;
+        const avgLoss = performance?.avgLoss;
+        if (typeof avgWin !== "number" || !Number.isFinite(avgWin)
+            || typeof avgLoss !== "number" || !Number.isFinite(avgLoss)) {
+            return null;
+        }
+        if (avgLoss > 0) return avgWin / avgLoss;
+        return avgWin > 0 ? Number.POSITIVE_INFINITY : 0;
+    }
+    if (sortMetric === "tstatEdge") {
+        if (!performance
+            || !("expectancy" in performance)
+            || !("totalTrades" in performance)
+            || !("winRate" in performance)
+            || !("avgWin" in performance)
+            || !("avgLoss" in performance)) {
+            return undefined;
+        }
+        const mean = performance?.expectancy;
+        const trades = performance?.totalTrades;
+        const winRate = performance?.winRate;
+        const avgWin = performance?.avgWin;
+        const avgLoss = performance?.avgLoss;
+        if (typeof mean !== "number" || !Number.isFinite(mean)
+            || typeof trades !== "number" || !Number.isFinite(trades) || trades < 2
+            || typeof winRate !== "number" || !Number.isFinite(winRate)
+            || typeof avgWin !== "number" || !Number.isFinite(avgWin)
+            || typeof avgLoss !== "number" || !Number.isFinite(avgLoss)) {
+            return null;
+        }
+        const winProbability = Math.min(1, Math.max(0, winRate / 100));
+        const variance = winProbability * (avgWin - mean) ** 2
+            + (1 - winProbability) * (avgLoss + mean) ** 2;
+        if (variance <= 0) return mean > 0 ? Number.POSITIVE_INFINITY : 0;
+        return (mean * Math.sqrt(trades)) / Math.sqrt(variance);
+    }
     const field = THESIS_SORT_FIELDS[sortMetric];
     if (!field) return undefined;
     const raw = field === "strategyCoverageCount"
         ? row.strategyCoverageCount
-        : row.selectionPerformance?.[field];
+        : field === "freshSignalLibraryCount"
+            ? row.freshSignalLibraryCount
+            : field === "totalTradesCappedValue"
+                ? row.totalTradesCappedValue
+                : performance?.[field];
+    if (raw === undefined) return undefined;
+    if (field === "profitFactor" && raw === null) {
+        const netProfit = performance?.netProfit;
+        return typeof netProfit === "number" && Number.isFinite(netProfit) && netProfit > 0
+            ? Number.POSITIVE_INFINITY
+            : 0;
+    }
     if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
     if (sortMetric === "medianBarsToTp" && raw < 0) return null;
     if (sortMetric === "priorTupleRecurrence" && (!Number.isInteger(raw) || raw < 0)) return null;
@@ -995,39 +1104,75 @@ function getThesisSortMetricValue(row: AssetOpportunityArchiveRow, sortMetric: s
     return raw;
 }
 
-function buildThesisSortEvidence(rows: AssetOpportunityArchiveRow[], sortMetric: string): ThesisSortEvidence {
-    if (!THESIS_SORT_FIELDS[sortMetric]) {
+function buildThesisSortEvidence(
+    records: AssetOpportunityArchiveRecord[],
+    sortMetric: string,
+): ThesisSortEvidence {
+    const totalRows = records.reduce((sum, record) => sum + record.topResults.length, 0);
+    const emptyEvidence = (status: ThesisSortEvidenceStatus): ThesisSortEvidence => ({
+        status,
+        totalRows,
+        validRows: 0,
+        distinctValues: 0,
+        positiveRows: null,
+        comparableHoldouts: 0,
+        differentiatedHoldouts: 0,
+        totalHoldouts: records.length,
+    });
+    if (CONTROL_SORT_METRICS.has(sortMetric)) {
+        return emptyEvidence("control");
+    }
+    if (!THESIS_SORT_FIELDS[sortMetric] && !DERIVED_THESIS_SORTS.has(sortMetric)) {
+        return emptyEvidence("not_persisted");
+    }
+    const rawValuesByHoldout = records.map((record) => [...record.topResults]
+        .sort((left, right) => (left.rank ?? Number.MAX_SAFE_INTEGER) - (right.rank ?? Number.MAX_SAFE_INTEGER))
+        .map((row) => getThesisSortMetricValue(row, sortMetric)));
+    const isValidValue = (value: number | null | undefined): value is number => (
+        value !== null && value !== undefined
+        && (Number.isFinite(value) || value === Number.POSITIVE_INFINITY)
+    );
+    const valuesByHoldout = rawValuesByHoldout.map((rawValues) => rawValues
+        .filter(isValidValue));
+    const values = valuesByHoldout.flat();
+    if (values.length === 0) {
+        const metricWasPersisted = rawValuesByHoldout.some((rawValues) => rawValues.some((value) => value !== undefined));
         return {
-            status: "not_persisted",
-            totalRows: rows.length,
-            validRows: 0,
-            distinctValues: 0,
-            positiveRows: null,
+            ...emptyEvidence(totalRows === 0 || metricWasPersisted ? "unavailable" : "not_persisted"),
+            positiveRows: sortMetric === "priorTupleRecurrence" ? 0 : null,
         };
     }
-    const values = rows
-        .map((row) => getThesisSortMetricValue(row, sortMetric))
-        .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value));
     const distinctValues = new Set(values).size;
     const positiveRows = sortMetric === "priorTupleRecurrence"
         ? values.filter((value) => value > 0).length
         : null;
+    const comparableHoldouts = rawValuesByHoldout.filter((holdoutValues) => (
+        isValidValue(holdoutValues[0]) && isValidValue(holdoutValues[1])
+    )).length;
+    const differentiatedHoldouts = rawValuesByHoldout.filter((holdoutValues) => (
+        isValidValue(holdoutValues[0])
+        && isValidValue(holdoutValues[1])
+        && holdoutValues[0] !== holdoutValues[1]
+    )).length;
     const density = positiveRows === null || values.length === 0
         ? null
         : positiveRows / values.length;
-    const status: ThesisSortEvidenceStatus = values.length === 0
-        ? "unavailable"
-        : density !== null && density < MIN_RECURRENCE_DENSITY_FOR_INFERENCE
-            ? "insufficient_data"
-            : distinctValues < 2
+    const status: ThesisSortEvidenceStatus = density !== null && density < MIN_RECURRENCE_DENSITY_FOR_INFERENCE
+        ? "insufficient_data"
+        : comparableHoldouts === 0
+            ? "not_testable"
+            : differentiatedHoldouts === 0
                 ? "degenerate"
                 : "measured";
     return {
         status,
-        totalRows: rows.length,
+        totalRows,
         validRows: values.length,
         distinctValues,
         positiveRows,
+        comparableHoldouts,
+        differentiatedHoldouts,
+        totalHoldouts: records.length,
     };
 }
 
@@ -1039,7 +1184,7 @@ function buildNextExitSortAnalysis(
     return {
         sortMetric: records[0]!.sortMetric,
         holdoutBars: [...new Set(records.map((record) => record.holdoutBars))].sort((left, right) => left - right),
-        thesisMetricEvidence: buildThesisSortEvidence(rows, records[0]!.sortMetric),
+        thesisMetricEvidence: buildThesisSortEvidence(records, records[0]!.sortMetric),
         ...calculateNextExitAnalysis(rows),
     };
 }
@@ -1558,6 +1703,39 @@ function buildSignalCandleHourPerformance(
         .sort((left, right) => left.hour - right.hour);
 }
 
+function buildNextExitSignalCandleHourPerformance(
+    records: AssetOpportunityArchiveRecord[],
+    topK: number,
+    field: "signalCandleHourUtc" | "signalCandleHourJakarta",
+): NextExitSignalCandleHourAnalysis[] {
+    const groups = new Map<number, {
+        rows: AssetOpportunityArchiveRow[];
+        holdoutBars: Set<number>;
+        strategyIds: Set<string>;
+    }>();
+    for (const { record, row } of archiveRows(records, topK)) {
+        const hour = row[field];
+        if (hour === null || hour === undefined) continue;
+        const group = groups.get(hour) ?? {
+            rows: [],
+            holdoutBars: new Set<number>(),
+            strategyIds: new Set<string>(),
+        };
+        group.rows.push(row);
+        group.holdoutBars.add(record.holdoutBars);
+        if (row.strategyId) group.strategyIds.add(row.strategyId);
+        groups.set(hour, group);
+    }
+    return [...groups.entries()]
+        .map(([hour, group]) => ({
+            hour,
+            holdoutBars: [...group.holdoutBars].sort((left, right) => left - right),
+            strategyCount: group.strategyIds.size,
+            ...calculateNextExitAnalysis(group.rows),
+        }))
+        .sort((left, right) => left.hour - right.hour);
+}
+
 export function analyzeAssetOpportunityArchive(
     records: AssetOpportunityArchiveRecord[],
     options: AnalyzeOptions = {},
@@ -1582,6 +1760,9 @@ export function analyzeAssetOpportunityArchive(
     }
     const holdoutBars = [...selected.holdoutBars].sort((left, right) => left - right);
     const topK = Math.max(1, Math.floor(options.topK ?? DEFAULT_TOP_K));
+    const archiveMaximumRank = analysisRecords.reduce((maximum, record) => {
+        return Math.max(maximum, ...record.topResults.map((row, index) => row.rank ?? index + 1));
+    }, 0);
     const sortMetrics = [...new Set(analysisRecords.map((record) => record.sortMetric))].sort();
     const baselineHorizonBars = [...new Set(selected.records.flatMap((record) => record.baseline?.horizons.map((horizon) => horizon.bars) ?? []))]
         .sort((left, right) => left - right);
@@ -1618,11 +1799,17 @@ export function analyzeAssetOpportunityArchive(
     const oosWithoutWorstStrategyPerSort = measurementMode === "fixed_horizon"
         ? buildOosWithoutWorstStrategyPerSort(analysisRecords, topK, horizonBars)
         : [];
-    const signalCandleHoursAvailable = measurementMode === "fixed_horizon" && analysisRecords.some((record) => record.topResults.some((row) => (
+    const signalCandleHoursAvailable = analysisRecords.some((record) => record.topResults.some((row) => (
         row.signalCandleHourUtc !== null && row.signalCandleHourUtc !== undefined
     ) || (
         row.signalCandleHourJakarta !== null && row.signalCandleHourJakarta !== undefined
     )));
+    const nextExitSignalCandleHourPerformance = measurementMode === "next_exit" && signalCandleHoursAvailable
+        ? {
+            utc: buildNextExitSignalCandleHourPerformance(analysisRecords, topK, "signalCandleHourUtc"),
+            jakarta: buildNextExitSignalCandleHourPerformance(analysisRecords, topK, "signalCandleHourJakarta"),
+        }
+        : { utc: [], jakarta: [] };
     return {
         schemaVersion: REPORT_SCHEMA_VERSION,
         generatedAt: options.generatedAt ?? new Date().toISOString(),
@@ -1637,6 +1824,7 @@ export function analyzeAssetOpportunityArchive(
         measurementMode,
         excludedRedundantSortMetrics,
         topK,
+        archiveMaximumRank,
         candidateIdentity: parameterFingerprintAvailable
             ? "symbol+strategyId+candidateFingerprint"
             : "symbol+strategyId",
@@ -1647,6 +1835,7 @@ export function analyzeAssetOpportunityArchive(
             ? {
                 baseline: buildNextExitBaselineAnalysis(selected.records),
                 sorts: nextExitSorts,
+                signalCandleHourPerformance: nextExitSignalCandleHourPerformance,
             }
             : null,
         questionsAnswered: measurementMode === "next_exit"
@@ -1666,13 +1855,20 @@ export function analyzeAssetOpportunityArchive(
             ...(excludedRedundantSortMetrics.length > 0
                 ? ["netProfit was omitted from the detailed analysis because it duplicates netProfitPercent in the selected archive."]
                 : []),
+            ...(archiveMaximumRank > 0 && topK > archiveMaximumRank
+                ? [`Requested top-K ${topK} exceeds the archive maximum rank ${archiveMaximumRank}; no rows beyond rank ${archiveMaximumRank} can be measured.`]
+                : []),
             measurementMode === "next_exit"
                 ? "Each archive sort is analyzed independently; holdout bars are the maximum observation window, not a fixed exit horizon."
                 : "Each archive sort and forward horizon is analyzed independently; freshSignalLibraries is not pooled with performance sorts.",
             "The JSON report stores each candidate's per-holdout series; aggregate rows must not be treated as independent samples.",
             "Strategy contribution and worst-strategy removal are calculated from archived selected rows; removal does not rerun Finder or simulate capital, position sizing, or trade overlap.",
             ...(measurementMode === "next_exit"
-                ? ["A thesis sort with unavailable, insufficient, or degenerate archived values falls back to its deterministic tie order; its forward result is not evidence that the thesis differentiated candidates.", ...thesisEvidenceNotes]
+                ? [
+                    "The thesis audit uses all archived shortlist rows per holdout, not only the requested outcome top-K; varied compares rank 1 with rank 2. It does not reconstruct the full candidate pool.",
+                    "If a thesis is unavailable, insufficient, degenerate, or not testable within the archived shortlist, its rank-1 result can include deterministic tiebreak selection and is not clean evidence for that thesis.",
+                    ...thesisEvidenceNotes,
+                ]
                 : []),
             signalCandleHoursAvailable
                 ? "Signal candle hour is derived from latestSignalTime and reported in UTC and Asia/Jakarta; it is not necessarily the eventual trade-entry hour."
@@ -1688,10 +1884,10 @@ export function analyzeAssetOpportunityArchive(
         oosWithoutWorstStrategyPerSort,
         signalCandleHoursAvailable,
         signalCandleHourPerformance: {
-            utc: signalCandleHoursAvailable
+            utc: signalCandleHoursAvailable && measurementMode === "fixed_horizon"
                 ? buildSignalCandleHourPerformance(analysisRecords, topK, horizonBars, "signalCandleHourUtc")
                 : [],
-            jakarta: signalCandleHoursAvailable
+            jakarta: signalCandleHoursAvailable && measurementMode === "fixed_horizon"
                 ? buildSignalCandleHourPerformance(analysisRecords, topK, horizonBars, "signalCandleHourJakarta")
                 : [],
         },
@@ -1789,20 +1985,66 @@ function formatExitReasonCounts(exitReasonCounts: Record<string, number>): strin
 }
 
 function formatThesisSortEvidence(evidence: ThesisSortEvidence): string {
-    if (evidence.status === "not_persisted") return "not archived";
+    if (evidence.status === "control") return "control (no single thesis metric)";
+    if (evidence.status === "not_persisted") return "thesis value not archived";
     const recurrence = evidence.positiveRows === null
         ? ""
         : `, recurring=${evidence.positiveRows}/${evidence.validRows}`;
     const status = evidence.status.toUpperCase().replace("_", " ");
-    return `${evidence.validRows}/${evidence.totalRows} valid${recurrence}, distinct=${evidence.distinctValues} (${status})`;
+    return `${evidence.validRows}/${evidence.totalRows} valid${recurrence}, varied=${evidence.differentiatedHoldouts}/${evidence.comparableHoldouts} comparable holdouts, distinct=${evidence.distinctValues} (${status})`;
 }
 
 function buildThesisEvidenceNotes(sorts: readonly NextExitSortAnalysis[]): string[] {
     return sorts
         .filter((sort) => sort.thesisMetricEvidence.status === "unavailable"
             || sort.thesisMetricEvidence.status === "insufficient_data"
-            || sort.thesisMetricEvidence.status === "degenerate")
-        .map((sort) => `${sort.sortMetric} has ${formatThesisSortEvidence(sort.thesisMetricEvidence)}; its forward result is a fallback/diagnostic result, not evidence that the thesis differentiated candidates.`);
+            || sort.thesisMetricEvidence.status === "degenerate"
+            || sort.thesisMetricEvidence.status === "not_testable"
+            || sort.thesisMetricEvidence.status === "not_persisted")
+        .map((sort) => `${sort.sortMetric} has ${formatThesisSortEvidence(sort.thesisMetricEvidence)}; its rank-1 result cannot establish that this thesis chose the winner rather than a tiebreak.`);
+}
+
+function renderNextExitSignalCandleHourSection(
+    lines: string[],
+    label: string,
+    hours: NextExitSignalCandleHourAnalysis[],
+    baselineAveragePnlPercent: number | null,
+): void {
+    lines.push("", `NEXT-EXIT SIGNAL CANDLE HOUR — ${label} (selected rows; best/worst by observed average PnL)`);
+    if (hours.length === 0) {
+        lines.push("Unavailable: archive rows do not contain this signal-candle hour field.");
+        return;
+    }
+    lines.push("Hour | Rows | Holdouts | Strategies | Exits | Positive exits | Censored | Unavailable | Avg PnL | Median PnL | P10 PnL | Worst PnL | Delta vs baseline");
+    const ranked = [...hours].sort((left, right) => {
+        return (right.averagePnlPercent ?? Number.NEGATIVE_INFINITY)
+            - (left.averagePnlPercent ?? Number.NEGATIVE_INFINITY)
+            || right.observedRows - left.observedRows
+            || left.hour - right.hour;
+    });
+    const selected = [...ranked.slice(0, 3), ...ranked.slice(-3)]
+        .filter((hour, index, all) => all.findIndex((candidate) => candidate.hour === hour.hour) === index);
+    for (const hour of selected) {
+        const delta = hour.averagePnlPercent !== null && baselineAveragePnlPercent !== null
+            ? hour.averagePnlPercent - baselineAveragePnlPercent
+            : null;
+        lines.push([
+            `${String(hour.hour).padStart(2, "0")}:00`,
+            String(hour.totalRows),
+            String(hour.holdoutBars.length),
+            String(hour.strategyCount),
+            `${hour.observedRows}/${hour.totalRows}`,
+            `${hour.positiveRows}/${hour.observedRows}`,
+            String(hour.censoredRows),
+            String(hour.unavailableRows),
+            formatPercent(hour.averagePnlPercent),
+            formatPercent(hour.medianPnlPercent),
+            formatPercent(hour.p10PnlPercent),
+            formatPercent(hour.worstPnlPercent),
+            formatPercent(delta),
+        ].join(" | "));
+    }
+    lines.push("Rows can repeat across archive sorts; use this as a concentration diagnostic, not as independent hour trials. Full hour data is stored in JSON.");
 }
 
 function renderNextExitReport(
@@ -1812,14 +2054,16 @@ function renderNextExitReport(
     const lines = [
         ...headerLines,
         "",
+        DISCOVERY_WARNING,
         "Interpretation: next-exit results are descriptive evidence only. Censored and unavailable outcomes are not zero-PnL exits.",
+        "Thesis audit: valid/distinct use every archived shortlist row; varied compares rank 1 with rank 2 in each holdout. It is independent of outcome top-K and does not contain the full candidate-pool distribution.",
         "Unavailable reasons: no_boundary_trade means no exact entry matched; missing_exit_reason means a trade matched without an exit reason; replay_error means the full replay failed; unknown_legacy means the archive predates this diagnostic.",
         "",
         "QUESTIONS ANSWERED BY THIS REPORT",
         ...report.questionsAnswered.map((question, index) => `${index + 1}. ${question}`),
         "",
         "NEXT EXIT OOS SUMMARY — BEST TO WORST BY OBSERVED AVG PNL",
-        "Sort | Thesis metric evidence | Holdout coverage | Exits | Positive exits | Censored | Unavailable | Unavailable reasons | Avg PnL | Median PnL | P10 PnL | Worst PnL | Avg bars held | Exit reasons | Delta vs baseline",
+        "Sort | Thesis audit (archived shortlist) | Holdout coverage | Exits | Positive exits | Censored | Unavailable | Unavailable reasons | Avg PnL | Median PnL | P10 PnL | Worst PnL | Avg bars held | Exit reasons | Delta vs baseline",
     ];
     const baselineAverage = report.nextExit?.baseline?.averagePnlPercent ?? null;
     const orderedSorts = [...(report.nextExit?.sorts ?? [])].sort((left, right) => {
@@ -1873,6 +2117,23 @@ function renderNextExitReport(
             formatExitReasonCounts(baseline.exitReasonCounts),
         ].join(" | "));
     }
+    if (report.signalCandleHoursAvailable) {
+        renderNextExitSignalCandleHourSection(
+            lines,
+            "UTC",
+            report.nextExit?.signalCandleHourPerformance.utc ?? [],
+            baselineAverage,
+        );
+        renderNextExitSignalCandleHourSection(
+            lines,
+            "Asia/Jakarta",
+            report.nextExit?.signalCandleHourPerformance.jakarta ?? [],
+            baselineAverage,
+        );
+    } else {
+        lines.push("", "NEXT-EXIT SIGNAL CANDLE HOUR");
+        lines.push("Unavailable: legacy archive rows do not contain signal candle hour fields.");
+    }
     lines.push(
         "",
         "Selection persistence and concentration diagnostics are available in the JSON report; their repeated holdout/sort appearances are not independent observations.",
@@ -1891,7 +2152,7 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
         `Holdout windows: ${formatHoldoutWindows(report.holdoutBars)}`,
         `Archive blocks analyzed: ${report.analyzedBlockCount} of ${report.selectedBlockCount} selected (${report.sourceBlockCount} source)`,
         `Forward measurement: ${report.measurementMode}`,
-        `Top-K measured: ${report.topK}`,
+        `Outcome rows: cumulative ranks 1–${report.topK} requested (archive maximum rank: ${report.archiveMaximumRank || "none"})`,
         `Candidate identity: ${report.candidateIdentity}`,
         `Parameter fingerprints: ${report.parameterFingerprintAvailable ? "available" : "not available in this archive"}`,
         `All-candidate baseline: ${report.baselineAvailable || report.nextExit?.baseline ? "available" : "not available in this archive"}`,
@@ -1902,6 +2163,7 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
     const lines: string[] = [
         ...headerLines,
         "",
+        DISCOVERY_WARNING,
         "Interpretation: forward OOS results are descriptive evidence only. Holdout windows overlap, so positive percentages are not independent predictive probabilities.",
         "",
         "QUESTIONS ANSWERED BY THIS REPORT",
@@ -2087,7 +2349,7 @@ export function colorizeAssetOpportunityHoldoutReport(
     const red = "\u001b[91m";
     const yellow = "\u001b[93m";
     const reset = "\u001b[0m";
-    const sectionPattern = /^(QUESTIONS ANSWERED|NEXT EXIT OOS SUMMARY|ALL-CANDIDATE NEXT-EXIT BASELINE|FORWARD OOS SUMMARY|STRATEGY LIBRARY|OOS COUNTERFACTUAL|SIGNAL CANDLE HOUR|PERSISTENT CANDIDATES|CROSS-SORT AGREEMENT|SELECTION CONCENTRATION|PARAMETER FINGERPRINT)/;
+    const sectionPattern = /^(QUESTIONS ANSWERED|NEXT EXIT OOS SUMMARY|NEXT-EXIT SIGNAL CANDLE HOUR|ALL-CANDIDATE NEXT-EXIT BASELINE|FORWARD OOS SUMMARY|STRATEGY LIBRARY|OOS COUNTERFACTUAL|SIGNAL CANDLE HOUR|PERSISTENT CANDIDATES|CROSS-SORT AGREEMENT|SELECTION CONCENTRATION|PARAMETER FINGERPRINT)/;
     return reportText.split("\n").map((line) => {
         const coloredLine = line.replace(/[-+]?\d+(?:\.\d+)?%/g, (match) => {
             const value = Number.parseFloat(match);

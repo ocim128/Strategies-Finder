@@ -825,17 +825,25 @@ export function sortAssetOpportunityResultsByMetric(
             .sort((left, right) => left - right);
         if (tradeCounts.length === 0) return [...results];
         const saturationCap = quantileSorted(tradeCounts, TOTAL_TRADES_SATURATION_PERCENTILE);
-        return [...results].sort((a, b) => {
-            const capA = Math.min(getAssetOpportunityMetricValue(a, "totalTrades"), saturationCap);
-            const capB = Math.min(getAssetOpportunityMetricValue(b, "totalTrades"), saturationCap);
-            if (capA !== capB) return capB - capA;
-            const gainA = getAssetOpportunityMetricValue(a, "averageGain");
-            const gainB = getAssetOpportunityMetricValue(b, "averageGain");
-            if (gainA !== gainB) return gainB - gainA;
-            if (a.symbol < b.symbol) return -1;
-            if (a.symbol > b.symbol) return 1;
-            return 0;
-        });
+        return [...results]
+            .map((result) => ({
+                ...result,
+                totalTradesCappedValue: Math.min(
+                    getAssetOpportunityMetricValue(result, "totalTrades"),
+                    saturationCap,
+                ),
+            }))
+            .sort((a, b) => {
+                const capA = a.totalTradesCappedValue;
+                const capB = b.totalTradesCappedValue;
+                if (capA !== capB) return capB - capA;
+                const gainA = getAssetOpportunityMetricValue(a, "averageGain");
+                const gainB = getAssetOpportunityMetricValue(b, "averageGain");
+                if (gainA !== gainB) return gainB - gainA;
+                if (a.symbol < b.symbol) return -1;
+                if (a.symbol > b.symbol) return 1;
+                return 0;
+            });
     }
     if (metric === MEDIAN_BARS_TO_TP_METRIC) {
         return [...results].sort((a, b) => {

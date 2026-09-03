@@ -16,7 +16,7 @@ if not exist "%ESNO%" (
 
 :ask_top_k
 set "TOP_K="
-set /p "TOP_K=Enter top rank to measure (for example, 3 or 10): "
+set /p "TOP_K=Enter cumulative top-K size, no larger than Finder Top N (1 = rank 1 only; 3 = ranks 1-3 pooled): "
 if not defined TOP_K (
     echo Please enter a positive whole number.
     goto ask_top_k

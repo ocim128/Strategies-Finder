@@ -155,6 +155,10 @@ export interface AssetOpportunityPerformancePayload {
     strategyName: string;
     /** Stable identity for the sampled entry/exit parameters. */
     candidateFingerprint: string;
+    /** Present on fresh-signal-library resort representatives. */
+    freshSignalLibraryCount?: number | null;
+    /** Exact per-run P90-capped trade-count value used by that resort. */
+    totalTradesCappedValue?: number | null;
     /** Present on the grouped strategy-coverage resort representative. */
     strategyCoverageCount?: number | null;
     /** Hour of the latest signal candle; null for date-only/no signal times. */
@@ -286,6 +290,8 @@ export function buildAssetOpportunityPerformancePayload(args: {
         strategyId: result.strategyKey,
         strategyName: result.strategyName,
         candidateFingerprint: buildAssetOpportunityCandidateFingerprint(result),
+        ...(result.freshSignalLibraryCount !== undefined ? { freshSignalLibraryCount: result.freshSignalLibraryCount } : {}),
+        ...(result.totalTradesCappedValue !== undefined ? { totalTradesCappedValue: result.totalTradesCappedValue } : {}),
         ...(result.strategyCoverageCount !== undefined ? { strategyCoverageCount: result.strategyCoverageCount } : {}),
         signalCandleHourUtc: hours.utc,
         signalCandleHourJakarta: hours.jakarta,

@@ -218,11 +218,18 @@ describe("Asset Opportunity holdout analysis", () => {
                 holdoutBars: 5,
                 sortMetric: "barrierExitShare",
                 measurementMode: "next_exit",
-                rows: [{
-                    ...row(1, 2, 1),
-                    selectionPerformance: { barrierExitShare: 0 },
-                    nextExitOosPerformance: { status: "exited", pnlPercent: 2, exitReason: "time_stop" },
-                }],
+                rows: [
+                    {
+                        ...row(1, 2, 1),
+                        selectionPerformance: { barrierExitShare: 0 },
+                        nextExitOosPerformance: { status: "exited", pnlPercent: 2, exitReason: "time_stop" },
+                    },
+                    {
+                        ...row(2, -1, 1),
+                        selectionPerformance: { barrierExitShare: 0 },
+                        nextExitOosPerformance: { status: "exited", pnlPercent: -1, exitReason: "time_stop" },
+                    },
+                ],
             }),
         ].join("\n"));
         const report = analyzeAssetOpportunityArchive(records, { topK: 1 });
@@ -234,6 +241,9 @@ describe("Asset Opportunity holdout analysis", () => {
             validRows: 0,
             distinctValues: 0,
             positiveRows: null,
+            comparableHoldouts: 0,
+            differentiatedHoldouts: 0,
+            totalHoldouts: 1,
         });
         expect(sorts.find((sort) => sort.sortMetric === "priorTupleRecurrence")!.thesisMetricEvidence).to.deep.equal({
             status: "insufficient_data",
@@ -241,14 +251,109 @@ describe("Asset Opportunity holdout analysis", () => {
             validRows: 1,
             distinctValues: 1,
             positiveRows: 0,
+            comparableHoldouts: 0,
+            differentiatedHoldouts: 0,
+            totalHoldouts: 1,
         });
         expect(sorts.find((sort) => sort.sortMetric === "barrierExitShare")!.thesisMetricEvidence.status).to.equal("degenerate");
 
         const text = renderAssetOpportunityHoldoutReport(report);
-        expect(text).to.contain("Top-K measured: 1");
-        expect(text).to.contain("medianBarsToTp | 0/1 valid, distinct=0 (UNAVAILABLE)");
-        expect(text).to.contain("priorTupleRecurrence | 1/1 valid, recurring=0/1, distinct=1 (INSUFFICIENT DATA)");
-        expect(text).to.contain("fallback/diagnostic result");
+        expect(text).to.contain("Outcome rows: cumulative ranks 1–1 requested (archive maximum rank: 2)");
+        expect(text).to.contain("medianBarsToTp | 0/1 valid, varied=0/0 comparable holdouts, distinct=0 (UNAVAILABLE)");
+        expect(text).to.contain("priorTupleRecurrence | 1/1 valid, recurring=0/1, varied=0/0 comparable holdouts, distinct=1 (INSUFFICIENT DATA)");
+        expect(text).to.contain("cannot establish that this thesis chose the winner rather than a tiebreak");
+    });
+
+    it("audits persisted inverted metrics across the whole archived shortlist, not only outcome top-K", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-08-11T00:00:00.000Z",
+            runId: "run-next-exit",
+            holdoutBars: 5,
+            sortMetric: "invertedSharpeRatio",
+            measurementMode: "next_exit",
+            rows: [-2, -1, 0].map((sharpeRatio, index) => ({
+                ...row(index + 1, 3 - index, 1),
+                selectionPerformance: { sharpeRatio },
+                nextExitOosPerformance: { status: "exited", pnlPercent: 3 - index, exitReason: "time_stop" },
+            })),
+        }));
+        const report = analyzeAssetOpportunityArchive(records, { topK: 1 });
+        const sort = report.nextExit!.sorts[0]!;
+
+        expect(sort.totalRows).to.equal(1);
+        expect(sort.thesisMetricEvidence).to.deep.equal({
+            status: "measured",
+            totalRows: 3,
+            validRows: 3,
+            distinctValues: 3,
+            positiveRows: null,
+            comparableHoldouts: 1,
+            differentiatedHoldouts: 1,
+            totalHoldouts: 1,
+        });
+        expect(renderAssetOpportunityHoldoutReport(report)).to.contain(
+            "invertedSharpeRatio | 3/3 valid, varied=1/1 comparable holdouts, distinct=3 (MEASURED)",
+        );
+    });
+
+    it("audits the exact capped-trade thesis value when newer archives provide it", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-08-11T00:00:00.000Z",
+            runId: "run-capped-trades",
+            holdoutBars: 5,
+            sortMetric: "totalTradesCapped",
+            measurementMode: "next_exit",
+            rows: [120, 95].map((totalTradesCappedValue, index) => ({
+                ...row(index + 1, 1, 1),
+                totalTradesCappedValue,
+                nextExitOosPerformance: { status: "exited", pnlPercent: 1, exitReason: "time_stop" },
+            })),
+        }));
+        const evidence = analyzeAssetOpportunityArchive(records, { topK: 1 })
+            .nextExit!.sorts[0]!.thesisMetricEvidence;
+
+        expect(evidence.status).to.equal("measured");
+        expect(evidence.differentiatedHoldouts).to.equal(1);
+        expect(evidence.distinctValues).to.equal(2);
+    });
+
+    it("reports signal-candle hour outcomes for next-exit archives", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-08-11T00:00:00.000Z",
+            runId: "run-next-exit-hours",
+            holdoutBars: 5,
+            sortMetric: "expectancy",
+            measurementMode: "next_exit",
+            rows: [
+                {
+                    ...row(1, 2, 1),
+                    signalCandleHourUtc: 12,
+                    signalCandleHourJakarta: 19,
+                    selectionPerformance: { expectancy: 2 },
+                    nextExitOosPerformance: { status: "exited", pnlPercent: 2, exitReason: "time_stop" },
+                },
+                {
+                    ...row(2, -1, 1),
+                    signalCandleHourUtc: 16,
+                    signalCandleHourJakarta: 23,
+                    selectionPerformance: { expectancy: 1 },
+                    nextExitOosPerformance: { status: "exited", pnlPercent: -1, exitReason: "time_stop" },
+                },
+            ],
+        }));
+        const report = analyzeAssetOpportunityArchive(records, { topK: 2 });
+
+        expect(report.signalCandleHoursAvailable).to.equal(true);
+        expect(report.nextExit!.signalCandleHourPerformance.utc.map((hour) => ({
+            hour: hour.hour,
+            averagePnlPercent: hour.averagePnlPercent,
+        }))).to.deep.equal([
+            { hour: 12, averagePnlPercent: 2 },
+            { hour: 16, averagePnlPercent: -1 },
+        ]);
+        const text = renderAssetOpportunityHoldoutReport(report);
+        expect(text).to.contain("NEXT-EXIT SIGNAL CANDLE HOUR — UTC");
+        expect(text).to.contain("12:00 | 1 | 1 | 1 | 1/1 | 1/1");
     });
 
     it("renders next-exit sorts best to worst and colorizes console output only", () => {
@@ -330,6 +435,7 @@ describe("Asset Opportunity holdout analysis", () => {
 
         expect(text).to.contain("FORWARD OOS SUMMARY");
         expect(text).to.contain("freshSignalLibraries");
+        expect(text).to.contain("Research status: DISCOVERY ONLY");
         expect(text).to.contain("must not be treated as independent experiments");
         expect(text).to.contain("QUESTIONS ANSWERED BY THIS REPORT");
     });

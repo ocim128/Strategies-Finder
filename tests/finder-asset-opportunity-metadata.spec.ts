@@ -305,6 +305,19 @@ describe("Asset Opportunity metadata payload serializer", () => {
         expect(legacy.selectionPerformance.medianBarsToTp).to.not.equal(0);
     });
 
+    it("persists resort-supplied thesis values needed by later archive analysis", () => {
+        const payload = buildAssetOpportunityPerformancePayload({
+            result: makeAssetResult({
+                freshSignalLibraryCount: 4,
+                totalTradesCappedValue: 120,
+            }),
+            rank: 1,
+        });
+
+        expect(payload.freshSignalLibraryCount).to.equal(4);
+        expect(payload.totalTradesCappedValue).to.equal(120);
+    });
+
     it("ranks are passed through 1-based per displayed row", () => {
         const rows = [makeAssetResult(), makeAssetResult({ symbol: "ETHUSDT" })];
         const payloads = rows.map((result, index) => buildAssetOpportunityMetadataPayload({

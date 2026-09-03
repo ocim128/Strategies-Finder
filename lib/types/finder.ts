@@ -442,6 +442,8 @@ export interface FinderAssetOpportunityResult {
     oosNextExitMetrics?: import('../finder/finder-asset-opportunity-oos').FinderAssetOosNextExitMetrics;
     /** Distinct selected strategy libraries with a fresh entry for this symbol. */
     freshSignalLibraryCount?: number;
+    /** Per-run P90-capped total-trades value attached by that archive resort. */
+    totalTradesCappedValue?: number;
     /** Median in-sample bars from entry to take-profit across qualifying trades. */
     medianBarsToTp?: number | null;
     /** Count of earlier archived snapshots containing the same candidate tuple. */
