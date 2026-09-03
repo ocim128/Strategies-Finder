@@ -1,0 +1,93 @@
+You are working in this repository:
+C:\Users\user\Documents\Repo\Experimental\lightweight-charts\debug\playground\Strategies-Finder
+
+You are an expert quantitative researcher generating ASSET-SELECTION rule ideas for the
+TOP_MEAN decision layer.
+
+TASK
+Generate exactly 10 NEW selector rule ideas as structured JSON.
+You do NOT run anything and you do NOT modify any file. Idea generation only.
+
+CONTEXT
+The entry strategy and pair universe are frozen. On every decision event (2-3 per day,
+4H S&P500 synthetic-pair surface, 136-asset catalog) the incumbent selector TOP_MEAN
+picks the positive-score, longEligible asset with the highest score =
+signedVotes / activePairCount and trades it vs USD for a fixed 24-bar horizon. Full
+window: +5.40% mean per event vs +0.72% same-pool random control (delta +4.68%, n=938).
+Research goal: keep everything frozen; mine rules for WHICH asset to pick or WHICH
+candidates/events to allow, so the selection beats the incumbent on matched events
+(PRIMARY).
+Engine arms already implemented (anti-clone - never re-derive these): TOP_RAW (max
+signedVotes, +4.86%), TOP_ADJUSTED (raw/sqrt(activePairs), +4.73%), TOP_MEAN
+(incumbent, +4.68%), TOP_MEAN_RAW_UNIQUE_V1, TOP_MEAN_TREND (breadth>0.5 + ema200Above,
+activePairs tie-break), REGIME_MEAN, MAX_ACTIVE (max activePairCount), MAX_SUBMITTED,
+MAX_RETAINED, ACCELERATING, plus the FRESH/STALE/HHI/PAIRS conditional splits. The
+current dominant selection asset is SNDK (most frequently picked by TOP_MEAN).
+
+READ FIRST (mandatory)
+- archive/top-mean-mining/idea-log.txt
+  Every thesis already tried, with verdicts. NEVER propose a logged thesis, a rewording
+  of one, the same feature with the same gate direction, or a combination of
+  already-dead features. Also never propose anything equivalent to the incumbent
+  (raw score ordering) or to a listed engine arm.
+- archive/top-mean-mining/MINING-GUIDE.md
+  Rule kinds, PRIMARY/SECONDARY semantics, discipline.
+
+RULE KINDS (exactly one per idea)
+- ranking: (cand, event) => number — the highest-value candidate wins the event.
+- filter:  (cand, event) => boolean — true candidates remain; among them the frozen
+  TOP_MEAN score decides. A filter can change the pick and can drop whole events
+  (no true candidates = event not kept).
+
+AVAILABLE FIELDS (causal, known at decision time; anything else THROWS)
+cand:  asset, signedVotes, activePairCount, score (recomputed signedVotes/activePairCount),
+       inPool, longEligible, shortEligible, ema200Above, breadth, regime, poolVersion
+event: decisionTimeSec, breadth, regime, poolSize, dow (UTC, 1=Mon..5=Fri), hour (UTC)
+NOTE: a rule sees ONE candidate at a time. Cross-candidate comparisons (gap to second
+best, rank within event) are NOT expressible. Design accordingly.
+FORBIDDEN: outcome/return data of any kind (sealed by the checker); alphabetical asset
+rank carries no information. An explicit asset-exclusion list is allowed as a thesis,
+at most ONE per batch.
+
+MEASURED SCALES ON L1 DISCOVERY (568 events, 35,557 candidates — calibrate BEFORE proposing)
+score           p25 0.08 | p50 0.19 | p75 0.36 | p95 0.67 | p99 0.90 | max 1.0
+signedVotes     p25 5 | p50 12 | p75 20 | p95 32 | p99 37 | max 40
+activePairCount p25 55 | p50 60 | p75 64 | p95 71 | band 13..79, almost always 41+
+breadth         p25 0.59 | p50 0.67 | p75 0.71 | p95 0.78 | max 0.84 (regime bullish when breadth > 0.5)
+poolSize is constant 136. Events/day: 2-3 (4H session bars). dow values 1..5 only.
+A threshold matching ~0% or ~100% of candidates tests nothing. Filter event keep-rates
+below 5% are fragile (few events = inconclusive).
+
+HARD DESIGN RULES FOR THIS CAMPAIGN
+1. CAUSAL ONLY. Only the fields listed. The checker enforces this by throwing.
+2. ANTI-CLONE. The idea log is the law. Generic single-feature gates with an obvious
+   direction are expected to land at noise level; prefer INTERACTIONS of two independent
+   information sources (coverage x trend, breadth x score-shape, calendar x regime) and
+   nonlinear score transforms (saturation, floor effects) over obvious gates.
+3. DIVERSITY ACROSS THE BATCH. The 10 ideas must differ in their PRIMARY information
+   source, not just thresholds.
+4. NON-TRIVIALITY. A ranking rule must be a genuinely different ordering than
+   score / signedVotes / activePairCount / raw-sqrt(activePairs) (else it clones an
+   engine arm). A filter must state its expected event keep-rate; ~100% keep is only
+   acceptable for a targeted exclusion thesis.
+5. Each idea is ONE one-line rule body (the wrapper is added at implementation):
+   <rule over cand and event>
+
+NON-NEGOTIABLE OUTPUT RULES
+- Return valid JSON only.
+- Do not use markdown fences.
+- Do not write prose outside the JSON.
+- The top-level object must be:
+{
+  "ideas": [
+    {
+      "key": "snake_case_key",
+      "thesis": "question form, one sentence",
+      "rule": "rule body only, e.g. cand.signedVotes >= 20 && cand.ema200Above",
+      "kind": "ranking|filter",
+      "family": "score-shape|coverage|trend|regime-breadth|calendar|identity|interaction",
+      "expectedKeep": "estimated event keep-rate for filters, n/a for rankings",
+      "rationale": "1-2 sentences: why this could beat the incumbent on matched events"
+    }
+  ]
+}
