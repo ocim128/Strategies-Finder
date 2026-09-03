@@ -56,6 +56,7 @@ import {
     resolveTopMeanWindowDesignation,
     sha256LineList,
     type TopMeanArchiveManifest,
+    type TopMeanArchiveOutcome,
     type TopMeanPhase0bArchiveWriter,
 } from "./sp500-top-mean-archive-log";
 import { debugLogger } from "../debug-logger";
@@ -78,6 +79,7 @@ export interface TopMeanCoordinatorRunRequest {
     maxPairs?: number;
     pairListText?: string;
     resume?: boolean;
+    saveArchiveLog?: boolean;
     useRustEnginePreference?: boolean;
     /**
      * Optional decision-event date window (unix seconds, inclusive) applied
@@ -113,6 +115,9 @@ export interface TopMeanResultSummary {
     runId: string;
     completed: boolean;
     archiveComplete: boolean;
+    archiveRequested?: boolean;
+    archiveDir?: string;
+    archiveError?: string;
     counts: CoverageCounts;
     horizons: TopMeanHorizonSummary[];
     /** Calendar-year OPEN_SCORE USD reports clipped to the selected From/To range. */
@@ -204,6 +209,10 @@ export interface TopMeanStatusResponse {
      */
     actualEngineMode: string;
     engineUsage: { rust: number; typescript: number };
+    archiveComplete?: boolean;
+    archiveRequested?: boolean;
+    archiveDir?: string;
+    archiveError?: string;
     performance?: TopMeanPerformanceDiagnostic;
     error?: string;
     result?: TopMeanResultSummary;
@@ -249,11 +258,15 @@ export class TopMeanCoordinatorEngine {
         slippageBps: 0,
         commissionPercent: 0,
     };
+    private readonly archiveRequested: boolean;
+    private archiveRoot: string | null = null;
 
     constructor(
         private readonly _request: TopMeanCoordinatorRunRequest,
         private readonly baseDir?: string,
-    ) {}
+    ) {
+        this.archiveRequested = _request.saveArchiveLog !== false;
+    }
 
     public get request(): TopMeanCoordinatorRunRequest {
         return this._request;
@@ -274,6 +287,12 @@ export class TopMeanCoordinatorEngine {
             requestedEngineMode: this._request.useRustEnginePreference ? "rust" : "typescript",
             actualEngineMode: this.resolveActualEngineMode(),
             engineUsage: { ...this.engineUsage },
+            archiveComplete: this.resultSummary?.archiveComplete ?? this.manifest?.archiveComplete,
+            archiveRequested: this.resultSummary?.archiveRequested
+                ?? this.manifest?.archiveRequested
+                ?? this.archiveRequested,
+            archiveDir: this.resultSummary?.archiveDir ?? this.manifest?.archiveDir,
+            archiveError: this.resultSummary?.archiveError ?? this.manifest?.archiveError,
             ...(this.performanceDiagnostic
                 ? { performance: this.performanceSnapshot() }
                 : {}),
@@ -461,11 +480,15 @@ export class TopMeanCoordinatorEngine {
         };
         const preflightStartedAt = performance.now();
         activeEngineInstance = this;
+        this.archiveRoot = this.archiveRequested
+            ? resolveTopMeanArchiveLogDir(this.baseDir ?? process.cwd())
+            : null;
         reconcileInterruptedManifestsOnStartup(this.baseDir);
         cleanOldArtifacts(this.baseDir);
         let phase0bWriter: TopMeanPhase0bArchiveWriter | null = null;
         let phase0bFiles: TopMeanPhase0bArchiveWriter["files"] | undefined;
         let phase0bWriterFailed = false;
+        let phase0bWriterError: string | undefined;
 
         try {
             // 1. Enumeration & Preflight
@@ -505,13 +528,15 @@ export class TopMeanCoordinatorEngine {
             });
             this.canonicalAssets = [...enumRes.eligibleAssets];
             this.runFingerprint = fingerprint;
-            if (resolveTopMeanArchiveLogDir(this.baseDir ?? process.cwd()) !== null) {
+            if (this.archiveRequested && this.archiveRoot !== null) {
                 try {
                     phase0bWriter = await createTopMeanPhase0bArchiveWriter(this.baseDir, this._request.runId);
                 } catch (error) {
+                    phase0bWriterFailed = true;
+                    phase0bWriterError = error instanceof Error ? error.message : String(error);
                     debugLogger.warn("sp500_top_mean.phase0b_writer_failed", {
                         runId: this._request.runId,
-                        error: error instanceof Error ? error.message : String(error),
+                        error: phase0bWriterError,
                     });
                 }
             }
@@ -550,6 +575,10 @@ export class TopMeanCoordinatorEngine {
                 };
             }
             this.manifest = manifest;
+            manifest.archiveRequested = this.archiveRequested;
+            delete manifest.archiveComplete;
+            delete manifest.archiveDir;
+            delete manifest.archiveError;
             this.performanceDiagnostic.pairCount = enumRes.canonicalPairs.length;
             this.engineUsage = {
                 rust: manifest.engineUsage?.rust ?? 0,
@@ -751,6 +780,7 @@ export class TopMeanCoordinatorEngine {
                                             runId: this._request.runId,
                                             error: error instanceof Error ? error.message : String(error),
                                         });
+                                        phase0bWriterError ??= error instanceof Error ? error.message : String(error);
                                         phase0bWriterFailed = true;
                                     }
                                 },
@@ -763,6 +793,7 @@ export class TopMeanCoordinatorEngine {
                                             runId: this._request.runId,
                                             error: error instanceof Error ? error.message : String(error),
                                         });
+                                        phase0bWriterError ??= error instanceof Error ? error.message : String(error);
                                         phase0bWriterFailed = true;
                                     }
                                 },
@@ -796,6 +827,7 @@ export class TopMeanCoordinatorEngine {
                         runId: this._request.runId,
                         error: error instanceof Error ? error.message : String(error),
                     });
+                    phase0bWriterError ??= error instanceof Error ? error.message : String(error);
                 }
             }
 
@@ -891,20 +923,56 @@ export class TopMeanCoordinatorEngine {
                 currentSnapshot: currentSnapshotResult,
             };
 
-            const archiveComplete = await archiveCompletedTopMeanRun(this.resultSummary, this._request, {
-                root: this.baseDir,
-                canonicalAssets: this.canonicalAssets,
-                fingerprint: this.runFingerprint ?? this.manifest?.fingerprint,
-                warn: (event, data) => debugLogger.warn(event, data),
-                manifest: await this.buildArchiveManifest(),
-                ...(phase0bFiles ? { phase0bFiles } : {}),
-            });
-            this.resultSummary.archiveComplete = archiveComplete;
+            let archiveOutcome: TopMeanArchiveOutcome;
+            if (phase0bWriterFailed) {
+                archiveOutcome = {
+                    reason: "failed",
+                    error: phase0bWriterError ?? "Phase 0b archive staging failed.",
+                };
+            } else if (!this.archiveRequested) {
+                archiveOutcome = { reason: "not_requested" };
+            } else if (this.archiveRoot === null) {
+                archiveOutcome = { reason: "disabled" };
+            } else {
+                try {
+                    archiveOutcome = await archiveCompletedTopMeanRun(this.resultSummary, this._request, {
+                        root: this.baseDir,
+                        archiveRoot: this.archiveRoot,
+                        canonicalAssets: this.canonicalAssets,
+                        fingerprint: this.runFingerprint ?? this.manifest?.fingerprint,
+                        warn: (event, data) => debugLogger.warn(event, data),
+                        manifest: await this.buildArchiveManifest(),
+                        ...(phase0bFiles ? { phase0bFiles } : {}),
+                    });
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    debugLogger.warn("sp500_top_mean.archive_log_failed", {
+                        runId: this._request.runId,
+                        error: message,
+                    });
+                    archiveOutcome = { reason: "failed", error: message };
+                }
+            }
+            this.resultSummary.archiveRequested = this.archiveRequested;
+            this.resultSummary.archiveComplete = archiveOutcome.reason === "saved";
+            if (archiveOutcome.reason === "saved") {
+                this.resultSummary.archiveDir = archiveOutcome.archiveDir;
+            } else if (archiveOutcome.reason === "failed") {
+                this.resultSummary.archiveError = archiveOutcome.error;
+            }
 
             this.currentPhase = "completed";
             this.progressText = "TOP_MEAN analysis completed successfully.";
             if (this.manifest) {
                 this.manifest.status = "completed";
+                this.manifest.archiveComplete = this.resultSummary.archiveComplete;
+                this.manifest.archiveRequested = this.resultSummary.archiveRequested;
+                if (this.resultSummary.archiveDir !== undefined) {
+                    this.manifest.archiveDir = this.resultSummary.archiveDir;
+                }
+                if (this.resultSummary.archiveError !== undefined) {
+                    this.manifest.archiveError = this.resultSummary.archiveError;
+                }
                 this.updateManifestEngineTelemetry(this.manifest);
                 this.manifest.updatedAt = Date.now();
                 saveManifest(this.manifest, this.baseDir);

@@ -90,6 +90,40 @@ import { coalesceAnimationFrame } from "../render-scheduler";
 
 type OngoingTopMeanEventDetail = OpenScoreUsdOngoingEventDetail;
 
+export function formatTopMeanCompletionMessage(summary: {
+    archiveComplete?: boolean;
+    archiveRequested?: boolean;
+    archiveDir?: string;
+    archiveError?: string;
+}): string {
+    const prefix = "TOP_MEAN run completed successfully.";
+    if (summary.archiveRequested === false) {
+        return `${prefix} Archive not saved (toggle off).`;
+    }
+    if (summary.archiveError) {
+        return `${prefix} Archive save failed: ${summary.archiveError}.`;
+    }
+    if (summary.archiveComplete === true) {
+        return summary.archiveDir
+            ? `${prefix} Archive saved: ${summary.archiveDir}.`
+            : `${prefix} Archive saved.`;
+    }
+    return `${prefix} Archive not saved (disabled by TOP_MEAN_ARCHIVE_LOG_DIR).`;
+}
+
+function mergeTopMeanArchiveStatus(
+    result: TopMeanResultSummary,
+    status: TopMeanStatusResponse,
+): TopMeanResultSummary {
+    return {
+        ...result,
+        ...(status.archiveComplete !== undefined ? { archiveComplete: status.archiveComplete } : {}),
+        ...(status.archiveRequested !== undefined ? { archiveRequested: status.archiveRequested } : {}),
+        ...(status.archiveDir !== undefined ? { archiveDir: status.archiveDir } : {}),
+        ...(status.archiveError !== undefined ? { archiveError: status.archiveError } : {}),
+    };
+}
+
 interface TopMeanOpenScoreDetailSection {
     label: string;
     rows: OpenScoreUsdEventDetail[];
@@ -2736,6 +2770,7 @@ export class BatchBacktestService {
         // From/To controls. Pair backtests (phase 2) still cover full history.
         const sampleFrom = dom.batchBacktestSp500TopMeanFrom.value.trim();
         const sampleTo = dom.batchBacktestSp500TopMeanTo.value.trim();
+        const saveArchiveLog = dom.batchBacktestSp500TopMeanArchiveToggle.checked;
 
         const payload = {
             runId,
@@ -2748,6 +2783,7 @@ export class BatchBacktestService {
             workerCount,
             maxPairs,
             pairListText,
+            saveArchiveLog,
             useRustEnginePreference: shouldUseRustEngine(),
             ...(sampleFrom ? { sampleFrom } : {}),
             ...(sampleTo ? { sampleTo } : {}),
@@ -2819,7 +2855,8 @@ export class BatchBacktestService {
                         dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled =
                             !Array.isArray(event.result.reportLines) || event.result.reportLines.length === 0;
                         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
-                        dom.batchBacktestSp500TopMeanProgressText.textContent = "TOP_MEAN run completed successfully.";
+                        dom.batchBacktestSp500TopMeanProgressText.textContent =
+                            formatTopMeanCompletionMessage(event.result);
                         this.activeTopMeanRunId = null;
                         clearTopMeanActiveRun();
                     },
@@ -3138,7 +3175,7 @@ export class BatchBacktestService {
         dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled =
             !Array.isArray(result.reportLines) || result.reportLines.length === 0;
         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
-        dom.batchBacktestSp500TopMeanProgressText.textContent = "Restored completed TOP_MEAN result.";
+        dom.batchBacktestSp500TopMeanProgressText.textContent = formatTopMeanCompletionMessage(result);
     }
 
     private resetTopMeanOpenScoreDetails(dom: BatchBacktestDom): void {
@@ -3721,13 +3758,20 @@ export class BatchBacktestService {
                         setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
                         setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
                         if (status.result) {
-                            this.latestTopMeanResult = status.result;
-                            this.persistLatestTopMeanResult(status.result);
-                            this.renderTopMeanResults(dom, status.result);
+                            const result = mergeTopMeanArchiveStatus(status.result, status);
+                            this.latestTopMeanResult = result;
+                            this.persistLatestTopMeanResult(result);
+                            this.renderTopMeanResults(dom, result);
                             dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
                             dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled =
-                                !Array.isArray(status.result.reportLines) || status.result.reportLines.length === 0;
+                                !Array.isArray(result.reportLines) || result.reportLines.length === 0;
                             dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
+                        }
+                        if (status.status === "completed") {
+                            dom.batchBacktestSp500TopMeanProgressText.textContent =
+                                formatTopMeanCompletionMessage(status.result
+                                    ? mergeTopMeanArchiveStatus(status.result, status)
+                                    : status);
                         }
                         clearTopMeanActiveRun();
                         this.activeTopMeanRunId = null;

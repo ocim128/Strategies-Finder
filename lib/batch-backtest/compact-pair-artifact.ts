@@ -54,6 +54,10 @@ export interface TopMeanRunManifest {
     engineUsage?: { rust: number; typescript: number };
     workerCount?: number;
     error?: string;
+    archiveComplete?: boolean;
+    archiveRequested?: boolean;
+    archiveDir?: string;
+    archiveError?: string;
 }
 
 export interface BatchSyntheticPairArtifactAdapter {

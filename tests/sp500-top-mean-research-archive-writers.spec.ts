@@ -18,6 +18,7 @@ const request = {
     runId: "top_mean_writer_shape_1",
     interval: "1h",
     horizons: [12],
+    saveArchiveLog: true,
 } as unknown as TopMeanCoordinatorRunRequest;
 
 const manifest = {
@@ -96,11 +97,12 @@ async function main(): Promise<void> {
             poolSnapshots: [],
             candidateOutcomes: outcomes,
         } as unknown as TopMeanResultSummary;
-        assert.equal(await archiveCompletedTopMeanRun(summary, request, {
+        const outcome = await archiveCompletedTopMeanRun(summary, request, {
             root,
             canonicalAssets: ["AAA", "BBB"],
             manifest,
-        }), true);
+        });
+        assert.equal(outcome.reason, "saved");
         const runDir = join(root, "archive", "batch-open-score", request.runId);
         const eventRow = JSON.parse(readFileSync(join(runDir, "events-full.jsonl"), "utf8")) as Record<string, unknown>;
         assert.equal(eventRow.eventId, eventId);

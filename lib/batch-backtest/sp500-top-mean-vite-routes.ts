@@ -165,6 +165,12 @@ async function handleSp500TopMeanRunRequest(
         throw new HttpStatusError(400, "Request body must be a JSON object.");
     }
     const req = body as Partial<TopMeanCoordinatorRunRequest>;
+    if (
+        Object.prototype.hasOwnProperty.call(req, "saveArchiveLog")
+        && typeof req.saveArchiveLog !== "boolean"
+    ) {
+        throw new HttpStatusError(400, "saveArchiveLog must be a boolean when provided.");
+    }
     if (!req.runId || typeof req.runId !== "string") {
         throw new HttpStatusError(400, "Missing required string property: runId.");
     }
@@ -251,7 +257,10 @@ async function handleSp500TopMeanStopRequest(runId?: unknown): Promise<{ ok: boo
     return { ok: true, stopped: true, runId: activeEngine.request.runId };
 }
 
-async function handleSp500TopMeanStatusRequest(runId?: string): Promise<TopMeanStatusResponse | { ok: false; error: string }> {
+export async function handleSp500TopMeanStatusRequest(
+    runId?: string,
+    baseDir?: string,
+): Promise<TopMeanStatusResponse | { ok: false; error: string }> {
     const activeEngine = getActiveTopMeanCoordinatorEngine();
     if (activeEngine && (!runId || activeEngine.request.runId === runId)) {
         return activeEngine.getStatus();
@@ -263,7 +272,7 @@ async function handleSp500TopMeanStatusRequest(runId?: string): Promise<TopMeanS
         if (!isValidRunId(runId)) {
             return { ok: false, error: "Run not found" };
         }
-        const manifest = loadManifest(runId);
+        const manifest = loadManifest(runId, baseDir);
         if (manifest) {
             // Audit: read multi-MB result files ASYNC. The prior
             // `existsSync` + `readFileSync` blocked the Vite event loop on
@@ -273,7 +282,7 @@ async function handleSp500TopMeanStatusRequest(runId?: string): Promise<TopMeanS
             // artifact I/O to fs/promises for the same reason.
             // Drop `existsSync` (TOCTOU); distinguish missing via ENOENT.
             let result: unknown = undefined;
-            const resultPath = join(getRunDir(runId), "result.json");
+            const resultPath = join(getRunDir(runId, baseDir), "result.json");
             try {
                 const txt = await readFile(resultPath, "utf8");
                 try { result = JSON.parse(txt); } catch { /* malformed JSON */ }
@@ -298,6 +307,10 @@ async function handleSp500TopMeanStatusRequest(runId?: string): Promise<TopMeanS
                 requestedEngineMode: manifest.requestedEngineMode ?? "auto",
                 actualEngineMode: manifest.actualEngineMode ?? "auto",
                 engineUsage: manifest.engineUsage ?? { rust: 0, typescript: 0 },
+                archiveComplete: manifest.archiveComplete,
+                archiveRequested: manifest.archiveRequested,
+                archiveDir: manifest.archiveDir,
+                archiveError: manifest.archiveError,
                 error: manifest.error,
                 // `result` is untrusted JSON read from disk; cast at the
                 // boundary rather than widening the parsed local, so the

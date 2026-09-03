@@ -88,6 +88,14 @@ export interface TopMeanArchiveLogOptions {
     completedAt?: string;
     /** Coordinator-owned staged Phase 0b files, already closed before archive. */
     phase0bFiles?: TopMeanPhase0bArchiveFiles;
+    /** Resolved archive root captured by the coordinator at run start. */
+    archiveRoot?: string | null;
+}
+
+export interface TopMeanArchiveOutcome {
+    reason: "saved" | "not_requested" | "disabled" | "failed" | "not_completed";
+    archiveDir?: string;
+    error?: string;
 }
 
 export interface TopMeanPhase0bArchiveFiles {
@@ -324,33 +332,37 @@ function defaultWarning(event: string, data: Record<string, unknown>): void {
  * Persist the permanent TOP_MEAN research archive. This is deliberately a
  * Node-only leaf and has no retention or cleanup behavior.
  *
- * The function is best-effort: it returns false and emits one warning on any
- * failure so archive I/O can never fail the coordinator run.
+ * The function is best-effort: it returns a failure outcome and emits one
+ * warning on any failure so archive I/O can never fail the coordinator run.
  */
 export async function archiveCompletedTopMeanRun(
     result: TopMeanResultSummary,
     request: TopMeanCoordinatorRunRequest,
     options: TopMeanArchiveLogOptions,
-): Promise<boolean> {
+): Promise<TopMeanArchiveOutcome> {
     const warn = options.warn ?? defaultWarning;
 
-    if (!result.completed) return false;
+    if (!result.completed) return { reason: "not_completed" };
+    if (request.saveArchiveLog === false) return { reason: "not_requested" };
     if (!isValidRunId(request.runId)) {
+        const error = "Invalid runId";
         try {
             warn("sp500_top_mean.archive_log_failed", {
                 runId: request.runId,
-                error: "Invalid runId",
+                error,
             });
         } catch {
             // Warning telemetry must never change coordinator control flow.
         }
-        return false;
+        return { reason: "failed", error };
     }
 
     try {
         const root = options.root ?? process.cwd();
-        const archiveRoot = resolveTopMeanArchiveLogDir(root, options.env);
-        if (!archiveRoot) return false;
+        const archiveRoot = options.archiveRoot !== undefined
+            ? options.archiveRoot
+            : resolveTopMeanArchiveLogDir(root, options.env);
+        if (!archiveRoot) return { reason: "disabled" };
 
         const canonicalAssets = [...(options.canonicalAssets ?? [])];
         const fingerprint = options.fingerprint
@@ -458,16 +470,17 @@ export async function archiveCompletedTopMeanRun(
         } else if (result.candidateOutcomes !== undefined) {
             await writeJsonlFile(path.join(runDir, "candidate-outcomes.jsonl"), result.candidateOutcomes);
         }
-        return true;
+        return { reason: "saved", archiveDir: runDir };
     } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         try {
             warn("sp500_top_mean.archive_log_failed", {
                 runId: request.runId,
-                error: error instanceof Error ? error.message : String(error),
+                error: message,
             });
         } catch {
             // Warning telemetry must never change coordinator control flow.
         }
-        return false;
+        return { reason: "failed", error: message };
     }
 }

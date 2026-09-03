@@ -1,7 +1,11 @@
 /** Browser-visible analysis lifecycle regressions not covered by plugin specs. */
 import { expect } from "chai";
 import { describe, it, before, after, beforeEach } from "node:test";
-import { createBatchBacktestService, type BatchBacktestService } from "../lib/batch-backtest/batch-backtest-service";
+import {
+    createBatchBacktestService,
+    formatTopMeanCompletionMessage,
+    type BatchBacktestService,
+} from "../lib/batch-backtest/batch-backtest-service";
 import type { BatchBacktestDom } from "../lib/batch-backtest/batch-backtest-dom";
 import { BATCH_BACKTEST_REQUIRED_IDS } from "../lib/batch-backtest/batch-backtest-dom";
 import { state } from "../lib/state";
@@ -345,6 +349,68 @@ describe("BatchBacktestService analysis lifecycle", () => {
 
         expect(requestBody.interval).to.equal("15m");
         expect(requestBody.pairListText).to.equal("BTCUSDT\nZEC+APT");
+        expect(requestBody.saveArchiveLog).to.equal(false);
+    });
+
+    it("submits an explicitly checked archive toggle and does not persist it", async () => {
+        const dom = setupForAnalysis();
+        dom.batchBacktestSp500TopMeanArchiveToggle.checked = true;
+        const service = svc();
+        dom.batchBacktestSymbols.value = "BTCUSDT\nZEC+APT";
+        state.currentInterval = "15m";
+        let requestBody: any = null;
+        service.resolveTopMeanBuiltInStrategy = async () => ({
+            strategyKey: "test",
+            strategy: { defaultParams: {} },
+        });
+        const originalBacktestSettings = backtestService.getBacktestSettings;
+        const originalCapitalSettings = backtestService.getCapitalSettings;
+        backtestService.getBacktestSettings = () => ({});
+        backtestService.getCapitalSettings = () => ({
+            initialCapital: 10_000,
+            positionSize: 100,
+            commission: 0,
+            sizingMode: "fixed",
+            fixedTradeAmount: 1_000,
+        });
+
+        try {
+            await withMockFetch((url, init) => {
+                if (String(url).includes("/sp500-top-mean/run")) {
+                    requestBody = JSON.parse(String(init?.body ?? "{}"));
+                }
+                return { ok: true, status: 200, body: new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }) };
+            }, async () => {
+                await service.runSp500TopMeanCoordinator();
+            });
+        } finally {
+            backtestService.getBacktestSettings = originalBacktestSettings;
+            backtestService.getCapitalSettings = originalCapitalSettings;
+        }
+
+        expect(requestBody.saveArchiveLog).to.equal(true);
+        expect((globalThis as any).localStorage.getItem("sp500_top_mean_archive_toggle")).to.equal(null);
+        expect(createFakeBatchBacktestDom().batchBacktestSp500TopMeanArchiveToggle.checked).to.equal(false);
+    });
+
+    it("formats all TOP_MEAN archive completion outcomes after completion", () => {
+        const prefix = "TOP_MEAN run completed successfully.";
+        expect(formatTopMeanCompletionMessage({ archiveRequested: false, archiveComplete: false }))
+            .to.equal(`${prefix} Archive not saved (toggle off).`);
+        expect(formatTopMeanCompletionMessage({
+            archiveRequested: true,
+            archiveComplete: false,
+        })).to.equal(`${prefix} Archive not saved (disabled by TOP_MEAN_ARCHIVE_LOG_DIR).`);
+        expect(formatTopMeanCompletionMessage({
+            archiveRequested: true,
+            archiveComplete: true,
+            archiveDir: "C:\\archive\\run",
+        })).to.equal(`${prefix} Archive saved: C:\\archive\\run.`);
+        expect(formatTopMeanCompletionMessage({
+            archiveRequested: true,
+            archiveComplete: false,
+            archiveError: "disk full",
+        })).to.equal(`${prefix} Archive save failed: disk full.`);
     });
 
     it("persists the active run id and restores it after a tab-style reset", () => {

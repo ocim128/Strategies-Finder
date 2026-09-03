@@ -187,6 +187,10 @@
                 <label class="batch-field-label" for="batchBacktestSp500TopMeanTo">To</label>
                 <input class="batch-field-input batch-field-input--auto" id="batchBacktestSp500TopMeanTo" type="date">
             </div>
+            <div class="batch-field batch-field--inline" title="Write the completed run's permanent mining ledger to archive/batch-open-score/. Saved archives are not automatically removed.">
+                <input id="batchBacktestSp500TopMeanArchiveToggle" type="checkbox">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanArchiveToggle">Save full research archive (~150 MB / 5k pairs)</label>
+            </div>
         </div>
         <div class="batch-coordinator-actions">
             <button class="btn btn-secondary" id="batchBacktestSp500TopMeanRunBtn" type="button">Run TOP_MEAN</button>

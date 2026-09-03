@@ -27,6 +27,7 @@ function makeRequest(runId = "top_mean_archive_test_1"): TopMeanCoordinatorRunRe
         horizons: [12, 24],
         workerCount: 2,
         maxPairs: 10,
+        saveArchiveLog: true,
         useRustEnginePreference: true,
         sampleFromSec: 1_700_000_000,
         sampleToSec: 1_700_086_400,
@@ -160,7 +161,7 @@ async function testCompletedRunWritesArchive(): Promise<void> {
     try {
         const request = makeRequest();
         const summary = makeSummary();
-        const completed = await archiveCompletedTopMeanRun(summary, request, {
+        const outcome = await archiveCompletedTopMeanRun(summary, request, {
             root,
             canonicalAssets: ["AAPL", "MSFT"],
             fingerprint: "fingerprint-test",
@@ -168,8 +169,9 @@ async function testCompletedRunWritesArchive(): Promise<void> {
             manifest: makeManifest(),
         });
 
-        assert.equal(completed, true);
-        summary.archiveComplete = completed;
+        assert.equal(outcome.reason, "saved");
+        assert.equal(outcome.archiveDir, join(root, "archive", "batch-open-score", request.runId));
+        summary.archiveComplete = outcome.reason === "saved";
         assert.equal(summary.archiveComplete, true);
         const runDir = join(root, "archive", "batch-open-score", request.runId);
         assert.equal(readFileSync(join(runDir, "report.txt"), "utf8"), summary.reportLines.join("\n"));
@@ -221,6 +223,14 @@ async function testCompletedRunWritesArchive(): Promise<void> {
 async function testDisabledAndFailedWritesAreBestEffort(): Promise<void> {
     const root = mkdtempSync(join(tmpdir(), "top-mean-archive-disabled-"));
     try {
+        const offRequest = { ...makeRequest(), saveArchiveLog: false };
+        const notRequested = await archiveCompletedTopMeanRun(makeSummary(), offRequest, {
+            root,
+            manifest: makeManifest(),
+        });
+        assert.equal(notRequested.reason, "not_requested");
+        assert.equal(existsSync(join(root, "archive")), false);
+
         const request = makeRequest();
         const summary = makeSummary();
         const disabled = await archiveCompletedTopMeanRun(summary, request, {
@@ -228,7 +238,7 @@ async function testDisabledAndFailedWritesAreBestEffort(): Promise<void> {
             env: { TOP_MEAN_ARCHIVE_LOG_DIR: "" },
             manifest: makeManifest(),
         });
-        assert.equal(disabled, false);
+        assert.equal(disabled.reason, "disabled");
         assert.equal(existsSync(join(root, "archive")), false);
         assert.equal(existsSync(join(root, "pool-snapshots.jsonl")), false);
         assert.equal(existsSync(join(root, "candidate-outcomes.jsonl")), false);
@@ -241,8 +251,9 @@ async function testDisabledAndFailedWritesAreBestEffort(): Promise<void> {
             warn: (event) => warnings.push(event),
             manifest: makeManifest(),
         });
-        assert.equal(failed, false);
-        summary.archiveComplete = failed;
+        summary.archiveComplete = failed.reason === "saved";
+        assert.equal(failed.reason, "failed");
+        assert.equal(typeof failed.error, "string");
         assert.equal(summary.completed, true);
         assert.equal(summary.archiveComplete, false);
         assert.deepEqual(warnings, ["sp500_top_mean.archive_log_failed"]);
@@ -252,7 +263,7 @@ async function testDisabledAndFailedWritesAreBestEffort(): Promise<void> {
             warn: (event) => warnings.push(event),
             manifest: makeManifest(),
         });
-        assert.equal(invalid, false);
+        assert.equal(invalid.reason, "failed");
         assert.deepEqual(warnings, [
             "sp500_top_mean.archive_log_failed",
             "sp500_top_mean.archive_log_failed",
@@ -263,7 +274,7 @@ async function testDisabledAndFailedWritesAreBestEffort(): Promise<void> {
             root: cancelledRoot,
             manifest: makeManifest(),
         });
-        assert.equal(cancelled, false);
+        assert.equal(cancelled.reason, "not_completed");
         assert.equal(existsSync(cancelledRoot), false);
     } finally {
         rmSync(root, { recursive: true, force: true });
@@ -296,7 +307,7 @@ async function testMarkedRegistryPoolMatch(): Promise<void> {
             root,
             manifest,
         });
-        assert.equal(completed, true);
+        assert.equal(completed.reason, "saved");
         const meta = JSON.parse(readFileSync(
             join(root, "archive", "batch-open-score", request.runId, "meta.json"),
             "utf8",

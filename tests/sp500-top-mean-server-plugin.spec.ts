@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Readable } from "node:stream";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +20,10 @@ import { enumerateSp500Pairs } from "../lib/batch-backtest/sp500-pair-enumerator
 import type { CompactPairArtifact, TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
 import { computeCurrentTopMeanSnapshot } from "../lib/batch-backtest/sp500-top-mean-current-snapshot";
 import type { Time } from "lightweight-charts";
+import {
+    handleSp500TopMeanStatusRequest,
+    registerSp500TopMeanRoutes,
+} from "../lib/batch-backtest/sp500-top-mean-vite-routes";
 
 /**
  * Coordinator + persistence tests for the Phase-1 current snapshot.
@@ -41,6 +46,7 @@ async function testEngineValidationAndConflict(): Promise<void> {
         interval: "4h",
         horizons: [12, 24, 48],
         maxPairs: 2,
+        saveArchiveLog: false,
     };
 
     const engine = new TopMeanCoordinatorEngine(request as any);
@@ -49,6 +55,8 @@ async function testEngineValidationAndConflict(): Promise<void> {
     assert.equal(status.runId, "spec_test_run_1");
     assert.equal(status.status, "running");
     assert.equal(status.phase, "preflight");
+    assert.equal(status.archiveRequested, false);
+    assert.equal(engine.request.saveArchiveLog, false);
 
     // Test stop
     engine.stop();
@@ -386,6 +394,7 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
         horizons: [12],
         pairListText,
         resume: true,
+        saveArchiveLog: false,
         useRustEnginePreference: false,
     };
     const fingerprint = computeRunFingerprint({
@@ -446,6 +455,11 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
             // replay phase entirely — modeling "replay never runs / fails".
             if (e.type === "current_snapshot" && !sawSnapshot) {
                 sawSnapshot = true;
+                assert.equal(
+                    existsSync(join(getRunDir(runId, baseDir), "phase0b")),
+                    false,
+                    "explicitly disabled archive must not create Phase 0b staging",
+                );
                 engine!.stop();
             }
         });
@@ -535,6 +549,81 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
     }
 }
 
+async function testTopMeanRouteRejectsNonBooleanArchiveFlag(): Promise<void> {
+    const routes = new Map<string, (req: any, res: any) => void | Promise<void>>();
+    registerSp500TopMeanRoutes({
+        use(path, handler) {
+            routes.set(path, handler);
+        },
+    }, {
+        maxBodyBytes: 1024 * 1024,
+        rememberLocalApiOriginFromRequest: () => undefined,
+        ownerLocks: {
+            isBusy: () => false,
+            acquire: () => ({ runOwner: 1, analysisOwner: 1 }),
+            releaseIfStillOwner: () => undefined,
+        },
+    });
+
+    const response: any = {
+        statusCode: 0,
+        headers: {} as Record<string, string>,
+        body: "",
+        setHeader(name: string, value: string) { this.headers[name] = value; },
+        end(body: string) { this.body = body; },
+    };
+    const request: any = Readable.from([JSON.stringify({ saveArchiveLog: "false" })]);
+    request.method = "POST";
+    request.url = "/api/batch-backtest/sp500-top-mean/run";
+    request.headers = { host: "127.0.0.1:5173" };
+    request.socket = { remoteAddress: "127.0.0.1" };
+
+    await routes.get("/api/batch-backtest/sp500-top-mean/run")!(request, response);
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(JSON.parse(response.body), {
+        ok: false,
+        error: "saveArchiveLog must be a boolean when provided.",
+    });
+    console.log("PASS: TOP_MEAN route rejects non-boolean saveArchiveLog");
+}
+
+async function testManifestBackedStatusPreservesArchiveOutcome(): Promise<void> {
+    const baseDir = mkdtempSync(join(tmpdir(), "sp500-top-mean-status-"));
+    const runId = "spec_archive_status_1";
+    try {
+        saveManifest({
+            schema: "top_mean_run_manifest.v1",
+            runId,
+            status: "completed",
+            fingerprint: "archive-status-fingerprint",
+            strategyKey: "close_location_median_alignment",
+            interval: "4h",
+            pairCount: 1,
+            shardSize: 50,
+            totalShards: 1,
+            completedShards: [0],
+            failedShards: [],
+            completedPairsCount: 1,
+            failedPairsCount: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            archiveComplete: true,
+            archiveRequested: true,
+            archiveDir: "C:\\archive\\spec_archive_status_1",
+        }, baseDir);
+
+        const status = await handleSp500TopMeanStatusRequest(runId, baseDir);
+        assert.equal("ok" in status, false);
+        if ("ok" in status) return;
+        assert.equal(status.archiveComplete, true);
+        assert.equal(status.archiveRequested, true);
+        assert.equal(status.archiveDir, "C:\\archive\\spec_archive_status_1");
+    } finally {
+        rmSync(baseDir, { recursive: true, force: true });
+    }
+    console.log("PASS: manifest-backed TOP_MEAN status preserves archive outcome");
+}
+
 function openArtifact(
     pairIndex: number,
     symbol: string,
@@ -564,6 +653,8 @@ async function main(): Promise<void> {
     await testResultJsonAugmentationIsAdditive();
     await testResultSummaryFieldIsOptional();
     await testRunIntegratesSnapshotAndPersistsBeforeReplay();
+    await testTopMeanRouteRejectsNonBooleanArchiveFlag();
+    await testManifestBackedStatusPreservesArchiveOutcome();
     console.log("PASS: sp500-top-mean-server-plugin.spec.ts");
 }
 

@@ -221,14 +221,18 @@ Worker cost is summed across parallel workers and can exceed coordinator wall
 time. Use wall time for before/after latency and summed worker cost to identify
 the bottleneck.
 
-Every completed TOP_MEAN coordinator run also writes a permanent archive under
-`archive/batch-open-score/<runId>/`: the exact report, run metadata, and full
-and per-calendar-year event JSONL files. Set `TOP_MEAN_ARCHIVE_LOG_DIR` to an
-absolute or relative directory to override the location, or set it to an empty
-string to disable logging. New archives use `top_mean_archive.v2` metadata with
-normalized run-manifest provenance; the streamed result exposes `archiveComplete`
-and the terminal event is emitted only after the archive attempt resolves. The
-archive has no TTL or cleanup sweep.
+TOP_MEAN archive admission is controlled by the unchecked-by-default `Save full
+research archive (~150 MB / 5k pairs)` checkbox. An enabled request writes the
+permanent archive under `archive/batch-open-score/<runId>/`: the exact report,
+run metadata, and full and per-calendar-year event JSONL files. Older/direct API
+callers that omit `saveArchiveLog` retain the legacy behavior and request the
+archive; a present non-boolean value is rejected. `TOP_MEAN_ARCHIVE_LOG_DIR`
+still overrides the location, and an empty value is an absolute server veto.
+Only completed runs are archived. New archives use `top_mean_archive.v2`
+metadata with normalized run-manifest provenance; the streamed result and
+terminal status expose `archiveComplete`, `archiveRequested`, and, when
+applicable, `archiveDir` or `archiveError`. Archive writes remain best-effort,
+and saved archives have no TTL or cleanup sweep.
 
 For cold runs, worker threads read synced IBKR and crypto CSVs directly from
 disk rather than routing local files through the Vite HTTP server. Worker-thread
