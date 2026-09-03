@@ -26,10 +26,11 @@ current dominant selection asset is SNDK (most frequently picked by TOP_MEAN).
 
 READ FIRST (mandatory)
 - archive/top-mean-mining/idea-log.txt
-  Every thesis already tried, with verdicts. NEVER propose a logged thesis, a rewording
-  of one, the same feature with the same gate direction, or a combination of
-  already-dead features. Also never propose anything equivalent to the incumbent
-  (raw score ordering) or to a listed engine arm.
+  Read this append-only log directly. Every thesis and familyKey already tried, with
+  verdicts, is clone-blocked. NEVER propose a logged thesis, a rewording of one, the
+  same feature with the same gate direction, or a combination of already-dead
+  features. Also never propose anything equivalent to the incumbent (raw score
+  ordering) or to a listed engine arm.
 - archive/top-mean-mining/MINING-GUIDE.md
   Rule kinds, PRIMARY/SECONDARY semantics, discipline.
 
@@ -64,13 +65,18 @@ HARD DESIGN RULES FOR THIS CAMPAIGN
    direction are expected to land at noise level; prefer INTERACTIONS of two independent
    information sources (coverage x trend, breadth x score-shape, calendar x regime) and
    nonlinear score transforms (saturation, floor effects) over obvious gates.
-3. DIVERSITY ACROSS THE BATCH. The 10 ideas must differ in their PRIMARY information
-   source, not just thresholds.
-4. NON-TRIVIALITY. A ranking rule must be a genuinely different ordering than
+3. C5 BATCH COMPOSITION. Every batch has exactly 10 ideas, at least 6 distinct
+   familyKey values, at most 2 ideas per familyKey, at most 1 identity/asset-list rule,
+   and at most 1 combination. An EDGE cannot spawn a same-batch variant.
+4. C7 COMBINATIONS. A combination has exactly two parents, both pass the campaign
+   discovery floor and concentration checklist, the parents have different familyKeys
+   and distinct causal sources, neither parent is a combination, and the fresh idea
+   records both parents. Combination ideas require human approval at campaign review.
+5. NON-TRIVIALITY. A ranking rule must be a genuinely different ordering than
    score / signedVotes / activePairCount / raw-sqrt(activePairs) (else it clones an
    engine arm). A filter must state its expected event keep-rate; ~100% keep is only
    acceptable for a targeted exclusion thesis.
-5. Each idea is ONE one-line rule body (the wrapper is added at implementation):
+6. Each idea is ONE one-line rule body (the wrapper is added at implementation):
    <rule over cand and event>
 
 NON-NEGOTIABLE OUTPUT RULES
@@ -86,6 +92,7 @@ NON-NEGOTIABLE OUTPUT RULES
       "rule": "rule body only, e.g. cand.signedVotes >= 20 && cand.ema200Above",
       "kind": "ranking|filter",
       "family": "score-shape|coverage|trend|regime-breadth|calendar|identity|interaction",
+      "familyKey": "specific family key, e.g. coverage_x_trend",
       "expectedKeep": "estimated event keep-rate for filters, n/a for rankings",
       "rationale": "1-2 sentences: why this could beat the incumbent on matched events"
     }

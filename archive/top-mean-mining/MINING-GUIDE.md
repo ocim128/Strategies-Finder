@@ -7,6 +7,16 @@ to it, to this directory, or to any other archive. The designated L1 report is
 allowed to be `DATA_INCOMPLETE` only for that run: its h24 long coverage is
 938/962 (97.5%).
 
+The active campaign is `TM-L1-C1`. [`LOOP-CONTRACT.md`](./LOOP-CONTRACT.md) is
+the governing contract for discovery, corroboration, validation, L2, reviews,
+stopping, and promotion. This guide remains the checker and CLI reference.
+
+A checker `EDGE` is local discovery evidence only: it requires the C1
+discovery label, but it does not authorize validation or any engine change.
+Promotion requires the ordered C3 chain and the universal C2 evidence
+checklist in `LOOP-CONTRACT.md`, including a positive dominant-exclusion
+`PRIMARY`, corroboration where required, human authorization, and audit.
+
 ## Frozen contract
 
 The checker is v1: horizon 24, direction `long`, and causal base candidates
@@ -74,10 +84,11 @@ Calibrate causal fields without selecting on outcomes:
 ..\..\..\node_modules\.bin\esno scripts\top-mean-rule-checker.ts archive\batch-open-score\sp500_top_mean_1788443592188_cgd3 --stats --window validation
 ```
 
-Discovery is for idea generation and calibration. Validation is sealed until
-finalist stage: do not inspect validation outcomes while choosing, editing, or
-ranking ideas. A finalist implementation must rerun the same checker with the
-explicit validation window and preserve the rule bytes for provenance.
+Discovery is for idea generation and calibration. The checker supports an
+explicit validation window, but campaign validation is sealed: do not run it
+as an immediate finalist step or without the corroboration and human-approved
+G2 authorization required by `LOOP-CONTRACT.md`. Preserve the exact rule bytes
+for any authorized validation provenance.
 
 Rule files must be pure and deterministic: no imports, file I/O, network,
 clocks, randomness, mutation, or logging. The checker is not a process

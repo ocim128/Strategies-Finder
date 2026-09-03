@@ -1,0 +1,3 @@
+Q1|exclude dominant asset SNDK from selection|WORSE -1.04pp sec+0.11pp keep100% val-
+FORMAT2|effective=Q2|records=I2,G2,V2,P2|legacy Q-lines remain immutable
+P2|Q1|B0|key=exclude_dominant_sndk|family=identity:dominant_exclusion|parents=-|sha256=9837dcba123f7b8ea9b9a6165f0e739ac07698de772903e31d2997c098befd2d|ledger=ec81193124e572237acdcd826c6fe688da3adf2156e2abac17052a1c1838b887
