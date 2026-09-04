@@ -281,7 +281,11 @@ function readHistory(options: CampaignStandingsOptions): CampaignHistory {
     const logText = logBytes.toString("utf8");
     const registrationText = readFileSync(paths.registrationPath, "utf8");
     const outcomes = parseRecords(logText, "I2").map(parseOutcome).filter((record): record is CampaignOutcomeRecord => record !== null);
-    const screens = parseRecords(logText, "S3").map(parseScreen).filter((record): record is CampaignScreenRecord => record !== null);
+    // v1.5: collapse byte-identical duplicate appends of the same S3 record.
+    const screens = [...new Set(parseRecords(logText, "S3").map((r) => JSON.stringify(r)))]
+        .map((s) => JSON.parse(s) as PipeRecord)
+        .map(parseScreen)
+        .filter((record): record is CampaignScreenRecord => record !== null);
     const registration = parseRegistration(registrationText);
     const p2 = parseRecords(logText, "P2")[0];
     const legacyRule = p2?.fields.key && p2.fields.sha256
@@ -585,7 +589,7 @@ export function buildCampaignStandings(options: CampaignStandingsOptions): Campa
         cloneKeyCount: cloneCounts.keys,
         cloneShaCount: cloneCounts.shas,
         thesisUnknownCount: cloneCounts.thesisUnknown,
-        tail: history.logLines.slice(-(options.tail ?? TOP_MEAN_STANDINGS_DEFAULT_TAIL)),
+        tail: (options.tail ?? TOP_MEAN_STANDINGS_DEFAULT_TAIL) > 0 ? history.logLines.slice(-(options.tail ?? TOP_MEAN_STANDINGS_DEFAULT_TAIL)) : [],
         familyDetail: requestedFamilyDetail,
     };
 }

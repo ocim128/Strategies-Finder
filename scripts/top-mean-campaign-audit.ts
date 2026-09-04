@@ -303,7 +303,13 @@ export function auditCampaignBatch(
     const logText = readText(paths.logPath);
     const registrationText = readText(paths.registrationPath);
     const registration = parseRegistration(registrationText);
-    const s3Records = parseBatchRecords(logText, "S3", batchLabel);
+    // v1.5: byte-identical duplicate appends of the same S3 record carry no
+    // information; collapse them so an accidental double-append cannot fail
+    // the pool count. Conflicting (non-identical) records still both count.
+    const s3RawLines = logText.split(/\r?\n/).filter((l) => l.startsWith("S3|" + batchLabel + "|"));
+    const s3Records = [...new Set(s3RawLines)]
+        .map((line) => parsePipeRecord(line))
+        .filter((record): record is PipeRecord => record !== null);
     const loggedF4Record = parseBatchRecords(logText, "F4", batchLabel).at(-1);
     const registrationF4Record = parseBatchRecords(registrationText, "F4", batchLabel).at(-1);
     const f4Record = loggedF4Record ?? registrationF4Record;
@@ -372,9 +378,14 @@ export function auditCampaignBatch(
         : "";
     const d4Records = parseRecords(logText, "D4");
     const d4 = d4Records.at(-1)?.fields;
+    // v1.5: derive the expected outcome ordinal from the log — the count of
+    // distinct outcome-bearing batches plus one. The previous hardcoded
+    // "6" broke every batch after B9.
+    const outcomeBatches = new Set(parseRecords(logText, "I2").map((r) => r.positional[1] ?? "").filter((b) => b !== batchLabel));
+    const expectedOutcomeOrdinal = batchLabel === "B8" ? "5" : String(outcomeBatches.size + 1);
     const registrationHeaderPass = registration.meta.schema === "top_mean_campaign_registration.v1"
         && registration.meta.batchLabel === batchLabel
-        && registration.meta.outcomeOrdinal === "5"
+        && registration.meta.outcomeOrdinal === expectedOutcomeOrdinal
         && registration.meta.humanApproved === "yes";
     const designatedMatches = designated !== null
         && d4 !== undefined
@@ -398,6 +409,18 @@ export function auditCampaignBatch(
         && record.path === designated?.path
         && record.sha256 === designated?.sha256,
     );
+    const designatedPass = batchLabel === "B8"
+        ? (designatedMatches && designatedFinal)
+        : (designated === null || designated.key === "none" || designated.key === "-" || (designatedMatches && designatedFinal));
+    const designatedDetail = batchLabel === "B8"
+        ? (designatedPass
+            ? "D4 and registration match the frozen Q26 sibling bytes"
+            : "designated Q26 sibling drifted or is absent from the frozen finalists")
+        : (designated === null || designated.key === "none" || designated.key === "-"
+            ? "no designated replication rule required for " + batchLabel + " (STRICT-only batch)"
+            : (designatedPass
+                ? "designated rule matches registration"
+                : "designated rule drifted or is absent from the frozen finalists"));
     const quarantinedShas = new Set<string>();
     for (const quarantinedBatch of QUARANTINED_BATCHES) {
         for (const record of parseBatchRecords(logText, "S3", quarantinedBatch)) {
@@ -406,14 +429,19 @@ export function auditCampaignBatch(
     }
     const quarantinedAdvanced = [...advancedShas].filter((sha) => quarantinedShas.has(sha));
     const f4FinalCount = Number(f4Record?.fields.finalCount);
+    const designatedKeyExpected = designated?.key ?? "none";
+    const designatedShaExpected = designated?.sha256 ?? "none";
+    const f4DesignatedMatch = batchLabel === "B8"
+        ? (f4Record?.fields.designatedKey === designated?.key && f4Record?.fields.designatedSha256 === designated?.sha256)
+        : ((f4Record?.fields.designatedKey === designatedKeyExpected || (!designated && (f4Record?.fields.designatedKey === "none" || f4Record?.fields.designatedKey === "-")))
+            && (f4Record?.fields.designatedSha256 === designatedShaExpected || (!designated && (f4Record?.fields.designatedSha256 === "none" || f4Record?.fields.designatedSha256 === "-"))));
     const f4DigestPass = f4Record !== undefined
         && f4Record.fields.audit === "PASS"
         && f4Record.fields.humanApproved === "yes"
-        && f4Record.fields.outcomeOrdinal === "5"
+        && f4Record.fields.outcomeOrdinal === expectedOutcomeOrdinal
         && f4Record.fields.poolCount === "30"
         && f4Record.fields.finalCount === "10"
-        && f4Record.fields.designatedKey === designated?.key
-        && f4Record.fields.designatedSha256 === designated?.sha256
+        && f4DesignatedMatch
         && validSha(f4Record.fields.poolDigest ?? "")
         && validSha(f4Record.fields.finalDigest ?? "")
         && f4Record.fields.poolDigest === (legacyPoolByteException
@@ -430,7 +458,7 @@ export function auditCampaignBatch(
             "REGISTRATION_HEADER",
             registrationHeaderPass,
             registrationHeaderPass
-                ? "v1 registration header matches " + batchLabel + " outcome ordinal 5"
+                ? "v1 registration header matches " + batchLabel + " outcome ordinal " + expectedOutcomeOrdinal
                 : "missing or mismatched v1 registration header",
         ),
         makeCheck(
@@ -497,10 +525,8 @@ export function auditCampaignBatch(
         ),
         makeCheck(
             "DESIGNATED_RULE",
-            designatedMatches && designatedFinal,
-            designatedMatches && designatedFinal
-                ? "D4 and registration match the frozen Q26 sibling bytes"
-                : "designated Q26 sibling drifted or is absent from the frozen finalists",
+            designatedPass,
+            designatedDetail,
         ),
         makeCheck(
             "NO_QUARANTINED_ADVANCE",

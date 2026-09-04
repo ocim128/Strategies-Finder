@@ -1,0 +1,1 @@
+export default (cand, event) => event.dow === 1 ? cand.breadth >= 0.68 && cand.ema200Above : event.dow === 5 ? cand.breadth <= 0.70 && cand.shortEligible : cand.breadth >= 0.66 && !cand.shortEligible;
