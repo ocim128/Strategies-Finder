@@ -9,6 +9,10 @@ reference and command examples remain in [`MINING-GUIDE.md`](./MINING-GUIDE.md).
 
 - v1.0 governs B0-B1.
 - v1.1 is effective before Batch 2 causal screening.
+- v1.2 is effective before Batch 3 generation: identity/asset-list rules are banned
+  outright (Q1 and Q2 measured WORSE; asset-name conditioning has no causal
+  mechanism and memorizes in-window winners). Earlier log records remain immutable
+  and counted.
 - Existing log records and discovery counts are not reclassified.
 
 ## Frozen L1 ledger
@@ -80,7 +84,9 @@ Each batch must contain:
 - 10 ideas.
 - At least 6 distinct `familyKey` values.
 - At most 2 ideas per `familyKey`.
-- At most 1 identity/asset-list rule.
+- Identity/asset-list rules are BANNED (v1.2): rules must not condition on
+  `cand.asset` name in any form — no exclusions, no per-asset weight tables, no
+  name-conditional gates.
 - At most 1 combination.
 
 An `EDGE` inside a batch cannot spawn a same-batch variant.
@@ -263,3 +269,25 @@ but their theses and SHAs remain clone-blocked.
    then enforce C6 and append the applicable sealed records.
 6. Finish only when C8 `DONE-SUCCESS` requirements and the C9 audit and human
    approval requirements are satisfied.
+
+## Contract v1.3 amendment — replication route
+
+- Effective after the FORMAT4/R4/D4 review marker and before generation of B8, the fifth outcome-bearing batch. Existing causal-only S3 pools labeled B5, B6, B7 predate this review, remain immutable and clone-blocking, and are QUARANTINED from advancement. Outcome-batch ordinal 5 runs under label B8.
+- Supersedes conflicting portions of C2/C3/C5/C6/C8/C11 and Batch procedure.
+- DISCOVERY ROUTES: STRICT unchanged (LEAD = PRIMARY >= +0.50pp + all C2, corroborated by different-SHA, different-batch same frozen familyKey and mechanism lineage passing same bar). A REPLICATION route: REPLICATION SEED requires PRIMARY >= +1.00pp, event keep >= 5%, EX_dominant > 0 (CI95 and blocks mandatory report fields but advisory for route). REPLICATED LEAD requires different-SHA rule in different outcome-bearing batch, same familyKey and same predeclared mechanism lineage, independently passing full seed bar. FamilyKey/mechanism lineage frozen before either rule outcomes; generic family labels don’t permit unrelated mechanisms to corroborate; same-batch cannot corroborate; failed sibling cannot be replaced by another parameter value. C2 mandatory STRICT/every fresh confirmation; seed/replicated are routing gates, not promotion evidence.
+- ONE-TIME LEGACY SEED: Q26 (interaction:interaction / low_breadth_coverage_floor) legacy hypothesis seed only; existing result cannot authorize validation/promotion. May become REPLICATED LEAD only if one exact human-approved sibling frozen before outcomes and independently passes seed bar. Designated sibling frozen now:
+  `export default (cand, event) => event.breadth < 0.62 ? cand.activePairCount >= 55 : true;`
+  key=`q26_sibling_low_breadth_coverage_floor_55`, kind filter, family=`interaction:interaction`, mechanism lineage=`low_breadth_coverage_floor`. Fresh sibling SHA—not Q26—is predeclared validation/promotion candidate. No fallback threshold; if misses bar lineage dead. Q16 ineligible (negative EX_dominant -0.26pp, threshold drift from declared >=41, familyKey differs). Historical family assignments immutable.
+- CONFIRMATION ORDER unchanged: replicated lead -> human-authorized G2 -> L1 validation exact predeclared sibling SHA (PRIMARY >= +0.30pp + all C2) -> L2 registration before any L2 outcomes -> both L2 windows same bar -> audit/human approval. Failure cannot be tuned. C6 L1-before-L2 remains.
+- FAMILY RETIREMENT: identity family RETIRED (Q1/Q2/Q20 counted, immutable, ineligible routing/corroboration/validation/promotion; no rule may condition on cand.asset). Broad coverage:coverage retired from further exploratory generation; sole exception Q26 lineage pilot.
+- BATCH LOCK: before any outcome-bearing evaluation: exactly 30 unique S3-screened pool candidates; exactly 10 finalists frozen in F4 record; C5 satisfied; no ZERO; <=1 human-approved THIN; registration records ordered rule paths, exact source bodies, SHAs, familyKeys, mechanism lineages, designated replication rule; deterministic audit must PASS before first I2; every rule exact registered bytes (mismatch/substitution/threshold change/missing/extra invalidates advancement but still consumes N_D); if pool cannot supply 10 compliant finalists abandon before outcomes/regenerate.
+- REVIEWS/FUTILITY: review cadence keys on completed outcome-batch ordinal, not S3 labels. ACTIONABLE CANDIDATE = strict corroborated lead; replicated lead; first seed whose single predeclared different-batch sibling not yet evaluated; or candidate passed one fresh confirmation and awaits next authorized stage. At each review, stop futility when no actionable candidate. Seed sibling failed not actionable; validation failure retires exact rule/lineage. Hard stops unchanged (20 outcome batches, ~201 N_D, 30 validation views, 3 L2 bundles).
+- Append-only schemas:
+
+```text
+FORMAT4|effective=pre-B8|adds=R4,D4,F4|contract=v1.3|legacy-records-immutable
+R4|review=pre-fifth-outcome-batch|completed=B1+B2+B3+B4|ND=27|L1V=0/30|L2=unregistered|quarantinedPools=B5+B6+B7|identity=retired|historicalDeviations=B2_pool10_final4+B3_pool10_final5_identity_and_drift+B4_pool10_final7|humanApproved=yes
+D4|seed=Q26|role=legacy-hypothesis-only|family=interaction:interaction|mechanism=low_breadth_coverage_floor|freshSiblingRequired=yes|validationTarget=fresh-sibling|humanApproved=yes
+F4|B<batch>|outcomeOrdinal=<n>|poolCount=30|finalCount=10|poolDigest=<64hex>|finalDigest=<64hex>|designatedKey=<key>|designatedSha256=<64hex>|audit=PASS|humanApproved=yes
+```
+- NULL-CAMPAIGN DELIVERABLE: `archive/top-mean-mining/FINAL-REPORT.md` is the required closing artifact of DONE-NO-PROMOTION (no promoted selector; selection-invariance law; winner-frontier vs population coverage; shrinkage empirically invariant; screen methodology; process deviations; final N_D, spend, hashes).

@@ -49,8 +49,10 @@ event: decisionTimeSec, breadth, regime, poolSize, dow (UTC, 1=Mon..5=Fri), hour
 NOTE: a rule sees ONE candidate at a time. Cross-candidate comparisons (gap to second
 best, rank within event) are NOT expressible. Design accordingly.
 FORBIDDEN: outcome/return data of any kind (sealed by the checker); alphabetical asset
-rank carries no information. An explicit asset-exclusion list is allowed as a thesis,
-at most ONE per batch.
+rank carries no information. Asset-NAME conditioning is BANNED (contract v1.2): rules
+must not reference cand.asset in any form — no exclusions, no per-asset weight
+tables, no name-conditional gates. Asset identity has no causal mechanism; name-based
+selection memorizes in-window winners (Q1 SNDK and Q2 APP both measured WORSE).
 
 MEASURED SCALES ON L1 DISCOVERY (568 events, 35,557 candidates — calibrate BEFORE proposing)
 score           p25 0.08 | p50 0.19 | p75 0.36 | p95 0.67 | p99 0.90 | max 1.0
@@ -72,6 +74,27 @@ max-signedVotes vs TOP_MEAN differ 20/568 (3.52%)
 batch-1 causal changes: Q3 0, Q4 0, Q6 0, Q7 1, Q9 0, Q11 11 of 568
 Candidate keep-rate is not selection impact.
 
+BOUNDED SCORE-REWEIGHTING (mechanism-distinct only)
+Bounded score leverage and discount forms are allowed only when their mechanism
+lineage is declared before screening and is distinct from every logged thesis. They
+are ranking rules: candidate-specific multipliers and functions of the causal fields
+are allowed and DO break the invariance law. Open-ended reweighting and threshold
+sweeps are not an invitation to generate variants.
+- Denominator cap: cand.signedVotes / Math.min(cand.activePairCount, CAP) — stop
+  counting coverage beyond a cap; useful CAP values sit near the winner frontier
+  (41..60), not the candidate band (55..79).
+- Bayesian shrinkage: (cand.signedVotes + K) / (cand.activePairCount + M) — blend the
+  raw ratio toward a prior support level instead of trusting small denominators.
+- Conditioned exponents/weights: bounded coverage- or trend-scaled score terms.
+Asset-NAME leverage (per-asset weight tables) is RETIRED (contract v1.3): it is the
+identity family in continuous form and memorizes in-window winners (~136 free
+parameters). Broad `coverage:coverage` exploration is also RETIRED; the sole
+exception is the designated Q26 lineage pilot below. Weighting must be driven by
+causal features (support, trend, regime), never by asset identity.
+Every reweighting idea still needs a numeric flip witness naming which frontier
+events it flips (low-coverage winner vs high-coverage runner-up, e.g. 14 votes/16
+pairs losing to 27 votes/51 pairs).
+
 HARD DESIGN RULES FOR THIS CAMPAIGN
 1. CAUSAL ONLY. Only the fields listed. The checker enforces this by throwing.
 2. ANTI-CLONE. The idea log is the law. Generic single-feature gates with an obvious
@@ -79,7 +102,8 @@ HARD DESIGN RULES FOR THIS CAMPAIGN
    information sources (coverage x trend, breadth x score-shape, calendar x regime) and
    nonlinear score transforms (saturation, floor effects) over obvious gates.
 3. C5 BATCH COMPOSITION. Every batch has exactly 10 ideas, at least 6 distinct
-   familyKey values, at most 2 ideas per familyKey, at most 1 identity/asset-list rule,
+   familyKey values, at most 2 ideas per familyKey, and NO identity/asset-list rule
+   or broad `coverage:coverage` familyKey (retired v1.3),
    and at most 1 combination. An EDGE cannot spawn a same-batch variant.
 4. C7 COMBINATIONS. A combination has exactly two parents, both pass the campaign
    discovery floor and concentration checklist, the parents have different familyKeys
@@ -115,9 +139,34 @@ BATCH MECHANISM MIX (applies to the screened final 10)
 - At least 6 distinct familyKeys.
 - At least 2 rankings use a bounded candidate-specific secondary signal rather than
   another denominator curve.
-- No identity rule and no combination.
+- No identity rule, no broad `coverage:coverage` familyKey, and no combination.
 - A causal ZERO rule is rejected.
 - At most one THIN rule, with explicit human approval.
+
+V1.3 ROUTING AND B8 BATCH LOCK
+- Identity and broad `coverage:coverage` exploration are RETIRED. Do not generate
+  open-ended score reweighting or threshold-sweep variants. Any reweighting must be
+  bounded, mechanism-distinct, and predeclared.
+- The fixed designated candidate counts toward the 30-candidate B8 pool and must
+  appear verbatim:
+  key=`q26_sibling_low_breadth_coverage_floor_55`, kind `filter`,
+  family=`interaction:interaction`, mechanism=`candidate-filter`, rule:
+  `event.breadth < 0.62 ? cand.activePairCount >= 55 : true`
+- The other 29 candidates must not clone any thesis in `idea-log.txt`, including
+  quarantined B5-B7 S3 records. No second Q26 threshold or functional variant is
+  allowed: do not sweep 54/56/58/60 or any equivalent threshold. No identity and no
+  broad `coverage:coverage` familyKey.
+- A replication seed requires PRIMARY >= +1.00pp, event keep >= 5%, and
+  EX_dominant > 0. CI95 and block counts remain mandatory report fields but are
+  advisory for routing. A replicated lead requires a different-SHA rule in a
+  different outcome-bearing batch, the same frozen familyKey and the same
+  predeclared mechanism lineage, independently passing the full seed bar. Declare
+  and freeze familyKey and mechanism lineage before either rule receives outcomes.
+  Same-batch results cannot corroborate; a failed sibling cannot be replaced by a
+  different parameter value. C2 remains mandatory for STRICT and every fresh
+  confirmation; routing gates are not promotion evidence.
+- The v1.3 semantics apply before B8: outcome-batch ordinal 5 is B8, while existing
+  B5-B7 S3 pools are immutable, clone-blocked, and quarantined from advancement.
 
 NON-NEGOTIABLE OUTPUT RULES
 - The ideas array must contain exactly 30 candidate ideas.
@@ -132,7 +181,7 @@ NON-NEGOTIABLE OUTPUT RULES
       "thesis": "question form, one sentence",
       "rule": "rule body only, e.g. cand.signedVotes >= 20 && cand.ema200Above",
       "kind": "ranking|filter",
-      "family": "score-shape|coverage|trend|regime-breadth|calendar|identity|interaction",
+      "family": "score-shape|coverage|trend|regime-breadth|calendar|interaction",
       "familyKey": "specific family key, e.g. coverage_x_trend",
       "mechanism": "ranking-reorder|candidate-filter",
       "expectedKeep": "estimated event keep-rate for filters, n/a for rankings",

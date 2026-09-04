@@ -17,6 +17,57 @@ Promotion requires the ordered C3 chain and the universal C2 evidence
 checklist in `LOOP-CONTRACT.md`, including a positive dominant-exclusion
 `PRIMARY`, corroboration where required, human authorization, and audit.
 
+## v1.3 routes and B8 lock
+
+The v1.3 amendment is effective before B8, the fifth outcome-bearing batch.
+Existing B5, B6, and B7 S3 pools are immutable, clone-blocked, and quarantined;
+their S3 labels do not advance the completed outcome-batch ordinal.
+
+The campaign has two discovery routes:
+
+- `STRICT`: a lead requires `PRIMARY >= +0.50pp` and every C2 item. Corroboration
+  requires a different SHA in a different outcome-bearing batch, with the same
+  frozen `familyKey` and mechanism lineage, passing the same bar.
+- `REPLICATION`: a seed requires `PRIMARY >= +1.00pp`, event keep `>= 5%`, and
+  `EX_dominant > 0`. CI95 and block counts are mandatory report fields but advisory
+  for route selection. A replicated lead requires a different-SHA sibling in a
+  different outcome-bearing batch, with the same predeclared `familyKey` and
+  mechanism lineage, independently passing the full seed bar.
+
+FamilyKey and mechanism lineage are frozen before either rule receives outcomes.
+Same-batch results cannot corroborate, failed siblings cannot be replaced by a
+different parameter value, and routing gates are not promotion evidence. C2 remains
+mandatory for STRICT and every fresh confirmation. L1 validation remains before L2
+registration and before any L2 outcomes.
+
+Before any B8 I2 outcome, materialize 30 unique candidates, run S3 on all 30,
+discard ZERO candidates, admit at most one THIN with human approval, and freeze
+exactly 10 finalists. The F4 registration must preserve ordered paths, exact source
+bodies, SHAs, familyKeys, mechanism lineages, and the designated replication rule.
+Run the deterministic audit from the repository root; it must PASS before the first
+I2:
+
+```powershell
+$env:NODE_OPTIONS = "--max-old-space-size=8192"
+..\..\..\node_modules\.bin\esno scripts/top-mean-campaign-audit.ts B8
+```
+
+If the pool cannot produce 10 compliant finalists, stop before outcomes and
+regenerate. The designated legacy sibling is fixed exactly as follows and counts
+toward the 30:
+
+```text
+key=q26_sibling_low_breadth_coverage_floor_55
+kind=filter
+family=interaction:interaction
+mechanism=candidate-filter
+rule=event.breadth < 0.62 ? cand.activePairCount >= 55 : true
+```
+
+Identity and broad `coverage:coverage` exploration are retired. No second Q26
+threshold or functional variant is allowed, including a 54/56/58/60 sweep. The
+other 29 candidates must not clone any logged thesis, including B5-B7 S3 records.
+
 ## Frozen contract
 
 The checker is v1: horizon 24, direction `long`, and causal base candidates

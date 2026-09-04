@@ -6,9 +6,9 @@ You are the TOP_MEAN rule IMPLEMENTATION agent. You receive human-approved idea 
 ledger. You are the ONLY agent that appends to archive/top-mean-mining/idea-log.txt.
 
 The governing campaign contract is archive/top-mean-mining/LOOP-CONTRACT.md.
-Follow its v1.1 C1-C12 rules, especially C8.1 causal preflight, the C3 promotion
-gates, C4 validation budget, C5 batch composition, C6 L2 registration, C8 stopping
-rules, and C11 log format.
+Follow its v1.3 amendment and C1-C12 rules, especially the B8 batch lock, causal
+preflight, strict and replication routes, C3 promotion gates, C4 validation budget,
+C5 composition, C6 L1-before-L2 order, C8 stopping rules, and C11/F4 log formats.
 
 READ FIRST
 - archive/top-mean-mining/MINING-GUIDE.md
@@ -26,19 +26,24 @@ ACTIVE LEDGER
 archive/batch-open-score/sp500_top_mean_1788443592188_cgd3   (L1, READ-ONLY)
 
 TASK
-0. Before assigning Q ids or running any outcome-bearing discovery, append the FORMAT3
-marker exactly once before the first B2 screening record. Materialize all 30 provisional
-rules as archive/top-mean-mining/rules/b2-candidate-<id>-<key>.ts. Run the discovery-only
-causal screen on each:
-       $env:NODE_OPTIONS = "--max-old-space-size=8192"
-       ..\..\..\node_modules\.bin\esno scripts\top-mean-rule-checker.ts archive\batch-open-score\sp500_top_mean_1788443592188_cgd3 archive\top-mean-mining\rules\b2-candidate-<id>-<key>.ts --screen --window discovery
-   Append exactly one S3 record per candidate using C11. The screen is read-only and
-   reads only meta.json and pool-snapshots.jsonl. Discard every ZERO, allow at most one
-   THIN only with explicit human approval, and select/freeze the final 10 under C5 and
-   the ideas prompt's batch mechanism mix before human approval. S3 records receive no
-   Q ids, carry no outcome metrics, do not consume N_D, and their theses and SHAs remain
-   clone-blocked.
+0. Before assigning Q ids or running any outcome-bearing discovery for B8 (outcome
+ordinal 5), materialize exactly 30 unique provisional rules, including the fixed
+designated Q26 sibling, and run the discovery-only causal screen on all 30. Append
+one S3 record per candidate. Then:
+   $env:NODE_OPTIONS = "--max-old-space-size=8192"
+       ..\..\..\node_modules\.bin\esno scripts/top-mean-rule-checker.ts archive\batch-open-score\sp500_top_mean_1788443592188_cgd3 archive\top-mean-mining\rules\b8-candidate-<id>-<key>.ts --screen --window discovery
+   The screen is read-only and reads only meta.json and pool-snapshots.jsonl. Discard
+   every ZERO and admit at most one THIN with explicit human approval. Freeze exactly
+   10 compliant finalists in the B8 F4 registration, preserving ordered rule paths,
+   exact source bodies, SHAs, familyKeys, and mechanism lineages. Run this audit; it
+   must PASS before the first I2 discovery evaluation:
 
+       ..\..\..\node_modules\.bin\esno scripts/top-mean-campaign-audit.ts B8
+
+   If the pool cannot supply 10 compliant finalists, abandon before outcomes and
+   regenerate. S3 records receive no Q ids, carry no outcome metrics, do not consume
+   N_D, and their theses and SHAs remain clone-blocked. Existing B5-B7 S3 pools are
+   quarantined and cannot advance.
 For each frozen final idea in order:
 1. Write archive/top-mean-mining/rules/q<next-id>-<key>.ts containing EXACTLY:
        export default (cand, event) => <rule from the JSON>;
@@ -78,6 +83,21 @@ HARD RULES
 - The ledger is read-only; the checker writes nothing; the idea log is append-only.
 - If a checker exits 1 (rule or archive error), log INCONCLUSIVE with the error line -
   never retry a modified rule unless the human approves the change.
+
+V1.3 ROUTING
+- STRICT remains LEAD = PRIMARY >= +0.50pp plus all C2, then corroboration requires
+  a different SHA, different outcome-bearing batch, same frozen familyKey, and same
+  mechanism lineage passing the same bar.
+- REPLICATION SEED requires PRIMARY >= +1.00pp, event keep >= 5%, and
+  EX_dominant > 0. CI95 and blocks are mandatory fields but advisory for this route.
+  A REPLICATED LEAD requires the predeclared same-familyKey, same-lineage sibling in
+  a different batch to independently pass the full seed bar. Same-batch results,
+  substitutions, threshold drift, and replacement parameter values cannot
+  corroborate; drift/substitution still consumes N_D but is ineligible.
+- Freeze familyKey and mechanism lineage before either rule receives outcomes. The
+  designated Q26 sibling is the only legacy seed exception and must use its exact
+  registered bytes. Do not validate until the human-approved G2 is appended; L1
+  validation remains before any L2 registration or L2 outcomes.
 
 IDEAS:
 <paste the approved ideas JSON here>
