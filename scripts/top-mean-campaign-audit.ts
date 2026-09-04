@@ -53,36 +53,33 @@ export function sha256Bytes(value: string | Uint8Array): string {
     return createHash("sha256").update(value).digest("hex");
 }
 
-function parseFields(parts: readonly string[]): Record<string, string> {
-    const fields: Record<string, string> = {};
-    for (const part of parts) {
-        const separator = part.indexOf("=");
-        if (separator <= 0) continue;
-        fields[part.slice(0, separator)] = part.slice(separator + 1);
-    }
-    return fields;
-}
-
-interface PipeRecord {
+export interface PipeRecord {
     marker: string;
     positional: string[];
     fields: Record<string, string>;
 }
 
-function parsePipeRecord(line: string): PipeRecord | null {
-    const parts = line.split("|");
-    const marker = parts.shift();
-    if (!marker) return null;
-    const positional: string[] = [];
-    const fieldParts: string[] = [];
-    for (const part of parts) {
-        if (part.includes("=")) fieldParts.push(part);
-        else positional.push(part);
+export function parsePipeRecord(line: string): PipeRecord | null {
+    const markerEnd = line.indexOf("|");
+    if (markerEnd <= 0) return null;
+    const marker = line.slice(0, markerEnd);
+    const fieldStarts = [...line.matchAll(/\|([A-Za-z][A-Za-z0-9]*)=/g)];
+    const firstField = fieldStarts[0];
+    const positionalText = firstField
+        ? line.slice(markerEnd + 1, firstField.index)
+        : line.slice(markerEnd + 1);
+    const positional = positionalText.split("|").filter((part) => part.length > 0);
+    const fields: Record<string, string> = {};
+    for (let index = 0; index < fieldStarts.length; index += 1) {
+        const current = fieldStarts[index]!;
+        const valueStart = current.index + current[0].length;
+        const valueEnd = fieldStarts[index + 1]?.index ?? line.length;
+        fields[current[1]!] = line.slice(valueStart, valueEnd);
     }
-    return { marker, positional, fields: parseFields(fieldParts) };
+    return { marker, positional, fields };
 }
 
-function parseRecords(text: string, marker: string): PipeRecord[] {
+export function parseRecords(text: string, marker: string): PipeRecord[] {
     const records: PipeRecord[] = [];
     for (const line of text.split(/\r?\n/)) {
         if (!line.startsWith(marker + "|")) continue;
@@ -201,6 +198,35 @@ export function computeRegistrationDigest(records: readonly CampaignRegistration
     return sha256Bytes(records.map(canonicalRegistrationRecord).join("\n") + "\n");
 }
 
+function legacyRegistrationDigest(text: string, marker: string): string {
+    const records: CampaignRegistrationRule[] = [];
+    for (const line of text.split(/\r?\n/)) {
+        if (!line.startsWith(marker + "|")) continue;
+        const fields: Record<string, string> = {};
+        for (const part of line.split("|").slice(1)) {
+            const separator = part.indexOf("=");
+            if (separator > 0) fields[part.slice(0, separator)] = part.slice(separator + 1);
+        }
+        const ordinal = Number(fields.ordinal);
+        if (Number.isInteger(ordinal)) {
+            records.push({
+                ordinal,
+                candidate: fields.candidate ?? "",
+                key: fields.key ?? "",
+                kind: fields.kind ?? "",
+                family: fields.family ?? "",
+                familyKey: fields.familyKey ?? "",
+                mechanism: fields.mechanism ?? "",
+                mechanismLineage: fields.mechanismLineage ?? "",
+                path: fields.path ?? "",
+                sourceBody: fields.sourceBody ?? "",
+                sha256: fields.sha256 ?? "",
+            });
+        }
+    }
+    return computeRegistrationDigest(records);
+}
+
 function resolveRulePath(rulePath: string, paths: CampaignAuditPaths): string {
     if (path.isAbsolute(rulePath)) return rulePath;
     const normalized = rulePath.replaceAll("\\", "/");
@@ -214,6 +240,7 @@ function resolveRulePath(rulePath: string, paths: CampaignAuditPaths): string {
 interface RuleBytesCheck {
     valid: boolean;
     identityReference: boolean;
+    containsPipe: boolean;
     detail: string;
 }
 
@@ -225,21 +252,23 @@ function checkRegisteredRuleBytes(
         return {
             valid: false,
             identityReference: false,
+            containsPipe: record.sourceBody.includes("|"),
             detail: "missing registration fields for " + (record.key || record.candidate || "unknown"),
         };
     }
     const filePath = resolveRulePath(record.path, paths);
     if (!existsSync(filePath)) {
-        return { valid: false, identityReference: false, detail: "missing rule file " + record.path };
+        return { valid: false, identityReference: false, containsPipe: record.sourceBody.includes("|"), detail: "missing rule file " + record.path };
     }
     const bytes = readFileSync(filePath);
     const source = bytes.toString("utf8");
     const identityReference = source.includes("cand.asset");
+    const containsPipe = bytes.includes(0x7c) || record.sourceBody.includes("|");
     const hashMatches = sha256Bytes(bytes) === record.sha256;
     const bodyMatches = source === record.sourceBody + "\n";
-    if (!hashMatches) return { valid: false, identityReference, detail: "SHA mismatch for " + record.key };
-    if (!bodyMatches) return { valid: false, identityReference, detail: "source body mismatch for " + record.key };
-    return { valid: true, identityReference, detail: "10 finalist rule files match registered source bytes" };
+    if (!hashMatches) return { valid: false, identityReference, containsPipe, detail: "SHA mismatch for " + record.key };
+    if (!bodyMatches) return { valid: false, identityReference, containsPipe, detail: "source body mismatch for " + record.key };
+    return { valid: true, identityReference, containsPipe, detail: "rule file matches registered source bytes" };
 }
 
 function findS3Candidate(
@@ -312,8 +341,25 @@ export function auditCampaignBatch(
     const combinationCount = registration.finalists.filter((record) =>
         record.kind === "combination" || record.mechanism === "combination",
     ).length;
-    const poolByteChecks = registration.pool.map((record) => checkRegisteredRuleBytes(record, paths));
+    const legacyPoolByteException = batchLabel === "B8";
+    const poolByteChecks = legacyPoolByteException
+        ? []
+        : registration.pool.map((record) => checkRegisteredRuleBytes(record, paths));
     const finalByteChecks = registration.finalists.map((record) => checkRegisteredRuleBytes(record, paths));
+    const format5Present = parseRecords(logText, "FORMAT5").length > 0;
+    const grammarRequired = format5Present && !legacyPoolByteException;
+    const grammarChecks = grammarRequired
+        ? [...registration.pool, ...registration.finalists].map((record) => checkRegisteredRuleBytes(record, paths))
+        : [];
+    const grammarViolations = grammarChecks.filter((check) => check.containsPipe);
+    const poolBytePass = legacyPoolByteException
+        || (poolByteChecks.length === registration.pool.length && poolByteChecks.every((check) => check.valid));
+    const poolByteDetail = legacyPoolByteException
+        ? "B8 X5 historical pool-byte exception; finalists remain byte-checked"
+        : poolByteChecks.find((check) => !check.valid)?.detail
+            ?? (poolByteChecks.length === 30
+                ? "30 registered pool rule files match registered source bytes"
+                : poolByteChecks.length + " registered pool rule records checked");
     const finalistByteDetail = finalByteChecks.find((check) => !check.valid)?.detail
         ?? (finalByteChecks.length === 10
             ? "10 finalist rule files match registered source bytes"
@@ -370,7 +416,9 @@ export function auditCampaignBatch(
         && f4Record.fields.designatedSha256 === designated?.sha256
         && validSha(f4Record.fields.poolDigest ?? "")
         && validSha(f4Record.fields.finalDigest ?? "")
-        && f4Record.fields.poolDigest === computeRegistrationDigest(registration.pool)
+        && f4Record.fields.poolDigest === (legacyPoolByteException
+            ? legacyRegistrationDigest(registrationText, "POOL")
+            : computeRegistrationDigest(registration.pool))
         && f4Record.fields.finalDigest === computeRegistrationDigest(registration.finalists);
     const noZeroAdvanced = advancedRecords.every((record) => record.fields.impact !== "ZERO");
     const thinRecords = advancedRecords.filter((record) => record.fields.impact === "THIN");
@@ -420,6 +468,20 @@ export function auditCampaignBatch(
             "THIN_CAP",
             thinPass,
             thinRecords.length + " advanced THIN records; cap=1",
+        ),
+        makeCheck(
+            "POOL_BYTES",
+            poolBytePass,
+            poolByteDetail,
+        ),
+        makeCheck(
+            "RULE_GRAMMAR",
+            !grammarRequired || grammarViolations.length === 0,
+            !grammarRequired
+                ? (legacyPoolByteException ? "B8 X5 historical no-pipe exception" : "legacy format without FORMAT5 marker")
+                : grammarViolations.length === 0
+                    ? "no registered pool or finalist source contains U+007C"
+                    : grammarViolations.length + " registered source records contain U+007C",
         ),
         makeCheck(
             "FINALIST_BYTES",

@@ -1289,6 +1289,21 @@ function sha256File(filename: string): string {
     return createHash("sha256").update(readFileSync(filename)).digest("hex");
 }
 
+function preflightRuleSource(ruleFile: string): void {
+    const resolved = path.resolve(ruleFile);
+    const name = path.basename(resolved);
+    let bytes: Buffer;
+    try {
+        bytes = readFileSync(resolved);
+    } catch {
+        throw new CheckerFailure("rule.file", "readable rule file", name, [], "RULE FAIL");
+    }
+    const pipeOffset = bytes.indexOf(0x7c);
+    if (pipeOffset >= 0) {
+        throw new CheckerFailure("rule.source.no_pipe", "no U+007C bytes", `${name}:offset=${pipeOffset}`, [], "RULE FAIL");
+    }
+}
+
 async function importRule(ruleFile: string): Promise<{ name: string; sha256: string; rule: TopMeanRule }> {
     const resolved = path.resolve(ruleFile);
     const name = path.basename(resolved);
@@ -1401,6 +1416,14 @@ export async function runTopMeanRuleCheckerCli(argv: readonly string[]): Promise
     if (options === "help") {
         process.stdout.write(`${USAGE}\n`);
         return 0;
+    }
+    if (options.ruleFile !== undefined) {
+        try {
+            preflightRuleSource(options.ruleFile);
+        } catch (error) {
+            process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+            return 1;
+        }
     }
     if (options.mode === "causal-stats" || options.mode === "screen") {
         let causalArchive: TopMeanCausalArchive;

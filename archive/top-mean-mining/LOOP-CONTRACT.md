@@ -13,6 +13,9 @@ reference and command examples remain in [`MINING-GUIDE.md`](./MINING-GUIDE.md).
   outright (Q1 and Q2 measured WORSE; asset-name conditioning has no causal
   mechanism and memorizes in-window winners). Earlier log records remain immutable
   and counted.
+- v1.4 is effective before Batch 9 generation. It adds the bounded standings
+  digest, complete-history clone checks, scale-safe generation rules, and the
+  B9-or-later no-pipe rule. Earlier log records remain immutable and counted.
 - Existing log records and discovery counts are not reclassified.
 
 ## Frozen L1 ledger
@@ -245,7 +248,9 @@ but their theses and SHAs remain clone-blocked.
 
 ## C12. Roles
 
-- The idea agent reads `idea-log.txt` directly; there is no standings artifact.
+- Under v1.4, routine idea and implementation work reads the generated standings
+  digest and tail; the full log remains for deterministic tools, humans, and
+  auditors.
 - A human approves the complete ideas JSON.
 - The implementation agent implements exact rules in `DISCOVERY` only, with
   one I2 line per attempt.
@@ -255,8 +260,8 @@ but their theses and SHAs remain clone-blocked.
 
 ## Batch procedure
 
-1. Read `idea-log.txt` directly, freeze the approved 10-idea JSON, and verify
-   C5 before implementation.
+1. Read the v1.4 standings digest and tail, freeze the approved ideas JSON, and
+   verify C5 before implementation.
 2. For each idea, implement the exact rule, run the mandatory checker
    self-check and discovery window, and append exactly one I2 result line.
 3. Apply C1 and the full C2 checklist. Flag only C3.1 campaign-qualified
@@ -291,3 +296,45 @@ D4|seed=Q26|role=legacy-hypothesis-only|family=interaction:interaction|mechanism
 F4|B<batch>|outcomeOrdinal=<n>|poolCount=30|finalCount=10|poolDigest=<64hex>|finalDigest=<64hex>|designatedKey=<key>|designatedSha256=<64hex>|audit=PASS|humanApproved=yes
 ```
 - NULL-CAMPAIGN DELIVERABLE: `archive/top-mean-mining/FINAL-REPORT.md` is the required closing artifact of DONE-NO-PROMOTION (no promoted selector; selection-invariance law; winner-frontier vs population coverage; shrinkage empirically invariant; screen methodology; process deviations; final N_D, spend, hashes).
+
+## Contract v1.4 amendment — scale-safe execution and bounded context
+
+- Effective before B9 generation. C1 thresholds, the v1.3 STRICT and
+  REPLICATION routes, the Q26 and lead-lineage rules, sealed validation, C6
+  ordering, and C9 boundaries are unchanged.
+- ROUTINE CONTEXT: idea and implementation agents consume the deterministic
+  `top_mean_standings.v1` digest and its verbatim log tail. The digest is
+  generated, never hand-maintained, is not committed, and is bounded to at most
+  40 lines and 8192 bytes. It fails loudly on overflow rather than truncating.
+  Routine batches do not reread the full idea log. The append-only log remains
+  authoritative; deterministic tools, humans, and auditors read the complete
+  history when required.
+- CLONE CHECKING: code checks exact keys, rule bodies, SHAs, normalized theses,
+  family reuse, and declared sibling lineage against the complete history.
+  Historical S3 records without theses are marked `thesis-unknown`; no thesis
+  may be reconstructed or invented.
+- GENERATION TARGET: each batch targets 50 total causal-screen candidates,
+  including fixed corroboration siblings. The registered pool remains exactly
+  30 qualifying candidates and the frozen finalist set exactly 10. If fewer than
+  30 qualify, top up with causal-only screening before outcomes; never relax the
+  ZERO or THIN standards.
+- RULE GRAMMAR: every B9-or-later rule source and registered `sourceBody` must
+  contain no U+007C byte. This bans logical/bitwise OR and pipe characters
+  anywhere in the source. The checker and audit reject the byte before outcome
+  access. Use ternary forms such as `A ? true : B` for conditional filters.
+- ALL-POOL BYTE VALIDATION: the audit validates every registered pool rule's
+  bytes, not only finalists. Batch B8 is the historical X5 exception to the
+  grammar/byte check; its v1 digest is preserved and its finalists retain the
+  existing validation.
+- ERRORS: a screen rule failure records `impact=ERROR` and `advanced=no`. An
+  outcome-mode rule failure consumes N_D and emits `D=INCONCLUSIVE` with `n/a`
+  metrics. A rule not started because of archive/self-check failure or
+  cancellation does not consume N_D.
+- CAMPAIGN ROTATION: the 20-batch and approximately-201 outcome-bearing
+  evaluation caps apply per registered campaign surface. `N_D_surface` resets
+  only for a genuinely new ledger/schema/fence set registered before outcomes.
+  `N_G` counts every lifetime outcome-bearing evaluation and never resets.
+  Carry the log and prefix hashes, rule SHA/clone index, family lineage,
+  validation failures, retired families, promotion history, and N_G across
+  campaigns. Renaming or reusing a surface resets nothing. An L2 confirmation
+  ledger must never later serve as fresh discovery data.

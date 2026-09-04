@@ -68,6 +68,39 @@ Identity and broad `coverage:coverage` exploration are retired. No second Q26
 threshold or functional variant is allowed, including a 54/56/58/60 sweep. The
 other 29 candidates must not clone any logged thesis, including B5-B7 S3 records.
 
+## v1.4 standings and grammar
+
+Routine idea and implementation work consumes the deterministic standings digest
+and its tail instead of rereading the full append-only log:
+
+```powershell
+$env:NODE_OPTIONS = "--max-old-space-size=8192"
+..\..\..\node_modules\.bin\esno scripts/top-mean-campaign-standings.ts --campaign TM-L1-C1 --tail 8
+```
+
+The digest reads only `idea-log.txt`, `rules/`, and `B8-REGISTRATION.md`, writes
+nothing, and fails with `DIGEST OVERFLOW` rather than truncating when it exceeds
+40 lines or 8192 UTF-8 bytes. Use `--family <familyKey>` for one family's full
+history. Use `--check-ideas <ideas.json>` to run the complete-history clone
+checks without printing the candidate JSON.
+
+Each new batch targets 50 causal-screen candidates, including fixed corroboration
+siblings; the registered pool remains exactly 30 qualifying candidates and the
+frozen finalist set exactly 10. Top up with causal-only candidates when fewer
+than 30 qualify, without relaxing ZERO or THIN standards.
+
+B9-or-later rule source bytes and registered `sourceBody` values must contain no
+U+007C pipe byte. This bans logical/bitwise OR and pipes anywhere in the rule.
+Use a ternary filter such as `A ? true : B`. The checker rejects the byte before
+archive loading or dynamic import, and the audit checks every registered pool and
+finalist source. B8 is the X5 historical exception and its v1 digest is preserved.
+
+`N_D_surface` is the unique outcome-bearing discovery SHA count for the currently
+registered ledger/schema/fence surface, including the immutable Q1 baseline;
+`N_G` is every lifetime outcome-bearing evaluation and never resets. A genuinely
+new registered surface may reset `N_D_surface`, but renaming or reusing a surface
+does not. L2 confirmation data never becomes fresh discovery data.
+
 ## Frozen contract
 
 The checker is v1: horizon 24, direction `long`, and causal base candidates

@@ -29,6 +29,9 @@ const FINAL_FAMILY_KEYS = [
 ] as const;
 
 interface FixtureOptions {
+    batchLabel?: string;
+    poolByteMismatch?: boolean;
+    grammarPipe?: boolean;
     wrongPoolCount?: boolean;
     compositionBreach?: boolean;
     identityBody?: boolean;
@@ -90,10 +93,10 @@ function makeFinals(pool: readonly CampaignRegistrationRule[]): CampaignRegistra
     }));
 }
 
-function s3Line(record: CampaignRegistrationRule): string {
+function s3Line(record: CampaignRegistrationRule, batchLabel = BATCH_LABEL): string {
     return [
         "S3",
-        BATCH_LABEL,
+        batchLabel,
         "candidate=" + record.candidate,
         "key=" + record.key,
         "kind=" + record.kind,
@@ -115,6 +118,12 @@ function buildFixture(options: FixtureOptions = {}): Fixture {
     mkdirSync(rulesDir, { recursive: true });
     const pool = Array.from({ length: 30 }, (_, index) => makeRule(index));
     const finals = makeFinals(pool);
+    const batchLabel = options.batchLabel ?? BATCH_LABEL;
+    if (options.grammarPipe) {
+        const sourceBody = "export default (cand, event) => cand.ema200Above || cand.signedVotes >= 20;";
+        pool[29] = { ...pool[29]!, sourceBody, sha256: sha256Bytes(sourceBody + "\n") };
+    }
+    if (options.poolByteMismatch) pool[29] = { ...pool[29]!, sha256: "b".repeat(64) };
 
     if (options.identityBody) {
         const identityBody = "export default (cand, event) => cand.asset === \"AAA\" ? 1 : 0;";
@@ -150,12 +159,12 @@ function buildFixture(options: FixtureOptions = {}): Fixture {
         ? finals.map((record) => ({ ...record, familyKey: "one_family" }))
         : finals;
     const registration = [
-        "REGISTRATION|schema=top_mean_campaign_registration.v1|batchLabel=B8|outcomeOrdinal=5|humanApproved=yes",
+        "REGISTRATION|schema=top_mean_campaign_registration.v1|batchLabel=" + batchLabel + "|outcomeOrdinal=5|humanApproved=yes",
         designatedLine,
         ...registeredPool.map((record) => recordLine("POOL", record)),
         ...registrationFinals.map((record) => recordLine("FINAL", record)),
     ].join("\n") + "\n";
-    writeFileSync(path.join(miningDir, "B8-REGISTRATION.md"), registration);
+    writeFileSync(path.join(miningDir, batchLabel + "-REGISTRATION.md"), registration);
     writeFileSync(path.join(rulesDir, "b8-designated-q26-sibling.ts"), DESIGNATED_SOURCE + "\n");
     for (const record of pool.slice(1)) {
         writeFileSync(path.join(rulesDir, "b8-rule-" + record.candidate + ".ts"), record.sourceBody + "\n");
@@ -169,7 +178,7 @@ function buildFixture(options: FixtureOptions = {}): Fixture {
         const effective = options.quarantinedAdvance && record.ordinal === 30
             ? { ...record, sha256: quarantinedSha }
             : record;
-        return s3Line(effective);
+        return s3Line(effective, batchLabel);
     });
     const poolDigest = computeRegistrationDigest(registeredPool);
     const finalDigest = computeRegistrationDigest(registrationFinals);
@@ -177,8 +186,9 @@ function buildFixture(options: FixtureOptions = {}): Fixture {
         quarantinedLine,
         "FORMAT4|effective=pre-B8|adds=R4,D4,F4|contract=v1.3|legacy-records-immutable",
         "D4|seed=Q26|role=legacy-hypothesis-only|family=interaction:interaction|mechanism=low_breadth_coverage_floor|freshSiblingRequired=yes|validationTarget=fresh-sibling|humanApproved=yes",
+        ...(batchLabel === "B9" ? ["FORMAT5|effective=pre-B9|contract=v1.4|adds=X5|prefixSha256=fixture|legacy-records-immutable"] : []),
         ...advancedLogPool,
-        "F4|B8|outcomeOrdinal=5|poolCount=" + registeredPool.length + "|finalCount=10|poolDigest=" + poolDigest
+        "F4|" + batchLabel + "|outcomeOrdinal=5|poolCount=" + registeredPool.length + "|finalCount=10|poolDigest=" + poolDigest
             + "|finalDigest=" + finalDigest + "|designatedKey=" + DESIGNATED_KEY + "|designatedSha256=" + DESIGNATED_SHA
             + "|audit=PASS|humanApproved=yes",
     ].join("\n") + "\n";
@@ -206,6 +216,27 @@ describe("top-mean campaign audit", () => {
         withFixture({}, (fixture) => {
             const result = auditCampaignBatch(BATCH_LABEL, { miningDir: fixture.miningDir });
             assert.equal(result.passed, true);
+        });
+    });
+
+    it("preserves the B8 historical pool-byte exception", () => {
+        withFixture({ poolByteMismatch: true }, (fixture) => {
+            const result = auditCampaignBatch(BATCH_LABEL, { miningDir: fixture.miningDir });
+            assert.equal(result.passed, true);
+            assert.equal(result.checks.find((check) => check.name === "POOL_BYTES")?.passed, true);
+            assert.equal(result.checks.find((check) => check.name === "RULE_GRAMMAR")?.passed, true);
+        });
+    });
+
+    it("validates every registered pool rule byte for a B9-format registration", () => {
+        withFixture({ batchLabel: "B9", poolByteMismatch: true }, (fixture) => {
+            assertFailed(auditCampaignBatch("B9", { miningDir: fixture.miningDir }), "POOL_BYTES");
+        });
+    });
+
+    it("rejects a pipe in a B9 registered pool source", () => {
+        withFixture({ batchLabel: "B9", grammarPipe: true }, (fixture) => {
+            assertFailed(auditCampaignBatch("B9", { miningDir: fixture.miningDir }), "RULE_GRAMMAR");
         });
     });
 

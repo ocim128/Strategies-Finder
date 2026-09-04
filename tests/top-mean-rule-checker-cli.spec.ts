@@ -398,4 +398,21 @@ describe("top-mean-rule-checker CLI", () => {
             rmSync(path.dirname(path.dirname(path.dirname(reversed.ledgerDir))), { recursive: true, force: true });
         }
     });
+
+    it("rejects a pipe byte before loading the archive or importing the rule", () => {
+        const fixture = writeFixture(EVENT_COUNT, { includeOutcomeFiles: false, startSec: PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC + 86_400 });
+        const pipeRule = path.join(path.dirname(path.dirname(path.dirname(fixture.ledgerDir))), "pipe-rule.ts");
+        writeFileSync(pipeRule, "export default (candidate, event) => candidate.ema200Above || event.breadth > 0.5;\n", "utf8");
+        try {
+            const result = runChecker([path.join(path.dirname(fixture.ledgerDir), "missing-ledger"), pipeRule, "--screen", "--window", "discovery"]);
+            assert.equal(result.status, 1);
+            assert.match(result.stderr, /^RULE FAIL/m);
+            assert.match(result.stderr, /check=rule\.source\.no_pipe/);
+            assert.match(result.stderr, /expected=no U\+007C bytes/);
+            assert.match(result.stderr, /actual=pipe-rule\.ts:offset=59/);
+            assert.doesNotMatch(result.stderr, /ARCHIVE FAIL/);
+        } finally {
+            rmSync(path.dirname(path.dirname(path.dirname(fixture.ledgerDir))), { recursive: true, force: true });
+        }
+    });
 });
