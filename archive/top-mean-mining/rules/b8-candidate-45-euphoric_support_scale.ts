@@ -1,0 +1,1 @@
+export default (cand, event) => cand.score * (1 + 0.2 * ((event.breadth ?? 0) >= 0.7 && cand.activePairCount >= 50 ? 1 : 0) - 0.2 * ((event.breadth ?? 1) >= 0.7 && cand.activePairCount < 40 ? 1 : 0));
