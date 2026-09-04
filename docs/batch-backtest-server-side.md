@@ -228,8 +228,10 @@ run metadata, and full and per-calendar-year event JSONL files. Older/direct API
 callers that omit `saveArchiveLog` retain the legacy behavior and request the
 archive; a present non-boolean value is rejected. `TOP_MEAN_ARCHIVE_LOG_DIR`
 still overrides the location, and an empty value is an absolute server veto.
-Only completed runs are archived. New archives use `top_mean_archive.v2`
-metadata with normalized run-manifest provenance; the streamed result and
+Only completed runs are archived. New archives use `top_mean_archive.v3`
+metadata with normalized run-manifest provenance and a causal feature sidecar;
+frozen legacy archives remain readable as `top_mean_archive.v2`. The streamed
+result and
 terminal status expose `archiveComplete`, `archiveRequested`, and, when
 applicable, `archiveDir` or `archiveError`. Archive writes remain best-effort,
 and saved archives have no TTL or cleanup sweep.

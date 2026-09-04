@@ -206,3 +206,9 @@ sandbox, so this is a trusted-rule contract rather than a security boundary.
 The checker owns evaluation and reporting. This directory's `idea-log.txt` is
 owned by the separate mining/implementation workflow and may only be appended
 to there; the checker never appends ideas or results.
+
+Campaign log hashes use canonical UTF-8 text with CRLF pairs stripped
+(`hashConvention=crlf-stripped`) from v1.5 forward. The committed log retains
+one historical CR byte on line 209 from the B8 F4 append; it is permanent and
+must not be rewritten. The FORMAT6 correction record records the canonical
+replacement for the historical contaminated prefix hash.

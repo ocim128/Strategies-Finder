@@ -95,7 +95,7 @@ describe("top-mean campaign standings", () => {
             const first = renderCampaignStandings(buildCampaignStandings({ ...fixture.options, tail: 1 }));
             const second = renderCampaignStandings(buildCampaignStandings({ ...fixture.options, tail: 1 }));
             assert.equal(first, second);
-            assert.match(first, /^TOP_MEAN_STANDINGS\|schema=top_mean_standings\.v1\|campaign=TM-L1-C1\|contract=v1\.5\|logSha256=[0-9a-f]{64}$/m);
+            assert.match(first, /^TOP_MEAN_STANDINGS\|schema=top_mean_standings\.v1\|campaign=TM-L1-C1\|contract=v1\.5\|hashConvention=crlf-stripped\|logSha256=[0-9a-f]{64}$/m);
             assert.match(first, /^STATE\|nextBatch=B9\|nextOutcomeOrdinal=6\|completed=2\/20\|NDsurface=3\/201\|NG=3\|L1V=0\/30\|L2=unregistered$/m);
             assert.match(first, /^COUNTS\|I2=2\|S3=2\|tested=3\|quarantined=1$/m);
             assert.match(first, /^ROUTES\|strictOpen=1\|replicationOpen=0\|confirmationOpen=0$/m);

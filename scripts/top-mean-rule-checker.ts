@@ -6,7 +6,7 @@
  * backtest and never writes to the archive.
  */
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -32,6 +32,15 @@ import type {
     CandidateOutcomeRecord,
     PoolSnapshotRecord,
 } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
+import {
+    TOP_MEAN_CAUSAL_FEATURE_FIELDS,
+    TOP_MEAN_CANDIDATE_FEATURES_SCHEMA,
+    TOP_MEAN_FEATURE_CONTRACT_VERSION,
+    TOP_MEAN_FEATURE_FORMULA_VERSION,
+    TOP_MEAN_FEATURE_AVAILABILITY_POLICY,
+    type TopMeanCandidateFeatureRow,
+    type TopMeanCausalFeatureField,
+} from "../lib/batch-backtest/sp500-top-mean-causal-features";
 
 export const TOP_MEAN_RULE_HORIZON = 24;
 export const TOP_MEAN_RULE_INTERVAL = "4h";
@@ -55,6 +64,8 @@ const TOP_MEAN_RULE_CANDIDATE_FIELDS = [
     "regime",
 ] as const;
 
+export const TOP_MEAN_RULE_V2_FIELDS = TOP_MEAN_CAUSAL_FEATURE_FIELDS;
+
 const TOP_MEAN_RULE_EVENT_FIELDS = [
     "decisionTimeSec",
     "breadth",
@@ -69,7 +80,7 @@ const OUTCOME_STATUSES = ["ok", "missing_target", "missing_entry", "right_censor
 type CandidateField = typeof TOP_MEAN_RULE_CANDIDATE_FIELDS[number];
 type Regime = PoolSnapshotRecord["regime"];
 
-export type TopMeanRuleCandidate = Readonly<Pick<PoolSnapshotRecord, CandidateField>>;
+export type TopMeanRuleCandidate = Readonly<Pick<PoolSnapshotRecord, CandidateField> & Partial<Record<TopMeanCausalFeatureField, number | null>>>;
 export type TopMeanRuleEvent = Readonly<{
     decisionTimeSec: number;
     breadth: number | null;
@@ -95,6 +106,11 @@ export interface TopMeanRuleArchiveMeta {
     horizons?: unknown;
     canonicalAssets?: unknown;
     fingerprint?: unknown;
+    runFingerprint?: unknown;
+    fingerprintVersion?: unknown;
+    postAssemblyFingerprint?: unknown;
+    files?: unknown;
+    featureSet?: unknown;
     manifest?: {
         catalog?: { assets?: unknown };
         researchContract?: {
@@ -109,6 +125,7 @@ export interface TopMeanRuleArchiveMeta {
 export interface TopMeanBaseCandidate {
     row: PoolSnapshotRecord;
     score: number;
+    features: TopMeanCandidateFeatureRow | null;
 }
 
 export interface TopMeanNormalizedEvent {
@@ -127,6 +144,7 @@ export interface TopMeanNormalizedArchive {
     events: readonly TopMeanNormalizedEvent[];
     outcomeByKey: ReadonlyMap<string, CandidateOutcomeRecord>;
     eventRows: readonly PoolRuleEventRow[];
+    featuresByKey?: ReadonlyMap<string, TopMeanCandidateFeatureRow>;
 }
 
 export interface TopMeanCausalArchive {
@@ -134,6 +152,7 @@ export interface TopMeanCausalArchive {
     meta: TopMeanRuleMeta;
     catalogAssets: readonly string[];
     events: readonly TopMeanNormalizedEvent[];
+    featuresByKey?: ReadonlyMap<string, TopMeanCandidateFeatureRow>;
 }
 
 interface TopMeanRuleMeta extends TopMeanRuleArchiveMeta {
@@ -211,6 +230,12 @@ export interface TopMeanRuleEvaluation {
     dominantAsset: string | null;
     dominantExclusionPrimary: RuleMetric;
     dominantExclusionSecondary: RuleMetric;
+    accessedV2Fields: readonly TopMeanCausalFeatureField[];
+    nullReads: number;
+    nullReadsByField: Readonly<Record<string, number>>;
+    nullNeutralViolations: number;
+    changedFullyObservedEvents: number;
+    changedPartiallyObservedEvents: number;
 }
 
 export interface PercentileSummary {
@@ -252,6 +277,12 @@ export interface TopMeanCausalScreenEvaluation {
     droppedEvents: number;
     changedEvents: number;
     unchangedEvents: number;
+    accessedV2Fields: readonly TopMeanCausalFeatureField[];
+    nullReads: number;
+    nullReadsByField: Readonly<Record<string, number>>;
+    nullNeutralViolations: number;
+    changedFullyObservedEvents: number;
+    changedPartiallyObservedEvents: number;
 }
 
 export interface TopMeanCausalStats {
@@ -266,6 +297,69 @@ export interface TopMeanCausalStats {
     exactTopScoreTies: number;
     nearTieCounts: Readonly<{ le001: number; le0025: number; le005: number }>;
     topRawSelectionDifferences: number;
+}
+
+export interface TopMeanFeatureFieldStats {
+    nonNull: number;
+    nullCount: number;
+    values: PercentileSummary;
+    incumbent: PercentileSummary;
+    runnerUp: PercentileSummary;
+    nonIncumbent: PercentileSummary;
+    withinEventRange: PercentileSummary;
+    withinEventDistinctValueRate: number | null;
+    correlations: Readonly<Record<string, number | null>>;
+}
+
+export interface TopMeanFeatureAvailabilityByEvent {
+    ordinal: number;
+    eventId: string;
+    baseCandidates: number;
+    nonNullByField: Readonly<Record<string, number>>;
+}
+
+export interface TopMeanFeatureStats {
+    window: TopMeanRuleWindowSpec;
+    rawEventCount: number;
+    baseCandidateEventCount: number;
+    baseCandidateCount: number;
+    fields: Readonly<Record<TopMeanCausalFeatureField, TopMeanFeatureFieldStats>>;
+    availabilityByEvent: readonly TopMeanFeatureAvailabilityByEvent[];
+    warmupCompletionByOrdinal: readonly TopMeanFeatureAvailabilityByEvent[];
+    priorTopMeanReturnMean3Availability: Readonly<{ zero: number; one: number; twoPlus: number }>;
+    crossFeatureCorrelations: Readonly<Record<string, number | null>>;
+}
+
+interface RuleAccessTracker {
+    accessed: Set<TopMeanCausalFeatureField>;
+    nullReads: number;
+    nullReadsByField: Map<TopMeanCausalFeatureField, number>;
+    nullNeutralViolations: number;
+}
+
+export interface TopMeanRuleAccessSummary {
+    accessedV2Fields: readonly TopMeanCausalFeatureField[];
+    nullReads: number;
+    nullReadsByField: Readonly<Record<string, number>>;
+    nullNeutralViolations: number;
+}
+
+function createRuleAccessTracker(): RuleAccessTracker {
+    return { accessed: new Set(), nullReads: 0, nullReadsByField: new Map(), nullNeutralViolations: 0 };
+}
+
+function accessSummary(tracker: RuleAccessTracker): TopMeanRuleAccessSummary {
+    const nullReadsByField: Record<string, number> = {};
+    for (const field of TOP_MEAN_CAUSAL_FEATURE_FIELDS) {
+        const count = tracker.nullReadsByField.get(field) ?? 0;
+        if (count > 0) nullReadsByField[field] = count;
+    }
+    return {
+        accessedV2Fields: [...tracker.accessed].sort(codeUnitCompare),
+        nullReads: tracker.nullReads,
+        nullReadsByField,
+        nullNeutralViolations: tracker.nullNeutralViolations,
+    };
 }
 
 interface RuleDecision {
@@ -336,7 +430,7 @@ function requireCheck(condition: boolean, check: string, expected: string, actua
 function metaRecord(meta: unknown): TopMeanRuleMeta {
     requireCheck(isRecord(meta), "meta.object", "object", typeof meta);
     const value = meta as unknown as TopMeanRuleMeta;
-    requireCheck(value.schema === "top_mean_archive.v2", "meta.schema", "top_mean_archive.v2", String(value.schema));
+    requireCheck(value.schema === "top_mean_archive.v2" || value.schema === "top_mean_archive.v3", "meta.schema", "top_mean_archive.v2 or top_mean_archive.v3", String(value.schema));
     requireCheck(typeof value.runId === "string" && value.runId.length > 0, "meta.runId", "non-empty string", String(value.runId));
     requireCheck(value.interval === TOP_MEAN_RULE_INTERVAL, "meta.interval", TOP_MEAN_RULE_INTERVAL, String(value.interval));
     requireCheck(Array.isArray(value.horizons) && value.horizons.length === 1 && value.horizons[0] === TOP_MEAN_RULE_HORIZON, "meta.horizons", "[24]", JSON.stringify(value.horizons));
@@ -486,6 +580,7 @@ function compareBaseCandidates(left: TopMeanBaseCandidate, right: TopMeanBaseCan
 
 function buildNormalizedEvents(
     byEvent: ReadonlyMap<string, ReadonlyMap<string, PoolSnapshotRecord>>,
+    featuresByKey: ReadonlyMap<string, TopMeanCandidateFeatureRow> = new Map(),
 ): TopMeanNormalizedEvent[] {
     const events: TopMeanNormalizedEvent[] = [];
     for (const [eventId, snapshotMap] of byEvent) {
@@ -495,7 +590,9 @@ function buildNormalizedEvents(
         const baseCandidates = rows
             .map((row): TopMeanBaseCandidate | null => {
                 const score = row.activePairCount > 0 ? row.signedVotes / row.activePairCount : null;
-                return finite(score) && score > 0 && row.longEligible === true ? { row, score } : null;
+                return finite(score) && score > 0 && row.longEligible === true
+                    ? { row, score, features: featuresByKey.get(featureKey(row.eventId, row.asset)) ?? null }
+                    : null;
             })
             .filter((candidate): candidate is TopMeanBaseCandidate => candidate !== null)
             .sort((left, right) => codeUnitCompare(left.row.asset, right.row.asset));
@@ -522,6 +619,7 @@ export function normalizeTopMeanArchive(args: {
     archive: PoolRuleArchive;
     reportText: string;
     runId?: string;
+    features?: readonly TopMeanCandidateFeatureRow[];
 }): TopMeanNormalizedArchive {
     const meta = metaRecord(args.archive.meta);
     const runId = args.runId ?? meta.runId;
@@ -532,14 +630,19 @@ export function normalizeTopMeanArchive(args: {
     validateIncompleteHeader(runId, args.reportText);
     const byEvent = validateSnapshotRows(args.archive.snapshots, catalogAssets);
     const outcomeByKey = validateOutcomeRows(args.archive.outcomes, catalogAssets, byEvent);
+    const featuresByKey = args.features === undefined
+        ? new Map<string, TopMeanCandidateFeatureRow>()
+        : validateFeatureRows(args.features, args.archive.snapshots);
+    requireCheck(meta.schema === "top_mean_archive.v2" ? featuresByKey.size === 0 : args.features !== undefined, "feature-set.normalize", "v3 archives receive joined feature rows", meta.schema);
     return {
         runId,
         meta,
         reportText: args.reportText,
         catalogAssets,
-        events: buildNormalizedEvents(byEvent),
+        events: buildNormalizedEvents(byEvent, featuresByKey),
         outcomeByKey,
         eventRows: args.archive.eventRows,
+        featuresByKey,
     };
 }
 
@@ -584,6 +687,134 @@ function safeSnapshotRead(filename: string): PoolSnapshotRecord[] {
         });
 }
 
+function featureKey(eventId: string, asset: string): string {
+    return `${eventId}|${asset}`;
+}
+
+function safeFeatureRead(filename: string): TopMeanCandidateFeatureRow[] {
+    let text: string;
+    try {
+        text = readFileSync(filename, "utf8");
+    } catch {
+        throw new CheckerFailure("feature-set.file", "readable candidate-features.jsonl", path.basename(filename), [], "ARCHIVE FAIL");
+    }
+    return text
+        .split(/\r?\n/)
+        .filter((line) => line.trim().length > 0)
+        .map((line, index) => {
+            try {
+                return JSON.parse(line) as TopMeanCandidateFeatureRow;
+            } catch {
+                throw new CheckerFailure("feature-set.jsonl", "valid JSONL rows", `${path.basename(filename)}:${index + 1}`, [], "ARCHIVE FAIL");
+            }
+        });
+}
+
+function validateFeatureRows(
+    rows: readonly TopMeanCandidateFeatureRow[],
+    snapshots: readonly PoolSnapshotRecord[],
+): Map<string, TopMeanCandidateFeatureRow> {
+    const snapshotKeys = new Set(snapshots.map((row) => featureKey(row.eventId, row.asset)));
+    const snapshotsByKey = new Map(snapshots.map((row) => [featureKey(row.eventId, row.asset), row] as const));
+    const map = new Map<string, TopMeanCandidateFeatureRow>();
+    for (const row of rows) {
+        requireCheck(isRecord(row), "feature-set.row", "object", typeof row);
+        requireCheck(typeof row.eventId === "string" && row.eventId.length > 0, "feature-set.identity", "non-empty eventId", String(row.eventId));
+        requireCheck(integer(row.decisionTimeSec), "feature-set.decisionTimeSec", "integer Unix seconds", String(row.decisionTimeSec));
+        requireCheck(typeof row.asset === "string", "feature-set.asset", "string", String(row.asset));
+        const key = featureKey(row.eventId, row.asset);
+        requireCheck(snapshotKeys.has(key), "feature-set.snapshot_identity", "matching snapshot identity", key);
+        requireCheck(!map.has(key), "feature-set.unique_identity", "one row per eventId|asset", key);
+        const snapshot = snapshotsByKey.get(key)!;
+        requireCheck(snapshot.decisionTimeSec === row.decisionTimeSec, "feature-set.event_context", "matching snapshot decision time", key);
+        for (const field of TOP_MEAN_CAUSAL_FEATURE_FIELDS) {
+            const value = row[field];
+            requireCheck(value === null || finite(value), `feature-set.${field}`, "finite number or null", String(value), [key]);
+        }
+        map.set(key, row);
+    }
+    const missing = [...snapshotKeys].filter((key) => !map.has(key));
+    requireCheck(rows.length === snapshots.length && missing.length === 0, "feature-set.row_count_identity", `${snapshots.length} one-to-one rows`, `${rows.length} rows`, missing.slice(0, 10));
+    return map;
+}
+
+function loadFeatureRowsForArchive(
+    location: TopMeanArchiveLocation,
+    meta: TopMeanRuleMeta,
+    snapshots: readonly PoolSnapshotRecord[],
+    options: { verifyOutcomeSource: boolean } = { verifyOutcomeSource: true },
+): Map<string, TopMeanCandidateFeatureRow> {
+    const declared = meta.featureSet !== undefined;
+    if (!declared) {
+        requireCheck(meta.schema === "top_mean_archive.v2", "feature-set.declaration", "no featureSet on v2 archive", `schema=${meta.schema}`, [], "ARCHIVE FAIL");
+        return new Map();
+    }
+    requireCheck(meta.schema === "top_mean_archive.v3", "feature-set.schema", "top_mean_archive.v3", String(meta.schema));
+    requireCheck(isRecord(meta.featureSet), "feature-set.meta", "featureSet object", typeof meta.featureSet);
+    const featureSet = meta.featureSet;
+    requireCheck(featureSet.schema === TOP_MEAN_CANDIDATE_FEATURES_SCHEMA, "feature-set.version.schema", TOP_MEAN_CANDIDATE_FEATURES_SCHEMA, String(featureSet.schema));
+    requireCheck(featureSet.contractVersion === TOP_MEAN_FEATURE_CONTRACT_VERSION, "feature-set.version.contract", TOP_MEAN_FEATURE_CONTRACT_VERSION, String(featureSet.contractVersion));
+    requireCheck(featureSet.formulaVersion === TOP_MEAN_FEATURE_FORMULA_VERSION, "feature-set.version.formula", TOP_MEAN_FEATURE_FORMULA_VERSION, String(featureSet.formulaVersion));
+    requireCheck(featureSet.availabilityPolicy === TOP_MEAN_FEATURE_AVAILABILITY_POLICY, "feature-set.version.availability", TOP_MEAN_FEATURE_AVAILABILITY_POLICY, String(featureSet.availabilityPolicy));
+    requireCheck(featureSet.file === "candidate-features.jsonl", "feature-set.file", "candidate-features.jsonl", String(featureSet.file));
+    requireCheck(integer(featureSet.rowCount) && featureSet.rowCount >= 0, "feature-set.rowCount", "non-negative integer", String(featureSet.rowCount));
+    requireCheck(typeof featureSet.sha256 === "string" && /^[0-9a-f]{64}$/i.test(featureSet.sha256), "feature-set.sha256", "SHA-256", String(featureSet.sha256));
+    requireCheck(typeof featureSet.builderSourceSha256 === "string" && /^[0-9a-f]{64}$/i.test(featureSet.builderSourceSha256), "feature-set.builderSourceSha256", "SHA-256", String(featureSet.builderSourceSha256));
+    requireCheck(Array.isArray(featureSet.fields) && featureSet.fields.length === TOP_MEAN_CAUSAL_FEATURE_FIELDS.length && featureSet.fields.every((field: unknown, index: number) => field === TOP_MEAN_CAUSAL_FEATURE_FIELDS[index]), "feature-set.fields", JSON.stringify(TOP_MEAN_CAUSAL_FEATURE_FIELDS), JSON.stringify(featureSet.fields));
+    requireCheck(isRecord(featureSet.sources), "feature-set.sources", "sources object", typeof featureSet.sources);
+    for (const field of ["poolSnapshotsSha256", "candidateOutcomesSha256"] as const) {
+        requireCheck(typeof featureSet.sources[field] === "string" && /^[0-9a-f]{64}$/i.test(featureSet.sources[field]), `feature-set.sources.${field}`, "SHA-256", String(featureSet.sources[field]));
+    }
+    validateV3FileManifest(location, meta, options.verifyOutcomeSource);
+    const featurePath = path.join(location.runDir, "candidate-features.jsonl");
+    const featureRows = safeFeatureRead(featurePath);
+    requireCheck(sha256File(featurePath) === featureSet.sha256, "feature-set.file.sha256", String(featureSet.sha256), sha256File(featurePath));
+    const poolPath = path.join(location.runDir, "pool-snapshots.jsonl");
+    const outcomePath = path.join(location.runDir, "candidate-outcomes.jsonl");
+    requireCheck(sha256File(poolPath) === featureSet.sources.poolSnapshotsSha256, "feature-set.source.pool-snapshots", String(featureSet.sources.poolSnapshotsSha256), sha256File(poolPath));
+    if (options.verifyOutcomeSource) {
+        requireCheck(sha256File(outcomePath) === featureSet.sources.candidateOutcomesSha256, "feature-set.source.candidate-outcomes", String(featureSet.sources.candidateOutcomesSha256), sha256File(outcomePath));
+    }
+    requireCheck(featureRows.length === featureSet.rowCount, "feature-set.rowCount.actual", String(featureSet.rowCount), String(featureRows.length));
+    return validateFeatureRows(featureRows, snapshots);
+}
+
+function validateV3FileManifest(
+    location: TopMeanArchiveLocation,
+    meta: TopMeanRuleMeta,
+    includeOutcome: boolean,
+): void {
+    requireCheck(typeof meta.runFingerprint === "string" && meta.runFingerprint.length > 0, "meta.runFingerprint", "non-empty string", String(meta.runFingerprint));
+    requireCheck(meta.fingerprint === undefined || meta.runFingerprint === meta.fingerprint, "meta.runFingerprint_matches_fingerprint", String(meta.fingerprint), String(meta.runFingerprint));
+    requireCheck(meta.fingerprintVersion === "top_mean_ledger_fingerprint.v2", "meta.fingerprintVersion", "top_mean_ledger_fingerprint.v2", String(meta.fingerprintVersion));
+    requireCheck(typeof meta.postAssemblyFingerprint === "string" && /^[0-9a-f]{64}$/i.test(meta.postAssemblyFingerprint), "meta.postAssemblyFingerprint", "SHA-256", String(meta.postAssemblyFingerprint));
+    requireCheck(isRecord(meta.files), "meta.files", "file hash map", typeof meta.files);
+    const files = meta.files as Record<string, unknown>;
+
+    const declaredNames = Object.keys(files).sort(codeUnitCompare);
+    const actualNames = readdirSync(location.runDir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name !== "meta.json")
+        .map((entry) => entry.name)
+        .sort(codeUnitCompare);
+    if (includeOutcome) {
+        requireCheck(JSON.stringify(declaredNames) === JSON.stringify(actualNames), "meta.files.identity", "all sealed non-meta files declared exactly once", `${declaredNames.join(",")} vs ${actualNames.join(",")}`);
+    }
+    const namesToVerify = includeOutcome
+        ? declaredNames
+        : ["pool-snapshots.jsonl", "candidate-features.jsonl"];
+    for (const filename of namesToVerify) {
+        const expected = files[filename];
+        requireCheck(typeof expected === "string" && /^[0-9a-f]{64}$/i.test(expected), `meta.files.${filename}`, "SHA-256", String(expected));
+        const filePath = path.join(location.runDir, filename);
+        requireCheck(existsSync(filePath), `meta.files.${filename}.exists`, "declared file exists", filename);
+        requireCheck(sha256File(filePath) === expected, `meta.files.${filename}.sha256`, String(expected), sha256File(filePath));
+    }
+    if (includeOutcome) {
+        const assembled = sha256LineList(declaredNames.map((filename) => `${filename}=${files[filename]}`));
+        requireCheck(assembled === meta.postAssemblyFingerprint, "meta.postAssemblyFingerprint.value", String(meta.postAssemblyFingerprint), assembled);
+    }
+}
+
 export function resolveTopMeanArchiveLocation(ledgerDir: string): TopMeanArchiveLocation {
     const runDir = path.resolve(ledgerDir);
     const batchDir = path.dirname(runDir);
@@ -606,7 +837,15 @@ export function loadNormalizedTopMeanArchiveFromDirectory(ledgerDir: string): To
         throw new CheckerFailure("archive.jsonl", "valid archive JSONL and meta", location.runId, [], "ARCHIVE FAIL");
     }
     const reportText = safeArchiveRead(path.join(location.runDir, "report.txt"));
-    return normalizeTopMeanArchive({ archive, reportText, runId: location.runId });
+    const featuresByKey = loadFeatureRowsForArchive(location, metaRecord(archive.meta), archive.snapshots);
+    return normalizeTopMeanArchive({
+        archive,
+        reportText,
+        runId: location.runId,
+        ...(featuresByKey.size > 0 || metaRecord(archive.meta).schema === "top_mean_archive.v3"
+            ? { features: [...featuresByKey.values()] }
+            : {}),
+    });
 }
 
 export function loadCausalTopMeanArchiveFromDirectory(ledgerDir: string): TopMeanCausalArchive {
@@ -618,11 +857,13 @@ export function loadCausalTopMeanArchiveFromDirectory(ledgerDir: string): TopMea
     const catalogAssets = archiveCatalog(meta);
     const snapshots = safeSnapshotRead(path.join(location.runDir, "pool-snapshots.jsonl"));
     const byEvent = validateSnapshotRows(snapshots, catalogAssets);
+    const featuresByKey = loadFeatureRowsForArchive(location, meta, snapshots, { verifyOutcomeSource: false });
     return {
         runId: location.runId,
         meta,
         catalogAssets,
-        events: buildNormalizedEvents(byEvent),
+        events: buildNormalizedEvents(byEvent, featuresByKey),
+        featuresByKey,
     };
 }
 
@@ -650,6 +891,12 @@ function topRawCandidate(event: TopMeanNormalizedEvent): TopMeanBaseCandidate {
     const candidate = [...event.baseCandidates].sort((left, right) => numberCompare(right.row.signedVotes, left.row.signedVotes) || compareCandidateTie(left, right, event.decisionTimeSec))[0];
     if (!candidate) throw new CheckerFailure("candidate.selection", "at least one base candidate", event.eventId, [], "ARCHIVE FAIL");
     return candidate;
+}
+
+function eventFeaturesFullyObserved(event: TopMeanNormalizedEvent): boolean {
+    return event.baseCandidates.length > 0 && event.baseCandidates.every((candidate) =>
+        candidate.features !== null
+        && TOP_MEAN_CAUSAL_FEATURE_FIELDS.every((field) => candidate.features![field] !== null));
 }
 
 function validLongOutcome(archive: TopMeanNormalizedArchive, eventId: string, asset: string): CandidateOutcomeRecord | null {
@@ -852,7 +1099,12 @@ export function runTopMeanSelfCheck(archive: TopMeanNormalizedArchive): SelfChec
     return { eventCount: expectedRows.length, dominantAsset: dominant, metric };
 }
 
-function createReadOnlyProxy<T extends object>(value: T, allowed: readonly string[], label: string): T {
+function createReadOnlyProxy<T extends object>(
+    value: T,
+    allowed: readonly string[],
+    label: string,
+    onGet?: (property: string, value: unknown) => void,
+): T {
     const allow = new Set(allowed);
     const assertProperty = (property: string | symbol): void => {
         if (typeof property !== "string" || !allow.has(property)) throw new Error(`Rule accessed forbidden ${label} field "${String(property)}".`);
@@ -860,7 +1112,9 @@ function createReadOnlyProxy<T extends object>(value: T, allowed: readonly strin
     return new Proxy(value, {
         get(target, property, receiver) {
             assertProperty(property);
-            return Reflect.get(target, property, receiver);
+            const result = Reflect.get(target, property, receiver);
+            if (typeof property === "string") onGet?.(property, result);
+            return result;
         },
         has(target, property) {
             assertProperty(property);
@@ -894,10 +1148,29 @@ function createReadOnlyProxy<T extends object>(value: T, allowed: readonly strin
     });
 }
 
-function candidateProxy(candidate: TopMeanBaseCandidate): TopMeanRuleCandidate {
+function candidateProxy(candidate: TopMeanBaseCandidate, tracker: RuleAccessTracker, invocation: { nullRead: boolean }): TopMeanRuleCandidate {
     const row = candidate.row;
-    const causal = Object.fromEntries(TOP_MEAN_RULE_CANDIDATE_FIELDS.map((field) => [field, field === "score" ? candidate.score : row[field]])) as TopMeanRuleCandidate;
-    return createReadOnlyProxy(causal, TOP_MEAN_RULE_CANDIDATE_FIELDS, "candidate");
+    const fields = candidate.features === null
+        ? TOP_MEAN_RULE_CANDIDATE_FIELDS
+        : [...TOP_MEAN_RULE_CANDIDATE_FIELDS, ...TOP_MEAN_CAUSAL_FEATURE_FIELDS];
+    const causal = Object.fromEntries(fields.map((field) => {
+        if ((TOP_MEAN_CAUSAL_FEATURE_FIELDS as readonly string[]).includes(field)) {
+            const value = candidate.features?.[field as TopMeanCausalFeatureField] ?? null;
+            return [field, value];
+        }
+        return [field, field === "score" ? candidate.score : row[field as CandidateField]];
+    })) as TopMeanRuleCandidate;
+    return createReadOnlyProxy(causal, fields, "candidate", (property, value) => {
+        if ((TOP_MEAN_CAUSAL_FEATURE_FIELDS as readonly string[]).includes(property) && value === null) {
+            const field = property as TopMeanCausalFeatureField;
+            tracker.accessed.add(field);
+            tracker.nullReads += 1;
+            tracker.nullReadsByField.set(field, (tracker.nullReadsByField.get(field) ?? 0) + 1);
+            invocation.nullRead = true;
+        } else if ((TOP_MEAN_CAUSAL_FEATURE_FIELDS as readonly string[]).includes(property)) {
+            tracker.accessed.add(property as TopMeanCausalFeatureField);
+        }
+    });
 }
 
 function eventProxy(event: TopMeanNormalizedEvent): TopMeanRuleEvent {
@@ -923,6 +1196,22 @@ function classifyRuleValue(value: unknown): "ranking" | "filter" {
     throw new Error("Rule must return a finite number or boolean for every base candidate.");
 }
 
+function neutralizeNullFeatureRead(
+    value: unknown,
+    candidate: TopMeanBaseCandidate,
+    invocation: { nullRead: boolean },
+    tracker: RuleAccessTracker,
+    establishedKind: "ranking" | "filter" | null,
+): unknown {
+    if (!invocation.nullRead) return value;
+    const kind = establishedKind
+        ?? (typeof value === "boolean" ? "filter" : "ranking");
+    const neutral = kind === "filter" ? true : candidate.score;
+    const isNeutral = kind === "filter" ? value === true : value === neutral;
+    if (!isNeutral) tracker.nullNeutralViolations += 1;
+    return neutral;
+}
+
 function ruleFailure(error: unknown, eventId?: string, asset?: string): never {
     const detail = error instanceof Error ? error.message : String(error);
     throw new CheckerFailure("rule.evaluation", "finite number or boolean result without exception", `${eventId ?? "unknown"}${asset ? `/${asset}` : ""}: ${detail}`, [], "RULE FAIL");
@@ -931,19 +1220,22 @@ function ruleFailure(error: unknown, eventId?: string, asset?: string): never {
 function evaluateRuleDecisions(
     events: readonly TopMeanNormalizedEvent[],
     rule: TopMeanRule,
-): { kind: "ranking" | "filter" | "none"; decisions: readonly RuleDecision[] } {
+): { kind: "ranking" | "filter" | "none"; decisions: readonly RuleDecision[]; access: TopMeanRuleAccessSummary } {
     const decisions: RuleDecision[] = [];
     let kind: "ranking" | "filter" | null = null;
+    const tracker = createRuleAccessTracker();
     for (const event of events) {
         const candidateResults: Array<{ candidate: TopMeanBaseCandidate; value: number | boolean }> = [];
         let trueCandidateCount = 0;
         for (const candidate of event.baseCandidates) {
             let value: unknown;
+            const invocation = { nullRead: false };
             try {
-                value = rule(candidateProxy(candidate), eventProxy(event));
+                value = rule(candidateProxy(candidate, tracker, invocation), eventProxy(event));
             } catch (error) {
                 ruleFailure(error, event.eventId, candidate.row.asset);
             }
+            value = neutralizeNullFeatureRead(value, candidate, invocation, tracker, kind);
             let currentKind: "ranking" | "filter";
             try {
                 currentKind = classifyRuleValue(value);
@@ -960,7 +1252,7 @@ function evaluateRuleDecisions(
         decision.selected = kind === null ? null : selectRuleDecision(decision, kind);
         decisions.push(decision);
     }
-    return { kind: kind ?? "none", decisions };
+    return { kind: kind ?? "none", decisions, access: accessSummary(tracker) };
 }
 
 export function evaluateTopMeanRule(args: {
@@ -977,6 +1269,8 @@ export function evaluateTopMeanRule(args: {
     const completeEvents = baseEvents.filter((event) => outcomeComplete(args.archive, event));
     const completeIds = new Set(completeEvents.map((event) => event.eventId));
     const points: RuleEventPoint[] = [];
+    let changedFullyObservedEvents = 0;
+    let changedPartiallyObservedEvents = 0;
     for (const decision of decisions) {
         if (!completeIds.has(decision.event.eventId) || !decision.selected) continue;
         const incumbent = topMeanCandidate(decision.event);
@@ -987,6 +1281,10 @@ export function evaluateTopMeanRule(args: {
             .map((candidate) => validLongOutcome(args.archive, decision.event.eventId, candidate.row.asset)!.return!)
             .filter(finite);
         const controlReturn = otherReturns.reduce((sum, value) => sum + value, 0) / otherReturns.length;
+        if (decision.selected.row.asset !== incumbent.row.asset) {
+            if (eventFeaturesFullyObserved(decision.event)) changedFullyObservedEvents += 1;
+            else changedPartiallyObservedEvents += 1;
+        }
         points.push({
             eventId: decision.event.eventId,
             decisionTimeSec: decision.event.decisionTimeSec,
@@ -1034,6 +1332,9 @@ export function evaluateTopMeanRule(args: {
         dominantAsset,
         dominantExclusionPrimary: metricFromPairs(excludedPoints, "primary"),
         dominantExclusionSecondary: metricFromPairs(excludedPoints, "secondary"),
+        ...decisionResult.access,
+        changedFullyObservedEvents,
+        changedPartiallyObservedEvents,
     };
 }
 
@@ -1046,10 +1347,15 @@ export function evaluateTopMeanCausalScreen(args: {
     const windowEvents = eventsInWindow(args.archive, window);
     const baseEvents = windowEvents.filter((event) => event.baseCandidates.length >= 2);
     const decisionResult = evaluateRuleDecisions(baseEvents, args.rule);
+    if (args.archive.meta.schema === "top_mean_archive.v3" && decisionResult.access.accessedV2Fields.length === 0) {
+        throw new CheckerFailure("rule.v2.no_feature_access", "at least one V2 feature field read", "none", [], "RULE FAIL");
+    }
     let selectedEvents = 0;
     let droppedEvents = 0;
     let changedEvents = 0;
     let unchangedEvents = 0;
+    let changedFullyObservedEvents = 0;
+    let changedPartiallyObservedEvents = 0;
     for (const decision of decisionResult.decisions) {
         if (!decision.selected) {
             droppedEvents += 1;
@@ -1057,7 +1363,11 @@ export function evaluateTopMeanCausalScreen(args: {
         }
         selectedEvents += 1;
         if (decision.selected.row.asset === topMeanCandidate(decision.event).row.asset) unchangedEvents += 1;
-        else changedEvents += 1;
+        else {
+            changedEvents += 1;
+            if (eventFeaturesFullyObserved(decision.event)) changedFullyObservedEvents += 1;
+            else changedPartiallyObservedEvents += 1;
+        }
     }
     const baseCandidateCount = baseEvents.reduce((sum, event) => sum + event.baseCandidates.length, 0);
     const candidateNumerator = decisionResult.kind === "filter"
@@ -1074,6 +1384,9 @@ export function evaluateTopMeanCausalScreen(args: {
         droppedEvents,
         changedEvents,
         unchangedEvents,
+        ...decisionResult.access,
+        changedFullyObservedEvents,
+        changedPartiallyObservedEvents,
     };
 }
 
@@ -1111,6 +1424,169 @@ export function computeTopMeanCausalStats(archive: TopMeanCausalArchive, windowN
         exactTopScoreTies,
         nearTieCounts,
         topRawSelectionDifferences,
+    };
+}
+
+function pearson(left: readonly number[], right: readonly number[]): number | null {
+    if (left.length !== right.length || left.length < 2) return null;
+    const leftMean = left.reduce((sum, value) => sum + value, 0) / left.length;
+    const rightMean = right.reduce((sum, value) => sum + value, 0) / right.length;
+    let numerator = 0;
+    let leftVariance = 0;
+    let rightVariance = 0;
+    for (let index = 0; index < left.length; index += 1) {
+        const leftDelta = left[index]! - leftMean;
+        const rightDelta = right[index]! - rightMean;
+        numerator += leftDelta * rightDelta;
+        leftVariance += leftDelta ** 2;
+        rightVariance += rightDelta ** 2;
+    }
+    if (leftVariance === 0 || rightVariance === 0) return null;
+    return numerator / Math.sqrt(leftVariance * rightVariance);
+}
+
+function ranks(values: readonly number[]): number[] {
+    const indexed = values.map((value, index) => ({ value, index })).sort((left, right) => left.value - right.value || left.index - right.index);
+    const output = new Array<number>(values.length);
+    let index = 0;
+    while (index < indexed.length) {
+        let end = index + 1;
+        while (end < indexed.length && indexed[end]!.value === indexed[index]!.value) end += 1;
+        const rank = (index + 1 + end) / 2;
+        for (let cursor = index; cursor < end; cursor += 1) output[indexed[cursor]!.index] = rank;
+        index = end;
+    }
+    return output;
+}
+
+function correlation(left: readonly number[], right: readonly number[]): { pearson: number | null; spearman: number | null } {
+    return { pearson: pearson(left, right), spearman: pearson(ranks(left), ranks(right)) };
+}
+
+function featureValue(candidate: TopMeanBaseCandidate, field: TopMeanCausalFeatureField): number | null {
+    return candidate.features?.[field] ?? null;
+}
+
+function featureCorrelation(
+    candidates: readonly TopMeanBaseCandidate[],
+    field: TopMeanCausalFeatureField,
+    target: (candidate: TopMeanBaseCandidate) => number,
+): { pearson: number | null; spearman: number | null } {
+    const left: number[] = [];
+    const right: number[] = [];
+    for (const candidate of candidates) {
+        const value = featureValue(candidate, field);
+        if (value === null) continue;
+        left.push(value);
+        right.push(target(candidate));
+    }
+    return correlation(left, right);
+}
+
+function distributionForRole(
+    candidates: readonly TopMeanBaseCandidate[],
+    field: TopMeanCausalFeatureField,
+): PercentileSummary {
+    return percentile(candidates.map((candidate) => featureValue(candidate, field)).filter(finite));
+}
+
+function featureFieldStats(
+    field: TopMeanCausalFeatureField,
+    baseEvents: readonly TopMeanNormalizedEvent[],
+    allCandidates: readonly TopMeanBaseCandidate[],
+): TopMeanFeatureFieldStats {
+    const values = allCandidates.map((candidate) => featureValue(candidate, field));
+    const eventRanges: number[] = [];
+    let distinctEvents = 0;
+    for (const event of baseEvents) {
+        const eventValues = event.baseCandidates.map((candidate) => featureValue(candidate, field)).filter(finite);
+        if (eventValues.length === 0) continue;
+        eventRanges.push(Math.max(...eventValues) - Math.min(...eventValues));
+        if (new Set(eventValues).size > 1) distinctEvents += 1;
+    }
+    const sortedCandidatesByEvent = baseEvents.map((event) => [...event.baseCandidates].sort((left, right) => compareBaseCandidates(left, right, event.decisionTimeSec)));
+    const incumbents = sortedCandidatesByEvent.map((candidates) => candidates.slice(0, 1)).flat();
+    const runnersUp = sortedCandidatesByEvent.map((candidates) => candidates.slice(1, 2)).flat();
+    const nonIncumbents = sortedCandidatesByEvent.map((candidates) => candidates.slice(1)).flat();
+    const correlations: Record<string, number | null> = {};
+    const targets: Readonly<Record<string, (candidate: TopMeanBaseCandidate) => number>> = {
+        score: (candidate) => candidate.score,
+        signedVotes: (candidate) => candidate.row.signedVotes,
+        activePairCount: (candidate) => candidate.row.activePairCount,
+        ema200Above: (candidate) => candidate.row.ema200Above ? 1 : 0,
+    };
+    for (const [name, target] of Object.entries(targets)) {
+        const result = featureCorrelation(allCandidates, field, target);
+        correlations[`${name}.pearson`] = result.pearson;
+        correlations[`${name}.spearman`] = result.spearman;
+    }
+    return {
+        nonNull: values.filter(finite).length,
+        nullCount: values.filter((value) => value === null).length,
+        values: percentile(values.filter(finite)),
+        incumbent: distributionForRole(incumbents, field),
+        runnerUp: distributionForRole(runnersUp, field),
+        nonIncumbent: distributionForRole(nonIncumbents, field),
+        withinEventRange: percentile(eventRanges),
+        withinEventDistinctValueRate: baseEvents.length > 0 ? distinctEvents / baseEvents.length : null,
+        correlations,
+    };
+}
+
+export function computeTopMeanFeatureStats(
+    archive: TopMeanCausalArchive,
+    windowName: TopMeanRuleWindow,
+): TopMeanFeatureStats {
+    requireCheck(archive.meta.schema === "top_mean_archive.v3", "feature-stats.archive", "top_mean_archive.v3 with featureSet", String(archive.meta.schema));
+    const window = windowSpec(windowName);
+    const windowEvents = eventsInWindow(archive, window);
+    const baseEvents = windowEvents.filter((event) => event.baseCandidates.length >= 2);
+    const allCandidates = baseEvents.flatMap((event) => event.baseCandidates);
+    const availabilityByEvent = windowEvents.map((event, index) => {
+        const nonNullByField: Record<string, number> = {};
+        for (const field of TOP_MEAN_CAUSAL_FEATURE_FIELDS) {
+            nonNullByField[field] = event.baseCandidates.filter((candidate) => featureValue(candidate, field) !== null).length;
+        }
+        return { ordinal: index + 1, eventId: event.eventId, baseCandidates: event.baseCandidates.length, nonNullByField };
+    });
+    const fields = {} as Record<TopMeanCausalFeatureField, TopMeanFeatureFieldStats>;
+    for (const field of TOP_MEAN_CAUSAL_FEATURE_FIELDS) fields[field] = featureFieldStats(field, baseEvents, allCandidates);
+    const crossFeatureCorrelations: Record<string, number | null> = {};
+    for (let leftIndex = 0; leftIndex < TOP_MEAN_CAUSAL_FEATURE_FIELDS.length; leftIndex += 1) {
+        const leftField = TOP_MEAN_CAUSAL_FEATURE_FIELDS[leftIndex]!;
+        for (let rightIndex = leftIndex + 1; rightIndex < TOP_MEAN_CAUSAL_FEATURE_FIELDS.length; rightIndex += 1) {
+            const rightField = TOP_MEAN_CAUSAL_FEATURE_FIELDS[rightIndex]!;
+            const left: number[] = [];
+            const right: number[] = [];
+            for (const candidate of allCandidates) {
+                const leftValue = featureValue(candidate, leftField);
+                const rightValue = featureValue(candidate, rightField);
+                if (leftValue === null || rightValue === null) continue;
+                left.push(leftValue);
+                right.push(rightValue);
+            }
+            const result = correlation(left, right);
+            crossFeatureCorrelations[`${leftField}~${rightField}.pearson`] = result.pearson;
+            crossFeatureCorrelations[`${leftField}~${rightField}.spearman`] = result.spearman;
+        }
+    }
+    const returnAvailability = { zero: 0, one: 0, twoPlus: 0 };
+    for (const event of windowEvents) {
+        const available = event.baseCandidates.filter((candidate) => featureValue(candidate, "priorTopMeanReturnMean3") !== null).length;
+        if (available === 0) returnAvailability.zero += 1;
+        else if (available === 1) returnAvailability.one += 1;
+        else returnAvailability.twoPlus += 1;
+    }
+    return {
+        window,
+        rawEventCount: windowEvents.length,
+        baseCandidateEventCount: baseEvents.length,
+        baseCandidateCount: allCandidates.length,
+        fields,
+        availabilityByEvent,
+        warmupCompletionByOrdinal: availabilityByEvent,
+        priorTopMeanReturnMean3Availability: returnAvailability,
+        crossFeatureCorrelations,
     };
 }
 
@@ -1193,6 +1669,7 @@ export function renderTopMeanRuleReport(args: {
     lines.push(blockLine(`PRIMARY_EX_${exclusionLabel}`, evaluation.dominantExclusionPrimary));
     lines.push(ruleMetricLine(`SECONDARY_EX_${exclusionLabel}`, evaluation.dominantExclusionSecondary));
     lines.push(blockLine(`SECONDARY_EX_${exclusionLabel}`, evaluation.dominantExclusionSecondary));
+    lines.push(`access | v2Fields=${evaluation.accessedV2Fields.join(",") || "none"} nullReads=${evaluation.nullReads} nullNeutralViolations=${evaluation.nullNeutralViolations}`);
     return lines.join("\n") + "\n";
 }
 
@@ -1260,6 +1737,36 @@ export function renderTopMeanCausalStatsReport(archive: TopMeanCausalArchive, st
     return lines.join("\n") + "\n";
 }
 
+function featurePercentileLine(label: string, summary: PercentileSummary): string {
+    return `${label} | n=${summary.n} p0=${fixedNumber(summary.p0)} p1=${fixedNumber(summary.p1)} p5=${fixedNumber(summary.p5)} p25=${fixedNumber(summary.p25)} p50=${fixedNumber(summary.p50)} p75=${fixedNumber(summary.p75)} p95=${fixedNumber(summary.p95)} p99=${fixedNumber(summary.p99)} p100=${fixedNumber(summary.p100)}`;
+}
+
+export function renderTopMeanFeatureStatsReport(archive: TopMeanCausalArchive, stats: TopMeanFeatureStats): string {
+    const lines = [
+        "TOP_MEAN RULE CHECKER | mode=feature-stats",
+        `archive | runId=${archive.runId} interval=${TOP_MEAN_RULE_INTERVAL} metaFingerprint=${typeof archive.meta.fingerprint === "string" ? archive.meta.fingerprint : "n/a"}`,
+        `feature-set | schema=${TOP_MEAN_CANDIDATE_FEATURES_SCHEMA} contract=${TOP_MEAN_FEATURE_CONTRACT_VERSION} formula=${TOP_MEAN_FEATURE_FORMULA_VERSION} availability=${TOP_MEAN_FEATURE_AVAILABILITY_POLICY}`,
+        `window | name=${stats.window.name} from=${stats.window.fromSec} to=${stats.window.toSec}`,
+        `causal cohort | rawEvents=${stats.rawEventCount} baseCandidateEvents=${stats.baseCandidateEventCount} baseCandidates=${stats.baseCandidateCount}`,
+    ];
+    for (const field of TOP_MEAN_CAUSAL_FEATURE_FIELDS) {
+        const value = stats.fields[field]!;
+        lines.push(`FEATURE | name=${field} nonNull=${value.nonNull} null=${value.nullCount} distinctEventRate=${value.withinEventDistinctValueRate === null ? "n/a" : value.withinEventDistinctValueRate.toFixed(4)}`);
+        lines.push(featurePercentileLine(`${field} values`, value.values));
+        lines.push(featurePercentileLine(`${field} incumbent`, value.incumbent));
+        lines.push(featurePercentileLine(`${field} runnerUp`, value.runnerUp));
+        lines.push(featurePercentileLine(`${field} nonIncumbent`, value.nonIncumbent));
+        lines.push(featurePercentileLine(`${field} withinEventRange`, value.withinEventRange));
+        for (const name of Object.keys(value.correlations).sort(codeUnitCompare)) lines.push(`CORRELATION | ${field}~${name}=${fixedNumber(value.correlations[name] ?? null)}`);
+    }
+    for (const name of Object.keys(stats.crossFeatureCorrelations).sort(codeUnitCompare)) lines.push(`CROSS_FEATURE | ${name}=${fixedNumber(stats.crossFeatureCorrelations[name] ?? null)}`);
+    lines.push(`RETURN_FEATURE_AVAILABILITY | zero=${stats.priorTopMeanReturnMean3Availability.zero} one=${stats.priorTopMeanReturnMean3Availability.one} twoPlus=${stats.priorTopMeanReturnMean3Availability.twoPlus}`);
+    for (const event of stats.warmupCompletionByOrdinal) {
+        lines.push(`WARMUP | ordinal=${event.ordinal} eventId=${event.eventId} baseCandidates=${event.baseCandidates} ${TOP_MEAN_CAUSAL_FEATURE_FIELDS.map((field) => `${field}=${event.nonNullByField[field]}`).join(" ")}`);
+    }
+    return lines.join("\n") + "\n";
+}
+
 export function renderTopMeanCausalScreenReport(args: {
     archive: TopMeanCausalArchive;
     ruleName: string;
@@ -1279,6 +1786,8 @@ export function renderTopMeanCausalScreenReport(args: {
         `causal cohort | rawEvents=${evaluation.rawEventCount} baseCandidateEvents=${evaluation.baseCandidateEventCount} baseCandidates=${evaluation.baseCandidateCount}`,
         `rule | kind=${evaluation.kind}`,
         `selection | selectedEvents=${evaluation.selectedEvents} droppedEvents=${evaluation.droppedEvents} changed=${evaluation.changedEvents}/${evaluation.baseCandidateEventCount} rate=${changeRate.toFixed(2)}% unchanged=${evaluation.unchangedEvents}`,
+        `selection observation | changedFullyObserved=${evaluation.changedFullyObservedEvents} changedPartiallyObserved=${evaluation.changedPartiallyObservedEvents}`,
+        `access | v2Fields=${evaluation.accessedV2Fields.join(",") || "none"} nullReads=${evaluation.nullReads} nullReadsByField=${JSON.stringify(evaluation.nullReadsByField)} nullNeutralViolations=${evaluation.nullNeutralViolations}`,
         `candidate keep rate=${(evaluation.candidateKeepRate * 100).toFixed(2)}%`,
         `SCREEN | impact=${impact} thinCutoff=2.00%`,
     ];
@@ -1287,6 +1796,10 @@ export function renderTopMeanCausalScreenReport(args: {
 
 function sha256File(filename: string): string {
     return createHash("sha256").update(readFileSync(filename)).digest("hex");
+}
+
+function sha256LineList(lines: readonly string[]): string {
+    return createHash("sha256").update(`${lines.join("\n")}\n`, "utf8").digest("hex");
 }
 
 function preflightRuleSource(ruleFile: string, allowLegacySource: boolean): void {
@@ -1326,7 +1839,7 @@ async function importRule(ruleFile: string): Promise<{ name: string; sha256: str
 
 interface CliOptions {
     ledgerDir: string;
-    mode: "self-check" | "stats" | "causal-stats" | "screen" | "rule";
+    mode: "self-check" | "stats" | "causal-stats" | "feature-stats" | "screen" | "rule";
     ruleFile?: string;
     window?: TopMeanRuleWindow;
     allowLegacySource: boolean;
@@ -1338,6 +1851,7 @@ const USAGE = [
     "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --self-check",
     "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --stats --window discovery|validation",
     "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --causal-stats --window discovery",
+    "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --feature-stats --window discovery|validation",
     "  esno scripts/top-mean-rule-checker.ts <ledgerDir> <ruleFile.ts> --screen --window discovery",
     "  --allow-legacy-source allows U+007C only for historical rule replay",
 ].join("\n");
@@ -1347,6 +1861,7 @@ function parseCli(argv: readonly string[]): CliOptions | "help" {
     let selfCheck = false;
     let stats = false;
     let causalStats = false;
+    let featureStats = false;
     let screen = false;
     let allowLegacySource = false;
     let selectedWindow: TopMeanRuleWindow | undefined;
@@ -1362,6 +1877,9 @@ function parseCli(argv: readonly string[]): CliOptions | "help" {
         } else if (arg === "--causal-stats") {
             if (causalStats) throw new UsageFailure("duplicate --causal-stats");
             causalStats = true;
+        } else if (arg === "--feature-stats") {
+            if (featureStats) throw new UsageFailure("duplicate --feature-stats");
+            featureStats = true;
         } else if (arg === "--screen") {
             if (screen) throw new UsageFailure("duplicate --screen");
             screen = true;
@@ -1380,7 +1898,7 @@ function parseCli(argv: readonly string[]): CliOptions | "help" {
     if (positional.length === 0) throw new UsageFailure("ledgerDir is required");
     if (allowLegacySource && positional.length !== 2) throw new UsageFailure("--allow-legacy-source requires ledgerDir and ruleFile");
     if (selfCheck && stats) throw new UsageFailure("--self-check and --stats are exclusive");
-    if ([selfCheck, stats, causalStats, screen].filter(Boolean).length > 1) throw new UsageFailure("checker modes are exclusive");
+    if ([selfCheck, stats, causalStats, featureStats, screen].filter(Boolean).length > 1) throw new UsageFailure("checker modes are exclusive");
     if (selfCheck) {
         if (positional.length !== 1 || selectedWindow !== undefined) throw new UsageFailure("self-check mode takes only ledgerDir");
         return { ledgerDir: positional[0]!, mode: "self-check", allowLegacySource };
@@ -1392,6 +1910,10 @@ function parseCli(argv: readonly string[]): CliOptions | "help" {
     if (causalStats) {
         if (positional.length !== 1 || selectedWindow !== "discovery") throw new UsageFailure("causal-stats mode requires ledgerDir and --window discovery");
         return { ledgerDir: positional[0]!, mode: "causal-stats", window: selectedWindow, allowLegacySource };
+    }
+    if (featureStats) {
+        if (positional.length !== 1 || selectedWindow === undefined) throw new UsageFailure("feature-stats mode requires ledgerDir and --window");
+        return { ledgerDir: positional[0]!, mode: "feature-stats", window: selectedWindow, allowLegacySource };
     }
     if (screen) {
         if (positional.length !== 2 || selectedWindow !== "discovery") throw new UsageFailure("screen mode requires ledgerDir, ruleFile, and --window discovery");
@@ -1432,7 +1954,7 @@ export async function runTopMeanRuleCheckerCli(argv: readonly string[]): Promise
             return 1;
         }
     }
-    if (options.mode === "causal-stats" || options.mode === "screen") {
+    if (options.mode === "causal-stats" || options.mode === "feature-stats" || options.mode === "screen") {
         let causalArchive: TopMeanCausalArchive;
         try {
             causalArchive = loadCausalTopMeanArchiveFromDirectory(options.ledgerDir);
@@ -1444,6 +1966,16 @@ export async function runTopMeanRuleCheckerCli(argv: readonly string[]): Promise
             const stats = computeTopMeanCausalStats(causalArchive, options.window!);
             process.stdout.write(renderTopMeanCausalStatsReport(causalArchive, stats));
             return 0;
+        }
+        if (options.mode === "feature-stats") {
+            try {
+                const stats = computeTopMeanFeatureStats(causalArchive, options.window!);
+                process.stdout.write(renderTopMeanFeatureStatsReport(causalArchive, stats));
+                return 0;
+            } catch (error) {
+                process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+                return 1;
+            }
         }
         let importedRule: { name: string; sha256: string; rule: TopMeanRule };
         try {

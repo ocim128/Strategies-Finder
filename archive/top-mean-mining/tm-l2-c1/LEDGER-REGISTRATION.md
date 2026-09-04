@@ -1,0 +1,17 @@
+# TM-L2-C1 ledger registration
+
+This is the static registration for the successor campaign. The registration
+fingerprint is intentionally pending until the L2 ledger is sealed.
+
+REGISTRATION|schema=top_mean_v2_campaign_registration.v1|campaign=TM-L2-C1|contract=v2.0|humanApproved=yes|registrationFingerprint=PENDING_L2_SEAL
+IDENTITY|predecessor=TM-L1-C1|strategy=body_direction_placement_coherence|coherenceThreshold=0.705|interval=4h|horizonBars=24|direction=long
+FEATURE_SOURCE|builder=lib/batch-backtest/sp500-top-mean-causal-features.ts|builderSourceSha256=50ddf57029d2d19a18f04b4d692ce2673e6c923fa881a2b21c45278ca12bbbb9|checker=scripts/top-mean-rule-checker.ts|checkerSourceSha256=802e222bf8ffbb44b1f1e6a2747b329ee64c3d0ad1cc07c0277745bcb4bb3d71|featureContract=top_mean_feature_set.v2|formulaVersion=tm_feature_formulas.v1|availabilityPolicy=strict_prior_exit_v1
+FEATURE_FIELDS|fields=priorCoverageSlope5,priorSignedVoteDelta3,priorScoreStdDev5,priorTopMeanReturnMean3|schema=top_mean_candidate_features.v1
+PAIRLIST|poolVersion=BAL5555-S2.v1|file=docs/pairlist-pools/BAL5555-S2.v1.json|algorithm=seeded_round_robin_v1|effectiveSeed=2|executionOrderSha256=605bb290dc9cb1b7111932b36e242fab105cf47407fab8c53df456ac7616636b|sortedSetSha256=504b470e45449f40029400e3322ea910de057450740429420bdda8e87ba34a47|catalogSha256=6c8fead5fabb671b0b8278d79f23a4dd5061c2fa439998ccd74cd0bb7ca0cd42
+CATALOG|count=136|source=L1 canonicalAssets from archive/batch-open-score/sp500_top_mean_1788443592188_cgd3/meta.json|hash=6c8fead5fabb671b0b8278d79f23a4dd5061c2fa439998ccd74cd0bb7ca0cd42
+COSTS|slippageBps=5|commissionPercent=0.1|executionModel=next_open|dataCutoffPolicy=record-sealed-source-cutoff
+FENCES|discovery=L2D|validation=L2V|sampleStart=2025-01-10T00:00:00.000Z|outcomeGate=all-positive-base-candidates-valid-h24-long
+TIE_BOOTSTRAP|tieVersion=max_active_tie_v1|blockCount=10|bootstrapSamples=10000|bootstrapSeed=20260301|tieBreak=FNV-1a digest then asset code-unit order
+POWER_GATE|primaryMinPp=1.00|ciLowerMinPp=0.15|positiveBlocksMin=8/10|keepMinPercent=20|exDominantMinPp=0.30|fullC2=yes
+PILOT_LIMITS|outcomeBatches=3|outcomeShas=30|validationViews=6|stopAfterBatch3WithoutCorroboratedLead=yes
+REGISTRATION_BYTES|path=archive/top-mean-mining/tm-l2-c1/LEDGER-REGISTRATION.md|sha256=4543343bd437a5241fe23c91a57f0d8e2c69c5cecbbc27eb9024d478a1c3b427

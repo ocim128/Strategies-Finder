@@ -1,5 +1,6 @@
-import { createWriteStream, type WriteStream } from "node:fs";
+import { createReadStream, createWriteStream, type WriteStream } from "node:fs";
 import { mkdir, readFile, readdir, rm, writeFile, copyFile } from "node:fs/promises";
+import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import type {
@@ -12,6 +13,15 @@ import type {
     CandidateOutcomeRecord,
     PoolSnapshotRecord,
 } from "./batch-open-score-usd-replay-engine";
+import {
+    TOP_MEAN_CANDIDATE_FEATURES_SCHEMA,
+    TOP_MEAN_CAUSAL_FEATURE_FIELDS,
+    TOP_MEAN_FEATURE_AVAILABILITY_POLICY,
+    TOP_MEAN_FEATURE_CONTRACT_VERSION,
+    TOP_MEAN_FEATURE_FORMULA_VERSION,
+    buildCandidateFeaturesFromOutcomeStream,
+    type TopMeanCandidateFeatureRow,
+} from "./sp500-top-mean-causal-features";
 
 /**
  * Archive writer notes for Phase 0b:
@@ -90,6 +100,8 @@ export interface TopMeanArchiveLogOptions {
     phase0bFiles?: TopMeanPhase0bArchiveFiles;
     /** Resolved archive root captured by the coordinator at run start. */
     archiveRoot?: string | null;
+    /** Test seam proving metadata is written only after data files are sealed. */
+    beforeMetaWrite?: (filenames: readonly string[]) => void | Promise<void>;
 }
 
 export interface TopMeanArchiveOutcome {
@@ -213,6 +225,10 @@ function hashText(value: string): string {
     return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+function hashBytes(value: Uint8Array): string {
+    return createHash("sha256").update(value).digest("hex");
+}
+
 const DISCOVERY_FROM_SEC = Math.floor(Date.parse("2025-01-10T00:00:00.000Z") / 1000);
 const DISCOVERY_TO_SEC = Math.floor(Date.parse("2025-12-31T23:59:59.000Z") / 1000);
 const VALIDATION_FROM_SEC = Math.floor(Date.parse("2026-01-01T00:00:00.000Z") / 1000);
@@ -324,8 +340,41 @@ async function writeJsonlFile<T>(filename: string, rows: readonly T[]): Promise<
     }
 }
 
+async function readJsonlFile<T>(filename: string): Promise<T[]> {
+    const text = await readFile(filename, "utf8");
+    return text
+        .split(/\r?\n/)
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as T);
+}
+
+async function* streamJsonlFile<T>(filename: string): AsyncIterable<T> {
+    const input = createReadStream(filename, { encoding: "utf8" });
+    const lines = createInterface({ input, crlfDelay: Infinity });
+    try {
+        for await (const line of lines) {
+            if (line.trim().length > 0) yield JSON.parse(line) as T;
+        }
+    } finally {
+        lines.close();
+        input.destroy();
+    }
+}
+
+async function hashFile(filename: string): Promise<string> {
+    return hashBytes(await readFile(filename));
+}
+
+async function builderSourceHash(): Promise<string> {
+    return hashBytes(await readFile(new URL("./sp500-top-mean-causal-features.ts", import.meta.url)));
+}
+
 function defaultWarning(event: string, data: Record<string, unknown>): void {
     console.warn(`[debug] ${event}`, data);
+}
+
+function codeUnitCompare(left: string, right: string): number {
+    return left < right ? -1 : left > right ? 1 : 0;
 }
 
 /**
@@ -411,30 +460,6 @@ export async function archiveCompletedTopMeanRun(
             },
             windowDesignation: resolveTopMeanWindowDesignation(request),
         };
-        const meta = {
-            schema: "top_mean_archive.v2",
-            runId: request.runId,
-            completedAt,
-            interval: request.interval,
-            horizons: request.horizons,
-            sampleFromSec: request.sampleFromSec ?? null,
-            sampleToSec: request.sampleToSec ?? null,
-            workerCount: request.workerCount ?? null,
-            maxPairs: request.maxPairs ?? null,
-            fingerprint,
-            canonicalAssets,
-            counts: {
-                pairs: result.counts.pairCount,
-                assets: canonicalAssets.length,
-            },
-            engine: performanceEngine,
-            useRustEnginePreference: request.useRustEnginePreference === true,
-            latestSelections: result.latestSelections ?? null,
-            ...(result.currentSnapshot !== undefined
-                ? { currentSnapshot: result.currentSnapshot }
-                : {}),
-            manifest,
-        };
         const annualEventFiles = (result.annualReports ?? [])
             .filter((annual) => (annual.eventDetails?.length ?? 0) > 0)
             .map((annual) => ({
@@ -452,9 +477,11 @@ export async function archiveCompletedTopMeanRun(
         }));
 
         await mkdir(runDir, { recursive: true });
+        // A rerun must not leave a previous complete meta.json claiming that
+        // a newly assembled archive is complete if finalization later fails.
+        await rm(path.join(runDir, "meta.json"), { force: true });
         await Promise.all([
             writeFile(path.join(runDir, "report.txt"), result.reportLines.join("\n"), "utf8"),
-            writeFile(path.join(runDir, "meta.json"), JSON.stringify(meta), "utf8"),
         ]);
         await writeJsonlFile(path.join(runDir, "events-full.jsonl"), fullEventRows);
         for (const file of annualEventFiles) {
@@ -470,9 +497,86 @@ export async function archiveCompletedTopMeanRun(
         } else if (result.candidateOutcomes !== undefined) {
             await writeJsonlFile(path.join(runDir, "candidate-outcomes.jsonl"), result.candidateOutcomes);
         }
+
+        const snapshotsPath = path.join(runDir, "pool-snapshots.jsonl");
+        const outcomesPath = path.join(runDir, "candidate-outcomes.jsonl");
+        const snapshots = await readJsonlFile<PoolSnapshotRecord>(snapshotsPath);
+        const featureRows: TopMeanCandidateFeatureRow[] = await buildCandidateFeaturesFromOutcomeStream({
+            snapshots,
+            outcomes: streamJsonlFile<CandidateOutcomeRecord>(outcomesPath),
+        });
+        const featurePath = path.join(runDir, "candidate-features.jsonl");
+        await writeJsonlFile(featurePath, featureRows);
+
+        const filenames = (await readdir(runDir, { withFileTypes: true }))
+            .filter((entry) => entry.isFile() && entry.name !== "meta.json")
+            .map((entry) => entry.name)
+            .sort(codeUnitCompare);
+        const fileHashes: Record<string, string> = {};
+        for (const filename of filenames) fileHashes[filename] = await hashFile(path.join(runDir, filename));
+        const meta = {
+            schema: "top_mean_archive.v3",
+            runId: request.runId,
+            completedAt,
+            interval: request.interval,
+            horizons: request.horizons,
+            sampleFromSec: request.sampleFromSec ?? null,
+            sampleToSec: request.sampleToSec ?? null,
+            workerCount: request.workerCount ?? null,
+            maxPairs: request.maxPairs ?? null,
+            fingerprint,
+            runFingerprint: fingerprint,
+            fingerprintVersion: "top_mean_ledger_fingerprint.v2",
+            postAssemblyFingerprint: sha256LineList(filenames.map((filename) => `${filename}=${fileHashes[filename]}`)),
+            canonicalAssets,
+            counts: {
+                pairs: result.counts.pairCount,
+                assets: canonicalAssets.length,
+            },
+            engine: performanceEngine,
+            useRustEnginePreference: request.useRustEnginePreference === true,
+            latestSelections: result.latestSelections ?? null,
+            ...(result.currentSnapshot !== undefined
+                ? { currentSnapshot: result.currentSnapshot }
+                : {}),
+            manifest,
+            files: fileHashes,
+            featureSet: {
+                schema: TOP_MEAN_CANDIDATE_FEATURES_SCHEMA,
+                contractVersion: TOP_MEAN_FEATURE_CONTRACT_VERSION,
+                formulaVersion: TOP_MEAN_FEATURE_FORMULA_VERSION,
+                availabilityPolicy: TOP_MEAN_FEATURE_AVAILABILITY_POLICY,
+                file: "candidate-features.jsonl",
+                rowCount: featureRows.length,
+                sha256: fileHashes["candidate-features.jsonl"],
+                builderSourceSha256: await builderSourceHash(),
+                sources: {
+                    poolSnapshotsSha256: fileHashes["pool-snapshots.jsonl"],
+                    candidateOutcomesSha256: fileHashes["candidate-outcomes.jsonl"],
+                },
+                fields: [...TOP_MEAN_CAUSAL_FEATURE_FIELDS],
+            },
+        };
+        // meta.json is deliberately the final write: its hashes describe only
+        // sealed data files and never a partially assembled archive.
+        await options.beforeMetaWrite?.(filenames);
+        await writeFile(path.join(runDir, "meta.json"), JSON.stringify(meta), "utf8");
         return { reason: "saved", archiveDir: runDir };
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        try {
+            const root = options.root ?? process.cwd();
+            const archiveRoot = options.archiveRoot !== undefined
+                ? options.archiveRoot
+                : resolveTopMeanArchiveLogDir(root, options.env);
+            if (archiveRoot) {
+                const runDir = path.join(archiveRoot, request.runId);
+                await rm(path.join(runDir, "meta.json"), { force: true });
+                await rm(path.join(runDir, "candidate-features.jsonl"), { force: true });
+            }
+        } catch {
+            // The primary archive error remains the useful failure signal.
+        }
         try {
             warn("sp500_top_mean.archive_log_failed", {
                 runId: request.runId,

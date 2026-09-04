@@ -161,42 +161,46 @@ async function testCompletedRunWritesArchive(): Promise<void> {
     try {
         const request = makeRequest();
         const summary = makeSummary();
+        let metaWriteObserved = false;
         const outcome = await archiveCompletedTopMeanRun(summary, request, {
             root,
             canonicalAssets: ["AAPL", "MSFT"],
             fingerprint: "fingerprint-test",
             completedAt: "2026-08-24T00:00:00.000Z",
             manifest: makeManifest(),
+            beforeMetaWrite: (filenames) => {
+                const runDir = join(root, "archive", "batch-open-score", request.runId);
+                assert.equal(existsSync(join(runDir, "meta.json")), false);
+                assert.ok(filenames.length > 0);
+                assert.ok(filenames.every((filename) => existsSync(join(runDir, filename))));
+                metaWriteObserved = true;
+            },
         });
 
         assert.equal(outcome.reason, "saved");
+        assert.equal(metaWriteObserved, true);
         assert.equal(outcome.archiveDir, join(root, "archive", "batch-open-score", request.runId));
         summary.archiveComplete = outcome.reason === "saved";
         assert.equal(summary.archiveComplete, true);
         const runDir = join(root, "archive", "batch-open-score", request.runId);
         assert.equal(readFileSync(join(runDir, "report.txt"), "utf8"), summary.reportLines.join("\n"));
-        assert.deepEqual(JSON.parse(readFileSync(join(runDir, "meta.json"), "utf8")), {
-            schema: "top_mean_archive.v2",
-            runId: request.runId,
-            completedAt: "2026-08-24T00:00:00.000Z",
-            interval: "4h",
-            horizons: [12, 24],
-            sampleFromSec: 1_700_000_000,
-            sampleToSec: 1_700_086_400,
-            workerCount: 2,
-            maxPairs: 10,
-            fingerprint: "fingerprint-test",
-            canonicalAssets: ["AAPL", "MSFT"],
-            counts: { pairs: 1, assets: 2 },
-            engine: {
-                requested: "rust",
-                actual: "typescript",
-                typescriptRequirementReasons: ["slippage is enabled"],
-            },
-            useRustEnginePreference: true,
-            latestSelections: null,
-            manifest: makeManifest(),
-        });
+        const meta = JSON.parse(readFileSync(join(runDir, "meta.json"), "utf8")) as Record<string, any>;
+        assert.equal(meta.schema, "top_mean_archive.v3");
+        assert.equal(meta.runId, request.runId);
+        assert.equal(meta.completedAt, "2026-08-24T00:00:00.000Z");
+        assert.equal(meta.fingerprint, "fingerprint-test");
+        assert.equal(meta.runFingerprint, "fingerprint-test");
+        assert.equal(meta.fingerprintVersion, "top_mean_ledger_fingerprint.v2");
+        assert.deepEqual(meta.manifest, makeManifest());
+        assert.equal(meta.featureSet.schema, "top_mean_candidate_features.v1");
+        assert.equal(meta.featureSet.contractVersion, "top_mean_feature_set.v2");
+        assert.equal(meta.featureSet.formulaVersion, "tm_feature_formulas.v1");
+        assert.equal(meta.featureSet.availabilityPolicy, "strict_prior_exit_v1");
+        assert.equal(meta.featureSet.file, "candidate-features.jsonl");
+        assert.equal(meta.featureSet.rowCount, 1);
+        assert.equal(meta.files["pool-snapshots.jsonl"], meta.featureSet.sources.poolSnapshotsSha256);
+        assert.equal(meta.files["candidate-outcomes.jsonl"], meta.featureSet.sources.candidateOutcomesSha256);
+        assert.equal(meta.files["candidate-features.jsonl"], meta.featureSet.sha256);
         const event = summary.openScoreEventDetails![0];
         assert.equal(
             readFileSync(join(runDir, "events-full.jsonl"), "utf8"),
@@ -214,6 +218,16 @@ async function testCompletedRunWritesArchive(): Promise<void> {
             readFileSync(join(runDir, "candidate-outcomes.jsonl"), "utf8"),
             `${JSON.stringify(summary.candidateOutcomes![0])}\n`,
         );
+        const featureRows = readFileSync(join(runDir, "candidate-features.jsonl"), "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
+        assert.deepEqual(featureRows, [{
+            eventId: "4h:1700000000",
+            decisionTimeSec: 1_700_000_000,
+            asset: "AAPL",
+            priorCoverageSlope5: null,
+            priorSignedVoteDelta3: null,
+            priorScoreStdDev5: null,
+            priorTopMeanReturnMean3: null,
+        }]);
         assert.equal(resolveTopMeanArchiveLogDir(root, { TOP_MEAN_ARCHIVE_LOG_DIR: "" }), null);
     } finally {
         rmSync(root, { recursive: true, force: true });
@@ -268,6 +282,23 @@ async function testDisabledAndFailedWritesAreBestEffort(): Promise<void> {
             "sp500_top_mean.archive_log_failed",
             "sp500_top_mean.archive_log_failed",
         ]);
+
+        const incompleteRoot = join(root, "incomplete-feature-build");
+        const incompleteRunDir = join(incompleteRoot, "archive", "batch-open-score", request.runId);
+        mkdirSync(incompleteRunDir, { recursive: true });
+        writeFileSync(join(incompleteRunDir, "meta.json"), "stale complete metadata", "utf8");
+        const stagedPool = join(root, "staged-pool.jsonl");
+        const stagedOutcomes = join(root, "staged-outcomes.jsonl");
+        writeFileSync(stagedPool, `${JSON.stringify(makeSummary().poolSnapshots![0])}\n`, "utf8");
+        writeFileSync(stagedOutcomes, "{malformed jsonl\n", "utf8");
+        const featureFailed = await archiveCompletedTopMeanRun(summary, request, {
+            root: incompleteRoot,
+            phase0bFiles: { poolSnapshotsPath: stagedPool, candidateOutcomesPath: stagedOutcomes },
+            manifest: makeManifest(),
+        });
+        assert.equal(featureFailed.reason, "failed");
+        assert.equal(existsSync(join(incompleteRunDir, "meta.json")), false);
+        assert.equal(existsSync(join(incompleteRunDir, "candidate-features.jsonl")), false);
 
         const cancelledRoot = join(root, "cancelled");
         const cancelled = await archiveCompletedTopMeanRun(makeSummary(false), request, {

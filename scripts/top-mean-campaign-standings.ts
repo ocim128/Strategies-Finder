@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { campaignLogSha256 } from "./top-mean-campaign-log";
 import {
     parseRecords,
     sha256Bytes,
@@ -573,7 +573,7 @@ export function buildCampaignStandings(options: CampaignStandingsOptions): Campa
     if (options.family && !requestedFamilyDetail) throw new Error(`family not found: ${options.family}`);
     return {
         campaign: options.campaign,
-        logSha256: createHash("sha256").update(history.logBytes).digest("hex"),
+        logSha256: campaignLogSha256(history.logText),
         nextBatch: history.closedDisposition ? "CLOSED" : `B${maxBatch + 1}`,
         nextOutcomeOrdinal: Math.max(maxOrdinal, completedBatches.length) + 1,
         completedBatches: completedBatches.length,
@@ -630,7 +630,7 @@ function renderFamilyDetail(detail: CampaignFamilyDetail): string[] {
 
 export function renderCampaignStandings(result: CampaignStandings): string {
     const lines = [
-        `TOP_MEAN_STANDINGS|schema=${TOP_MEAN_STANDINGS_SCHEMA}|campaign=${result.campaign}|contract=${TOP_MEAN_STANDINGS_CONTRACT}|logSha256=${result.logSha256}`,
+        `TOP_MEAN_STANDINGS|schema=${TOP_MEAN_STANDINGS_SCHEMA}|campaign=${result.campaign}|contract=${TOP_MEAN_STANDINGS_CONTRACT}|hashConvention=crlf-stripped|logSha256=${result.logSha256}`,
         `STATE|nextBatch=${result.nextBatch}|nextOutcomeOrdinal=${result.nextOutcomeOrdinal}|completed=${result.completedBatches}/${TOP_MEAN_CAMPAIGN_MAX_BATCHES}|NDsurface=${result.discoverySurface}/${TOP_MEAN_CAMPAIGN_MAX_DISCOVERY}|NG=${result.lifetimeEvaluations}|L1V=${result.validationViews}/${TOP_MEAN_CAMPAIGN_MAX_VALIDATION}|L2=${result.l2}${result.closedDisposition ? `|closed=${result.closedDisposition}` : ""}`,
         `COUNTS|I2=${result.i2Count}|S3=${result.s3Count}|tested=${result.testedCount}|quarantined=${result.quarantinedCount}`,
         `ROUTES|strictOpen=${result.strictOpen.length}|replicationOpen=${result.replicationOpen}|confirmationOpen=${result.confirmationOpen}`,
