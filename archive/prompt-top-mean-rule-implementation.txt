@@ -1,3 +1,10 @@
+CAMPAIGN TM-L1-C1 CONCLUDED: DONE-NO-PROMOTION (see
+archive/top-mean-mining/FINAL-REPORT.md). This prompt is ARCHIVED — do not
+run it. A successor campaign must rewrite it (new features, calibration,
+campaign ID) before reuse. Per-batch variables (designated siblings, phase
+instructions) must be supplied as paste-in addenda, never baked into this
+file.
+
 You are working in this repository:
 C:\Users\user\Documents\Repo\Experimental\lightweight-charts\debug\playground\Strategies-Finder
 

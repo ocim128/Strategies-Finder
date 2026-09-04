@@ -1,3 +1,10 @@
+CAMPAIGN TM-L1-C1 CONCLUDED: DONE-NO-PROMOTION (see
+archive/top-mean-mining/FINAL-REPORT.md). This prompt is ARCHIVED — do not
+run it. A successor campaign must rewrite it (new features, calibration,
+campaign ID) before reuse. Per-batch variables (designated siblings, phase
+instructions) must be supplied as paste-in addenda, never baked into this
+file.
+
 You are working in this repository:
 C:\Users\user\Documents\Repo\Experimental\lightweight-charts\debug\playground\Strategies-Finder
 
@@ -6,7 +13,8 @@ TOP_MEAN decision layer.
 
 TASK
 Generate exactly 50 NEW selector rule ideas as a causal-screening pool, not the
-approved batch. Include any fixed corroboration siblings supplied below. A
+approved batch. Include any corroboration siblings supplied in a paste-in
+addendum. A
 downstream agent screens the pool and selects the final 10 satisfying C5
 (deterministic selection, audit-verified; no human gate at this stage).
 You do not run the checker or modify any file. Idea generation only; the read-only
@@ -190,31 +198,14 @@ V1.3 ROUTING AND B8 BATCH LOCK
 V1.4 GENERATION AND CONTEXT LOCK
 - Before B9, use the standings digest and tail for routine context. Do not reread
   the full log during ordinary idea generation.
-- Target 50 total causal-screen candidates per batch, including the four fixed B9
-  corroboration siblings below. The registered pool remains exactly 30 qualifying
+- Target 50 total causal-screen candidates per batch, including any corroboration
+  siblings supplied in a paste-in addendum. The registered pool remains exactly 30 qualifying
   candidates and the frozen finalist set exactly 10; top up with causal-only ideas
   if fewer than 30 qualify, without relaxing ZERO or THIN standards.
 - Rules and registered source bodies may not contain U+007C. Use `A ? true : B`
   instead of logical OR in filters. The full-history checker rejects duplicate
   keys, exact/canonicalized bodies, SHA collisions, known theses, family-cap reuse,
   identity references, and undeclared lineage.
-
-FIXED B9 CORROBORATION SIBLINGS (verbatim)
-Freeze exactly these four candidates before outcomes, one for each current strict
-lead. They are fixed candidates, not threshold variants; do not alter their keys,
-familyKeys, lineages, or rule bodies.
-
-Q29 sibling (regime-breadth:bear_coverage_floor):
-event.regime === "bearish" ? cand.score * (cand.activePairCount >= 48 ? 1.15 : 0.85) : cand.score
-
-Q31 sibling (regime-breadth:bear_dual_support_floor):
-event.regime === "bearish" ? cand.score * (cand.activePairCount >= 48 && cand.signedVotes >= 15 ? 1.15 : 0.85) : cand.score
-
-Q32 sibling (interaction:support_deficit_votes):
-cand.signedVotes - Math.pow(Math.max(0, 55 - cand.activePairCount), 2) / 22
-
-Q35 sibling (interaction:quality_confirmation_premium):
-cand.score + (cand.ema200Above ? (cand.activePairCount >= 50 ? 0.20 : 0) : 0)
 
 NON-NEGOTIABLE OUTPUT RULES
 - The ideas array must contain exactly 50 candidate ideas.

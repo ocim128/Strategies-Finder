@@ -87,6 +87,7 @@ export interface CampaignStandings {
     lifetimeEvaluations: number;
     validationViews: number;
     l2: string;
+    closedDisposition: string | null;
     i2Count: number;
     s3Count: number;
     testedCount: number;
@@ -144,6 +145,7 @@ interface CampaignHistory {
     registration: CampaignRegistrationSummary;
     ruleFiles: readonly RuleFileRecord[];
     legacyRule: { key: string; sha256: string; family: string; familyKey: string } | null;
+    closedDisposition: string | null;
 }
 
 interface ParsedBatchRecord {
@@ -280,6 +282,8 @@ function readHistory(options: CampaignStandingsOptions): CampaignHistory {
     const logBytes = readFileSync(paths.logPath);
     const logText = logBytes.toString("utf8");
     const registrationText = readFileSync(paths.registrationPath, "utf8");
+    const closedDisposition = parseRecords(logText, "CLOSED")
+        .find((record) => record.fields.campaign === options.campaign)?.fields.disposition ?? null;
     const outcomes = parseRecords(logText, "I2").map(parseOutcome).filter((record): record is CampaignOutcomeRecord => record !== null);
     // v1.5: collapse byte-identical duplicate appends of the same S3 record.
     const screens = [...new Set(parseRecords(logText, "S3").map((r) => JSON.stringify(r)))]
@@ -300,6 +304,7 @@ function readHistory(options: CampaignStandingsOptions): CampaignHistory {
         registration,
         ruleFiles: readRuleFiles(paths.rulesDir),
         legacyRule,
+        closedDisposition,
     };
 }
 
@@ -569,13 +574,14 @@ export function buildCampaignStandings(options: CampaignStandingsOptions): Campa
     return {
         campaign: options.campaign,
         logSha256: createHash("sha256").update(history.logBytes).digest("hex"),
-        nextBatch: `B${maxBatch + 1}`,
+        nextBatch: history.closedDisposition ? "CLOSED" : `B${maxBatch + 1}`,
         nextOutcomeOrdinal: Math.max(maxOrdinal, completedBatches.length) + 1,
         completedBatches: completedBatches.length,
         discoverySurface: 1 + new Set(outcomes.map((outcome) => outcome.sha256)).size,
         lifetimeEvaluations: 1 + outcomes.length,
         validationViews,
         l2: parseRecords(history.logText, "V2").length > 0 ? "registered" : "unregistered",
+        closedDisposition: history.closedDisposition,
         i2Count: outcomes.length,
         s3Count: history.screens.length,
         testedCount: 1 + outcomes.length,
@@ -625,7 +631,7 @@ function renderFamilyDetail(detail: CampaignFamilyDetail): string[] {
 export function renderCampaignStandings(result: CampaignStandings): string {
     const lines = [
         `TOP_MEAN_STANDINGS|schema=${TOP_MEAN_STANDINGS_SCHEMA}|campaign=${result.campaign}|contract=${TOP_MEAN_STANDINGS_CONTRACT}|logSha256=${result.logSha256}`,
-        `STATE|nextBatch=${result.nextBatch}|nextOutcomeOrdinal=${result.nextOutcomeOrdinal}|completed=${result.completedBatches}/${TOP_MEAN_CAMPAIGN_MAX_BATCHES}|NDsurface=${result.discoverySurface}/${TOP_MEAN_CAMPAIGN_MAX_DISCOVERY}|NG=${result.lifetimeEvaluations}|L1V=${result.validationViews}/${TOP_MEAN_CAMPAIGN_MAX_VALIDATION}|L2=${result.l2}`,
+        `STATE|nextBatch=${result.nextBatch}|nextOutcomeOrdinal=${result.nextOutcomeOrdinal}|completed=${result.completedBatches}/${TOP_MEAN_CAMPAIGN_MAX_BATCHES}|NDsurface=${result.discoverySurface}/${TOP_MEAN_CAMPAIGN_MAX_DISCOVERY}|NG=${result.lifetimeEvaluations}|L1V=${result.validationViews}/${TOP_MEAN_CAMPAIGN_MAX_VALIDATION}|L2=${result.l2}${result.closedDisposition ? `|closed=${result.closedDisposition}` : ""}`,
         `COUNTS|I2=${result.i2Count}|S3=${result.s3Count}|tested=${result.testedCount}|quarantined=${result.quarantinedCount}`,
         `ROUTES|strictOpen=${result.strictOpen.length}|replicationOpen=${result.replicationOpen}|confirmationOpen=${result.confirmationOpen}`,
     ];

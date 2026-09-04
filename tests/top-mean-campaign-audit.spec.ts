@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import {
     auditCampaignBatch,
     computeRegistrationDigest,
+    getExpectedOutcomeOrdinal,
     runCampaignAuditCli,
     sha256Bytes,
     type CampaignRegistrationRule,
@@ -158,8 +159,9 @@ function buildFixture(options: FixtureOptions = {}): Fixture {
     const registrationFinals = options.compositionBreach
         ? finals.map((record) => ({ ...record, familyKey: "one_family" }))
         : finals;
+    const outcomeOrdinal = batchLabel === "B9" ? 6 : 5;
     const registration = [
-        "REGISTRATION|schema=top_mean_campaign_registration.v1|batchLabel=" + batchLabel + "|outcomeOrdinal=5|humanApproved=yes",
+        "REGISTRATION|schema=top_mean_campaign_registration.v1|batchLabel=" + batchLabel + "|outcomeOrdinal=" + outcomeOrdinal + "|humanApproved=yes",
         designatedLine,
         ...registeredPool.map((record) => recordLine("POOL", record)),
         ...registrationFinals.map((record) => recordLine("FINAL", record)),
@@ -187,8 +189,13 @@ function buildFixture(options: FixtureOptions = {}): Fixture {
         "FORMAT4|effective=pre-B8|adds=R4,D4,F4|contract=v1.3|legacy-records-immutable",
         "D4|seed=Q26|role=legacy-hypothesis-only|family=interaction:interaction|mechanism=low_breadth_coverage_floor|freshSiblingRequired=yes|validationTarget=fresh-sibling|humanApproved=yes",
         ...(batchLabel === "B9" ? ["FORMAT5|effective=pre-B9|contract=v1.4|adds=X5|prefixSha256=fixture|legacy-records-immutable"] : []),
+        "I2|Q-history-1|B1",
+        "I2|Q-history-2|B2",
+        "I2|Q-history-3|B3",
+        "I2|Q-history-4|B4",
+        ...(batchLabel === "B9" ? ["I2|Q-history-5|B8"] : []),
         ...advancedLogPool,
-        "F4|" + batchLabel + "|outcomeOrdinal=5|poolCount=" + registeredPool.length + "|finalCount=10|poolDigest=" + poolDigest
+        "F4|" + batchLabel + "|outcomeOrdinal=" + outcomeOrdinal + "|poolCount=" + registeredPool.length + "|finalCount=10|poolDigest=" + poolDigest
             + "|finalDigest=" + finalDigest + "|designatedKey=" + DESIGNATED_KEY + "|designatedSha256=" + DESIGNATED_SHA
             + "|audit=PASS|humanApproved=yes",
     ].join("\n") + "\n";
@@ -212,6 +219,14 @@ function assertFailed(result: ReturnType<typeof auditCampaignBatch>, name: strin
 }
 
 describe("top-mean campaign audit", () => {
+    it("orders outcome ordinals by first I2 appearance and reserves the next ordinal", () => {
+        const log = ["I2|Q1|B1", "I2|Q2|B4", "I2|Q3|B1", "I2|Q4|B2"].join("\n");
+        assert.equal(getExpectedOutcomeOrdinal(log, "B1"), 1);
+        assert.equal(getExpectedOutcomeOrdinal(log, "B4"), 2);
+        assert.equal(getExpectedOutcomeOrdinal(log, "B2"), 3);
+        assert.equal(getExpectedOutcomeOrdinal(log, "B9"), 4);
+    });
+
     it("passes a complete deterministic B8 registration", () => {
         withFixture({}, (fixture) => {
             const result = auditCampaignBatch(BATCH_LABEL, { miningDir: fixture.miningDir });

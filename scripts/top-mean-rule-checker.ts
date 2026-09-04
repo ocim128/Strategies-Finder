@@ -1289,7 +1289,7 @@ function sha256File(filename: string): string {
     return createHash("sha256").update(readFileSync(filename)).digest("hex");
 }
 
-function preflightRuleSource(ruleFile: string): void {
+function preflightRuleSource(ruleFile: string, allowLegacySource: boolean): void {
     const resolved = path.resolve(ruleFile);
     const name = path.basename(resolved);
     let bytes: Buffer;
@@ -1299,7 +1299,7 @@ function preflightRuleSource(ruleFile: string): void {
         throw new CheckerFailure("rule.file", "readable rule file", name, [], "RULE FAIL");
     }
     const pipeOffset = bytes.indexOf(0x7c);
-    if (pipeOffset >= 0) {
+    if (!allowLegacySource && pipeOffset >= 0) {
         throw new CheckerFailure("rule.source.no_pipe", "no U+007C bytes", `${name}:offset=${pipeOffset}`, [], "RULE FAIL");
     }
 }
@@ -1329,15 +1329,17 @@ interface CliOptions {
     mode: "self-check" | "stats" | "causal-stats" | "screen" | "rule";
     ruleFile?: string;
     window?: TopMeanRuleWindow;
+    allowLegacySource: boolean;
 }
 
 const USAGE = [
     "Usage:",
-    "  esno scripts/top-mean-rule-checker.ts <ledgerDir> <ruleFile.ts> --window discovery|validation",
+    "  esno scripts/top-mean-rule-checker.ts <ledgerDir> <ruleFile.ts> --window discovery|validation [--allow-legacy-source]",
     "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --self-check",
     "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --stats --window discovery|validation",
     "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --causal-stats --window discovery",
     "  esno scripts/top-mean-rule-checker.ts <ledgerDir> <ruleFile.ts> --screen --window discovery",
+    "  --allow-legacy-source allows U+007C only for historical rule replay",
 ].join("\n");
 
 function parseCli(argv: readonly string[]): CliOptions | "help" {
@@ -1346,6 +1348,7 @@ function parseCli(argv: readonly string[]): CliOptions | "help" {
     let stats = false;
     let causalStats = false;
     let screen = false;
+    let allowLegacySource = false;
     let selectedWindow: TopMeanRuleWindow | undefined;
     const positional: string[] = [];
     for (let index = 0; index < argv.length; index += 1) {
@@ -1362,6 +1365,9 @@ function parseCli(argv: readonly string[]): CliOptions | "help" {
         } else if (arg === "--screen") {
             if (screen) throw new UsageFailure("duplicate --screen");
             screen = true;
+        } else if (arg === "--allow-legacy-source") {
+            if (allowLegacySource) throw new UsageFailure("duplicate --allow-legacy-source");
+            allowLegacySource = true;
         } else if (arg === "--window") {
             if (selectedWindow !== undefined) throw new UsageFailure("duplicate --window");
             const value = argv[++index];
@@ -1372,26 +1378,27 @@ function parseCli(argv: readonly string[]): CliOptions | "help" {
         } else positional.push(arg);
     }
     if (positional.length === 0) throw new UsageFailure("ledgerDir is required");
+    if (allowLegacySource && positional.length !== 2) throw new UsageFailure("--allow-legacy-source requires ledgerDir and ruleFile");
     if (selfCheck && stats) throw new UsageFailure("--self-check and --stats are exclusive");
     if ([selfCheck, stats, causalStats, screen].filter(Boolean).length > 1) throw new UsageFailure("checker modes are exclusive");
     if (selfCheck) {
         if (positional.length !== 1 || selectedWindow !== undefined) throw new UsageFailure("self-check mode takes only ledgerDir");
-        return { ledgerDir: positional[0]!, mode: "self-check" };
+        return { ledgerDir: positional[0]!, mode: "self-check", allowLegacySource };
     }
     if (stats) {
         if (positional.length !== 1 || selectedWindow === undefined) throw new UsageFailure("stats mode requires ledgerDir and --window");
-        return { ledgerDir: positional[0]!, mode: "stats", window: selectedWindow };
+        return { ledgerDir: positional[0]!, mode: "stats", window: selectedWindow, allowLegacySource };
     }
     if (causalStats) {
         if (positional.length !== 1 || selectedWindow !== "discovery") throw new UsageFailure("causal-stats mode requires ledgerDir and --window discovery");
-        return { ledgerDir: positional[0]!, mode: "causal-stats", window: selectedWindow };
+        return { ledgerDir: positional[0]!, mode: "causal-stats", window: selectedWindow, allowLegacySource };
     }
     if (screen) {
         if (positional.length !== 2 || selectedWindow !== "discovery") throw new UsageFailure("screen mode requires ledgerDir, ruleFile, and --window discovery");
-        return { ledgerDir: positional[0]!, ruleFile: positional[1]!, mode: "screen", window: selectedWindow };
+        return { ledgerDir: positional[0]!, ruleFile: positional[1]!, mode: "screen", window: selectedWindow, allowLegacySource };
     }
     if (positional.length !== 2 || selectedWindow === undefined) throw new UsageFailure("rule mode requires ledgerDir, ruleFile, and --window");
-    return { ledgerDir: positional[0]!, mode: "rule", ruleFile: positional[1]!, window: selectedWindow };
+    return { ledgerDir: positional[0]!, mode: "rule", ruleFile: positional[1]!, window: selectedWindow, allowLegacySource };
 }
 
 function isMainModule(): boolean {
@@ -1419,7 +1426,7 @@ export async function runTopMeanRuleCheckerCli(argv: readonly string[]): Promise
     }
     if (options.ruleFile !== undefined) {
         try {
-            preflightRuleSource(options.ruleFile);
+            preflightRuleSource(options.ruleFile, options.allowLegacySource);
         } catch (error) {
             process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
             return 1;

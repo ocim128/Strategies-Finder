@@ -36,7 +36,7 @@ function registrationLine(marker: string, source: string): string {
     ].join("|");
 }
 
-function makeFixture(longTail = false): Fixture {
+function makeFixture(longTail = false, closed = false): Fixture {
     const tempRoot = mkdtempSync(path.join(os.tmpdir(), "top-mean-campaign-standings-"));
     const miningDir = path.join(tempRoot, "archive", "top-mean-mining");
     const rulesDir = path.join(miningDir, "rules");
@@ -59,6 +59,7 @@ function makeFixture(longTail = false): Fixture {
         `I2|Q2|B1|key=alpha_rule|kind=ranking|family=interaction:alpha_family|parents=-|sha256=${ALPHA_SHA}|ledger=fixture|thesis=Alpha support thesis|D=EDGE primary=+0.60pp ci=[+0.10pp,+1.00pp] blocks=6/10 sec=+0.70pp keep=10.00% dominant=AAA share=50.00% exDom=+0.20pp`,
         `I2|Q3|B8|key=beta_rule|kind=ranking|family=interaction:beta_family|parents=-|sha256=${betaSha}|ledger=fixture|thesis=Beta support thesis|D=NO-EDGE primary=+0.10pp ci=[-0.20pp,+0.40pp] blocks=3/10 sec=+0.20pp keep=100.00% dominant=AAA share=50.00% exDom=-0.10pp`,
     ];
+    if (closed) logLines.push("CLOSED|campaign=TM-L1-C1|disposition=DONE-NO-PROMOTION|outcomeBatches=2|NDsurface=3|NG=3|L1V=0/30|leads=0|finalReport=FINAL-REPORT.md|humanApproved=yes");
     if (longTail) logLines.push(`TAIL|${"x".repeat(8_300)}`);
     writeFileSync(path.join(miningDir, "idea-log.txt"), logLines.join("\n") + "\n", "utf8");
     return { miningDir, options: { campaign: "TM-L1-C1", miningDir } };
@@ -78,6 +79,16 @@ function removeFixture(fixture: Fixture): void {
 }
 
 describe("top-mean campaign standings", () => {
+    it("renders a closed campaign state and does not offer another batch", () => {
+        const fixture = makeFixture(false, true);
+        try {
+            const output = renderCampaignStandings(buildCampaignStandings({ ...fixture.options, tail: 0 }));
+            assert.match(output, /^STATE\|nextBatch=CLOSED\|nextOutcomeOrdinal=6\|completed=2\/20\|NDsurface=3\/201\|NG=3\|L1V=0\/30\|L2=unregistered\|closed=DONE-NO-PROMOTION$/m);
+        } finally {
+            removeFixture(fixture);
+        }
+    });
+
     it("renders deterministic fixture digest lines and state counters", () => {
         const fixture = makeFixture();
         try {

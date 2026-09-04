@@ -93,6 +93,27 @@ function parseBatchRecords(text: string, marker: string, batchLabel: string): Pi
     return parseRecords(text, marker).filter((record) => record.positional[0] === batchLabel);
 }
 
+export function getExpectedOutcomeOrdinal(logText: string, batchLabel: string): number {
+    const firstI2LineByBatch = new Map<string, number>();
+    const lines = logText.split(/\r?\n/);
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+        const line = lines[lineIndex]!;
+        if (!line.startsWith("I2|")) continue;
+        const record = parsePipeRecord(line);
+        const outcomeBatch = record?.positional[1];
+        if (outcomeBatch !== undefined && !firstI2LineByBatch.has(outcomeBatch)) {
+            firstI2LineByBatch.set(outcomeBatch, lineIndex);
+        }
+    }
+    const auditedFirstLine = firstI2LineByBatch.get(batchLabel);
+    if (auditedFirstLine === undefined) return firstI2LineByBatch.size + 1;
+    let ordinal = 1;
+    for (const firstLine of firstI2LineByBatch.values()) {
+        if (firstLine < auditedFirstLine) ordinal += 1;
+    }
+    return ordinal;
+}
+
 function asRegistrationRule(record: PipeRecord): CampaignRegistrationRule | null {
     const fields = record.fields;
     const ordinal = Number(fields.ordinal);
@@ -378,14 +399,11 @@ export function auditCampaignBatch(
         : "";
     const d4Records = parseRecords(logText, "D4");
     const d4 = d4Records.at(-1)?.fields;
-    // v1.5: derive the expected outcome ordinal from the log — the count of
-    // distinct outcome-bearing batches plus one. The previous hardcoded
-    // "6" broke every batch after B9.
-    const outcomeBatches = new Set(parseRecords(logText, "I2").map((r) => r.positional[1] ?? "").filter((b) => b !== batchLabel));
-    const expectedOutcomeOrdinal = batchLabel === "B8" ? "5" : String(outcomeBatches.size + 1);
+    // v1.5: derive the ordinal from first I2 appearance order.
+    const expectedOrdinal = String(getExpectedOutcomeOrdinal(logText, batchLabel));
     const registrationHeaderPass = registration.meta.schema === "top_mean_campaign_registration.v1"
         && registration.meta.batchLabel === batchLabel
-        && registration.meta.outcomeOrdinal === expectedOutcomeOrdinal
+        && registration.meta.outcomeOrdinal === expectedOrdinal
         && registration.meta.humanApproved === "yes";
     const designatedMatches = designated !== null
         && d4 !== undefined
@@ -438,7 +456,7 @@ export function auditCampaignBatch(
     const f4DigestPass = f4Record !== undefined
         && f4Record.fields.audit === "PASS"
         && f4Record.fields.humanApproved === "yes"
-        && f4Record.fields.outcomeOrdinal === expectedOutcomeOrdinal
+        && f4Record.fields.outcomeOrdinal === expectedOrdinal
         && f4Record.fields.poolCount === "30"
         && f4Record.fields.finalCount === "10"
         && f4DesignatedMatch
@@ -458,7 +476,7 @@ export function auditCampaignBatch(
             "REGISTRATION_HEADER",
             registrationHeaderPass,
             registrationHeaderPass
-                ? "v1 registration header matches " + batchLabel + " outcome ordinal " + expectedOutcomeOrdinal
+                ? "v1 registration header matches " + batchLabel + " outcome ordinal " + expectedOrdinal
                 : "missing or mismatched v1 registration header",
         ),
         makeCheck(

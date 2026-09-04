@@ -709,7 +709,7 @@ describe("trade ledger writer", () => {
         const rankChunkSizes: number[] = [];
         const trackedDeps: TradeLedgerWriterDeps = {
             ...deps,
-            appendFile: (async (filePath: unknown, data: unknown) => {
+            appendFile: (async (filePath: Parameters<TradeLedgerWriterDeps["appendFile"]>[0], data: Parameters<TradeLedgerWriterDeps["appendFile"]>[1]) => {
                 if (String(filePath).endsWith("signal-ranks.jsonl")) rankChunkSizes.push(String(data).length);
                 await deps.appendFile(filePath, data);
             }) as unknown as TradeLedgerWriterDeps["appendFile"],
