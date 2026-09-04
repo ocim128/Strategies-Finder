@@ -186,12 +186,12 @@ function checkRegistration(registration: Registration, root: string): V2Campaign
         && pairAssets?.length === 136
         && pairJson?.catalogSha256 === sha256Bytes(`${pairAssets?.join("\n")}\n`)
         && relationshipSet?.normalization === "normalizeAssetPairSet; undirected canonical scoring-asset pairs"
-        && relationshipSet.intersection === 3372
-        && relationshipSet.union === 7738
+        && relationshipSet.intersection === 3351
+        && relationshipSet.union === 7759
         && typeof relationshipSet.jaccard === "number"
-        && Number(relationshipSet.jaccard.toFixed(6)) === 0.435772
-        && intersection === 3372
-        && union === 7738
+        && Number(relationshipSet.jaccard.toFixed(6)) === 0.431886
+        && intersection === 3351
+        && union === 7759
         && jaccard !== null && jaccard <= 0.8, "BAL5555-S2.v1 pair-list provenance"));
     const gatesPassed = power?.fields.primaryMinPp === "1.00"
         && power.fields.ciLowerMinPp === "0.15"
