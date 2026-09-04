@@ -41,7 +41,8 @@ mandatory for STRICT and every fresh confirmation. L1 validation remains before 
 registration and before any L2 outcomes.
 
 Before any B8 I2 outcome, materialize 30 unique candidates, run S3 on all 30,
-discard ZERO candidates, admit at most one THIN with human approval, and freeze
+discard ZERO candidates, admit at most one THIN deterministically (highest
+changed-selection count), and freeze
 exactly 10 finalists. The F4 registration must preserve ordered paths, exact source
 bodies, SHAs, familyKeys, mechanism lineages, and the designated replication rule.
 Run the deterministic audit from the repository root; it must PASS before the first
@@ -132,7 +133,7 @@ Print causal calibration and top-of-book statistics:
 
 `ZERO` means no selection changed and must be replaced. `THIN` is a warning,
 not an accounting exemption, and at most one THIN idea may enter a final batch
-with explicit human approval. A successful screen never replaces the mandatory
+(the one with the highest changed-selection count, admitted automatically). A successful screen never replaces the mandatory
 self-check before an outcome-bearing discovery run.
 
 Rule files are trusted local TypeScript modules with a default export taking

@@ -10,7 +10,7 @@ import {
 } from "./top-mean-campaign-audit";
 
 export const TOP_MEAN_STANDINGS_SCHEMA = "top_mean_standings.v1";
-export const TOP_MEAN_STANDINGS_CONTRACT = "v1.4";
+export const TOP_MEAN_STANDINGS_CONTRACT = "v1.5";
 export const TOP_MEAN_STANDINGS_MAX_LINES = 40;
 export const TOP_MEAN_STANDINGS_MAX_BYTES = 8192;
 export const TOP_MEAN_STANDINGS_DEFAULT_TAIL = 8;

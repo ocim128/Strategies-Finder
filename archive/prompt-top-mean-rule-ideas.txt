@@ -7,8 +7,8 @@ TOP_MEAN decision layer.
 TASK
 Generate exactly 50 NEW selector rule ideas as a causal-screening pool, not the
 approved batch. Include any fixed corroboration siblings supplied below. A
-downstream agent screens the pool and selects the final 10 satisfying C5 before
-human approval.
+downstream agent screens the pool and selects the final 10 satisfying C5
+(deterministic selection, audit-verified; no human gate at this stage).
 You do not run the checker or modify any file. Idea generation only; the read-only
 standings command below is the sole routine context lookup.
 

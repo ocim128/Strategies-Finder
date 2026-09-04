@@ -9,6 +9,10 @@ reference and command examples remain in [`MINING-GUIDE.md`](./MINING-GUIDE.md).
 
 - v1.0 governs B0-B1.
 - v1.1 is effective before Batch 2 causal screening.
+- v1.5 is effective before Batch 9 generation: batch-internal approvals (idea JSON,
+  pool freeze, THIN admission) are replaced by standing pre-authorization and
+  deterministic audit checks. Human gates remain at G2 validation spend, L2
+  registration, campaign reviews, combinations, and promotion.
 - v1.2 is effective before Batch 3 generation: identity/asset-list rules are banned
   outright (Q1 and Q2 measured WORSE; asset-name conditioning has no causal
   mechanism and memorizes in-window winners). Earlier log records remain immutable
@@ -156,15 +160,17 @@ a Q id or an outcome-bearing I2 record. The screen reads only metadata and
 snapshots and never outcomes.
 
 `ZERO` candidates are rejected and replaced. At most one `THIN` candidate may
-appear in a final batch, with explicit human approval. `THIN` is advisory, not
-an accounting exemption.
+appear in a final batch: if any qualify, the one with the highest changed-selection
+count is admitted automatically and recorded in F4; otherwise none. `THIN` is
+advisory, not an accounting exemption.
 
 A causal screen does not increment `N_D` or the approximately 201 discovery cap.
 `N_D` counts unique rule SHAs receiving outcome-bearing I2 records. Running
 discovery before or despite the screen counts and cannot be exempted.
 
-Generate and screen a 30-idea pool, then freeze and human-approve the final 10.
-C5 and the 20-batch/approximately-201 caps are unchanged.
+Generate and screen a 30-idea pool, then freeze the final 10 deterministically
+(C5 + audit; standing pre-authorization recorded in F4). C5 and the
+20-batch/approximately-201 caps are unchanged.
 
 ## C9. Endgame and promotion boundary
 
@@ -251,7 +257,8 @@ but their theses and SHAs remain clone-blocked.
 - Under v1.4, routine idea and implementation work reads the generated standings
   digest and tail; the full log remains for deterministic tools, humans, and
   auditors.
-- A human approves the complete ideas JSON.
+- The ideas JSON is validated by --check-ideas and the campaign audit; there is
+  no human gate at this stage (v1.5).
 - The implementation agent implements exact rules in `DISCOVERY` only, with
   one I2 line per attempt.
 - The auditor verifies hashes, verdicts, families, composition, and budget.
