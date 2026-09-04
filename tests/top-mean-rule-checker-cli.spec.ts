@@ -411,6 +411,10 @@ describe("top-mean-rule-checker CLI", () => {
             assert.match(result.stderr, /expected=no U\+007C bytes/);
             assert.match(result.stderr, /actual=pipe-rule\.ts:offset=59/);
             assert.doesNotMatch(result.stderr, /ARCHIVE FAIL/);
+
+            const legacyReplay = runChecker([fixture.ledgerDir, pipeRule, "--screen", "--window", "discovery", "--allow-legacy-source"]);
+            assert.equal(legacyReplay.status, 0, legacyReplay.stderr);
+            assert.match(legacyReplay.stdout, /^TOP_MEAN RULE CHECKER \| mode=screen/m);
         } finally {
             rmSync(path.dirname(path.dirname(path.dirname(fixture.ledgerDir))), { recursive: true, force: true });
         }
