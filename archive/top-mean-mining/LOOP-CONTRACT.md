@@ -5,6 +5,12 @@ Campaign ID: `TM-L1-C1`
 This contract governs the approved TOP_MEAN mining campaign. The checker
 reference and command examples remain in [`MINING-GUIDE.md`](./MINING-GUIDE.md).
 
+## Contract version
+
+- v1.0 governs B0-B1.
+- v1.1 is effective before Batch 2 causal screening.
+- Existing log records and discovery counts are not reclassified.
+
 ## Frozen L1 ledger
 
 - Ledger: `archive/batch-open-score/sp500_top_mean_1788443592188_cgd3`
@@ -134,6 +140,23 @@ Hard stop after any of the following:
 `DONE-SUCCESS` requires the full C3 chain, engine-arm tests, and fresh-
 coordinator parity. The checker label `EDGE` alone never means `DONE`.
 
+## C8.1. Causal idea preflight
+
+Every idea needs a passing discovery-window `DEGENERACY SCREEN` before receiving
+a Q id or an outcome-bearing I2 record. The screen reads only metadata and
+snapshots and never outcomes.
+
+`ZERO` candidates are rejected and replaced. At most one `THIN` candidate may
+appear in a final batch, with explicit human approval. `THIN` is advisory, not
+an accounting exemption.
+
+A causal screen does not increment `N_D` or the approximately 201 discovery cap.
+`N_D` counts unique rule SHAs receiving outcome-bearing I2 records. Running
+discovery before or despite the screen counts and cannot be exempted.
+
+Generate and screen a 30-idea pool, then freeze and human-approve the final 10.
+C5 and the 20-batch/approximately-201 caps are unchanged.
+
 ## C9. Endgame and promotion boundary
 
 Promotion may add only a research selector arm in the shared OPEN_SCORE replay
@@ -198,6 +221,21 @@ V2|Q<id>|surface=<L1V|L2D|L2V>|sha256=<64hex>|ledger=<fingerprint>|spent=<0|1>|r
 ```
 
 Values may not contain `|` or newlines. Never edit old records; append only.
+
+Before the first B2 screening record, append this FORMAT3 marker exactly once:
+
+```text
+FORMAT3|effective=B2|adds=S3|ND=Q1-plus-unique-outcome-bearing-I2-sha|legacy-records-immutable
+```
+
+Screening records use this format:
+
+```text
+S3|B<batch>|candidate=<id>|key=<key>|kind=<ranking|filter>|family=<family>:<familyKey>|sha256=<64hex>|ledger=<fingerprint>|changed=<n>/<total>|dropped=<n>/<total>|impact=<ZERO|THIN|MATERIAL>|advanced=<yes|no>|reason=<short_text>
+```
+
+S3 records carry no outcome metric, receive no Q ids, and do not consume `N_D`,
+but their theses and SHAs remain clone-blocked.
 
 ## C12. Roles
 

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+    computeTopMeanCausalStats,
     computeTopMeanCalibrationStats,
+    evaluateTopMeanCausalScreen,
     evaluateTopMeanRule,
     getTopMeanRuleWindow,
     normalizeTopMeanArchive,
@@ -260,6 +262,27 @@ describe("top-mean-rule-checker semantics", () => {
         assert.equal(stats.regimes.bullish.events, 8);
         assert.equal(stats.regimes.bearish.events, 4);
         assert.equal(stats.regimes.unavailable.events, 0);
+    });
+
+    it("shares the frozen causal base and winner semantics with screen and stats", () => {
+        const archive = makeArchive({ count: 12 });
+        const causalArchive = {
+            runId: archive.runId,
+            meta: archive.meta,
+            catalogAssets: archive.catalogAssets,
+            events: archive.events,
+        };
+        const screen = evaluateTopMeanCausalScreen({ archive: causalArchive, window: "validation", rule: (candidate) => candidate.score ?? 0 });
+        assert.equal(screen.kind, "ranking");
+        assert.equal(screen.baseCandidateEventCount, 12);
+        assert.equal(screen.baseCandidateCount, 36);
+        assert.equal(screen.changedEvents, 0);
+        assert.equal(screen.droppedEvents, 0);
+        const stats = computeTopMeanCausalStats(causalArchive, "validation");
+        assert.equal(stats.baseCandidateEventCount, 12);
+        assert.equal(stats.baseCandidateCount, 36);
+        assert.equal(stats.exactTopScoreTies, 0);
+        assert.equal(stats.topRawSelectionDifferences, 0);
     });
 
     it("reports concentration rows and dominant-asset exclusion on the same event set", () => {

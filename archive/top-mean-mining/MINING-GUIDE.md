@@ -26,6 +26,31 @@ happens before outcome lookup. A kept event is discarded entirely unless every
 base candidate has an eligible, `ok`, finite, non-null h24 long outcome.
 Unavailable outcomes are never replaced with zero.
 
+## Causal idea preflight
+
+The v1.1 campaign requires a discovery-window degeneracy screen for every
+provisional idea before it receives a Q id or an outcome-bearing I2 record.
+Both modes are read-only, discovery-only causal checks over `meta.json` and
+`pool-snapshots.jsonl`; they never read outcomes or performance reports.
+
+Screen a rule file:
+
+```powershell
+$env:NODE_OPTIONS = "--max-old-space-size=8192"
+..\..\..\node_modules\.bin\esno scripts\top-mean-rule-checker.ts archive\batch-open-score\sp500_top_mean_1788443592188_cgd3 archive\top-mean-mining\rules\b2-candidate-<id>-<key>.ts --screen --window discovery
+```
+
+Print causal calibration and top-of-book statistics:
+
+```powershell
+..\..\..\node_modules\.bin\esno scripts\top-mean-rule-checker.ts archive\batch-open-score\sp500_top_mean_1788443592188_cgd3 --causal-stats --window discovery
+```
+
+`ZERO` means no selection changed and must be replaced. `THIN` is a warning,
+not an accounting exemption, and at most one THIN idea may enter a final batch
+with explicit human approval. A successful screen never replaces the mandatory
+self-check before an outcome-bearing discovery run.
+
 Rule files are trusted local TypeScript modules with a default export taking
 `(candidate, event)` and returning either a finite number or a boolean:
 

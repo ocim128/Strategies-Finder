@@ -10,6 +10,7 @@ import {
     MAX_ACTIVE_BOOTSTRAP_SAMPLES,
     MAX_ACTIVE_BOOTSTRAP_SEED,
     MAX_ACTIVE_TIE_VERSION,
+    PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC,
 } from "../lib/batch-backtest/max-active-research-contract";
 import { bootstrapBlockMeans, splitChronologicalBlocks, type PoolRuleArchive } from "../scripts/analyze-pool-rules";
 import type { CandidateOutcomeRecord, PoolSnapshotRecord } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
@@ -22,8 +23,21 @@ interface Fixture {
     reportPath: string;
     rankingRule: string;
     filterRule: string;
+    scoreRule: string;
+    thinRule: string;
+    materialRule: string;
+    droppedEventsRule: string;
+    leakyRule: string;
     markerPath: string;
     reportText: string;
+    startSec: number;
+}
+
+interface FixtureOptions {
+    includeOutcomeFiles?: boolean;
+    tied?: boolean;
+    reverseSnapshots?: boolean;
+    startSec?: number;
 }
 
 function fixtureMeta(runId: string): PoolRuleArchive["meta"] {
@@ -46,14 +60,14 @@ function fixtureMeta(runId: string): PoolRuleArchive["meta"] {
     } as PoolRuleArchive["meta"];
 }
 
-function buildFixtureRows(startSec: number, eventCount = EVENT_COUNT): { snapshots: PoolSnapshotRecord[]; outcomes: CandidateOutcomeRecord[]; eventRows: Record<string, unknown>[] } {
+function buildFixtureRows(startSec: number, eventCount = EVENT_COUNT, options: FixtureOptions = {}): { snapshots: PoolSnapshotRecord[]; outcomes: CandidateOutcomeRecord[]; eventRows: Record<string, unknown>[] } {
     const snapshots: PoolSnapshotRecord[] = [];
     const outcomes: CandidateOutcomeRecord[] = [];
     const eventRows: Record<string, unknown>[] = [];
     for (let index = 0; index < eventCount; index += 1) {
         const decisionTimeSec = startSec + index * 86_400;
         const eventId = `4h:${decisionTimeSec}`;
-        const signedVotes = index % 2 === 0 ? [8, 5, 2] : [5, 8, 2];
+        const signedVotes = options.tied ? [8, 8, 2] : index % 2 === 0 ? [8, 5, 2] : [5, 8, 2];
         for (let assetIndex = 0; assetIndex < ASSETS.length; assetIndex += 1) {
             const asset = ASSETS[assetIndex]!;
             snapshots.push({
@@ -105,6 +119,7 @@ function buildFixtureRows(startSec: number, eventCount = EVENT_COUNT): { snapsho
             eligibleCandidates: 3,
         });
     }
+    if (options.reverseSnapshots) snapshots.reverse();
     return { snapshots, outcomes, eventRows };
 }
 
@@ -139,15 +154,20 @@ function summaryLine(rows: readonly Record<string, unknown>[]): string {
     return summaries.map((row) => `${row.asset}:n=${row.events},share=${(row.share * 100).toFixed(1)}%,delta=${percent(row.delta)}`).join(" | ");
 }
 
-function writeFixture(eventCount = EVENT_COUNT): Fixture {
+function writeFixture(eventCount = EVENT_COUNT, options: FixtureOptions = {}): Fixture {
     const tempRoot = mkdtempSync(path.join(os.tmpdir(), "top-mean-rule-checker-"));
     const ledgerDir = path.join(tempRoot, "archive", "batch-open-score", "cli-fixture");
     const reportPath = path.join(ledgerDir, "report.txt");
     const markerPath = path.join(tempRoot, "rule-imported.txt");
     const rankingRule = path.join(tempRoot, "ranking-rule.ts");
     const filterRule = path.join(tempRoot, "filter-rule.ts");
-    const startSec = 1_767_312_000;
-    const rows = buildFixtureRows(startSec, eventCount);
+    const scoreRule = path.join(tempRoot, "score-rule.ts");
+    const thinRule = path.join(tempRoot, "thin-rule.ts");
+    const materialRule = path.join(tempRoot, "material-rule.ts");
+    const droppedEventsRule = path.join(tempRoot, "dropped-events-rule.ts");
+    const leakyRule = path.join(tempRoot, "leaky-rule.ts");
+    const startSec = options.startSec ?? 1_767_312_000;
+    const rows = buildFixtureRows(startSec, eventCount, options);
     const archive: PoolRuleArchive = { meta: fixtureMeta("cli-fixture"), snapshots: rows.snapshots, outcomes: rows.outcomes, eventRows: rows.eventRows };
     const selectedRows = rows.eventRows;
     const excludedRows = selectedRows.filter((row) => row.asset !== "AAA");
@@ -159,20 +179,28 @@ function writeFixture(eventCount = EVENT_COUNT): Fixture {
         `TOP_MEAN selected assets = ${summaryLine(selectedRows)}`,
         metricLine("MEAN_EX_AAA", excludedRows),
     ].join("\n") + "\n";
-    for (const [name, value] of [
+    const files: Array<[string, string]> = [
         ["meta.json", JSON.stringify(archive.meta)],
         ["pool-snapshots.jsonl", rows.snapshots.map((row) => JSON.stringify(row)).join("\n") + "\n"],
+    ];
+    if (options.includeOutcomeFiles !== false) files.push(
         ["candidate-outcomes.jsonl", rows.outcomes.map((row) => JSON.stringify(row)).join("\n") + "\n"],
         ["events-full.jsonl", rows.eventRows.map((row) => JSON.stringify(row)).join("\n") + "\n"],
         ["report.txt", reportText],
-    ] as const) {
+    );
+    for (const [name, value] of files) {
         const file = path.join(ledgerDir, name);
         mkdirSync(path.dirname(file), { recursive: true });
         writeFileSync(file, value, "utf8");
     }
     writeFileSync(rankingRule, `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(markerPath)}, "loaded"); export default (candidate) => candidate.asset === "CCC" ? 2 : 1;\n`, "utf8");
     writeFileSync(filterRule, "export default (candidate) => candidate.asset !== \"CCC\";\n", "utf8");
-    return { ledgerDir, reportPath, rankingRule, filterRule, markerPath, reportText };
+    writeFileSync(scoreRule, "export default (candidate) => candidate.score;\n", "utf8");
+    writeFileSync(thinRule, `export default (candidate, event) => event.decisionTimeSec === ${startSec} && candidate.asset === "CCC" ? 2 : candidate.score;\n`, "utf8");
+    writeFileSync(materialRule, `export default (candidate, event) => event.decisionTimeSec <= ${startSec + 86_400} && candidate.asset === "CCC" ? 2 : candidate.score;\n`, "utf8");
+    writeFileSync(droppedEventsRule, "export default (_candidate, event) => event.dow !== 0;\n", "utf8");
+    writeFileSync(leakyRule, "export default (candidate) => (candidate as any).return;\n", "utf8");
+    return { ledgerDir, reportPath, rankingRule, filterRule, scoreRule, thinRule, materialRule, droppedEventsRule, leakyRule, markerPath, reportText, startSec };
 }
 
 function ledgerHashes(ledgerDir: string): string {
@@ -272,6 +300,102 @@ describe("top-mean-rule-checker CLI", () => {
             assert.match(result.stdout, /CI95=n\/a/);
         } finally {
             rmSync(path.dirname(path.dirname(path.dirname(fixture.ledgerDir))), { recursive: true, force: true });
+        }
+    });
+
+    it("classifies ZERO, THIN, MATERIAL, and event-drop screen impacts", () => {
+        const fixture = writeFixture(100, { includeOutcomeFiles: false, startSec: PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC + 86_400 });
+        try {
+            const zero = runChecker([fixture.ledgerDir, fixture.scoreRule, "--screen", "--window", "discovery"]);
+            assert.equal(zero.status, 0, zero.stderr);
+            assert.match(zero.stdout, /TOP_MEAN RULE CHECKER \| mode=screen/);
+            assert.match(zero.stdout, /changed=0\/100 rate=0\.00%/);
+            assert.match(zero.stdout, /SCREEN \| impact=ZERO thinCutoff=2\.00%/);
+
+            const thin = runChecker([fixture.ledgerDir, fixture.thinRule, "--screen", "--window", "discovery"]);
+            assert.equal(thin.status, 0, thin.stderr);
+            assert.match(thin.stdout, /changed=1\/100 rate=1\.00%/);
+            assert.match(thin.stdout, /SCREEN \| impact=THIN thinCutoff=2\.00%/);
+
+            const material = runChecker([fixture.ledgerDir, fixture.materialRule, "--screen", "--window", "discovery"]);
+            assert.equal(material.status, 0, material.stderr);
+            assert.match(material.stdout, /changed=2\/100 rate=2\.00%/);
+            assert.match(material.stdout, /SCREEN \| impact=MATERIAL thinCutoff=2\.00%/);
+
+            const dropped = runChecker([fixture.ledgerDir, fixture.droppedEventsRule, "--screen", "--window", "discovery"]);
+            assert.equal(dropped.status, 0, dropped.stderr);
+            assert.match(dropped.stdout, /droppedEvents=[1-9]\d* changed=0\/100/);
+            assert.match(dropped.stdout, /SCREEN \| impact=ZERO thinCutoff=2\.00%/);
+        } finally {
+            rmSync(path.dirname(path.dirname(path.dirname(fixture.ledgerDir))), { recursive: true, force: true });
+        }
+    });
+
+    it("rejects validation for both causal modes with usage code 2", () => {
+        const fixture = writeFixture(EVENT_COUNT, { includeOutcomeFiles: false, startSec: PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC + 86_400 });
+        try {
+            const screen = runChecker([fixture.ledgerDir, fixture.scoreRule, "--screen", "--window", "validation"]);
+            assert.equal(screen.status, 2);
+            assert.match(screen.stderr, /USAGE ERROR/);
+            const stats = runChecker([fixture.ledgerDir, "--causal-stats", "--window", "validation"]);
+            assert.equal(stats.status, 2);
+            assert.match(stats.stderr, /USAGE ERROR/);
+        } finally {
+            rmSync(path.dirname(path.dirname(path.dirname(fixture.ledgerDir))), { recursive: true, force: true });
+        }
+    });
+
+    it("runs screen and causal stats with no outcome or report files", () => {
+        const fixture = writeFixture(EVENT_COUNT, { includeOutcomeFiles: false, startSec: PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC + 86_400 });
+        try {
+            for (const filename of ["candidate-outcomes.jsonl", "events-full.jsonl", "report.txt"]) {
+                assert.equal(existsSync(path.join(fixture.ledgerDir, filename)), false);
+            }
+            const before = ledgerHashes(fixture.ledgerDir);
+            const screen = runChecker([fixture.ledgerDir, fixture.scoreRule, "--screen", "--window", "discovery"]);
+            assert.equal(screen.status, 0, screen.stderr);
+            assert.match(screen.stdout, /causal cohort \| rawEvents=24 baseCandidateEvents=24 baseCandidates=72/);
+            const stats = runChecker([fixture.ledgerDir, "--causal-stats", "--window", "discovery"]);
+            assert.equal(stats.status, 0, stats.stderr);
+            assert.match(stats.stdout, /causal cohort \| rawEvents=24 baseCandidateEvents=24 baseCandidates=72/);
+            assert.equal(ledgerHashes(fixture.ledgerDir), before);
+        } finally {
+            rmSync(path.dirname(path.dirname(path.dirname(fixture.ledgerDir))), { recursive: true, force: true });
+        }
+    });
+
+    it("keeps leakage failures, tie handling, input order, and stdout deterministic", () => {
+        const fixture = writeFixture(EVENT_COUNT, { includeOutcomeFiles: false, startSec: PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC + 86_400 });
+        const tied = writeFixture(EVENT_COUNT, { includeOutcomeFiles: false, tied: true, startSec: PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC + 86_400 });
+        const reversed = writeFixture(EVENT_COUNT, { includeOutcomeFiles: false, tied: true, reverseSnapshots: true, startSec: PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC + 86_400 });
+        try {
+            const leak = runChecker([fixture.ledgerDir, fixture.leakyRule, "--screen", "--window", "discovery"]);
+            assert.equal(leak.status, 1);
+            assert.match(leak.stderr, /RULE FAIL/);
+            assert.match(leak.stderr, /forbidden candidate field "return"/);
+
+            const screenFirst = runChecker([fixture.ledgerDir, fixture.scoreRule, "--screen", "--window", "discovery"]);
+            const screenSecond = runChecker([fixture.ledgerDir, fixture.scoreRule, "--screen", "--window", "discovery"]);
+            assert.equal(screenFirst.status, 0);
+            assert.equal(screenSecond.status, 0);
+            assert.equal(screenFirst.stdout, screenSecond.stdout);
+
+            const statsFirst = runChecker([fixture.ledgerDir, "--causal-stats", "--window", "discovery"]);
+            const statsSecond = runChecker([fixture.ledgerDir, "--causal-stats", "--window", "discovery"]);
+            assert.equal(statsFirst.status, 0);
+            assert.equal(statsSecond.status, 0);
+            assert.equal(statsFirst.stdout, statsSecond.stdout);
+
+            const ordered = runChecker([tied.ledgerDir, tied.scoreRule, "--screen", "--window", "discovery"]);
+            const inputReversed = runChecker([reversed.ledgerDir, reversed.scoreRule, "--screen", "--window", "discovery"]);
+            assert.equal(ordered.status, 0);
+            assert.equal(inputReversed.status, 0);
+            assert.equal(ordered.stdout, inputReversed.stdout);
+            assert.match(ordered.stdout, /changed=0\/24/);
+        } finally {
+            rmSync(path.dirname(path.dirname(path.dirname(fixture.ledgerDir))), { recursive: true, force: true });
+            rmSync(path.dirname(path.dirname(path.dirname(tied.ledgerDir))), { recursive: true, force: true });
+            rmSync(path.dirname(path.dirname(path.dirname(reversed.ledgerDir))), { recursive: true, force: true });
         }
     });
 });

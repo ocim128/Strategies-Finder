@@ -129,6 +129,13 @@ export interface TopMeanNormalizedArchive {
     eventRows: readonly PoolRuleEventRow[];
 }
 
+export interface TopMeanCausalArchive {
+    runId: string;
+    meta: TopMeanRuleMeta;
+    catalogAssets: readonly string[];
+    events: readonly TopMeanNormalizedEvent[];
+}
+
 interface TopMeanRuleMeta extends TopMeanRuleArchiveMeta {
     schema: string;
     runId: string;
@@ -232,6 +239,33 @@ export interface TopMeanCalibrationStats {
     eventPoolSize: PercentileSummary;
     eventsPerUtcDay: PercentileSummary;
     regimes: Readonly<Record<Regime, { events: number; share: number }>>;
+}
+
+export interface TopMeanCausalScreenEvaluation {
+    window: TopMeanRuleWindowSpec;
+    kind: "ranking" | "filter" | "none";
+    rawEventCount: number;
+    baseCandidateEventCount: number;
+    baseCandidateCount: number;
+    candidateKeepRate: number;
+    selectedEvents: number;
+    droppedEvents: number;
+    changedEvents: number;
+    unchangedEvents: number;
+}
+
+export interface TopMeanCausalStats {
+    window: TopMeanRuleWindowSpec;
+    rawEventCount: number;
+    baseCandidateEventCount: number;
+    baseCandidateCount: number;
+    incumbentActivePairCount: PercentileSummary;
+    runnerUpActivePairCount: PercentileSummary;
+    top1Score: PercentileSummary;
+    top2Score: PercentileSummary;
+    exactTopScoreTies: number;
+    nearTieCounts: Readonly<{ le001: number; le0025: number; le005: number }>;
+    topRawSelectionDifferences: number;
 }
 
 interface RuleDecision {
@@ -441,10 +475,13 @@ function validateOutcomeRows(
     return map;
 }
 
-function compareBaseCandidates(left: TopMeanBaseCandidate, right: TopMeanBaseCandidate, decisionTimeSec: number): number {
-    return numberCompare(right.score, left.score)
-        || codeUnitCompare(tieBreakDigest(decisionTimeSec, left.row.asset), tieBreakDigest(decisionTimeSec, right.row.asset))
+function compareCandidateTie(left: TopMeanBaseCandidate, right: TopMeanBaseCandidate, decisionTimeSec: number): number {
+    return codeUnitCompare(tieBreakDigest(decisionTimeSec, left.row.asset), tieBreakDigest(decisionTimeSec, right.row.asset))
         || codeUnitCompare(left.row.asset, right.row.asset);
+}
+
+function compareBaseCandidates(left: TopMeanBaseCandidate, right: TopMeanBaseCandidate, decisionTimeSec: number): number {
+    return numberCompare(right.score, left.score) || compareCandidateTie(left, right, decisionTimeSec);
 }
 
 function buildNormalizedEvents(
@@ -514,6 +551,39 @@ function safeArchiveRead(filename: string): string {
     }
 }
 
+function safeJsonRead(filename: string): unknown {
+    let text: string;
+    try {
+        text = readFileSync(filename, "utf8");
+    } catch {
+        throw new CheckerFailure("archive.read", "required causal archive files readable", path.basename(filename), [], "ARCHIVE FAIL");
+    }
+    try {
+        return JSON.parse(text) as unknown;
+    } catch {
+        throw new CheckerFailure("meta.json", "valid JSON", path.basename(filename), [], "ARCHIVE FAIL");
+    }
+}
+
+function safeSnapshotRead(filename: string): PoolSnapshotRecord[] {
+    let text: string;
+    try {
+        text = readFileSync(filename, "utf8");
+    } catch {
+        throw new CheckerFailure("archive.read", "required causal archive files readable", path.basename(filename), [], "ARCHIVE FAIL");
+    }
+    return text
+        .split(/\r?\n/)
+        .filter((line) => line.trim().length > 0)
+        .map((line, index) => {
+            try {
+                return JSON.parse(line) as PoolSnapshotRecord;
+            } catch {
+                throw new CheckerFailure("pool-snapshots.jsonl", "valid JSONL rows", `${path.basename(filename)}:${index + 1}`, [], "ARCHIVE FAIL");
+            }
+        });
+}
+
 export function resolveTopMeanArchiveLocation(ledgerDir: string): TopMeanArchiveLocation {
     const runDir = path.resolve(ledgerDir);
     const batchDir = path.dirname(runDir);
@@ -539,6 +609,23 @@ export function loadNormalizedTopMeanArchiveFromDirectory(ledgerDir: string): To
     return normalizeTopMeanArchive({ archive, reportText, runId: location.runId });
 }
 
+export function loadCausalTopMeanArchiveFromDirectory(ledgerDir: string): TopMeanCausalArchive {
+    const location = resolveTopMeanArchiveLocation(ledgerDir);
+    if (!existsSync(location.runDir)) throw new CheckerFailure("archive.directory", "existing archive directory", location.runId, [], "ARCHIVE FAIL");
+    const meta = metaRecord(safeJsonRead(path.join(location.runDir, "meta.json")));
+    requireCheck(meta.runId === location.runId, "meta.runId_matches_directory", location.runId, String(meta.runId));
+    validateResearchContract(meta);
+    const catalogAssets = archiveCatalog(meta);
+    const snapshots = safeSnapshotRead(path.join(location.runDir, "pool-snapshots.jsonl"));
+    const byEvent = validateSnapshotRows(snapshots, catalogAssets);
+    return {
+        runId: location.runId,
+        meta,
+        catalogAssets,
+        events: buildNormalizedEvents(byEvent),
+    };
+}
+
 function windowSpec(name: TopMeanRuleWindow): TopMeanRuleWindowSpec {
     return name === "discovery"
         ? { name, fromSec: PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC, toSec: PAIRLIST_POOL_RULE_DISCOVERY_TO_SEC }
@@ -549,12 +636,18 @@ export function getTopMeanRuleWindow(name: TopMeanRuleWindow): TopMeanRuleWindow
     return windowSpec(name);
 }
 
-function eventsInWindow(archive: TopMeanNormalizedArchive, window: TopMeanRuleWindowSpec): TopMeanNormalizedEvent[] {
+function eventsInWindow(archive: { events: readonly TopMeanNormalizedEvent[] }, window: TopMeanRuleWindowSpec): TopMeanNormalizedEvent[] {
     return archive.events.filter((event) => event.decisionTimeSec >= window.fromSec && event.decisionTimeSec <= window.toSec);
 }
 
 function topMeanCandidate(event: TopMeanNormalizedEvent): TopMeanBaseCandidate {
     const candidate = [...event.baseCandidates].sort((left, right) => compareBaseCandidates(left, right, event.decisionTimeSec))[0];
+    if (!candidate) throw new CheckerFailure("candidate.selection", "at least one base candidate", event.eventId, [], "ARCHIVE FAIL");
+    return candidate;
+}
+
+function topRawCandidate(event: TopMeanNormalizedEvent): TopMeanBaseCandidate {
+    const candidate = [...event.baseCandidates].sort((left, right) => numberCompare(right.row.signedVotes, left.row.signedVotes) || compareCandidateTie(left, right, event.decisionTimeSec))[0];
     if (!candidate) throw new CheckerFailure("candidate.selection", "at least one base candidate", event.eventId, [], "ARCHIVE FAIL");
     return candidate;
 }
@@ -813,8 +906,7 @@ function eventProxy(event: TopMeanNormalizedEvent): TopMeanRuleEvent {
 
 function compareRuleValue(left: { candidate: TopMeanBaseCandidate; value: number | boolean }, right: { candidate: TopMeanBaseCandidate; value: number | boolean }, event: TopMeanNormalizedEvent): number {
     return numberCompare(right.value as number, left.value as number)
-        || codeUnitCompare(tieBreakDigest(event.decisionTimeSec, left.candidate.row.asset), tieBreakDigest(event.decisionTimeSec, right.candidate.row.asset))
-        || codeUnitCompare(left.candidate.row.asset, right.candidate.row.asset);
+        || compareCandidateTie(left.candidate, right.candidate, event.decisionTimeSec);
 }
 
 function selectRuleDecision(decision: RuleDecision, kind: "ranking" | "filter"): TopMeanBaseCandidate | null {
@@ -836,23 +928,19 @@ function ruleFailure(error: unknown, eventId?: string, asset?: string): never {
     throw new CheckerFailure("rule.evaluation", "finite number or boolean result without exception", `${eventId ?? "unknown"}${asset ? `/${asset}` : ""}: ${detail}`, [], "RULE FAIL");
 }
 
-export function evaluateTopMeanRule(args: {
-    archive: TopMeanNormalizedArchive;
-    window: TopMeanRuleWindow;
-    rule: TopMeanRule;
-}): TopMeanRuleEvaluation {
-    const window = windowSpec(args.window);
-    const windowEvents = eventsInWindow(args.archive, window);
-    const baseEvents = windowEvents.filter((event) => event.baseCandidates.length >= 2);
+function evaluateRuleDecisions(
+    events: readonly TopMeanNormalizedEvent[],
+    rule: TopMeanRule,
+): { kind: "ranking" | "filter" | "none"; decisions: readonly RuleDecision[] } {
     const decisions: RuleDecision[] = [];
     let kind: "ranking" | "filter" | null = null;
-    for (const event of baseEvents) {
+    for (const event of events) {
         const candidateResults: Array<{ candidate: TopMeanBaseCandidate; value: number | boolean }> = [];
         let trueCandidateCount = 0;
         for (const candidate of event.baseCandidates) {
             let value: unknown;
             try {
-                value = args.rule(candidateProxy(candidate), eventProxy(event));
+                value = rule(candidateProxy(candidate), eventProxy(event));
             } catch (error) {
                 ruleFailure(error, event.eventId, candidate.row.asset);
             }
@@ -872,6 +960,20 @@ export function evaluateTopMeanRule(args: {
         decision.selected = kind === null ? null : selectRuleDecision(decision, kind);
         decisions.push(decision);
     }
+    return { kind: kind ?? "none", decisions };
+}
+
+export function evaluateTopMeanRule(args: {
+    archive: TopMeanNormalizedArchive;
+    window: TopMeanRuleWindow;
+    rule: TopMeanRule;
+}): TopMeanRuleEvaluation {
+    const window = windowSpec(args.window);
+    const windowEvents = eventsInWindow(args.archive, window);
+    const baseEvents = windowEvents.filter((event) => event.baseCandidates.length >= 2);
+    const decisionResult = evaluateRuleDecisions(baseEvents, args.rule);
+    const decisions = decisionResult.decisions;
+    const kind = decisionResult.kind;
     const completeEvents = baseEvents.filter((event) => outcomeComplete(args.archive, event));
     const completeIds = new Set(completeEvents.map((event) => event.eventId));
     const points: RuleEventPoint[] = [];
@@ -935,10 +1037,81 @@ export function evaluateTopMeanRule(args: {
     };
 }
 
+export function evaluateTopMeanCausalScreen(args: {
+    archive: TopMeanCausalArchive;
+    window: TopMeanRuleWindow;
+    rule: TopMeanRule;
+}): TopMeanCausalScreenEvaluation {
+    const window = windowSpec(args.window);
+    const windowEvents = eventsInWindow(args.archive, window);
+    const baseEvents = windowEvents.filter((event) => event.baseCandidates.length >= 2);
+    const decisionResult = evaluateRuleDecisions(baseEvents, args.rule);
+    let selectedEvents = 0;
+    let droppedEvents = 0;
+    let changedEvents = 0;
+    let unchangedEvents = 0;
+    for (const decision of decisionResult.decisions) {
+        if (!decision.selected) {
+            droppedEvents += 1;
+            continue;
+        }
+        selectedEvents += 1;
+        if (decision.selected.row.asset === topMeanCandidate(decision.event).row.asset) unchangedEvents += 1;
+        else changedEvents += 1;
+    }
+    const baseCandidateCount = baseEvents.reduce((sum, event) => sum + event.baseCandidates.length, 0);
+    const candidateNumerator = decisionResult.kind === "filter"
+        ? decisionResult.decisions.reduce((sum, decision) => sum + decision.trueCandidateCount, 0)
+        : baseCandidateCount;
+    return {
+        window,
+        kind: decisionResult.kind,
+        rawEventCount: windowEvents.length,
+        baseCandidateEventCount: baseEvents.length,
+        baseCandidateCount,
+        candidateKeepRate: baseCandidateCount > 0 ? candidateNumerator / baseCandidateCount : 0,
+        selectedEvents,
+        droppedEvents,
+        changedEvents,
+        unchangedEvents,
+    };
+}
+
 function percentile(values: readonly number[]): PercentileSummary {
     const sorted = [...values].sort(numberCompare);
     const at = (fraction: number): number | null => sorted.length === 0 ? null : sorted[Math.min(sorted.length - 1, Math.floor(fraction * sorted.length))]!;
     return { n: sorted.length, p0: at(0), p1: at(0.01), p5: at(0.05), p25: at(0.25), p50: at(0.5), p75: at(0.75), p95: at(0.95), p99: at(0.99), p100: at(1) };
+}
+
+export function computeTopMeanCausalStats(archive: TopMeanCausalArchive, windowName: TopMeanRuleWindow): TopMeanCausalStats {
+    const window = windowSpec(windowName);
+    const windowEvents = eventsInWindow(archive, window);
+    const baseEvents = windowEvents.filter((event) => event.baseCandidates.length >= 2);
+    const sortedCandidates = baseEvents.map((event) => [...event.baseCandidates].sort((left, right) => compareBaseCandidates(left, right, event.decisionTimeSec)));
+    const top1 = sortedCandidates.map((candidates) => candidates[0]!.score);
+    const top2 = sortedCandidates.map((candidates) => candidates[1]!.score);
+    const winnerActivePairCount = sortedCandidates.map((candidates) => candidates[0]!.row.activePairCount);
+    const runnerUpActivePairCount = sortedCandidates.map((candidates) => candidates[1]!.row.activePairCount);
+    const exactTopScoreTies = top1.filter((score, index) => score === top2[index]).length;
+    const nearTieCounts = {
+        le001: top1.filter((score, index) => score - top2[index]! <= 0.01).length,
+        le0025: top1.filter((score, index) => score - top2[index]! <= 0.025).length,
+        le005: top1.filter((score, index) => score - top2[index]! <= 0.05).length,
+    };
+    const topRawSelectionDifferences = baseEvents.filter((event) => topRawCandidate(event).row.asset !== topMeanCandidate(event).row.asset).length;
+    return {
+        window,
+        rawEventCount: windowEvents.length,
+        baseCandidateEventCount: baseEvents.length,
+        baseCandidateCount: baseEvents.reduce((sum, event) => sum + event.baseCandidates.length, 0),
+        incumbentActivePairCount: percentile(winnerActivePairCount),
+        runnerUpActivePairCount: percentile(runnerUpActivePairCount),
+        top1Score: percentile(top1),
+        top2Score: percentile(top2),
+        exactTopScoreTies,
+        nearTieCounts,
+        topRawSelectionDifferences,
+    };
 }
 
 export function computeTopMeanCalibrationStats(archive: TopMeanNormalizedArchive, windowName: TopMeanRuleWindow): TopMeanCalibrationStats {
@@ -1052,6 +1225,66 @@ export function renderTopMeanStatsReport(archive: TopMeanNormalizedArchive, stat
     return lines.join("\n") + "\n";
 }
 
+function causalPercentileValue(value: number | null, digits: number): string {
+    return value === null ? "n/a" : value.toFixed(digits);
+}
+
+function causalCountRate(count: number, total: number): string {
+    return `${count}/${total} (${total > 0 ? ((count / total) * 100).toFixed(2) : "0.00"}%)`;
+}
+
+function renderCausalActivePairPercentiles(label: string, summary: PercentileSummary): string {
+    return `${label}: p0 ${causalPercentileValue(summary.p0, 0)} | p25 ${causalPercentileValue(summary.p25, 0)} | p50 ${causalPercentileValue(summary.p50, 0)} | p75 ${causalPercentileValue(summary.p75, 0)} | p95 ${causalPercentileValue(summary.p95, 0)} | max ${causalPercentileValue(summary.p100, 0)}`;
+}
+
+function renderCausalScorePercentiles(label: string, summary: PercentileSummary): string {
+    return `${label}: p25 ${causalPercentileValue(summary.p25, 4)} | p50 ${causalPercentileValue(summary.p50, 4)} | p75 ${causalPercentileValue(summary.p75, 4)}`;
+}
+
+export function renderTopMeanCausalStatsReport(archive: TopMeanCausalArchive, stats: TopMeanCausalStats): string {
+    const lines = [
+        "TOP_MEAN RULE CHECKER | mode=causal-stats",
+        `archive | runId=${archive.runId} interval=${TOP_MEAN_RULE_INTERVAL} metaFingerprint=${typeof archive.meta.fingerprint === "string" ? archive.meta.fingerprint : "n/a"}`,
+        `window | name=${stats.window.name} from=${stats.window.fromSec} to=${stats.window.toSec}`,
+        `causal cohort | rawEvents=${stats.rawEventCount} baseCandidateEvents=${stats.baseCandidateEventCount} baseCandidates=${stats.baseCandidateCount}`,
+        renderCausalActivePairPercentiles("incumbent winner activePairCount", stats.incumbentActivePairCount),
+        renderCausalActivePairPercentiles("runner-up activePairCount", stats.runnerUpActivePairCount),
+        renderCausalScorePercentiles("top-1 score", stats.top1Score),
+        renderCausalScorePercentiles("top-2 score", stats.top2Score),
+        `exact top-score ties: ${causalCountRate(stats.exactTopScoreTies, stats.baseCandidateEventCount)}`,
+        `top1-top2 score margin <=0.01: ${causalCountRate(stats.nearTieCounts.le001, stats.baseCandidateEventCount)}`,
+        `top1-top2 score margin <=0.025: ${causalCountRate(stats.nearTieCounts.le0025, stats.baseCandidateEventCount)}`,
+        `top1-top2 score margin <=0.05: ${causalCountRate(stats.nearTieCounts.le005, stats.baseCandidateEventCount)}`,
+        `max-signedVotes (TOP_RAW) selection differs: ${causalCountRate(stats.topRawSelectionDifferences, stats.baseCandidateEventCount)}`,
+    ];
+    return lines.join("\n") + "\n";
+}
+
+export function renderTopMeanCausalScreenReport(args: {
+    archive: TopMeanCausalArchive;
+    ruleName: string;
+    ruleSha256: string;
+    evaluation: TopMeanCausalScreenEvaluation;
+}): string {
+    const evaluation = args.evaluation;
+    const changeRate = evaluation.baseCandidateEventCount > 0
+        ? (evaluation.changedEvents / evaluation.baseCandidateEventCount) * 100
+        : 0;
+    const impact = evaluation.changedEvents === 0 ? "ZERO" : changeRate < 2 ? "THIN" : "MATERIAL";
+    const lines = [
+        "TOP_MEAN RULE CHECKER | mode=screen",
+        `archive | runId=${args.archive.runId} interval=${TOP_MEAN_RULE_INTERVAL} metaFingerprint=${typeof args.archive.meta.fingerprint === "string" ? args.archive.meta.fingerprint : "n/a"}`,
+        `rule | file=${args.ruleName} sha256=${args.ruleSha256}`,
+        `window | name=${evaluation.window.name} from=${evaluation.window.fromSec} to=${evaluation.window.toSec}`,
+        `causal cohort | rawEvents=${evaluation.rawEventCount} baseCandidateEvents=${evaluation.baseCandidateEventCount} baseCandidates=${evaluation.baseCandidateCount}`,
+        `rule | kind=${evaluation.kind}`,
+        `selection | selectedEvents=${evaluation.selectedEvents} droppedEvents=${evaluation.droppedEvents} changed=${evaluation.changedEvents}/${evaluation.baseCandidateEventCount} rate=${changeRate.toFixed(2)}% unchanged=${evaluation.unchangedEvents}`,
+        `candidate keep rate=${(evaluation.candidateKeepRate * 100).toFixed(2)}%`,
+        `SCREEN | impact=${impact} thinCutoff=2.00%`,
+    ];
+    return lines.join("\n") + "\n";
+}
+
 function sha256File(filename: string): string {
     return createHash("sha256").update(readFileSync(filename)).digest("hex");
 }
@@ -1078,7 +1311,7 @@ async function importRule(ruleFile: string): Promise<{ name: string; sha256: str
 
 interface CliOptions {
     ledgerDir: string;
-    mode: "self-check" | "stats" | "rule";
+    mode: "self-check" | "stats" | "causal-stats" | "screen" | "rule";
     ruleFile?: string;
     window?: TopMeanRuleWindow;
 }
@@ -1088,12 +1321,16 @@ const USAGE = [
     "  esno scripts/top-mean-rule-checker.ts <ledgerDir> <ruleFile.ts> --window discovery|validation",
     "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --self-check",
     "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --stats --window discovery|validation",
+    "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --causal-stats --window discovery",
+    "  esno scripts/top-mean-rule-checker.ts <ledgerDir> <ruleFile.ts> --screen --window discovery",
 ].join("\n");
 
 function parseCli(argv: readonly string[]): CliOptions | "help" {
     if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) return "help";
     let selfCheck = false;
     let stats = false;
+    let causalStats = false;
+    let screen = false;
     let selectedWindow: TopMeanRuleWindow | undefined;
     const positional: string[] = [];
     for (let index = 0; index < argv.length; index += 1) {
@@ -1104,6 +1341,12 @@ function parseCli(argv: readonly string[]): CliOptions | "help" {
         } else if (arg === "--stats") {
             if (stats) throw new UsageFailure("duplicate --stats");
             stats = true;
+        } else if (arg === "--causal-stats") {
+            if (causalStats) throw new UsageFailure("duplicate --causal-stats");
+            causalStats = true;
+        } else if (arg === "--screen") {
+            if (screen) throw new UsageFailure("duplicate --screen");
+            screen = true;
         } else if (arg === "--window") {
             if (selectedWindow !== undefined) throw new UsageFailure("duplicate --window");
             const value = argv[++index];
@@ -1115,6 +1358,7 @@ function parseCli(argv: readonly string[]): CliOptions | "help" {
     }
     if (positional.length === 0) throw new UsageFailure("ledgerDir is required");
     if (selfCheck && stats) throw new UsageFailure("--self-check and --stats are exclusive");
+    if ([selfCheck, stats, causalStats, screen].filter(Boolean).length > 1) throw new UsageFailure("checker modes are exclusive");
     if (selfCheck) {
         if (positional.length !== 1 || selectedWindow !== undefined) throw new UsageFailure("self-check mode takes only ledgerDir");
         return { ledgerDir: positional[0]!, mode: "self-check" };
@@ -1122,6 +1366,14 @@ function parseCli(argv: readonly string[]): CliOptions | "help" {
     if (stats) {
         if (positional.length !== 1 || selectedWindow === undefined) throw new UsageFailure("stats mode requires ledgerDir and --window");
         return { ledgerDir: positional[0]!, mode: "stats", window: selectedWindow };
+    }
+    if (causalStats) {
+        if (positional.length !== 1 || selectedWindow !== "discovery") throw new UsageFailure("causal-stats mode requires ledgerDir and --window discovery");
+        return { ledgerDir: positional[0]!, mode: "causal-stats", window: selectedWindow };
+    }
+    if (screen) {
+        if (positional.length !== 2 || selectedWindow !== "discovery") throw new UsageFailure("screen mode requires ledgerDir, ruleFile, and --window discovery");
+        return { ledgerDir: positional[0]!, ruleFile: positional[1]!, mode: "screen", window: selectedWindow };
     }
     if (positional.length !== 2 || selectedWindow === undefined) throw new UsageFailure("rule mode requires ledgerDir, ruleFile, and --window");
     return { ledgerDir: positional[0]!, mode: "rule", ruleFile: positional[1]!, window: selectedWindow };
@@ -1149,6 +1401,35 @@ export async function runTopMeanRuleCheckerCli(argv: readonly string[]): Promise
     if (options === "help") {
         process.stdout.write(`${USAGE}\n`);
         return 0;
+    }
+    if (options.mode === "causal-stats" || options.mode === "screen") {
+        let causalArchive: TopMeanCausalArchive;
+        try {
+            causalArchive = loadCausalTopMeanArchiveFromDirectory(options.ledgerDir);
+        } catch (error) {
+            process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+            return 1;
+        }
+        if (options.mode === "causal-stats") {
+            const stats = computeTopMeanCausalStats(causalArchive, options.window!);
+            process.stdout.write(renderTopMeanCausalStatsReport(causalArchive, stats));
+            return 0;
+        }
+        let importedRule: { name: string; sha256: string; rule: TopMeanRule };
+        try {
+            importedRule = await importRule(options.ruleFile!);
+        } catch (error) {
+            process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+            return 1;
+        }
+        try {
+            const evaluation = evaluateTopMeanCausalScreen({ archive: causalArchive, window: options.window!, rule: importedRule.rule });
+            process.stdout.write(renderTopMeanCausalScreenReport({ archive: causalArchive, ruleName: importedRule.name, ruleSha256: importedRule.sha256, evaluation }));
+            return 0;
+        } catch (error) {
+            process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+            return 1;
+        }
     }
     let archive: TopMeanNormalizedArchive;
     try {

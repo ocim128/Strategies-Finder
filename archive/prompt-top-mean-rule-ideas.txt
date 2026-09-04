@@ -5,7 +5,9 @@ You are an expert quantitative researcher generating ASSET-SELECTION rule ideas 
 TOP_MEAN decision layer.
 
 TASK
-Generate exactly 10 NEW selector rule ideas as structured JSON.
+Generate exactly 30 NEW selector rule ideas as a causal-screening pool, not the
+approved batch. A downstream agent screens the pool and selects the final 10
+satisfying C5 before human approval.
 You do NOT run anything and you do NOT modify any file. Idea generation only.
 
 CONTEXT
@@ -59,6 +61,17 @@ poolSize is constant 136. Events/day: 2-3 (4H session bars). dow values 1..5 onl
 A threshold matching ~0% or ~100% of candidates tests nothing. Filter event keep-rates
 below 5% are fragile (few events = inconclusive).
 
+TOP-OF-BOOK CALIBRATION (use this for selector design instead of inferring from all
+candidates)
+winner activePairCount p0 16 | p25 41 | p50 44 | p75 45 | p95 48 | max 55
+runner-up activePairCount p0 38 | p25 42 | p50 46 | p75 49 | p95 53 | max 59
+top-1 score p25 0.7447 | p50 0.8222 | p75 0.9024
+top-2 score p25 0.60 | p50 0.7333 | p75 0.8537
+exact ties 86/568 (15.14%); margin <=0.01 112/568 (19.72%); <=0.025 120/568 (21.13%)
+max-signedVotes vs TOP_MEAN differ 20/568 (3.52%)
+batch-1 causal changes: Q3 0, Q4 0, Q6 0, Q7 1, Q9 0, Q11 11 of 568
+Candidate keep-rate is not selection impact.
+
 HARD DESIGN RULES FOR THIS CAMPAIGN
 1. CAUSAL ONLY. Only the fields listed. The checker enforces this by throwing.
 2. ANTI-CLONE. The idea log is the law. Generic single-feature gates with an obvious
@@ -79,7 +92,35 @@ HARD DESIGN RULES FOR THIS CAMPAIGN
 6. Each idea is ONE one-line rule body (the wrapper is added at implementation):
    <rule over cand and event>
 
+SELECTION-INVARIANCE LAW
+A ranking changes an event only if another candidate beats the frozen winner under
+(rule value, FNV digest). Any rule of the form g_event(cand.score) with g_event
+strictly increasing is banned because it preserves ordering and ties. Event-only
+terms, positive event-only multipliers, and event-only offsets cannot change
+within-event ordering. A filter changes the pick only if it rejects the winner and
+retains an alternative. Pure event filters have PRIMARY exactly zero on retained
+events and are banned. cand.longEligible is always true and cand.score is always
+positive in the base pool. Monotone-in-signedVotes is not banned by itself (there is
+no quota).
+
+MANDATORY FLIP WITNESS
+Every idea must provide arithmetic in flipArgument. For a ranking, give two feasible
+candidate tuples A/B with score(A) > score(B) but rule(A) < rule(B), with values
+computed, or give an exact tie that the rule resolves differently. For a filter,
+give an incumbent-like tuple rejected and an alternative-like tuple retained. “May
+reorder” is not a witness.
+
+BATCH MECHANISM MIX (applies to the screened final 10)
+- At least 6 rankings and at least 2 candidate filters.
+- At least 6 distinct familyKeys.
+- At least 2 rankings use a bounded candidate-specific secondary signal rather than
+  another denominator curve.
+- No identity rule and no combination.
+- A causal ZERO rule is rejected.
+- At most one THIN rule, with explicit human approval.
+
 NON-NEGOTIABLE OUTPUT RULES
+- The ideas array must contain exactly 30 candidate ideas.
 - Return valid JSON only.
 - Do not use markdown fences.
 - Do not write prose outside the JSON.
@@ -93,8 +134,12 @@ NON-NEGOTIABLE OUTPUT RULES
       "kind": "ranking|filter",
       "family": "score-shape|coverage|trend|regime-breadth|calendar|identity|interaction",
       "familyKey": "specific family key, e.g. coverage_x_trend",
+      "mechanism": "ranking-reorder|candidate-filter",
       "expectedKeep": "estimated event keep-rate for filters, n/a for rankings",
-      "rationale": "1-2 sentences: why this could beat the incumbent on matched events"
+      "rationale": "1-2 sentences: why this could beat the incumbent on matched events",
+      "flipArgument": "arithmetic witness that the rule can change selection",
+      "expectedSelectionChanges": "estimated changed events or rate after causal screening",
+      "invarianceRisk": "why the rule does or does not preserve the incumbent ordering"
     }
   ]
 }
