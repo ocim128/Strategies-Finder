@@ -1,1 +1,0 @@
-export default (cand, event) => event.dow === 2 ? cand.score * (cand.shortEligible ? 1 + 0.2 * cand.breadth : 1 - 0.15 * cand.breadth) : event.dow === 4 ? cand.score * (cand.shortEligible ? 1 - 0.16 * cand.breadth : 1 + 0.18 * cand.breadth) : cand.score;

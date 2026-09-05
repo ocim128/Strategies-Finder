@@ -1,1 +1,0 @@
-export default (cand, event) => event.dow === 3 ? cand.score >= 0.30 && cand.shortEligible : event.dow === 4 ? cand.score >= 0.42 && !cand.shortEligible : cand.ema200Above !== (event.regime === "bullish");

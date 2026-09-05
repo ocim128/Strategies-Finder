@@ -1,1 +1,0 @@
-export default (cand, event) => event.dow === 1 ? (cand.shortEligible ? Math.sqrt(cand.score) : Math.pow(cand.score, 1.4)) : event.dow === 5 ? (cand.shortEligible ? Math.pow(cand.score, 1.2) : Math.sqrt(cand.score)) : cand.score;
