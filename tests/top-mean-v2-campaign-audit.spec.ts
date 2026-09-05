@@ -14,6 +14,7 @@ interface FixtureOptions {
     missingUsage?: boolean;
     pipeBody?: boolean;
     identityBody?: boolean;
+    l2d1Registration?: boolean;
 }
 
 interface Fixture {
@@ -50,10 +51,45 @@ function makeFixture(options: FixtureOptions = {}): Fixture {
         readFileSync(path.join(sourceMiningDir, "tm-l2-c1", "FEATURE-SET.md")),
     );
     const sourceLog = readFileSync(path.join(sourceMiningDir, "idea-log.txt"), "utf8");
-    const logText = sourceLog.replace(
+    let logText = sourceLog.replace(
         /(C6\|[^\r\n]*registrationSha256=)[0-9a-f]{64}/,
         `$1${sha256Bytes(readFileSync(registrationPath, "utf8"))}`,
     );
+    if (options.l2d1Registration) {
+        mkdirSync(path.join(successorDir, "rules"), { recursive: true });
+        const pool = Array.from({ length: 30 }, (_, index) => {
+            const candidate = String(index + 1).padStart(2, "0");
+            const familyKey = `family_${index % 6}`;
+            const key = `l2d1_rule_${candidate}`;
+            const sourceBody = `export default (cand, event) => cand.priorCoverageSlope5 ?? cand.score;`;
+            const rulePath = `rules/l2d1-${candidate}-${key}.ts`;
+            writeFileSync(path.join(successorDir, rulePath), `${sourceBody}\n`, "utf8");
+            return { ordinal: index + 1, candidate, key, familyKey, sourceBody, rulePath, sha256: sha256Bytes(`${sourceBody}\n`) };
+        });
+        const final = pool.slice(0, 10).map((rule, index) => ({ ...rule, ordinal: index + 1 }));
+        const registrationRule = (marker: string, rule: typeof pool[number]) => `${marker}|ordinal=${rule.ordinal}|candidate=${rule.candidate}|key=${rule.key}|kind=ranking|family=feature:${rule.familyKey}|familyKey=${rule.familyKey}|mechanism=ranking-reorder|mechanismLineage=${rule.familyKey}|path=${rule.rulePath}|sourceBody=${rule.sourceBody}|sha256=${rule.sha256}`;
+        const digest = (rules: readonly (typeof pool[number])[]) => sha256Bytes(rules.map((rule) => [
+            `ordinal=${rule.ordinal}`,
+            `candidate=${rule.candidate}`,
+            `key=${rule.key}`,
+            "kind=ranking",
+            `family=feature:${rule.familyKey}`,
+            `familyKey=${rule.familyKey}`,
+            "mechanism=ranking-reorder",
+            `mechanismLineage=${rule.familyKey}`,
+            `path=${rule.rulePath}`,
+            `sourceBody=${rule.sourceBody}`,
+            `sha256=${rule.sha256}`,
+        ].join("|")).join("\n") + "\n");
+        const registrationLines = [
+            "REGISTRATION|schema=top_mean_campaign_registration.v1|batchLabel=L2D1|campaign=TM-L2-C1|outcomeOrdinal=1|humanApproved=yes",
+            ...pool.map((rule) => registrationRule("POOL", rule)),
+            ...final.map((rule) => registrationRule("FINAL", rule)),
+            `F4|L2D1|outcomeOrdinal=1|poolCount=30|finalCount=10|poolDigest=${digest(pool)}|finalDigest=${digest(final)}|audit=PASS|humanApproved=yes`,
+        ];
+        writeFileSync(path.join(successorDir, "L2D1-REGISTRATION.md"), `${registrationLines.join("\n")}\n`, "utf8");
+        logText += pool.map((rule) => `S3|L2D1|campaign=TM-L2-C1|candidate=${rule.candidate}|key=${rule.key}|kind=ranking|family=feature:${rule.familyKey}|sha256=${rule.sha256}|changed=60/566|impact=MATERIAL|advanced=yes`).join("\n") + "\n";
+    }
     writeFileSync(path.join(miningDir, "idea-log.txt"), logText, "utf8");
     return { root, miningDir };
 }
@@ -94,6 +130,27 @@ describe("TM-L2-C1 audit discrimination", () => {
             assertFailed(auditTmL2C1({ root: repositoryRoot, miningDir: fixture.miningDir }), "V2_FIELD_USAGE");
         } finally {
             removeFixture(fixture);
+        }
+    });
+
+    it("validates a complete L2D1 registration and skips it before materialization", () => {
+        const skipped = makeFixture();
+        try {
+            const result = auditTmL2C1({ root: repositoryRoot, miningDir: skipped.miningDir });
+            assert.equal(result.checks.find((check) => check.name === "L2D1_REGISTRATION")?.detail, "skipped: L2D1-REGISTRATION.md does not exist");
+        } finally {
+            removeFixture(skipped);
+        }
+
+        const materialized = makeFixture({ l2d1Registration: true });
+        try {
+            const result = auditTmL2C1({ root: repositoryRoot, miningDir: materialized.miningDir });
+            assert.equal(result.passed, true, result.checks.filter((check) => !check.passed).map((check) => `${check.name}: ${check.detail}`).join("\n"));
+            for (const name of ["L2D1_REGISTRATION", "L2D1_POOL_COUNT", "L2D1_FINAL_COUNT", "L2D1_C5_COMPOSITION", "L2D1_POOL_BYTES", "L2D1_FINAL_BYTES", "L2D1_V2_FIELD_USAGE", "L2D1_ADMISSION_GATE", "L2D1_DIGESTS"]) {
+                assert.equal(result.checks.find((check) => check.name === name)?.passed, true, name);
+            }
+        } finally {
+            removeFixture(materialized);
         }
     });
 

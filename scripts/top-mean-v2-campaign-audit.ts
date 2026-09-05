@@ -74,6 +74,10 @@ function fileSha(filename: string): string | null {
     }
 }
 
+function readJson(filename: string): Record<string, unknown> | null {
+    try { return JSON.parse(readFileSync(filename, "utf8")) as Record<string, unknown>; } catch { return null; }
+}
+
 function record(registration: Registration, marker: string): CampaignPipeRecord | null {
     return registration.records.get(marker) ?? null;
 }
@@ -119,6 +123,222 @@ function checkFormatAndC6(logText: string, registration: Registration, featureCo
         && c6.fields.humanApproved === "yes";
     checks.push(check("C6", c6Passed, c6Line ?? "missing C6"));
     return checks;
+}
+
+function checkL6Identity(logText: string, registration: Registration, root: string): V2CampaignAuditCheck {
+    const l6Records = parseRecords(logText, "L6");
+    const l6 = l6Records.length === 1 ? l6Records[0] : null;
+    if (l6 === null) {
+        return check("L6_IDENTITY", false, `${l6Records.length} L6 records; expected exactly one`);
+    }
+    const registrationMeta = record(registration, "REGISTRATION");
+    const ledgerRunId = l6.fields.ledgerRunId;
+    const ledgerDir = ledgerRunId ? path.join(root, "archive", "batch-open-score", ledgerRunId) : "";
+    const meta = ledgerDir ? readJson(path.join(ledgerDir, "meta.json")) : null;
+    const registrationRunId = registrationMeta?.fields.ledgerRunId;
+    const expectedRunId = registrationRunId ?? (typeof meta?.runId === "string" ? meta.runId : undefined);
+    const featurePath = path.join(ledgerDir, "candidate-features.jsonl");
+    const featureSha = fileSha(featurePath);
+    const featureRowCount = featureSha === null
+        ? null
+        : readFileSync(featurePath, "utf8").split(/\r?\n/).filter((line) => line.length > 0).length;
+    const ledgerFingerprint = typeof meta?.postAssemblyFingerprint === "string"
+        ? meta.postAssemblyFingerprint
+        : typeof meta?.fingerprint === "string" ? meta.fingerprint : undefined;
+    const passed = l6.fields.campaign === CAMPAIGN
+        && l6.fields.humanApproved === "yes"
+        && ledgerRunId !== undefined
+        && ledgerRunId.length > 0
+        && expectedRunId === ledgerRunId
+        && meta?.runId === ledgerRunId
+        && validSha(l6.fields.ledgerFingerprint)
+        && ledgerFingerprint === l6.fields.ledgerFingerprint
+        && validSha(l6.fields.featureFileSha256)
+        && featureSha === l6.fields.featureFileSha256
+        && l6.fields.featureRowCount !== undefined
+        && Number(l6.fields.featureRowCount) === featureRowCount;
+    return check(
+        "L6_IDENTITY",
+        passed,
+        `records=${l6Records.length}|ledgerRunId=${ledgerRunId ?? "missing"}|registrationLedgerRunId=${registrationRunId ?? "derived-from-ledger"}|featureSha=${featureSha ?? "missing"}|featureRows=${featureRowCount ?? "missing"}`,
+    );
+}
+
+interface RegisteredRuleBytes {
+    valid: boolean;
+    detail: string;
+}
+
+function registrationRuleDigest(recordValue: CampaignPipeRecord): string {
+    const fields = recordValue.fields;
+    return [
+        `ordinal=${fields.ordinal ?? ""}`,
+        `candidate=${fields.candidate ?? ""}`,
+        `key=${fields.key ?? ""}`,
+        `kind=${fields.kind ?? ""}`,
+        `family=${fields.family ?? ""}`,
+        `familyKey=${fields.familyKey ?? ""}`,
+        `mechanism=${fields.mechanism ?? ""}`,
+        `mechanismLineage=${fields.mechanismLineage ?? ""}`,
+        `path=${fields.path ?? ""}`,
+        `sourceBody=${fields.sourceBody ?? ""}`,
+        `sha256=${fields.sha256 ?? ""}`,
+    ].join("|");
+}
+
+function registrationDigest(records: readonly CampaignPipeRecord[]): string {
+    return sha256Bytes(records.map(registrationRuleDigest).join("\n") + "\n");
+}
+
+function registrationBatch(recordValue: CampaignPipeRecord): string | null {
+    return recordValue.fields.batchLabel
+        ?? recordValue.fields.batch
+        ?? recordValue.positional.find((value) => /^L2[DV]\d+$/.test(value))
+        ?? null;
+}
+
+function resolveRegisteredRulePath(root: string, rulePath: string): string {
+    if (path.isAbsolute(rulePath)) return rulePath;
+    const normalized = rulePath.replaceAll("\\", "/");
+    const archivePrefix = "archive/top-mean-mining/";
+    if (normalized.startsWith(archivePrefix)) return path.join(root, normalized);
+    return path.join(root, "archive", "top-mean-mining", normalized);
+}
+
+function checkRegisteredRuleBytes(root: string, rule: CampaignPipeRecord, registrationDir?: string): RegisteredRuleBytes {
+    const sourceBody = rule.fields.sourceBody;
+    const rulePath = rule.fields.path;
+    const expectedSha = rule.fields.sha256;
+    if (!sourceBody || !rulePath || !validSha(expectedSha)) return { valid: false, detail: `incomplete registration fields for ${rule.fields.key ?? "unknown"}` };
+    const normalizedRulePath = rulePath.replaceAll("\\", "/");
+    let filename = registrationDir
+        ? path.join(registrationDir, normalizedRulePath)
+        : resolveRegisteredRulePath(root, rulePath);
+    if (!existsSync(filename)) filename = resolveRegisteredRulePath(root, rulePath);
+    if (!existsSync(filename) && rulePath.replaceAll("\\", "/").startsWith("rules/")) {
+        filename = path.join(root, "archive", "top-mean-mining", "tm-l2-c1", normalizedRulePath);
+    }
+    if (!existsSync(filename)) return { valid: false, detail: `missing rule file ${rulePath}` };
+    const bytes = readFileSync(filename);
+    const source = bytes.toString("utf8");
+    if (sha256Bytes(bytes) !== expectedSha) return { valid: false, detail: `SHA mismatch for ${rule.fields.key ?? rulePath}` };
+    if (source !== sourceBody + "\n") return { valid: false, detail: `source body mismatch for ${rule.fields.key ?? rulePath}` };
+    return { valid: true, detail: `rule file matches ${rule.fields.key ?? rulePath}` };
+}
+
+function hasOrderedOrdinals(records: readonly CampaignPipeRecord[], count: number): boolean {
+    return records.length === count && records.every((item, index) => item.fields.ordinal === String(index + 1));
+}
+
+function matchingScreenRecord(records: readonly CampaignPipeRecord[], rule: CampaignPipeRecord): CampaignPipeRecord | null {
+    const candidate = rule.fields.candidate;
+    return records.find((item) => item.fields.candidate === candidate
+        && item.fields.key === rule.fields.key
+        && item.fields.kind === rule.fields.kind
+        && item.fields.family === rule.fields.family
+        && item.fields.sha256 === rule.fields.sha256) ?? null;
+}
+
+function changedCount(value: string | undefined): { changed: number; total: number } | null {
+    const match = value?.match(/^(\d+)\/(\d+)$/);
+    if (!match) return null;
+    return { changed: Number(match[1]), total: Number(match[2]) };
+}
+
+function skippedL2D1Checks(): V2CampaignAuditCheck[] {
+    return [
+        "L2D1_REGISTRATION",
+        "L2D1_POOL_COUNT",
+        "L2D1_FINAL_COUNT",
+        "L2D1_C5_COMPOSITION",
+        "L2D1_POOL_BYTES",
+        "L2D1_FINAL_BYTES",
+        "L2D1_V2_FIELD_USAGE",
+        "L2D1_ADMISSION_GATE",
+        "L2D1_DIGESTS",
+    ].map((name) => check(name, true, "skipped: L2D1-REGISTRATION.md does not exist"));
+}
+
+function checkL2D1Registration(logText: string, root: string, registrationPath: string): V2CampaignAuditCheck[] {
+    if (!existsSync(registrationPath)) return skippedL2D1Checks();
+    const registrationText = readFileSync(registrationPath, "utf8");
+    const headers = parseRecords(registrationText, "REGISTRATION");
+    const pool = parseRecords(registrationText, "POOL");
+    const finalists = parseRecords(registrationText, "FINAL");
+    const header = headers.length === 1 ? headers[0] : null;
+    const headerPassed = header !== null
+        && (header.fields.schema === "top_mean_campaign_registration.v1" || header.fields.schema === "top_mean_v2_campaign_registration.v1")
+        && (header.fields.campaign === undefined || header.fields.campaign === CAMPAIGN)
+        && (header.fields.batchLabel ?? header.fields.batch) === "L2D1"
+        && header.fields.outcomeOrdinal === "1"
+        && header.fields.humanApproved === "yes";
+    const poolCountPassed = hasOrderedOrdinals(pool, 30)
+        && new Set(pool.map((item) => item.fields.candidate)).size === 30;
+    const finalCountPassed = hasOrderedOrdinals(finalists, 10)
+        && new Set(finalists.map((item) => item.fields.candidate)).size === 10
+        && finalists.every((item) => pool.some((candidate) => registrationRuleDigest(candidate) === registrationRuleDigest(item)));
+    const finalFamilies = new Map<string, number>();
+    for (const item of finalists) {
+        const family = item.fields.familyKey ?? "";
+        finalFamilies.set(family, (finalFamilies.get(family) ?? 0) + 1);
+    }
+    const c5Passed = finalFamilies.size >= 6
+        && !finalFamilies.has("")
+        && [...finalFamilies.values()].every((count) => count <= 2);
+    const registrationDir = path.dirname(registrationPath);
+    const poolBytes = pool.map((item) => checkRegisteredRuleBytes(root, item, registrationDir));
+    const finalBytes = finalists.map((item) => checkRegisteredRuleBytes(root, item, registrationDir));
+    const poolBytesPassed = poolBytes.length === 30 && poolBytes.every((item) => item.valid);
+    const finalBytesPassed = finalBytes.length === 10 && finalBytes.every((item) => item.valid);
+    const allRules = [...pool, ...finalists];
+    const v2UsagePassed = allRules.length === 40
+        && allRules.every((item) => FEATURE_FIELDS.some((field) => (item.fields.sourceBody ?? "").includes(field)));
+    const screenRecords = parseRecords(logText, "S3").filter((item) => registrationBatch(item) === "L2D1"
+        && (item.fields.campaign === undefined || item.fields.campaign === CAMPAIGN));
+    const admissionResults = pool.map((item) => {
+        const screen = matchingScreenRecord(screenRecords, item);
+        const changed = changedCount(screen?.fields.changed);
+        const threshold = changed === null ? Number.POSITIVE_INFINITY : Math.max(60, Math.ceil(changed.total * 0.10));
+        const passed = screen !== null
+            && changed !== null
+            && changed.changed >= threshold
+            && (screen.fields.advanced === undefined || screen.fields.advanced === "yes")
+            && (screen.fields.impact === undefined || screen.fields.impact !== "ZERO");
+        return { passed, screen, changed, threshold };
+    });
+    const admissionPassed = admissionResults.length === 30 && admissionResults.every((item) => item.passed);
+    const registeredF4 = parseRecords(registrationText, "F4").filter((item) => registrationBatch(item) === "L2D1");
+    const loggedF4 = parseRecords(logText, "F4").filter((item) => registrationBatch(item) === "L2D1"
+        && (item.fields.campaign === undefined || item.fields.campaign === CAMPAIGN));
+    const f4 = registeredF4.at(-1) ?? loggedF4.at(-1) ?? null;
+    const poolDigest = registrationDigest(pool);
+    const finalDigest = registrationDigest(finalists);
+    const headerDigestPassed = header !== null
+        && (header.fields.poolDigest === undefined || header.fields.poolDigest === poolDigest)
+        && (header.fields.finalDigest === undefined || header.fields.finalDigest === finalDigest);
+    const f4Passed = f4 !== null
+        && f4.fields.outcomeOrdinal === "1"
+        && f4.fields.poolCount === "30"
+        && f4.fields.finalCount === "10"
+        && f4.fields.poolDigest === poolDigest
+        && f4.fields.finalDigest === finalDigest
+        && f4.fields.audit === "PASS"
+        && f4.fields.humanApproved === "yes";
+    const allF4Agree = [...registeredF4, ...loggedF4].every((item) => item.fields.poolDigest === poolDigest
+        && item.fields.finalDigest === finalDigest
+        && item.fields.poolCount === "30"
+        && item.fields.finalCount === "10");
+    return [
+        check("L2D1_REGISTRATION", headerPassed, `${headers.length} v1 schema header(s); campaign=${header?.fields.campaign ?? "missing"}; batch=${header?.fields.batchLabel ?? header?.fields.batch ?? "missing"}`),
+        check("L2D1_POOL_COUNT", poolCountPassed, `${pool.length}/30 ordered unique POOL records`),
+        check("L2D1_FINAL_COUNT", finalCountPassed, `${finalists.length}/10 ordered FINAL records`),
+        check("L2D1_C5_COMPOSITION", c5Passed, `${finalFamilies.size} distinct familyKeys; maxFamily=${Math.max(0, ...finalFamilies.values())}`),
+        check("L2D1_POOL_BYTES", poolBytesPassed, poolBytes.find((item) => !item.valid)?.detail ?? "30 POOL rule files match registered source bytes"),
+        check("L2D1_FINAL_BYTES", finalBytesPassed, finalBytes.find((item) => !item.valid)?.detail ?? "10 FINAL rule files match registered source bytes"),
+        check("L2D1_V2_FIELD_USAGE", v2UsagePassed, `${allRules.filter((item) => FEATURE_FIELDS.some((field) => (item.fields.sourceBody ?? "").includes(field))).length}/40 registered rules read a V2 field`),
+        check("L2D1_ADMISSION_GATE", admissionPassed, `${admissionResults.filter((item) => item.passed).length}/30 POOL records meet changed >= max(60, 10% of base events)`),
+        check("L2D1_DIGESTS", headerDigestPassed && f4Passed && allF4Agree, `poolDigest=${poolDigest}|finalDigest=${finalDigest}|registrationF4=${registeredF4.length}|loggedF4=${loggedF4.length}`),
+    ];
 }
 
 function checkRegistration(registration: Registration, root: string): V2CampaignAuditCheck[] {
@@ -239,7 +459,9 @@ export function auditTmL2C1(options: V2CampaignAuditOptions = {}): V2CampaignAud
     const log = readCampaignLog(path.join(paths.miningDir, "idea-log.txt"));
     const checks = [
         ...checkFormatAndC6(log.text, registration, path.join(paths.miningDir, "tm-l2-c1", "FEATURE-SET.md")),
+        checkL6Identity(log.text, registration, paths.root),
         ...checkRegistration(registration, paths.root),
+        ...checkL2D1Registration(log.text, paths.root, path.join(paths.miningDir, "tm-l2-c1", "L2D1-REGISTRATION.md")),
         ...checkLogSafety(log.text),
     ];
     return { campaign: CAMPAIGN, checks, passed: checks.every((item) => item.passed) };

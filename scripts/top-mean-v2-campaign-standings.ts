@@ -60,6 +60,11 @@ function parseCiLower(record: CampaignPipeRecord): number | null {
         ?? finiteMetric(record.fields.D?.match(/\bci=\[([+-]?\d+(?:\.\d+)?)pp,/)?.[1]);
 }
 
+function hasAtLeastEightPositiveBlocks(value: string | undefined): boolean {
+    const match = value?.match(/^(\d+)\/10$/);
+    return match !== undefined && match !== null && Number(match[1]) >= 8;
+}
+
 function isQualifiedLead(record: CampaignPipeRecord): boolean {
     const value = primary(record);
     const lower = parseCiLower(record);
@@ -68,7 +73,7 @@ function isQualifiedLead(record: CampaignPipeRecord): boolean {
     const exDom = finiteMetric(record.fields.exDom ?? record.fields.exDominant);
     return value !== null && value >= 1
         && lower !== null && lower >= 0.15
-        && (blocks === "8/10" || blocks === "10/10")
+        && hasAtLeastEightPositiveBlocks(blocks)
         && keep !== null && keep >= 20
         && exDom !== null && exDom >= 0.30
         && (record.fields.fullC2 ?? "") === "yes";
@@ -182,7 +187,7 @@ function assertMonotonicity(
 function nextBatchFromSequence(labels: readonly string[], closed: boolean): string {
     if (closed) return "CLOSED";
     const last = labels[labels.length - 1];
-    if (!last) return "L2D";
+    if (!last) return "L2D1";
     const match = last.match(/^L2([DV])(\d+)$/);
     return match ? `L2${match[1]}${Number(match[2]) + 1}` : last;
 }
@@ -194,6 +199,8 @@ export function buildV2CampaignStandings(options: V2CampaignStandingsOptions): V
     const log = readCampaignLog(logPath);
     const outcomes = parseRecords(log.text, "I2").filter((record) => successorBatch(record, campaign) !== null);
     const screens = parseRecords(log.text, "S3").filter((record) => successorBatch(record, campaign) !== null);
+    const spentValidationViews = parseRecords(log.text, "V2")
+        .filter((record) => belongsToCampaign(record, campaign) && record.fields.spent === "1");
     const outcomeBatchLabels: string[] = [];
     for (const outcome of outcomes) {
         const batch = successorBatch(outcome, campaign);
@@ -227,7 +234,7 @@ export function buildV2CampaignStandings(options: V2CampaignStandingsOptions): V
         outcomeBatches: outcomeBatchLabels.length,
         discoverySurface: counters.discoverySurface,
         lifetimeEvaluations: counters.lifetimeEvaluations,
-        validationViews: screens.filter((record) => record.fields.window === "validation" || record.fields.view === "L2V").length,
+        validationViews: spentValidationViews.length,
         familyStandings: options.family === undefined
             ? familyStandings
             : familyStandings.filter((standing) => standing.familyKey === options.family || standing.familyKey === options.family!.split(":").pop()),
@@ -241,7 +248,7 @@ export const buildCampaignStandings = buildV2CampaignStandings;
 export function renderV2CampaignStandings(standing: V2CampaignStandings): string {
     const lines = [
         `TOP_MEAN_V2_STANDINGS|schema=${TOP_MEAN_V2_STANDINGS_SCHEMA}|campaign=${standing.campaign}|contract=${TOP_MEAN_V2_STANDINGS_CONTRACT}|hashConvention=${CAMPAIGN_LOG_HASH_CONVENTION}|logSha256=${standing.logSha256}`,
-        `STATE|nextBatch=${standing.nextBatch}|nextOutcomeOrdinal=${standing.nextOutcomeOrdinal}|outcomeBatches=${standing.outcomeBatches}|NDsurface=${standing.discoverySurface}|NG=${standing.lifetimeEvaluations}|validationViews=${standing.validationViews}`,
+        `STATE|nextBatch=${standing.nextBatch}|nextOutcomeOrdinal=${standing.nextOutcomeOrdinal}|outcomeBatches=${standing.outcomeBatches}|NDsurface=${standing.discoverySurface}|NG=${standing.lifetimeEvaluations}|L1V=${standing.validationViews}/6`,
         `BOUNDS|outcomeBatches=3|outcomeShas=30|validationViews=6`,
     ];
     for (const family of standing.familyStandings) lines.push(`FAMILY|key=${family.familyKey}|observations=${family.observations}|bestPrimary=${family.bestPrimary === null ? "n/a" : family.bestPrimary.toFixed(2)}pp|state=${family.state}`);

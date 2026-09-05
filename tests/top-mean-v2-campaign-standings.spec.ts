@@ -32,6 +32,10 @@ function outcome(batch: string, ordinal: number, campaign = "TM-L2-C1", family =
     return `I2|${batch}|campaign=${campaign}|ordinal=${ordinal}|family=${family}|primary=0.10pp`;
 }
 
+function qualifiedOutcome(blocks: number): string {
+    return `I2|L2D1|campaign=TM-L2-C1|ordinal=1|family=family:lead|primary=1.00pp|ciLower=0.15pp|positiveBlocks=${blocks}/10|keep=20%|exDom=0.30pp|fullC2=yes`;
+}
+
 describe("TM-L2-C1 standings state machine", () => {
     it("uses CRLF-stripped hashes and preserves the historical FORMAT6 correction", () => {
         assert.equal(campaignLogSha256("before\r\nFORMAT6\n"), campaignLogSha256("before\nFORMAT6\n"));
@@ -72,6 +76,8 @@ describe("TM-L2-C1 standings state machine", () => {
             outcome("L2D1", 1),
             "S3|L2V1|campaign=TM-OTHER|window=validation|family=foreign:family",
             "S3|L2V1|campaign=TM-L2-C1|window=validation|family=successor:family",
+            "V2|L2V1|campaign=TM-L2-C1|spent=0|family=successor:family",
+            "V2|L2V1|campaign=TM-L2-C1|spent=1|family=successor:family",
         ]);
         try {
             const standing = buildV2CampaignStandings({ miningDir: value.miningDir, tail: 0 });
@@ -79,6 +85,35 @@ describe("TM-L2-C1 standings state machine", () => {
             assert.equal(standing.nextBatch, "L2D2");
             assert.equal(standing.nextOutcomeOrdinal, 2);
             assert.equal(standing.validationViews, 1);
+        } finally {
+            removeFixture(value);
+        }
+    });
+
+    it("treats every positive-block result from 8/10 through 10/10 as a lead", () => {
+        for (const blocks of [8, 9, 10]) {
+            const value = fixture([
+                "C6|campaign=TM-L2-C1|NGStart=57|NDsurfaceStart=0",
+                qualifiedOutcome(blocks),
+            ]);
+            try {
+                assert.equal(buildV2CampaignStandings({ miningDir: value.miningDir, tail: 0 }).familyStandings[0]?.state, "LEAD", `${blocks}/10`);
+            } finally {
+                removeFixture(value);
+            }
+        }
+    });
+
+    it("counts only spent V2 validation records and ignores validation-view S3 records", () => {
+        const value = fixture([
+            "C6|campaign=TM-L2-C1|NGStart=57|NDsurfaceStart=0",
+            "S3|L2V1|campaign=TM-L2-C1|window=validation|family=successor:family",
+            "V2|L2V1|campaign=TM-L2-C1|spent=0|family=successor:family",
+            "V2|L2V1|campaign=TM-L2-C1|spent=1|family=successor:family",
+            "V2|L2V2|campaign=TM-L2-C1|spent=1|family=successor:family",
+        ]);
+        try {
+            assert.equal(buildV2CampaignStandings({ miningDir: value.miningDir, tail: 0 }).validationViews, 2);
         } finally {
             removeFixture(value);
         }
