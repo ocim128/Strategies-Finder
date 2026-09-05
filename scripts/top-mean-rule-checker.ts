@@ -41,17 +41,6 @@ import {
     type TopMeanCandidateFeatureRow,
     type TopMeanCausalFeatureField,
 } from "../lib/batch-backtest/sp500-top-mean-causal-features";
-import {
-    TOP_MEAN_PRICE_FEATURE_FIELDS,
-    TOP_MEAN_PRICE_FEATURES_SCHEMA,
-    TOP_MEAN_PRICE_FEATURE_CONTRACT_VERSION,
-    TOP_MEAN_PRICE_FEATURE_FORMULA_VERSION,
-    TOP_MEAN_PRICE_FEATURE_AVAILABILITY_POLICY,
-    TOP_MEAN_PRICE_SESSION_SCHEDULE_VERSION,
-    type TopMeanPriceFeatureField,
-    type TopMeanPriceFeatureRow,
-} from "./lib/top-mean-price-features";
-import type { TopMeanPriceManifest } from "./build-top-mean-price-features";
 
 export const TOP_MEAN_RULE_HORIZON = 24;
 export const TOP_MEAN_RULE_INTERVAL = "4h";
@@ -78,7 +67,6 @@ const TOP_MEAN_RULE_CANDIDATE_FIELDS = [
 ] as const;
 
 export const TOP_MEAN_RULE_V2_FIELDS = TOP_MEAN_CAUSAL_FEATURE_FIELDS;
-export const TOP_MEAN_RULE_PRICE_FIELDS = TOP_MEAN_PRICE_FEATURE_FIELDS;
 
 const TOP_MEAN_RULE_EVENT_FIELDS = [
     "decisionTimeSec",
@@ -94,9 +82,7 @@ const OUTCOME_STATUSES = ["ok", "missing_target", "missing_entry", "right_censor
 type CandidateField = typeof TOP_MEAN_RULE_CANDIDATE_FIELDS[number];
 type Regime = PoolSnapshotRecord["regime"];
 
-export type TopMeanRuleCandidate = Readonly<Pick<PoolSnapshotRecord, CandidateField>
-    & Partial<Record<TopMeanCausalFeatureField, number | null>>
-    & Partial<Record<TopMeanPriceFeatureField, number | null>>>;
+export type TopMeanRuleCandidate = Readonly<Pick<PoolSnapshotRecord, CandidateField> & Partial<Record<TopMeanCausalFeatureField, number | null>>>;
 export type TopMeanRuleEvent = Readonly<{
     decisionTimeSec: number;
     breadth: number | null;
@@ -142,7 +128,6 @@ export interface TopMeanBaseCandidate {
     row: PoolSnapshotRecord;
     score: number;
     features: TopMeanCandidateFeatureRow | null;
-    priceFeatures: TopMeanPriceFeatureRow | null;
 }
 
 export interface TopMeanNormalizedEvent {
@@ -162,9 +147,6 @@ export interface TopMeanNormalizedArchive {
     outcomeByKey: ReadonlyMap<string, CandidateOutcomeRecord>;
     eventRows: readonly PoolRuleEventRow[];
     featuresByKey?: ReadonlyMap<string, TopMeanCandidateFeatureRow>;
-    priceFeaturesByKey?: ReadonlyMap<string, TopMeanPriceFeatureRow>;
-    priceManifest?: TopMeanPriceManifest;
-    admittedPriceFields?: readonly TopMeanPriceFeatureField[];
 }
 
 export interface TopMeanCausalArchive {
@@ -173,9 +155,6 @@ export interface TopMeanCausalArchive {
     catalogAssets: readonly string[];
     events: readonly TopMeanNormalizedEvent[];
     featuresByKey?: ReadonlyMap<string, TopMeanCandidateFeatureRow>;
-    priceFeaturesByKey?: ReadonlyMap<string, TopMeanPriceFeatureRow>;
-    priceManifest?: TopMeanPriceManifest;
-    admittedPriceFields?: readonly TopMeanPriceFeatureField[];
 }
 
 interface TopMeanRuleMeta extends TopMeanRuleArchiveMeta {
@@ -259,9 +238,6 @@ export interface TopMeanRuleEvaluation {
     nullNeutralViolations: number;
     changedFullyObservedEvents: number;
     changedPartiallyObservedEvents: number;
-    accessedPriceFields: readonly TopMeanPriceFeatureField[];
-    priceFieldsFullyObservedEvents: number;
-    priceFieldsPartiallyObservedEvents: number;
 }
 
 export interface PercentileSummary {
@@ -309,9 +285,6 @@ export interface TopMeanCausalScreenEvaluation {
     nullNeutralViolations: number;
     changedFullyObservedEvents: number;
     changedPartiallyObservedEvents: number;
-    accessedPriceFields: readonly TopMeanPriceFeatureField[];
-    priceFieldsFullyObservedEvents: number;
-    priceFieldsPartiallyObservedEvents: number;
 }
 
 export interface TopMeanCausalStats {
@@ -353,19 +326,16 @@ export interface TopMeanFeatureStats {
     baseCandidateEventCount: number;
     baseCandidateCount: number;
     fields: Readonly<Record<TopMeanCausalFeatureField, TopMeanFeatureFieldStats>>;
-    priceFields?: Readonly<Record<TopMeanPriceFeatureField, TopMeanFeatureFieldStats>>;
     availabilityByEvent: readonly TopMeanFeatureAvailabilityByEvent[];
     warmupCompletionByOrdinal: readonly TopMeanFeatureAvailabilityByEvent[];
     priorTopMeanReturnMean3Availability: Readonly<{ zero: number; one: number; twoPlus: number }>;
     crossFeatureCorrelations: Readonly<Record<string, number | null>>;
-    priceCrossFeatureCorrelations?: Readonly<Record<string, number | null>>;
 }
 
 interface RuleAccessTracker {
     accessed: Set<TopMeanCausalFeatureField>;
-    accessedPrice: Set<TopMeanPriceFeatureField>;
     nullReads: number;
-    nullReadsByField: Map<string, number>;
+    nullReadsByField: Map<TopMeanCausalFeatureField, number>;
     nullNeutralViolations: number;
 }
 
@@ -374,16 +344,15 @@ export interface TopMeanRuleAccessSummary {
     nullReads: number;
     nullReadsByField: Readonly<Record<string, number>>;
     nullNeutralViolations: number;
-    accessedPriceFields: readonly TopMeanPriceFeatureField[];
 }
 
 function createRuleAccessTracker(): RuleAccessTracker {
-    return { accessed: new Set(), accessedPrice: new Set(), nullReads: 0, nullReadsByField: new Map(), nullNeutralViolations: 0 };
+    return { accessed: new Set(), nullReads: 0, nullReadsByField: new Map(), nullNeutralViolations: 0 };
 }
 
 function accessSummary(tracker: RuleAccessTracker): TopMeanRuleAccessSummary {
     const nullReadsByField: Record<string, number> = {};
-    for (const field of [...TOP_MEAN_CAUSAL_FEATURE_FIELDS, ...TOP_MEAN_PRICE_FEATURE_FIELDS]) {
+    for (const field of TOP_MEAN_CAUSAL_FEATURE_FIELDS) {
         const count = tracker.nullReadsByField.get(field) ?? 0;
         if (count > 0) nullReadsByField[field] = count;
     }
@@ -392,7 +361,6 @@ function accessSummary(tracker: RuleAccessTracker): TopMeanRuleAccessSummary {
         nullReads: tracker.nullReads,
         nullReadsByField,
         nullNeutralViolations: tracker.nullNeutralViolations,
-        accessedPriceFields: [...tracker.accessedPrice].sort(codeUnitCompare),
     };
 }
 
@@ -613,7 +581,6 @@ function compareBaseCandidates(left: TopMeanBaseCandidate, right: TopMeanBaseCan
 function buildNormalizedEvents(
     byEvent: ReadonlyMap<string, ReadonlyMap<string, PoolSnapshotRecord>>,
     featuresByKey: ReadonlyMap<string, TopMeanCandidateFeatureRow> = new Map(),
-    priceFeaturesByKey: ReadonlyMap<string, TopMeanPriceFeatureRow> = new Map(),
 ): TopMeanNormalizedEvent[] {
     const events: TopMeanNormalizedEvent[] = [];
     for (const [eventId, snapshotMap] of byEvent) {
@@ -624,12 +591,7 @@ function buildNormalizedEvents(
             .map((row): TopMeanBaseCandidate | null => {
                 const score = row.activePairCount > 0 ? row.signedVotes / row.activePairCount : null;
                 return finite(score) && score > 0 && row.longEligible === true
-                    ? {
-                        row,
-                        score,
-                        features: featuresByKey.get(featureKey(row.eventId, row.asset)) ?? null,
-                        priceFeatures: priceFeaturesByKey.get(featureKey(row.eventId, row.asset)) ?? null,
-                    }
+                    ? { row, score, features: featuresByKey.get(featureKey(row.eventId, row.asset)) ?? null }
                     : null;
             })
             .filter((candidate): candidate is TopMeanBaseCandidate => candidate !== null)
@@ -658,9 +620,6 @@ export function normalizeTopMeanArchive(args: {
     reportText: string;
     runId?: string;
     features?: readonly TopMeanCandidateFeatureRow[];
-    priceFeatures?: readonly TopMeanPriceFeatureRow[];
-    priceManifest?: TopMeanPriceManifest;
-    admittedPriceFields?: readonly TopMeanPriceFeatureField[];
 }): TopMeanNormalizedArchive {
     const meta = metaRecord(args.archive.meta);
     const runId = args.runId ?? meta.runId;
@@ -674,22 +633,16 @@ export function normalizeTopMeanArchive(args: {
     const featuresByKey = args.features === undefined
         ? new Map<string, TopMeanCandidateFeatureRow>()
         : validateFeatureRows(args.features, args.archive.snapshots);
-    const priceFeaturesByKey = args.priceFeatures === undefined
-        ? new Map<string, TopMeanPriceFeatureRow>()
-        : validatePriceFeatureRows(args.priceFeatures, args.archive.snapshots);
     requireCheck(meta.schema === "top_mean_archive.v2" ? featuresByKey.size === 0 : args.features !== undefined, "feature-set.normalize", "v3 archives receive joined feature rows", meta.schema);
     return {
         runId,
         meta,
         reportText: args.reportText,
         catalogAssets,
-        events: buildNormalizedEvents(byEvent, featuresByKey, priceFeaturesByKey),
+        events: buildNormalizedEvents(byEvent, featuresByKey),
         outcomeByKey,
         eventRows: args.archive.eventRows,
         featuresByKey,
-        ...(args.priceFeatures !== undefined ? { priceFeaturesByKey } : {}),
-        ...(args.priceManifest ? { priceManifest: args.priceManifest } : {}),
-        ...(args.admittedPriceFields ? { admittedPriceFields: args.admittedPriceFields } : {}),
     };
 }
 
@@ -785,163 +738,6 @@ function validateFeatureRows(
     return map;
 }
 
-const PRICE_ROW_FIELDS = ["eventId", "decisionTimeSec", "asset", ...TOP_MEAN_PRICE_FEATURE_FIELDS] as const;
-
-function validatePriceFeatureRows(
-    rows: readonly TopMeanPriceFeatureRow[],
-    snapshots: readonly PoolSnapshotRecord[],
-): Map<string, TopMeanPriceFeatureRow> {
-    const snapshotKeys = new Set(snapshots.map((row) => featureKey(row.eventId, row.asset)));
-    const snapshotsByKey = new Map(snapshots.map((row) => [featureKey(row.eventId, row.asset), row] as const));
-    const map = new Map<string, TopMeanPriceFeatureRow>();
-    let previousOrder: TopMeanPriceFeatureRow | undefined;
-    for (const row of rows) {
-        requireCheck(isRecord(row), "price-feature.row", "object", typeof row);
-        requireCheck(JSON.stringify(Object.keys(row).sort(codeUnitCompare)) === JSON.stringify([...PRICE_ROW_FIELDS].sort(codeUnitCompare)), "price-feature.fields", JSON.stringify(PRICE_ROW_FIELDS), JSON.stringify(Object.keys(row).sort(codeUnitCompare)));
-        requireCheck(typeof row.eventId === "string" && row.eventId.length > 0, "price-feature.identity", "non-empty eventId", String(row.eventId));
-        requireCheck(integer(row.decisionTimeSec), "price-feature.decisionTimeSec", "integer Unix seconds", String(row.decisionTimeSec));
-        requireCheck(typeof row.asset === "string", "price-feature.asset", "string", String(row.asset));
-        const key = featureKey(row.eventId, row.asset);
-        requireCheck(snapshotKeys.has(key), "price-feature.snapshot_identity", "matching snapshot identity", key);
-        requireCheck(!map.has(key), "price-feature.unique_identity", "one row per eventId|asset", key);
-        const snapshot = snapshotsByKey.get(key)!;
-        requireCheck(snapshot.decisionTimeSec === row.decisionTimeSec, "price-feature.event_context", "matching snapshot decision time", key);
-        for (const field of TOP_MEAN_PRICE_FEATURE_FIELDS) {
-            const value = row[field];
-            requireCheck(value === null || finite(value), `price-feature.${field}`, "finite number or null", String(value), [key]);
-        }
-        if (previousOrder) {
-            const ordered = previousOrder.decisionTimeSec < row.decisionTimeSec
-                || (previousOrder.decisionTimeSec === row.decisionTimeSec && (codeUnitCompare(previousOrder.eventId, row.eventId) < 0
-                    || (previousOrder.eventId === row.eventId && codeUnitCompare(previousOrder.asset, row.asset) <= 0)));
-            requireCheck(ordered, "price-feature.order", "decisionTimeSec,eventId,asset ascending", `${previousOrder.eventId}/${previousOrder.asset} before ${row.eventId}/${row.asset}`);
-        }
-        map.set(key, row);
-        previousOrder = row;
-    }
-    const missing = [...snapshotKeys].filter((key) => !map.has(key));
-    requireCheck(rows.length === snapshots.length && missing.length === 0, "price-feature.row_count_identity", `${snapshots.length} one-to-one rows`, `${rows.length} rows`, missing.slice(0, 10));
-    return map;
-}
-
-function safePriceFeatureRead(filename: string): TopMeanPriceFeatureRow[] {
-    let text: string;
-    try {
-        text = readFileSync(filename, "utf8");
-    } catch {
-        throw new CheckerFailure("price-feature.file", "readable candidate-price-features.jsonl", path.basename(filename), [], "ARCHIVE FAIL");
-    }
-    return text
-        .split(/\r?\n/)
-        .filter((line) => line.trim().length > 0)
-        .map((line, index) => {
-            try {
-                return JSON.parse(line) as TopMeanPriceFeatureRow;
-            } catch {
-                throw new CheckerFailure("price-feature.jsonl", "valid JSONL rows", `${path.basename(filename)}:${index + 1}`, [], "ARCHIVE FAIL");
-            }
-        });
-}
-
-function safePriceAuditRead(filename: string): unknown[] {
-    let text: string;
-    try {
-        text = readFileSync(filename, "utf8");
-    } catch {
-        throw new CheckerFailure("price-feature.audit", "readable price-feature-audit.jsonl", path.basename(filename), [], "ARCHIVE FAIL");
-    }
-    return text.split(/\r?\n/).filter((line) => line.trim().length > 0).map((line, index) => {
-        try {
-            return JSON.parse(line) as unknown;
-        } catch {
-            throw new CheckerFailure("price-feature.audit.jsonl", "valid JSONL rows", `${path.basename(filename)}:${index + 1}`, [], "ARCHIVE FAIL");
-        }
-    });
-}
-
-function canonicalManifestWithoutIdentity(manifest: TopMeanPriceManifest): string {
-    const copy = { ...manifest } as Record<string, unknown>;
-    delete copy.enrichmentId;
-    return JSON.stringify(copy);
-}
-
-function validatePriceManifest(value: unknown, location: TopMeanArchiveLocation, enrichmentDir: string, meta: TopMeanRuleMeta, snapshots: readonly PoolSnapshotRecord[]): TopMeanPriceManifest {
-    requireCheck(isRecord(value), "price-manifest.object", "object", typeof value, [], "ARCHIVE FAIL");
-    const manifest = value as unknown as TopMeanPriceManifest;
-    requireCheck(manifest.schema === TOP_MEAN_PRICE_FEATURES_SCHEMA, "price-manifest.schema", TOP_MEAN_PRICE_FEATURES_SCHEMA, String(manifest.schema));
-    requireCheck(manifest.contractVersion === TOP_MEAN_PRICE_FEATURE_CONTRACT_VERSION, "price-manifest.contract", TOP_MEAN_PRICE_FEATURE_CONTRACT_VERSION, String(manifest.contractVersion));
-    requireCheck(manifest.formulaVersion === TOP_MEAN_PRICE_FEATURE_FORMULA_VERSION, "price-manifest.formula", TOP_MEAN_PRICE_FEATURE_FORMULA_VERSION, String(manifest.formulaVersion));
-    requireCheck(manifest.availabilityPolicy === TOP_MEAN_PRICE_FEATURE_AVAILABILITY_POLICY, "price-manifest.availability", TOP_MEAN_PRICE_FEATURE_AVAILABILITY_POLICY, String(manifest.availabilityPolicy));
-    requireCheck(manifest.sessionScheduleVersion === TOP_MEAN_PRICE_SESSION_SCHEDULE_VERSION, "price-manifest.schedule", TOP_MEAN_PRICE_SESSION_SCHEDULE_VERSION, String(manifest.sessionScheduleVersion));
-    requireCheck(JSON.stringify(manifest.fields) === JSON.stringify(TOP_MEAN_PRICE_FEATURE_FIELDS), "price-manifest.fields", JSON.stringify(TOP_MEAN_PRICE_FEATURE_FIELDS), JSON.stringify(manifest.fields));
-    requireCheck(typeof manifest.enrichmentId === "string" && /^[0-9a-f]{64}$/i.test(manifest.enrichmentId), "price-manifest.enrichmentId", "SHA-256", String(manifest.enrichmentId));
-    const computedIdentity = createHash("sha256").update(canonicalManifestWithoutIdentity(manifest), "utf8").digest("hex");
-    requireCheck(manifest.enrichmentId === computedIdentity, "price-manifest.identity", String(manifest.enrichmentId), computedIdentity);
-    requireCheck(manifest.parentRunId === location.runId, "price-manifest.parentRunId", location.runId, String(manifest.parentRunId));
-    requireCheck(manifest.parentMetaSha256 === sha256File(path.join(location.runDir, "meta.json")), "price-manifest.parentMeta", String(manifest.parentMetaSha256), sha256File(path.join(location.runDir, "meta.json")));
-    requireCheck(manifest.parentPoolSnapshotsSha256 === sha256File(path.join(location.runDir, "pool-snapshots.jsonl")), "price-manifest.parentPoolSnapshots", String(manifest.parentPoolSnapshotsSha256), sha256File(path.join(location.runDir, "pool-snapshots.jsonl")));
-    const expectedTemporal = isRecord(meta.featureSet) && typeof meta.featureSet.sha256 === "string" ? meta.featureSet.sha256 : null;
-    requireCheck(manifest.parentTemporalFeatureSha256 === expectedTemporal, "price-manifest.parentTemporalFeature", String(expectedTemporal), String(manifest.parentTemporalFeatureSha256));
-    const expectedPostAssembly = typeof meta.postAssemblyFingerprint === "string" ? meta.postAssemblyFingerprint : null;
-    requireCheck(manifest.parentPostAssemblyFingerprint === expectedPostAssembly, "price-manifest.parentPostAssembly", String(expectedPostAssembly), String(manifest.parentPostAssemblyFingerprint));
-    const assets = archiveCatalog(meta);
-    requireCheck(isRecord(manifest.catalog), "price-manifest.catalog", "catalog object", typeof manifest.catalog);
-    requireCheck(JSON.stringify(manifest.catalog.assets) === JSON.stringify(assets), "price-manifest.catalog.assets", JSON.stringify(assets), JSON.stringify(manifest.catalog.assets));
-    requireCheck(manifest.catalog.sha256 === createHash("sha256").update(JSON.stringify(assets), "utf8").digest("hex"), "price-manifest.catalog.sha256", "catalog SHA-256", String(manifest.catalog.sha256));
-    requireCheck(isRecord(manifest.sourceCsvSha256), "price-manifest.sourceCsvSha256", "source hash map", typeof manifest.sourceCsvSha256);
-    const sourceNames = Object.keys(manifest.sourceCsvSha256).sort(codeUnitCompare);
-    requireCheck(JSON.stringify(sourceNames) === JSON.stringify(assets), "price-manifest.sourceCsvSha256.keys", JSON.stringify(assets), JSON.stringify(sourceNames));
-    for (const asset of assets) requireCheck(typeof manifest.sourceCsvSha256[asset] === "string" && /^[0-9a-f]{64}$/i.test(manifest.sourceCsvSha256[asset]!), `price-manifest.sourceCsvSha256.${asset}`, "SHA-256", String(manifest.sourceCsvSha256[asset]));
-    for (const [name, label] of [["sessionScheduleSha256", "sessionScheduleSha256"], ["builderSourceSha256", "builderSourceSha256"]] as const) requireCheck(typeof manifest[name] === "string" && /^[0-9a-f]{64}$/i.test(manifest[name]), `price-manifest.${label}`, "SHA-256", String(manifest[name]));
-    requireCheck(integer(manifest.rowCount) && manifest.rowCount === snapshots.length, "price-manifest.rowCount", String(snapshots.length), String(manifest.rowCount));
-    requireCheck(manifest.sidecarFile === "candidate-price-features.jsonl", "price-manifest.sidecarFile", "candidate-price-features.jsonl", String(manifest.sidecarFile));
-    requireCheck(manifest.auditFile === "price-feature-audit.jsonl", "price-manifest.auditFile", "price-feature-audit.jsonl", String(manifest.auditFile));
-    requireCheck(typeof manifest.sidecarSha256 === "string" && /^[0-9a-f]{64}$/i.test(manifest.sidecarSha256), "price-manifest.sidecarSha256", "SHA-256", String(manifest.sidecarSha256));
-    requireCheck(typeof manifest.auditSha256 === "string" && /^[0-9a-f]{64}$/i.test(manifest.auditSha256), "price-manifest.auditSha256", "SHA-256", String(manifest.auditSha256));
-    const sidecarPath = path.join(enrichmentDir, manifest.sidecarFile);
-    const auditPath = path.join(enrichmentDir, manifest.auditFile);
-    requireCheck(existsSync(sidecarPath), "price-manifest.sidecarFile.exists", "sidecar file exists", manifest.sidecarFile, [], "ARCHIVE FAIL");
-    requireCheck(existsSync(auditPath), "price-manifest.auditFile.exists", "audit file exists", manifest.auditFile, [], "ARCHIVE FAIL");
-    requireCheck(sha256File(sidecarPath) === manifest.sidecarSha256, "price-manifest.sidecarSha256.actual", manifest.sidecarSha256, sha256File(sidecarPath));
-    requireCheck(sha256File(auditPath) === manifest.auditSha256, "price-manifest.auditSha256.actual", manifest.auditSha256, sha256File(auditPath));
-    return manifest;
-}
-
-function loadPriceFeaturesForArchive(
-    location: TopMeanArchiveLocation,
-    enrichmentDir: string,
-    meta: TopMeanRuleMeta,
-    snapshots: readonly PoolSnapshotRecord[],
-): { rows: Map<string, TopMeanPriceFeatureRow>; manifest: TopMeanPriceManifest } {
-    const resolved = path.resolve(enrichmentDir);
-    requireCheck(resolved !== location.runDir && !resolved.startsWith(`${location.runDir}${path.sep}`), "price-feature.layout", "enrichment outside parent ledger", resolved, [], "ARCHIVE FAIL");
-    const manifestPath = path.join(resolved, "price-feature-manifest.json");
-    const manifest = validatePriceManifest(safeJsonRead(manifestPath), location, resolved, meta, snapshots);
-    const rows = validatePriceFeatureRows(safePriceFeatureRead(path.join(resolved, manifest.sidecarFile)), snapshots);
-    const audit = safePriceAuditRead(path.join(resolved, manifest.auditFile));
-    requireCheck(audit.length === rows.size, "price-feature.audit.row_count", String(rows.size), String(audit.length));
-    const auditKeys = new Set<string>();
-    for (const row of audit) {
-        requireCheck(isRecord(row), "price-feature.audit.row", "object", typeof row);
-        requireCheck(typeof row.eventId === "string" && typeof row.asset === "string" && integer(row.decisionTimeSec), "price-feature.audit.identity", "eventId, asset, integer decisionTimeSec", JSON.stringify(row));
-        const key = featureKey(row.eventId, row.asset);
-        requireCheck(!auditKeys.has(key), "price-feature.audit.unique_identity", "one row per eventId|asset", key);
-        auditKeys.add(key);
-        const feature = rows.get(key);
-        requireCheck(feature !== undefined && feature.decisionTimeSec === row.decisionTimeSec, "price-feature.audit.event_context", "matching sidecar row", key);
-        requireCheck(isRecord(row.availability) && isRecord(row.maxSourceBarEndSec), "price-feature.audit.shape", "availability and maxSourceBarEndSec objects", key);
-        requireCheck(JSON.stringify(Object.keys(row.availability).sort(codeUnitCompare)) === JSON.stringify([...TOP_MEAN_PRICE_FEATURE_FIELDS].sort(codeUnitCompare)), "price-feature.audit.availability.fields", JSON.stringify(TOP_MEAN_PRICE_FEATURE_FIELDS), JSON.stringify(Object.keys(row.availability).sort(codeUnitCompare)), [key]);
-        requireCheck(JSON.stringify(Object.keys(row.maxSourceBarEndSec).sort(codeUnitCompare)) === JSON.stringify([...TOP_MEAN_PRICE_FEATURE_FIELDS].sort(codeUnitCompare)), "price-feature.audit.maxSourceBarEndSec.fields", JSON.stringify(TOP_MEAN_PRICE_FEATURE_FIELDS), JSON.stringify(Object.keys(row.maxSourceBarEndSec).sort(codeUnitCompare)), [key]);
-        for (const field of TOP_MEAN_PRICE_FEATURE_FIELDS) {
-            requireCheck(typeof row.availability[field] === "string", `price-feature.audit.${field}.reason`, "string reason", String(row.availability[field]), [key]);
-            const max = row.maxSourceBarEndSec[field];
-            requireCheck(max === null || integer(max), `price-feature.audit.${field}.maxSourceBarEndSec`, "integer or null", String(max), [key]);
-        }
-    }
-    requireCheck(auditKeys.size === rows.size, "price-feature.audit.coverage", String(rows.size), String(auditKeys.size));
-    return { rows, manifest };
-}
-
 function loadFeatureRowsForArchive(
     location: TopMeanArchiveLocation,
     meta: TopMeanRuleMeta,
@@ -1031,7 +827,7 @@ export function resolveTopMeanArchiveLocation(ledgerDir: string): TopMeanArchive
     return { root, runId, runDir };
 }
 
-export function loadNormalizedTopMeanArchiveFromDirectory(ledgerDir: string, options: TopMeanCausalArchiveLoadOptions = {}): TopMeanNormalizedArchive {
+export function loadNormalizedTopMeanArchiveFromDirectory(ledgerDir: string): TopMeanNormalizedArchive {
     const location = resolveTopMeanArchiveLocation(ledgerDir);
     if (!existsSync(location.runDir)) throw new CheckerFailure("archive.directory", "existing archive directory", location.runId, [], "ARCHIVE FAIL");
     let archive: PoolRuleArchive;
@@ -1042,10 +838,6 @@ export function loadNormalizedTopMeanArchiveFromDirectory(ledgerDir: string, opt
     }
     const reportText = safeArchiveRead(path.join(location.runDir, "report.txt"));
     const featuresByKey = loadFeatureRowsForArchive(location, metaRecord(archive.meta), archive.snapshots);
-    const metaValue = metaRecord(archive.meta);
-    const price = options.priceFeaturesDir === undefined
-        ? null
-        : loadPriceFeaturesForArchive(location, options.priceFeaturesDir, metaValue, archive.snapshots);
     return normalizeTopMeanArchive({
         archive,
         reportText,
@@ -1053,52 +845,10 @@ export function loadNormalizedTopMeanArchiveFromDirectory(ledgerDir: string, opt
         ...(featuresByKey.size > 0 || metaRecord(archive.meta).schema === "top_mean_archive.v3"
             ? { features: [...featuresByKey.values()] }
             : {}),
-        ...(price ? { priceFeatures: [...price.rows.values()], priceManifest: price.manifest } : {}),
-        ...(options.admittedPriceFields ? { admittedPriceFields: options.admittedPriceFields } : {}),
     });
 }
 
-export interface TopMeanCausalArchiveLoadOptions {
-    priceFeaturesDir?: string;
-    admittedPriceFields?: readonly TopMeanPriceFeatureField[];
-}
-
-interface TopMeanPriceCalibrationHeader {
-    schema?: unknown;
-    parentRunId?: unknown;
-    enrichmentId?: unknown;
-    admittedFields?: unknown;
-    artifactSha256?: unknown;
-}
-
-function loadAdmittedPriceFields(filename: string, archive: TopMeanCausalArchive | TopMeanNormalizedArchive): TopMeanPriceFeatureField[] {
-    let value: unknown;
-    try {
-        value = JSON.parse(readFileSync(path.resolve(filename), "utf8")) as unknown;
-    } catch {
-        throw new CheckerFailure("price-calibration.file", "readable valid JSON calibration artifact", path.basename(filename), [], "RULE FAIL");
-    }
-    requireCheck(isRecord(value), "price-calibration.object", "object", typeof value, [], "RULE FAIL");
-    const artifact = value as TopMeanPriceCalibrationHeader;
-    requireCheck(artifact.schema === "top_mean_price_calibration.v1", "price-calibration.schema", "top_mean_price_calibration.v1", String(artifact.schema), [], "RULE FAIL");
-    requireCheck(artifact.parentRunId === archive.runId, "price-calibration.parentRunId", archive.runId, String(artifact.parentRunId), [], "RULE FAIL");
-    requireCheck(archive.priceManifest !== undefined && artifact.enrichmentId === archive.priceManifest.enrichmentId, "price-calibration.enrichmentId", archive.priceManifest?.enrichmentId ?? "price sidecar", String(artifact.enrichmentId), [], "RULE FAIL");
-    requireCheck(typeof artifact.artifactSha256 === "string" && /^[0-9a-f]{64}$/i.test(artifact.artifactSha256), "price-calibration.artifactSha256", "SHA-256", String(artifact.artifactSha256), [], "RULE FAIL");
-    const copy = { ...artifact } as Record<string, unknown>;
-    delete copy.artifactSha256;
-    const expectedHash = createHash("sha256").update(JSON.stringify(copy), "utf8").digest("hex");
-    requireCheck(artifact.artifactSha256 === expectedHash, "price-calibration.identity", String(artifact.artifactSha256), expectedHash, [], "RULE FAIL");
-    requireCheck(Array.isArray(artifact.admittedFields), "price-calibration.admittedFields", "array", typeof artifact.admittedFields, [], "RULE FAIL");
-    const admitted = artifact.admittedFields.map((field) => {
-        requireCheck(typeof field === "string" && (TOP_MEAN_PRICE_FEATURE_FIELDS as readonly string[]).includes(field), "price-calibration.field", "registered price field", String(field), [], "RULE FAIL");
-        return field as TopMeanPriceFeatureField;
-    });
-    requireCheck(new Set(admitted).size === admitted.length, "price-calibration.admittedFields.unique", "unique fields", JSON.stringify(admitted), [], "RULE FAIL");
-    requireCheck(admitted.every((field) => archive.priceManifest?.fields.includes(field)), "price-calibration.admittedFields.sidecar", "sidecar fields", JSON.stringify(admitted), [], "RULE FAIL");
-    return admitted;
-}
-
-export function loadCausalTopMeanArchiveFromDirectory(ledgerDir: string, options: TopMeanCausalArchiveLoadOptions = {}): TopMeanCausalArchive {
+export function loadCausalTopMeanArchiveFromDirectory(ledgerDir: string): TopMeanCausalArchive {
     const location = resolveTopMeanArchiveLocation(ledgerDir);
     if (!existsSync(location.runDir)) throw new CheckerFailure("archive.directory", "existing archive directory", location.runId, [], "ARCHIVE FAIL");
     const meta = metaRecord(safeJsonRead(path.join(location.runDir, "meta.json")));
@@ -1108,17 +858,12 @@ export function loadCausalTopMeanArchiveFromDirectory(ledgerDir: string, options
     const snapshots = safeSnapshotRead(path.join(location.runDir, "pool-snapshots.jsonl"));
     const byEvent = validateSnapshotRows(snapshots, catalogAssets);
     const featuresByKey = loadFeatureRowsForArchive(location, meta, snapshots, { verifyOutcomeSource: false });
-    const price = options.priceFeaturesDir === undefined
-        ? null
-        : loadPriceFeaturesForArchive(location, options.priceFeaturesDir, meta, snapshots);
     return {
         runId: location.runId,
         meta,
         catalogAssets,
-        events: buildNormalizedEvents(byEvent, featuresByKey, price?.rows),
+        events: buildNormalizedEvents(byEvent, featuresByKey),
         featuresByKey,
-        ...(price ? { priceFeaturesByKey: price.rows, priceManifest: price.manifest } : {}),
-        ...(options.admittedPriceFields ? { admittedPriceFields: options.admittedPriceFields } : {}),
     };
 }
 
@@ -1152,11 +897,6 @@ function eventFeaturesFullyObserved(event: TopMeanNormalizedEvent): boolean {
     return event.baseCandidates.length > 0 && event.baseCandidates.every((candidate) =>
         candidate.features !== null
         && TOP_MEAN_CAUSAL_FEATURE_FIELDS.every((field) => candidate.features![field] !== null));
-}
-
-function priceFieldsFullyObserved(event: TopMeanNormalizedEvent, fields: readonly TopMeanPriceFeatureField[]): boolean {
-    return event.baseCandidates.length > 0 && event.baseCandidates.every((candidate) =>
-        candidate.priceFeatures !== null && fields.every((field) => candidate.priceFeatures![field] !== null));
 }
 
 function validLongOutcome(archive: TopMeanNormalizedArchive, eventId: string, asset: string): CandidateOutcomeRecord | null {
@@ -1408,23 +1148,14 @@ function createReadOnlyProxy<T extends object>(
     });
 }
 
-function candidateProxy(candidate: TopMeanBaseCandidate, tracker: RuleAccessTracker, invocation: { nullRead: boolean }, allowedPriceFields?: readonly TopMeanPriceFeatureField[]): TopMeanRuleCandidate {
+function candidateProxy(candidate: TopMeanBaseCandidate, tracker: RuleAccessTracker, invocation: { nullRead: boolean }): TopMeanRuleCandidate {
     const row = candidate.row;
-    const priceFields = candidate.priceFeatures === null
-        ? []
-        : (allowedPriceFields ?? TOP_MEAN_PRICE_FEATURE_FIELDS);
-    const fields = [
-        ...TOP_MEAN_RULE_CANDIDATE_FIELDS,
-        ...(candidate.features === null ? [] : TOP_MEAN_CAUSAL_FEATURE_FIELDS),
-        ...priceFields,
-    ];
+    const fields = candidate.features === null
+        ? TOP_MEAN_RULE_CANDIDATE_FIELDS
+        : [...TOP_MEAN_RULE_CANDIDATE_FIELDS, ...TOP_MEAN_CAUSAL_FEATURE_FIELDS];
     const causal = Object.fromEntries(fields.map((field) => {
         if ((TOP_MEAN_CAUSAL_FEATURE_FIELDS as readonly string[]).includes(field)) {
             const value = candidate.features?.[field as TopMeanCausalFeatureField] ?? null;
-            return [field, value];
-        }
-        if ((TOP_MEAN_PRICE_FEATURE_FIELDS as readonly string[]).includes(field)) {
-            const value = candidate.priceFeatures?.[field as TopMeanPriceFeatureField] ?? null;
             return [field, value];
         }
         return [field, field === "score" ? candidate.score : row[field as CandidateField]];
@@ -1436,16 +1167,8 @@ function candidateProxy(candidate: TopMeanBaseCandidate, tracker: RuleAccessTrac
             tracker.nullReads += 1;
             tracker.nullReadsByField.set(field, (tracker.nullReadsByField.get(field) ?? 0) + 1);
             invocation.nullRead = true;
-        } else if ((TOP_MEAN_PRICE_FEATURE_FIELDS as readonly string[]).includes(property) && value === null) {
-            const field = property as TopMeanPriceFeatureField;
-            tracker.accessedPrice.add(field);
-            tracker.nullReads += 1;
-            tracker.nullReadsByField.set(field, (tracker.nullReadsByField.get(field) ?? 0) + 1);
-            invocation.nullRead = true;
         } else if ((TOP_MEAN_CAUSAL_FEATURE_FIELDS as readonly string[]).includes(property)) {
             tracker.accessed.add(property as TopMeanCausalFeatureField);
-        } else if ((TOP_MEAN_PRICE_FEATURE_FIELDS as readonly string[]).includes(property)) {
-            tracker.accessedPrice.add(property as TopMeanPriceFeatureField);
         }
     });
 }
@@ -1497,7 +1220,6 @@ function ruleFailure(error: unknown, eventId?: string, asset?: string): never {
 function evaluateRuleDecisions(
     events: readonly TopMeanNormalizedEvent[],
     rule: TopMeanRule,
-    allowedPriceFields?: readonly TopMeanPriceFeatureField[],
 ): { kind: "ranking" | "filter" | "none"; decisions: readonly RuleDecision[]; access: TopMeanRuleAccessSummary } {
     const decisions: RuleDecision[] = [];
     let kind: "ranking" | "filter" | null = null;
@@ -1509,7 +1231,7 @@ function evaluateRuleDecisions(
             let value: unknown;
             const invocation = { nullRead: false };
             try {
-                value = rule(candidateProxy(candidate, tracker, invocation, allowedPriceFields), eventProxy(event));
+                value = rule(candidateProxy(candidate, tracker, invocation), eventProxy(event));
             } catch (error) {
                 ruleFailure(error, event.eventId, candidate.row.asset);
             }
@@ -1541,7 +1263,7 @@ export function evaluateTopMeanRule(args: {
     const window = windowSpec(args.window);
     const windowEvents = eventsInWindow(args.archive, window);
     const baseEvents = windowEvents.filter((event) => event.baseCandidates.length >= 2);
-    const decisionResult = evaluateRuleDecisions(baseEvents, args.rule, args.archive.admittedPriceFields);
+    const decisionResult = evaluateRuleDecisions(baseEvents, args.rule);
     const decisions = decisionResult.decisions;
     const kind = decisionResult.kind;
     const completeEvents = baseEvents.filter((event) => outcomeComplete(args.archive, event));
@@ -1595,9 +1317,6 @@ export function evaluateTopMeanRule(args: {
     })));
     const dominantAsset = selectedAssets[0]?.asset ?? null;
     const excludedPoints = dominantAsset === null ? [] : points.filter((point) => point.selectedAsset !== dominantAsset);
-    const priceFieldsFullyObservedEvents = decisionResult.access.accessedPriceFields.length === 0
-        ? 0
-        : baseEvents.filter((event) => priceFieldsFullyObserved(event, decisionResult.access.accessedPriceFields)).length;
     return {
         window,
         kind: kind ?? "none",
@@ -1616,10 +1335,6 @@ export function evaluateTopMeanRule(args: {
         ...decisionResult.access,
         changedFullyObservedEvents,
         changedPartiallyObservedEvents,
-        priceFieldsFullyObservedEvents,
-        priceFieldsPartiallyObservedEvents: decisionResult.access.accessedPriceFields.length === 0
-            ? 0
-            : baseEvents.length - priceFieldsFullyObservedEvents,
     };
 }
 
@@ -1631,8 +1346,8 @@ export function evaluateTopMeanCausalScreen(args: {
     const window = windowSpec(args.window);
     const windowEvents = eventsInWindow(args.archive, window);
     const baseEvents = windowEvents.filter((event) => event.baseCandidates.length >= 2);
-    const decisionResult = evaluateRuleDecisions(baseEvents, args.rule, args.archive.admittedPriceFields);
-    if (args.archive.meta.schema === "top_mean_archive.v3" && decisionResult.access.accessedV2Fields.length === 0 && decisionResult.access.accessedPriceFields.length === 0) {
+    const decisionResult = evaluateRuleDecisions(baseEvents, args.rule);
+    if (args.archive.meta.schema === "top_mean_archive.v3" && decisionResult.access.accessedV2Fields.length === 0) {
         throw new CheckerFailure("rule.v2.no_feature_access", "at least one V2 feature field read", "none", [], "RULE FAIL");
     }
     let selectedEvents = 0;
@@ -1672,12 +1387,6 @@ export function evaluateTopMeanCausalScreen(args: {
         ...decisionResult.access,
         changedFullyObservedEvents,
         changedPartiallyObservedEvents,
-        priceFieldsFullyObservedEvents: decisionResult.access.accessedPriceFields.length === 0
-            ? 0
-            : baseEvents.filter((event) => priceFieldsFullyObserved(event, decisionResult.access.accessedPriceFields)).length,
-        priceFieldsPartiallyObservedEvents: decisionResult.access.accessedPriceFields.length === 0
-            ? 0
-            : baseEvents.filter((event) => !priceFieldsFullyObserved(event, decisionResult.access.accessedPriceFields)).length,
     };
 }
 
@@ -1758,10 +1467,6 @@ function featureValue(candidate: TopMeanBaseCandidate, field: TopMeanCausalFeatu
     return candidate.features?.[field] ?? null;
 }
 
-function priceFeatureValue(candidate: TopMeanBaseCandidate, field: TopMeanPriceFeatureField): number | null {
-    return candidate.priceFeatures?.[field] ?? null;
-}
-
 function featureCorrelation(
     candidates: readonly TopMeanBaseCandidate[],
     field: TopMeanCausalFeatureField,
@@ -1828,67 +1533,6 @@ function featureFieldStats(
     };
 }
 
-function priceFeatureFieldStats(
-    field: TopMeanPriceFeatureField,
-    baseEvents: readonly TopMeanNormalizedEvent[],
-    allCandidates: readonly TopMeanBaseCandidate[],
-): TopMeanFeatureFieldStats {
-    const values = allCandidates.map((candidate) => priceFeatureValue(candidate, field));
-    const eventRanges: number[] = [];
-    let distinctEvents = 0;
-    for (const event of baseEvents) {
-        const eventValues = event.baseCandidates.map((candidate) => priceFeatureValue(candidate, field)).filter(finite);
-        if (eventValues.length === 0) continue;
-        eventRanges.push(Math.max(...eventValues) - Math.min(...eventValues));
-        if (new Set(eventValues).size > 1) distinctEvents += 1;
-    }
-    const sortedCandidatesByEvent = baseEvents.map((event) => [...event.baseCandidates].sort((left, right) => compareBaseCandidates(left, right, event.decisionTimeSec)));
-    const incumbents = sortedCandidatesByEvent.map((candidates) => candidates.slice(0, 1)).flat();
-    const runnersUp = sortedCandidatesByEvent.map((candidates) => candidates.slice(1, 2)).flat();
-    const nonIncumbents = sortedCandidatesByEvent.map((candidates) => candidates.slice(1)).flat();
-    const targets: Readonly<Record<string, (candidate: TopMeanBaseCandidate) => number | null>> = {
-        score: (candidate) => candidate.score,
-        signedVotes: (candidate) => candidate.row.signedVotes,
-        activePairCount: (candidate) => candidate.row.activePairCount,
-        ema200Above: (candidate) => candidate.row.ema200Above ? 1 : 0,
-        ...Object.fromEntries(TOP_MEAN_CAUSAL_FEATURE_FIELDS.map((temporal) => [temporal, (candidate: TopMeanBaseCandidate) => featureValue(candidate, temporal)])),
-        breadth: (candidate) => candidate.row.breadth,
-        regimeBullish: (candidate) => candidate.row.regime === "bullish" ? 1 : 0,
-        regimeBearish: (candidate) => candidate.row.regime === "bearish" ? 1 : 0,
-        regimeUnavailable: (candidate) => candidate.row.regime === "unavailable" ? 1 : 0,
-    };
-    const correlations: Record<string, number | null> = {};
-    for (const [name, target] of Object.entries(targets)) {
-        const left: number[] = [];
-        const right: number[] = [];
-        for (const candidate of allCandidates) {
-            const value = priceFeatureValue(candidate, field);
-            const targetValue = target(candidate);
-            if (value === null || !finite(targetValue)) continue;
-            left.push(value);
-            right.push(targetValue);
-        }
-        const result = correlation(left, right);
-        correlations[`${name}.pearson`] = result.pearson;
-        correlations[`${name}.spearman`] = result.spearman;
-    }
-    return {
-        nonNull: values.filter(finite).length,
-        nullCount: values.filter((value) => value === null).length,
-        values: percentile(values.filter(finite)),
-        incumbent: distributionForPriceRole(incumbents, field),
-        runnerUp: distributionForPriceRole(runnersUp, field),
-        nonIncumbent: distributionForPriceRole(nonIncumbents, field),
-        withinEventRange: percentile(eventRanges),
-        withinEventDistinctValueRate: baseEvents.length > 0 ? distinctEvents / baseEvents.length : null,
-        correlations,
-    };
-}
-
-function distributionForPriceRole(candidates: readonly TopMeanBaseCandidate[], field: TopMeanPriceFeatureField): PercentileSummary {
-    return percentile(candidates.map((candidate) => priceFeatureValue(candidate, field)).filter(finite));
-}
-
 export function computeTopMeanFeatureStats(
     archive: TopMeanCausalArchive,
     windowName: TopMeanRuleWindow,
@@ -1907,10 +1551,6 @@ export function computeTopMeanFeatureStats(
     });
     const fields = {} as Record<TopMeanCausalFeatureField, TopMeanFeatureFieldStats>;
     for (const field of TOP_MEAN_CAUSAL_FEATURE_FIELDS) fields[field] = featureFieldStats(field, baseEvents, allCandidates);
-    const priceFields = archive.priceFeaturesByKey === undefined
-        ? undefined
-        : {} as Record<TopMeanPriceFeatureField, TopMeanFeatureFieldStats>;
-    if (priceFields) for (const field of TOP_MEAN_PRICE_FEATURE_FIELDS) priceFields[field] = priceFeatureFieldStats(field, baseEvents, allCandidates);
     const crossFeatureCorrelations: Record<string, number | null> = {};
     for (let leftIndex = 0; leftIndex < TOP_MEAN_CAUSAL_FEATURE_FIELDS.length; leftIndex += 1) {
         const leftField = TOP_MEAN_CAUSAL_FEATURE_FIELDS[leftIndex]!;
@@ -1930,25 +1570,6 @@ export function computeTopMeanFeatureStats(
             crossFeatureCorrelations[`${leftField}~${rightField}.spearman`] = result.spearman;
         }
     }
-    const priceCrossFeatureCorrelations: Record<string, number | null> = {};
-    if (priceFields) for (let leftIndex = 0; leftIndex < TOP_MEAN_PRICE_FEATURE_FIELDS.length; leftIndex += 1) {
-        const leftField = TOP_MEAN_PRICE_FEATURE_FIELDS[leftIndex]!;
-        for (let rightIndex = leftIndex + 1; rightIndex < TOP_MEAN_PRICE_FEATURE_FIELDS.length; rightIndex += 1) {
-            const rightField = TOP_MEAN_PRICE_FEATURE_FIELDS[rightIndex]!;
-            const left: number[] = [];
-            const right: number[] = [];
-            for (const candidate of allCandidates) {
-                const leftValue = priceFeatureValue(candidate, leftField);
-                const rightValue = priceFeatureValue(candidate, rightField);
-                if (leftValue === null || rightValue === null) continue;
-                left.push(leftValue);
-                right.push(rightValue);
-            }
-            const result = correlation(left, right);
-            priceCrossFeatureCorrelations[`${leftField}~${rightField}.pearson`] = result.pearson;
-            priceCrossFeatureCorrelations[`${leftField}~${rightField}.spearman`] = result.spearman;
-        }
-    }
     const returnAvailability = { zero: 0, one: 0, twoPlus: 0 };
     for (const event of windowEvents) {
         const available = event.baseCandidates.filter((candidate) => featureValue(candidate, "priorTopMeanReturnMean3") !== null).length;
@@ -1962,12 +1583,10 @@ export function computeTopMeanFeatureStats(
         baseCandidateEventCount: baseEvents.length,
         baseCandidateCount: allCandidates.length,
         fields,
-        ...(priceFields ? { priceFields } : {}),
         availabilityByEvent,
         warmupCompletionByOrdinal: availabilityByEvent,
         priorTopMeanReturnMean3Availability: returnAvailability,
         crossFeatureCorrelations,
-        ...(priceFields ? { priceCrossFeatureCorrelations } : {}),
     };
 }
 
@@ -2050,8 +1669,7 @@ export function renderTopMeanRuleReport(args: {
     lines.push(blockLine(`PRIMARY_EX_${exclusionLabel}`, evaluation.dominantExclusionPrimary));
     lines.push(ruleMetricLine(`SECONDARY_EX_${exclusionLabel}`, evaluation.dominantExclusionSecondary));
     lines.push(blockLine(`SECONDARY_EX_${exclusionLabel}`, evaluation.dominantExclusionSecondary));
-    lines.push(`access | v2Fields=${evaluation.accessedV2Fields.join(",") || "none"}${evaluation.accessedPriceFields.length > 0 ? ` priceFields=${evaluation.accessedPriceFields.join(",")}` : ""} nullReads=${evaluation.nullReads} nullNeutralViolations=${evaluation.nullNeutralViolations}`);
-    if (evaluation.accessedPriceFields.length > 0) lines.push(`price completeness | fullyObservedEvents=${evaluation.priceFieldsFullyObservedEvents} partiallyObservedEvents=${evaluation.priceFieldsPartiallyObservedEvents}`);
+    lines.push(`access | v2Fields=${evaluation.accessedV2Fields.join(",") || "none"} nullReads=${evaluation.nullReads} nullNeutralViolations=${evaluation.nullNeutralViolations}`);
     return lines.join("\n") + "\n";
 }
 
@@ -2141,18 +1759,6 @@ export function renderTopMeanFeatureStatsReport(archive: TopMeanCausalArchive, s
         lines.push(featurePercentileLine(`${field} withinEventRange`, value.withinEventRange));
         for (const name of Object.keys(value.correlations).sort(codeUnitCompare)) lines.push(`CORRELATION | ${field}~${name}=${fixedNumber(value.correlations[name] ?? null)}`);
     }
-    for (const field of TOP_MEAN_PRICE_FEATURE_FIELDS) {
-        const value = stats.priceFields?.[field];
-        if (!value) continue;
-        lines.push(`FEATURE | name=${field} nonNull=${value.nonNull} null=${value.nullCount} distinctEventRate=${value.withinEventDistinctValueRate === null ? "n/a" : value.withinEventDistinctValueRate.toFixed(4)}`);
-        lines.push(featurePercentileLine(`${field} values`, value.values));
-        lines.push(featurePercentileLine(`${field} incumbent`, value.incumbent));
-        lines.push(featurePercentileLine(`${field} runnerUp`, value.runnerUp));
-        lines.push(featurePercentileLine(`${field} nonIncumbent`, value.nonIncumbent));
-        lines.push(featurePercentileLine(`${field} withinEventRange`, value.withinEventRange));
-        for (const name of Object.keys(value.correlations).sort(codeUnitCompare)) lines.push(`CORRELATION | ${field}~${name}=${fixedNumber(value.correlations[name] ?? null)}`);
-    }
-    for (const name of Object.keys(stats.priceCrossFeatureCorrelations ?? {}).sort(codeUnitCompare)) lines.push(`PRICE_CROSS_FEATURE | ${name}=${fixedNumber(stats.priceCrossFeatureCorrelations![name] ?? null)}`);
     for (const name of Object.keys(stats.crossFeatureCorrelations).sort(codeUnitCompare)) lines.push(`CROSS_FEATURE | ${name}=${fixedNumber(stats.crossFeatureCorrelations[name] ?? null)}`);
     lines.push(`RETURN_FEATURE_AVAILABILITY | zero=${stats.priorTopMeanReturnMean3Availability.zero} one=${stats.priorTopMeanReturnMean3Availability.one} twoPlus=${stats.priorTopMeanReturnMean3Availability.twoPlus}`);
     for (const event of stats.warmupCompletionByOrdinal) {
@@ -2181,8 +1787,7 @@ export function renderTopMeanCausalScreenReport(args: {
         `rule | kind=${evaluation.kind}`,
         `selection | selectedEvents=${evaluation.selectedEvents} droppedEvents=${evaluation.droppedEvents} changed=${evaluation.changedEvents}/${evaluation.baseCandidateEventCount} rate=${changeRate.toFixed(2)}% unchanged=${evaluation.unchangedEvents}`,
         `selection observation | changedFullyObserved=${evaluation.changedFullyObservedEvents} changedPartiallyObserved=${evaluation.changedPartiallyObservedEvents}`,
-        `access | v2Fields=${evaluation.accessedV2Fields.join(",") || "none"}${evaluation.accessedPriceFields.length > 0 ? ` priceFields=${evaluation.accessedPriceFields.join(",")}` : ""} nullReads=${evaluation.nullReads} nullReadsByField=${JSON.stringify(evaluation.nullReadsByField)} nullNeutralViolations=${evaluation.nullNeutralViolations}`,
-        ...(evaluation.accessedPriceFields.length > 0 ? [`price completeness | fullyObservedEvents=${evaluation.priceFieldsFullyObservedEvents} partiallyObservedEvents=${evaluation.priceFieldsPartiallyObservedEvents}`] : []),
+        `access | v2Fields=${evaluation.accessedV2Fields.join(",") || "none"} nullReads=${evaluation.nullReads} nullReadsByField=${JSON.stringify(evaluation.nullReadsByField)} nullNeutralViolations=${evaluation.nullNeutralViolations}`,
         `candidate keep rate=${(evaluation.candidateKeepRate * 100).toFixed(2)}%`,
         `SCREEN | impact=${impact} thinCutoff=2.00%`,
     ];
@@ -2238,18 +1843,16 @@ interface CliOptions {
     ruleFile?: string;
     window?: TopMeanRuleWindow;
     allowLegacySource: boolean;
-    priceFeaturesDir?: string;
-    priceCalibrationFile?: string;
 }
 
 const USAGE = [
     "Usage:",
-    "  esno scripts/top-mean-rule-checker.ts <ledgerDir> <ruleFile.ts> --window discovery|validation [--price-features <dir>] [--price-calibration <file>] [--allow-legacy-source]",
+    "  esno scripts/top-mean-rule-checker.ts <ledgerDir> <ruleFile.ts> --window discovery|validation [--allow-legacy-source]",
     "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --self-check",
     "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --stats --window discovery|validation",
     "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --causal-stats --window discovery",
-    "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --feature-stats --window discovery|validation [--price-features <dir>]",
-    "  esno scripts/top-mean-rule-checker.ts <ledgerDir> <ruleFile.ts> --screen --window discovery [--price-features <dir>] [--price-calibration <file>]",
+    "  esno scripts/top-mean-rule-checker.ts <ledgerDir> --feature-stats --window discovery|validation",
+    "  esno scripts/top-mean-rule-checker.ts <ledgerDir> <ruleFile.ts> --screen --window discovery",
     "  --allow-legacy-source allows U+007C only for historical rule replay",
 ].join("\n");
 
@@ -2261,8 +1864,6 @@ function parseCli(argv: readonly string[]): CliOptions | "help" {
     let featureStats = false;
     let screen = false;
     let allowLegacySource = false;
-    let priceFeaturesDir: string | undefined;
-    let priceCalibrationFile: string | undefined;
     let selectedWindow: TopMeanRuleWindow | undefined;
     const positional: string[] = [];
     for (let index = 0; index < argv.length; index += 1) {
@@ -2285,14 +1886,6 @@ function parseCli(argv: readonly string[]): CliOptions | "help" {
         } else if (arg === "--allow-legacy-source") {
             if (allowLegacySource) throw new UsageFailure("duplicate --allow-legacy-source");
             allowLegacySource = true;
-        } else if (arg === "--price-features") {
-            if (priceFeaturesDir !== undefined) throw new UsageFailure("duplicate --price-features");
-            priceFeaturesDir = argv[++index];
-            if (!priceFeaturesDir) throw new UsageFailure("--price-features requires a directory");
-        } else if (arg === "--price-calibration") {
-            if (priceCalibrationFile !== undefined) throw new UsageFailure("duplicate --price-calibration");
-            priceCalibrationFile = argv[++index];
-            if (!priceCalibrationFile) throw new UsageFailure("--price-calibration requires a file");
         } else if (arg === "--window") {
             if (selectedWindow !== undefined) throw new UsageFailure("duplicate --window");
             const value = argv[++index];
@@ -2308,26 +1901,26 @@ function parseCli(argv: readonly string[]): CliOptions | "help" {
     if ([selfCheck, stats, causalStats, featureStats, screen].filter(Boolean).length > 1) throw new UsageFailure("checker modes are exclusive");
     if (selfCheck) {
         if (positional.length !== 1 || selectedWindow !== undefined) throw new UsageFailure("self-check mode takes only ledgerDir");
-        return { ledgerDir: positional[0]!, mode: "self-check", allowLegacySource, priceFeaturesDir, priceCalibrationFile };
+        return { ledgerDir: positional[0]!, mode: "self-check", allowLegacySource };
     }
     if (stats) {
         if (positional.length !== 1 || selectedWindow === undefined) throw new UsageFailure("stats mode requires ledgerDir and --window");
-        return { ledgerDir: positional[0]!, mode: "stats", window: selectedWindow, allowLegacySource, priceFeaturesDir, priceCalibrationFile };
+        return { ledgerDir: positional[0]!, mode: "stats", window: selectedWindow, allowLegacySource };
     }
     if (causalStats) {
         if (positional.length !== 1 || selectedWindow !== "discovery") throw new UsageFailure("causal-stats mode requires ledgerDir and --window discovery");
-        return { ledgerDir: positional[0]!, mode: "causal-stats", window: selectedWindow, allowLegacySource, priceFeaturesDir, priceCalibrationFile };
+        return { ledgerDir: positional[0]!, mode: "causal-stats", window: selectedWindow, allowLegacySource };
     }
     if (featureStats) {
         if (positional.length !== 1 || selectedWindow === undefined) throw new UsageFailure("feature-stats mode requires ledgerDir and --window");
-        return { ledgerDir: positional[0]!, mode: "feature-stats", window: selectedWindow, allowLegacySource, priceFeaturesDir, priceCalibrationFile };
+        return { ledgerDir: positional[0]!, mode: "feature-stats", window: selectedWindow, allowLegacySource };
     }
     if (screen) {
         if (positional.length !== 2 || selectedWindow !== "discovery") throw new UsageFailure("screen mode requires ledgerDir, ruleFile, and --window discovery");
-        return { ledgerDir: positional[0]!, ruleFile: positional[1]!, mode: "screen", window: selectedWindow, allowLegacySource, priceFeaturesDir, priceCalibrationFile };
+        return { ledgerDir: positional[0]!, ruleFile: positional[1]!, mode: "screen", window: selectedWindow, allowLegacySource };
     }
     if (positional.length !== 2 || selectedWindow === undefined) throw new UsageFailure("rule mode requires ledgerDir, ruleFile, and --window");
-    return { ledgerDir: positional[0]!, mode: "rule", ruleFile: positional[1]!, window: selectedWindow, allowLegacySource, priceFeaturesDir, priceCalibrationFile };
+    return { ledgerDir: positional[0]!, mode: "rule", ruleFile: positional[1]!, window: selectedWindow, allowLegacySource };
 }
 
 function isMainModule(): boolean {
@@ -2364,24 +1957,10 @@ export async function runTopMeanRuleCheckerCli(argv: readonly string[]): Promise
     if (options.mode === "causal-stats" || options.mode === "feature-stats" || options.mode === "screen") {
         let causalArchive: TopMeanCausalArchive;
         try {
-            causalArchive = loadCausalTopMeanArchiveFromDirectory(options.ledgerDir, {
-                ...(options.priceFeaturesDir ? { priceFeaturesDir: options.priceFeaturesDir } : {}),
-            });
+            causalArchive = loadCausalTopMeanArchiveFromDirectory(options.ledgerDir);
         } catch (error) {
             process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
             return 1;
-        }
-        if (options.mode === "screen" && options.priceFeaturesDir && !options.priceCalibrationFile) {
-            process.stderr.write("RULE FAIL | enriched screen requires --price-calibration\n");
-            return 1;
-        }
-        if (options.priceCalibrationFile) {
-            try {
-                causalArchive = { ...causalArchive, admittedPriceFields: loadAdmittedPriceFields(options.priceCalibrationFile, causalArchive) };
-            } catch (error) {
-                process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-                return 1;
-            }
         }
         if (options.mode === "causal-stats") {
             const stats = computeTopMeanCausalStats(causalArchive, options.window!);
@@ -2416,24 +1995,10 @@ export async function runTopMeanRuleCheckerCli(argv: readonly string[]): Promise
     }
     let archive: TopMeanNormalizedArchive;
     try {
-        archive = loadNormalizedTopMeanArchiveFromDirectory(options.ledgerDir, {
-            ...(options.priceFeaturesDir ? { priceFeaturesDir: options.priceFeaturesDir } : {}),
-        });
+        archive = loadNormalizedTopMeanArchiveFromDirectory(options.ledgerDir);
     } catch (error) {
         process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
         return 1;
-    }
-    if (options.priceFeaturesDir && options.mode === "rule" && !options.priceCalibrationFile) {
-        process.stderr.write("RULE FAIL | enriched rule evaluation requires --price-calibration\n");
-        return 1;
-    }
-    if (options.priceCalibrationFile) {
-        try {
-            archive = { ...archive, admittedPriceFields: loadAdmittedPriceFields(options.priceCalibrationFile, archive) };
-        } catch (error) {
-            process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-            return 1;
-        }
     }
     let selfCheck: SelfCheckResult;
     try {
