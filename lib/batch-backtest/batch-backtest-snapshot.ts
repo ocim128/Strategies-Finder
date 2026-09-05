@@ -6,8 +6,8 @@ export const BATCH_RESULT_SNAPSHOT_LIMIT = BATCH_MAX_SYMBOLS;
 
 /**
  * Truncated-snapshot row cap used as the tier-2 fallback when the full snapshot
- * exceeds the localStorage quota (audit Finding 5). Keeps the most recent rows
- * so a reload still restores a useful table instead of silently losing the run.
+ * exceeds the localStorage quota (audit Finding 5). Keeps the first rows so a
+ * reload preserves the same absolute-index prefix used by status recovery.
  */
 export const BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT = 250;
 
@@ -48,16 +48,11 @@ export function compactBatchBacktestResultsSnapshot(
         fingerprint: typeof snapshot.fingerprint === "string" ? snapshot.fingerprint : null,
         strategyKey: typeof snapshot.strategyKey === "string" && snapshot.strategyKey ? snapshot.strategyKey : null,
         serverHasArtifacts: snapshot.serverHasArtifacts === true,
-        // Skip the per-row clone for rows that already satisfy the scalar
-        // invariant (no `data` and no `trades`/`equityCurve`). Every
-        // server-streamed row already meets this — re-cloning with
-        // `{ ...row.result, trades: [], equityCurve: [] }` per row allocated a
-        // fresh object graph per row for no behavioral change. Rows that still
-        // carry array artifacts (browser-side rows that have not been pruned)
-        // keep going through `toScalarRow` exactly as before.
+        // Always project through the scalar allowlist so heavy row artifacts
+        // cannot enter localStorage, including rows with no trades.
         results: snapshot.results
             .slice(0, BATCH_RESULT_SNAPSHOT_LIMIT)
-            .map((row) => (row.data === undefined && (row.result?.trades?.length ?? 0) === 0 ? row : toScalarRow(row))),
+            .map((row) => toScalarRow(row)),
         ...(snapshot.meta ? { meta: snapshot.meta } : {}),
     };
 }

@@ -38,26 +38,10 @@ interface BatchOverallStats {
     tradeGateStats: TradeGateStats | null;
 }
 
-export function formatBatchSummaryLine(results: readonly BatchBacktestSymbolResult[]): string {
-    const stats = summarizeBatchResults(results);
-    if (stats.resultRows.length === 0) {
-        return `${stats.completedRows.length} pair${stats.completedRows.length === 1 ? "" : "s"}`;
-    }
-    return [
-        `${stats.resultRows.length} tested`,
-        `${stats.profitableCount} profitable`,
-        `Net ${formatCurrency(stats.totalNet)}`,
-        `Trades ${stats.totalTrades}`,
-        `Avg/Trade ${formatCurrency(resolveAggregateExpectancy(stats))}`,
-        `Med Exposure ${formatPercent(medianMetric(stats.resultRows, (row) => row.tradeSummary?.exposurePercent ?? null))}`,
-    ].join(" | ");
-}
-
 /**
- * Structured label/value cells for the Batch run-state summary grid. Same
- * reductions as {@link formatBatchSummaryLine}, but as stable cells instead of
- * a pipe-delimited strip so the UI can render a scannable grid (the pipe form
- * stays the clipboard/Copy surface). Returns null when no row produced a result.
+ * Structured label/value cells for the Batch run-state summary grid. The pipe
+ * form remains the clipboard/Copy surface. Returns null when no row produced a
+ * result.
  */
 export function buildBatchSummaryCells(
     results: readonly BatchBacktestSymbolResult[],

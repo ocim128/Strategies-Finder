@@ -790,40 +790,43 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(svc().lastResults.length, "lastResults has 5 rows total").to.equal(5);
     });
 
-    it("reconcileStatusRows clears a truncated-suffix restore before rebuilding (audit Finding 5 dedupe fix)", () => {
-        // Intent being locked (AGENTS.md rule 8): a truncated persisted snapshot
-        // holds the most-recent N rows (a SUFFIX), not a prefix starting at 0.
-        // reconcileStatusRows dedupes by absolute index assuming lastResults is
-        // a prefix, so a truncated suffix would incorrectly skip rows 0..N-1
-        // and produce a jumbled table on the next reattach. The fix: the first
-        // reconcile call after a truncated restore clears lastResults + DOM
-        // before accepting the incoming page, so the reattach rebuilds cleanly.
+    it("drains a page whose continuation starts exactly after the current page", async () => {
         const dom = setupForAnalysis();
-        // Simulate a truncated restore: lastResults holds rows 8,9 of a 10-row
-        // run (a suffix), flagged as truncated.
-        svc().lastResults = [
-            { symbol: "ROW_8", status: "profitable", barCount: 100 },
-            { symbol: "ROW_9", status: "profitable", barCount: 100 },
-        ] as any;
-        svc().appendedCount = 2;
-        (svc() as any).lastResultsIsTruncatedSuffix = true;
-        // A reattach now delivers the TRUE first page (rows 0,1,2 — a prefix).
-        // Without the fix, the dedupe would skip absoluteIndex 0,1 (thinking
-        // they're already held) and only accept index 2+, producing gaps.
         const firstPage = [
             { symbol: "ROW_0", status: "profitable", barCount: 100 },
             { symbol: "ROW_1", status: "profitable", barCount: 100 },
-            { symbol: "ROW_2", status: "profitable", barCount: 100 },
         ] as any;
-        const accepted = svc().reconcileStatusRows(dom, firstPage, 0);
-        // The fix cleared the truncated suffix, so ALL 3 prefix rows are
-        // accepted (not deduped against the stale suffix).
-        expect(accepted.length, "truncated suffix cleared, all prefix rows accepted").to.equal(3);
-        expect(accepted.map((r: any) => r.symbol)).to.deep.equal(["ROW_0", "ROW_1", "ROW_2"]);
-        // The stale suffix rows are gone — lastResults starts fresh from the
-        // incoming page (no jumbled ROW_8/ROW_9 lingering before ROW_0).
-        expect(svc().lastResults.map((r: any) => r.symbol)).to.deep.equal(["ROW_0", "ROW_1", "ROW_2"]);
-        expect((svc() as any).lastResultsIsTruncatedSuffix, "flag cleared after reconcile").to.equal(false);
+        const secondPage = [
+            { symbol: "ROW_2", status: "profitable", barCount: 100 },
+            { symbol: "ROW_3", status: "profitable", barCount: 100 },
+        ] as any;
+        let pageRequests = 0;
+
+        await withMockFetch((url) => {
+            pageRequests += 1;
+            expect(url).to.include("after=2");
+            return {
+                ok: true,
+                status: 200,
+                text: JSON.stringify({
+                    runMismatch: false,
+                    lastRun: { rows: secondPage, rowOffset: 2, nextOffset: null },
+                }),
+            };
+        }, async () => {
+            await svc().drainStatusRows(
+                dom,
+                { rows: firstPage, rowOffset: 0, nextOffset: 2 },
+                "batch-pagination",
+                "lastRun",
+                { limit: 2, maxRows: 4 },
+            );
+        });
+
+        expect(pageRequests, "the exact page boundary must not stop the drain").to.equal(1);
+        expect(svc().lastResults.map((row: any) => row.symbol)).to.deep.equal([
+            "ROW_0", "ROW_1", "ROW_2", "ROW_3",
+        ]);
     });
 
     it("a terminal reattach drains lastRun.rows so a reloaded tab recovers the result table (audit status-row-recovery finding)", async () => {

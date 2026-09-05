@@ -37,10 +37,6 @@ export async function loadBatchDataset(
     return loader.load(symbol, interval, signal);
 }
 
-export function __clearBatchDatasetCachesForTests(): void {
-    clearBatchDatasetCaches();
-}
-
 export function clearBatchDatasetCaches(): void {
     loader.clearCaches();
 }

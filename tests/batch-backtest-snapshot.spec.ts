@@ -80,6 +80,26 @@ describe("Batch backtest result snapshots", () => {
         expect(snapshot.results[0]!.openTradeAssetScores?.map((s) => `${s.asset}:${s.score}`)).to.deep.equal(["BTC:-1", "WLD:1"]);
     });
 
+    it("projects rows that have no trades but still carry heavy arrays", () => {
+        const row = makeResult(0);
+        row.result = { ...row.result!, trades: [] };
+
+        const snapshot = compactBatchBacktestResultsSnapshot({
+            savedAt: 123,
+            interval: "5m",
+            fingerprint: "abc",
+            strategyKey: "rolling_vwap_center",
+            serverHasArtifacts: false,
+            results: [row],
+        });
+
+        expect(snapshot.results[0]).to.not.equal(row);
+        expect(snapshot.results[0]!.data).to.equal(undefined);
+        expect(snapshot.results[0]!.signals).to.equal(undefined);
+        expect(snapshot.results[0]!.result?.trades).to.deep.equal([]);
+        expect(snapshot.results[0]!.result?.equityCurve).to.deep.equal([]);
+    });
+
     it("rejects malformed snapshots", () => {
         expect(normalizeBatchBacktestResultsSnapshot(null)).to.equal(null);
         expect(normalizeBatchBacktestResultsSnapshot({ results: [] })).to.equal(null);

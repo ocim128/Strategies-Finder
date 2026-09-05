@@ -28,7 +28,6 @@ import { parseJsonPreservingNonFinite } from "../json-utils";
 import { buildBatchRunLedgerBodyField } from "./trade-ledger-wire";
 import { buildBatchRunTradeGateBodyField, type TradeGateRunOptions } from "./trade-gate-wire";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
-import { getBatchDatasetCacheStats } from "./batch-backtest-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { extractBatchServerError, postBatchNdjson } from "./batch-ndjson-post";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
@@ -61,7 +60,6 @@ import {
     benchmarkRatio,
     buildBatchBenchmarkBottlenecks,
     buildCacheStatsFromLoader,
-    type BatchBenchmarkCacheSource,
     type BatchBenchmarkCacheStats,
     type BatchBenchmarkRunOutcome,
     type BatchBenchmarkRunPhase,
@@ -89,6 +87,12 @@ import { debounce } from "../debounce";
 import { coalesceAnimationFrame } from "../render-scheduler";
 
 type OngoingTopMeanEventDetail = OpenScoreUsdOngoingEventDetail;
+
+type BatchStatusRowsPage = {
+    rows?: BatchBacktestSymbolResult[];
+    rowOffset?: number;
+    nextOffset?: number | null;
+};
 
 export function formatTopMeanCompletionMessage(summary: {
     archiveComplete?: boolean;
@@ -323,14 +327,6 @@ export class BatchBacktestService {
     // instead of rebuilding every row (the runner emits onSymbolComplete in
     // strict input order, so the incremental appends are already ordered).
     private appendedCount = 0;
-    // Audit Finding 5: set when `lastResults` was restored from a TRUNCATED
-    // persisted snapshot (the most-recent N rows, not a prefix starting at 0).
-    // `reconcileStatusRows` dedupes by absolute index assuming `lastResults`
-    // is a contiguous prefix, so a truncated suffix would poison the dedupe on
-    // the next reattach (rows 0..N-1 incorrectly skipped). The first
-    // `reconcileStatusRows` call after such a restore clears this flag AND
-    // `lastResults` so the reattach rebuilds cleanly.
-    private lastResultsIsTruncatedSuffix = false;
     // Monotonic run token. A stale run that resumes after a newer run started
     // (e.g. Stop -> Run while the old run is still awaiting executeBacktest)
     // sees its token as stale and stops writing DOM/state, preventing two
@@ -354,7 +350,7 @@ export class BatchBacktestService {
     private topMeanReattachInFlight = false;
     /**
      * TOP_MEAN reattach cancellation + transient-failure backoff (mirrors the
-     * normal-Batch reattach fields of the same suffix). The prior TOP_MEAN
+     * normal-Batch reattach fields of the same pattern). The prior TOP_MEAN
      * reattach loop had no backoff — a single non-2xx or thrown fetch
      * abandoned the entire reattach and cleared the persisted run marker — and
      * no cancellation hook, so Stop had to wait for the in-flight 2s delay to
@@ -880,8 +876,6 @@ export class BatchBacktestService {
         this.lastRunInterval = null;
         this.lastRunStrategyKey = null;
         this.appendedCount = 0;
-        // Audit Finding 5: a new run clears any truncated-suffix restore state.
-        this.lastResultsIsTruncatedSuffix = false;
         this.serverHasArtifacts = false;
         // Audit Finding 5: clear the active server run id at the start of each
         // new run; `runBatchServer` assigns a fresh one before POSTing.
@@ -958,7 +952,7 @@ export class BatchBacktestService {
                 const benchmarkOutcome: BatchBenchmarkRunOutcome = reachedTerminal
                     ? runOutcome
                     : "incomplete";
-                this.recordRunBenchmark("server", strategyKey, interval, runStartedAt, benchmarkOutcome);
+                this.recordRunBenchmark(strategyKey, interval, runStartedAt, benchmarkOutcome);
             }
         }
     }
@@ -1160,6 +1154,61 @@ export class BatchBacktestService {
         }
     }
 
+    private async drainStatusRows(
+        dom: BatchBacktestDom,
+        initial: BatchStatusRowsPage,
+        scopeRunId: string | undefined,
+        pageKey: "run" | "lastRun",
+        options: {
+            limit: number;
+            maxRows: number;
+            stopWhenPollingStopped?: boolean;
+        },
+    ): Promise<void> {
+        this.reconcileStatusRows(dom, initial.rows, initial.rowOffset, scopeRunId);
+
+        const limit = Math.max(1, Math.floor(options.limit));
+        const maxRows = Math.max(0, Math.floor(options.maxRows));
+        const maxPages = Math.max(0, Math.ceil(maxRows / limit) + 1);
+        let cursor = initial.nextOffset ?? null;
+        let previousCursor: number | null = null;
+
+        for (
+            let pageCount = 0;
+            typeof cursor === "number"
+            && this.lastResults.length < maxRows
+            && pageCount < maxPages;
+            pageCount += 1
+        ) {
+            if (options.stopWhenPollingStopped && this.reattachPollingStopped) return;
+            if (!Number.isFinite(cursor) || (previousCursor !== null && cursor <= previousCursor)) return;
+            previousCursor = cursor;
+
+            const scopeQuery = scopeRunId ? `&runId=${encodeURIComponent(scopeRunId)}` : "";
+            const response = await fetch(
+                `/api/batch-backtest/status?after=${cursor}&limit=${limit}${scopeQuery}`,
+                { cache: "no-store" },
+            );
+            if (!response.ok) return;
+            if (options.stopWhenPollingStopped && this.reattachPollingStopped) return;
+
+            const payload = parseJsonPreservingNonFinite(await response.text()) as {
+                runMismatch?: boolean;
+                run?: BatchStatusRowsPage | null;
+                lastRun?: BatchStatusRowsPage | null;
+            };
+            if (options.stopWhenPollingStopped && this.reattachPollingStopped) return;
+            if (payload.runMismatch) return;
+            const page = pageKey === "run" ? payload.run : payload.lastRun;
+            if (!page || !Array.isArray(page.rows) || page.rows.length === 0) return;
+
+            this.reconcileStatusRows(dom, page.rows, page.rowOffset, scopeRunId);
+            const nextCursor = page.nextOffset === undefined ? null : page.nextOffset;
+            if (nextCursor !== null && (!Number.isFinite(nextCursor) || nextCursor <= cursor)) return;
+            cursor = nextCursor;
+        }
+    }
+
     private async recoverCompletedServerRun(
         dom: BatchBacktestDom,
         runFingerprint: string,
@@ -1239,59 +1288,23 @@ export class BatchBacktestService {
             // absolute index (offset+i) and is the single place that pushes
             // to `lastResults` and `appendResultRows`.
             const serverRowCount = Math.max(0, Math.floor(Number(lastRun.rowCount ?? 0)));
-            const nextOffset = Array.isArray(lastRun.rows)
-                ? (lastRun.nextOffset === undefined ? null : lastRun.nextOffset)
-                : null;
-            this.reconcileStatusRows(dom, lastRun.rows, lastRun.rowOffset, scopeRunId);
-
-            // Drain remaining pages from the server offset until the server
-            // signals no more rows (`nextOffset === null`). The status endpoint
-            // bounds rows-per-response and returns `nextOffset` only when more
-            // remain; the non-progressing-cursor guard below + the absolute
-            // row-count / iteration caps prevent a misbehaving server from
-            // looping the browser forever.
-            let guard = 0;
-            let cursor = nextOffset;
-            let lastCursor = cursor;
-            while (
-                typeof cursor === "number"
-                && this.lastResults.length < serverRowCount
-                && this.lastResults.length < MAX_ROWS_TO_RECONSTRUCT
-                && guard < MAX_ROWS_TO_RECONSTRUCT
-            ) {
-                guard += 1;
-                const pageResponse = await fetch(
-                    `/api/batch-backtest/status?after=${cursor}&limit=${PAGE_LIMIT}`
-                    + (scopeRunId ? `&runId=${encodeURIComponent(scopeRunId)}` : ""),
-                    { cache: "no-store" },
-                );
-                if (!pageResponse.ok) break;
-                const pagePayload = await pageResponse.json() as {
-                    runMismatch?: boolean;
-                    lastRun?: {
-                        rows?: BatchBacktestSymbolResult[];
-                        rowOffset?: number;
-                        nextOffset?: number | null;
-                    } | null;
-                };
-                // Audit runId-scoping finding: stop paginating the moment the
-                // server signals the run id is no longer ours (a newer run
-                // started during the drain).
-                if (pagePayload.runMismatch) break;
-                const page = pagePayload.lastRun;
-                if (!page || !Array.isArray(page.rows) || page.rows.length === 0) break;
-                const pageOffset = Math.max(0, Math.floor(Number(page.rowOffset ?? cursor)));
-                this.reconcileStatusRows(dom, page.rows, pageOffset, scopeRunId);
-                lastCursor = cursor;
-                cursor = page.nextOffset === undefined ? null : page.nextOffset;
-                if (
-                    cursor !== null
-                    && cursor <= pageOffset + page.rows.length
-                ) {
-                    break; // non-progressing cursor guard
-                }
-                if (cursor === lastCursor) break;
-            }
+            await this.drainStatusRows(
+                dom,
+                {
+                    rows: lastRun.rows,
+                    rowOffset: lastRun.rowOffset,
+                    nextOffset: lastRun.nextOffset,
+                },
+                scopeRunId,
+                "lastRun",
+                {
+                    limit: PAGE_LIMIT,
+                    maxRows: Math.min(
+                        MAX_ROWS_TO_RECONSTRUCT,
+                        Math.max(serverRowCount, lastRun.rows?.length ?? 0),
+                    ),
+                },
+            );
 
             setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
             this.updateArtifactActionButtons(dom);
@@ -1334,18 +1347,6 @@ export class BatchBacktestService {
         _expectedRunId?: string,
     ): BatchBacktestSymbolResult[] {
         if (!rows || rows.length === 0) return [];
-        // Audit Finding 5: if `lastResults` was restored from a truncated
-        // persisted snapshot, it holds a SUFFIX (most-recent N rows), not a
-        // prefix starting at index 0. The absolute-index dedupe below assumes
-        // a prefix, so a truncated suffix would incorrectly skip rows 0..N-1.
-        // A real run (live stream or reattach) is now driving rows — clear the
-        // truncated state so the table rebuilds from the incoming page.
-        if (this.lastResultsIsTruncatedSuffix) {
-            this.lastResultsIsTruncatedSuffix = false;
-            this.lastResults = [];
-            this.appendedCount = 0;
-            dom.batchBacktestResults.replaceChildren();
-        }
         const rowOffset = Math.max(0, Math.floor(Number(rowOffsetRaw ?? 0)));
         const accepted: BatchBacktestSymbolResult[] = [];
         for (let i = 0; i < rows.length; i += 1) {
@@ -1376,7 +1377,6 @@ export class BatchBacktestService {
     // ─────────────────────────────────────────────────────────────────────
 
     private recordRunBenchmark(
-        mode: "browser" | "server",
         strategyKey: string,
         interval: string,
         startedAt: number,
@@ -1417,7 +1417,7 @@ export class BatchBacktestService {
         // reason it did before: those rows have a non-failure status. The new
         // `completed`/`cancelled` split is the accurate breakdown.
         const loaded = this.lastResults.filter((r) => r.status !== "load_failed" && r.status !== "run_failed").length;
-        const serverCounts = mode === "server" ? this.pendingServerRunCounts : null;
+        const serverCounts = this.pendingServerRunCounts;
         const attempted = serverCounts?.attempted ?? this.lastResults.length;
         if (serverCounts) {
             failed = serverCounts.failed;
@@ -1438,16 +1438,12 @@ export class BatchBacktestService {
             skipped: cancelled,
             outcome,
         };
-        const cacheSource = this.resolveCacheSource(mode);
-        const cache = cacheSource === "server_stream" && this.pendingServerRunCacheStats
-            ? this.pendingServerRunCacheStats
-            : cacheSource === "browser_loader"
-                ? this.currentCacheStats()
-                : this.emptyCacheStats();
+        const cacheSource = this.pendingServerRunCacheStats ? "server_stream" : "unavailable";
+        const cache = this.pendingServerRunCacheStats ?? this.emptyCacheStats();
         const snapshot: BatchBenchmarkSnapshot = {
             schema: BATCH_BENCHMARK_SCHEMA,
             run: {
-                mode,
+                mode: "server",
                 strategy: strategyKey,
                 interval,
                 engineMode: shouldUseRustEngine() ? "rust_preferred" : "typescript",
@@ -1462,17 +1458,6 @@ export class BatchBacktestService {
         this.lastBenchmark = snapshot;
         const dom = this.dom;
         if (dom) dom.batchBacktestCopyBenchmarkBtn.disabled = false;
-    }
-
-    private resolveCacheSource(mode: "browser" | "server"): BatchBenchmarkCacheSource {
-        if (mode === "browser") return "browser_loader";
-        return this.pendingServerRunCacheStats ? "server_stream" : "unavailable";
-    }
-
-    private currentCacheStats(): BatchBenchmarkCacheStats {
-        // Browser path: in-memory LRU populated; disk counters stay 0. Server
-        // runs pass server-side stats through `pendingServerRunCacheStats`.
-        return buildCacheStatsFromLoader(getBatchDatasetCacheStats());
     }
 
     private emptyCacheStats(): BatchBenchmarkCacheStats {
@@ -1768,47 +1753,17 @@ export class BatchBacktestService {
                         // helper dedupes by absolute index so a partial earlier
                         // render is preserved and only the gap is filled.
                         const dom = this.getDom();
-                        this.reconcileStatusRows(dom, payload.lastRun.rows, payload.lastRun.rowOffset, terminalRunId);
-                        // Audit status-row-recovery finding: drain remaining
-                        // pages while the server reports more rows for this
-                        // terminal snapshot. The pagination contract matches
-                        // the recovery path (after + limit + runId scope).
-                        let termCursor = payload.lastRun.nextOffset ?? null;
-                        let termLastCursor = termCursor;
-                        let termGuard = 0;
-                        const TERM_PAGE_LIMIT = 250;
-                        const TERM_MAX_PAGES = 40; // ~10k rows, matches recovery cap
-                        while (
-                            typeof termCursor === "number"
-                            && termGuard < TERM_MAX_PAGES
-                            && !this.reattachPollingStopped
-                        ) {
-                            termGuard += 1;
-                            const termRunId = terminalRunId
-                                ? `&runId=${encodeURIComponent(terminalRunId)}`
-                                : "";
-                            const pageResponse = await fetch(
-                                `/api/batch-backtest/status?after=${termCursor}&limit=${TERM_PAGE_LIMIT}${termRunId}`,
-                                { cache: "no-store" },
-                            );
-                            if (!pageResponse.ok) break;
-                            const pagePayload = parseJsonPreservingNonFinite(await pageResponse.text()) as {
-                                runMismatch?: boolean;
-                                lastRun?: {
-                                    rows?: BatchBacktestSymbolResult[];
-                                    rowOffset?: number;
-                                    nextOffset?: number | null;
-                                } | null;
-                            };
-                            if (pagePayload.runMismatch) break;
-                            const page = pagePayload.lastRun;
-                            if (!page || !Array.isArray(page.rows) || page.rows.length === 0) break;
-                            const pageOffset = Math.max(0, Math.floor(Number(page.rowOffset ?? termCursor)));
-                            this.reconcileStatusRows(dom, page.rows, pageOffset, terminalRunId);
-                            termLastCursor = termCursor;
-                            termCursor = page.nextOffset ?? null;
-                            if (termCursor === null || termCursor <= termLastCursor) break;
-                        }
+                        await this.drainStatusRows(
+                            dom,
+                            payload.lastRun,
+                            terminalRunId,
+                            "lastRun",
+                            {
+                                limit: 250,
+                                maxRows: Math.min(10_000, payload.lastRun.rowCount ?? payload.lastRun.rows?.length ?? 0),
+                                stopWhenPollingStopped: true,
+                            },
+                        );
                         if (this.lastResults.length > 0) {
                             this.saveLatestResultsSnapshot();
                         }
@@ -1885,33 +1840,17 @@ export class BatchBacktestService {
                 // reload would catch up at one page per 2s poll. Paged
                 // responses are scoped to the active run id so a newer run
                 // started mid-drain cannot contaminate this tab's row list.
-                this.reconcileStatusRows(dom, run.rows, run.rowOffset, this.activeServerRunId ?? undefined);
-                let nextOffset = run.nextOffset;
-                let lastOffset = nextOffset;
-                for (;;) {
-                    if (nextOffset === null || nextOffset === undefined) break;
-                    const pageOffsetCheck = Math.max(0, Math.floor(Number(run.rowOffset ?? 0)));
-                    if (nextOffset <= pageOffsetCheck + run.rows.length) break; // guard against non-progressing cursors
-                    if (!payload.running || !payload.run) break;
-                    const scopeQs = this.activeServerRunId
-                        ? `&runId=${encodeURIComponent(this.activeServerRunId)}`
-                        : "";
-                    const nextResponse = await fetch(`/api/batch-backtest/status?after=${nextOffset}&limit=250${scopeQs}`, { cache: "no-store" });
-                    if (!nextResponse.ok) break;
-                        const nextPayload = parseJsonPreservingNonFinite(await nextResponse.text()) as {
-                        runMismatch?: boolean;
-                        run?: { rows: BatchBacktestSymbolResult[]; rowOffset?: number; nextOffset?: number | null } | null;
-                    };
-                    // Audit runId-scoping finding: stop the moment the server
-                    // signals the run id is no longer ours.
-                    if (nextPayload.runMismatch) break;
-                    if (!nextPayload.run) break;
-                    const np = nextPayload.run;
-                    this.reconcileStatusRows(dom, np.rows, np.rowOffset, this.activeServerRunId ?? undefined);
-                    lastOffset = nextOffset;
-                    nextOffset = np.nextOffset === undefined ? null : np.nextOffset;
-                    if (nextOffset === null || nextOffset === lastOffset) break;
-                }
+                await this.drainStatusRows(
+                    dom,
+                    run,
+                    this.activeServerRunId ?? undefined,
+                    "run",
+                    {
+                        limit: 250,
+                        maxRows: run.rowCount,
+                        stopWhenPollingStopped: true,
+                    },
+                );
                 // `run.completed` already counts every attempted (non-skipped)
                 // row, including failures — adding `run.failed` double-counts
                 // them and lets progress exceed the total (e.g. 11/10). The
@@ -2221,12 +2160,6 @@ export class BatchBacktestService {
         // to `null`.
         this.lastRunStrategyKey = snapshot.strategyKey ?? null;
         this.appendedCount = snapshot.results.length;
-        // Audit Finding 5: a truncated snapshot holds the most-recent N rows
-        // (a suffix), NOT a prefix starting at index 0. Flag it so the next
-        // reattach's `reconcileStatusRows` clears `lastResults` before
-        // rebuilding — otherwise its absolute-index dedupe would incorrectly
-        // skip rows 0..N-1 and produce a jumbled table.
-        this.lastResultsIsTruncatedSuffix = snapshot.meta?.truncated === true;
         // LocalStorage cannot prove server artifact TTL is still valid, and
         // browser-mode heavy arrays are intentionally not restored. Reattach
         // status may re-enable OPEN_SCORE USD if server artifacts still exist.
@@ -2296,7 +2229,7 @@ export class BatchBacktestService {
         }
         const truncatedSnapshot = compactBatchBacktestResultsSnapshot({
             ...baseSnapshot,
-            results: this.lastResults.slice(-BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT),
+            results: this.lastResults.slice(0, BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT),
             meta: { truncated: true, totalRows: this.lastResults.length },
         });
         writePersistedJson({
@@ -2479,8 +2412,6 @@ export class BatchBacktestService {
         if (this.lastResults.length === 0) return;
         this.lastResults = [];
         this.appendedCount = 0;
-        // Audit Finding 5: a new run clears any truncated-suffix restore state.
-        this.lastResultsIsTruncatedSuffix = false;
         dom.batchBacktestResults.replaceChildren();
         setVisible(dom.batchBacktestEmpty, true);
         dom.batchBacktestCopyBtn.disabled = true;

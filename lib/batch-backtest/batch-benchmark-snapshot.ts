@@ -31,7 +31,7 @@ export interface BatchBenchmarkCacheStats {
     disk: BatchBenchmarkCacheBucket & { writes: number };
 }
 
-export type BatchBenchmarkCacheSource = "browser_loader" | "server_stream" | "unavailable";
+export type BatchBenchmarkCacheSource = "server_stream" | "unavailable";
 
 export interface BatchBenchmarkRunPhase {
     totalMs: number;
@@ -70,7 +70,7 @@ export type BatchBenchmarkRunOutcome = "done" | "cancelled" | "fatal" | "incompl
 export interface BatchBenchmarkSnapshot {
     schema: typeof BATCH_BENCHMARK_SCHEMA;
     run: {
-        mode: "browser" | "server";
+        mode: "server";
         strategy: string;
         interval: string;
         engineMode: string;
@@ -129,7 +129,7 @@ export function buildCacheStatsFromLoader(stats: BatchDatasetCacheStats): BatchB
 export function buildBatchBenchmarkBottlenecks(
     phases: BatchBenchmarkSnapshot["phases"],
     cache: BatchBenchmarkCacheStats,
-    cacheSource: BatchBenchmarkCacheSource = "browser_loader",
+    cacheSource: BatchBenchmarkCacheSource = "unavailable",
 ): string[] {
     const notes: string[] = [];
 
