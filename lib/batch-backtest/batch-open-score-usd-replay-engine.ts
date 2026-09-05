@@ -74,6 +74,20 @@ export interface ReplayComparison {
     totalBlocks: number;
 }
 
+export interface TakeSkipComparison {
+    /** All events in the TOP_MEAN series, including skipped events. */
+    events: number;
+    /** Mean return after the take/skip gate; skipped events contribute zero. */
+    gatedMean: number | null;
+    /** Mean return of the ungated TOP_MEAN series. */
+    allMean: number | null;
+    /** Ungated sum minus gated sum, expressed as a decimal return. */
+    skipValue: number;
+    /** Count of positive means in the fixed ten chronological delta blocks. */
+    positiveBlocks: number;
+    totalBlocks: number;
+}
+
 /**
  * Equal-notional event-basket P&L summary.
  *
@@ -269,6 +283,10 @@ export interface OpenScoreUsdReplayResult {
         topAdjusted: ReplayComparison;
         /** Highest rawScore / activePairCount (mean signed vote). */
         topMean: ReplayComparison;
+        /** TOP_MEAN with events vetoed after two recent losses on the selected asset. */
+        lossVeto: TakeSkipComparison;
+        /** TOP_MEAN with events vetoed while the last ten completed returns are negative. */
+        regimeFloor: TakeSkipComparison;
         /**
          * TOP_MEAN_RAW_UNIQUE_V1: form the TOP_MEAN tied set, then select its
          * unique raw-score maximum. Residual raw ties are skipped. The control
@@ -2025,10 +2043,25 @@ export async function runOpenScoreUsdReplay(
             times: number[];
             assets: string[];
         }
+        interface TakeSkipSeries {
+            gatedReturns: number[];
+            incumbentReturns: number[];
+            deltas: number[];
+            times: number[];
+        }
+        interface PendingIncumbentOutcome {
+            assetIndex: number;
+            returnValue: number;
+            exitTimeSec: number;
+            sequence: number;
+        }
         const createSeries = (): SelectorSeries => ({ deltas: [], returns: [], times: [], assets: [] });
+        const createTakeSkipSeries = (): TakeSkipSeries => ({ gatedReturns: [], incumbentReturns: [], deltas: [], times: [] });
         const topRaw = createSeries();
         const topAdjusted = createSeries();
         const topMean = createSeries();
+        const lossVeto = createTakeSkipSeries();
+        const regimeFloor = createTakeSkipSeries();
         const topMeanRawUniqueV1 = createSeries();
         const topRaw6Bar = createSeries();
         const topMean6Bar = createSeries();
@@ -2078,6 +2111,52 @@ export async function runOpenScoreUsdReplay(
         const topRawSpread = createSeries();
         const topRawHiPairs = createSeries();
         const topRawLoPairs = createSeries();
+        const pendingIncumbents: PendingIncumbentOutcome[] = [];
+        const completedByAsset = new Map<number, PendingIncumbentOutcome[]>();
+        const completedIncumbents: PendingIncumbentOutcome[] = [];
+        let incumbentSequence = 0;
+        const compareMaturity = (a: PendingIncumbentOutcome, b: PendingIncumbentOutcome): number =>
+            a.exitTimeSec - b.exitTimeSec || a.sequence - b.sequence;
+        const insertCompleted = (list: PendingIncumbentOutcome[], item: PendingIncumbentOutcome): void => {
+            let low = 0;
+            let high = list.length;
+            while (low < high) {
+                const mid = Math.floor((low + high) / 2);
+                if (compareMaturity(list[mid]!, item) <= 0) low = mid + 1;
+                else high = mid;
+            }
+            list.splice(low, 0, item);
+        };
+        const flushMaturedIncumbents = (decisionTimeSec: number): void => {
+            const matured: PendingIncumbentOutcome[] = [];
+            let pendingCount = 0;
+            for (const outcome of pendingIncumbents) {
+                if (outcome.exitTimeSec < decisionTimeSec) matured.push(outcome);
+                else pendingIncumbents[pendingCount++] = outcome;
+            }
+            pendingIncumbents.length = pendingCount;
+            matured.sort(compareMaturity);
+            for (const outcome of matured) {
+                let assetHistory = completedByAsset.get(outcome.assetIndex);
+                if (!assetHistory) {
+                    assetHistory = [];
+                    completedByAsset.set(outcome.assetIndex, assetHistory);
+                }
+                insertCompleted(assetHistory, outcome);
+                insertCompleted(completedIncumbents, outcome);
+            }
+        };
+        const appendTakeSkip = (
+            series: TakeSkipSeries,
+            take: boolean,
+            incumbentReturn: number,
+            decisionTimeSec: number,
+        ): void => {
+            series.gatedReturns.push(take ? incumbentReturn : 0);
+            series.incumbentReturns.push(incumbentReturn);
+            series.deltas.push(take ? 0 : -incumbentReturn);
+            series.times.push(decisionTimeSec);
+        };
         // Phase 3 MAX_ACTIVE tie counters per selector.
         const tieCounts: Record<SelectorName, number> = { RAW: 0, ADJUSTED: 0, MEAN: 0, ACTIVE: 0, SUBMITTED: 0, RETAINED: 0, REVERSION: 0, BOTTOM: 0 };
         const selectedDegree: number[] = [];
@@ -2109,6 +2188,7 @@ export async function runOpenScoreUsdReplay(
 
         for (let v = 0; v < views.length; v += 1) {
             const view = views[v]!;
+            flushMaturedIncumbents(view.timeSec);
             const perAsset = returnsByView[v];
             if (!perAsset) {
                 noDataEvents.add(v);
@@ -2380,6 +2460,36 @@ export async function runOpenScoreUsdReplay(
                 retByAsset.set(c.assetIndex, r);
                 shortByAsset.set(c.assetIndex, shortReturn);
             }
+            // The take/skip arms use the incumbent TOP_MEAN outcome even when
+            // another positive candidate makes the ordinary all-positive
+            // comparison ineligible. This preserves the selected-incumbent
+            // cohort while keeping the existing selector arms unchanged.
+            const incumbentOutcome = perAsset.get(view.topMean);
+            const incumbentReturn = incumbentOutcome?.long[hIdx];
+            const incumbentEntryTime = incumbentOutcome?.entryTimes[hIdx];
+            const incumbentExitTime = incumbentOutcome?.exitTimes[hIdx];
+            if (
+                incumbentReturn !== undefined
+                && Number.isFinite(incumbentReturn)
+                && Number.isFinite(incumbentEntryTime)
+                && Number.isFinite(incumbentExitTime)
+            ) {
+                const assetHistory = completedByAsset.get(view.topMean) ?? [];
+                const lossVetoSkip = assetHistory.length >= 2
+                    && assetHistory[assetHistory.length - 1]!.returnValue < 0
+                    && assetHistory[assetHistory.length - 2]!.returnValue < 0;
+                const recentIncumbents = completedIncumbents.slice(-10);
+                const regimeFloorSkip = recentIncumbents.length >= 10
+                    && recentIncumbents.reduce((sum, outcome) => sum + outcome.returnValue, 0) / recentIncumbents.length < 0;
+                appendTakeSkip(lossVeto, !lossVetoSkip, incumbentReturn, view.timeSec);
+                appendTakeSkip(regimeFloor, !regimeFloorSkip, incumbentReturn, view.timeSec);
+                pendingIncumbents.push({
+                    assetIndex: view.topMean,
+                    returnValue: incumbentReturn,
+                    exitTimeSec: incumbentExitTime!,
+                    sequence: incumbentSequence += 1,
+                });
+            }
             if (!allValid) {
                 appendOngoingTopMeanEventDetail(view, perAsset, hIdx);
                 continue; // censored or missing -> omit from both arms
@@ -2451,6 +2561,8 @@ export async function runOpenScoreUsdReplay(
             appendSelection(topRaw, view.topRaw);
             appendSelection(topAdjusted, view.topAdjusted);
             appendSelection(topMean, view.topMean);
+            const topMeanReturn = retByAsset.get(view.topMean)!;
+            const topMeanOutcome = incumbentOutcome!;
             appendTopMeanRawUniqueV1Selection();
             appendEventDetail(
                 "TOP_RAW",
@@ -2534,12 +2646,10 @@ export async function runOpenScoreUsdReplay(
             appendPairwise(activeVsRetained, view.maxActive, view.maxStatic);
             appendPairwise(activeVsRaw, view.maxActive, view.topRaw);
             appendPairwise(activeVsMean, view.maxActive, view.topMean);
-            const topMeanReturn = retByAsset.get(view.topMean)!;
             const rank2ShortReturn = shortByAsset.get(view.topMeanRank2)!;
             topMeanHedge.returns.push(topMeanReturn + rank2ShortReturn);
             topMeanHedge.times.push(view.timeSec);
             topMeanHedge.assets.push(assetNames[view.topMean]!);
-            const topMeanOutcome = perAsset.get(view.topMean)!;
             topMeanPortfolioOpportunities.push({
                 asset: assetNames[view.topMean]!,
                 decisionTime: view.timeSec,
@@ -2820,6 +2930,18 @@ export async function runOpenScoreUsdReplay(
         // duplicate `buildComparison(maxStatic.deltas, ...)` burned 10k LCG
         // iterations + one sort + one 10k-element allocation per horizon.
         const maxStaticComparison = buildComparison(maxStatic.deltas, maxStatic.returns, maxStatic.times);
+        const lossVetoComparison = buildTakeSkipComparison(
+            lossVeto.gatedReturns,
+            lossVeto.incumbentReturns,
+            lossVeto.deltas,
+            lossVeto.times,
+        );
+        const regimeFloorComparison = buildTakeSkipComparison(
+            regimeFloor.gatedReturns,
+            regimeFloor.incumbentReturns,
+            regimeFloor.deltas,
+            regimeFloor.times,
+        );
         const topMeanPnl = computeSelectorPnl(topMean.returns, topMean.times);
         const randomPnlReturns: number[] = [];
         for (let i = 0; i < topMean.returns.length; i += 1) {
@@ -2842,6 +2964,8 @@ export async function runOpenScoreUsdReplay(
             topRaw: buildComparison(topRaw.deltas, topRaw.returns, topRaw.times),
             topAdjusted: buildComparison(topAdjusted.deltas, topAdjusted.returns, topAdjusted.times),
             topMean: buildComparison(topMean.deltas, topMean.returns, topMean.times),
+            lossVeto: lossVetoComparison,
+            regimeFloor: regimeFloorComparison,
             topMeanRawUniqueV1: buildComparison(topMeanRawUniqueV1.deltas, topMeanRawUniqueV1.returns, topMeanRawUniqueV1.times),
             topMeanRawUniqueV1ByAsset,
             topMeanRawUniqueV1ExDominant,
@@ -3172,7 +3296,40 @@ function splitIntoBlocks(values: readonly number[], times: readonly number[], bl
     return blocks;
 }
 
+function buildTakeSkipComparison(
+    gatedReturns: readonly number[],
+    incumbentReturns: readonly number[],
+    deltas: readonly number[],
+    times: readonly number[],
+): TakeSkipComparison {
+    let gatedSum = 0;
+    let incumbentSum = 0;
+    for (const value of gatedReturns) gatedSum += value;
+    for (const value of incumbentReturns) incumbentSum += value;
+    const blockMeans = splitIntoBlocks(deltas, times, MAX_ACTIVE_BLOCK_COUNT)
+        .map((block) => block.reduce((sum, value) => sum + value, 0) / block.length);
+    return {
+        events: gatedReturns.length,
+        gatedMean: meanOrNull(gatedReturns),
+        allMean: meanOrNull(incumbentReturns),
+        skipValue: incumbentSum - gatedSum,
+        positiveBlocks: blockMeans.filter((mean) => mean > 0).length,
+        totalBlocks: MAX_ACTIVE_BLOCK_COUNT,
+    };
+}
+
 const fmtPct = (x: number | null): string => (x === null || !Number.isFinite(x) ? "n/a" : `${x >= 0 ? "+" : ""}${(x * 100).toFixed(2)}%`);
+const fmtTakeSkipPct = (x: number | null): string => {
+    if (x === null || !Number.isFinite(x)) return "n/a";
+    const rounded = Number((x * 100).toFixed(2));
+    const normalized = Object.is(rounded, -0) ? 0 : rounded;
+    return `${normalized >= 0 ? "+" : ""}${normalized.toFixed(2)}%`;
+};
+const fmtPp = (x: number): string => {
+    const rounded = Number((x * 100).toFixed(2));
+    const normalized = Object.is(rounded, -0) ? 0 : rounded;
+    return `${normalized >= 0 ? "+" : ""}${normalized.toFixed(2)}`;
+};
 const fmtNum = (x: number | null): string => (x === null || !Number.isFinite(x) ? "n/a" : x.toFixed(2));
 const fmtUsd = (x: number | null): string => (x === null || !Number.isFinite(x)
     ? "n/a"
@@ -3191,6 +3348,9 @@ function buildReportLines(args: {
         `${label.padEnd(14)} n=${comparison.events} top=${fmtPct(comparison.topMean)} rand=${fmtPct(comparison.randomMean)} ` +
         `delta=${fmtPct(comparison.delta)} CI95=[${fmtPct(comparison.ciLower)},${fmtPct(comparison.ciUpper)}] ` +
         `+blocks=${comparison.positiveBlocks}/${comparison.totalBlocks}`;
+    const takeSkipLine = (label: string, comparison: TakeSkipComparison): string =>
+        `${label.padEnd(12)} n=${comparison.events} top=${fmtTakeSkipPct(comparison.gatedMean)} all=${fmtTakeSkipPct(comparison.allMean)} ` +
+        `skip=${fmtPp(comparison.skipValue)}pp +blocks=${comparison.positiveBlocks}/${comparison.totalBlocks}`;
     const pnlLine = (label: string, summary: SelectorPnlSummary): string => {
         const average = summary.trades > 0 && summary.totalReturn !== null
             ? summary.totalReturn / summary.trades
@@ -3222,6 +3382,8 @@ function buildReportLines(args: {
         lines.push(comparisonLine("TOP_RAW", h.topRaw));
         lines.push(comparisonLine("TOP_ADJUSTED", h.topAdjusted));
         lines.push(comparisonLine("TOP_MEAN", h.topMean));
+        lines.push(takeSkipLine("LOSS_VETO", h.lossVeto));
+        lines.push(takeSkipLine("REGIME_FLOOR", h.regimeFloor));
         lines.push(comparisonLine("TOP_MEAN_RAW_UNIQUE_V1", h.topMeanRawUniqueV1));
         lines.push(comparisonLine(`TOP_MEAN_RAW_UNIQUE_V1_EX_${h.topMeanRawUniqueV1DominantAsset ?? "NONE"}`, h.topMeanRawUniqueV1ExDominant));
         lines.push(comparisonLine("TOP_RAW_6BAR", h.topRaw6Bar));

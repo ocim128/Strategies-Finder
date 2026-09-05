@@ -57,6 +57,46 @@ function makeDirectMarket(asset: string, trades: Trade[]): BatchSyntheticPairArt
     };
 }
 
+function makeNamedDirectMarket(asset: string, name: string, trades: Trade[]): BatchSyntheticPairArtifact {
+    return {
+        symbol: `${asset}USDT-${name}`,
+        baseAsset: asset,
+        quoteAsset: "",
+        data: [],
+        signals: [],
+        result: { ...emptyResult(), totalTrades: trades.length, trades },
+    };
+}
+
+function makeTakeSkipFixture(returns: number[]): {
+    pairs: BatchSyntheticPairArtifact[];
+    targets: OpenScoreUsdTarget[];
+} {
+    const spacingBars = 5;
+    const decisionTimes = returns.map((_, i) => T0 + (i + 1) * spacingBars * 1000);
+    const longTrades = decisionTimes.map((time) => makeTrade("long", time, null));
+    const shortTrades = decisionTimes.map((time) => makeTrade("short", time, null));
+    const pairs = [
+        makeNamedDirectMarket("AAA", "A1", longTrades),
+        makeNamedDirectMarket("AAA", "A2", longTrades.map((trade) => ({ ...trade }))),
+        makeNamedDirectMarket("BBB", "B1", longTrades.map((trade) => ({ ...trade }))),
+        makeNamedDirectMarket("BBB", "B2", longTrades.map((trade) => ({ ...trade }))),
+        makeNamedDirectMarket("BBB", "B3", shortTrades),
+    ];
+    const bars = (returns.length + 2) * spacingBars + 5;
+    const aaa = makeTarget("AAA", bars, (i) => {
+        for (let eventIndex = 0; eventIndex < returns.length; eventIndex += 1) {
+            const exitBar = (eventIndex + 1) * spacingBars + 2;
+            if (i === exitBar) return 100 * (1 + returns[eventIndex]!);
+        }
+        return 100;
+    });
+    return {
+        pairs,
+        targets: [aaa, makeTarget("BBB", bars, () => 100)],
+    };
+}
+
 /** Target OHLCV: bars at T0, T0+1000, T0+2000, ... with constant price. */
 function makeTarget(asset: string, bars: number, priceAt: (i: number) => number): OpenScoreUsdTarget {
     const data: OHLCVData[] = Array.from({ length: bars }, (_, i) => {
@@ -849,5 +889,83 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(result.assets).to.equal(4);
         expect(result.degree.min).to.equal(1);
         expect(result.degree.max).to.equal(1);
+    });
+
+    it("LOSS_VETO skips the third same-asset pick after two matured losses", async () => {
+        const fixture = makeTakeSkipFixture([-0.10, -0.10, -0.20]);
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs),
+            () => fromArray(fixture.targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0 },
+        );
+        const horizon = result.horizons[0]!;
+        expect(result.eligibleEvents).to.equal(3);
+        // The existing TOP_MEAN series is unchanged and remains the ungated
+        // incumbent series used by both new arms.
+        expect(horizon.topMean.events).to.equal(3);
+        expect(horizon.topMean.topMean).to.be.closeTo(-0.40 / 3, 1e-9);
+        // Regression checks for the pre-existing selector outputs on this same
+        // fixture: adding the gates must not rewrite any incumbent arm.
+        expect(horizon.topRaw.topMean).to.be.closeTo(-0.40 / 3, 1e-9);
+        expect(horizon.topAdjusted.topMean).to.be.closeTo(-0.40 / 3, 1e-9);
+        expect(horizon.maxActive.topMean).to.be.closeTo(0, 1e-9);
+        expect(horizon.lossVeto.events).to.equal(horizon.topMean.events);
+        expect(horizon.lossVeto.gatedMean).to.be.closeTo(-0.20 / 3, 1e-9);
+        expect(horizon.lossVeto.allMean).to.be.closeTo(-0.40 / 3, 1e-9);
+        expect(horizon.lossVeto.skipValue).to.be.closeTo(-0.20, 1e-9);
+        expect(horizon.lossVeto.positiveBlocks).to.equal(1);
+        expect(horizon.lossVeto.totalBlocks).to.equal(10);
+
+        const lines = result.reportLines;
+        const topMeanLine = lines.findIndex((line) => line.startsWith("TOP_MEAN "));
+        expect(topMeanLine).to.be.greaterThanOrEqual(0);
+        expect(lines[topMeanLine + 1]).to.equal(
+            "LOSS_VETO    n=3 top=-6.67% all=-13.33% skip=-20.00pp +blocks=1/10",
+        );
+        expect(lines[topMeanLine + 2]).to.match(
+            /^REGIME_FLOOR n=3 top=-13\.33% all=-13\.33% skip=\+0\.00pp \+blocks=0\/10$/,
+        );
+    });
+
+    it("REGIME_FLOOR skips events after ten completed negative incumbent returns", async () => {
+        const fixture = makeTakeSkipFixture(Array.from({ length: 12 }, () => -0.10));
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs),
+            () => fromArray(fixture.targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0 },
+        );
+        const horizon = result.horizons[0]!;
+        expect(result.eligibleEvents).to.equal(12);
+        expect(horizon.topMean.topMean).to.be.closeTo(-0.10, 1e-9);
+        expect(horizon.regimeFloor.events).to.equal(12);
+        // Events 1..10 are taken; events 11..12 see ten completed losses and
+        // are zeroed. The last two positive deltas occupy the final fixed
+        // chronological block, proving the /10 partition is used.
+        expect(horizon.regimeFloor.gatedMean).to.be.closeTo(-1.00 / 12, 1e-9);
+        expect(horizon.regimeFloor.allMean).to.be.closeTo(-0.10, 1e-9);
+        expect(horizon.regimeFloor.skipValue).to.be.closeTo(-0.20, 1e-9);
+        expect(horizon.regimeFloor.positiveBlocks).to.equal(1);
+        expect(horizon.regimeFloor.totalBlocks).to.equal(10);
+        expect(result.reportLines.join("\n")).to.include(
+            "REGIME_FLOOR n=12 top=-8.33% all=-10.00% skip=-20.00pp +blocks=1/10",
+        );
+    });
+
+    it("keeps a valid incumbent in the gate cohort when another positive is missing", async () => {
+        const fixture = makeTakeSkipFixture([-0.10]);
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs),
+            () => fromArray([fixture.targets[0]!]),
+            { horizons: [2], slippageRate: 0, commissionRate: 0 },
+        );
+        const horizon = result.horizons[0]!;
+        // The ordinary comparison rejects the event because BBB has no target,
+        // but the selected AAA incumbent is already a complete outcome and is
+        // therefore part of both deterministic gate series.
+        expect(horizon.topMean.events).to.equal(0);
+        expect(horizon.lossVeto.events).to.equal(1);
+        expect(horizon.regimeFloor.events).to.equal(1);
+        expect(horizon.lossVeto.allMean).to.be.closeTo(-0.10, 1e-9);
+        expect(horizon.regimeFloor.allMean).to.be.closeTo(-0.10, 1e-9);
     });
 });
