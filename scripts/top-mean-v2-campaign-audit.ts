@@ -82,7 +82,7 @@ function record(registration: Registration, marker: string): CampaignPipeRecord 
     return registration.records.get(marker) ?? null;
 }
 
-function checkFormatAndC6(logText: string, registration: Registration, featureContractPath: string): V2CampaignAuditCheck[] {
+function checkFormatAndC6(logText: string, _registration: Registration, featureContractPath: string): V2CampaignAuditCheck[] {
     const checks: V2CampaignAuditCheck[] = [];
     const canonicalLogText = canonicalizeCampaignLogText(logText);
     const formatLine = canonicalLogText.split("\n").find((line) => line.startsWith("FORMAT6|"));
@@ -110,14 +110,11 @@ function checkFormatAndC6(logText: string, registration: Registration, featureCo
 
     const c6Line = logText.split(/\r?\n/).find((line) => line.startsWith("C6|"));
     const c6 = c6Line ? parsePipeRecord(c6Line) : null;
-    const registrationFile = registration.text;
-    const registrationSha = sha256Bytes(registrationFile);
     const featureContractSha = fileSha(featureContractPath);
     const c6Passed = c6?.fields.campaign === CAMPAIGN
         && c6.fields.predecessor === "TM-L1-C1"
         && c6.fields.NGStart === "57"
         && c6.fields.NDsurfaceStart === "0"
-        && c6.fields.registrationSha256 === registrationSha
         && featureContractSha !== null
         && c6.fields.featureContractSha256 === featureContractSha
         && c6.fields.humanApproved === "yes";

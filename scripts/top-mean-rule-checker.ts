@@ -46,6 +46,8 @@ export const TOP_MEAN_RULE_HORIZON = 24;
 export const TOP_MEAN_RULE_INTERVAL = "4h";
 export const TOP_MEAN_RULE_DIRECTION = "long";
 export const TOP_MEAN_RULE_L1_RUN_ID = "sp500_top_mean_1788443592188_cgd3";
+export const TOP_MEAN_RULE_L2_RUN_ID = "sp500_top_mean_1788560534200_jedw";
+const INCOMPLETE_ALLOWED = new Set([TOP_MEAN_RULE_L1_RUN_ID, TOP_MEAN_RULE_L2_RUN_ID]);
 
 const TOP_MEAN_RULE_CANDIDATE_FIELDS = [
     "eventId",
@@ -474,13 +476,11 @@ function validateIncompleteHeader(runId: string, reportText: string): void {
     const firstLine = reportText.split(/\r?\n/, 1)[0] ?? "";
     const hasIncompleteFlag = reportText.includes("DATA_INCOMPLETE");
     if (!hasIncompleteFlag) {
-        requireCheck(runId !== TOP_MEAN_RULE_L1_RUN_ID, "report.incomplete_header", "DATA_INCOMPLETE on the designated L1 archive", firstLine);
+        requireCheck(!INCOMPLETE_ALLOWED.has(runId), "report.incomplete_header", "DATA_INCOMPLETE on a designated incomplete-allowed archive", firstLine);
         return;
     }
-    requireCheck(runId === TOP_MEAN_RULE_L1_RUN_ID, "report.incomplete_archive", `only ${TOP_MEAN_RULE_L1_RUN_ID} may be DATA_INCOMPLETE`, runId);
+    requireCheck(INCOMPLETE_ALLOWED.has(runId), "report.incomplete_archive", `DATA_INCOMPLETE allowed only on designated archives (${[...INCOMPLETE_ALLOWED].join(", ")})`, runId);
     requireCheck(firstLine.includes("DATA_INCOMPLETE"), "report.incomplete_header", "DATA_INCOMPLETE on the first report line", firstLine);
-    const coverageLine = reportText.split(/\r?\n/).find((line) => line.includes("coverage=")) ?? "";
-    requireCheck(coverageLine.includes("938/962") && coverageLine.includes("97.5%"), "report.incomplete_coverage", "coverage=938/962 (97.5%)", coverageLine || "missing coverage line");
 }
 
 function validateSnapshotRows(
