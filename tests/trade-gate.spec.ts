@@ -52,6 +52,8 @@ function makeFeatureRow(index: number, candidatesAtTime = 2): TradeGateFeatureRo
     return {
         ledgerVersion: 2,
         pair: "PAIR",
+        baseSymbol: "BASEUSDT",
+        quoteSymbol: "QUOTEUSDT",
         direction: "long",
         signalTime: BASE_TIME + index * 60,
         signalBarIndex: index,
@@ -65,6 +67,9 @@ function makeFeatureRow(index: number, candidatesAtTime = 2): TradeGateFeatureRo
         feat_hour: 0,
         feat_pairWinRatePrior: null,
         feat_pairTradesPrior: 0,
+        feat_barsSincePairLastFire: null,
+        feat_pairSpreadVolatility20: null,
+        feat_legVolatilityRatio20: null,
         feat_candidatesAtTime: candidatesAtTime,
     };
 }

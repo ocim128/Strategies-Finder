@@ -4,6 +4,7 @@ import { describe, it, after, afterEach, before } from "node:test";
 import { sep } from "node:path";
 import { Readable } from "node:stream";
 import { strategyRegistry } from "../strategyRegistry";
+import { BATCH_MAX_SYMBOLS } from "../lib/batch-backtest/batch-run-contract";
 import { getRunDir, getArtifactsRootDir } from "../lib/batch-backtest/sp500-top-mean-artifact-store";
 import {
     processRunBatch,
@@ -814,11 +815,11 @@ describe("batch-backtest server plugin run intake size guard", () => {
         const prevToken = process.env.LOCAL_PROXY_TOKEN;
         delete process.env.LOCAL_PROXY_TOKEN;
         try {
-            // 2001 unique symbols exceeds the 2000-row persistence cap. The
-            // handler must reject before allocating the run or opening the
-            // NDJSON stream — the response is a single JSON error, not a
-            // stream that starts and then aborts.
-            const tooMany = Array.from({ length: 2001 }, (_, i) => `SYM${i}`);
+            // BATCH_MAX_SYMBOLS + 1 unique symbols exceeds the intake and
+            // snapshot ceiling. The handler must reject before allocating the
+            // run or opening the NDJSON stream — the response is a single
+            // JSON error, not a stream that starts and then aborts.
+            const tooMany = Array.from({ length: BATCH_MAX_SYMBOLS + 1 }, (_, i) => `SYM${i}`);
             // The route handler calls readJsonBody(req), which iterates the
             // request asynchronously. A Node Readable that emits the JSON
             // body satisfies that contract (IncomingMessage is a Readable).
@@ -833,7 +834,7 @@ describe("batch-backtest server plugin run intake size guard", () => {
             const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
             expect(payload.ok).to.equal(false);
             expect(payload.error).to.include("exceeds");
-            expect(payload.error).to.match(/2[,.]?000/);
+            expect(payload.error).to.include(String(BATCH_MAX_SYMBOLS));
         } finally {
             setRunOwnerForTests(0);
             if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;

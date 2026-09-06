@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import {
-    TRADE_LEDGER_FEATURE_VERSION,
-    TRADE_LEDGER_VERSION,
+    TRADE_LEDGER_SUPPORTED_FEATURE_VERSIONS,
+    TRADE_LEDGER_SUPPORTED_VERSIONS,
     type TradeLedgerProvenance,
 } from "./trade-ledger-schema";
 import {
@@ -166,8 +166,10 @@ function refusalReason(args: {
 }): string | null {
     if (!args.provenance) return "provenance.json is missing or malformed";
     if (!args.summary) return "summary.json is missing or malformed";
-    if (args.ledgerVersion !== TRADE_LEDGER_VERSION) return `unsupported ledger version ${String(args.ledgerVersion)}`;
-    if (args.featureVersion !== TRADE_LEDGER_FEATURE_VERSION) return `unsupported feature version ${String(args.featureVersion)}`;
+    if (!(TRADE_LEDGER_SUPPORTED_VERSIONS as readonly number[]).includes(args.ledgerVersion ?? -1)) return `unsupported ledger version ${String(args.ledgerVersion)}`;
+    if (!(TRADE_LEDGER_SUPPORTED_FEATURE_VERSIONS as readonly number[]).includes(args.featureVersion ?? -1)) {
+        return `unsupported feature version ${String(args.featureVersion)}`;
+    }
     if (args.summary.ledgerComplete !== true || (certifiedNumber(args.summary.failedWrites) ?? 0) !== 0) {
         return "ledger is incomplete or has failed writes";
     }

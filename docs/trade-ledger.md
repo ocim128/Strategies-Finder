@@ -1,4 +1,4 @@
-# Trade Ledger (Batch rule-mining export, v2)
+# Trade Ledger (Batch rule-mining export, v3)
 
 The Batch "Save trade ledger" toggle exports a point-in-time trade ledger while a
 server-side Batch run executes. The research workflow it serves: a winning strategy is
@@ -88,7 +88,7 @@ browser-bound.
 
 ### provenance.json
 
-Run-level snapshot: `ledgerVersion`, `featureVersion`, `runId`, `startedAt`,
+Run-level snapshot: `ledgerVersion`, `featureVersion`, `ledgerHorizons`, `runId`, `startedAt`,
 `interval`, `strategyKey`, `strategyParams`, full `backtestSettings` +
 `capitalSettings`, `engineMode`, `executionModel`, `tradeDirection`, `riskMode`,
 `fees` (`commissionPercent`, `slippageBps`), `pairCount`, `symbols`, and the
@@ -108,6 +108,9 @@ Run-level snapshot: `ledgerVersion`, `featureVersion`, `runId`, `startedAt`,
   "commissionRate": 0
 }
 ```
+
+The run-level `ledgerHorizons` field is an array of positive whole-bar counts,
+for example `[24]`.
 
 ### Replay eligibility guard
 
@@ -145,9 +148,10 @@ The checker REFUSES replay with a clear message on ineligible folders.
 
 | Group   | Fields |
 |---------|--------|
-| Identity  | `pair`, `direction` (`long`\|`short`), `ledgerVersion` |
+| Identity  | `pair`, canonical `baseSymbol` / `quoteSymbol`, `direction` (`long`\|`short`), `ledgerVersion` |
 | Entry     | `signalTime` (unix s of the decision bar), `signalBarIndex`, `fillTime`, `fillPrice`, `executed`, `notExecutedReason` |
-| Features  | `feat_entryRangePosition`, `feat_atrPct`, `feat_return20`, `feat_gapPct`, `feat_dow`, `feat_hour`, `feat_pairWinRatePrior`, `feat_pairTradesPrior`, `feat_rank`, `feat_candidatesAtTime` |
+| Features  | `feat_entryRangePosition`, `feat_atrPct`, `feat_return20`, `feat_gapPct`, `feat_dow`, `feat_hour`, `feat_pairWinRatePrior`, `feat_pairTradesPrior`, `feat_barsSincePairLastFire`, `feat_pairSpreadVolatility20`, `feat_legVolatilityRatio20`, `feat_rank`, `feat_candidatesAtTime` |
+| Horizon   | `horizons[H]: { entryTimeSec, entryPrice, exitTimeSec, exitPrice, pnlPercent, status }` for each configured H; `status` is `"ok"` or `"right_censored"` |
 | As-if     | `asIf: { fillTime, fillPrice, exitTime, exitPrice, pnlPercent, barsHeld, exitReason } \| null`, `asIfReason` (`"right_censored"` \| `"replay_ineligible"` \| `null`) |
 | Outcome   | `exitTime`, `exitPrice`, `pnlPercent`, `fees`, `exitReason` — **executed rows ONLY** (the keys are absent otherwise) |
 
@@ -168,6 +172,25 @@ The checker REFUSES replay with a clear message on ineligible folders.
 - `asIf` is null ONLY when right-censored (no fill bar near the data end — the engine
   drops those entries too) or when the run is replay-ineligible
   (`asIfReason: "replay_ineligible"`). Never zero-filled, never a substituted exit.
+
+### Fixed-horizon outcomes (v3)
+
+Each row also carries the configured `ledgerHorizons` (default `[24]`) under
+`horizons`. These outcomes are the pair spread's fixed-horizon judging values for
+pair selection; they match the coordinator's per-asset outcome semantics instead
+of following the frozen strategy's signal-exit or max-hold path. The `asIf` column
+stays available for the legacy gate/replay loop.
+
+The alignment is exact: the entry bar is the row's fill bar (`signal_close` offset
+0, `next_open`/`next_close` offset 1 from the signal bar), and `H` means the close
+of bar `fillBarIndex + H`. `entryPrice` is the fill bar open. Long return is
+`exitPrice / entryPrice - 1`; short return is `1 - exitPrice / entryPrice`.
+When that exit bar does not exist, the outcome is `status: "right_censored"` with
+`pnlPercent: null` and no fabricated last-bar exit price.
+
+The pair-selection checker requires `ledgerVersion: 3` and reads the selected H
+from `provenance.ledgerHorizons`; pass an optional third CLI argument to name a
+different configured horizon. A horizon absent from that provenance is refused.
 
 ### As-if outcomes: engine math, no parallel exit engine
 
@@ -199,7 +222,8 @@ levels (ATR is null there for the engine as well).
 
 ### Feature definitions (all causal — bars at or before the signal bar only)
 
-Bump `TRADE_LEDGER_FEATURE_VERSION` whenever the feature set changes (v2 = 2).
+Bump `TRADE_LEDGER_FEATURE_VERSION` whenever the feature set changes (v3 = 3; the
+checker and Ledger Sweep remain able to read v2 folders).
 
 - `feat_entryRangePosition` — signal bar's close located within the PRIOR bar's
   `[low, high]` range, percent; null when the prior range is zero or `i < 1`.
@@ -211,10 +235,26 @@ Bump `TRADE_LEDGER_FEATURE_VERSION` whenever the feature set changes (v2 = 2).
 - `feat_pairWinRatePrior` — trailing win rate (`pnlPercent > 0`) of THIS pair's
   strictly earlier executed trades within this run; null until ≥ 5 priors.
   `feat_pairTradesPrior` — the count of those trades.
+- `feat_barsSincePairLastFire` — `signalBarIndex` minus the signal bar index of
+  this same pair's previous signal in the run; null on the pair's first signal.
+- `feat_pairSpreadVolatility20` — population standard deviation (divide by `N`)
+  of the twenty one-bar percent changes
+  `(close[k] − close[k−1]) / close[k−1] × 100` for `k = i−20 .. i−1`, where `i`
+  is the signal bar index. All changes end strictly before the signal bar; null
+  during warm-up (`i < 20` or when a required close is unavailable/non-positive).
+- `feat_legVolatilityRatio20` — the same twenty-change population standard
+  deviation on BASE closes divided by the same value on QUOTE closes, aligned
+  to the pair bar timestamps. Null when aligned leg series are unavailable,
+  fewer than twenty aligned observations exist, a required close is
+  non-positive, or QUOTE volatility is zero.
 - `feat_rank` / `feat_candidatesAtTime` — null in the ledger; filled by the checker
   from `signal-ranks.jsonl`.
 
-If a feature cannot be made causal, it is dropped rather than approximated.
+The v3 `baseSymbol` and `quoteSymbol` columns are the canonical BASE and QUOTE
+leg symbols from the run's pair definition. They are supplied by the loader/run
+context, not inferred from a derived chart symbol. Warm-up or unavailable
+features are always `null`, never zero. If a feature cannot be made causal, it
+is dropped rather than approximated.
 
 ### signal-ranks.jsonl (cross-sectional rank pass)
 
@@ -281,6 +321,8 @@ reads and `in` probes of forbidden fields throw, and field enumeration
 unconditionally. Sealed fields: `exitTime`, `exitPrice`, `pnlPercent`, `fees`,
 `exitReason`, `asIf`, `asIfReason`, plus `executed`/`notExecutedReason` — conditioning
 on the ORIGINAL run's survivorship is lookahead for a rule meant to run live.
+The v3 `horizons` field is sealed from legacy gate rules as well; pair-selection
+reads it through its separate outcome harness.
 
 **Replay semantics.** Per pair (pairs are independent in the engine — there is
 deliberately NO global cross-pair capital replay): sort candidates by decision time;
@@ -326,8 +368,8 @@ Rejected candidates occupy nothing. Right-censored candidates are counted as blo
 
 ## Tests
 
-- `tests/trade-ledger-exporter.spec.ts` — v2 row schema + as-if outcomes (engine exit
-  series, stop-out, end-of-data, same-bar gate, right-censoring), executed/notExecuted
+- `tests/trade-ledger-exporter.spec.ts` — v3 row schema + fixed-horizon and as-if
+  outcomes (engine exit series, stop-out, end-of-data, same-bar gate, right-censoring), executed/notExecuted
   categories incl. cooldown + match_missing, duplicate collapse, slippage tolerance
   boundaries, unlimited `maxOpenTrades`, causal immunity (mutating bar i+1), fixed
   ATR(14), replay-eligibility guard list, writer files/ranks/summary + pair

@@ -37,6 +37,8 @@ export async function runChecker(folder: string, ruleFile: string, options: RunC
     }
     return buildCheckerReport({
         folder,
+        ledgerVersion: loaded.provenance.ledgerVersion,
+        featureVersion: loaded.provenance.featureVersion,
         ruleName: path.basename(resolvedRule),
         rows: loaded.rows,
         joinedRankCount: loaded.joinedRankCount,

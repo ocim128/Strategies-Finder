@@ -33,11 +33,12 @@ import { debugLogger } from "../debug-logger";
 import { createDisconnectSafeStream, HttpStatusError, registerLocalJsonRoute, sendJson, type ViteHttpResponse } from "../vite-http-utils";
 import { FINDER_BATCH_MAX_BODY_BYTES } from "../server-request-limits";
 import { runBatchBacktest, type BatchBacktestRunInput, type BatchBacktestSymbolResult } from "./batch-backtest-runner";
-import { clearServerBatchDatasetCaches, getServerBatchDatasetCacheStats, loadServerBatchDataset } from "./server-batch-data-loader";
+import { clearServerBatchDatasetCaches, getServerBatchDatasetCacheStats, loadServerBatchDataset, loadServerBatchDatasetWithMetadata } from "./server-batch-data-loader";
 import {
     TRADE_LEDGER_DEFAULT_FOLDER,
     TRADE_LEDGER_FEATURE_VERSION,
     TRADE_LEDGER_VERSION,
+    TRADE_LEDGER_DEFAULT_HORIZONS,
     buildTradeLedgerRowsForPair,
     sanitizeTradeLedgerFolder,
     TradeLedgerWriter,
@@ -1080,7 +1081,15 @@ function parseTradeLedgerOptions(raw: unknown): TradeLedgerRunOptions | null {
     if (!folder) {
         throw new HttpStatusError(400, `Invalid tradeLedger folder: ${String(folderRaw)}.`);
     }
-    return { enabled: true, folder };
+    const horizonsRaw = (raw as { ledgerHorizons?: unknown }).ledgerHorizons;
+    let ledgerHorizons: number[] = [...TRADE_LEDGER_DEFAULT_HORIZONS];
+    if (horizonsRaw !== undefined) {
+        if (!Array.isArray(horizonsRaw) || horizonsRaw.length === 0 || horizonsRaw.some((value) => typeof value !== "number" || !Number.isInteger(value) || value <= 0)) {
+            throw new HttpStatusError(400, "tradeLedger.ledgerHorizons must be a non-empty array of positive integers.");
+        }
+        ledgerHorizons = [...new Set(horizonsRaw as number[])];
+    }
+    return { enabled: true, folder, ledgerHorizons };
 }
 
 /**
@@ -1099,6 +1108,7 @@ function resolveTradeLedgerRunContext(input: {
     backtestSettings: BacktestSettings;
     capitalSettings: CapitalSettings;
     interval: string;
+    ledgerHorizons?: readonly number[];
 }): TradeLedgerRunContext {
     const resolved = resolveExecutorBacktestSettings(
         { ...input.backtestSettings, interval: input.interval } as BacktestSettings,
@@ -1114,6 +1124,7 @@ function resolveTradeLedgerRunContext(input: {
             maxOpenTrades: eligibility.params.maxOpenTrades,
             cooldownBars: eligibility.params.cooldownBars,
             slippageRate: eligibility.params.slippageRate,
+            ledgerHorizons: [...(input.ledgerHorizons ?? TRADE_LEDGER_DEFAULT_HORIZONS)],
         },
     };
 }
@@ -1145,6 +1156,7 @@ function buildTradeLedgerProvenance(
             commissionPercent: Number(input.capitalSettings?.commission ?? 0),
             slippageBps: Number((input.backtestSettings as Record<string, unknown>).slippageBps ?? 0),
         },
+        ledgerHorizons: context.rowContext.ledgerHorizons ?? [...TRADE_LEDGER_DEFAULT_HORIZONS],
         pairCount: input.symbols.length,
         symbols: input.symbols,
         // Replay contract for the offline checker. The checker refuses replay
@@ -1262,12 +1274,15 @@ function buildTradeGatePairContexts(
 }
 
 async function prepareTradeGateFeatureContexts(
-    input: BatchBacktestRunInput,
+    input: BatchBacktestRunInput & { tradeLedger?: TradeLedgerRunOptions | null },
     gate: TradeGate,
     isCancelled: () => boolean,
     writer: StreamWriter,
 ): Promise<TradeGate> {
-    const ledgerContext = resolveTradeLedgerRunContext(input);
+    const ledgerContext = resolveTradeLedgerRunContext({
+        ...input,
+        ledgerHorizons: input.tradeLedger?.ledgerHorizons,
+    });
     const rowsByPair = new Map<string, TradeLedgerRow[]>();
     const timing = createBatchPairTimingLogger("pre-pass");
     writer({ type: "progress", percent: 0, text: "Trade Gate: building causal feature pre-pass...", status: "Trade Gate: building causal feature pre-pass..." });
@@ -1295,6 +1310,10 @@ async function prepareTradeGateFeatureContexts(
                         signals: completionContext.signals,
                         trades: result.result.trades,
                         context: ledgerContext.rowContext,
+                        baseSymbol: completionContext.baseSymbol,
+                        quoteSymbol: completionContext.quoteSymbol,
+                        baseCloses: completionContext.baseCloses,
+                        quoteCloses: completionContext.quoteCloses,
                     });
                     rowsByPair.set(result.symbol, pairRows.rows);
                 } finally {
@@ -1376,7 +1395,12 @@ export async function processRunBatch(
     // artifact: created per run, written inside the awaited onSymbolComplete
     // path (audit F2 shape), and never allowed to fail the run.
     const tradeLedgerRequested = input.tradeLedger?.enabled === true;
-    const ledgerRunContext = tradeLedgerRequested ? resolveTradeLedgerRunContext(input) : null;
+    const ledgerRunContext = tradeLedgerRequested
+        ? resolveTradeLedgerRunContext({
+            ...input,
+            ledgerHorizons: input.tradeLedger?.ledgerHorizons,
+        })
+        : null;
     const ledger = tradeLedgerRequested
         ? await TradeLedgerWriter.create({
             rootDir: ledgerRootDir ?? process.cwd(),
@@ -1507,6 +1531,10 @@ export async function processRunBatch(
                         signals: completionContext.signals,
                         trades: result.result?.trades,
                         context: ledgerRunContext.rowContext,
+                        baseSymbol: completionContext.baseSymbol,
+                        quoteSymbol: completionContext.quoteSymbol,
+                        baseCloses: completionContext.baseCloses,
+                        quoteCloses: completionContext.quoteCloses,
                         asIfModel,
                     });
                     await ledger.appendPairRows(pairRows);
@@ -1889,6 +1917,9 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
                     pairListProvenance,
                     maxActiveResearchRegistration,
                     loadDataset: (sym, intv, signal) => loadServerBatchDataset(sym, intv, signal),
+                    ...(tradeLedger || tradeGateOptions
+                        ? { loadDatasetWithContext: (sym: string, intv: string, signal?: AbortSignal) => loadServerBatchDatasetWithMetadata(sym, intv, signal) }
+                        : {}),
                 },
                 (event) => stream!.write(event),
                 owner,

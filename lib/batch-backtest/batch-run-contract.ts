@@ -22,8 +22,18 @@ export interface BatchRunFingerprintInput {
     tradeGate?: unknown;
 }
 
-/** Shared intake and snapshot ceiling for one Batch run. */
-export const BATCH_MAX_SYMBOLS = 2_000;
+/**
+ * Shared intake and snapshot ceiling for one Batch run.
+ *
+ * Batch has exactly one execution path: the Vite dev server streams scalar
+ * rows while per-symbol datasets flow through bounded loader caches and
+ * analysis artifacts are written to disk behind the submission gate — the
+ * browser tab never holds row data. The ceiling therefore bounds only the
+ * scalar snapshot/intake (KB-scale per thousand symbols), not tab memory, so
+ * it was raised from the legacy in-tab-era 2,000 to cover whole-universe
+ * ledger-export runs (e.g. ~5.5k synthetic pairs for pair-selection mining).
+ */
+export const BATCH_MAX_SYMBOLS = 8_000;
 export const BATCH_MAX_SYMBOL_LENGTH = 128;
 
 /**

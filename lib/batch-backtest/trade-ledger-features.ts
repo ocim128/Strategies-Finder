@@ -33,6 +33,8 @@ export interface TradeLedgerFeatureValues {
     feat_hour: number | null;
     feat_pairWinRatePrior: number | null;
     feat_pairTradesPrior: number;
+    feat_pairSpreadVolatility20: number | null;
+    feat_legVolatilityRatio20: number | null;
 }
 
 /** The identity/entry/features surface that trusted gate rules may inspect. */
@@ -40,6 +42,8 @@ export type TradeGateFeatureRow = Pick<
     TradeLedgerRow,
     | "ledgerVersion"
     | "pair"
+    | "baseSymbol"
+    | "quoteSymbol"
     | "direction"
     | "signalTime"
     | "signalBarIndex"
@@ -53,6 +57,9 @@ export type TradeGateFeatureRow = Pick<
     | "feat_hour"
     | "feat_pairWinRatePrior"
     | "feat_pairTradesPrior"
+    | "feat_barsSincePairLastFire"
+    | "feat_pairSpreadVolatility20"
+    | "feat_legVolatilityRatio20"
     | "feat_candidatesAtTime"
 >;
 
@@ -83,8 +90,10 @@ export function buildTradeLedgerFeatureValues(args: {
     signalBarIndex: number;
     signalSec: number;
     prior: TradeLedgerPriorStats;
+    baseCloses?: readonly (number | null)[];
+    quoteCloses?: readonly (number | null)[];
 }): TradeLedgerFeatureValues {
-    const { data, series, signalBarIndex, signalSec, prior } = args;
+    const { data, series, signalBarIndex, signalSec, prior, baseCloses, quoteCloses } = args;
     const { closes, highs, lows, atr } = series;
     return {
         feat_entryRangePosition:
@@ -117,7 +126,63 @@ export function buildTradeLedgerFeatureValues(args: {
                 ? (prior.wins / prior.trades) * 100
                 : null,
         feat_pairTradesPrior: prior.trades,
+        feat_pairSpreadVolatility20: buildVolatility20(closes, signalBarIndex),
+        feat_legVolatilityRatio20: buildLegVolatilityRatio20(
+            baseCloses,
+            quoteCloses,
+            signalBarIndex,
+        ),
     };
+}
+
+/**
+ * Population standard deviation of the twenty one-bar returns immediately
+ * before the signal bar. The close at the signal bar is never read.
+ */
+export function buildVolatility20(
+    closes: readonly (number | null)[] | undefined,
+    signalBarIndex: number,
+): number | null {
+    if (!closes || signalBarIndex < TRADE_LEDGER_FEATURE_RETURN_BARS) return null;
+    const changes: number[] = [];
+    for (
+        let k = signalBarIndex - TRADE_LEDGER_FEATURE_RETURN_BARS;
+        k < signalBarIndex;
+        k += 1
+    ) {
+        const previous = closes[k - 1];
+        const current = closes[k];
+        if (
+            previous == null
+            || current == null
+            || !Number.isFinite(previous)
+            || !Number.isFinite(current)
+            || previous <= 0
+            || current <= 0
+        ) {
+            return null;
+        }
+        changes.push(((current - previous) / previous) * 100);
+    }
+    return populationStandardDeviation(changes);
+}
+
+export function buildLegVolatilityRatio20(
+    baseCloses: readonly (number | null)[] | undefined,
+    quoteCloses: readonly (number | null)[] | undefined,
+    signalBarIndex: number,
+): number | null {
+    const baseVolatility = buildVolatility20(baseCloses, signalBarIndex);
+    const quoteVolatility = buildVolatility20(quoteCloses, signalBarIndex);
+    if (baseVolatility === null || quoteVolatility === null || quoteVolatility === 0) return null;
+    return baseVolatility / quoteVolatility;
+}
+
+function populationStandardDeviation(values: readonly number[]): number | null {
+    if (values.length !== TRADE_LEDGER_FEATURE_RETURN_BARS) return null;
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+    return Math.sqrt(variance);
 }
 
 export function tradeGateSignalKey(signalBarIndex: number, direction: TradeLedgerDirection): string {
@@ -131,6 +196,8 @@ export function toTradeGateFeatureRow(
     return {
         ledgerVersion: row.ledgerVersion,
         pair: row.pair,
+        baseSymbol: row.baseSymbol,
+        quoteSymbol: row.quoteSymbol,
         direction: row.direction,
         signalTime: row.signalTime,
         signalBarIndex: row.signalBarIndex,
@@ -144,6 +211,9 @@ export function toTradeGateFeatureRow(
         feat_hour: row.feat_hour,
         feat_pairWinRatePrior: row.feat_pairWinRatePrior,
         feat_pairTradesPrior: row.feat_pairTradesPrior,
+        feat_barsSincePairLastFire: row.feat_barsSincePairLastFire,
+        feat_pairSpreadVolatility20: row.feat_pairSpreadVolatility20,
+        feat_legVolatilityRatio20: row.feat_legVolatilityRatio20,
         feat_candidatesAtTime: candidatesAtTime,
     };
 }

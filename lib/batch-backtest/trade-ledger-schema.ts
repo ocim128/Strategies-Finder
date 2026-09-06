@@ -1,5 +1,5 @@
 /**
- * Data-only trade-ledger v2 schema and fixed feature constants.
+ * Data-only trade-ledger v3 schema and fixed feature constants.
  *
  * Keep this leaf free of filesystem, browser, and writer imports so replay
  * consumers can share the schema without pulling in the exporter.
@@ -18,9 +18,14 @@ import type {
 // Constants (bump versions whenever the schema or the feature set changes)
 // ============================================================================
 
-export const TRADE_LEDGER_VERSION = 2;
-export const TRADE_LEDGER_FEATURE_VERSION = 2;
+export const TRADE_LEDGER_VERSION = 3;
+export const TRADE_LEDGER_FEATURE_VERSION = 3;
+/** Ledger versions retained for legacy as-if replay consumers. */
+export const TRADE_LEDGER_SUPPORTED_VERSIONS = [2, 3] as const;
+/** Feature versions that the legacy checker/sweep may still read. */
+export const TRADE_LEDGER_SUPPORTED_FEATURE_VERSIONS = [2, 3] as const;
 export const TRADE_LEDGER_DEFAULT_FOLDER = "archive/mining-ledger";
+export const TRADE_LEDGER_DEFAULT_HORIZONS = [24] as const;
 
 /** Fixed feature ATR period — independent of the user's backtest ATR settings. */
 export const TRADE_LEDGER_FEATURE_ATR_PERIOD = 14;
@@ -30,8 +35,8 @@ export const TRADE_LEDGER_FEATURE_RETURN_BARS = 20;
 export const TRADE_LEDGER_PAIR_WIN_RATE_MIN_PRIOR = 5;
 
 /**
- * Outcome-ish fields a checker rule must NEVER read: realized outcomes, the
- * as-if outcomes, and the original run's survivorship (`executed` /
+ * Outcome-ish fields a checker rule must NEVER read: realized outcomes, fixed
+ * horizon/as-if outcomes, and the original run's survivorship (`executed` /
  * `notExecutedReason` — conditioning on them is survivorship lookahead).
  */
 export const TRADE_LEDGER_RULE_FORBIDDEN_FIELDS = [
@@ -42,6 +47,7 @@ export const TRADE_LEDGER_RULE_FORBIDDEN_FIELDS = [
     "exitReason",
     "asIf",
     "asIfReason",
+    "horizons",
     "executed",
     "notExecutedReason",
 ] as const;
@@ -50,6 +56,8 @@ export const TRADE_LEDGER_RULE_FORBIDDEN_FIELDS = [
 export const TRADE_LEDGER_RULE_ALLOWED_FIELDS = [
     "ledgerVersion",
     "pair",
+    "baseSymbol",
+    "quoteSymbol",
     "direction",
     "signalTime",
     "signalBarIndex",
@@ -63,6 +71,9 @@ export const TRADE_LEDGER_RULE_ALLOWED_FIELDS = [
     "feat_hour",
     "feat_pairWinRatePrior",
     "feat_pairTradesPrior",
+    "feat_barsSincePairLastFire",
+    "feat_pairSpreadVolatility20",
+    "feat_legVolatilityRatio20",
     "feat_rank",
     "feat_candidatesAtTime",
 ] as const;
@@ -85,9 +96,25 @@ export interface TradeLedgerAsIfOutcome {
     exitReason: string;
 }
 
+export type TradeLedgerHorizonStatus = "ok" | "right_censored";
+
+export interface TradeLedgerHorizonOutcome {
+    entryTimeSec: number | null;
+    entryPrice: number | null;
+    exitTimeSec: number | null;
+    exitPrice: number | null;
+    /** Fractional, direction-adjusted return. Null when right-censored. */
+    pnlPercent: number | null;
+    status: TradeLedgerHorizonStatus;
+}
+
 export interface TradeLedgerRow {
     ledgerVersion: number;
     pair: string;
+    /** Canonical BASE leg symbol from the run's pair definition. */
+    baseSymbol: string;
+    /** Canonical QUOTE leg symbol from the run's pair definition. */
+    quoteSymbol: string;
     direction: TradeLedgerDirection;
     /** Decision-bar time, unix seconds. */
     signalTime: number;
@@ -114,6 +141,12 @@ export interface TradeLedgerRow {
     feat_pairWinRatePrior: number | null;
     /** Count of those prior executed trades. */
     feat_pairTradesPrior: number;
+    /** Bars since this pair's previous entry signal; null on its first signal. */
+    feat_barsSincePairLastFire: number | null;
+    /** Population standard deviation of the prior twenty pair close returns. */
+    feat_pairSpreadVolatility20: number | null;
+    /** BASE prior-twenty volatility divided by QUOTE prior-twenty volatility. */
+    feat_legVolatilityRatio20: number | null;
     /** Joined from signal-ranks.jsonl at check time; null in ledger rows. */
     feat_rank: number | null;
     feat_candidatesAtTime: number | null;
@@ -124,6 +157,8 @@ export interface TradeLedgerRow {
      */
     asIf: TradeLedgerAsIfOutcome | null;
     asIfReason: "right_censored" | "replay_ineligible" | null;
+    /** Fixed-horizon spread outcomes, keyed by horizon bar count. */
+    horizons: Partial<Record<string, TradeLedgerHorizonOutcome>>;
     // ── Outcome fields, executed rows ONLY (never present otherwise) ──
     exitTime?: number;
     exitPrice?: number;
@@ -192,6 +227,8 @@ export interface TradeLedgerProvenance {
     tradeDirection: string;
     riskMode: string;
     fees: { commissionPercent: number; slippageBps: number };
+    /** Fixed-horizon outcomes emitted for every ledger row. */
+    ledgerHorizons?: number[];
     pairCount: number;
     symbols: string[];
     /** Replay contract for the offline checker. */
@@ -221,6 +258,8 @@ export interface TradeLedgerRowContext {
     maxOpenTrades: number;
     cooldownBars: number;
     slippageRate: number;
+    /** Fixed forward horizons, in whole bars. Defaults to [24]. */
+    ledgerHorizons?: number[];
 }
 
 export interface TradeLedgerFinalizeResult {
@@ -237,6 +276,12 @@ export interface BuildTradeLedgerRowsArgs {
     signals: readonly Signal[] | undefined;
     trades: readonly Trade[] | undefined;
     context: TradeLedgerRowContext;
+    /** Canonical leg identity supplied by the run/loader; never inferred here. */
+    baseSymbol?: string | null;
+    quoteSymbol?: string | null;
+    /** Leg closes aligned to `data`'s pair-bar timestamps. */
+    baseCloses?: readonly (number | null)[];
+    quoteCloses?: readonly (number | null)[];
     /** Per-pair as-if model; null/undefined when the run is replay-ineligible. */
     asIfModel?: AsIfPairModel | null;
 }

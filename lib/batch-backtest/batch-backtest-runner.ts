@@ -31,6 +31,7 @@ import { parseTimeToUnixSeconds } from "../time-normalization";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { isTradeGateEvaluationError, type TradeGate } from "./trade-gate";
 import { formatYearlyPnl, groupTradesByExitYear } from "./batch-yearly-pnl";
+import type { BatchDatasetLoadResult } from "./batch-dataset-loader-core";
 export { parseBatchSymbols } from "./batch-run-contract";
 
 // ============================================================================
@@ -96,6 +97,12 @@ export interface BatchBacktestSymbolResult {
  */
 export interface BatchSymbolCompletionContext {
     signals?: Signal[];
+    /** Canonical leg context supplied by a loader that owns the pair definition. */
+    baseSymbol?: string;
+    quoteSymbol?: string;
+    /** Leg closes aligned to the completed pair's bar timestamps. */
+    baseCloses?: readonly (number | null)[];
+    quoteCloses?: readonly (number | null)[];
 }
 
 export interface BatchBacktestTradeSummary {
@@ -139,6 +146,12 @@ export interface BatchBacktestRunInput {
     tradeGate?: TradeGate;
     /** Loads one symbol's OHLCV series without touching the live chart. */
     loadDataset: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
+    /** Optional loader-owned pair context for ledger features. */
+    loadDatasetWithContext?: (
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+    ) => Promise<BatchDatasetLoadResult>;
     /**
      * Minimum bar count for a loaded dataset to be considered usable. Loads
      * that return a positive but smaller number of bars (typical of a stale
@@ -252,14 +265,16 @@ export async function runBatchBacktest(
     // The Finder universe runner parallelizes loads the same way via
     // mapWithConcurrencyLimit.
     const PREFETCH_AHEAD = 4;
-    const inflight: Promise<OHLCVData[]>[] = [];
+    const inflight: Promise<BatchDatasetLoadResult>[] = [];
     const startPrefetch = (idx: number) => {
         // The promise is consumed by the serial loop in order. Attach a
         // no-op catch so that if the loop breaks early on cancel (leaving
         // up to PREFETCH_AHEAD promises unawaited) and one of them later
         // rejects on a network error, it doesn't surface as an unhandled
         // rejection. The consumer path handles errors itself via try/catch.
-        const p = input.loadDataset(symbols[idx], input.interval, abort.signal);
+        const p = input.loadDatasetWithContext
+            ? input.loadDatasetWithContext(symbols[idx], input.interval, abort.signal)
+            : input.loadDataset(symbols[idx], input.interval, abort.signal).then((data) => ({ data }));
         p.catch(() => { /* abandoned prefetch; error surfaced by consumer path */ });
         inflight.push(p);
     };
@@ -284,11 +299,13 @@ export async function runBatchBacktest(
         const loadPromise = inflight.shift()!;
 
         let data: OHLCVData[] = [];
+        let datasetContext: BatchDatasetLoadResult = { data: [] };
         try {
             const loadStartedAt = performance.now();
-            data = await loadPromise.finally(() => {
+            datasetContext = await loadPromise.finally(() => {
                 timings.datasetWaitMs += performance.now() - loadStartedAt;
             });
+            data = datasetContext.data;
             if (cancelCheck() || abort.signal.aborted) break;
             if (!Array.isArray(data) || data.length === 0) {
                 const failure: BatchBacktestSymbolResult = {
@@ -388,7 +405,13 @@ export async function runBatchBacktest(
             const projectionStartedAt = performance.now();
             const result = buildSymbolResult(symbol, data, output.result, output.signals, preResolvedCapital);
             timings.resultProjectionMs += performance.now() - projectionStartedAt;
-            await notifyComplete(i, result, { signals: output.signals });
+            await notifyComplete(i, result, {
+                signals: output.signals,
+                baseSymbol: datasetContext.baseSymbol,
+                quoteSymbol: datasetContext.quoteSymbol,
+                baseCloses: datasetContext.baseCloses,
+                quoteCloses: datasetContext.quoteCloses,
+            });
             results[i] = input.pruneResultArtifacts ? pruneResultArtifacts(result) : result;
         } catch (error) {
             if (cancelCheck()) break;

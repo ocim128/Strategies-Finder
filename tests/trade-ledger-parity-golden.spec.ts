@@ -34,6 +34,8 @@ describe("trade-ledger independent golden parity", () => {
                 : undefined;
             const result = evaluateTradeLedgerRuleWithReport({
                 folder: FOLDER_LABEL,
+                ledgerVersion: loaded.provenance.ledgerVersion,
+                featureVersion: loaded.provenance.featureVersion,
                 ruleName: "golden-rule.ts",
                 rows: loaded.rows,
                 joinedRankCount: loaded.joinedRankCount,

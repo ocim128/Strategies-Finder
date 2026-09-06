@@ -1,7 +1,7 @@
 /**
  * Trade-ledger scale benchmark (audit W7 — throwaway/manual tool, NOT a spec).
  *
- * Generates a synthetic ~2M-row ledger v2 folder (fake pairs, valid row shape
+ * Generates a synthetic ~2M-row ledger v3 folder (fake pairs, valid row shape
  * including asIf) and runs the offline checker over it once, reporting:
  *   - generation time + folder size
  *   - checker load (provenance/summary/ledger/ranks parse) duration
@@ -20,6 +20,7 @@ import { mkdir } from "node:fs/promises";
 import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import path from "node:path";
 import {
+    TRADE_LEDGER_FEATURE_VERSION,
     TRADE_LEDGER_VERSION,
     type TradeLedgerRow,
 } from "../lib/batch-backtest/trade-ledger-exporter";
@@ -43,6 +44,8 @@ function synthRow(pair: string, i: number, pairIndex: number): TradeLedgerRow {
     return {
         ledgerVersion: TRADE_LEDGER_VERSION,
         pair,
+        baseSymbol: `SYN${String(pairIndex).padStart(4, "0")}USDT`,
+        quoteSymbol: "USDUSDT",
         direction: "long",
         signalTime: 1_600_000_000 + i * 3600 + pairIndex,
         signalBarIndex: i,
@@ -58,6 +61,9 @@ function synthRow(pair: string, i: number, pairIndex: number): TradeLedgerRow {
         feat_hour: 12,
         feat_pairWinRatePrior: null,
         feat_pairTradesPrior: 0,
+        feat_barsSincePairLastFire: i === 0 ? null : 1,
+        feat_pairSpreadVolatility20: 0,
+        feat_legVolatilityRatio20: 1,
         feat_rank: null,
         feat_candidatesAtTime: null,
         asIf: {
@@ -70,6 +76,16 @@ function synthRow(pair: string, i: number, pairIndex: number): TradeLedgerRow {
             exitReason: "signal",
         },
         asIfReason: null,
+        horizons: {
+            "24": {
+                entryTimeSec: 1_600_000_000 + (i + 1) * 3600 + pairIndex,
+                entryPrice: entry,
+                exitTimeSec: 1_600_000_000 + (i + 25) * 3600 + pairIndex,
+                exitPrice: exit,
+                pnlPercent: (exit - entry) / entry,
+                status: "ok",
+            },
+        },
         ...(i % 8 === 0
             ? { exitTime: 1_600_000_000 + (i + 2) * 3600 + pairIndex, exitPrice: exit, pnlPercent: ((exit - entry) / entry) * 100, fees: 0.01, exitReason: "signal" as const }
             : {}),
@@ -107,17 +123,17 @@ async function generate(rowsPerPair: number, pairCount: number): Promise<void> {
     // summary + provenance (certified complete)
     const { writeFile } = await import("node:fs/promises");
     await writeFile(path.join(OUT_DIR, "provenance.json"), JSON.stringify({
-        ledgerVersion: TRADE_LEDGER_VERSION, featureVersion: 2, runId: "bench", startedAt: new Date().toISOString(),
+        ledgerVersion: TRADE_LEDGER_VERSION, featureVersion: TRADE_LEDGER_FEATURE_VERSION, runId: "bench", startedAt: new Date().toISOString(),
         interval: "4h", strategyKey: "bench", strategyParams: {}, backtestSettings: {}, capitalSettings: {},
         engineMode: "typescript", executionModel: "next_open", tradeDirection: "long", riskMode: "percentage",
-        fees: { commissionPercent: 0, slippageBps: 0 }, pairCount, symbols: [], replay: {
+        fees: { commissionPercent: 0, slippageBps: 0 }, ledgerHorizons: [24], pairCount, symbols: [], replay: {
             replayEligible: true, replayBlockers: [], maxOpenTrades: 1, cooldownBars: 0,
             executionModel: "next_open", tradeDirection: "long", allowSameBarExit: false,
             disableSignalExits: true, slippageRate: 0, commissionRate: 0,
         },
     }));
     await writeFile(path.join(OUT_DIR, "summary.json"), JSON.stringify({
-        ledgerVersion: TRADE_LEDGER_VERSION, featureVersion: 2, runId: "bench",
+        ledgerVersion: TRADE_LEDGER_VERSION, featureVersion: TRADE_LEDGER_FEATURE_VERSION, runId: "bench",
         startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
         cancelled: false, ledgerComplete: true, failedWrites: 0, lastError: null,
         totals: { pairs: pairCount, signals: rowsPerPair * pairCount, executed: 0, notExecuted: 0 },

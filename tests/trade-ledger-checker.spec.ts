@@ -33,6 +33,8 @@ function baseRow(overrides: Partial<TradeLedgerRow>): TradeLedgerRow {
     return {
         ledgerVersion: 2,
         pair: "A+B",
+        baseSymbol: "AUSDT",
+        quoteSymbol: "BUSDT",
         direction: "long",
         signalTime: 100,
         signalBarIndex: 3,
@@ -48,6 +50,9 @@ function baseRow(overrides: Partial<TradeLedgerRow>): TradeLedgerRow {
         feat_hour: 14,
         feat_pairWinRatePrior: null,
         feat_pairTradesPrior: 2,
+        feat_barsSincePairLastFire: null,
+        feat_pairSpreadVolatility20: null,
+        feat_legVolatilityRatio20: null,
         feat_rank: null,
         feat_candidatesAtTime: null,
         asIf: {
@@ -60,6 +65,16 @@ function baseRow(overrides: Partial<TradeLedgerRow>): TradeLedgerRow {
             exitReason: "signal",
         },
         asIfReason: null,
+        horizons: {
+            "24": {
+                entryTimeSec: 200,
+                entryPrice: 10,
+                exitTimeSec: 300,
+                exitPrice: 11,
+                pnlPercent: 0.1,
+                status: "ok",
+            },
+        },
         exitTime: 300,
         exitPrice: 11,
         pnlPercent: 5,

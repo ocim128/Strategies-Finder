@@ -505,6 +505,8 @@ async function runWorker(options: WorkerOptions): Promise<void> {
                 if (!loadedRule) fail(`Rule ${entry.ruleId} was not loaded.`);
                 const evaluated = await evaluateTradeLedgerRuleWithReportAsync({
                     folder: manifest.ledgerFolder,
+                    ledgerVersion: loaded.provenance.ledgerVersion,
+                    featureVersion: loaded.provenance.featureVersion,
                     ruleName: entry.ruleName,
                     rows: loaded.rows,
                     joinedRankCount: loaded.joinedRankCount,

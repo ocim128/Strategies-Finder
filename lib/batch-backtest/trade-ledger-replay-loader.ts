@@ -1,5 +1,5 @@
 /**
- * Node-only streaming loader and replay eligibility validator for ledger v2.
+ * Node-only streaming loader and replay eligibility validator for ledger v2/v3.
  *
  * The loader owns filesystem access and rank joining. Replay semantics stay in
  * trade-ledger-replay-core so the worker and legacy CLI share one core.
@@ -9,7 +9,7 @@ import { existsSync, readFileSync, statSync, createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import {
-    TRADE_LEDGER_VERSION,
+    TRADE_LEDGER_SUPPORTED_VERSIONS,
     type TradeLedgerProvenance,
     type TradeLedgerRankRow,
     type TradeLedgerRow,
@@ -152,9 +152,9 @@ export async function loadLedgerForReplay(folder: string, options: LoadLedgerOpt
         throw new Error(`${PROVENANCE_FILE} not found in "${folder}" — not a trade-ledger run folder.`);
     }
     const provenance = JSON.parse(readFileSync(provenancePath, "utf8")) as TradeLedgerProvenance;
-    if (provenance.ledgerVersion !== TRADE_LEDGER_VERSION) {
+    if (!(TRADE_LEDGER_SUPPORTED_VERSIONS as readonly number[]).includes(provenance.ledgerVersion)) {
         throw new Error(
-            `ledger v${provenance.ledgerVersion} — re-run the batch to regenerate (checker requires ledger v${TRADE_LEDGER_VERSION} with as-if outcomes).`
+            `ledger v${provenance.ledgerVersion} — re-run the batch to regenerate (supported ledger versions: ${TRADE_LEDGER_SUPPORTED_VERSIONS.join(", ")}).`
         );
     }
     const replay = provenance.replay;
@@ -179,9 +179,9 @@ export async function loadLedgerForReplay(folder: string, options: LoadLedgerOpt
         failedWrites?: number;
         failedPairs?: string[];
     };
-    if (summary.ledgerVersion !== TRADE_LEDGER_VERSION) {
+    if (summary.ledgerVersion !== provenance.ledgerVersion) {
         throw new Error(
-            `summary.json ledgerVersion ${String(summary.ledgerVersion)} unsupported — checker requires v${TRADE_LEDGER_VERSION}. Re-run the batch.`
+            `summary.json ledgerVersion ${String(summary.ledgerVersion)} is unsupported or does not match provenance ledgerVersion ${String(provenance.ledgerVersion)}. Re-run the batch.`
         );
     }
     const failedPairs = Array.isArray(summary.failedPairs) ? summary.failedPairs : [];

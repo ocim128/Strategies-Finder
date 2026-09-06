@@ -1,5 +1,5 @@
 /**
- * Trade Ledger exporter for server-side Batch runs (v2).
+ * Trade Ledger exporter for server-side Batch runs (v3 features).
  *
  * While a Batch run executes with the ledger toggle ON, the vite plugin
  * (`batch-backtest-vite-plugin.ts`) writes one run folder containing:
@@ -18,7 +18,8 @@
  * replay-eligible (`asIfReason: "replay_ineligible"`; the checker refuses
  * those folders anyway).
  *
- * The ledger is a pure side artifact: every function here only READS the
+ * v3 adds fixed-horizon outcomes (`horizons`) for pair-selection judging. The
+ * ledger is a pure side artifact: every function here only READS the
  * runner's rows, and any write failure is recorded (`ledgerComplete: false`)
  * instead of failing the batch run.
  *
@@ -57,9 +58,11 @@ import type {
 } from "../types/strategies";
 
 import {
+    TRADE_LEDGER_DEFAULT_HORIZONS,
     TRADE_LEDGER_FEATURE_VERSION,
     TRADE_LEDGER_VERSION,
     type TradeLedgerFinalizeResult,
+    type TradeLedgerHorizonOutcome,
     type TradeLedgerNotExecutedReason,
     type TradeLedgerPairSuppression,
     type TradeLedgerProvenance,
@@ -69,7 +72,10 @@ import {
 } from "./trade-ledger-schema";
 export {
     TRADE_LEDGER_DEFAULT_FOLDER,
+    TRADE_LEDGER_DEFAULT_HORIZONS,
     TRADE_LEDGER_FEATURE_VERSION,
+    TRADE_LEDGER_SUPPORTED_VERSIONS,
+    TRADE_LEDGER_SUPPORTED_FEATURE_VERSIONS,
     TRADE_LEDGER_FEATURE_ATR_PERIOD,
     TRADE_LEDGER_FEATURE_RETURN_BARS,
     TRADE_LEDGER_PAIR_WIN_RATE_MIN_PRIOR,
@@ -79,6 +85,7 @@ export {
     type TradeLedgerAsIfOutcome,
     type TradeLedgerDirection,
     type TradeLedgerFinalizeResult,
+    type TradeLedgerHorizonOutcome,
     type TradeLedgerNotExecutedReason,
     type TradeLedgerPairSuppression,
     type TradeLedgerProvenance,
@@ -132,6 +139,12 @@ export interface BuildTradeLedgerRowsArgs {
     signals: readonly Signal[] | undefined;
     trades: readonly Trade[] | undefined;
     context: TradeLedgerRowContext;
+    /** Canonical leg identity supplied by the run/loader; never inferred here. */
+    baseSymbol?: string | null;
+    quoteSymbol?: string | null;
+    /** Leg closes aligned to `data`'s pair-bar timestamps. */
+    baseCloses?: readonly (number | null)[];
+    quoteCloses?: readonly (number | null)[];
     /** Per-pair as-if model; null/undefined when the run is replay-ineligible. */
     asIfModel?: AsIfPairModel | null;
 }
@@ -158,7 +171,18 @@ export interface TradeLedgerPairRows {
  * right-censored or the run is replay-ineligible.
  */
 export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): TradeLedgerPairRows {
-    const { pair, data, signals, trades, context, asIfModel } = args;
+    const {
+        pair,
+        data,
+        signals,
+        trades,
+        context,
+        baseSymbol,
+        quoteSymbol,
+        baseCloses,
+        quoteCloses,
+        asIfModel,
+    } = args;
     if (!signals || signals.length === 0 || !data || data.length === 0) {
         return { rows: [], duplicatesCollapsed: 0, rightCensored: 0 };
     }
@@ -193,6 +217,7 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
     const rows: TradeLedgerRow[] = [];
     let duplicatesCollapsed = 0;
     let rightCensored = 0;
+    let previousSignalBarIndex: number | null = null;
 
     // W4: decision-time order (stable) before trailing statistics; W5:
     // (signalBarIndex, direction) identity — first wins, duplicates counted.
@@ -245,6 +270,8 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
         const row: TradeLedgerRow = {
             ledgerVersion: TRADE_LEDGER_VERSION,
             pair,
+            baseSymbol: baseSymbol ?? "",
+            quoteSymbol: quoteSymbol ?? "",
             direction,
             signalTime: signalSec,
             signalBarIndex: signalBarIndex === -1 ? -1 : signalBarIndex,
@@ -269,11 +296,24 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
                 signalBarIndex,
                 signalSec,
                 prior,
+                baseCloses,
+                quoteCloses,
             }),
+            feat_barsSincePairLastFire:
+                signalBarIndex >= 0 && previousSignalBarIndex !== null && previousSignalBarIndex >= 0
+                    ? signalBarIndex - previousSignalBarIndex
+                    : null,
             feat_rank: null,
             feat_candidatesAtTime: null,
             asIf: null,
             asIfReason: null,
+            horizons: buildTradeLedgerHorizonOutcomes(
+                data,
+                barSecs,
+                fillBarIndex,
+                direction,
+                context.ledgerHorizons ?? [...TRADE_LEDGER_DEFAULT_HORIZONS],
+            ),
         };
         if (matched) {
             executedSoFar.push(matched);
@@ -289,6 +329,7 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
             row.fees = matched.fees ?? 0;
             row.exitReason = matched.exitReason;
         }
+        if (signalBarIndex >= 0) previousSignalBarIndex = signalBarIndex;
         // As-if outcome for EVERY entry signal (v2 replay contract).
         if (asIfModel) {
             if (signalBarIndex === -1) {
@@ -317,6 +358,60 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
         rows.push(row);
     }
     return { rows, duplicatesCollapsed, rightCensored };
+}
+
+function buildTradeLedgerHorizonOutcomes(
+    data: readonly OHLCVData[],
+    barSecs: readonly (number | null)[],
+    fillBarIndex: number,
+    direction: TradeLedgerRow["direction"],
+    horizons: readonly number[],
+): Partial<Record<string, TradeLedgerHorizonOutcome>> {
+    const outcomes: Partial<Record<string, TradeLedgerHorizonOutcome>> = {};
+    const fillBar = data[fillBarIndex];
+    const entryTimeSec = fillBarIndex >= 0 && fillBarIndex < data.length ? barSecs[fillBarIndex] ?? null : null;
+    const entryPrice = fillBarIndex >= 0 && fillBarIndex < data.length ? fillBar?.open ?? null : null;
+    if (entryPrice !== null && (!Number.isFinite(entryPrice) || entryPrice <= 0)) {
+        throw new Error(`Trade-ledger horizon entry price is invalid at fill bar ${fillBarIndex}.`);
+    }
+    for (const horizon of horizons) {
+        const key = String(horizon);
+        const exitBarIndex = fillBarIndex + horizon;
+        const exitBar = exitBarIndex >= 0 && exitBarIndex < data.length ? data[exitBarIndex] : undefined;
+        const exitTimeSec = exitBarIndex >= 0 && exitBarIndex < data.length ? barSecs[exitBarIndex] ?? null : null;
+        const exitPrice = exitBar?.close ?? null;
+        if (
+            entryTimeSec === null
+            || entryPrice === null
+            || exitBar === undefined
+            || exitTimeSec === null
+            || exitPrice === null
+        ) {
+            outcomes[key] = {
+                entryTimeSec,
+                entryPrice,
+                exitTimeSec: null,
+                exitPrice: null,
+                pnlPercent: null,
+                status: "right_censored",
+            };
+            continue;
+        }
+        if (!Number.isFinite(exitPrice) || exitPrice <= 0) {
+            throw new Error(`Trade-ledger horizon exit price is invalid at bar ${exitBarIndex}.`);
+        }
+        outcomes[key] = {
+            entryTimeSec,
+            entryPrice,
+            exitTimeSec,
+            exitPrice,
+            pnlPercent: direction === "long"
+                ? exitPrice / entryPrice - 1
+                : 1 - exitPrice / entryPrice,
+            status: "ok",
+        };
+    }
+    return outcomes;
 }
 
 function isEntrySignal(signal: Signal, tradeDirection: TradeDirection): boolean {

@@ -28,9 +28,26 @@ export interface BatchDatasetLoaderCore {
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
     ): Promise<OHLCVData[]>;
+    loadWithMetadata(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ): Promise<BatchDatasetLoadResult>;
     clearCaches(): void;
     /** Snapshot of in-memory + disk cache counters for benchmark diagnostics. */
     getCacheStats(): BatchDatasetCacheStats;
+}
+
+/** Pair data plus optional loader-owned leg context for causal ledger features. */
+export interface BatchDatasetLoadResult {
+    data: OHLCVData[];
+    /** Canonical symbols from the pair definition, not from a derived chart name. */
+    baseSymbol?: string;
+    quoteSymbol?: string;
+    /** Closes aligned to `data`'s pair-bar timestamps. */
+    baseCloses?: readonly (number | null)[];
+    quoteCloses?: readonly (number | null)[];
 }
 
 export interface BatchDatasetCacheStats {
@@ -173,13 +190,13 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                 interval,
             );
             if (synthParts) {
-                return await loadSyntheticPair(
+                return (await loadSyntheticPair(
                     synthParts.baseSymbol,
                     synthParts.quoteSymbol,
                     effectiveInterval,
                     signal,
                     context,
-                );
+                )).data;
             }
 
             // OPEN_SCORE USD analysis loads each synthetic leg again as a standalone target.
@@ -233,14 +250,37 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         }
     }
 
+    async function loadWithMetadata(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ): Promise<BatchDatasetLoadResult> {
+        const synthParts = parseSyntheticPairToken(symbol);
+        if (!synthParts) return { data: await load(symbol, interval, signal, context) };
+        const effectiveInterval = resolveEffectiveIntervalForSynthetic(
+            symbol,
+            synthParts.baseSymbol,
+            synthParts.quoteSymbol,
+            interval,
+        );
+        return loadSyntheticPair(
+            synthParts.baseSymbol,
+            synthParts.quoteSymbol,
+            effectiveInterval,
+            signal,
+            context,
+        );
+    }
+
     async function loadSyntheticPair(
         baseSymbol: string,
         quoteSymbol: string,
         interval: string,
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
-    ): Promise<OHLCVData[]> {
-        if (signal?.aborted) return [];
+    ): Promise<BatchDatasetLoadResult> {
+        if (signal?.aborted) return { data: [] };
         const diagnostics = context?.diagnostics;
         if (diagnostics) diagnostics.syntheticPairRequests += 1;
 
@@ -266,7 +306,13 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
             debugLogger.event(`${options.logPrefix}.synthetic_pair_cache_hit`, {
                 syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
             });
-            return cachedPair;
+            const data = await cachedPair;
+            return {
+                data,
+                baseSymbol,
+                quoteSymbol,
+                ...(await loadAlignedLegCloses(baseSymbol, quoteSymbol, interval, data, signal, context)),
+            };
         }
         if (diagnostics) diagnostics.pairCacheMisses += 1;
 
@@ -297,7 +343,13 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                         });
                         const diskPromise = Promise.resolve(cached.bars);
                         activePairCache.set(pairKey, diskPromise);
-                        return await diskPromise;
+                        const data = await diskPromise;
+                        return {
+                            data,
+                            baseSymbol,
+                            quoteSymbol,
+                            ...(await loadAlignedLegCloses(baseSymbol, quoteSymbol, interval, data, signal, context)),
+                        };
                     }
                     diskStats.misses += 1;
                     if (diagnostics) diagnostics.diskCacheMisses += 1;
@@ -313,8 +365,8 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
             }
         }
 
-        const promise = (async (): Promise<OHLCVData[]> => {
-            if (signal?.aborted) return [];
+        const pairBuildPromise = (async (): Promise<BatchDatasetLoadResult> => {
+            if (signal?.aborted) return { data: [] };
             const pairBuildStartedAt = performance.now();
             const result = await buildSyntheticPairFromLegs({
                 baseSymbol,
@@ -333,7 +385,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                 diagnostics.pairBuilds += 1;
                 diagnostics.timingsMs.pairBuild += performance.now() - pairBuildStartedAt;
             }
-            if (signal?.aborted) return [];
+            if (signal?.aborted) return { data: [] };
             // Write to disk cache (fire-and-forget; failures logged, never thrown).
             // Done here inside the producer so the write happens once per true miss,
             // not on every consumer awaiting the same deduped promise.
@@ -350,10 +402,62 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                 }
                 if (diagnostics) diagnostics.timingsMs.pairWrite += performance.now() - pairWriteStartedAt;
             }
-            return result.bars;
+            const data = result.bars;
+            return {
+                data,
+                baseSymbol,
+                quoteSymbol,
+                baseCloses: alignLegCloses(data, result.base, interval),
+                quoteCloses: alignLegCloses(data, result.quote, interval),
+            };
         })();
+        const barsPromise = pairBuildPromise.then((result) => result.data);
+        const data = await cacheSuccessfulLoad(activePairCache, pairKey, barsPromise, signal);
+        const built = await pairBuildPromise;
+        return { ...built, data };
+    }
 
-        return cacheSuccessfulLoad(activePairCache, pairKey, promise, signal);
+    async function loadAlignedLegCloses(
+        baseSymbol: string,
+        quoteSymbol: string,
+        interval: string,
+        pairBars: readonly OHLCVData[],
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ): Promise<Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">> {
+        try {
+            const diamondLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
+            const available = resolveSyntheticAvailableIntervals(baseSymbol, quoteSymbol);
+            const source = diamondLeg ? null : pickSourceInterval(interval, 12, available);
+            const sourceInterval = source?.sourceInterval ?? interval;
+            const sourceBars = Math.min(SYNTHETIC_TARGET_BARS * (source?.ratio ?? 1), DATA_CHART_TOTAL_LIMIT);
+            let [base, quote] = await Promise.all([
+                getSourceSeries(baseSymbol, sourceInterval, sourceBars, signal, context),
+                getSourceSeries(quoteSymbol, sourceInterval, sourceBars, signal, context),
+            ]);
+            let subdivided = source !== null;
+            if (subdivided && (base.length === 0 || quote.length === 0)) {
+                const fallback = await Promise.all([
+                    getSourceSeries(baseSymbol, interval, SYNTHETIC_TARGET_BARS, signal, context),
+                    getSourceSeries(quoteSymbol, interval, SYNTHETIC_TARGET_BARS, signal, context),
+                ]);
+                if (fallback[0].length > 0 && fallback[1].length > 0) {
+                    base = fallback[0];
+                    quote = fallback[1];
+                    subdivided = false;
+                }
+            }
+            const alignmentInterval = subdivided ? sourceInterval : interval;
+            return {
+                baseCloses: alignLegCloses(pairBars, base, alignmentInterval),
+                quoteCloses: alignLegCloses(pairBars, quote, alignmentInterval),
+            };
+        } catch {
+            // The pair itself may come from the pair cache/disk cache even when
+            // its legs are no longer available. The ledger must use null here,
+            // never a proxy or zero-filled ratio.
+            return {};
+        }
     }
 
     function getSourceSeries(
@@ -412,6 +516,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
 
     return {
         load,
+        loadWithMetadata,
         clearCaches() {
             legCache.clear();
             pairCache.clear();
@@ -428,6 +533,24 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         },
     };
 }
+
+function alignLegCloses(
+    pairBars: readonly OHLCVData[],
+    legBars: readonly OHLCVData[],
+    interval: string,
+): (number | null)[] {
+    const alignedLegBars = resampleOHLCV([...legBars], interval);
+    const closeByTime = new Map<number, number>();
+    for (const bar of alignedLegBars) {
+        const sec = typeof bar.time === "number" ? bar.time : null;
+        if (sec !== null && Number.isFinite(sec)) closeByTime.set(sec, bar.close);
+    }
+    return pairBars.map((bar) => {
+        const sec = typeof bar.time === "number" ? bar.time : null;
+        return sec !== null && Number.isFinite(sec) ? closeByTime.get(sec) ?? null : null;
+    });
+}
+
 
 function cacheSuccessfulLoad(
     cache: SyntheticLegCache<OHLCVData[]>,

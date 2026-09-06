@@ -343,6 +343,94 @@ describe("trade ledger row builder", () => {
         expect(row.feat_candidatesAtTime).to.equal(null);
     });
 
+    it("computes v3 pair-fire spacing, spread volatility, and aligned leg ratio", () => {
+        const alternatingCloses = (count: number, changePct: number): number[] => {
+            const closes = [100];
+            for (let i = 0; i < count - 1; i += 1) {
+                closes.push(closes[i]! * (1 + (i % 2 === 0 ? changePct : -changePct) / 100));
+            }
+            return closes;
+        };
+        const pairCloses = alternatingCloses(24, 10);
+        const baseCloses = alternatingCloses(24, 20);
+        const quoteCloses = alternatingCloses(24, 10);
+        const pairData = pairCloses.map((close, index) => ({
+            time: barTime(index),
+            open: close,
+            high: close + 1,
+            low: close - 1,
+            close,
+            volume: 1000,
+        }));
+        const signals = [21, 23].map((index) => makeSignal({
+            time: pairData[index]!.time,
+            type: "buy",
+            price: pairData[index]!.close,
+            barIndex: index,
+        }));
+        const { rows } = buildTradeLedgerRowsForPair({
+            pair: "BASE+QUOTE",
+            baseSymbol: "BASEUSDT",
+            quoteSymbol: "QUOTEUSDT",
+            data: pairData,
+            signals,
+            trades: [],
+            context: { ...ledgerContext, executionModel: "signal_close" },
+            baseCloses,
+            quoteCloses,
+        });
+
+        expect(rows[0]!.baseSymbol).to.equal("BASEUSDT");
+        expect(rows[0]!.quoteSymbol).to.equal("QUOTEUSDT");
+        expect(rows[0]!.feat_barsSincePairLastFire).to.equal(null);
+        expect(rows[1]!.feat_barsSincePairLastFire).to.equal(2);
+        // The twenty prior changes are exactly alternating +10%/-10% and
+        // +20%/-20%, so their population standard deviations are 10 and 20.
+        expect(rows[0]!.feat_pairSpreadVolatility20).to.be.closeTo(10, 1e-12);
+        expect(rows[0]!.feat_legVolatilityRatio20).to.be.closeTo(2, 1e-12);
+    });
+
+    it("returns null for v3 volatility warm-up, invalid closes, missing legs, and zero quote volatility", () => {
+        const alternatingCloses = (count: number, changePct: number): number[] => {
+            const values = [100];
+            for (let i = 0; i < count - 1; i += 1) {
+                values.push(values[i]! * (1 + (i % 2 === 0 ? changePct : -changePct) / 100));
+            }
+            return values;
+        };
+        const closes = Array.from({ length: 24 }, (_, index) => 100 + index);
+        const data = closes.map((close, index) => ({
+            time: barTime(index),
+            open: close,
+            high: close + 1,
+            low: close - 1,
+            close,
+            volume: 1000,
+        }));
+        const build = (
+            index: number,
+            pairCloses = closes,
+            baseCloses?: readonly (number | null)[],
+            quoteCloses?: readonly (number | null)[],
+        ) => buildTradeLedgerRowsForPair({
+            pair: "BASE+QUOTE",
+            data: data.map((bar, barIndex) => ({ ...bar, close: pairCloses[barIndex]! })),
+            signals: [makeSignal({ time: barTime(index), type: "buy", price: pairCloses[index]!, barIndex: index })],
+            trades: [],
+            context: { ...ledgerContext, executionModel: "signal_close" },
+            baseCloses,
+            quoteCloses,
+        }).rows[0]!;
+
+        expect(build(19).feat_pairSpreadVolatility20).to.equal(null);
+        const invalidPair = [...closes];
+        invalidPair[1] = 0;
+        expect(build(21, invalidPair, alternatingCloses(24, 20), alternatingCloses(24, 10)).feat_pairSpreadVolatility20).to.equal(null);
+        expect(build(21, closes, undefined, undefined).feat_legVolatilityRatio20).to.equal(null);
+        expect(build(21, closes, alternatingCloses(20, 20), alternatingCloses(20, 10)).feat_legVolatilityRatio20).to.equal(null);
+        expect(build(21, closes, alternatingCloses(24, 20), Array(24).fill(100)).feat_legVolatilityRatio20).to.equal(null);
+    });
+
     it("honors the run's execution model for fill timing", () => {
         const signals = [makeSignal({ time: barTime(5), type: "buy", price: data[5]!.close, barIndex: 5 })];
         const signalClose = buildTradeLedgerRowsForPair({
@@ -364,6 +452,71 @@ describe("trade ledger row builder", () => {
         });
         expect(nextClose.rows[0]!.fillTime).to.equal(BASE_TIME + 6 * HOUR);
         expect(nextClose.rows[0]!.fillPrice).to.equal(data[6]!.close);
+    });
+
+    it("records fixed-horizon prices from the fill bar and direction-adjusted returns", () => {
+        const handBars: OHLCVData[] = [
+            100, 101, 102, 110, 111,
+        ].map((close, index) => ({
+            time: barTime(index),
+            open: close - 1,
+            high: close + 1,
+            low: close - 2,
+            close,
+            volume: 1,
+        }));
+        const long = buildTradeLedgerRowsForPair({
+            pair: "HAND",
+            data: handBars,
+            signals: [makeSignal({ time: barTime(1), type: "buy", barIndex: 1 })],
+            trades: [],
+            context: { ...ledgerContext, executionModel: "signal_close", ledgerHorizons: [2] },
+        }).rows[0]!;
+        expect(long.horizons["2"]).to.deep.equal({
+            entryTimeSec: BASE_TIME + HOUR,
+            entryPrice: 100,
+            exitTimeSec: BASE_TIME + 3 * HOUR,
+            exitPrice: 110,
+            pnlPercent: 110 / 100 - 1,
+            status: "ok",
+        });
+
+        const nextOpen = buildTradeLedgerRowsForPair({
+            pair: "HAND",
+            data: handBars,
+            signals: [makeSignal({ time: barTime(1), type: "buy", barIndex: 1 })],
+            trades: [],
+            context: { ...ledgerContext, ledgerHorizons: [2] },
+        }).rows[0]!;
+        expect(nextOpen.horizons["2"]!.entryTimeSec).to.equal(BASE_TIME + 2 * HOUR);
+        expect(nextOpen.horizons["2"]!.entryPrice).to.equal(101);
+        expect(nextOpen.horizons["2"]!.exitTimeSec).to.equal(BASE_TIME + 4 * HOUR);
+        expect(nextOpen.horizons["2"]!.exitPrice).to.equal(111);
+
+        const short = buildTradeLedgerRowsForPair({
+            pair: "HAND",
+            data: handBars,
+            signals: [makeSignal({ time: barTime(1), type: "sell", barIndex: 1 })],
+            trades: [],
+            context: { ...ledgerContext, tradeDirection: "short", executionModel: "signal_close", ledgerHorizons: [2] },
+        }).rows[0]!;
+        expect(short.horizons["2"]!.pnlPercent).to.be.closeTo(-0.1, 1e-12);
+
+        const censored = buildTradeLedgerRowsForPair({
+            pair: "HAND",
+            data: handBars,
+            signals: [makeSignal({ time: barTime(3), type: "buy", barIndex: 3 })],
+            trades: [],
+            context: { ...ledgerContext, executionModel: "signal_close", ledgerHorizons: [2] },
+        }).rows[0]!;
+        expect(censored.horizons["2"]).to.deep.equal({
+            entryTimeSec: BASE_TIME + 3 * HOUR,
+            entryPrice: 109,
+            exitTimeSec: null,
+            exitPrice: null,
+            pnlPercent: null,
+            status: "right_censored",
+        });
     });
 
     it("returns no rows without signals or data", () => {
@@ -570,8 +723,10 @@ function makeMemDeps(): { files: Map<string, string>; deps: TradeLedgerWriterDep
 
 function sampleRow(overrides: Partial<TradeLedgerRow>): TradeLedgerRow {
     return {
-        ledgerVersion: 2,
+        ledgerVersion: 3,
         pair: "A+B",
+        baseSymbol: "AUSDT",
+        quoteSymbol: "BUSDT",
         direction: "long",
         signalTime: 1000,
         signalBarIndex: 10,
@@ -587,10 +742,23 @@ function sampleRow(overrides: Partial<TradeLedgerRow>): TradeLedgerRow {
         feat_hour: 12,
         feat_pairWinRatePrior: null,
         feat_pairTradesPrior: 0,
+        feat_barsSincePairLastFire: null,
+        feat_pairSpreadVolatility20: null,
+        feat_legVolatilityRatio20: null,
         feat_rank: null,
         feat_candidatesAtTime: null,
         asIf: null,
         asIfReason: null,
+        horizons: {
+            "24": {
+                entryTimeSec: 3600,
+                entryPrice: 101,
+                exitTimeSec: 90000,
+                exitPrice: 103,
+                pnlPercent: 2 / 100,
+                status: "ok",
+            },
+        },
         exitTime: 7200,
         exitPrice: 103,
         pnlPercent: 2,
@@ -603,7 +771,8 @@ function sampleRow(overrides: Partial<TradeLedgerRow>): TradeLedgerRow {
 const STARTED_AT = new Date(2026, 7, 29, 14, 12).getTime();
 
 const sampleProvenance = {
-    ledgerVersion: 2,
+    ledgerVersion: 3,
+    ledgerHorizons: [24],
     featureVersion: 2,
     runId: "batch-abc",
     startedAt: new Date(STARTED_AT).toISOString(),
@@ -866,6 +1035,9 @@ describe("trade ledger request body wire contract", () => {
         expect(buildBatchRunLedgerBodyField({ enabled: true, folder: "archive/mining-ledger" })).to.deep.equal({
             tradeLedger: { enabled: true, folder: "archive/mining-ledger" },
         });
+        expect(buildBatchRunLedgerBodyField({ enabled: true, folder: "archive/mining-ledger", ledgerHorizons: [24, 48] })).to.deep.equal({
+            tradeLedger: { enabled: true, folder: "archive/mining-ledger", ledgerHorizons: [24, 48] },
+        });
     });
 });
 
@@ -1111,7 +1283,7 @@ describe("trade ledger processRunBatch integration", () => {
         await releaseLastResults("toggle_off_end");
     });
 
-    it("toggle ON writes a complete v2 run folder; rows/events are identical to toggle OFF", async () => {
+    it("toggle ON writes a complete v3-feature run folder; rows/events are identical to toggle OFF", async () => {
         const makeInput = () => ({
             interval: "5m",
             strategyKey: STRATEGY_KEY,
@@ -1185,7 +1357,7 @@ describe("trade ledger processRunBatch integration", () => {
         expect(buyRow.fillPrice).to.equal(105);
         expect(buyRow.exitTime).to.be.a("number");
         expect(ledgerRows.filter((r) => r.pair === "DOWN").length).to.equal(1);
-        // v2: the as-if outcome mirrors the REAL trade's engine math.
+        // v2 outcome contract: the as-if outcome mirrors the REAL trade's engine math.
         expect(buyRow.asIf).to.not.equal(null);
         expect(buyRow.asIf!.exitReason).to.equal("signal");
         expect(buyRow.asIf!.pnlPercent).to.be.closeTo(buyRow.pnlPercent!, 1e-9);
@@ -1194,17 +1366,80 @@ describe("trade ledger processRunBatch integration", () => {
         expect(summary.ledgerComplete).to.equal(true);
         expect(summary.totals.signals).to.equal(2);
         expect(summary.totals.executed).to.equal(2);
-        expect(summary.ledgerVersion).to.equal(2);
+        expect(summary.ledgerVersion).to.equal(3);
 
         const provenance = JSON.parse(readFileSync(path.join(runDir, "provenance.json"), "utf8"));
         expect(provenance.runId).to.equal("batch-ref");
         expect(provenance.strategyKey).to.equal(STRATEGY_KEY);
         expect(provenance.pairCount).to.equal(2);
+        expect(provenance.featureVersion).to.equal(3);
         expect(provenance.replay.replayEligible).to.equal(true);
         expect(provenance.replay.replayBlockers).to.deep.equal([]);
 
         setRunOwnerForTests(0);
         await releaseLastResults("toggle_on_end");
+    });
+
+    it("threads loader-owned leg identity and aligned closes into v3 rows", async () => {
+        const alternatingCloses = (count: number, changePct: number): number[] => {
+            const values = [100];
+            for (let i = 0; i < count - 1; i += 1) {
+                values.push(values[i]! * (1 + (i % 2 === 0 ? changePct : -changePct) / 100));
+            }
+            return values;
+        };
+        const closes = alternatingCloses(24, 10);
+        const baseCloses = alternatingCloses(24, 20);
+        const quoteCloses = alternatingCloses(24, 10);
+        const data = makeCandles(closes);
+        const strategy: Strategy = {
+            name: "Ledger v3 Context",
+            description: "Emits one late signal for the loader-context fixture.",
+            defaultParams: {},
+            paramLabels: {},
+            execute(series) {
+                return [{ time: series[21]!.time, type: "buy", price: series[21]!.close, barIndex: 21 }];
+            },
+        };
+        const owner = 8705;
+        setRunOwnerForTests(owner);
+        await collectEvents((ev) => processRunBatch(
+            {
+                interval: "5m",
+                strategyKey: "ledger-v3-context",
+                strategy,
+                strategyParams: {},
+                backtestSettings: integrationSettings,
+                capitalSettings: ledgerCapital,
+                symbols: ["DERIVEDPAIR"],
+                loadDataset: () => Promise.resolve(data),
+                loadDatasetWithContext: () => Promise.resolve({
+                    data,
+                    baseSymbol: "BASEUSDT",
+                    quoteSymbol: "QUOTEUSDT",
+                    baseCloses,
+                    quoteCloses,
+                }),
+                minUsableBars: 1,
+                tradeLedger: { enabled: true, folder: "v3-context" },
+            },
+            (event) => ev.push(event),
+            owner,
+            "batch-v3-context",
+        ));
+
+        const runDirs = readdirSync(path.join(tmpRoot, "v3-context"));
+        expect(runDirs).to.have.length(1);
+        const rows = readFileSync(path.join(tmpRoot, "v3-context", runDirs[0]!, "ledger.jsonl"), "utf8")
+            .trim().split("\n").map((line) => JSON.parse(line) as TradeLedgerRow);
+        expect(rows).to.have.length(1);
+        expect(rows[0]!.baseSymbol).to.equal("BASEUSDT");
+        expect(rows[0]!.quoteSymbol).to.equal("QUOTEUSDT");
+        expect(rows[0]!.feat_barsSincePairLastFire).to.equal(null);
+        expect(rows[0]!.feat_pairSpreadVolatility20).to.be.closeTo(10, 1e-12);
+        expect(rows[0]!.feat_legVolatilityRatio20).to.be.closeTo(2, 1e-12);
+        setRunOwnerForTests(0);
+        await releaseLastResults("v3_context_end");
     });
 
     it("a ledger setup failure does not fail the run and is visible in the summary", async () => {
@@ -1343,7 +1578,7 @@ describe("trade ledger HTTP route contract", () => {
         const runDirs = readdirSync(ledgerRoot);
         expect(runDirs.length).to.equal(1);
         expect(existsSync(path.join(ledgerRoot, runDirs[0]!, "provenance.json"))).to.equal(true);
-        expect(JSON.parse(readFileSync(path.join(ledgerRoot, runDirs[0]!, "summary.json"), "utf8")).ledgerVersion).to.equal(2);
+        expect(JSON.parse(readFileSync(path.join(ledgerRoot, runDirs[0]!, "summary.json"), "utf8")).ledgerVersion).to.equal(3);
 
         setRunOwnerForTests(0);
         await releaseLastResults("http_end");

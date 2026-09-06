@@ -139,15 +139,16 @@ describe("trade-ledger sweep engine", () => {
         try {
             const catalogRoot = path.join(root, "archive", "mining-ledger");
             const preflight = resolveLedgerSweepPreflight(1, Number.MAX_SAFE_INTEGER);
-            const createFixtureFolder = async (folderId: string): Promise<string> => {
+            const createFixtureFolder = async (folderId: string, featureVersion = 2): Promise<string> => {
                 const folderPath = path.join(catalogRoot, folderId);
                 await mkdir(folderPath, { recursive: true });
                 await writeFile(path.join(folderPath, "ledger.jsonl"), "{}\n", "utf8");
-                await writeFile(path.join(folderPath, "provenance.json"), JSON.stringify({ ledgerVersion: 2, featureVersion: 2, replay: { replayEligible: true } }), "utf8");
+                await writeFile(path.join(folderPath, "provenance.json"), JSON.stringify({ ledgerVersion: 2, featureVersion, replay: { replayEligible: true } }), "utf8");
                 await writeFile(path.join(folderPath, "summary.json"), JSON.stringify({ ledgerComplete: true, failedWrites: 0, totals: { signals: 1, pairs: 1 } }), "utf8");
                 return folderPath;
             };
             const writerFolder = await createFixtureFolder("writer-fixture");
+            await createFixtureFolder("v3-fixture", 3);
             const writer = await createTradeLedgerSweepArtifacts({
                 outputAbsolutePath: path.join(writerFolder, "sweeps", "writer-done"),
                 outputDir: "archive/mining-ledger/writer-fixture/sweeps/writer-done",
@@ -199,6 +200,7 @@ describe("trade-ledger sweep engine", () => {
 
             const catalog = await discoverLedgerSweepCatalog(root);
             expect(catalog.folders.find((folder) => folder.folderId === "writer-fixture")?.latestSweep?.sweepId).to.equal("writer-done");
+            expect(catalog.folders.find((folder) => folder.folderId === "v3-fixture")?.runnable).to.equal(true);
             for (const terminalPhase of ["running", "cancelled", "fatal"] as const) {
                 expect(catalog.folders.find((folder) => folder.folderId === terminalPhase)?.latestSweep).to.equal(null);
             }

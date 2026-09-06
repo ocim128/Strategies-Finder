@@ -10,6 +10,7 @@
 export interface TradeLedgerRunOptions {
     enabled: boolean;
     folder: string;
+    ledgerHorizons?: number[];
 }
 
 /**
@@ -20,5 +21,11 @@ export function buildBatchRunLedgerBodyField(
     options: TradeLedgerRunOptions | null | undefined,
 ): Record<string, unknown> {
     if (!options || options.enabled !== true) return {};
-    return { tradeLedger: { enabled: true, folder: options.folder } };
+    return {
+        tradeLedger: {
+            enabled: true,
+            folder: options.folder,
+            ...(options.ledgerHorizons ? { ledgerHorizons: options.ledgerHorizons } : {}),
+        },
+    };
 }

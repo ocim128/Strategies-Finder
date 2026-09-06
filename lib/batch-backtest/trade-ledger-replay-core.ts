@@ -473,6 +473,8 @@ export function calibratedRandomRule(
 
 export interface CheckerReportInput {
     folder: string;
+    ledgerVersion?: number;
+    featureVersion?: number;
     ruleName: string;
     rows: readonly TradeLedgerRow[];
     joinedRankCount: number;
@@ -840,9 +842,9 @@ export function buildCheckerReportLines(input: CheckerReportInput, evaluation: L
     const isStats = evaluation.isStats;
     const holdoutStats = evaluation.holdoutStats;
     const lines: string[] = [
-        "trade-ledger-checker (replay, ledger v2)",
+        `trade-ledger-checker (replay, ledger v${input.ledgerVersion ?? TRADE_LEDGER_VERSION})`,
         `folder: ${input.folder}`,
-        `ledgerVersion: ${TRADE_LEDGER_VERSION} featureVersion: ${TRADE_LEDGER_FEATURE_VERSION}`,
+        `ledgerVersion: ${input.ledgerVersion ?? TRADE_LEDGER_VERSION} featureVersion: ${input.featureVersion ?? TRADE_LEDGER_FEATURE_VERSION}`,
         ...(input.incomplete
             ? [
                 `!! INCOMPLETE LEDGER — produced with --allow-incomplete: failedWrites=${input.incomplete.failedWrites}; dropped pair rows (${input.incomplete.failedPairs.length}): ${formatFailedPairList(input.incomplete.failedPairs) || "(none recorded — pre-W2 summary)"}.`,
