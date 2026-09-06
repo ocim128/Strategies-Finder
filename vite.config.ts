@@ -10,6 +10,7 @@ import { localSqlitePlugin } from './lib/local-sqlite-vite-plugin';
 import { secondMarketApiPlugin } from './lib/second-market-vite-plugin';
 import { batchBacktestVitePlugin } from './lib/batch-backtest/batch-backtest-vite-plugin';
 import { tradeLedgerSweepVitePlugin } from './lib/batch-backtest/trade-ledger-sweep-vite-plugin';
+import { selectionRulesVitePlugin } from './lib/selection-rules/server-vite-plugin';
 import { finderVitePlugin } from './lib/finder/server/finder-vite-plugin';
 import { rankPairsVitePlugin } from './lib/rank-pairs/server/rank-pairs-vite-plugin';
 import { sendCaughtErrorJson, sendJson, proxyUpstreamJson } from './lib/vite-http-utils';
@@ -361,6 +362,7 @@ export default defineConfig({
         backtestEndpointPlugin(),
         batchBacktestVitePlugin(),
         tradeLedgerSweepVitePlugin(),
+        selectionRulesVitePlugin(),
         finderVitePlugin(),
         rankPairsVitePlugin(),
     ],

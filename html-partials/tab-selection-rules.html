@@ -1,0 +1,59 @@
+<div id="selectionrulesTab">
+    <header class="selection-rules-header">
+        <h2 class="selection-rules-title">Selection Rules</h2>
+        <p class="selection-rules-subtitle">Tally fixed selection rules against an archived TOP_MEAN coordinator run. Results are descriptive research evidence, not parameter optimization.</p>
+    </header>
+    <section class="batch-section selection-rules" id="selectionRulesSection" aria-label="Selection Rules">
+        <div class="selection-rules-controls">
+            <div class="selection-rules-folder-field">
+                <label class="batch-field-label" for="selectionRulesFolderSelect">Coordinator archive</label>
+                <select class="param-input" id="selectionRulesFolderSelect"></select>
+                <div class="batch-miner-status batch-miner-status--multiline selection-rules-folder-meta" id="selectionRulesFolderMeta"></div>
+            </div>
+            <fieldset class="selection-rules-rule-field">
+                <legend class="batch-field-label">Rules</legend>
+                <div class="selection-rules-rule-list" id="selectionRulesRuleList"></div>
+            </fieldset>
+        </div>
+        <div class="selection-rules-actions">
+            <button class="btn btn-primary btn-compact" id="selectionRulesRunBtn" type="button">Run Selection Rules</button>
+            <button class="btn btn-danger btn-compact" id="selectionRulesStopBtn" type="button" hidden>Stop</button>
+            <div class="batch-miner-status selection-rules-status" id="selectionRulesStatus" role="status" aria-live="polite">Idle</div>
+        </div>
+        <div class="progress-container selection-rules-progress" id="selectionRulesProgress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-label="Selection rules progress" hidden>
+            <div class="progress-bar"><progress id="selectionRulesProgressFill" max="100" value="0"></progress></div>
+            <div class="progress-text" id="selectionRulesProgressText">Ready</div>
+        </div>
+        <div class="selection-rules-results-wrap">
+            <table class="finder-table selection-rules-results-table" aria-label="Selection rule results">
+                <thead>
+                    <tr>
+                        <th>Rule</th>
+                        <th>Horizon</th>
+                        <th>n</th>
+                        <th>vs TOP_RAW<br><span>mean / median pp</span></th>
+                        <th>vs TOP_MEAN<br><span>mean / median pp</span></th>
+                        <th>vs OTHERS_MEAN<br><span>mean / median pp</span></th>
+                        <th>Success bar<br><span>all 6 deltas &gt; 0</span></th>
+                        <th>Dominant asset</th>
+                        <th>EX line</th>
+                    </tr>
+                </thead>
+                <tbody id="selectionRulesResults"></tbody>
+            </table>
+        </div>
+        <div class="empty-state empty-state-compact selection-rules-empty" id="selectionRulesEmpty">
+            <div class="empty-state-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M4 5h2v2H4V5zm4 0h12v2H8V5zM4 11h2v2H4v-2zm4 0h12v2H8v-2zM4 17h2v2H4v-2zm4 0h12v2H8v-2z" />
+                </svg>
+            </div>
+            <h3 class="empty-state-title">No selection-rule results yet</h3>
+            <p class="empty-state-description">Choose an archived coordinator folder and at least one rule, then run the tally.</p>
+        </div>
+        <pre class="selection-rules-report" id="selectionRulesReport" aria-label="Selection rule report"></pre>
+        <div class="selection-rules-report-actions">
+            <button class="btn btn-quiet btn-compact" id="selectionRulesCopyBtn" type="button" disabled>Copy Report</button>
+        </div>
+    </section>
+</div>

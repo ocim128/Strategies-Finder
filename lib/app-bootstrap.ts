@@ -313,6 +313,7 @@ function registerLazyFeatures(): void {
     registerLazyFeature("hunt", async () => (await import("./hunt/hunt-service")).huntService.init());
     registerLazyFeature("batch-backtest", async () => (await import("./batch-backtest/batch-backtest-service")).batchBacktestService.init());
     registerLazyFeature("ledger-sweep", async () => (await import("./batch-backtest/trade-ledger-sweep-service")).tradeLedgerSweepService.init());
+    registerLazyFeature("selection-rules", async () => (await import("./selection-rules/service")).selectionRulesService.init());
     registerLazyFeature("rank-pairs", async () => (await import("./rank-pairs/rank-pairs-service")).rankPairsService.init());
     registerLazyFeature("data-mining", async () => (await import("./data-mining-manager")).dataMiningManager.init());
     registerLazyFeature("ibkr-data", async () => (await import("./ibkr-data/ibkr-data-service")).ibkrDataService.init());

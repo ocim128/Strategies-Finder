@@ -1,0 +1,42 @@
+coverage_confirmed_votes|jedw|coverage-confirmed votes (votes x pairs^elasticity, default 1)|FAIL vsRAW +0.70/+0.00 vsMEAN +0.91/+0.00 vsRAND +5.29/+1.79 dom SNDK 41.7
+coverage_floor_votes|jedw|coverage floor at 0.8x event median pairs, then loudest crowd|FAIL vsRAW -4.83/-2.62 vsMEAN -4.63/-2.47 vsRAND -0.33/-1.04 dom AMAT 14.4
+thin_coverage_exclusive_cap|jedw|thin coverage cap at 0.9x event median, then loudest crowd|FAIL vsRAW +0.00/+0.00 vsMEAN +0.21/+0.00 vsRAND +4.57/+1.77 dom SNDK 41.7%
+poisson_vote_elasticity|jedw|square-root Poisson vote scaling by active-pair coverage|FAIL vsRAW -0.02/+0.00 vsMEAN +0.19/+0.00 vsRAND +4.55/+1.73 dom SNDK 41.7%
+coverage_contraction_tilt|jedw|density ranking tilted toward contracting coverage history|FAIL vsRAW -1.50/+0.00 vsMEAN -1.30/+0.00 vsRAND +3.05/+0.99 dom SNDK 21.1%
+thin_coverage_density_hurdle|jedw|thin coverage must clear a 0.35 density hurdle|FAIL vsRAW +0.00/+0.00 vsMEAN +0.21/+0.00 vsRAND +4.57/+1.77 dom SNDK 41.7%
+rising_vote_acceleration_gate|jedw|density ranking gated on rising three-event vote flow|FAIL vsRAW -4.62/-0.66 vsMEAN -4.41/-0.39 vsRAND -0.12/-0.51 dom CAT 4.3%
+vote_fade_penalty|jedw|density ranking with a penalty for fading vote flow|FAIL vsRAW -0.25/+0.00 vsMEAN -0.04/+0.00 vsRAND +4.32/+1.71 dom SNDK 30.1%
+durable_score_stability_gate|jedw|density ranking gated on stable five-event scores|FAIL vsRAW -0.03/+0.00 vsMEAN +0.18/+0.00 vsRAND +4.55/+1.07 dom SNDK 30.4%
+incumbent_momentum_tilt|jedw|density ranking tilted by prior incumbent returns|FAIL vsRAW -1.25/+0.00 vsMEAN -1.05/+0.00 vsRAND +3.30/+0.81 dom SNDK 24.3%
+losing_incumbent_demotion|jedw|density ranking demotes repeat incumbents with losses|FAIL vsRAW -0.34/+0.00 vsMEAN -0.13/+0.00 vsRAND +4.23/+1.79 dom SNDK 23.8%
+breadth_conditioned_regime_switch|jedw|raw votes in broad markets and density in narrow markets|FAIL vsRAW -0.26/+0.00 vsMEAN -0.05/+0.00 vsRAND +4.31/+1.73 dom SNDK 36.0%
+ema200_trend_filter|jedw|density with a 0.2 weight for below-EMA candidates|FAIL vsRAW -0.21/+0.00 vsMEAN -0.00/+0.00 vsRAND +4.36/+1.73 dom SNDK 29.9%
+bearish_regime_vote_hurdle|jedw|bear-regime density requires at least 20 votes|FAIL vsRAW -0.17/+0.00 vsMEAN +0.04/+0.00 vsRAND +4.40/+1.79 dom SNDK 30.0%
+thin_coverage_fixed_cap|jedw|thin coverage below a fixed 52-pair ceiling|FAIL vsRAW -0.03/+0.00 vsMEAN +0.18/+0.00 vsRAND +4.55/+1.77 dom SNDK 41.7%
+excess_vote_density|jedw|subtract an 8-vote noise floor before density ranking|FAIL vsRAW +0.36/+0.00 vsMEAN +0.56/+0.00 vsRAND +4.94/+1.92 dom SNDK 41.7%
+zero_variance_plateau_discount|jedw|discount candidates with exactly zero prior score variance|FAIL vsRAW -3.13/+0.00 vsMEAN -2.92/+0.00 vsRAND +1.39/+0.52 dom APP 9.7%
+incumbent_reversal_tilt|jedw|density tilted inversely by prior incumbent returns|FAIL vsRAW -2.29/+0.00 vsMEAN -2.08/+0.00 vsRAND +2.25/+1.46 dom WDC 23.7%
+event_vote_dominance_boost|jedw|density boosted by square-root vote dominance over runner-up|FAIL vsRAW -0.06/+0.00 vsMEAN +0.15/+0.00 vsRAND +4.52/+1.73 dom SNDK 41.7%
+expanding_coverage_penalty|jedw|density demotes rapidly expanding coverage|FAIL vsRAW -0.21/+0.00 vsMEAN -0.00/+0.00 vsRAND +4.36/+1.85 dom SNDK 30.2%
+vote_velocity_additive_blend|jedw|current votes blended with four-times vote velocity|FAIL vsRAW -1.40/+0.00 vsMEAN -1.19/+0.00 vsRAND +3.15/+0.87 dom SNDK 25.9%
+vote_quorum_density_gate|jedw|density requires an absolute 16-vote quorum|FAIL vsRAW -0.17/+0.00 vsMEAN +0.04/+0.00 vsRAND +4.40/+1.79 dom SNDK 30.0%
+thin_coverage_deficit_product|jedw|votes multiplied by deficit from event maximum coverage|FAIL vsRAW -0.52/+0.00 vsMEAN -0.31/+0.00 vsRAND +4.04/+1.81 dom SNDK 20.6%
+vote_dispersion_regime_switch|jedw|raw votes in dispersed pools and density in contested pools|FAIL vsRAW +0.00/+0.00 vsMEAN +0.21/+0.00 vsRAND +4.57/+1.77 dom SNDK 41.7%
+vote_acceleration_share|jedw|density tilted by relative three-event vote growth|FAIL vsRAW -0.57/+0.00 vsMEAN -0.36/+0.00 vsRAND +3.99/+1.50 dom SNDK 27.9%
+counter_breadth_trend_strength|jedw|EMA-aligned density boosted in low-breadth markets|FAIL vsRAW -0.25/+0.00 vsMEAN -0.04/+0.00 vsRAND +4.32/+1.74 dom SNDK 29.9%
+top_density_gap_fallback|jedw|density falls back to raw votes when leaders nearly tie|FAIL vsRAW -0.07/+0.00 vsMEAN +0.13/+0.00 vsRAND +4.50/+1.79 dom SNDK 41.7%
+coverage_rank_discount|jedw|votes discounted by ordinal within-event coverage rank|FAIL vsRAW -0.05/+0.00 vsMEAN +0.15/+0.00 vsRAND +4.52/+1.73 dom SNDK 40.2%
+superlinear_vote_conviction|jedw|density with superlinear 1.5-power vote conviction|FAIL vsRAW +0.32/+0.00 vsMEAN +0.52/+0.00 vsRAND +4.90/+1.92 dom SNDK 41.7%
+score_information_ratio|jedw|density normalized by regularized score volatility|FAIL vsRAW -0.28/+0.00 vsMEAN -0.08/+0.00 vsRAND +4.29/+1.01 dom SNDK 30.5%
+bayesian_odds_ratio|jedw|votes divided by smoothed inactive-pair odds|FAIL vsRAW +0.32/+0.00 vsMEAN +0.53/+0.00 vsRAND +4.90/+1.92 dom SNDK 41.7%
+rookie_candidate_preference|jedw|density discounts candidates with incumbent history|FAIL vsRAW -1.50/+0.00 vsMEAN -1.29/+0.00 vsRAND +3.05/+1.49 dom SNDK 14.0%
+coverage_contraction_vote_velocity|jedw|vote acceleration minus twice coverage contraction slope|FAIL vsRAW -4.16/-1.70 vsMEAN -3.95/-1.49 vsRAND +0.35/+0.03 dom INTC 2.6%
+thinness_vote_delta_product|jedw|thinness multiplied by vote acceleration tilt|FAIL vsRAW -4.08/-0.91 vsMEAN -3.87/-0.57 vsRAND +0.43/+0.18 dom APP 2.9%
+trend_aligned_contraction|jedw|inverted coverage slope discounted below the EMA|FAIL vsRAW -4.16/-1.70 vsMEAN -3.95/-1.12 vsRAND +0.35/+0.23 dom C 3.0%
+low_volatility_thinness|jedw|thinness normalized by regularized score volatility|FAIL vsRAW -1.90/+0.00 vsMEAN -1.69/+0.00 vsRAND +2.64/+0.76 dom WDC 14.2%
+vote_delta_to_stddev_ratio|jedw|vote velocity and thinness divided by score volatility|FAIL vsRAW -4.18/-1.75 vsMEAN -3.97/-1.95 vsRAND +0.33/-0.01 dom CSCO 1.8%
+contracting_thinness_gate|jedw|thinness doubled for confirmed coverage contraction|FAIL vsRAW -3.87/+0.00 vsMEAN -3.67/+0.00 vsRAND +0.64/+0.32 dom APP 5.9%
+breadth_adaptive_thinness|jedw|breadth switches between vote flow and thinness|FAIL vsRAW -4.25/+0.00 vsMEAN -4.05/+0.00 vsRAND +0.25/-0.22 dom GLW 12.3%
+trend_momentum_thinness|jedw|thinness blended with five-times vote momentum and EMA|FAIL vsRAW -3.67/+0.00 vsMEAN -3.46/+0.00 vsRAND +0.85/+0.58 dom GLW 7.9%
+stable_contraction_score|jedw|coverage contraction penalized by score volatility|FAIL vsRAW -4.34/-2.16 vsMEAN -4.14/-1.87 vsRAND +0.16/-0.10 dom ANET 2.0%
+regime_conditioned_flow_switch|jedw|bull flow switches to bear contraction by regime|FAIL vsRAW -4.01/-1.61 vsMEAN -3.80/-1.53 vsRAND +0.50/+0.27 dom ANET 2.3%

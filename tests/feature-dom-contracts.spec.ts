@@ -27,6 +27,7 @@ import { BACKTEST_DOM_SETTING_IDS } from "../lib/backtest-settings-dom-contract"
 import { IBKR_DATA_REQUIRED_IDS } from "../lib/ibkr-data/ibkr-data-dom";
 import { CRYPTO_DATA_REQUIRED_IDS } from "../lib/crypto-data/crypto-data-dom";
 import { TRADE_LEDGER_SWEEP_REQUIRED_IDS } from "../lib/batch-backtest/trade-ledger-sweep-dom";
+import { SELECTION_RULES_REQUIRED_IDS } from "../lib/selection-rules-dom";
 
 const PARTIALS_DIR = path.join(process.cwd(), "html-partials");
 
@@ -99,6 +100,7 @@ describe("Feature DOM contracts", () => {
         ibkrData: [...IBKR_DATA_REQUIRED_IDS],
         cryptoData: [...CRYPTO_DATA_REQUIRED_IDS],
         tradeLedgerSweep: [...TRADE_LEDGER_SWEEP_REQUIRED_IDS],
+        selectionRules: [...SELECTION_RULES_REQUIRED_IDS],
     } as const;
 
     for (const [groupName, ids] of Object.entries(contractGroups)) {

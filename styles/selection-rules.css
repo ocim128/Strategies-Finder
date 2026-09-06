@@ -1,0 +1,244 @@
+/* The shared .btn / .empty-state rules set `display`, which beats the UA
+ * stylesheet's [hidden] rule. Restore the expected semantics for every
+ * element in this tab so `hidden` toggling actually hides (same pattern as
+ * trade-ledger-sweep.css). */
+#selectionrulesTab [hidden] {
+    display: none !important;
+}
+
+#selectionrulesTab .selection-rules-header {
+    margin-bottom: var(--space-4);
+}
+
+#selectionrulesTab .selection-rules-title {
+    margin: 0;
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-bold);
+    line-height: var(--line-height-tight);
+}
+
+#selectionrulesTab .selection-rules-subtitle {
+    margin: var(--space-1) 0 0;
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-relaxed);
+    color: var(--text-secondary);
+}
+
+#selectionrulesTab .selection-rules-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.8fr);
+    gap: var(--space-3);
+}
+
+#selectionrulesTab .selection-rules-folder-field,
+#selectionrulesTab .selection-rules-rule-field {
+    min-width: 0;
+}
+
+#selectionrulesTab .selection-rules-rule-field {
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+#selectionrulesTab .selection-rules-rule-list {
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-s);
+}
+
+#selectionrulesTab .selection-rules-rule-option {
+    display: flex;
+    gap: var(--space-1-5);
+    align-items: center;
+    cursor: pointer;
+}
+
+#selectionrulesTab .selection-rules-rule-option input {
+    margin: 0;
+    accent-color: var(--accent-color);
+}
+
+#selectionrulesTab .selection-rules-rule-key {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-2xs);
+    color: var(--text-tertiary);
+}
+
+#selectionrulesTab .selection-rules-folder-meta {
+    margin-top: var(--space-1);
+}
+
+#selectionrulesTab .selection-rules-actions {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: var(--space-3);
+}
+
+/* Status dot mirrors the Ledger Sweep status: the service already annotates
+ * data-tone, this makes the state readable at a glance. */
+#selectionrulesTab .selection-rules-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1-5);
+    min-height: 32px;
+}
+
+#selectionrulesTab .selection-rules-status::before {
+    content: "";
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-tertiary);
+    transition: background 0.2s ease;
+}
+
+#selectionrulesTab .selection-rules-status[data-tone="running"]::before {
+    background: var(--accent-color);
+    animation: pulse 1.6s ease-in-out infinite;
+}
+
+#selectionrulesTab .selection-rules-status[data-tone="success"]::before {
+    background: var(--green);
+}
+
+#selectionrulesTab .selection-rules-status[data-tone="warning"]::before {
+    background: var(--warning);
+}
+
+#selectionrulesTab .selection-rules-status[data-tone="danger"]::before {
+    background: var(--red);
+}
+
+/* Visibility follows the shared .progress-container convention (hidden by
+ * default, shown via .active while a run is in flight). */
+#selectionrulesTab .selection-rules-progress {
+    margin-top: var(--space-2);
+}
+
+#selectionrulesTab .selection-rules-progress progress {
+    display: block;
+    width: 100%;
+    height: 8px;
+    accent-color: var(--accent-color);
+}
+
+#selectionrulesTab .selection-rules-progress .progress-text {
+    text-align: left;
+    font-family: var(--font-family-mono);
+}
+
+#selectionrulesTab .selection-rules-results-wrap {
+    overflow-x: auto;
+    margin-top: var(--space-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-s);
+}
+
+#selectionrulesTab .selection-rules-results-table {
+    min-width: 980px;
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-xs);
+}
+
+#selectionrulesTab .selection-rules-results-table th,
+#selectionrulesTab .selection-rules-results-table td {
+    padding: var(--space-1-5) var(--space-2);
+    border-bottom: 1px solid var(--border-subtle);
+    text-align: left;
+    vertical-align: top;
+    white-space: nowrap;
+}
+
+#selectionrulesTab .selection-rules-results-table thead th {
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    background: hsl(var(--hsl-surface-1) / 0.5);
+}
+
+#selectionrulesTab .selection-rules-results-table th span {
+    color: var(--text-tertiary);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-normal);
+}
+
+#selectionrulesTab .selection-rules-results-table td {
+    font-variant-numeric: tabular-nums;
+}
+
+#selectionrulesTab .selection-rules-results-table tbody tr {
+    cursor: pointer;
+}
+
+#selectionrulesTab .selection-rules-results-table tbody tr:hover {
+    background: hsl(var(--hsl-surface-1) / 0.4);
+}
+
+#selectionrulesTab .selection-rules-results-table tbody tr:last-child th,
+#selectionrulesTab .selection-rules-results-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+#selectionrulesTab .selection-rules-result-pass {
+    color: var(--green);
+    font-weight: var(--font-weight-semibold);
+}
+
+#selectionrulesTab .selection-rules-result-fail {
+    color: var(--red);
+    font-weight: var(--font-weight-semibold);
+}
+
+#selectionrulesTab .selection-rules-result-selected {
+    background: hsl(var(--hsl-accent) / 0.08);
+}
+
+#selectionrulesTab .selection-rules-empty {
+    margin-top: var(--space-3);
+}
+
+/* Analytical surface: skip the generic pulsing-icon motion (Batch does the
+ * same for its empty state). */
+#selectionrulesTab .selection-rules-empty .empty-state-icon {
+    animation: none;
+    opacity: 0.35;
+}
+
+#selectionrulesTab .selection-rules-report {
+    max-height: 360px;
+    overflow: auto;
+    margin: var(--space-3) 0 0;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-s);
+    background: hsl(var(--hsl-surface-1) / 0.5);
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+}
+
+/* No report yet: render neither the bordered empty box nor its copy row. */
+#selectionrulesTab .selection-rules-report:empty {
+    display: none;
+}
+
+#selectionrulesTab .selection-rules-report:empty + .selection-rules-report-actions {
+    display: none;
+}
+
+#selectionrulesTab .selection-rules-report-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--space-2);
+}
+
+@media (max-width: 720px) {
+    #selectionrulesTab .selection-rules-controls {
+        grid-template-columns: 1fr;
+    }
+}
