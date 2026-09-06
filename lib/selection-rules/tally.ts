@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { tieBreakDigest } from "../batch-backtest/max-active-research-contract";
+import {
+    comparison,
+    formatPercent,
+    type SelectionComparison,
+} from "../selection-metrics";
 import { getSelectionRule } from "./registry";
 import type {
     SelectionCandidate,
@@ -101,17 +106,7 @@ export interface SelectionPick {
     tiedCount: number;
 }
 
-export interface SelectionMetric {
-    count: number;
-    mean: number | null;
-    median: number | null;
-}
-
-export interface SelectionComparison {
-    selected: SelectionMetric;
-    benchmark: SelectionMetric;
-    delta: SelectionMetric;
-}
+export type { SelectionComparison, SelectionMetric } from "../selection-metrics";
 
 export interface SelectionAssetFrequency {
     asset: string;
@@ -526,24 +521,6 @@ export function pickSelectionRule(
     };
 }
 
-function metric(values: readonly number[]): SelectionMetric {
-    if (values.length === 0) return { count: 0, mean: null, median: null };
-    const sorted = [...values].sort((left, right) => left - right);
-    const middle = sorted.length >> 1;
-    const median = sorted.length % 2 === 1 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
-    return {
-        count: values.length,
-        mean: values.reduce((sum, value) => sum + value, 0) / values.length,
-        median,
-    };
-}
-
-function comparison(selected: readonly number[], benchmark: readonly number[]): SelectionComparison {
-    if (selected.length !== benchmark.length) dataBug("comparison series have different lengths");
-    const deltas = selected.map((value, index) => value - benchmark[index]!);
-    return { selected: metric(selected), benchmark: metric(benchmark), delta: metric(deltas) };
-}
-
 function comparisonForSamples(samples: readonly Sample[]): {
     topRaw: SelectionComparison;
     topMean: SelectionComparison;
@@ -618,13 +595,8 @@ function horizonTally(
     };
 }
 
-function formatPercent(value: number | null): string {
-    if (value === null) return "n/a";
-    return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
-}
-
 function formatComparison(label: string, value: SelectionComparison): string {
-    return `${label} selected(mean/median)=${formatPercent(value.selected.mean)}/${formatPercent(value.selected.median)} benchmark(mean/median)=${formatPercent(value.benchmark.mean)}/${formatPercent(value.benchmark.median)} delta(mean/median)=${formatPercent(value.delta.mean)}/${formatPercent(value.delta.median)}`;
+    return `${label} selected(mean/median)=${formatPercent(value.selected.mean, true)}/${formatPercent(value.selected.median, true)} benchmark(mean/median)=${formatPercent(value.benchmark.mean, true)}/${formatPercent(value.benchmark.median, true)} delta(mean/median)=${formatPercent(value.delta.mean, true)}/${formatPercent(value.delta.median, true)}`;
 }
 
 function reportForHorizon(ruleName: string, tally: SelectionHorizonTally): string[] {

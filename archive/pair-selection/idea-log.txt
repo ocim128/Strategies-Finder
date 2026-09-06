@@ -1,0 +1,19 @@
+directional_close_location|mtpt2fxs|direction-aligned close-location target|FAIL vsRAND -0.03/-0.23 vsALPHA -1.67/-0.44 vsATR -1.16/-0.17 domPair BMY+AMAT 0.1% domBase COST 1.7%
+direction_adjusted_gap_target|mtpt2fxs|direction-adjusted gap target|FAIL vsRAND +0.13/-0.23 vsALPHA -1.51/-0.25 vsATR -1.00/-0.10 domPair NVDA+AMZN 0.3% domBase AAPL 2.5%
+relative_atr_cleanliness|mtpt2fxs|event-relative signal ATR target|FAIL vsRAND -0.24/-0.24 vsALPHA -1.87/-0.42 vsATR -1.36/-0.44 domPair HD+PG 0.3% domBase DHR 2.9%
+pair_win_rate_shrinkage|mtpt2fxs|depth-aware pair win-rate prior|FAIL vsRAND +0.77/+0.36 vsALPHA -0.87/+0.10 vsATR -0.36/+0.26 domPair DHR+BAC 5.5% domBase AAPL 13.6%
+fresh_fire_recency|mtpt2fxs|bars-since-last-pair-fire target|FAIL vsRAND -0.12/-0.24 vsALPHA -1.76/-0.44 vsATR -1.25/-0.38 domPair BKNG+RTX 0.1% domBase AAPL 1.7%
+shared_leg_overlap_target|mtpt2fxs|same-event shared-leg overlap target|FAIL vsRAND +0.09/-0.31 vsALPHA -1.54/-0.26 vsATR -1.03/+0.00 domPair NVDA+MU 0.5% domBase NVDA 4.1%
+crowd_relative_contrarian|mtpt2fxs|exact event median/MAD screen exceeded 20 minute runtime budget|INCONCLUSIVE vsRAND n/a/n/a vsALPHA n/a/n/a vsATR n/a/n/a domPair n/a n/a domBase n/a n/a
+crowd_range_consensus|mtpt2fxs|exact event-median close consensus screen not run after runtime budget breach|INCONCLUSIVE vsRAND n/a/n/a vsALPHA n/a/n/a vsATR n/a/n/a domPair n/a n/a domBase n/a n/a
+historical_spread_calm|mtpt2fxs|exact event-median spread-volatility screen not run after runtime budget breach|INCONCLUSIVE vsRAND n/a/n/a vsALPHA n/a/n/a vsATR n/a/n/a domPair n/a n/a domBase n/a n/a
+hedge_volatility_balance|mtpt2fxs|feat_legVolatilityRatio20 is 100.00% null and selection is tie-only|INCONCLUSIVE vsRAND -0.01/-0.17 vsALPHA -1.65/-0.39 vsATR -1.14/-0.31 domPair MCD+BAC 0.2% domBase MA 1.7%
+crowd_relative_contrarian|mtpt2fxs|contrarian gap vs event median in MAD (re-run after runtime memo fix)|FAIL vsRAND -0.01/-0.20 vsALPHA -1.65/-0.31 vsATR -1.14/-0.22 domPair DE+AXP 0.2%
+crowd_range_consensus|mtpt2fxs|consensus offset from directional close-location median (re-run after runtime memo fix)|FAIL vsRAND -0.02/-0.21 vsALPHA -1.65/-0.36 vsATR -1.14/-0.24 domPair DE+C 0.2%
+historical_spread_calm|mtpt2fxs|relative spread-volatility calm target 0.75x event median (re-run after runtime memo fix)|FAIL vsRAND -0.08/-0.27 vsALPHA -1.71/-0.39 vsATR -1.20/-0.38 domPair UNP+DHR 0.2%
+reference_alphabetical|mtpt2fxs|TIME-SPLIT 2004-2020 (9811 events)|FAIL vsRAND +2.35/+0.51 domBase AAPL 78.8% — floor edge is a pre-2021 AAPL legacy, dead after
+reference_alphabetical|mtpt2fxs|TIME-SPLIT 2021-2023 (1760 events)|FAIL vsRAND -0.16/-0.40
+reference_alphabetical|mtpt2fxs|TIME-SPLIT 2024-2026 (1549 events)|FAIL vsRAND -0.80/-0.86
+pair_win_rate_shrinkage|mtpt2fxs|TIME-SPLIT 2004-2020 (9811 events)|POSITIVE vsRAND +0.62/+0.38 vsALPHA -1.72/+0.00 domBase AAPL 17.8%
+pair_win_rate_shrinkage|mtpt2fxs|TIME-SPLIT 2021-2023 (1760 events)|POSITIVE vsRAND +0.73/-0.24 vsALPHA +0.89/+0.37
+pair_win_rate_shrinkage|mtpt2fxs|TIME-SPLIT 2024-2026 (1549 events)|POSITIVE vsRAND +1.72/+0.80 vsALPHA +2.51/+1.99 domBase AAPL ~flat

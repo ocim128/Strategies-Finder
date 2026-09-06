@@ -1,4 +1,5 @@
 import type { SelectionArchive, SelectionArchiveEvent } from "./tally";
+import { formatNumber, formatPercent, formatScaleNumber, percentile } from "../selection-metrics";
 
 const NUMERIC_FIELDS = ["score", "signedVotes", "activePairCount", "breadth"] as const;
 const BOOLEAN_FIELDS = ["ema200Above", "longEligible", "shortEligible", "inPool"] as const;
@@ -28,14 +29,6 @@ export interface SelectionScaleBlock {
     };
     utcHourShares: number[];
     utcDayShares: number[];
-}
-
-function percentile(values: readonly number[], fraction: number): number {
-    const position = (values.length - 1) * fraction;
-    const lower = Math.floor(position);
-    const upper = Math.ceil(position);
-    if (lower === upper) return values[lower]!;
-    return values[lower]! + (values[upper]! - values[lower]!) * (position - lower);
 }
 
 function numericScale(events: readonly SelectionArchiveEvent[], field: NumericField): NumericScale {
@@ -72,18 +65,6 @@ function candidateEventPercentiles(events: readonly SelectionArchiveEvent[]): Se
 
 function share(count: number, total: number): number {
     return count / total;
-}
-
-function formatNumber(value: number | null): string {
-    return value === null ? "null" : value.toFixed(6);
-}
-
-function formatPercent(value: number): string {
-    return `${(value * 100).toFixed(2)}%`;
-}
-
-function formatScaleNumber(value: number): string {
-    return Number.isInteger(value) ? String(value) : formatNumber(value);
 }
 
 export function computeSelectionScales(archive: SelectionArchive): SelectionScaleBlock[] {
