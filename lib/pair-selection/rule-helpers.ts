@@ -1,18 +1,24 @@
 import type { PairCandidate } from "./types";
 
-const poolMemo = new WeakMap<object, unknown>();
+const poolMemo = new WeakMap<object, Map<string, unknown>>();
 
 /**
- * Caches a per-event pool computation on the pool array itself. The harness
- * passes the SAME pool instance to every score call within one event, so the
- * entry lives exactly one event and is garbage-collected after it. Scores
- * stay pure: identical pool contents always produce identical values.
+ * Caches per-event pool computations on the pool array itself, keyed by a
+ * computation name so several different memoized values can coexist for one
+ * event. The harness passes the SAME pool instance to every score call
+ * within one event, so the entry lives exactly one event and is
+ * garbage-collected after it. Scores stay pure: identical pool contents
+ * always produce identical values.
  */
-export function memoByPool<T>(pool: readonly PairCandidate[], compute: () => T): T {
-    const cached = poolMemo.get(pool);
-    if (cached !== undefined) return cached as T;
+export function memoByPool<T>(pool: readonly PairCandidate[], key: string, compute: () => T): T {
+    let slot = poolMemo.get(pool);
+    if (!slot) {
+        slot = new Map<string, unknown>();
+        poolMemo.set(pool, slot);
+    }
+    if (slot.has(key)) return slot.get(key) as T;
     const value = compute();
-    poolMemo.set(pool, value);
+    slot.set(key, value);
     return value;
 }
 

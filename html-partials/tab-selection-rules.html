@@ -1,17 +1,21 @@
 <div id="selectionrulesTab">
     <header class="selection-rules-header">
         <h2 class="selection-rules-title">Selection Rules</h2>
-        <p class="selection-rules-subtitle">Tally fixed selection rules against an archived TOP_MEAN coordinator run. Results are descriptive research evidence, not parameter optimization.</p>
+        <p class="selection-rules-subtitle">Tally pair-selection rules against a v3 mining-ledger folder using fixed-horizon spread outcomes.</p>
     </header>
     <section class="batch-section selection-rules" id="selectionRulesSection" aria-label="Selection Rules">
         <div class="selection-rules-controls">
             <div class="selection-rules-folder-field">
-                <label class="batch-field-label" for="selectionRulesFolderSelect">Coordinator archive</label>
+                <label class="batch-field-label" for="selectionRulesFolderSelect">Mining-ledger folder</label>
                 <select class="param-input" id="selectionRulesFolderSelect"></select>
                 <div class="batch-miner-status batch-miner-status--multiline selection-rules-folder-meta" id="selectionRulesFolderMeta"></div>
             </div>
+            <div class="selection-rules-horizon-field">
+                <label class="batch-field-label" for="selectionRulesHorizonSelect">Horizon (bars)</label>
+                <select class="param-input" id="selectionRulesHorizonSelect"></select>
+            </div>
             <fieldset class="selection-rules-rule-field">
-                <legend class="batch-field-label">Rules</legend>
+                <legend class="batch-field-label">Pair-selection rules</legend>
                 <div class="selection-rules-rule-list" id="selectionRulesRuleList"></div>
             </fieldset>
         </div>
@@ -31,11 +35,13 @@
                         <th>Rule</th>
                         <th>Horizon</th>
                         <th>n</th>
-                        <th>vs TOP_RAW<br><span>mean / median pp</span></th>
-                        <th>vs TOP_MEAN<br><span>mean / median pp</span></th>
                         <th>vs OTHERS_MEAN<br><span>mean / median pp</span></th>
+                        <th>vs ALPHABETICAL<br><span>mean / median pp</span></th>
+                        <th>vs LOUDEST_ATR<br><span>mean / median pp</span></th>
                         <th>Success bar<br><span>all 6 deltas &gt; 0</span></th>
-                        <th>Dominant asset</th>
+                        <th>Dominant pair<br><span>share</span></th>
+                        <th>Dominant BASE<br><span>share</span></th>
+                        <th>Dominant QUOTE<br><span>share</span></th>
                         <th>EX line</th>
                     </tr>
                 </thead>
@@ -49,7 +55,7 @@
                 </svg>
             </div>
             <h3 class="empty-state-title">No selection-rule results yet</h3>
-            <p class="empty-state-description">Choose an archived coordinator folder and at least one rule, then run the tally.</p>
+            <p class="empty-state-description">Choose a mining-ledger folder, horizon, and at least one pair-selection rule, then run the tally.</p>
         </div>
         <pre class="selection-rules-report" id="selectionRulesReport" aria-label="Selection rule report"></pre>
         <div class="selection-rules-report-actions">

@@ -2,8 +2,9 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type { SelectionRulesCatalogEntry } from "./stream-types";
 
-export const SELECTION_RULES_ARCHIVE_RELATIVE_ROOT = path.join("archive", "batch-open-score");
-export const SELECTION_RULES_ARCHIVE_SCHEMA = "top_mean_archive.v3";
+export const SELECTION_RULES_ARCHIVE_RELATIVE_ROOT = path.join("archive", "mining-ledger");
+export const SELECTION_RULES_LEDGER_VERSION = 3;
+export const SELECTION_RULES_FEATURE_VERSION = 3;
 
 function isStrictChild(parent: string, child: string): boolean {
     const relative = path.relative(parent, child);
@@ -17,38 +18,73 @@ function catalogRootFor(serverRoot: string): string {
     return path.resolve(serverRoot, SELECTION_RULES_ARCHIVE_RELATIVE_ROOT);
 }
 
-function isValidRunId(value: unknown): value is string {
-    return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+function isValidFolderId(value: unknown): value is string {
+    return typeof value === "string"
+        && value.length > 0
+        && value !== "."
+        && value !== ".."
+        && !value.includes("/")
+        && !value.includes("\\");
 }
 
-function parseCatalogMeta(value: unknown, folderName: string): SelectionRulesCatalogEntry | null {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const meta = value as Record<string, unknown>;
-    if (meta.schema !== SELECTION_RULES_ARCHIVE_SCHEMA) return null;
-    if (!isValidRunId(meta.runId) || meta.runId !== folderName) return null;
-    if (typeof meta.completedAt !== "string" || !meta.completedAt.trim()) return null;
-    if (typeof meta.interval !== "string" || !meta.interval.trim()) return null;
-    if (!Array.isArray(meta.horizons) || meta.horizons.length === 0) return null;
-    const horizons = meta.horizons.map((value) => value as number);
-    if (horizons.some((value) => !Number.isInteger(value) || value <= 0)) return null;
-    if (new Set(horizons).size !== horizons.length) return null;
-    if (typeof meta.fingerprint !== "string" || !meta.fingerprint.trim()) return null;
-    return {
-        runId: meta.runId,
-        completedAt: meta.completedAt,
-        interval: meta.interval,
-        horizons,
-        fingerprint: meta.fingerprint,
-    };
+function nonEmptyString(value: unknown): value is string {
+    return typeof value === "string" && value.trim().length > 0;
 }
 
-async function readEntryMeta(folderPath: string, folderName: string): Promise<SelectionRulesCatalogEntry | null> {
+function positiveIntegers(value: unknown): value is number[] {
+    return Array.isArray(value)
+        && value.length > 0
+        && value.every((item) => typeof item === "number" && Number.isInteger(item) && item > 0)
+        && new Set(value).size === value.length;
+}
+
+function nonNegativeInteger(value: unknown): value is number {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+async function readJson(filePath: string): Promise<Record<string, unknown> | null> {
     try {
-        const text = await readFile(path.join(folderPath, "meta.json"), "utf8");
-        return parseCatalogMeta(JSON.parse(text) as unknown, folderName);
+        const value = JSON.parse(await readFile(filePath, "utf8")) as unknown;
+        return value && typeof value === "object" && !Array.isArray(value)
+            ? value as Record<string, unknown>
+            : null;
     } catch {
         return null;
     }
+}
+
+async function readEntryMeta(folderPath: string, folderId: string): Promise<SelectionRulesCatalogEntry | null> {
+    const provenance = await readJson(path.join(folderPath, "provenance.json"));
+    const summary = await readJson(path.join(folderPath, "summary.json"));
+    if (!provenance || !summary) return null;
+    if (provenance.ledgerVersion !== SELECTION_RULES_LEDGER_VERSION) return null;
+    if (provenance.featureVersion !== SELECTION_RULES_FEATURE_VERSION) return null;
+    const replay = provenance.replay;
+    if (!replay || typeof replay !== "object" || Array.isArray(replay) || (replay as Record<string, unknown>).replayEligible !== true) return null;
+    if (summary.ledgerComplete !== true) return null;
+    const totals = summary.totals;
+    if (!totals || typeof totals !== "object" || Array.isArray(totals)) return null;
+    const totalsRecord = totals as Record<string, unknown>;
+    if (!nonNegativeInteger(totalsRecord.signals) || !nonNegativeInteger(totalsRecord.pairs)) return null;
+    if (!isValidFolderId(folderId)
+        || !nonEmptyString(provenance.runId)
+        || !nonEmptyString(provenance.startedAt)
+        || !nonEmptyString(summary.finishedAt)
+        || !nonEmptyString(provenance.interval)
+        || !nonEmptyString(provenance.strategyKey)
+        || !positiveIntegers(provenance.ledgerHorizons)) {
+        return null;
+    }
+    return {
+        folderId,
+        runId: provenance.runId,
+        startedAt: provenance.startedAt,
+        finishedAt: summary.finishedAt,
+        interval: provenance.interval,
+        strategyKey: provenance.strategyKey,
+        ledgerHorizons: [...provenance.ledgerHorizons],
+        totals: { signals: totalsRecord.signals, pairs: totalsRecord.pairs },
+    };
 }
 
 export async function discoverSelectionRulesCatalog(serverRoot: string): Promise<{
@@ -85,7 +121,7 @@ export async function discoverSelectionRulesCatalog(serverRoot: string): Promise
         const meta = await readEntryMeta(canonicalCandidate, entry.name);
         if (meta) folders.push(meta);
     }
-    folders.sort((left, right) => right.completedAt.localeCompare(left.completedAt) || left.runId.localeCompare(right.runId));
+    folders.sort((left, right) => right.finishedAt.localeCompare(left.finishedAt) || left.folderId.localeCompare(right.folderId));
     return { catalogRoot: canonicalRoot, folders };
 }
 
@@ -111,6 +147,7 @@ export async function resolveSelectionRulesFolder(
     } catch {
         return null;
     }
-    const entry = await readEntryMeta(canonicalCandidate, path.basename(canonicalCandidate));
+    const folderId = path.basename(canonicalCandidate);
+    const entry = await readEntryMeta(canonicalCandidate, folderId);
     return entry ? { entry, absolutePath: canonicalCandidate } : null;
 }

@@ -1,8 +1,8 @@
 import { setImmediate } from "node:timers/promises";
-import { loadSelectionArchive, tallySelectionRule, type SelectionArchive } from "./tally";
-import type { SelectionRule } from "./types";
+import { loadPairSelectionArchive, tallyPairSelectionRule, type PairSelectionArchive } from "../pair-selection/tally";
+import type { PairSelectionRule } from "../pair-selection/types";
 import {
-    resultFromHorizon,
+    resultFromPairSelection,
     type SelectionRuleResult,
     type SelectionRulesCancelledEvent,
     type SelectionRulesDoneEvent,
@@ -15,9 +15,10 @@ export interface SelectionRulesJobArgs {
     runId: string;
     folderPath: string;
     archiveFolderPath?: string;
-    rules: readonly SelectionRule[];
+    horizonBars?: number;
+    rules: readonly PairSelectionRule[];
     signal: AbortSignal;
-    loadArchive?: (folderPath: string) => SelectionArchive;
+    loadArchive?: (folderPath: string) => PairSelectionArchive | PromiseLike<PairSelectionArchive>;
     emit: (event: SelectionRulesStreamEvent) => void;
     update: (patch: {
         phase?: "loading" | "tallying" | "done" | "cancelled" | "fatal";
@@ -72,34 +73,35 @@ function cancelledEvent(
 export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise<void> {
     const results: SelectionRuleResult[] = [];
     const reportLines: string[] = [];
-    const loadArchiveFn = args.loadArchive ?? loadSelectionArchive;
+    const loadArchiveFn = args.loadArchive ?? loadPairSelectionArchive;
 
     args.update({ phase: "loading", currentRuleKey: null, currentHorizonBars: null });
     args.emit({
         type: "phase",
         runId: args.runId,
         phase: "loading",
-        detail: "Loading and verifying archive files…",
+        detail: "Loading and verifying pair-selection ledger…",
         completedRules: 0,
         totalRules: args.rules.length,
         currentRuleKey: null,
         currentHorizonBars: null,
     });
 
-    // This is intentionally the only archive load in the job. The core does
-    // all file hashing and parsing; each horizon below reuses the loaded maps.
-    const archive = loadArchiveFn(args.archiveFolderPath ?? args.folderPath);
+    // This is intentionally the only archive load in the job. Each rule and
+    // horizon reuses the parsed, validated pair-selection archive.
+    const archive = await loadArchiveFn(args.archiveFolderPath ?? args.folderPath);
     if (args.signal.aborted) {
         args.emit(cancelledEvent(args, results, reportLines));
         return;
     }
+    const horizons = args.horizonBars === undefined ? [...archive.ledgerHorizons] : [args.horizonBars];
 
     args.update({ phase: "tallying" });
     args.emit({
         type: "phase",
         runId: args.runId,
         phase: "tallying",
-        detail: "Tallying selection rules…",
+        detail: "Tallying pair-selection rules…",
         completedRules: 0,
         totalRules: args.rules.length,
         currentRuleKey: null,
@@ -109,24 +111,20 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
     for (let ruleIndex = 0; ruleIndex < args.rules.length; ruleIndex += 1) {
         const rule = args.rules[ruleIndex]!;
         args.update({ phase: "tallying", currentRuleKey: rule.key, currentHorizonBars: null });
-        for (let horizonIndex = 0; horizonIndex < archive.horizons.length; horizonIndex += 1) {
-            const horizonBars = archive.horizons[horizonIndex]!;
+        for (let horizonIndex = 0; horizonIndex < horizons.length; horizonIndex += 1) {
+            const horizonBars = horizons[horizonIndex]!;
             if (args.signal.aborted) {
                 args.emit(cancelledEvent(args, results, reportLines));
                 return;
             }
             args.update({ currentRuleKey: rule.key, currentHorizonBars: horizonBars });
-            // Running the existing leaf once per horizon lets cancellation
-            // land at a horizon boundary without changing its semantics.
-            const horizonArchive: SelectionArchive = { ...archive, horizons: [horizonBars] };
-            const tally = tallySelectionRule(horizonArchive, rule);
-            const horizon = tally.horizons[0];
-            if (!horizon) throw new Error(`Selection rule ${rule.key} returned no horizon ${horizonBars}.`);
-            const result = resultFromHorizon(rule.key, rule.name, horizon, tally.reportLines);
+            const tally = tallyPairSelectionRule(archive, rule, undefined, horizonBars);
+            const result = resultFromPairSelection(tally, horizonBars);
             results.push(result);
-            reportLines.push(...tally.reportLines);
+            reportLines.push(...result.reportLines);
+            const completedRules = horizonIndex === horizons.length - 1 ? ruleIndex + 1 : ruleIndex;
             args.update({
-                completedRules: horizonIndex === archive.horizons.length - 1 ? ruleIndex + 1 : ruleIndex,
+                completedRules,
                 results: [...results],
                 reportLines: [...reportLines],
             });
@@ -134,11 +132,10 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
                 type: "rule_result",
                 runId: args.runId,
                 result,
-                completedRules: horizonIndex === archive.horizons.length - 1 ? ruleIndex + 1 : ruleIndex,
+                completedRules,
                 totalRules: args.rules.length,
             });
-            // Yield to the HTTP event loop so Stop can be observed between
-            // horizons/rules without introducing worker or queue machinery.
+            // Yield between rule/horizon tallies so Stop remains observable.
             await setImmediate();
             if (args.signal.aborted) {
                 args.emit(cancelledEvent(args, results, reportLines));

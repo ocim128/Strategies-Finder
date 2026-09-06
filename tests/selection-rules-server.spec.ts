@@ -4,16 +4,13 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
-import {
-    __testInternals,
-} from "../lib/selection-rules/server-vite-plugin";
+import { __testInternals } from "../lib/selection-rules/server-vite-plugin";
 import { resolveSelectionRulesFolder } from "../lib/selection-rules/catalog";
 import {
     assertSelectionRuleResultIsScalar,
     assertSelectionRulesWireEventIsScalar,
     type SelectionRulesStreamEvent,
 } from "../lib/selection-rules/stream-types";
-import type { SelectionArchive } from "../lib/selection-rules/tally";
 
 const {
     registerSelectionRulesRoutesForTests,
@@ -50,7 +47,7 @@ function makeRequest(method: string, url: string, body?: unknown, remoteAddress 
 }
 
 function makeResponse(): any {
-    const response: any = {
+    return {
         statusCode: 0,
         body: "",
         setHeader() { return undefined; },
@@ -58,58 +55,113 @@ function makeResponse(): any {
         end(value = "") { this.body += value; this.ended = true; },
         on() { return this; },
     };
-    return response;
 }
 
-function outcomeKey(eventId: string, horizon: number, asset: string): string {
-    return JSON.stringify([eventId, horizon, "long", asset]);
-}
-
-function shortOutcomeKey(eventId: string, horizon: number, asset: string): string {
-    return JSON.stringify([eventId, horizon, "short", asset]);
-}
-
-function baselineKey(eventId: string, horizon: number, selector: string): string {
-    return JSON.stringify([eventId, horizon, selector, "long"]);
-}
-
-function makeArchive(): SelectionArchive {
-    const eventId = "event-1";
-    const horizon = 24;
-    const candidates = [
-        { asset: "AAA", pair: null, score: 0.8, signedVotes: 8, activePairCount: 10, ema200Above: true, breadth: 0.5, regime: "bullish" as const, longEligible: true, shortEligible: true, inPool: true },
-        { asset: "BBB", pair: null, score: 0.4, signedVotes: 4, activePairCount: 20, ema200Above: true, breadth: 0.5, regime: "bullish" as const, longEligible: true, shortEligible: true, inPool: true },
-    ];
+function makeLedgerRow(args: {
+    signalTime: number;
+    pair: string;
+    baseSymbol: string;
+    quoteSymbol: string;
+    direction: "long" | "short";
+    atr: number;
+    entryPrice: number;
+    exitPrice: number;
+}): Record<string, unknown> {
+    const pnlPercent = args.direction === "long"
+        ? args.exitPrice / args.entryPrice - 1
+        : 1 - args.exitPrice / args.entryPrice;
     return {
-        runId: "fixture",
-        interval: "4h",
-        horizons: [horizon],
-        events: [{ eventId, decisionTimeSec: 1_700_000_000, interval: "4h", candidates }],
-        outcomes: new Map([
-            [outcomeKey(eventId, horizon, "AAA"), { eventId, decisionTimeSec: 1_700_000_000, horizonBars: horizon, direction: "long", asset: "AAA", inPool: true, eligible: true, return: 0.10, entryTimeSec: 1, exitTimeSec: 2, status: "ok" }],
-            [outcomeKey(eventId, horizon, "BBB"), { eventId, decisionTimeSec: 1_700_000_000, horizonBars: horizon, direction: "long", asset: "BBB", inPool: true, eligible: true, return: 0.04, entryTimeSec: 1, exitTimeSec: 2, status: "ok" }],
-            [shortOutcomeKey(eventId, horizon, "AAA"), { eventId, decisionTimeSec: 1_700_000_000, horizonBars: horizon, direction: "short", asset: "AAA", inPool: true, eligible: true, return: -0.10, entryTimeSec: 1, exitTimeSec: 2, status: "ok" }],
-            [shortOutcomeKey(eventId, horizon, "BBB"), { eventId, decisionTimeSec: 1_700_000_000, horizonBars: horizon, direction: "short", asset: "BBB", inPool: true, eligible: true, return: -0.04, entryTimeSec: 1, exitTimeSec: 2, status: "ok" }],
-        ]),
-        baselines: new Map([
-            [baselineKey(eventId, horizon, "TOP_RAW"), { eventId, decisionTimeSec: 1_700_000_000, horizonBars: horizon, selector: "TOP_RAW", direction: "long", asset: "AAA", selectedReturn: 0.10, controlReturn: 0.04 }],
-            [baselineKey(eventId, horizon, "TOP_MEAN"), { eventId, decisionTimeSec: 1_700_000_000, horizonBars: horizon, selector: "TOP_MEAN", direction: "long", asset: "AAA", selectedReturn: 0.10, controlReturn: 0.04 }],
-        ]),
+        ledgerVersion: 3,
+        pair: args.pair,
+        baseSymbol: args.baseSymbol,
+        quoteSymbol: args.quoteSymbol,
+        direction: args.direction,
+        signalTime: args.signalTime,
+        signalBarIndex: args.signalTime,
+        fillTime: args.signalTime + 1,
+        fillPrice: args.entryPrice,
+        executed: true,
+        notExecutedReason: null,
+        feat_entryRangePosition: args.direction === "long" ? 0.8 : 0.2,
+        feat_atrPct: args.atr,
+        feat_return20: args.direction === "long" ? 0.02 : -0.02,
+        feat_gapPct: 0.01,
+        feat_dow: 1,
+        feat_hour: 12,
+        feat_pairWinRatePrior: null,
+        feat_pairTradesPrior: 0,
+        feat_barsSincePairLastFire: null,
+        feat_pairSpreadVolatility20: 0.03,
+        feat_legVolatilityRatio20: 1,
+        feat_candidatesAtTime: 2,
+        asIf: null,
+        asIfReason: null,
+        horizons: {
+            "24": {
+                entryTimeSec: args.signalTime + 1,
+                entryPrice: args.entryPrice,
+                exitTimeSec: args.signalTime + 25,
+                exitPrice: args.exitPrice,
+                pnlPercent,
+                status: "ok",
+            },
+        },
     };
 }
 
 async function createFixtureRoot(): Promise<string> {
     const root = await mkdtemp(path.join(tmpdir(), "selection-rules-"));
-    const archiveRoot = path.join(root, "archive", "batch-open-score");
-    await mkdir(path.join(archiveRoot, "fixture"), { recursive: true });
-    await writeFile(path.join(archiveRoot, "fixture", "meta.json"), JSON.stringify({
-        schema: "top_mean_archive.v3",
-        runId: "fixture",
-        completedAt: "2026-09-06T00:00:00.000Z",
+    const archiveRoot = path.join(root, "archive", "mining-ledger");
+    const folder = path.join(archiveRoot, "fixture-folder");
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, "provenance.json"), JSON.stringify({
+        ledgerVersion: 3,
+        featureVersion: 3,
+        runId: "fixture-run",
+        startedAt: "2026-09-06T00:00:00.000Z",
         interval: "4h",
-        horizons: [24],
-        fingerprint: "fixture-fingerprint",
+        strategyKey: "fixture_strategy",
+        strategyParams: {},
+        backtestSettings: {},
+        capitalSettings: {},
+        engineMode: "typescript",
+        executionModel: "next_open",
+        tradeDirection: "both",
+        riskMode: "percentage",
+        fees: { commissionPercent: 0, slippageBps: 0 },
+        ledgerHorizons: [24],
+        pairCount: 2,
+        symbols: ["AAA", "BBB", "CCC", "DDD"],
+        replay: {
+            replayEligible: true,
+            replayBlockers: [],
+            maxOpenTrades: 1,
+            cooldownBars: 0,
+            executionModel: "next_open",
+            tradeDirection: "both",
+            allowSameBarExit: false,
+            disableSignalExits: true,
+            slippageRate: 0,
+            commissionRate: 0,
+        },
     }));
+    await writeFile(path.join(folder, "summary.json"), JSON.stringify({
+        ledgerVersion: 3,
+        featureVersion: 3,
+        runId: "fixture-run",
+        startedAt: "2026-09-06T00:00:00.000Z",
+        finishedAt: "2026-09-06T00:01:00.000Z",
+        ledgerComplete: true,
+        failedWrites: 0,
+        totals: { pairs: 2, signals: 4, executed: 4, notExecuted: 0 },
+    }));
+    const rows = [
+        makeLedgerRow({ signalTime: 1_700_000_000, pair: "AAA/BBB", baseSymbol: "AAA", quoteSymbol: "BBB", direction: "long", atr: 1, entryPrice: 100, exitPrice: 110 }),
+        makeLedgerRow({ signalTime: 1_700_000_000, pair: "CCC/DDD", baseSymbol: "CCC", quoteSymbol: "DDD", direction: "short", atr: 2, entryPrice: 100, exitPrice: 80 }),
+        makeLedgerRow({ signalTime: 1_700_001_000, pair: "AAA/BBB", baseSymbol: "AAA", quoteSymbol: "BBB", direction: "long", atr: 1, entryPrice: 100, exitPrice: 110 }),
+        makeLedgerRow({ signalTime: 1_700_001_000, pair: "CCC/DDD", baseSymbol: "CCC", quoteSymbol: "DDD", direction: "short", atr: 2, entryPrice: 100, exitPrice: 80 }),
+    ];
+    await writeFile(path.join(folder, "ledger.jsonl"), `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
     return root;
 }
 
@@ -124,7 +176,7 @@ describe("selection-rules server plugin", () => {
         const routes = captureRoutes();
         const requests: Array<[string, string, unknown?]> = [
             ["GET", "/api/selection-rules/catalog"],
-            ["POST", "/api/selection-rules/run", { runId: "x", folderPath: "fixture", ruleKeys: ["top_mean"] }],
+            ["POST", "/api/selection-rules/run", { runId: "x", folderPath: "fixture-folder", ruleKeys: ["reference_alphabetical"], horizonBars: 24 }],
             ["POST", "/api/selection-rules/stop", { runId: "x" }],
             ["GET", "/api/selection-rules/status?runId=x"],
         ];
@@ -135,22 +187,25 @@ describe("selection-rules server plugin", () => {
         }
     });
 
-    it("streams scalar rule rows in registry order and retains the terminal summary", async () => {
+    it("streams scalar pair-rule rows in registry order and retains the terminal summary", async () => {
         const root = await createFixtureRoot();
         setServerRootForTests(root);
-        setArchiveLoaderForTests(() => makeArchive());
         try {
             const routes = captureRoutes();
             const response = makeResponse();
             await routes.get("/api/selection-rules/run")!(makeRequest("POST", "/api/selection-rules/run", {
                 runId: "stream-test",
-                folderPath: "fixture",
-                ruleKeys: ["top_active", "top_mean", "top_raw"],
+                folderPath: "fixture-folder",
+                ruleKeys: ["hedge_volatility_balance", "reference_alphabetical", "directional_close_location"],
+                horizonBars: 24,
             }), response);
             const events: SelectionRulesStreamEvent[] = response.body.trim().split("\n").map((line: string) => JSON.parse(line) as SelectionRulesStreamEvent);
             expect(events.at(-1)?.type).to.equal("done");
             const rows = events.filter((event): event is Extract<SelectionRulesStreamEvent, { type: "rule_result" }> => event.type === "rule_result");
-            expect(rows.map((event) => event.result.ruleKey)).to.deep.equal(["top_mean", "top_raw", "top_active"]);
+            expect(rows.map((event) => event.result.ruleKey)).to.deep.equal(["reference_alphabetical", "directional_close_location", "hedge_volatility_balance"]);
+            expect(rows[0]?.result.n).to.equal(2);
+            expect(rows[0]?.result.referenceLoudestAtrDeltaMeanPp).to.be.closeTo(-10, 1e-12);
+            expect(rows[0]?.result.dominantBaseLeg).to.equal("AAA");
             for (const event of events) assertSelectionRulesWireEventIsScalar(event);
             for (const event of rows) assertSelectionRuleResultIsScalar(event.result);
             const statusResponse = makeResponse();
@@ -163,10 +218,28 @@ describe("selection-rules server plugin", () => {
         }
     });
 
+    it("rejects a horizon absent from folder provenance", async () => {
+        const root = await createFixtureRoot();
+        setServerRootForTests(root);
+        try {
+            const routes = captureRoutes();
+            const response = makeResponse();
+            await routes.get("/api/selection-rules/run")!(makeRequest("POST", "/api/selection-rules/run", {
+                runId: "bad-horizon",
+                folderPath: "fixture-folder",
+                ruleKeys: ["reference_alphabetical"],
+                horizonBars: 48,
+            }), response);
+            expect(response.statusCode).to.equal(400);
+            expect(response.body).to.contain("not present in folder provenance");
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it("keeps Stop run-scoped and honors the pending-stop slot", async () => {
         const root = await createFixtureRoot();
         setServerRootForTests(root);
-        setArchiveLoaderForTests(() => makeArchive());
         try {
             const routes = captureRoutes();
             let started!: () => void;
@@ -178,8 +251,9 @@ describe("selection-rules server plugin", () => {
             const runResponse = makeResponse();
             const runPromise = routes.get("/api/selection-rules/run")!(makeRequest("POST", "/api/selection-rules/run", {
                 runId: "stop-current",
-                folderPath: "fixture",
-                ruleKeys: ["top_mean"],
+                folderPath: "fixture-folder",
+                ruleKeys: ["reference_alphabetical"],
+                horizonBars: 24,
             }), runResponse);
             await startedPromise;
             const staleResponse = makeResponse();
@@ -199,36 +273,38 @@ describe("selection-rules server plugin", () => {
         }
     });
 
-    it("retains fatal status and filters the catalog safely", async () => {
+    it("retains fatal status and filters v3 catalog entries safely", async () => {
         const root = await createFixtureRoot();
-        const archiveRoot = path.join(root, "archive", "batch-open-score");
+        const archiveRoot = path.join(root, "archive", "mining-ledger");
         await mkdir(path.join(archiveRoot, "missing-meta"));
         await mkdir(path.join(archiveRoot, "unsupported"));
-        await writeFile(path.join(archiveRoot, "unsupported", "meta.json"), JSON.stringify({ schema: "top_mean_archive.v2", runId: "unsupported" }));
+        await writeFile(path.join(archiveRoot, "unsupported", "provenance.json"), JSON.stringify({ ledgerVersion: 2, featureVersion: 3 }));
+        await writeFile(path.join(archiveRoot, "unsupported", "summary.json"), JSON.stringify({ ledgerComplete: true, finishedAt: "2026-09-06T00:00:00.000Z", totals: { signals: 1, pairs: 1 } }));
         await mkdir(path.join(root, "outside"));
-        await writeFile(path.join(root, "outside", "meta.json"), "{}");
+        await writeFile(path.join(root, "outside", "provenance.json"), "{}");
         setServerRootForTests(root);
-        setArchiveLoaderForTests(() => { throw new Error("corrupt archive fixture"); });
+        setArchiveLoaderForTests(() => { throw new Error("corrupt pair-selection ledger fixture"); });
         try {
             expect(await resolveSelectionRulesFolder(root, "../outside")).to.equal(null);
             const routes = captureRoutes();
             const catalogResponse = makeResponse();
             await routes.get("/api/selection-rules/catalog")!(makeRequest("GET", "/api/selection-rules/catalog"), catalogResponse);
             const catalog = JSON.parse(catalogResponse.body);
-            expect(catalog.folders.map((folder: { runId: string }) => folder.runId)).to.deep.equal(["fixture"]);
+            expect(catalog.folders.map((folder: { folderId: string }) => folder.folderId)).to.deep.equal(["fixture-folder"]);
 
             const runResponse = makeResponse();
             await routes.get("/api/selection-rules/run")!(makeRequest("POST", "/api/selection-rules/run", {
                 runId: "fatal-test",
-                folderPath: "fixture",
-                ruleKeys: ["top_mean"],
+                folderPath: "fixture-folder",
+                ruleKeys: ["reference_alphabetical"],
+                horizonBars: 24,
             }), runResponse);
             expect(runResponse.body).to.contain('"type":"fatal"');
             const statusResponse = makeResponse();
             await routes.get("/api/selection-rules/status")!(makeRequest("GET", "/api/selection-rules/status?runId=fatal-test"), statusResponse);
             const status = JSON.parse(statusResponse.body);
             expect(status.lastRun.phase).to.equal("fatal");
-            expect(status.lastRun.error).to.equal("corrupt archive fixture");
+            expect(status.lastRun.error).to.equal("corrupt pair-selection ledger fixture");
         } finally {
             await rm(root, { recursive: true, force: true });
         }

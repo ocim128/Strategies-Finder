@@ -8,7 +8,7 @@ interface CrowdStats {
 }
 
 function crowdStats(pool: readonly PairCandidate[]): CrowdStats {
-    return memoByPool(pool, () => {
+    return memoByPool(pool, "return20-crowd-stats", () => {
         const values = pool
             .map((entry) => directionAdjusted(entry, entry.feat_return20))
             .filter((value): value is number => value !== null);

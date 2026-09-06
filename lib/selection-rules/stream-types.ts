@@ -1,26 +1,34 @@
-import type { SelectionHorizonTally } from "./tally";
+import type { PairSelectionResult, PairSelectionTally } from "../pair-selection/tally";
 
 export type SelectionRulesPhase = "loading" | "tallying" | "done" | "cancelled" | "fatal";
 
-/** One scalar table row, emitted after one rule/horizon has been tallied. */
+/** One scalar table row, emitted after one pair rule/horizon has been tallied. */
 export interface SelectionRuleResult {
     ruleKey: string;
     ruleName: string;
     horizonBars: number;
     n: number;
-    topRawDeltaMeanPp: number | null;
-    topRawDeltaMedianPp: number | null;
-    topMeanDeltaMeanPp: number | null;
-    topMeanDeltaMedianPp: number | null;
     othersMeanDeltaMeanPp: number | null;
     othersMeanDeltaMedianPp: number | null;
+    referenceAlphabeticalDeltaMeanPp: number | null;
+    referenceAlphabeticalDeltaMedianPp: number | null;
+    referenceLoudestAtrDeltaMeanPp: number | null;
+    referenceLoudestAtrDeltaMedianPp: number | null;
     successBarPass: boolean;
-    dominantAsset: string | null;
-    dominantShare: number | null;
-    excludingDominantAsset: string | null;
+    dominantPair: string | null;
+    dominantPairShare: number | null;
+    dominantBaseLeg: string | null;
+    dominantBaseShare: number | null;
+    dominantQuoteLeg: string | null;
+    dominantQuoteShare: number | null;
+    excludingDominantPair: string | null;
     excludingDominantN: number | null;
-    excludingDominantDeltaMeanPp: number | null;
-    excludingDominantDeltaMedianPp: number | null;
+    excludingDominantOthersMeanDeltaMeanPp: number | null;
+    excludingDominantOthersMeanDeltaMedianPp: number | null;
+    excludingDominantAlphabeticalDeltaMeanPp: number | null;
+    excludingDominantAlphabeticalDeltaMedianPp: number | null;
+    excludingDominantLoudestAtrDeltaMeanPp: number | null;
+    excludingDominantLoudestAtrDeltaMedianPp: number | null;
     reportLines: string[];
 }
 
@@ -121,11 +129,14 @@ export interface SelectionRulesStatusRun {
 }
 
 export interface SelectionRulesCatalogEntry {
+    folderId: string;
     runId: string;
-    completedAt: string;
+    startedAt: string;
+    finishedAt: string;
     interval: string;
-    horizons: number[];
-    fingerprint: string;
+    strategyKey: string;
+    ledgerHorizons: number[];
+    totals: { signals: number; pairs: number };
 }
 
 export interface SelectionRulesCatalogResponse {
@@ -190,46 +201,61 @@ export function assertSelectionRulesWireEventIsScalar(value: unknown): asserts v
         if (!Array.isArray(event.results) || !Array.isArray(event.reportLines)) {
             throw new Error(`Terminal ${String(event.type)} event is missing its summary arrays.`);
         }
-        for (const result of event.results) {
-            assertSelectionRuleResultIsScalar(result);
-        }
+        for (const result of event.results) assertSelectionRuleResultIsScalar(result);
         return;
     }
-    for (const [key, child] of Object.entries(event)) {
-        assertScalar(child, `$.${key}`);
-    }
+    for (const [key, child] of Object.entries(event)) assertScalar(child, `$.${key}`);
 }
 
-export function resultFromHorizon(
-    ruleKey: string,
-    ruleName: string,
-    horizon: SelectionHorizonTally,
-    reportLines: string[],
-): SelectionRuleResult {
-    const toPp = (value: number | null): number | null => value === null ? null : value * 100;
-    const topRawDelta = horizon.comparisons.topRaw.delta;
-    const topMeanDelta = horizon.comparisons.topMean.delta;
-    const othersDelta = horizon.comparisons.othersMean.delta;
-    const successBarPass = [topRawDelta, topMeanDelta, othersDelta]
-        .every((delta) => delta.mean !== null && delta.median !== null && delta.mean > 0 && delta.median > 0);
+function comparisonFields(
+    comparison: PairSelectionTally["comparisons"]["othersMean"],
+): { mean: number | null; median: number | null } {
     return {
-        ruleKey,
-        ruleName,
-        horizonBars: horizon.horizonBars,
-        n: horizon.eligibleEvents,
-        topRawDeltaMeanPp: toPp(topRawDelta.mean),
-        topRawDeltaMedianPp: toPp(topRawDelta.median),
-        topMeanDeltaMeanPp: toPp(topMeanDelta.mean),
-        topMeanDeltaMedianPp: toPp(topMeanDelta.median),
-        othersMeanDeltaMeanPp: toPp(othersDelta.mean),
-        othersMeanDeltaMedianPp: toPp(othersDelta.median),
+        mean: comparison.delta.mean === null ? null : comparison.delta.mean * 100,
+        median: comparison.delta.median === null ? null : comparison.delta.median * 100,
+    };
+}
+
+export function resultFromPairSelection(result: PairSelectionResult, horizonBars: number): SelectionRuleResult {
+    const { tally } = result;
+    const othersMean = comparisonFields(tally.comparisons.othersMean);
+    const alphabetical = comparisonFields(tally.comparisons.referenceAlphabetical);
+    const loudestAtr = comparisonFields(tally.comparisons.referenceLoudestAtr);
+    const excluding = tally.excludingDominantPair;
+    const excludingOthers = excluding ? comparisonFields(excluding.othersMean) : null;
+    const excludingAlphabetical = excluding ? comparisonFields(excluding.referenceAlphabetical) : null;
+    const excludingLoudestAtr = excluding ? comparisonFields(excluding.referenceLoudestAtr) : null;
+    const successBarPass = [
+        tally.comparisons.othersMean.delta,
+        tally.comparisons.referenceAlphabetical.delta,
+        tally.comparisons.referenceLoudestAtr.delta,
+    ].every((delta) => delta.mean !== null && delta.median !== null && delta.mean > 0 && delta.median > 0);
+    return {
+        ruleKey: result.ruleKey,
+        ruleName: result.ruleName,
+        horizonBars,
+        n: tally.eligibleEvents,
+        othersMeanDeltaMeanPp: othersMean.mean,
+        othersMeanDeltaMedianPp: othersMean.median,
+        referenceAlphabeticalDeltaMeanPp: alphabetical.mean,
+        referenceAlphabeticalDeltaMedianPp: alphabetical.median,
+        referenceLoudestAtrDeltaMeanPp: loudestAtr.mean,
+        referenceLoudestAtrDeltaMedianPp: loudestAtr.median,
         successBarPass,
-        dominantAsset: horizon.dominantAsset,
-        dominantShare: horizon.selectedAssets[0]?.share ?? null,
-        excludingDominantAsset: horizon.dominantAsset,
-        excludingDominantN: horizon.excludingDominant?.selected.count ?? null,
-        excludingDominantDeltaMeanPp: toPp(horizon.excludingDominant?.delta.mean ?? null),
-        excludingDominantDeltaMedianPp: toPp(horizon.excludingDominant?.delta.median ?? null),
-        reportLines: [...reportLines],
+        dominantPair: tally.dominantPair,
+        dominantPairShare: tally.selectedPairs[0]?.share ?? null,
+        dominantBaseLeg: tally.dominantBaseLeg,
+        dominantBaseShare: tally.selectedBaseLegs[0]?.share ?? null,
+        dominantQuoteLeg: tally.dominantQuoteLeg,
+        dominantQuoteShare: tally.selectedQuoteLegs[0]?.share ?? null,
+        excludingDominantPair: tally.dominantPair,
+        excludingDominantN: excluding?.othersMean.selected.count ?? null,
+        excludingDominantOthersMeanDeltaMeanPp: excludingOthers?.mean ?? null,
+        excludingDominantOthersMeanDeltaMedianPp: excludingOthers?.median ?? null,
+        excludingDominantAlphabeticalDeltaMeanPp: excludingAlphabetical?.mean ?? null,
+        excludingDominantAlphabeticalDeltaMedianPp: excludingAlphabetical?.median ?? null,
+        excludingDominantLoudestAtrDeltaMeanPp: excludingLoudestAtr?.mean ?? null,
+        excludingDominantLoudestAtrDeltaMedianPp: excludingLoudestAtr?.median ?? null,
+        reportLines: [...result.reportLines],
     };
 }

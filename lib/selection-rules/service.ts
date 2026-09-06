@@ -29,10 +29,7 @@ function readActiveRun(): PersistedSelectionRulesRun | null {
             if (!data || typeof data !== "object" || Array.isArray(data)) return null;
             const value = data as Partial<PersistedSelectionRulesRun>;
             if (typeof value.runId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(value.runId)) return null;
-            return {
-                runId: value.runId,
-                startedAt: typeof value.startedAt === "number" ? value.startedAt : Date.now(),
-            };
+            return { runId: value.runId, startedAt: typeof value.startedAt === "number" ? value.startedAt : Date.now() };
         },
     });
 }
@@ -63,28 +60,10 @@ function formatShare(value: number | null): string {
 
 function terminalFromStatus(run: SelectionRulesStatusRun): SelectionRulesTerminalEvent {
     if (run.phase === "done") {
-        return {
-            type: "done",
-            runId: run.runId,
-            ok: true,
-            cancelled: false,
-            finishedAt: run.finishedAt ?? Date.now(),
-            summary: run.summary!,
-            results: run.results,
-            reportLines: run.reportLines,
-        };
+        return { type: "done", runId: run.runId, ok: true, cancelled: false, finishedAt: run.finishedAt ?? Date.now(), summary: run.summary!, results: run.results, reportLines: run.reportLines };
     }
     if (run.phase === "cancelled") {
-        return {
-            type: "cancelled",
-            runId: run.runId,
-            ok: false,
-            cancelled: true,
-            finishedAt: run.finishedAt ?? Date.now(),
-            summary: run.summary!,
-            results: run.results,
-            reportLines: run.reportLines,
-        };
+        return { type: "cancelled", runId: run.runId, ok: false, cancelled: true, finishedAt: run.finishedAt ?? Date.now(), summary: run.summary!, results: run.results, reportLines: run.reportLines };
     }
     return {
         type: "fatal",
@@ -92,7 +71,7 @@ function terminalFromStatus(run: SelectionRulesStatusRun): SelectionRulesTermina
         ok: false,
         cancelled: false,
         finishedAt: run.finishedAt ?? Date.now(),
-        error: run.error ?? "Selection Rules failed.",
+        error: run.error ?? "Pair-selection tally failed.",
         summary: run.summary,
         results: run.results,
         reportLines: run.reportLines,
@@ -119,12 +98,11 @@ export class SelectionRulesService {
         const dom = this.getDom();
         this.initialized = true;
         dom.selectionRulesFolderSelect.addEventListener("change", () => this.renderSelectedFolder());
+        dom.selectionRulesHorizonSelect.addEventListener("change", () => this.setBusy());
         dom.selectionRulesRuleList.addEventListener("change", () => this.setBusy());
         dom.selectionRulesRunBtn.addEventListener("click", () => { void this.startRun(); });
         dom.selectionRulesStopBtn.addEventListener("click", () => { void this.stopRun(); });
         dom.selectionRulesCopyBtn.addEventListener("click", () => { void this.copyReport(); });
-        // Result rows have no individual controls; delegation keeps the table
-        // interaction bounded as streamed rows are appended.
         dom.selectionRulesResults.addEventListener("click", (event) => {
             const target = event.target as Element | null;
             const row = target?.closest<HTMLTableRowElement>("tr[data-result-key]");
@@ -164,12 +142,27 @@ export class SelectionRulesService {
         const folders = this.catalog?.folders ?? [];
         dom.selectionRulesFolderSelect.replaceChildren(...folders.map((folder) => {
             const option = document.createElement("option");
-            option.value = folder.runId;
-            option.textContent = `${folder.runId} · ${folder.completedAt}`;
+            option.value = folder.folderId;
+            option.textContent = `${folder.runId} - ${folder.interval} - ${folder.strategyKey} - signals=${folder.totals.signals}`;
             return option;
         }));
-        if (folders.some((folder) => folder.runId === selected)) dom.selectionRulesFolderSelect.value = selected;
-        else if (folders[0]) dom.selectionRulesFolderSelect.value = folders[0].runId;
+        if (folders.some((folder) => folder.folderId === selected)) dom.selectionRulesFolderSelect.value = selected;
+        else if (folders[0]) dom.selectionRulesFolderSelect.value = folders[0].folderId;
+        this.renderHorizons();
+    }
+
+    private renderHorizons(): void {
+        const dom = this.getDom();
+        const selected = Number(dom.selectionRulesHorizonSelect.value);
+        const horizons = this.selectedFolder()?.ledgerHorizons ?? [];
+        dom.selectionRulesHorizonSelect.replaceChildren(...horizons.map((horizon) => {
+            const option = document.createElement("option");
+            option.value = String(horizon);
+            option.textContent = String(horizon);
+            return option;
+        }));
+        if (horizons.includes(selected)) dom.selectionRulesHorizonSelect.value = String(selected);
+        else if (horizons[0] !== undefined) dom.selectionRulesHorizonSelect.value = String(horizons[0]);
     }
 
     private renderRules(): void {
@@ -180,6 +173,7 @@ export class SelectionRulesService {
         dom.selectionRulesRuleList.replaceChildren(...rules.map((rule) => {
             const label = document.createElement("label");
             label.className = "selection-rules-rule-option";
+            label.title = rule.description;
             const input = document.createElement("input");
             input.type = "checkbox";
             input.value = rule.key;
@@ -189,7 +183,9 @@ export class SelectionRulesService {
             const key = document.createElement("code");
             key.className = "selection-rules-rule-key";
             key.textContent = rule.key;
-            label.append(input, text, key);
+            const description = document.createElement("small");
+            description.textContent = rule.description;
+            label.append(input, text, key, description);
             return label;
         }));
     }
@@ -200,15 +196,16 @@ export class SelectionRulesService {
     }
 
     private selectedFolder(): SelectionRulesCatalogEntry | null {
-        const runId = this.getDom().selectionRulesFolderSelect.value;
-        return this.catalog?.folders.find((folder) => folder.runId === runId) ?? null;
+        const folderId = this.getDom().selectionRulesFolderSelect.value;
+        return this.catalog?.folders.find((folder) => folder.folderId === folderId) ?? null;
     }
 
     private renderSelectedFolder(): void {
         const folder = this.selectedFolder();
+        this.renderHorizons();
         this.getDom().selectionRulesFolderMeta.textContent = folder
-            ? `${folder.interval} · horizons ${folder.horizons.join(", ")} · completed ${folder.completedAt} · fingerprint ${folder.fingerprint.slice(0, 16)}…`
-            : "No supported top_mean_archive.v3 folders found.";
+            ? `runId=${folder.runId} - ${folder.interval} - strategy=${folder.strategyKey} - signals=${folder.totals.signals} - pairs=${folder.totals.pairs} - ${folder.startedAt} to ${folder.finishedAt} - horizons=${folder.ledgerHorizons.join(", ")}`
+            : "No supported v3 mining-ledger folders found.";
         this.setBusy();
     }
 
@@ -222,9 +219,11 @@ export class SelectionRulesService {
         const dom = this.getDom();
         const hasFolder = this.selectedFolder() !== null;
         const hasRules = this.selectedRuleKeys().length > 0;
-        dom.selectionRulesRunBtn.disabled = this.running || !hasFolder || !hasRules;
+        const hasHorizon = dom.selectionRulesHorizonSelect.value !== "";
+        dom.selectionRulesRunBtn.disabled = this.running || !hasFolder || !hasRules || !hasHorizon;
         dom.selectionRulesStopBtn.hidden = !this.running;
         dom.selectionRulesFolderSelect.disabled = this.running;
+        dom.selectionRulesHorizonSelect.disabled = this.running;
         dom.selectionRulesRuleList.querySelectorAll<HTMLInputElement>("input").forEach((input) => { input.disabled = this.running; });
     }
 
@@ -235,16 +234,16 @@ export class SelectionRulesService {
         const percent = totalRules > 0 ? Math.min(100, Math.max(0, completedRules / totalRules * 100)) : 0;
         dom.selectionRulesProgressFill.value = percent;
         dom.selectionRulesProgress.setAttribute("aria-valuenow", String(Math.round(percent)));
-        const current = currentRuleKey ? ` · ${currentRuleKey}${currentHorizonBars === null ? "" : ` · h=${currentHorizonBars}`}` : "";
-        dom.selectionRulesProgressText.textContent = `${detail}${current} · ${completedRules}/${totalRules} rules`;
+        const current = currentRuleKey ? ` - ${currentRuleKey}${currentHorizonBars === null ? "" : ` - h=${currentHorizonBars}`}` : "";
+        dom.selectionRulesProgressText.textContent = `${detail}${current} - ${completedRules}/${totalRules} rules`;
     }
 
     private renderResults(): void {
         const dom = this.getDom();
         const results = [...this.results.values()].sort((left, right) =>
-            (right.topMeanDeltaMeanPp ?? -Infinity) - (left.topMeanDeltaMeanPp ?? -Infinity)
+            (right.othersMeanDeltaMeanPp ?? -Infinity) - (left.othersMeanDeltaMeanPp ?? -Infinity)
             || left.ruleName.localeCompare(right.ruleName)
-            || left.horizonBars - right.horizonBars
+            || left.horizonBars - right.horizonBars,
         );
         dom.selectionRulesResults.replaceChildren(...results.map((result) => {
             const row = document.createElement("tr");
@@ -253,13 +252,15 @@ export class SelectionRulesService {
                 result.ruleName,
                 String(result.horizonBars),
                 String(result.n),
-                formatPair(result.topRawDeltaMeanPp, result.topRawDeltaMedianPp),
-                formatPair(result.topMeanDeltaMeanPp, result.topMeanDeltaMedianPp),
                 formatPair(result.othersMeanDeltaMeanPp, result.othersMeanDeltaMedianPp),
+                formatPair(result.referenceAlphabeticalDeltaMeanPp, result.referenceAlphabeticalDeltaMedianPp),
+                formatPair(result.referenceLoudestAtrDeltaMeanPp, result.referenceLoudestAtrDeltaMedianPp),
                 result.successBarPass ? "PASS" : "FAIL",
-                result.dominantAsset ? `${result.dominantAsset} · ${formatShare(result.dominantShare)}` : "n/a",
-                result.excludingDominantAsset
-                    ? `${result.excludingDominantAsset} · n=${result.excludingDominantN ?? "n/a"} · ${formatPair(result.excludingDominantDeltaMeanPp, result.excludingDominantDeltaMedianPp)}`
+                result.dominantPair ? `${result.dominantPair} - ${formatShare(result.dominantPairShare)}` : "n/a",
+                result.dominantBaseLeg ? `${result.dominantBaseLeg} - ${formatShare(result.dominantBaseShare)}` : "n/a",
+                result.dominantQuoteLeg ? `${result.dominantQuoteLeg} - ${formatShare(result.dominantQuoteShare)}` : "n/a",
+                result.excludingDominantPair
+                    ? `${result.excludingDominantPair} - n=${result.excludingDominantN ?? "n/a"} - ${formatPair(result.excludingDominantOthersMeanDeltaMeanPp, result.excludingDominantOthersMeanDeltaMedianPp)}`
                     : "n/a",
             ];
             values.forEach((value, index) => {
@@ -305,18 +306,14 @@ export class SelectionRulesService {
         this.renderReport();
         const totalRules = event.summary?.totalRules ?? new Set(event.results.map((result) => result.ruleKey)).size;
         const completedRules = event.summary?.completedRules ?? new Set(event.results.map((result) => result.ruleKey)).size;
-        // The progress card is for in-flight work only; the status line carries
-        // the terminal state plus the completed/total tally.
         this.getDom().selectionRulesProgress.classList.remove("active");
         this.setStatus(
             event.type === "fatal"
                 ? `Fatal: ${event.error}`
-                : `${event.type === "cancelled" ? "Cancelled" : "Done"} · ${completedRules}/${totalRules} rules`,
+                : `${event.type === "cancelled" ? "Cancelled" : "Done"} - ${completedRules}/${totalRules} rules`,
             event.type === "done" ? "success" : event.type === "cancelled" ? "warning" : "danger",
         );
         this.setBusy();
-        // Keep the run id so a reload can recover the retained terminal
-        // snapshot; the next Run overwrites it.
         persistActiveRun({ runId: event.runId, startedAt: Date.now() });
     }
 
@@ -324,23 +321,22 @@ export class SelectionRulesService {
         if (this.running) return;
         const folder = this.selectedFolder();
         const ruleKeys = this.selectedRuleKeys();
-        if (!folder || ruleKeys.length === 0) return;
+        const horizonBars = Number(this.getDom().selectionRulesHorizonSelect.value);
+        if (!folder || ruleKeys.length === 0 || !Number.isInteger(horizonBars) || horizonBars <= 0) return;
         const runId = createSelectionRulesRunId();
         this.activeServerRunId = runId;
         this.running = true;
         this.resetOutput();
-        // A started run supersedes the "no results yet" guidance until results
-        // or a failure arrives.
         this.getDom().selectionRulesEmpty.hidden = true;
         persistActiveRun({ runId, startedAt: Date.now() });
         this.setBusy();
-        this.setStatus("Starting…", "running");
-        this.renderProgress(0, ruleKeys.length, "Loading and verifying archive", null, null);
+        this.setStatus("Starting...", "running");
+        this.renderProgress(0, ruleKeys.length, "Loading and verifying pair-selection ledger", null, null);
         try {
             const response = await fetch("/api/selection-rules/run", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ runId, folderPath: folder.runId, ruleKeys }),
+                body: JSON.stringify({ runId, folderPath: folder.folderId, ruleKeys, horizonBars }),
             });
             if (!response.ok) {
                 const detail = await response.text();
@@ -356,7 +352,7 @@ export class SelectionRulesService {
             }
             if (!response.body) throw new Error("Selection Rules response body is missing.");
             await consumeNdjsonStream<SelectionRulesStreamEvent>(response.body, {
-                onStart: (event) => { if (this.activeServerRunId === event.runId) this.setStatus("Archive verified; running rules", "running"); },
+                onStart: (event) => { if (this.activeServerRunId === event.runId) this.setStatus("Pair-selection ledger verified; running rules", "running"); },
                 onPhase: (event) => { if (this.activeServerRunId === event.runId) this.renderProgress(event.completedRules, event.totalRules, event.detail, event.currentRuleKey, event.currentHorizonBars); },
                 onRuleResult: (event) => { if (this.activeServerRunId === event.runId) this.acceptResult(event); },
                 onDone: (event) => this.adoptTerminal(event),
@@ -380,7 +376,7 @@ export class SelectionRulesService {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ runId }),
             });
-            if (this.activeServerRunId === runId) this.setStatus("Stop requested…", "running");
+            if (this.activeServerRunId === runId) this.setStatus("Stop requested...", "running");
         } catch (error) {
             if (this.activeServerRunId === runId) this.setStatus(`Stop failed: ${error instanceof Error ? error.message : String(error)}`, "danger");
         }
@@ -408,7 +404,7 @@ export class SelectionRulesService {
                     this.reportLines = [...payload.run.reportLines];
                     this.renderResults();
                     this.renderReport();
-                    this.renderProgress(payload.run.completedRules, payload.run.totalRules, payload.run.phase === "loading" ? "Loading and verifying archive" : "Reattached", payload.run.currentRuleKey, payload.run.currentHorizonBars);
+                    this.renderProgress(payload.run.completedRules, payload.run.totalRules, payload.run.phase === "loading" ? "Loading and verifying pair-selection ledger" : "Reattached", payload.run.currentRuleKey, payload.run.currentHorizonBars);
                     this.setStatus(`Reattached: ${payload.run.phase}`, "running");
                 } else if (payload.lastRun) {
                     this.adoptTerminal(terminalFromStatus(payload.lastRun));

@@ -16,7 +16,7 @@ export const crowd_range_consensus: PairSelectionRule = {
     score: (candidate, _event, params, pool) => {
         const directionalPosition = directionalPositionOf(candidate);
         if (directionalPosition === null) return Number.NEGATIVE_INFINITY;
-        const eventMedian = memoByPool(pool, () => medianValid(pool, directionalPositionOf));
+        const eventMedian = memoByPool(pool, "consensus-median", () => medianValid(pool, directionalPositionOf));
         if (eventMedian === null) return Number.NEGATIVE_INFINITY;
         return -Math.abs(directionalPosition - eventMedian - params.targetConsensusOffsetPct!);
     },

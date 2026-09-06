@@ -3,6 +3,7 @@ import { getRequiredElement } from "./dom-utils";
 export const SELECTION_RULES_REQUIRED_IDS = [
     "selectionRulesSection",
     "selectionRulesFolderSelect",
+    "selectionRulesHorizonSelect",
     "selectionRulesFolderMeta",
     "selectionRulesRuleList",
     "selectionRulesRunBtn",
@@ -21,6 +22,7 @@ export function createSelectionRulesDom() {
     return {
         selectionRulesSection: getRequiredElement<HTMLElement>("selectionRulesSection"),
         selectionRulesFolderSelect: getRequiredElement<HTMLSelectElement>("selectionRulesFolderSelect"),
+        selectionRulesHorizonSelect: getRequiredElement<HTMLSelectElement>("selectionRulesHorizonSelect"),
         selectionRulesFolderMeta: getRequiredElement<HTMLDivElement>("selectionRulesFolderMeta"),
         selectionRulesRuleList: getRequiredElement<HTMLDivElement>("selectionRulesRuleList"),
         selectionRulesRunBtn: getRequiredElement<HTMLButtonElement>("selectionRulesRunBtn"),

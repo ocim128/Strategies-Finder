@@ -2,7 +2,7 @@ import type { Plugin } from "vite";
 import path from "node:path";
 import { createDisconnectSafeStream, HttpStatusError, registerLocalJsonRoute, sendJson, type LocalRouteMiddlewareStack, type ViteHttpResponse } from "../vite-http-utils";
 import { discoverSelectionRulesCatalog, resolveSelectionRulesFolder } from "./catalog";
-import { selectionRuleRegistry } from "./registry";
+import { pairSelectionRuleRegistry } from "../pair-selection/registry";
 import {
     createSelectionRulesCancelledEvent,
     createSelectionRulesFatalEvent,
@@ -55,8 +55,8 @@ function parseRuleKeys(raw: unknown): string[] {
         return value.trim();
     });
     if (new Set(keys).size !== keys.length) throw new HttpStatusError(400, "ruleKeys must not contain duplicates.");
-    const unknown = keys.filter((key) => !selectionRuleRegistry.has(key));
-    if (unknown.length > 0) throw new HttpStatusError(400, `Unknown selection rule: ${unknown[0]}.`);
+    const unknown = keys.filter((key) => !pairSelectionRuleRegistry.has(key));
+    if (unknown.length > 0) throw new HttpStatusError(400, `Unknown pair-selection rule: ${unknown[0]}.`);
     return keys;
 }
 
@@ -165,7 +165,7 @@ async function handleCatalogRequest(res: ViteHttpResponse): Promise<void> {
         catalogRoot: path.relative(root, catalog.catalogRoot).replace(/\\/g, "/"),
         generatedAt: Date.now(),
         folders: catalog.folders,
-        rules: [...selectionRuleRegistry.values()].map((rule) => ({
+        rules: [...pairSelectionRuleRegistry.values()].map((rule) => ({
             key: rule.key,
             name: rule.name,
             description: rule.description,
@@ -175,20 +175,30 @@ async function handleCatalogRequest(res: ViteHttpResponse): Promise<void> {
 
 function orderedRules(ruleKeys: readonly string[]) {
     const selected = new Set(ruleKeys);
-    return [...selectionRuleRegistry.values()].filter((rule) => selected.has(rule.key));
+    return [...pairSelectionRuleRegistry.values()].filter((rule) => selected.has(rule.key));
 }
 
 async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unknown>): Promise<void> {
-    assertExactBody(body, ["runId", "folderPath", "ruleKeys"]);
+    assertExactBody(body, ["runId", "folderPath", "ruleKeys", "horizonBars"]);
     const runId = parseRunId(body.runId);
     if (typeof body.folderPath !== "string" || !body.folderPath.trim()) {
         throw new HttpStatusError(400, "folderPath must be a non-empty string.");
+    }
+    let horizonBars: number | undefined;
+    if (body.horizonBars !== undefined) {
+        if (typeof body.horizonBars !== "number" || !Number.isInteger(body.horizonBars) || body.horizonBars <= 0) {
+            throw new HttpStatusError(400, "horizonBars must be a positive integer.");
+        }
+        horizonBars = body.horizonBars;
     }
     const ruleKeys = parseRuleKeys(body.ruleKeys);
     const rules = orderedRules(ruleKeys);
     const root = serverRoot ?? process.cwd();
     const folder = await resolveSelectionRulesFolder(root, body.folderPath.trim());
     if (!folder) throw new HttpStatusError(400, "Unknown or unsafe selection-rules archive folder.");
+    if (horizonBars !== undefined && !folder.entry.ledgerHorizons.includes(horizonBars)) {
+        throw new HttpStatusError(400, `horizonBars ${horizonBars} is not present in folder provenance (available: ${folder.entry.ledgerHorizons.join(", ")}).`);
+    }
     if (runOwner !== RUN_OWNER_NONE) throw new HttpStatusError(409, "Selection Rules is already running. Use Stop first.");
 
     const generation = ++runOwnerGeneration;
@@ -214,6 +224,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
         runId,
         folderPath: body.folderPath.trim(),
         archiveFolderPath: folder.absolutePath,
+        horizonBars,
         rules,
         signal: abortController.signal,
         loadArchive: archiveLoaderOverride ?? undefined,
