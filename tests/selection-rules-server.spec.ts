@@ -77,8 +77,8 @@ function makeArchive(): SelectionArchive {
     const eventId = "event-1";
     const horizon = 24;
     const candidates = [
-        { asset: "AAA", pair: null, score: 0.8, signedVotes: 8, activePairCount: 10, ema200Above: true, breadth: 0.5, regime: "bullish" as const, longEligible: true, shortEligible: true, inPool: true, priorCoverageSlope5: null, priorSignedVoteDelta3: null, priorScoreStdDev5: null, priorTopMeanReturnMean3: null },
-        { asset: "BBB", pair: null, score: 0.4, signedVotes: 4, activePairCount: 20, ema200Above: true, breadth: 0.5, regime: "bullish" as const, longEligible: true, shortEligible: true, inPool: true, priorCoverageSlope5: null, priorSignedVoteDelta3: null, priorScoreStdDev5: null, priorTopMeanReturnMean3: null },
+        { asset: "AAA", pair: null, score: 0.8, signedVotes: 8, activePairCount: 10, ema200Above: true, breadth: 0.5, regime: "bullish" as const, longEligible: true, shortEligible: true, inPool: true },
+        { asset: "BBB", pair: null, score: 0.4, signedVotes: 4, activePairCount: 20, ema200Above: true, breadth: 0.5, regime: "bullish" as const, longEligible: true, shortEligible: true, inPool: true },
     ];
     return {
         runId: "fixture",

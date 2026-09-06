@@ -1,10 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import {
-    TOP_MEAN_CAUSAL_FEATURE_FIELDS,
-    TOP_MEAN_FEATURE_CONTRACT_VERSION,
-} from "../batch-backtest/sp500-top-mean-causal-features";
 import { tieBreakDigest } from "../batch-backtest/max-active-research-contract";
 import { getSelectionRule } from "./registry";
 import type {
@@ -14,16 +10,11 @@ import type {
     SelectionRule,
     SelectionRuleParams,
 } from "./types";
-import type {
-    TopMeanCandidateFeatureRow,
-    TopMeanCausalFeatureField,
-} from "../batch-backtest/sp500-top-mean-causal-features";
 
 const REQUIRED_JSONL_FILES = [
     "pool-snapshots.jsonl",
     "candidate-outcomes.jsonl",
     "events-full.jsonl",
-    "candidate-features.jsonl",
 ] as const;
 
 const OUTCOME_STATUSES = new Set([
@@ -244,9 +235,6 @@ function parseMeta(text: string, folderPath: string): ArchiveMeta {
         return parsed;
     });
     if (new Set(horizons).size !== horizons.length) dataBug("meta.json.horizons must be unique");
-    if (isRecord(value.featureSet) && value.featureSet.contractVersion !== undefined && value.featureSet.contractVersion !== TOP_MEAN_FEATURE_CONTRACT_VERSION) {
-        dataBug(`meta.json.featureSet.contractVersion must be ${TOP_MEAN_FEATURE_CONTRACT_VERSION}, got ${String(value.featureSet.contractVersion)}`);
-    }
     if (!isRecord(value.files)) dataBug("meta.json.files must be an object");
     const files: Record<string, string> = {};
     for (const [filename, hash] of Object.entries(value.files)) {
@@ -352,60 +340,10 @@ function parsePoolRows(rows: readonly unknown[], meta: ArchiveMeta): {
                 longEligible: row.longEligible,
                 shortEligible: row.shortEligible,
                 inPool: row.inPool,
-                priorCoverageSlope5: null,
-                priorSignedVoteDelta3: null,
-                priorScoreStdDev5: null,
-                priorTopMeanReturnMean3: null,
             });
         }
     }
     return { events, assetsByEvent };
-}
-
-function parseFeatureRows(
-    rows: readonly unknown[],
-    events: ReadonlyMap<string, EventBuilder>,
-): Map<string, TopMeanCandidateFeatureRow> {
-    const features = new Map<string, TopMeanCandidateFeatureRow>();
-    for (let index = 0; index < rows.length; index += 1) {
-        const value = rows[index];
-        const label = `candidate-features.jsonl:${index + 1}`;
-        if (!isRecord(value)) dataBug(`${label} must contain an object`);
-        const eventId = requiredString(value.eventId, "eventId", label);
-        const event = events.get(eventId);
-        if (!event) dataBug(`${label}.eventId ${eventId} does not join pool-snapshots.jsonl`);
-        const asset = requiredString(value.asset, "asset", label);
-        if (!event.assets.has(asset)) dataBug(`${label}.asset ${asset} does not join pool-snapshots.jsonl event ${eventId}`);
-        const decisionTimeSec = requiredInteger(value.decisionTimeSec, "decisionTimeSec", label);
-        if (decisionTimeSec !== event.decisionTimeSec) dataBug(`${label}.decisionTimeSec does not join event ${eventId}`);
-        const featureValues = {} as Record<TopMeanCausalFeatureField, number | null>;
-        for (const field of TOP_MEAN_CAUSAL_FEATURE_FIELDS) {
-            featureValues[field] = nullableFinite(value[field], field, label);
-        }
-        const row: TopMeanCandidateFeatureRow = { eventId, decisionTimeSec, asset, ...featureValues };
-        const key = `${eventId}|${asset}`;
-        if (features.has(key)) dataBug(`duplicate candidate feature ${key}`);
-        features.set(key, row);
-    }
-    for (const event of events.values()) {
-        for (const asset of event.assets) {
-            if (!features.has(`${event.eventId}|${asset}`)) dataBug(`missing candidate feature ${event.eventId}|${asset}`);
-        }
-    }
-    return features;
-}
-
-function attachCandidateFeatures(
-    events: ReadonlyMap<string, EventBuilder>,
-    features: ReadonlyMap<string, TopMeanCandidateFeatureRow>,
-): void {
-    for (const event of events.values()) {
-        for (const candidate of event.candidates) {
-            const feature = features.get(`${event.eventId}|${candidate.asset}`);
-            if (!feature) dataBug(`missing candidate feature ${event.eventId}|${candidate.asset}`);
-            for (const field of TOP_MEAN_CAUSAL_FEATURE_FIELDS) candidate[field] = feature[field];
-        }
-    }
 }
 
 function outcomeKey(eventId: string, horizonBars: number, direction: string, asset: string): string {
@@ -520,11 +458,8 @@ export function loadSelectionArchive(folderPath: string): SelectionArchive {
     const poolText = jsonlTexts.get("pool-snapshots.jsonl");
     const outcomesText = jsonlTexts.get("candidate-outcomes.jsonl");
     const eventsText = jsonlTexts.get("events-full.jsonl");
-    const featuresText = jsonlTexts.get("candidate-features.jsonl");
-    if (poolText === undefined || outcomesText === undefined || eventsText === undefined || featuresText === undefined) dataBug("required JSONL file was not captured");
+    if (poolText === undefined || outcomesText === undefined || eventsText === undefined) dataBug("required JSONL file was not captured");
     const pool = parsePoolRows(parseJsonl(poolText, "pool-snapshots.jsonl"), meta);
-    const features = parseFeatureRows(parseJsonl(featuresText, "candidate-features.jsonl"), pool.events);
-    attachCandidateFeatures(pool.events, features);
     const outcomes = parseOutcomeRows(parseJsonl(outcomesText, "candidate-outcomes.jsonl"), pool.events, pool.assetsByEvent, meta);
     const baselines = parseBaselineRows(parseJsonl(eventsText, "events-full.jsonl"), pool.events, pool.assetsByEvent, meta);
     const events = [...pool.events.values()]

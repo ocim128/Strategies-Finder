@@ -1,7 +1,6 @@
 import type { SelectionArchive, SelectionArchiveEvent } from "./tally";
-import { TOP_MEAN_CAUSAL_FEATURE_FIELDS } from "../batch-backtest/sp500-top-mean-causal-features";
 
-const NUMERIC_FIELDS = ["score", "signedVotes", "activePairCount", "breadth", ...TOP_MEAN_CAUSAL_FEATURE_FIELDS] as const;
+const NUMERIC_FIELDS = ["score", "signedVotes", "activePairCount", "breadth"] as const;
 const BOOLEAN_FIELDS = ["ema200Above", "longEligible", "shortEligible", "inPool"] as const;
 const REGIMES = ["bullish", "bearish", "unavailable"] as const;
 const PERCENTILES = [0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99] as const;

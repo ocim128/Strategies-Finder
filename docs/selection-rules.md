@@ -56,53 +56,16 @@ explicitly with the rule.
 Rules receive only fresh plain `SelectionCandidate` and
 `SelectionEventContext` objects. Candidate fields are `asset`, `pair`, `score`,
 `signedVotes`, `activePairCount`, `ema200Above`, `breadth`, `regime`,
-`longEligible`, `shortEligible`, `inPool`, `priorCoverageSlope5`,
-`priorSignedVoteDelta3`, `priorScoreStdDev5`, and
-`priorTopMeanReturnMean3`. Event fields are `eventId`, `decisionTimeSec`,
-`horizonBars`, and `interval`. Candidate lists are built before outcome
-eligibility gating. Outcome rows and returns are never on those objects and
-are not reachable by a rule.
+`longEligible`, `shortEligible`, and `inPool`. Event fields are `eventId`,
+`decisionTimeSec`, `horizonBars`, and `interval`. Candidate lists are built
+before outcome eligibility gating. Outcome rows and returns are never on those
+objects and are not reachable by a rule.
 
 Constant-field trap: on the measured folder below, `longEligible` (100%),
 `shortEligible` (0%), and `inPool` (100%) are constant — they carry NO
 information. A rule that scores every candidate equally is not a strategy:
 the FNV tie-break then chooses, which is a coin flip. Do not mine constant
 fields.
-
-## History features (stage 1.5)
-
-The archived folder carries four strictly causal, per-asset history features
-in `candidate-features.jsonl`. The feature file uses policy
-`strict_prior_exit_v1`; rows are emitted BEFORE the current decision timestamp
-is applied to any state:
-
-- `priorCoverageSlope5`: OLS slope (x = -2..+2, divided by 10) of the asset's
-  last 5 activePairCount observations at PRIOR decision events. Null until 5
-  observations.
-- `priorSignedVoteDelta3`: newest minus oldest of the asset's last 3
-  signedVotes observations. Null until 3.
-- `priorScoreStdDev5`: population std-dev of the asset's last 5 scores
-  (signedVotes/activePairCount, recomputed). Null until 5.
-- `priorTopMeanReturnMean3`: mean of the asset's up-to-3 most recent
-  COMPLETED incumbent returns (the asset's own past TOP_MEAN picks, 24-bar
-  horizon, long), admitted only after strict exit < current decision time. Null
-  until 3 such completed trades.
-
-Nulls are WARM-UP (not enough prior observations). Null != 0. Rules handle
-nulls explicitly; the harness never zero-fills.
-
-`priorTopMeanReturnMean3` is defined on 24-bar LONG TOP_MEAN incumbents; the
-same value is reported regardless of which horizon a tally runs.
-
-The feature contract identifiers are schema
-`top_mean_candidate_features.v1`, contract `top_mean_feature_set.v2`, and
-formulas `tm_feature_formulas.v1`. These features are joined to pool snapshot
-rows by `eventId|asset`; missing, duplicate, or timestamp-mismatched joins are
-archive data bugs and fail loudly.
-
-The features are decision-time prefix data only. They are emitted before the
-current event updates any per-asset history, and incumbent returns are admitted
-only after their strict exit precedes the current decision time.
 
 ## How to run
 
@@ -138,10 +101,6 @@ score p1=0.014493 p10=0.041096 p25=0.088235 p50=0.193548 p75=0.360000 p90=0.5744
 signedVotes p1=1.000000 p10=3.000000 p25=6.000000 p50=12.000000 p75=20.000000 p90=28.000000 p99=39.000000 null=0.00%
 activePairCount p1=40.000000 p10=48.000000 p25=54.000000 p50=60.000000 p75=65.000000 p90=69.000000 p99=75.000000 null=0.00%
 breadth p1=0.181818 p10=0.393939 p25=0.583333 p50=0.653846 p75=0.704545 p90=0.744361 p99=0.819549 null=0.00%
-priorCoverageSlope5 p1=-1.600000 p10=-0.500000 p25=-0.200000 p50=0.000000 p75=0.200000 p90=0.500000 p99=1.500000 null=0.60%
-priorSignedVoteDelta3 p1=-4.000000 p10=-1.000000 p25=0.000000 p50=0.000000 p75=0.000000 p90=1.000000 p99=4.000000 null=0.36%
-priorScoreStdDev5 p1=0.000000 p10=0.000000 p25=0.000000 p50=0.008416 p75=0.015821 p90=0.027197 p99=0.078663 null=0.61%
-priorTopMeanReturnMean3 p1=-0.171932 p10=-0.109509 p25=-0.063218 p50=-0.021680 p75=0.008340 p90=0.117554 p99=0.357658 null=90.76%
 ema200Above true=85.04%
 longEligible true=100.00%
 shortEligible true=0.00%

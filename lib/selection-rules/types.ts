@@ -13,10 +13,6 @@ export interface SelectionCandidate {
     longEligible: boolean;
     shortEligible: boolean;
     inPool: boolean;
-    priorCoverageSlope5: number | null;
-    priorSignedVoteDelta3: number | null;
-    priorScoreStdDev5: number | null;
-    priorTopMeanReturnMean3: number | null;
 }
 
 /** The only event fields a selection rule may inspect. */
