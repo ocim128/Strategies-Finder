@@ -45,6 +45,15 @@ export interface PairSelectionArchiveDiagnostics {
     candidates: number;
 }
 
+export interface LoadPairSelectionArchiveOptions {
+    /**
+     * Menu runs select one horizon. When supplied, validate every horizon
+     * field but retain only this horizon's outcome keys in the archive.
+     * Omitting the option preserves the CLI/all-horizons behavior.
+     */
+    retainHorizonBars?: number;
+}
+
 export interface PairSelectionPick {
     signalTime: number;
     pair: string;
@@ -97,6 +106,7 @@ export interface PairSelectionTallyDiagnostics {
     refsMs: number;
     freqMs: number;
     scoredCandidates: number;
+    unscoredEvents: number;
 }
 
 function nowMs(): number {
@@ -122,10 +132,10 @@ interface IndexedPick {
 }
 
 interface ArchiveDerivedCache {
-    referencePicks: readonly {
-        alphabetical: IndexedPick;
-        loudestAtr: IndexedPick;
-    }[];
+    referencePicks: readonly ({
+        alphabetical: IndexedPick | null;
+        loudestAtr: IndexedPick | null;
+    })[];
     horizonReturns: Map<number, readonly (readonly (number | null)[])[]>;
 }
 
@@ -196,7 +206,11 @@ function horizonKey(horizonBars: number, signalTime: number, pair: string, direc
     return JSON.stringify([horizonBars, signalTime, pair, direction]);
 }
 
-function validateHorizonOutcomes(value: unknown, label: string): ReadonlyMap<string, number | null> {
+function validateHorizonOutcomes(
+    value: unknown,
+    label: string,
+    retainHorizonBars?: number,
+): ReadonlyMap<string, number | null> {
     if (!isRecord(value)) dataBug(`${label}.horizons must be an object`);
     const outcomes = new Map<string, number | null>();
     for (const [key, rawOutcome] of Object.entries(value)) {
@@ -216,7 +230,7 @@ function validateHorizonOutcomes(value: unknown, label: string): ReadonlyMap<str
         if (status === "right_censored") {
             if (pnl !== null) dataBug(`${label}.horizons.${key}.right_censored pnlPercent must be null`);
             if (exitTimeSec !== null || exitPrice !== null) dataBug(`${label}.horizons.${key}.right_censored exit fields must be null`);
-            outcomes.set(key, null);
+            if (retainHorizonBars === undefined || retainHorizonBars === horizon) outcomes.set(key, null);
         } else {
             if (entryTimeSec === null || entryPrice === null || exitTimeSec === null || exitPrice === null) {
                 dataBug(`${label}.horizons.${key}.ok entry and exit fields must be finite`);
@@ -224,13 +238,13 @@ function validateHorizonOutcomes(value: unknown, label: string): ReadonlyMap<str
             if (typeof pnl !== "number" || !Number.isFinite(pnl)) {
                 dataBug(`${label}.horizons.${key}.ok pnlPercent must be finite`);
             }
-            outcomes.set(key, pnl);
+            if (retainHorizonBars === undefined || retainHorizonBars === horizon) outcomes.set(key, pnl);
         }
     }
     return outcomes;
 }
 
-function validateLedgerRow(value: unknown, index: number): ValidatedRow {
+function validateLedgerRow(value: unknown, index: number, retainHorizonBars?: number): ValidatedRow {
     const label = `ledger.jsonl:${index + 1}`;
     if (!isRecord(value)) dataBug(`${label} must contain an object`);
     const ledgerVersion = requiredInteger(value, "ledgerVersion", label);
@@ -239,7 +253,7 @@ function validateLedgerRow(value: unknown, index: number): ValidatedRow {
     if (directionValue !== "long" && directionValue !== "short") dataBug(`${label}.direction must be long or short`);
     const direction = directionValue as "long" | "short";
     if (!hasOwn(value, "horizons")) dataBug(`${label}.horizons is missing`);
-    const horizonReturns = validateHorizonOutcomes(value.horizons, label);
+    const horizonReturns = validateHorizonOutcomes(value.horizons, label, retainHorizonBars);
     const featureFields = [
         "feat_entryRangePosition",
         "feat_atrPct",
@@ -298,7 +312,16 @@ function compareCandidates(left: PairCandidate, right: PairCandidate): number {
         : 0;
 }
 
-export async function loadPairSelectionArchive(folderPath: string): Promise<PairSelectionArchive> {
+export async function loadPairSelectionArchive(
+    folderPath: string,
+    options: LoadPairSelectionArchiveOptions = {},
+): Promise<PairSelectionArchive> {
+    if (
+        options.retainHorizonBars !== undefined
+        && (!Number.isInteger(options.retainHorizonBars) || options.retainHorizonBars <= 0)
+    ) {
+        throw new Error("retainHorizonBars must be a positive integer when supplied.");
+    }
     const loadStartedAt = nowMs();
     const loaded = await loadLedgerForReplay(folderPath);
     if (loaded.provenance.ledgerVersion !== TRADE_LEDGER_VERSION) {
@@ -325,7 +348,7 @@ export async function loadPairSelectionArchive(folderPath: string): Promise<Pair
     const horizonReturns = new Map<string, number | null>();
     const seen = new Set<string>();
     for (let index = 0; index < loaded.rows.length; index += 1) {
-        const validated = validateLedgerRow(loaded.rows[index], index);
+        const validated = validateLedgerRow(loaded.rows[index], index, options.retainHorizonBars);
         const candidate = validated.candidate;
         const key = candidateKey(candidate.signalTime, candidate.pair, candidate.direction);
         if (seen.has(key)) dataBug(`duplicate candidate ${key}`);
@@ -398,29 +421,31 @@ export function pickPairSelectionRule(
     rule: PairSelectionRule,
     params: PairSelectionRuleParams,
 ): PairSelectionPick {
-    return pickPairSelectionRuleIndexed(event, rule, params).pick;
+    const indexed = pickPairSelectionRuleIndexed(event, rule, params);
+    if (indexed === null) {
+        throw new Error(`Pair-selection rule ${rule.key} has no eligible candidate for ${event.context.signalTime}.`);
+    }
+    return indexed.pick;
 }
 
 function pickPairSelectionRuleIndexed(
     event: PairSelectionEvent,
     rule: PairSelectionRule,
     params: PairSelectionRuleParams,
-): IndexedPick {
+): IndexedPick | null {
     if (event.candidates.length === 0) dataBug(`event ${event.context.signalTime} has no candidates`);
     const pool = event.candidates.map(cloneCandidate);
-    const scores = pool.map((candidate) => {
+    let maxScore = Number.NEGATIVE_INFINITY;
+    let winnerIndex = -1;
+    let tiedCount = 0;
+    const compareTie = rule.tieBreak ?? defaultTieBreak;
+    for (let index = 0; index < pool.length; index += 1) {
+        const candidate = pool[index]!;
         const score = rule.score(candidate, { ...event.context }, params, pool);
-        if (typeof score !== "number" || Number.isNaN(score)) {
+        if (typeof score !== "number" || (score !== Number.NEGATIVE_INFINITY && !Number.isFinite(score))) {
             throw new Error(`Pair-selection rule ${rule.key} returned an invalid score for ${event.context.signalTime}/${candidate.pair}/${candidate.direction}`);
         }
-        return score;
-    });
-    let maxScore = scores[0]!;
-    let winnerIndex = 0;
-    let tiedCount = 1;
-    const compareTie = rule.tieBreak ?? defaultTieBreak;
-    for (let index = 1; index < pool.length; index += 1) {
-        const score = scores[index]!;
+        if (score === Number.NEGATIVE_INFINITY) continue;
         if (score > maxScore) {
             maxScore = score;
             winnerIndex = index;
@@ -430,6 +455,7 @@ function pickPairSelectionRuleIndexed(
             if (compareTie(pool[index]!, pool[winnerIndex]!, event.context) < 0) winnerIndex = index;
         }
     }
+    if (winnerIndex < 0) return null;
     const winner = pool[winnerIndex]!;
     return {
         pick: {
@@ -555,6 +581,7 @@ export function tallyPairSelectionRule(
         refsMs: 0,
         freqMs: 0,
         scoredCandidates: 0,
+        unscoredEvents: 0,
     };
     const refsStartedAt = nowMs();
     const derived = getArchiveDerivedCache(archive);
@@ -577,9 +604,17 @@ export function tallyPairSelectionRule(
         if (finiteReturns.length !== returns.length) continue;
         const scoreStartedAt = nowMs();
         const indexedPick = pickPairSelectionRuleIndexed(event, rule, params);
+        if (indexedPick === null) {
+            diagnostics.unscoredEvents += 1;
+            continue;
+        }
         const pick = indexedPick.pick;
         diagnostics.scoreMs += nowMs() - scoreStartedAt;
         const references = derived.referencePicks[eventIndex]!;
+        if (references.alphabetical === null || references.loudestAtr === null) {
+            diagnostics.unscoredEvents += 1;
+            continue;
+        }
         diagnostics.scoredCandidates += event.candidates.length * 3;
         const selectedReturn = returns[indexedPick.candidateIndex];
         const alphabeticalReturn = returns[references.alphabetical.candidateIndex];

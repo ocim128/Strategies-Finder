@@ -1,6 +1,11 @@
 import { setImmediate } from "node:timers/promises";
 import { cpus } from "node:os";
-import { loadPairSelectionArchive, tallyPairSelectionRule, type PairSelectionArchive } from "../pair-selection/tally";
+import {
+    loadPairSelectionArchive,
+    tallyPairSelectionRule,
+    type LoadPairSelectionArchiveOptions,
+    type PairSelectionArchive,
+} from "../pair-selection/tally";
 import type { PairSelectionRule } from "../pair-selection/types";
 import type { PairSelectionTallyDiagnostics } from "../pair-selection/tally";
 import {
@@ -20,7 +25,10 @@ export interface SelectionRulesJobArgs {
     horizonBars?: number;
     rules: readonly PairSelectionRule[];
     signal: AbortSignal;
-    loadArchive?: (folderPath: string) => PairSelectionArchive | PromiseLike<PairSelectionArchive>;
+    loadArchive?: (
+        folderPath: string,
+        options?: LoadPairSelectionArchiveOptions,
+    ) => PairSelectionArchive | PromiseLike<PairSelectionArchive>;
     emit: (event: SelectionRulesStreamEvent) => void;
     update: (patch: {
         phase?: "loading" | "tallying" | "done" | "cancelled" | "fatal";
@@ -40,6 +48,7 @@ interface SelectionRuleDiagnostics {
     wallMs: number;
     eventsPerSec: number;
     scoredCandidates: number;
+    unscoredEvents: number;
     gateMs: number;
     scoreMs: number;
     refsMs: number;
@@ -56,7 +65,7 @@ interface SelectionRulesDiagnosticsState {
 }
 
 function emptyTallyDiagnostics(): PairSelectionTallyDiagnostics {
-    return { gateMs: 0, scoreMs: 0, refsMs: 0, freqMs: 0, scoredCandidates: 0 };
+    return { gateMs: 0, scoreMs: 0, refsMs: 0, freqMs: 0, scoredCandidates: 0, unscoredEvents: 0 };
 }
 
 function addTallyDiagnostics(target: PairSelectionTallyDiagnostics, source: PairSelectionTallyDiagnostics): void {
@@ -65,6 +74,7 @@ function addTallyDiagnostics(target: PairSelectionTallyDiagnostics, source: Pair
     target.refsMs += source.refsMs;
     target.freqMs += source.freqMs;
     target.scoredCandidates += source.scoredCandidates;
+    target.unscoredEvents += source.unscoredEvents;
 }
 
 function formatMs(value: number): string {
@@ -94,7 +104,7 @@ function buildDiagnosticsLines(
             const wallMs = diagnostics?.wallMs ?? 0;
             const events = load?.events ?? 0;
             const eventsPerSec = diagnostics?.eventsPerSec ?? 0;
-            return `rule=${rule.key} horizon=${horizons.join(",")} wallMs=${formatMs(wallMs)} eventsPerSec=${eventsPerSec.toFixed(2)} scoredCandidates=${diagnostics?.scoredCandidates ?? 0} gateMs=${formatMs(diagnostics?.gateMs ?? 0)} scoreMs=${formatMs(diagnostics?.scoreMs ?? 0)} refsMs=${formatMs(diagnostics?.refsMs ?? 0)} freqMs=${formatMs(diagnostics?.freqMs ?? 0)} heapAfterMb=${formatMb(diagnostics?.heapAfterMb ?? null)} events=${events}`;
+            return `rule=${rule.key} horizon=${horizons.join(",")} wallMs=${formatMs(wallMs)} eventsPerSec=${eventsPerSec.toFixed(2)} scoredCandidates=${diagnostics?.scoredCandidates ?? 0} unscoredEvents=${diagnostics?.unscoredEvents ?? 0} gateMs=${formatMs(diagnostics?.gateMs ?? 0)} scoreMs=${formatMs(diagnostics?.scoreMs ?? 0)} refsMs=${formatMs(diagnostics?.refsMs ?? 0)} freqMs=${formatMs(diagnostics?.freqMs ?? 0)} heapAfterMb=${formatMb(diagnostics?.heapAfterMb ?? null)} events=${events}`;
         }),
     ];
 }
@@ -168,7 +178,10 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
     const loadStartedAt = performance.now();
     let archive: PairSelectionArchive;
     try {
-        archive = await loadArchiveFn(args.archiveFolderPath ?? args.folderPath);
+        archive = await loadArchiveFn(
+            args.archiveFolderPath ?? args.folderPath,
+            args.horizonBars === undefined ? undefined : { retainHorizonBars: args.horizonBars },
+        );
     } catch (error) {
         diagnosticsState.loadWallMs = performance.now() - loadStartedAt;
         args.update({ diagnosticsLines: buildDiagnosticsLines(args, diagnosticsState, horizons) });
@@ -241,6 +254,7 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
             wallMs: ruleWallMs,
             eventsPerSec: archive.events.length * horizons.length / Math.max(ruleWallMs / 1000, Number.EPSILON),
             scoredCandidates: ruleDiagnostics.scoredCandidates,
+            unscoredEvents: ruleDiagnostics.unscoredEvents,
             gateMs: ruleDiagnostics.gateMs,
             scoreMs: ruleDiagnostics.scoreMs,
             refsMs: ruleDiagnostics.refsMs,

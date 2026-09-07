@@ -1,4 +1,5 @@
 import type { PairSelectionResult, PairSelectionTally } from "../pair-selection/tally";
+import type { SelectionRulesCatalogSkippedFolder } from "./catalog";
 
 export type SelectionRulesPhase = "loading" | "tallying" | "done" | "cancelled" | "fatal";
 
@@ -148,6 +149,7 @@ export interface SelectionRulesCatalogResponse {
     catalogRoot: string;
     generatedAt: number;
     folders: SelectionRulesCatalogEntry[];
+    skippedFolders: SelectionRulesCatalogSkippedFolder[];
     rules: Array<{ key: string; name: string; description: string }>;
 }
 

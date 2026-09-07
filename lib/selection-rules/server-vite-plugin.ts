@@ -172,6 +172,7 @@ async function handleCatalogRequest(res: ViteHttpResponse): Promise<void> {
         catalogRoot: path.relative(root, catalog.catalogRoot).replace(/\\/g, "/"),
         generatedAt: Date.now(),
         folders: catalog.folders,
+        skippedFolders: catalog.skippedFolders,
         rules: [...pairSelectionRuleRegistry.values()].map((rule) => ({
             key: rule.key,
             name: rule.name,

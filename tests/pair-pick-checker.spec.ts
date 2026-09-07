@@ -197,6 +197,45 @@ describe("pair-pick checker", () => {
         expect(first.tiedCount).to.equal(2);
     });
 
+    it("does not turn an all-ineligible rule into a tie-break pick", async () => {
+        const archive = await loadPairSelectionArchive(folder);
+        const unavailableRule: PairSelectionRule = {
+            key: "fixture_unavailable",
+            name: "FIXTURE_UNAVAILABLE",
+            description: "Fixture rule with no eligible candidates.",
+            defaultParams: {},
+            paramLabels: {},
+            score: () => Number.NEGATIVE_INFINITY,
+        };
+        const result = tallyPairSelectionRule(archive, unavailableRule);
+        expect(result.tally.eligibleEvents).to.equal(0);
+        expect(result.diagnostics.unscoredEvents).to.equal(2);
+        expect(() => pickPairSelectionRule(archive.events[0]!, unavailableRule, {}))
+            .to.throw(/no eligible candidate/);
+    });
+
+    it("retains only the requested horizon when the menu supplies one", async () => {
+        const multiFolder = path.join(root, "multi-horizon");
+        await mkdir(multiFolder, { recursive: true });
+        await writeFixture(multiFolder);
+        const provenancePath = path.join(multiFolder, "provenance.json");
+        const provenance = JSON.parse(await readFile(provenancePath, "utf8")) as { ledgerHorizons: number[] };
+        provenance.ledgerHorizons = [24, 48];
+        await writeFile(provenancePath, JSON.stringify(provenance), "utf8");
+        const ledgerPath = path.join(multiFolder, "ledger.jsonl");
+        const rows = (await readFile(ledgerPath, "utf8"))
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line) as { horizons: Record<string, unknown> });
+        for (const row of rows) row.horizons["48"] = row.horizons["24"];
+        await writeFile(ledgerPath, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
+
+        const allHorizons = await loadPairSelectionArchive(multiFolder);
+        const selectedHorizon = await loadPairSelectionArchive(multiFolder, { retainHorizonBars: 24 });
+        expect(allHorizons.horizonReturns.size).to.equal(selectedHorizon.horizonReturns.size * 2);
+        expect(selectedHorizon.ledgerHorizons).to.deep.equal([24, 48]);
+    });
+
     it("keeps outcomes out of scoring while outcome mutation changes the tally", async () => {
         const archive = await loadPairSelectionArchive(folder);
         const before = tallyPairSelectionRule(archive, argmaxRule);

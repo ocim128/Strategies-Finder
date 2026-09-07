@@ -2,7 +2,13 @@ import { copyToClipboard } from "../browser-transfer";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { ensureLazyStylesheet } from "../lazy-styles";
+import { coalesceAnimationFrame } from "../render-scheduler";
 import { createSelectionRulesDom, type SelectionRulesDom } from "../selection-rules-dom";
+import {
+    normalizeSelectionRulesPreferences,
+    SELECTION_RULES_PREFERENCES_STORAGE,
+    type SelectionRulesPreferences,
+} from "./preferences";
 import type {
     SelectionRuleResult,
     SelectionRulesCatalogEntry,
@@ -89,6 +95,10 @@ export class SelectionRulesService {
     private reportLines: string[] = [];
     private diagnosticsLines: string[] = [];
     private reattachTimer: ReturnType<typeof setTimeout> | null = null;
+    private preferencesLoaded = false;
+    private preferences: SelectionRulesPreferences | null = null;
+    private ruleSelectionInitialized = false;
+    private readonly reportRenderFrame = coalesceAnimationFrame(() => this.renderReport());
 
     private getDom(): SelectionRulesDom {
         return this.dom ??= createSelectionRulesDom();
@@ -99,9 +109,17 @@ export class SelectionRulesService {
         if (this.initialized) return;
         const dom = this.getDom();
         this.initialized = true;
+        dom.selectionRulesRefreshBtn.addEventListener("click", () => { void this.refreshCatalog(); });
         dom.selectionRulesFolderSelect.addEventListener("change", () => this.renderSelectedFolder());
-        dom.selectionRulesHorizonSelect.addEventListener("change", () => this.setBusy());
-        dom.selectionRulesRuleList.addEventListener("change", () => this.setBusy());
+        dom.selectionRulesHorizonSelect.addEventListener("change", () => {
+            this.persistPreferences();
+            this.setBusy();
+        });
+        dom.selectionRulesRuleList.addEventListener("change", () => {
+            this.ruleSelectionInitialized = true;
+            this.persistPreferences();
+            this.setBusy();
+        });
         dom.selectionRulesRunBtn.addEventListener("click", () => { void this.startRun(); });
         dom.selectionRulesStopBtn.addEventListener("click", () => { void this.stopRun(); });
         dom.selectionRulesCopyBtn.addEventListener("click", () => { void this.copyReport(); });
@@ -130,10 +148,26 @@ export class SelectionRulesService {
             const response = await fetch("/api/selection-rules/catalog", { cache: "no-store" });
             if (!response.ok) throw new Error(`Catalog request failed: HTTP ${response.status}`);
             this.catalog = await response.json() as SelectionRulesCatalogResponse;
+            if (!this.preferencesLoaded) {
+                const availableRuleKeys = this.catalog.rules.map((rule) => rule.key);
+                const rawPreferences = readPersistedJson<unknown>({
+                    ...SELECTION_RULES_PREFERENCES_STORAGE,
+                    fallback: null,
+                    migrate: ({ data }) => data,
+                });
+                this.preferences = normalizeSelectionRulesPreferences(rawPreferences, availableRuleKeys);
+                this.preferencesLoaded = true;
+            }
             this.renderFolders();
             this.renderRules();
             this.renderSelectedFolder();
-            if (!this.activeServerRunId) this.setStatus("Idle");
+            if (!this.activeServerRunId) {
+                const skipped = this.catalog.skippedFolders?.length ?? 0;
+                this.setStatus(
+                    skipped > 0 ? `Idle — ${skipped} folder${skipped === 1 ? "" : "s"} skipped` : "Idle",
+                    skipped > 0 ? "warning" : "neutral",
+                );
+            }
         } catch (error) {
             this.setStatus(`Catalog error: ${error instanceof Error ? error.message : String(error)}`, "danger");
         }
@@ -141,7 +175,7 @@ export class SelectionRulesService {
 
     private renderFolders(): void {
         const dom = this.getDom();
-        const selected = dom.selectionRulesFolderSelect.value;
+        const selected = dom.selectionRulesFolderSelect.value || this.preferences?.folderId || "";
         const folders = this.catalog?.folders ?? [];
         dom.selectionRulesFolderSelect.replaceChildren(...folders.map((folder) => {
             const option = document.createElement("option");
@@ -164,15 +198,20 @@ export class SelectionRulesService {
             option.textContent = String(horizon);
             return option;
         }));
+        const preferred = this.preferences?.horizonBars ?? Number.NaN;
         if (horizons.includes(selected)) dom.selectionRulesHorizonSelect.value = String(selected);
+        else if (horizons.includes(preferred)) dom.selectionRulesHorizonSelect.value = String(preferred);
         else if (horizons[0] !== undefined) dom.selectionRulesHorizonSelect.value = String(horizons[0]);
     }
 
     private renderRules(): void {
         const dom = this.getDom();
-        const existing = new Set(this.selectedRuleKeys());
         const rules = this.catalog?.rules ?? [];
-        const initiallyChecked = existing.size === 0;
+        const existing = this.ruleSelectionInitialized ? new Set(this.selectedRuleKeys()) : null;
+        const preferred = !this.ruleSelectionInitialized && this.preferences !== null
+            ? new Set(this.preferences.ruleKeys)
+            : null;
+        const initiallyChecked = existing === null && preferred === null;
         dom.selectionRulesRuleList.replaceChildren(...rules.map((rule) => {
             const label = document.createElement("label");
             label.className = "selection-rules-rule-option";
@@ -180,7 +219,7 @@ export class SelectionRulesService {
             const input = document.createElement("input");
             input.type = "checkbox";
             input.value = rule.key;
-            input.checked = initiallyChecked || existing.has(rule.key);
+            input.checked = initiallyChecked || (existing ?? preferred)?.has(rule.key) === true;
             const text = document.createElement("span");
             text.textContent = rule.name;
             const key = document.createElement("code");
@@ -191,6 +230,7 @@ export class SelectionRulesService {
             label.append(input, text, key, description);
             return label;
         }));
+        this.ruleSelectionInitialized = true;
     }
 
     private selectedRuleKeys(): string[] {
@@ -210,6 +250,7 @@ export class SelectionRulesService {
             ? `runId=${folder.runId} - ${folder.interval} - strategy=${folder.strategyKey} - signals=${folder.totals.signals} - pairs=${folder.totals.pairs} - ${folder.startedAt} to ${folder.finishedAt} - horizons=${folder.ledgerHorizons.join(", ")}`
             : "No supported v3 mining-ledger folders found.";
         this.setBusy();
+        this.persistPreferences();
     }
 
     private setStatus(text: string, tone: "neutral" | "running" | "success" | "warning" | "danger" = "neutral"): void {
@@ -227,6 +268,7 @@ export class SelectionRulesService {
         dom.selectionRulesStopBtn.hidden = !this.running;
         dom.selectionRulesFolderSelect.disabled = this.running;
         dom.selectionRulesHorizonSelect.disabled = this.running;
+        dom.selectionRulesRefreshBtn.disabled = this.running;
         dom.selectionRulesRuleList.querySelectorAll<HTMLInputElement>("input").forEach((input) => { input.disabled = this.running; });
     }
 
@@ -303,7 +345,7 @@ export class SelectionRulesService {
         this.results.set(resultKey(event.result), event.result);
         this.reportLines.push(...event.result.reportLines);
         this.renderResults();
-        this.renderReport();
+        this.reportRenderFrame.schedule();
         this.renderProgress(event.completedRules, event.totalRules, "Tallying", event.result.ruleKey, event.result.horizonBars);
     }
 
@@ -328,6 +370,21 @@ export class SelectionRulesService {
         );
         this.setBusy();
         persistActiveRun({ runId: event.runId, startedAt: Date.now() });
+    }
+
+    private persistPreferences(): void {
+        if (!this.preferencesLoaded) return;
+        const dom = this.getDom();
+        const horizonBars = Number(dom.selectionRulesHorizonSelect.value);
+        this.preferences = {
+            folderId: dom.selectionRulesFolderSelect.value || null,
+            horizonBars: Number.isInteger(horizonBars) && horizonBars > 0 ? horizonBars : null,
+            ruleKeys: this.selectedRuleKeys(),
+        };
+        writePersistedJson({
+            ...SELECTION_RULES_PREFERENCES_STORAGE,
+            data: this.preferences,
+        });
     }
 
     private async startRun(): Promise<void> {

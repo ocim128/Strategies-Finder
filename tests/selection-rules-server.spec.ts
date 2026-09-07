@@ -298,6 +298,10 @@ describe("selection-rules server plugin", () => {
             await routes.get("/api/selection-rules/catalog")!(makeRequest("GET", "/api/selection-rules/catalog"), catalogResponse);
             const catalog = JSON.parse(catalogResponse.body);
             expect(catalog.folders.map((folder: { folderId: string }) => folder.folderId)).to.deep.equal(["fixture-folder"]);
+            expect(catalog.skippedFolders).to.deep.include.members([
+                { folderId: "missing-meta", reason: "missing_or_malformed_metadata" },
+                { folderId: "unsupported", reason: "unsupported_version" },
+            ]);
 
             const runResponse = makeResponse();
             await routes.get("/api/selection-rules/run")!(makeRequest("POST", "/api/selection-rules/run", {
