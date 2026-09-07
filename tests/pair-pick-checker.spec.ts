@@ -236,6 +236,25 @@ describe("pair-pick checker", () => {
         expect(selectedHorizon.ledgerHorizons).to.deep.equal([24, 48]);
     });
 
+    it("streams rows and only loads the rank sidecar for rank-aware rules", async () => {
+        const ranksPath = path.join(folder, "signal-ranks.jsonl");
+        const originalRanks = await readFile(ranksPath, "utf8");
+        await writeFile(ranksPath, `${JSON.stringify({ signalTime: 100, pair: "A+B", rank: 1, candidatesAtTime: 99 })}\n`, "utf8");
+        try {
+            const withRanks = await loadPairSelectionArchive(folder, { includeSignalRanks: true });
+            const withoutRanks = await loadPairSelectionArchive(folder, { includeSignalRanks: false });
+            expect(withRanks.events[0]!.candidates[0]!.feat_candidatesAtTime).to.equal(99);
+            expect(withRanks.diagnostics.rankRowsParsed).to.equal(1);
+            expect(withRanks.diagnostics.ranksLoaded).to.equal(true);
+            expect(withoutRanks.events[0]!.candidates[0]!.feat_candidatesAtTime).to.equal(null);
+            expect(withoutRanks.diagnostics.rankRowsParsed).to.equal(0);
+            expect(withoutRanks.diagnostics.ranksLoaded).to.equal(false);
+            expect(withoutRanks.diagnostics.rows).to.equal(10);
+        } finally {
+            await writeFile(ranksPath, originalRanks, "utf8");
+        }
+    });
+
     it("keeps outcomes out of scoring while outcome mutation changes the tally", async () => {
         const archive = await loadPairSelectionArchive(folder);
         const before = tallyPairSelectionRule(archive, argmaxRule);

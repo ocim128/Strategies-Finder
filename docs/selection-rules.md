@@ -36,6 +36,10 @@ interface PairSelectionRule {
 - `normalizeParams` is required when scoring sanitizes the parameter;
   defaults must already be valid after normalization.
 - `metadata.paramBounds` is metadata only (the sweep does not exist yet).
+- The menu streams the ledger into the grouped archive and skips
+  `signal-ranks.jsonl` unless at least one selected rule sets
+  `metadata.usesRankFeatures: true` because it reads
+  `feat_candidatesAtTime`.
 - Ties: the harness default is the smallest versioned FNV-1a-64 digest of
   `signalTime + "|pair|direction"`, asset-name order only on digest
   collision. A rule may override with its own deterministic tie-break;

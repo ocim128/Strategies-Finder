@@ -32,9 +32,17 @@ export interface LedgerReplayLoadDiagnostics {
     ledger: LedgerJsonlDiagnostics;
     ranks: LedgerJsonlDiagnostics;
     rankJoinMs: number;
+    rankJoinFused: boolean;
     joinedRows: number;
     unmatchedRows: number;
 }
+
+export interface LedgerReplayProgress {
+    file: "ledger" | "ranks";
+    rowsParsed: number;
+}
+
+const JSONL_PROGRESS_INTERVAL = 250_000;
 
 function nowMs(): number {
     return typeof performance !== "undefined" ? performance.now() : Date.now();
@@ -55,11 +63,17 @@ export async function* iterateJsonlLines(filePath: string): AsyncGenerator<strin
     let firstLine = true;
     try {
         for await (const rawLine of reader) {
-            let line = rawLine.trim();
+            let line = rawLine;
             if (firstLine) {
                 // Tolerate a UTF-8 BOM on the first line.
-                if (line.startsWith("\uFEFF")) line = line.slice(1).trim();
+                if (line.startsWith("\uFEFF")) line = line.slice(1);
                 firstLine = false;
+            }
+            // Generated ledger rows have no surrounding whitespace. Avoid a
+            // trim allocation on that hot path while retaining the old
+            // whitespace-only/indented JSONL tolerance for hand-edited files.
+            if (line.length > 0 && (line.charCodeAt(0) <= 32 || line.charCodeAt(line.length - 1) <= 32)) {
+                line = line.trim();
             }
             if (line) yield line;
         }
@@ -72,18 +86,25 @@ export async function* iterateJsonlLines(filePath: string): AsyncGenerator<strin
 async function readJsonl<T>(
     filePath: string,
     consume?: (value: T) => void,
+    onProgress?: (rowsParsed: number) => void,
 ): Promise<{ values: T[]; diagnostics: LedgerJsonlDiagnostics }> {
     const diagnostics = emptyJsonlDiagnostics(statSync(filePath).size);
     const values: T[] | null = consume ? null : [];
     const startedAt = nowMs();
+    let lastProgressRows = 0;
     for await (const line of iterateJsonlLines(filePath)) {
         const parseStartedAt = nowMs();
         const value = JSON.parse(line) as T;
+        diagnostics.jsonParseMs += nowMs() - parseStartedAt;
         if (consume) consume(value);
         else values!.push(value);
-        diagnostics.jsonParseMs += nowMs() - parseStartedAt;
         diagnostics.rowsParsed += 1;
+        if (onProgress && diagnostics.rowsParsed % JSONL_PROGRESS_INTERVAL === 0) {
+            onProgress(diagnostics.rowsParsed);
+            lastProgressRows = diagnostics.rowsParsed;
+        }
     }
+    if (onProgress && diagnostics.rowsParsed !== lastProgressRows) onProgress(diagnostics.rowsParsed);
     diagnostics.streamWallMs = nowMs() - startedAt;
     diagnostics.readResidualMs = Math.max(0, diagnostics.streamWallMs - diagnostics.jsonParseMs);
     return { values: values ?? [], diagnostics };
@@ -111,13 +132,17 @@ export async function loadSignalRanks(folder: string): Promise<Map<string, Trade
 export function joinSignalRanks(rows: TradeLedgerRow[], ranks: Map<string, TradeLedgerRankRow>): number {
     let joined = 0;
     for (const row of rows) {
-        const rank = ranks.get(`${row.signalTime}|${row.pair}`);
-        if (!rank) continue;
-        row.feat_rank = rank.rank;
-        row.feat_candidatesAtTime = rank.candidatesAtTime;
-        joined += 1;
+        if (joinSignalRank(row, ranks)) joined += 1;
     }
     return joined;
+}
+
+function joinSignalRank(row: TradeLedgerRow, ranks: Map<string, TradeLedgerRankRow>): boolean {
+    const rank = ranks.get(`${row.signalTime}|${row.pair}`);
+    if (!rank) return false;
+    row.feat_rank = rank.rank;
+    row.feat_candidatesAtTime = rank.candidatesAtTime;
+    return true;
 }
 
 export interface LoadedLedger {
@@ -133,6 +158,14 @@ export interface LoadedLedger {
 export interface LoadLedgerOptions {
     /** Proceed on an incomplete ledger — the report carries a loud warning. */
     allowIncomplete?: boolean;
+    /** Stream each parsed ledger row without retaining the full row array. */
+    onLedgerRow?: (row: TradeLedgerRow) => void;
+    /** Skip the optional rank sidecar when the consumer does not score rank features. */
+    includeSignalRanks?: boolean;
+    /** Called periodically while the ledger or rank sidecar is being read. */
+    onProgress?: (progress: LedgerReplayProgress) => void;
+    /** Consumer-specific provenance validation before any JSONL rows are read. */
+    validateProvenance?: (provenance: TradeLedgerProvenance) => void;
 }
 
 export function formatFailedPairList(failedPairs: readonly string[]): string {
@@ -195,23 +228,52 @@ export async function loadLedgerForReplay(folder: string, options: LoadLedgerOpt
         if (options.allowIncomplete !== true) throw new Error(message);
         incomplete = { failedWrites: summary.failedWrites ?? 0, failedPairs };
     }
+    options.validateProvenance?.(provenance);
     const ledgerPath = path.join(folder, LEDGER_FILE);
     if (!existsSync(ledgerPath)) {
         throw new Error(`${LEDGER_FILE} not found in "${folder}" — the run wrote no ledger rows.`);
     }
     const shift = replay.executionModel === "signal_close" ? 0 : 1;
-    const loadedRows = await readJsonl<TradeLedgerRow>(ledgerPath);
-    const rows = loadedRows.values;
     const ranksFile = path.join(folder, RANKS_FILE);
     const ranks = new Map<string, TradeLedgerRankRow>();
-    const loadedRanks = existsSync(ranksFile)
-        ? await readJsonl<TradeLedgerRankRow>(ranksFile, (rank) => {
-            ranks.set(`${rank.signalTime}|${rank.pair}`, rank);
-        })
-        : { values: [], diagnostics: emptyJsonlDiagnostics() };
-    const joinStartedAt = nowMs();
-    const joinedRankCount = joinSignalRanks(rows, ranks);
-    const rankJoinMs = nowMs() - joinStartedAt;
+    const includeSignalRanks = options.includeSignalRanks !== false;
+    const loadRanks = async (): Promise<{ diagnostics: LedgerJsonlDiagnostics }> => {
+        if (!includeSignalRanks || !existsSync(ranksFile)) return { diagnostics: emptyJsonlDiagnostics() };
+        const loadedRanks = await readJsonl<TradeLedgerRankRow>(
+            ranksFile,
+            (rank) => { ranks.set(`${rank.signalTime}|${rank.pair}`, rank); },
+            (rowsParsed) => options.onProgress?.({ file: "ranks", rowsParsed }),
+        );
+        return { diagnostics: loadedRanks.diagnostics };
+    };
+
+    let loadedRows: { values: TradeLedgerRow[]; diagnostics: LedgerJsonlDiagnostics };
+    let loadedRanks: { diagnostics: LedgerJsonlDiagnostics };
+    let joinedRankCount = 0;
+    let rankJoinMs = 0;
+    if (options.onLedgerRow) {
+        // The rank map must be ready before streaming ledger rows so rank-aware
+        // consumers receive the same joined feature values as the retained path.
+        loadedRanks = await loadRanks();
+        loadedRows = await readJsonl<TradeLedgerRow>(
+            ledgerPath,
+            (row) => {
+                if (includeSignalRanks && joinSignalRank(row, ranks)) joinedRankCount += 1;
+                options.onLedgerRow!(row);
+            },
+            (rowsParsed) => options.onProgress?.({ file: "ledger", rowsParsed }),
+        );
+        // The join is fused into row consumption here, so it is intentionally
+        // not timed separately from the consumer callback.
+        rankJoinMs = 0;
+    } else {
+        loadedRows = await readJsonl<TradeLedgerRow>(ledgerPath);
+        loadedRanks = await loadRanks();
+        const joinStartedAt = nowMs();
+        joinedRankCount = includeSignalRanks ? joinSignalRanks(loadedRows.values, ranks) : 0;
+        rankJoinMs = nowMs() - joinStartedAt;
+    }
+    const rows = options.onLedgerRow ? [] : loadedRows.values;
     return {
         rows,
         joinedRankCount,
@@ -226,8 +288,9 @@ export async function loadLedgerForReplay(folder: string, options: LoadLedgerOpt
             ledger: loadedRows.diagnostics,
             ranks: loadedRanks.diagnostics,
             rankJoinMs,
+            rankJoinFused: options.onLedgerRow !== undefined && includeSignalRanks,
             joinedRows: joinedRankCount,
-            unmatchedRows: rows.length - joinedRankCount,
+            unmatchedRows: loadedRows.diagnostics.rowsParsed - joinedRankCount,
         },
     };
 }

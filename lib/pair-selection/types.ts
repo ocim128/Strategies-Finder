@@ -51,6 +51,8 @@ export interface PairSelectionRule {
     normalizeParams?: (params: PairSelectionRuleParams) => PairSelectionRuleParams;
     metadata?: {
         paramBounds?: Readonly<Record<string, PairSelectionParamBounds>>;
+        /** Set true when the rule reads the rank-derived feat_candidatesAtTime. */
+        usesRankFeatures?: boolean;
     };
     score: (
         candidate: PairCandidate,

@@ -96,7 +96,7 @@ function buildDiagnosticsLines(
         : Math.max(0, state.peakHeapUsed - state.heapAfterLoad);
     return [
         `env nodeVersion=${process.version} cpus=${cpus().length} heapLimitHint=heapUsed-only`,
-        `load folder=${args.folderPath} horizon=${horizons.join(",")} loadWallMs=${formatMs(state.loadWallMs)} jsonParseMs=${formatMs(load?.jsonParseMs ?? 0)} streamWallMs=${formatMs(load?.streamWallMs ?? 0)} readResidualMs=${formatMs(load?.readResidualMs ?? 0)} rows=${load?.rows ?? 0} events=${load?.events ?? 0} candidates=${load?.candidates ?? 0}`,
+        `load folder=${args.folderPath} horizon=${horizons.join(",")} loadWallMs=${formatMs(state.loadWallMs)} jsonParseMs=${formatMs(load?.jsonParseMs ?? 0)} streamWallMs=${formatMs(load?.streamWallMs ?? 0)} readResidualMs=${formatMs(load?.readResidualMs ?? 0)} rankRows=${load?.rankRowsParsed ?? 0} rankJsonParseMs=${formatMs(load?.rankJsonParseMs ?? 0)} rankStreamWallMs=${formatMs(load?.rankStreamWallMs ?? 0)} rankReadResidualMs=${formatMs(load?.rankReadResidualMs ?? 0)} rankJoinMs=${formatMs(load?.rankJoinMs ?? 0)} rankJoinMode=${load?.rankJoinFused ? "fused" : "separate"} ranksLoaded=${load?.ranksLoaded === true} rows=${load?.rows ?? 0} events=${load?.events ?? 0} candidates=${load?.candidates ?? 0}`,
         `heap afterLoadMb=${formatMb(state.heapAfterLoad)}`,
         `heap peakDeltaMb=${formatMb(peakDelta)} peakAfterRulesMb=${formatMb(state.peakHeapUsed)}`,
         ...args.rules.map((rule) => {
@@ -152,6 +152,7 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
     const results: SelectionRuleResult[] = [];
     const reportLines: string[] = [];
     const loadArchiveFn = args.loadArchive ?? loadPairSelectionArchive;
+    const includeSignalRanks = args.rules.some((rule) => rule.metadata?.usesRankFeatures === true);
     const diagnosticsState: SelectionRulesDiagnosticsState = {
         loadWallMs: 0,
         archiveDiagnostics: null,
@@ -166,7 +167,9 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
         type: "phase",
         runId: args.runId,
         phase: "loading",
-        detail: "Loading and verifying pair-selection ledger…",
+        detail: includeSignalRanks
+            ? "Loading and verifying pair-selection ledger and rank sidecar…"
+            : "Loading and verifying pair-selection ledger…",
         completedRules: 0,
         totalRules: args.rules.length,
         currentRuleKey: null,
@@ -178,9 +181,27 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
     const loadStartedAt = performance.now();
     let archive: PairSelectionArchive;
     try {
+        const archiveOptions: LoadPairSelectionArchiveOptions = {
+            includeSignalRanks,
+            onProgress: ({ file, rowsParsed }) => {
+                args.emit({
+                    type: "phase",
+                    runId: args.runId,
+                    phase: "loading",
+                    detail: file === "ledger"
+                        ? `Loading and verifying pair-selection ledger (${rowsParsed.toLocaleString()} rows)…`
+                        : `Loading pair-selection rank sidecar (${rowsParsed.toLocaleString()} rows)…`,
+                    completedRules: 0,
+                    totalRules: args.rules.length,
+                    currentRuleKey: null,
+                    currentHorizonBars: null,
+                });
+            },
+        };
+        if (args.horizonBars !== undefined) archiveOptions.retainHorizonBars = args.horizonBars;
         archive = await loadArchiveFn(
             args.archiveFolderPath ?? args.folderPath,
-            args.horizonBars === undefined ? undefined : { retainHorizonBars: args.horizonBars },
+            archiveOptions,
         );
     } catch (error) {
         diagnosticsState.loadWallMs = performance.now() - loadStartedAt;

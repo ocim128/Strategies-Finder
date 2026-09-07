@@ -202,6 +202,7 @@ describe("selection-rules server plugin", () => {
             const events: SelectionRulesStreamEvent[] = response.body.trim().split("\n").map((line: string) => JSON.parse(line) as SelectionRulesStreamEvent);
             const done = events.at(-1);
             expect(done?.type).to.equal("done");
+            expect(events.some((event) => event.type === "phase" && event.detail.includes("4 rows"))).to.equal(true);
             if (done?.type === "done") {
                 expect(done.diagnosticsLines.some((line) => line.startsWith("env "))).to.equal(true);
                 expect(done.diagnosticsLines.some((line) => line.startsWith("load "))).to.equal(true);

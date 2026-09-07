@@ -4,6 +4,7 @@ import {
 } from "../batch-backtest/trade-ledger-schema";
 import { tieBreakDigest } from "../batch-backtest/max-active-research-contract";
 import { loadLedgerForReplay } from "../batch-backtest/trade-ledger-replay-loader";
+import type { LedgerReplayProgress } from "../batch-backtest/trade-ledger-replay-loader";
 import {
     comparison,
     formatPercentagePoints,
@@ -40,6 +41,13 @@ export interface PairSelectionArchiveDiagnostics {
     jsonParseMs: number;
     streamWallMs: number;
     readResidualMs: number;
+    rankRowsParsed: number;
+    rankJsonParseMs: number;
+    rankStreamWallMs: number;
+    rankReadResidualMs: number;
+    rankJoinMs: number;
+    rankJoinFused: boolean;
+    ranksLoaded: boolean;
     rows: number;
     events: number;
     candidates: number;
@@ -52,6 +60,10 @@ export interface LoadPairSelectionArchiveOptions {
      * Omitting the option preserves the CLI/all-horizons behavior.
      */
     retainHorizonBars?: number;
+    /** Set false when none of the selected rules reads rank features. */
+    includeSignalRanks?: boolean;
+    /** Called periodically while the ledger or rank sidecar is being read. */
+    onProgress?: (progress: LedgerReplayProgress) => void;
 }
 
 export interface PairSelectionPick {
@@ -199,7 +211,7 @@ function nullableString(row: Record<string, unknown>, field: string, label: stri
 }
 
 function candidateKey(signalTime: number, pair: string, direction: string): string {
-    return JSON.stringify([signalTime, pair, direction]);
+    return `${signalTime}\u0000${pair.length}:${pair}\u0000${direction}`;
 }
 
 function horizonKey(horizonBars: number, signalTime: number, pair: string, direction: string): string {
@@ -213,7 +225,9 @@ function validateHorizonOutcomes(
 ): ReadonlyMap<string, number | null> {
     if (!isRecord(value)) dataBug(`${label}.horizons must be an object`);
     const outcomes = new Map<string, number | null>();
-    for (const [key, rawOutcome] of Object.entries(value)) {
+    for (const key in value) {
+        if (!hasOwn(value, key)) continue;
+        const rawOutcome = value[key];
         const horizon = Number(key);
         if (!Number.isInteger(horizon) || horizon <= 0) dataBug(`${label}.horizons has invalid horizon key ${key}`);
         if (!isRecord(rawOutcome)) dataBug(`${label}.horizons.${key} must be an object`);
@@ -254,20 +268,17 @@ function validateLedgerRow(value: unknown, index: number, retainHorizonBars?: nu
     const direction = directionValue as "long" | "short";
     if (!hasOwn(value, "horizons")) dataBug(`${label}.horizons is missing`);
     const horizonReturns = validateHorizonOutcomes(value.horizons, label, retainHorizonBars);
-    const featureFields = [
-        "feat_entryRangePosition",
-        "feat_atrPct",
-        "feat_return20",
-        "feat_gapPct",
-        "feat_dow",
-        "feat_hour",
-        "feat_pairWinRatePrior",
-        "feat_barsSincePairLastFire",
-        "feat_pairSpreadVolatility20",
-        "feat_legVolatilityRatio20",
-        "feat_candidatesAtTime",
-    ] as const;
-    const features = Object.fromEntries(featureFields.map((field) => [field, nullableFinite(value, field, label)])) as Record<typeof featureFields[number], number | null>;
+    const feat_entryRangePosition = nullableFinite(value, "feat_entryRangePosition", label);
+    const feat_atrPct = nullableFinite(value, "feat_atrPct", label);
+    const feat_return20 = nullableFinite(value, "feat_return20", label);
+    const feat_gapPct = nullableFinite(value, "feat_gapPct", label);
+    const feat_dow = nullableFinite(value, "feat_dow", label);
+    const feat_hour = nullableFinite(value, "feat_hour", label);
+    const feat_pairWinRatePrior = nullableFinite(value, "feat_pairWinRatePrior", label);
+    const feat_barsSincePairLastFire = nullableFinite(value, "feat_barsSincePairLastFire", label);
+    const feat_pairSpreadVolatility20 = nullableFinite(value, "feat_pairSpreadVolatility20", label);
+    const feat_legVolatilityRatio20 = nullableFinite(value, "feat_legVolatilityRatio20", label);
+    const feat_candidatesAtTime = nullableFinite(value, "feat_candidatesAtTime", label);
     const pair = requiredString(value, "pair", label);
     const baseSymbol = requiredString(value, "baseSymbol", label);
     const quoteSymbol = requiredString(value, "quoteSymbol", label);
@@ -287,18 +298,18 @@ function validateLedgerRow(value: unknown, index: number, retainHorizonBars?: nu
             direction,
             signalTime,
             signalBarIndex,
-            feat_entryRangePosition: features.feat_entryRangePosition,
-            feat_atrPct: features.feat_atrPct,
-            feat_return20: features.feat_return20,
-            feat_gapPct: features.feat_gapPct,
-            feat_dow: features.feat_dow,
-            feat_hour: features.feat_hour,
-            feat_pairWinRatePrior: features.feat_pairWinRatePrior,
+            feat_entryRangePosition,
+            feat_atrPct,
+            feat_return20,
+            feat_gapPct,
+            feat_dow,
+            feat_hour,
+            feat_pairWinRatePrior,
             feat_pairTradesPrior: pairTradesPrior,
-            feat_barsSincePairLastFire: features.feat_barsSincePairLastFire,
-            feat_pairSpreadVolatility20: features.feat_pairSpreadVolatility20,
-            feat_legVolatilityRatio20: features.feat_legVolatilityRatio20,
-            feat_candidatesAtTime: features.feat_candidatesAtTime,
+            feat_barsSincePairLastFire,
+            feat_pairSpreadVolatility20,
+            feat_legVolatilityRatio20,
+            feat_candidatesAtTime,
         },
         horizonReturns,
     };
@@ -312,6 +323,29 @@ function compareCandidates(left: PairCandidate, right: PairCandidate): number {
         : 0;
 }
 
+function validatePairSelectionProvenance(provenance: { ledgerVersion: number; featureVersion?: number; ledgerHorizons?: unknown }): void {
+    if (provenance.ledgerVersion !== TRADE_LEDGER_VERSION) {
+        throw new Error(
+            `Pair selection requires ledgerVersion ${TRADE_LEDGER_VERSION}; folder has ${String(provenance.ledgerVersion)}. Re-run the batch.`,
+        );
+    }
+    if (provenance.featureVersion !== TRADE_LEDGER_FEATURE_VERSION) {
+        throw new Error(
+            `Pair selection requires ledger featureVersion ${TRADE_LEDGER_FEATURE_VERSION}; `
+            + `folder has ${String(provenance.featureVersion)}. Re-run the batch to create a v3 ledger.`,
+        );
+    }
+    const ledgerHorizons = provenance.ledgerHorizons;
+    if (
+        !Array.isArray(ledgerHorizons)
+        || ledgerHorizons.length === 0
+        || ledgerHorizons.some((value) => !Number.isInteger(value) || value <= 0)
+        || new Set(ledgerHorizons).size !== ledgerHorizons.length
+    ) {
+        throw new Error("Pair selection requires provenance.ledgerHorizons; re-run the batch to create a v3 ledger.");
+    }
+}
+
 export async function loadPairSelectionArchive(
     folderPath: string,
     options: LoadPairSelectionArchiveOptions = {},
@@ -323,46 +357,33 @@ export async function loadPairSelectionArchive(
         throw new Error("retainHorizonBars must be a positive integer when supplied.");
     }
     const loadStartedAt = nowMs();
-    const loaded = await loadLedgerForReplay(folderPath);
-    if (loaded.provenance.ledgerVersion !== TRADE_LEDGER_VERSION) {
-        throw new Error(
-            `Pair selection requires ledgerVersion ${TRADE_LEDGER_VERSION}; folder has ${String(loaded.provenance.ledgerVersion)}. Re-run the batch.`,
-        );
-    }
-    if (loaded.provenance.featureVersion !== TRADE_LEDGER_FEATURE_VERSION) {
-        throw new Error(
-            `Pair selection requires ledger featureVersion ${TRADE_LEDGER_FEATURE_VERSION}; `
-            + `folder has ${String(loaded.provenance.featureVersion)}. Re-run the batch to create a v3 ledger.`,
-        );
-    }
-    const ledgerHorizons = loaded.provenance.ledgerHorizons;
-    if (
-        !Array.isArray(ledgerHorizons)
-        || ledgerHorizons.length === 0
-        || ledgerHorizons.some((value) => !Number.isInteger(value) || value <= 0)
-        || new Set(ledgerHorizons).size !== ledgerHorizons.length
-    ) {
-        throw new Error("Pair selection requires provenance.ledgerHorizons; re-run the batch to create a v3 ledger.");
-    }
     const groups = new Map<number, { candidates: PairCandidate[] }>();
     const horizonReturns = new Map<string, number | null>();
     const seen = new Set<string>();
-    for (let index = 0; index < loaded.rows.length; index += 1) {
-        const validated = validateLedgerRow(loaded.rows[index], index, options.retainHorizonBars);
-        const candidate = validated.candidate;
-        const key = candidateKey(candidate.signalTime, candidate.pair, candidate.direction);
-        if (seen.has(key)) dataBug(`duplicate candidate ${key}`);
-        seen.add(key);
-        let group = groups.get(candidate.signalTime);
-        if (!group) {
-            group = { candidates: [] };
-            groups.set(candidate.signalTime, group);
-        }
-        group.candidates.push(candidate);
-        for (const [horizon, value] of validated.horizonReturns) {
-            horizonReturns.set(horizonKey(Number(horizon), candidate.signalTime, candidate.pair, candidate.direction), value);
-        }
-    }
+    let rows = 0;
+    const loaded = await loadLedgerForReplay(folderPath, {
+        includeSignalRanks: options.includeSignalRanks,
+        onProgress: options.onProgress,
+        validateProvenance: validatePairSelectionProvenance,
+        onLedgerRow: (value) => {
+            const validated = validateLedgerRow(value, rows, options.retainHorizonBars);
+            const candidate = validated.candidate;
+            const key = candidateKey(candidate.signalTime, candidate.pair, candidate.direction);
+            if (seen.has(key)) dataBug(`duplicate candidate ${key}`);
+            seen.add(key);
+            let group = groups.get(candidate.signalTime);
+            if (!group) {
+                group = { candidates: [] };
+                groups.set(candidate.signalTime, group);
+            }
+            group.candidates.push(candidate);
+            for (const [horizon, value] of validated.horizonReturns) {
+                horizonReturns.set(horizonKey(Number(horizon), candidate.signalTime, candidate.pair, candidate.direction), value);
+            }
+            rows += 1;
+        },
+    });
+    const ledgerHorizons = loaded.provenance.ledgerHorizons!;
     const events = [...groups.entries()]
         .sort(([left], [right]) => left - right)
         .map(([signalTime, group]): PairSelectionEvent => ({
@@ -387,7 +408,14 @@ export async function loadPairSelectionArchive(
             jsonParseMs: loaded.diagnostics.ledger.jsonParseMs,
             streamWallMs: loaded.diagnostics.ledger.streamWallMs,
             readResidualMs: loaded.diagnostics.ledger.readResidualMs,
-            rows: loaded.rows.length,
+            rankRowsParsed: loaded.diagnostics.ranks.rowsParsed,
+            rankJsonParseMs: loaded.diagnostics.ranks.jsonParseMs,
+            rankStreamWallMs: loaded.diagnostics.ranks.streamWallMs,
+            rankReadResidualMs: loaded.diagnostics.ranks.readResidualMs,
+            rankJoinMs: loaded.diagnostics.rankJoinMs,
+            rankJoinFused: loaded.diagnostics.rankJoinFused,
+            ranksLoaded: options.includeSignalRanks !== false && loaded.diagnostics.ranks.rowsParsed > 0,
+            rows,
             events: events.length,
             candidates,
         },
