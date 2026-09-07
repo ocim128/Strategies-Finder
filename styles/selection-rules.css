@@ -41,6 +41,12 @@
     border: 0;
 }
 
+#selectionrulesTab .selection-rules-rule-actions {
+    display: flex;
+    gap: var(--space-1);
+    margin: 0 0 var(--space-1);
+}
+
 #selectionrulesTab .selection-rules-rule-list {
     display: grid;
     gap: var(--space-1);

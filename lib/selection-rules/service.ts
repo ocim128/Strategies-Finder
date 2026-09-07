@@ -120,6 +120,9 @@ export class SelectionRulesService {
             this.persistPreferences();
             this.setBusy();
         });
+        dom.selectionRulesSelectAll.addEventListener("click", () => this.setRuleSelection(true));
+        dom.selectionRulesSelectNone.addEventListener("click", () => this.setRuleSelection(false));
+        dom.selectionRulesInvert.addEventListener("click", () => this.invertRuleSelection());
         dom.selectionRulesRunBtn.addEventListener("click", () => { void this.startRun(); });
         dom.selectionRulesStopBtn.addEventListener("click", () => { void this.stopRun(); });
         dom.selectionRulesCopyBtn.addEventListener("click", () => { void this.copyReport(); });
@@ -238,6 +241,22 @@ export class SelectionRulesService {
             .map((input) => input.value);
     }
 
+    private setRuleSelection(checked: boolean): void {
+        this.getDom().selectionRulesRuleList.querySelectorAll<HTMLInputElement>("input[type=checkbox]")
+            .forEach((input) => { input.checked = checked; });
+        this.ruleSelectionInitialized = true;
+        this.persistPreferences();
+        this.setBusy();
+    }
+
+    private invertRuleSelection(): void {
+        this.getDom().selectionRulesRuleList.querySelectorAll<HTMLInputElement>("input[type=checkbox]")
+            .forEach((input) => { input.checked = !input.checked; });
+        this.ruleSelectionInitialized = true;
+        this.persistPreferences();
+        this.setBusy();
+    }
+
     private selectedFolder(): SelectionRulesCatalogEntry | null {
         const folderId = this.getDom().selectionRulesFolderSelect.value;
         return this.catalog?.folders.find((folder) => folder.folderId === folderId) ?? null;
@@ -269,6 +288,9 @@ export class SelectionRulesService {
         dom.selectionRulesFolderSelect.disabled = this.running;
         dom.selectionRulesHorizonSelect.disabled = this.running;
         dom.selectionRulesRefreshBtn.disabled = this.running;
+        dom.selectionRulesSelectAll.disabled = this.running;
+        dom.selectionRulesSelectNone.disabled = this.running;
+        dom.selectionRulesInvert.disabled = this.running;
         dom.selectionRulesRuleList.querySelectorAll<HTMLInputElement>("input").forEach((input) => { input.disabled = this.running; });
     }
 
