@@ -31,6 +31,18 @@ export interface PairSelectionArchive {
     events: readonly PairSelectionEvent[];
     /** Private-to-the-harness outcomes; never passed to a rule. */
     horizonReturns: ReadonlyMap<string, number | null>;
+    diagnostics: PairSelectionArchiveDiagnostics;
+}
+
+export interface PairSelectionArchiveDiagnostics {
+    loadWallMs: number;
+    rowsParsed: number;
+    jsonParseMs: number;
+    streamWallMs: number;
+    readResidualMs: number;
+    rows: number;
+    events: number;
+    candidates: number;
 }
 
 export interface PairSelectionPick {
@@ -76,6 +88,19 @@ export interface PairSelectionResult {
     tally: PairSelectionTally;
     picks: PairSelectionPick[];
     reportLines: string[];
+    diagnostics: PairSelectionTallyDiagnostics;
+}
+
+export interface PairSelectionTallyDiagnostics {
+    gateMs: number;
+    scoreMs: number;
+    refsMs: number;
+    freqMs: number;
+    scoredCandidates: number;
+}
+
+function nowMs(): number {
+    return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
 
 interface ValidatedRow {
@@ -91,8 +116,27 @@ interface PairSample {
     othersMean: number;
 }
 
+interface IndexedPick {
+    pick: PairSelectionPick;
+    candidateIndex: number;
+}
+
+interface ArchiveDerivedCache {
+    referencePicks: readonly {
+        alphabetical: IndexedPick;
+        loudestAtr: IndexedPick;
+    }[];
+    horizonReturns: Map<number, readonly (readonly (number | null)[])[]>;
+}
+
+const archiveDerivedCache = new WeakMap<PairSelectionArchive, ArchiveDerivedCache>();
+
 function dataBug(message: string): never {
     throw new Error(`Pair-selection ledger data bug: ${message}`);
+}
+
+function isFiniteNumber(value: number | null): value is number {
+    return value !== null && Number.isFinite(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -255,6 +299,7 @@ function compareCandidates(left: PairCandidate, right: PairCandidate): number {
 }
 
 export async function loadPairSelectionArchive(folderPath: string): Promise<PairSelectionArchive> {
+    const loadStartedAt = nowMs();
     const loaded = await loadLedgerForReplay(folderPath);
     if (loaded.provenance.ledgerVersion !== TRADE_LEDGER_VERSION) {
         throw new Error(
@@ -305,6 +350,7 @@ export async function loadPairSelectionArchive(folderPath: string): Promise<Pair
             },
             candidates: group.candidates.sort(compareCandidates),
         }));
+    const candidates = events.reduce((sum, event) => sum + event.candidates.length, 0);
     return {
         runId: loaded.provenance.runId,
         interval: loaded.provenance.interval,
@@ -312,6 +358,16 @@ export async function loadPairSelectionArchive(folderPath: string): Promise<Pair
         ledgerHorizons: [...ledgerHorizons],
         events,
         horizonReturns,
+        diagnostics: {
+            loadWallMs: nowMs() - loadStartedAt,
+            rowsParsed: loaded.diagnostics.ledger.rowsParsed,
+            jsonParseMs: loaded.diagnostics.ledger.jsonParseMs,
+            streamWallMs: loaded.diagnostics.ledger.streamWallMs,
+            readResidualMs: loaded.diagnostics.ledger.readResidualMs,
+            rows: loaded.rows.length,
+            events: events.length,
+            candidates,
+        },
     };
 }
 
@@ -342,6 +398,14 @@ export function pickPairSelectionRule(
     rule: PairSelectionRule,
     params: PairSelectionRuleParams,
 ): PairSelectionPick {
+    return pickPairSelectionRuleIndexed(event, rule, params).pick;
+}
+
+function pickPairSelectionRuleIndexed(
+    event: PairSelectionEvent,
+    rule: PairSelectionRule,
+    params: PairSelectionRuleParams,
+): IndexedPick {
     if (event.candidates.length === 0) dataBug(`event ${event.context.signalTime} has no candidates`);
     const pool = event.candidates.map(cloneCandidate);
     const scores = pool.map((candidate) => {
@@ -352,24 +416,70 @@ export function pickPairSelectionRule(
         return score;
     });
     let maxScore = scores[0]!;
-    for (let index = 1; index < scores.length; index += 1) {
-        if (scores[index]! > maxScore) maxScore = scores[index]!;
-    }
-    const tied = pool.filter((_candidate, index) => scores[index] === maxScore);
-    let winner = tied[0]!;
+    let winnerIndex = 0;
+    let tiedCount = 1;
     const compareTie = rule.tieBreak ?? defaultTieBreak;
-    for (let index = 1; index < tied.length; index += 1) {
-        if (compareTie(tied[index]!, winner, event.context) < 0) winner = tied[index]!;
+    for (let index = 1; index < pool.length; index += 1) {
+        const score = scores[index]!;
+        if (score > maxScore) {
+            maxScore = score;
+            winnerIndex = index;
+            tiedCount = 1;
+        } else if (score === maxScore) {
+            tiedCount += 1;
+            if (compareTie(pool[index]!, pool[winnerIndex]!, event.context) < 0) winnerIndex = index;
+        }
     }
+    const winner = pool[winnerIndex]!;
     return {
-        signalTime: event.context.signalTime,
-        pair: winner.pair,
-        baseSymbol: winner.baseSymbol,
-        quoteSymbol: winner.quoteSymbol,
-        direction: winner.direction,
-        score: maxScore,
-        tiedCount: tied.length,
+        pick: {
+            signalTime: event.context.signalTime,
+            pair: winner.pair,
+            baseSymbol: winner.baseSymbol,
+            quoteSymbol: winner.quoteSymbol,
+            direction: winner.direction,
+            score: maxScore,
+            tiedCount,
+        },
+        candidateIndex: winnerIndex,
     };
+}
+
+function getArchiveDerivedCache(archive: PairSelectionArchive): ArchiveDerivedCache {
+    const existing = archiveDerivedCache.get(archive);
+    if (existing) return existing;
+    const created: ArchiveDerivedCache = {
+        referencePicks: archive.events.map((event) => ({
+            alphabetical: pickPairSelectionRuleIndexed(event, reference_alphabetical, {}),
+            loudestAtr: pickPairSelectionRuleIndexed(event, reference_loudest_atr, {}),
+        })),
+        horizonReturns: new Map(),
+    };
+    archiveDerivedCache.set(archive, created);
+    return created;
+}
+
+function getHorizonReturns(
+    archive: PairSelectionArchive,
+    horizonBars: number,
+): readonly (readonly (number | null)[])[] {
+    const cache = getArchiveDerivedCache(archive);
+    const existing = cache.horizonReturns.get(horizonBars);
+    if (existing) return existing;
+    const values = archive.events.map((event) => {
+        // Preserve the original strict gate: single-candidate events never
+        // require an outcome lookup because they cannot become samples.
+        if (event.candidates.length < 2) return [];
+        return event.candidates.map((candidate) => {
+            const key = horizonKey(horizonBars, event.context.signalTime, candidate.pair, candidate.direction);
+            if (!archive.horizonReturns.has(key)) {
+                dataBug(`horizon outcome is unjoinable for ${event.context.signalTime}/${candidate.pair}/${candidate.direction} at ${horizonBars} bars`);
+            }
+            return archive.horizonReturns.get(key)!;
+        });
+    });
+    cache.horizonReturns.set(horizonBars, values);
+    return values;
 }
 
 function comparisonForSamples(samples: readonly PairSample[]): PairSelectionComparisons {
@@ -387,12 +497,6 @@ function makeFrequencies(values: readonly string[]): PairSelectionFrequency[] {
     return [...counts.entries()]
         .sort((left, right) => right[1] - left[1] || (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
         .map(([value, count]) => ({ value, count, share: values.length > 0 ? count / values.length : 0 }));
-}
-
-function returnForPick(archive: PairSelectionArchive, pick: PairSelectionPick, horizonBars: number): number {
-    const value = archive.horizonReturns.get(horizonKey(horizonBars, pick.signalTime, pick.pair, pick.direction));
-    if (value === undefined || value === null || !Number.isFinite(value)) dataBug(`selected candidate outcome missing for ${pick.signalTime}/${pick.pair}/${pick.direction}`);
-    return value;
 }
 
 function formatComparison(label: string, value: SelectionComparison): string {
@@ -445,32 +549,56 @@ export function tallyPairSelectionRule(
     const samples: PairSample[] = [];
     const picks: PairSelectionPick[] = [];
     let candidateEvents = 0;
-    for (const event of archive.events) {
-        if (event.candidates.length < 2) continue;
+    const diagnostics: PairSelectionTallyDiagnostics = {
+        gateMs: 0,
+        scoreMs: 0,
+        refsMs: 0,
+        freqMs: 0,
+        scoredCandidates: 0,
+    };
+    const refsStartedAt = nowMs();
+    const derived = getArchiveDerivedCache(archive);
+    diagnostics.refsMs += nowMs() - refsStartedAt;
+    const returnsByEvent = getHorizonReturns(archive, horizonBars);
+    for (let eventIndex = 0; eventIndex < archive.events.length; eventIndex += 1) {
+        const event = archive.events[eventIndex]!;
+        const gateStartedAt = nowMs();
+        if (event.candidates.length < 2) {
+            diagnostics.gateMs += nowMs() - gateStartedAt;
+            continue;
+        }
         candidateEvents += 1;
-        const returns = event.candidates.map((candidate) => {
-            const key = horizonKey(horizonBars, event.context.signalTime, candidate.pair, candidate.direction);
-            if (!archive.horizonReturns.has(key)) dataBug(`horizon outcome is unjoinable for ${event.context.signalTime}/${candidate.pair}/${candidate.direction} at ${horizonBars} bars`);
-            const value = archive.horizonReturns.get(key);
-            return value;
-        });
-        const finiteReturns = returns.filter((value): value is number => Number.isFinite(value));
+        const returns = returnsByEvent[eventIndex]!;
+        const finiteReturns: number[] = [];
+        for (const value of returns) {
+            if (isFiniteNumber(value)) finiteReturns.push(value);
+        }
+        diagnostics.gateMs += nowMs() - gateStartedAt;
         if (finiteReturns.length !== returns.length) continue;
-        const pick = pickPairSelectionRule(event, rule, params);
-        const alphabeticalPick = pickPairSelectionRule(event, reference_alphabetical, {});
-        const loudestPick = pickPairSelectionRule(event, reference_loudest_atr, {});
-        const selectedReturn = returnForPick(archive, pick, horizonBars);
+        const scoreStartedAt = nowMs();
+        const indexedPick = pickPairSelectionRuleIndexed(event, rule, params);
+        const pick = indexedPick.pick;
+        diagnostics.scoreMs += nowMs() - scoreStartedAt;
+        const references = derived.referencePicks[eventIndex]!;
+        diagnostics.scoredCandidates += event.candidates.length * 3;
+        const selectedReturn = returns[indexedPick.candidateIndex];
+        const alphabeticalReturn = returns[references.alphabetical.candidateIndex];
+        const loudestAtrReturn = returns[references.loudestAtr.candidateIndex];
+        if (!isFiniteNumber(selectedReturn) || !isFiniteNumber(alphabeticalReturn) || !isFiniteNumber(loudestAtrReturn)) {
+            dataBug(`selected candidate outcome missing for ${event.context.signalTime}`);
+        }
         const totalReturn = finiteReturns.reduce((sum, value) => sum + value, 0);
         const othersMean = (totalReturn - selectedReturn) / (returns.length - 1);
         picks.push(pick);
         samples.push({
             pick,
             selectedReturn,
-            alphabeticalReturn: returnForPick(archive, alphabeticalPick, horizonBars),
-            loudestAtrReturn: returnForPick(archive, loudestPick, horizonBars),
+            alphabeticalReturn,
+            loudestAtrReturn,
             othersMean,
         });
     }
+    const freqStartedAt = nowMs();
     const selectedPairs = makeFrequencies(samples.map((sample) => sample.pick.pair));
     const selectedBaseLegs = makeFrequencies(samples.map((sample) => sample.pick.baseSymbol));
     const selectedQuoteLegs = makeFrequencies(samples.map((sample) => sample.pick.quoteSymbol));
@@ -478,11 +606,13 @@ export function tallyPairSelectionRule(
     const excludingDominantPair = dominantPair === null
         ? null
         : comparisonForSamples(samples.filter((sample) => sample.pick.pair !== dominantPair));
+    const comparisons = comparisonForSamples(samples);
+    diagnostics.freqMs += nowMs() - freqStartedAt;
     const tally: PairSelectionTally = {
         eventCount: archive.events.length,
         candidateEvents,
         eligibleEvents: samples.length,
-        comparisons: comparisonForSamples(samples),
+        comparisons,
         selectedPairs,
         selectedBaseLegs,
         selectedQuoteLegs,
@@ -498,5 +628,6 @@ export function tallyPairSelectionRule(
         tally,
         picks,
         reportLines: buildReportLines(archive, rule, tally, horizonBars),
+        diagnostics,
     };
 }

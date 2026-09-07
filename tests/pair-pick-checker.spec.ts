@@ -11,6 +11,10 @@ import {
     tallyPairSelectionRule,
 } from "../lib/pair-selection/tally";
 import type { PairSelectionRule } from "../lib/pair-selection/types";
+import { pair_win_rate_shrinkage } from "../lib/pair-selection/pair_win_rate_shrinkage";
+import { relative_atr_cleanliness } from "../lib/pair-selection/relative_atr_cleanliness";
+import { sharedLegOverlapFraction } from "../lib/pair-selection/rule-helpers";
+import { shared_leg_overlap_target } from "../lib/pair-selection/shared_leg_overlap_target";
 
 interface FixtureRowOptions {
     signalTime: number;
@@ -216,6 +220,71 @@ describe("pair-pick checker", () => {
         expect(Buffer.from(first.reportLines.join("\n"))).to.deep.equal(Buffer.from(second.reportLines.join("\n")));
         expect(first.reportLines.some((line) => line.includes("dominant BASE"))).to.equal(true);
         expect(first.reportLines.some((line) => line.includes("FIXTURE_ARGMAX_EX_A+B"))).to.equal(true);
+    });
+
+    it("preserves event-median and shared-leg rule picks", () => {
+        const event = {
+            context: { signalTime: 600, interval: "4h", strategyKey: "fixture-strategy" },
+            candidates: [
+                {
+                    pair: "A+B", baseSymbol: "A", quoteSymbol: "B", direction: "long" as const,
+                    signalTime: 600, signalBarIndex: 20, feat_entryRangePosition: 50,
+                    feat_atrPct: 1, feat_return20: 0, feat_gapPct: 0, feat_dow: 1, feat_hour: 12,
+                    feat_pairWinRatePrior: 0.2, feat_pairTradesPrior: 1, feat_barsSincePairLastFire: null,
+                    feat_pairSpreadVolatility20: 1, feat_legVolatilityRatio20: 1, feat_candidatesAtTime: 4,
+                },
+                {
+                    pair: "A+C", baseSymbol: "A", quoteSymbol: "C", direction: "long" as const,
+                    signalTime: 600, signalBarIndex: 20, feat_entryRangePosition: 50,
+                    feat_atrPct: 2, feat_return20: 0, feat_gapPct: 0, feat_dow: 1, feat_hour: 12,
+                    feat_pairWinRatePrior: 0.8, feat_pairTradesPrior: 10, feat_barsSincePairLastFire: null,
+                    feat_pairSpreadVolatility20: 1, feat_legVolatilityRatio20: 1, feat_candidatesAtTime: 4,
+                },
+                {
+                    pair: "D+B", baseSymbol: "D", quoteSymbol: "B", direction: "long" as const,
+                    signalTime: 600, signalBarIndex: 20, feat_entryRangePosition: 50,
+                    feat_atrPct: 4, feat_return20: 0, feat_gapPct: 0, feat_dow: 1, feat_hour: 12,
+                    feat_pairWinRatePrior: 0.5, feat_pairTradesPrior: 4, feat_barsSincePairLastFire: null,
+                    feat_pairSpreadVolatility20: 1, feat_legVolatilityRatio20: 1, feat_candidatesAtTime: 4,
+                },
+                {
+                    pair: "E+F", baseSymbol: "E", quoteSymbol: "F", direction: "long" as const,
+                    signalTime: 600, signalBarIndex: 20, feat_entryRangePosition: 50,
+                    feat_atrPct: 8, feat_return20: 0, feat_gapPct: 0, feat_dow: 1, feat_hour: 12,
+                    feat_pairWinRatePrior: 0.9, feat_pairTradesPrior: 1, feat_barsSincePairLastFire: null,
+                    feat_pairSpreadVolatility20: 1, feat_legVolatilityRatio20: 1, feat_candidatesAtTime: 4,
+                },
+            ],
+        };
+
+        expect(pickPairSelectionRule(event, relative_atr_cleanliness, relative_atr_cleanliness.defaultParams).pair).to.equal("A+C");
+        expect(pickPairSelectionRule(event, pair_win_rate_shrinkage, pair_win_rate_shrinkage.defaultParams).pair).to.equal("A+C");
+        expect(pickPairSelectionRule(event, shared_leg_overlap_target, shared_leg_overlap_target.defaultParams).pair).to.equal("E+F");
+    });
+
+    it("counts a degenerate A+A leg once, matching the pairwise overlap predicate", () => {
+        const event = {
+            context: { signalTime: 601, interval: "4h", strategyKey: "fixture-strategy" },
+            candidates: [
+                {
+                    pair: "A+A", baseSymbol: "A", quoteSymbol: "A", direction: "long" as const,
+                    signalTime: 601, signalBarIndex: 20, feat_entryRangePosition: 50,
+                    feat_atrPct: 1, feat_return20: 0, feat_gapPct: 0, feat_dow: 1, feat_hour: 12,
+                    feat_pairWinRatePrior: null, feat_pairTradesPrior: 0, feat_barsSincePairLastFire: null,
+                    feat_pairSpreadVolatility20: 1, feat_legVolatilityRatio20: 1, feat_candidatesAtTime: 2,
+                },
+                {
+                    pair: "A+B", baseSymbol: "A", quoteSymbol: "B", direction: "long" as const,
+                    signalTime: 601, signalBarIndex: 20, feat_entryRangePosition: 50,
+                    feat_atrPct: 2, feat_return20: 0, feat_gapPct: 0, feat_dow: 1, feat_hour: 12,
+                    feat_pairWinRatePrior: null, feat_pairTradesPrior: 0, feat_barsSincePairLastFire: null,
+                    feat_pairSpreadVolatility20: 1, feat_legVolatilityRatio20: 1, feat_candidatesAtTime: 2,
+                },
+            ],
+        };
+
+        expect(sharedLegOverlapFraction(event.candidates[0]!, event.candidates)).to.equal(1);
+        expect(sharedLegOverlapFraction(event.candidates[1]!, event.candidates)).to.equal(1);
     });
 
     it("refuses v2 folders before pair selection", async () => {

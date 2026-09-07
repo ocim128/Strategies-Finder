@@ -73,6 +73,7 @@ function initialRun(runId: string, folderPath: string, totalRules: number): Sele
         currentHorizonBars: null,
         results: [],
         reportLines: [],
+        diagnosticsLines: [],
         summary: null,
         error: null,
     };
@@ -128,6 +129,7 @@ function acceptJobEvent(generation: number, event: SelectionRulesStreamEvent): v
         currentHorizonBars: null,
         results: [...event.results],
         reportLines: [...event.reportLines],
+        diagnosticsLines: [...event.diagnosticsLines],
         summary: event.summary,
         error: event.type === "fatal" ? event.error : null,
     });
@@ -141,6 +143,10 @@ function currentReportLines(): string[] {
     return runState ? [...runState.reportLines] : [];
 }
 
+function currentDiagnosticsLines(): string[] {
+    return runState ? [...runState.diagnosticsLines] : [];
+}
+
 function statusResponse(runId: string): SelectionRulesStatusResponse {
     if (!runState || runState.runId !== runId) {
         return { ok: true, runMismatch: true, running: false, run: null, lastRun: null };
@@ -150,6 +156,7 @@ function statusResponse(runId: string): SelectionRulesStatusResponse {
         ...runState,
         results: [...runState.results],
         reportLines: [...runState.reportLines],
+        diagnosticsLines: [...runState.diagnosticsLines],
         summary: runState.summary
             ? { ...runState.summary, results: [...runState.summary.results], reportLines: [...runState.summary.reportLines] }
             : null,
@@ -243,14 +250,14 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
         await jobRunner(jobArgs);
         if (!terminal) {
             const event = abortController.signal.aborted
-                ? createSelectionRulesCancelledEvent(jobArgs, currentResults(), currentReportLines())
-                : createSelectionRulesFatalEvent(jobArgs, currentResults(), currentReportLines(), "Selection Rules job ended without a terminal event.");
+                ? createSelectionRulesCancelledEvent(jobArgs, currentResults(), currentReportLines(), currentDiagnosticsLines())
+                : createSelectionRulesFatalEvent(jobArgs, currentResults(), currentReportLines(), "Selection Rules job ended without a terminal event.", currentDiagnosticsLines());
             emit(event);
         }
     } catch (error) {
         const event = abortController.signal.aborted
-            ? createSelectionRulesCancelledEvent(jobArgs, currentResults(), currentReportLines())
-            : createSelectionRulesFatalEvent(jobArgs, currentResults(), currentReportLines(), error instanceof Error ? error.message : String(error));
+            ? createSelectionRulesCancelledEvent(jobArgs, currentResults(), currentReportLines(), currentDiagnosticsLines())
+            : createSelectionRulesFatalEvent(jobArgs, currentResults(), currentReportLines(), error instanceof Error ? error.message : String(error), currentDiagnosticsLines());
         if (!terminal) emit(event);
     } finally {
         // Keep this teardown synchronous and generation-scoped. A future run

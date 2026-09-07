@@ -56,3 +56,56 @@ export function hasCanonicalPairIdentity(candidate: PairCandidate): boolean {
         && candidate.quoteSymbol.length > 0
         && candidate.pair === `${candidate.baseSymbol}+${candidate.quoteSymbol}`;
 }
+
+interface SharedLegCounts {
+    legCounts: ReadonlyMap<string, number>;
+    pairCounts: ReadonlyMap<string, number>;
+    canonical: boolean;
+}
+
+function unorderedLegPairKey(left: string, right: string): string {
+    return left < right ? `${left}\u0000${right}` : `${right}\u0000${left}`;
+}
+
+function sharedLegCounts(pool: readonly PairCandidate[]): SharedLegCounts {
+    return memoByPool(pool, "shared-leg-counts", () => {
+        const legCounts = new Map<string, number>();
+        const pairCounts = new Map<string, number>();
+        for (const entry of pool) {
+            if (!hasCanonicalPairIdentity(entry)) {
+                return { legCounts, pairCounts, canonical: false };
+            }
+            legCounts.set(entry.baseSymbol, (legCounts.get(entry.baseSymbol) ?? 0) + 1);
+            if (entry.quoteSymbol !== entry.baseSymbol) {
+                legCounts.set(entry.quoteSymbol, (legCounts.get(entry.quoteSymbol) ?? 0) + 1);
+            }
+            const pairKey = unorderedLegPairKey(entry.baseSymbol, entry.quoteSymbol);
+            pairCounts.set(pairKey, (pairCounts.get(pairKey) ?? 0) + 1);
+        }
+        return { legCounts, pairCounts, canonical: true };
+    });
+}
+
+/**
+ * Returns the fraction of other pool entries sharing either leg with the
+ * candidate. The original definition is pairwise; the counts below compute
+ * the same union in O(1) per candidate after one O(n) event pass.
+ */
+export function sharedLegOverlapFraction(
+    candidate: PairCandidate,
+    pool: readonly PairCandidate[],
+): number | null {
+    if (pool.length <= 1 || !hasCanonicalPairIdentity(candidate)) return null;
+    const counts = sharedLegCounts(pool);
+    if (!counts.canonical) return null;
+    const baseCount = counts.legCounts.get(candidate.baseSymbol) ?? 0;
+    const quoteCount = counts.legCounts.get(candidate.quoteSymbol) ?? 0;
+    const sharedCount = candidate.baseSymbol === candidate.quoteSymbol
+        ? baseCount - 1
+        : baseCount
+            + quoteCount
+            - (counts.pairCounts.get(unorderedLegPairKey(candidate.baseSymbol, candidate.quoteSymbol)) ?? 0)
+            - 1;
+    const overlapFraction = sharedCount / (pool.length - 1);
+    return Number.isFinite(overlapFraction) ? overlapFraction : null;
+}

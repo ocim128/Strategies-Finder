@@ -200,7 +200,13 @@ describe("selection-rules server plugin", () => {
                 horizonBars: 24,
             }), response);
             const events: SelectionRulesStreamEvent[] = response.body.trim().split("\n").map((line: string) => JSON.parse(line) as SelectionRulesStreamEvent);
-            expect(events.at(-1)?.type).to.equal("done");
+            const done = events.at(-1);
+            expect(done?.type).to.equal("done");
+            if (done?.type === "done") {
+                expect(done.diagnosticsLines.some((line) => line.startsWith("env "))).to.equal(true);
+                expect(done.diagnosticsLines.some((line) => line.startsWith("load "))).to.equal(true);
+                expect(done.diagnosticsLines.some((line) => line.startsWith("rule=reference_alphabetical "))).to.equal(true);
+            }
             const rows = events.filter((event): event is Extract<SelectionRulesStreamEvent, { type: "rule_result" }> => event.type === "rule_result");
             expect(rows.map((event) => event.result.ruleKey)).to.deep.equal(["reference_alphabetical", "directional_close_location", "hedge_volatility_balance"]);
             expect(rows[0]?.result.n).to.equal(2);
@@ -213,6 +219,7 @@ describe("selection-rules server plugin", () => {
             const status = JSON.parse(statusResponse.body);
             expect(status.lastRun.phase).to.equal("done");
             expect(status.lastRun.results).to.have.length(3);
+            expect(status.lastRun.diagnosticsLines).to.deep.equal(done?.type === "done" ? done.diagnosticsLines : []);
         } finally {
             await rm(root, { recursive: true, force: true });
         }

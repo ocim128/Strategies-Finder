@@ -1,4 +1,4 @@
-import { medianValid } from "./rule-helpers";
+import { medianValid, memoByPool } from "./rule-helpers";
 import type { PairSelectionRule } from "./types";
 
 export const pair_win_rate_shrinkage: PairSelectionRule = {
@@ -9,7 +9,7 @@ export const pair_win_rate_shrinkage: PairSelectionRule = {
     paramLabels: { priorStrengthTrades: "Prior strength (trades)" },
     score: (candidate, _event, params, pool) => {
         const priorWinRate = candidate.feat_pairWinRatePrior;
-        const eventMedian = medianValid(pool, (entry) => entry.feat_pairWinRatePrior);
+        const eventMedian = memoByPool(pool, "pair-win-rate-median", () => medianValid(pool, (entry) => entry.feat_pairWinRatePrior));
         const priorStrength = params.priorStrengthTrades!;
         const denominator = candidate.feat_pairTradesPrior + priorStrength;
         if (priorWinRate === null || eventMedian === null || denominator <= 0) return Number.NEGATIVE_INFINITY;

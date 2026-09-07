@@ -16,6 +16,8 @@ export const SELECTION_RULES_REQUIRED_IDS = [
     "selectionRulesEmpty",
     "selectionRulesReport",
     "selectionRulesCopyBtn",
+    "selectionRulesDiagnostics",
+    "selectionRulesCopyDiagnosticsBtn",
 ] as const;
 
 export function createSelectionRulesDom() {
@@ -35,6 +37,8 @@ export function createSelectionRulesDom() {
         selectionRulesEmpty: getRequiredElement<HTMLDivElement>("selectionRulesEmpty"),
         selectionRulesReport: getRequiredElement<HTMLPreElement>("selectionRulesReport"),
         selectionRulesCopyBtn: getRequiredElement<HTMLButtonElement>("selectionRulesCopyBtn"),
+        selectionRulesDiagnostics: getRequiredElement<HTMLPreElement>("selectionRulesDiagnostics"),
+        selectionRulesCopyDiagnosticsBtn: getRequiredElement<HTMLButtonElement>("selectionRulesCopyDiagnosticsBtn"),
     };
 }
 

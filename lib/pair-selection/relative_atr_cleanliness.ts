@@ -1,4 +1,4 @@
-import { medianValid } from "./rule-helpers";
+import { medianValid, memoByPool } from "./rule-helpers";
 import type { PairSelectionRule } from "./types";
 
 export const relative_atr_cleanliness: PairSelectionRule = {
@@ -7,10 +7,10 @@ export const relative_atr_cleanliness: PairSelectionRule = {
     description: "Targets a chosen multiple of the event-median signal ATR.",
     defaultParams: { targetRelativeAtr: 0.75 },
     paramLabels: { targetRelativeAtr: "Target relative ATR" },
-    score: (candidate, _event, _params, pool) => {
+    score: (candidate, _event, params, pool) => {
         const atr = candidate.feat_atrPct;
-        const eventMedian = medianValid(pool, (entry) => entry.feat_atrPct);
+        const eventMedian = memoByPool(pool, "atr-pct-median", () => medianValid(pool, (entry) => entry.feat_atrPct));
         if (atr === null || eventMedian === null || eventMedian <= 0) return Number.NEGATIVE_INFINITY;
-        return -Math.abs(atr / eventMedian - _params.targetRelativeAtr!);
+        return -Math.abs(atr / eventMedian - params.targetRelativeAtr!);
     },
 };

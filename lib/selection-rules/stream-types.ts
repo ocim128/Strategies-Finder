@@ -79,6 +79,7 @@ export interface SelectionRulesDoneEvent {
     summary: SelectionRulesSummary;
     results: SelectionRuleResult[];
     reportLines: string[];
+    diagnosticsLines: string[];
 }
 
 export interface SelectionRulesCancelledEvent {
@@ -90,6 +91,7 @@ export interface SelectionRulesCancelledEvent {
     summary: SelectionRulesSummary;
     results: SelectionRuleResult[];
     reportLines: string[];
+    diagnosticsLines: string[];
 }
 
 export interface SelectionRulesFatalEvent {
@@ -102,6 +104,7 @@ export interface SelectionRulesFatalEvent {
     summary: SelectionRulesSummary | null;
     results: SelectionRuleResult[];
     reportLines: string[];
+    diagnosticsLines: string[];
 }
 
 export type SelectionRulesStreamEvent =
@@ -124,6 +127,7 @@ export interface SelectionRulesStatusRun {
     currentHorizonBars: number | null;
     results: SelectionRuleResult[];
     reportLines: string[];
+    diagnosticsLines: string[];
     summary: SelectionRulesSummary | null;
     error: string | null;
 }
@@ -198,10 +202,13 @@ export function assertSelectionRulesWireEventIsScalar(value: unknown): asserts v
     }
     if (event.type === "done" || event.type === "cancelled" || event.type === "fatal") {
         assertScalar(event.runId, "$.runId");
-        if (!Array.isArray(event.results) || !Array.isArray(event.reportLines)) {
+        if (!Array.isArray(event.results) || !Array.isArray(event.reportLines) || !Array.isArray(event.diagnosticsLines)) {
             throw new Error(`Terminal ${String(event.type)} event is missing its summary arrays.`);
         }
         for (const result of event.results) assertSelectionRuleResultIsScalar(result);
+        if (event.diagnosticsLines.some((line) => typeof line !== "string")) {
+            throw new Error(`Terminal ${String(event.type)} diagnosticsLines must be a string array.`);
+        }
         return;
     }
     for (const [key, child] of Object.entries(event)) assertScalar(child, `$.${key}`);

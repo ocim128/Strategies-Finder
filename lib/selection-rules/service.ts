@@ -60,10 +60,10 @@ function formatShare(value: number | null): string {
 
 function terminalFromStatus(run: SelectionRulesStatusRun): SelectionRulesTerminalEvent {
     if (run.phase === "done") {
-        return { type: "done", runId: run.runId, ok: true, cancelled: false, finishedAt: run.finishedAt ?? Date.now(), summary: run.summary!, results: run.results, reportLines: run.reportLines };
+        return { type: "done", runId: run.runId, ok: true, cancelled: false, finishedAt: run.finishedAt ?? Date.now(), summary: run.summary!, results: run.results, reportLines: run.reportLines, diagnosticsLines: run.diagnosticsLines };
     }
     if (run.phase === "cancelled") {
-        return { type: "cancelled", runId: run.runId, ok: false, cancelled: true, finishedAt: run.finishedAt ?? Date.now(), summary: run.summary!, results: run.results, reportLines: run.reportLines };
+        return { type: "cancelled", runId: run.runId, ok: false, cancelled: true, finishedAt: run.finishedAt ?? Date.now(), summary: run.summary!, results: run.results, reportLines: run.reportLines, diagnosticsLines: run.diagnosticsLines };
     }
     return {
         type: "fatal",
@@ -75,6 +75,7 @@ function terminalFromStatus(run: SelectionRulesStatusRun): SelectionRulesTermina
         summary: run.summary,
         results: run.results,
         reportLines: run.reportLines,
+        diagnosticsLines: run.diagnosticsLines,
     };
 }
 
@@ -86,6 +87,7 @@ export class SelectionRulesService {
     private running = false;
     private readonly results = new Map<string, SelectionRuleResult>();
     private reportLines: string[] = [];
+    private diagnosticsLines: string[] = [];
     private reattachTimer: ReturnType<typeof setTimeout> | null = null;
 
     private getDom(): SelectionRulesDom {
@@ -103,6 +105,7 @@ export class SelectionRulesService {
         dom.selectionRulesRunBtn.addEventListener("click", () => { void this.startRun(); });
         dom.selectionRulesStopBtn.addEventListener("click", () => { void this.stopRun(); });
         dom.selectionRulesCopyBtn.addEventListener("click", () => { void this.copyReport(); });
+        dom.selectionRulesCopyDiagnosticsBtn.addEventListener("click", () => { void this.copyDiagnostics(); });
         dom.selectionRulesResults.addEventListener("click", (event) => {
             const target = event.target as Element | null;
             const row = target?.closest<HTMLTableRowElement>("tr[data-result-key]");
@@ -281,11 +284,19 @@ export class SelectionRulesService {
         dom.selectionRulesCopyBtn.disabled = this.reportLines.length === 0;
     }
 
+    private renderDiagnostics(): void {
+        const dom = this.getDom();
+        dom.selectionRulesDiagnostics.textContent = this.diagnosticsLines.join("\n");
+        dom.selectionRulesCopyDiagnosticsBtn.disabled = this.diagnosticsLines.length === 0;
+    }
+
     private resetOutput(): void {
         this.results.clear();
         this.reportLines = [];
+        this.diagnosticsLines = [];
         this.renderResults();
         this.renderReport();
+        this.renderDiagnostics();
     }
 
     private acceptResult(event: SelectionRulesStreamEvent & { type: "rule_result" }): void {
@@ -301,9 +312,11 @@ export class SelectionRulesService {
         this.results.clear();
         for (const result of event.results) this.results.set(resultKey(result), result);
         this.reportLines = [...event.reportLines];
+        this.diagnosticsLines = [...event.diagnosticsLines];
         this.running = false;
         this.renderResults();
         this.renderReport();
+        this.renderDiagnostics();
         const totalRules = event.summary?.totalRules ?? new Set(event.results.map((result) => result.ruleKey)).size;
         const completedRules = event.summary?.completedRules ?? new Set(event.results.map((result) => result.ruleKey)).size;
         this.getDom().selectionRulesProgress.classList.remove("active");
@@ -402,8 +415,10 @@ export class SelectionRulesService {
                     this.results.clear();
                     for (const result of payload.run.results) this.results.set(resultKey(result), result);
                     this.reportLines = [...payload.run.reportLines];
+                    this.diagnosticsLines = [...payload.run.diagnosticsLines];
                     this.renderResults();
                     this.renderReport();
+                    this.renderDiagnostics();
                     this.renderProgress(payload.run.completedRules, payload.run.totalRules, payload.run.phase === "loading" ? "Loading and verifying pair-selection ledger" : "Reattached", payload.run.currentRuleKey, payload.run.currentHorizonBars);
                     this.setStatus(`Reattached: ${payload.run.phase}`, "running");
                 } else if (payload.lastRun) {
@@ -430,6 +445,10 @@ export class SelectionRulesService {
 
     private async copyReport(): Promise<void> {
         if (this.reportLines.length > 0) await copyToClipboard(this.reportLines.join("\n"));
+    }
+
+    private async copyDiagnostics(): Promise<void> {
+        if (this.diagnosticsLines.length > 0) await copyToClipboard(this.diagnosticsLines.join("\n"));
     }
 }
 
