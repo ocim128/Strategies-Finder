@@ -1,10 +1,12 @@
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import {
+    PAIR_HORIZON_OUTCOMES_CAPABILITY,
+    resolvePairFeatureCompatibility,
+} from "../pair-features/compatibility";
 import type { SelectionRulesCatalogEntry } from "./stream-types";
 
 export const SELECTION_RULES_ARCHIVE_RELATIVE_ROOT = path.join("archive", "mining-ledger");
-export const SELECTION_RULES_LEDGER_VERSION = 3;
-export const SELECTION_RULES_FEATURE_VERSION = 3;
 
 export type SelectionRulesCatalogSkipReason =
     | "missing_or_malformed_metadata"
@@ -76,8 +78,12 @@ async function inspectEntryMeta(
         readJson(path.join(folderPath, "summary.json")),
     ]);
     if (!provenance || !summary) return { entry: null, reason: "missing_or_malformed_metadata" };
-    if (provenance.ledgerVersion !== SELECTION_RULES_LEDGER_VERSION
-        || provenance.featureVersion !== SELECTION_RULES_FEATURE_VERSION) {
+    const compatibility = resolvePairFeatureCompatibility({
+        ledgerVersion: provenance.ledgerVersion,
+        featureVersion: provenance.featureVersion,
+        requiredCapabilities: [PAIR_HORIZON_OUTCOMES_CAPABILITY],
+    });
+    if (!compatibility.supported) {
         return { entry: null, reason: "unsupported_version" };
     }
     const replay = provenance.replay;
@@ -109,6 +115,7 @@ async function inspectEntryMeta(
             interval: provenance.interval,
             strategyKey: provenance.strategyKey,
             ledgerHorizons: [...provenance.ledgerHorizons],
+            capabilities: [...compatibility.capabilities],
             totals: { signals: totalsRecord.signals, pairs: totalsRecord.pairs },
         },
     };

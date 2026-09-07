@@ -1,4 +1,7 @@
 import type { TradeLedgerDirection } from "../batch-backtest/trade-ledger-schema";
+import type { PairFeatureRequirement } from "../pair-features/types";
+
+export type { PairFeatureCapability, PairFeatureCompatibilityResult, PairFeatureRequirement } from "../pair-features/types";
 
 export interface PairCandidate {
     pair: string;
@@ -35,6 +38,14 @@ export interface PairSelectionParamBounds {
     step?: number;
 }
 
+export interface PairSelectionRuleMetadata {
+    paramBounds?: Readonly<Record<string, PairSelectionParamBounds>>;
+    /** Set true when the rule reads the rank-derived feat_candidatesAtTime. */
+    usesRankFeatures?: boolean;
+    /** Optional derived-feature columns required by a future rule. */
+    featureRequirements?: PairFeatureRequirement;
+}
+
 export type PairSelectionTieBreak = (
     left: PairCandidate,
     right: PairCandidate,
@@ -49,11 +60,7 @@ export interface PairSelectionRule {
     defaultParams: PairSelectionRuleParams;
     paramLabels: Readonly<Record<string, string>>;
     normalizeParams?: (params: PairSelectionRuleParams) => PairSelectionRuleParams;
-    metadata?: {
-        paramBounds?: Readonly<Record<string, PairSelectionParamBounds>>;
-        /** Set true when the rule reads the rank-derived feat_candidatesAtTime. */
-        usesRankFeatures?: boolean;
-    };
+    metadata?: PairSelectionRuleMetadata;
     score: (
         candidate: PairCandidate,
         event: PairEventContext,

@@ -1,10 +1,14 @@
 import {
-    TRADE_LEDGER_FEATURE_VERSION,
     TRADE_LEDGER_VERSION,
 } from "../batch-backtest/trade-ledger-schema";
 import { tieBreakDigest } from "../batch-backtest/max-active-research-contract";
 import { loadLedgerForReplay } from "../batch-backtest/trade-ledger-replay-loader";
 import type { LedgerReplayProgress } from "../batch-backtest/trade-ledger-replay-loader";
+import {
+    PAIR_HORIZON_OUTCOMES_CAPABILITY,
+    resolvePairFeatureCompatibility,
+} from "../pair-features/compatibility";
+import type { PairFeatureCompatibilityResult } from "../pair-features/types";
 import {
     comparison,
     formatPercentagePoints,
@@ -152,6 +156,7 @@ interface ArchiveDerivedCache {
 }
 
 const archiveDerivedCache = new WeakMap<PairSelectionArchive, ArchiveDerivedCache>();
+const archiveCompatibility = new WeakMap<PairSelectionArchive, PairFeatureCompatibilityResult>();
 
 function dataBug(message: string): never {
     throw new Error(`Pair-selection ledger data bug: ${message}`);
@@ -323,18 +328,13 @@ function compareCandidates(left: PairCandidate, right: PairCandidate): number {
         : 0;
 }
 
-function validatePairSelectionProvenance(provenance: { ledgerVersion: number; featureVersion?: number; ledgerHorizons?: unknown }): void {
-    if (provenance.ledgerVersion !== TRADE_LEDGER_VERSION) {
-        throw new Error(
-            `Pair selection requires ledgerVersion ${TRADE_LEDGER_VERSION}; folder has ${String(provenance.ledgerVersion)}. Re-run the batch.`,
-        );
-    }
-    if (provenance.featureVersion !== TRADE_LEDGER_FEATURE_VERSION) {
-        throw new Error(
-            `Pair selection requires ledger featureVersion ${TRADE_LEDGER_FEATURE_VERSION}; `
-            + `folder has ${String(provenance.featureVersion)}. Re-run the batch to create a v3 ledger.`,
-        );
-    }
+function validatePairSelectionProvenance(provenance: { ledgerVersion: unknown; featureVersion?: unknown; ledgerHorizons?: unknown }): PairFeatureCompatibilityResult {
+    const compatibility = resolvePairFeatureCompatibility({
+        ledgerVersion: provenance.ledgerVersion,
+        featureVersion: provenance.featureVersion,
+        requiredCapabilities: [PAIR_HORIZON_OUTCOMES_CAPABILITY],
+    });
+    if (!compatibility.supported) throw new Error(compatibility.message ?? "Pair selection provenance is unsupported.");
     const ledgerHorizons = provenance.ledgerHorizons;
     if (
         !Array.isArray(ledgerHorizons)
@@ -344,6 +344,7 @@ function validatePairSelectionProvenance(provenance: { ledgerVersion: number; fe
     ) {
         throw new Error("Pair selection requires provenance.ledgerHorizons; re-run the batch to create a v3 ledger.");
     }
+    return compatibility;
 }
 
 export async function loadPairSelectionArchive(
@@ -361,10 +362,13 @@ export async function loadPairSelectionArchive(
     const horizonReturns = new Map<string, number | null>();
     const seen = new Set<string>();
     let rows = 0;
+    let compatibility: PairFeatureCompatibilityResult | null = null;
     const loaded = await loadLedgerForReplay(folderPath, {
         includeSignalRanks: options.includeSignalRanks,
         onProgress: options.onProgress,
-        validateProvenance: validatePairSelectionProvenance,
+        validateProvenance: (provenance) => {
+            compatibility = validatePairSelectionProvenance(provenance);
+        },
         onLedgerRow: (value) => {
             const validated = validateLedgerRow(value, rows, options.retainHorizonBars);
             const candidate = validated.candidate;
@@ -395,7 +399,7 @@ export async function loadPairSelectionArchive(
             candidates: group.candidates.sort(compareCandidates),
         }));
     const candidates = events.reduce((sum, event) => sum + event.candidates.length, 0);
-    return {
+    const archive: PairSelectionArchive = {
         runId: loaded.provenance.runId,
         interval: loaded.provenance.interval,
         strategyKey: loaded.provenance.strategyKey,
@@ -420,6 +424,29 @@ export async function loadPairSelectionArchive(
             candidates,
         },
     };
+    if (compatibility === null) throw new Error("Pair selection compatibility was not resolved before loading the ledger.");
+    archiveCompatibility.set(archive, compatibility);
+    return archive;
+}
+
+function validateRuleFeatureRequirements(archive: PairSelectionArchive, rule: PairSelectionRule): void {
+    const requirements = rule.metadata?.featureRequirements;
+    if (!requirements) return;
+    const compatibility = archiveCompatibility.get(archive);
+    if (!compatibility) {
+        throw new Error(`Pair-selection rule ${rule.name} (${rule.key}) cannot validate its feature requirements.`);
+    }
+    const decision = resolvePairFeatureCompatibility({
+        ledgerVersion: compatibility.ledgerVersion,
+        featureVersion: compatibility.featureVersion,
+        requiredCapabilities: requirements.columns,
+    });
+    if (!decision.supported) {
+        throw new Error(
+            `Pair-selection rule ${rule.name} (${rule.key}) requires unavailable capability `
+            + `${decision.missingCapabilities.join(", ")}. ${decision.message ?? "Prepare the required feature pack."}`,
+        );
+    }
 }
 
 export function resolvePairSelectionHorizon(archive: PairSelectionArchive, requested?: number): number {
@@ -597,6 +624,7 @@ export function tallyPairSelectionRule(
 ): PairSelectionResult {
     const rule = typeof ruleOrKey === "string" ? getPairSelectionRule(ruleOrKey) : ruleOrKey;
     if (!rule) throw new Error(`Unknown pair-selection rule: ${String(ruleOrKey)}`);
+    validateRuleFeatureRequirements(archive, rule);
     const horizonBars = resolvePairSelectionHorizon(archive, requestedHorizonBars);
     const rawParams = suppliedParams === undefined ? rule.defaultParams : { ...suppliedParams };
     const params = rule.normalizeParams ? rule.normalizeParams(rawParams) : rawParams;

@@ -4,48 +4,79 @@ import { pairSelectionRuleRegistry } from "../lib/pair-selection/registry";
 import { pickPairSelectionRule, type PairSelectionEvent } from "../lib/pair-selection/tally";
 import type { PairCandidate } from "../lib/pair-selection/types";
 
+const baseCandidate = {
+    pair: "",
+    baseSymbol: "",
+    quoteSymbol: "",
+    direction: "long" as const,
+    signalTime: 1_700_000_000,
+    signalBarIndex: 100,
+    feat_entryRangePosition: 80,
+    feat_atrPct: 1,
+    feat_return20: 0.1,
+    feat_gapPct: 0.02,
+    feat_dow: 1,
+    feat_hour: 12,
+    feat_pairWinRatePrior: 0.5,
+    feat_pairTradesPrior: 5,
+    feat_barsSincePairLastFire: 2,
+    feat_pairSpreadVolatility20: 1,
+    feat_legVolatilityRatio20: 0.9,
+    feat_candidatesAtTime: 2,
+};
+
+/**
+ * A "valid pool" carries every field any registered rule reads, including the
+ * v4-bound features that batch-1 rules access through local type extensions.
+ * A rule abstaining (-Infinity) on the whole pool is a fixture gap, not a
+ * registry contract failure.
+ */
 const pool: PairCandidate[] = [
     {
+        ...baseCandidate,
         pair: "AAA+BBB",
         baseSymbol: "AAA",
         quoteSymbol: "BBB",
         direction: "long",
-        signalTime: 1_700_000_000,
-        signalBarIndex: 100,
-        feat_entryRangePosition: 80,
-        feat_atrPct: 1,
-        feat_return20: 0.1,
-        feat_gapPct: 0.02,
-        feat_dow: 1,
-        feat_hour: 12,
-        feat_pairWinRatePrior: 0.5,
-        feat_pairTradesPrior: 5,
-        feat_barsSincePairLastFire: 2,
-        feat_pairSpreadVolatility20: 1,
-        feat_legVolatilityRatio20: 0.9,
-        feat_candidatesAtTime: 2,
+        feat_pairLosingStreakPrior: 1,
+        feat_pairDrawdownPctPrior: 4,
+        feat_pairMedianMaePctPrior: 1.2,
+        feat_spreadReturnAutocorr20: -0.2,
+        feat_spreadVarianceRatio5: 0.8,
+        feat_spreadHalfLifeBars20: 6,
+        feat_atrRatio5Over20: 1.2,
+        feat_pairSpreadVolatilityRatio5Over20: 0.9,
+        feat_pairFiresInLast20Bars: 3,
+        feat_pairInterFireIntervalCvPrior: 0.4,
     },
     {
+        ...baseCandidate,
         pair: "CCC+DDD",
         baseSymbol: "CCC",
         quoteSymbol: "DDD",
         direction: "short",
-        signalTime: 1_700_000_000,
-        signalBarIndex: 100,
         feat_entryRangePosition: 25,
         feat_atrPct: 2,
         feat_return20: -0.2,
         feat_gapPct: -0.01,
-        feat_dow: 1,
-        feat_hour: 12,
         feat_pairWinRatePrior: 0.8,
         feat_pairTradesPrior: 10,
         feat_barsSincePairLastFire: 4,
         feat_pairSpreadVolatility20: 2,
         feat_legVolatilityRatio20: 1.1,
         feat_candidatesAtTime: 2,
+        feat_pairLosingStreakPrior: 3,
+        feat_pairDrawdownPctPrior: 12,
+        feat_pairMedianMaePctPrior: 2.4,
+        feat_spreadReturnAutocorr20: 0.15,
+        feat_spreadVarianceRatio5: 1.3,
+        feat_spreadHalfLifeBars20: 11,
+        feat_atrRatio5Over20: 0.7,
+        feat_pairSpreadVolatilityRatio5Over20: 1.4,
+        feat_pairFiresInLast20Bars: 6,
+        feat_pairInterFireIntervalCvPrior: 0.9,
     },
-];
+] as unknown as PairCandidate[];
 
 const event: PairSelectionEvent = {
     context: { signalTime: 1_700_000_000, interval: "4h", strategyKey: "fixture" },
