@@ -70,6 +70,7 @@ import {
     type TradeLedgerRow,
     type TradeLedgerRowContext,
     type TradeLedgerSummary,
+    type TradeLedgerWindow,
 } from "./trade-ledger-schema";
 export {
     TRADE_LEDGER_DEFAULT_FOLDER,
@@ -95,6 +96,7 @@ export {
     type TradeLedgerRow,
     type TradeLedgerRowContext,
     type TradeLedgerSummary,
+    type TradeLedgerWindow,
 } from "./trade-ledger-schema";
 
 export {
@@ -155,6 +157,10 @@ export interface TradeLedgerPairRows {
     /** Same-direction signals collapsed onto an already-seen decision bar. */
     duplicatesCollapsed: number;
     rightCensored: number;
+    /** Signal times for duplicate candidates, used to window suppression totals. */
+    duplicateSignalTimes?: number[];
+    /** Signal times for right-censored rows, used to window suppression totals. */
+    rightCensoredSignalTimes?: number[];
 }
 
 export interface TradeLedgerPairSnapshotInput {
@@ -227,6 +233,8 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
     const rows: TradeLedgerRow[] = [];
     let duplicatesCollapsed = 0;
     let rightCensored = 0;
+    const duplicateSignalTimes: number[] = [];
+    const rightCensoredSignalTimes: number[] = [];
     let previousSignalBarIndex: number | null = null;
 
     // W4: decision-time order (stable) before trailing statistics; W5:
@@ -253,6 +261,7 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
         if (signalBarIndex !== -1) {
             if (seenIdentity.has(identity)) {
                 duplicatesCollapsed += 1;
+                duplicateSignalTimes.push(signalSec);
                 continue;
             }
             seenIdentity.add(identity);
@@ -346,6 +355,7 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
                 row.asIf = null;
                 row.asIfReason = "right_censored";
                 rightCensored += 1;
+                rightCensoredSignalTimes.push(signalSec);
             } else {
                 const asIf = resolveAsIfOutcome(asIfModel, data, signalBarIndex, signal);
                 if (asIf.outcome) {
@@ -354,11 +364,13 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
                     row.asIf = null;
                     row.asIfReason = "right_censored";
                     rightCensored += 1;
+                    rightCensoredSignalTimes.push(signalSec);
                 } else {
                     // Unreachable today; never zero-fill.
                     row.asIf = null;
                     row.asIfReason = "right_censored";
                     rightCensored += 1;
+                    rightCensoredSignalTimes.push(signalSec);
                 }
             }
         } else {
@@ -367,7 +379,7 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
         }
         rows.push(row);
     }
-    return { rows, duplicatesCollapsed, rightCensored };
+    return { rows, duplicatesCollapsed, rightCensored, duplicateSignalTimes, rightCensoredSignalTimes };
 }
 
 function buildTradeLedgerHorizonOutcomes(
@@ -574,6 +586,7 @@ export interface TradeLedgerWriterCreateOptions {
     runId: string;
     startedAtMs: number;
     provenance: TradeLedgerProvenance;
+    ledgerWindow?: TradeLedgerWindow;
     deps?: Partial<TradeLedgerWriterDeps>;
 }
 
@@ -617,13 +630,15 @@ export class TradeLedgerWriter {
     private readonly rankPairsByTime = new Map<number, Set<string>>();
     private readonly deps: TradeLedgerWriterDeps;
     private readonly snapshotWriter: TradeLedgerSnapshotWriter;
+    private readonly ledgerWindow: TradeLedgerWindow;
     private finalizeResult: TradeLedgerFinalizeResult | null = null;
 
-    private constructor(runDir: string, runId: string, startedAtMs: number, deps: TradeLedgerWriterDeps) {
+    private constructor(runDir: string, runId: string, startedAtMs: number, deps: TradeLedgerWriterDeps, ledgerWindow: TradeLedgerWindow) {
         this.runDir = runDir;
         this.runId = runId;
         this.startedAtMs = startedAtMs;
         this.deps = deps;
+        this.ledgerWindow = ledgerWindow;
         this.snapshotWriter = new TradeLedgerSnapshotWriter({ runDir });
     }
 
@@ -643,7 +658,11 @@ export class TradeLedgerWriter {
             ? `${formatLedgerRunStamp(options.startedAtMs)}_${options.runId}`
             : formatLedgerRunStamp(options.startedAtMs);
         const runDir = join(options.rootDir, folder, dirName);
-        const writer = new TradeLedgerWriter(runDir, options.runId, options.startedAtMs, deps);
+        const ledgerWindow: TradeLedgerWindow = {
+            fromSec: options.ledgerWindow?.fromSec ?? null,
+            toSec: options.ledgerWindow?.toSec ?? null,
+        };
+        const writer = new TradeLedgerWriter(runDir, options.runId, options.startedAtMs, deps, ledgerWindow);
         try {
             // The parent may be created recursively; the per-run directory is
             // deliberately exclusive so a timestamp/run-id collision cannot
@@ -652,7 +671,7 @@ export class TradeLedgerWriter {
             await deps.mkdir(runDir);
             await deps.writeFile(
                 join(runDir, PROVENANCE_FILE),
-                JSON.stringify({ ...options.provenance, runId: options.runId }, null, 2),
+                JSON.stringify({ ...options.provenance, runId: options.runId, ledgerWindow }, null, 2),
                 "utf8",
             );
             // Create the ledger eagerly so a successfully loaded pair with no
@@ -674,16 +693,27 @@ export class TradeLedgerWriter {
      * ledger append succeeds. Never throws.
      */
     async appendPairRows(pairRows: TradeLedgerPairRows, source?: TradeLedgerPairSnapshotInput): Promise<void> {
-        const rows = pairRows.rows;
+        const rows = pairRows.rows.filter((row) =>
+            (this.ledgerWindow.fromSec === null || row.signalTime >= this.ledgerWindow.fromSec)
+            && (this.ledgerWindow.toSec === null || row.signalTime <= this.ledgerWindow.toSec));
         const rowStart = this.totals.signals;
+        const isWindowed = this.ledgerWindow.fromSec !== null || this.ledgerWindow.toSec !== null;
+        const countInWindow = (times: readonly number[] | undefined, fallback: number): number => {
+            if (!isWindowed) return fallback;
+            if (!times) return 0;
+            return times.filter((time) =>
+                (this.ledgerWindow.fromSec === null || time >= this.ledgerWindow.fromSec)
+                && (this.ledgerWindow.toSec === null || time <= this.ledgerWindow.toSec),
+            ).length;
+        };
         try {
             if (rows.length > 0) {
                 const lines = rows.map((row) => JSON.stringify(row));
                 lines.push("");
                 await appendWithRetry(this.deps, join(this.runDir, LEDGER_FILE), lines.join("\n"));
             }
-            this.duplicateSignalsCollapsed += pairRows.duplicatesCollapsed;
-            this.rightCensored += pairRows.rightCensored;
+            this.duplicateSignalsCollapsed += countInWindow(pairRows.duplicateSignalTimes, pairRows.duplicatesCollapsed);
+            this.rightCensored += countInWindow(pairRows.rightCensoredSignalTimes, pairRows.rightCensored);
             for (const row of rows) {
                 this.totals.signals += 1;
                 if (row.executed) this.totals.executed += 1;
@@ -806,6 +836,7 @@ export class TradeLedgerWriter {
                 lastError: this.combinedLastError(),
                 totals: { pairs: rowBearingPairs, ...this.totals },
                 suppressionRate: this.totals.signals > 0 ? this.totals.notExecuted / this.totals.signals : 0,
+                ledgerWindow: this.ledgerWindow,
                 // W4 pair accounting: submittedPairs − loadedPairs = pairs that
                 // failed to load/run (names ride the run's done event + logs);
                 // loadedPairs − rowBearingPairs = loaded pairs with zero entry

@@ -47,6 +47,7 @@ import {
     type TradeLedgerRow,
     type TradeLedgerRowContext,
     type TradeLedgerRunOptions,
+    type TradeLedgerWindow,
 } from "./trade-ledger-exporter";
 import { discoverLedgerSweepCatalog, resolveLedgerSweepFolder, resolveLedgerSweepRule } from "./trade-ledger-sweep-catalog";
 import { toTradeGateFeatureRow, tradeGateSignalKey, type TradeGateFeatureRow } from "./trade-ledger-features";
@@ -1081,6 +1082,16 @@ function parseTradeLedgerOptions(raw: unknown): TradeLedgerRunOptions | null {
     if (!folder) {
         throw new HttpStatusError(400, `Invalid tradeLedger folder: ${String(folderRaw)}.`);
     }
+    const parseBound = (key: "fromSec" | "toSec"): number | undefined => {
+        const value = (raw as { fromSec?: unknown; toSec?: unknown })[key];
+        if (value === undefined || value === null) return undefined;
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+            throw new HttpStatusError(400, `tradeLedger.${key} must be a finite number.`);
+        }
+        return value;
+    };
+    const fromSec = parseBound("fromSec");
+    const toSec = parseBound("toSec");
     const horizonsRaw = (raw as { ledgerHorizons?: unknown }).ledgerHorizons;
     let ledgerHorizons: number[] = [...TRADE_LEDGER_DEFAULT_HORIZONS];
     if (horizonsRaw !== undefined) {
@@ -1089,7 +1100,13 @@ function parseTradeLedgerOptions(raw: unknown): TradeLedgerRunOptions | null {
         }
         ledgerHorizons = [...new Set(horizonsRaw as number[])];
     }
-    return { enabled: true, folder, ledgerHorizons };
+    return {
+        enabled: true,
+        folder,
+        ledgerHorizons,
+        ...(fromSec !== undefined ? { fromSec } : {}),
+        ...(toSec !== undefined ? { toSec } : {}),
+    };
 }
 
 /**
@@ -1102,6 +1119,7 @@ interface TradeLedgerRunContext {
     resolvedSettings: BacktestSettings;
     eligibility: ReturnType<typeof evaluateReplayEligibility>;
     rowContext: TradeLedgerRowContext;
+    ledgerWindow: TradeLedgerWindow;
 }
 
 function resolveTradeLedgerRunContext(input: {
@@ -1109,6 +1127,7 @@ function resolveTradeLedgerRunContext(input: {
     capitalSettings: CapitalSettings;
     interval: string;
     ledgerHorizons?: readonly number[];
+    ledgerWindow?: TradeLedgerWindow;
 }): TradeLedgerRunContext {
     const resolved = resolveExecutorBacktestSettings(
         { ...input.backtestSettings, interval: input.interval } as BacktestSettings,
@@ -1118,6 +1137,10 @@ function resolveTradeLedgerRunContext(input: {
     return {
         resolvedSettings: resolved,
         eligibility,
+        ledgerWindow: {
+            fromSec: input.ledgerWindow?.fromSec ?? null,
+            toSec: input.ledgerWindow?.toSec ?? null,
+        },
         rowContext: {
             tradeDirection: eligibility.params.tradeDirection,
             executionModel: eligibility.params.executionModel,
@@ -1157,6 +1180,7 @@ function buildTradeLedgerProvenance(
             slippageBps: Number((input.backtestSettings as Record<string, unknown>).slippageBps ?? 0),
         },
         ledgerHorizons: context.rowContext.ledgerHorizons ?? [...TRADE_LEDGER_DEFAULT_HORIZONS],
+        ledgerWindow: context.ledgerWindow,
         pairCount: input.symbols.length,
         symbols: input.symbols,
         // Replay contract for the offline checker. The checker refuses replay
@@ -1399,6 +1423,10 @@ export async function processRunBatch(
         ? resolveTradeLedgerRunContext({
             ...input,
             ledgerHorizons: input.tradeLedger?.ledgerHorizons,
+            ledgerWindow: {
+                fromSec: input.tradeLedger?.fromSec ?? null,
+                toSec: input.tradeLedger?.toSec ?? null,
+            },
         })
         : null;
     const ledger = tradeLedgerRequested
@@ -1408,6 +1436,7 @@ export async function processRunBatch(
             runId,
             startedAtMs: snapshot.startedAt,
             provenance: buildTradeLedgerProvenance(input, runId, snapshot.startedAt, ledgerRunContext!),
+            ledgerWindow: ledgerRunContext!.ledgerWindow,
         })
         : null;
     // Phase 3 MAX_ACTIVE: verify pair-list provenance against the canonical

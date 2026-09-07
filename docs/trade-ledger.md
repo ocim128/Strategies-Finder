@@ -35,6 +35,10 @@ candidates — the replay checker replaced that approach entirely.
   (`BATCH_BACKTEST_REQUIRED_IDS` in `lib/batch-backtest/batch-backtest-dom.ts`), which
   `tests/feature-dom-contracts.spec.ts` enforces against the partial like every other
   Batch id.
+- The Batch tab's From / To fields scope both the later OPEN_SCORE USD replay and
+  saved ledger rows. Blank bounds are open-ended; the resolved inclusive signal-time
+  window is recorded as ledgerWindow: { fromSec, toSec } in provenance.json and
+  summary.json.
 
 ## Ledger Rule Sweep
 
@@ -88,7 +92,8 @@ browser-bound.
 
 ### provenance.json
 
-Run-level snapshot: `ledgerVersion`, `featureVersion`, `ledgerHorizons`, `runId`, `startedAt`,
+Run-level snapshot: `ledgerVersion`, `featureVersion`, `ledgerHorizons`, `ledgerWindow`,
+`runId`, `startedAt`,
 `interval`, `strategyKey`, `strategyParams`, full `backtestSettings` +
 `capitalSettings`, `engineMode`, `executionModel`, `tradeDirection`, `riskMode`,
 `fees` (`commissionPercent`, `slippageBps`), `pairCount`, `symbols`, and the
@@ -268,7 +273,7 @@ pair symbol (deterministic; there is no score at signal time). The checker joins
 
 ### summary.json
 
-`totals` (`pairs`, `signals`, `executed`, `notExecuted`), overall `suppressionRate`,
+`ledgerWindow`, `totals` (`pairs`, `signals`, `executed`, `notExecuted`), overall `suppressionRate`,
 `rightCensored`, `duplicateSignalsCollapsed`, the W4 **pair accounting** block,
 `perPairSuppression` (all pairs with rows), `topSuppressedPairs` (top 20 by
 suppression rate), `cancelled`, and `ledgerComplete` / `failedWrites` / `lastError`.
@@ -285,6 +290,12 @@ carries the explicit split so a mismatch is never ambiguous:
   rowBearingPairs`).
 - `failedPairs` — pair identities whose rows were DROPPED by a failed append (W2);
   empty on a clean run.
+
+The source snapshot retains full loaded bars and full engine trade records for every
+captured pair. Its entries.jsonl.gz partition contains only the recorded, in-window
+ledger rows, including their contiguous ledger ordinals. A windowed folder has the
+same pair-selection capabilities as any other compatible folder; the checker's
+optional --from / --to controls remain available.
 
 ## Checker (replay mode)
 

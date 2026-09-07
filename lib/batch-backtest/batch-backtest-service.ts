@@ -165,6 +165,14 @@ const BATCH_TRADE_LEDGER_DEFAULT_FOLDER = "archive/mining-ledger";
 
 type BatchTradeLedgerOptions = { enabled: boolean; folder: string };
 
+function parseBatchDateInputSec(raw: string, endOfDay: boolean, label: string): number | null {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    const milliseconds = Date.parse(trimmed);
+    if (!Number.isFinite(milliseconds)) throw new Error(`Invalid ${label} date: "${trimmed}".`);
+    return Math.floor(milliseconds / 1000) + (endOfDay ? 24 * 3600 - 1 : 0);
+}
+
 const BATCH_TRADE_GATE_STORAGE = {
     key: "playground_batch_backtest_trade_gate",
     schema: "batch_backtest.trade_gate",
@@ -980,6 +988,16 @@ export class BatchBacktestService {
         tradeGateOptions: BatchTradeGateOptions,
         onTerminal: (outcome: BatchBenchmarkRunOutcome) => void,
     ): Promise<void> {
+        // The same two UI fields are sent with every ledger-enabled Batch run;
+        // OPEN_SCORE USD is a later, independent request that reads them too.
+        const tradeLedgerBaseOptions = this.readTradeLedgerOptions(dom);
+        const tradeLedgerOptions = tradeLedgerBaseOptions.enabled
+            ? {
+                ...tradeLedgerBaseOptions,
+                fromSec: parseBatchDateInputSec(dom.batchBacktestOpenScoreUsdFrom.value, false, "From"),
+                toSec: parseBatchDateInputSec(dom.batchBacktestOpenScoreUsdTo.value, true, "To"),
+            }
+            : tradeLedgerBaseOptions;
         // Audit Finding 5: generate a per-run id and send it on the /run body
         // so the server can scope Stop to THIS run. Adopted on the service so
         // Stop and reattach reconciliation send the same value.
@@ -993,7 +1011,6 @@ export class BatchBacktestService {
         // toggle is off so default requests stay unchanged. The wire shape
         // lives in the leaf exporter (buildBatchRunLedgerBodyField) so the
         // ON/OFF contract is unit-testable without importing this service.
-        const tradeLedgerOptions = this.readTradeLedgerOptions(dom);
         const response = await fetch("/api/batch-backtest/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },

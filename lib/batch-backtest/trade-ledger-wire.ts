@@ -11,6 +11,9 @@ export interface TradeLedgerRunOptions {
     enabled: boolean;
     folder: string;
     ledgerHorizons?: number[];
+    /** Optional inclusive signal-time bounds, in unix seconds. */
+    fromSec?: number | null;
+    toSec?: number | null;
 }
 
 /**
@@ -26,6 +29,8 @@ export function buildBatchRunLedgerBodyField(
             enabled: true,
             folder: options.folder,
             ...(options.ledgerHorizons ? { ledgerHorizons: options.ledgerHorizons } : {}),
+            ...(options.fromSec !== undefined && options.fromSec !== null ? { fromSec: options.fromSec } : {}),
+            ...(options.toSec !== undefined && options.toSec !== null ? { toSec: options.toSec } : {}),
         },
     };
 }

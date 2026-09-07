@@ -1,9 +1,11 @@
 import { expect } from "chai";
 import { describe, it, before, after } from "node:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync, mkdtempSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { gunzipSync } from "node:zlib";
 import { strategyRegistry } from "../strategyRegistry";
 import { processRunBatch, __testInternals } from "../lib/batch-backtest/batch-backtest-vite-plugin";
 import { runBatchBacktest, type BatchSymbolCompletionContext } from "../lib/batch-backtest/batch-backtest-runner";
@@ -906,6 +908,114 @@ describe("trade ledger writer", () => {
         expect(rankText.split("\n").filter((line) => line.trim()).length).to.equal(rows.length);
     });
 
+    it("records only the selected window while keeping snapshot bars/trades full and bindings contiguous", async () => {
+        const root = mkdtempSync(path.join(tmpdir(), "trade-ledger-window-"));
+        const times = [100, 200, 300, 400];
+        const bars = times.map((time, index) => ({
+            time: time as Time,
+            open: 100 + index,
+            high: 101 + index,
+            low: 99 + index,
+            close: 100 + index,
+            volume: 1000,
+        }));
+        const readGzipJsonl = (filePath: string): unknown[] => {
+            const text = gunzipSync(readFileSync(filePath)).toString("utf8");
+            return text.split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line));
+        };
+        const rowsFor = (pair: string, baseSymbol: string, signalTimes: readonly number[], executed: readonly boolean[]) => ({
+            rows: signalTimes.map((signalTime, index) => sampleRow({
+                pair,
+                baseSymbol,
+                quoteSymbol: baseSymbol + "Q",
+                signalTime,
+                signalBarIndex: times.indexOf(signalTime),
+                executed: executed[index]!,
+                notExecutedReason: executed[index] ? null : "position_open",
+            })),
+            duplicatesCollapsed: pair === "A+B" ? 2 : 1,
+            rightCensored: pair === "A+B" ? 2 : 1,
+            duplicateSignalTimes: pair === "A+B" ? [100, 300] : [200],
+            rightCensoredSignalTimes: pair === "A+B" ? [100, 300] : [300],
+        });
+        const sourceFor = (pair: string, baseSymbol: string): Parameters<TradeLedgerWriter["appendPairRows"]>[1] => ({
+            pair,
+            data: bars,
+            trades: [makeTrade({
+                id: pair === "A+B" ? 1 : 2,
+                entryTime: 200 as Time,
+                entryPrice: 101,
+                exitTime: 300 as Time,
+            })],
+            baseSymbol,
+            quoteSymbol: baseSymbol + "Q",
+        });
+        const cases = [
+            { name: "no-bounds", window: { fromSec: null, toSec: null }, expected: [100, 200, 300, 200, 300], duplicateCount: 3, censoredCount: 3 },
+            { name: "to-only", window: { fromSec: null, toSec: 200 }, expected: [100, 200, 200], duplicateCount: 2, censoredCount: 1 },
+            { name: "from-only", window: { fromSec: 200, toSec: null }, expected: [200, 300, 200, 300], duplicateCount: 2, censoredCount: 2 },
+            { name: "both-bounds", window: { fromSec: 200, toSec: 300 }, expected: [200, 300, 200, 300], duplicateCount: 2, censoredCount: 2 },
+        ] as const;
+        try {
+            for (const testCase of cases) {
+                const writer = await TradeLedgerWriter.create({
+                    rootDir: root,
+                    folder: "runs",
+                    runId: testCase.name,
+                    startedAtMs: BASE_TIME * 1000,
+                    provenance: sampleProvenance,
+                    ledgerWindow: testCase.window,
+                });
+                expect(writer).to.not.equal(null);
+                await writer!.appendPairRows(rowsFor("A+B", "A", [100, 200, 300], [true, false, true]), sourceFor("A+B", "A"));
+                await writer!.appendPairRows(rowsFor("B+C", "B", [200, 300], [false, true]), sourceFor("B+C", "B"));
+                const result = await writer!.finalize({ cancelled: false, finishedAtMs: BASE_TIME * 1000 + 1 });
+                expect(result.totals.signals).to.equal(testCase.expected.length);
+
+                const rows = readFileSync(path.join(writer!.runDir, "ledger.jsonl"), "utf8")
+                    .split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line) as TradeLedgerRow);
+                expect(rows.map((row) => row.signalTime)).to.deep.equal(testCase.expected);
+                expect(rows.map((_row, index) => index)).to.deep.equal([0, 1, 2, 3, 4].slice(0, rows.length));
+
+                const summary = JSON.parse(readFileSync(path.join(writer!.runDir, "summary.json"), "utf8"));
+                const provenance = JSON.parse(readFileSync(path.join(writer!.runDir, "provenance.json"), "utf8"));
+                expect(summary.ledgerWindow).to.deep.equal(testCase.window);
+                expect(provenance.ledgerWindow).to.deep.equal(testCase.window);
+                expect(summary.duplicateSignalsCollapsed).to.equal(testCase.duplicateCount);
+                expect(summary.rightCensored).to.equal(testCase.censoredCount);
+                expect(summary.totals.notExecuted).to.equal(rows.filter((row) => !row.executed).length);
+
+                const ranks = readFileSync(path.join(writer!.runDir, "signal-ranks.jsonl"), "utf8")
+                    .split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line));
+                expect(ranks.every((rank) => testCase.expected.includes(rank.signalTime))).to.equal(true);
+                for (const time of new Set(testCase.expected)) {
+                    const atTime = ranks.filter((rank) => rank.signalTime === time);
+                    const expectedPairs = rows
+                        .filter((row) => row.signalTime === time)
+                        .map((row) => row.pair)
+                        .filter((pair, index, values) => values.indexOf(pair) === index)
+                        .sort();
+                    expect(atTime.map((rank) => rank.pair)).to.deep.equal(expectedPairs);
+                    expect(atTime.every((rank) => rank.candidatesAtTime === atTime.length)).to.equal(true);
+                }
+
+                const manifest = JSON.parse(readFileSync(path.join(writer!.runDir, "source-snapshot", "manifest.json"), "utf8"));
+                expect(manifest.pairs).to.have.length(2);
+                expect(manifest.pairs.every((pair: { barCount: number; tradeCount: number }) => pair.barCount === bars.length && pair.tradeCount === 1)).to.equal(true);
+                expect(manifest.pairs.reduce((total: number, pair: { rowCount: number }) => total + pair.rowCount, 0)).to.equal(rows.length);
+                for (const pair of manifest.pairs as Array<{ pair: string; pairKey: string; rowStart: number }>) {
+                    const pairRows = rows.filter((row) => row.pair === pair.pair);
+                    const entries = readGzipJsonl(path.join(writer!.runDir, "source-snapshot", "pairs", pair.pairKey, "entries.jsonl.gz"));
+                    expect(entries).to.deep.equal(pairRows.map((row, index) => [pair.rowStart + index, row.signalBarIndex, row.direction, row.signalTime]));
+                    expect(readGzipJsonl(path.join(writer!.runDir, "source-snapshot", "pairs", pair.pairKey, "bars.jsonl.gz"))).to.have.length(bars.length);
+                    expect(readGzipJsonl(path.join(writer!.runDir, "source-snapshot", "pairs", pair.pairKey, "trades.jsonl.gz"))).to.have.length(1);
+                }
+            }
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("records write failures instead of throwing, and marks ledgerComplete false", async () => {
         const { files, deps } = makeMemDeps();
         const failingAppend = (async () => {
@@ -1038,6 +1148,24 @@ describe("trade ledger request body wire contract", () => {
         expect(buildBatchRunLedgerBodyField({ enabled: true, folder: "archive/mining-ledger", ledgerHorizons: [24, 48] })).to.deep.equal({
             tradeLedger: { enabled: true, folder: "archive/mining-ledger", ledgerHorizons: [24, 48] },
         });
+        expect(buildBatchRunLedgerBodyField({
+            enabled: true,
+            folder: "archive/mining-ledger",
+            fromSec: 101,
+            toSec: 202,
+        })).to.deep.equal({
+            tradeLedger: {
+                enabled: true,
+                folder: "archive/mining-ledger",
+                fromSec: 101,
+                toSec: 202,
+            },
+        });
+        expect(__testInternals.parseTradeLedgerOptionsForTests({
+            enabled: true,
+            folder: "archive/mining-ledger",
+            fromSec: 101,
+        })).to.deep.include({ enabled: true, fromSec: 101 });
     });
 });
 
@@ -1452,6 +1580,68 @@ describe("trade ledger processRunBatch integration", () => {
         await releaseLastResults("v3_context_end");
     });
 
+    it("passes a ledger window through processRunBatch without an OPEN_SCORE request", async () => {
+        const data = makeCandles([100, 101, 102, 103, 104, 105]);
+        const windowStrategy: Strategy = {
+            name: "Ledger Window",
+            description: "Emits early and late entry signals for window passthrough.",
+            defaultParams: {},
+            paramLabels: {},
+            execute(series) {
+                return [
+                    { time: series[1]!.time, type: "buy", price: series[1]!.close, barIndex: 1 },
+                    { time: series[3]!.time, type: "buy", price: series[3]!.close, barIndex: 3 },
+                ];
+            },
+        };
+        const fromSec = 1_700_000_600;
+        const toSec = 1_700_000_900;
+        const owner = 8706;
+        setRunOwnerForTests(owner);
+        try {
+            await collectEvents((ev) => processRunBatch(
+                {
+                    interval: "5m",
+                    strategyKey: "ledger-window",
+                    strategy: windowStrategy,
+                    strategyParams: {},
+                    backtestSettings: integrationSettings,
+                    capitalSettings: ledgerCapital,
+                    symbols: ["WINDOW"],
+                    loadDataset: () => Promise.resolve(data),
+                    minUsableBars: 1,
+                    tradeLedger: { enabled: true, folder: "window-passthrough", fromSec, toSec },
+                },
+                (event) => ev.push(event),
+                owner,
+                "batch-window",
+            ));
+
+            const runDirs = readdirSync(path.join(tmpRoot, "window-passthrough"));
+            expect(runDirs).to.have.length(1);
+            const runDir = path.join(tmpRoot, "window-passthrough", runDirs[0]!);
+            const rows = readFileSync(path.join(runDir, "ledger.jsonl"), "utf8")
+                .split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line) as TradeLedgerRow);
+            expect(rows.map((row) => row.signalTime)).to.deep.equal([toSec]);
+
+            const summary = JSON.parse(readFileSync(path.join(runDir, "summary.json"), "utf8"));
+            const provenance = JSON.parse(readFileSync(path.join(runDir, "provenance.json"), "utf8"));
+            expect(summary.ledgerWindow).to.deep.equal({ fromSec, toSec });
+            expect(provenance.ledgerWindow).to.deep.equal({ fromSec, toSec });
+            expect(summary.totals).to.include({ signals: 1, notExecuted: 1 });
+
+            const manifest = JSON.parse(readFileSync(path.join(runDir, "source-snapshot", "manifest.json"), "utf8"));
+            expect(manifest.pairs[0].barCount).to.equal(data.length);
+            expect(manifest.pairs[0].rowCount).to.equal(1);
+            const entriesPath = path.join(runDir, "source-snapshot", "pairs", manifest.pairs[0].pairKey, "entries.jsonl.gz");
+            const entries = gunzipSync(readFileSync(entriesPath)).toString("utf8").trim().split("\n").map((line) => JSON.parse(line));
+            expect(entries).to.deep.equal([[0, 3, "long", toSec]]);
+        } finally {
+            setRunOwnerForTests(0);
+            await releaseLastResults("window_passthrough_end");
+        }
+    });
+
     it("a ledger setup failure does not fail the run and is visible in the summary", async () => {
         // A FILE where the folder should be: mkdir fails -> writer is null.
         const blocker = path.join(tmpRoot, "blocker");
@@ -1552,7 +1742,7 @@ describe("trade ledger HTTP route contract", () => {
             capitalSettings: ledgerCapital,
             useRustEnginePreference: false,
             runId: "batch-http",
-            ...(withLedger ? { tradeLedger: { enabled: true, folder: "http-ledger" } } : {}),
+            ...(withLedger ? { tradeLedger: { enabled: true, folder: "http-ledger", fromSec: 1_700_000_100, toSec: 1_700_000_900 } } : {}),
         });
 
         setRunOwnerForTests(0);
@@ -1588,7 +1778,11 @@ describe("trade ledger HTTP route contract", () => {
         const runDirs = readdirSync(ledgerRoot);
         expect(runDirs.length).to.equal(1);
         expect(existsSync(path.join(ledgerRoot, runDirs[0]!, "provenance.json"))).to.equal(true);
-        expect(JSON.parse(readFileSync(path.join(ledgerRoot, runDirs[0]!, "summary.json"), "utf8")).ledgerVersion).to.equal(3);
+        const httpRunDir = path.join(ledgerRoot, runDirs[0]!);
+        const httpSummary = JSON.parse(readFileSync(path.join(httpRunDir, "summary.json"), "utf8"));
+        expect(httpSummary.ledgerVersion).to.equal(3);
+        expect(httpSummary.ledgerWindow).to.deep.equal({ fromSec: 1_700_000_100, toSec: 1_700_000_900 });
+        expect(JSON.parse(readFileSync(path.join(httpRunDir, "provenance.json"), "utf8")).ledgerWindow).to.deep.equal({ fromSec: 1_700_000_100, toSec: 1_700_000_900 });
 
         setRunOwnerForTests(0);
         await releaseLastResults("http_end");

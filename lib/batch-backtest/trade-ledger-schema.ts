@@ -182,6 +182,12 @@ export interface TradeLedgerPairSuppression {
     suppressionRate: number;
 }
 
+/** User-selected signal-recording bounds; null means open-ended. */
+export interface TradeLedgerWindow {
+    fromSec: number | null;
+    toSec: number | null;
+}
+
 export interface TradeLedgerSummary {
     ledgerVersion: number;
     featureVersion: number;
@@ -201,6 +207,7 @@ export interface TradeLedgerSummary {
     suppressionRate: number;
     rightCensored: number;
     duplicateSignalsCollapsed: number;
+    ledgerWindow: TradeLedgerWindow;
     /** W4 pair accounting (see the comment at the construction site). */
     submittedPairs: number;
     loadedPairs: number;
@@ -229,6 +236,8 @@ export interface TradeLedgerProvenance {
     fees: { commissionPercent: number; slippageBps: number };
     /** Fixed-horizon outcomes emitted for every ledger row. */
     ledgerHorizons?: number[];
+    /** Signal-recording bounds; null means open-ended. */
+    ledgerWindow?: TradeLedgerWindow;
     pairCount: number;
     symbols: string[];
     /** Replay contract for the offline checker. */
@@ -294,4 +303,8 @@ export interface TradeLedgerPairRows {
     /** Same-direction signals collapsed onto an already-seen decision bar. */
     duplicatesCollapsed: number;
     rightCensored: number;
+    /** Signal times for duplicate candidates, used to window suppression totals. */
+    duplicateSignalTimes?: number[];
+    /** Signal times for right-censored rows, used to window suppression totals. */
+    rightCensoredSignalTimes?: number[];
 }
