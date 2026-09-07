@@ -355,7 +355,7 @@ describe("pair-pick checker", () => {
         } catch (cause) {
             error = cause instanceof Error ? cause.message : String(cause);
         }
-        expect(error).to.match(/ledger v2|requires ledgerVersion 3|re-run the batch/);
+        expect(error).to.match(/pair_horizon_outcomes|Re-run the batch/);
     });
 
     it("refuses a horizon that is not in folder provenance", async () => {

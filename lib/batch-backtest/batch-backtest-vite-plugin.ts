@@ -1537,7 +1537,13 @@ export async function processRunBatch(
                         quoteCloses: completionContext.quoteCloses,
                         asIfModel,
                     });
-                    await ledger.appendPairRows(pairRows);
+                    await ledger.appendPairRows(pairRows, {
+                        pair: result.symbol,
+                        data: result.data,
+                        trades: result.result?.trades ?? [],
+                        baseSymbol: completionContext.baseSymbol,
+                        quoteSymbol: completionContext.quoteSymbol,
+                    });
                 }
                 writer({ type: "symbol", index, total, row: scalarRow });
                 await new Promise<void>((resolve) => setImmediate(resolve));
@@ -1649,6 +1655,9 @@ export async function processRunBatch(
         if (tradeLedgerRequested && (ledger === null || ledgerResult === null || !ledgerResult.ledgerComplete)) {
             terminalSummary += ` — trade ledger incomplete (${ledgerResult?.failedWrites ?? 0} failed write${(ledgerResult?.failedWrites ?? 0) === 1 ? "" : "s"}).`;
         }
+        if (tradeLedgerRequested && ledgerResult?.snapshotError) {
+            terminalSummary += ` - source snapshot failed (${ledgerResult.snapshotError}).`;
+        }
         // Audit Finding 6: stamp the terminal snapshot fields BEFORE releasing
         // ownership so /status can recover a terminal failure even if the run
         // produced no Mine artifacts. The previous `lastRun` gate
@@ -1752,7 +1761,10 @@ export async function processRunBatch(
         // ledger stays on disk with ledgerComplete=false. Never mask the fatal.
         if (ledger) {
             try {
-                await ledger.finalize({ cancelled: true, finishedAtMs: Date.now() });
+                const ledgerResult = await ledger.finalize({ cancelled: true, finishedAtMs: Date.now() });
+                if (runState === snapshot && ledgerResult.snapshotError) {
+                    snapshot.summary = `${snapshot.summary}; source snapshot failed (${ledgerResult.snapshotError}).`;
+                }
             } catch {
                 /* best-effort */
             }

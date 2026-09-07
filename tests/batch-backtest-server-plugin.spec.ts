@@ -1,7 +1,9 @@
 import { expect } from "chai";
 import assert from "node:assert/strict";
 import { describe, it, after, afterEach, before } from "node:test";
-import { sep } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path, { sep } from "node:path";
 import { Readable } from "node:stream";
 import { strategyRegistry } from "../strategyRegistry";
 import { BATCH_MAX_SYMBOLS } from "../lib/batch-backtest/batch-run-contract";
@@ -43,6 +45,7 @@ const {
     getPendingStopRunIdForTests,
     setRunReservationForTests,
     getRunOwnerForTests,
+    setLedgerRootDirForTests,
     shouldSweepOrphanEntryForTests,
     MINE_ARTIFACT_DIR_PREFIX_FOR_TESTS,
     ORPHAN_SWEEP_STALE_MS_FOR_TESTS,
@@ -125,6 +128,56 @@ function collectEvents(runner: (events: BatchStreamEvent[]) => Promise<void>): P
 }
 
 describe("batch-backtest server plugin processRunBatch", () => {
+    it("awaits durable source-snapshot capture and keeps it after temporary artifact release", async () => {
+        const root = mkdtempSync(path.join(tmpdir(), "batch-ledger-snapshot-"));
+        const owner = 9000;
+        setLedgerRootDirForTests(root);
+        setRunOwnerForTests(owner);
+        try {
+            const events = await collectEvents((ev) =>
+                processRunBatch(
+                    {
+                        interval: "5m",
+                        strategyKey: STRATEGY_KEY,
+                        strategy: testStrategy,
+                        strategyParams: { threshold: 1 },
+                        backtestSettings: settings,
+                        capitalSettings,
+                        symbols: ["UP+DOWN"],
+                        loadDataset: (symbol) => Promise.resolve(symbol === "UP+DOWN" ? makeCandles([100, 105, 110, 115, 120]) : []),
+                        minUsableBars: 1,
+                        tradeLedger: { enabled: true, folder: "ledger" },
+                    },
+                    (event) => ev.push(event),
+                    owner,
+                    "server-snapshot-run",
+                ),
+            );
+            const done = events[events.length - 1] as Extract<BatchStreamEvent, { type: "done" }>;
+            expect(done.type).to.equal("done");
+            expect(done.summary).to.not.include("source snapshot failed");
+            const runParent = path.join(root, "ledger");
+            const runDirs = readdirSync(runParent);
+            expect(runDirs).to.have.length(1);
+            const runDir = path.join(runParent, runDirs[0]!);
+            const manifestPath = path.join(runDir, "source-snapshot", "manifest.json");
+            expect(existsSync(manifestPath)).to.equal(true);
+            const manifestBytes = readFileSync(manifestPath);
+            const manifest = JSON.parse(manifestBytes.toString("utf8"));
+            expect(manifest.complete).to.equal(true);
+            expect(manifest.ledgerRowCount).to.be.greaterThan(0);
+
+            setRunOwnerForTests(0);
+            await releaseLastResults("snapshot_release");
+            expect(readFileSync(manifestPath).equals(manifestBytes)).to.equal(true);
+        } finally {
+            setLedgerRootDirForTests(null);
+            setRunOwnerForTests(0);
+            await releaseLastResults("snapshot_test_finally");
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("emits start, per-symbol, and done events in order", async () => {
         const datasets = new Map<string, OHLCVData[]>([
             ["UP", makeCandles([100, 105, 110, 115, 120])],

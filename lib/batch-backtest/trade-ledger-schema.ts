@@ -267,6 +267,9 @@ export interface TradeLedgerFinalizeResult {
     failedWrites: number;
     lastError: string | null;
     totals: { pairs: number; signals: number; executed: number; notExecuted: number };
+    snapshotComplete: boolean;
+    snapshotError: string | null;
+    sourceSnapshotSha256: string | null;
 }
 
 /** Writer-side arguments retained here so the exporter can re-export its old API. */

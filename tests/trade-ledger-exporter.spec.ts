@@ -1376,8 +1376,18 @@ describe("trade ledger processRunBatch integration", () => {
         expect(provenance.replay.replayEligible).to.equal(true);
         expect(provenance.replay.replayBlockers).to.deep.equal([]);
 
+        const snapshotManifestPath = path.join(runDir, "source-snapshot", "manifest.json");
+        expect(existsSync(snapshotManifestPath)).to.equal(true);
+        const snapshotManifestBytes = readFileSync(snapshotManifestPath);
+        const snapshotManifest = JSON.parse(snapshotManifestBytes.toString("utf8"));
+        expect(snapshotManifest.complete).to.equal(true);
+        expect(snapshotManifest.ledgerRowCount).to.equal(ledgerRows.length);
+
         setRunOwnerForTests(0);
         await releaseLastResults("toggle_on_end");
+        // Temporary OPEN_SCORE artifacts may be released, but the source
+        // snapshot is part of the durable ledger folder and must remain.
+        expect(readFileSync(snapshotManifestPath).equals(snapshotManifestBytes)).to.equal(true);
     });
 
     it("threads loader-owned leg identity and aligned closes into v3 rows", async () => {

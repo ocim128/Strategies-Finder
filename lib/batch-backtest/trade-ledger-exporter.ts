@@ -49,6 +49,7 @@ import {
     resolveAsIfOutcome,
     type AsIfPairModel,
 } from "./trade-ledger-asif";
+import { TradeLedgerSnapshotWriter } from "./trade-ledger-snapshot-writer";
 import type { NormalizedSettings } from "../types/backtest";
 import type {
     OHLCVData,
@@ -154,6 +155,15 @@ export interface TradeLedgerPairRows {
     /** Same-direction signals collapsed onto an already-seen decision bar. */
     duplicatesCollapsed: number;
     rightCensored: number;
+}
+
+export interface TradeLedgerPairSnapshotInput {
+    pair: string;
+    data: readonly OHLCVData[];
+    trades: readonly Trade[];
+    /** Canonical leg identity supplied by the loader/run context. */
+    baseSymbol?: string | null;
+    quoteSymbol?: string | null;
 }
 
 /**
@@ -606,12 +616,15 @@ export class TradeLedgerWriter {
     /** Bounded (signalTime → distinct pairs) tuples — interned pair strings, no candle data. */
     private readonly rankPairsByTime = new Map<number, Set<string>>();
     private readonly deps: TradeLedgerWriterDeps;
+    private readonly snapshotWriter: TradeLedgerSnapshotWriter;
+    private finalizeResult: TradeLedgerFinalizeResult | null = null;
 
     private constructor(runDir: string, runId: string, startedAtMs: number, deps: TradeLedgerWriterDeps) {
         this.runDir = runDir;
         this.runId = runId;
         this.startedAtMs = startedAtMs;
         this.deps = deps;
+        this.snapshotWriter = new TradeLedgerSnapshotWriter({ runDir });
     }
 
     static async create(options: TradeLedgerWriterCreateOptions): Promise<TradeLedgerWriter | null> {
@@ -632,12 +645,19 @@ export class TradeLedgerWriter {
         const runDir = join(options.rootDir, folder, dirName);
         const writer = new TradeLedgerWriter(runDir, options.runId, options.startedAtMs, deps);
         try {
-            await deps.mkdir(runDir, { recursive: true });
+            // The parent may be created recursively; the per-run directory is
+            // deliberately exclusive so a timestamp/run-id collision cannot
+            // overwrite a prior experiment's provenance or ledger.
+            await deps.mkdir(join(options.rootDir, folder), { recursive: true });
+            await deps.mkdir(runDir);
             await deps.writeFile(
                 join(runDir, PROVENANCE_FILE),
                 JSON.stringify({ ...options.provenance, runId: options.runId }, null, 2),
                 "utf8",
             );
+            // Create the ledger eagerly so a successfully loaded pair with no
+            // accepted entries still has a hashable, valid empty ledger.
+            await deps.writeFile(join(runDir, LEDGER_FILE), "", "utf8");
         } catch (error) {
             debugLogger.warn("batch.server.ledger_create_failed", {
                 runDir,
@@ -648,14 +668,20 @@ export class TradeLedgerWriter {
         return writer;
     }
 
-    /** Append one pair's rows as a single incremental write. Never throws. */
-    async appendPairRows(pairRows: TradeLedgerPairRows): Promise<void> {
+    /**
+     * Append one pair's rows as a single incremental write. When the source
+     * payload is supplied (the normal server path), capture it only after the
+     * ledger append succeeds. Never throws.
+     */
+    async appendPairRows(pairRows: TradeLedgerPairRows, source?: TradeLedgerPairSnapshotInput): Promise<void> {
         const rows = pairRows.rows;
-        if (rows.length === 0) return;
+        const rowStart = this.totals.signals;
         try {
-            const lines = rows.map((row) => JSON.stringify(row));
-            lines.push("");
-            await appendWithRetry(this.deps, join(this.runDir, LEDGER_FILE), lines.join("\n"));
+            if (rows.length > 0) {
+                const lines = rows.map((row) => JSON.stringify(row));
+                lines.push("");
+                await appendWithRetry(this.deps, join(this.runDir, LEDGER_FILE), lines.join("\n"));
+            }
             this.duplicateSignalsCollapsed += pairRows.duplicatesCollapsed;
             this.rightCensored += pairRows.rightCensored;
             for (const row of rows) {
@@ -675,6 +701,19 @@ export class TradeLedgerWriter {
                 }
                 pairs.add(row.pair);
             }
+            if (source) {
+                await this.snapshotWriter.capturePair({
+                    identity: {
+                        pair: source.pair,
+                        baseSymbol: source.baseSymbol ?? rows[0]?.baseSymbol ?? "",
+                        quoteSymbol: source.quoteSymbol ?? rows[0]?.quoteSymbol ?? "",
+                    },
+                    bars: source.data,
+                    trades: source.trades,
+                    entries: rows.map((row, index) => [rowStart + index, row.signalBarIndex, row.direction, row.signalTime]),
+                    rowStart,
+                });
+            }
         } catch (error) {
             // W2: record WHICH pairs lost rows, not just a count.
             for (const row of rows) this.failedPairs.add(row.pair);
@@ -689,15 +728,11 @@ export class TradeLedgerWriter {
      */
     async finalize(input: { cancelled: boolean; finishedAtMs: number; accounting?: TradeLedgerPairAccounting }): Promise<TradeLedgerFinalizeResult> {
         if (this.finalized) {
-            return {
-                ledgerComplete: this.ledgerComplete,
-                failedWrites: this.failedWrites,
-                lastError: this.lastError,
-                totals: { ...this.totals, pairs: this.perPair.size },
-            };
+            return this.finalizeResult!;
         }
         this.finalized = true;
 
+        let summary: TradeLedgerSummary | null = null;
         try {
             const rankPath = join(this.runDir, RANKS_FILE);
             const rankLines: string[] = [];
@@ -759,7 +794,7 @@ export class TradeLedgerWriter {
                 Math.max(input.accounting?.loadedPairs ?? rowBearingPairs, rowBearingPairs),
                 submittedPairs,
             );
-            const summary: TradeLedgerSummary = {
+            summary = {
                 ledgerVersion: TRADE_LEDGER_VERSION,
                 featureVersion: TRADE_LEDGER_FEATURE_VERSION,
                 runId: this.runId,
@@ -768,7 +803,7 @@ export class TradeLedgerWriter {
                 cancelled: input.cancelled,
                 ledgerComplete: this.ledgerComplete,
                 failedWrites: this.failedWrites,
-                lastError: this.lastError,
+                lastError: this.combinedLastError(),
                 totals: { pairs: rowBearingPairs, ...this.totals },
                 suppressionRate: this.totals.signals > 0 ? this.totals.notExecuted / this.totals.signals : 0,
                 // W4 pair accounting: submittedPairs − loadedPairs = pairs that
@@ -791,12 +826,54 @@ export class TradeLedgerWriter {
             this.recordFailure(error);
         }
 
-        return {
+        let snapshotComplete = false;
+        let sourceSnapshotSha256: string | null = null;
+        if (this.snapshotWriter.isActive && !input.cancelled && this.ledgerComplete) {
+            const snapshotResult = await this.snapshotWriter.finalize({
+                ledgerComplete: this.ledgerComplete,
+                ledgerRowCount: this.totals.signals,
+                ledgerPath: join(this.runDir, LEDGER_FILE),
+                provenancePath: join(this.runDir, PROVENANCE_FILE),
+                summaryPath: join(this.runDir, SUMMARY_FILE),
+                ranksPath: join(this.runDir, RANKS_FILE),
+            });
+            snapshotComplete = snapshotResult.complete;
+            sourceSnapshotSha256 = snapshotResult.manifestSha256;
+            if (snapshotResult.error) {
+                // Snapshot failure is optional-artifact failure: preserve a
+                // checkable, complete legacy ledger and only amend its
+                // terminal diagnostic text.
+                this.lastError = this.combinedLastError(snapshotResult.error);
+                if (summary) {
+                    summary.lastError = this.lastError;
+                    try {
+                        await this.deps.writeFile(join(this.runDir, SUMMARY_FILE), JSON.stringify(summary, null, 2), "utf8");
+                    } catch (error) {
+                        debugLogger.warn("batch.server.ledger_snapshot_summary_update_failed", {
+                            runDir: this.runDir,
+                            error: error instanceof Error ? error.message : String(error),
+                        });
+                    }
+                }
+            }
+        }
+
+        this.finalizeResult = {
             ledgerComplete: this.ledgerComplete,
             failedWrites: this.failedWrites,
-            lastError: this.lastError,
+            lastError: this.combinedLastError(),
             totals: { ...this.totals, pairs: this.perPair.size },
+            snapshotComplete,
+            snapshotError: this.snapshotWriter.error,
+            sourceSnapshotSha256,
         };
+        return this.finalizeResult;
+    }
+
+    private combinedLastError(snapshotError = this.snapshotWriter.error): string | null {
+        if (!this.lastError) return snapshotError ? `source snapshot failed: ${snapshotError}` : null;
+        if (!snapshotError || this.lastError.includes(snapshotError)) return this.lastError;
+        return `${this.lastError}; source snapshot failed: ${snapshotError}`;
     }
 
     private recordFailure(error: unknown): void {
