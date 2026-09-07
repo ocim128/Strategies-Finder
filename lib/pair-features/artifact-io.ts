@@ -8,10 +8,10 @@
 
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, rename, unlink, writeFile } from "node:fs/promises";
+import { lstat, link, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { join, resolve } from "node:path";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 export interface EncodedCanonicalJsonl {
     compressed: Buffer;
@@ -23,6 +23,13 @@ export interface EncodedCanonicalJsonl {
 export interface FileHash {
     sha256: string;
     bytes: number;
+}
+
+export interface EncodedBinaryArtifact {
+    compressed: Buffer;
+    uncompressed: Buffer;
+    compressedSha256: string;
+    uncompressedSha256: string;
 }
 
 /**
@@ -82,6 +89,82 @@ export function encodeCanonicalJsonl(records: readonly unknown[]): EncodedCanoni
         compressedSha256: sha256(compressed),
         uncompressedSha256: sha256(uncompressed),
     };
+}
+
+function encodeBinaryArtifact(uncompressed: Buffer): EncodedBinaryArtifact {
+    const compressed = gzipSync(uncompressed, { level: 6 });
+    return {
+        compressed,
+        uncompressed,
+        compressedSha256: sha256(compressed),
+        uncompressedSha256: sha256(uncompressed),
+    };
+}
+
+/** Encode consecutive IEEE-754 Float64 values in little-endian order. */
+export function encodeFloat64Le(values: readonly number[]): EncodedBinaryArtifact {
+    const uncompressed = Buffer.alloc(values.length * 8);
+    values.forEach((value, index) => {
+        if (!Number.isFinite(value)) throw new Error(`Float64 column value ${index} must be finite.`);
+        uncompressed.writeDoubleLE(Object.is(value, -0) ? 0 : value, index * 8);
+    });
+    return encodeBinaryArtifact(uncompressed);
+}
+
+/** Encode one validity byte per row. Only 0 and 1 are accepted. */
+export function encodeUint8(values: readonly number[]): EncodedBinaryArtifact {
+    const uncompressed = Buffer.alloc(values.length);
+    values.forEach((value, index) => {
+        if (value !== 0 && value !== 1) throw new Error(`UInt8 column value ${index} must be 0 or 1.`);
+        uncompressed[index] = value;
+    });
+    return encodeBinaryArtifact(uncompressed);
+}
+
+/** Encode consecutive UInt32 values in little-endian order without wrapping. */
+export function encodeUint32Le(values: readonly number[]): EncodedBinaryArtifact {
+    const uncompressed = Buffer.alloc(values.length * 4);
+    values.forEach((value, index) => {
+        if (!Number.isSafeInteger(value) || value < 0 || value > 0xffffffff) {
+            throw new Error(`UInt32 column value ${index} is out of range.`);
+        }
+        uncompressed.writeUInt32LE(value, index * 4);
+    });
+    return encodeBinaryArtifact(uncompressed);
+}
+
+/** Decode and validate a gzipped Float64 column. */
+export function decodeFloat64Le(compressed: Buffer): number[] {
+    const uncompressed = gunzipSync(compressed);
+    if (uncompressed.length % 8 !== 0) throw new Error("Float64 column byte length is not divisible by 8.");
+    const values: number[] = [];
+    for (let offset = 0; offset < uncompressed.length; offset += 8) {
+        const value = uncompressed.readDoubleLE(offset);
+        if (!Number.isFinite(value)) throw new Error("Float64 column contains a non-finite value.");
+        if (Object.is(value, -0)) throw new Error("Float64 column contains a non-canonical negative zero.");
+        values.push(value);
+    }
+    return values;
+}
+
+/** Decode and validate a gzipped validity column. */
+export function decodeUint8(compressed: Buffer): number[] {
+    const uncompressed = gunzipSync(compressed);
+    const values: number[] = [];
+    for (const value of uncompressed) {
+        if (value !== 0 && value !== 1) throw new Error("UInt8 column contains a value other than 0 or 1.");
+        values.push(value);
+    }
+    return values;
+}
+
+/** Decode and validate a gzipped UInt32 column. */
+export function decodeUint32Le(compressed: Buffer): number[] {
+    const uncompressed = gunzipSync(compressed);
+    if (uncompressed.length % 4 !== 0) throw new Error("UInt32 column byte length is not divisible by 4.");
+    const values: number[] = [];
+    for (let offset = 0; offset < uncompressed.length; offset += 4) values.push(uncompressed.readUInt32LE(offset));
+    return values;
 }
 
 /** Hash a file without materializing it in memory. */
@@ -155,6 +238,45 @@ export async function writeArtifactAtomically(filePath: string, data: string | B
         await unlink(temporaryPath).catch(() => { /* best effort */ });
         throw error;
     }
+}
+
+/** Publish a deterministic artifact without overwriting a concurrent file. */
+export async function publishArtifactIfMissing(filePath: string, data: string | Buffer): Promise<boolean> {
+    const expected = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    const expectedHash = hashBytes(expected);
+    try {
+        const stats = await lstat(filePath);
+        if (!stats.isFile() || isReparsePoint(stats)) throw new Error(`Published artifact is not a regular file: ${filePath}.`);
+        const existing = await hashFile(filePath);
+        if (existing.bytes !== expected.length || existing.sha256 !== expectedHash) {
+            throw new Error(`Published artifact differs from the requested bytes: ${filePath}.`);
+        }
+        return true;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException | null)?.code !== "ENOENT") throw error;
+    }
+
+    const temporaryPath = `${filePath}.tmp-${process.pid}-${++atomicWriteCounter}`;
+    let reused = false;
+    await writeFile(temporaryPath, expected, { flag: "wx" });
+    try {
+        try {
+            await link(temporaryPath, filePath);
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException | null)?.code !== "EEXIST") throw error;
+            reused = true;
+        }
+    } finally {
+        await unlink(temporaryPath).catch(() => { /* best effort */ });
+    }
+
+    const publishedStats = await lstat(filePath);
+    if (!publishedStats.isFile() || isReparsePoint(publishedStats)) throw new Error(`Published artifact is not a regular file: ${filePath}.`);
+    const published = await hashFile(filePath);
+    if (published.bytes !== expected.length || published.sha256 !== expectedHash) {
+        throw new Error(`Published artifact differs from the requested bytes: ${filePath}.`);
+    }
+    return reused;
 }
 
 /** Ensure a path's parent exists without allowing a symlinked artifact path. */

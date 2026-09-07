@@ -40,6 +40,101 @@ export interface PairFeatureRequirement {
     columns: readonly string[];
 }
 
+export interface PairFeatureDefinitionDependency {
+    id: string;
+    definitionDigest: string;
+}
+
+export interface PairFeatureImplementationFile {
+    path: string;
+    sha256: string;
+}
+
+export interface PairFeatureDefinition {
+    id: string;
+    family: string;
+    revision: number;
+    units: string;
+    directionConvention: string;
+    parameters: Readonly<Record<string, number | string | boolean>>;
+    requiredCapabilities: readonly PairFeatureCapability[];
+    minimumObservations: number;
+    missingPolicy: string;
+    cutoff: string;
+    formula: string;
+    dependencies: readonly PairFeatureDefinitionDependency[];
+    implementationFiles: readonly PairFeatureImplementationFile[];
+    definitionDigest: string;
+}
+
+export interface PairFeatureEvaluationResult {
+    value: number | null;
+    observations: number;
+}
+
+export interface PairFeatureEvaluationContext {
+    bars: readonly PairFeatureSnapshotBar[];
+    signalBarIndex: number;
+    historicalTrades: readonly PairFeatureSnapshotTrade[];
+}
+
+export interface PairFeatureRelease {
+    releaseId: string;
+    catalogFormatVersion: 1;
+    runtime: PairFeatureSnapshotRuntimeFingerprint;
+    definitions: readonly PairFeatureDefinition[];
+}
+
+export interface PairFeatureColumnArtifact {
+    path: string;
+    bytes: number;
+    sha256: string;
+    uncompressedBytes: number;
+    uncompressedSha256: string;
+}
+
+export interface PairFeatureColumnPairManifest {
+    pairKey: string;
+    values: PairFeatureColumnArtifact;
+    valid: PairFeatureColumnArtifact;
+    observations: PairFeatureColumnArtifact;
+    rowCount: number;
+    nullCount: number;
+    observationMin: number;
+    observationMax: number;
+}
+
+export interface PairFeatureFamilyFeatureManifest {
+    id: string;
+    definitionDigest: string;
+    pairs: readonly PairFeatureColumnPairManifest[];
+}
+
+export interface PairFeatureFamilyManifest {
+    formatVersion: 1;
+    familyId: string;
+    ledgerSha256: string;
+    ledgerRowCount: number;
+    sourceSnapshotSha256: string;
+    features: readonly PairFeatureFamilyFeatureManifest[];
+}
+
+export interface PairFeatureFamilyManifestReference {
+    path: string;
+    sha256: string;
+}
+
+export interface PairFeaturePackManifest {
+    formatVersion: 1;
+    libraryRelease: string;
+    libraryReleaseSha256: string;
+    ledgerSha256: string;
+    ledgerRowCount: number;
+    sourceSnapshotSha256: string;
+    requestedFeatureIds: readonly string[];
+    familyManifests: readonly PairFeatureFamilyManifestReference[];
+}
+
 export const PAIR_FEATURE_SNAPSHOT_CAPABILITIES = [
     "pair_bars_v1",
     "closed_trade_records_v1",

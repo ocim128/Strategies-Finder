@@ -1,0 +1,55 @@
+{
+  "releaseId": "v0",
+  "catalogFormatVersion": 1,
+  "runtime": {
+    "node": "v22.16.0",
+    "v8": "12.4.254.21-node.26",
+    "zlib": "1.3.0.1-motley-780819f",
+    "platform": "win32",
+    "arch": "x64"
+  },
+  "definitions": [
+    {
+      "id": "feat_fp_spread_log_return_b12_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "dimensionless log return",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": { "bars": 12 },
+      "requiredCapabilities": ["pair_bars_v1"],
+      "minimumObservations": 13,
+      "missingPolicy": "null_if_any_required_close_missing_or_nonpositive",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "ln(close[s-1]) - ln(close[s-13]); require every close[s-13..s-1] finite and positive; never read close[s]",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/spread.ts",
+          "sha256": "deeaab926477a5ac0207d82d8dfd529c5c2d51dd03c329fecb9c7ed4ed33c3e2"
+        }
+      ],
+      "definitionDigest": "2b4957a23aa8cbdf51f7825fef58af0fd33822d812e81713dd218993a0bd25b6"
+    },
+    {
+      "id": "feat_fp_trade_mean_net_pct_t8_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "percentage points of captured pnlPercent",
+      "directionConvention": "captured_trade_direction",
+      "parameters": { "trades": 8 },
+      "requiredCapabilities": ["closed_trade_records_v1"],
+      "minimumObservations": 8,
+      "missingPolicy": "null_if_fewer_than_eight_finite_eligible_closed_records",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "arithmetic mean of the last eight eligible finite closed records by (exitBarIndex, tradeOrdinal), using captured pnlPercent without recomputing returns or fees",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/trades.ts",
+          "sha256": "6449e96d8a5a3ad9261f395631aea7e9ee68c4b0a3359955a4784883b281539c"
+        }
+      ],
+      "definitionDigest": "f1e97d7fa97763b327fb8723c7622a1c03213b8eff6a466262a81730b1c1df39"
+    }
+  ]
+}
