@@ -132,6 +132,7 @@ export class SelectionRulesService {
                 }
             }
             this.lastRuleToggleKey = ruleKey;
+            this.updateRuleSelectionSummary();
         });
         dom.selectionRulesRuleList.addEventListener("change", () => {
             this.ruleSelectionInitialized = true;
@@ -253,11 +254,17 @@ export class SelectionRulesService {
             return label;
         }));
         this.ruleSelectionInitialized = true;
+        this.updateRuleSelectionSummary();
     }
 
     private selectedRuleKeys(): string[] {
         return Array.from(this.getDom().selectionRulesRuleList.querySelectorAll<HTMLInputElement>("input[type=checkbox]:checked"))
             .map((input) => input.value);
+    }
+
+    private updateRuleSelectionSummary(): void {
+        const dom = this.getDom();
+        dom.selectionRulesSelectionSummary.textContent = `${this.selectedRuleKeys().length} selected`;
     }
 
     private setRuleSelection(checked: boolean): void {
@@ -311,6 +318,7 @@ export class SelectionRulesService {
         dom.selectionRulesSelectNone.disabled = this.running;
         dom.selectionRulesInvert.disabled = this.running;
         dom.selectionRulesRuleList.querySelectorAll<HTMLInputElement>("input").forEach((input) => { input.disabled = this.running; });
+        this.updateRuleSelectionSummary();
     }
 
     private renderProgress(completedRules: number, totalRules: number, detail: string, currentRuleKey: string | null, currentHorizonBars: number | null): void {
