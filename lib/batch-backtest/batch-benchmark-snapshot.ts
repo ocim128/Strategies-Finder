@@ -183,6 +183,10 @@ export function buildBatchBenchmarkBottlenecks(
             ["ledger row construction", run.ledgerRowsMs],
             ["ledger append", run.ledgerAppendMs],
             ["ledger finalization", run.ledgerFinalizeMs],
+            ["ledger row encoding", run.ledgerRowEncodeMs],
+            ["ledger file write", run.ledgerFileWriteMs],
+            ["ledger bookkeeping", run.ledgerBookkeepingMs],
+            ["ledger snapshot queue", run.ledgerSnapshotEnqueueMs],
         ] as const;
         let dominantLedger: { label: string; ms: number } | null = null;
         for (const [label, ms] of ledgerParts) {

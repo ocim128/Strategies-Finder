@@ -29,7 +29,7 @@
  * `chart-manager.ts`.
  */
 
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, writeFile, type FileHandle } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { join } from "node:path";
 import { parseTimeToUnixSeconds } from "../time-normalization";
@@ -646,6 +646,13 @@ export interface TradeLedgerWriterDeps {
     delay: (ms: number) => Promise<void>;
 }
 
+export interface TradeLedgerAppendTimings {
+    ledgerRowEncodeMs: number;
+    ledgerFileWriteMs: number;
+    ledgerBookkeepingMs: number;
+    ledgerSnapshotEnqueueMs: number;
+}
+
 /** Transient FS errors worth retrying; anything else fails on first attempt. */
 const RETRYABLE_LEDGER_ERROR_CODES = new Set(["EBUSY", "EPERM", "ESTALE"]);
 const LEDGER_APPEND_MAX_ATTEMPTS = 3;
@@ -725,14 +732,30 @@ export class TradeLedgerWriter {
     private readonly deps: TradeLedgerWriterDeps;
     private readonly snapshotWriter: TradeLedgerSnapshotWriter;
     private readonly ledgerWindow: TradeLedgerWindow;
+    private readonly useLedgerFileHandle: boolean;
+    private ledgerFileHandle: FileHandle | null = null;
     private finalizeResult: TradeLedgerFinalizeResult | null = null;
+    private readonly appendTimings: TradeLedgerAppendTimings = {
+        ledgerRowEncodeMs: 0,
+        ledgerFileWriteMs: 0,
+        ledgerBookkeepingMs: 0,
+        ledgerSnapshotEnqueueMs: 0,
+    };
 
-    private constructor(runDir: string, runId: string, startedAtMs: number, deps: TradeLedgerWriterDeps, ledgerWindow: TradeLedgerWindow) {
+    private constructor(
+        runDir: string,
+        runId: string,
+        startedAtMs: number,
+        deps: TradeLedgerWriterDeps,
+        ledgerWindow: TradeLedgerWindow,
+        useLedgerFileHandle: boolean,
+    ) {
         this.runDir = runDir;
         this.runId = runId;
         this.startedAtMs = startedAtMs;
         this.deps = deps;
         this.ledgerWindow = ledgerWindow;
+        this.useLedgerFileHandle = useLedgerFileHandle;
         this.snapshotWriter = new TradeLedgerSnapshotWriter({ runDir });
     }
 
@@ -756,7 +779,14 @@ export class TradeLedgerWriter {
             fromSec: options.ledgerWindow?.fromSec ?? null,
             toSec: options.ledgerWindow?.toSec ?? null,
         };
-        const writer = new TradeLedgerWriter(runDir, options.runId, options.startedAtMs, deps, ledgerWindow);
+        const writer = new TradeLedgerWriter(
+            runDir,
+            options.runId,
+            options.startedAtMs,
+            deps,
+            ledgerWindow,
+            options.deps?.appendFile === undefined,
+        );
         try {
             // The parent may be created recursively; the per-run directory is
             // deliberately exclusive so a timestamp/run-id collision cannot
@@ -781,17 +811,55 @@ export class TradeLedgerWriter {
         return writer;
     }
 
+    getAppendTimings(): TradeLedgerAppendTimings {
+        return { ...this.appendTimings };
+    }
+
+    private async appendLedger(data: string): Promise<void> {
+        if (!this.useLedgerFileHandle) {
+            await appendWithRetry(this.deps, join(this.runDir, LEDGER_FILE), data);
+            return;
+        }
+        let lastError: unknown;
+        for (let attempt = 1; attempt <= LEDGER_APPEND_MAX_ATTEMPTS; attempt += 1) {
+            try {
+                this.ledgerFileHandle ??= await open(join(this.runDir, LEDGER_FILE), "a");
+                await this.ledgerFileHandle.write(data, null, "utf8");
+                return;
+            } catch (error) {
+                lastError = error;
+                const handle = this.ledgerFileHandle;
+                this.ledgerFileHandle = null;
+                await handle?.close().catch(() => undefined);
+                const code = (error as NodeJS.ErrnoException | null)?.code;
+                if (!code || !RETRYABLE_LEDGER_ERROR_CODES.has(code) || attempt === LEDGER_APPEND_MAX_ATTEMPTS) {
+                    throw error;
+                }
+                await this.deps.delay(LEDGER_APPEND_BACKOFF_MS[attempt - 1] ?? 200);
+            }
+        }
+        throw lastError;
+    }
+
+    private async closeLedgerFileHandle(): Promise<void> {
+        const handle = this.ledgerFileHandle;
+        this.ledgerFileHandle = null;
+        await handle?.close().catch(() => undefined);
+    }
+
     /**
      * Append one pair's rows as a single incremental write. When the source
      * payload is supplied (the normal server path), capture it only after the
      * ledger append succeeds. Never throws.
      */
     async appendPairRows(pairRows: TradeLedgerPairRows, source?: TradeLedgerPairSnapshotInput): Promise<void> {
-        const rows = pairRows.rows.filter((row) =>
-            (this.ledgerWindow.fromSec === null || row.signalTime >= this.ledgerWindow.fromSec)
-            && (this.ledgerWindow.toSec === null || row.signalTime <= this.ledgerWindow.toSec));
-        const rowStart = this.totals.signals;
         const isWindowed = this.ledgerWindow.fromSec !== null || this.ledgerWindow.toSec !== null;
+        const rows = isWindowed
+            ? pairRows.rows.filter((row) =>
+                (this.ledgerWindow.fromSec === null || row.signalTime >= this.ledgerWindow.fromSec)
+                && (this.ledgerWindow.toSec === null || row.signalTime <= this.ledgerWindow.toSec))
+            : pairRows.rows;
+        const rowStart = this.totals.signals;
         const countInWindow = (times: readonly number[] | undefined, fallback: number): number => {
             if (!isWindowed) return fallback;
             if (!times) return 0;
@@ -802,20 +870,24 @@ export class TradeLedgerWriter {
         };
         try {
             if (rows.length > 0) {
+                const encodeStartedAt = performance.now();
                 const lines = rows.map((row) => JSON.stringify(row));
                 lines.push("");
-                await appendWithRetry(this.deps, join(this.runDir, LEDGER_FILE), lines.join("\n"));
+                this.appendTimings.ledgerRowEncodeMs += performance.now() - encodeStartedAt;
+                const writeStartedAt = performance.now();
+                await this.appendLedger(lines.join("\n"));
+                this.appendTimings.ledgerFileWriteMs += performance.now() - writeStartedAt;
             }
             this.duplicateSignalsCollapsed += countInWindow(pairRows.duplicateSignalTimes, pairRows.duplicatesCollapsed);
             this.rightCensored += countInWindow(pairRows.rightCensoredSignalTimes, pairRows.rightCensored);
+            const bookkeepingStartedAt = performance.now();
+            let executedForPair = 0;
             for (const row of rows) {
                 this.totals.signals += 1;
-                if (row.executed) this.totals.executed += 1;
-                else this.totals.notExecuted += 1;
-                const totals = this.perPair.get(row.pair) ?? { signals: 0, executed: 0 };
-                totals.signals += 1;
-                if (row.executed) totals.executed += 1;
-                this.perPair.set(row.pair, totals);
+                if (row.executed) {
+                    this.totals.executed += 1;
+                    executedForPair += 1;
+                } else this.totals.notExecuted += 1;
                 // Per-time Set of distinct pairs — no repeated `includes` scan
                 // inside large same-timestamp buckets.
                 let pairs = this.rankPairsByTime.get(row.signalTime);
@@ -825,7 +897,19 @@ export class TradeLedgerWriter {
                 }
                 pairs.add(row.pair);
             }
+            if (rows.length > 0) {
+                // buildTradeLedgerRowsForPair produces one pair per append;
+                // update its summary once instead of doing a class-map lookup
+                // and write for every row.
+                const pair = rows[0]!.pair;
+                const totals = this.perPair.get(pair) ?? { signals: 0, executed: 0 };
+                totals.signals += rows.length;
+                totals.executed += executedForPair;
+                this.perPair.set(pair, totals);
+            }
+            this.appendTimings.ledgerBookkeepingMs += performance.now() - bookkeepingStartedAt;
             if (source) {
+                const snapshotStartedAt = performance.now();
                 await this.snapshotWriter.enqueuePair({
                     identity: {
                         pair: source.pair,
@@ -842,6 +926,7 @@ export class TradeLedgerWriter {
                             .map((row) => [row.signalBarIndex, row.direction, row.signalTime]),
                     rowStart,
                 });
+                this.appendTimings.ledgerSnapshotEnqueueMs += performance.now() - snapshotStartedAt;
             }
         } catch (error) {
             // W2: record WHICH pairs lost rows, not just a count.
@@ -860,6 +945,7 @@ export class TradeLedgerWriter {
             return this.finalizeResult!;
         }
         this.finalized = true;
+        await this.closeLedgerFileHandle();
 
         let summary: TradeLedgerSummary | null = null;
         try {

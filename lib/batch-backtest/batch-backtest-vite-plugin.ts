@@ -1757,7 +1757,11 @@ export async function processRunBatch(
             fingerprint,
             cacheStats,
             performance: tradeLedgerRequested
-                ? { ...output.timings, ...ledgerTimings }
+                ? {
+                    ...output.timings,
+                    ...ledgerTimings,
+                    ...(ledger ? ledger.getAppendTimings() : {}),
+                }
                 : output.timings,
             runId,
             artifactStats,
