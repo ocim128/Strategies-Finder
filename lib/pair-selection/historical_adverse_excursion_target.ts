@@ -10,6 +10,10 @@ export const historical_adverse_excursion_target: PairSelectionRule = {
     description: "Targets a chosen prior median maximum adverse excursion percentage.",
     defaultParams: { targetMaePct: 1.0 },
     paramLabels: { targetMaePct: "Target MAE (%)" },
+    metadata: {
+        featureRequirements: { libraryRelease: "v1", columns: ["feat_pairMedianMaePctPrior"] },
+        sourceFiles: ["lib/pair-selection/historical_adverse_excursion_target.ts"],
+    },
     score: (candidate, _event, params) => {
         const mae = (candidate as CandidateWithMae).feat_pairMedianMaePctPrior ?? null;
         if (mae === null || !Number.isFinite(mae)) return Number.NEGATIVE_INFINITY;

@@ -10,6 +10,10 @@ export const volatility_expansion_ratio_target: PairSelectionRule = {
     description: "Targets a chosen short-to-medium ATR expansion ratio.",
     defaultParams: { targetAtrRatio: 1.25 },
     paramLabels: { targetAtrRatio: "Target ATR ratio" },
+    metadata: {
+        featureRequirements: { libraryRelease: "v1", columns: ["feat_atrRatio5Over20"] },
+        sourceFiles: ["lib/pair-selection/volatility_expansion_ratio_target.ts"],
+    },
     score: (candidate, _event, params) => {
         const atrRatio = (candidate as CandidateWithAtrRatio).feat_atrRatio5Over20 ?? null;
         if (atrRatio === null || !Number.isFinite(atrRatio)) return Number.NEGATIVE_INFINITY;

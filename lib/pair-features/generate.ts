@@ -20,7 +20,7 @@ import {
     publishArtifactIfMissing,
     safeArtifactPath,
 } from "./artifact-io";
-import { getPairFeatureCatalogEntry, V0_FEATURE_CATALOG, V0_RELEASE, type PairFeatureCatalogEntry } from "./catalog";
+import { getPairFeatureCatalogEntryForRelease, getPairFeatureRelease, type PairFeatureCatalogEntry } from "./catalog";
 import type {
     PairFeatureColumnArtifact,
     PairFeatureColumnPairManifest,
@@ -40,10 +40,23 @@ import type {
 
 const SOURCE_MANIFEST_PATH = "source-snapshot/manifest.json";
 const LEDGER_PATH = "ledger.jsonl";
-const RELEASE_PATH = "feature-packs/releases/v0.json";
 const SOURCE_REQUIRED_MESSAGE = "source snapshot required; this folder is unchanged";
 
-interface ValidatedSnapshot {
+export interface PairFeatureGenerationOptions {
+    signal?: AbortSignal;
+    onProgress?: (progress: PairFeatureGenerationProgress) => void;
+}
+
+export interface PairFeatureGenerationProgress {
+    familyId: string;
+    featureIds: readonly string[];
+    computedColumns: number;
+    reusedColumns: number;
+    compressedBytes: number;
+    allNullFeatureIds: readonly string[];
+}
+
+export interface ValidatedPairFeatureSnapshot {
     folder: string;
     manifest: PairFeatureSnapshotManifest;
     sourceSnapshotSha256: string;
@@ -72,6 +85,16 @@ export interface PairFeatureFamilyGenerationSummary {
     computedColumns: number;
     reusedColumns: number;
     compressedBytes: number;
+    columnCoverage: readonly PairFeatureColumnCoverage[];
+}
+
+export interface PairFeatureColumnCoverage {
+    featureId: string;
+    rowCount: number;
+    nullCount: number;
+    nullShare: number;
+    observationMin: number;
+    observationMax: number;
 }
 
 export interface PairFeaturePackResult {
@@ -85,10 +108,15 @@ export interface PairFeaturePackResult {
     computedColumns: number;
     reusedColumns: number;
     families: readonly PairFeatureFamilyGenerationSummary[];
+    allNullFeatureIds: readonly string[];
 }
 
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+    if (signal?.aborted) throw new Error("Pair-feature preparation cancelled.");
 }
 
 function isMissing(error: unknown): boolean {
@@ -313,7 +341,7 @@ function validateLedgerRow(value: unknown, pair: PairFeatureSnapshotPairManifest
     }
 }
 
-async function validateSnapshotInputs(folder: string): Promise<ValidatedSnapshot> {
+export async function validatePairFeatureSnapshot(folder: string): Promise<ValidatedPairFeatureSnapshot> {
     const runDir = resolve(folder);
     const manifestPath = await safeArtifactPath(runDir, SOURCE_MANIFEST_PATH);
     let rawManifest: Buffer;
@@ -389,10 +417,10 @@ function definitionWithoutDigest(definition: PairFeatureDefinition): Record<stri
     return result;
 }
 
-async function validateRelease(libraryRelease: string): Promise<{ release: PairFeatureRelease; bytes: Buffer; sha256: string }> {
-    if (libraryRelease !== V0_RELEASE.releaseId) throw new Error(`Unknown feature library release: ${libraryRelease}.`);
-    const release = V0_RELEASE;
-    if (release.catalogFormatVersion !== 1 || release.definitions.length !== V0_FEATURE_CATALOG.length) throw new Error("Invalid v0 feature release inventory.");
+export async function validatePairFeatureLibraryRelease(libraryRelease: string): Promise<{ release: PairFeatureRelease; bytes: Buffer; sha256: string }> {
+    const release = getPairFeatureRelease(libraryRelease);
+    if (!release) throw new Error(`Unknown feature library release: ${libraryRelease}.`);
+    if (release.catalogFormatVersion !== 1 || release.definitions.length === 0) throw new Error(`Invalid ${libraryRelease} feature release inventory.`);
     const currentRuntime = runtimeFingerprint();
     if (!sameRuntime(release.runtime, currentRuntime)) throw new Error("feature library release runtime fingerprint does not match the current runtime.");
     const sortedDefinitions = [...release.definitions].sort((left, right) => compareCodeUnits(left.id, right.id));
@@ -400,7 +428,7 @@ async function validateRelease(libraryRelease: string): Promise<{ release: PairF
     for (const definition of release.definitions) {
         const digest = hashBytes(Buffer.from(canonicalJson(definitionWithoutDigest(definition)), "utf8"));
         if (digest !== definition.definitionDigest) throw new Error(`Definition digest mismatch for ${definition.id}.`);
-        const catalogEntry = getPairFeatureCatalogEntry(definition.id);
+        const catalogEntry = getPairFeatureCatalogEntryForRelease(libraryRelease, definition.id);
         if (!catalogEntry) throw new Error(`No evaluator exists for ${definition.id}.`);
         for (const implementation of definition.implementationFiles) {
             const implementationPath = await safeArtifactPath(process.cwd(), implementation.path);
@@ -418,7 +446,7 @@ async function validateRelease(libraryRelease: string): Promise<{ release: PairF
     return { release, bytes, sha256: hashBytes(bytes) };
 }
 
-function resolveRequestedFeatures(featureIds: readonly string[]): RequestedFeature[] {
+function resolveRequestedFeatures(featureIds: readonly string[], libraryRelease: string): RequestedFeature[] {
     if (featureIds.length === 0) throw new Error("At least one feature ID is required.");
     const seen = new Set<string>();
     const resolved = new Map<string, RequestedFeature>();
@@ -428,7 +456,7 @@ function resolveRequestedFeatures(featureIds: readonly string[]): RequestedFeatu
         const isObservationAccessor = featureId.endsWith("_n");
         const parentId = isObservationAccessor ? featureId.slice(0, -2) : featureId;
         if (!parentId) throw new Error(`Unknown feature ID: ${featureId}.`);
-        const entry = getPairFeatureCatalogEntry(parentId);
+        const entry = getPairFeatureCatalogEntryForRelease(libraryRelease, parentId);
         if (!entry) throw new Error(`Unknown feature ID: ${featureId}.`);
         const existing = resolved.get(parentId);
         if (existing) {
@@ -540,7 +568,6 @@ async function existingColumnPair(
                 nullCount += 1;
                 if (values[index] !== 0) throw new Error(`Existing invalid ${definition.id} value is not canonical +0.`);
             }
-            if (observations[index]! > definition.minimumObservations) throw new Error(`Existing ${definition.id} observation count exceeds its definition.`);
             observationMin = Math.min(observationMin, observations[index]!);
             observationMax = Math.max(observationMax, observations[index]!);
         }
@@ -618,6 +645,7 @@ async function generateMissingPairColumns(
     pair: PairFeatureSnapshotPairManifest,
     pairData: PairData,
     missing: readonly RequestedFeature[],
+    signal?: AbortSignal,
 ): Promise<Map<string, PairFeatureColumnPairManifest>> {
     const values = new Map<string, number[]>();
     const valid = new Map<string, number[]>();
@@ -630,10 +658,12 @@ async function generateMissingPairColumns(
 
     const orderedTrades = pairData.trades.slice().sort((left, right) => left.exitBarIndex - right.exitBarIndex || left.tradeOrdinal - right.tradeOrdinal);
     const historicalTrades: PairFeatureSnapshotTrade[] = [];
+    const historicalEntries: PairFeatureSnapshotEntry[] = [];
     let tradeCursor = 0;
     let entryIndex = 0;
     let previousSignalBarIndex = -1;
     while (entryIndex < pairData.entries.length) {
+        throwIfAborted(signal);
         const signalBarIndex = pairData.entries[entryIndex]![1];
         if (signalBarIndex < previousSignalBarIndex) throw new Error(`Historical boundary regressed for ${pair.pairKey}.`);
         previousSignalBarIndex = signalBarIndex;
@@ -643,9 +673,10 @@ async function generateMissingPairColumns(
         }
         let endIndex = entryIndex + 1;
         while (endIndex < pairData.entries.length && pairData.entries[endIndex]![1] === signalBarIndex) endIndex += 1;
-        const context: PairFeatureEvaluationContext = { bars: pairData.bars, signalBarIndex, historicalTrades };
+        const context: PairFeatureEvaluationContext = { bars: pairData.bars, signalBarIndex, historicalTrades, historicalEntries };
         for (let index = entryIndex; index < endIndex; index += 1) {
             for (const requested of missing) {
+                throwIfAborted(signal);
                 const result = requested.entry.evaluate(context);
                 const featureId = requested.entry.definition.id;
                 observations.get(featureId)![index] = result.observations;
@@ -656,13 +687,13 @@ async function generateMissingPairColumns(
                 }
             }
         }
-        // There are no v0 fire features; this boundary still deliberately
-        // evaluates all same-bar entries before any future history advances.
+        for (let index = entryIndex; index < endIndex; index += 1) historicalEntries.push(pairData.entries[index]!);
         entryIndex = endIndex;
     }
 
     const generated = new Map<string, PairFeatureColumnPairManifest>();
     for (const requested of missing) {
+        throwIfAborted(signal);
         const featureId = requested.entry.definition.id;
         const built = buildColumnPair(
             pair.pairKey,
@@ -684,18 +715,21 @@ export async function generatePairFeaturePack(
     folderPath: string,
     libraryRelease: string,
     featureIds: readonly string[],
+    options: PairFeatureGenerationOptions = {},
 ): Promise<PairFeaturePackResult> {
-    const snapshot = await validateSnapshotInputs(folderPath);
+    throwIfAborted(options.signal);
+    const snapshot = await validatePairFeatureSnapshot(folderPath);
+    const release = await validatePairFeatureLibraryRelease(libraryRelease);
     const requestedIds = [...featureIds].sort(compareCodeUnits);
-    const requested = resolveRequestedFeatures(requestedIds);
-    const release = await validateRelease(libraryRelease);
+    const requested = resolveRequestedFeatures(requestedIds, libraryRelease);
     const capabilities = new Set<string>(snapshot.manifest.capabilities);
     for (const item of requested) {
         for (const capability of item.entry.definition.requiredCapabilities) {
             if (!capabilities.has(capability)) throw new Error(`source snapshot missing capability ${capability}.`);
         }
     }
-    const releasePath = await safeArtifactPath(snapshot.folder, RELEASE_PATH);
+    const releaseRelativePath = `feature-packs/releases/${libraryRelease}.json`;
+    const releasePath = await safeArtifactPath(snapshot.folder, releaseRelativePath);
     await prepareArtifactDirectory(snapshot.folder, "feature-packs/releases");
     await publishArtifactIfMissing(releasePath, release.bytes);
 
@@ -716,7 +750,9 @@ export async function generatePairFeaturePack(
     const reusedByFamily = new Map<string, number>();
     let computedColumns = 0;
     let reusedColumns = 0;
+    const allNullFeatureIds = new Set<string>();
     for (const pair of snapshot.manifest.pairs) {
+        throwIfAborted(options.signal);
         const missing: RequestedFeature[] = [];
         for (const item of requested) {
             const familyManifests = existingByFamily.get(item.entry.definition.family)!;
@@ -738,7 +774,7 @@ export async function generatePairFeaturePack(
             }
         }
         if (missing.length > 0) {
-            const generated = await generateMissingPairColumns(snapshot.folder, pair, await readPairData(snapshot.folder, pair), missing);
+            const generated = await generateMissingPairColumns(snapshot.folder, pair, await readPairData(snapshot.folder, pair), missing, options.signal);
             for (const item of missing) {
                 pairColumns.get(item.entry.definition.id)!.set(pair.pairKey, [generated.get(item.entry.definition.id)!]);
                 computedColumns += 3;
@@ -751,6 +787,7 @@ export async function generatePairFeaturePack(
     const familyReferences: { path: string; sha256: string }[] = [];
     const familySummaries: PairFeatureFamilyGenerationSummary[] = [];
     for (const familyId of [...familiesById.keys()].sort(compareCodeUnits)) {
+        throwIfAborted(options.signal);
         const features: PairFeatureFamilyFeatureManifest[] = familiesById.get(familyId)!
             .slice()
             .sort((left, right) => compareCodeUnits(left.entry.definition.id, right.entry.definition.id))
@@ -776,6 +813,22 @@ export async function generatePairFeaturePack(
         familyReferences.push({ path: familyPath, sha256: familyDigest });
         let compressedBytes = 0;
         for (const feature of features) for (const pair of feature.pairs) compressedBytes += pair.values.bytes + pair.valid.bytes + pair.observations.bytes;
+        const columnCoverage = features.map((feature): PairFeatureColumnCoverage => {
+            const rowCount = feature.pairs.reduce((sum, pair) => sum + pair.rowCount, 0);
+            const nullCount = feature.pairs.reduce((sum, pair) => sum + pair.nullCount, 0);
+            const observationMin = feature.pairs.length === 0 ? 0 : Math.min(...feature.pairs.map((pair) => pair.observationMin));
+            const observationMax = feature.pairs.length === 0 ? 0 : Math.max(...feature.pairs.map((pair) => pair.observationMax));
+            const coverage = {
+                featureId: feature.id,
+                rowCount,
+                nullCount,
+                nullShare: rowCount > 0 ? nullCount / rowCount : 0,
+                observationMin,
+                observationMax,
+            };
+            if (rowCount > 0 && nullCount === rowCount) allNullFeatureIds.add(feature.id);
+            return coverage;
+        });
         familySummaries.push({
             familyId,
             featureIds: features.map((feature) => feature.id),
@@ -783,7 +836,18 @@ export async function generatePairFeaturePack(
             computedColumns: computedByFamily.get(familyId) ?? 0,
             reusedColumns: reusedByFamily.get(familyId) ?? 0,
             compressedBytes,
+            columnCoverage,
         });
+        options.onProgress?.({
+            familyId,
+            featureIds: familySummaries.at(-1)!.featureIds,
+            computedColumns: computedByFamily.get(familyId) ?? 0,
+            reusedColumns: reusedByFamily.get(familyId) ?? 0,
+            compressedBytes,
+            allNullFeatureIds: features.filter((feature) => feature.pairs.length > 0
+                && feature.pairs.every((pair) => pair.rowCount === 0 || pair.nullCount === pair.rowCount)).map((feature) => feature.id),
+        });
+        throwIfAborted(options.signal);
     }
     familyManifests.sort(compareCodeUnits);
     familyReferences.sort((left, right) => compareCodeUnits(left.path, right.path));
@@ -805,7 +869,7 @@ export async function generatePairFeaturePack(
     return {
         packDigest,
         packPath,
-        releasePath: RELEASE_PATH,
+        releasePath: releaseRelativePath,
         releaseSha256: release.sha256,
         sourceSnapshotSha256: snapshot.sourceSnapshotSha256,
         ledgerSha256: snapshot.manifest.ledgerSha256,
@@ -813,6 +877,7 @@ export async function generatePairFeaturePack(
         computedColumns,
         reusedColumns,
         families: familySummaries,
+        allNullFeatureIds: [...allNullFeatureIds].sort(compareCodeUnits),
     };
 }
 

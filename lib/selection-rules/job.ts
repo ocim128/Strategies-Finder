@@ -5,7 +5,14 @@ import {
     tallyPairSelectionRule,
     type LoadPairSelectionArchiveOptions,
     type PairSelectionArchive,
+    type PairSelectionResult,
 } from "../pair-selection/tally";
+import {
+    activatePairFeatures,
+    ensurePairFeatures,
+    releasePairFeatures,
+    writePairSelectionCheckReceipt,
+} from "../pair-selection/feature-access";
 import type { PairSelectionRule } from "../pair-selection/types";
 import type { PairSelectionTallyDiagnostics } from "../pair-selection/tally";
 import {
@@ -150,6 +157,7 @@ function cancelledEvent(
 
 export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise<void> {
     const results: SelectionRuleResult[] = [];
+    const featureResults: PairSelectionResult[] = [];
     const reportLines: string[] = [];
     const loadArchiveFn = args.loadArchive ?? loadPairSelectionArchive;
     const includeSignalRanks = args.rules.some((rule) => rule.metadata?.usesRankFeatures === true);
@@ -176,6 +184,29 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
         currentHorizonBars: null,
     });
 
+    const archiveFolderPath = args.archiveFolderPath ?? args.folderPath;
+    const prepared = await ensurePairFeatures(archiveFolderPath, args.rules, args.signal, (progress) => {
+        const coverage = progress.allNullFeatureIds.length > 0
+            ? ` all-null=${progress.allNullFeatureIds.join(",")}`
+            : "";
+        const detail = `Preparing pair features (${progress.familyId}: ${progress.featureIds.join(",")}; computed=${progress.computedColumns}; reused=${progress.reusedColumns}; compressedBytes=${progress.compressedBytes})${coverage}…`;
+        args.update({ phase: "loading" });
+        args.emit({
+            type: "phase",
+            runId: args.runId,
+            phase: "loading",
+            detail,
+            completedRules: 0,
+            totalRules: args.rules.length,
+            currentRuleKey: null,
+            currentHorizonBars: null,
+        });
+    });
+    if (args.signal.aborted) {
+        args.emit(cancelledEvent(args, results, reportLines, buildDiagnosticsLines(args, diagnosticsState, horizons)));
+        return;
+    }
+
     // This is intentionally the only archive load in the job. Each rule and
     // horizon reuses the parsed, validated pair-selection archive.
     const loadStartedAt = performance.now();
@@ -200,7 +231,7 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
         };
         if (args.horizonBars !== undefined) archiveOptions.retainHorizonBars = args.horizonBars;
         archive = await loadArchiveFn(
-            args.archiveFolderPath ?? args.folderPath,
+            archiveFolderPath,
             archiveOptions,
         );
     } catch (error) {
@@ -233,6 +264,12 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
 
     for (let ruleIndex = 0; ruleIndex < args.rules.length; ruleIndex += 1) {
         const rule = args.rules[ruleIndex]!;
+        const activeFeatures = await activatePairFeatures(prepared, rule, args.signal);
+        if (args.signal.aborted) {
+            releasePairFeatures(prepared);
+            args.emit(cancelledEvent(args, results, reportLines, buildDiagnosticsLines(args, diagnosticsState, horizons)));
+            return;
+        }
         const ruleStartedAt = performance.now();
         const ruleDiagnostics = emptyTallyDiagnostics();
         args.update({ phase: "tallying", currentRuleKey: rule.key, currentHorizonBars: null });
@@ -243,8 +280,9 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
                 return;
             }
             args.update({ currentRuleKey: rule.key, currentHorizonBars: horizonBars });
-            const tally = tallyPairSelectionRule(archive, rule, undefined, horizonBars);
+            const tally = tallyPairSelectionRule(archive, rule, undefined, horizonBars, activeFeatures ?? undefined);
             addTallyDiagnostics(ruleDiagnostics, tally.diagnostics);
+            featureResults.push(tally);
             const result = resultFromPairSelection(tally, horizonBars);
             results.push(result);
             reportLines.push(...result.reportLines);
@@ -284,6 +322,21 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
         });
         args.update({ diagnosticsLines: buildDiagnosticsLines(args, diagnosticsState, horizons) });
     }
+
+    if (prepared.sourceSnapshotSha256 !== null) {
+        if (args.signal.aborted) {
+            releasePairFeatures(prepared);
+            args.emit(cancelledEvent(args, results, reportLines, buildDiagnosticsLines(args, diagnosticsState, horizons)));
+            return;
+        }
+        await writePairSelectionCheckReceipt({
+            prepared,
+            rules: args.rules,
+            horizons,
+            results: featureResults,
+        });
+    }
+    releasePairFeatures(prepared);
 
     const summary = buildSummary(args.runId, args.folderPath, args.rules.length, results, reportLines);
     const done: SelectionRulesDoneEvent = {

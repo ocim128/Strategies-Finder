@@ -1,5 +1,10 @@
 import { loadPairSelectionArchive, tallyPairSelectionRule } from "../lib/pair-selection/tally";
 import { getPairSelectionRule } from "../lib/pair-selection/registry";
+import {
+    activatePairFeatures,
+    ensurePairFeatures,
+    writePairSelectionCheckReceipt,
+} from "../lib/pair-selection/feature-access";
 
 function parseDateSec(raw: string, endOfDay = false): number {
     const ms = Date.parse(endOfDay ? `${raw}T23:59:59Z` : `${raw}T00:00:00Z`);
@@ -27,7 +32,9 @@ async function main(): Promise<void> {
     try {
         const rule = getPairSelectionRule(ruleKey);
         if (!rule) throw new Error(`Unknown pair-selection rule: ${ruleKey}`);
+        const prepared = await ensurePairFeatures(folderPath, [rule]);
         let archive = await loadPairSelectionArchive(folderPath);
+        const activeFeatures = await activatePairFeatures(prepared, rule);
         if (fromSec !== null || toSec !== null) {
             const events = archive.events.filter((event) =>
                 (fromSec === null || event.context.signalTime >= fromSec)
@@ -35,13 +42,24 @@ async function main(): Promise<void> {
             if (events.length === 0) throw new Error("Date range matched no pick-events.");
             archive = { ...archive, events };
         }
-        const tally = horizonRaw === undefined
-            ? tallyPairSelectionRule(archive, rule)
+        const horizonBars = horizonRaw === undefined
+            ? archive.ledgerHorizons[0]!
             : (() => {
                 const horizonBars = Number(horizonRaw);
                 if (!Number.isInteger(horizonBars) || horizonBars <= 0) throw new Error(`Invalid horizonBars: ${horizonRaw}`);
-                return tallyPairSelectionRule(archive, rule, undefined, horizonBars);
+                return horizonBars;
             })();
+        const tally = tallyPairSelectionRule(archive, rule, undefined, horizonBars, activeFeatures ?? undefined);
+        if (prepared.sourceSnapshotSha256 !== null) {
+            await writePairSelectionCheckReceipt({
+                prepared,
+                rules: [rule],
+                horizons: [horizonBars],
+                results: [tally],
+                fromSec,
+                toSec,
+            });
+        }
         for (const line of tally.reportLines) console.log(line);
     } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));

@@ -64,7 +64,15 @@ export interface PairFeatureDefinition {
     formula: string;
     dependencies: readonly PairFeatureDefinitionDependency[];
     implementationFiles: readonly PairFeatureImplementationFile[];
+    expectedValueFixtures?: readonly PairFeatureExpectedValueFixture[];
     definitionDigest: string;
+}
+
+export interface PairFeatureExpectedValueFixture {
+    name: string;
+    signalBarIndex: number;
+    expected: number | null;
+    observations: number;
 }
 
 export interface PairFeatureEvaluationResult {
@@ -76,6 +84,7 @@ export interface PairFeatureEvaluationContext {
     bars: readonly PairFeatureSnapshotBar[];
     signalBarIndex: number;
     historicalTrades: readonly PairFeatureSnapshotTrade[];
+    historicalEntries: readonly PairFeatureSnapshotEntry[];
 }
 
 export interface PairFeatureRelease {
@@ -83,6 +92,7 @@ export interface PairFeatureRelease {
     catalogFormatVersion: 1;
     runtime: PairFeatureSnapshotRuntimeFingerprint;
     definitions: readonly PairFeatureDefinition[];
+    notes?: readonly string[];
 }
 
 export interface PairFeatureColumnArtifact {

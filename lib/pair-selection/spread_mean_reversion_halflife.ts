@@ -10,6 +10,10 @@ export const spread_mean_reversion_halflife: PairSelectionRule = {
     description: "Targets a chosen prior spread mean-reversion half-life in bars.",
     defaultParams: { targetHalfLifeBars: 6 },
     paramLabels: { targetHalfLifeBars: "Target half-life (bars)" },
+    metadata: {
+        featureRequirements: { libraryRelease: "v1", columns: ["feat_spreadHalfLifeBars20"] },
+        sourceFiles: ["lib/pair-selection/spread_mean_reversion_halflife.ts"],
+    },
     score: (candidate, _event, params) => {
         const halfLife = (candidate as CandidateWithHalfLife).feat_spreadHalfLifeBars20 ?? null;
         if (halfLife === null || !Number.isFinite(halfLife)) return Number.NEGATIVE_INFINITY;

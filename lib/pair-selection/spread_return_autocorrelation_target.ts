@@ -10,6 +10,10 @@ export const spread_return_autocorrelation_target: PairSelectionRule = {
     description: "Targets a chosen lag-1 autocorrelation of prior spread returns.",
     defaultParams: { targetAutocorr: -0.25 },
     paramLabels: { targetAutocorr: "Target return autocorrelation" },
+    metadata: {
+        featureRequirements: { libraryRelease: "v1", columns: ["feat_spreadReturnAutocorr20"] },
+        sourceFiles: ["lib/pair-selection/spread_return_autocorrelation_target.ts"],
+    },
     score: (candidate, _event, params) => {
         const autocorrelation = (candidate as CandidateWithAutocorrelation).feat_spreadReturnAutocorr20 ?? null;
         if (autocorrelation === null || !Number.isFinite(autocorrelation)) return Number.NEGATIVE_INFINITY;

@@ -1,5 +1,5 @@
 import { loadPairSelectionArchive } from "../lib/pair-selection/tally";
-import { computePairSelectionScales, formatPairSelectionScales } from "../lib/pair-selection/scales";
+import { computePairFeaturePackScales, computePairSelectionScales, formatPairSelectionScales } from "../lib/pair-selection/scales";
 
 async function main(): Promise<void> {
     const [folderPath] = process.argv.slice(2);
@@ -10,7 +10,8 @@ async function main(): Promise<void> {
     }
     try {
         const archive = await loadPairSelectionArchive(folderPath);
-        for (const line of formatPairSelectionScales(computePairSelectionScales(archive))) console.log(line);
+        const packScales = await computePairFeaturePackScales(folderPath);
+        for (const line of formatPairSelectionScales(computePairSelectionScales(archive, packScales))) console.log(line);
     } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;

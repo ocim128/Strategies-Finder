@@ -36,9 +36,15 @@ const WATCH_STRATEGIES = process.env.WATCH_STRATEGIES === '1';
 const WATCH_IGNORED_GLOBS = [
     // Generated artifacts are rewritten in place and can trip Vite's watcher on Windows.
     '**/artifacts/**',
-    // Synthetic-pair cache files are generated during large server-side runs;
-    // they are not application source and must not trigger Vite's watcher.
-    '**/price-data/synthetic-cache/**',
+    // Research archives can contain millions of feature-pack files. Watching
+    // these data/build trees exhausts memory before the UI modules can load.
+    '**/archive/**',
+    '**/batch-runs/**',
+    '**/price-data/**',
+    '**/logs/**',
+    '**/reports/**',
+    '**/rust-engine/target/**',
+    '**/.freebuff/**',
     // Strategy authoring often happens during long Finder/Hunt runs. Require a manual refresh
     // instead of interrupting the current browser session on every change under lib/strategies.
     ...(WATCH_STRATEGIES ? [] : ['**/lib/strategies/**']),
@@ -349,6 +355,10 @@ function localPriceDataCatalogPlugin(): Plugin {
 }
 
 export default defineConfig({
+    // Avoid crawling archived HTML reports during dependency discovery.
+    optimizeDeps: {
+        entries: ['index.html'],
+    },
     plugins: [
         tradFiKlineProxyPlugin(),
         polymarketProxyPlugin(),

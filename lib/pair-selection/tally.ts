@@ -22,6 +22,7 @@ import type {
     PairSelectionRule,
     PairSelectionRuleParams,
 } from "./types";
+import type { ActivePairFeatures } from "./feature-access";
 
 export interface PairSelectionEvent {
     context: PairEventContext;
@@ -133,6 +134,9 @@ interface ValidatedRow {
     candidate: PairCandidate;
     horizonReturns: ReadonlyMap<string, number | null>;
 }
+
+const PRIVATE_ROW_ORDINAL = Symbol("pairSelectionLedgerRowOrdinal");
+type ArchivedCandidate = PairCandidate & { [PRIVATE_ROW_ORDINAL]?: number };
 
 interface PairSample {
     pick: PairSelectionPick;
@@ -358,7 +362,7 @@ export async function loadPairSelectionArchive(
         throw new Error("retainHorizonBars must be a positive integer when supplied.");
     }
     const loadStartedAt = nowMs();
-    const groups = new Map<number, { candidates: PairCandidate[] }>();
+    const groups = new Map<number, { candidates: ArchivedCandidate[] }>();
     const horizonReturns = new Map<string, number | null>();
     const seen = new Set<string>();
     let rows = 0;
@@ -371,7 +375,10 @@ export async function loadPairSelectionArchive(
         },
         onLedgerRow: (value) => {
             const validated = validateLedgerRow(value, rows, options.retainHorizonBars);
-            const candidate = validated.candidate;
+            const candidate = {
+                ...validated.candidate,
+                [PRIVATE_ROW_ORDINAL]: rows,
+            } as ArchivedCandidate;
             const key = candidateKey(candidate.signalTime, candidate.pair, candidate.direction);
             if (seen.has(key)) dataBug(`duplicate candidate ${key}`);
             seen.add(key);
@@ -429,9 +436,13 @@ export async function loadPairSelectionArchive(
     return archive;
 }
 
-function validateRuleFeatureRequirements(archive: PairSelectionArchive, rule: PairSelectionRule): void {
+function validateRuleFeatureRequirements(archive: PairSelectionArchive, rule: PairSelectionRule, activeFeatures?: ActivePairFeatures): void {
     const requirements = rule.metadata?.featureRequirements;
     if (!requirements) return;
+    if (activeFeatures) {
+        if (activeFeatures.ruleKey !== rule.key) throw new Error(`Pair features activated for ${activeFeatures.ruleKey}, not ${rule.key}.`);
+        return;
+    }
     const compatibility = archiveCompatibility.get(archive);
     if (!compatibility) {
         throw new Error(`Pair-selection rule ${rule.name} (${rule.key}) cannot validate its feature requirements.`);
@@ -459,8 +470,16 @@ export function resolvePairSelectionHorizon(archive: PairSelectionArchive, reque
     return horizonBars;
 }
 
-function cloneCandidate(candidate: PairCandidate): PairCandidate {
-    return { ...candidate };
+function cloneCandidate(candidate: PairCandidate, activeFeatures?: ActivePairFeatures): PairCandidate {
+    const archived = candidate as ArchivedCandidate;
+    const cloned = { ...archived } as ArchivedCandidate;
+    const ordinal = archived[PRIVATE_ROW_ORDINAL];
+    delete cloned[PRIVATE_ROW_ORDINAL];
+    if (activeFeatures) {
+        if (ordinal === undefined) dataBug(`candidate ${candidate.pair} has no private ledger row ordinal`);
+        Object.assign(cloned, activeFeatures.readCandidateFeatures(ordinal));
+    }
+    return cloned;
 }
 
 function defaultTieBreak(left: PairCandidate, right: PairCandidate, event: PairEventContext): number {
@@ -475,8 +494,9 @@ export function pickPairSelectionRule(
     event: PairSelectionEvent,
     rule: PairSelectionRule,
     params: PairSelectionRuleParams,
+    activeFeatures?: ActivePairFeatures,
 ): PairSelectionPick {
-    const indexed = pickPairSelectionRuleIndexed(event, rule, params);
+    const indexed = pickPairSelectionRuleIndexed(event, rule, params, activeFeatures);
     if (indexed === null) {
         throw new Error(`Pair-selection rule ${rule.key} has no eligible candidate for ${event.context.signalTime}.`);
     }
@@ -487,9 +507,10 @@ function pickPairSelectionRuleIndexed(
     event: PairSelectionEvent,
     rule: PairSelectionRule,
     params: PairSelectionRuleParams,
+    activeFeatures?: ActivePairFeatures,
 ): IndexedPick | null {
     if (event.candidates.length === 0) dataBug(`event ${event.context.signalTime} has no candidates`);
-    const pool = event.candidates.map(cloneCandidate);
+    const pool = event.candidates.map((candidate) => cloneCandidate(candidate, activeFeatures));
     let maxScore = Number.NEGATIVE_INFINITY;
     let winnerIndex = -1;
     let tiedCount = 0;
@@ -621,10 +642,11 @@ export function tallyPairSelectionRule(
     ruleOrKey: PairSelectionRule | string,
     suppliedParams?: PairSelectionRuleParams,
     requestedHorizonBars?: number,
+    activeFeatures?: ActivePairFeatures,
 ): PairSelectionResult {
     const rule = typeof ruleOrKey === "string" ? getPairSelectionRule(ruleOrKey) : ruleOrKey;
     if (!rule) throw new Error(`Unknown pair-selection rule: ${String(ruleOrKey)}`);
-    validateRuleFeatureRequirements(archive, rule);
+    validateRuleFeatureRequirements(archive, rule, activeFeatures);
     const horizonBars = resolvePairSelectionHorizon(archive, requestedHorizonBars);
     const rawParams = suppliedParams === undefined ? rule.defaultParams : { ...suppliedParams };
     const params = rule.normalizeParams ? rule.normalizeParams(rawParams) : rawParams;
@@ -659,7 +681,7 @@ export function tallyPairSelectionRule(
         diagnostics.gateMs += nowMs() - gateStartedAt;
         if (finiteReturns.length !== returns.length) continue;
         const scoreStartedAt = nowMs();
-        const indexedPick = pickPairSelectionRuleIndexed(event, rule, params);
+        const indexedPick = pickPairSelectionRuleIndexed(event, rule, params, activeFeatures);
         if (indexedPick === null) {
             diagnostics.unscoredEvents += 1;
             continue;

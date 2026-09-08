@@ -10,6 +10,10 @@ export const pair_drawdown_recovery_target: PairSelectionRule = {
     description: "Targets a chosen prior cumulative pair-equity drawdown percentage.",
     defaultParams: { targetDrawdownPct: 10 },
     paramLabels: { targetDrawdownPct: "Target drawdown (%)" },
+    metadata: {
+        featureRequirements: { libraryRelease: "v1", columns: ["feat_pairDrawdownPctPrior"] },
+        sourceFiles: ["lib/pair-selection/pair_drawdown_recovery_target.ts"],
+    },
     score: (candidate, _event, params) => {
         const drawdown = (candidate as CandidateWithDrawdown).feat_pairDrawdownPctPrior ?? null;
         if (drawdown === null || !Number.isFinite(drawdown)) return Number.NEGATIVE_INFINITY;

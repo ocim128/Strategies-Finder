@@ -10,6 +10,10 @@ export const inter_fire_cadence_regularity: PairSelectionRule = {
     description: "Prefers pairs with lower prior inter-fire interval variability.",
     defaultParams: {},
     paramLabels: {},
+    metadata: {
+        featureRequirements: { libraryRelease: "v1", columns: ["feat_pairInterFireIntervalCvPrior"] },
+        sourceFiles: ["lib/pair-selection/inter_fire_cadence_regularity.ts"],
+    },
     score: (candidate) => {
         const intervalCv = (candidate as CandidateWithIntervalCv).feat_pairInterFireIntervalCvPrior ?? null;
         if (intervalCv === null || !Number.isFinite(intervalCv)) return Number.NEGATIVE_INFINITY;

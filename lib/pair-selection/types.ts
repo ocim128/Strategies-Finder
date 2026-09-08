@@ -22,6 +22,7 @@ export interface PairCandidate {
     feat_pairSpreadVolatility20: number | null;
     feat_legVolatilityRatio20: number | null;
     feat_candidatesAtTime: number | null;
+    [feature: `feat_fp_${string}`]: number | null;
 }
 
 export interface PairEventContext {
@@ -44,6 +45,8 @@ export interface PairSelectionRuleMetadata {
     usesRankFeatures?: boolean;
     /** Optional derived-feature columns required by a future rule. */
     featureRequirements?: PairFeatureRequirement;
+    /** Source modules, including imported scoring helpers, for check receipts. */
+    sourceFiles?: readonly string[];
 }
 
 export type PairSelectionTieBreak = (

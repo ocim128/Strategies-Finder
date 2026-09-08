@@ -2,7 +2,7 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import { pairSelectionRuleRegistry } from "../lib/pair-selection/registry";
 import { pickPairSelectionRule, type PairSelectionEvent } from "../lib/pair-selection/tally";
-import type { PairCandidate } from "../lib/pair-selection/types";
+import type { PairCandidate, PairSelectionRule } from "../lib/pair-selection/types";
 
 const baseCandidate = {
     pair: "",
@@ -83,6 +83,19 @@ const event: PairSelectionEvent = {
     candidates: pool,
 };
 
+const featureMetadataFixture: PairSelectionRule = {
+    key: "fixture_feature_metadata",
+    name: "FIXTURE_FEATURE_METADATA",
+    description: "A test-only rule carrying a catalog requirement.",
+    defaultParams: {},
+    paramLabels: {},
+    metadata: {
+        featureRequirements: { libraryRelease: "v1", columns: ["feat_fp_spread_zscore_b12_r1"] },
+        sourceFiles: ["tests/pair-selection-registry.spec.ts"],
+    },
+    score: (candidate) => candidate.feat_fp_spread_zscore_b12_r1 ?? Number.NEGATIVE_INFINITY,
+};
+
 describe("pair-selection registry contract", () => {
     it("keeps rule keys unique and parameter metadata aligned", () => {
         const rules = [...pairSelectionRuleRegistry.values()];
@@ -116,5 +129,12 @@ describe("pair-selection registry contract", () => {
             expect(pickPairSelectionRule(event, rule, rule.defaultParams))
                 .to.deep.equal(pickPairSelectionRule(event, rule, rule.defaultParams));
         }
+    });
+
+    it("keeps feature requirements on test rules explicit", () => {
+        expect(featureMetadataFixture.metadata?.featureRequirements).to.deep.equal({
+            libraryRelease: "v1",
+            columns: ["feat_fp_spread_zscore_b12_r1"],
+        });
     });
 });

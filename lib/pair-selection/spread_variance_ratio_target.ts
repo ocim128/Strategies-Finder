@@ -10,6 +10,10 @@ export const spread_variance_ratio_target: PairSelectionRule = {
     description: "Targets a chosen variance ratio of prior spread returns.",
     defaultParams: { targetVarianceRatio: 0.7 },
     paramLabels: { targetVarianceRatio: "Target variance ratio" },
+    metadata: {
+        featureRequirements: { libraryRelease: "v1", columns: ["feat_spreadVarianceRatio5"] },
+        sourceFiles: ["lib/pair-selection/spread_variance_ratio_target.ts"],
+    },
     score: (candidate, _event, params) => {
         const varianceRatio = (candidate as CandidateWithVarianceRatio).feat_spreadVarianceRatio5 ?? null;
         if (varianceRatio === null || !Number.isFinite(varianceRatio)) return Number.NEGATIVE_INFINITY;
