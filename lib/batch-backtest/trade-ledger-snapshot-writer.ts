@@ -425,10 +425,10 @@ export class TradeLedgerSnapshotWriter {
         // async zlib encoder uses Node's worker pool, so source snapshots
         // no longer serialize four compression jobs on the event loop.
         const [barsFile, tradesFile, entriesFile, warmupFile] = await Promise.all([
-            this.writeJsonl(`${prefix}/bars.jsonl.gz`, bars, pairDirectory),
-            this.writeJsonl(`${prefix}/trades.jsonl.gz`, trades, pairDirectory),
-            this.writeJsonl(`${prefix}/entries.jsonl.gz`, entries, pairDirectory),
-            this.writeJsonl(`${prefix}/entries-warmup.jsonl.gz`, warmupEntries, pairDirectory),
+            this.writeJsonl(`${prefix}/bars.jsonl.gz`, bars, pairDirectory, true),
+            this.writeJsonl(`${prefix}/trades.jsonl.gz`, trades, pairDirectory, false),
+            this.writeJsonl(`${prefix}/entries.jsonl.gz`, entries, pairDirectory, true),
+            this.writeJsonl(`${prefix}/entries-warmup.jsonl.gz`, warmupEntries, pairDirectory, true),
         ]);
         this.pairs.push({
             ...source.identity,
@@ -549,8 +549,12 @@ export class TradeLedgerSnapshotWriter {
         relativePath: string,
         records: readonly unknown[],
         preparedParent: string,
+        flatTuples: boolean,
     ): Promise<PairFeatureSnapshotArtifact> {
-        const encoded = await encodeCanonicalJsonlAsync(records, { gzipLevel: SOURCE_SNAPSHOT_GZIP_LEVEL });
+        const encoded = await encodeCanonicalJsonlAsync(records, {
+            gzipLevel: SOURCE_SNAPSHOT_GZIP_LEVEL,
+            flatTuples,
+        });
         const separator = relativePath.lastIndexOf("/");
         const filename = relativePath.slice(separator + 1);
         await writeArtifactAtomically(join(preparedParent, filename), encoded.compressed);

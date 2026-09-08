@@ -26,6 +26,8 @@ export interface EncodedCanonicalJsonl {
 export interface CanonicalJsonlEncodeOptions {
     /** zlib compression level; defaults to the established level 6. */
     gzipLevel?: number;
+    /** Caller guarantees every record is a validated flat scalar tuple. */
+    flatTuples?: boolean;
 }
 
 export interface FileHash {
@@ -101,6 +103,15 @@ function isFlatCanonicalTuple(value: unknown): value is readonly unknown[] {
     return true;
 }
 
+function canonicalFlatJsonl(records: readonly unknown[]): Buffer {
+    if (records.length === 0) return Buffer.alloc(0);
+    const lines = new Array<string>(records.length);
+    for (let index = 0; index < records.length; index += 1) {
+        lines[index] = `${JSON.stringify(records[index])}\n`;
+    }
+    return Buffer.from(lines.join(""), "utf8");
+}
+
 function sha256(data: Buffer): string {
     return createHash("sha256").update(data).digest("hex");
 }
@@ -133,7 +144,7 @@ export async function encodeCanonicalJsonlAsync(
     records: readonly unknown[],
     options: CanonicalJsonlEncodeOptions = {},
 ): Promise<EncodedCanonicalJsonl> {
-    const uncompressed = canonicalJsonl(records);
+    const uncompressed = options.flatTuples ? canonicalFlatJsonl(records) : canonicalJsonl(records);
     const compressed = await gzipAsync(uncompressed, { level: options.gzipLevel ?? 6 });
     return {
         compressed,
