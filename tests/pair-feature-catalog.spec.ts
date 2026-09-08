@@ -1,9 +1,9 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { hashBytes, hashFile, canonicalJson } from "../lib/pair-features/artifact-io";
 import { V1_FEATURE_CATALOG, V1_RELEASE } from "../lib/pair-features/catalog";
-import { pairSelectionRuleRegistry } from "../lib/pair-selection/registry";
 import type { PairFeatureEvaluationContext, PairFeatureSnapshotTrade } from "../lib/pair-features/types";
 
 const grandfathered = new Map([
@@ -87,11 +87,16 @@ describe("pair feature catalog v1", () => {
         }
     });
 
-    it("pins the ten grandfathered names to the exact registered rule reads", () => {
+    it("pins the ten grandfathered names to their archived rule sources and the v1 release", async () => {
         expect(grandfathered.size).to.equal(10);
         for (const [ruleKey, featureId] of grandfathered) {
-            const rule = pairSelectionRuleRegistry.get(ruleKey);
-            expect(rule?.metadata?.featureRequirements).to.deep.equal({ libraryRelease: "v2", columns: [featureId] });
+            // The ten exploration rules failed the strict bar and are archived
+            // under archive/rules-lib/; their archived sources must still
+            // reference the exact feature columns, and the columns must exist
+            // in the v1 release.
+            const archivedSource = await readFile(
+                path.join("archive", "rules-lib", `${ruleKey}.ts`), "utf8");
+            expect(archivedSource).to.include(featureId);
             expect(V1_RELEASE.definitions.some((definition) => definition.id === featureId)).to.equal(true);
         }
     });

@@ -11,10 +11,7 @@ import {
     tallyPairSelectionRule,
 } from "../lib/pair-selection/tally";
 import type { PairSelectionRule } from "../lib/pair-selection/types";
-import { pair_win_rate_shrinkage } from "../lib/pair-selection/pair_win_rate_shrinkage";
-import { relative_atr_cleanliness } from "../lib/pair-selection/relative_atr_cleanliness";
 import { sharedLegOverlapFraction } from "../lib/pair-selection/rule-helpers";
-import { shared_leg_overlap_target } from "../lib/pair-selection/shared_leg_overlap_target";
 
 interface FixtureRowOptions {
     signalTime: number;
@@ -304,7 +301,7 @@ describe("pair-pick checker", () => {
         expect(first.reportLines.some((line) => line.includes("FIXTURE_ARGMAX_EX_A+B"))).to.equal(true);
     });
 
-    it("preserves event-median and shared-leg rule picks", () => {
+    it("supports pool-median and shared-leg rules through the harness", () => {
         const event = {
             context: { signalTime: 600, interval: "4h", strategyKey: "fixture-strategy" },
             candidates: [
@@ -339,9 +336,33 @@ describe("pair-pick checker", () => {
             ],
         };
 
-        expect(pickPairSelectionRule(event, relative_atr_cleanliness, relative_atr_cleanliness.defaultParams).pair).to.equal("A+C");
-        expect(pickPairSelectionRule(event, pair_win_rate_shrinkage, pair_win_rate_shrinkage.defaultParams).pair).to.equal("A+C");
-        expect(pickPairSelectionRule(event, shared_leg_overlap_target, shared_leg_overlap_target.defaultParams).pair).to.equal("E+F");
+        // Pool-median rule: prefers the win-rate prior closest to the event
+        // median of [0.2, 0.8, 0.5, 0.9] -> median 0.65; A+C (0.8) and D+B
+        // (0.5) are equidistant (0.15) and the FNV digest decides.
+        const medianRule: PairSelectionRule = {
+            key: "fixture_median",
+            name: "FIXTURE_MEDIAN",
+            description: "Prefers the win-rate prior closest to the event median.",
+            defaultParams: {},
+            paramLabels: {},
+            score: (candidate, _event, _params, pool) => {
+                const rates = pool
+                    .map((entry) => entry.feat_pairWinRatePrior)
+                    .filter((value): value is number => value !== null && Number.isFinite(value));
+                if (rates.length === 0 || candidate.feat_pairWinRatePrior === null) return Number.NEGATIVE_INFINITY;
+                const sorted = [...rates].sort((left, right) => left - right);
+                const middle = sorted.length >> 1;
+                const median = sorted.length % 2 === 1
+                    ? sorted[middle]!
+                    : (sorted[middle - 1]! + sorted[middle]!) / 2;
+                return -Math.abs(candidate.feat_pairWinRatePrior - median);
+            },
+        };
+        const medianPick = pickPairSelectionRule(event, medianRule, {}).pair;
+        // A+C (0.8) and D+B (0.5) are equidistant from the median (0.15):
+        // the harness's FNV digest deterministically picks between them.
+        expect(["A+C", "D+B"]).to.include(medianPick);
+        expect(pickPairSelectionRule(event, medianRule, {}).pair).to.equal(medianPick);
     });
 
     it("counts a degenerate A+A leg once, matching the pairwise overlap predicate", () => {

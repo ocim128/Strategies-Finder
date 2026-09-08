@@ -196,7 +196,7 @@ describe("selection-rules server plugin", () => {
             await routes.get("/api/selection-rules/run")!(makeRequest("POST", "/api/selection-rules/run", {
                 runId: "stream-test",
                 folderPath: "fixture-folder",
-                ruleKeys: ["hedge_volatility_balance", "reference_alphabetical", "directional_close_location"],
+                ruleKeys: ["reference_alphabetical", "reference_loudest_atr"],
                 horizonBars: 24,
             }), response);
             const events: SelectionRulesStreamEvent[] = response.body.trim().split("\n").map((line: string) => JSON.parse(line) as SelectionRulesStreamEvent);
@@ -215,7 +215,7 @@ describe("selection-rules server plugin", () => {
                 expect(done.diagnosticsLines.some((line) => line.startsWith("rule=reference_alphabetical "))).to.equal(true);
             }
             const rows = events.filter((event): event is Extract<SelectionRulesStreamEvent, { type: "rule_result" }> => event.type === "rule_result");
-            expect(rows.map((event) => event.result.ruleKey)).to.deep.equal(["reference_alphabetical", "directional_close_location", "hedge_volatility_balance"]);
+            expect(rows.map((event) => event.result.ruleKey)).to.deep.equal(["reference_alphabetical", "reference_loudest_atr"]);
             expect(rows[0]?.result.n).to.equal(2);
             expect(rows[0]?.result.referenceLoudestAtrDeltaMeanPp).to.be.closeTo(-10, 1e-12);
             expect(rows[0]?.result.dominantBaseLeg).to.equal("AAA");
@@ -225,7 +225,7 @@ describe("selection-rules server plugin", () => {
             await routes.get("/api/selection-rules/status")!(makeRequest("GET", "/api/selection-rules/status?runId=stream-test"), statusResponse);
             const status = JSON.parse(statusResponse.body);
             expect(status.lastRun.phase).to.equal("done");
-            expect(status.lastRun.results).to.have.length(3);
+            expect(status.lastRun.results).to.have.length(2);
             expect(status.lastRun.diagnosticsLines).to.deep.equal(done?.type === "done" ? done.diagnosticsLines : []);
         } finally {
             await rm(root, { recursive: true, force: true });
