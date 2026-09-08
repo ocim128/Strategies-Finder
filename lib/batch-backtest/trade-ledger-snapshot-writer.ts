@@ -98,10 +98,8 @@ function runtimeFingerprint(): PairFeatureSnapshotRuntimeFingerprint {
 
 function buildBars(source: PairFeatureSnapshotSource["bars"]): {
     records: PairFeatureSnapshotBar[];
-    barIndexByTime: Map<number, number>;
 } {
     const records: PairFeatureSnapshotBar[] = [];
-    const barIndexByTime = new Map<number, number>();
     let previousTime = -Infinity;
     for (const [index, bar] of source.entries()) {
         const timeSec = parseTimeToUnixSeconds(bar.time);
@@ -110,7 +108,6 @@ function buildBars(source: PairFeatureSnapshotSource["bars"]): {
             throw new Error(`Source snapshot bars must have strictly increasing unique times (bar ${index}).`);
         }
         previousTime = timeSec;
-        barIndexByTime.set(timeSec, index);
         records.push([
             timeSec,
             requireFinite(bar.open, `bar ${index} open`),
@@ -120,10 +117,23 @@ function buildBars(source: PairFeatureSnapshotSource["bars"]): {
             requireFinite(bar.volume, `bar ${index} volume`),
         ]);
     }
-    return { records, barIndexByTime };
+    return { records };
 }
 
-function buildTrades(source: PairFeatureSnapshotSource["trades"], barIndexByTime: Map<number, number>): PairFeatureSnapshotTrade[] {
+function findBarIndexByTime(bars: readonly PairFeatureSnapshotBar[], timeSec: number): number | undefined {
+    let low = 0;
+    let high = bars.length - 1;
+    while (low <= high) {
+        const middle = low + ((high - low) >> 1);
+        const middleTime = bars[middle]![0];
+        if (middleTime === timeSec) return middle;
+        if (middleTime < timeSec) low = middle + 1;
+        else high = middle - 1;
+    }
+    return undefined;
+}
+
+function buildTrades(source: PairFeatureSnapshotSource["trades"], bars: readonly PairFeatureSnapshotBar[]): PairFeatureSnapshotTrade[] {
     return source.map((trade, tradeOrdinal) => {
         if (trade.type !== "long" && trade.type !== "short") {
             throw new Error(`Source snapshot trade ${tradeOrdinal} has an invalid direction.`);
@@ -133,8 +143,8 @@ function buildTrades(source: PairFeatureSnapshotSource["trades"], barIndexByTime
         if (entryTimeSec === null || exitTimeSec === null) {
             throw new Error(`Source snapshot trade ${tradeOrdinal} has an invalid time.`);
         }
-        const entryBarIndex = barIndexByTime.get(entryTimeSec);
-        const exitBarIndex = barIndexByTime.get(exitTimeSec);
+        const entryBarIndex = findBarIndexByTime(bars, entryTimeSec);
+        const exitBarIndex = findBarIndexByTime(bars, exitTimeSec);
         if (entryBarIndex === undefined || exitBarIndex === undefined) {
             throw new Error(`Source snapshot trade ${tradeOrdinal} time does not map to a captured bar.`);
         }
@@ -166,8 +176,8 @@ function buildTrades(source: PairFeatureSnapshotSource["trades"], barIndexByTime
 function buildEntries(
     source: PairFeatureSnapshotSource["entries"],
     bars: readonly PairFeatureSnapshotBar[],
-): PairFeatureSnapshotEntry[] {
-    return source.map((entry, index) => {
+): readonly PairFeatureSnapshotEntry[] {
+    for (const [index, entry] of source.entries()) {
         const rowOrdinal = requireInteger(entry[0], `entry ${index} rowOrdinal`);
         const signalBarIndex = requireInteger(entry[1], `entry ${index} signalBarIndex`);
         if (rowOrdinal < 0 || signalBarIndex < 0 || signalBarIndex >= bars.length) {
@@ -180,16 +190,16 @@ function buildEntries(
         if (bars[signalBarIndex]![0] !== signalTimeSec) {
             throw new Error(`Source snapshot entry ${index} time does not match its signal bar.`);
         }
-        return [rowOrdinal, signalBarIndex, entry[2], signalTimeSec];
-    });
+    }
+    return source;
 }
 
 function buildWarmupEntries(
     source: readonly PairFeatureSnapshotWarmupEntry[],
     bars: readonly PairFeatureSnapshotBar[],
-): PairFeatureSnapshotWarmupEntry[] {
+): readonly PairFeatureSnapshotWarmupEntry[] {
     let previousSignalBarIndex = -1;
-    return source.map((entry, index) => {
+    for (const [index, entry] of source.entries()) {
         const signalBarIndex = requireInteger(entry[0], `warmup entry ${index} signalBarIndex`);
         if (signalBarIndex < 0 || signalBarIndex >= bars.length || signalBarIndex < previousSignalBarIndex) {
             throw new Error(`Source snapshot warmup entry ${index} has an invalid or non-monotonic bar index.`);
@@ -202,8 +212,8 @@ function buildWarmupEntries(
         if (bars[signalBarIndex]![0] !== signalTimeSec) {
             throw new Error(`Source snapshot warmup entry ${index} time does not match its signal bar.`);
         }
-        return [signalBarIndex, entry[1], signalTimeSec];
-    });
+    }
+    return source;
 }
 
 function artifactMetadata(
@@ -394,8 +404,8 @@ export class TradeLedgerSnapshotWriter {
         const rowStart = requireInteger(source.rowStart, "pair rowStart");
         if (rowStart < 0) throw new Error("Source snapshot pair rowStart must not be negative.");
 
-        const { records: bars, barIndexByTime } = buildBars(source.bars);
-        const trades = buildTrades(source.trades, barIndexByTime);
+        const { records: bars } = buildBars(source.bars);
+        const trades = buildTrades(source.trades, bars);
         const entries = buildEntries(source.entries, bars);
         const warmupEntries = buildWarmupEntries(source.warmupEntries ?? [], bars);
         const expectedRowOrdinal = rowStart;
