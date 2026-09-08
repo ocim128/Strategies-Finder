@@ -22,6 +22,20 @@
 
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
+
+/** Timing breakdown emitted with a server-side Batch completion event. */
+export interface BatchBacktestPerformance {
+    datasetWaitMs: number;
+    executeMs: number;
+    resultProjectionMs: number;
+    completionCallbackMs: number;
+    artifactPersistenceMs?: number;
+    ledgerFeatureMs?: number;
+    ledgerAsIfMs?: number;
+    ledgerRowsMs?: number;
+    ledgerAppendMs?: number;
+    ledgerFinalizeMs?: number;
+}
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import type { BatchRunPairListProvenanceMeta, BatchUniverseCounts } from "./batch-run-contract";
 import type { MaxActiveResearchRegistrationV1 } from "./max-active-research-contract";
@@ -129,12 +143,7 @@ export type BatchStreamEvent =
         fingerprint: string | null;
         /** Server-side loader cache counters captured at run completion. */
         cacheStats?: BatchDatasetCacheStats;
-        performance?: {
-            datasetWaitMs: number;
-            executeMs: number;
-            resultProjectionMs: number;
-            completionCallbackMs: number;
-        };
+        performance?: BatchBacktestPerformance;
         /** Browser-generated run id (audit Finding 5). Optional for backward
          *  compat with stale browser bundles that predate the runId contract;
          *  the server still scopes Stop by runId once the browser sends one. */

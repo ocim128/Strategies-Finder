@@ -14,6 +14,7 @@
  */
 
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
+import type { BatchBacktestPerformance } from "./batch-backtest-stream-types";
 
 export const BATCH_BENCHMARK_SCHEMA = "batch.benchmark.v2" as const;
 
@@ -33,12 +34,8 @@ export interface BatchBenchmarkCacheStats {
 
 export type BatchBenchmarkCacheSource = "server_stream" | "unavailable";
 
-export interface BatchBenchmarkRunPhase {
+export interface BatchBenchmarkRunPhase extends Partial<BatchBacktestPerformance> {
     totalMs: number;
-    datasetWaitMs?: number;
-    executeMs?: number;
-    resultProjectionMs?: number;
-    completionCallbackMs?: number;
     loaded: number;
     failed: number;
     synthetic: number;
@@ -175,6 +172,26 @@ export function buildBatchBenchmarkBottlenecks(
             notes.push(`${dominant.label} dominates at ${dominant.ms.toFixed(0)} ms (${(dominant.ms / run.totalMs * 100).toFixed(1)}%)`);
         } else {
             notes.push(`run phase ${run.totalMs.toFixed(0)} ms`);
+        }
+
+        // Keep the aggregate callback timing above for continuity, then add
+        // the largest ledger subphase when SAVE TRADE LEDGER was enabled.
+        const ledgerParts = [
+            ["artifact persistence", run.artifactPersistenceMs],
+            ["ledger feature preparation", run.ledgerFeatureMs],
+            ["ledger as-if calculation", run.ledgerAsIfMs],
+            ["ledger row construction", run.ledgerRowsMs],
+            ["ledger append", run.ledgerAppendMs],
+            ["ledger finalization", run.ledgerFinalizeMs],
+        ] as const;
+        let dominantLedger: { label: string; ms: number } | null = null;
+        for (const [label, ms] of ledgerParts) {
+            if (typeof ms === "number" && ms > 0 && (!dominantLedger || ms > dominantLedger.ms)) {
+                dominantLedger = { label, ms };
+            }
+        }
+        if (dominantLedger && dominantLedger.ms / run.totalMs >= 0.2) {
+            notes.push(`${dominantLedger.label} accounts for ${dominantLedger.ms.toFixed(0)} ms (${(dominantLedger.ms / run.totalMs * 100).toFixed(1)}%)`);
         }
     }
 

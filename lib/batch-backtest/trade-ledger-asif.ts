@@ -344,6 +344,38 @@ export function resolveAsIfOutcome(
     // Per-bar order mirrors the engine loop: open-only exits → signal exits →
     // full exits → state update. Signal exits honor the same-bar gate
     // (`allowSameBarExit || exit bar after the entry bar`).
+    // With no position-dependent exit rule, the per-bar loop cannot change
+    // the position or produce a trigger. The first eligible shifted signal
+    // event is therefore the same result as the full loop; skipping the walk
+    // is significant for pairs with thousands of bars and hundreds of entries.
+    const hasPositionExitRule = position.stopLossPrice !== null
+        || position.takeProfitPrice !== null
+        || position.partialTargetPrice !== null
+        || model.config.pathExitEnabled === true
+        || (model.config.riskMaxHoldEnabled === true && model.config.riskMaxHoldBars > 0)
+        || model.config.timeStopBars > 0
+        || model.config.breakEvenAtR > 0
+        || model.config.trailingAtr > 0
+        || model.config.breakEvenPercent > 0;
+    if (!hasPositionExitRule) {
+        while (
+            eventIdx < model.exitEvents.length
+            && model.exitEvents[eventIdx]!.barIndex === fillBarIndex
+            && !model.allowSameBarExit
+        ) {
+            eventIdx += 1;
+        }
+        const event = model.exitEvents[eventIdx];
+        if (event && event.barIndex >= fillBarIndex && event.barIndex < data.length) {
+            return {
+                outcome: closeTrade(applySlippage(event.price, exitSide, model.slippageRate), event.barIndex, "signal"),
+                rightCensored: false,
+            };
+        }
+        const lastBar = data.length - 1;
+        return { outcome: closeTrade(data[lastBar]!.close, lastBar, "end_of_data"), rightCensored: false };
+    }
+
     for (let bar = fillBarIndex; bar < data.length; bar += 1) {
         const candle = data[bar]!;
         const openedThisBar = bar === fillBarIndex;

@@ -73,4 +73,35 @@ describe("batch benchmark bottlenecks", () => {
         // they are present.
         expect(BATCH_BENCHMARK_SCHEMA).to.equal("batch.benchmark.v2");
     });
+
+    it("surfaces the largest trade-ledger subphase when ledger timings are present", () => {
+        const phases: BatchBenchmarkSnapshot["phases"] = {
+            run: {
+                totalMs: 10_000,
+                datasetWaitMs: 100,
+                executeMs: 100,
+                resultProjectionMs: 100,
+                completionCallbackMs: 8_000,
+                artifactPersistenceMs: 400,
+                ledgerFeatureMs: 500,
+                ledgerAsIfMs: 5_000,
+                ledgerRowsMs: 1_000,
+                ledgerAppendMs: 300,
+                ledgerFinalizeMs: 200,
+                loaded: 10,
+                failed: 0,
+                synthetic: 10,
+                real: 0,
+                avgMsPerLoaded: 1_000,
+                attempted: 10,
+                completed: 10,
+                cancelled: 0,
+                skipped: 0,
+                outcome: "done",
+            },
+        };
+
+        const notes = buildBatchBenchmarkBottlenecks(phases, emptyCache(), "server_stream");
+        expect(notes).to.include("ledger as-if calculation accounts for 5000 ms (50.0%)");
+    });
 });

@@ -66,7 +66,7 @@ import {
     type BatchBenchmarkSnapshot,
 } from "./batch-benchmark-snapshot";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
-import type { BatchStatusResponse, BatchStreamEvent } from "./batch-backtest-stream-types";
+import type { BatchBacktestPerformance, BatchStatusResponse, BatchStreamEvent } from "./batch-backtest-stream-types";
 import type { LedgerSweepCatalogResponse } from "./trade-ledger-sweep-stream-types";
 import type { TopMeanCurrentSnapshot, TopMeanStreamEvent } from "./sp500-top-mean-stream-types";
 import type { CoverageCounts } from "./sp500-pair-enumerator";
@@ -422,12 +422,7 @@ export class BatchBacktestService {
     private lastBenchmark: BatchBenchmarkSnapshot | null = null;
     private pendingServerRunCacheStats: BatchBenchmarkCacheStats | null = null;
     private pendingServerRunCounts: { attempted: number; cancelled: number; failed: number } | null = null;
-    private pendingServerRunPerformance: {
-        datasetWaitMs: number;
-        executeMs: number;
-        resultProjectionMs: number;
-        completionCallbackMs: number;
-    } | null = null;
+    private pendingServerRunPerformance: BatchBacktestPerformance | null = null;
     private tradeGateCatalog: LedgerSweepCatalogResponse | null = null;
     private persistedTradeGateOptions = readPersistedTradeGateOptions();
 

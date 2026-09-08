@@ -1419,6 +1419,14 @@ export async function processRunBatch(
     // artifact: created per run, written inside the awaited onSymbolComplete
     // path (audit F2 shape), and never allowed to fail the run.
     const tradeLedgerRequested = input.tradeLedger?.enabled === true;
+    const ledgerTimings = {
+        artifactPersistenceMs: 0,
+        ledgerFeatureMs: 0,
+        ledgerAsIfMs: 0,
+        ledgerRowsMs: 0,
+        ledgerAppendMs: 0,
+        ledgerFinalizeMs: 0,
+    };
     const ledgerRunContext = tradeLedgerRequested
         ? resolveTradeLedgerRunContext({
             ...input,
@@ -1539,18 +1547,23 @@ export async function processRunBatch(
                 // that each retain a full multi-MB row. R-F1: pass THIS run's
                 // captured store so a stale writer can't contaminate a newer
                 // generation after Stop + new Run detached it.
+                const artifactStartedAt = performance.now();
                 await storeMineArtifact(index, result, store);
+                ledgerTimings.artifactPersistenceMs += performance.now() - artifactStartedAt;
                 if (store.isDetached()) return;
                 // Trade-ledger appends ride the same awaited completion path
                 // (incremental, one write per pair) and only read the row.
                 // The as-if model is per-pair streaming data — built here and
                 // dropped when the callback returns, never accumulated.
                 if (ledger && completionContext?.signals && result.data && ledgerRunContext) {
+                    const featureStartedAt = performance.now();
                     const featureSeries = buildTradeLedgerFeatureSeries(
                         result.data,
                         completionContext.baseCloses,
                         completionContext.quoteCloses,
                     );
+                    ledgerTimings.ledgerFeatureMs += performance.now() - featureStartedAt;
+                    const asIfStartedAt = performance.now();
                     const asIfModel = ledgerRunContext.eligibility.eligible
                         ? await buildAsIfPairModel({
                             data: result.data,
@@ -1560,6 +1573,8 @@ export async function processRunBatch(
                             featureSeries,
                         })
                         : null;
+                    ledgerTimings.ledgerAsIfMs += performance.now() - asIfStartedAt;
+                    const rowsStartedAt = performance.now();
                     const pairRows = buildTradeLedgerRowsForPair({
                         pair: result.symbol,
                         data: result.data,
@@ -1573,6 +1588,8 @@ export async function processRunBatch(
                         asIfModel,
                         featureSeries,
                     });
+                    ledgerTimings.ledgerRowsMs += performance.now() - rowsStartedAt;
+                    const appendStartedAt = performance.now();
                     await ledger.appendPairRows(pairRows, {
                         pair: result.symbol,
                         data: result.data,
@@ -1580,6 +1597,7 @@ export async function processRunBatch(
                         baseSymbol: completionContext.baseSymbol,
                         quoteSymbol: completionContext.quoteSymbol,
                     });
+                    ledgerTimings.ledgerAppendMs += performance.now() - appendStartedAt;
                 }
                 writer({ type: "symbol", index, total, row: scalarRow });
                 await new Promise<void>((resolve) => setImmediate(resolve));
@@ -1646,14 +1664,19 @@ export async function processRunBatch(
             ledgerRunDir = ledger.runDir;
             // W4 pair accounting: provenance.pairCount stays "submitted";
             // summary.json carries the full submitted/loaded/row-bearing split.
-            ledgerResult = await ledger.finalize({
-                cancelled,
-                finishedAtMs: Date.now(),
-                accounting: {
-                    submittedPairs: input.symbols.length,
-                    loadedPairs: output.loadedSymbols,
-                },
-            });
+            const finalizeStartedAt = performance.now();
+            try {
+                ledgerResult = await ledger.finalize({
+                    cancelled,
+                    finishedAtMs: Date.now(),
+                    accounting: {
+                        submittedPairs: input.symbols.length,
+                        loadedPairs: output.loadedSymbols,
+                    },
+                });
+            } finally {
+                ledgerTimings.ledgerFinalizeMs += performance.now() - finalizeStartedAt;
+            }
         }
         const artifactsAvailable = store.hasStored();
         const artifactStats = store.artifactStats();
@@ -1733,7 +1756,9 @@ export async function processRunBatch(
             serverHasArtifacts: artifactsAvailable,
             fingerprint,
             cacheStats,
-            performance: output.timings,
+            performance: tradeLedgerRequested
+                ? { ...output.timings, ...ledgerTimings }
+                : output.timings,
             runId,
             artifactStats,
             parsedCacheStats,

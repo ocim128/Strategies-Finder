@@ -70,7 +70,30 @@ export function canonicalJson(value: unknown): string {
 /** Serialize canonical JSONL with LF separators and a trailing LF. */
 export function canonicalJsonl(records: readonly unknown[]): Buffer {
     if (records.length === 0) return Buffer.alloc(0);
-    return Buffer.from(records.map((record) => `${canonicalJson(record)}\n`).join(""), "utf8");
+    const lines = new Array<string>(records.length);
+    for (let index = 0; index < records.length; index += 1) {
+        const record = records[index];
+        // Source snapshots use flat tuples for bars and entry bindings. Their
+        // elements have no object keys to sort, so JSON.stringify is already
+        // the canonical representation. Keep the recursive path for every
+        // other shape (including trade objects) to preserve exact bytes.
+        if (isFlatCanonicalTuple(record)) {
+            lines[index] = `${JSON.stringify(record)}\n`;
+        } else {
+            lines[index] = `${canonicalJson(record)}\n`;
+        }
+    }
+    return Buffer.from(lines.join(""), "utf8");
+}
+
+function isFlatCanonicalTuple(value: unknown): value is readonly unknown[] {
+    if (!Array.isArray(value)) return false;
+    for (const item of value) {
+        if (item === null || typeof item === "string" || typeof item === "boolean") continue;
+        if (typeof item === "number" && Number.isFinite(item) && !Object.is(item, -0)) continue;
+        return false;
+    }
+    return true;
 }
 
 function sha256(data: Buffer): string {
