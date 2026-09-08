@@ -18,6 +18,7 @@ import {
     type EncodedCanonicalJsonl,
     hashFile,
     hashBytes,
+    prepareArtifactDirectory,
     safeArtifactPath,
     writeArtifactAtomically,
 } from "../pair-features/artifact-io";
@@ -305,7 +306,10 @@ export interface TradeLedgerSnapshotWriterOptions {
  * drains those bounded captures before publishing the manifest.
  */
 export class TradeLedgerSnapshotWriter {
-    private static readonly MAX_IN_FLIGHT_CAPTURES = 2;
+    // Source snapshots average well below 1 MB compressed per pair in the
+    // server batch workload. Keep enough captures in flight to overlap the
+    // zlib pool and filesystem without allowing an unbounded artifact queue.
+    private static readonly MAX_IN_FLIGHT_CAPTURES = 8;
     private readonly runDir: string;
     private initialized = false;
     private initializationPromise: Promise<void> | null = null;
@@ -395,14 +399,19 @@ export class TradeLedgerSnapshotWriter {
         }
 
         const prefix = `${PAIRS_DIR}/${key}`;
+        // Validate and create the pair directory once. The four partition
+        // paths below are fixed names beneath this generated hash directory,
+        // so repeating the full safe-path walk for every file only adds
+        // synchronous filesystem overhead to the callback hot path.
+        const pairDirectory = await prepareArtifactDirectory(this.runDir, prefix);
         // Start all four independent partitions before awaiting them. The
         // async zlib encoder uses Node's worker pool, so source snapshots
         // no longer serialize four compression jobs on the event loop.
         const [barsFile, tradesFile, entriesFile, warmupFile] = await Promise.all([
-            this.writeJsonl(`${prefix}/bars.jsonl.gz`, bars),
-            this.writeJsonl(`${prefix}/trades.jsonl.gz`, trades),
-            this.writeJsonl(`${prefix}/entries.jsonl.gz`, entries),
-            this.writeJsonl(`${prefix}/entries-warmup.jsonl.gz`, warmupEntries),
+            this.writeJsonl(`${prefix}/bars.jsonl.gz`, bars, pairDirectory),
+            this.writeJsonl(`${prefix}/trades.jsonl.gz`, trades, pairDirectory),
+            this.writeJsonl(`${prefix}/entries.jsonl.gz`, entries, pairDirectory),
+            this.writeJsonl(`${prefix}/entries-warmup.jsonl.gz`, warmupEntries, pairDirectory),
         ]);
         this.pairs.push({
             ...source.identity,
@@ -519,13 +528,15 @@ export class TradeLedgerSnapshotWriter {
         this.initialized = true;
     }
 
-    private async writeJsonl(relativePath: string, records: readonly unknown[]): Promise<PairFeatureSnapshotArtifact> {
+    private async writeJsonl(
+        relativePath: string,
+        records: readonly unknown[],
+        preparedParent: string,
+    ): Promise<PairFeatureSnapshotArtifact> {
         const encoded = await encodeCanonicalJsonlAsync(records, { gzipLevel: SOURCE_SNAPSHOT_GZIP_LEVEL });
-        const parent = relativePath.slice(0, relativePath.lastIndexOf("/"));
-        await safeArtifactPath(this.runDir, parent);
-        await mkdir(join(this.runDir, parent), { recursive: true });
-        const target = await safeArtifactPath(this.runDir, relativePath);
-        await writeArtifactAtomically(target, encoded.compressed);
+        const separator = relativePath.lastIndexOf("/");
+        const filename = relativePath.slice(separator + 1);
+        await writeArtifactAtomically(join(preparedParent, filename), encoded.compressed);
         return artifactMetadata(relativePath, records.length, encoded);
     }
 
