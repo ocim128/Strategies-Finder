@@ -41,6 +41,10 @@ const SOURCE_SNAPSHOT_DIR = "source-snapshot";
 const PAIRS_DIR = `${SOURCE_SNAPSHOT_DIR}/pairs`;
 const MANIFEST_PATH = `${SOURCE_SNAPSHOT_DIR}/manifest.json`;
 const ERROR_PATH = `${SOURCE_SNAPSHOT_DIR}/error.json`;
+// Source snapshots are read back through gzip and do not require the tighter
+// ratio used by feature artifacts. Level 1 substantially lowers CPU time for
+// the multi-million-bar SAVE TRADE LEDGER workload while retaining compression.
+const SOURCE_SNAPSHOT_GZIP_LEVEL = 1;
 
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -516,7 +520,7 @@ export class TradeLedgerSnapshotWriter {
     }
 
     private async writeJsonl(relativePath: string, records: readonly unknown[]): Promise<PairFeatureSnapshotArtifact> {
-        const encoded = await encodeCanonicalJsonlAsync(records);
+        const encoded = await encodeCanonicalJsonlAsync(records, { gzipLevel: SOURCE_SNAPSHOT_GZIP_LEVEL });
         const parent = relativePath.slice(0, relativePath.lastIndexOf("/"));
         await safeArtifactPath(this.runDir, parent);
         await mkdir(join(this.runDir, parent), { recursive: true });

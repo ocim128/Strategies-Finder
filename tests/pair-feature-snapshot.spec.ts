@@ -167,8 +167,11 @@ describe("pair feature snapshot artifact I/O", () => {
         const first = encodeCanonicalJsonl(records);
         const second = encodeCanonicalJsonl(records);
         const asyncEncoded = await encodeCanonicalJsonlAsync(records);
+        const fastEncoded = await encodeCanonicalJsonlAsync(records, { gzipLevel: 1 });
         expect(first.compressed.equals(second.compressed)).to.equal(true);
         expect(first.compressed.equals(asyncEncoded.compressed)).to.equal(true);
+        expect(fastEncoded.uncompressed.equals(first.uncompressed)).to.equal(true);
+        expect(gunzipSync(fastEncoded.compressed).equals(first.uncompressed)).to.equal(true);
         expect(first.uncompressed.equals(second.uncompressed)).to.equal(true);
         expect(gunzipSync(first.compressed).toString("utf8")).to.equal(
             '{"a":2,"nested":{"alpha":"x","beta":1},"z":0}\n["keeps","array","order"]\n',

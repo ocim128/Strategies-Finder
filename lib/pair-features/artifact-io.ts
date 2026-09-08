@@ -23,6 +23,11 @@ export interface EncodedCanonicalJsonl {
     uncompressedSha256: string;
 }
 
+export interface CanonicalJsonlEncodeOptions {
+    /** zlib compression level; defaults to the established level 6. */
+    gzipLevel?: number;
+}
+
 export interface FileHash {
     sha256: string;
     bytes: number;
@@ -121,12 +126,15 @@ export function encodeCanonicalJsonl(records: readonly unknown[]): EncodedCanoni
  * Async twin for large JSONL snapshots. Canonical serialization stays
  * deterministic on the caller, while compression runs in Node's zlib worker
  * pool so independent snapshot partitions can be compressed concurrently.
+ * The default level remains 6; source-snapshot callers can choose a faster
+ * level when the format only requires a readable gzip stream.
  */
 export async function encodeCanonicalJsonlAsync(
     records: readonly unknown[],
+    options: CanonicalJsonlEncodeOptions = {},
 ): Promise<EncodedCanonicalJsonl> {
     const uncompressed = canonicalJsonl(records);
-    const compressed = await gzipAsync(uncompressed, { level: 6 });
+    const compressed = await gzipAsync(uncompressed, { level: options.gzipLevel ?? 6 });
     return {
         compressed,
         uncompressed,
