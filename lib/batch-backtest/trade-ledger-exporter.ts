@@ -36,7 +36,7 @@ import { parseTimeToUnixSeconds } from "../time-normalization";
 import {
     buildTradeLedgerFeatureSeries,
     buildTradeLedgerFeatureValues,
-    summarizePriorTrades,
+    type TradeLedgerFeatureSeries,
 } from "./trade-ledger-features";
 import {
     allowsSignalAsEntry,
@@ -150,6 +150,8 @@ export interface BuildTradeLedgerRowsArgs {
     quoteCloses?: readonly (number | null)[];
     /** Per-pair as-if model; null/undefined when the run is replay-ineligible. */
     asIfModel?: AsIfPairModel | null;
+    /** Optional prepared features shared with the as-if model for this pair. */
+    featureSeries?: TradeLedgerFeatureSeries;
 }
 
 export interface TradeLedgerPairRows {
@@ -198,12 +200,14 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
         baseCloses,
         quoteCloses,
         asIfModel,
+        featureSeries: preparedFeatureSeries,
     } = args;
     if (!signals || signals.length === 0 || !data || data.length === 0) {
         return { rows: [], duplicatesCollapsed: 0, rightCensored: 0 };
     }
 
-    const featureSeries = buildTradeLedgerFeatureSeries(data);
+    const featureSeries = preparedFeatureSeries
+        ?? buildTradeLedgerFeatureSeries(data, baseCloses, quoteCloses);
     const { barSecs } = featureSeries;
 
     // Trade lookup: (direction | fill time) bucket, matched by entry price
@@ -222,13 +226,18 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
         else tradeBuckets.set(key, [trade]);
     }
     const claimed = new Set<Trade>();
-    const executedSoFar: Trade[] = [];
-    const executedExitBars: number[] = [];
+    let executedTradeCount = 0;
+    let executedTradeWins = 0;
     // Unlimited overlap resolves to Infinity in the engine — preserve it; a
     // non-finite or non-positive cap means unlimited, never 1.
     const maxOpenTrades = Number.isFinite(context.maxOpenTrades) && context.maxOpenTrades > 0
         ? context.maxOpenTrades
         : Number.POSITIVE_INFINITY;
+    const priorTradeClassifier: PriorTradeClassifierState = {
+        pendingEntries: [],
+        activeExits: [],
+        maxExitBar: -1,
+    };
     const cooldownBars = Math.max(0, context.cooldownBars);
     const rows: TradeLedgerRow[] = [];
     let duplicatesCollapsed = 0;
@@ -266,6 +275,7 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
             }
             seenIdentity.add(identity);
         }
+        advancePriorTradeClassifier(priorTradeClassifier, signalSec, maxOpenTrades);
 
         const fillBarIndex = signalBarIndex === -1
             ? -1
@@ -285,7 +295,7 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
             context.slippageRate,
         );
 
-        const prior = summarizePriorTrades(executedSoFar);
+        const prior = { trades: executedTradeCount, wins: executedTradeWins };
         const row: TradeLedgerRow = {
             ledgerVersion: TRADE_LEDGER_VERSION,
             pair,
@@ -300,10 +310,7 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
             notExecutedReason: matched !== null
                 ? null
                 : classifyNotExecuted(
-                    executedExitBars,
-                    tradeSecs,
-                    executedSoFar,
-                    signalSec,
+                    priorTradeClassifier,
                     fillBarIndex,
                     hasFillBar,
                     maxOpenTrades,
@@ -335,11 +342,18 @@ export function buildTradeLedgerRowsForPair(args: BuildTradeLedgerRowsArgs): Tra
             ),
         };
         if (matched) {
-            executedSoFar.push(matched);
+            executedTradeCount += 1;
+            if (matched.pnlPercent > 0) executedTradeWins += 1;
+            const matchedSecs = tradeSecs.get(matched);
             // The cooldown/overlap reconstruction tracks the TRADE's exit bar,
             // not the signal's fill bar.
-            executedExitBars.push(resolveExitBarIndex(barSecs, tradeSecs.get(matched)?.exit ?? null));
-            const matchedSecs = tradeSecs.get(matched);
+            const exitBar = resolveExitBarIndex(barSecs, matchedSecs?.exit ?? null);
+            if (matchedSecs?.entry !== null && matchedSecs?.entry !== undefined && matchedSecs.exit !== null && matchedSecs.exit !== undefined) {
+                if (Number.isFinite(maxOpenTrades)) {
+                    pushPendingEntry(priorTradeClassifier.pendingEntries, { entry: matchedSecs.entry, exit: matchedSecs.exit });
+                }
+                priorTradeClassifier.maxExitBar = Math.max(priorTradeClassifier.maxExitBar, exitBar);
+            }
             // Executed rows carry the trade's ACTUAL fill (post-slippage).
             row.fillPrice = matched.entryPrice;
             row.exitTime = matchedSecs?.exit ?? undefined;
@@ -512,32 +526,112 @@ function matchTrade(
  * a silent drop; `no_fill_bar` for entries beyond the data end; everything
  * else (sizing rejections, confirmation, …) is `engine_skip`.
  */
-function classifyNotExecuted(
-    executedExitBars: readonly number[],
-    tradeSecs: Map<Trade, { entry: number | null; exit: number | null }>,
-    executedSoFar: readonly Trade[],
+interface PriorTradeInterval {
+    entry: number;
+    exit: number;
+}
+
+interface PriorTradeClassifierState {
+    /** Min-heap ordered by entry time for matched trades not yet time-visible. */
+    pendingEntries: PriorTradeInterval[];
+    /** Min-heap of exit times for intervals currently open at the signal time. */
+    activeExits: number[];
+    maxExitBar: number;
+}
+
+function advancePriorTradeClassifier(
+    state: PriorTradeClassifierState,
     signalSec: number,
+    maxOpenTrades: number,
+): void {
+    if (Number.isFinite(maxOpenTrades)) {
+        while (state.pendingEntries.length > 0 && state.pendingEntries[0]!.entry <= signalSec) {
+            const interval = popPendingEntry(state.pendingEntries)!;
+            if (interval.exit > signalSec) pushMinHeap(state.activeExits, interval.exit);
+        }
+        while (state.activeExits.length > 0 && state.activeExits[0]! <= signalSec) {
+            popMinHeap(state.activeExits);
+        }
+    }
+}
+
+function classifyNotExecuted(
+    state: PriorTradeClassifierState,
     fillBarIndex: number,
     hasFillBar: boolean,
     maxOpenTrades: number,
     cooldownBars: number,
 ): TradeLedgerNotExecutedReason {
     if (!hasFillBar) return "no_fill_bar";
-    let open = 0;
-    let lastExitBar = -1;
-    for (let i = 0; i < executedSoFar.length; i += 1) {
-        const trade = executedSoFar[i]!;
-        const secs = tradeSecs.get(trade);
-        if (!secs || secs.entry === null || secs.exit === null) continue;
-        if (secs.entry <= signalSec && secs.exit > signalSec) open += 1;
-        const exitBar = executedExitBars[i] ?? -1;
-        if (exitBar > lastExitBar) lastExitBar = exitBar;
-    }
-    if (open >= maxOpenTrades) return "position_open";
-    if (cooldownBars > 0 && lastExitBar >= 0 && lastExitBar + cooldownBars - 1 >= fillBarIndex) {
+    if (state.activeExits.length >= maxOpenTrades) return "position_open";
+    if (cooldownBars > 0 && state.maxExitBar >= 0 && state.maxExitBar + cooldownBars - 1 >= fillBarIndex) {
         return "cooldown";
     }
     return "match_missing";
+}
+
+function pushPendingEntry(heap: PriorTradeInterval[], value: PriorTradeInterval): void {
+    heap.push(value);
+    let index = heap.length - 1;
+    while (index > 0) {
+        const parent = (index - 1) >> 1;
+        if (heap[parent]!.entry <= heap[index]!.entry) break;
+        [heap[parent], heap[index]] = [heap[index]!, heap[parent]!];
+        index = parent;
+    }
+}
+
+function popPendingEntry(heap: PriorTradeInterval[]): PriorTradeInterval | undefined {
+    if (heap.length === 0) return undefined;
+    const first = heap[0]!;
+    const last = heap.pop()!;
+    if (heap.length > 0) {
+        heap[0] = last;
+        let index = 0;
+        while (true) {
+            const left = index * 2 + 1;
+            const right = left + 1;
+            let smallest = index;
+            if (left < heap.length && heap[left]!.entry < heap[smallest]!.entry) smallest = left;
+            if (right < heap.length && heap[right]!.entry < heap[smallest]!.entry) smallest = right;
+            if (smallest === index) break;
+            [heap[index], heap[smallest]] = [heap[smallest]!, heap[index]!];
+            index = smallest;
+        }
+    }
+    return first;
+}
+
+function pushMinHeap(heap: number[], value: number): void {
+    heap.push(value);
+    let index = heap.length - 1;
+    while (index > 0) {
+        const parent = (index - 1) >> 1;
+        if (heap[parent]! <= heap[index]!) break;
+        [heap[parent], heap[index]] = [heap[index]!, heap[parent]!];
+        index = parent;
+    }
+}
+
+function popMinHeap(heap: number[]): number | undefined {
+    if (heap.length === 0) return undefined;
+    const first = heap[0]!;
+    const last = heap.pop()!;
+    if (heap.length > 0) {
+        heap[0] = last;
+        let index = 0;
+        while (true) {
+            const left = index * 2 + 1;
+            const right = left + 1;
+            let smallest = index;
+            if (left < heap.length && heap[left]! < heap[smallest]!) smallest = left;
+            if (right < heap.length && heap[right]! < heap[smallest]!) smallest = right;
+            if (smallest === index) break;
+            [heap[index], heap[smallest]] = [heap[smallest]!, heap[index]!];
+            index = smallest;
+        }
+    }
+    return first;
 }
 
 // ============================================================================
@@ -732,7 +826,7 @@ export class TradeLedgerWriter {
                 pairs.add(row.pair);
             }
             if (source) {
-                await this.snapshotWriter.capturePair({
+                await this.snapshotWriter.enqueuePair({
                     identity: {
                         pair: source.pair,
                         baseSymbol: source.baseSymbol ?? rows[0]?.baseSymbol ?? "",

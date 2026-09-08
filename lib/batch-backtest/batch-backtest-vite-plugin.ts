@@ -50,7 +50,7 @@ import {
     type TradeLedgerWindow,
 } from "./trade-ledger-exporter";
 import { discoverLedgerSweepCatalog, resolveLedgerSweepFolder, resolveLedgerSweepRule } from "./trade-ledger-sweep-catalog";
-import { toTradeGateFeatureRow, tradeGateSignalKey, type TradeGateFeatureRow } from "./trade-ledger-features";
+import { buildTradeLedgerFeatureSeries, toTradeGateFeatureRow, tradeGateSignalKey, type TradeGateFeatureRow } from "./trade-ledger-features";
 import { createTradeGateStats, addTradeGateStats, type TradeGate, type TradeGatePairContext, type TradeGateProvenance, type TradeGateStats } from "./trade-gate";
 import { createTradeGateRuleLoaderRun, type TradeGateRuleLoaderRun } from "./trade-gate-rule-loader";
 import type { TradeGateRunOptions } from "./trade-gate-wire";
@@ -1546,12 +1546,18 @@ export async function processRunBatch(
                 // The as-if model is per-pair streaming data — built here and
                 // dropped when the callback returns, never accumulated.
                 if (ledger && completionContext?.signals && result.data && ledgerRunContext) {
+                    const featureSeries = buildTradeLedgerFeatureSeries(
+                        result.data,
+                        completionContext.baseCloses,
+                        completionContext.quoteCloses,
+                    );
                     const asIfModel = ledgerRunContext.eligibility.eligible
                         ? await buildAsIfPairModel({
                             data: result.data,
                             primarySignals: completionContext.signals,
                             resolvedSettings: ledgerRunContext.resolvedSettings,
                             eligibility: ledgerRunContext.eligibility,
+                            featureSeries,
                         })
                         : null;
                     const pairRows = buildTradeLedgerRowsForPair({
@@ -1565,6 +1571,7 @@ export async function processRunBatch(
                         baseCloses: completionContext.baseCloses,
                         quoteCloses: completionContext.quoteCloses,
                         asIfModel,
+                        featureSeries,
                     });
                     await ledger.appendPairRows(pairRows, {
                         pair: result.symbol,

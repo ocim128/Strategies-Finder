@@ -11,7 +11,10 @@ import { createReadStream } from "node:fs";
 import { lstat, link, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { join, resolve } from "node:path";
-import { gunzipSync, gzipSync } from "node:zlib";
+import { gunzipSync, gzip, gzipSync } from "node:zlib";
+import { promisify } from "node:util";
+
+const gzipAsync = promisify(gzip);
 
 export interface EncodedCanonicalJsonl {
     compressed: Buffer;
@@ -83,6 +86,24 @@ export function encodeCanonicalJsonl(records: readonly unknown[]): EncodedCanoni
     // current Node typings do not expose the historical mtime option, so the
     // fixed default header is used. No filename/comment options are supplied.
     const compressed = gzipSync(uncompressed, { level: 6 });
+    return {
+        compressed,
+        uncompressed,
+        compressedSha256: sha256(compressed),
+        uncompressedSha256: sha256(uncompressed),
+    };
+}
+
+/**
+ * Async twin for large JSONL snapshots. Canonical serialization stays
+ * deterministic on the caller, while compression runs in Node's zlib worker
+ * pool so independent snapshot partitions can be compressed concurrently.
+ */
+export async function encodeCanonicalJsonlAsync(
+    records: readonly unknown[],
+): Promise<EncodedCanonicalJsonl> {
+    const uncompressed = canonicalJsonl(records);
+    const compressed = await gzipAsync(uncompressed, { level: 6 });
     return {
         compressed,
         uncompressed,

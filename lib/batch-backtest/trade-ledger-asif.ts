@@ -56,7 +56,9 @@ import { resolveInitialExitLevels } from "../strategies/backtest/position-builde
 import { calculateTradeExitDetails } from "../strategies/backtest/position-stats";
 import { resolveExitStrategyOverrideSignals } from "../backtest-executor";
 import { mergeExitStrategySignals } from "../exit-strategy-merge";
+import type { TradeLedgerFeatureSeries } from "./trade-ledger-features";
 import type { CapitalSettings, IndicatorSeries, NormalizedSettings, PositionState } from "../types/backtest";
+import { TRADE_LEDGER_FEATURE_ATR_PERIOD } from "./trade-ledger-schema";
 import type {
     BacktestSettings,
     ExecutionModel,
@@ -200,21 +202,23 @@ export async function buildAsIfPairModel(input: {
     primarySignals: readonly Signal[];
     resolvedSettings: BacktestSettings;
     eligibility: ReturnType<typeof evaluateReplayEligibility>;
+    /** Optional series prepared by the ledger row builder for this pair. */
+    featureSeries?: Pick<TradeLedgerFeatureSeries, "highs" | "lows" | "closes" | "atr">;
 }): Promise<AsIfPairModel> {
-    const { data, primarySignals, resolvedSettings, eligibility } = input;
+    const { data, primarySignals, resolvedSettings, eligibility, featureSeries } = input;
     const config = resolvedSettings as unknown as NormalizedSettings;
     const params = eligibility.params;
     const shift = executionShift(params.executionModel);
 
-    const highs: number[] = new Array(data.length);
-    const lows: number[] = new Array(data.length);
-    const closes: number[] = new Array(data.length);
-    for (let i = 0; i < data.length; i += 1) {
-        highs[i] = data[i]!.high;
-        lows[i] = data[i]!.low;
-        closes[i] = data[i]!.close;
-    }
-    const atr = calculateATR(highs, lows, closes, params.atrPeriod);
+    const highs = featureSeries?.highs ?? data.map((bar) => bar.high);
+    const lows = featureSeries?.lows ?? data.map((bar) => bar.low);
+    const closes = featureSeries?.closes ?? data.map((bar) => bar.close);
+    // Ledger features intentionally use a fixed ATR period. Reuse that array
+    // only when the replay's configured period is the same; other settings
+    // retain the as-if engine's original ATR calculation.
+    const atr = featureSeries?.atr && params.atrPeriod === TRADE_LEDGER_FEATURE_ATR_PERIOD
+        ? featureSeries.atr
+        : calculateATR(highs, lows, closes, params.atrPeriod);
 
     const exitEvents: AsIfExitEvent[] = [];
     if (data.length > 0) {

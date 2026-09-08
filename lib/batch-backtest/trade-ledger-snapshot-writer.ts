@@ -14,7 +14,8 @@ import { parseTimeToUnixSeconds } from "../time-normalization";
 import { iterateJsonlLines } from "./trade-ledger-replay-loader";
 import {
     canonicalJson,
-    encodeCanonicalJsonl,
+    encodeCanonicalJsonlAsync,
+    type EncodedCanonicalJsonl,
     hashFile,
     hashBytes,
     safeArtifactPath,
@@ -199,7 +200,7 @@ function buildWarmupEntries(
 function artifactMetadata(
     relativePath: string,
     recordCount: number,
-    encoded: ReturnType<typeof encodeCanonicalJsonl>,
+    encoded: EncodedCanonicalJsonl,
 ): PairFeatureSnapshotArtifact {
     return {
         path: relativePath,
@@ -294,15 +295,24 @@ export interface TradeLedgerSnapshotWriterOptions {
     runDir: string;
 }
 
-/** Incremental source-snapshot writer; only one completion payload is held. */
+/**
+ * Incremental source-snapshot writer. At most two complete pair payloads are
+ * retained while their independent gzip/file operations overlap; finalize
+ * drains those bounded captures before publishing the manifest.
+ */
 export class TradeLedgerSnapshotWriter {
+    private static readonly MAX_IN_FLIGHT_CAPTURES = 2;
     private readonly runDir: string;
     private initialized = false;
+    private initializationPromise: Promise<void> | null = null;
     private active = false;
     private failure: string | null = null;
     private finalized: PairFeatureSnapshotFinalizeResult | null = null;
     private readonly pairs: PairFeatureSnapshotPairManifest[] = [];
     private readonly pairKeys = new Set<string>();
+    private inFlightCaptures = new Set<Promise<void>>();
+    private activeCaptureCount = 0;
+    private readonly captureSlotWaiters: Array<() => void> = [];
 
     constructor(options: TradeLedgerSnapshotWriterOptions) {
         this.runDir = options.runDir;
@@ -318,52 +328,124 @@ export class TradeLedgerSnapshotWriter {
 
     /** Capture one successful pair after its ledger rows have committed. */
     async capturePair(source: PairFeatureSnapshotSource): Promise<void> {
+        const capture = await this.startCapture(source);
+        if (capture) await capture;
+    }
+
+    /**
+     * Start a bounded capture and return once its slot is occupied. Batch uses
+     * this to overlap source-snapshot work with the next pair; `finalize()`
+     * waits for every started capture before checking coverage or hashes.
+     */
+    async enqueuePair(source: PairFeatureSnapshotSource): Promise<void> {
+        await this.startCapture(source);
+    }
+
+    private async startCapture(source: PairFeatureSnapshotSource): Promise<Promise<void> | null> {
         this.active = true;
-        if (this.failure) return;
+        if (this.failure) return null;
+        let key: string;
         try {
-            await this.initialize();
-            const key = pairKey(source.identity);
-            if (this.pairKeys.has(key)) throw new Error(`Source snapshot pair ${key} was captured more than once.`);
-            const rowStart = requireInteger(source.rowStart, "pair rowStart");
-            if (rowStart < 0) throw new Error("Source snapshot pair rowStart must not be negative.");
-
-            const { records: bars, barIndexByTime } = buildBars(source.bars);
-            const trades = buildTrades(source.trades, barIndexByTime);
-            const entries = buildEntries(source.entries, bars);
-            const warmupEntries = buildWarmupEntries(source.warmupEntries ?? [], bars);
-            const expectedRowOrdinal = rowStart;
-            for (const [index, entry] of entries.entries()) {
-                if (entry[0] !== expectedRowOrdinal + index) {
-                    throw new Error(`Source snapshot entry ordinals are not contiguous at entry ${index}.`);
-                }
+            key = pairKey(source.identity);
+            if (this.pairKeys.has(key)) {
+                throw new Error(`Source snapshot pair ${key} was captured more than once.`);
             }
-
-            const prefix = `${PAIRS_DIR}/${key}`;
-            const files = {
-                bars: await this.writeJsonl(`${prefix}/bars.jsonl.gz`, bars),
-                trades: await this.writeJsonl(`${prefix}/trades.jsonl.gz`, trades),
-                entries: await this.writeJsonl(`${prefix}/entries.jsonl.gz`, entries),
-                entriesWarmup: await this.writeJsonl(`${prefix}/entries-warmup.jsonl.gz`, warmupEntries),
-            };
+            // Reserve the key before waiting for a slot. This keeps concurrent
+            // callers from scheduling duplicate partitions for the same pair.
             this.pairKeys.add(key);
-            this.pairs.push({
-                ...source.identity,
-                pairKey: key,
-                barCount: bars.length,
-                firstTimeSec: bars[0]?.[0] ?? null,
-                lastTimeSec: bars[bars.length - 1]?.[0] ?? null,
-                tradeCount: trades.length,
-                rowStart,
-                rowCount: entries.length,
-                files,
-            });
         } catch (error) {
             await this.recordFailure(error);
+            return null;
+        }
+
+        await this.acquireCaptureSlot();
+        if (this.failure) {
+            this.releaseCaptureSlot();
+            return null;
+        }
+        const capture = this.capturePairNow(source, key).catch(async (error) => {
+            await this.recordFailure(error);
+        });
+        this.inFlightCaptures.add(capture);
+        void capture.then(() => {
+            this.inFlightCaptures.delete(capture);
+            this.releaseCaptureSlot();
+        });
+        return capture;
+    }
+
+    private async capturePairNow(source: PairFeatureSnapshotSource, key: string): Promise<void> {
+        await this.initialize();
+        const rowStart = requireInteger(source.rowStart, "pair rowStart");
+        if (rowStart < 0) throw new Error("Source snapshot pair rowStart must not be negative.");
+
+        const { records: bars, barIndexByTime } = buildBars(source.bars);
+        const trades = buildTrades(source.trades, barIndexByTime);
+        const entries = buildEntries(source.entries, bars);
+        const warmupEntries = buildWarmupEntries(source.warmupEntries ?? [], bars);
+        const expectedRowOrdinal = rowStart;
+        for (const [index, entry] of entries.entries()) {
+            if (entry[0] !== expectedRowOrdinal + index) {
+                throw new Error(`Source snapshot entry ordinals are not contiguous at entry ${index}.`);
+            }
+        }
+
+        const prefix = `${PAIRS_DIR}/${key}`;
+        // Start all four independent partitions before awaiting them. The
+        // async zlib encoder uses Node's worker pool, so source snapshots
+        // no longer serialize four compression jobs on the event loop.
+        const [barsFile, tradesFile, entriesFile, warmupFile] = await Promise.all([
+            this.writeJsonl(`${prefix}/bars.jsonl.gz`, bars),
+            this.writeJsonl(`${prefix}/trades.jsonl.gz`, trades),
+            this.writeJsonl(`${prefix}/entries.jsonl.gz`, entries),
+            this.writeJsonl(`${prefix}/entries-warmup.jsonl.gz`, warmupEntries),
+        ]);
+        this.pairs.push({
+            ...source.identity,
+            pairKey: key,
+            barCount: bars.length,
+            firstTimeSec: bars[0]?.[0] ?? null,
+            lastTimeSec: bars[bars.length - 1]?.[0] ?? null,
+            tradeCount: trades.length,
+            rowStart,
+            rowCount: entries.length,
+            files: {
+                bars: barsFile,
+                trades: tradesFile,
+                entries: entriesFile,
+                entriesWarmup: warmupFile,
+            },
+        });
+    }
+
+    private acquireCaptureSlot(): Promise<void> {
+        if (this.activeCaptureCount < TradeLedgerSnapshotWriter.MAX_IN_FLIGHT_CAPTURES) {
+            this.activeCaptureCount += 1;
+            return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+            this.captureSlotWaiters.push(() => {
+                this.activeCaptureCount += 1;
+                resolve();
+            });
+        });
+    }
+
+    private releaseCaptureSlot(): void {
+        const next = this.captureSlotWaiters.shift();
+        if (next) next();
+        else this.activeCaptureCount = Math.max(0, this.activeCaptureCount - 1);
+    }
+
+    private async waitForCaptures(): Promise<void> {
+        while (this.inFlightCaptures.size > 0) {
+            await Promise.all([...this.inFlightCaptures]);
         }
     }
 
     async finalize(input: PairFeatureSnapshotFinalizeInput): Promise<PairFeatureSnapshotFinalizeResult> {
         if (this.finalized) return this.finalized;
+        await this.waitForCaptures();
         if (!this.active) return { complete: false, error: null, manifestSha256: null };
         if (this.failure) return { complete: false, error: this.failure, manifestSha256: null };
         if (!input.ledgerComplete) return { complete: false, error: null, manifestSha256: null };
@@ -418,6 +500,12 @@ export class TradeLedgerSnapshotWriter {
 
     private async initialize(): Promise<void> {
         if (this.initialized) return;
+        if (this.initializationPromise) return this.initializationPromise;
+        this.initializationPromise = this.initializeOnce();
+        await this.initializationPromise;
+    }
+
+    private async initializeOnce(): Promise<void> {
         const sourceSnapshotPath = await safeArtifactPath(this.runDir, SOURCE_SNAPSHOT_DIR);
         await mkdir(sourceSnapshotPath);
         const pairsPath = await safeArtifactPath(this.runDir, PAIRS_DIR);
@@ -428,7 +516,7 @@ export class TradeLedgerSnapshotWriter {
     }
 
     private async writeJsonl(relativePath: string, records: readonly unknown[]): Promise<PairFeatureSnapshotArtifact> {
-        const encoded = encodeCanonicalJsonl(records);
+        const encoded = await encodeCanonicalJsonlAsync(records);
         const parent = relativePath.slice(0, relativePath.lastIndexOf("/"));
         await safeArtifactPath(this.runDir, parent);
         await mkdir(join(this.runDir, parent), { recursive: true });

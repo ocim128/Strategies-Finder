@@ -9,6 +9,7 @@ import { gunzipSync } from "node:zlib";
 import {
     canonicalJson,
     encodeCanonicalJsonl,
+    encodeCanonicalJsonlAsync,
     safeArtifactPath,
 } from "../lib/pair-features/artifact-io";
 import {
@@ -157,7 +158,7 @@ describe("pair feature snapshot artifact I/O", () => {
         for (const root of tempRoots) rmSync(root, { recursive: true, force: true });
     });
 
-    it("canonicalizes JSON and produces reproducible level-6 gzip bytes", () => {
+    it("canonicalizes JSON and produces reproducible level-6 gzip bytes", async () => {
         const records = [
             { z: -0, a: 2, nested: { beta: 1, alpha: "x" } },
             ["keeps", "array", "order"],
@@ -165,7 +166,9 @@ describe("pair feature snapshot artifact I/O", () => {
         expect(canonicalJson(records[0])).to.equal('{"a":2,"nested":{"alpha":"x","beta":1},"z":0}');
         const first = encodeCanonicalJsonl(records);
         const second = encodeCanonicalJsonl(records);
+        const asyncEncoded = await encodeCanonicalJsonlAsync(records);
         expect(first.compressed.equals(second.compressed)).to.equal(true);
+        expect(first.compressed.equals(asyncEncoded.compressed)).to.equal(true);
         expect(first.uncompressed.equals(second.uncompressed)).to.equal(true);
         expect(gunzipSync(first.compressed).toString("utf8")).to.equal(
             '{"a":2,"nested":{"alpha":"x","beta":1},"z":0}\n["keeps","array","order"]\n',

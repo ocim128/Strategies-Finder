@@ -17,6 +17,10 @@ export interface TradeLedgerFeatureSeries {
     lows: number[];
     barSecs: (number | null)[];
     atr: (number | null)[];
+    /** Cached causal volatility values; populated once per pair instead of per signal. */
+    pairVolatility20: (number | null)[];
+    baseVolatility20?: (number | null)[];
+    quoteVolatility20?: (number | null)[];
 }
 
 export interface TradeLedgerPriorStats {
@@ -63,7 +67,11 @@ export type TradeGateFeatureRow = Pick<
     | "feat_candidatesAtTime"
 >;
 
-export function buildTradeLedgerFeatureSeries(data: readonly OHLCVData[]): TradeLedgerFeatureSeries {
+export function buildTradeLedgerFeatureSeries(
+    data: readonly OHLCVData[],
+    baseCloses?: readonly (number | null)[],
+    quoteCloses?: readonly (number | null)[],
+): TradeLedgerFeatureSeries {
     const closes: number[] = new Array(data.length);
     const highs: number[] = new Array(data.length);
     const lows: number[] = new Array(data.length);
@@ -81,6 +89,13 @@ export function buildTradeLedgerFeatureSeries(data: readonly OHLCVData[]): Trade
         lows,
         barSecs,
         atr: calculateATR(highs, lows, closes, TRADE_LEDGER_FEATURE_ATR_PERIOD),
+        pairVolatility20: buildRollingVolatility20(closes),
+        ...(baseCloses && quoteCloses
+            ? {
+                baseVolatility20: buildRollingVolatility20(baseCloses),
+                quoteVolatility20: buildRollingVolatility20(quoteCloses),
+            }
+            : {}),
     };
 }
 
@@ -94,7 +109,15 @@ export function buildTradeLedgerFeatureValues(args: {
     quoteCloses?: readonly (number | null)[];
 }): TradeLedgerFeatureValues {
     const { data, series, signalBarIndex, signalSec, prior, baseCloses, quoteCloses } = args;
-    const { closes, highs, lows, atr } = series;
+    const {
+        closes,
+        highs,
+        lows,
+        atr,
+        pairVolatility20,
+        baseVolatility20,
+        quoteVolatility20,
+    } = series;
     return {
         feat_entryRangePosition:
             signalBarIndex >= 1 && highs[signalBarIndex - 1]! > lows[signalBarIndex - 1]!
@@ -126,13 +149,100 @@ export function buildTradeLedgerFeatureValues(args: {
                 ? (prior.wins / prior.trades) * 100
                 : null,
         feat_pairTradesPrior: prior.trades,
-        feat_pairSpreadVolatility20: buildVolatility20(closes, signalBarIndex),
-        feat_legVolatilityRatio20: buildLegVolatilityRatio20(
-            baseCloses,
-            quoteCloses,
-            signalBarIndex,
-        ),
+        feat_pairSpreadVolatility20: pairVolatility20[signalBarIndex] ?? null,
+        feat_legVolatilityRatio20: baseVolatility20 && quoteVolatility20
+            ? ratioFromVolatilitySeries(baseVolatility20, quoteVolatility20, signalBarIndex)
+            : buildLegVolatilityRatio20(baseCloses, quoteCloses, signalBarIndex),
     };
+}
+
+/**
+ * Build every twenty-return volatility value in one rolling pass. The
+ * per-signal helper below remains exported for callers that only need one
+ * value, while the ledger path reuses these arrays for all signals in a pair.
+ */
+function buildRollingVolatility20(
+    closes: readonly (number | null)[] | undefined,
+): (number | null)[] {
+    const length = closes?.length ?? 0;
+    const values: (number | null)[] = new Array(length).fill(null);
+    if (!closes || length <= TRADE_LEDGER_FEATURE_RETURN_BARS) return values;
+
+    const changes = new Float64Array(length);
+    const valid = new Uint8Array(length);
+    for (let index = 1; index < length; index += 1) {
+        const previous = closes[index - 1];
+        const current = closes[index];
+        if (
+            previous == null
+            || current == null
+            || !Number.isFinite(previous)
+            || !Number.isFinite(current)
+            || previous <= 0
+            || current <= 0
+        ) {
+            continue;
+        }
+        changes[index] = ((current - previous) / previous) * 100;
+        valid[index] = 1;
+    }
+
+    let sum = 0;
+    let sumSquares = 0;
+    let invalidCount = 0;
+    for (let index = 1; index <= TRADE_LEDGER_FEATURE_RETURN_BARS; index += 1) {
+        if (valid[index] === 0) {
+            invalidCount += 1;
+        } else {
+            const change = changes[index]!;
+            sum += change;
+            sumSquares += change * change;
+        }
+    }
+
+    for (let signalIndex = TRADE_LEDGER_FEATURE_RETURN_BARS + 1; signalIndex < length; signalIndex += 1) {
+        if (invalidCount === 0) {
+            const mean = sum / TRADE_LEDGER_FEATURE_RETURN_BARS;
+            // Round-off can make this expression very slightly negative for
+            // nearly constant windows; the direct helper returns zero there.
+            values[signalIndex] = Math.sqrt(
+                Math.max(0, sumSquares / TRADE_LEDGER_FEATURE_RETURN_BARS - mean * mean),
+            );
+        }
+
+        // Advance the window for the next signal bar. The current signal bar
+        // is added only as the final prior return of the next window.
+        if (signalIndex + 1 < length) {
+            const removedIndex = signalIndex - TRADE_LEDGER_FEATURE_RETURN_BARS;
+            if (valid[removedIndex] !== 0) {
+                const removed = changes[removedIndex]!;
+                sum -= removed;
+                sumSquares -= removed * removed;
+            } else {
+                invalidCount -= 1;
+            }
+            const addedIndex = signalIndex;
+            if (valid[addedIndex] !== 0) {
+                const added = changes[addedIndex]!;
+                sum += added;
+                sumSquares += added * added;
+            } else {
+                invalidCount += 1;
+            }
+        }
+    }
+    return values;
+}
+
+function ratioFromVolatilitySeries(
+    baseVolatility: readonly (number | null)[],
+    quoteVolatility: readonly (number | null)[],
+    signalBarIndex: number,
+): number | null {
+    const base = baseVolatility[signalBarIndex] ?? null;
+    const quote = quoteVolatility[signalBarIndex] ?? null;
+    if (base === null || quote === null || quote === 0) return null;
+    return base / quote;
 }
 
 /**
