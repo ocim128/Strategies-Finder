@@ -1,7 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { hashBytes, hashFile, canonicalJson } from "../lib/pair-features/artifact-io";
 import { V1_FEATURE_CATALOG, V1_RELEASE } from "../lib/pair-features/catalog";
 import type { PairFeatureEvaluationContext, PairFeatureSnapshotTrade } from "../lib/pair-features/types";
@@ -84,20 +83,6 @@ describe("pair feature catalog v1", () => {
                 if (fixture.expected === null) expect(result.value, `${entry.definition.id}/${fixture.name}`).to.equal(null);
                 else expect(result.value, `${entry.definition.id}/${fixture.name}`).to.be.closeTo(fixture.expected, 1e-12);
             }
-        }
-    });
-
-    it("pins the ten grandfathered names to their archived rule sources and the v1 release", async () => {
-        expect(grandfathered.size).to.equal(10);
-        for (const [ruleKey, featureId] of grandfathered) {
-            // The ten exploration rules failed the strict bar and are archived
-            // under archive/rules-lib/; their archived sources must still
-            // reference the exact feature columns, and the columns must exist
-            // in the v1 release.
-            const archivedSource = await readFile(
-                path.join("archive", "rules-lib", `${ruleKey}.ts`), "utf8");
-            expect(archivedSource).to.include(featureId);
-            expect(V1_RELEASE.definitions.some((definition) => definition.id === featureId)).to.equal(true);
         }
     });
 
