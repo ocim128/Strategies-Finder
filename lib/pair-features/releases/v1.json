@@ -33,7 +33,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -48,7 +48,7 @@
           "observations": 20
         }
       ],
-      "definitionDigest": "e6d5e728c14872847a7838588cdc1925ac4c713e926a1ac47f2e9514323a0088"
+      "definitionDigest": "a3e1e961265b6af54680b111f378a6df535b7ef2c106ecff6053524625eda14e"
     },
     {
       "id": "feat_fp_dependence_ar1_half_life_b48_r1",
@@ -70,11 +70,11 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/dependence.ts",
-          "sha256": "817fec2d622b83e52ec89d0afb381f3edd3d33cee2645c7651782ec5f73cd287"
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
         },
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         }
       ],
       "expectedValueFixtures": [
@@ -85,7 +85,7 @@
           "observations": 48
         }
       ],
-      "definitionDigest": "fb8dd841b52e4dc50967024492b306cc5eaf2a64c7fdcec6fa374b62b0bf5920"
+      "definitionDigest": "1682002e0ae236813d96176d9e99e6358ee223258fe4640365d0700680f7253d"
     },
     {
       "id": "feat_fp_dependence_ar1_r_squared_b48_r1",
@@ -107,11 +107,11 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/dependence.ts",
-          "sha256": "817fec2d622b83e52ec89d0afb381f3edd3d33cee2645c7651782ec5f73cd287"
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
         },
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         }
       ],
       "expectedValueFixtures": [
@@ -122,7 +122,7 @@
           "observations": 48
         }
       ],
-      "definitionDigest": "3f5b18b2b9afbabffb3c569e26033eb76bef7481ac285f7e730e018fd8e0854b"
+      "definitionDigest": "62a219663b2fa46c64a9c85cf226e67113d14c57143d81aec9f5119ab59c77fa"
     },
     {
       "id": "feat_fp_dependence_ar1_slope_b48_r1",
@@ -144,11 +144,11 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/dependence.ts",
-          "sha256": "817fec2d622b83e52ec89d0afb381f3edd3d33cee2645c7651782ec5f73cd287"
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
         },
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         }
       ],
       "expectedValueFixtures": [
@@ -159,7 +159,7 @@
           "observations": 48
         }
       ],
-      "definitionDigest": "b03eee0eef6831cecec546f222a17e550663e63de308d581e42ee90e69186a2b"
+      "definitionDigest": "d95a0326ed1c9774148ece0fad6c45ad5264c43abce18a5ea4d8f33686caa274"
     },
     {
       "id": "feat_fp_dependence_return_acf_b240_l1_r1",
@@ -182,11 +182,11 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/dependence.ts",
-          "sha256": "817fec2d622b83e52ec89d0afb381f3edd3d33cee2645c7651782ec5f73cd287"
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
         },
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         }
       ],
       "expectedValueFixtures": [
@@ -197,7 +197,7 @@
           "observations": 241
         }
       ],
-      "definitionDigest": "507afff187480a333f7c6b50e6a52915cd729a3888ca4f660bd587735a93152c"
+      "definitionDigest": "9ddd31b0c860dc70dd7b4daefed2285f4c194e0693f486a7ad42a9ac526ce414"
     },
     {
       "id": "feat_fp_dependence_return_acf_b240_l4_r1",
@@ -220,11 +220,11 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/dependence.ts",
-          "sha256": "817fec2d622b83e52ec89d0afb381f3edd3d33cee2645c7651782ec5f73cd287"
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
         },
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         }
       ],
       "expectedValueFixtures": [
@@ -235,7 +235,7 @@
           "observations": 241
         }
       ],
-      "definitionDigest": "465c92add77c5183c572904244d0349f777dd21a0535b686f0d341e5e2ae4da9"
+      "definitionDigest": "dd0552b34cb3e10fa6ddcb0623c6e1cf2dd92568f7a27eb5be6b456cbad409a8"
     },
     {
       "id": "feat_fp_dependence_return_acf_b48_l1_r1",
@@ -258,11 +258,11 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/dependence.ts",
-          "sha256": "817fec2d622b83e52ec89d0afb381f3edd3d33cee2645c7651782ec5f73cd287"
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
         },
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         }
       ],
       "expectedValueFixtures": [
@@ -273,7 +273,7 @@
           "observations": 49
         }
       ],
-      "definitionDigest": "cab40cbaf01683ae5e5fc588e7838f4e8373e3e542b42775063654113e45f10b"
+      "definitionDigest": "d07d9474b5690163b441d7d9cffd64947841fa87852784aa96dc247b55443c7d"
     },
     {
       "id": "feat_fp_dependence_return_acf_b48_l4_r1",
@@ -296,11 +296,11 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/dependence.ts",
-          "sha256": "817fec2d622b83e52ec89d0afb381f3edd3d33cee2645c7651782ec5f73cd287"
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
         },
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         }
       ],
       "expectedValueFixtures": [
@@ -311,7 +311,7 @@
           "observations": 49
         }
       ],
-      "definitionDigest": "e679cafc1b770b250704447b6885102df3b1a454aab406d1b7d7157eea006217"
+      "definitionDigest": "af0d2af0fea48ed1fb09fc87154824540a295e8dcdc2d079be8c02968ab810b5"
     },
     {
       "id": "feat_fp_dependence_variance_ratio_b240_h4_r1",
@@ -334,11 +334,11 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/dependence.ts",
-          "sha256": "817fec2d622b83e52ec89d0afb381f3edd3d33cee2645c7651782ec5f73cd287"
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
         },
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         }
       ],
       "expectedValueFixtures": [
@@ -349,7 +349,7 @@
           "observations": 241
         }
       ],
-      "definitionDigest": "6a5ec77d1a69c0ea3d5d26c302cfe283113a7be85a142849ad612cad2822fc8b"
+      "definitionDigest": "4c812724f8c3cbc2c6ce8e7221d0b228b5621baf4903486097621b71f227d6e1"
     },
     {
       "id": "feat_fp_dependence_variance_ratio_b48_h4_r1",
@@ -372,11 +372,11 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/dependence.ts",
-          "sha256": "817fec2d622b83e52ec89d0afb381f3edd3d33cee2645c7651782ec5f73cd287"
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
         },
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         }
       ],
       "expectedValueFixtures": [
@@ -387,7 +387,7 @@
           "observations": 49
         }
       ],
-      "definitionDigest": "55e608ec3117952feca29fb7f5cd2703bb0066547126aac6745359b972aa1330"
+      "definitionDigest": "b82cc3fcf46802a00de58240642c925597cf8b0b6ab6d5e5f51d5dec4dcf5c41"
     },
     {
       "id": "feat_fp_spread_distance_above_min_b12_r1",
@@ -409,7 +409,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -424,7 +424,7 @@
           "observations": 12
         }
       ],
-      "definitionDigest": "81ad0354b8deee3eac48722383ea09b37becdc2089fe65b72e6453905a48d0a6"
+      "definitionDigest": "a1b65424735212d6eab1f125030d0ac17c2649790ee883ae5da30a50af2eef9f"
     },
     {
       "id": "feat_fp_spread_distance_above_min_b240_r1",
@@ -446,7 +446,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -461,7 +461,7 @@
           "observations": 240
         }
       ],
-      "definitionDigest": "1a43b7ebf217c0fee7df0f7b0dc4eaf256abf71a4d1194919c92b1c96efaf702"
+      "definitionDigest": "4dd7e32693ebf6c3fe0a5288f13891a92e4915a34496319b1a90c09783afbde2"
     },
     {
       "id": "feat_fp_spread_distance_above_min_b48_r1",
@@ -483,7 +483,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -498,7 +498,7 @@
           "observations": 48
         }
       ],
-      "definitionDigest": "5d77f13cc138481a07390587e24f3ab3ca09b29e23e937ea14a229fae50b63a2"
+      "definitionDigest": "1abff2c38e181051c57f8fb267e551de1322bcbc941104cea1ec8b5a84e54191"
     },
     {
       "id": "feat_fp_spread_distance_below_max_b12_r1",
@@ -520,7 +520,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -535,7 +535,7 @@
           "observations": 12
         }
       ],
-      "definitionDigest": "fcf6edb3bd64aff1a8831c5168c0b0efddbb8307dd9ab21b9dbc2bcc8fc3fb8c"
+      "definitionDigest": "da77018cc67320e09007c92a96d93bbafd1397ec77f02f59df60111e89ddb2f6"
     },
     {
       "id": "feat_fp_spread_distance_below_max_b240_r1",
@@ -557,7 +557,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -572,7 +572,7 @@
           "observations": 240
         }
       ],
-      "definitionDigest": "d608d62be24939147067b1c54c23039d187ab087546d9ce4d723503218aad52d"
+      "definitionDigest": "0c0ce4cff04524c9de5b3c750bd0afd7fb269c57935d3b316001bd4c46036e5b"
     },
     {
       "id": "feat_fp_spread_distance_below_max_b48_r1",
@@ -594,7 +594,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -609,7 +609,7 @@
           "observations": 48
         }
       ],
-      "definitionDigest": "892127020c66837261c0679c433d2c34cb4c35cd940b183dce4a15e3ab0a20a9"
+      "definitionDigest": "2419ebeed19051b9b9a4198fb10806cc96df53c74bcb9f334dadffbb70db9a40"
     },
     {
       "id": "feat_fp_spread_distance_to_median_b12_r1",
@@ -631,7 +631,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -646,7 +646,7 @@
           "observations": 12
         }
       ],
-      "definitionDigest": "9d2227ef0c43d4975ec71ded21ce07310199cfe86587a7d025accc9fadd71ec6"
+      "definitionDigest": "82ccd5900b4ce22006f459c2fad1541590a5bbecfe3dffc5b5f108dedb03c159"
     },
     {
       "id": "feat_fp_spread_distance_to_median_b240_r1",
@@ -668,7 +668,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -683,7 +683,7 @@
           "observations": 240
         }
       ],
-      "definitionDigest": "9e5a083d6930d9f26d8ff61402418183b11be8a22dedfa9ee75d5e9ba6bdaeeb"
+      "definitionDigest": "5e3dfe401c045b9f3fa2899a38631363f612a35967cc8bbd621b70ebf3f9d12a"
     },
     {
       "id": "feat_fp_spread_distance_to_median_b48_r1",
@@ -705,7 +705,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -720,7 +720,7 @@
           "observations": 48
         }
       ],
-      "definitionDigest": "b05419855b9e7916be97e74e2cbff55bb11cbb237d608368255a4959f819aff9"
+      "definitionDigest": "7881a13c144e15e0511c43205623759d5108063357a4c36dfea819f2cdf368d1"
     },
     {
       "id": "feat_fp_spread_down_increment_streak_r1",
@@ -740,7 +740,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -755,7 +755,7 @@
           "observations": 2
         }
       ],
-      "definitionDigest": "80892d0aa5cc43fd1673d5420a870dae60d717e26f6f2b0034ae943f65a9dbca"
+      "definitionDigest": "8556bc288e1ed59c8416408c926a7aa504c6bb42f4a441ba9e14942015499bce"
     },
     {
       "id": "feat_fp_spread_efficiency_ratio_b12_r1",
@@ -777,7 +777,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -792,7 +792,7 @@
           "observations": 13
         }
       ],
-      "definitionDigest": "915fc329832747bb77140b643d64558d6bbcb83df195b472556f0f2156fc8dc5"
+      "definitionDigest": "ceec2d8647683cd8fc5b0d55db432ff167d312776750da5ce29a9b9a95a03238"
     },
     {
       "id": "feat_fp_spread_efficiency_ratio_b240_r1",
@@ -814,7 +814,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -829,7 +829,7 @@
           "observations": 241
         }
       ],
-      "definitionDigest": "8597f085f020c6ae5b1607e14bb8a5890f650846be121fe103beef22fbc4cb0a"
+      "definitionDigest": "4cde2847a625129a016552629e8dec4c828981c100e605b560b10fc2bf8f6d79"
     },
     {
       "id": "feat_fp_spread_efficiency_ratio_b48_r1",
@@ -851,7 +851,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -866,7 +866,7 @@
           "observations": 49
         }
       ],
-      "definitionDigest": "19e8d6a10b31b1e863e56cf6561d7675e0b894be84507068f7918ce6185f618f"
+      "definitionDigest": "526b5f39f9849ace61fd8e624022001179a19a8b45e5a839b2c2c8389ff49fc6"
     },
     {
       "id": "feat_fp_spread_log_return_b12_r1",
@@ -927,7 +927,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -942,7 +942,7 @@
           "observations": 241
         }
       ],
-      "definitionDigest": "a50a7d24b6d544be1469488c6a2ec809cdd93d5c4795a1ac5f6ce2210bc882c7"
+      "definitionDigest": "25081c286a19ea8364eb60130b5a92e1001a7ebea369f8880520b9f66c3c45ff"
     },
     {
       "id": "feat_fp_spread_log_return_b48_r1",
@@ -964,7 +964,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -979,12 +979,12 @@
           "observations": 49
         }
       ],
-      "definitionDigest": "f7aa9dd9e3b0c97000aa2101fdf2e27525a62fed176de2d9e409eda643186e34"
+      "definitionDigest": "b60924b5edc1f7181ec5f1d720167f004a5b39ed2e49a8d2e75d0a1465897e59"
     },
     {
-      "id": "feat_fp_spread_ols_slope_b12_r1",
+      "id": "feat_fp_spread_ols_slope_b12_r2",
       "family": "spread",
-      "revision": 1,
+      "revision": 2,
       "units": "log-price units per observed bar",
       "directionConvention": "captured_base_over_quote",
       "parameters": {
@@ -994,14 +994,14 @@
         "pair_bars_v1"
       ],
       "minimumObservations": 12,
-      "missingPolicy": "null_if_incomplete_or_degenerate_fit",
+      "missingPolicy": "null_if_incomplete_or_zero_predictor_variance",
       "cutoff": "strictly_before_signal_bar",
       "formula": "Population ordinary least-squares slope of preceding 12 log closes against oldest-to-newest bar ordinal.",
       "dependencies": [],
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -1016,12 +1016,12 @@
           "observations": 12
         }
       ],
-      "definitionDigest": "837b09577445640d876c9ce8ba3475bac3a1f316692b1dbff4302717576e5941"
+      "definitionDigest": "a70e2a58076cdcd5bc6ad0bca9e63286c794f29eed0a985ee954be2ed810a6bc"
     },
     {
-      "id": "feat_fp_spread_ols_slope_b240_r1",
+      "id": "feat_fp_spread_ols_slope_b240_r2",
       "family": "spread",
-      "revision": 1,
+      "revision": 2,
       "units": "log-price units per observed bar",
       "directionConvention": "captured_base_over_quote",
       "parameters": {
@@ -1031,14 +1031,14 @@
         "pair_bars_v1"
       ],
       "minimumObservations": 240,
-      "missingPolicy": "null_if_incomplete_or_degenerate_fit",
+      "missingPolicy": "null_if_incomplete_or_zero_predictor_variance",
       "cutoff": "strictly_before_signal_bar",
       "formula": "Population ordinary least-squares slope of preceding 240 log closes against oldest-to-newest bar ordinal.",
       "dependencies": [],
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -1053,12 +1053,12 @@
           "observations": 240
         }
       ],
-      "definitionDigest": "ad88bc7450fe537f3b34f912fadce80e62c92000a9d16e047260df057c304b1d"
+      "definitionDigest": "2a7ec43e2bba337019482b6095c77819c768a74e1aedf066ba26cefb881cb53a"
     },
     {
-      "id": "feat_fp_spread_ols_slope_b48_r1",
+      "id": "feat_fp_spread_ols_slope_b48_r2",
       "family": "spread",
-      "revision": 1,
+      "revision": 2,
       "units": "log-price units per observed bar",
       "directionConvention": "captured_base_over_quote",
       "parameters": {
@@ -1068,14 +1068,14 @@
         "pair_bars_v1"
       ],
       "minimumObservations": 48,
-      "missingPolicy": "null_if_incomplete_or_degenerate_fit",
+      "missingPolicy": "null_if_incomplete_or_zero_predictor_variance",
       "cutoff": "strictly_before_signal_bar",
       "formula": "Population ordinary least-squares slope of preceding 48 log closes against oldest-to-newest bar ordinal.",
       "dependencies": [],
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -1090,7 +1090,7 @@
           "observations": 48
         }
       ],
-      "definitionDigest": "fa62e473cfe76642441d88f5779399ae47e0ebd102d653d19d4e75246c2be9cb"
+      "definitionDigest": "204378b0ab7ebb6a4fcf64d1626dd1ab7c35dd85d5e14e06a372fe3fa96308ed"
     },
     {
       "id": "feat_fp_spread_up_increment_streak_r1",
@@ -1110,7 +1110,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -1125,7 +1125,7 @@
           "observations": 2
         }
       ],
-      "definitionDigest": "b48ed864342ca32e342febdf09a37637fdbc41c11f00edb627dd1be964f580fb"
+      "definitionDigest": "8371a943cb5fb28db92ecf5f7742bb309d30d5ad1e3b825e6ac9f3b13d66ab68"
     },
     {
       "id": "feat_fp_spread_zscore_b12_r1",
@@ -1147,7 +1147,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -1162,7 +1162,7 @@
           "observations": 12
         }
       ],
-      "definitionDigest": "26c3c148b208988e15beeb4fa31df3175e8f3aaad48bf2cebffc1fdc0879c502"
+      "definitionDigest": "950337490a1588225c1c5e798db0442a87c74bac1cf3086b7a5bbddd4cd5c0bf"
     },
     {
       "id": "feat_fp_spread_zscore_b240_r1",
@@ -1184,7 +1184,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -1199,7 +1199,7 @@
           "observations": 240
         }
       ],
-      "definitionDigest": "3d0b3cd16c2bf4616259b9c383ca6fed9605ca1fe412952abc1b5f8a3733bd54"
+      "definitionDigest": "8dca9d98722f96393daab30940b818beec0d13ed052e47603e85c006e44c081e"
     },
     {
       "id": "feat_fp_spread_zscore_b48_r1",
@@ -1221,7 +1221,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/spread-v1.ts",
@@ -1236,7 +1236,7 @@
           "observations": 48
         }
       ],
-      "definitionDigest": "12aa8e30a185989f0e8e70523c7effa48c3984e2a5c291c2a4a8346904a9737d"
+      "definitionDigest": "2faacc9a34c82e5f422c40ddf134fb8d3e1866eaa9726cbf46a738938f0fbd9d"
     },
     {
       "id": "feat_fp_trade_downside_rms_t128_r1",
@@ -1258,7 +1258,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -1273,7 +1273,7 @@
           "observations": 128
         }
       ],
-      "definitionDigest": "82d4d723d4cf3b1a04a3befd73478df1e1a28878d93ee0239c132f21639affbd"
+      "definitionDigest": "edc76ec3c69201caf6512d67c65f7606d18dd263610a97c932c4e358b4a15468"
     },
     {
       "id": "feat_fp_trade_downside_rms_t32_r1",
@@ -1295,7 +1295,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -1310,7 +1310,7 @@
           "observations": 32
         }
       ],
-      "definitionDigest": "16057eda318261f83f62603306d7a3f60e8201f0b4ed7866d9dbce090f82f3df"
+      "definitionDigest": "8a6b88c6072161795841bbf30b4556ca7e275959f492ba8fb2a984b608d8857a"
     },
     {
       "id": "feat_fp_trade_downside_rms_t8_r1",
@@ -1332,7 +1332,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -1347,7 +1347,7 @@
           "observations": 8
         }
       ],
-      "definitionDigest": "cd58b1b0362200bb26eb12d2ad9ec1f5958dd88d1c8a34a07756d82a408be26b"
+      "definitionDigest": "8b88a6a584fa4e45643dd5050163d7ea5f371ff6c29da1b6e765c50f90278777"
     },
     {
       "id": "feat_fp_trade_mean_net_pct_t128_r1",
@@ -1369,7 +1369,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -1384,7 +1384,7 @@
           "observations": 128
         }
       ],
-      "definitionDigest": "584cd17ff0f7a98af29e6787d85defa5f81e30c41327bc6ea4af8396b0a9d1ea"
+      "definitionDigest": "61a289897a6849105332838f62cdbc1d0f8978db99bfaba3a7b5c661a9f9d88a"
     },
     {
       "id": "feat_fp_trade_mean_net_pct_t32_r1",
@@ -1406,7 +1406,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -1421,7 +1421,7 @@
           "observations": 32
         }
       ],
-      "definitionDigest": "11b1e78892469973523be2988a4d69b9b236963644a44b37f30d9a6a3f8d869a"
+      "definitionDigest": "83fc0fb8f580cab072fe747ec6bedea7707cb5262fe480bf19dbea420b32b47d"
     },
     {
       "id": "feat_fp_trade_mean_net_pct_t8_r1",
@@ -1482,7 +1482,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -1497,7 +1497,7 @@
           "observations": 128
         }
       ],
-      "definitionDigest": "84fdac8237ea27bcf8fa0e9d31c6297102cb895add923d74f3e2a3bde9e92658"
+      "definitionDigest": "5d61bedd19fbe3315d6470860f5a05d40123985f9890e433a7ac333e56df8f1e"
     },
     {
       "id": "feat_fp_trade_median_net_pct_t32_r1",
@@ -1519,7 +1519,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -1534,7 +1534,7 @@
           "observations": 32
         }
       ],
-      "definitionDigest": "d97350691cf9855067f53f7460a6565249d37b523c99f8474c59191f14031d09"
+      "definitionDigest": "22c68d5b8a4fd1e9d070b70e713ba7e9c10223b3c144c1d4e17bf08c9027d97e"
     },
     {
       "id": "feat_fp_trade_median_net_pct_t8_r1",
@@ -1556,7 +1556,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -1571,7 +1571,7 @@
           "observations": 8
         }
       ],
-      "definitionDigest": "ce223593d33da22c2ec5a92e4466a3d593709a5a2e1ab8a1d3d6818a1eeee519"
+      "definitionDigest": "48003ada2b9827d78ddd407eedfd069698f22d5c60643db9b200bd7ceca0d8b9"
     },
     {
       "id": "feat_fp_trade_profit_factor_t128_r1",
@@ -1593,7 +1593,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -1608,7 +1608,7 @@
           "observations": 128
         }
       ],
-      "definitionDigest": "8a0530d7d32a4aad479b9cf8d4b19e8a13274731271296a89283e702f24ba40d"
+      "definitionDigest": "1e0bc9808d450974ae28dd9281e286c87080ce46cbe038a9d30040520f1a2be7"
     },
     {
       "id": "feat_fp_trade_profit_factor_t32_r1",
@@ -1630,7 +1630,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -1645,7 +1645,7 @@
           "observations": 32
         }
       ],
-      "definitionDigest": "3c0a91b2ddf394b329fd5beb76c96f74c6b0e5c6c69f1995148646a57a84f501"
+      "definitionDigest": "33635167384d13fc5fd333ed831f30e5601f3f15ffec8667bbc2e932541afe36"
     },
     {
       "id": "feat_fp_trade_profit_factor_t8_r1",
@@ -1667,7 +1667,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -1682,7 +1682,7 @@
           "observations": 8
         }
       ],
-      "definitionDigest": "66571cf7d0ffc82a26eec4e6f14b894799e95c86ae83a7434849d5fd5ff2cd08"
+      "definitionDigest": "4d11496380f9313d9fd2c5961d0138df99542bb591db4da5e99cfcc644b4398f"
     },
     {
       "id": "feat_fp_trade_win_fraction_t128_r1",
@@ -1704,7 +1704,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -1719,7 +1719,7 @@
           "observations": 128
         }
       ],
-      "definitionDigest": "9ecc8b10d5e44885003b7bfbe2817cbd1ff7facd14f773ba4ec57dd416763e59"
+      "definitionDigest": "b0eda94ec0e7b8ef9bdfb0982bc1238f1ff48f2def566cb2dd71a54092a225e5"
     },
     {
       "id": "feat_fp_trade_win_fraction_t32_r1",
@@ -1741,7 +1741,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -1756,7 +1756,7 @@
           "observations": 32
         }
       ],
-      "definitionDigest": "3c517dd425e84988dd7210059d8b795cb5760ab8abddfb81a02e525edf4010ed"
+      "definitionDigest": "0822fa6d73c46d036beedfab7750f24485eeb62b2e4ace22c78d17e090b44b89"
     },
     {
       "id": "feat_fp_trade_win_fraction_t8_r1",
@@ -1778,7 +1778,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -1793,7 +1793,7 @@
           "observations": 8
         }
       ],
-      "definitionDigest": "2de600fc59f99b5e3bf1534823de3671ad6766b9e8fbf5476ccfccc695e85eef"
+      "definitionDigest": "59e6e7a4948606c94f375dbfff3669545e2ac0bd9f51fec134454d62127cae1a"
     },
     {
       "id": "feat_fp_volatility_abs_return_acf_b48_l1_r1",
@@ -1816,7 +1816,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -1831,7 +1831,7 @@
           "observations": 49
         }
       ],
-      "definitionDigest": "db23ec09a4808b975887e6682e571da7f172c422224e82430f8a16acb7878209"
+      "definitionDigest": "ec63c68053f39fc54f660725a5f2bc5220ed7fbe4bc80a57e295bdcd85fb0183"
     },
     {
       "id": "feat_fp_volatility_downside_rms_b12_r1",
@@ -1853,7 +1853,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -1868,7 +1868,7 @@
           "observations": 13
         }
       ],
-      "definitionDigest": "383d7a3e45637b1a236a5ae2bf0eb3a60e8a24a746c9977e5f49500ff6d3f1df"
+      "definitionDigest": "4264dd2860c7303ffdec8c1d7ff0a1fc3b20db992c8a0f8d831e20729272aae6"
     },
     {
       "id": "feat_fp_volatility_downside_rms_b240_r1",
@@ -1890,7 +1890,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -1905,7 +1905,7 @@
           "observations": 241
         }
       ],
-      "definitionDigest": "3d660936f86206baac607ed997a386b3abd3a5fce0907ea243317d551707eb70"
+      "definitionDigest": "0d255e0a5e341b8948157906f3c1e3993f249bbc917fe8f40a0d75c74260ef1c"
     },
     {
       "id": "feat_fp_volatility_downside_rms_b48_r1",
@@ -1927,7 +1927,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -1942,7 +1942,7 @@
           "observations": 49
         }
       ],
-      "definitionDigest": "9b0fa751d0ccce4cc10e4de5280a71c158a734d42290ae54f494722199e472fe"
+      "definitionDigest": "13a545ce2b61d3e864c7d9f072d8a8364f88e8f47f88fbf495718d55fb0210f3"
     },
     {
       "id": "feat_fp_volatility_normalized_atr_b12_r1",
@@ -1964,7 +1964,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -1974,12 +1974,12 @@
       "expectedValueFixtures": [
         {
           "name": "flat_is_zero",
-          "signalBarIndex": 12,
+          "signalBarIndex": 13,
           "expected": 0,
           "observations": 12
         }
       ],
-      "definitionDigest": "2e9844b3f4cae2dae2e1f70cabf87cfdd6a27901757bde7484df931e46dc2e65"
+      "definitionDigest": "3785134cd50fbc8023623aa299d56bed3e00cdb49c9ec064da9dc153ccc4f44c"
     },
     {
       "id": "feat_fp_volatility_normalized_atr_b240_r1",
@@ -2001,7 +2001,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -2011,12 +2011,12 @@
       "expectedValueFixtures": [
         {
           "name": "flat_is_zero",
-          "signalBarIndex": 240,
+          "signalBarIndex": 241,
           "expected": 0,
           "observations": 240
         }
       ],
-      "definitionDigest": "396c2fff2387b34d02babddeee4eb86226db2b7879434e646ab0c0ba49a715d9"
+      "definitionDigest": "db89b1254caf089696ed3ae5f81798b3cf6707dbdebc2fed6aae3911ff2b3082"
     },
     {
       "id": "feat_fp_volatility_normalized_atr_b48_r1",
@@ -2038,7 +2038,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -2048,12 +2048,12 @@
       "expectedValueFixtures": [
         {
           "name": "flat_is_zero",
-          "signalBarIndex": 48,
+          "signalBarIndex": 49,
           "expected": 0,
           "observations": 48
         }
       ],
-      "definitionDigest": "1dae4cf2054780d8f65ddf0e5be5225bcb3bebce70278e1cc2449c5b239da381"
+      "definitionDigest": "05b08ee358398e589cb6c14b4ac449b2632566b795642303dd7fa14d7ca4e7e1"
     },
     {
       "id": "feat_fp_volatility_return_std_b12_r1",
@@ -2075,7 +2075,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -2085,12 +2085,12 @@
       "expectedValueFixtures": [
         {
           "name": "flat_is_zero",
-          "signalBarIndex": 12,
+          "signalBarIndex": 13,
           "expected": 0,
           "observations": 13
         }
       ],
-      "definitionDigest": "70f2467857d1a00a30fab0ebf6d7c42f0abcd3332754a690c5cc41e1e24a11d0"
+      "definitionDigest": "94d4c0cb5a32f2f1bd9955de4705beafe31faa8b93c7082c44b0324a5a989cdb"
     },
     {
       "id": "feat_fp_volatility_return_std_b240_r1",
@@ -2112,7 +2112,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -2122,12 +2122,12 @@
       "expectedValueFixtures": [
         {
           "name": "flat_is_zero",
-          "signalBarIndex": 240,
+          "signalBarIndex": 241,
           "expected": 0,
           "observations": 241
         }
       ],
-      "definitionDigest": "1931b1ee1826c2cd4f7120f18f310b9a828f89b148aa75e43cbf779625cc341b"
+      "definitionDigest": "e9bc88d23874b54af6f0165637a3654aeaff57bfe5f441f185f2ff454509a3c3"
     },
     {
       "id": "feat_fp_volatility_return_std_b48_r1",
@@ -2149,7 +2149,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -2159,12 +2159,12 @@
       "expectedValueFixtures": [
         {
           "name": "flat_is_zero",
-          "signalBarIndex": 48,
+          "signalBarIndex": 49,
           "expected": 0,
           "observations": 49
         }
       ],
-      "definitionDigest": "adfa5f1637b537accf1c4821ad956b4d10aa2af49c9be15312fdeba1d4c377fd"
+      "definitionDigest": "ba395761ea20a443a35c95e6c9f2e4ad584f8e48ae172c4185cd2e71a3f09bc5"
     },
     {
       "id": "feat_fp_volatility_std_ratio_b12_over_b240_r1",
@@ -2187,7 +2187,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -2202,7 +2202,7 @@
           "observations": 13
         }
       ],
-      "definitionDigest": "aa65e55e2d5bd3208d23a610c38589eb3c818e9ca8a1b24b5822d258af9e2ffe"
+      "definitionDigest": "7bc07807b17d3dacbec2f8956b01c1efc57cfa37a77e003e5c33b7ae544c80ad"
     },
     {
       "id": "feat_fp_volatility_upside_rms_b12_r1",
@@ -2224,7 +2224,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -2239,7 +2239,7 @@
           "observations": 13
         }
       ],
-      "definitionDigest": "025632e81ade2b8cb0b0e281233905f982d5508749baecdca5327a131fcdd9bd"
+      "definitionDigest": "24dd1e32fd1b3b7b305200239f4a08ece79bf46eaed0a32484afc0605f0e6538"
     },
     {
       "id": "feat_fp_volatility_upside_rms_b240_r1",
@@ -2261,7 +2261,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -2276,7 +2276,7 @@
           "observations": 241
         }
       ],
-      "definitionDigest": "298b797fa76d8dae00edee73bb1d5ea98058cc45c8435239e93934d420329c72"
+      "definitionDigest": "f9733ec9a0c688656164c7294cba67dcbb87366ee1f6ed9b31821a19b8478b80"
     },
     {
       "id": "feat_fp_volatility_upside_rms_b48_r1",
@@ -2298,7 +2298,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -2313,7 +2313,7 @@
           "observations": 49
         }
       ],
-      "definitionDigest": "a916bb2f5d4822fd54b69e95c802cf1ecb741200dfb98d868848bc8e6fd1fccf"
+      "definitionDigest": "856850940ec507f9988e564dbf36a0850249244658e6bda7d562ec8e697ded44"
     },
     {
       "id": "feat_pairDrawdownPctPrior",
@@ -2333,7 +2333,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -2348,7 +2348,7 @@
           "observations": 0
         }
       ],
-      "definitionDigest": "bb532da8a0e13b161e10f8dbec062071bbc272d4a5489d9cd735550b6ddb45ad"
+      "definitionDigest": "7c86115a016ed5dc8ad057d4ea26304a631433f962fc8793ba63ef836814b3b8"
     },
     {
       "id": "feat_pairFiresInLast20Bars",
@@ -2370,11 +2370,11 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/fires.ts",
-          "sha256": "0ca042b8cb07de6f796310c1d8aa86d94d9a7d87495cfcfaba119b3480ee266d"
+          "sha256": "07c8491272d96ab204f6c062db68bd1baf2b76e2c7ce6fb333e42b53726a8311"
         },
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         }
       ],
       "expectedValueFixtures": [
@@ -2385,7 +2385,7 @@
           "observations": 19
         }
       ],
-      "definitionDigest": "dafbcd98a87f59fbff5f47af165e63518a88f09ee7656243283a64c6367fe124"
+      "definitionDigest": "08739c38ee90b486336ac7865733c316a11f71d70d872c0c57cca0190ea75a27"
     },
     {
       "id": "feat_pairInterFireIntervalCvPrior",
@@ -2405,11 +2405,11 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/fires.ts",
-          "sha256": "0ca042b8cb07de6f796310c1d8aa86d94d9a7d87495cfcfaba119b3480ee266d"
+          "sha256": "07c8491272d96ab204f6c062db68bd1baf2b76e2c7ce6fb333e42b53726a8311"
         },
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         }
       ],
       "expectedValueFixtures": [
@@ -2420,7 +2420,7 @@
           "observations": 0
         }
       ],
-      "definitionDigest": "68aa8e9924efd3143df5a779ed6c901fb022c42c1b2edd77d493c2a7f9080523"
+      "definitionDigest": "ac21b0793cb00fe61de2cdb012245fbec1af6f5aa3b5b86c67d74eff1519ce79"
     },
     {
       "id": "feat_pairLosingStreakPrior",
@@ -2440,7 +2440,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -2455,7 +2455,7 @@
           "observations": 0
         }
       ],
-      "definitionDigest": "8cbed6decb443baae91cb6903420910b949a6a293019b7432cc66b40c65c0136"
+      "definitionDigest": "8d02eaca2084d7ae9cf424d3fbc32380a090350509e6b78b8ae63c6e6b416481"
     },
     {
       "id": "feat_pairMedianMaePctPrior",
@@ -2476,7 +2476,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/trades-v1.ts",
@@ -2491,7 +2491,7 @@
           "observations": 0
         }
       ],
-      "definitionDigest": "d2c0ab7b1fb705974402011490e27105b53e9014f90260135e1d3d76be92e6fd"
+      "definitionDigest": "8178668f7967c3adbf4ad7974603108bd1fc4b98ea9c460bfcd40e8aba65cfc5"
     },
     {
       "id": "feat_pairSpreadVolatilityRatio5Over20",
@@ -2514,7 +2514,7 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         },
         {
           "path": "lib/pair-features/families/volatility.ts",
@@ -2529,7 +2529,7 @@
           "observations": 6
         }
       ],
-      "definitionDigest": "009f7eb3d650a10f5c1acff61a0094f96884ced56c26bc326194950d0e0af768"
+      "definitionDigest": "470946e941b7db994899e45673fefeb8a19de690fd13340d9a230844c8e18a69"
     },
     {
       "id": "feat_spreadHalfLifeBars20",
@@ -2551,11 +2551,11 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/dependence.ts",
-          "sha256": "817fec2d622b83e52ec89d0afb381f3edd3d33cee2645c7651782ec5f73cd287"
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
         },
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         }
       ],
       "expectedValueFixtures": [
@@ -2566,7 +2566,7 @@
           "observations": 20
         }
       ],
-      "definitionDigest": "6e1ca30c924654f3bf7ce0654f9154adfab843a549811f1bc5c19765737db6c1"
+      "definitionDigest": "3dba1f8bef6d77bd2038c1b07464958c8f1d9026994ae437ebd40bda4a7d947f"
     },
     {
       "id": "feat_spreadReturnAutocorr20",
@@ -2589,11 +2589,11 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/dependence.ts",
-          "sha256": "817fec2d622b83e52ec89d0afb381f3edd3d33cee2645c7651782ec5f73cd287"
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
         },
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         }
       ],
       "expectedValueFixtures": [
@@ -2604,7 +2604,7 @@
           "observations": 21
         }
       ],
-      "definitionDigest": "40cc9d1180f3c13bf9aecb00ee0b497801f35775b57f98f9f225de5bd496eeb9"
+      "definitionDigest": "a4afc6c27e01606529d3e93fd064fd7e91d64b7d19b1cf921135523deaf77f48"
     },
     {
       "id": "feat_spreadVarianceRatio5",
@@ -2627,11 +2627,11 @@
       "implementationFiles": [
         {
           "path": "lib/pair-features/families/dependence.ts",
-          "sha256": "817fec2d622b83e52ec89d0afb381f3edd3d33cee2645c7651782ec5f73cd287"
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
         },
         {
           "path": "lib/pair-features/families/math.ts",
-          "sha256": "2a7652e43ec18c25c045ff49bf1717999d836cd481ead8a5160ae2c0c080db99"
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
         }
       ],
       "expectedValueFixtures": [
@@ -2642,7 +2642,7 @@
           "observations": 21
         }
       ],
-      "definitionDigest": "9e315c0dbb46fddf03a331a4cb761382d1c82dda6d08feebe2269d2e53ec3726"
+      "definitionDigest": "8c547b024c952613d01f6c637a46556900d3c1746d4d773b2369364e02a2c3db"
     }
   ]
 }

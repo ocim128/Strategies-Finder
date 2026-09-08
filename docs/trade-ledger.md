@@ -292,10 +292,15 @@ carries the explicit split so a mismatch is never ambiguous:
   empty on a clean run.
 
 The source snapshot retains full loaded bars and full engine trade records for every
-captured pair. Its entries.jsonl.gz partition contains only the recorded, in-window
-ledger rows, including their contiguous ledger ordinals. A windowed folder has the
-same pair-selection capabilities as any other compatible folder; the checker's
-optional --from / --to controls remain available.
+captured pair. Its `entries.jsonl.gz` partition contains only the recorded, in-window
+ledger rows, including their contiguous ledger ordinals. For a window with `fromSec`,
+`entries-warmup.jsonl.gz` separately retains accepted pre-window entries as
+`[signalBarIndex, direction, signalTimeSec]`; these records have no ledger ordinals,
+outcome fields, or ledger-row binding. Feature generation folds them into strictly
+prior fire/inter-fire history, while each feature's observation count remains the
+support of its declared input window. A windowed folder has the same pair-selection
+capabilities as any other compatible folder; the checker's optional --from / --to
+controls remain available.
 
 ## Checker (replay mode)
 

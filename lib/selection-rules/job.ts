@@ -329,12 +329,27 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
             args.emit(cancelledEvent(args, results, reportLines, buildDiagnosticsLines(args, diagnosticsState, horizons)));
             return;
         }
-        await writePairSelectionCheckReceipt({
-            prepared,
-            rules: args.rules,
-            horizons,
-            results: featureResults,
-        });
+        try {
+            await writePairSelectionCheckReceipt({
+                prepared,
+                rules: args.rules,
+                horizons,
+                results: featureResults,
+                signal: args.signal,
+            });
+        } catch (error) {
+            if (args.signal.aborted) {
+                releasePairFeatures(prepared);
+                args.emit(cancelledEvent(args, results, reportLines, buildDiagnosticsLines(args, diagnosticsState, horizons)));
+                return;
+            }
+            throw error;
+        }
+        if (args.signal.aborted) {
+            releasePairFeatures(prepared);
+            args.emit(cancelledEvent(args, results, reportLines, buildDiagnosticsLines(args, diagnosticsState, horizons)));
+            return;
+        }
     }
     releasePairFeatures(prepared);
 
@@ -361,6 +376,10 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
         summary,
         finishedAt: done.finishedAt,
     });
+    if (args.signal.aborted) {
+        args.emit(cancelledEvent(args, results, reportLines, buildDiagnosticsLines(args, diagnosticsState, horizons)));
+        return;
+    }
     args.emit(done);
 }
 

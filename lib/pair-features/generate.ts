@@ -36,11 +36,12 @@ import type {
     PairFeatureSnapshotPairManifest,
     PairFeatureSnapshotRuntimeFingerprint,
     PairFeatureSnapshotTrade,
+    PairFeatureSnapshotWarmupEntry,
 } from "./types";
 
 const SOURCE_MANIFEST_PATH = "source-snapshot/manifest.json";
 const LEDGER_PATH = "ledger.jsonl";
-const SOURCE_REQUIRED_MESSAGE = "source snapshot required; this folder is unchanged";
+export const SOURCE_REQUIRED_MESSAGE = "source snapshot required; this folder is unchanged";
 
 export interface PairFeatureGenerationOptions {
     signal?: AbortSignal;
@@ -66,6 +67,7 @@ interface PairData {
     bars: PairFeatureSnapshotBar[];
     trades: PairFeatureSnapshotTrade[];
     entries: PairFeatureSnapshotEntry[];
+    warmupEntries: PairFeatureSnapshotWarmupEntry[];
 }
 
 interface RequestedFeature {
@@ -300,6 +302,28 @@ function validateEntries(
     return entries;
 }
 
+function validateWarmupEntries(
+    records: readonly unknown[],
+    bars: readonly PairFeatureSnapshotBar[],
+    label: string,
+): PairFeatureSnapshotWarmupEntry[] {
+    const entries: PairFeatureSnapshotWarmupEntry[] = [];
+    let previousSignalBarIndex = -1;
+    for (const [index, value] of records.entries()) {
+        if (!Array.isArray(value) || value.length !== 3) throw new Error(`${label} entry ${index} is malformed.`);
+        const signalBarIndex = requireInteger(value[0], `${label} entry ${index} signalBarIndex`);
+        if (signalBarIndex < 0 || signalBarIndex >= bars.length || signalBarIndex < previousSignalBarIndex) {
+            throw new Error(`${label} entry ${index} has an invalid or non-monotonic bar index.`);
+        }
+        previousSignalBarIndex = signalBarIndex;
+        if (value[1] !== "long" && value[1] !== "short") throw new Error(`${label} entry ${index} has an invalid direction.`);
+        const signalTimeSec = requireFinite(value[2], `${label} entry ${index} signalTimeSec`);
+        if (bars[signalBarIndex]![0] !== signalTimeSec) throw new Error(`${label} entry ${index} time does not match its signal bar.`);
+        entries.push([signalBarIndex, value[1], signalTimeSec]);
+    }
+    return entries;
+}
+
 async function readPairData(folder: string, pair: PairFeatureSnapshotPairManifest): Promise<PairData> {
     const prefix = `source-snapshot/pairs/${pair.pairKey}/`;
     const expectedPaths = {
@@ -324,10 +348,24 @@ async function readPairData(folder: string, pair: PairFeatureSnapshotPairManifes
         bars,
         `${pair.pairKey}/entries`,
     );
+    const warmupArtifact = pair.files.entriesWarmup;
+    if (warmupArtifact && warmupArtifact.path !== `${prefix}entries-warmup.jsonl.gz`) {
+        throw new Error(`${pair.pairKey} entriesWarmup path does not match its pair mapping.`);
+    }
+    const warmupEntries = warmupArtifact
+        ? validateWarmupEntries(
+            await readSourceArtifact<unknown>(folder, warmupArtifact, `${pair.pairKey}/entriesWarmup`),
+            bars,
+            `${pair.pairKey}/entriesWarmup`,
+        )
+        : [];
+    if (entries[0] && warmupEntries.some((entry) => entry[0] >= entries[0]![1])) {
+        throw new Error(`${pair.pairKey} warmup entries must precede the first in-window entry.`);
+    }
     if (bars.length !== pair.barCount || trades.length !== pair.tradeCount || entries.length !== pair.rowCount) {
         throw new Error(`${pair.pairKey} source record counts do not match source-snapshot/manifest.json.`);
     }
-    return { bars, trades, entries };
+    return { bars, trades, entries, warmupEntries };
 }
 
 function validateLedgerRow(value: unknown, pair: PairFeatureSnapshotPairManifest, entry: PairFeatureSnapshotEntry): void {
@@ -359,9 +397,6 @@ export async function validatePairFeatureSnapshot(folder: string): Promise<Valid
     }
     if (manifest.complete !== true) throw new Error(SOURCE_REQUIRED_MESSAGE);
     if (manifest.formatVersion !== 1 || manifest.writerRevision !== 1) throw new Error("Unsupported source snapshot format.");
-    if (!sameRuntime(manifest.runtime, runtimeFingerprint())) {
-        throw new Error("source snapshot runtime fingerprint does not match the current runtime.");
-    }
     const manifestHash = hashBytes(rawManifest);
     const ledgerPath = await safeArtifactPath(runDir, LEDGER_PATH);
     const ledgerHash = await hashFile(ledgerPath);
@@ -409,6 +444,14 @@ export async function validatePairFeatureSnapshot(folder: string): Promise<Valid
     }
     if (expectedRowStart !== manifest.ledgerRowCount) throw new Error("source snapshot row count does not cover ledger.jsonl.");
     return { folder: runDir, manifest, sourceSnapshotSha256: manifestHash };
+}
+
+export async function validatePairFeatureSnapshotForGeneration(folder: string): Promise<ValidatedPairFeatureSnapshot> {
+    const snapshot = await validatePairFeatureSnapshot(folder);
+    if (!sameRuntime(snapshot.manifest.runtime, runtimeFingerprint())) {
+        throw new Error("source snapshot runtime fingerprint does not match the current runtime.");
+    }
+    return snapshot;
 }
 
 function definitionWithoutDigest(definition: PairFeatureDefinition): Record<string, unknown> {
@@ -658,7 +701,7 @@ async function generateMissingPairColumns(
 
     const orderedTrades = pairData.trades.slice().sort((left, right) => left.exitBarIndex - right.exitBarIndex || left.tradeOrdinal - right.tradeOrdinal);
     const historicalTrades: PairFeatureSnapshotTrade[] = [];
-    const historicalEntries: PairFeatureSnapshotEntry[] = [];
+    const historicalEntries: (PairFeatureSnapshotEntry | PairFeatureSnapshotWarmupEntry)[] = [...pairData.warmupEntries];
     let tradeCursor = 0;
     let entryIndex = 0;
     let previousSignalBarIndex = -1;
@@ -718,7 +761,7 @@ export async function generatePairFeaturePack(
     options: PairFeatureGenerationOptions = {},
 ): Promise<PairFeaturePackResult> {
     throwIfAborted(options.signal);
-    const snapshot = await validatePairFeatureSnapshot(folderPath);
+    const snapshot = await validatePairFeatureSnapshotForGeneration(folderPath);
     const release = await validatePairFeatureLibraryRelease(libraryRelease);
     const requestedIds = [...featureIds].sort(compareCodeUnits);
     const requested = resolveRequestedFeatures(requestedIds, libraryRelease);
@@ -880,5 +923,3 @@ export async function generatePairFeaturePack(
         allNullFeatureIds: [...allNullFeatureIds].sort(compareCodeUnits),
     };
 }
-
-export { SOURCE_REQUIRED_MESSAGE };

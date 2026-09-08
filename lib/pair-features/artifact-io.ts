@@ -232,12 +232,26 @@ export async function safeArtifactPath(runDir: string, relativePath: string): Pr
 export async function writeArtifactAtomically(filePath: string, data: string | Buffer): Promise<void> {
     const temporaryPath = `${filePath}.tmp-${process.pid}-${++atomicWriteCounter}`;
     await writeFile(temporaryPath, data, { flag: "wx" });
-    try {
-        await rename(temporaryPath, filePath);
-    } catch (error) {
-        await unlink(temporaryPath).catch(() => { /* best effort */ });
-        throw error;
+    // Windows can briefly deny the rename while an antivirus scanner, indexer,
+    // or the Vite watcher still holds the destination. The same bounded retry
+    // the batch exporter's atomic writes use; other platforms attempt once.
+    const attempts = process.platform === "win32" ? 10 : 1;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+        try {
+            await rename(temporaryPath, filePath);
+            return;
+        } catch (error) {
+            lastError = error;
+            const code = (error as NodeJS.ErrnoException | null)?.code;
+            const retryable = process.platform === "win32"
+                && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
+            if (!retryable || attempt === attempts - 1) break;
+            await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, Math.min(25 * (attempt + 1), 100)));
+        }
     }
+    await unlink(temporaryPath).catch(() => { /* best effort */ });
+    throw lastError;
 }
 
 /** Publish a deterministic artifact without overwriting a concurrent file. */

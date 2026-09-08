@@ -33,6 +33,7 @@ import {
     type PairFeatureSnapshotRuntimeFingerprint,
     type PairFeatureSnapshotSource,
     type PairFeatureSnapshotTrade,
+    type PairFeatureSnapshotWarmupEntry,
 } from "../pair-features/types";
 
 const SOURCE_SNAPSHOT_DIR = "source-snapshot";
@@ -173,6 +174,28 @@ function buildEntries(
     });
 }
 
+function buildWarmupEntries(
+    source: readonly PairFeatureSnapshotWarmupEntry[],
+    bars: readonly PairFeatureSnapshotBar[],
+): PairFeatureSnapshotWarmupEntry[] {
+    let previousSignalBarIndex = -1;
+    return source.map((entry, index) => {
+        const signalBarIndex = requireInteger(entry[0], `warmup entry ${index} signalBarIndex`);
+        if (signalBarIndex < 0 || signalBarIndex >= bars.length || signalBarIndex < previousSignalBarIndex) {
+            throw new Error(`Source snapshot warmup entry ${index} has an invalid or non-monotonic bar index.`);
+        }
+        previousSignalBarIndex = signalBarIndex;
+        if (entry[1] !== "long" && entry[1] !== "short") {
+            throw new Error(`Source snapshot warmup entry ${index} has an invalid direction.`);
+        }
+        const signalTimeSec = requireFinite(entry[2], `warmup entry ${index} signalTimeSec`);
+        if (bars[signalBarIndex]![0] !== signalTimeSec) {
+            throw new Error(`Source snapshot warmup entry ${index} time does not match its signal bar.`);
+        }
+        return [signalBarIndex, entry[1], signalTimeSec];
+    });
+}
+
 function artifactMetadata(
     relativePath: string,
     recordCount: number,
@@ -307,6 +330,7 @@ export class TradeLedgerSnapshotWriter {
             const { records: bars, barIndexByTime } = buildBars(source.bars);
             const trades = buildTrades(source.trades, barIndexByTime);
             const entries = buildEntries(source.entries, bars);
+            const warmupEntries = buildWarmupEntries(source.warmupEntries ?? [], bars);
             const expectedRowOrdinal = rowStart;
             for (const [index, entry] of entries.entries()) {
                 if (entry[0] !== expectedRowOrdinal + index) {
@@ -319,6 +343,7 @@ export class TradeLedgerSnapshotWriter {
                 bars: await this.writeJsonl(`${prefix}/bars.jsonl.gz`, bars),
                 trades: await this.writeJsonl(`${prefix}/trades.jsonl.gz`, trades),
                 entries: await this.writeJsonl(`${prefix}/entries.jsonl.gz`, entries),
+                entriesWarmup: await this.writeJsonl(`${prefix}/entries-warmup.jsonl.gz`, warmupEntries),
             };
             this.pairKeys.add(key);
             this.pairs.push({

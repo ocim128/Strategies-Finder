@@ -16,7 +16,7 @@
  * Refuses to run when a manifest already exists (immutability fence).
  */
 
-import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, readdirSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { createGunzip } from "node:zlib";
 import { createHash } from "node:crypto";
@@ -51,22 +51,16 @@ interface PairGroup {
     rows: Array<{ direction: string; signalTime: number; signalBarIndex: number }>;
 }
 
-interface PartitionFileMeta {
-    path: string;
-    recordCount: number;
-    compressedBytes: number;
-    compressedSha256: string;
-    uncompressedSha256: string;
-}
-
 interface PairGroupArtifacts {
     bars: { count: number; firstTimeSec: number | null; lastTimeSec: number | null };
     trades: { count: number };
     files: {
-        bars: PartitionFileMeta;
-        trades: PartitionFileMeta;
-        entries: PartitionFileMeta;
+        bars: ArtifactMeta;
+        trades: ArtifactMeta;
+        entries: ArtifactMeta;
+        entriesWarmup?: ArtifactMeta;
     };
+    hasWarmup: boolean;
 }
 
 interface ArtifactMeta {
@@ -74,6 +68,7 @@ interface ArtifactMeta {
     recordCount: number;
     compressedBytes: number;
     compressedSha256: string;
+    uncompressedBytes: number;
     uncompressedSha256: string;
 }
 
@@ -88,28 +83,27 @@ function pairKeyOf(row: Pick<RowRecord, "pair" | "baseSymbol" | "quoteSymbol">):
     );
 }
 
-async function hashStream(stream: import("node:stream").Readable): Promise<string> {
-    const hash = createHash("sha256");
-    for await (const chunk of stream) hash.update(chunk as Buffer);
-    return hash.digest("hex");
-}
-
-void hashStream;
-
 async function gzStatsAndRecords<T>(
     filePath: string,
     parse: (value: unknown, index: number) => T,
-): Promise<{ records: T[]; compressedBytes: number; compressedSha256: string; uncompressedSha256: string }> {
+): Promise<{ records: T[]; compressedBytes: number; compressedSha256: string; uncompressedBytes: number; uncompressedSha256: string }> {
     const compressedSha = createHash("sha256");
     const decompressedSha = createHash("sha256");
     const read = createReadStream(filePath);
     let compressedBytes = 0;
+    let uncompressedBytes = 0;
     read.on("data", (chunk: Buffer) => {
         compressedSha.update(chunk);
         compressedBytes += chunk.length;
     });
     const gunzip = createGunzip();
-    gunzip.on("data", (chunk: Buffer) => decompressedSha.update(chunk));
+    gunzip.on("data", (chunk: Buffer) => {
+        decompressedSha.update(chunk);
+        uncompressedBytes += chunk.length;
+    });
+    read.on("error", (error) => gunzip.destroy(error));
+    gunzip.on("error", (error) => read.destroy(error));
+    read.pipe(gunzip);
     const reader = createInterface({ input: gunzip, crlfDelay: Infinity });
     const records: T[] = [];
     try {
@@ -126,17 +120,8 @@ async function gzStatsAndRecords<T>(
         records,
         compressedBytes,
         compressedSha256: compressedSha.digest("hex"),
+        uncompressedBytes,
         uncompressedSha256: decompressedSha.digest("hex"),
-    };
-}
-
-interface PairGroupArtifacts {
-    bars: { count: number; firstTimeSec: number | null; lastTimeSec: number | null };
-    trades: { count: number };
-    files: {
-        bars: ArtifactMeta;
-        trades: ArtifactMeta;
-        entries: ArtifactMeta;
     };
 }
 
@@ -180,7 +165,7 @@ async function verifyPairPartition(
         },
     );
 
-    const entries = await gzStatsAndRecords<readonly [number, number, string, number]>(
+    const entries = await gzStatsAndRecords<readonly [number, number, "long" | "short", number]>(
         entriesFile,
         (value, index) => {
             if (!Array.isArray(value) || value.length !== 4) {
@@ -189,7 +174,10 @@ async function verifyPairPartition(
             if (typeof value[2] !== "string" || (value[2] !== "long" && value[2] !== "short")) {
                 fail(`entries ${group.pairKey}:${index} has an invalid direction.`);
             }
-            return value as unknown as readonly [number, number, string, number];
+            if (!Number.isSafeInteger(value[0]) || !Number.isSafeInteger(value[1]) || !Number.isFinite(value[3] as number)) {
+                fail(`entries ${group.pairKey}:${index} has invalid numeric fields.`);
+            }
+            return value as unknown as readonly [number, number, "long" | "short", number];
         },
     );
     if (entries.records.length !== group.rowCount) {
@@ -208,29 +196,45 @@ async function verifyPairPartition(
         }
     }
 
-    const files = {
-        bars: {
-            path: `${PAIRS_DIR}/${group.pairKey}/bars.jsonl.gz`,
-            recordCount: bars.records.length,
-            compressedBytes: statSync(barsFile).size,
-            compressedSha256: bars.compressedSha256,
-            uncompressedSha256: bars.uncompressedSha256,
-        },
-        trades: {
-            path: `${PAIRS_DIR}/${group.pairKey}/trades.jsonl.gz`,
-            recordCount: trades.records.length,
-            compressedBytes: statSync(tradesFile).size,
-            compressedSha256: trades.compressedSha256,
-            uncompressedSha256: trades.uncompressedSha256,
-        },
-        entries: {
-            path: `${PAIRS_DIR}/${group.pairKey}/entries.jsonl.gz`,
-            recordCount: entries.records.length,
-            compressedBytes: statSync(entriesFile).size,
-            compressedSha256: entries.compressedSha256,
-            uncompressedSha256: entries.uncompressedSha256,
-        },
+    const warmupFile = path.join(pairDir, "entries-warmup.jsonl.gz");
+    const warmup = existsSync(warmupFile)
+        ? await gzStatsAndRecords<readonly [number, "long" | "short", number]>(warmupFile, (value, index) => {
+            if (!Array.isArray(value) || value.length !== 3 || !Number.isSafeInteger(value[0]) || (value[1] !== "long" && value[1] !== "short") || !Number.isFinite(value[2] as number)) {
+                fail(`warmup entries ${group.pairKey}:${index} is malformed.`);
+            }
+            const bar = bars.records[value[0] as number];
+            if (!bar || bar[0] !== value[2]) fail(`warmup entry ${group.pairKey}:${index} does not match its signal bar.`);
+            return value as unknown as readonly [number, "long" | "short", number];
+        })
+        : null;
+    let previousWarmupBar = -1;
+    for (const entry of warmup?.records ?? []) {
+        if (entry[0] < previousWarmupBar || (entries.records[0] && entry[0] >= entries.records[0][1])) fail(`warmup entries are not strictly before in-window entries for ${group.identity.pair}.`);
+        previousWarmupBar = entry[0];
+    }
+    const artifact = (relativePath: string, stats: { records: unknown[]; compressedBytes: number; compressedSha256: string; uncompressedBytes: number; uncompressedSha256: string }): ArtifactMeta => ({
+        path: relativePath,
+        recordCount: stats.records.length,
+        compressedBytes: stats.compressedBytes,
+        compressedSha256: stats.compressedSha256,
+        uncompressedBytes: stats.uncompressedBytes,
+        uncompressedSha256: stats.uncompressedSha256,
+    });
+    const files: PairGroupArtifacts["files"] = {
+        bars: artifact(
+            `${PAIRS_DIR}/${group.pairKey}/bars.jsonl.gz`,
+            bars as { records: unknown[]; compressedBytes: number; compressedSha256: string; uncompressedBytes: number; uncompressedSha256: string },
+        ),
+        trades: artifact(
+            `${PAIRS_DIR}/${group.pairKey}/trades.jsonl.gz`,
+            trades as { records: unknown[]; compressedBytes: number; compressedSha256: string; uncompressedBytes: number; uncompressedSha256: string },
+        ),
+        entries: artifact(
+            `${PAIRS_DIR}/${group.pairKey}/entries.jsonl.gz`,
+            entries as { records: unknown[]; compressedBytes: number; compressedSha256: string; uncompressedBytes: number; uncompressedSha256: string },
+        ),
     };
+    if (warmup) files.entriesWarmup = artifact(`${PAIRS_DIR}/${group.pairKey}/entries-warmup.jsonl.gz`, warmup as { records: unknown[]; compressedBytes: number; compressedSha256: string; uncompressedBytes: number; uncompressedSha256: string });
     return {
         bars: {
             count: bars.records.length,
@@ -239,6 +243,7 @@ async function verifyPairPartition(
         },
         trades: { count: trades.records.length },
         files,
+        hasWarmup: warmup !== null,
     };
 }
 
@@ -250,11 +255,7 @@ async function main(): Promise<void> {
     const manifestTarget = path.join(runDir, MANIFEST_PATH);
     if (existsSync(manifestTarget)) fail("manifest.json already exists — nothing to recover.");
 
-    const summary = JSON.parse(await readFileText(path.join(runDir, "summary.json"))) as {
-        ledgerComplete?: boolean;
-        cancelled?: boolean;
-        totals?: { signals?: number };
-    };
+    const summary = JSON.parse(readFileSync(path.join(runDir, "summary.json"), "utf8")) as { ledgerComplete?: boolean; cancelled?: boolean };
     if (summary.cancelled) fail("run was cancelled — re-run the batch instead of recovering.");
     if (summary.ledgerComplete !== true) fail("ledger is incomplete — re-run the batch instead of recovering.");
 
@@ -264,33 +265,28 @@ async function main(): Promise<void> {
     // order (= capture order), verifying each completed group's partition
     // before moving on. Memory stays bounded to one group's rows.
     const groups: PairGroup[] = [];
-    const artifacts: PairGroupArtifacts[] = [];
     const groupByKey = new Map<string, PairGroup>();
     let current: PairGroup | null = null;
     let ordinal = 0;
-    let expectedNextOrdinal = 0;
 
     for await (const line of iterateJsonlLines(ledgerPath)) {
         const value = JSON.parse(line) as Record<string, unknown>;
+        const direction = value.direction === "long" || value.direction === "short" ? value.direction : null;
         const row: RowRecord = {
             ordinal,
             pair: typeof value.pair === "string" ? value.pair : "",
             baseSymbol: typeof value.baseSymbol === "string" ? value.baseSymbol : "",
             quoteSymbol: typeof value.quoteSymbol === "string" ? value.quoteSymbol : "",
-            direction: typeof value.direction === "string" ? value.direction : "",
+            direction: direction ?? "long",
             signalTime: typeof value.signalTime === "number" ? value.signalTime : Number.NaN,
             signalBarIndex: typeof value.signalBarIndex === "number" ? value.signalBarIndex : Number.NaN,
         };
-        if (!row.pair || !row.baseSymbol || !row.quoteSymbol || (row.direction !== "long" && row.direction !== "short") || !Number.isFinite(row.signalTime) || !Number.isInteger(row.signalBarIndex)) {
+        if (!row.pair || !row.baseSymbol || !row.quoteSymbol || !direction || !Number.isFinite(row.signalTime) || !Number.isSafeInteger(row.signalBarIndex)) {
             fail(`ledger row ${ordinal} is missing identity fields.`);
-        }
-        if (row.ordinal !== expectedNextOrdinal) {
-            fail(`ledger row ordinals are not sequential at ${row.ordinal}.`);
         }
 
         const key = pairKeyOf(row);
         if (!current || current.pairKey !== key) {
-            if (current) await finalizeGroup(runDir, current, artifacts);
             if (groupByKey.has(key)) fail(`pair ${row.pair} reappears in a non-contiguous run at row ${ordinal}.`);
             current = {
                 pairKey: key,
@@ -311,14 +307,52 @@ async function main(): Promise<void> {
         current.rowCount += 1;
         current.rows.push({ direction: row.direction, signalTime: row.signalTime, signalBarIndex: row.signalBarIndex });
         ordinal += 1;
-        expectedNextOrdinal += 1;
     }
-    if (current) await finalizeGroup(runDir, current, artifacts);
 
     const ledgerRowCount = ordinal;
-    if (groups.length === 0) fail("ledger has no rows.");
     const totalRows = groups.reduce((sum, group) => sum + group.rowCount, 0);
     if (totalRows !== ledgerRowCount) fail(`group rows ${totalRows} != ledger rows ${ledgerRowCount}.`);
+
+    const pairsDir = path.join(runDir, PAIRS_DIR);
+    if (!existsSync(pairsDir)) fail(`missing partition directory ${pairsDir}.`);
+    const partitionKeys = new Set<string>();
+    for (const entry of readdirSync(pairsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const pairDir = path.join(pairsDir, entry.name);
+        for (const file of ["bars.jsonl.gz", "trades.jsonl.gz", "entries.jsonl.gz"]) {
+            if (!existsSync(path.join(pairDir, file))) fail(`partition directory ${entry.name} is missing ${file}.`);
+        }
+        partitionKeys.add(entry.name);
+    }
+    const provenance = JSON.parse(readFileSync(path.join(runDir, "provenance.json"), "utf8")) as { symbols?: unknown };
+    if (!Array.isArray(provenance.symbols)) fail("provenance symbols are missing.");
+    const orderedGroups: PairGroup[] = [];
+    const seenPartitions = new Set<string>();
+    for (const symbol of provenance.symbols) {
+        if (typeof symbol !== "string") fail(`provenance symbol is not a string: ${String(symbol)}.`);
+        const separator = symbol.indexOf("+");
+        if (separator <= 0 || separator === symbol.length - 1) fail(`cannot derive pair identity from provenance symbol ${symbol}.`);
+        const identity = { pair: symbol, baseSymbol: symbol.slice(0, separator), quoteSymbol: symbol.slice(separator + 1) };
+        const key = hashBytes(Buffer.from(canonicalJson([identity.pair, identity.baseSymbol, identity.quoteSymbol]), "utf8"));
+        if (!partitionKeys.has(key)) continue;
+        if (seenPartitions.has(key)) fail(`partition ${key} is listed more than once in provenance.`);
+        seenPartitions.add(key);
+        const group = groupByKey.get(key) ?? { pairKey: key, identity, rowStart: 0, rowCount: 0, rows: [] };
+        if (group.identity.pair !== identity.pair || group.identity.baseSymbol !== identity.baseSymbol || group.identity.quoteSymbol !== identity.quoteSymbol) fail(`partition ${key} identity disagrees with provenance.`);
+        orderedGroups.push(group);
+    }
+    for (const key of partitionKeys) if (!seenPartitions.has(key)) fail(`partition ${key} cannot be matched to a provenance or ledger identity.`);
+    for (const group of groups) if (!seenPartitions.has(group.pairKey)) fail(`ledger pair ${group.pairKey} has no discovered partition.`);
+
+    let nextRowStart = 0;
+    const artifacts: PairGroupArtifacts[] = [];
+    for (const group of orderedGroups) {
+        if (group.rowCount > 0 && group.rowStart !== nextRowStart) fail(`ledger row partition order disagrees with provenance at ${group.pairKey}.`);
+        group.rowStart = nextRowStart;
+        await finalizeGroup(runDir, group, artifacts);
+        nextRowStart += group.rowCount;
+    }
+    if (nextRowStart !== ledgerRowCount) fail(`recovered partition rows ${nextRowStart} != ledger rows ${ledgerRowCount}.`);
     console.log(`ledger: ${ledgerRowCount} rows across ${groups.length} pairs — partition verification passed`);
 
     const ledgerHash = await hashFile(ledgerPath);
@@ -327,7 +361,8 @@ async function main(): Promise<void> {
     const ranksPath = path.join(runDir, "signal-ranks.jsonl");
     const ranks = existsSync(ranksPath) ? await hashFile(ranksPath) : null;
 
-    const pairManifests = groups
+    const hasWarmup = artifacts.some((item) => item.hasWarmup);
+    const pairManifests = orderedGroups
         .map((group, index) => ({
             ...group.identity,
             pairKey: group.pairKey,
@@ -338,8 +373,7 @@ async function main(): Promise<void> {
             rowStart: group.rowStart,
             rowCount: group.rowCount,
             files: artifacts[index]!.files,
-        }))
-        .sort((a, b) => a.rowStart - b.rowStart || compareCodeUnits(a.pairKey, b.pairKey));
+        }));
 
     const manifest = {
         formatVersion: 1,
@@ -358,7 +392,9 @@ async function main(): Promise<void> {
             platform: process.platform,
             arch: process.arch,
         },
-        capabilities: ["pair_bars_v1", "closed_trade_records_v1", "entry_candidates_v1"],
+        capabilities: hasWarmup
+            ? ["pair_bars_v1", "closed_trade_records_v1", "entry_candidates_v1", "entry_candidates_warmup_v1"]
+            : ["pair_bars_v1", "closed_trade_records_v1", "entry_candidates_v1"],
         pairs: pairManifests,
     };
 
@@ -370,14 +406,6 @@ async function main(): Promise<void> {
 async function finalizeGroup(runDir: string, group: PairGroup, artifacts: PairGroupArtifacts[]): Promise<void> {
     const verified = await verifyPairPartition(runDir, group);
     artifacts.push(verified);
-}
-
-function compareCodeUnits(a: string, b: string): number {
-    return a < b ? -1 : a > b ? 1 : 0;
-}
-
-async function readFileText(filePath: string): Promise<string> {
-    return readFileSync(filePath, "utf8");
 }
 
 void main();

@@ -54,6 +54,10 @@ interface PairSelectionRule {
   `memoByPool(pool, "<unique-key>", () => ...)` from `rule-helpers.ts` —
   un-memoized per-candidate pool scans caused multi-minute timeouts in
   batch 1.
+- Receipt `repositoryRelativeSourceFiles` entries are repository-relative paths,
+  never absolute paths. A rule's `metadata.sourceFiles` must list the actual rule
+  module and every imported scoring helper; listing only a test driver is not a
+  reproducible rule receipt.
 - Performance envelope: a full 13,120-event tally runs in seconds when
   pool passes are memoized; the one-time folder load dominates.
 
@@ -76,6 +80,31 @@ NODE_OPTIONS=--max-old-space-size=8192 esno scripts/pair-pick-scales.ts <folderP
 ```
 
 Or use the Selection Rules menu (same engine, one load for all rules).
+
+The scales CLI always prints the embedded ledger scales. If a legacy folder has
+no source snapshot (and therefore no materialized feature packs), it also prints
+an explicit `pack-derived scales unavailable` note and continues. A malformed
+snapshot remains a loud error.
+
+### Window warmup and T=128 support
+
+When a ledger folder uses a `fromSec` boundary, the snapshot keeps accepted
+pre-window entries in the separate warmup partition. Fire and inter-fire features
+use those entries only as strictly prior history; same-bar current entries remain
+excluded, and observation counts continue to describe the feature's declared
+support. This prevents early-window fires from being reported as zero-history
+events without manufacturing ledger rows or outcomes.
+
+The `mtpt2fxs` T=128 trade-feature catalog entries are intentionally retained for
+compatibility. In the measured folder, 0 of 937,277 candidates had 128 eligible
+trades (maximum support 75), so their null values represent insufficient history,
+not an implementation gap.
+
+Reading a materialized pack validates the stored pack/release/family digests,
+column bytes and row bindings against the current folder ledger. It does not
+require the runtime fingerprint or implementation files from the checkout that
+generated it, so a Node patch upgrade remains readable. Generating or extending
+a pack still pins and verifies the current runtime and implementation hashes.
 Loading a 5M+-signal folder takes minutes and several GB of heap — size
 `--max-old-space-size` accordingly.
 

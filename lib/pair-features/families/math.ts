@@ -74,7 +74,7 @@ export function precedingLogReturns(
 export function simpleRegression(
     x: readonly number[],
     y: readonly number[],
-): { slope: number; rSquared: number } | null {
+): { slope: number; rSquared: number | null } | null {
     if (x.length !== y.length || x.length < 2) return null;
     const xMean = populationMean(x);
     const yMean = populationMean(y);
@@ -96,8 +96,7 @@ export function simpleRegression(
         const deviation = y[index]! - yMean;
         total += deviation * deviation;
     }
-    if (total === 0) return null;
-    return { slope, rSquared: 1 - residual / total };
+    return { slope, rSquared: total === 0 ? null : 1 - residual / total };
 }
 
 export function autocorrelation(values: readonly number[], lag: number): number | null {

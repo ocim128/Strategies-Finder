@@ -1,5 +1,7 @@
 import { expect } from "chai";
+import { spawnSync } from "node:child_process";
 import { describe, it, afterEach } from "node:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -13,65 +15,34 @@ import {
 } from "../lib/pair-selection/feature-access";
 import { loadPairSelectionArchive, tallyPairSelectionRule } from "../lib/pair-selection/tally";
 import { runSelectionRulesJob } from "../lib/selection-rules/job";
-import type { PairSelectionRule } from "../lib/pair-selection/types";
 import {
     createPairFeatureFixture,
     FIXTURE_BASE,
     FIXTURE_PAIR,
     FIXTURE_QUOTE,
 } from "./fixtures/pair-features/fixture";
+import {
+    autoPreparedRule,
+    nullableTradeRule,
+    spreadId,
+    spreadRule,
+    tradeId,
+    tradeRule,
+} from "./fixtures/pair-features/rules";
 
-const spreadId = "feat_fp_spread_log_return_b12_r1";
-const tradeId = "feat_fp_trade_mean_net_pct_t8_r1";
-const sourceFile = "tests/pair-feature-access.spec.ts";
-
-const spreadRule: PairSelectionRule = {
-    key: "fixture_feature_spread",
-    name: "FIXTURE_FEATURE_SPREAD",
-    description: "Reads the prepared spread feature.",
-    defaultParams: {},
-    paramLabels: {},
-    metadata: { featureRequirements: { libraryRelease: "v0", columns: [spreadId] }, sourceFiles: [sourceFile] },
-    score: (candidate) => {
-        if (Object.getOwnPropertySymbols(candidate).length > 0) throw new Error("private feature ordinal leaked into rule clone");
-        return candidate[spreadId] ?? Number.NEGATIVE_INFINITY;
-    },
-};
-
-const tradeRule: PairSelectionRule = {
-    key: "fixture_feature_trade",
-    name: "FIXTURE_FEATURE_TRADE",
-    description: "Reads the prepared trade feature and its count.",
-    defaultParams: {},
-    paramLabels: {},
-    metadata: { featureRequirements: { libraryRelease: "v0", columns: [tradeId, `${tradeId}_n`] }, sourceFiles: [sourceFile] },
-    score: (candidate) => {
-        if (spreadId in candidate) throw new Error("inactive feature leaked into rule clone");
-        return candidate[tradeId] ?? Number.NEGATIVE_INFINITY;
-    },
-};
-
-const nullableTradeRule: PairSelectionRule = {
-    ...tradeRule,
-    key: "fixture_feature_trade_nullable",
-    name: "FIXTURE_FEATURE_TRADE_NULLABLE",
-    score: (candidate) => candidate[tradeId] === null ? Number.NEGATIVE_INFINITY : candidate[tradeId]!,
-};
-
-const autoPreparedRule: PairSelectionRule = {
-    key: "fixture_feature_auto_prepared",
-    name: "FIXTURE_FEATURE_AUTO_PREPARED",
-    description: "Reads a v1 column prepared by the selection-rules job.",
-    defaultParams: {},
-    paramLabels: {},
-    metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_fp_spread_zscore_b12_r1"] },
-        sourceFiles: [sourceFile],
-    },
-    score: (candidate) => candidate.feat_fp_spread_zscore_b12_r1 ?? Number.NEGATIVE_INFINITY,
-};
+const sourceFile = "tests/fixtures/pair-features/rules.ts";
 
 let temporaryRoots: string[] = [];
+
+async function expectRejected(promise: Promise<unknown>, pattern: RegExp): Promise<void> {
+    try {
+        await promise;
+    } catch (error) {
+        expect(String(error)).to.match(pattern);
+        return;
+    }
+    expect.fail("expected promise to reject");
+}
 
 async function writeCanonical(filePath: string, value: unknown): Promise<void> {
     await writeFile(filePath, Buffer.from(canonicalJson(value), "utf8"));
@@ -304,12 +275,69 @@ describe("pair feature access", () => {
         expect(receipt.dateBoundaries).to.deep.equal({ fromSec: 1012, toSec: 1013 });
         expect(receipt.definitionDigests).to.have.length(1);
         expect(path.isAbsolute(receipt.packDigests[0]!.path)).to.equal(false);
-        expect(receipt.rules[0]!.sourceFiles[0]!.path).to.equal(sourceFile);
-        expect(path.isAbsolute(receipt.rules[0]!.sourceFiles[0]!.path)).to.equal(false);
+        expect(receipt.rules[0]!.repositoryRelativeSourceFiles[0]!.path).to.equal(sourceFile);
+        expect(path.isAbsolute(receipt.rules[0]!.repositoryRelativeSourceFiles[0]!.path)).to.equal(false);
         const checks = await readdir(path.join(folder, "feature-packs", "checks"));
         expect(checks).to.deep.equal([`${receipt.receiptDigest}.json`]);
         const stored = JSON.parse(await readFile(path.join(folder, "feature-packs", "checks", checks[0]!), "utf8")) as typeof receipt;
         expect(stored).to.deep.equal(receipt);
+    });
+
+    it("publishes no receipt when cancellation arrives during source hashing", async () => {
+        const folder = await createLoadableFolder();
+        const prepared = await ensurePairFeatures(folder, [spreadRule]);
+        const active = await activatePairFeatures(prepared, spreadRule);
+        const archive = await loadPairSelectionArchive(folder);
+        const result = tallyPairSelectionRule(archive, spreadRule, undefined, 24, active!);
+        const slowSource = "tests/fixtures/pair-features/receipt-hash-race.tmp";
+        await writeFile(path.resolve(process.cwd(), slowSource), Buffer.alloc(32 * 1024 * 1024, 7));
+        const controller = new AbortController();
+        const slowRule = {
+            ...spreadRule,
+            key: "fixture_feature_spread_hash_race",
+            metadata: {
+                ...spreadRule.metadata,
+                sourceFiles: [sourceFile, slowSource],
+            },
+        };
+        try {
+            const pending = writePairSelectionCheckReceipt({
+                prepared,
+                rules: [slowRule],
+                horizons: [24],
+                results: [result],
+                signal: controller.signal,
+            });
+            setImmediate(() => controller.abort());
+            await expectRejected(pending, /aborted|cancelled/i);
+            expect(existsSync(path.join(folder, "feature-packs", "checks"))).to.equal(false);
+        } finally {
+            await rm(path.resolve(process.cwd(), slowSource), { force: true });
+        }
+    });
+
+    it("runs the scales CLI from embedded fields when no snapshot or packs exist", async () => {
+        const folder = await createLoadableFolder();
+        await rm(path.join(folder, "source-snapshot"), { recursive: true, force: true });
+        await rm(path.join(folder, "feature-packs"), { recursive: true, force: true });
+        const esno = path.resolve(process.cwd(), "../../../node_modules/esno/esno.js");
+        const script = path.resolve(process.cwd(), "scripts/pair-pick-scales.ts");
+        const result = spawnSync(process.execPath, [esno, script, folder], { encoding: "utf8" });
+        expect(result.status, result.stderr).to.equal(0);
+        expect(result.stdout).to.include("events=");
+        expect(result.stdout).to.include("pack-derived scales unavailable: no source snapshot is present; using embedded scales only.");
+    });
+
+    it("keeps malformed snapshots loud in the scales CLI", async () => {
+        const folder = await createLoadableFolder();
+        await rm(path.join(folder, "feature-packs"), { recursive: true, force: true });
+        await writeFile(path.join(folder, "source-snapshot", "manifest.json"), "{}", "utf8");
+        const esno = path.resolve(process.cwd(), "../../../node_modules/esno/esno.js");
+        const script = path.resolve(process.cwd(), "scripts/pair-pick-scales.ts");
+        const result = spawnSync(process.execPath, [esno, script, folder], { encoding: "utf8" });
+        expect(result.status).to.not.equal(0);
+        expect(`${result.stdout}\n${result.stderr}`).to.include("source snapshot required");
+        expect(`${result.stdout}\n${result.stderr}`).to.not.include("using embedded scales only");
     });
 
     it("prepares once, activates each rule, and writes one successful job receipt", async () => {

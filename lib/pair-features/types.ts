@@ -84,7 +84,7 @@ export interface PairFeatureEvaluationContext {
     bars: readonly PairFeatureSnapshotBar[];
     signalBarIndex: number;
     historicalTrades: readonly PairFeatureSnapshotTrade[];
-    historicalEntries: readonly PairFeatureSnapshotEntry[];
+    historicalEntries: readonly (PairFeatureSnapshotEntry | PairFeatureSnapshotWarmupEntry)[];
 }
 
 export interface PairFeatureRelease {
@@ -149,6 +149,7 @@ export const PAIR_FEATURE_SNAPSHOT_CAPABILITIES = [
     "pair_bars_v1",
     "closed_trade_records_v1",
     "entry_candidates_v1",
+    "entry_candidates_warmup_v1",
 ] as const;
 
 export type PairFeatureSnapshotCapability = (typeof PAIR_FEATURE_SNAPSHOT_CAPABILITIES)[number];
@@ -192,6 +193,13 @@ export type PairFeatureSnapshotEntry = readonly [
     signalTimeSec: number,
 ];
 
+/** Accepted entries before the ledger window; deliberately has no ordinal or outcome fields. */
+export type PairFeatureSnapshotWarmupEntry = readonly [
+    signalBarIndex: number,
+    direction: "long" | "short",
+    signalTimeSec: number,
+];
+
 export interface PairFeatureSnapshotArtifact {
     path: string;
     recordCount: number;
@@ -213,6 +221,7 @@ export interface PairFeatureSnapshotPairManifest extends PairFeatureSnapshotIden
         bars: PairFeatureSnapshotArtifact;
         trades: PairFeatureSnapshotArtifact;
         entries: PairFeatureSnapshotArtifact;
+        entriesWarmup?: PairFeatureSnapshotArtifact;
     };
 }
 
@@ -244,6 +253,7 @@ export interface PairFeatureSnapshotSource {
     bars: readonly OHLCVData[];
     trades: readonly Trade[];
     entries: readonly PairFeatureSnapshotEntry[];
+    warmupEntries?: readonly PairFeatureSnapshotWarmupEntry[];
     rowStart: number;
 }
 

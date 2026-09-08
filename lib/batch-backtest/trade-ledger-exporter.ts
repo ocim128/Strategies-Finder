@@ -741,6 +741,11 @@ export class TradeLedgerWriter {
                     bars: source.data,
                     trades: source.trades,
                     entries: rows.map((row, index) => [rowStart + index, row.signalBarIndex, row.direction, row.signalTime]),
+                    warmupEntries: this.ledgerWindow.fromSec === null
+                        ? []
+                        : pairRows.rows
+                            .filter((row) => row.signalTime < this.ledgerWindow.fromSec!)
+                            .map((row) => [row.signalBarIndex, row.direction, row.signalTime]),
                     rowStart,
                 });
             }

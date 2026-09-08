@@ -6,24 +6,10 @@ import path from "node:path";
 import { hashFile } from "../lib/pair-features/artifact-io";
 import { computePairFeaturePackScales } from "../lib/pair-selection/scales";
 import { ensurePairFeatures } from "../lib/pair-selection/feature-access";
-import type { PairSelectionRule } from "../lib/pair-selection/types";
 import { createPairFeatureFixture } from "./fixtures/pair-features/fixture";
+import { makeFeatureRule } from "./fixtures/pair-features/rules";
 
-const sourceFile = "tests/pair-feature-pipeline.spec.ts";
 const roots: string[] = [];
-
-function rule(key: string, columns: readonly string[]): PairSelectionRule {
-    return {
-        key,
-        name: key,
-        description: key,
-        defaultParams: {},
-        paramLabels: {},
-        metadata: { featureRequirements: { libraryRelease: "v1", columns }, sourceFiles: [sourceFile] },
-        score: (candidate) =>
-            (candidate as unknown as Record<string, number | null>)[columns[0]!] ?? Number.NEGATIVE_INFINITY,
-    };
-}
 
 async function columnHashes(folder: string): Promise<Record<string, string>> {
     const definitionDirs = await readdir(path.join(folder, "feature-packs", "columns"));
@@ -50,7 +36,7 @@ describe("automatic pair feature preparation", () => {
         roots.push(root);
         await createPairFeatureFixture(root);
         const ledgerBefore = (await hashFile(path.join(root, "ledger.jsonl"))).sha256;
-        const first = rule("pipeline_first", ["feat_fp_spread_zscore_b12_r1", "feat_fp_trade_median_net_pct_t8_r1"]);
+        const first = makeFeatureRule("pipeline_first", ["feat_fp_spread_zscore_b12_r1", "feat_fp_trade_median_net_pct_t8_r1"]);
         const progress: string[] = [];
         await ensurePairFeatures(root, [first], undefined, (event) => progress.push(event.familyId));
         expect(progress).to.deep.equal(["spread", "trades"]);
@@ -63,7 +49,7 @@ describe("automatic pair feature preparation", () => {
             ["feat_fp_trade_win_fraction_t8_r1", "feat_fp_trade_median_net_pct_t8_r1"],
             ["feat_fp_spread_zscore_b12_r1", "feat_fp_dependence_variance_ratio_b48_h4_r1"],
         ] as const;
-        for (const [index, columns] of requirementSets.entries()) await ensurePairFeatures(root, [rule(`pipeline_${index}`, columns)]);
+        for (const [index, columns] of requirementSets.entries()) await ensurePairFeatures(root, [makeFeatureRule(`pipeline_${index}`, columns)]);
         expect((await hashFile(path.join(root, "ledger.jsonl"))).sha256).to.equal(ledgerBefore);
         const afterHashes = await columnHashes(root);
         for (const [file, digest] of Object.entries(firstHashes)) expect(afterHashes[file]).to.equal(digest);
@@ -77,13 +63,13 @@ describe("automatic pair feature preparation", () => {
         const root = await mkdtemp(path.join(os.tmpdir(), "pair-feature-pipeline-cancel-"));
         roots.push(root);
         await createPairFeatureFixture(root);
-        const priorRule = rule("pipeline_prior", ["feat_fp_spread_zscore_b12_r1"]);
+        const priorRule = makeFeatureRule("pipeline_prior", ["feat_fp_spread_zscore_b12_r1"]);
         await ensurePairFeatures(root, [priorRule]);
         const packsBefore = await readdir(path.join(root, "feature-packs", "manifests"));
         const controller = new AbortController();
         let message = "";
         try {
-            await ensurePairFeatures(root, [rule("pipeline_cancel", ["feat_fp_spread_zscore_b48_r1", "feat_fp_trade_win_fraction_t8_r1"])], controller.signal, () => controller.abort());
+            await ensurePairFeatures(root, [makeFeatureRule("pipeline_cancel", ["feat_fp_spread_zscore_b48_r1", "feat_fp_trade_win_fraction_t8_r1"])], controller.signal, () => controller.abort());
         } catch (error) {
             message = error instanceof Error ? error.message : String(error);
         }
@@ -97,7 +83,7 @@ describe("automatic pair feature preparation", () => {
         const root = await mkdtemp(path.join(os.tmpdir(), "pair-feature-pipeline-concurrent-"));
         roots.push(root);
         await createPairFeatureFixture(root);
-        const requested = rule("pipeline_concurrent", ["feat_fp_dependence_return_acf_b48_l1_r1", "feat_fp_volatility_return_std_b12_r1"]);
+        const requested = makeFeatureRule("pipeline_concurrent", ["feat_fp_dependence_return_acf_b48_l1_r1", "feat_fp_volatility_return_std_b12_r1"]);
         const prepared = await Promise.all([ensurePairFeatures(root, [requested]), ensurePairFeatures(root, [requested])]);
         expect(prepared[0]!.columns.size).to.equal(2);
         expect(prepared[1]!.columns.size).to.equal(2);

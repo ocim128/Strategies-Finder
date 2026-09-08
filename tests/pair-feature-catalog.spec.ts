@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { hashBytes, hashFile, canonicalJson } from "../lib/pair-features/artifact-io";
 import { V1_FEATURE_CATALOG, V1_RELEASE } from "../lib/pair-features/catalog";
 import { pairSelectionRuleRegistry } from "../lib/pair-selection/registry";
+import type { PairFeatureEvaluationContext, PairFeatureSnapshotTrade } from "../lib/pair-features/types";
 
 const grandfathered = new Map([
     ["pair_losing_streak_rebound", "feat_pairLosingStreakPrior"],
@@ -29,7 +30,7 @@ describe("pair feature catalog v1", () => {
         for (const definition of V1_RELEASE.definitions) {
             expect(definition.id).to.be.a("string").and.not.empty;
             expect(definition.family).to.be.oneOf(["spread", "dependence", "volatility", "trades", "fires"]);
-            expect(definition.revision).to.equal(1);
+            expect(definition.revision).to.equal(definition.id.includes("spread_ols_slope") ? 2 : 1);
             expect(definition.units).to.be.a("string").and.not.empty;
             expect(definition.directionConvention).to.be.a("string").and.not.empty;
             expect(definition.cutoff).to.be.a("string").and.not.empty;
@@ -45,6 +46,44 @@ describe("pair feature catalog v1", () => {
             const withoutDigest = Object.fromEntries(Object.entries(definition).filter(([key]) => key !== "definitionDigest"));
             expect(hashBytes(Buffer.from(canonicalJson(withoutDigest), "utf8"))).to.equal(definition.definitionDigest);
             expect(V1_FEATURE_CATALOG.some((entry) => entry.definition.id === definition.id)).to.equal(true);
+        }
+    });
+
+    it("executes every declared v1 numeric fixture, including flat-response OLS slopes", () => {
+        const bars = Array.from({ length: 300 }, (_, index) => [index, 1, 1, 1, 1, 1] as const);
+        for (const entry of V1_FEATURE_CATALOG) {
+            for (const fixture of entry.definition.expectedValueFixtures ?? []) {
+                if (fixture.expected === null) continue;
+                const tradeCount = Math.max(entry.definition.minimumObservations, 1);
+                const historicalTrades: PairFeatureSnapshotTrade[] = fixture.name.includes("no_losses") || fixture.name.includes("all_winners") || fixture.name === "complete" || fixture.name.includes("zero_returns")
+                    ? Array.from({ length: tradeCount }, (_, index) => ({
+                        tradeOrdinal: index,
+                        id: index,
+                        direction: "long" as const,
+                        entryTimeSec: index,
+                        exitTimeSec: index + 1,
+                        entryBarIndex: index,
+                        exitBarIndex: index + 1,
+                        entryPrice: 1,
+                        exitPrice: fixture.name.includes("zero_returns") || fixture.name === "complete" ? 1 : 2,
+                        pnl: fixture.name.includes("zero_returns") || fixture.name === "complete" ? 0 : 1,
+                        pnlPercent: fixture.name.includes("zero_returns") || fixture.name === "complete" ? 0 : 1,
+                        size: 1,
+                        fees: 0,
+                        exitReason: null,
+                    }))
+                    : [];
+                const context: PairFeatureEvaluationContext = {
+                    bars,
+                    signalBarIndex: fixture.signalBarIndex,
+                    historicalTrades,
+                    historicalEntries: [],
+                };
+                const result = entry.evaluate(context);
+                expect(result.observations, `${entry.definition.id}/${fixture.name} observations`).to.equal(fixture.observations);
+                if (fixture.expected === null) expect(result.value, `${entry.definition.id}/${fixture.name}`).to.equal(null);
+                else expect(result.value, `${entry.definition.id}/${fixture.name}`).to.be.closeTo(fixture.expected, 1e-12);
+            }
         }
     });
 

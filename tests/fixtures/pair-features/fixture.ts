@@ -14,6 +14,7 @@ import type {
     PairFeatureSnapshotPairManifest,
     PairFeatureSnapshotRuntimeFingerprint,
     PairFeatureSnapshotTrade,
+    PairFeatureSnapshotWarmupEntry,
 } from "../../../lib/pair-features/types";
 
 export const FIXTURE_PAIR = "FIXTURE_PAIR";
@@ -24,6 +25,7 @@ export interface PairFeatureFixtureOptions {
     mutateBar?: (bars: PairFeatureSnapshotBar[]) => void;
     mutateTrade?: (trades: PairFeatureSnapshotTrade[]) => void;
     entries?: readonly PairFeatureSnapshotEntry[];
+    warmupEntries?: readonly PairFeatureSnapshotWarmupEntry[];
 }
 
 function runtimeFingerprint(): PairFeatureSnapshotRuntimeFingerprint {
@@ -119,6 +121,8 @@ export async function createPairFeatureFixture(
     const barsEncoded = await writeGzipArtifact(folder, `${prefix}/bars.jsonl.gz`, bars);
     const tradesEncoded = await writeGzipArtifact(folder, `${prefix}/trades.jsonl.gz`, trades);
     const entriesEncoded = await writeGzipArtifact(folder, `${prefix}/entries.jsonl.gz`, entries);
+    const warmupEntries = [...(options.warmupEntries ?? [])];
+    const warmupEncoded = await writeGzipArtifact(folder, `${prefix}/entries-warmup.jsonl.gz`, warmupEntries);
     const ledgerRows = entries.map((entry) => ({
         ledgerVersion: 3,
         pair: FIXTURE_PAIR,
@@ -148,6 +152,7 @@ export async function createPairFeatureFixture(
             bars: artifact(`${prefix}/bars.jsonl.gz`, bars.length, barsEncoded),
             trades: artifact(`${prefix}/trades.jsonl.gz`, trades.length, tradesEncoded),
             entries: artifact(`${prefix}/entries.jsonl.gz`, entries.length, entriesEncoded),
+            entriesWarmup: artifact(`${prefix}/entries-warmup.jsonl.gz`, warmupEntries.length, warmupEncoded),
         },
     };
     const manifest: PairFeatureSnapshotManifest = {
@@ -161,7 +166,7 @@ export async function createPairFeatureFixture(
         summarySha256: hashBytes(Buffer.from(canonicalJson({}), "utf8")),
         ranksSha256: hashBytes(Buffer.alloc(0)),
         runtime: runtimeFingerprint(),
-        capabilities: ["pair_bars_v1", "closed_trade_records_v1", "entry_candidates_v1"],
+        capabilities: ["pair_bars_v1", "closed_trade_records_v1", "entry_candidates_v1", "entry_candidates_warmup_v1"],
         pairs: [pair],
     };
     await writeJson(join(folder, "source-snapshot", "manifest.json"), manifest);

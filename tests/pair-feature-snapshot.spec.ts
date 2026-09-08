@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { spawnSync } from "node:child_process";
 import { describe, it, after } from "node:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -206,7 +207,7 @@ describe("pair feature snapshot artifact I/O", () => {
 
         const manifest = JSON.parse(readFileSync(path.join(root, "source-snapshot/manifest.json"), "utf8")) as any;
         expect(manifest.complete).to.equal(true);
-        expect(manifest.capabilities).to.deep.equal(["pair_bars_v1", "closed_trade_records_v1", "entry_candidates_v1"]);
+        expect(manifest.capabilities).to.deep.equal(["pair_bars_v1", "closed_trade_records_v1", "entry_candidates_v1", "entry_candidates_warmup_v1"]);
         expect(manifest.ledgerRowCount).to.equal(2);
         expect(manifest.pairs).to.have.length(1);
         const pair = manifest.pairs[0];
@@ -247,6 +248,42 @@ describe("pair feature snapshot artifact I/O", () => {
         expect(pair.files.entries.recordCount).to.equal(2);
         expect(pair.files.entries.compressedBytes).to.equal(readFileSync(pairDir + "/entries.jsonl.gz").byteLength);
         expect(pair.files.entries.uncompressedBytes).to.equal(Buffer.byteLength("[0,1,\"long\",1700003600]\n[1,1,\"short\",1700003600]\n"));
+        expect(decodeJsonl(pairDir + "/entries-warmup.jsonl.gz")).to.deep.equal([]);
+    });
+
+    it("round-trips pre-window entries without ledger ordinals or outcomes", async () => {
+        const root = makeRoot();
+        const writer = await TradeLedgerWriter.create({
+            rootDir: root,
+            folder: "runs",
+            runId: "window-warmup",
+            startedAtMs: BASE_TIME * 1000,
+            provenance: makeProvenance("window-warmup"),
+            ledgerWindow: { fromSec: BASE_TIME + 2 * HOUR, toSec: null },
+        });
+        expect(writer).to.not.equal(null);
+        await writer!.appendPairRows(
+            {
+                rows: [
+                    makeRow(),
+                    makeRow({ signalTime: BASE_TIME + 2 * HOUR, signalBarIndex: 2 }),
+                ],
+                duplicatesCollapsed: 0,
+                rightCensored: 0,
+            },
+            { pair: "BASE+QUOTE", data: makeBars(), trades: [] },
+        );
+        const result = await writer!.finalize({ cancelled: false, finishedAtMs: BASE_TIME * 1000 + 1 });
+        expect(result.snapshotComplete).to.equal(true);
+        const manifest = JSON.parse(readFileSync(path.join(writer!.runDir, "source-snapshot/manifest.json"), "utf8")) as any;
+        const pair = manifest.pairs[0];
+        expect(pair.rowCount).to.equal(1);
+        expect(pair.files.entriesWarmup.recordCount).to.equal(1);
+        const pairDir = path.join(writer!.runDir, "source-snapshot", "pairs", pair.pairKey);
+        expect(decodeJsonl(pairDir + "/entries-warmup.jsonl.gz")).to.deep.equal([
+            [1, "long", BASE_TIME + HOUR],
+        ]);
+        expect(JSON.stringify(decodeJsonl(pairDir + "/entries-warmup.jsonl.gz"))).to.not.include("outcome");
     });
 
     it("captures an empty entry/trade partition and refuses a reused run directory", async () => {
@@ -433,6 +470,32 @@ describe("pair feature snapshot artifact I/O", () => {
         expect(failedResult.snapshotComplete).to.equal(false);
         expect(existsSync(path.join(failed!.runDir, "source-snapshot/manifest.json"))).to.equal(false);
         expect(existsSync(path.join(failed!.runDir, "source-snapshot"))).to.equal(false);
+    });
+
+    it("recovers a zero-row partition and records compressed and uncompressed metadata", async () => {
+        const root = makeRoot();
+        const writer = await TradeLedgerWriter.create({
+            rootDir: root,
+            folder: "runs",
+            runId: "recovery-zero",
+            startedAtMs: BASE_TIME * 1000,
+            provenance: makeProvenance("recovery-zero"),
+        });
+        expect(writer).to.not.equal(null);
+        await writer!.appendPairRows(
+            { rows: [], duplicatesCollapsed: 0, rightCensored: 0 },
+            { pair: "BASE+QUOTE", data: makeBars(), trades: [], baseSymbol: "BASE", quoteSymbol: "QUOTE" },
+        );
+        await writeFile(path.join(writer!.runDir, "summary.json"), JSON.stringify({ ledgerComplete: true, cancelled: false }), "utf8");
+        const esno = path.resolve(process.cwd(), "../../../node_modules/esno/esno.js");
+        const script = path.resolve(process.cwd(), "scripts/trade-ledger-snapshot-recover.ts");
+        const recovered = spawnSync(process.execPath, [esno, script, writer!.runDir], { encoding: "utf8" });
+        expect(recovered.status, recovered.stderr).to.equal(0);
+        const manifest = JSON.parse(readFileSync(path.join(writer!.runDir, "source-snapshot/manifest.json"), "utf8")) as any;
+        expect(manifest.pairs).to.have.length(1);
+        expect(manifest.pairs[0].rowCount).to.equal(0);
+        expect(manifest.pairs[0].files.bars.uncompressedBytes).to.be.greaterThan(0);
+        expect(manifest.pairs[0].files.entries.uncompressedBytes).to.equal(0);
     });
 });
 

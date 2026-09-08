@@ -39,7 +39,7 @@ function arMetric(
     bars: readonly PairFeatureSnapshotBar[],
     signalBarIndex: number,
     window: number,
-    calculate: (regression: { slope: number; rSquared: number }) => number | null,
+    calculate: (regression: { slope: number; rSquared: number | null }) => number | null,
 ): PairFeatureEvaluationResult {
     const input = precedingCloses(bars, signalBarIndex, window);
     if (!input.complete) return { value: null, observations: input.observations };

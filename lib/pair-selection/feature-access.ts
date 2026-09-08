@@ -18,7 +18,6 @@ import {
 import {
     generatePairFeaturePack,
     type PairFeatureGenerationProgress,
-    validatePairFeatureLibraryRelease,
     validatePairFeatureSnapshot,
 } from "../pair-features/generate";
 import type {
@@ -26,6 +25,7 @@ import type {
     PairFeatureDefinition,
     PairFeatureFamilyManifest,
     PairFeaturePackManifest,
+    PairFeatureRelease,
 } from "../pair-features/types";
 import type { PairSelectionResult } from "./tally";
 import type { PairSelectionRule } from "./types";
@@ -33,6 +33,7 @@ import { gunzipSync } from "node:zlib";
 
 const FEATURE_PACK_MANIFEST_DIR = "feature-packs/manifests";
 const FEATURE_PACK_CHECK_DIR = "feature-packs/checks";
+const featureGenerationTails = new Map<string, Promise<void>>();
 
 interface RequirementKey {
     libraryRelease: string;
@@ -50,6 +51,7 @@ interface PreparedPack {
     sha256: string;
     manifest: PairFeaturePackManifest;
     families: readonly PairFeatureFamilyManifest[];
+    release: PairFeatureRelease;
 }
 
 export interface PreparedPairFeatures {
@@ -71,12 +73,12 @@ export interface ActivePairFeatures {
 
 interface ResolvedRequirement extends RequirementKey {
     requestedIds: string[];
-    definition: PairFeatureDefinition;
+    definition: PairFeatureDefinition | null;
 }
 
 interface ReceiptRule {
     key: string;
-    sourceFiles: readonly { path: string; sha256: string }[];
+    repositoryRelativeSourceFiles: readonly { path: string; sha256: string }[];
     parameters: Readonly<Record<string, number>>;
 }
 
@@ -87,6 +89,7 @@ export interface PairSelectionCheckReceiptInput {
     results: readonly PairSelectionResult[];
     fromSec?: number | null;
     toSec?: number | null;
+    signal?: AbortSignal;
 }
 
 export interface PairSelectionCheckReceipt {
@@ -123,6 +126,21 @@ function throwIfAborted(signal?: AbortSignal): void {
     if (signal?.aborted) throw new Error("Pair-feature preparation cancelled.");
 }
 
+async function withFeatureGenerationLock<T>(folder: string, operation: () => Promise<T>): Promise<T> {
+    const previous = featureGenerationTails.get(folder) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const queued = previous.then(() => current);
+    featureGenerationTails.set(folder, queued);
+    await previous;
+    try {
+        return await operation();
+    } finally {
+        release();
+        if (featureGenerationTails.get(folder) === queued) featureGenerationTails.delete(folder);
+    }
+}
+
 function requirementKey(libraryRelease: string, parentId: string): string {
     return `${libraryRelease}\u0000${parentId}`;
 }
@@ -131,7 +149,10 @@ function parentFeatureId(featureId: string): string {
     return featureId.endsWith("_n") ? featureId.slice(0, -2) : featureId;
 }
 
-function resolveRequirements(rules: readonly PairSelectionRule[]): ResolvedRequirement[] {
+function resolveRequirements(
+    rules: readonly PairSelectionRule[],
+    fallbackDefinitions: ReadonlyMap<string, PairFeatureDefinition> = new Map(),
+): ResolvedRequirement[] {
     const resolved = new Map<string, ResolvedRequirement>();
     for (const rule of rules) {
         const requirement = rule.metadata?.featureRequirements;
@@ -140,7 +161,6 @@ function resolveRequirements(rules: readonly PairSelectionRule[]): ResolvedRequi
         for (const requestedId of requirement.columns) {
             const parentId = parentFeatureId(requestedId);
             const entry = getPairFeatureCatalogEntryForRelease(requirement.libraryRelease, parentId);
-            if (!entry) throw new Error(`Unknown pair feature ID: ${requestedId}.`);
             const key = requirementKey(requirement.libraryRelease, parentId);
             const existing = resolved.get(key);
             if (existing) {
@@ -152,13 +172,48 @@ function resolveRequirements(rules: readonly PairSelectionRule[]): ResolvedRequi
                     libraryRelease: requirement.libraryRelease,
                     parentId,
                     requestedIds: [requestedId],
-                    definition: entry.definition,
+                    definition: entry?.definition ?? fallbackDefinitions.get(key) ?? null,
                 });
             }
         }
     }
     return [...resolved.values()].sort((left, right) =>
         compare(requirementKey(left.libraryRelease, left.parentId), requirementKey(right.libraryRelease, right.parentId)));
+}
+
+function definitionWithoutDigest(definition: PairFeatureDefinition): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(definition)) if (key !== "definitionDigest") result[key] = value;
+    return result;
+}
+
+async function readStoredLibraryRelease(
+    folder: string,
+    libraryRelease: string,
+    expectedSha256: string,
+): Promise<{ release: PairFeatureRelease; bytes: Buffer; sha256: string }> {
+    const relativePath = `feature-packs/releases/${libraryRelease}.json`;
+    const file = await readJsonFile<PairFeatureRelease>(folder, relativePath, relativePath);
+    if (file.sha256 !== expectedSha256) throw new Error(`Feature pack release mismatch: ${relativePath}.`);
+    const release = file.value;
+    if (release.releaseId !== libraryRelease || release.catalogFormatVersion !== 1 || !Array.isArray(release.definitions) || release.definitions.length === 0) {
+        throw new Error(`Invalid stored feature library release: ${relativePath}.`);
+    }
+    if (canonicalJson(release) !== file.bytes.toString("utf8")) throw new Error(`Stored feature release bytes are not canonical: ${relativePath}.`);
+    const sorted = [...release.definitions].sort((left, right) => compare(left.id, right.id));
+    if (sorted.some((definition, index) => definition !== release.definitions[index])) throw new Error(`Stored feature release definitions are not sorted: ${relativePath}.`);
+    const definitions = new Map(release.definitions.map((definition) => [definition.id, definition] as const));
+    for (const definition of release.definitions) {
+        if (hashBytes(Buffer.from(canonicalJson(definitionWithoutDigest(definition)), "utf8")) !== definition.definitionDigest) {
+            throw new Error(`Stored definition digest mismatch for ${definition.id}.`);
+        }
+        for (const dependency of definition.dependencies) {
+            if (definitions.get(dependency.id)?.definitionDigest !== dependency.definitionDigest) {
+                throw new Error(`Stored definition dependency mismatch for ${definition.id}.`);
+            }
+        }
+    }
+    return { release, bytes: file.bytes, sha256: file.sha256 };
 }
 
 function missingPackCommand(folderPath: string, missing: readonly ResolvedRequirement[]): string {
@@ -210,8 +265,7 @@ async function validateColumnPresence(
     for (const kind of ["values", "valid", "observations"] as const) {
         const artifact = pair[kind];
         if (artifact.path !== expected[kind] || artifact.bytes < 0 || artifact.uncompressedBytes < 0) throw new Error(`Invalid ${definition.id} ${kind} column mapping.`);
-        const stats = await lstat(await safeArtifactPath(folder, artifact.path));
-        assertRegularFile(stats, artifact.path);
+        await readColumn(folder, artifact, kind, pair.rowCount);
     }
 }
 
@@ -237,7 +291,6 @@ async function readPack(
     relativePath: string,
     snapshot: Awaited<ReturnType<typeof validatePairFeatureSnapshot>>,
     requirements: readonly ResolvedRequirement[],
-    releaseById: ReadonlyMap<string, Awaited<ReturnType<typeof validatePairFeatureLibraryRelease>>>,
     signal?: AbortSignal,
 ): Promise<PreparedPack | null> {
     throwIfAborted(signal);
@@ -255,18 +308,12 @@ async function readPack(
         || manifest.sourceSnapshotSha256 !== snapshot.sourceSnapshotSha256) {
         throw new Error(`Feature pack binding mismatch: ${relativePath}.`);
     }
-    const release = releaseById.get(manifest.libraryRelease);
-    if (!release || manifest.libraryReleaseSha256 !== release.sha256) throw new Error(`Feature pack release mismatch: ${relativePath}.`);
-    const releaseRelativePath = `feature-packs/releases/${manifest.libraryRelease}.json`;
-    let releaseFile: Awaited<ReturnType<typeof readJsonFile<unknown>>>;
+    let release: Awaited<ReturnType<typeof readStoredLibraryRelease>>;
     try {
-        releaseFile = await readJsonFile<unknown>(folder, releaseRelativePath, releaseRelativePath);
+        release = await readStoredLibraryRelease(folder, manifest.libraryRelease, manifest.libraryReleaseSha256);
     } catch (error) {
         if (isMissing(error)) throw new Error(missingPackCommand(folder, relevant));
         throw error;
-    }
-    if (releaseFile.sha256 !== release.sha256 || canonicalJson(releaseFile.value) !== canonicalJson(release.release)) {
-        throw new Error(`Feature pack release bytes mismatch: ${releaseRelativePath}.`);
     }
     const families: PairFeatureFamilyManifest[] = [];
     for (const familyReference of manifest.familyManifests) {
@@ -310,7 +357,7 @@ async function readPack(
         }
         families.push(family);
     }
-    return { path: relativePath, sha256: digest, manifest, families };
+    return { path: relativePath, sha256: digest, manifest, families, release: release.release };
 }
 
 function findPreparedColumns(
@@ -325,8 +372,10 @@ function findPreparedColumns(
                 const requirement = requirements.find((item) => item.libraryRelease === pack.manifest.libraryRelease && item.parentId === feature.id);
                 if (!requirement) continue;
                 const key = requirementKey(requirement.libraryRelease, requirement.parentId);
+                const definition = pack.release.definitions.find((candidate) => candidate.id === feature.id);
+                if (!definition) throw new Error(`Stored feature release has no definition for ${feature.id}.`);
                 if (!columns.has(key)) columns.set(key, {
-                    definition: requirement.definition,
+                    definition,
                     pairs: feature.pairs,
                     rowStarts: new Map(snapshotPairs.map((pair) => [pair.pairKey, pair.rowStart] as const)),
                 });
@@ -348,11 +397,6 @@ export async function ensurePairFeatures(
     }
     throwIfAborted(signal);
     const snapshot = await validatePairFeatureSnapshot(folderPath);
-    const releases = new Map<string, Awaited<ReturnType<typeof validatePairFeatureLibraryRelease>>>();
-    for (const libraryRelease of [...new Set(requirements.map((item) => item.libraryRelease))].sort(compare)) {
-        throwIfAborted(signal);
-        releases.set(libraryRelease, await validatePairFeatureLibraryRelease(libraryRelease));
-    }
     const packs: PreparedPack[] = [];
     const columns = new Map<string, PreparedColumn>();
     async function readAvailablePacks(): Promise<void> {
@@ -365,7 +409,7 @@ export async function ensurePairFeatures(
         }
         packs.splice(0, packs.length);
         for (const packPath of names.filter((name) => name.endsWith(".json")).sort(compare).map((name) => `${FEATURE_PACK_MANIFEST_DIR}/${name}`)) {
-            const pack = await readPack(folderPath, packPath, snapshot, requirements, releases, signal);
+            const pack = await readPack(folderPath, packPath, snapshot, requirements, signal);
             if (pack) packs.push(pack);
         }
         columns.clear();
@@ -374,19 +418,25 @@ export async function ensurePairFeatures(
     await readAvailablePacks();
     let missing = requirements.filter((item) => !columns.has(requirementKey(item.libraryRelease, item.parentId)));
     if (missing.length > 0) {
-        const byRelease = new Map<string, string[]>();
-        for (const item of missing) {
-            const featureIds = byRelease.get(item.libraryRelease) ?? [];
-            featureIds.push(item.parentId);
-            byRelease.set(item.libraryRelease, featureIds);
-        }
-        for (const [libraryRelease, featureIds] of [...byRelease.entries()].sort(([left], [right]) => compare(left, right))) {
-            throwIfAborted(signal);
-            await generatePairFeaturePack(folderPath, libraryRelease, [...new Set(featureIds)].sort(compare), {
-                signal,
-                onProgress,
-            });
-        }
+        await withFeatureGenerationLock(folderPath, async () => {
+            await readAvailablePacks();
+            missing = requirements.filter((item) => !columns.has(requirementKey(item.libraryRelease, item.parentId)));
+            const unknown = missing.find((item) => item.definition === null);
+            if (unknown) throw new Error(`Unknown pair feature ID: ${unknown.parentId}.`);
+            const byRelease = new Map<string, string[]>();
+            for (const item of missing) {
+                const featureIds = byRelease.get(item.libraryRelease) ?? [];
+                featureIds.push(item.parentId);
+                byRelease.set(item.libraryRelease, featureIds);
+            }
+            for (const [libraryRelease, featureIds] of [...byRelease.entries()].sort(([left], [right]) => compare(left, right))) {
+                throwIfAborted(signal);
+                await generatePairFeaturePack(folderPath, libraryRelease, [...new Set(featureIds)].sort(compare), {
+                    signal,
+                    onProgress,
+                });
+            }
+        });
         await readAvailablePacks();
         missing = requirements.filter((item) => !columns.has(requirementKey(item.libraryRelease, item.parentId)));
     }
@@ -485,36 +535,45 @@ function receiptSourcePath(sourcePath: string): string {
     return relative;
 }
 
-async function receiptRules(rules: readonly PairSelectionRule[]): Promise<ReceiptRule[]> {
+async function receiptRules(rules: readonly PairSelectionRule[], signal?: AbortSignal): Promise<ReceiptRule[]> {
     const result: ReceiptRule[] = [];
     for (const rule of rules) {
         const sourceFiles = rule.metadata?.sourceFiles;
         if (!sourceFiles || sourceFiles.length === 0) throw new Error(`Pair-selection rule ${rule.key} must declare metadata.sourceFiles for check receipts.`);
         const files = [];
         for (const sourceFile of [...new Set(sourceFiles)].sort(compare)) {
+            throwIfAborted(signal);
             const relative = receiptSourcePath(sourceFile);
-            files.push({ path: relative, sha256: (await hashFile(path.resolve(process.cwd(), relative))).sha256 });
+            const digest = await hashFile(path.resolve(process.cwd(), relative));
+            throwIfAborted(signal);
+            files.push({ path: relative, sha256: digest.sha256 });
         }
         const rawParams = { ...rule.defaultParams };
         const parameters = rule.normalizeParams ? rule.normalizeParams(rawParams) : rawParams;
-        result.push({ key: rule.key, sourceFiles: files, parameters });
+        result.push({ key: rule.key, repositoryRelativeSourceFiles: files, parameters });
     }
     return result;
 }
 
 export async function writePairSelectionCheckReceipt(input: PairSelectionCheckReceiptInput): Promise<PairSelectionCheckReceipt> {
+    throwIfAborted(input.signal);
     if (!input.prepared.ledgerSha256 || !input.prepared.sourceSnapshotSha256) throw new Error("Feature check receipts require a prepared source snapshot.");
-    const requirements = resolveRequirements(input.rules);
+    const fallbackDefinitions = new Map(
+        [...input.prepared.columns.entries()].map(([key, column]) => [key, column.definition] as const),
+    );
+    const requirements = resolveRequirements(input.rules, fallbackDefinitions);
+    if (requirements.some((item) => item.definition === null)) throw new Error("Feature check receipt is missing a stored feature definition.");
     const releases = [...new Set(requirements.map((item) => item.libraryRelease))].sort(compare);
     const definitions = requirements
-        .map((item) => ({ id: item.definition.id, sha256: item.definition.definitionDigest }))
+        .map((item) => ({ id: item.definition!.id, sha256: item.definition!.definitionDigest }))
         .sort((left, right) => compare(left.id, right.id));
     const packDigests = input.prepared.packs.map((pack) => ({ path: pack.path, sha256: pack.sha256 })).sort((left, right) => compare(left.path, right.path));
     const libraryReleaseDigests = [...new Map(input.prepared.packs.map((pack) => [
         pack.manifest.libraryRelease,
         { release: pack.manifest.libraryRelease, sha256: pack.manifest.libraryReleaseSha256 },
     ] as const)).values()].sort((left, right) => compare(left.release, right.release));
-    const rules = await receiptRules(input.rules);
+    const rules = await receiptRules(input.rules, input.signal);
+    throwIfAborted(input.signal);
     const resultBytes = Buffer.from(canonicalJson(input.results.map((result) => {
         const { diagnostics: _diagnostics, ...deterministic } = result;
         return deterministic;
@@ -536,8 +595,12 @@ export async function writePairSelectionCheckReceipt(input: PairSelectionCheckRe
     const receiptDigest = hashBytes(Buffer.from(canonicalJson(withoutDigest), "utf8"));
     const receipt = { ...withoutDigest, receiptDigest };
     const relativePath = `${FEATURE_PACK_CHECK_DIR}/${receiptDigest}.json`;
+    throwIfAborted(input.signal);
     await prepareArtifactDirectory(input.prepared.folderPath, FEATURE_PACK_CHECK_DIR);
-    await publishArtifactIfMissing(await safeArtifactPath(input.prepared.folderPath, relativePath), Buffer.from(canonicalJson(receipt), "utf8"));
+    throwIfAborted(input.signal);
+    const receiptPath = await safeArtifactPath(input.prepared.folderPath, relativePath);
+    throwIfAborted(input.signal);
+    await publishArtifactIfMissing(receiptPath, Buffer.from(canonicalJson(receipt), "utf8"));
     return receipt;
 }
 

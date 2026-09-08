@@ -87,7 +87,7 @@ for (const window of [12, 48, 240]) {
     evaluators[`feat_fp_spread_distance_to_median_b${window}_r1`] = ({ bars, signalBarIndex }) => computeSpreadDistanceToMedianV1(bars, signalBarIndex, window);
     evaluators[`feat_fp_spread_distance_below_max_b${window}_r1`] = ({ bars, signalBarIndex }) => computeSpreadDistanceBelowMaxV1(bars, signalBarIndex, window);
     evaluators[`feat_fp_spread_distance_above_min_b${window}_r1`] = ({ bars, signalBarIndex }) => computeSpreadDistanceAboveMinV1(bars, signalBarIndex, window);
-    evaluators[`feat_fp_spread_ols_slope_b${window}_r1`] = ({ bars, signalBarIndex }) => computeSpreadOlsSlope(bars, signalBarIndex, window);
+    evaluators[`feat_fp_spread_ols_slope_b${window}_r2`] = ({ bars, signalBarIndex }) => computeSpreadOlsSlope(bars, signalBarIndex, window);
     evaluators[`feat_fp_spread_efficiency_ratio_b${window}_r1`] = ({ bars, signalBarIndex }) => computeSpreadEfficiencyV1(bars, signalBarIndex, window);
     evaluators[`feat_fp_volatility_return_std_b${window}_r1`] = ({ bars, signalBarIndex }) => computeReturnStd(bars, signalBarIndex, window);
     evaluators[`feat_fp_volatility_downside_rms_b${window}_r1`] = ({ bars, signalBarIndex }) => computeReturnDownsideRms(bars, signalBarIndex, window);

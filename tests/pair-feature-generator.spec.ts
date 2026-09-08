@@ -5,9 +5,16 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decodeFloat64Le, decodeUint32Le, decodeUint8 } from "../lib/pair-features/artifact-io";
-import { generatePairFeaturePack, SOURCE_REQUIRED_MESSAGE } from "../lib/pair-features/generate";
+import {
+    generatePairFeaturePack,
+    SOURCE_REQUIRED_MESSAGE,
+    validatePairFeatureSnapshot,
+    validatePairFeatureSnapshotForGeneration,
+} from "../lib/pair-features/generate";
+import { ensurePairFeatures } from "../lib/pair-selection/feature-access";
 import type { PairFeatureFamilyManifest, PairFeaturePackManifest } from "../lib/pair-features/types";
 import { createPairFeatureFixture } from "./fixtures/pair-features/fixture";
+import { spreadRule } from "./fixtures/pair-features/rules";
 
 const roots: string[] = [];
 
@@ -101,6 +108,31 @@ describe("offline pair feature generator", () => {
         expect(await loadColumn(root, pair.values.path, "values")).to.deep.equal([]);
     });
 
+    it("folds pre-window accepted entries into fire history without inflating support", async () => {
+        const root = makeRoot();
+        const fixture = await createPairFeatureFixture(root, {
+            entries: [[0, 20, "long", 1020]],
+            warmupEntries: [
+                [1, "long", 1001],
+                [5, "short", 1005],
+                [10, "long", 1010],
+            ],
+        });
+        const result = await generatePairFeaturePack(root, "v1", [
+            "feat_pairFiresInLast20Bars",
+            "feat_pairInterFireIntervalCvPrior",
+        ]);
+        const pack = JSON.parse(readFileSync(join(root, ...result.packPath.split("/")), "utf8")) as PairFeaturePackManifest;
+        const family = await loadFamily(root, pack, "fires");
+        const fire = family.features.find((feature) => feature.id === "feat_pairFiresInLast20Bars")!.pairs[0]!;
+        const cadence = family.features.find((feature) => feature.id === "feat_pairInterFireIntervalCvPrior")!.pairs[0]!;
+        expect(await loadColumn(root, fire.values.path, "values")).to.deep.equal([3]);
+        expect(await loadColumn(root, fire.observations.path, "observations")).to.deep.equal([20]);
+        expect((await loadColumn(root, cadence.values.path, "values"))[0]).to.be.closeTo(1 / 9, 1e-12);
+        expect(await loadColumn(root, cadence.observations.path, "observations")).to.deep.equal([2]);
+        expect(fixture.entries).to.have.length(1);
+    });
+
     it("refuses an incomplete source snapshot without creating feature-pack output", async () => {
         const root = makeRoot();
         await mkdir(join(root, "source-snapshot"), { recursive: true });
@@ -115,5 +147,21 @@ describe("offline pair feature generator", () => {
         await writeFile(join(root, "ledger.jsonl"), `${readFileSync(join(root, "ledger.jsonl"), "utf8")}\n`, "utf8");
         await expectRejected(generatePairFeaturePack(root, "v0", ["feat_fp_spread_log_return_b12_r1"]), /ledger\.jsonl hash or byte count/);
         expect(existsSync(join(root, "feature-packs"))).to.equal(false);
+    });
+
+    it("keeps stored snapshots readable across runtime patches while pinning generation", async () => {
+        const root = makeRoot();
+        await createPairFeatureFixture(root);
+        await generatePairFeaturePack(root, "v0", ["feat_fp_spread_log_return_b12_r1"]);
+        const originalVersion = process.version;
+        Object.defineProperty(process, "version", { configurable: true, value: "patched-node-runtime" });
+        try {
+            await validatePairFeatureSnapshot(root);
+            const prepared = await ensurePairFeatures(root, [spreadRule]);
+            expect(prepared.columns.size).to.equal(1);
+            await expectRejected(validatePairFeatureSnapshotForGeneration(root), /runtime fingerprint/);
+        } finally {
+            Object.defineProperty(process, "version", { configurable: true, value: originalVersion });
+        }
     });
 });
