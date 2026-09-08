@@ -891,7 +891,7 @@ function pairFeatureWorkerCount(taskCount: number): number {
 }
 
 function pairFeatureWorkerPath(): string {
-    return resolve(dirname(fileURLToPath(import.meta.url)), "../../scripts/pair-feature-generation-worker.mjs");
+    return resolve(dirname(fileURLToPath(import.meta.url)), "../../scripts/pair-feature-generation-worker.cjs");
 }
 
 async function generateMissingPairColumnsInWorkers(

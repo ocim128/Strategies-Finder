@@ -4,6 +4,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import { decodeFloat64Le, decodeUint32Le, decodeUint8 } from "../lib/pair-features/artifact-io";
 import {
     generatePairFeaturePack,
@@ -162,6 +164,36 @@ describe("offline pair feature generator", () => {
             await expectRejected(validatePairFeatureSnapshotForGeneration(root), /runtime fingerprint/);
         } finally {
             Object.defineProperty(process, "version", { configurable: true, value: originalVersion });
+        }
+    });
+
+    it("starts the feature-generation worker through the CommonJS bootstrap", async () => {
+        const root = makeRoot();
+        await createPairFeatureFixture(root);
+        const snapshot = await validatePairFeatureSnapshot(root, { verifySourceRecords: false });
+        const worker = new Worker(fileURLToPath(new URL("../scripts/pair-feature-generation-worker.cjs", import.meta.url)));
+        try {
+            const generated = await new Promise<readonly [string, unknown][]>((resolve, reject) => {
+                worker.on("message", (message: { type: string; generated?: readonly [string, unknown][]; error?: string }) => {
+                    if (message.type === "ready") {
+                        worker.postMessage({
+                            taskId: "fixture-worker",
+                            folder: root,
+                            libraryRelease: "v0",
+                            pair: snapshot.manifest.pairs[0],
+                            featureIds: ["feat_fp_spread_log_return_b12_r1"],
+                        });
+                    } else if (message.type === "done") {
+                        resolve(message.generated ?? []);
+                    } else if (message.type === "error") {
+                        reject(new Error(message.error ?? "feature worker failed"));
+                    }
+                });
+                worker.once("error", reject);
+            });
+            expect(generated).to.have.length(1);
+        } finally {
+            await worker.terminate();
         }
     });
 });
