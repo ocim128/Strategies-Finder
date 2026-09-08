@@ -1,6 +1,6 @@
 # Research Tabs Layout Consistency — Technical Plan
 
-Status: planned; implementation not started  
+Status: implemented; validation completed
 Date: 2026-09-08
 
 ## Scope and assumptions
@@ -11,8 +11,8 @@ semantics. Use Batch's page header and section treatment as the visual baseline,
 with less nested shading and consistent spacing across all four tabs.
 
 This document is an explicit user-requested exception to the implementation-plan
-restriction in [README.md](README.md). After shipping, consolidate any durable
-behavior notes into the feature guides and remove this plan.
+restriction in [README.md](README.md). Durable behavior notes can be consolidated
+into the feature guides later; this document remains as the implementation record.
 
 The initial review inspected source, not rendered screens. Exact responsive
 breakpoints and inherited style conflicts must be confirmed in the browser before
@@ -201,3 +201,25 @@ in its feature-local contract; decorative wrappers need only classes.
 Rollback consists of reverting this work's partial/style and any narrowly required
 presentation-handler changes. No data migration or server rollback is needed.
 Do not reset or restore unrelated working-tree changes.
+
+## Implementation result
+
+The shared presentation is implemented in `styles/research-tabs.css` and imported
+from `styles.css`. The four partials now use shared research-tab roots and headers;
+Finder setup/ranking are grouped, Batch execution/results/analysis are ordered as
+separate sections, and Selection Rules report/diagnostics use independent native
+disclosures. Existing IDs, feature services, lazy stylesheet loading, result
+renderers, and copy contracts remain unchanged.
+
+Validation completed on 2026-09-08:
+
+- `npm run typecheck`
+- `npm run typecheck:tests`
+- `..\\..\\..\\node_modules\\.bin\\esno tests\\feature-dom-contracts.spec.ts` (54 passed)
+- `..\\..\\..\\node_modules\\.bin\\esno tests\\batch-backtest-service-lifecycle.browser.spec.ts` (28 passed)
+- Browser smoke checks for Finder, Batch, Selection Rules, and Ledger Sweep at
+  compact and expanded panel widths, including tab switching and disclosure state.
+
+The focused lifecycle, copy, ledger, and preference specs and `npm run build:check`
+also passed during implementation; the browser console retained only the existing
+Binance websocket timeout and Rust-unavailable warnings.

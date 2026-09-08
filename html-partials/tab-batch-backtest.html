@@ -1,8 +1,8 @@
 <!-- Batch Backtest Tab -->
-<div id="batchbacktestTab">
-    <header class="batch-header">
-        <h2 class="batch-title">Batch Backtest</h2>
-        <p class="batch-subtitle">
+<div id="batchbacktestTab" class="research-tab research-tab--batch">
+    <header class="batch-header research-tab-header">
+        <h2 class="batch-title research-tab-title">Batch Backtest</h2>
+        <p class="batch-subtitle research-tab-subtitle">
             Run the active strategy + params + backtest settings once on each pair
             in the list. Synthetic pairs use <code>BASE+QUOTE</code>. This is not a
             search &mdash; use Finder for that.
@@ -29,6 +29,8 @@
             <textarea class="param-input" id="batchBacktestSymbols" rows="8"
                 placeholder="BTCUSDT&#10;ZEC+APT&#10;PAXGUSDT&#10;TSLAUSDT"></textarea>
         </div>
+        <details class="research-disclosure batch-balanced-generator-disclosure">
+            <summary>Advanced pair-list tools</summary>
         <div class="batch-balanced-generator" aria-label="Balanced pair-list generator">
             <div class="batch-balanced-generator-heading">
                 <span class="batch-balanced-generator-label">Balanced Generator</span>
@@ -58,6 +60,7 @@
             </div>
             <div class="batch-miner-status batch-miner-status--multiline batch-balanced-generator-status" id="batchBacktestBalancedSummary"></div>
         </div>
+        </details>
 
         <div class="batch-balanced-generator" aria-label="Trade ledger export">
             <div class="batch-balanced-generator-heading">
@@ -93,7 +96,7 @@
         </div>
     </section>
 
-    <div class="batch-actions">
+    <div class="batch-actions batch-execution-actions">
         <div class="batch-action-group batch-action-group--primary" role="group" aria-label="Batch execution">
             <button class="btn btn-primary run-btn" id="batchBacktestRunBtn" type="button">
                 <svg viewBox="0 0 24 24" fill="currentColor">
@@ -106,41 +109,6 @@
                     <path d="M6 6h12v12H6z" />
                 </svg>
                 Stop
-            </button>
-        </div>
-        <div class="batch-action-group batch-action-group--analysis" role="group" aria-label="OPEN_SCORE USD analysis">
-            <button class="btn btn-secondary btn-compact" id="batchBacktestOpenScoreUsdBtn" type="button" disabled
-                title="Event-level selector study: at each historical OPEN_SCORE decision event, did the top positive-score asset (traded vs USD at the next bar open) beat a random positive candidate?">
-                OPEN_SCORE USD
-            </button>
-            <div class="batch-open-score-usd-config" aria-label="OPEN_SCORE USD configuration">
-                <div class="batch-field batch-field--inline" title="Scope OPEN_SCORE USD replay and saved trade-ledger rows from this date onward. Leave blank for open-ended history.">
-                    <label class="batch-field-label" for="batchBacktestOpenScoreUsdFrom">From</label>
-                    <input class="batch-field-input batch-field-input--auto" id="batchBacktestOpenScoreUsdFrom" type="date">
-                </div>
-                <div class="batch-field batch-field--inline" title="Scope OPEN_SCORE USD replay and saved trade-ledger rows through this date. Leave blank for open-ended history.">
-                    <label class="batch-field-label" for="batchBacktestOpenScoreUsdTo">To</label>
-                    <input class="batch-field-input batch-field-input--auto" id="batchBacktestOpenScoreUsdTo" type="date">
-                </div>
-                <div class="batch-field batch-field--inline" title="Forward USD-return horizons in bars (comma-separated). Required. Use values that match your intended hold period.">
-                    <label class="batch-field-label" for="batchBacktestOpenScoreUsdHorizons">Horizons</label>
-                    <input class="batch-field-input batch-field-input--auto" id="batchBacktestOpenScoreUsdHorizons" type="text" value="12,24,48" placeholder="12,24,48">
-                </div>
-            </div>
-        </div>
-        <div class="batch-action-group batch-action-group--exports" role="group" aria-label="Batch export">
-            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyBtn" type="button"
-                title="Copy all rows as pipe-delimited text">
-                Copy Results
-            </button>
-
-            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyOpenScoreUsdBtn" type="button" disabled
-                title="Copy the OPEN_SCORE USD replay report">
-                Copy OPEN_SCORE USD
-            </button>
-            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyBenchmarkBtn" type="button" disabled
-                title="Copy benchmark diagnostics (timings, cache hit rates) for the latest run as JSON">
-                Copy Benchmark
             </button>
         </div>
     </div>
@@ -158,73 +126,18 @@
         </div>
         <div class="batch-summary-grid" id="batchBacktestSummaryGrid" hidden></div>
 
-        <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestOpenScoreUsdSummary"></div>
     </div>
 
-    <section class="batch-section" aria-label="TOP_MEAN coordinator">
-        <div class="batch-section-heading">
-            <h3 class="batch-section-title">TOP_MEAN Coordinator</h3>
-            <p class="batch-section-note">Evaluate the Pairs list at the current timeframe (direct or synthetic crypto markets), or leave it empty for the S&amp;P 500 IBKR 4H universe.</p>
-        </div>
-        <div class="batch-coordinator-fields">
-            <div class="batch-field">
-                <label class="batch-field-label" for="batchBacktestSp500TopMeanHorizons">Horizons</label>
-                <input class="batch-field-input" id="batchBacktestSp500TopMeanHorizons" type="text" value="12,24,48" placeholder="12,24,48">
-            </div>
-            <div class="batch-field">
-                <label class="batch-field-label" for="batchBacktestSp500TopMeanWorkers">Workers</label>
-                <input class="batch-field-input" id="batchBacktestSp500TopMeanWorkers" type="number" min="1" max="24" step="1" placeholder="Auto">
-            </div>
-            <div class="batch-field">
-                <label class="batch-field-label" for="batchBacktestSp500TopMeanMaxPairs">Max Pairs (Smoke)</label>
-                <input class="batch-field-input" id="batchBacktestSp500TopMeanMaxPairs" type="number" min="1" step="10" placeholder="Full">
-            </div>
-            <div class="batch-field batch-field--inline" title="Restrict phase-3 replay decision events to this date onward (YYYY-MM-DD). Leave blank for full history. Only affects the OPEN_SCORE USD replay phase; pair backtests still cover full history.">
-                <label class="batch-field-label" for="batchBacktestSp500TopMeanFrom">From</label>
-                <input class="batch-field-input batch-field-input--auto" id="batchBacktestSp500TopMeanFrom" type="date">
-            </div>
-            <div class="batch-field batch-field--inline" title="Restrict phase-3 replay decision events up to this date (YYYY-MM-DD). Leave blank for full history.">
-                <label class="batch-field-label" for="batchBacktestSp500TopMeanTo">To</label>
-                <input class="batch-field-input batch-field-input--auto" id="batchBacktestSp500TopMeanTo" type="date">
-            </div>
-            <div class="batch-field batch-field--inline" title="Write the completed run's permanent mining ledger to archive/batch-open-score/. Saved archives are not automatically removed.">
-                <input id="batchBacktestSp500TopMeanArchiveToggle" type="checkbox">
-                <label class="batch-field-label" for="batchBacktestSp500TopMeanArchiveToggle">Save full research archive (~150 MB / 5k pairs)</label>
+    <div class="finder-results research-results-section batch-main-results-section">
+        <div class="research-results-heading">
+            <h3>Batch results</h3>
+            <div class="batch-action-group batch-action-group--exports" role="group" aria-label="Batch result exports">
+                <button class="btn btn-secondary btn-compact" id="batchBacktestCopyBtn" type="button"
+                    title="Copy all rows as pipe-delimited text">Copy Results</button>
+                <button class="btn btn-secondary btn-compact" id="batchBacktestCopyBenchmarkBtn" type="button" disabled
+                    title="Copy benchmark diagnostics (timings, cache hit rates) for the latest run as JSON">Copy Benchmark</button>
             </div>
         </div>
-        <div class="batch-coordinator-actions">
-            <button class="btn btn-secondary" id="batchBacktestSp500TopMeanRunBtn" type="button">Run TOP_MEAN</button>
-            <button class="btn btn-danger btn-compact" id="batchBacktestSp500TopMeanStopBtn" type="button" style="display:none">Stop</button>
-            <select class="param-input batch-open-score-details-selector" id="batchBacktestSp500TopMeanDetailsSelector" aria-label="OPEN_SCORE detail selector" disabled>
-                <option value="TOP_MEAN" selected>TOP_MEAN</option>
-                <option value="MAX_ACTIVE">MAX_ACTIVE</option>
-                <option value="TOP_RAW">TOP_RAW</option>
-                <option value="TOP_MEAN_RAW_UNIQUE_V1">TOP_MEAN_RAW_UNIQUE_V1</option>
-                <option value="TOP_ADJUSTED">TOP_ADJUSTED</option>
-                <option value="TOP_MEAN_TREND">TOP_MEAN_TREND</option>
-                <option value="REGIME_MEAN">REGIME_MEAN</option>
-                <option value="MAX_SUBMITTED">MAX_SUBMITTED</option>
-                <option value="MAX_RETAINED">MAX_RETAINED</option>
-                <option value="ACCELERATING">ACCELERATING</option>
-                <option value="MAX_ACTIVE_REVERSION">MAX_ACTIVE_REVERSION</option>
-                <option value="BOTTOM_MEAN">BOTTOM_MEAN</option>
-            </select>
-            <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanDetailsBtn" type="button" title="Show every OPEN_SCORE decision, selected asset, and realized selector performance. Details are excluded from Copy OPEN_SCORE." disabled>Show OPEN_SCORE Details</button>
-            <div class="batch-action-group batch-action-group--exports" role="group" aria-label="TOP_MEAN export">
-                <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanCopyBtn" type="button" disabled>Copy Result</button>
-                <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanCopyOpenScoreBtn" type="button" title="Copy the full-range and calendar-year OPEN_SCORE reports" disabled>Copy OPEN_SCORE</button>
-                <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanDownloadBtn" type="button" disabled>Download Result</button>
-                <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanCopyDiagnosticBtn" type="button" disabled>Copy Diagnostic</button>
-            </div>
-        </div>
-        <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestSp500TopMeanCoverageSummary"></div>
-        <div class="batch-miner-status" id="batchBacktestSp500TopMeanProgressText"></div>
-        <div class="batch-open-score-details" id="batchBacktestSp500TopMeanDetails" hidden></div>
-        <div class="finder-list" id="batchBacktestSp500TopMeanResults"></div>
-        <pre class="batch-diagnostic-pre" id="batchBacktestSp500TopMeanDiagnostic" hidden></pre>
-    </section>
-
-    <div class="finder-results">
         <div class="batch-results-header" id="batchBacktestResultsHeader" role="row" aria-label="Sort batch results">
             <span class="batch-results-header-label" role="columnheader">Pair</span>
             <div class="batch-results-sort-column" role="columnheader" data-batch-sort-key="netProfit">
@@ -287,4 +200,97 @@
             </p>
         </div>
     </div>
+
+    <section class="batch-section batch-analysis-section" aria-label="OPEN_SCORE USD analysis">
+        <div class="batch-section-heading">
+            <h3 class="batch-section-title">OPEN_SCORE USD</h3>
+            <p class="batch-section-note">Replay selector choices against forward USD returns after a completed batch.</p>
+        </div>
+        <div class="batch-action-group batch-action-group--analysis" role="group" aria-label="OPEN_SCORE USD analysis controls">
+            <button class="btn btn-secondary btn-compact" id="batchBacktestOpenScoreUsdBtn" type="button" disabled
+                title="Event-level selector study: at each historical OPEN_SCORE decision event, did the top positive-score asset (traded vs USD at the next bar open) beat a random positive candidate?">
+                OPEN_SCORE USD
+            </button>
+            <div class="batch-open-score-usd-config" aria-label="OPEN_SCORE USD configuration">
+                <div class="batch-field batch-field--inline" title="Scope OPEN_SCORE USD replay and saved trade-ledger rows from this date onward. Leave blank for open-ended history.">
+                    <label class="batch-field-label" for="batchBacktestOpenScoreUsdFrom">From</label>
+                    <input class="batch-field-input batch-field-input--auto" id="batchBacktestOpenScoreUsdFrom" type="date">
+                </div>
+                <div class="batch-field batch-field--inline" title="Scope OPEN_SCORE USD replay and saved trade-ledger rows through this date. Leave blank for open-ended history.">
+                    <label class="batch-field-label" for="batchBacktestOpenScoreUsdTo">To</label>
+                    <input class="batch-field-input batch-field-input--auto" id="batchBacktestOpenScoreUsdTo" type="date">
+                </div>
+                <div class="batch-field batch-field--inline" title="Forward USD-return horizons in bars (comma-separated). Required. Use values that match your intended hold period.">
+                    <label class="batch-field-label" for="batchBacktestOpenScoreUsdHorizons">Horizons</label>
+                    <input class="batch-field-input batch-field-input--auto" id="batchBacktestOpenScoreUsdHorizons" type="text" value="12,24,48" placeholder="12,24,48">
+                </div>
+            </div>
+            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyOpenScoreUsdBtn" type="button" disabled
+                title="Copy the OPEN_SCORE USD replay report">Copy OPEN_SCORE USD</button>
+        </div>
+        <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestOpenScoreUsdSummary"></div>
+    </section>
+
+    <section class="batch-section batch-coordinator-section" aria-label="TOP_MEAN coordinator">
+        <div class="batch-section-heading">
+            <h3 class="batch-section-title">TOP_MEAN Coordinator</h3>
+            <p class="batch-section-note">Evaluate the Pairs list at the current timeframe (direct or synthetic crypto markets), or leave it empty for the S&amp;P 500 IBKR 4H universe.</p>
+        </div>
+        <div class="batch-coordinator-fields">
+            <div class="batch-field">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanHorizons">Horizons</label>
+                <input class="batch-field-input" id="batchBacktestSp500TopMeanHorizons" type="text" value="12,24,48" placeholder="12,24,48">
+            </div>
+            <div class="batch-field">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanWorkers">Workers</label>
+                <input class="batch-field-input" id="batchBacktestSp500TopMeanWorkers" type="number" min="1" max="24" step="1" placeholder="Auto">
+            </div>
+            <div class="batch-field">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanMaxPairs">Max Pairs (Smoke)</label>
+                <input class="batch-field-input" id="batchBacktestSp500TopMeanMaxPairs" type="number" min="1" step="10" placeholder="Full">
+            </div>
+            <div class="batch-field batch-field--inline" title="Restrict phase-3 replay decision events to this date onward (YYYY-MM-DD). Leave blank for full history. Only affects the OPEN_SCORE USD replay phase; pair backtests still cover full history.">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanFrom">From</label>
+                <input class="batch-field-input batch-field-input--auto" id="batchBacktestSp500TopMeanFrom" type="date">
+            </div>
+            <div class="batch-field batch-field--inline" title="Restrict phase-3 replay decision events up to this date (YYYY-MM-DD). Leave blank for full history.">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanTo">To</label>
+                <input class="batch-field-input batch-field-input--auto" id="batchBacktestSp500TopMeanTo" type="date">
+            </div>
+            <div class="batch-field batch-field--inline" title="Write the completed run's permanent mining ledger to archive/batch-open-score/. Saved archives are not automatically removed.">
+                <input id="batchBacktestSp500TopMeanArchiveToggle" type="checkbox">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanArchiveToggle">Save full research archive (~150 MB / 5k pairs)</label>
+            </div>
+        </div>
+        <div class="batch-coordinator-actions">
+            <button class="btn btn-secondary" id="batchBacktestSp500TopMeanRunBtn" type="button">Run TOP_MEAN</button>
+            <button class="btn btn-danger btn-compact" id="batchBacktestSp500TopMeanStopBtn" type="button" style="display:none">Stop</button>
+            <select class="param-input batch-open-score-details-selector" id="batchBacktestSp500TopMeanDetailsSelector" aria-label="OPEN_SCORE detail selector" disabled>
+                <option value="TOP_MEAN" selected>TOP_MEAN</option>
+                <option value="MAX_ACTIVE">MAX_ACTIVE</option>
+                <option value="TOP_RAW">TOP_RAW</option>
+                <option value="TOP_MEAN_RAW_UNIQUE_V1">TOP_MEAN_RAW_UNIQUE_V1</option>
+                <option value="TOP_ADJUSTED">TOP_ADJUSTED</option>
+                <option value="TOP_MEAN_TREND">TOP_MEAN_TREND</option>
+                <option value="REGIME_MEAN">REGIME_MEAN</option>
+                <option value="MAX_SUBMITTED">MAX_SUBMITTED</option>
+                <option value="MAX_RETAINED">MAX_RETAINED</option>
+                <option value="ACCELERATING">ACCELERATING</option>
+                <option value="MAX_ACTIVE_REVERSION">MAX_ACTIVE_REVERSION</option>
+                <option value="BOTTOM_MEAN">BOTTOM_MEAN</option>
+            </select>
+            <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanDetailsBtn" type="button" title="Show every OPEN_SCORE decision, selected asset, and realized selector performance. Details are excluded from Copy OPEN_SCORE." disabled>Show OPEN_SCORE Details</button>
+            <div class="batch-action-group batch-action-group--exports" role="group" aria-label="TOP_MEAN export">
+                <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanCopyBtn" type="button" disabled>Copy Result</button>
+                <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanCopyOpenScoreBtn" type="button" title="Copy the full-range and calendar-year OPEN_SCORE reports" disabled>Copy OPEN_SCORE</button>
+                <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanDownloadBtn" type="button" disabled>Download Result</button>
+                <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanCopyDiagnosticBtn" type="button" disabled>Copy Diagnostic</button>
+            </div>
+        </div>
+        <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestSp500TopMeanCoverageSummary"></div>
+        <div class="batch-miner-status" id="batchBacktestSp500TopMeanProgressText"></div>
+        <div class="batch-open-score-details" id="batchBacktestSp500TopMeanDetails" hidden></div>
+        <div class="finder-list" id="batchBacktestSp500TopMeanResults"></div>
+        <pre class="batch-diagnostic-pre" id="batchBacktestSp500TopMeanDiagnostic" hidden></pre>
+    </section>
 </div>

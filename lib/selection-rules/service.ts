@@ -98,6 +98,7 @@ export class SelectionRulesService {
     private preferencesLoaded = false;
     private preferences: SelectionRulesPreferences | null = null;
     private ruleSelectionInitialized = false;
+    private lastRuleToggleKey: string | null = null;
     private readonly reportRenderFrame = coalesceAnimationFrame(() => this.renderReport());
 
     private getDom(): SelectionRulesDom {
@@ -114,6 +115,23 @@ export class SelectionRulesService {
         dom.selectionRulesHorizonSelect.addEventListener("change", () => {
             this.persistPreferences();
             this.setBusy();
+        });
+        dom.selectionRulesRuleList.addEventListener("click", (event) => {
+            const target = event.target as HTMLElement | null;
+            const checkbox = target?.closest<HTMLInputElement>("input[type=\"checkbox\"]");
+            const ruleKey = checkbox?.value;
+            if (!checkbox || !ruleKey || !dom.selectionRulesRuleList.contains(checkbox)) return;
+
+            if (event.shiftKey && this.lastRuleToggleKey) {
+                const inputs = Array.from(dom.selectionRulesRuleList.querySelectorAll<HTMLInputElement>("input[type=\"checkbox\"]"));
+                const startIndex = inputs.findIndex((input) => input.value === this.lastRuleToggleKey);
+                const endIndex = inputs.findIndex((input) => input.value === ruleKey);
+                if (startIndex !== -1 && endIndex !== -1) {
+                    const [from, to] = startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+                    inputs.slice(from, to + 1).forEach((input) => { input.checked = checkbox.checked; });
+                }
+            }
+            this.lastRuleToggleKey = ruleKey;
         });
         dom.selectionRulesRuleList.addEventListener("change", () => {
             this.ruleSelectionInitialized = true;
@@ -210,6 +228,7 @@ export class SelectionRulesService {
     private renderRules(): void {
         const dom = this.getDom();
         const rules = this.catalog?.rules ?? [];
+        this.lastRuleToggleKey = null;
         const existing = this.ruleSelectionInitialized ? new Set(this.selectedRuleKeys()) : null;
         const preferred = !this.ruleSelectionInitialized && this.preferences !== null
             ? new Set(this.preferences.ruleKeys)

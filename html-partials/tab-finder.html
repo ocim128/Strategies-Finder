@@ -1,7 +1,11 @@
 <!-- Finder Tab -->
-<div id="finderTab">
-    <div class="section-title">Strategy Finder</div>
+<div id="finderTab" class="research-tab research-tab--finder">
+    <header class="research-tab-header">
+        <h2 class="research-tab-title">Strategy Finder</h2>
+        <p class="research-tab-subtitle">Search strategy parameters on the current chart, a symbol universe, or an asset opportunity set.</p>
+    </header>
 
+    <section class="research-tab-section finder-setup-section" aria-label="Finder setup">
     <div class="param-row">
         <div class="param-group">
             <label class="param-label" for="finderScope">Scope</label>
@@ -11,56 +15,6 @@
                 <option value="asset_opportunity">Asset Opportunity</option>
                 <option value="strategy_quality">Strategy Quality Audit</option>
             </select>
-        </div>
-    </div>
-
-    <div id="finderChartSortSection">
-        <div class="section-header">
-            <div class="section-title">Sorting</div>
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <span class="finder-advanced-badge">Advanced</span>
-                <label class="section-toggle" aria-label="Toggle advanced sort">
-                    <input type="checkbox" id="finderAdvancedToggle">
-                    <span class="section-toggle-track"></span>
-                </label>
-            </div>
-        </div>
-
-        <div class="param-row" id="finderSimpleSort">
-            <div class="param-group">
-                <label class="param-label">Sort By</label>
-                <select class="param-input" id="finderSort">
-                    <!-- Populated by JS -->
-                </select>
-            </div>
-            <div class="param-group">
-                <label class="param-label">Then By</label>
-                <select class="param-input" id="finderSortSecondary">
-                    <!-- Populated by JS -->
-                </select>
-            </div>
-        </div>
-
-        <div class="finder-sort-list" id="finderSortList" style="display: none;">
-            <!-- Sort Items injected by JS -->
-        </div>
-    </div>
-
-    <div id="finderUniverseSortSection" style="display:none;">
-        <div class="section-header">
-            <div class="section-title">Universe Ranking</div>
-        </div>
-        <div class="section-body">
-            <div class="param-row">
-                <div class="param-group">
-                    <label class="param-label" for="finderUniverseSort">Sort By</label>
-                    <select class="param-input" id="finderUniverseSort"></select>
-                </div>
-                <div class="param-group">
-                    <label class="param-label" for="finderUniverseSortSecondary">Then By</label>
-                    <select class="param-input" id="finderUniverseSortSecondary"></select>
-                </div>
-            </div>
         </div>
     </div>
 
@@ -120,6 +74,59 @@
             <span class="section-toggle-track"></span>
         </label>
     </div>
+    </section>
+
+    <section class="research-tab-section finder-sort-section" aria-label="Finder ranking">
+        <div id="finderChartSortSection">
+            <div class="section-header">
+                <div class="section-title">Sorting</div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span class="finder-advanced-badge">Advanced</span>
+                    <label class="section-toggle" aria-label="Toggle advanced sort">
+                        <input type="checkbox" id="finderAdvancedToggle">
+                        <span class="section-toggle-track"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="param-row" id="finderSimpleSort">
+                <div class="param-group">
+                    <label class="param-label">Sort By</label>
+                    <select class="param-input" id="finderSort">
+                        <!-- Populated by JS -->
+                    </select>
+                </div>
+                <div class="param-group">
+                    <label class="param-label">Then By</label>
+                    <select class="param-input" id="finderSortSecondary">
+                        <!-- Populated by JS -->
+                    </select>
+                </div>
+            </div>
+
+            <div class="finder-sort-list" id="finderSortList" style="display: none;">
+                <!-- Sort Items injected by JS -->
+            </div>
+        </div>
+
+        <div id="finderUniverseSortSection" style="display:none;">
+            <div class="section-header">
+                <div class="section-title">Universe Ranking</div>
+            </div>
+            <div class="section-body">
+                <div class="param-row">
+                    <div class="param-group">
+                        <label class="param-label" for="finderUniverseSort">Sort By</label>
+                        <select class="param-input" id="finderUniverseSort"></select>
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label" for="finderUniverseSortSecondary">Then By</label>
+                        <select class="param-input" id="finderUniverseSortSecondary"></select>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
 
     <div class="section-header" id="finderUniverseSectionHeader" style="display:none;">
         <div class="section-title">Symbol Universe</div>
@@ -377,6 +384,9 @@
     </div>
 
     <div class="finder-results">
+        <div class="research-results-heading">
+            <h3>Finder results</h3>
+        </div>
         <div class="finder-actions-bar">
             <button class="btn btn-secondary btn-compact" id="finderCopyTopResults" type="button"
                 title="Copy metadata for all top results">

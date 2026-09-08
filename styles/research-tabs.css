@@ -1,0 +1,322 @@
+/* Shared presentation for the four research tools. Feature styles keep their
+ * own rendering and state rules; this file only supplies the common page frame,
+ * controls, surfaces, and output rhythm. */
+
+.research-tab {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    min-width: 0;
+    container-type: inline-size;
+}
+
+/* The tab controller owns visibility with an inline display value. Keep that
+ * contract while restoring the shared column layout for the visible panel. */
+.research-tab[style*="display: block"] {
+    display: flex !important;
+}
+
+.research-tab[style*="display: none"] {
+    display: none !important;
+}
+
+.research-tab [hidden] {
+    display: none !important;
+}
+
+.research-tab-header {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+}
+
+.research-tab-title {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-bold);
+    line-height: var(--line-height-tight);
+}
+
+.research-tab-subtitle {
+    max-width: 72ch;
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-relaxed);
+}
+
+.research-tab-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-4);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    background: hsl(var(--hsl-surface-2) / 0.35);
+}
+
+.research-tab-section > .section-header,
+.research-tab-section > .section-title {
+    margin-top: 0;
+}
+
+.research-tab .param-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+    margin: 0;
+}
+
+.research-tab .param-group,
+.research-tab .batch-field {
+    min-width: 0;
+}
+
+.research-tab .param-label,
+.research-tab .batch-field-label {
+    line-height: var(--line-height-tight);
+}
+
+.research-tab .param-input,
+.research-tab .batch-field-input {
+    box-sizing: border-box;
+    min-height: 36px;
+}
+
+.research-tab .section-header {
+    min-height: 36px;
+    margin: 0;
+    padding: var(--space-2) 0;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.research-tab .section-header:first-child {
+    border-top: 0;
+}
+
+.research-tab .section-body {
+    min-width: 0;
+}
+
+.research-tab .finder-actions,
+.research-tab .batch-actions,
+.research-tab .batch-coordinator-actions,
+.research-tab .selection-rules-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-top: 0;
+}
+
+.research-tab .finder-status,
+.research-tab .selection-rules-status,
+.research-tab .trade-ledger-sweep-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1-5);
+    min-height: 36px;
+    margin-top: 0;
+    color: var(--text-secondary);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+}
+
+.research-tab .finder-results,
+.research-tab .research-results-section {
+    min-width: 0;
+    margin-top: 0;
+    padding-top: var(--space-1);
+    border-top: 1px solid var(--border-subtle);
+}
+
+.research-results-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-2);
+}
+
+.research-results-heading h3 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--tracking-medium);
+}
+
+.research-tab .finder-actions-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    margin: 0 0 var(--space-2);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.research-tab .finder-actions-bar .finder-resort-group {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1-5);
+    margin-left: auto;
+}
+
+.research-tab .empty-state {
+    margin: 0;
+}
+
+.research-disclosure {
+    min-width: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-s);
+    background: hsl(var(--hsl-surface-1) / 0.28);
+}
+
+.research-disclosure > summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: 36px;
+    padding: 0 var(--space-3);
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--tracking-wide);
+    list-style: none;
+    user-select: none;
+}
+
+.research-disclosure > summary::-webkit-details-marker {
+    display: none;
+}
+
+.research-disclosure > summary::before {
+    content: "";
+    width: 0;
+    height: 0;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    border-left: 5px solid var(--text-tertiary);
+    transition: transform 0.15s ease;
+}
+
+.research-disclosure[open] > summary::before {
+    transform: rotate(90deg);
+}
+
+.research-disclosure > summary:hover {
+    color: var(--text-primary);
+    background: hsl(var(--hsl-surface-3) / 0.32);
+}
+
+.research-disclosure > summary:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring), var(--focus-ring-soft);
+}
+
+.research-disclosure > *:not(summary) {
+    margin-left: var(--space-3);
+    margin-right: var(--space-3);
+}
+
+.research-tab--batch .batch-section,
+.research-tab--selection .batch-section,
+.research-tab--ledger .batch-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-4);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    background: hsl(var(--hsl-surface-2) / 0.35);
+}
+
+.research-tab--batch .batch-balanced-generator-disclosure {
+    margin-top: var(--space-2);
+}
+
+.research-tab--batch .batch-balanced-generator-disclosure > .batch-balanced-generator {
+    margin-top: var(--space-3);
+}
+
+.research-tab--batch .batch-analysis-section {
+    order: 4;
+}
+
+.research-tab--batch .batch-coordinator-section {
+    order: 5;
+}
+
+.research-tab--batch .batch-main-results-section {
+    order: 3;
+}
+
+.research-tab--batch > .batch-header,
+.research-tab--batch > .batch-actions,
+.research-tab--batch > .batch-run-state,
+.research-tab--batch > .batch-section[aria-label="Batch markets"] {
+    order: 1;
+}
+
+.research-tab--batch > .batch-actions {
+    order: 2;
+}
+
+.research-tab--batch > .batch-run-state {
+    order: 2;
+}
+
+.research-tab--finder .finder-setup-section,
+.research-tab--finder .finder-sort-section {
+    gap: var(--space-3);
+}
+
+.research-tab--finder .finder-sort-section > [id$="SortSection"],
+.research-tab--finder .finder-sort-section > [id="finderUniverseSortSection"] {
+    min-width: 0;
+}
+
+@container (max-width: 360px) {
+    .research-tab .param-row {
+        grid-template-columns: 1fr;
+    }
+
+    .research-tab .finder-actions,
+    .research-tab .batch-actions,
+    .research-tab .batch-coordinator-actions,
+    .research-tab .selection-rules-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .research-tab .finder-actions > .btn,
+    .research-tab .batch-actions > .btn,
+    .research-tab .batch-action-group--primary .btn,
+    .research-tab .batch-coordinator-actions > .btn,
+    .research-tab .selection-rules-actions > .btn {
+        width: 100%;
+    }
+
+    .research-tab .finder-actions-bar .finder-resort-group {
+        width: 100%;
+        margin-left: 0;
+    }
+
+    .research-tab .finder-actions-bar .finder-resort-group .param-input {
+        flex: 1;
+        min-width: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .research-disclosure > summary::before {
+        transition: none;
+    }
+}

@@ -1,7 +1,7 @@
-<div id="selectionrulesTab">
-    <header class="selection-rules-header">
-        <h2 class="selection-rules-title">Selection Rules</h2>
-        <p class="selection-rules-subtitle">Tally pair-selection rules against a v3 mining-ledger folder using fixed-horizon spread outcomes.</p>
+<div id="selectionrulesTab" class="research-tab research-tab--selection">
+    <header class="selection-rules-header research-tab-header">
+        <h2 class="selection-rules-title research-tab-title">Selection Rules</h2>
+        <p class="selection-rules-subtitle research-tab-subtitle">Tally pair-selection rules against a v3 mining-ledger folder using fixed-horizon spread outcomes.</p>
     </header>
     <section class="batch-section selection-rules" id="selectionRulesSection" aria-label="Selection Rules">
         <div class="selection-rules-controls">
@@ -63,13 +63,19 @@
             <h3 class="empty-state-title">No selection-rule results yet</h3>
             <p class="empty-state-description">Choose a mining-ledger folder, horizon, and at least one pair-selection rule, then run the tally.</p>
         </div>
-        <pre class="selection-rules-report" id="selectionRulesReport" aria-label="Selection rule report"></pre>
-        <div class="selection-rules-report-actions">
-            <button class="btn btn-quiet btn-compact" id="selectionRulesCopyBtn" type="button" disabled>Copy Report</button>
-        </div>
-        <pre class="selection-rules-report selection-rules-diagnostics" id="selectionRulesDiagnostics" aria-label="Selection rule diagnostics"></pre>
-        <div class="selection-rules-report-actions">
-            <button class="btn btn-quiet btn-compact" id="selectionRulesCopyDiagnosticsBtn" type="button" disabled>Copy Diagnostics</button>
-        </div>
+        <details class="research-disclosure selection-rules-report-disclosure">
+            <summary>Report</summary>
+            <pre class="selection-rules-report" id="selectionRulesReport" aria-label="Selection rule report"></pre>
+            <div class="selection-rules-report-actions">
+                <button class="btn btn-quiet btn-compact" id="selectionRulesCopyBtn" type="button" disabled>Copy Report</button>
+            </div>
+        </details>
+        <details class="research-disclosure selection-rules-report-disclosure">
+            <summary>Diagnostics</summary>
+            <pre class="selection-rules-report selection-rules-diagnostics" id="selectionRulesDiagnostics" aria-label="Selection rule diagnostics"></pre>
+            <div class="selection-rules-report-actions">
+                <button class="btn btn-quiet btn-compact" id="selectionRulesCopyDiagnosticsBtn" type="button" disabled>Copy Diagnostics</button>
+            </div>
+        </details>
     </section>
 </div>
