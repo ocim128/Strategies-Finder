@@ -11,7 +11,7 @@ export const spread_variance_ratio_target: PairSelectionRule = {
     defaultParams: { targetVarianceRatio: 0.7 },
     paramLabels: { targetVarianceRatio: "Target variance ratio" },
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_spreadVarianceRatio5"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_spreadVarianceRatio5"] },
         sourceFiles: ["lib/pair-selection/spread_variance_ratio_target.ts"],
     },
     score: (candidate, _event, params) => {

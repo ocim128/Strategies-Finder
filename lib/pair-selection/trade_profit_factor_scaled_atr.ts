@@ -8,7 +8,7 @@ export const trade_profit_factor_scaled_atr: PairSelectionRule = {
     paramLabels: {},
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: ["feat_fp_trade_profit_factor_t8_r1"],
         },
         sourceFiles: ["lib/pair-selection/trade_profit_factor_scaled_atr.ts"],

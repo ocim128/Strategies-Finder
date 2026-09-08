@@ -7,7 +7,7 @@ export const extreme_tail_jump_ratio: PairSelectionRule = {
     defaultParams: { volFloor: 0.005 },
     paramLabels: { volFloor: "Floor added to 48-bar return volatility to prevent division by near-zero" },
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_fp_volatility_return_std_b48_r1"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_fp_volatility_return_std_b48_r1"] },
         sourceFiles: ["lib/pair-selection/extreme_tail_jump_ratio.ts"],
     },
     score: (candidate, _event, params) => {

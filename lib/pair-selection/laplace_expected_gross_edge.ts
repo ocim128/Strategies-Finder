@@ -8,7 +8,7 @@ export const laplace_expected_gross_edge: PairSelectionRule = {
     paramLabels: {},
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: ["feat_fp_trade_profit_factor_t8_r1"],
         },
         sourceFiles: ["lib/pair-selection/laplace_expected_gross_edge.ts"],

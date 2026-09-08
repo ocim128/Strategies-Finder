@@ -7,7 +7,7 @@ export const directional_ols_drift_rate: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_fp_spread_ols_slope_b48_r2"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_fp_spread_ols_slope_b48_r2"] },
         sourceFiles: ["lib/pair-selection/directional_ols_drift_rate.ts"],
     },
     score: (candidate) => {

@@ -8,7 +8,7 @@ export const historical_trade_sortino: PairSelectionRule = {
     paramLabels: { riskFloor: "Floor in percentage points added to downside RMS to stabilize near-zero denominator" },
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_trade_mean_net_pct_t8_r1",
                 "feat_fp_trade_mean_net_pct_t8_r1_n",

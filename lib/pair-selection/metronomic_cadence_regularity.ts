@@ -11,7 +11,7 @@ export const metronomic_cadence_regularity: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_pairInterFireIntervalCvPrior"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_pairInterFireIntervalCvPrior"] },
         sourceFiles: ["lib/pair-selection/metronomic_cadence_regularity.ts"],
     },
     score: (candidate) => {

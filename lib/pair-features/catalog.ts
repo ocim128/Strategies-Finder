@@ -1,5 +1,6 @@
 import releaseV0Json from "./releases/v0.json";
 import releaseV1Json from "./releases/v1.json";
+import releaseV2Json from "./releases/v2.json";
 import { computeGrandfatheredIntervalCv, computeGrandfatheredFireCount } from "./families/fires";
 import {
     computeAr1HalfLife,
@@ -56,9 +57,11 @@ import type {
 
 export const V0_RELEASE = releaseV0Json as unknown as PairFeatureRelease;
 export const V1_RELEASE = releaseV1Json as unknown as PairFeatureRelease;
+export const V2_RELEASE = releaseV2Json as unknown as PairFeatureRelease;
 export const PAIR_FEATURE_RELEASES: ReadonlyMap<string, PairFeatureRelease> = new Map([
     [V0_RELEASE.releaseId, V0_RELEASE],
     [V1_RELEASE.releaseId, V1_RELEASE],
+    [V2_RELEASE.releaseId, V2_RELEASE],
 ]);
 
 export interface PairFeatureCatalogEntry {
@@ -126,16 +129,20 @@ function catalogForRelease(release: PairFeatureRelease): readonly PairFeatureCat
 }
 
 export const V0_FEATURE_CATALOG = catalogForRelease(V0_RELEASE);
-// Deferred v2 scope: tails/bar geometry, cross-time changes, history support,
+// Deferred scope: tails/bar geometry, cross-time changes, history support,
 // and closed-trade excursions/duration beyond the initial tranche.
 export const V1_FEATURE_CATALOG = catalogForRelease(V1_RELEASE);
+// The corrected definitions must publish separately from already archived v1 releases.
+export const V2_FEATURE_CATALOG = catalogForRelease(V2_RELEASE);
 const entriesById = new Map<string, PairFeatureCatalogEntry>([
     ...V0_FEATURE_CATALOG,
     ...V1_FEATURE_CATALOG,
+    ...V2_FEATURE_CATALOG,
 ].map((entry) => [entry.definition.id, entry] as const));
 const entriesByRelease = new Map<string, ReadonlyMap<string, PairFeatureCatalogEntry>>([
     [V0_RELEASE.releaseId, new Map(V0_FEATURE_CATALOG.map((entry) => [entry.definition.id, entry] as const))],
     [V1_RELEASE.releaseId, new Map(V1_FEATURE_CATALOG.map((entry) => [entry.definition.id, entry] as const))],
+    [V2_RELEASE.releaseId, new Map(V2_FEATURE_CATALOG.map((entry) => [entry.definition.id, entry] as const))],
 ]);
 
 export function getPairFeatureCatalogEntry(featureId: string): PairFeatureCatalogEntry | null {

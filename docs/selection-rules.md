@@ -105,6 +105,12 @@ column bytes and row bindings against the current folder ledger. It does not
 require the runtime fingerprint or implementation files from the checkout that
 generated it, so a Node patch upgrade remains readable. Generating or extending
 a pack still pins and verifies the current runtime and implementation hashes.
+All registered feature-backed pair-selection rules request release `v2`. Missing
+columns are prepared on demand from the folder's frozen snapshot; no batch rerun
+is needed. Historical `v0`/`v1` release inventories and pack-reading support remain
+available, and archived manifests and packs must not be renamed or overwritten.
+New work uses one explicitly pinned release; changed definitions or release
+contents require a new release ID, never an edit to an already published release.
 Loading a 5M+-signal folder takes minutes and several GB of heap — size
 `--max-old-space-size` accordingly.
 

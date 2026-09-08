@@ -11,7 +11,7 @@ export const virgin_signal_regime_ignition: PairSelectionRule = {
     defaultParams: { churnPenalty: 0.5 },
     paramLabels: { churnPenalty: "Penalty weight applied per preceding pair signal in the last 20 bars" },
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_pairFiresInLast20Bars"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_pairFiresInLast20Bars"] },
         sourceFiles: ["lib/pair-selection/virgin_signal_regime_ignition.ts"],
     },
     score: (candidate, _event, params) => {

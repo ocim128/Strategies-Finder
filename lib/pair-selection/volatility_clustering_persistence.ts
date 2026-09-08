@@ -7,7 +7,7 @@ export const volatility_clustering_persistence: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_fp_volatility_abs_return_acf_b48_l1_r1"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_fp_volatility_abs_return_acf_b48_l1_r1"] },
         sourceFiles: ["lib/pair-selection/volatility_clustering_persistence.ts"],
     },
     score: (candidate) => {

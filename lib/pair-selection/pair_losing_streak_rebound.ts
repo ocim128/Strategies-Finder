@@ -11,7 +11,7 @@ export const pair_losing_streak_rebound: PairSelectionRule = {
     defaultParams: { targetLosingStreak: 2 },
     paramLabels: { targetLosingStreak: "Target losing streak (trades)" },
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_pairLosingStreakPrior"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_pairLosingStreakPrior"] },
         sourceFiles: ["lib/pair-selection/pair_losing_streak_rebound.ts"],
     },
     score: (candidate, _event, params) => {

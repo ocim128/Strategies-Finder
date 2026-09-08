@@ -7,7 +7,7 @@ export const short_horizon_directional_momentum: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_fp_spread_log_return_b12_r1"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_fp_spread_log_return_b12_r1"] },
         sourceFiles: ["lib/pair-selection/short_horizon_directional_momentum.ts"],
     },
     score: (candidate) => {

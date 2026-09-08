@@ -1,0 +1,61 @@
+{
+  "ledgerVersion": 3,
+  "featureVersion": 3,
+  "runId": "batch-mtr1p3fh-izn02l1e",
+  "startedAt": "2026-09-07T09:35:35.073Z",
+  "finishedAt": "2026-09-07T09:35:35.928Z",
+  "cancelled": false,
+  "ledgerComplete": true,
+  "failedWrites": 0,
+  "lastError": null,
+  "totals": {
+    "pairs": 2,
+    "signals": 31,
+    "executed": 6,
+    "notExecuted": 25
+  },
+  "suppressionRate": 0.8064516129032258,
+  "ledgerWindow": {
+    "fromSec": 1764547200,
+    "toSec": 1768521599
+  },
+  "submittedPairs": 2,
+  "loadedPairs": 2,
+  "rowBearingPairs": 2,
+  "emptyPairs": 0,
+  "failedPairs": [],
+  "rightCensored": 0,
+  "duplicateSignalsCollapsed": 0,
+  "perPairSuppression": [
+    {
+      "pair": "BTCUSDT+SOLUSDT",
+      "signals": 16,
+      "executed": 2,
+      "notExecuted": 14,
+      "suppressionRate": 0.875
+    },
+    {
+      "pair": "ETHUSDT+BNBUSDT",
+      "signals": 15,
+      "executed": 4,
+      "notExecuted": 11,
+      "suppressionRate": 0.7333333333333333
+    }
+  ],
+  "topSuppressedPairs": [
+    {
+      "pair": "BTCUSDT+SOLUSDT",
+      "signals": 16,
+      "executed": 2,
+      "notExecuted": 14,
+      "suppressionRate": 0.875
+    },
+    {
+      "pair": "ETHUSDT+BNBUSDT",
+      "signals": 15,
+      "executed": 4,
+      "notExecuted": 11,
+      "suppressionRate": 0.7333333333333333
+    }
+  ]
+}

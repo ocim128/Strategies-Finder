@@ -8,7 +8,7 @@ export const profit_factor_regularized_shrinkage: PairSelectionRule = {
     paramLabels: { priorStrength: "Prior weight pulling profit factor toward neutral 1.0" },
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: ["feat_fp_trade_profit_factor_t8_r1", "feat_fp_trade_profit_factor_t8_r1_n"],
         },
         sourceFiles: ["lib/pair-selection/profit_factor_regularized_shrinkage.ts"],

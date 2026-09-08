@@ -11,7 +11,7 @@ export const spread_mean_reversion_halflife: PairSelectionRule = {
     defaultParams: { targetHalfLifeBars: 6 },
     paramLabels: { targetHalfLifeBars: "Target half-life (bars)" },
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_spreadHalfLifeBars20"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_spreadHalfLifeBars20"] },
         sourceFiles: ["lib/pair-selection/spread_mean_reversion_halflife.ts"],
     },
     score: (candidate, _event, params) => {

@@ -11,7 +11,7 @@ export const gain_to_pain_trade_ratio: PairSelectionRule = {
     defaultParams: { drawdownPenalty: 0.1 },
     paramLabels: { drawdownPenalty: "Penalty weight applied per percentage point of historical equity drawdown" },
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_fp_trade_mean_net_pct_t8_r1", "feat_fp_trade_mean_net_pct_t8_r1_n", "feat_pairDrawdownPctPrior"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_fp_trade_mean_net_pct_t8_r1", "feat_fp_trade_mean_net_pct_t8_r1_n", "feat_pairDrawdownPctPrior"] },
         sourceFiles: ["lib/pair-selection/gain_to_pain_trade_ratio.ts"],
     },
     score: (candidate, _event, params) => {

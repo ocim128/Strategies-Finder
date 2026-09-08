@@ -1,0 +1,2648 @@
+{
+  "releaseId": "v2",
+  "catalogFormatVersion": 1,
+  "runtime": {
+    "node": "v22.16.0",
+    "v8": "12.4.254.21-node.26",
+    "zlib": "1.3.0.1-motley-780819f",
+    "platform": "win32",
+    "arch": "x64"
+  },
+  "notes": [
+    "The ten feat_pair/feat_spread/feat_atr grandfathered definitions retain their approved pre-feat_fp names; future additions use feat_fp_."
+  ],
+  "definitions": [
+    {
+      "id": "feat_atrRatio5Over20",
+      "family": "volatility",
+      "revision": 1,
+      "units": "ratio",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "shortBars": 5,
+        "longBars": 20
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 20,
+      "missingPolicy": "null_if_incomplete_or_invalid_ohlc_or_zero_long_atr",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Simple-average true range over the preceding 5 bars divided by the corresponding preceding 20-bar average true range; first true range uses its prior close.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_undefined",
+          "signalBarIndex": 20,
+          "expected": null,
+          "observations": 20
+        }
+      ],
+      "definitionDigest": "a3e1e961265b6af54680b111f378a6df535b7ef2c106ecff6053524625eda14e"
+    },
+    {
+      "id": "feat_fp_dependence_ar1_half_life_b48_r1",
+      "family": "dependence",
+      "revision": 1,
+      "units": "bars",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 48,
+      "missingPolicy": "null_if_incomplete_or_degenerate_fit_or_phi_outside_zero_one",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Fit log(close[j]) = intercept + phi * log(close[j-1]) over the preceding 48 positive closes; return -ln(2)/ln(phi) only when 0 < phi < 1.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/dependence.ts",
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
+        },
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_degenerate",
+          "signalBarIndex": 48,
+          "expected": null,
+          "observations": 48
+        }
+      ],
+      "definitionDigest": "1682002e0ae236813d96176d9e99e6358ee223258fe4640365d0700680f7253d"
+    },
+    {
+      "id": "feat_fp_dependence_ar1_r_squared_b48_r1",
+      "family": "dependence",
+      "revision": 1,
+      "units": "coefficient of determination",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 48,
+      "missingPolicy": "null_if_incomplete_or_degenerate_fit",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "R-squared of the intercept-bearing AR(1) regression of preceding log closes, with x=log(close[j-1]) and y=log(close[j]).",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/dependence.ts",
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
+        },
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_degenerate",
+          "signalBarIndex": 48,
+          "expected": null,
+          "observations": 48
+        }
+      ],
+      "definitionDigest": "62a219663b2fa46c64a9c85cf226e67113d14c57143d81aec9f5119ab59c77fa"
+    },
+    {
+      "id": "feat_fp_dependence_ar1_slope_b48_r1",
+      "family": "dependence",
+      "revision": 1,
+      "units": "AR(1) slope",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 48,
+      "missingPolicy": "null_if_incomplete_or_degenerate_fit",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Slope phi from the intercept-bearing AR(1) regression of preceding 48 log closes.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/dependence.ts",
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
+        },
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_degenerate",
+          "signalBarIndex": 48,
+          "expected": null,
+          "observations": 48
+        }
+      ],
+      "definitionDigest": "d95a0326ed1c9774148ece0fad6c45ad5264c43abce18a5ea4d8f33686caa274"
+    },
+    {
+      "id": "feat_fp_dependence_return_acf_b240_l1_r1",
+      "family": "dependence",
+      "revision": 1,
+      "units": "correlation",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 240,
+        "lag": 1
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 241,
+      "missingPolicy": "null_if_incomplete_or_zero_return_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population lag-1 autocorrelation of the preceding 240 log close increments.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/dependence.ts",
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
+        },
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_degenerate",
+          "signalBarIndex": 240,
+          "expected": null,
+          "observations": 241
+        }
+      ],
+      "definitionDigest": "9ddd31b0c860dc70dd7b4daefed2285f4c194e0693f486a7ad42a9ac526ce414"
+    },
+    {
+      "id": "feat_fp_dependence_return_acf_b240_l4_r1",
+      "family": "dependence",
+      "revision": 1,
+      "units": "correlation",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 240,
+        "lag": 4
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 241,
+      "missingPolicy": "null_if_incomplete_or_zero_return_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population lag-4 autocorrelation of the preceding 240 log close increments.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/dependence.ts",
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
+        },
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_degenerate",
+          "signalBarIndex": 240,
+          "expected": null,
+          "observations": 241
+        }
+      ],
+      "definitionDigest": "dd0552b34cb3e10fa6ddcb0623c6e1cf2dd92568f7a27eb5be6b456cbad409a8"
+    },
+    {
+      "id": "feat_fp_dependence_return_acf_b48_l1_r1",
+      "family": "dependence",
+      "revision": 1,
+      "units": "correlation",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48,
+        "lag": 1
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 49,
+      "missingPolicy": "null_if_incomplete_or_zero_return_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population lag-1 autocorrelation of the preceding 48 log close increments.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/dependence.ts",
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
+        },
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_degenerate",
+          "signalBarIndex": 48,
+          "expected": null,
+          "observations": 49
+        }
+      ],
+      "definitionDigest": "d07d9474b5690163b441d7d9cffd64947841fa87852784aa96dc247b55443c7d"
+    },
+    {
+      "id": "feat_fp_dependence_return_acf_b48_l4_r1",
+      "family": "dependence",
+      "revision": 1,
+      "units": "correlation",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48,
+        "lag": 4
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 49,
+      "missingPolicy": "null_if_incomplete_or_zero_return_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population lag-4 autocorrelation of the preceding 48 log close increments.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/dependence.ts",
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
+        },
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_degenerate",
+          "signalBarIndex": 48,
+          "expected": null,
+          "observations": 49
+        }
+      ],
+      "definitionDigest": "af0d2af0fea48ed1fb09fc87154824540a295e8dcdc2d079be8c02968ab810b5"
+    },
+    {
+      "id": "feat_fp_dependence_variance_ratio_b240_h4_r1",
+      "family": "dependence",
+      "revision": 1,
+      "units": "variance ratio",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 240,
+        "horizon": 4
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 241,
+      "missingPolicy": "null_if_incomplete_or_zero_one_bar_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population variance of overlapping four-return sums divided by four times population variance of the preceding 240 one-bar log returns.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/dependence.ts",
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
+        },
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_degenerate",
+          "signalBarIndex": 240,
+          "expected": null,
+          "observations": 241
+        }
+      ],
+      "definitionDigest": "4c812724f8c3cbc2c6ce8e7221d0b228b5621baf4903486097621b71f227d6e1"
+    },
+    {
+      "id": "feat_fp_dependence_variance_ratio_b48_h4_r1",
+      "family": "dependence",
+      "revision": 1,
+      "units": "variance ratio",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48,
+        "horizon": 4
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 49,
+      "missingPolicy": "null_if_incomplete_or_zero_one_bar_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population variance of overlapping four-return sums divided by four times population variance of the preceding 48 one-bar log returns.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/dependence.ts",
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
+        },
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_degenerate",
+          "signalBarIndex": 48,
+          "expected": null,
+          "observations": 49
+        }
+      ],
+      "definitionDigest": "b82cc3fcf46802a00de58240642c925597cf8b0b6ab6d5e5f51d5dec4dcf5c41"
+    },
+    {
+      "id": "feat_fp_spread_distance_above_min_b12_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "log-price distance",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 12
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 12,
+      "missingPolicy": "null_if_incomplete_or_nonpositive_close",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "log(close[s-1]) minus the minimum of the preceding 12 log closes.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 12,
+          "expected": 0,
+          "observations": 12
+        }
+      ],
+      "definitionDigest": "a1b65424735212d6eab1f125030d0ac17c2649790ee883ae5da30a50af2eef9f"
+    },
+    {
+      "id": "feat_fp_spread_distance_above_min_b240_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "log-price distance",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 240
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 240,
+      "missingPolicy": "null_if_incomplete_or_nonpositive_close",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "log(close[s-1]) minus the minimum of the preceding 240 log closes.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 240,
+          "expected": 0,
+          "observations": 240
+        }
+      ],
+      "definitionDigest": "4dd7e32693ebf6c3fe0a5288f13891a92e4915a34496319b1a90c09783afbde2"
+    },
+    {
+      "id": "feat_fp_spread_distance_above_min_b48_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "log-price distance",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 48,
+      "missingPolicy": "null_if_incomplete_or_nonpositive_close",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "log(close[s-1]) minus the minimum of the preceding 48 log closes.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 48,
+          "expected": 0,
+          "observations": 48
+        }
+      ],
+      "definitionDigest": "1abff2c38e181051c57f8fb267e551de1322bcbc941104cea1ec8b5a84e54191"
+    },
+    {
+      "id": "feat_fp_spread_distance_below_max_b12_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "log-price distance",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 12
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 12,
+      "missingPolicy": "null_if_incomplete_or_nonpositive_close",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "maximum of the preceding 12 log closes minus log(close[s-1]).",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 12,
+          "expected": 0,
+          "observations": 12
+        }
+      ],
+      "definitionDigest": "da77018cc67320e09007c92a96d93bbafd1397ec77f02f59df60111e89ddb2f6"
+    },
+    {
+      "id": "feat_fp_spread_distance_below_max_b240_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "log-price distance",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 240
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 240,
+      "missingPolicy": "null_if_incomplete_or_nonpositive_close",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "maximum of the preceding 240 log closes minus log(close[s-1]).",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 240,
+          "expected": 0,
+          "observations": 240
+        }
+      ],
+      "definitionDigest": "0c0ce4cff04524c9de5b3c750bd0afd7fb269c57935d3b316001bd4c46036e5b"
+    },
+    {
+      "id": "feat_fp_spread_distance_below_max_b48_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "log-price distance",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 48,
+      "missingPolicy": "null_if_incomplete_or_nonpositive_close",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "maximum of the preceding 48 log closes minus log(close[s-1]).",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 48,
+          "expected": 0,
+          "observations": 48
+        }
+      ],
+      "definitionDigest": "2419ebeed19051b9b9a4198fb10806cc96df53c74bcb9f334dadffbb70db9a40"
+    },
+    {
+      "id": "feat_fp_spread_distance_to_median_b12_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "log-price distance",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 12
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 12,
+      "missingPolicy": "null_if_incomplete_or_nonpositive_close",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "log(close[s-1]) minus the sorted-median of the preceding 12 log closes.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 12,
+          "expected": 0,
+          "observations": 12
+        }
+      ],
+      "definitionDigest": "82ccd5900b4ce22006f459c2fad1541590a5bbecfe3dffc5b5f108dedb03c159"
+    },
+    {
+      "id": "feat_fp_spread_distance_to_median_b240_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "log-price distance",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 240
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 240,
+      "missingPolicy": "null_if_incomplete_or_nonpositive_close",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "log(close[s-1]) minus the sorted-median of the preceding 240 log closes.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 240,
+          "expected": 0,
+          "observations": 240
+        }
+      ],
+      "definitionDigest": "5e3dfe401c045b9f3fa2899a38631363f612a35967cc8bbd621b70ebf3f9d12a"
+    },
+    {
+      "id": "feat_fp_spread_distance_to_median_b48_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "log-price distance",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 48,
+      "missingPolicy": "null_if_incomplete_or_nonpositive_close",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "log(close[s-1]) minus the sorted-median of the preceding 48 log closes.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 48,
+          "expected": 0,
+          "observations": 48
+        }
+      ],
+      "definitionDigest": "7881a13c144e15e0511c43205623759d5108063357a4c36dfea819f2cdf368d1"
+    },
+    {
+      "id": "feat_fp_spread_down_increment_streak_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "observed bars",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {},
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 2,
+      "missingPolicy": "null_if_fewer_than_two_prior_closes",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Count consecutive negative close increments ending at close[s-1], using only preceding closes.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 2,
+          "expected": 0,
+          "observations": 2
+        }
+      ],
+      "definitionDigest": "8556bc288e1ed59c8416408c926a7aa504c6bb42f4a441ba9e14942015499bce"
+    },
+    {
+      "id": "feat_fp_spread_efficiency_ratio_b12_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "dimensionless",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 12
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 13,
+      "missingPolicy": "null_if_incomplete_or_zero_total_increment",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Absolute net log change over the preceding 12 intervals divided by the sum of absolute log increments.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_undefined",
+          "signalBarIndex": 12,
+          "expected": null,
+          "observations": 13
+        }
+      ],
+      "definitionDigest": "ceec2d8647683cd8fc5b0d55db432ff167d312776750da5ce29a9b9a95a03238"
+    },
+    {
+      "id": "feat_fp_spread_efficiency_ratio_b240_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "dimensionless",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 240
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 241,
+      "missingPolicy": "null_if_incomplete_or_zero_total_increment",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Absolute net log change over the preceding 240 intervals divided by the sum of absolute log increments.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_undefined",
+          "signalBarIndex": 240,
+          "expected": null,
+          "observations": 241
+        }
+      ],
+      "definitionDigest": "4cde2847a625129a016552629e8dec4c828981c100e605b560b10fc2bf8f6d79"
+    },
+    {
+      "id": "feat_fp_spread_efficiency_ratio_b48_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "dimensionless",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 49,
+      "missingPolicy": "null_if_incomplete_or_zero_total_increment",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Absolute net log change over the preceding 48 intervals divided by the sum of absolute log increments.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_undefined",
+          "signalBarIndex": 48,
+          "expected": null,
+          "observations": 49
+        }
+      ],
+      "definitionDigest": "526b5f39f9849ace61fd8e624022001179a19a8b45e5a839b2c2c8389ff49fc6"
+    },
+    {
+      "id": "feat_fp_spread_log_return_b12_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "dimensionless log return",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 12
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 13,
+      "missingPolicy": "null_if_any_required_close_missing_or_nonpositive",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "ln(close[s-1]) - ln(close[s-13]); require every close[s-13..s-1] finite and positive; never read close[s]",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/spread.ts",
+          "sha256": "deeaab926477a5ac0207d82d8dfd529c5c2d51dd03c329fecb9c7ed4ed33c3e2"
+        }
+      ],
+      "definitionDigest": "da7d869b7762d86c6bd84f9f45180a72f0f01164fe142b1d699888e06afab063",
+      "expectedValueFixtures": [
+        {
+          "name": "warmup",
+          "signalBarIndex": 12,
+          "expected": null,
+          "observations": 12
+        },
+        {
+          "name": "constant",
+          "signalBarIndex": 13,
+          "expected": 0,
+          "observations": 13
+        }
+      ]
+    },
+    {
+      "id": "feat_fp_spread_log_return_b240_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "dimensionless log return",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 240
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 241,
+      "missingPolicy": "null_if_incomplete_or_nonpositive_close",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "ln(close[s-1]) - ln(close[s-241]); require every preceding close finite and positive.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 241,
+          "expected": 0,
+          "observations": 241
+        }
+      ],
+      "definitionDigest": "25081c286a19ea8364eb60130b5a92e1001a7ebea369f8880520b9f66c3c45ff"
+    },
+    {
+      "id": "feat_fp_spread_log_return_b48_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "dimensionless log return",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 49,
+      "missingPolicy": "null_if_incomplete_or_nonpositive_close",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "ln(close[s-1]) - ln(close[s-49]); require every preceding close finite and positive.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 49,
+          "expected": 0,
+          "observations": 49
+        }
+      ],
+      "definitionDigest": "b60924b5edc1f7181ec5f1d720167f004a5b39ed2e49a8d2e75d0a1465897e59"
+    },
+    {
+      "id": "feat_fp_spread_ols_slope_b12_r2",
+      "family": "spread",
+      "revision": 2,
+      "units": "log-price units per observed bar",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 12
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 12,
+      "missingPolicy": "null_if_incomplete_or_zero_predictor_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population ordinary least-squares slope of preceding 12 log closes against oldest-to-newest bar ordinal.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 12,
+          "expected": 0,
+          "observations": 12
+        }
+      ],
+      "definitionDigest": "a70e2a58076cdcd5bc6ad0bca9e63286c794f29eed0a985ee954be2ed810a6bc"
+    },
+    {
+      "id": "feat_fp_spread_ols_slope_b240_r2",
+      "family": "spread",
+      "revision": 2,
+      "units": "log-price units per observed bar",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 240
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 240,
+      "missingPolicy": "null_if_incomplete_or_zero_predictor_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population ordinary least-squares slope of preceding 240 log closes against oldest-to-newest bar ordinal.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 240,
+          "expected": 0,
+          "observations": 240
+        }
+      ],
+      "definitionDigest": "2a7ec43e2bba337019482b6095c77819c768a74e1aedf066ba26cefb881cb53a"
+    },
+    {
+      "id": "feat_fp_spread_ols_slope_b48_r2",
+      "family": "spread",
+      "revision": 2,
+      "units": "log-price units per observed bar",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 48,
+      "missingPolicy": "null_if_incomplete_or_zero_predictor_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population ordinary least-squares slope of preceding 48 log closes against oldest-to-newest bar ordinal.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 48,
+          "expected": 0,
+          "observations": 48
+        }
+      ],
+      "definitionDigest": "204378b0ab7ebb6a4fcf64d1626dd1ab7c35dd85d5e14e06a372fe3fa96308ed"
+    },
+    {
+      "id": "feat_fp_spread_up_increment_streak_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "observed bars",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {},
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 2,
+      "missingPolicy": "null_if_fewer_than_two_prior_closes",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Count consecutive positive close increments ending at close[s-1], using only preceding closes.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 2,
+          "expected": 0,
+          "observations": 2
+        }
+      ],
+      "definitionDigest": "8371a943cb5fb28db92ecf5f7742bb309d30d5ad1e3b825e6ac9f3b13d66ab68"
+    },
+    {
+      "id": "feat_fp_spread_zscore_b12_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "standard deviations",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 12
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 12,
+      "missingPolicy": "null_if_incomplete_or_zero_log_close_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Last preceding log close minus the population mean, divided by population standard deviation, over 12 preceding log closes.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_undefined",
+          "signalBarIndex": 12,
+          "expected": null,
+          "observations": 12
+        }
+      ],
+      "definitionDigest": "950337490a1588225c1c5e798db0442a87c74bac1cf3086b7a5bbddd4cd5c0bf"
+    },
+    {
+      "id": "feat_fp_spread_zscore_b240_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "standard deviations",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 240
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 240,
+      "missingPolicy": "null_if_incomplete_or_zero_log_close_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Last preceding log close minus the population mean, divided by population standard deviation, over 240 preceding log closes.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_undefined",
+          "signalBarIndex": 240,
+          "expected": null,
+          "observations": 240
+        }
+      ],
+      "definitionDigest": "8dca9d98722f96393daab30940b818beec0d13ed052e47603e85c006e44c081e"
+    },
+    {
+      "id": "feat_fp_spread_zscore_b48_r1",
+      "family": "spread",
+      "revision": 1,
+      "units": "standard deviations",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 48,
+      "missingPolicy": "null_if_incomplete_or_zero_log_close_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Last preceding log close minus the population mean, divided by population standard deviation, over 48 preceding log closes.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/spread-v1.ts",
+          "sha256": "f8425be49db75714891493b3c13c7eeaf1db4ee58488c4997c4a65cead7e8f41"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_undefined",
+          "signalBarIndex": 48,
+          "expected": null,
+          "observations": 48
+        }
+      ],
+      "definitionDigest": "2faacc9a34c82e5f422c40ddf134fb8d3e1866eaa9726cbf46a738938f0fbd9d"
+    },
+    {
+      "id": "feat_fp_trade_downside_rms_t128_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "percentage points of captured pnlPercent",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 128
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 128,
+      "missingPolicy": "null_if_fewer_than_window_finite_closed_records_or_no_losses",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "RMS of negative captured pnlPercent values in the last 128 eligible closed records, relative to zero.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "no_losses_is_null",
+          "signalBarIndex": 200,
+          "expected": null,
+          "observations": 128
+        }
+      ],
+      "definitionDigest": "edc76ec3c69201caf6512d67c65f7606d18dd263610a97c932c4e358b4a15468"
+    },
+    {
+      "id": "feat_fp_trade_downside_rms_t32_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "percentage points of captured pnlPercent",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 32
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 32,
+      "missingPolicy": "null_if_fewer_than_window_finite_closed_records_or_no_losses",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "RMS of negative captured pnlPercent values in the last 32 eligible closed records, relative to zero.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "no_losses_is_null",
+          "signalBarIndex": 200,
+          "expected": null,
+          "observations": 32
+        }
+      ],
+      "definitionDigest": "8a6b88c6072161795841bbf30b4556ca7e275959f492ba8fb2a984b608d8857a"
+    },
+    {
+      "id": "feat_fp_trade_downside_rms_t8_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "percentage points of captured pnlPercent",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 8
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 8,
+      "missingPolicy": "null_if_fewer_than_window_finite_closed_records_or_no_losses",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "RMS of negative captured pnlPercent values in the last 8 eligible closed records, relative to zero.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "no_losses_is_null",
+          "signalBarIndex": 200,
+          "expected": null,
+          "observations": 8
+        }
+      ],
+      "definitionDigest": "8b88a6a584fa4e45643dd5050163d7ea5f371ff6c29da1b6e765c50f90278777"
+    },
+    {
+      "id": "feat_fp_trade_mean_net_pct_t128_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "percentage points of captured pnlPercent",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 128
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 128,
+      "missingPolicy": "null_if_fewer_than_window_finite_closed_records",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "Arithmetic mean of captured pnlPercent in the last 128 eligible closed records ordered by exit bar then trade ordinal.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "zero_returns_are_zero",
+          "signalBarIndex": 200,
+          "expected": 0,
+          "observations": 128
+        }
+      ],
+      "definitionDigest": "61a289897a6849105332838f62cdbc1d0f8978db99bfaba3a7b5c661a9f9d88a"
+    },
+    {
+      "id": "feat_fp_trade_mean_net_pct_t32_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "percentage points of captured pnlPercent",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 32
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 32,
+      "missingPolicy": "null_if_fewer_than_window_finite_closed_records",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "Arithmetic mean of captured pnlPercent in the last 32 eligible closed records ordered by exit bar then trade ordinal.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "zero_returns_are_zero",
+          "signalBarIndex": 200,
+          "expected": 0,
+          "observations": 32
+        }
+      ],
+      "definitionDigest": "83fc0fb8f580cab072fe747ec6bedea7707cb5262fe480bf19dbea420b32b47d"
+    },
+    {
+      "id": "feat_fp_trade_mean_net_pct_t8_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "percentage points of captured pnlPercent",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 8
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 8,
+      "missingPolicy": "null_if_fewer_than_eight_finite_eligible_closed_records",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "arithmetic mean of the last eight eligible finite closed records by (exitBarIndex, tradeOrdinal), using captured pnlPercent without recomputing returns or fees",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/trades.ts",
+          "sha256": "6449e96d8a5a3ad9261f395631aea7e9ee68c4b0a3359955a4784883b281539c"
+        }
+      ],
+      "definitionDigest": "0cc8884aa672fd47b0d5757a9b2b682dde1acad2d4a68667ad497e7d9eafa4f7",
+      "expectedValueFixtures": [
+        {
+          "name": "warmup",
+          "signalBarIndex": 0,
+          "expected": null,
+          "observations": 0
+        },
+        {
+          "name": "complete",
+          "signalBarIndex": 8,
+          "expected": 0,
+          "observations": 8
+        }
+      ]
+    },
+    {
+      "id": "feat_fp_trade_median_net_pct_t128_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "percentage points of captured pnlPercent",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 128
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 128,
+      "missingPolicy": "null_if_fewer_than_window_finite_closed_records",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "Sorted median of captured pnlPercent in the last 128 eligible closed records.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "zero_returns_are_zero",
+          "signalBarIndex": 200,
+          "expected": 0,
+          "observations": 128
+        }
+      ],
+      "definitionDigest": "5d61bedd19fbe3315d6470860f5a05d40123985f9890e433a7ac333e56df8f1e"
+    },
+    {
+      "id": "feat_fp_trade_median_net_pct_t32_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "percentage points of captured pnlPercent",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 32
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 32,
+      "missingPolicy": "null_if_fewer_than_window_finite_closed_records",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "Sorted median of captured pnlPercent in the last 32 eligible closed records.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "zero_returns_are_zero",
+          "signalBarIndex": 200,
+          "expected": 0,
+          "observations": 32
+        }
+      ],
+      "definitionDigest": "22c68d5b8a4fd1e9d070b70e713ba7e9c10223b3c144c1d4e17bf08c9027d97e"
+    },
+    {
+      "id": "feat_fp_trade_median_net_pct_t8_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "percentage points of captured pnlPercent",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 8
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 8,
+      "missingPolicy": "null_if_fewer_than_window_finite_closed_records",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "Sorted median of captured pnlPercent in the last 8 eligible closed records.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "zero_returns_are_zero",
+          "signalBarIndex": 200,
+          "expected": 0,
+          "observations": 8
+        }
+      ],
+      "definitionDigest": "48003ada2b9827d78ddd407eedfd069698f22d5c60643db9b200bd7ceca0d8b9"
+    },
+    {
+      "id": "feat_fp_trade_profit_factor_t128_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "ratio",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 128
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 128,
+      "missingPolicy": "null_if_fewer_than_window_finite_closed_records_or_no_losses",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "Sum of positive captured pnlPercent divided by absolute sum of negative captured pnlPercent in the last 128 eligible records; null without losses.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "no_losses_is_null",
+          "signalBarIndex": 200,
+          "expected": null,
+          "observations": 128
+        }
+      ],
+      "definitionDigest": "1e0bc9808d450974ae28dd9281e286c87080ce46cbe038a9d30040520f1a2be7"
+    },
+    {
+      "id": "feat_fp_trade_profit_factor_t32_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "ratio",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 32
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 32,
+      "missingPolicy": "null_if_fewer_than_window_finite_closed_records_or_no_losses",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "Sum of positive captured pnlPercent divided by absolute sum of negative captured pnlPercent in the last 32 eligible records; null without losses.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "no_losses_is_null",
+          "signalBarIndex": 200,
+          "expected": null,
+          "observations": 32
+        }
+      ],
+      "definitionDigest": "33635167384d13fc5fd333ed831f30e5601f3f15ffec8667bbc2e932541afe36"
+    },
+    {
+      "id": "feat_fp_trade_profit_factor_t8_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "ratio",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 8
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 8,
+      "missingPolicy": "null_if_fewer_than_window_finite_closed_records_or_no_losses",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "Sum of positive captured pnlPercent divided by absolute sum of negative captured pnlPercent in the last 8 eligible records; null without losses.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "no_losses_is_null",
+          "signalBarIndex": 200,
+          "expected": null,
+          "observations": 8
+        }
+      ],
+      "definitionDigest": "4d11496380f9313d9fd2c5961d0138df99542bb591db4da5e99cfcc644b4398f"
+    },
+    {
+      "id": "feat_fp_trade_win_fraction_t128_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "fraction",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 128
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 128,
+      "missingPolicy": "null_if_fewer_than_window_finite_closed_records",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "Count of strictly positive captured pnlPercent divided by 128 eligible closed records.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "all_winners_are_one",
+          "signalBarIndex": 200,
+          "expected": 1,
+          "observations": 128
+        }
+      ],
+      "definitionDigest": "b0eda94ec0e7b8ef9bdfb0982bc1238f1ff48f2def566cb2dd71a54092a225e5"
+    },
+    {
+      "id": "feat_fp_trade_win_fraction_t32_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "fraction",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 32
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 32,
+      "missingPolicy": "null_if_fewer_than_window_finite_closed_records",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "Count of strictly positive captured pnlPercent divided by 32 eligible closed records.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "all_winners_are_one",
+          "signalBarIndex": 200,
+          "expected": 1,
+          "observations": 32
+        }
+      ],
+      "definitionDigest": "0822fa6d73c46d036beedfab7750f24485eeb62b2e4ace22c78d17e090b44b89"
+    },
+    {
+      "id": "feat_fp_trade_win_fraction_t8_r1",
+      "family": "trades",
+      "revision": 1,
+      "units": "fraction",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {
+        "trades": 8
+      },
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 8,
+      "missingPolicy": "null_if_fewer_than_window_finite_closed_records",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "Count of strictly positive captured pnlPercent divided by 8 eligible closed records.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "all_winners_are_one",
+          "signalBarIndex": 200,
+          "expected": 1,
+          "observations": 8
+        }
+      ],
+      "definitionDigest": "59e6e7a4948606c94f375dbfff3669545e2ac0bd9f51fec134454d62127cae1a"
+    },
+    {
+      "id": "feat_fp_volatility_abs_return_acf_b48_l1_r1",
+      "family": "volatility",
+      "revision": 1,
+      "units": "correlation",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48,
+        "lag": 1
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 49,
+      "missingPolicy": "null_if_incomplete_or_zero_absolute_return_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population lag-1 autocorrelation of absolute preceding 48 log close increments.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_degenerate",
+          "signalBarIndex": 48,
+          "expected": null,
+          "observations": 49
+        }
+      ],
+      "definitionDigest": "ec63c68053f39fc54f660725a5f2bc5220ed7fbe4bc80a57e295bdcd85fb0183"
+    },
+    {
+      "id": "feat_fp_volatility_downside_rms_b12_r1",
+      "family": "volatility",
+      "revision": 1,
+      "units": "log-return RMS",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 12
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 13,
+      "missingPolicy": "null_if_incomplete_or_no_downside_returns",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "RMS relative to zero of negative log close increments in the preceding 12 intervals.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_has_no_downside",
+          "signalBarIndex": 12,
+          "expected": null,
+          "observations": 13
+        }
+      ],
+      "definitionDigest": "4264dd2860c7303ffdec8c1d7ff0a1fc3b20db992c8a0f8d831e20729272aae6"
+    },
+    {
+      "id": "feat_fp_volatility_downside_rms_b240_r1",
+      "family": "volatility",
+      "revision": 1,
+      "units": "log-return RMS",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 240
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 241,
+      "missingPolicy": "null_if_incomplete_or_no_downside_returns",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "RMS relative to zero of negative log close increments in the preceding 240 intervals.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_has_no_downside",
+          "signalBarIndex": 240,
+          "expected": null,
+          "observations": 241
+        }
+      ],
+      "definitionDigest": "0d255e0a5e341b8948157906f3c1e3993f249bbc917fe8f40a0d75c74260ef1c"
+    },
+    {
+      "id": "feat_fp_volatility_downside_rms_b48_r1",
+      "family": "volatility",
+      "revision": 1,
+      "units": "log-return RMS",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 49,
+      "missingPolicy": "null_if_incomplete_or_no_downside_returns",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "RMS relative to zero of negative log close increments in the preceding 48 intervals.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_has_no_downside",
+          "signalBarIndex": 48,
+          "expected": null,
+          "observations": 49
+        }
+      ],
+      "definitionDigest": "13a545ce2b61d3e864c7d9f072d8a8364f88e8f47f88fbf495718d55fb0210f3"
+    },
+    {
+      "id": "feat_fp_volatility_normalized_atr_b12_r1",
+      "family": "volatility",
+      "revision": 1,
+      "units": "fraction of last prior close",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 12
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 12,
+      "missingPolicy": "null_if_incomplete_or_invalid_ohlc_or_close",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Simple mean true range of the preceding 12 bars divided by close[s-1], requiring close[s-13] for the first true range.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 13,
+          "expected": 0,
+          "observations": 12
+        }
+      ],
+      "definitionDigest": "3785134cd50fbc8023623aa299d56bed3e00cdb49c9ec064da9dc153ccc4f44c"
+    },
+    {
+      "id": "feat_fp_volatility_normalized_atr_b240_r1",
+      "family": "volatility",
+      "revision": 1,
+      "units": "fraction of last prior close",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 240
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 240,
+      "missingPolicy": "null_if_incomplete_or_invalid_ohlc_or_close",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Simple mean true range of the preceding 240 bars divided by close[s-1], requiring close[s-241] for the first true range.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 241,
+          "expected": 0,
+          "observations": 240
+        }
+      ],
+      "definitionDigest": "db89b1254caf089696ed3ae5f81798b3cf6707dbdebc2fed6aae3911ff2b3082"
+    },
+    {
+      "id": "feat_fp_volatility_normalized_atr_b48_r1",
+      "family": "volatility",
+      "revision": 1,
+      "units": "fraction of last prior close",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 48,
+      "missingPolicy": "null_if_incomplete_or_invalid_ohlc_or_close",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Simple mean true range of the preceding 48 bars divided by close[s-1], requiring close[s-49] for the first true range.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 49,
+          "expected": 0,
+          "observations": 48
+        }
+      ],
+      "definitionDigest": "05b08ee358398e589cb6c14b4ac449b2632566b795642303dd7fa14d7ca4e7e1"
+    },
+    {
+      "id": "feat_fp_volatility_return_std_b12_r1",
+      "family": "volatility",
+      "revision": 1,
+      "units": "log-return standard deviation",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 12
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 13,
+      "missingPolicy": "null_if_incomplete",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population standard deviation of the preceding 12 log close increments.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 13,
+          "expected": 0,
+          "observations": 13
+        }
+      ],
+      "definitionDigest": "94d4c0cb5a32f2f1bd9955de4705beafe31faa8b93c7082c44b0324a5a989cdb"
+    },
+    {
+      "id": "feat_fp_volatility_return_std_b240_r1",
+      "family": "volatility",
+      "revision": 1,
+      "units": "log-return standard deviation",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 240
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 241,
+      "missingPolicy": "null_if_incomplete",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population standard deviation of the preceding 240 log close increments.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 241,
+          "expected": 0,
+          "observations": 241
+        }
+      ],
+      "definitionDigest": "e9bc88d23874b54af6f0165637a3654aeaff57bfe5f441f185f2ff454509a3c3"
+    },
+    {
+      "id": "feat_fp_volatility_return_std_b48_r1",
+      "family": "volatility",
+      "revision": 1,
+      "units": "log-return standard deviation",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 49,
+      "missingPolicy": "null_if_incomplete",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population standard deviation of the preceding 48 log close increments.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_zero",
+          "signalBarIndex": 49,
+          "expected": 0,
+          "observations": 49
+        }
+      ],
+      "definitionDigest": "ba395761ea20a443a35c95e6c9f2e4ad584f8e48ae172c4185cd2e71a3f09bc5"
+    },
+    {
+      "id": "feat_fp_volatility_std_ratio_b12_over_b240_r1",
+      "family": "volatility",
+      "revision": 1,
+      "units": "ratio",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "shortBars": 12,
+        "longBars": 240
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 241,
+      "missingPolicy": "null_if_incomplete_or_zero_long_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population standard deviation of b12 log returns divided by population standard deviation of b240 log returns.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_undefined",
+          "signalBarIndex": 240,
+          "expected": null,
+          "observations": 13
+        }
+      ],
+      "definitionDigest": "7bc07807b17d3dacbec2f8956b01c1efc57cfa37a77e003e5c33b7ae544c80ad"
+    },
+    {
+      "id": "feat_fp_volatility_upside_rms_b12_r1",
+      "family": "volatility",
+      "revision": 1,
+      "units": "log-return RMS",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 12
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 13,
+      "missingPolicy": "null_if_incomplete_or_no_upside_returns",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "RMS relative to zero of positive log close increments in the preceding 12 intervals.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_has_no_upside",
+          "signalBarIndex": 12,
+          "expected": null,
+          "observations": 13
+        }
+      ],
+      "definitionDigest": "24dd1e32fd1b3b7b305200239f4a08ece79bf46eaed0a32484afc0605f0e6538"
+    },
+    {
+      "id": "feat_fp_volatility_upside_rms_b240_r1",
+      "family": "volatility",
+      "revision": 1,
+      "units": "log-return RMS",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 240
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 241,
+      "missingPolicy": "null_if_incomplete_or_no_upside_returns",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "RMS relative to zero of positive log close increments in the preceding 240 intervals.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_has_no_upside",
+          "signalBarIndex": 240,
+          "expected": null,
+          "observations": 241
+        }
+      ],
+      "definitionDigest": "f9733ec9a0c688656164c7294cba67dcbb87366ee1f6ed9b31821a19b8478b80"
+    },
+    {
+      "id": "feat_fp_volatility_upside_rms_b48_r1",
+      "family": "volatility",
+      "revision": 1,
+      "units": "log-return RMS",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 48
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 49,
+      "missingPolicy": "null_if_incomplete_or_no_upside_returns",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "RMS relative to zero of positive log close increments in the preceding 48 intervals.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_has_no_upside",
+          "signalBarIndex": 48,
+          "expected": null,
+          "observations": 49
+        }
+      ],
+      "definitionDigest": "856850940ec507f9988e564dbf36a0850249244658e6bda7d562ec8e697ded44"
+    },
+    {
+      "id": "feat_pairDrawdownPctPrior",
+      "family": "trades",
+      "revision": 1,
+      "units": "additive percentage points",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {},
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 1,
+      "missingPolicy": "null_without_prior_finite_closed_trade",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "Current drawdown from the running peak of the additive captured-pnlPercent path starting at zero over all prior finite closed records.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "no_prior_trade_is_null",
+          "signalBarIndex": 0,
+          "expected": null,
+          "observations": 0
+        }
+      ],
+      "definitionDigest": "7c86115a016ed5dc8ad057d4ea26304a631433f962fc8793ba63ef836814b3b8"
+    },
+    {
+      "id": "feat_pairFiresInLast20Bars",
+      "family": "fires",
+      "revision": 1,
+      "units": "candidate fires",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 20
+      },
+      "requiredCapabilities": [
+        "entry_candidates_v1"
+      ],
+      "minimumObservations": 20,
+      "missingPolicy": "null_before_twenty_prior_bars",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Count prior accepted candidate rows whose signal bar is in [s-20,s); same-bar current candidates are excluded.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/fires.ts",
+          "sha256": "07c8491272d96ab204f6c062db68bd1baf2b76e2c7ce6fb333e42b53726a8311"
+        },
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "warmup_is_null",
+          "signalBarIndex": 19,
+          "expected": null,
+          "observations": 19
+        }
+      ],
+      "definitionDigest": "08739c38ee90b486336ac7865733c316a11f71d70d872c0c57cca0190ea75a27"
+    },
+    {
+      "id": "feat_pairInterFireIntervalCvPrior",
+      "family": "fires",
+      "revision": 1,
+      "units": "coefficient of variation",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {},
+      "requiredCapabilities": [
+        "entry_candidates_v1"
+      ],
+      "minimumObservations": 2,
+      "missingPolicy": "null_without_two_prior_intervals_or_zero_mean_gap",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population standard deviation divided by mean of gaps between distinct prior fired bars, with current-bar entries excluded.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/fires.ts",
+          "sha256": "07c8491272d96ab204f6c062db68bd1baf2b76e2c7ce6fb333e42b53726a8311"
+        },
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "insufficient_prior_fires_is_null",
+          "signalBarIndex": 20,
+          "expected": null,
+          "observations": 0
+        }
+      ],
+      "definitionDigest": "ac21b0793cb00fe61de2cdb012245fbec1af6f5aa3b5b86c67d74eff1519ce79"
+    },
+    {
+      "id": "feat_pairLosingStreakPrior",
+      "family": "trades",
+      "revision": 1,
+      "units": "closed trades",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {},
+      "requiredCapabilities": [
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 1,
+      "missingPolicy": "null_without_prior_finite_closed_trade",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "Number of consecutive prior finite closed records with negative captured pnlPercent, ending at the latest prior record; nonloss ends the streak.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "no_prior_trade_is_null",
+          "signalBarIndex": 0,
+          "expected": null,
+          "observations": 0
+        }
+      ],
+      "definitionDigest": "8d02eaca2084d7ae9cf424d3fbc32380a090350509e6b78b8ae63c6e6b416481"
+    },
+    {
+      "id": "feat_pairMedianMaePctPrior",
+      "family": "trades",
+      "revision": 1,
+      "units": "percentage points",
+      "directionConvention": "captured_trade_direction",
+      "parameters": {},
+      "requiredCapabilities": [
+        "pair_bars_v1",
+        "closed_trade_records_v1"
+      ],
+      "minimumObservations": 1,
+      "missingPolicy": "null_without_prior_trade_with_interior_closes",
+      "cutoff": "exit_bar_index_strictly_before_signal_bar",
+      "formula": "Median of prior trades' interior-close maximum adverse excursion, using entryBarIndex < j < exitBarIndex and direction-signed close return.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/trades-v1.ts",
+          "sha256": "1d6c4cf3d834469023af2fe5f1f8db374557609c3edad4b6046163559eed00d4"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "no_prior_trade_is_null",
+          "signalBarIndex": 0,
+          "expected": null,
+          "observations": 0
+        }
+      ],
+      "definitionDigest": "8178668f7967c3adbf4ad7974603108bd1fc4b98ea9c460bfcd40e8aba65cfc5"
+    },
+    {
+      "id": "feat_pairSpreadVolatilityRatio5Over20",
+      "family": "volatility",
+      "revision": 1,
+      "units": "ratio",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "shortBars": 5,
+        "longBars": 20
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 21,
+      "missingPolicy": "null_if_incomplete_or_zero_long_volatility",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population standard deviation of the preceding 5 log returns divided by that of the preceding 20 log returns.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        },
+        {
+          "path": "lib/pair-features/families/volatility.ts",
+          "sha256": "6fd06fb52e9bf001539f6a4efd57ba9c28f78f58848c2fac3ae665e0ce458790"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_undefined",
+          "signalBarIndex": 20,
+          "expected": null,
+          "observations": 6
+        }
+      ],
+      "definitionDigest": "470946e941b7db994899e45673fefeb8a19de690fd13340d9a230844c8e18a69"
+    },
+    {
+      "id": "feat_spreadHalfLifeBars20",
+      "family": "dependence",
+      "revision": 1,
+      "units": "bars",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 20
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 20,
+      "missingPolicy": "null_if_incomplete_or_phi_outside_zero_one",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "-ln(2)/ln(phi) from the intercept-bearing AR(1) fit of the preceding 20 log closes, only for 0 < phi < 1.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/dependence.ts",
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
+        },
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_degenerate",
+          "signalBarIndex": 20,
+          "expected": null,
+          "observations": 20
+        }
+      ],
+      "definitionDigest": "3dba1f8bef6d77bd2038c1b07464958c8f1d9026994ae437ebd40bda4a7d947f"
+    },
+    {
+      "id": "feat_spreadReturnAutocorr20",
+      "family": "dependence",
+      "revision": 1,
+      "units": "correlation",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 20,
+        "lag": 1
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 21,
+      "missingPolicy": "null_if_incomplete_or_zero_return_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population lag-1 autocorrelation of the preceding 20 log close increments.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/dependence.ts",
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
+        },
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_degenerate",
+          "signalBarIndex": 20,
+          "expected": null,
+          "observations": 21
+        }
+      ],
+      "definitionDigest": "a4afc6c27e01606529d3e93fd064fd7e91d64b7d19b1cf921135523deaf77f48"
+    },
+    {
+      "id": "feat_spreadVarianceRatio5",
+      "family": "dependence",
+      "revision": 1,
+      "units": "variance ratio",
+      "directionConvention": "captured_base_over_quote",
+      "parameters": {
+        "bars": 20,
+        "horizon": 5
+      },
+      "requiredCapabilities": [
+        "pair_bars_v1"
+      ],
+      "minimumObservations": 21,
+      "missingPolicy": "null_if_incomplete_or_zero_one_bar_variance",
+      "cutoff": "strictly_before_signal_bar",
+      "formula": "Population variance of overlapping five-return sums divided by five times population variance of the preceding 20 one-bar log returns.",
+      "dependencies": [],
+      "implementationFiles": [
+        {
+          "path": "lib/pair-features/families/dependence.ts",
+          "sha256": "dbc0f9250d20dd19295856d2d15bdf1d5843bacf1908ab80822c152e202f7c99"
+        },
+        {
+          "path": "lib/pair-features/families/math.ts",
+          "sha256": "cbb17948448f3009644139787dff854af5ec0b33374763aead77eb1fc2d74c69"
+        }
+      ],
+      "expectedValueFixtures": [
+        {
+          "name": "flat_is_degenerate",
+          "signalBarIndex": 20,
+          "expected": null,
+          "observations": 21
+        }
+      ],
+      "definitionDigest": "8c547b024c952613d01f6c637a46556900d3c1746d4d773b2369364e02a2c3db"
+    }
+  ]
+}

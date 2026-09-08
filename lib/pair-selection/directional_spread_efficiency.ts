@@ -8,7 +8,7 @@ export const directional_spread_efficiency: PairSelectionRule = {
     paramLabels: { efficiencyWeight: "Exponent weighting applied to Kaufman efficiency ratio" },
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_spread_log_return_b48_r1",
                 "feat_fp_spread_efficiency_ratio_b48_r1",

@@ -8,7 +8,7 @@ export const multi_horizon_directional_concordance: PairSelectionRule = {
     paramLabels: { secularWeight: "Weighting applied to the long-term 240-bar spread return" },
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_spread_log_return_b12_r1",
                 "feat_fp_spread_log_return_b48_r1",

@@ -8,7 +8,7 @@ export const volatility_term_structure_inversion: PairSelectionRule = {
     paramLabels: { volFloor: "Floor added to 48-bar volatility to stabilize division against near-zero values" },
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_volatility_return_std_b12_r1",
                 "feat_fp_volatility_return_std_b48_r1",

@@ -8,7 +8,7 @@ export const joint_shrunk_win_expectancy_product: PairSelectionRule = {
     defaultParams: { priorStrength: 5 },
     paramLabels: { priorStrength: "Prior trade count weight for Bayesian win-rate shrinkage" },
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_fp_trade_mean_net_pct_t8_r1"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_fp_trade_mean_net_pct_t8_r1"] },
         sourceFiles: ["lib/pair-selection/joint_shrunk_win_expectancy_product.ts"],
     },
     score: (candidate, _event, params, pool) => {

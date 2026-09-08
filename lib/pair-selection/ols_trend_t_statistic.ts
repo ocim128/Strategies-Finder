@@ -8,7 +8,7 @@ export const ols_trend_t_statistic: PairSelectionRule = {
     paramLabels: { noiseFloor: "Floor added to return standard deviation to stabilize division" },
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_spread_ols_slope_b48_r2",
                 "feat_fp_volatility_return_std_b48_r1",

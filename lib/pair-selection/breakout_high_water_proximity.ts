@@ -8,7 +8,7 @@ export const breakout_high_water_proximity: PairSelectionRule = {
     paramLabels: {},
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_spread_distance_below_max_b48_r1",
                 "feat_fp_spread_distance_above_min_b48_r1",

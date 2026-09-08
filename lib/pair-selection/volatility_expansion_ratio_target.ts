@@ -11,7 +11,7 @@ export const volatility_expansion_ratio_target: PairSelectionRule = {
     defaultParams: { targetAtrRatio: 1.25 },
     paramLabels: { targetAtrRatio: "Target ATR ratio" },
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_atrRatio5Over20"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_atrRatio5Over20"] },
         sourceFiles: ["lib/pair-selection/volatility_expansion_ratio_target.ts"],
     },
     score: (candidate, _event, params) => {

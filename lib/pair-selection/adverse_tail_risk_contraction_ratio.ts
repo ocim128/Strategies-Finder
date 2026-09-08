@@ -8,7 +8,7 @@ export const adverse_tail_risk_contraction_ratio: PairSelectionRule = {
     paramLabels: { volFloor: "Floor added to baseline 240-bar adverse RMS" },
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_volatility_downside_rms_b12_r1",
                 "feat_fp_volatility_downside_rms_b240_r1",

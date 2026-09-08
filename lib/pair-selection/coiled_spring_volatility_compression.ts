@@ -11,7 +11,7 @@ export const coiled_spring_volatility_compression: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_atrRatio5Over20"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_atrRatio5Over20"] },
         sourceFiles: ["lib/pair-selection/coiled_spring_volatility_compression.ts"],
     },
     score: (candidate) => {

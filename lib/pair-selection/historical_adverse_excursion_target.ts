@@ -11,7 +11,7 @@ export const historical_adverse_excursion_target: PairSelectionRule = {
     defaultParams: { targetMaePct: 1.0 },
     paramLabels: { targetMaePct: "Target MAE (%)" },
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_pairMedianMaePctPrior"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_pairMedianMaePctPrior"] },
         sourceFiles: ["lib/pair-selection/historical_adverse_excursion_target.ts"],
     },
     score: (candidate, _event, params) => {

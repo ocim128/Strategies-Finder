@@ -7,7 +7,7 @@ export const spread_volatility_surge_ratio: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_fp_volatility_std_ratio_b12_over_b240_r1"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_fp_volatility_std_ratio_b12_over_b240_r1"] },
         sourceFiles: ["lib/pair-selection/spread_volatility_surge_ratio.ts"],
     },
     score: (candidate) => {

@@ -11,7 +11,7 @@ export const spread_return_autocorrelation_target: PairSelectionRule = {
     defaultParams: { targetAutocorr: -0.25 },
     paramLabels: { targetAutocorr: "Target return autocorrelation" },
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_spreadReturnAutocorr20"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_spreadReturnAutocorr20"] },
         sourceFiles: ["lib/pair-selection/spread_return_autocorrelation_target.ts"],
     },
     score: (candidate, _event, params) => {

@@ -8,7 +8,7 @@ export const interday_persistence_scaled_momentum: PairSelectionRule = {
     paramLabels: { persistenceWeight: "Sensitivity weight applied to 240-bar lag-4 autocorrelation" },
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_spread_log_return_b48_r1",
                 "feat_fp_dependence_return_acf_b240_l4_r1",

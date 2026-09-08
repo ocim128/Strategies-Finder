@@ -8,7 +8,7 @@ export const consecutive_spread_increment_momentum: PairSelectionRule = {
     paramLabels: {},
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_spread_up_increment_streak_r1",
                 "feat_fp_spread_down_increment_streak_r1",

@@ -8,7 +8,7 @@ export const directional_volatility_skew: PairSelectionRule = {
     paramLabels: { adverseFloor: "Floor added to adverse RMS to stabilize division against near-zero values" },
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_volatility_upside_rms_b48_r1",
                 "feat_fp_volatility_downside_rms_b48_r1",

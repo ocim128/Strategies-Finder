@@ -11,7 +11,7 @@ export const inter_fire_cadence_regularity: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_pairInterFireIntervalCvPrior"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_pairInterFireIntervalCvPrior"] },
         sourceFiles: ["lib/pair-selection/inter_fire_cadence_regularity.ts"],
     },
     score: (candidate) => {

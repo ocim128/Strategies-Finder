@@ -8,7 +8,7 @@ export const win_rate_momentum_regime_shift: PairSelectionRule = {
     paramLabels: {},
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_trade_win_fraction_t8_r1",
                 "feat_fp_trade_win_fraction_t32_r1",

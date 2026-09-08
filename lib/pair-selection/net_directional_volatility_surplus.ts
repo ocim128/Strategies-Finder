@@ -8,7 +8,7 @@ export const net_directional_volatility_surplus: PairSelectionRule = {
     paramLabels: {},
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_volatility_upside_rms_b48_r1",
                 "feat_fp_volatility_downside_rms_b48_r1",

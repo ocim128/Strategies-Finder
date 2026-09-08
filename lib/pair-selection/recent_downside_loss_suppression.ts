@@ -8,7 +8,7 @@ export const recent_downside_loss_suppression: PairSelectionRule = {
     paramLabels: {},
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: ["feat_fp_trade_downside_rms_t8_r1", "feat_fp_trade_downside_rms_t8_r1_n"],
         },
         sourceFiles: ["lib/pair-selection/recent_downside_loss_suppression.ts"],

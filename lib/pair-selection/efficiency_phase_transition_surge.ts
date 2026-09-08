@@ -8,7 +8,7 @@ export const efficiency_phase_transition_surge: PairSelectionRule = {
     paramLabels: {},
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_spread_efficiency_ratio_b12_r1",
                 "feat_fp_spread_efficiency_ratio_b48_r1",

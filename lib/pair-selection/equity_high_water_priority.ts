@@ -11,7 +11,7 @@ export const equity_high_water_priority: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_pairDrawdownPctPrior"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_pairDrawdownPctPrior"] },
         sourceFiles: ["lib/pair-selection/equity_high_water_priority.ts"],
     },
     score: (candidate) => {

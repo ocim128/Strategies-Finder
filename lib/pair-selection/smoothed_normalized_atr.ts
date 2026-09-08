@@ -7,7 +7,7 @@ export const smoothed_normalized_atr: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_fp_volatility_normalized_atr_b12_r1"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_fp_volatility_normalized_atr_b12_r1"] },
         sourceFiles: ["lib/pair-selection/smoothed_normalized_atr.ts"],
     },
     score: (candidate) => {

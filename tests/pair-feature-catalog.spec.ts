@@ -91,7 +91,7 @@ describe("pair feature catalog v1", () => {
         expect(grandfathered.size).to.equal(10);
         for (const [ruleKey, featureId] of grandfathered) {
             const rule = pairSelectionRuleRegistry.get(ruleKey);
-            expect(rule?.metadata?.featureRequirements).to.deep.equal({ libraryRelease: "v1", columns: [featureId] });
+            expect(rule?.metadata?.featureRequirements).to.deep.equal({ libraryRelease: "v2", columns: [featureId] });
             expect(V1_RELEASE.definitions.some((definition) => definition.id === featureId)).to.equal(true);
         }
     });

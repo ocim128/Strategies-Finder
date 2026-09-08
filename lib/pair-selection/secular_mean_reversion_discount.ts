@@ -8,7 +8,7 @@ export const secular_mean_reversion_discount: PairSelectionRule = {
     paramLabels: {},
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: ["feat_fp_spread_log_return_b240_r1"],
         },
         sourceFiles: ["lib/pair-selection/secular_mean_reversion_discount.ts"],

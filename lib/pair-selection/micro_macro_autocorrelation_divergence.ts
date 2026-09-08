@@ -8,7 +8,7 @@ export const micro_macro_autocorrelation_divergence: PairSelectionRule = {
     paramLabels: {},
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_dependence_return_acf_b48_l4_r1",
                 "feat_fp_dependence_return_acf_b48_l1_r1",

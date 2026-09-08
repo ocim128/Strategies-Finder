@@ -11,7 +11,7 @@ export const rhythmic_cadence_loud_atr: PairSelectionRule = {
     defaultParams: { cvPenalty: 0.5 },
     paramLabels: { cvPenalty: "Penalty weight applied per unit of inter-fire interval coefficient of variation" },
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_pairInterFireIntervalCvPrior"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_pairInterFireIntervalCvPrior"] },
         sourceFiles: ["lib/pair-selection/rhythmic_cadence_loud_atr.ts"],
     },
     score: (candidate, _event, params) => {

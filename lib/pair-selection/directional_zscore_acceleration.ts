@@ -8,7 +8,7 @@ export const directional_zscore_acceleration: PairSelectionRule = {
     paramLabels: {},
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: ["feat_fp_spread_zscore_b12_r1", "feat_fp_spread_zscore_b48_r1"],
         },
         sourceFiles: ["lib/pair-selection/directional_zscore_acceleration.ts"],

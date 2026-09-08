@@ -7,7 +7,7 @@ export const mean_reversion_gravity_strength: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_fp_dependence_ar1_slope_b48_r1"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_fp_dependence_ar1_slope_b48_r1"] },
         sourceFiles: ["lib/pair-selection/mean_reversion_gravity_strength.ts"],
     },
     score: (candidate) => {

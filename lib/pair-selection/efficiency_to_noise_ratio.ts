@@ -8,7 +8,7 @@ export const efficiency_to_noise_ratio: PairSelectionRule = {
     paramLabels: { volFloor: "Floor added to return standard deviation to prevent division by near-zero" },
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_spread_efficiency_ratio_b48_r1",
                 "feat_fp_volatility_return_std_b48_r1",

@@ -8,7 +8,7 @@ export const directional_stochastic_range_position: PairSelectionRule = {
     paramLabels: {},
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_spread_distance_above_min_b240_r1",
                 "feat_fp_spread_distance_below_max_b240_r1",

@@ -7,7 +7,7 @@ export const directional_spread_zscore_momentum: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_fp_spread_zscore_b48_r1"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_fp_spread_zscore_b48_r1"] },
         sourceFiles: ["lib/pair-selection/directional_spread_zscore_momentum.ts"],
     },
     score: (candidate) => {

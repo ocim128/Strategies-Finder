@@ -11,7 +11,7 @@ export const drawdown_discounted_atr: PairSelectionRule = {
     defaultParams: { drawdownPenalty: 0.05 },
     paramLabels: { drawdownPenalty: "Penalty multiplier per percentage point of prior pair equity drawdown" },
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_pairDrawdownPctPrior"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_pairDrawdownPctPrior"] },
         sourceFiles: ["lib/pair-selection/drawdown_discounted_atr.ts"],
     },
     score: (candidate, _event, params) => {

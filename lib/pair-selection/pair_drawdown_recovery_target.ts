@@ -11,7 +11,7 @@ export const pair_drawdown_recovery_target: PairSelectionRule = {
     defaultParams: { targetDrawdownPct: 10 },
     paramLabels: { targetDrawdownPct: "Target drawdown (%)" },
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_pairDrawdownPctPrior"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_pairDrawdownPctPrior"] },
         sourceFiles: ["lib/pair-selection/pair_drawdown_recovery_target.ts"],
     },
     score: (candidate, _event, params) => {

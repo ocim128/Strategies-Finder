@@ -8,7 +8,7 @@ export const empirical_trade_payoff_skewness: PairSelectionRule = {
     paramLabels: {},
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: ["feat_fp_trade_profit_factor_t8_r1", "feat_fp_trade_win_fraction_t8_r1"],
         },
         sourceFiles: ["lib/pair-selection/empirical_trade_payoff_skewness.ts"],

@@ -8,7 +8,7 @@ export const variance_ratio_trend_persistence: PairSelectionRule = {
     paramLabels: {},
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_spread_log_return_b48_r1",
                 "feat_fp_dependence_variance_ratio_b48_h4_r1",

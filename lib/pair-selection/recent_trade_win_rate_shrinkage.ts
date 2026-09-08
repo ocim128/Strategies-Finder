@@ -9,7 +9,7 @@ export const recent_trade_win_rate_shrinkage: PairSelectionRule = {
     paramLabels: { priorStrength: "Prior trade count weight for Bayesian shrinkage" },
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: ["feat_fp_trade_win_fraction_t8_r1", "feat_fp_trade_win_fraction_t8_r1_n"],
         },
         sourceFiles: ["lib/pair-selection/recent_trade_win_rate_shrinkage.ts"],

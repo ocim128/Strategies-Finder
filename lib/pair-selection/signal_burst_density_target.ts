@@ -11,7 +11,7 @@ export const signal_burst_density_target: PairSelectionRule = {
     defaultParams: { targetFireCount: 3 },
     paramLabels: { targetFireCount: "Target prior fire count" },
     metadata: {
-        featureRequirements: { libraryRelease: "v1", columns: ["feat_pairFiresInLast20Bars"] },
+        featureRequirements: { libraryRelease: "v2", columns: ["feat_pairFiresInLast20Bars"] },
         sourceFiles: ["lib/pair-selection/signal_burst_density_target.ts"],
     },
     score: (candidate, _event, params) => {

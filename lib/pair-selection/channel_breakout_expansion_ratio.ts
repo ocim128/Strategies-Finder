@@ -8,7 +8,7 @@ export const channel_breakout_expansion_ratio: PairSelectionRule = {
     paramLabels: { floor: "Floor added to 48-bar total channel range to stabilize division against near-zero values" },
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: [
                 "feat_fp_spread_distance_below_max_b48_r1",
                 "feat_fp_spread_distance_above_min_b48_r1",

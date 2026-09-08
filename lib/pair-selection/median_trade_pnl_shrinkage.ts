@@ -9,7 +9,7 @@ export const median_trade_pnl_shrinkage: PairSelectionRule = {
     paramLabels: { priorStrength: "Prior trade count weight for Bayesian shrinkage" },
     metadata: {
         featureRequirements: {
-            libraryRelease: "v1",
+            libraryRelease: "v2",
             columns: ["feat_fp_trade_median_net_pct_t8_r1", "feat_fp_trade_median_net_pct_t8_r1_n"],
         },
         sourceFiles: ["lib/pair-selection/median_trade_pnl_shrinkage.ts"],
