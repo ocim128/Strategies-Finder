@@ -67,6 +67,12 @@ interface PreparedPack {
     release: PairFeatureRelease;
 }
 
+interface ActivatedColumnArrays {
+    values?: Float64Array;
+    valid?: Uint8Array;
+    observations?: Uint32Array;
+}
+
 export interface PreparedPairFeatures {
     readonly folderPath: string;
     readonly sourceValidationMode: "none" | "hash-only" | "full";
@@ -78,6 +84,8 @@ export interface PreparedPairFeatures {
     readonly ledgerRowCount: number;
     readonly columns: ReadonlyMap<string, PreparedColumn>;
     readonly packs: readonly PreparedPack[];
+    readonly decodedColumns: Map<string, number[]>;
+    readonly activatedColumns: Map<string, ActivatedColumnArrays>;
     active: ActivePairFeatures | null;
 }
 
@@ -272,6 +280,7 @@ async function validateColumnPresence(
     folder: string,
     definition: PairFeatureDefinition,
     pair: PairFeatureColumnPairManifest,
+    decodedColumns: Map<string, number[]>,
 ): Promise<void> {
     if (pair.pairKey.length === 0 || pair.rowCount < 0 || !Number.isSafeInteger(pair.rowCount)) throw new Error(`Invalid ${definition.id} pair column row count.`);
     const expected = {
@@ -282,7 +291,7 @@ async function validateColumnPresence(
     for (const kind of ["values", "valid", "observations"] as const) {
         const artifact = pair[kind];
         if (artifact.path !== expected[kind] || artifact.bytes < 0 || artifact.uncompressedBytes < 0) throw new Error(`Invalid ${definition.id} ${kind} column mapping.`);
-        await readColumn(folder, artifact, kind, pair.rowCount);
+        if (!decodedColumns.has(artifact.path)) decodedColumns.set(artifact.path, await readColumn(folder, artifact, kind, pair.rowCount));
     }
 }
 
@@ -308,6 +317,7 @@ async function readPack(
     relativePath: string,
     snapshot: Awaited<ReturnType<typeof validatePairFeatureSnapshot>>,
     requirements: readonly ResolvedRequirement[],
+    decodedColumns: Map<string, number[]>,
     signal?: AbortSignal,
 ): Promise<PreparedPack | null> {
     throwIfAborted(signal);
@@ -363,7 +373,7 @@ async function readPack(
             await forEachColumnPair(feature.pairs, async (pair) => {
                 throwIfAborted(signal);
                 try {
-                    await validateColumnPresence(folder, definition, pair);
+                    await validateColumnPresence(folder, definition, pair, decodedColumns);
                 } catch (error) {
                     if (isMissing(error)) {
                         throw new Error(missingPackCommand(folder, relevant.filter((item) => item.parentId === feature.id)));
@@ -421,6 +431,8 @@ export async function ensurePairFeatures(
             ledgerRowCount: 0,
             columns: new Map(),
             packs: [],
+            decodedColumns: new Map(),
+            activatedColumns: new Map(),
             active: null,
         };
     }
@@ -434,6 +446,8 @@ export async function ensurePairFeatures(
     let sourceValidationMode: "hash-only" | "full" = "hash-only";
     const packs: PreparedPack[] = [];
     const columns = new Map<string, PreparedColumn>();
+    const decodedColumns = new Map<string, number[]>();
+    const activatedColumns = new Map<string, ActivatedColumnArrays>();
     async function readAvailablePacks(): Promise<void> {
         let names: string[];
         try {
@@ -444,7 +458,7 @@ export async function ensurePairFeatures(
         }
         packs.splice(0, packs.length);
         for (const packPath of names.filter((name) => name.endsWith(".json")).sort(compare).map((name) => `${FEATURE_PACK_MANIFEST_DIR}/${name}`)) {
-            const pack = await readPack(folderPath, packPath, snapshot, requirements, signal);
+            const pack = await readPack(folderPath, packPath, snapshot, requirements, decodedColumns, signal);
             if (pack) packs.push(pack);
         }
         columns.clear();
@@ -499,6 +513,8 @@ export async function ensurePairFeatures(
         ledgerRowCount: snapshot.manifest.ledgerRowCount,
         columns,
         packs,
+        decodedColumns,
+        activatedColumns,
         active: null,
     };
 }
@@ -541,19 +557,42 @@ export async function activatePairFeatures(prepared: PreparedPairFeatures, rule:
         throwIfAborted(signal);
         const column = prepared.columns.get(requirementKey(requirement.libraryRelease, parentId));
         if (!column) throw new Error(`Pair feature ${parentId} was not prepared for rule ${rule.key}.`);
-        const values = requestedColumns.includes(parentId) ? new Float64Array(prepared.ledgerRowCount) : undefined;
-        const valid = requestedColumns.includes(parentId) ? new Uint8Array(prepared.ledgerRowCount) : undefined;
-        const observations = requestedColumns.includes(`${parentId}_n`) ? new Uint32Array(prepared.ledgerRowCount) : undefined;
-        await forEachColumnPair(column.pairs, async (pair) => {
-            throwIfAborted(signal);
-            const start = pairStart(column, pair.pairKey);
-            if (values && valid) {
-                values.set(await readColumn(prepared.folderPath, pair.values, "values", pair.rowCount), start);
-                valid.set(await readColumn(prepared.folderPath, pair.valid, "valid", pair.rowCount), start);
-            }
-            if (observations) observations.set(await readColumn(prepared.folderPath, pair.observations, "observations", pair.rowCount), start);
-        });
-        arrays.set(parentId, { values, valid, observations });
+        const cacheKey = requirementKey(requirement.libraryRelease, parentId);
+        const cached = prepared.activatedColumns.get(cacheKey) ?? {};
+        const needsValues = requestedColumns.includes(parentId);
+        const needsObservations = requestedColumns.includes(`${parentId}_n`);
+        if (needsValues && (!cached.values || !cached.valid)) {
+            const values = new Float64Array(prepared.ledgerRowCount);
+            const valid = new Uint8Array(prepared.ledgerRowCount);
+            await forEachColumnPair(column.pairs, async (pair) => {
+                throwIfAborted(signal);
+                const start = pairStart(column, pair.pairKey);
+                const pairValues = prepared.decodedColumns.get(pair.values.path)
+                    ?? await readColumn(prepared.folderPath, pair.values, "values", pair.rowCount);
+                const pairValid = prepared.decodedColumns.get(pair.valid.path)
+                    ?? await readColumn(prepared.folderPath, pair.valid, "valid", pair.rowCount);
+                values.set(pairValues, start);
+                valid.set(pairValid, start);
+                prepared.decodedColumns.delete(pair.values.path);
+                prepared.decodedColumns.delete(pair.valid.path);
+            });
+            cached.values = values;
+            cached.valid = valid;
+        }
+        if (needsObservations && !cached.observations) {
+            const observations = new Uint32Array(prepared.ledgerRowCount);
+            await forEachColumnPair(column.pairs, async (pair) => {
+                throwIfAborted(signal);
+                const start = pairStart(column, pair.pairKey);
+                const pairObservations = prepared.decodedColumns.get(pair.observations.path)
+                    ?? await readColumn(prepared.folderPath, pair.observations, "observations", pair.rowCount);
+                observations.set(pairObservations, start);
+                prepared.decodedColumns.delete(pair.observations.path);
+            });
+            cached.observations = observations;
+        }
+        prepared.activatedColumns.set(cacheKey, cached);
+        arrays.set(parentId, cached);
     }
     let released = false;
     const active: ActivePairFeatures = {
@@ -664,4 +703,6 @@ export async function writePairSelectionCheckReceipt(input: PairSelectionCheckRe
 export function releasePairFeatures(prepared: PreparedPairFeatures): void {
     prepared.active?.release();
     prepared.active = null;
+    prepared.decodedColumns.clear();
+    prepared.activatedColumns.clear();
 }

@@ -35,8 +35,11 @@ index. `scoredCandidates` counts actual rule score calls, including rejected
 candidates, without counting cached reference picks. Heap peaks are sampled
 after loading and each rule, not continuously.
 
-Source-snapshot validation, feature-column verification, and activation read at
-most eight pairs at once. Small missing-feature generations use the same
+Source-snapshot validation and feature-column verification read at most eight
+pairs at once. Decoded columns are retained for the prepared run and promoted
+to one global typed array per feature on first activation, so later rules reuse
+the same data without rereading or reinflating the column files. Small
+missing-feature generations use the same
 bounded in-process batches. Large cold generations use a bounded Node worker-thread pool
 (`featureGenerationWorkers` in diagnostics) so synchronous feature evaluation
 can use multiple CPU cores; small generations remain in-process. Results are
