@@ -73,6 +73,11 @@ interface ActivatedColumnArrays {
     observations?: Uint32Array;
 }
 
+interface DecodedColumn {
+    artifact: { path: string; bytes: number; sha256: string; uncompressedBytes: number; uncompressedSha256: string };
+    values: number[];
+}
+
 export interface PreparedPairFeatures {
     readonly folderPath: string;
     readonly sourceValidationMode: "none" | "hash-only" | "full";
@@ -84,7 +89,7 @@ export interface PreparedPairFeatures {
     readonly ledgerRowCount: number;
     readonly columns: ReadonlyMap<string, PreparedColumn>;
     readonly packs: readonly PreparedPack[];
-    readonly decodedColumns: Map<string, number[]>;
+    readonly decodedColumns: Map<string, DecodedColumn>;
     readonly activatedColumns: Map<string, ActivatedColumnArrays>;
     active: ActivePairFeatures | null;
 }
@@ -280,7 +285,7 @@ async function validateColumnPresence(
     folder: string,
     definition: PairFeatureDefinition,
     pair: PairFeatureColumnPairManifest,
-    decodedColumns: Map<string, number[]>,
+    decodedColumns: Map<string, DecodedColumn>,
 ): Promise<void> {
     if (pair.pairKey.length === 0 || pair.rowCount < 0 || !Number.isSafeInteger(pair.rowCount)) throw new Error(`Invalid ${definition.id} pair column row count.`);
     const expected = {
@@ -291,7 +296,17 @@ async function validateColumnPresence(
     for (const kind of ["values", "valid", "observations"] as const) {
         const artifact = pair[kind];
         if (artifact.path !== expected[kind] || artifact.bytes < 0 || artifact.uncompressedBytes < 0) throw new Error(`Invalid ${definition.id} ${kind} column mapping.`);
-        if (!decodedColumns.has(artifact.path)) decodedColumns.set(artifact.path, await readColumn(folder, artifact, kind, pair.rowCount));
+        const cached = decodedColumns.get(artifact.path);
+        if (cached) {
+            if (cached.artifact.bytes !== artifact.bytes
+                || cached.artifact.sha256 !== artifact.sha256
+                || cached.artifact.uncompressedBytes !== artifact.uncompressedBytes
+                || cached.artifact.uncompressedSha256 !== artifact.uncompressedSha256) {
+                throw new Error(`Feature ${kind} column metadata mismatch: ${artifact.path}.`);
+            }
+        } else {
+            decodedColumns.set(artifact.path, { artifact: { ...artifact }, values: await readColumn(folder, artifact, kind, pair.rowCount) });
+        }
     }
 }
 
@@ -317,7 +332,7 @@ async function readPack(
     relativePath: string,
     snapshot: Awaited<ReturnType<typeof validatePairFeatureSnapshot>>,
     requirements: readonly ResolvedRequirement[],
-    decodedColumns: Map<string, number[]>,
+    decodedColumns: Map<string, DecodedColumn>,
     signal?: AbortSignal,
 ): Promise<PreparedPack | null> {
     throwIfAborted(signal);
@@ -446,7 +461,7 @@ export async function ensurePairFeatures(
     let sourceValidationMode: "hash-only" | "full" = "hash-only";
     const packs: PreparedPack[] = [];
     const columns = new Map<string, PreparedColumn>();
-    const decodedColumns = new Map<string, number[]>();
+    const decodedColumns = new Map<string, DecodedColumn>();
     const activatedColumns = new Map<string, ActivatedColumnArrays>();
     async function readAvailablePacks(): Promise<void> {
         let names: string[];
@@ -567,9 +582,9 @@ export async function activatePairFeatures(prepared: PreparedPairFeatures, rule:
             await forEachColumnPair(column.pairs, async (pair) => {
                 throwIfAborted(signal);
                 const start = pairStart(column, pair.pairKey);
-                const pairValues = prepared.decodedColumns.get(pair.values.path)
+                const pairValues = prepared.decodedColumns.get(pair.values.path)?.values
                     ?? await readColumn(prepared.folderPath, pair.values, "values", pair.rowCount);
-                const pairValid = prepared.decodedColumns.get(pair.valid.path)
+                const pairValid = prepared.decodedColumns.get(pair.valid.path)?.values
                     ?? await readColumn(prepared.folderPath, pair.valid, "valid", pair.rowCount);
                 values.set(pairValues, start);
                 valid.set(pairValid, start);
@@ -584,7 +599,7 @@ export async function activatePairFeatures(prepared: PreparedPairFeatures, rule:
             await forEachColumnPair(column.pairs, async (pair) => {
                 throwIfAborted(signal);
                 const start = pairStart(column, pair.pairKey);
-                const pairObservations = prepared.decodedColumns.get(pair.observations.path)
+                const pairObservations = prepared.decodedColumns.get(pair.observations.path)?.values
                     ?? await readColumn(prepared.folderPath, pair.observations, "observations", pair.rowCount);
                 observations.set(pairObservations, start);
                 prepared.decodedColumns.delete(pair.observations.path);
