@@ -1596,7 +1596,7 @@ export async function processRunBatch(
                         trades: result.result?.trades ?? [],
                         baseSymbol: completionContext.baseSymbol,
                         quoteSymbol: completionContext.quoteSymbol,
-                    });
+                    }, { awaitSnapshotCapture: false });
                     ledgerTimings.ledgerAppendMs += performance.now() - appendStartedAt;
                 }
                 writer({ type: "symbol", index, total, row: scalarRow });

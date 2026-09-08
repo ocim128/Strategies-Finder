@@ -57,6 +57,7 @@ import type {
     Trade,
     TradeDirection,
 } from "../types/strategies";
+import type { PairFeatureSnapshotSource } from "../pair-features/types";
 
 import {
     TRADE_LEDGER_DEFAULT_HORIZONS,
@@ -172,6 +173,15 @@ export interface TradeLedgerPairSnapshotInput {
     /** Canonical leg identity supplied by the loader/run context. */
     baseSymbol?: string | null;
     quoteSymbol?: string | null;
+}
+
+export interface TradeLedgerAppendOptions {
+    /**
+     * Wait for the source snapshot's four files before returning. The batch
+     * server disables this per-pair wait; finalize still drains all captures
+     * before publishing the completed snapshot manifest.
+     */
+    awaitSnapshotCapture?: boolean;
 }
 
 /**
@@ -852,7 +862,11 @@ export class TradeLedgerWriter {
      * payload is supplied (the normal server path), capture it only after the
      * ledger append succeeds. Never throws.
      */
-    async appendPairRows(pairRows: TradeLedgerPairRows, source?: TradeLedgerPairSnapshotInput): Promise<void> {
+    async appendPairRows(
+        pairRows: TradeLedgerPairRows,
+        source?: TradeLedgerPairSnapshotInput,
+        options: TradeLedgerAppendOptions = {},
+    ): Promise<void> {
         const isWindowed = this.ledgerWindow.fromSec !== null || this.ledgerWindow.toSec !== null;
         const rows = isWindowed
             ? pairRows.rows.filter((row) =>
@@ -910,7 +924,7 @@ export class TradeLedgerWriter {
             this.appendTimings.ledgerBookkeepingMs += performance.now() - bookkeepingStartedAt;
             if (source) {
                 const snapshotStartedAt = performance.now();
-                await this.snapshotWriter.enqueuePair({
+                const snapshotSource: PairFeatureSnapshotSource = {
                     identity: {
                         pair: source.pair,
                         baseSymbol: source.baseSymbol ?? rows[0]?.baseSymbol ?? "",
@@ -925,7 +939,12 @@ export class TradeLedgerWriter {
                             .filter((row) => row.signalTime < this.ledgerWindow.fromSec!)
                             .map((row) => [row.signalBarIndex, row.direction, row.signalTime]),
                     rowStart,
-                });
+                };
+                if (options.awaitSnapshotCapture === false) {
+                    await this.snapshotWriter.enqueuePair(snapshotSource);
+                } else {
+                    await this.snapshotWriter.capturePair(snapshotSource);
+                }
                 this.appendTimings.ledgerSnapshotEnqueueMs += performance.now() - snapshotStartedAt;
             }
         } catch (error) {

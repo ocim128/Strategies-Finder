@@ -47,6 +47,10 @@ const ERROR_PATH = `${SOURCE_SNAPSHOT_DIR}/error.json`;
 // the multi-million-bar SAVE TRADE LEDGER workload while retaining compression.
 const SOURCE_SNAPSHOT_GZIP_LEVEL = 1;
 
+interface SnapshotCaptureHandle {
+    completion: Promise<void>;
+}
+
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
@@ -336,8 +340,8 @@ export class TradeLedgerSnapshotWriter {
 
     /** Capture one successful pair after its ledger rows have committed. */
     async capturePair(source: PairFeatureSnapshotSource): Promise<void> {
-        const capture = await this.startCapture(source);
-        if (capture) await capture;
+        const handle = await this.startCapture(source);
+        if (handle) await handle.completion;
     }
 
     /**
@@ -349,7 +353,7 @@ export class TradeLedgerSnapshotWriter {
         await this.startCapture(source);
     }
 
-    private async startCapture(source: PairFeatureSnapshotSource): Promise<Promise<void> | null> {
+    private async startCapture(source: PairFeatureSnapshotSource): Promise<SnapshotCaptureHandle | null> {
         this.active = true;
         if (this.failure) return null;
         let key: string;
@@ -379,7 +383,10 @@ export class TradeLedgerSnapshotWriter {
             this.inFlightCaptures.delete(capture);
             this.releaseCaptureSlot();
         });
-        return capture;
+        // Wrap the promise so the async function does not assimilate it.
+        // `enqueuePair` intentionally waits only for a capture slot; finalize
+        // remains responsible for awaiting every completion.
+        return { completion: capture };
     }
 
     private async capturePairNow(source: PairFeatureSnapshotSource, key: string): Promise<void> {
