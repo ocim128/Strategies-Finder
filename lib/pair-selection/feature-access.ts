@@ -3,9 +3,9 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import {
     canonicalJson,
-    decodeFloat64Le,
-    decodeUint32Le,
-    decodeUint8,
+    decodeFloat64LeUncompressed,
+    decodeUint32LeUncompressed,
+    decodeUint8Uncompressed,
     hashBytes,
     hashFile,
     prepareArtifactDirectory,
@@ -34,6 +34,19 @@ import { gunzipSync } from "node:zlib";
 const FEATURE_PACK_MANIFEST_DIR = "feature-packs/manifests";
 const FEATURE_PACK_CHECK_DIR = "feature-packs/checks";
 const featureGenerationTails = new Map<string, Promise<void>>();
+// Bound filesystem work and decoded buffers even for thousands of pairs.
+const FEATURE_COLUMN_READ_CONCURRENCY = 8;
+
+async function forEachColumnPair(
+    pairs: readonly PairFeatureColumnPairManifest[],
+    consume: (pair: PairFeatureColumnPairManifest) => Promise<void>,
+): Promise<void> {
+    for (let start = 0; start < pairs.length; start += FEATURE_COLUMN_READ_CONCURRENCY) {
+        const results = await Promise.allSettled(pairs.slice(start, start + FEATURE_COLUMN_READ_CONCURRENCY).map(consume));
+        // Drain the bounded batch before propagating failure or cancellation.
+        for (const result of results) if (result.status === "rejected") throw result.reason;
+    }
+}
 
 interface RequirementKey {
     libraryRelease: string;
@@ -56,6 +69,10 @@ interface PreparedPack {
 
 export interface PreparedPairFeatures {
     readonly folderPath: string;
+    readonly sourceValidationMode: "none" | "hash-only" | "full";
+    readonly sourceValidationMs: number;
+    readonly featureGenerationMs: number;
+    readonly featureGenerationWorkers: number;
     readonly ledgerSha256: string | null;
     readonly sourceSnapshotSha256: string | null;
     readonly ledgerRowCount: number;
@@ -343,7 +360,7 @@ async function readPack(
             const relevantFeature = relevant.some((item) => item.parentId === feature.id);
             if (!relevantFeature) continue;
             validatePairRows(snapshot.manifest.pairs, definition, feature.pairs);
-            for (const pair of feature.pairs) {
+            await forEachColumnPair(feature.pairs, async (pair) => {
                 throwIfAborted(signal);
                 try {
                     await validateColumnPresence(folder, definition, pair);
@@ -353,7 +370,7 @@ async function readPack(
                     }
                     throw error;
                 }
-            }
+            });
         }
         families.push(family);
     }
@@ -393,10 +410,28 @@ export async function ensurePairFeatures(
 ): Promise<PreparedPairFeatures> {
     const requirements = resolveRequirements(rules);
     if (requirements.length === 0) {
-        return { folderPath, ledgerSha256: null, sourceSnapshotSha256: null, ledgerRowCount: 0, columns: new Map(), packs: [], active: null };
+        return {
+            folderPath,
+            sourceValidationMode: "none",
+            sourceValidationMs: 0,
+            featureGenerationMs: 0,
+            featureGenerationWorkers: 0,
+            ledgerSha256: null,
+            sourceSnapshotSha256: null,
+            ledgerRowCount: 0,
+            columns: new Map(),
+            packs: [],
+            active: null,
+        };
     }
     throwIfAborted(signal);
-    const snapshot = await validatePairFeatureSnapshot(folderPath);
+    let sourceValidationMs = 0;
+    let featureGenerationMs = 0;
+    let featureGenerationWorkers = 0;
+    const sourceValidationStartedAt = performance.now();
+    let snapshot = await validatePairFeatureSnapshot(folderPath, { verifySourceRecords: false });
+    sourceValidationMs += performance.now() - sourceValidationStartedAt;
+    let sourceValidationMode: "hash-only" | "full" = "hash-only";
     const packs: PreparedPack[] = [];
     const columns = new Map<string, PreparedColumn>();
     async function readAvailablePacks(): Promise<void> {
@@ -421,6 +456,14 @@ export async function ensurePairFeatures(
         await withFeatureGenerationLock(folderPath, async () => {
             await readAvailablePacks();
             missing = requirements.filter((item) => !columns.has(requirementKey(item.libraryRelease, item.parentId)));
+            if (missing.length > 0) {
+                const fullValidationStartedAt = performance.now();
+                snapshot = await validatePairFeatureSnapshot(folderPath);
+                sourceValidationMs += performance.now() - fullValidationStartedAt;
+                sourceValidationMode = "full";
+                await readAvailablePacks();
+                missing = requirements.filter((item) => !columns.has(requirementKey(item.libraryRelease, item.parentId)));
+            }
             const unknown = missing.find((item) => item.definition === null);
             if (unknown) throw new Error(`Unknown pair feature ID: ${unknown.parentId}.`);
             const byRelease = new Map<string, string[]>();
@@ -431,10 +474,14 @@ export async function ensurePairFeatures(
             }
             for (const [libraryRelease, featureIds] of [...byRelease.entries()].sort(([left], [right]) => compare(left, right))) {
                 throwIfAborted(signal);
-                await generatePairFeaturePack(folderPath, libraryRelease, [...new Set(featureIds)].sort(compare), {
+                const generationStartedAt = performance.now();
+                const generated = await generatePairFeaturePack(folderPath, libraryRelease, [...new Set(featureIds)].sort(compare), {
                     signal,
                     onProgress,
+                    validatedSnapshot: snapshot,
                 });
+                featureGenerationMs += performance.now() - generationStartedAt;
+                featureGenerationWorkers = Math.max(featureGenerationWorkers, generated.workersUsed);
             }
         });
         await readAvailablePacks();
@@ -443,6 +490,10 @@ export async function ensurePairFeatures(
     if (missing.length > 0) throw new Error(missingPackCommand(folderPath, missing));
     return {
         folderPath,
+        sourceValidationMode,
+        sourceValidationMs,
+        featureGenerationMs,
+        featureGenerationWorkers,
         ledgerSha256: snapshot.manifest.ledgerSha256,
         sourceSnapshotSha256: snapshot.sourceSnapshotSha256,
         ledgerRowCount: snapshot.manifest.ledgerRowCount,
@@ -465,7 +516,13 @@ async function readColumn(
     if (artifact.uncompressedBytes !== uncompressedLength
         || uncompressed.length !== artifact.uncompressedBytes
         || hashBytes(uncompressed) !== artifact.uncompressedSha256) throw new Error(`Feature ${kind} column uncompressed bytes mismatch: ${artifact.path}.`);
-    const decoded = kind === "values" ? decodeFloat64Le(compressed) : kind === "valid" ? decodeUint8(compressed) : decodeUint32Le(compressed);
+    // The integrity check already inflated this buffer; decode it directly
+    // instead of inflating the same column a second time.
+    const decoded = kind === "values"
+        ? decodeFloat64LeUncompressed(uncompressed)
+        : kind === "valid"
+            ? decodeUint8Uncompressed(uncompressed)
+            : decodeUint32LeUncompressed(uncompressed);
     if (decoded.length !== rowCount) {
         throw new Error(`Feature ${kind} column row count mismatch: ${artifact.path}.`);
     }
@@ -487,15 +544,15 @@ export async function activatePairFeatures(prepared: PreparedPairFeatures, rule:
         const values = requestedColumns.includes(parentId) ? new Float64Array(prepared.ledgerRowCount) : undefined;
         const valid = requestedColumns.includes(parentId) ? new Uint8Array(prepared.ledgerRowCount) : undefined;
         const observations = requestedColumns.includes(`${parentId}_n`) ? new Uint32Array(prepared.ledgerRowCount) : undefined;
-        for (const pair of column.pairs) {
+        await forEachColumnPair(column.pairs, async (pair) => {
             throwIfAborted(signal);
             const start = pairStart(column, pair.pairKey);
             if (values && valid) {
-                values.set(Float64Array.from(await readColumn(prepared.folderPath, pair.values, "values", pair.rowCount)), start);
-                valid.set(Uint8Array.from(await readColumn(prepared.folderPath, pair.valid, "valid", pair.rowCount)), start);
+                values.set(await readColumn(prepared.folderPath, pair.values, "values", pair.rowCount), start);
+                valid.set(await readColumn(prepared.folderPath, pair.valid, "valid", pair.rowCount), start);
             }
-        if (observations) observations.set(Uint32Array.from(await readColumn(prepared.folderPath, pair.observations, "observations", pair.rowCount)), start);
-        }
+            if (observations) observations.set(await readColumn(prepared.folderPath, pair.observations, "observations", pair.rowCount), start);
+        });
         arrays.set(parentId, { values, valid, observations });
     }
     let released = false;

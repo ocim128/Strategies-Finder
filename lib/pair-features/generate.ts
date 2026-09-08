@@ -3,14 +3,17 @@ import { createReadStream } from "node:fs";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { createInterface } from "node:readline";
+import { availableParallelism } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import { createGunzip, gunzipSync } from "node:zlib";
 import { iterateJsonlLines } from "../batch-backtest/trade-ledger-replay-loader";
 import {
     canonicalJson,
-    decodeFloat64Le,
-    decodeUint32Le,
-    decodeUint8,
+    decodeFloat64LeUncompressed,
+    decodeUint32LeUncompressed,
+    decodeUint8Uncompressed,
     encodeFloat64Le,
     encodeUint32Le,
     encodeUint8,
@@ -41,11 +44,23 @@ import type {
 
 const SOURCE_MANIFEST_PATH = "source-snapshot/manifest.json";
 const LEDGER_PATH = "ledger.jsonl";
+const SOURCE_PAIR_READ_CONCURRENCY = 8;
+const FEATURE_PAIR_GENERATION_CONCURRENCY = 8;
+const FEATURE_GENERATION_WORKER_THRESHOLD_ROWS = 100_000;
+const FEATURE_GENERATION_MAX_WORKERS = 20;
+const pairGenerationTails = new Map<string, Promise<void>>();
 export const SOURCE_REQUIRED_MESSAGE = "source snapshot required; this folder is unchanged";
 
 export interface PairFeatureGenerationOptions {
     signal?: AbortSignal;
     onProgress?: (progress: PairFeatureGenerationProgress) => void;
+    /** Reuse the caller's already validated immutable source snapshot. */
+    validatedSnapshot?: ValidatedPairFeatureSnapshot;
+}
+
+export interface PairFeatureSnapshotValidationOptions {
+    /** Skip JSONL record decoding when existing feature packs are complete. */
+    verifySourceRecords?: boolean;
 }
 
 export interface PairFeatureGenerationProgress {
@@ -111,6 +126,7 @@ export interface PairFeaturePackResult {
     reusedColumns: number;
     families: readonly PairFeatureFamilyGenerationSummary[];
     allNullFeatureIds: readonly string[];
+    workersUsed: number;
 }
 
 function errorMessage(error: unknown): string {
@@ -162,11 +178,24 @@ function sameRuntime(left: PairFeatureSnapshotRuntimeFingerprint, right: PairFea
         && left.arch === right.arch;
 }
 
-async function readGzipJsonl<T>(filePath: string, label: string): Promise<{ values: T[]; bytes: number; sha256: string }> {
+async function readGzipJsonl<T>(filePath: string, label: string): Promise<{
+    values: T[];
+    bytes: number;
+    sha256: string;
+    compressedBytes: number;
+    compressedSha256: string;
+}> {
     const source = createReadStream(filePath);
     const gunzip = createGunzip();
     const digest = createHash("sha256");
+    const compressedDigest = createHash("sha256");
     let bytes = 0;
+    let compressedBytes = 0;
+    source.on("data", (chunk: Buffer | string) => {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        compressedDigest.update(buffer);
+        compressedBytes += buffer.length;
+    });
     source.pipe(gunzip);
     gunzip.on("data", (chunk: Buffer | string) => {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -196,12 +225,35 @@ async function readGzipJsonl<T>(filePath: string, label: string): Promise<{ valu
         source.destroy();
         gunzip.destroy();
     }
-    return { values, bytes, sha256: digest.digest("hex") };
+    return {
+        values,
+        bytes,
+        sha256: digest.digest("hex"),
+        compressedBytes,
+        compressedSha256: compressedDigest.digest("hex"),
+    };
 }
 
 async function assertFileHash(filePath: string, expectedSha256: string, label: string): Promise<void> {
     const actual = await hashFile(filePath);
     if (actual.sha256 !== expectedSha256) throw new Error(`${label} hash mismatch.`);
+}
+
+async function validateSourceArtifactHashes(
+    runDir: string,
+    pairs: readonly PairFeatureSnapshotPairManifest[],
+): Promise<void> {
+    const artifacts = pairs.flatMap((pair) => Object.values(pair.files));
+    for (let start = 0; start < artifacts.length; start += SOURCE_PAIR_READ_CONCURRENCY) {
+        const batch = artifacts.slice(start, start + SOURCE_PAIR_READ_CONCURRENCY);
+        const settled = await Promise.allSettled(batch.map(async (artifact) => {
+            const actual = await hashFile(await safeArtifactPath(runDir, artifact.path));
+            if (actual.bytes !== artifact.compressedBytes || actual.sha256 !== artifact.compressedSha256) {
+                throw new Error(`${artifact.path} compressed bytes or hash do not match source-snapshot/manifest.json.`);
+            }
+        }));
+        for (const result of settled) if (result.status === "rejected") throw result.reason;
+    }
 }
 
 async function readSourceArtifact<T>(
@@ -210,15 +262,12 @@ async function readSourceArtifact<T>(
     label: string,
 ): Promise<T[]> {
     const filePath = await safeArtifactPath(folder, artifact.path);
-    const compressed = await hashFile(filePath);
-    if (compressed.bytes !== artifact.compressedBytes || compressed.sha256 !== artifact.compressedSha256) {
-        throw new Error(`${label} compressed bytes or hash do not match source-snapshot/manifest.json.`);
-    }
     const decoded = await readGzipJsonl<T>(filePath, label);
-    if (decoded.values.length !== artifact.recordCount
+    if (decoded.compressedBytes !== artifact.compressedBytes || decoded.compressedSha256 !== artifact.compressedSha256
+        || decoded.values.length !== artifact.recordCount
         || decoded.bytes !== artifact.uncompressedBytes
         || decoded.sha256 !== artifact.uncompressedSha256) {
-        throw new Error(`${label} record count or uncompressed hash does not match source-snapshot/manifest.json.`);
+        throw new Error(`${label} compressed bytes, record count, or hash does not match source-snapshot/manifest.json.`);
     }
     return decoded.values;
 }
@@ -379,7 +428,10 @@ function validateLedgerRow(value: unknown, pair: PairFeatureSnapshotPairManifest
     }
 }
 
-export async function validatePairFeatureSnapshot(folder: string): Promise<ValidatedPairFeatureSnapshot> {
+export async function validatePairFeatureSnapshot(
+    folder: string,
+    options: PairFeatureSnapshotValidationOptions = {},
+): Promise<ValidatedPairFeatureSnapshot> {
     const runDir = resolve(folder);
     const manifestPath = await safeArtifactPath(runDir, SOURCE_MANIFEST_PATH);
     let rawManifest: Buffer;
@@ -411,31 +463,49 @@ export async function validatePairFeatureSnapshot(folder: string): Promise<Valid
 
     let expectedRowStart = 0;
     let previousPair: PairFeatureSnapshotPairManifest | null = null;
+    const validatePairMetadata = (pair: PairFeatureSnapshotPairManifest): void => {
+        if (pair.pairKey !== pairKey(pair)) throw new Error(`source snapshot pair key does not match ${pair.pair}.`);
+        if (!Number.isSafeInteger(pair.rowStart) || !Number.isSafeInteger(pair.rowCount) || pair.rowStart !== expectedRowStart || pair.rowCount < 0) {
+            throw new Error(`source snapshot row partitions are not contiguous at ${pair.pairKey}.`);
+        }
+        if (previousPair && (previousPair.rowStart > pair.rowStart
+            || (previousPair.rowStart === pair.rowStart && compareCodeUnits(previousPair.pairKey, pair.pairKey) > 0))) {
+            throw new Error("source snapshot pairs are not sorted by rowStart and pairKey.");
+        }
+        previousPair = pair;
+        expectedRowStart += pair.rowCount;
+    };
+
+    if (options.verifySourceRecords === false) {
+        for (const pair of manifest.pairs) validatePairMetadata(pair);
+        if (expectedRowStart !== manifest.ledgerRowCount) throw new Error("source snapshot row count does not cover ledger.jsonl.");
+        await validateSourceArtifactHashes(runDir, manifest.pairs);
+        return { folder: runDir, manifest, sourceSnapshotSha256: manifestHash };
+    }
+
     const ledgerIterator = iterateJsonlLines(ledgerPath)[Symbol.asyncIterator]();
     try {
-        for (const pair of manifest.pairs) {
-            if (pair.pairKey !== pairKey(pair)) throw new Error(`source snapshot pair key does not match ${pair.pair}.`);
-            if (!Number.isSafeInteger(pair.rowStart) || !Number.isSafeInteger(pair.rowCount) || pair.rowStart !== expectedRowStart || pair.rowCount < 0) {
-                throw new Error(`source snapshot row partitions are not contiguous at ${pair.pairKey}.`);
+        for (let batchStart = 0; batchStart < manifest.pairs.length; batchStart += SOURCE_PAIR_READ_CONCURRENCY) {
+            const batch = manifest.pairs.slice(batchStart, batchStart + SOURCE_PAIR_READ_CONCURRENCY);
+            for (const pair of batch) {
+                validatePairMetadata(pair);
             }
-            if (previousPair && (previousPair.rowStart > pair.rowStart
-                || (previousPair.rowStart === pair.rowStart && compareCodeUnits(previousPair.pairKey, pair.pairKey) > 0))) {
-                throw new Error("source snapshot pairs are not sorted by rowStart and pairKey.");
-            }
-            previousPair = pair;
-            const pairData = await readPairData(runDir, pair);
-            for (const entry of pairData.entries) {
-                const next = await ledgerIterator.next();
-                if (next.done) throw new Error(`ledger.jsonl ended before source entry ordinal ${entry[0]}.`);
-                let row: unknown;
-                try {
-                    row = JSON.parse(next.value);
-                } catch (error) {
-                    throw new Error(`ledger.jsonl contains invalid JSON: ${errorMessage(error)}.`);
+            const pairDataBatch = await Promise.all(batch.map((pair) => readPairData(runDir, pair)));
+            for (let batchIndex = 0; batchIndex < batch.length; batchIndex += 1) {
+                const pair = batch[batchIndex]!;
+                const pairData = pairDataBatch[batchIndex]!;
+                for (const entry of pairData.entries) {
+                    const next = await ledgerIterator.next();
+                    if (next.done) throw new Error(`ledger.jsonl ended before source entry ordinal ${entry[0]}.`);
+                    let row: unknown;
+                    try {
+                        row = JSON.parse(next.value);
+                    } catch (error) {
+                        throw new Error(`ledger.jsonl contains invalid JSON: ${errorMessage(error)}.`);
+                    }
+                    validateLedgerRow(row, pair, entry);
                 }
-                validateLedgerRow(row, pair, entry);
             }
-            expectedRowStart += pair.rowCount;
         }
         const extra = await ledgerIterator.next();
         if (!extra.done) throw new Error("ledger.jsonl contains rows without source-snapshot entries.");
@@ -565,7 +635,11 @@ async function validateExistingColumnFile(
     if (uncompressed.length !== artifact.uncompressedBytes || hashBytes(uncompressed) !== artifact.uncompressedSha256) {
         throw new Error(`Existing ${kind} column uncompressed hash mismatch: ${artifact.path}.`);
     }
-    const values = kind === "values" ? decodeFloat64Le(compressed) : kind === "valid" ? decodeUint8(compressed) : decodeUint32Le(compressed);
+    const values = kind === "values"
+        ? decodeFloat64LeUncompressed(uncompressed)
+        : kind === "valid"
+            ? decodeUint8Uncompressed(uncompressed)
+            : decodeUint32LeUncompressed(uncompressed);
     if (values.length !== rowCount) throw new Error(`Existing ${kind} column length mismatch: ${artifact.path}.`);
     return values;
 }
@@ -754,14 +828,174 @@ async function generateMissingPairColumns(
     return generated;
 }
 
+/**
+ * Generate one pair's missing columns in a worker thread. The caller has
+ * already validated the immutable snapshot; the worker still validates the
+ * pair records while reading them before it writes any column bytes.
+ */
+export async function generatePairFeatureColumnsForWorker(
+    folder: string,
+    libraryRelease: string,
+    pair: PairFeatureSnapshotPairManifest,
+    featureIds: readonly string[],
+): Promise<readonly [string, PairFeatureColumnPairManifest][]> {
+    const requested = resolveRequestedFeatures([...featureIds].sort(compareCodeUnits), libraryRelease);
+    if (requested.length === 0) return [];
+    const generated = await generateMissingPairColumns(folder, pair, await readPairData(folder, pair), requested);
+    return [...generated.entries()];
+}
+
+interface PairFeatureWorkerTask {
+    taskId: string;
+    folder: string;
+    libraryRelease: string;
+    pair: PairFeatureSnapshotPairManifest;
+    featureIds: readonly string[];
+}
+
+interface PairFeaturePairInspection {
+    pair: PairFeatureSnapshotPairManifest;
+    missing: readonly RequestedFeature[];
+    columnsForPair: Map<string, PairFeatureColumnPairManifest>;
+    computedForFamily: Map<string, number>;
+    reusedForFamily: Map<string, number>;
+}
+
+interface PairFeatureWorkerDoneMessage {
+    type: "done";
+    taskId: string;
+    generated: readonly [string, PairFeatureColumnPairManifest][];
+}
+
+interface PairFeatureWorkerErrorMessage {
+    type: "error";
+    taskId: string;
+    error: string;
+}
+
+interface PairFeatureWorkerReadyMessage {
+    type: "ready";
+}
+
+type PairFeatureWorkerMessage =
+    | PairFeatureWorkerReadyMessage
+    | PairFeatureWorkerDoneMessage
+    | PairFeatureWorkerErrorMessage;
+
+function pairFeatureWorkerCount(taskCount: number): number {
+    const configured = Number(process.env.PAIR_FEATURE_GENERATION_WORKERS);
+    const requested = Number.isFinite(configured) && configured >= 1
+        ? Math.floor(configured)
+        : Math.max(1, Math.min(FEATURE_GENERATION_MAX_WORKERS, availableParallelism() - 1));
+    return Math.max(1, Math.min(requested, taskCount));
+}
+
+function pairFeatureWorkerPath(): string {
+    return resolve(dirname(fileURLToPath(import.meta.url)), "../../scripts/pair-feature-generation-worker.mjs");
+}
+
+async function generateMissingPairColumnsInWorkers(
+    tasks: readonly PairFeatureWorkerTask[],
+    signal?: AbortSignal,
+): Promise<readonly PairFeatureWorkerDoneMessage[]> {
+    if (tasks.length === 0) return [];
+    throwIfAborted(signal);
+    const workerCount = pairFeatureWorkerCount(tasks.length);
+    const workers = Array.from({ length: workerCount }, () => new Worker(pairFeatureWorkerPath()));
+    const pending = new Map<string, { resolve: (message: PairFeatureWorkerDoneMessage) => void; reject: (error: Error) => void }>();
+    let readyCount = 0;
+    let readyResolve!: () => void;
+    let readyReject!: (error: Error) => void;
+    const ready = new Promise<void>((resolveReady, rejectReady) => {
+        readyResolve = resolveReady;
+        readyReject = rejectReady;
+    });
+    let closed = false;
+    let fatalError: Error | null = null;
+    const fail = (error: Error): void => {
+        if (fatalError) return;
+        fatalError = error;
+        readyReject(error);
+        for (const entry of pending.values()) entry.reject(error);
+        pending.clear();
+    };
+    const onMessage = (message: PairFeatureWorkerMessage): void => {
+        if (message.type === "ready") {
+            readyCount += 1;
+            if (readyCount === workers.length) readyResolve();
+            return;
+        }
+        if (message.type === "error") {
+            fail(new Error(message.error));
+            return;
+        }
+        const entry = pending.get(message.taskId);
+        if (!entry) return;
+        pending.delete(message.taskId);
+        entry.resolve(message);
+    };
+    for (const worker of workers) {
+        worker.on("message", onMessage);
+        worker.on("error", (error) => fail(error instanceof Error ? error : new Error(String(error))));
+        worker.on("exit", (code) => {
+            if (!closed && code !== 0) fail(new Error(`Pair feature worker exited with code ${code}.`));
+        });
+    }
+    const abort = (): void => fail(new Error("Pair-feature preparation cancelled."));
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+        await ready;
+        if (fatalError) throw fatalError;
+        const messages = tasks.map((task, index) => new Promise<PairFeatureWorkerDoneMessage>((resolveDone, rejectDone) => {
+            const taskId = `${index}`;
+            pending.set(taskId, { resolve: resolveDone, reject: rejectDone });
+            const message: PairFeatureWorkerTask = { ...task, taskId };
+            workers[index % workers.length]!.postMessage(message);
+        }));
+        return await Promise.all(messages);
+    } finally {
+        signal?.removeEventListener("abort", abort);
+        closed = true;
+        for (const entry of pending.values()) entry.reject(fatalError ?? new Error("Pair feature workers closed."));
+        pending.clear();
+        await Promise.all(workers.map((worker) => worker.terminate()));
+    }
+}
+
+async function withPairGenerationLock<T>(folder: string, operation: () => Promise<T>): Promise<T> {
+    const previous = pairGenerationTails.get(folder) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    pairGenerationTails.set(folder, current);
+    await previous;
+    try {
+        return await operation();
+    } finally {
+        release();
+        if (pairGenerationTails.get(folder) === current) pairGenerationTails.delete(folder);
+    }
+}
+
 export async function generatePairFeaturePack(
     folderPath: string,
     libraryRelease: string,
     featureIds: readonly string[],
     options: PairFeatureGenerationOptions = {},
 ): Promise<PairFeaturePackResult> {
+    return withPairGenerationLock(folderPath, () => generatePairFeaturePackUnlocked(folderPath, libraryRelease, featureIds, options));
+}
+
+async function generatePairFeaturePackUnlocked(
+    folderPath: string,
+    libraryRelease: string,
+    featureIds: readonly string[],
+    options: PairFeatureGenerationOptions = {},
+): Promise<PairFeaturePackResult> {
     throwIfAborted(options.signal);
-    const snapshot = await validatePairFeatureSnapshotForGeneration(folderPath);
+    const snapshot = options.validatedSnapshot ?? await validatePairFeatureSnapshotForGeneration(folderPath);
+    if (options.validatedSnapshot && !sameRuntime(snapshot.manifest.runtime, runtimeFingerprint())) {
+        throw new Error("source snapshot runtime fingerprint does not match the current runtime.");
+    }
     const release = await validatePairFeatureLibraryRelease(libraryRelease);
     const requestedIds = [...featureIds].sort(compareCodeUnits);
     const requested = resolveRequestedFeatures(requestedIds, libraryRelease);
@@ -794,35 +1028,89 @@ export async function generatePairFeaturePack(
     let computedColumns = 0;
     let reusedColumns = 0;
     const allNullFeatureIds = new Set<string>();
-    for (const pair of snapshot.manifest.pairs) {
-        throwIfAborted(options.signal);
-        const missing: RequestedFeature[] = [];
-        for (const item of requested) {
-            const familyManifests = existingByFamily.get(item.entry.definition.family)!;
-            const existing = await existingColumnPair(
-                snapshot.folder,
-                item.entry.definition,
-                pair,
-                familyManifests,
-                snapshot.manifest.ledgerSha256,
-                snapshot.manifest.ledgerRowCount,
-                snapshot.sourceSnapshotSha256,
-            );
-            if (existing) {
-                pairColumns.get(item.entry.definition.id)!.set(pair.pairKey, [existing]);
-                reusedColumns += 3;
-                reusedByFamily.set(item.entry.definition.family, (reusedByFamily.get(item.entry.definition.family) ?? 0) + 3);
-            } else {
-                missing.push(item);
+    const inspections: PairFeaturePairInspection[] = [];
+    for (let batchStart = 0; batchStart < snapshot.manifest.pairs.length; batchStart += FEATURE_PAIR_GENERATION_CONCURRENCY) {
+        const batch = snapshot.manifest.pairs.slice(batchStart, batchStart + FEATURE_PAIR_GENERATION_CONCURRENCY);
+        const settled = await Promise.allSettled(batch.map(async (pair): Promise<PairFeaturePairInspection> => {
+            throwIfAborted(options.signal);
+            const missing: RequestedFeature[] = [];
+            const columnsForPair = new Map<string, PairFeatureColumnPairManifest>();
+            const computedForFamily = new Map<string, number>();
+            const reusedForFamily = new Map<string, number>();
+            for (const item of requested) {
+                const familyManifests = existingByFamily.get(item.entry.definition.family)!;
+                const existing = await existingColumnPair(
+                    snapshot.folder,
+                    item.entry.definition,
+                    pair,
+                    familyManifests,
+                    snapshot.manifest.ledgerSha256,
+                    snapshot.manifest.ledgerRowCount,
+                    snapshot.sourceSnapshotSha256,
+                );
+                if (existing) {
+                    columnsForPair.set(item.entry.definition.id, existing);
+                    reusedForFamily.set(item.entry.definition.family, (reusedForFamily.get(item.entry.definition.family) ?? 0) + 3);
+                } else {
+                    missing.push(item);
+                }
             }
+            return { pair, missing, columnsForPair, computedForFamily, reusedForFamily };
+        }));
+        for (const result of settled) if (result.status === "rejected") throw result.reason;
+        for (const result of settled) if (result.status === "fulfilled") inspections.push(result.value);
+    }
+
+    const missingInspections = inspections.filter((inspection) => inspection.missing.length > 0);
+    const totalRowsToGenerate = missingInspections.reduce((sum, inspection) => sum + inspection.pair.rowCount, 0);
+    const generatedByPair = new Map<string, ReadonlyMap<string, PairFeatureColumnPairManifest>>();
+    let workersUsed = 0;
+    if (totalRowsToGenerate >= FEATURE_GENERATION_WORKER_THRESHOLD_ROWS && missingInspections.length > 1) {
+        const workerTasks = missingInspections.map((inspection, index): PairFeatureWorkerTask => ({
+            taskId: `${index}`,
+            folder: snapshot.folder,
+            libraryRelease,
+            pair: inspection.pair,
+            featureIds: inspection.missing.map((item) => item.entry.definition.id),
+        }));
+        workersUsed = pairFeatureWorkerCount(workerTasks.length);
+        const generated = await generateMissingPairColumnsInWorkers(workerTasks, options.signal);
+        for (const result of generated) {
+            const task = workerTasks[Number(result.taskId)];
+            if (!task) throw new Error(`Pair feature worker returned an unknown task ${result.taskId}.`);
+            generatedByPair.set(task.pair.pairKey, new Map(result.generated));
         }
-        if (missing.length > 0) {
-            const generated = await generateMissingPairColumns(snapshot.folder, pair, await readPairData(snapshot.folder, pair), missing, options.signal);
-            for (const item of missing) {
-                pairColumns.get(item.entry.definition.id)!.set(pair.pairKey, [generated.get(item.entry.definition.id)!]);
-                computedColumns += 3;
-                computedByFamily.set(item.entry.definition.family, (computedByFamily.get(item.entry.definition.family) ?? 0) + 3);
-            }
+    } else {
+        for (const inspection of missingInspections) {
+            throwIfAborted(options.signal);
+            generatedByPair.set(inspection.pair.pairKey, await generateMissingPairColumns(
+                snapshot.folder,
+                inspection.pair,
+                await readPairData(snapshot.folder, inspection.pair),
+                inspection.missing,
+                options.signal,
+            ));
+        }
+    }
+
+    for (const inspection of inspections) {
+        const generated = generatedByPair.get(inspection.pair.pairKey);
+        for (const item of inspection.missing) {
+            const column = generated?.get(item.entry.definition.id);
+            if (!column) throw new Error(`Pair feature generation did not return ${item.entry.definition.id} for ${inspection.pair.pairKey}.`);
+            inspection.columnsForPair.set(item.entry.definition.id, column);
+            inspection.computedForFamily.set(item.entry.definition.family, (inspection.computedForFamily.get(item.entry.definition.family) ?? 0) + 3);
+        }
+        for (const item of requested) {
+            pairColumns.get(item.entry.definition.id)!.set(inspection.pair.pairKey, [inspection.columnsForPair.get(item.entry.definition.id)!]);
+        }
+        for (const [familyId, count] of inspection.computedForFamily) {
+            computedColumns += count;
+            computedByFamily.set(familyId, (computedByFamily.get(familyId) ?? 0) + count);
+        }
+        for (const [familyId, count] of inspection.reusedForFamily) {
+            reusedColumns += count;
+            reusedByFamily.set(familyId, (reusedByFamily.get(familyId) ?? 0) + count);
         }
     }
 
@@ -921,5 +1209,6 @@ export async function generatePairFeaturePack(
         reusedColumns,
         families: familySummaries,
         allNullFeatureIds: [...allNullFeatureIds].sort(compareCodeUnits),
+        workersUsed,
     };
 }

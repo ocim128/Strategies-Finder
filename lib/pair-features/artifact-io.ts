@@ -135,7 +135,11 @@ export function encodeUint32Le(values: readonly number[]): EncodedBinaryArtifact
 
 /** Decode and validate a gzipped Float64 column. */
 export function decodeFloat64Le(compressed: Buffer): number[] {
-    const uncompressed = gunzipSync(compressed);
+    return decodeFloat64LeUncompressed(gunzipSync(compressed));
+}
+
+/** Decode and validate an already-inflated Float64 column. */
+export function decodeFloat64LeUncompressed(uncompressed: Buffer): number[] {
     if (uncompressed.length % 8 !== 0) throw new Error("Float64 column byte length is not divisible by 8.");
     const values: number[] = [];
     for (let offset = 0; offset < uncompressed.length; offset += 8) {
@@ -149,7 +153,11 @@ export function decodeFloat64Le(compressed: Buffer): number[] {
 
 /** Decode and validate a gzipped validity column. */
 export function decodeUint8(compressed: Buffer): number[] {
-    const uncompressed = gunzipSync(compressed);
+    return decodeUint8Uncompressed(gunzipSync(compressed));
+}
+
+/** Decode and validate an already-inflated validity column. */
+export function decodeUint8Uncompressed(uncompressed: Buffer): number[] {
     const values: number[] = [];
     for (const value of uncompressed) {
         if (value !== 0 && value !== 1) throw new Error("UInt8 column contains a value other than 0 or 1.");
@@ -160,7 +168,11 @@ export function decodeUint8(compressed: Buffer): number[] {
 
 /** Decode and validate a gzipped UInt32 column. */
 export function decodeUint32Le(compressed: Buffer): number[] {
-    const uncompressed = gunzipSync(compressed);
+    return decodeUint32LeUncompressed(gunzipSync(compressed));
+}
+
+/** Decode and validate an already-inflated UInt32 column. */
+export function decodeUint32LeUncompressed(uncompressed: Buffer): number[] {
     if (uncompressed.length % 4 !== 0) throw new Error("UInt32 column byte length is not divisible by 4.");
     const values: number[] = [];
     for (let offset = 0; offset < uncompressed.length; offset += 4) values.push(uncompressed.readUInt32LE(offset));

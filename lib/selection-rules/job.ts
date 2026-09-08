@@ -53,6 +53,7 @@ export interface SelectionRulesJobArgs {
 
 interface SelectionRuleDiagnostics {
     wallMs: number;
+    activationMs: number;
     eventsPerSec: number;
     scoredCandidates: number;
     unscoredEvents: number;
@@ -65,6 +66,11 @@ interface SelectionRuleDiagnostics {
 
 interface SelectionRulesDiagnosticsState {
     loadWallMs: number;
+    featurePreparationMs: number;
+    featurePreparationMode: "none" | "hash-only" | "full";
+    sourceValidationMs: number;
+    featureGenerationMs: number;
+    featureGenerationWorkers: number;
     archiveDiagnostics: PairSelectionArchive["diagnostics"] | null;
     heapAfterLoad: number | null;
     peakHeapUsed: number | null;
@@ -105,13 +111,14 @@ function buildDiagnosticsLines(
         `env nodeVersion=${process.version} cpus=${cpus().length} heapLimitHint=heapUsed-only`,
         `load folder=${args.folderPath} horizon=${horizons.join(",")} loadWallMs=${formatMs(state.loadWallMs)} jsonParseMs=${formatMs(load?.jsonParseMs ?? 0)} streamWallMs=${formatMs(load?.streamWallMs ?? 0)} readResidualMs=${formatMs(load?.readResidualMs ?? 0)} rankRows=${load?.rankRowsParsed ?? 0} rankJsonParseMs=${formatMs(load?.rankJsonParseMs ?? 0)} rankStreamWallMs=${formatMs(load?.rankStreamWallMs ?? 0)} rankReadResidualMs=${formatMs(load?.rankReadResidualMs ?? 0)} rankJoinMs=${formatMs(load?.rankJoinMs ?? 0)} rankJoinMode=${load?.rankJoinFused ? "fused" : "separate"} ranksLoaded=${load?.ranksLoaded === true} rows=${load?.rows ?? 0} events=${load?.events ?? 0} candidates=${load?.candidates ?? 0}`,
         `heap afterLoadMb=${formatMb(state.heapAfterLoad)}`,
+        `preparation featurePreparationMs=${formatMs(state.featurePreparationMs)} sourceValidationMode=${state.featurePreparationMode} sourceValidationMs=${formatMs(state.sourceValidationMs)} featureGenerationMs=${formatMs(state.featureGenerationMs)} featureGenerationWorkers=${state.featureGenerationWorkers} consumeMs=${formatMs(load?.consumeMs ?? 0)} streamOverheadMs=${formatMs(Math.max(0, (load?.readResidualMs ?? 0) - (load?.consumeMs ?? 0)))} readResidualIncludesConsume=true refsIncludesOutcomeIndex=true heapSampling=after-load-and-each-rule`,
         `heap peakDeltaMb=${formatMb(peakDelta)} peakAfterRulesMb=${formatMb(state.peakHeapUsed)}`,
         ...args.rules.map((rule) => {
             const diagnostics = state.rules.get(rule.key);
             const wallMs = diagnostics?.wallMs ?? 0;
             const events = load?.events ?? 0;
             const eventsPerSec = diagnostics?.eventsPerSec ?? 0;
-            return `rule=${rule.key} horizon=${horizons.join(",")} wallMs=${formatMs(wallMs)} eventsPerSec=${eventsPerSec.toFixed(2)} scoredCandidates=${diagnostics?.scoredCandidates ?? 0} unscoredEvents=${diagnostics?.unscoredEvents ?? 0} gateMs=${formatMs(diagnostics?.gateMs ?? 0)} scoreMs=${formatMs(diagnostics?.scoreMs ?? 0)} refsMs=${formatMs(diagnostics?.refsMs ?? 0)} freqMs=${formatMs(diagnostics?.freqMs ?? 0)} heapAfterMb=${formatMb(diagnostics?.heapAfterMb ?? null)} events=${events}`;
+            return `rule=${rule.key} horizon=${horizons.join(",")} wallMs=${formatMs(wallMs)} activationMs=${formatMs(diagnostics?.activationMs ?? 0)} eventsPerSec=${eventsPerSec.toFixed(2)} scoredCandidates=${diagnostics?.scoredCandidates ?? 0} unscoredEvents=${diagnostics?.unscoredEvents ?? 0} gateMs=${formatMs(diagnostics?.gateMs ?? 0)} scoreMs=${formatMs(diagnostics?.scoreMs ?? 0)} refsMs=${formatMs(diagnostics?.refsMs ?? 0)} freqMs=${formatMs(diagnostics?.freqMs ?? 0)} heapAfterMb=${formatMb(diagnostics?.heapAfterMb ?? null)} events=${events}`;
         }),
     ];
 }
@@ -163,6 +170,11 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
     const includeSignalRanks = args.rules.some((rule) => rule.metadata?.usesRankFeatures === true);
     const diagnosticsState: SelectionRulesDiagnosticsState = {
         loadWallMs: 0,
+        featurePreparationMs: 0,
+        featurePreparationMode: "none",
+        sourceValidationMs: 0,
+        featureGenerationMs: 0,
+        featureGenerationWorkers: 0,
         archiveDiagnostics: null,
         heapAfterLoad: null,
         peakHeapUsed: null,
@@ -185,6 +197,7 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
     });
 
     const archiveFolderPath = args.archiveFolderPath ?? args.folderPath;
+    const featurePreparationStartedAt = performance.now();
     const prepared = await ensurePairFeatures(archiveFolderPath, args.rules, args.signal, (progress) => {
         const coverage = progress.allNullFeatureIds.length > 0
             ? ` all-null=${progress.allNullFeatureIds.join(",")}`
@@ -202,6 +215,11 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
             currentHorizonBars: null,
         });
     });
+    diagnosticsState.featurePreparationMs = performance.now() - featurePreparationStartedAt;
+    diagnosticsState.featurePreparationMode = prepared.sourceValidationMode;
+    diagnosticsState.sourceValidationMs = prepared.sourceValidationMs;
+    diagnosticsState.featureGenerationMs = prepared.featureGenerationMs;
+    diagnosticsState.featureGenerationWorkers = prepared.featureGenerationWorkers;
     if (args.signal.aborted) {
         args.emit(cancelledEvent(args, results, reportLines, buildDiagnosticsLines(args, diagnosticsState, horizons)));
         return;
@@ -264,13 +282,14 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
 
     for (let ruleIndex = 0; ruleIndex < args.rules.length; ruleIndex += 1) {
         const rule = args.rules[ruleIndex]!;
+        const ruleStartedAt = performance.now();
         const activeFeatures = await activatePairFeatures(prepared, rule, args.signal);
+        const activationMs = performance.now() - ruleStartedAt;
         if (args.signal.aborted) {
             releasePairFeatures(prepared);
             args.emit(cancelledEvent(args, results, reportLines, buildDiagnosticsLines(args, diagnosticsState, horizons)));
             return;
         }
-        const ruleStartedAt = performance.now();
         const ruleDiagnostics = emptyTallyDiagnostics();
         args.update({ phase: "tallying", currentRuleKey: rule.key, currentHorizonBars: null });
         for (let horizonIndex = 0; horizonIndex < horizons.length; horizonIndex += 1) {
@@ -311,6 +330,7 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
         diagnosticsState.peakHeapUsed = Math.max(diagnosticsState.peakHeapUsed ?? heapAfter, heapAfter);
         diagnosticsState.rules.set(rule.key, {
             wallMs: ruleWallMs,
+            activationMs,
             eventsPerSec: archive.events.length * horizons.length / Math.max(ruleWallMs / 1000, Number.EPSILON),
             scoredCandidates: ruleDiagnostics.scoredCandidates,
             unscoredEvents: ruleDiagnostics.unscoredEvents,

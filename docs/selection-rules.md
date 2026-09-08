@@ -11,6 +11,42 @@ signedVotes-based rules over `archive/batch-open-score/`) lives in git
 history and is no longer maintained. The asset core in `lib/selection-rules/`
 is preserved for its CLI and parity tests only.
 
+## Performance diagnostics
+
+Run diagnostics include `featurePreparationMs` (snapshot/pack verification and
+any missing-feature generation), its `sourceValidationMs` and
+`featureGenerationMs` split, and `featureGenerationWorkers`. Per-rule
+`activationMs` measures loading the required feature columns, and per-rule
+`wallMs` includes activation. These phases were previously absent from the
+reported timings.
+
+When complete feature packs already exist, preparation uses
+`sourceValidationMode=hash-only`: it verifies the manifest, ledger, metadata,
+and every source artifact hash without reparsing every source JSONL record. If
+a requested feature is missing, it switches to `full` validation before
+generation. The already validated snapshot is reused across feature-library
+generations in that run.
+
+`consumeMs` measures ledger validation, grouping, and outcome indexing during
+loading. It is part of `readResidualMs`; `streamOverheadMs` subtracts it from
+that residual and still includes scheduling and GC, so it is not pure disk
+time. `refsMs` includes cached reference preparation and the horizon outcome
+index. `scoredCandidates` counts actual rule score calls, including rejected
+candidates, without counting cached reference picks. Heap peaks are sampled
+after loading and each rule, not continuously.
+
+Source-snapshot validation, feature-column verification, and activation read at
+most eight pairs at once. Small missing-feature generations use the same
+bounded in-process batches. Large cold generations use a bounded Node worker-thread pool
+(`featureGenerationWorkers` in diagnostics) so synchronous feature evaluation
+can use multiple CPU cores; small generations remain in-process. Results are
+merged in source-pair order, so manifests and feature bytes remain
+deterministic. The default pool is capped at 20 workers; set
+`PAIR_FEATURE_GENERATION_WORKERS` before starting the dev server to tune it.
+All artifact checks remain enabled, and a failed/cancelled batch drains before
+the error is returned. Rule candidates remain isolated copies; only the fixed
+read-only reference rules reuse archive candidates.
+
 ## Rule contract
 
 Rules are registered in the static `lib/pair-selection/registry.ts`. The

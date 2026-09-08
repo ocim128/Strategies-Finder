@@ -26,6 +26,8 @@ export interface LedgerJsonlDiagnostics {
     rowsParsed: number;
     bytesRead: number;
     readResidualMs: number;
+    /** Consumer work is included in readResidualMs, not disk-read time. */
+    consumeMs: number;
 }
 
 export interface LedgerReplayLoadDiagnostics {
@@ -49,7 +51,7 @@ function nowMs(): number {
 }
 
 function emptyJsonlDiagnostics(bytesRead = 0): LedgerJsonlDiagnostics {
-    return { streamWallMs: 0, jsonParseMs: 0, rowsParsed: 0, bytesRead, readResidualMs: 0 };
+    return { streamWallMs: 0, jsonParseMs: 0, rowsParsed: 0, bytesRead, readResidualMs: 0, consumeMs: 0 };
 }
 
 /**
@@ -95,9 +97,11 @@ async function readJsonl<T>(
     for await (const line of iterateJsonlLines(filePath)) {
         const parseStartedAt = nowMs();
         const value = JSON.parse(line) as T;
-        diagnostics.jsonParseMs += nowMs() - parseStartedAt;
+        const parsedAt = nowMs();
+        diagnostics.jsonParseMs += parsedAt - parseStartedAt;
         if (consume) consume(value);
         else values!.push(value);
+        diagnostics.consumeMs += nowMs() - parsedAt;
         diagnostics.rowsParsed += 1;
         if (onProgress && diagnostics.rowsParsed % JSONL_PROGRESS_INTERVAL === 0) {
             onProgress(diagnostics.rowsParsed);

@@ -206,6 +206,12 @@ describe("selection-rules server plugin", () => {
             if (done?.type === "done") {
                 expect(done.diagnosticsLines.some((line) => line.startsWith("env "))).to.equal(true);
                 expect(done.diagnosticsLines.some((line) => line.startsWith("load "))).to.equal(true);
+                expect(done.diagnosticsLines.some((line) => line.startsWith("preparation featurePreparationMs=")
+                    && line.includes("sourceValidationMs=")
+                    && line.includes("featureGenerationMs=")
+                    && line.includes("featureGenerationWorkers=")
+                    && line.includes("consumeMs="))).to.equal(true);
+                expect(done.diagnosticsLines.filter((line) => line.startsWith("rule=")).every((line) => line.includes("activationMs="))).to.equal(true);
                 expect(done.diagnosticsLines.some((line) => line.startsWith("rule=reference_alphabetical "))).to.equal(true);
             }
             const rows = events.filter((event): event is Extract<SelectionRulesStreamEvent, { type: "rule_result" }> => event.type === "rule_result");

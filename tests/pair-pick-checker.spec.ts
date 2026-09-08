@@ -179,6 +179,8 @@ describe("pair-pick checker", () => {
         expect(result.tally.eventCount).to.equal(5);
         expect(result.tally.candidateEvents).to.equal(4);
         expect(result.tally.eligibleEvents).to.equal(2);
+        // Count actual rule calls, excluding cached reference work and gates.
+        expect(result.diagnostics.scoredCandidates).to.equal(5);
         expect(result.picks.map((pick) => `${pick.signalTime}|${pick.pair}`)).to.deep.equal(["100|A+B", "200|G+H"]);
         expect(result.tally.comparisons.othersMean.selected.count).to.equal(2);
         expect(result.tally.comparisons.othersMean.selected.mean).to.be.closeTo(0.15, 1e-12);
@@ -197,6 +199,27 @@ describe("pair-pick checker", () => {
         expect(first.tiedCount).to.equal(2);
     });
 
+    it("keeps private ordinals and rule mutations out of subsequent scoring", async () => {
+        const archive = await loadPairSelectionArchive(folder);
+        const before = tallyPairSelectionRule(archive, argmaxRule);
+        const mutatingRule: PairSelectionRule = {
+            ...argmaxRule,
+            score(candidate, context, _params, pool) {
+                expect(Object.getOwnPropertySymbols(candidate)).to.have.length(0);
+                expect(pool.every((entry) => Object.getOwnPropertySymbols(entry).length === 0)).to.equal(true);
+                candidate.feat_atrPct = 9999;
+                pool[0]!.feat_return20 = -9999;
+                context.signalTime = -1;
+                return 1;
+            },
+        };
+        tallyPairSelectionRule(archive, mutatingRule);
+        const after = tallyPairSelectionRule(archive, argmaxRule);
+        expect(after.picks).to.deep.equal(before.picks);
+        expect(after.tally).to.deep.equal(before.tally);
+        expect(after.reportLines).to.deep.equal(before.reportLines);
+    });
+
     it("does not turn an all-ineligible rule into a tie-break pick", async () => {
         const archive = await loadPairSelectionArchive(folder);
         const unavailableRule: PairSelectionRule = {
@@ -210,6 +233,7 @@ describe("pair-pick checker", () => {
         const result = tallyPairSelectionRule(archive, unavailableRule);
         expect(result.tally.eligibleEvents).to.equal(0);
         expect(result.diagnostics.unscoredEvents).to.equal(2);
+        expect(result.diagnostics.scoredCandidates).to.equal(5);
         expect(() => pickPairSelectionRule(archive.events[0]!, unavailableRule, {}))
             .to.throw(/no eligible candidate/);
     });

@@ -46,6 +46,7 @@ export interface PairSelectionArchiveDiagnostics {
     jsonParseMs: number;
     streamWallMs: number;
     readResidualMs: number;
+    consumeMs: number;
     rankRowsParsed: number;
     rankJsonParseMs: number;
     rankStreamWallMs: number;
@@ -375,10 +376,10 @@ export async function loadPairSelectionArchive(
         },
         onLedgerRow: (value) => {
             const validated = validateLedgerRow(value, rows, options.retainHorizonBars);
-            const candidate = {
-                ...validated.candidate,
-                [PRIVATE_ROW_ORDINAL]: rows,
-            } as ArchivedCandidate;
+            const candidate = validated.candidate as ArchivedCandidate;
+            // Keep the ordinal private without copying and deleting a symbol
+            // on every scoring pass (which deoptimizes the candidate shape).
+            Object.defineProperty(candidate, PRIVATE_ROW_ORDINAL, { value: rows });
             const key = candidateKey(candidate.signalTime, candidate.pair, candidate.direction);
             if (seen.has(key)) dataBug(`duplicate candidate ${key}`);
             seen.add(key);
@@ -419,6 +420,7 @@ export async function loadPairSelectionArchive(
             jsonParseMs: loaded.diagnostics.ledger.jsonParseMs,
             streamWallMs: loaded.diagnostics.ledger.streamWallMs,
             readResidualMs: loaded.diagnostics.ledger.readResidualMs,
+            consumeMs: loaded.diagnostics.ledger.consumeMs,
             rankRowsParsed: loaded.diagnostics.ranks.rowsParsed,
             rankJsonParseMs: loaded.diagnostics.ranks.jsonParseMs,
             rankStreamWallMs: loaded.diagnostics.ranks.streamWallMs,
@@ -474,7 +476,6 @@ function cloneCandidate(candidate: PairCandidate, activeFeatures?: ActivePairFea
     const archived = candidate as ArchivedCandidate;
     const cloned = { ...archived } as ArchivedCandidate;
     const ordinal = archived[PRIVATE_ROW_ORDINAL];
-    delete cloned[PRIVATE_ROW_ORDINAL];
     if (activeFeatures) {
         if (ordinal === undefined) dataBug(`candidate ${candidate.pair} has no private ledger row ordinal`);
         Object.assign(cloned, activeFeatures.readCandidateFeatures(ordinal));
@@ -508,9 +509,12 @@ function pickPairSelectionRuleIndexed(
     rule: PairSelectionRule,
     params: PairSelectionRuleParams,
     activeFeatures?: ActivePairFeatures,
+    copyCandidates = true,
 ): IndexedPick | null {
     if (event.candidates.length === 0) dataBug(`event ${event.context.signalTime} has no candidates`);
-    const pool = event.candidates.map((candidate) => cloneCandidate(candidate, activeFeatures));
+    const pool = copyCandidates
+        ? event.candidates.map((candidate) => cloneCandidate(candidate, activeFeatures))
+        : event.candidates;
     let maxScore = Number.NEGATIVE_INFINITY;
     let winnerIndex = -1;
     let tiedCount = 0;
@@ -552,8 +556,10 @@ function getArchiveDerivedCache(archive: PairSelectionArchive): ArchiveDerivedCa
     if (existing) return existing;
     const created: ArchiveDerivedCache = {
         referencePicks: archive.events.map((event) => ({
-            alphabetical: pickPairSelectionRuleIndexed(event, reference_alphabetical, {}),
-            loudestAtr: pickPairSelectionRuleIndexed(event, reference_loudest_atr, {}),
+            // These fixed references only read candidates; user rules still
+            // receive isolated copies, including their complete event pool.
+            alphabetical: pickPairSelectionRuleIndexed(event, reference_alphabetical, {}, undefined, false),
+            loudestAtr: pickPairSelectionRuleIndexed(event, reference_loudest_atr, {}, undefined, false),
         })),
         horizonReturns: new Map(),
     };
@@ -663,8 +669,8 @@ export function tallyPairSelectionRule(
     };
     const refsStartedAt = nowMs();
     const derived = getArchiveDerivedCache(archive);
-    diagnostics.refsMs += nowMs() - refsStartedAt;
     const returnsByEvent = getHorizonReturns(archive, horizonBars);
+    diagnostics.refsMs += nowMs() - refsStartedAt;
     for (let eventIndex = 0; eventIndex < archive.events.length; eventIndex += 1) {
         const event = archive.events[eventIndex]!;
         const gateStartedAt = nowMs();
@@ -682,18 +688,18 @@ export function tallyPairSelectionRule(
         if (finiteReturns.length !== returns.length) continue;
         const scoreStartedAt = nowMs();
         const indexedPick = pickPairSelectionRuleIndexed(event, rule, params, activeFeatures);
+        diagnostics.scoreMs += nowMs() - scoreStartedAt;
+        diagnostics.scoredCandidates += event.candidates.length;
         if (indexedPick === null) {
             diagnostics.unscoredEvents += 1;
             continue;
         }
         const pick = indexedPick.pick;
-        diagnostics.scoreMs += nowMs() - scoreStartedAt;
         const references = derived.referencePicks[eventIndex]!;
         if (references.alphabetical === null || references.loudestAtr === null) {
             diagnostics.unscoredEvents += 1;
             continue;
         }
-        diagnostics.scoredCandidates += event.candidates.length * 3;
         const selectedReturn = returns[indexedPick.candidateIndex];
         const alphabeticalReturn = returns[references.alphabetical.candidateIndex];
         const loudestAtrReturn = returns[references.loudestAtr.candidateIndex];
