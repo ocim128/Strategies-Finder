@@ -310,7 +310,6 @@ function registerLazyFeatures(): void {
     registerLazyFeature("quick-view", async () => (await import("./quick-view")).quickViewManager.init());
     registerLazyFeature("finder", async () => (await import("./finder-manager")).finderManager.init());
     registerLazyFeature("alerts", async () => (await import("./handlers/alert-handlers")).initAlertHandlers());
-    registerLazyFeature("hunt", async () => (await import("./hunt/hunt-service")).huntService.init());
     registerLazyFeature("batch-backtest", async () => (await import("./batch-backtest/batch-backtest-service")).batchBacktestService.init());
     registerLazyFeature("ledger-sweep", async () => (await import("./batch-backtest/trade-ledger-sweep-service")).tradeLedgerSweepService.init());
     registerLazyFeature("selection-rules", async () => (await import("./selection-rules/service")).selectionRulesService.init());

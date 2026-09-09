@@ -45,7 +45,7 @@ const WATCH_IGNORED_GLOBS = [
     '**/reports/**',
     '**/rust-engine/target/**',
     '**/.freebuff/**',
-    // Strategy authoring often happens during long Finder/Hunt runs. Require a manual refresh
+    // Strategy authoring often happens during long Finder runs. Require a manual refresh
     // instead of interrupting the current browser session on every change under lib/strategies.
     ...(WATCH_STRATEGIES ? [] : ['**/lib/strategies/**']),
 ];

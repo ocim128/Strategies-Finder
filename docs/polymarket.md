@@ -5,7 +5,7 @@ This repo has several Polymarket features that share UI space but use different 
 Keep these paths separate:
 
 - direct Polymarket market charting
-- Polymarket outcome scoring for backtests, Finder, and Hunt
+- Polymarket outcome scoring for backtests and Finder
 - diagnostics on scored trades and deployability analysis helpers
 - bridge export for downstream `external_signal` bots
 - Execution Lab live trade through a local executor
@@ -386,7 +386,6 @@ If you add another target, update:
 | Manual backtest annotation | native `5m` / `15m` / `1h`, existing `1m` / `15m` / `1h` / `4h` bridge paths, and supported `1s` + `signal_close`, `next_open`, or `next_close` CLOB runs | `1m` + `next_open` on the selected native outcome session; supported `1s` + `signal_close`, `next_open`, or `next_close` uses exact-second CLOB exits inside the event; `signal_exit_same_event` is signal-only and `chart_exit_same_event` uses chart trade close | native `5m`, including supported `1s` CLOB runs | same chart backtest, Polymarket post-pass |
 | Headless `evaluatePolymarketOutcomes(...)` | resolve-hold only | not supported | not supported | caller supplies outcome rows only; no price-point input surface |
 | Finder Polymarket mode | `1m`, `5m`, `15m`, `1h`, `4h`, and supported `1s` + `signal_close`, `next_open`, or `next_close` CLOB runs | `1m` + `next_open`; supported `1s` + `signal_close`, `next_open`, or `next_close` uses exact-second CLOB exits inside the event | native `5m`, including supported `1s` CLOB runs | `grid` and `random` only; no combo; no multi-timeframe |
-| Hunt | same as Finder | same as Finder | same as Finder | preserves Polymarket mode settings in profiles |
 | Quick View / Trades / Polymarket diagnostics reload | can reuse stored summary broadly; native `15m` / `1h` show summary and payout cards; supported `1s` spot/futures resolve-hold summaries rebuild with CLOB entry pricing when needed | `1m` when price points are available or can be ensured; supported `1s` spot/futures + `signal_close`, `next_open`, or `next_close` uses exact-second CLOB rows | reloads `1m` price points or `1s` CLOB quotes for `5m` limit attempts | active consumers, not passive renderers |
 | Endpoint Preview / Copy / HTTP execution | `resolve_hold` only | not supported | not supported | exit mode and limit-entry settings are stripped |
 | Bridge export | separate contract | separate contract | separate contract | ignores scoring-mode settings; still chart-symbol `5m` entry-signal export |
@@ -504,7 +503,7 @@ Price points are different:
 
 1-second Polymarket research uses the second-market modules listed above and the `mine:1s*` scripts in `package.json`.
 
-## Finder And Hunt Behavior
+## Finder Behavior
 
 Finder uses a dedicated Polymarket runner instead of bolting scoring onto the normal sort path.
 
@@ -541,7 +540,7 @@ Important same-event exit differences versus the old `1m` bridge mode:
 - Finder does not fan out one parameter set into five offset variants
 - `polymarketEntryOffset` is ignored in same-event exit modes
 - `polymarketLockOffset` becomes irrelevant and the UI disables it
-- same-event exit results are per-event by default; when `polymarketSignalExitAllowMultipleTradesPerEvent` is enabled, Finder and Hunt rank the per-chart-trade variant and duplicate counts should be expected to fall
+- same-event exit results are per-event by default; when `polymarketSignalExitAllowMultipleTradesPerEvent` is enabled, Finder ranks the per-chart-trade variant and duplicate counts should be expected to fall
 - applying a Finder result preserves `polymarketExitMode` and only writes `polymarketEntryOffset` back when the effective mode is still `resolve_hold`
 
 Native-session resolve-hold note:
@@ -549,12 +548,6 @@ Native-session resolve-hold note:
 - Finder also does not fan out offset variants when `polymarketOutcomeInterval` is `15m` or `1h`
 - Finder also does not fan out offset variants when post-signal limit entry is enabled
 - native-session resolve-hold ranks the actual selected session annotations and payout metrics
-
-Hunt behavior:
-
-- Hunt exposes its own `Polymarket Exit Mode` and signal-exit multi-trade controls and preserves them in run settings and saved profiles
-- Hunt inherits the actual execution logic from Finder
-- applying a Hunt survivor follows the same mode-aware rule as Finder result application
 
 ## Settings And Persistence
 
@@ -612,7 +605,7 @@ Current UI rules:
 - target exit mode only shows when post-signal target exit is enabled
 - fixed target price only shows when target exit mode is `fixed_price`
 - target offset only shows when target exit mode is `entry_offset`
-- Finder and Hunt rank-mode dropdowns disable unsupported rank modes when a same-event exit mode is selected
+- Finder rank-mode dropdowns disable unsupported rank modes when a same-event exit mode is selected
 
 Persistence and compatibility:
 
@@ -620,7 +613,6 @@ Persistence and compatibility:
 - on `1s` + `signal_close`, `next_open`, or `next_close` charts, saved `resolve_hold` values stay in `resolve_hold`
 - on `1s` charts with other execution models, saved same-event exit values downgrade to `resolve_hold` and CLOB scoring is skipped
 - invalid persisted values normalize back to `resolve_hold`
-- Hunt uses the same default and normalization behavior
 - `polymarketOutcomeSymbol` is normalized to uppercase
 - `polymarketOutcomeInterval` defaults to `5m`
 - invalid persisted values normalize back to `5m`
@@ -714,7 +706,7 @@ If you touch Polymarket code, first decide which contract you are editing:
 - post-signal limit-entry fill semantics
 - Execution Lab live trade request, retry, or executor status semantics
 - local price-point storage or ingestion
-- Finder or Hunt Polymarket ranking
+- Finder Polymarket ranking
 - diagnostics rendering
 - headless fillability or deployability analysis
 - endpoint parity fences

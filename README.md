@@ -6,7 +6,7 @@ It combines:
 - a browser UI assembled from HTML partials at runtime
 - a TypeScript backtest engine with optional Rust acceleration
 - a multi-source data pipeline with local caching
-- research tools such as Finder, Exit Strategy Override, Hunt, Walk Forward, Monte Carlo, Scanner, Data Mining, Rank Pairs, and Batch Backtest
+- research tools such as Finder, Exit Strategy Override, Walk Forward, Monte Carlo, Scanner, Data Mining, Rank Pairs, and Batch Backtest
 - optional Cloudflare Worker alerting and subscription execution
 
 ## What You Can Do Here
@@ -15,7 +15,7 @@ It combines:
 - Switch between fixed, percent, Kelly, volatility-targeted, risk-parity, martingale, and Optimal f sizing models from the settings panel
 - Compare strategies, inspect trades, and review backtest result diagnostics, including entry and exit timing quality
 - Search parameter spaces with Finder, including random and genetic modes, and rank current-chart grid/random runs by Entry Score or Exit Score
-- Batch Finder runs across reusable Hunt profiles and compare survivor candidates across symbols, intervals, and execution settings
+- Run Batch Backtest across symbol-pair lists and compare survivor candidates across symbols, intervals, and execution settings
 - Validate robustness with walk-forward analysis and latest-OOS checks
 - Stress trade-path robustness with Monte Carlo sequence randomization, bootstrap resampling, and Polymarket bankroll survivability on annotated runs
 - Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics, including native `15m` / `1h` session summaries, same-event signal-exit metrics on supported `1m` runs, and exact-second CLOB metrics on supported `1s` runs
@@ -44,7 +44,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 1. Pick a symbol and timeframe.
 2. Select a strategy from the dropdown.
 3. Click `Run Backtest`.
-4. Open `Trades`, `Results`, `Finder`, `Hunt`, and `Walk Forward` to verify the feature panels loaded.
+4. Open `Trades`, `Results`, `Finder`, and `Walk Forward` to verify the feature panels loaded.
 5. Open `Monte Carlo` after a backtest to inspect drawdown tails and ruin probability under reshuffled paths, or run Polymarket Monte Carlo on annotated runs to estimate ending bankroll survivability.
 
 ## Architecture Map
@@ -85,7 +85,6 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 
 ### Research tools
 - Finder: `lib/finder-manager.ts`, `lib/finder/*` (server-side Symbol Universe in `lib/finder/server/*`; see [docs/finder-server-side.md](docs/finder-server-side.md))
-- Hunt: `lib/hunt/*`
 - Walk Forward: `lib/walk-forward-service.ts`
 - Monte Carlo: `lib/monte-carlo-service.ts`, `lib/strategies/monte-carlo/*`
 - Execution Lab: `lib/execution-lab/*`
@@ -124,10 +123,8 @@ flowchart LR
     J --> G
 
     F --> M[Finder]
-    F --> N[Hunt]
     F --> O[Walk Forward]
     M --> J
-    N --> J
     O --> J
     P --> J
 ```
@@ -240,7 +237,7 @@ The short version:
 6. To remove built-in strategies from disk, use `Library Tools` in the Settings tab. It can delete the current strategy or a pasted bulk list of keys, names, or filenames, archives each file to `archive/strategy/*`, and re-syncs `lib/strategies/manifest.ts` automatically.
 
 Dev note:
-- `npm run dev` ignores `lib/strategies/**` changes by default so Finder/Hunt work is not interrupted while you author or edit strategies.
+- `npm run dev` ignores `lib/strategies/**` changes by default so Finder work is not interrupted while you author or edit strategies.
 - After strategy edits, run `npm run strategies:sync-manifest` if needed and do a manual browser refresh when you are ready to load the new code.
 - Set `WATCH_STRATEGIES=1` before starting Vite if you want live reload for `lib/strategies/**` again.
 
@@ -250,7 +247,7 @@ For strategy-idea generation via [`archive/prompt.txt`](archive/prompt.txt), kee
 Automate the inspection of executed chart trades against historical Polymarket crypto event resolution and locally cached CLOB quotes.
 Implementation notes live in [`docs/polymarket.md`](docs/polymarket.md).
 1. Sync closed Polymarket matching events to your local SQLite database using `npm run poly:sync-outcomes:all` for every supported 5m symbol, or `npm run poly:sync-outcomes` / the direct `esno` command for a single symbol (requires the Vite server running via `npm run dev`).
-2. Use the normal backtest, Finder, or Hunt surfaces for full Polymarket parity. The older headless helper `evaluatePolymarketOutcomes` in `lib/polymarket-outcome-evaluator.ts` still represents the resolve-hold outcome-only path.
+2. Use the normal backtest or Finder surfaces for full Polymarket parity. The older headless helper `evaluatePolymarketOutcomes` in `lib/polymarket-outcome-evaluator.ts` still represents the resolve-hold outcome-only path.
 3. Choose `Polymarket Exit Mode` in Polymarket Settings:
    - `Resolve Hold` keeps the original final-outcome scoring path.
    - `Signal Exit Same Event` is available on `1m` + `next_open` runs and on supported `1s` BTCUSDT/XRPUSDT CLOB runs with `signal_close`, `next_open`, or `next_close`.
@@ -260,7 +257,7 @@ Implementation notes live in [`docs/polymarket.md`](docs/polymarket.md).
 7. Use `npm run poly:sync-outcomes:all` to backfill every supported 5m outcome series, or `..\..\..\node_modules\.bin\esno scripts\polymarket-sync-outcomes.ts --symbol <BTCUSDT|ETHUSDT|SOLUSDT|XRPUSDT>` for a single series.
 8. `1m` signal-exit runs ensure local Polymarket price points on demand through the SQLite/Vite path; outcome rows still need the normal sync step above.
 9. Use the `Polymarket` strategy-panel tab to inspect scored-run diagnostics. The same panel also has the separate bridge export workflow for `external_signal`.
-10. Endpoint Preview / Copy stays on `resolve_hold`; the new signal-exit mode is a backtest, Finder, Hunt, Quick View, Trades, and Polymarket diagnostics feature.
+10. Endpoint Preview / Copy stays on `resolve_hold`; the new signal-exit mode is a backtest, Finder, Quick View, Trades, and Polymarket diagnostics feature.
 11. The symbol search accepts custom Polymarket event URLs or slugs. Append `:yes` or `:no`, or use the URL `outcome` / `side` query param, to choose the side.
 12. The `PM` control in the timeframe bar prompts for a Polymarket slug or URL when needed, then opens the market at the supported `1m` chart resolution.
 

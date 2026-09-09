@@ -200,7 +200,7 @@ See `README.md` under `Architecture Map` for the canonical subsystem and file ma
 - If persisted JSON shape changes, add a migration in the relevant `readPersistedJson(...)` callsite instead of silently breaking old payloads
 - Check any resolver/sanitizer path that mirrors those settings
 - If you change the Polymarket bridge `external_signal` payload or `polymarketEntryOffset` contract, keep `scripts/export-latest-entry-signal.ts` and the bridge export code in `lib/polymarket-panel-service.ts` aligned
-- If you change `polymarketExitMode`, keep `docs/polymarket.md`, endpoint fences, and Finder/Hunt apply-result behavior aligned
+- If you change `polymarketExitMode`, keep `docs/polymarket.md`, endpoint fences, and Finder apply-result behavior aligned
 
 ### Any worker-facing change
 - Check `lib/alert-service.ts`
@@ -409,7 +409,7 @@ Nine audit findings landed across the Batch and Finder server plugins. The contr
   - `lib/local-sqlite-polymarket-api.ts`
   - `vite.config.ts`
   - `docs/polymarket.md`
-- Finder and Hunt signal-exit mode must not fan out by `polymarketEntryOffset`; applying results should preserve `polymarketExitMode` and only write offset data in `resolve_hold`
+- Finder signal-exit mode must not fan out by `polymarketEntryOffset`; applying results should preserve `polymarketExitMode` and only write offset data in `resolve_hold`
 - endpoint Preview / Copy / HTTP execution intentionally stay on `resolve_hold`; do not silently broaden those callers
 - Execution Lab live trade is not bridge export: browser code sends non-secret order intent to a local executor, private keys stay in `.env`, and live entry/exit semantics live in `lib/execution-lab/live-trade-request.ts`, `lib/execution-lab/live-executor-adapter.ts`, and the side-repo one-shot executor docs
 - Validation habit after Polymarket changes:

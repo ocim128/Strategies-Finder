@@ -19,7 +19,6 @@ let tabLazyListener: EventListener | null = null;
 const TAB_TO_FEATURE: Record<string, string> = {
     finder: "finder",
     alerts: "alerts",
-    hunt: "hunt",
     batchbacktest: "batch-backtest",
     ledgersweep: "ledger-sweep",
     selectionrules: "selection-rules",

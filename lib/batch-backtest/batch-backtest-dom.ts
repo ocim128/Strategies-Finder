@@ -3,7 +3,7 @@ import { getRequiredElement } from "../dom-utils";
 /**
  * Structural DOM contract for the Batch Backtest tab.
  *
- * Mirrors the `lib/hunt/hunt-dom.ts` pattern: a required-ids array used by
+ * A required-ids array used by
  * `tests/feature-dom-contracts.spec.ts`, plus a `create*Dom()` factory that
  * resolves the elements through `getRequiredElement`.
  *

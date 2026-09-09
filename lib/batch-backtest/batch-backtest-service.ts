@@ -1,8 +1,8 @@
 /**
  * Batch Backtest UI service.
  *
- * Lazy-initialized like the other strategy panel services (see
- * `lib/hunt/hunt-service.ts`). Binds the tab's buttons, reads the CURRENT
+ * Lazy-initialized like the other strategy panel services. Binds the tab's
+ * buttons, reads the CURRENT
  * strategy / params / backtest / capital settings once per run, and replays
  * them across every pair in the user's list through the pure runner.
  *

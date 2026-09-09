@@ -14,7 +14,6 @@ import type { PolymarketPricePoint } from "../lib/local-sqlite-polymarket-api";
 import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
 import type { Trade } from "../lib/types/strategies";
 import { resolveBacktestSettingsFromRaw } from "../lib/backtest-settings-resolver";
-import { normalizeStoredHuntRunSettings, DEFAULT_HUNT_RUN_SETTINGS } from "../lib/hunt/hunt-model";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -1133,29 +1132,6 @@ console.log("\n=== settings resolver: polymarketExitMode ===");
         riskSettingsToggle: true,
     } as any);
     eq(withInvalid.polymarketExitMode, "resolve_hold", "invalid mode → resolve_hold");
-}
-
-console.log("\n=== hunt model: polymarketExitMode ===");
-
-{
-    eq(DEFAULT_HUNT_RUN_SETTINGS.polymarketExitMode, "resolve_hold", "hunt default is resolve_hold");
-    eq(DEFAULT_HUNT_RUN_SETTINGS.polymarketSignalExitAllowMultipleTradesPerEvent, false, "hunt multi-trade default is false");
-
-    const withSignalExit = normalizeStoredHuntRunSettings({
-        polymarketExitMode: "signal_exit_same_event",
-        polymarketSignalExitAllowMultipleTradesPerEvent: true,
-    });
-    eq(withSignalExit.polymarketExitMode, "signal_exit_same_event", "hunt preserves signal_exit_same_event");
-    eq(withSignalExit.polymarketSignalExitAllowMultipleTradesPerEvent, true, "hunt preserves multi-trade setting");
-    const withChartExit = normalizeStoredHuntRunSettings({
-        polymarketExitMode: "chart_exit_same_event",
-    });
-    eq(withChartExit.polymarketExitMode, "chart_exit_same_event", "hunt preserves chart_exit_same_event");
-
-    const withInvalid = normalizeStoredHuntRunSettings({
-        polymarketExitMode: "garbage",
-    });
-    eq(withInvalid.polymarketExitMode, "resolve_hold", "hunt invalid → resolve_hold");
 }
 
 });
