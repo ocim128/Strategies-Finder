@@ -14,6 +14,7 @@ import {
     TRADE_LEDGER_FEATURE_ATR_PERIOD,
     TRADE_LEDGER_VERSION,
     buildBatchRunLedgerBodyField,
+    parseTradeLedgerHorizons,
     buildTradeLedgerRowsForPair,
     formatLedgerRunStamp,
     sanitizeTradeLedgerFolder,
@@ -1138,6 +1139,12 @@ describe("trade ledger writer", () => {
 // ============================================================================
 
 describe("trade ledger request body wire contract", () => {
+    it("parses, deduplicates, and sorts editable capture horizons", () => {
+        expect(parseTradeLedgerHorizons("48, 24, 48")).to.deep.equal([24, 48]);
+        expect(() => parseTradeLedgerHorizons("24, nope")).to.throw("positive integers");
+        expect(() => parseTradeLedgerHorizons(" ")).to.throw("at least one");
+    });
+
     it("omits the ledger field when OFF and includes it when ON", () => {
         expect(buildBatchRunLedgerBodyField({ enabled: false, folder: "x" })).to.deep.equal({});
         expect(buildBatchRunLedgerBodyField(null)).to.deep.equal({});

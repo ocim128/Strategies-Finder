@@ -17,6 +17,7 @@ import type {
     SelectionRulesStatusRun,
     SelectionRulesStreamEvent,
 } from "./stream-types";
+import { assertSelectionRuleResultIsScalar } from "./stream-types";
 
 export const SELECTION_RULES_ACTIVE_RUN_STORAGE = {
     key: "playground_selection_rules_active_server_run",
@@ -24,8 +25,55 @@ export const SELECTION_RULES_ACTIVE_RUN_STORAGE = {
     version: 1,
 } as const;
 
+export const SELECTION_RULES_LAST_RUN_STORAGE = {
+    key: "playground_selection_rules_last_run",
+    schema: "selection_rules.last_run",
+    version: 1,
+} as const;
+
+export const SELECTION_RULES_DEFAULT_HORIZON_BARS = 24;
+
 type PersistedSelectionRulesRun = { runId: string; startedAt: number };
-type SelectionRulesTerminalEvent = Extract<SelectionRulesStreamEvent, { type: "done" | "cancelled" | "fatal" }>;
+export type SelectionRulesTerminalEvent = Extract<SelectionRulesStreamEvent, { type: "done" | "cancelled" | "fatal" }>;
+
+function isSelectionRulesTerminalEvent(value: unknown): value is SelectionRulesTerminalEvent {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const event = value as Partial<SelectionRulesTerminalEvent> & { type?: unknown };
+    return (event.type === "done" || event.type === "cancelled" || event.type === "fatal")
+        && typeof event.runId === "string"
+        && event.runId.length > 0
+        && event.runId.length <= 64
+        && typeof event.finishedAt === "number"
+        && Number.isFinite(event.finishedAt)
+        && Array.isArray(event.results)
+        && event.results.every((result) => {
+            try {
+                assertSelectionRuleResultIsScalar(result);
+                return true;
+            } catch {
+                return false;
+            }
+        })
+        && Array.isArray(event.reportLines)
+        && event.reportLines.every((line) => typeof line === "string")
+        && Array.isArray(event.diagnosticsLines)
+        && event.diagnosticsLines.every((line) => typeof line === "string");
+}
+
+export function readPersistedSelectionRulesLastRun(): SelectionRulesTerminalEvent | null {
+    return readPersistedJson<SelectionRulesTerminalEvent | null>({
+        ...SELECTION_RULES_LAST_RUN_STORAGE,
+        fallback: null,
+        migrate: ({ data }) => isSelectionRulesTerminalEvent(data) ? data : null,
+    });
+}
+
+export function persistSelectionRulesLastRun(value: SelectionRulesTerminalEvent): void {
+    writePersistedJson({
+        ...SELECTION_RULES_LAST_RUN_STORAGE,
+        data: value,
+    });
+}
 
 function readActiveRun(): PersistedSelectionRulesRun | null {
     return readPersistedJson<PersistedSelectionRulesRun | null>({
@@ -161,6 +209,12 @@ export class SelectionRulesService {
                 void this.reattach(this.activeServerRunId);
                 return;
             }
+            const lastRun = readPersistedSelectionRulesLastRun();
+            if (lastRun) {
+                this.activeServerRunId = lastRun.runId;
+                this.adoptTerminal(lastRun);
+                return;
+            }
             this.setStatus("Idle");
         });
     }
@@ -214,16 +268,11 @@ export class SelectionRulesService {
         const dom = this.getDom();
         const selected = Number(dom.selectionRulesHorizonSelect.value);
         const horizons = this.selectedFolder()?.ledgerHorizons ?? [];
-        dom.selectionRulesHorizonSelect.replaceChildren(...horizons.map((horizon) => {
-            const option = document.createElement("option");
-            option.value = String(horizon);
-            option.textContent = String(horizon);
-            return option;
-        }));
-        const preferred = this.preferences?.horizonBars ?? Number.NaN;
+        const preferred = this.preferences?.horizonBars ?? SELECTION_RULES_DEFAULT_HORIZON_BARS;
         if (horizons.includes(selected)) dom.selectionRulesHorizonSelect.value = String(selected);
         else if (horizons.includes(preferred)) dom.selectionRulesHorizonSelect.value = String(preferred);
         else if (horizons[0] !== undefined) dom.selectionRulesHorizonSelect.value = String(horizons[0]);
+        else dom.selectionRulesHorizonSelect.value = String(preferred);
     }
 
     private renderRules(): void {
@@ -308,7 +357,8 @@ export class SelectionRulesService {
         const dom = this.getDom();
         const hasFolder = this.selectedFolder() !== null;
         const hasRules = this.selectedRuleKeys().length > 0;
-        const hasHorizon = dom.selectionRulesHorizonSelect.value !== "";
+        const horizonBars = Number(dom.selectionRulesHorizonSelect.value);
+        const hasHorizon = Number.isInteger(horizonBars) && horizonBars > 0;
         dom.selectionRulesRunBtn.disabled = this.running || !hasFolder || !hasRules || !hasHorizon;
         dom.selectionRulesStopBtn.hidden = !this.running;
         dom.selectionRulesFolderSelect.disabled = this.running;
@@ -400,6 +450,7 @@ export class SelectionRulesService {
 
     private adoptTerminal(event: SelectionRulesTerminalEvent): void {
         if (this.activeServerRunId !== event.runId) return;
+        persistSelectionRulesLastRun(event);
         this.results.clear();
         for (const result of event.results) this.results.set(resultKey(result), result);
         this.reportLines = [...event.reportLines];
@@ -442,6 +493,10 @@ export class SelectionRulesService {
         const ruleKeys = this.selectedRuleKeys();
         const horizonBars = Number(this.getDom().selectionRulesHorizonSelect.value);
         if (!folder || ruleKeys.length === 0 || !Number.isInteger(horizonBars) || horizonBars <= 0) return;
+        if (!folder.ledgerHorizons.includes(horizonBars)) {
+            this.setStatus(`Horizon ${horizonBars} is not captured in this folder. Available: ${folder.ledgerHorizons.join(", ") || "none"}.`, "danger");
+            return;
+        }
         const runId = createSelectionRulesRunId();
         this.activeServerRunId = runId;
         this.running = true;
@@ -509,9 +564,16 @@ export class SelectionRulesService {
                 const payload = await response.json() as SelectionRulesStatusResponse;
                 if (this.activeServerRunId !== runId) return;
                 if (payload.runMismatch) {
+                    const lastRun = readPersistedSelectionRulesLastRun();
                     this.activeServerRunId = null;
                     this.running = false;
                     persistActiveRun(null);
+                    if (lastRun) {
+                        this.activeServerRunId = lastRun.runId;
+                        this.adoptTerminal(lastRun);
+                        this.setStatus("Server run is no longer retained; restored the last completed result.", "warning");
+                        return;
+                    }
                     this.setStatus("Run is no longer retained by the server.", "warning");
                     this.setBusy();
                     return;

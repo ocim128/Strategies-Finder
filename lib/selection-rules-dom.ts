@@ -29,7 +29,7 @@ export function createSelectionRulesDom() {
     return {
         selectionRulesSection: getRequiredElement<HTMLElement>("selectionRulesSection"),
         selectionRulesFolderSelect: getRequiredElement<HTMLSelectElement>("selectionRulesFolderSelect"),
-        selectionRulesHorizonSelect: getRequiredElement<HTMLSelectElement>("selectionRulesHorizonSelect"),
+        selectionRulesHorizonSelect: getRequiredElement<HTMLInputElement>("selectionRulesHorizonSelect"),
         selectionRulesFolderMeta: getRequiredElement<HTMLDivElement>("selectionRulesFolderMeta"),
         selectionRulesSelectAll: getRequiredElement<HTMLButtonElement>("selectionRulesSelectAll"),
         selectionRulesSelectNone: getRequiredElement<HTMLButtonElement>("selectionRulesSelectNone"),

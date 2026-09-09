@@ -25,7 +25,8 @@ import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { copyToClipboard } from "../browser-transfer";
 import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { parseJsonPreservingNonFinite } from "../json-utils";
-import { buildBatchRunLedgerBodyField } from "./trade-ledger-wire";
+import { buildBatchRunLedgerBodyField, parseTradeLedgerHorizons } from "./trade-ledger-wire";
+import { TRADE_LEDGER_DEFAULT_HORIZONS } from "./trade-ledger-schema";
 import { buildBatchRunTradeGateBodyField, type TradeGateRunOptions } from "./trade-gate-wire";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
 import { consumeNdjsonStream } from "../ndjson-stream";
@@ -163,7 +164,7 @@ const BATCH_TRADE_LEDGER_STORAGE = {
 
 const BATCH_TRADE_LEDGER_DEFAULT_FOLDER = "archive/mining-ledger";
 
-type BatchTradeLedgerOptions = { enabled: boolean; folder: string };
+type BatchTradeLedgerOptions = { enabled: boolean; folder: string; ledgerHorizons: number[] };
 
 function parseBatchDateInputSec(raw: string, endOfDay: boolean, label: string): number | null {
     const trimmed = raw.trim();
@@ -219,7 +220,7 @@ function readPersistedTradeGateOptions(): BatchTradeGateOptions {
 function readPersistedTradeLedgerOptions(): BatchTradeLedgerOptions {
     return readPersistedJson<BatchTradeLedgerOptions>({
         ...BATCH_TRADE_LEDGER_STORAGE,
-        fallback: { enabled: false, folder: BATCH_TRADE_LEDGER_DEFAULT_FOLDER },
+        fallback: { enabled: false, folder: BATCH_TRADE_LEDGER_DEFAULT_FOLDER, ledgerHorizons: [...TRADE_LEDGER_DEFAULT_HORIZONS] },
         migrate: (ctx) => {
             const data = ctx.data;
             if (!data || typeof data !== "object" || Array.isArray(data)) return null;
@@ -227,7 +228,14 @@ function readPersistedTradeLedgerOptions(): BatchTradeLedgerOptions {
             const folder = typeof source.folder === "string" && source.folder.trim()
                 ? source.folder.trim()
                 : BATCH_TRADE_LEDGER_DEFAULT_FOLDER;
-            return { enabled: source.enabled === true, folder };
+            const ledgerHorizons = Array.isArray(source.ledgerHorizons)
+                ? [...new Set(source.ledgerHorizons.filter((value): value is number => typeof value === "number" && Number.isInteger(value) && value > 0))].sort((left, right) => left - right)
+                : [];
+            return {
+                enabled: source.enabled === true,
+                folder,
+                ledgerHorizons: ledgerHorizons.length > 0 ? ledgerHorizons : [...TRADE_LEDGER_DEFAULT_HORIZONS],
+            };
         },
     });
 }
@@ -604,6 +612,9 @@ export class BatchBacktestService {
         dom.batchBacktestTradeLedgerFolder.addEventListener("change", () => {
             this.persistTradeLedgerOptions(dom);
         });
+        dom.batchBacktestTradeLedgerHorizons.addEventListener("change", () => {
+            this.persistTradeLedgerOptions(dom);
+        });
         dom.batchBacktestTradeGateToggle.addEventListener("change", () => {
             this.persistTradeGateOptions(dom);
             this.clearStaleResults(dom);
@@ -659,24 +670,35 @@ export class BatchBacktestService {
         if (options.folder) {
             dom.batchBacktestTradeLedgerFolder.value = options.folder;
         }
+        dom.batchBacktestTradeLedgerHorizons.value = options.ledgerHorizons.join(",");
     }
 
     /** Read the trade-ledger options from the DOM (defaults applied). */
     private readTradeLedgerOptions(dom: BatchBacktestDom): BatchTradeLedgerOptions {
+        const enabled = dom.batchBacktestTradeLedgerToggle.checked;
         return {
-            enabled: dom.batchBacktestTradeLedgerToggle.checked,
+            enabled,
             folder: dom.batchBacktestTradeLedgerFolder.value.trim() || BATCH_TRADE_LEDGER_DEFAULT_FOLDER,
+            ledgerHorizons: enabled
+                ? parseTradeLedgerHorizons(dom.batchBacktestTradeLedgerHorizons.value)
+                : [...TRADE_LEDGER_DEFAULT_HORIZONS],
         };
     }
 
     private persistTradeLedgerOptions(dom: BatchBacktestDom): void {
-        writePersistedJson({
-            ...BATCH_TRADE_LEDGER_STORAGE,
-            data: this.readTradeLedgerOptions(dom),
-            onError: (error) => debugLogger.warn("batch_backtest.trade_ledger_save_failed", {
+        try {
+            writePersistedJson({
+                ...BATCH_TRADE_LEDGER_STORAGE,
+                data: this.readTradeLedgerOptions(dom),
+                onError: (error) => debugLogger.warn("batch_backtest.trade_ledger_save_failed", {
+                    error: error instanceof Error ? error.message : String(error),
+                }),
+            });
+        } catch (error) {
+            debugLogger.warn("batch_backtest.trade_ledger_save_failed", {
                 error: error instanceof Error ? error.message : String(error),
-            }),
-        });
+            });
+        }
     }
 
     private restoreTradeGateOptions(dom: BatchBacktestDom): void {

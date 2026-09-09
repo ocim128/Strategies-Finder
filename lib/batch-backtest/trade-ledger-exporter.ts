@@ -102,6 +102,7 @@ export {
 
 export {
     buildBatchRunLedgerBodyField,
+    parseTradeLedgerHorizons,
     type TradeLedgerRunOptions,
 } from "./trade-ledger-wire";
 

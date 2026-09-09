@@ -16,6 +16,17 @@ export interface TradeLedgerRunOptions {
     toSec?: number | null;
 }
 
+/** Parse the comma-separated horizons used by the Batch ledger control. */
+export function parseTradeLedgerHorizons(raw: string): number[] {
+    const parts = raw.split(",").map((part) => part.trim()).filter(Boolean);
+    if (parts.length === 0) throw new Error("Trade ledger horizon bars must include at least one positive integer.");
+    const horizons = parts.map((part) => Number(part));
+    if (horizons.some((value) => !Number.isInteger(value) || value <= 0)) {
+        throw new Error("Trade ledger horizon bars must be positive integers separated by commas.");
+    }
+    return [...new Set(horizons)].sort((left, right) => left - right);
+}
+
 /**
  * The request-body field the browser sends on /api/batch-backtest/run when the
  * ledger toggle is ON. Empty when OFF so default request bodies are unchanged.
