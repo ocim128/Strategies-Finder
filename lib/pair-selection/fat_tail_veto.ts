@@ -61,10 +61,7 @@ export const fat_tail_veto: PairSelectionRule = {
         paramBounds: { vetoQuantile: { min: 0, max: 1, step: 0.01 } },
         featureRequirements: {
             libraryRelease: "v2",
-            columns: [
-                "feat_fp_spread_increment_kurtosis_b48_r1",
-                "feat_fp_spread_log_return_b48_r1",
-            ],
+            columns: ["feat_fp_spread_log_return_b48_r1"],
         },
         sourceFiles: [
             "lib/pair-selection/fat_tail_veto.ts",

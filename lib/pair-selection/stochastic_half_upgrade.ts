@@ -7,10 +7,6 @@ export const stochastic_half_upgrade: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: {
-            libraryRelease: "v2",
-            columns: ["feat_fp_spread_half_upgrade_u_b48_r1"],
-        },
         sourceFiles: ["lib/pair-selection/stochastic_half_upgrade.ts"],
     },
     score: (candidate) => candidate.feat_fp_spread_half_upgrade_u_b48_r1

@@ -10,10 +10,7 @@ export const jump_discounted_drift: PairSelectionRule = {
     metadata: {
         featureRequirements: {
             libraryRelease: "v2",
-            columns: [
-                "feat_fp_spread_log_return_b48_r1",
-                "feat_fp_spread_tail_concentration_b48_r1",
-            ],
+            columns: ["feat_fp_spread_log_return_b48_r1"],
         },
         sourceFiles: [
             "lib/pair-selection/jump_discounted_drift.ts",
@@ -23,7 +20,9 @@ export const jump_discounted_drift: PairSelectionRule = {
     score: (candidate) => {
         const return48 = directionAdjusted(candidate, candidate.feat_fp_spread_log_return_b48_r1);
         const concentration = candidate.feat_fp_spread_tail_concentration_b48_r1;
-        if (return48 === null || concentration === null) return Number.NEGATIVE_INFINITY;
+        if (return48 === null || concentration === null || !Number.isFinite(concentration)) {
+            return Number.NEGATIVE_INFINITY;
+        }
         return return48 * (1 - concentration);
     },
 };

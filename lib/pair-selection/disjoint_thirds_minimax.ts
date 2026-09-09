@@ -7,10 +7,6 @@ export const disjoint_thirds_minimax: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: {
-            libraryRelease: "v2",
-            columns: ["feat_fp_spread_thirds_min_slope_b48_r1"],
-        },
         sourceFiles: ["lib/pair-selection/disjoint_thirds_minimax.ts"],
     },
     score: (candidate) => candidate.feat_fp_spread_thirds_min_slope_b48_r1

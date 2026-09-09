@@ -7,10 +7,6 @@ export const range_freshness_orientation: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: {
-            libraryRelease: "v2",
-            columns: ["feat_fp_spread_extreme_age_gap_b48_r1"],
-        },
         sourceFiles: ["lib/pair-selection/range_freshness_orientation.ts"],
     },
     score: (candidate) => candidate.feat_fp_spread_extreme_age_gap_b48_r1

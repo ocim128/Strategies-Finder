@@ -42,7 +42,6 @@ export const dual_engine_agreement_veto: PairSelectionRule = {
         featureRequirements: {
             libraryRelease: "v2",
             columns: [
-                "feat_fp_spread_median_increment_sign_b48_r1",
                 "feat_fp_spread_ols_slope_b48_r2",
                 "feat_fp_spread_log_return_b48_r1",
             ],

@@ -10,10 +10,7 @@ export const skew_weighted_drift: PairSelectionRule = {
     metadata: {
         featureRequirements: {
             libraryRelease: "v2",
-            columns: [
-                "feat_fp_spread_log_return_b48_r1",
-                "feat_fp_spread_increment_skew_b48_r1",
-            ],
+            columns: ["feat_fp_spread_log_return_b48_r1"],
         },
         sourceFiles: [
             "lib/pair-selection/skew_weighted_drift.ts",

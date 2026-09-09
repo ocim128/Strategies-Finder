@@ -7,10 +7,6 @@ export const directional_sign_fraction: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: {
-            libraryRelease: "v2",
-            columns: ["feat_fp_spread_sign_fraction_b48_r1"],
-        },
         sourceFiles: ["lib/pair-selection/directional_sign_fraction.ts"],
     },
     score: (candidate) => candidate.feat_fp_spread_sign_fraction_b48_r1

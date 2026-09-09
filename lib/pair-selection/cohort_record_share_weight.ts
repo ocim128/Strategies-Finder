@@ -21,10 +21,7 @@ export const cohort_record_share_weight: PairSelectionRule = {
     metadata: {
         featureRequirements: {
             libraryRelease: "v2",
-            columns: [
-                "feat_fp_spread_log_return_b48_r1",
-                "feat_fp_spread_recent_record_flag_b48_r1",
-            ],
+            columns: ["feat_fp_spread_log_return_b48_r1"],
         },
         sourceFiles: [
             "lib/pair-selection/cohort_record_share_weight.ts",

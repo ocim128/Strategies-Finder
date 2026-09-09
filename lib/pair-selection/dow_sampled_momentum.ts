@@ -7,10 +7,6 @@ export const dow_sampled_momentum: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: {
-            libraryRelease: "v2",
-            columns: ["feat_fp_spread_dow_sampled_drift_b48_r1"],
-        },
         sourceFiles: ["lib/pair-selection/dow_sampled_momentum.ts"],
     },
     score: (candidate) => {

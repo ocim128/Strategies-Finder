@@ -7,10 +7,6 @@ export const golden_cross_recency: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: {
-            libraryRelease: "v2",
-            columns: ["feat_fp_spread_golden_cross_age_r1"],
-        },
         sourceFiles: ["lib/pair-selection/golden_cross_recency.ts"],
     },
     score: (candidate) => {

@@ -7,10 +7,6 @@ export const leave_best_out_drift: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: {
-            libraryRelease: "v2",
-            columns: ["feat_fp_spread_leave_best_out_drift_b48_r1"],
-        },
         sourceFiles: ["lib/pair-selection/leave_best_out_drift.ts"],
     },
     score: (candidate) => {

@@ -10,10 +10,7 @@ export const leverage_healing_weight: PairSelectionRule = {
     metadata: {
         featureRequirements: {
             libraryRelease: "v2",
-            columns: [
-                "feat_fp_spread_log_return_b48_r1",
-                "feat_fp_spread_leverage_stat_b48_r1",
-            ],
+            columns: ["feat_fp_spread_log_return_b48_r1"],
         },
         sourceFiles: [
             "lib/pair-selection/leverage_healing_weight.ts",

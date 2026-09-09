@@ -7,10 +7,6 @@ export const best_bar_back_loading: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: {
-            libraryRelease: "v2",
-            columns: ["feat_fp_spread_best_bar_index_b48_r1"],
-        },
         sourceFiles: ["lib/pair-selection/best_bar_back_loading.ts"],
     },
     score: (candidate) => {

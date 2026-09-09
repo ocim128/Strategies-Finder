@@ -7,10 +7,6 @@ export const quadratic_path_curvature: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: {
-            libraryRelease: "v2",
-            columns: ["feat_fp_spread_quadratic_curvature_b48_r1"],
-        },
         sourceFiles: ["lib/pair-selection/quadratic_path_curvature.ts"],
     },
     score: (candidate) => candidate.feat_fp_spread_quadratic_curvature_b48_r1

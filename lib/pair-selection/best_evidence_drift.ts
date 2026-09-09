@@ -39,9 +39,6 @@ export const best_evidence_drift: PairSelectionRule = {
         featureRequirements: {
             libraryRelease: "v2",
             columns: [
-                "feat_fp_spread_trend_t_stat_b12_r1",
-                "feat_fp_spread_trend_t_stat_b48_r1",
-                "feat_fp_spread_trend_t_stat_b240_r1",
                 "feat_fp_spread_log_return_b12_r1",
                 "feat_fp_spread_log_return_b48_r1",
                 "feat_fp_spread_log_return_b240_r1",

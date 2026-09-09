@@ -7,10 +7,6 @@ export const median_increment_drift: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: {
-            libraryRelease: "v2",
-            columns: ["feat_fp_spread_median_increment_b48_r1"],
-        },
         sourceFiles: ["lib/pair-selection/median_increment_drift.ts"],
     },
     score: (candidate) => candidate.feat_fp_spread_median_increment_b48_r1

@@ -7,10 +7,6 @@ export const trend_t_statistic: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: {
-            libraryRelease: "v2",
-            columns: ["feat_fp_spread_trend_t_stat_b48_r1"],
-        },
         sourceFiles: ["lib/pair-selection/trend_t_statistic.ts"],
     },
     score: (candidate) => candidate.feat_fp_spread_trend_t_stat_b48_r1
