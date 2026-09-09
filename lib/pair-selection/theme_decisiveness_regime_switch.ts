@@ -38,10 +38,7 @@ export const theme_decisiveness_regime_switch: PairSelectionRule = {
     metadata: {
         featureRequirements: {
             libraryRelease: "v2",
-            columns: [
-                "feat_fp_spread_log_return_b48_r1",
-                "feat_atrPct",
-            ],
+            columns: ["feat_fp_spread_log_return_b48_r1"],
         },
         sourceFiles: [
             "lib/pair-selection/theme_decisiveness_regime_switch.ts",
