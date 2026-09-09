@@ -7,14 +7,12 @@ export const leg_correlation_independence: PairSelectionRule = {
     defaultParams: {},
     paramLabels: {},
     metadata: {
-        featureRequirements: {
-            libraryRelease: "v2",
-            columns: ["feat_fp_leg_return_correlation_b48_r1"],
-        },
         sourceFiles: ["lib/pair-selection/leg_correlation_independence.ts"],
     },
     score: (candidate) => {
         const correlation = candidate.feat_fp_leg_return_correlation_b48_r1;
-        return correlation === null ? Number.NEGATIVE_INFINITY : -correlation;
+        return correlation === null || !Number.isFinite(correlation)
+            ? Number.NEGATIVE_INFINITY
+            : -correlation;
     },
 };
