@@ -1,11 +1,10 @@
-// Clean pair-selection registry: 65 entries (diagnostic cleanup 2026-09-08).
+// Clean pair-selection registry: 112 active entries.
 import { adverse_channel_bounce_proximity } from "./adverse_channel_bounce_proximity";
 import { adverse_increment_streak_rebound } from "./adverse_increment_streak_rebound";
 import { autocorr_penalized_drift } from "./autocorr_penalized_drift";
 import { autoregressive_persistence_scaled_drift } from "./autoregressive_persistence_scaled_drift";
 import { base_cohort_excess_momentum } from "./base_cohort_excess_momentum";
 import { base_cohort_direction_purity_weight } from "./base_cohort_direction_purity_weight";
-import { base_theme_deduplicated_leader } from "./base_theme_deduplicated_leader";
 import { breadth_sign_conditioned_drift } from "./breadth_sign_conditioned_drift";
 import { breadth_size_ranking_switch } from "./breadth_size_ranking_switch";
 import { broad_theme_confirmed_drift } from "./broad_theme_confirmed_drift";
@@ -86,7 +85,6 @@ import { persistence_regime_switch } from "./persistence_regime_switch";
 import { pool_skew_regime_switch } from "./pool_skew_regime_switch";
 import { pullback_discounted_directional_momentum } from "./pullback_discounted_directional_momentum";
 import { quote_cohort_excess_momentum } from "./quote_cohort_excess_momentum";
-import { rank_neighborhood_smoothed_pick } from "./rank_neighborhood_smoothed_pick";
 import { reference_alphabetical, reference_loudest_atr } from "./references";
 import { short_horizon_directional_momentum } from "./short_horizon_directional_momentum";
 import { short_to_intermediate_reversion_gap } from "./short_to_intermediate_reversion_gap";
@@ -121,7 +119,6 @@ const pairSelectionRuleDefinitions = [
     autoregressive_persistence_scaled_drift,
     base_cohort_excess_momentum,
     base_cohort_direction_purity_weight,
-    base_theme_deduplicated_leader,
     breadth_sign_conditioned_drift,
     breadth_size_ranking_switch,
     broad_theme_confirmed_drift,
@@ -202,7 +199,6 @@ const pairSelectionRuleDefinitions = [
     pool_skew_regime_switch,
     pullback_discounted_directional_momentum,
     quote_cohort_excess_momentum,
-    rank_neighborhood_smoothed_pick,
     reference_alphabetical,
     reference_loudest_atr,
     short_horizon_directional_momentum,
