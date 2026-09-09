@@ -264,6 +264,12 @@ export interface PairFeatureSnapshotFinalizeInput {
     provenancePath: string;
     summaryPath: string;
     ranksPath: string;
+    /**
+     * Set only when the caller owns the append path and constructed each
+     * source entry from the exact ledger rows that were successfully written.
+     * Standalone snapshot writers keep the defensive read-back verification.
+     */
+    ledgerCoverageAlreadyVerified?: boolean;
 }
 
 export interface PairFeatureSnapshotFinalizeResult {

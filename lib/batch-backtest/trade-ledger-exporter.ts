@@ -1071,6 +1071,12 @@ export class TradeLedgerWriter {
                 provenancePath: join(this.runDir, PROVENANCE_FILE),
                 summaryPath: join(this.runDir, SUMMARY_FILE),
                 ranksPath: join(this.runDir, RANKS_FILE),
+                // The exporter builds entries from the same `rows` passed to
+                // appendLedger and only starts the snapshot after that append
+                // succeeds. Avoid rereading/parsing the complete ledger at
+                // finalize; standalone snapshot writers retain read-back
+                // verification by default.
+                ledgerCoverageAlreadyVerified: true,
             });
             snapshotComplete = snapshotResult.complete;
             sourceSnapshotSha256 = snapshotResult.manifestSha256;

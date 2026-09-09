@@ -25,7 +25,6 @@ import {
 import {
     PAIR_FEATURE_SNAPSHOT_CAPABILITIES,
     type PairFeatureSnapshotArtifact,
-    type PairFeatureSnapshotBar,
     type PairFeatureSnapshotEntry,
     type PairFeatureSnapshotFinalizeInput,
     type PairFeatureSnapshotFinalizeResult,
@@ -97,9 +96,9 @@ function runtimeFingerprint(): PairFeatureSnapshotRuntimeFingerprint {
 }
 
 function buildBars(source: PairFeatureSnapshotSource["bars"]): {
-    records: PairFeatureSnapshotBar[];
+    times: number[];
 } {
-    const records: PairFeatureSnapshotBar[] = [];
+    const times: number[] = new Array(source.length);
     let previousTime = -Infinity;
     for (const [index, bar] of source.entries()) {
         const timeSec = parseTimeToUnixSeconds(bar.time);
@@ -108,24 +107,22 @@ function buildBars(source: PairFeatureSnapshotSource["bars"]): {
             throw new Error(`Source snapshot bars must have strictly increasing unique times (bar ${index}).`);
         }
         previousTime = timeSec;
-        records.push([
-            timeSec,
-            requireFinite(bar.open, `bar ${index} open`),
-            requireFinite(bar.high, `bar ${index} high`),
-            requireFinite(bar.low, `bar ${index} low`),
-            requireFinite(bar.close, `bar ${index} close`),
-            requireFinite(bar.volume, `bar ${index} volume`),
-        ]);
+        requireFinite(bar.open, `bar ${index} open`);
+        requireFinite(bar.high, `bar ${index} high`);
+        requireFinite(bar.low, `bar ${index} low`);
+        requireFinite(bar.close, `bar ${index} close`);
+        requireFinite(bar.volume, `bar ${index} volume`);
+        times[index] = timeSec;
     }
-    return { records };
+    return { times };
 }
 
-function findBarIndexByTime(bars: readonly PairFeatureSnapshotBar[], timeSec: number): number | undefined {
+function findBarIndexByTime(barTimes: readonly number[], timeSec: number): number | undefined {
     let low = 0;
-    let high = bars.length - 1;
+    let high = barTimes.length - 1;
     while (low <= high) {
         const middle = low + ((high - low) >> 1);
-        const middleTime = bars[middle]![0];
+        const middleTime = barTimes[middle]!;
         if (middleTime === timeSec) return middle;
         if (middleTime < timeSec) low = middle + 1;
         else high = middle - 1;
@@ -133,7 +130,7 @@ function findBarIndexByTime(bars: readonly PairFeatureSnapshotBar[], timeSec: nu
     return undefined;
 }
 
-function buildTrades(source: PairFeatureSnapshotSource["trades"], bars: readonly PairFeatureSnapshotBar[]): PairFeatureSnapshotTrade[] {
+function buildTrades(source: PairFeatureSnapshotSource["trades"], barTimes: readonly number[]): PairFeatureSnapshotTrade[] {
     return source.map((trade, tradeOrdinal) => {
         if (trade.type !== "long" && trade.type !== "short") {
             throw new Error(`Source snapshot trade ${tradeOrdinal} has an invalid direction.`);
@@ -143,8 +140,8 @@ function buildTrades(source: PairFeatureSnapshotSource["trades"], bars: readonly
         if (entryTimeSec === null || exitTimeSec === null) {
             throw new Error(`Source snapshot trade ${tradeOrdinal} has an invalid time.`);
         }
-        const entryBarIndex = findBarIndexByTime(bars, entryTimeSec);
-        const exitBarIndex = findBarIndexByTime(bars, exitTimeSec);
+        const entryBarIndex = findBarIndexByTime(barTimes, entryTimeSec);
+        const exitBarIndex = findBarIndexByTime(barTimes, exitTimeSec);
         if (entryBarIndex === undefined || exitBarIndex === undefined) {
             throw new Error(`Source snapshot trade ${tradeOrdinal} time does not map to a captured bar.`);
         }
@@ -175,19 +172,19 @@ function buildTrades(source: PairFeatureSnapshotSource["trades"], bars: readonly
 
 function buildEntries(
     source: PairFeatureSnapshotSource["entries"],
-    bars: readonly PairFeatureSnapshotBar[],
+    barTimes: readonly number[],
 ): readonly PairFeatureSnapshotEntry[] {
     for (const [index, entry] of source.entries()) {
         const rowOrdinal = requireInteger(entry[0], `entry ${index} rowOrdinal`);
         const signalBarIndex = requireInteger(entry[1], `entry ${index} signalBarIndex`);
-        if (rowOrdinal < 0 || signalBarIndex < 0 || signalBarIndex >= bars.length) {
+        if (rowOrdinal < 0 || signalBarIndex < 0 || signalBarIndex >= barTimes.length) {
             throw new Error(`Source snapshot entry ${index} has an out-of-range ordinal or bar index.`);
         }
         if (entry[2] !== "long" && entry[2] !== "short") {
             throw new Error(`Source snapshot entry ${index} has an invalid direction.`);
         }
         const signalTimeSec = requireFinite(entry[3], `entry ${index} signalTimeSec`);
-        if (bars[signalBarIndex]![0] !== signalTimeSec) {
+        if (barTimes[signalBarIndex] !== signalTimeSec) {
             throw new Error(`Source snapshot entry ${index} time does not match its signal bar.`);
         }
     }
@@ -196,12 +193,12 @@ function buildEntries(
 
 function buildWarmupEntries(
     source: readonly PairFeatureSnapshotWarmupEntry[],
-    bars: readonly PairFeatureSnapshotBar[],
+    barTimes: readonly number[],
 ): readonly PairFeatureSnapshotWarmupEntry[] {
     let previousSignalBarIndex = -1;
     for (const [index, entry] of source.entries()) {
         const signalBarIndex = requireInteger(entry[0], `warmup entry ${index} signalBarIndex`);
-        if (signalBarIndex < 0 || signalBarIndex >= bars.length || signalBarIndex < previousSignalBarIndex) {
+        if (signalBarIndex < 0 || signalBarIndex >= barTimes.length || signalBarIndex < previousSignalBarIndex) {
             throw new Error(`Source snapshot warmup entry ${index} has an invalid or non-monotonic bar index.`);
         }
         previousSignalBarIndex = signalBarIndex;
@@ -209,11 +206,27 @@ function buildWarmupEntries(
             throw new Error(`Source snapshot warmup entry ${index} has an invalid direction.`);
         }
         const signalTimeSec = requireFinite(entry[2], `warmup entry ${index} signalTimeSec`);
-        if (bars[signalBarIndex]![0] !== signalTimeSec) {
+        if (barTimes[signalBarIndex] !== signalTimeSec) {
             throw new Error(`Source snapshot warmup entry ${index} time does not match its signal bar.`);
         }
     }
     return source;
+}
+
+function jsonNumber(value: number): string {
+    if (!Number.isFinite(value)) throw new Error("Source snapshot bar number must be finite.");
+    // For finite IEEE-754 numbers String() uses the same NumberToString
+    // representation as JSON.stringify, while avoiding six serializer calls
+    // per bar. String(-0) is already the canonical JSON spelling, "0".
+    return String(value);
+}
+
+/** Serialize an already-validated OHLCV bar without allocating a tuple array. */
+function encodeBarLine(
+    bar: PairFeatureSnapshotSource["bars"][number],
+    timeSec: number,
+): string {
+    return `[${jsonNumber(timeSec)},${jsonNumber(bar.open)},${jsonNumber(bar.high)},${jsonNumber(bar.low)},${jsonNumber(bar.close)},${jsonNumber(bar.volume)}]`;
 }
 
 function artifactMetadata(
@@ -315,7 +328,7 @@ export interface TradeLedgerSnapshotWriterOptions {
 }
 
 /**
- * Incremental source-snapshot writer. At most two complete pair payloads are
+ * Incremental source-snapshot writer. At most eight complete pair payloads are
  * retained while their independent gzip/file operations overlap; finalize
  * drains those bounded captures before publishing the manifest.
  */
@@ -404,10 +417,10 @@ export class TradeLedgerSnapshotWriter {
         const rowStart = requireInteger(source.rowStart, "pair rowStart");
         if (rowStart < 0) throw new Error("Source snapshot pair rowStart must not be negative.");
 
-        const { records: bars } = buildBars(source.bars);
-        const trades = buildTrades(source.trades, bars);
-        const entries = buildEntries(source.entries, bars);
-        const warmupEntries = buildWarmupEntries(source.warmupEntries ?? [], bars);
+        const { times: barTimes } = buildBars(source.bars);
+        const trades = buildTrades(source.trades, barTimes);
+        const entries = buildEntries(source.entries, barTimes);
+        const warmupEntries = buildWarmupEntries(source.warmupEntries ?? [], barTimes);
         const expectedRowOrdinal = rowStart;
         for (const [index, entry] of entries.entries()) {
             if (entry[0] !== expectedRowOrdinal + index) {
@@ -425,7 +438,9 @@ export class TradeLedgerSnapshotWriter {
         // async zlib encoder uses Node's worker pool, so source snapshots
         // no longer serialize four compression jobs on the event loop.
         const [barsFile, tradesFile, entriesFile, warmupFile] = await Promise.all([
-            this.writeJsonl(`${prefix}/bars.jsonl.gz`, bars, pairDirectory, true),
+            this.writeJsonl(`${prefix}/bars.jsonl.gz`, source.bars, pairDirectory, false, (record, index) =>
+                encodeBarLine(record as PairFeatureSnapshotSource["bars"][number], barTimes[index]!),
+            ),
             this.writeJsonl(`${prefix}/trades.jsonl.gz`, trades, pairDirectory, false),
             this.writeJsonl(`${prefix}/entries.jsonl.gz`, entries, pairDirectory, true),
             this.writeJsonl(`${prefix}/entries-warmup.jsonl.gz`, warmupEntries, pairDirectory, true),
@@ -433,9 +448,9 @@ export class TradeLedgerSnapshotWriter {
         this.pairs.push({
             ...source.identity,
             pairKey: key,
-            barCount: bars.length,
-            firstTimeSec: bars[0]?.[0] ?? null,
-            lastTimeSec: bars[bars.length - 1]?.[0] ?? null,
+            barCount: barTimes.length,
+            firstTimeSec: barTimes[0] ?? null,
+            lastTimeSec: barTimes[barTimes.length - 1] ?? null,
             tradeCount: trades.length,
             rowStart,
             rowCount: entries.length,
@@ -492,7 +507,9 @@ export class TradeLedgerSnapshotWriter {
             if (nextRowOrdinal !== input.ledgerRowCount) {
                 throw new Error(`Source snapshot covers ${nextRowOrdinal} rows but the ledger has ${input.ledgerRowCount}.`);
             }
-            await verifyLedgerEntries(this.runDir, input.ledgerPath, pairs, input.ledgerRowCount);
+            if (input.ledgerCoverageAlreadyVerified !== true) {
+                await verifyLedgerEntries(this.runDir, input.ledgerPath, pairs, input.ledgerRowCount);
+            }
 
             const ledger = await hashFile(input.ledgerPath);
             const provenance = await hashFile(input.provenancePath);
@@ -550,10 +567,12 @@ export class TradeLedgerSnapshotWriter {
         records: readonly unknown[],
         preparedParent: string,
         flatTuples: boolean,
+        lineEncoder?: (record: unknown, index: number) => string,
     ): Promise<PairFeatureSnapshotArtifact> {
         const encoded = await encodeCanonicalJsonlAsync(records, {
             gzipLevel: SOURCE_SNAPSHOT_GZIP_LEVEL,
             flatTuples,
+            lineEncoder,
         });
         const separator = relativePath.lastIndexOf("/");
         const filename = relativePath.slice(separator + 1);

@@ -28,6 +28,8 @@ export interface CanonicalJsonlEncodeOptions {
     gzipLevel?: number;
     /** Caller guarantees every record is a validated flat scalar tuple. */
     flatTuples?: boolean;
+    /** Encode a record directly as one canonical JSON value. */
+    lineEncoder?: (record: unknown, index: number) => string;
 }
 
 export interface FileHash {
@@ -112,6 +114,18 @@ function canonicalFlatJsonl(records: readonly unknown[]): Buffer {
     return Buffer.from(lines.join(""), "utf8");
 }
 
+function canonicalMappedJsonl(
+    records: readonly unknown[],
+    lineEncoder: (record: unknown, index: number) => string,
+): Buffer {
+    if (records.length === 0) return Buffer.alloc(0);
+    const lines = new Array<string>(records.length);
+    for (let index = 0; index < records.length; index += 1) {
+        lines[index] = `${lineEncoder(records[index], index)}\n`;
+    }
+    return Buffer.from(lines.join(""), "utf8");
+}
+
 function sha256(data: Buffer): string {
     return createHash("sha256").update(data).digest("hex");
 }
@@ -144,7 +158,11 @@ export async function encodeCanonicalJsonlAsync(
     records: readonly unknown[],
     options: CanonicalJsonlEncodeOptions = {},
 ): Promise<EncodedCanonicalJsonl> {
-    const uncompressed = options.flatTuples ? canonicalFlatJsonl(records) : canonicalJsonl(records);
+    const uncompressed = options.lineEncoder
+        ? canonicalMappedJsonl(records, options.lineEncoder)
+        : options.flatTuples
+            ? canonicalFlatJsonl(records)
+            : canonicalJsonl(records);
     const compressed = await gzipAsync(uncompressed, { level: options.gzipLevel ?? 6 });
     return {
         compressed,
