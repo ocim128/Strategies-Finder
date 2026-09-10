@@ -148,9 +148,9 @@ const BATCH_ACTIVE_SERVER_RUN_STORAGE = {
 } as const;
 
 /**
- * Trade-ledger export toggle + output folder (Batch menu). Persisted across
- * reloads and threaded into the `/api/batch-backtest/run` body so the
- * server-side plugin writes the per-run ledger folder. These are BATCH-RUN
+ * Trade-ledger export controls (Batch menu). Toggle, folder, and horizons are
+ * persisted across reloads and threaded into the `/api/batch-backtest/run`
+ * body so the server-side plugin writes the per-run ledger folder. These are BATCH-RUN
  * options, not backtest settings — deliberately NOT registered in
  * BACKTEST_SETTINGS_DOM_CONTRACTS (the settings-manager round-trips that
  * contract through engine settings, and its "string" parser uppercases
@@ -1005,14 +1005,14 @@ export class BatchBacktestService {
         tradeGateOptions: BatchTradeGateOptions,
         onTerminal: (outcome: BatchBenchmarkRunOutcome) => void,
     ): Promise<void> {
-        // The same two UI fields are sent with every ledger-enabled Batch run;
-        // OPEN_SCORE USD is a later, independent request that reads them too.
+        // The saved-ledger date fields define the signal-time window for this
+        // run. OPEN_SCORE USD has its own independent date fields below.
         const tradeLedgerBaseOptions = this.readTradeLedgerOptions(dom);
         const tradeLedgerOptions = tradeLedgerBaseOptions.enabled
             ? {
                 ...tradeLedgerBaseOptions,
-                fromSec: parseBatchDateInputSec(dom.batchBacktestOpenScoreUsdFrom.value, false, "From"),
-                toSec: parseBatchDateInputSec(dom.batchBacktestOpenScoreUsdTo.value, true, "To"),
+                fromSec: parseBatchDateInputSec(dom.batchBacktestTradeLedgerFrom.value, false, "Ledger From"),
+                toSec: parseBatchDateInputSec(dom.batchBacktestTradeLedgerTo.value, true, "Ledger To"),
             }
             : tradeLedgerBaseOptions;
         // Audit Finding 5: generate a per-run id and send it on the /run body

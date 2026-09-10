@@ -76,6 +76,20 @@ function compareCodeUnits(a: string, b: string): number {
     return a < b ? -1 : a > b ? 1 : 0;
 }
 
+function compareSnapshotPairs(
+    left: PairFeatureSnapshotPairManifest,
+    right: PairFeatureSnapshotPairManifest,
+): number {
+    const byRowStart = left.rowStart - right.rowStart;
+    if (byRowStart !== 0) return byRowStart;
+    // Empty partitions do not advance the ledger ordinal. Put them before a
+    // row-bearing partition at the same offset so the contiguous-row check is
+    // deterministic and accepts both partitions.
+    if (left.rowCount === 0 && right.rowCount !== 0) return -1;
+    if (left.rowCount !== 0 && right.rowCount === 0) return 1;
+    return compareCodeUnits(left.pairKey, right.pairKey);
+}
+
 function pairKey(identity: PairFeatureSnapshotIdentity): string {
     const canonicalIdentity = canonicalJson([
         requireString(identity.pair, "pair identity"),
@@ -496,7 +510,7 @@ export class TradeLedgerSnapshotWriter {
         if (!input.ledgerComplete) return { complete: false, error: null, manifestSha256: null };
 
         try {
-            const pairs = [...this.pairs].sort((a, b) => a.rowStart - b.rowStart || compareCodeUnits(a.pairKey, b.pairKey));
+            const pairs = [...this.pairs].sort(compareSnapshotPairs);
             let nextRowOrdinal = 0;
             for (const pair of pairs) {
                 if (pair.rowStart !== nextRowOrdinal) {

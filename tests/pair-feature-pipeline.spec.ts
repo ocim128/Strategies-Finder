@@ -1,9 +1,11 @@
 import { expect } from "chai";
+import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { hashFile } from "../lib/pair-features/artifact-io";
+import { validatePairFeatureSnapshot } from "../lib/pair-features/generate";
 import { computePairFeaturePackScales } from "../lib/pair-selection/scales";
 import { ensurePairFeatures } from "../lib/pair-selection/feature-access";
 import { createPairFeatureFixture } from "./fixtures/pair-features/fixture";
@@ -31,6 +33,21 @@ after(async () => {
 });
 
 describe("automatic pair feature preparation", () => {
+    it("reuses a validated source snapshot and invalidates it after a source edit", async () => {
+        const root = await mkdtemp(path.join(os.tmpdir(), "pair-feature-pipeline-validation-cache-"));
+        roots.push(root);
+        const fixture = await createPairFeatureFixture(root);
+        const first = await validatePairFeatureSnapshot(root);
+        const cached = await validatePairFeatureSnapshot(root, { verifySourceRecords: false });
+        assert.strictEqual(cached, first);
+
+        await appendFile(path.join(root, "source-snapshot", "pairs", fixture.pairKey, "bars.jsonl.gz"), Buffer.from("changed"));
+        await assert.rejects(
+            () => validatePairFeatureSnapshot(root, { verifySourceRecords: false }),
+            /do not match source-snapshot/,
+        );
+    });
+
     it("uses one captured folder for overlapping requirement sets and derives pack scales", async () => {
         const root = await mkdtemp(path.join(os.tmpdir(), "pair-feature-pipeline-"));
         roots.push(root);

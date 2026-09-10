@@ -286,6 +286,7 @@ async function validateColumnPresence(
     definition: PairFeatureDefinition,
     pair: PairFeatureColumnPairManifest,
     decodedColumns: Map<string, DecodedColumn>,
+    kinds: readonly ("values" | "valid" | "observations")[],
 ): Promise<void> {
     if (pair.pairKey.length === 0 || pair.rowCount < 0 || !Number.isSafeInteger(pair.rowCount)) throw new Error(`Invalid ${definition.id} pair column row count.`);
     const expected = {
@@ -293,7 +294,7 @@ async function validateColumnPresence(
         valid: expectedColumnPath(definition, pair.pairKey, "valid"),
         observations: expectedColumnPath(definition, pair.pairKey, "observations"),
     } as const;
-    for (const kind of ["values", "valid", "observations"] as const) {
+    for (const kind of kinds) {
         const artifact = pair[kind];
         if (artifact.path !== expected[kind] || artifact.bytes < 0 || artifact.uncompressedBytes < 0) throw new Error(`Invalid ${definition.id} ${kind} column mapping.`);
         const cached = decodedColumns.get(artifact.path);
@@ -385,10 +386,22 @@ async function readPack(
             const relevantFeature = relevant.some((item) => item.parentId === feature.id);
             if (!relevantFeature) continue;
             validatePairRows(snapshot.manifest.pairs, definition, feature.pairs);
+            const kinds = new Set<"values" | "valid" | "observations">();
+            for (const item of relevant) {
+                if (item.parentId !== feature.id) continue;
+                for (const requestedId of item.requestedIds) {
+                    if (requestedId === feature.id) {
+                        kinds.add("values");
+                        kinds.add("valid");
+                    } else if (requestedId === `${feature.id}_n`) {
+                        kinds.add("observations");
+                    }
+                }
+            }
             await forEachColumnPair(feature.pairs, async (pair) => {
                 throwIfAborted(signal);
                 try {
-                    await validateColumnPresence(folder, definition, pair, decodedColumns);
+                    await validateColumnPresence(folder, definition, pair, decodedColumns, [...kinds]);
                 } catch (error) {
                     if (isMissing(error)) {
                         throw new Error(missingPackCommand(folder, relevant.filter((item) => item.parentId === feature.id)));

@@ -46,10 +46,30 @@ const SOURCE_MANIFEST_PATH = "source-snapshot/manifest.json";
 const LEDGER_PATH = "ledger.jsonl";
 const SOURCE_PAIR_READ_CONCURRENCY = 8;
 const FEATURE_PAIR_GENERATION_CONCURRENCY = 8;
-const FEATURE_GENERATION_WORKER_THRESHOLD_ROWS = 100_000;
+// The generation workers are worthwhile once a run has enough rows spread
+// over multiple pairs. The old 100k threshold left normal 4H ledgers such as
+// the 51k-row selection-rules folders on the serial path.
+const FEATURE_GENERATION_WORKER_THRESHOLD_ROWS = 50_000;
 const FEATURE_GENERATION_MAX_WORKERS = 20;
 const pairGenerationTails = new Map<string, Promise<void>>();
 export const SOURCE_REQUIRED_MESSAGE = "source snapshot required; this folder is unchanged";
+
+interface SnapshotFileStamp {
+    path: string;
+    bytes: number;
+    mtimeMs: number;
+    ctimeMs: number;
+}
+
+interface SnapshotValidationCacheEntry {
+    manifestHash: string;
+    level: "hash-only" | "full";
+    snapshot: ValidatedPairFeatureSnapshot;
+    files: readonly SnapshotFileStamp[];
+}
+
+const SNAPSHOT_VALIDATION_CACHE_MAX_ENTRIES = 4;
+const snapshotValidationCache = new Map<string, SnapshotValidationCacheEntry>();
 
 export interface PairFeatureGenerationOptions {
     signal?: AbortSignal;
@@ -141,8 +161,108 @@ function isMissing(error: unknown): boolean {
     return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
 }
 
+function snapshotArtifactPaths(manifest: PairFeatureSnapshotManifest): string[] {
+    const paths = new Set<string>([LEDGER_PATH, "provenance.json", "summary.json"]);
+    if (manifest.ranksSha256 !== null) paths.add("signal-ranks.jsonl");
+    for (const pair of manifest.pairs) for (const artifact of Object.values(pair.files)) paths.add(artifact.path);
+    return [...paths].sort(compareCodeUnits);
+}
+
+async function captureSnapshotFileStamps(
+    runDir: string,
+    manifest: PairFeatureSnapshotManifest,
+): Promise<SnapshotFileStamp[]> {
+    const paths = snapshotArtifactPaths(manifest);
+    const stamps: SnapshotFileStamp[] = [];
+    for (let start = 0; start < paths.length; start += SOURCE_PAIR_READ_CONCURRENCY) {
+        const batch = paths.slice(start, start + SOURCE_PAIR_READ_CONCURRENCY);
+        const result = await Promise.all(batch.map(async (relativePath): Promise<SnapshotFileStamp> => {
+            const absolutePath = await safeArtifactPath(runDir, relativePath);
+            const stats = await lstat(absolutePath);
+            if (!stats.isFile() || stats.isSymbolicLink() || (stats as { isReparsePoint?: () => boolean }).isReparsePoint?.()) {
+                throw new Error(`${relativePath} is not a regular file.`);
+            }
+            return {
+                path: relativePath,
+                bytes: stats.size,
+                mtimeMs: stats.mtimeMs,
+                ctimeMs: stats.ctimeMs,
+            };
+        }));
+        stamps.push(...result);
+    }
+    return stamps;
+}
+
+async function snapshotFilesUnchanged(entry: SnapshotValidationCacheEntry): Promise<boolean> {
+    for (let start = 0; start < entry.files.length; start += SOURCE_PAIR_READ_CONCURRENCY) {
+        const batch = entry.files.slice(start, start + SOURCE_PAIR_READ_CONCURRENCY);
+        const result = await Promise.all(batch.map(async (file) => {
+            try {
+                const stats = await lstat(await safeArtifactPath(entry.snapshot.folder, file.path));
+                return stats.isFile()
+                    && !stats.isSymbolicLink()
+                    && (stats as { isReparsePoint?: () => boolean }).isReparsePoint?.() !== true
+                    && stats.size === file.bytes
+                    && stats.mtimeMs === file.mtimeMs
+                    && stats.ctimeMs === file.ctimeMs;
+            } catch (error) {
+                if (isMissing(error)) return false;
+                throw error;
+            }
+        }));
+        if (result.some((unchanged) => !unchanged)) return false;
+    }
+    return true;
+}
+
+async function readCachedSnapshot(
+    runDir: string,
+    manifestHash: string,
+    requiredLevel: "hash-only" | "full",
+): Promise<ValidatedPairFeatureSnapshot | null> {
+    const cached = snapshotValidationCache.get(runDir);
+    if (!cached || cached.manifestHash !== manifestHash || (requiredLevel === "full" && cached.level !== "full")) return null;
+    if (!await snapshotFilesUnchanged(cached)) {
+        snapshotValidationCache.delete(runDir);
+        return null;
+    }
+    snapshotValidationCache.delete(runDir);
+    snapshotValidationCache.set(runDir, cached);
+    return cached.snapshot;
+}
+
+async function cacheValidatedSnapshot(
+    runDir: string,
+    manifestHash: string,
+    level: "hash-only" | "full",
+    snapshot: ValidatedPairFeatureSnapshot,
+): Promise<void> {
+    const previous = snapshotValidationCache.get(runDir);
+    const effectiveLevel = previous?.manifestHash === manifestHash && previous.level === "full" ? "full" : level;
+    const files = await captureSnapshotFileStamps(runDir, snapshot.manifest);
+    snapshotValidationCache.delete(runDir);
+    snapshotValidationCache.set(runDir, { manifestHash, level: effectiveLevel, snapshot, files });
+    while (snapshotValidationCache.size > SNAPSHOT_VALIDATION_CACHE_MAX_ENTRIES) {
+        const oldest = snapshotValidationCache.keys().next().value;
+        if (oldest === undefined) break;
+        snapshotValidationCache.delete(oldest);
+    }
+}
+
 function compareCodeUnits(left: string, right: string): number {
     return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function compareSnapshotPairs(
+    left: PairFeatureSnapshotPairManifest,
+    right: PairFeatureSnapshotPairManifest,
+): number {
+    const byRowStart = left.rowStart - right.rowStart;
+    if (byRowStart !== 0) return byRowStart;
+    if (left.rowCount === 0 && right.rowCount !== 0) return -1;
+    if (left.rowCount !== 0 && right.rowCount === 0) return 1;
+    return compareCodeUnits(left.pairKey, right.pairKey);
 }
 
 function requireFinite(value: unknown, label: string): number {
@@ -450,6 +570,9 @@ export async function validatePairFeatureSnapshot(
     if (manifest.complete !== true) throw new Error(SOURCE_REQUIRED_MESSAGE);
     if (manifest.formatVersion !== 1 || manifest.writerRevision !== 1) throw new Error("Unsupported source snapshot format.");
     const manifestHash = hashBytes(rawManifest);
+    const requiredValidationLevel = options.verifySourceRecords === false ? "hash-only" : "full";
+    const cachedSnapshot = await readCachedSnapshot(runDir, manifestHash, requiredValidationLevel);
+    if (cachedSnapshot) return cachedSnapshot;
     const ledgerPath = await safeArtifactPath(runDir, LEDGER_PATH);
     const ledgerHash = await hashFile(ledgerPath);
     if (ledgerHash.sha256 !== manifest.ledgerSha256 || ledgerHash.bytes !== manifest.ledgerBytes) {
@@ -468,8 +591,7 @@ export async function validatePairFeatureSnapshot(
         if (!Number.isSafeInteger(pair.rowStart) || !Number.isSafeInteger(pair.rowCount) || pair.rowStart !== expectedRowStart || pair.rowCount < 0) {
             throw new Error(`source snapshot row partitions are not contiguous at ${pair.pairKey}.`);
         }
-        if (previousPair && (previousPair.rowStart > pair.rowStart
-            || (previousPair.rowStart === pair.rowStart && compareCodeUnits(previousPair.pairKey, pair.pairKey) > 0))) {
+        if (previousPair && compareSnapshotPairs(previousPair, pair) > 0) {
             throw new Error("source snapshot pairs are not sorted by rowStart and pairKey.");
         }
         previousPair = pair;
@@ -480,7 +602,9 @@ export async function validatePairFeatureSnapshot(
         for (const pair of manifest.pairs) validatePairMetadata(pair);
         if (expectedRowStart !== manifest.ledgerRowCount) throw new Error("source snapshot row count does not cover ledger.jsonl.");
         await validateSourceArtifactHashes(runDir, manifest.pairs);
-        return { folder: runDir, manifest, sourceSnapshotSha256: manifestHash };
+        const snapshot = { folder: runDir, manifest, sourceSnapshotSha256: manifestHash };
+        await cacheValidatedSnapshot(runDir, manifestHash, "hash-only", snapshot);
+        return snapshot;
     }
 
     const ledgerIterator = iterateJsonlLines(ledgerPath)[Symbol.asyncIterator]();
@@ -513,7 +637,9 @@ export async function validatePairFeatureSnapshot(
         await ledgerIterator.return?.(undefined);
     }
     if (expectedRowStart !== manifest.ledgerRowCount) throw new Error("source snapshot row count does not cover ledger.jsonl.");
-    return { folder: runDir, manifest, sourceSnapshotSha256: manifestHash };
+    const snapshot = { folder: runDir, manifest, sourceSnapshotSha256: manifestHash };
+    await cacheValidatedSnapshot(runDir, manifestHash, "full", snapshot);
+    return snapshot;
 }
 
 export async function validatePairFeatureSnapshotForGeneration(folder: string): Promise<ValidatedPairFeatureSnapshot> {

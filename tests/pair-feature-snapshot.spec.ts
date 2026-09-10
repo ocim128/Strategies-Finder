@@ -10,8 +10,10 @@ import {
     canonicalJson,
     encodeCanonicalJsonl,
     encodeCanonicalJsonlAsync,
+    hashBytes,
     safeArtifactPath,
 } from "../lib/pair-features/artifact-io";
+import { validatePairFeatureSnapshot } from "../lib/pair-features/generate";
 import {
     TradeLedgerSnapshotWriter,
 } from "../lib/batch-backtest/trade-ledger-snapshot-writer";
@@ -379,6 +381,40 @@ describe("pair feature snapshot artifact I/O", () => {
         });
         expect(repeatedResult.complete).to.equal(false);
         expect(existsSync(path.join(repeatedRoot, "source-snapshot/manifest.json"))).to.equal(false);
+    });
+
+    it("accepts an empty partition tied with the next row-bearing partition", async () => {
+        const root = makeRoot();
+        await writeExperimentFiles(root, 1);
+        await writeFile(path.join(root, "ledger.jsonl"), `${JSON.stringify({ pair: "B+Q", baseSymbol: "B", quoteSymbol: "Q", direction: "long", signalTime: BASE_TIME + HOUR, signalBarIndex: 1 })}\n`, "utf8");
+        const writer = new TradeLedgerSnapshotWriter({ runDir: root });
+
+        // Both captures begin at ordinal 0. Force the empty partition to have
+        // the later hash so the old rowStart+pairKey ordering put it after the
+        // row-bearing partition and rejected an otherwise valid snapshot.
+        const empty = { pair: "A+Q", baseSymbol: "A", quoteSymbol: "Q" };
+        const row = { pair: "B+Q", baseSymbol: "B", quoteSymbol: "Q" };
+        const pairKeyFor = (identity: typeof empty): string => hashBytes(Buffer.from(canonicalJson([
+            identity.pair,
+            identity.baseSymbol,
+            identity.quoteSymbol,
+        ]), "utf8"));
+        expect(pairKeyFor(empty) > pairKeyFor(row)).to.equal(true);
+
+        await writer.capturePair({ ...snapshotSource({ identity: empty, entries: [], trades: [], rowStart: 0 }) });
+        await writer.capturePair({ ...snapshotSource({ identity: row, entries: [[0, 1, "long", BASE_TIME + HOUR]], rowStart: 0 }) });
+        const result = await writer.finalize({
+            ledgerComplete: true,
+            ledgerRowCount: 1,
+            ledgerPath: path.join(root, "ledger.jsonl"),
+            provenancePath: path.join(root, "provenance.json"),
+            summaryPath: path.join(root, "summary.json"),
+            ranksPath: path.join(root, "signal-ranks.jsonl"),
+        });
+        expect(result.complete).to.equal(true);
+        const manifest = JSON.parse(readFileSync(path.join(root, "source-snapshot/manifest.json"), "utf8")) as any;
+        expect(manifest.pairs.map((item: any) => item.pair)).to.deep.equal(["A+Q", "B+Q"]);
+        await validatePairFeatureSnapshot(root);
     });
 
     it("keeps a complete legacy ledger checkable when snapshot I/O or mappings fail", async () => {

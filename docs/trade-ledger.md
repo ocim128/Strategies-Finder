@@ -16,17 +16,24 @@ candidates — the replay checker replaced that approach entirely.
 
 ## Batch menu control
 
-- **Save trade ledger** (`batchBacktestTradeLedgerToggle`, default OFF) and **Folder**
-  (`batchBacktestTradeLedgerFolder`, default `archive/mining-ledger`) live in the Batch
-  tab, under the Balanced Generator. The control requires **server-side mode** (the
-  Vite dev/preview server), which is Batch's only execution path. The folder is
-  resolved relative to the app root (`server.config.root`).
-- Both values persist across reloads via `lib/persisted-json.ts`
+- **Save trade ledger** (`batchBacktestTradeLedgerToggle`, default OFF), **Folder**
+  (`batchBacktestTradeLedgerFolder`, default `archive/mining-ledger`), and **Horizon bars**
+  (`batchBacktestTradeLedgerHorizons`) live in the Batch tab, under the Balanced
+  Generator. The control requires **server-side mode** (the Vite dev/preview server),
+  which is Batch's only execution path. The folder is resolved relative to the app root
+  (`server.config.root`).
+- The toggle, folder, and horizons persist across reloads via `lib/persisted-json.ts`
   (`playground_batch_backtest_trade_ledger`, schema `batch_backtest.trade_ledger`, v1).
+- **Ledger From** (`batchBacktestTradeLedgerFrom`) and **Ledger To**
+  (`batchBacktestTradeLedgerTo`) are optional inclusive signal-time filters for the
+  saved ledger. Enter dates as `YYYY-MM-DD`; blank means open-ended. They apply to the
+  new ledger run only and are intentionally not persisted. The resolved window is
+  recorded as `ledgerWindow` in `provenance.json` and `summary.json`.
 - The request-body field is built by `buildBatchRunLedgerBodyField`
   (`lib/batch-backtest/trade-ledger-wire.ts`, dependency-free so the lazy browser chunk
   does not import the engine graph): `{}` when OFF, `{ tradeLedger: { enabled: true,
-  folder } }` when ON — locked by an HTTP-level route test plus a wire unit test.
+  folder, ledgerHorizons, and optional fromSec/toSec }` when ON — locked by an HTTP-level
+  route test plus a wire unit test.
 - These are BATCH-RUN options, deliberately **not** registered in
   `BACKTEST_SETTINGS_DOM_CONTRACTS`: that contract is round-tripped wholesale by
   `lib/settings-manager.ts` into engine settings / `AppSettings.backtestSettings`, and
@@ -35,10 +42,9 @@ candidates — the replay checker replaced that approach entirely.
   (`BATCH_BACKTEST_REQUIRED_IDS` in `lib/batch-backtest/batch-backtest-dom.ts`), which
   `tests/feature-dom-contracts.spec.ts` enforces against the partial like every other
   Batch id.
-- The Batch tab's From / To fields scope both the later OPEN_SCORE USD replay and
-  saved ledger rows. Blank bounds are open-ended; the resolved inclusive signal-time
-  window is recorded as ledgerWindow: { fromSec, toSec } in provenance.json and
-  summary.json.
+- The separate OPEN_SCORE USD From / To fields scope only the later OPEN_SCORE USD
+  replay. Saved-ledger dates do not alter that analysis window, and OPEN_SCORE dates do
+  not alter the saved ledger window. Blank bounds remain open-ended for both controls.
 
 ## Ledger Rule Sweep
 

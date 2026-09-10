@@ -80,6 +80,14 @@
                     <label class="batch-field-label" for="batchBacktestTradeLedgerHorizons">Horizon bars</label>
                     <input class="batch-field-input" id="batchBacktestTradeLedgerHorizons" type="text" value="24" inputmode="numeric" spellcheck="false">
                 </div>
+                <div class="batch-field batch-field--inline" title="Restrict saved ledger signal rows to this date onward (YYYY-MM-DD). Leave blank for full history.">
+                    <label class="batch-field-label" for="batchBacktestTradeLedgerFrom">From</label>
+                    <input class="batch-field-input batch-field-input--auto" id="batchBacktestTradeLedgerFrom" type="date">
+                </div>
+                <div class="batch-field batch-field--inline" title="Restrict saved ledger signal rows through this date (YYYY-MM-DD). Leave blank for full history.">
+                    <label class="batch-field-label" for="batchBacktestTradeLedgerTo">To</label>
+                    <input class="batch-field-input batch-field-input--auto" id="batchBacktestTradeLedgerTo" type="date">
+                </div>
             </div>
             <div class="batch-balanced-generator-controls">
                 <div class="batch-field batch-field--inline" title="Apply trusted EDGE-CANDIDATE rules as an OR gate before new entries. Server-side only.">
@@ -216,11 +224,11 @@
                 OPEN_SCORE USD
             </button>
             <div class="batch-open-score-usd-config" aria-label="OPEN_SCORE USD configuration">
-                <div class="batch-field batch-field--inline" title="Scope OPEN_SCORE USD replay and saved trade-ledger rows from this date onward. Leave blank for open-ended history.">
+                <div class="batch-field batch-field--inline" title="Restrict OPEN_SCORE USD decision events to this date onward (YYYY-MM-DD). Leave blank for full history.">
                     <label class="batch-field-label" for="batchBacktestOpenScoreUsdFrom">From</label>
                     <input class="batch-field-input batch-field-input--auto" id="batchBacktestOpenScoreUsdFrom" type="date">
                 </div>
-                <div class="batch-field batch-field--inline" title="Scope OPEN_SCORE USD replay and saved trade-ledger rows through this date. Leave blank for open-ended history.">
+                <div class="batch-field batch-field--inline" title="Restrict OPEN_SCORE USD decision events through this date (YYYY-MM-DD). Leave blank for full history.">
                     <label class="batch-field-label" for="batchBacktestOpenScoreUsdTo">To</label>
                     <input class="batch-field-input batch-field-input--auto" id="batchBacktestOpenScoreUsdTo" type="date">
                 </div>

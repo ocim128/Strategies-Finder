@@ -72,6 +72,17 @@ interface ArtifactMeta {
     uncompressedSha256: string;
 }
 
+function compareRecoveredPairs(
+    left: Pick<PairGroup, "rowStart" | "rowCount" | "pairKey">,
+    right: Pick<PairGroup, "rowStart" | "rowCount" | "pairKey">,
+): number {
+    const byRowStart = left.rowStart - right.rowStart;
+    if (byRowStart !== 0) return byRowStart;
+    if (left.rowCount === 0 && right.rowCount !== 0) return -1;
+    if (left.rowCount !== 0 && right.rowCount === 0) return 1;
+    return left.pairKey < right.pairKey ? -1 : left.pairKey > right.pairKey ? 1 : 0;
+}
+
 function fail(message: string): never {
     console.error(`snapshot-recover: ${message}`);
     process.exit(1);
@@ -253,7 +264,13 @@ async function main(): Promise<void> {
         fail(`not a trade-ledger run folder: ${runDir}`);
     }
     const manifestTarget = path.join(runDir, MANIFEST_PATH);
-    if (existsSync(manifestTarget)) fail("manifest.json already exists — nothing to recover.");
+    // A prior recovery may have published a manifest even though the original
+    // run left source-snapshot/error.json. Allow that known-invalid state to be
+    // replaced after the recovery ordering rules are corrected; preserve the
+    // immutability fence for ordinary completed snapshots.
+    if (existsSync(manifestTarget) && !existsSync(path.join(runDir, "source-snapshot/error.json"))) {
+        fail("manifest.json already exists — nothing to recover.");
+    }
 
     const summary = JSON.parse(readFileSync(path.join(runDir, "summary.json"), "utf8")) as { ledgerComplete?: boolean; cancelled?: boolean };
     if (summary.cancelled) fail("run was cancelled — re-run the batch instead of recovering.");
@@ -373,7 +390,8 @@ async function main(): Promise<void> {
             rowStart: group.rowStart,
             rowCount: group.rowCount,
             files: artifacts[index]!.files,
-        }));
+        }))
+        .sort(compareRecoveredPairs);
 
     const manifest = {
         formatVersion: 1,

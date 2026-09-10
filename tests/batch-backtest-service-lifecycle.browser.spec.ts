@@ -760,6 +760,50 @@ describe("BatchBacktestService analysis lifecycle", () => {
         svc().runInFlight = false;
     });
 
+    it("uses dedicated ledger dates and keeps OPEN_SCORE dates independent", async () => {
+        const dom = setupForAnalysis();
+        dom.batchBacktestTradeLedgerToggle.checked = true;
+        dom.batchBacktestTradeLedgerFolder.value = "archive/mining-ledger";
+        dom.batchBacktestTradeLedgerHorizons.value = "12";
+        dom.batchBacktestTradeLedgerFrom.value = "2025-01-01";
+        dom.batchBacktestTradeLedgerTo.value = "2025-12-31";
+        dom.batchBacktestOpenScoreUsdFrom.value = "2026-09-10";
+        dom.batchBacktestOpenScoreUsdTo.value = "2026-09-10";
+        let requestBody: any = null;
+
+        await withMockFetch((_url, init) => {
+            requestBody = JSON.parse(String(init?.body ?? "{}"));
+            return { ok: false, status: 400, text: "test stop before server run" };
+        }, async () => {
+            try {
+                await svc().runBatchServer(
+                    dom,
+                    0,
+                    ["A+B"],
+                    "fixture_strategy",
+                    {},
+                    {},
+                    {},
+                    "4h",
+                    "fixture-fingerprint",
+                    { enabled: false, folderId: "", ruleIds: [] },
+                    () => undefined,
+                );
+            } catch {
+                // The mocked 400 stops before execution; the request is the
+                // behavior under test.
+            }
+        });
+
+        expect(requestBody.tradeLedger).to.deep.equal({
+            enabled: true,
+            folder: "archive/mining-ledger",
+            ledgerHorizons: [12],
+            fromSec: 1735689600,
+            toSec: 1767225599,
+        });
+    });
+
     it("reconcileStatusRows dedupes a streamed prefix + a recovery page (audit status-row-recovery finding)", () => {
         // Intent being locked (AGENTS.md rule 8): the shared helper is the
         // single source of truth for accepting status rows. The previous

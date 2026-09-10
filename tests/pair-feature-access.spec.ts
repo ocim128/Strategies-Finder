@@ -162,6 +162,7 @@ describe("pair feature access", () => {
     it("decodes exact values/counts and injects only the active rule columns", async () => {
         const folder = await createLoadableFolder();
         const prepared = await ensurePairFeatures(folder, [spreadRule, tradeRule]);
+        expect([...prepared.decodedColumns.keys()].some((key) => key.endsWith("observations.u32le.gz"))).to.equal(true);
         const spread = await activatePairFeatures(prepared, spreadRule);
         expect(spread).to.not.equal(null);
         expect(spread!.readCandidateFeatures(0)).to.deep.equal({ [spreadId]: null });
@@ -181,6 +182,7 @@ describe("pair feature access", () => {
     it("keeps original ordinals and feature history when date filters are applied", async () => {
         const folder = await createLoadableFolder();
         const prepared = await ensurePairFeatures(folder, [spreadRule]);
+        expect([...prepared.decodedColumns.keys()].some((key) => key.endsWith("observations.u32le.gz"))).to.equal(false);
         const active = await activatePairFeatures(prepared, spreadRule);
         const archive = await loadPairSelectionArchive(folder);
         expect(filterEvents(archive, null, null).events).to.have.length(3);
