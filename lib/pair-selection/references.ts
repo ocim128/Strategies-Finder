@@ -11,6 +11,9 @@ export const reference_alphabetical: PairSelectionRule = {
     description: "Selects the first candidate by pair, then direction.",
     defaultParams: {},
     paramLabels: {},
+    metadata: {
+        sourceFiles: ["lib/pair-selection/references.ts"],
+    },
     score: () => 0,
     tieBreak(left, right) {
         return compareText(left.pair, right.pair) || compareText(left.direction, right.direction);
@@ -24,5 +27,8 @@ export const reference_loudest_atr: PairSelectionRule = {
     description: "Selects the candidate with the highest feat_atrPct.",
     defaultParams: {},
     paramLabels: {},
+    metadata: {
+        sourceFiles: ["lib/pair-selection/references.ts"],
+    },
     score: (candidate) => candidate.feat_atrPct ?? Number.NEGATIVE_INFINITY,
 };

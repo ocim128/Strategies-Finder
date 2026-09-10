@@ -15,6 +15,7 @@ import {
 } from "../lib/pair-selection/feature-access";
 import { loadPairSelectionArchive, tallyPairSelectionRule } from "../lib/pair-selection/tally";
 import { runSelectionRulesJob } from "../lib/selection-rules/job";
+import { reference_alphabetical, reference_loudest_atr } from "../lib/pair-selection/references";
 import {
     createPairFeatureFixture,
     FIXTURE_BASE,
@@ -359,6 +360,32 @@ describe("pair feature access", () => {
         expect(events.some((event) => event.startsWith("Preparing pair features (spread:"))).to.equal(true);
         const checks = await readdir(path.join(folder, "feature-packs", "checks"));
         expect(checks).to.have.length(1);
+    });
+
+    it("completes a feature run that also selects both reference rules", async () => {
+        const folder = await createLoadableFolder();
+        const events: string[] = [];
+        const controller = new AbortController();
+        await runSelectionRulesJob({
+            runId: "feature-and-reference-job",
+            folderPath: folder,
+            horizonBars: 24,
+            rules: [spreadRule, reference_alphabetical, reference_loudest_atr],
+            signal: controller.signal,
+            emit: (event) => { events.push(event.type); },
+            update: () => undefined,
+        });
+        expect(events.at(-1)).to.equal("done");
+        const checks = await readdir(path.join(folder, "feature-packs", "checks"));
+        expect(checks).to.have.length(1);
+        const receipt = JSON.parse(await readFile(path.join(folder, "feature-packs", "checks", checks[0]!), "utf8")) as {
+            rules: readonly { key: string }[];
+        };
+        expect(receipt.rules.map((rule) => rule.key)).to.deep.equal([
+            spreadRule.key,
+            reference_alphabetical.key,
+            reference_loudest_atr.key,
+        ]);
     });
 
     it("emits one detail payload per rule/horizon without touching the streamed events", async () => {
