@@ -205,3 +205,49 @@ dominant pair (or dominant leg) is excluded is a concentration bet.
 Batch discipline lives in archive/selection-mining-plan.md and
 archive/pair-selection/idea-log.txt (append-only; one line per idea,
 failures included). Known gaps are tracked in the plan's campaign status.
+
+## Detailed selection view
+
+Each result row in the Selection Rules menu has a `Details` action backed by
+`GET /api/selection-rules/details` (local-only; requires `runId`, `ruleKey`,
+`horizonBars`; `offset`/`limit` paginate, default page 250, hard maximum
+500). The view shows the latest selection, a newest-first selection history,
+and pair+direction performance. It is a research inspection surface only:
+details never appear in report lines, Copy Report, Copy Diagnostics, stream
+events, status snapshots, or the persisted last-run JSON.
+
+Detail rows are compact scalars per event (signal UTC time, pair, legs,
+direction, score, tie count, candidate count, status, selected return,
+`othersMean`, delta). The archive keeps horizon PnL only, so there are no
+entry/exit timestamps, and rows always use the rule's default parameters
+(the job performs no parameter sweep). Statuses:
+
+- `COMPLETE` — every candidate has a finite horizon outcome. A detail-only
+  probe can still be excluded from summary aggregates when a required
+  reference pick is unavailable.
+- `SELECTED_OUTCOME_KNOWN_POOL_INCOMPLETE` — the selected candidate's
+  outcome is finite but at least one other candidate's is unavailable; the
+  selected return is shown while `othersMean` and delta are `n/a`.
+- `PENDING` — the selected candidate's outcome is unavailable.
+
+The latest selection is the most recent multi-candidate event where the rule
+returned a pick. Single-candidate events and rule-rejects-all events are
+skipped. Recent gated events are reached by a detail-only backward probe
+capped at `SELECTION_RULES_DETAIL_PENDING_PROBE_MAX_EVENTS = 64`
+multi-candidate events. Every rule pick found in that bounded tail is shown,
+so multiple ongoing selections remain visible; the probe never rescores the
+full censored history and never touches `picks`, `samples`, summary
+comparisons, report lines, `scoredCandidates`, or `unscoredEvents` (probe work
+is counted separately in the detail payload).
+
+Server retention is process-lifetime state keyed `ruleKey|horizonBars`:
+at most `SELECTION_RULES_DETAIL_HISTORY_CAP = 2000` newest rows per key
+(older rows are dropped and surfaced as `historyTruncated`), while pair
+performance aggregates are computed by the tally over ALL completed eligible
+events, so they stay exact even when history is truncated. `selectedCount`
+also includes a detail-only probe row when one is present; completed metrics
+exclude that probe. Details are
+cleared when a new run is installed; cancelled/fatal runs keep details for
+already-tallied rules, matching their retained partial summary. A Vite
+restart loses details — the endpoint returns 404 and the UI says so while
+the summary stays usable.

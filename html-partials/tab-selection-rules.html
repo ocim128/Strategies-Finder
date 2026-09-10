@@ -52,10 +52,68 @@
                         <th>Dominant BASE<br><span>share</span></th>
                         <th>Dominant QUOTE<br><span>share</span></th>
                         <th>EX line</th>
+                        <th>Details</th>
                     </tr>
                 </thead>
                 <tbody id="selectionRulesResults"></tbody>
             </table>
+        </div>
+        <div class="selection-rules-detail" id="selectionRulesDetail" hidden>
+            <div class="selection-rules-detail-head">
+                <h3 class="selection-rules-detail-title" id="selectionRulesDetailTitle">Details</h3>
+                <button class="btn btn-quiet btn-compact" id="selectionRulesDetailHideBtn" type="button">Hide</button>
+            </div>
+            <p class="selection-rules-detail-note">Detail rows replay the rule's default parameters — the current job performs no parameter sweep. The archive keeps horizon PnL only, so there are no entry/exit timestamps; PENDING rows mark selections whose horizon outcome is not yet available.</p>
+            <div class="selection-rules-detail-latest" id="selectionRulesDetailLatest"></div>
+            <details class="research-disclosure selection-rules-detail-disclosure" open>
+                <summary>Selection history <span class="selection-rules-detail-history-summary" id="selectionRulesDetailHistorySummary"></span></summary>
+                <div class="selection-rules-detail-scroll">
+                    <table class="finder-table selection-rules-detail-table" aria-label="Selection history">
+                        <thead>
+                            <tr>
+                                <th>Signal UTC</th>
+                                <th>Pair</th>
+                                <th>Base</th>
+                                <th>Quote</th>
+                                <th>Dir</th>
+                                <th>Score</th>
+                                <th>Ties</th>
+                                <th>Candidates</th>
+                                <th>Status</th>
+                                <th>Return</th>
+                                <th>Others mean</th>
+                                <th>Δ others</th>
+                            </tr>
+                        </thead>
+                        <tbody id="selectionRulesDetailHistory"></tbody>
+                    </table>
+                </div>
+                <div class="selection-rules-detail-actions">
+                    <button class="btn btn-secondary btn-compact" id="selectionRulesDetailLoadOlderBtn" type="button" hidden>Load older</button>
+                </div>
+            </details>
+            <details class="research-disclosure selection-rules-detail-disclosure" open>
+                <summary>Pair / direction performance</summary>
+                <div class="selection-rules-detail-scroll">
+                    <table class="finder-table selection-rules-detail-table" aria-label="Pair and direction performance">
+                        <thead>
+                            <tr>
+                                <th>Pair</th>
+                                <th>Dir</th>
+                                <th>Selected</th>
+                                <th>Completed</th>
+                                <th>Wins</th>
+                                <th>Win rate</th>
+                                <th>Mean return</th>
+                                <th>Median return</th>
+                                <th>Mean Δ others</th>
+                            </tr>
+                        </thead>
+                        <tbody id="selectionRulesDetailPerformance"></tbody>
+                    </table>
+                </div>
+            </details>
+            <div class="selection-rules-detail-status" id="selectionRulesDetailStatus" role="status" aria-live="polite"></div>
         </div>
         <div class="empty-state empty-state-compact selection-rules-empty" id="selectionRulesEmpty">
             <div class="empty-state-icon" aria-hidden="true">

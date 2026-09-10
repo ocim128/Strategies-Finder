@@ -12,6 +12,7 @@ import type { PairFeatureCompatibilityResult } from "../pair-features/types";
 import {
     comparison,
     formatPercentagePoints,
+    metric,
     type SelectionComparison,
 } from "../selection-metrics";
 import { getPairSelectionRule } from "./registry";
@@ -125,6 +126,61 @@ export interface PairSelectionTallyDiagnostics {
     freqMs: number;
     scoredCandidates: number;
     unscoredEvents: number;
+}
+
+/**
+ * Detail-only tail probe budget: the most recent multi-candidate events the
+ * harness may score to answer "what is the rule currently selecting?" when
+ * the strict outcome gate omitted them. Gated history is never rescored
+ * beyond this window and probe work never touches the summary counters.
+ */
+export const SELECTION_RULES_DETAIL_PENDING_PROBE_MAX_EVENTS = 64;
+
+export type PairSelectionDetailStatus = "COMPLETE" | "SELECTED_OUTCOME_KNOWN_POOL_INCOMPLETE" | "PENDING";
+
+/** One compact per-event selection row; the archive keeps horizon PnL only. */
+export interface PairSelectionDetailRow {
+    signalTime: number;
+    pair: string;
+    baseSymbol: string;
+    quoteSymbol: string;
+    direction: PairCandidate["direction"];
+    score: number;
+    tiedCount: number;
+    candidateCount: number;
+    status: PairSelectionDetailStatus;
+    selectedReturn: number | null;
+    othersMean: number | null;
+    delta: number | null;
+}
+
+export interface PairSelectionDetailPairPerformance {
+    pair: string;
+    direction: PairCandidate["direction"];
+    selectedCount: number;
+    completedCount: number;
+    wins: number;
+    winRate: number | null;
+    meanSelectedReturn: number | null;
+    medianSelectedReturn: number | null;
+    meanDelta: number | null;
+}
+
+export interface PairSelectionDetailProbe {
+    eventsScanned: number;
+    scoredCandidates: number;
+}
+
+/**
+ * Separate detail payload handed to an optional sink; never attached to
+ * {@link PairSelectionResult}, stream events, status snapshots, or receipts.
+ */
+export interface PairSelectionRuleDetail {
+    latest: PairSelectionDetailRow | null;
+    /** Chronological (oldest → newest); probe rows, when present, follow completed rows. */
+    history: PairSelectionDetailRow[];
+    pairPerformance: PairSelectionDetailPairPerformance[];
+    probe: PairSelectionDetailProbe;
 }
 
 function nowMs(): number {
@@ -599,6 +655,155 @@ function comparisonForSamples(samples: readonly PairSample[]): PairSelectionComp
     };
 }
 
+function buildDetailRow(
+    event: PairSelectionEvent,
+    indexed: IndexedPick,
+    returns: readonly (number | null)[],
+): PairSelectionDetailRow {
+    const pick = indexed.pick;
+    const selectedReturn = returns[indexed.candidateIndex] ?? null;
+    const poolComplete = returns.length === event.candidates.length && returns.every(isFiniteNumber);
+    const selectedKnown = isFiniteNumber(selectedReturn);
+    let othersMean: number | null = null;
+    if (poolComplete && selectedKnown) {
+        const totalReturn = returns.reduce((sum, value) => sum + (value as number), 0);
+        othersMean = (totalReturn - (selectedReturn as number)) / (returns.length - 1);
+    }
+    const status: PairSelectionDetailStatus = !selectedKnown
+        ? "PENDING"
+        : poolComplete ? "COMPLETE" : "SELECTED_OUTCOME_KNOWN_POOL_INCOMPLETE";
+    return {
+        signalTime: event.context.signalTime,
+        pair: pick.pair,
+        baseSymbol: pick.baseSymbol,
+        quoteSymbol: pick.quoteSymbol,
+        direction: pick.direction,
+        score: pick.score,
+        tiedCount: pick.tiedCount,
+        candidateCount: event.candidates.length,
+        status,
+        selectedReturn: selectedKnown ? selectedReturn : null,
+        othersMean,
+        delta: othersMean === null ? null : (selectedReturn as number) - othersMean,
+    };
+}
+
+/**
+ * Detail-only backward probe for current selections. Walks the archive tail
+ * over at most SELECTION_RULES_DETAIL_PENDING_PROBE_MAX_EVENTS
+ * multi-candidate events, scoring each once and retaining every pick found in
+ * that bounded window. Single-candidate events are skipped entirely; probe
+ * work never touches picks, samples, diagnostics, comparisons, or report
+ * lines.
+ */
+function probeLatestDetailRows(
+    archive: PairSelectionArchive,
+    rule: PairSelectionRule,
+    params: PairSelectionRuleParams,
+    horizonBars: number,
+    activeFeatures: ActivePairFeatures | undefined,
+    newestSampleEventIndex: number,
+): { rows: PairSelectionDetailRow[]; eventsScanned: number; scoredCandidates: number } {
+    let eventsScanned = 0;
+    let scoredCandidates = 0;
+    const rows: PairSelectionDetailRow[] = [];
+    for (let index = archive.events.length - 1; index > newestSampleEventIndex; index -= 1) {
+        const event = archive.events[index]!;
+        if (event.candidates.length < 2) continue;
+        if (eventsScanned >= SELECTION_RULES_DETAIL_PENDING_PROBE_MAX_EVENTS) {
+            return { rows, eventsScanned, scoredCandidates };
+        }
+        eventsScanned += 1;
+        const indexed = pickPairSelectionRuleIndexed(event, rule, params, activeFeatures);
+        scoredCandidates += event.candidates.length;
+        if (indexed === null) continue;
+        const returns = event.candidates.map((candidate) =>
+            archive.horizonReturns.get(horizonKey(horizonBars, event.context.signalTime, candidate.pair, candidate.direction)) ?? null);
+        rows.push(buildDetailRow(event, indexed, returns));
+    }
+    return { rows, eventsScanned, scoredCandidates };
+}
+
+function buildDetailPairPerformance(
+    completedRows: readonly PairSelectionDetailRow[],
+    probeRows: readonly PairSelectionDetailRow[],
+): PairSelectionDetailPairPerformance[] {
+    interface DetailGroup {
+        pair: string;
+        direction: PairCandidate["direction"];
+        all: PairSelectionDetailRow[];
+        completed: PairSelectionDetailRow[];
+    }
+    const groups = new Map<string, DetailGroup>();
+    for (const row of completedRows) {
+        const key = `${row.pair}\u0000${row.direction}`;
+        let group = groups.get(key);
+        if (!group) {
+            group = { pair: row.pair, direction: row.direction, all: [], completed: [] };
+            groups.set(key, group);
+        }
+        group.all.push(row);
+        group.completed.push(row);
+    }
+    for (const probeRow of probeRows) {
+        const key = `${probeRow.pair}\u0000${probeRow.direction}`;
+        let group = groups.get(key);
+        if (!group) {
+            group = { pair: probeRow.pair, direction: probeRow.direction, all: [], completed: [] };
+            groups.set(key, group);
+        }
+        // The probe is deliberately detail-only. It may show a known selected
+        // return, but it was not admitted to the summary sample set (the
+        // probe exists only because the normal gate/reference path did not
+        // produce a sample), so it must never affect completed metrics.
+        group.all.push(probeRow);
+    }
+    return [...groups.values()]
+        .map((group): PairSelectionDetailPairPerformance => {
+            const returns = group.completed.map((row) => row.selectedReturn as number);
+            const stats = metric(returns);
+            const meanDelta = group.completed.length > 0
+                ? group.completed.reduce((sum, row) => sum + (row.delta as number), 0) / group.completed.length
+                : null;
+            return {
+                pair: group.pair,
+                direction: group.direction,
+                selectedCount: group.all.length,
+                completedCount: group.completed.length,
+                wins: returns.filter((value) => value > 0).length,
+                winRate: group.completed.length > 0 ? returns.filter((value) => value > 0).length / group.completed.length : null,
+                meanSelectedReturn: stats.mean,
+                medianSelectedReturn: stats.median,
+                meanDelta,
+            };
+        })
+        .sort((left, right) =>
+            right.selectedCount - left.selectedCount
+            || (left.pair < right.pair ? -1 : left.pair > right.pair ? 1 : 0)
+            || (left.direction < right.direction ? -1 : left.direction > right.direction ? 1 : 0));
+}
+
+function emitPairSelectionDetail(
+    archive: PairSelectionArchive,
+    rule: PairSelectionRule,
+    params: PairSelectionRuleParams,
+    horizonBars: number,
+    activeFeatures: ActivePairFeatures | undefined,
+    detailRows: readonly PairSelectionDetailRow[],
+    newestSampleEventIndex: number,
+    detailSink: (detail: PairSelectionRuleDetail) => void,
+): void {
+    const history = [...detailRows];
+    const probe = probeLatestDetailRows(archive, rule, params, horizonBars, activeFeatures, newestSampleEventIndex);
+    if (probe.rows.length > 0) history.push(...[...probe.rows].reverse());
+    detailSink({
+        latest: history.length > 0 ? history[history.length - 1]! : null,
+        history,
+        pairPerformance: buildDetailPairPerformance(detailRows, probe.rows),
+        probe: { eventsScanned: probe.eventsScanned, scoredCandidates: probe.scoredCandidates },
+    });
+}
+
 function makeFrequencies(values: readonly string[]): PairSelectionFrequency[] {
     const counts = new Map<string, number>();
     for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
@@ -649,6 +854,7 @@ export function tallyPairSelectionRule(
     suppliedParams?: PairSelectionRuleParams,
     requestedHorizonBars?: number,
     activeFeatures?: ActivePairFeatures,
+    detailSink?: (detail: PairSelectionRuleDetail) => void,
 ): PairSelectionResult {
     const rule = typeof ruleOrKey === "string" ? getPairSelectionRule(ruleOrKey) : ruleOrKey;
     if (!rule) throw new Error(`Unknown pair-selection rule: ${String(ruleOrKey)}`);
@@ -658,6 +864,8 @@ export function tallyPairSelectionRule(
     const params = rule.normalizeParams ? rule.normalizeParams(rawParams) : rawParams;
     const samples: PairSample[] = [];
     const picks: PairSelectionPick[] = [];
+    const detailRows: PairSelectionDetailRow[] = [];
+    let newestSampleEventIndex = -1;
     let candidateEvents = 0;
     const diagnostics: PairSelectionTallyDiagnostics = {
         gateMs: 0,
@@ -716,6 +924,10 @@ export function tallyPairSelectionRule(
             loudestAtrReturn,
             othersMean,
         });
+        if (detailSink) {
+            newestSampleEventIndex = eventIndex;
+            detailRows.push(buildDetailRow(event, indexedPick, returns));
+        }
     }
     const freqStartedAt = nowMs();
     const selectedPairs = makeFrequencies(samples.map((sample) => sample.pick.pair));
@@ -740,6 +952,9 @@ export function tallyPairSelectionRule(
         dominantQuoteLeg: selectedQuoteLegs[0]?.value ?? null,
         excludingDominantPair,
     };
+    if (detailSink) {
+        emitPairSelectionDetail(archive, rule, params, horizonBars, activeFeatures, detailRows, newestSampleEventIndex, detailSink);
+    }
     return {
         runId: archive.runId,
         ruleKey: rule.key,

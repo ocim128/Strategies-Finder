@@ -1,8 +1,12 @@
-import type { PairSelectionResult, PairSelectionTally } from "../pair-selection/tally";
+import type { PairSelectionDetailPairPerformance, PairSelectionDetailRow, PairSelectionResult, PairSelectionTally } from "../pair-selection/tally";
 import type { PairFeatureCapability } from "../pair-features/types";
 import type { SelectionRulesCatalogSkippedFolder } from "./catalog";
 
 export type SelectionRulesPhase = "loading" | "tallying" | "done" | "cancelled" | "fatal";
+
+/** Default and hard-maximum history page sizes for the details endpoint. */
+export const SELECTION_RULES_DETAIL_PAGE_DEFAULT = 250;
+export const SELECTION_RULES_DETAIL_PAGE_MAX = 500;
 
 /** One scalar table row, emitted after one pair rule/horizon has been tallied. */
 export interface SelectionRuleResult {
@@ -161,6 +165,27 @@ export interface SelectionRulesStatusResponse {
     running: boolean;
     run: SelectionRulesStatusRun | null;
     lastRun: SelectionRulesStatusRun | null;
+}
+
+/**
+ * Response of GET /api/selection-rules/details. Deliberately separate from
+ * every stream event and status snapshot: details are an on-demand read of
+ * run-scoped server state, never part of the scalar transport contract.
+ * `rows` is newest-first; `historyTruncated` marks rows dropped by the
+ * server's retention cap while `pairPerformance` still covers every
+ * completed event.
+ */
+export interface SelectionRulesDetailResponse {
+    ok: true;
+    runId: string;
+    ruleKey: string;
+    horizonBars: number;
+    latest: PairSelectionDetailRow | null;
+    rows: PairSelectionDetailRow[];
+    totalRows: number;
+    hasMore: boolean;
+    historyTruncated: boolean;
+    pairPerformance: PairSelectionDetailPairPerformance[];
 }
 
 function assertScalar(value: unknown, path: string): void {

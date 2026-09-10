@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { __testInternals } from "../lib/selection-rules/server-vite-plugin";
+import { createSelectionRulesDetailStore, SELECTION_RULES_DETAIL_HISTORY_CAP } from "../lib/selection-rules/detail-store";
 import { resolveSelectionRulesFolder } from "../lib/selection-rules/catalog";
+import type { PairSelectionRuleDetail } from "../lib/pair-selection/tally";
 import {
     assertSelectionRuleResultIsScalar,
     assertSelectionRulesWireEventIsScalar,
@@ -20,6 +22,8 @@ const {
     resetForTests,
     handleStopRequest,
     getPendingStopRunIdForTests,
+    getRunOwnerForTests,
+    getDetailEntryForTests,
 } = __testInternals;
 
 type RouteHandler = (req: any, res: any) => Promise<void>;
@@ -55,6 +59,13 @@ function makeResponse(): any {
         end(value = "") { this.body += value; this.ended = true; },
         on() { return this; },
     };
+}
+
+/** The run route installs its owner across several async hops; wait for it. */
+async function waitForRunInstall(): Promise<void> {
+    for (let tick = 0; tick < 100 && getRunOwnerForTests() === 0; tick += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
 }
 
 function makeLedgerRow(args: {
@@ -179,6 +190,7 @@ describe("selection-rules server plugin", () => {
             ["POST", "/api/selection-rules/run", { runId: "x", folderPath: "fixture-folder", ruleKeys: ["reference_alphabetical"], horizonBars: 24 }],
             ["POST", "/api/selection-rules/stop", { runId: "x" }],
             ["GET", "/api/selection-rules/status?runId=x"],
+            ["GET", "/api/selection-rules/details?runId=x&ruleKey=reference_alphabetical&horizonBars=24"],
         ];
         for (const [method, url, body] of requests) {
             const response = makeResponse();
@@ -326,5 +338,306 @@ describe("selection-rules server plugin", () => {
         } finally {
             await rm(root, { recursive: true, force: true });
         }
+    });
+
+    it("serves paged detail history after a completed run", async () => {
+        const root = await createFixtureRoot();
+        setServerRootForTests(root);
+        try {
+            const routes = captureRoutes();
+            const runResponse = makeResponse();
+            await routes.get("/api/selection-rules/run")!(makeRequest("POST", "/api/selection-rules/run", {
+                runId: "details-run",
+                folderPath: "fixture-folder",
+                ruleKeys: ["reference_alphabetical"],
+                horizonBars: 24,
+            }), runResponse);
+            expect(runResponse.body).to.contain('"type":"done"');
+
+            const response = makeResponse();
+            await routes.get("/api/selection-rules/details")!(
+                makeRequest("GET", "/api/selection-rules/details?runId=details-run&ruleKey=reference_alphabetical&horizonBars=24"),
+                response,
+            );
+            expect(response.statusCode).to.equal(200);
+            const payload = JSON.parse(response.body);
+            expect(payload.ok).to.equal(true);
+            expect(payload.runId).to.equal("details-run");
+            expect(payload.totalRows).to.equal(2);
+            expect(payload.hasMore).to.equal(false);
+            expect(payload.historyTruncated).to.equal(false);
+            // Newest-first: the second fixture event leads the page.
+            expect(payload.rows.map((row: { signalTime: number }) => row.signalTime)).to.deep.equal([1_700_001_000, 1_700_000_000]);
+            for (const row of payload.rows) {
+                expect(row.status).to.equal("COMPLETE");
+                expect(row.candidateCount).to.equal(2);
+            }
+            expect(payload.latest.signalTime).to.equal(1_700_001_000);
+            expect(payload.pairPerformance).to.have.lengthOf(1);
+            expect(payload.pairPerformance[0]).to.include({ pair: "AAA/BBB", direction: "long", selectedCount: 2, completedCount: 2, wins: 2 });
+
+            const page = makeResponse();
+            await routes.get("/api/selection-rules/details")!(
+                makeRequest("GET", "/api/selection-rules/details?runId=details-run&ruleKey=reference_alphabetical&horizonBars=24&offset=1&limit=1"),
+                page,
+            );
+            const paged = JSON.parse(page.body);
+            expect(paged.rows).to.have.lengthOf(1);
+            expect(paged.rows[0].signalTime).to.equal(1_700_000_000);
+            expect(paged.hasMore).to.equal(false);
+            const firstPage = makeResponse();
+            await routes.get("/api/selection-rules/details")!(
+                makeRequest("GET", "/api/selection-rules/details?runId=details-run&ruleKey=reference_alphabetical&horizonBars=24&limit=1"),
+                firstPage,
+            );
+            expect(JSON.parse(firstPage.body).hasMore).to.equal(true);
+
+            // Status snapshots and streamed events stay detail-free.
+            const statusResponse = makeResponse();
+            await routes.get("/api/selection-rules/status")!(makeRequest("GET", "/api/selection-rules/status?runId=details-run"), statusResponse);
+            expect(statusResponse.body).to.not.contain("pairPerformance");
+            expect(statusResponse.body).to.not.contain("selectedReturn");
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it("validates details query values and rejects run or entry mismatches", async () => {
+        const root = await createFixtureRoot();
+        setServerRootForTests(root);
+        try {
+            const routes = captureRoutes();
+            const runResponse = makeResponse();
+            await routes.get("/api/selection-rules/run")!(makeRequest("POST", "/api/selection-rules/run", {
+                runId: "validated-run",
+                folderPath: "fixture-folder",
+                ruleKeys: ["reference_alphabetical"],
+                horizonBars: 24,
+            }), runResponse);
+            const url = "/api/selection-rules/details";
+            const invalid: Array<[string, string]> = [
+                ["missing runId", `${url}?ruleKey=reference_alphabetical&horizonBars=24`],
+                ["bad runId", `${url}?runId=bad%21id&ruleKey=reference_alphabetical&horizonBars=24`],
+                ["missing ruleKey", `${url}?runId=validated-run&horizonBars=24`],
+                ["unknown ruleKey", `${url}?runId=validated-run&ruleKey=not_a_rule&horizonBars=24`],
+                ["missing horizonBars", `${url}?runId=validated-run&ruleKey=reference_alphabetical`],
+                ["zero horizonBars", `${url}?runId=validated-run&ruleKey=reference_alphabetical&horizonBars=0`],
+                ["fractional horizonBars", `${url}?runId=validated-run&ruleKey=reference_alphabetical&horizonBars=2.5`],
+                ["negative offset", `${url}?runId=validated-run&ruleKey=reference_alphabetical&horizonBars=24&offset=-1`],
+                ["zero limit", `${url}?runId=validated-run&ruleKey=reference_alphabetical&horizonBars=24&limit=0`],
+                ["oversized limit", `${url}?runId=validated-run&ruleKey=reference_alphabetical&horizonBars=24&limit=501`],
+            ];
+            for (const [label, query] of invalid) {
+                const response = makeResponse();
+                await routes.get(url)!(makeRequest("GET", query), response);
+                expect(response.statusCode, label).to.equal(400);
+            }
+            // Unknown run: loud 404, not empty data.
+            const runMismatch = makeResponse();
+            await routes.get(url)!(makeRequest("GET", `${url}?runId=another-run&ruleKey=reference_alphabetical&horizonBars=24`), runMismatch);
+            expect(runMismatch.statusCode).to.equal(404);
+            // Valid run, but a rule/horizon combination that never tallied.
+            const missingEntry = makeResponse();
+            await routes.get(url)!(makeRequest("GET", `${url}?runId=validated-run&ruleKey=reference_alphabetical&horizonBars=48`), missingEntry);
+            expect(missingEntry.statusCode).to.equal(404);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it("keeps details readable mid-run and after cancellation or fatal termination", async () => {
+        const root = await createFixtureRoot();
+        setServerRootForTests(root);
+        try {
+            const routes = captureRoutes();
+            const detail: PairSelectionRuleDetail = {
+                latest: null,
+                history: [{
+                    signalTime: 1_700_000_000, pair: "AAA/BBB", baseSymbol: "AAA", quoteSymbol: "BBB",
+                    direction: "long", score: 0, tiedCount: 1, candidateCount: 2, status: "COMPLETE",
+                    selectedReturn: 0.1, othersMean: 0.2, delta: -0.1,
+                }],
+                pairPerformance: [],
+                probe: { eventsScanned: 0, scoredCandidates: 0 },
+            };
+            let release!: () => void;
+            const blocked = new Promise<void>((resolve) => { release = resolve; });
+            setJobRunnerForTests(async (args) => {
+                args.onDetail?.(detail, "reference_alphabetical", 24);
+                await blocked;
+            });
+            const runPromise = routes.get("/api/selection-rules/run")!(makeRequest("POST", "/api/selection-rules/run", {
+                runId: "midrun-details",
+                folderPath: "fixture-folder",
+                ruleKeys: ["reference_alphabetical"],
+                horizonBars: 24,
+            }), makeResponse());
+            // Give the route a tick to install the run, then read mid-run.
+            await waitForRunInstall();
+            const midRun = makeResponse();
+            await routes.get("/api/selection-rules/details")!(
+                makeRequest("GET", "/api/selection-rules/details?runId=midrun-details&ruleKey=reference_alphabetical&horizonBars=24"),
+                midRun,
+            );
+            expect(midRun.statusCode).to.equal(200);
+            expect(JSON.parse(midRun.body).rows).to.have.lengthOf(1);
+
+            await handleStopRequest("midrun-details");
+            release();
+            await runPromise;
+            const afterCancel = makeResponse();
+            await routes.get("/api/selection-rules/details")!(
+                makeRequest("GET", "/api/selection-rules/details?runId=midrun-details&ruleKey=reference_alphabetical&horizonBars=24"),
+                afterCancel,
+            );
+            expect(afterCancel.statusCode).to.equal(200);
+            expect(JSON.parse(afterCancel.body).rows).to.have.lengthOf(1);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it("clears details when a new run is installed and drops stale-generation writes", async () => {
+        const root = await createFixtureRoot();
+        setServerRootForTests(root);
+        try {
+            const routes = captureRoutes();
+            const detail: PairSelectionRuleDetail = {
+                latest: null,
+                history: [{
+                    signalTime: 1, pair: "OLD/PAIR", baseSymbol: "OLD", quoteSymbol: "PAIR",
+                    direction: "long", score: 0, tiedCount: 1, candidateCount: 2, status: "COMPLETE",
+                    selectedReturn: 0, othersMean: 0, delta: 0,
+                }],
+                pairPerformance: [],
+                probe: { eventsScanned: 0, scoredCandidates: 0 },
+            };
+            // First run stores a detail then releases the run slot.
+            setJobRunnerForTests(async (args) => {
+                args.onDetail?.(detail, "reference_alphabetical", 24);
+            });
+            const firstRun = makeResponse();
+            await routes.get("/api/selection-rules/run")!(makeRequest("POST", "/api/selection-rules/run", {
+                runId: "first-run",
+                folderPath: "fixture-folder",
+                ruleKeys: ["reference_alphabetical"],
+                horizonBars: 24,
+            }), firstRun);
+            expect(getDetailEntryForTests("reference_alphabetical", 24)).to.not.equal(null);
+
+            // Second run installs its own store generation.
+            let releaseSecond!: () => void;
+            const secondBlocked = new Promise<void>((resolve) => { releaseSecond = resolve; });
+            setJobRunnerForTests(async () => { await secondBlocked; });
+            const secondRun = makeResponse();
+            const secondPromise = routes.get("/api/selection-rules/run")!(makeRequest("POST", "/api/selection-rules/run", {
+                runId: "second-run",
+                folderPath: "fixture-folder",
+                ruleKeys: ["reference_alphabetical"],
+                horizonBars: 24,
+            }), secondRun);
+            await waitForRunInstall();
+            const cleared = makeResponse();
+            await routes.get("/api/selection-rules/details")!(
+                makeRequest("GET", "/api/selection-rules/details?runId=second-run&ruleKey=reference_alphabetical&horizonBars=24"),
+                cleared,
+            );
+            expect(cleared.statusCode).to.equal(404);
+
+            await handleStopRequest("second-run");
+            releaseSecond();
+            await secondPromise;
+            expect(getDetailEntryForTests("reference_alphabetical", 24)).to.equal(null);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it("ignores a delayed detail write from a job whose generation already ended", async () => {
+        const root = await createFixtureRoot();
+        setServerRootForTests(root);
+        try {
+            const routes = captureRoutes();
+            const detail: PairSelectionRuleDetail = {
+                latest: null,
+                history: [{
+                    signalTime: 1, pair: "STALE/PAIR", baseSymbol: "STALE", quoteSymbol: "PAIR",
+                    direction: "long", score: 0, tiedCount: 1, candidateCount: 2, status: "COMPLETE",
+                    selectedReturn: 0, othersMean: 0, delta: 0,
+                }],
+                pairPerformance: [],
+                probe: { eventsScanned: 0, scoredCandidates: 0 },
+            };
+            let staleWrite: (() => void) | null = null;
+            setJobRunnerForTests(async (args) => {
+                staleWrite = () => args.onDetail?.(detail, "reference_alphabetical", 24);
+            });
+            const firstRun = makeResponse();
+            await routes.get("/api/selection-rules/run")!(makeRequest("POST", "/api/selection-rules/run", {
+                runId: "stale-source",
+                folderPath: "fixture-folder",
+                ruleKeys: ["reference_alphabetical"],
+                horizonBars: 24,
+            }), firstRun);
+            expect(typeof staleWrite).to.equal("function");
+
+            let releaseSecond!: () => void;
+            const secondBlocked = new Promise<void>((resolve) => { releaseSecond = resolve; });
+            setJobRunnerForTests(async () => { await secondBlocked; });
+            const secondRun = makeResponse();
+            const secondPromise = routes.get("/api/selection-rules/run")!(makeRequest("POST", "/api/selection-rules/run", {
+                runId: "stale-target",
+                folderPath: "fixture-folder",
+                ruleKeys: ["reference_alphabetical"],
+                horizonBars: 24,
+            }), secondRun);
+            await waitForRunInstall();
+
+            (staleWrite as (() => void) | null)?.();
+            expect(getDetailEntryForTests("reference_alphabetical", 24)).to.equal(null);
+
+            await handleStopRequest("stale-target");
+            releaseSecond();
+            await secondPromise;
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("selection-rules detail store", () => {
+    it("caps retained history at 2000 newest rows while keeping totalRows and aggregates complete", () => {
+        const store = createSelectionRulesDetailStore();
+        const history = Array.from({ length: SELECTION_RULES_DETAIL_HISTORY_CAP + 500 }, (_, index) => ({
+            signalTime: index,
+            pair: `P${index}/Q${index}`,
+            baseSymbol: `P${index}`,
+            quoteSymbol: `Q${index}`,
+            direction: "long" as const,
+            score: index,
+            tiedCount: 1,
+            candidateCount: 2,
+            status: "COMPLETE" as const,
+            selectedReturn: 0.01,
+            othersMean: 0.02,
+            delta: -0.01,
+        }));
+        const performance = [{ pair: "P/Q", direction: "long" as const, selectedCount: history.length, completedCount: history.length, wins: 1, winRate: 1, meanSelectedReturn: 0.01, medianSelectedReturn: 0.01, meanDelta: -0.01 }];
+        store.store("rule_a", 24, {
+            latest: history[history.length - 1]!,
+            history,
+            pairPerformance: performance,
+            probe: { eventsScanned: 0, scoredCandidates: 0 },
+        });
+        const entry = store.get("rule_a", 24)!;
+        expect(entry.rows).to.have.lengthOf(SELECTION_RULES_DETAIL_HISTORY_CAP);
+        expect(entry.totalRows).to.equal(history.length);
+        expect(entry.historyTruncated).to.equal(true);
+        // Newest-first: the highest signalTime leads the retained page.
+        expect(entry.rows[0]!.signalTime).to.equal(history.length - 1);
+        expect(entry.rows.at(-1)!.signalTime).to.equal(history.length - SELECTION_RULES_DETAIL_HISTORY_CAP);
+        expect(entry.pairPerformance).to.deep.equal(performance);
+        store.clear();
+        expect(store.get("rule_a", 24)).to.equal(null);
     });
 });

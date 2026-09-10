@@ -358,4 +358,55 @@ describe("pair feature access", () => {
         const checks = await readdir(path.join(folder, "feature-packs", "checks"));
         expect(checks).to.have.length(1);
     });
+
+    it("emits one detail payload per rule/horizon without touching the streamed events", async () => {
+        const folder = await createLoadableFolder();
+        const details: Array<{ key: string; horizonBars: number; rows: number }> = [];
+        const emittedEvents: string[] = [];
+        const controller = new AbortController();
+        await runSelectionRulesJob({
+            runId: "feature-detail-job",
+            folderPath: folder,
+            horizonBars: 24,
+            rules: [spreadRule],
+            signal: controller.signal,
+            onDetail: (detail, ruleKey, horizonBars) => {
+                details.push({ key: ruleKey, horizonBars, rows: detail.history.length });
+            },
+            emit: (event) => { emittedEvents.push(event.type); },
+            update: () => undefined,
+        });
+        expect(details).to.deep.equal([{ key: spreadRule.key, horizonBars: 24, rows: 2 }]);
+        expect(emittedEvents.at(-1)).to.equal("done");
+        // Detail payloads never ride the scalar wire events.
+        expect(emittedEvents).to.not.include("rule_detail");
+    });
+
+    it("keeps the check receipt digest unchanged when the detail payload is produced", async () => {
+        const folder = await createLoadableFolder();
+        const prepared = await ensurePairFeatures(folder, [spreadRule]);
+        const active = await activatePairFeatures(prepared, spreadRule);
+        const archive = await loadPairSelectionArchive(folder, { retainHorizonBars: 24 });
+        const filtered = filterEvents(archive, 1013, 1013);
+        const plain = tallyPairSelectionRule(filtered, spreadRule, undefined, 24, active!);
+        const details: unknown[] = [];
+        const withDetail = tallyPairSelectionRule(filtered, spreadRule, undefined, 24, active!, (payload) => { details.push(payload); });
+        // Detail production changes neither the picks/tally/report surface
+        // (diagnostics wall times are timing noise and compared via digests).
+        expect(withDetail.picks).to.deep.equal(plain.picks);
+        expect(withDetail.tally).to.deep.equal(plain.tally);
+        expect(withDetail.reportLines).to.deep.equal(plain.reportLines);
+        expect(details).to.have.length(1);
+        const receiptInput = {
+            prepared,
+            rules: [spreadRule],
+            horizons: [24] as const,
+            fromSec: 1013,
+            toSec: 1013,
+        };
+        const receiptPlain = await writePairSelectionCheckReceipt({ ...receiptInput, results: [plain] });
+        const receiptDetail = await writePairSelectionCheckReceipt({ ...receiptInput, results: [withDetail] });
+        expect(receiptDetail.resultsSha256).to.equal(receiptPlain.resultsSha256);
+        expect(receiptDetail.receiptDigest).to.equal(receiptPlain.receiptDigest);
+    });
 });

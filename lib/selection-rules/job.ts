@@ -6,6 +6,7 @@ import {
     type LoadPairSelectionArchiveOptions,
     type PairSelectionArchive,
     type PairSelectionResult,
+    type PairSelectionRuleDetail,
 } from "../pair-selection/tally";
 import {
     activatePairFeatures,
@@ -36,6 +37,12 @@ export interface SelectionRulesJobArgs {
         folderPath: string,
         options?: LoadPairSelectionArchiveOptions,
     ) => PairSelectionArchive | PromiseLike<PairSelectionArchive>;
+    /**
+     * Receives the separate per-rule/horizon detail payload right after each
+     * tally. Never part of stream events, status snapshots, or the receipt's
+     * `featureResults`.
+     */
+    onDetail?: (detail: PairSelectionRuleDetail, ruleKey: string, horizonBars: number) => void;
     emit: (event: SelectionRulesStreamEvent) => void;
     update: (patch: {
         phase?: "loading" | "tallying" | "done" | "cancelled" | "fatal";
@@ -299,7 +306,14 @@ export async function runSelectionRulesJob(args: SelectionRulesJobArgs): Promise
                 return;
             }
             args.update({ currentRuleKey: rule.key, currentHorizonBars: horizonBars });
-            const tally = tallyPairSelectionRule(archive, rule, undefined, horizonBars, activeFeatures ?? undefined);
+            const tally = tallyPairSelectionRule(
+                archive,
+                rule,
+                undefined,
+                horizonBars,
+                activeFeatures ?? undefined,
+                args.onDetail ? (detail) => args.onDetail!(detail, rule.key, horizonBars) : undefined,
+            );
             addTallyDiagnostics(ruleDiagnostics, tally.diagnostics);
             featureResults.push(tally);
             const result = resultFromPairSelection(tally, horizonBars);

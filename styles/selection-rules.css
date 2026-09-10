@@ -226,6 +226,145 @@
     margin-top: var(--space-3);
 }
 
+/* Detail view: bounded research surface below the results table. Kept out of
+ * reports, diagnostics, copy paths, and persisted terminal state. */
+#selectionrulesTab .selection-rules-detail {
+    margin-top: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-s);
+    display: grid;
+    gap: var(--space-2);
+}
+
+#selectionrulesTab .selection-rules-detail-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+}
+
+#selectionrulesTab .selection-rules-detail-title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+}
+
+#selectionrulesTab .selection-rules-detail-note {
+    margin: 0;
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height-relaxed);
+    color: var(--text-secondary);
+}
+
+#selectionrulesTab .selection-rules-detail-latest {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-1);
+    flex-wrap: wrap;
+    font-size: var(--font-size-sm);
+    padding: var(--space-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-s);
+    background: hsl(var(--hsl-surface-1) / 0.5);
+}
+
+#selectionrulesTab .selection-rules-detail-disclosure summary {
+    cursor: pointer;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+}
+
+#selectionrulesTab .selection-rules-detail-history-summary {
+    font-weight: var(--font-weight-normal);
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+}
+
+#selectionrulesTab .selection-rules-detail-scroll {
+    max-height: 340px;
+    overflow: auto;
+    margin-top: var(--space-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-s);
+}
+
+#selectionrulesTab .selection-rules-detail-table {
+    min-width: 860px;
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-xs);
+}
+
+#selectionrulesTab .selection-rules-detail-table th,
+#selectionrulesTab .selection-rules-detail-table td {
+    padding: var(--space-1) var(--space-1-5);
+    border-bottom: 1px solid var(--border-subtle);
+    text-align: left;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+#selectionrulesTab .selection-rules-detail-table thead th {
+    position: sticky;
+    top: 0;
+    background: hsl(var(--hsl-surface-1));
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+}
+
+#selectionrulesTab .selection-rules-detail-table tbody tr:last-child th,
+#selectionrulesTab .selection-rules-detail-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+#selectionrulesTab .selection-rules-detail-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--space-2);
+}
+
+#selectionrulesTab .selection-rules-detail-status {
+    min-height: 1em;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+#selectionrulesTab .selection-rules-detail-status[data-tone="danger"] {
+    color: var(--red);
+}
+
+#selectionrulesTab .selection-rules-detail-status[data-tone="warning"] {
+    color: var(--warning);
+}
+
+#selectionrulesTab .selection-rules-detail-status-complete {
+    color: var(--green);
+    font-weight: var(--font-weight-semibold);
+}
+
+#selectionrulesTab .selection-rules-detail-status-pending {
+    color: var(--warning);
+    font-weight: var(--font-weight-semibold);
+}
+
+#selectionrulesTab .selection-rules-detail-status-selected_outcome_known_pool_incomplete {
+    color: var(--warning);
+    font-weight: var(--font-weight-semibold);
+}
+
+#selectionrulesTab .selection-rules-detail-pos {
+    color: var(--green);
+}
+
+#selectionrulesTab .selection-rules-detail-neg {
+    color: var(--red);
+}
+
+#selectionrulesTab .selection-rules-detail-open {
+    white-space: nowrap;
+}
+
 /* Analytical surface: skip the generic pulsing-icon motion (Batch does the
  * same for its empty state). */
 #selectionrulesTab .selection-rules-empty .empty-state-icon {

@@ -2,6 +2,7 @@ import type { Plugin } from "vite";
 import path from "node:path";
 import { createDisconnectSafeStream, HttpStatusError, registerLocalJsonRoute, sendJson, type LocalRouteMiddlewareStack, type ViteHttpResponse } from "../vite-http-utils";
 import { discoverSelectionRulesCatalog, resolveSelectionRulesFolder } from "./catalog";
+import { createSelectionRulesDetailStore, type SelectionRulesDetailStore } from "./detail-store";
 import { pairSelectionRuleRegistry } from "../pair-selection/registry";
 import {
     createSelectionRulesCancelledEvent,
@@ -11,7 +12,10 @@ import {
 } from "./job";
 import {
     assertSelectionRulesWireEventIsScalar,
+    SELECTION_RULES_DETAIL_PAGE_DEFAULT,
+    SELECTION_RULES_DETAIL_PAGE_MAX,
     type SelectionRuleResult,
+    type SelectionRulesDetailResponse,
     type SelectionRulesStatusResponse,
     type SelectionRulesStatusRun,
     type SelectionRulesStreamEvent,
@@ -29,6 +33,7 @@ let pendingStopRunId: string | null = null;
 let serverRoot: string | null = null;
 let jobRunner: (args: SelectionRulesJobArgs) => Promise<void> = runSelectionRulesJob;
 let archiveLoaderOverride: SelectionRulesJobArgs["loadArchive"] | null = null;
+const detailStore: SelectionRulesDetailStore = createSelectionRulesDetailStore();
 
 function parseRunId(raw: unknown): string {
     if (typeof raw !== "string" || !raw.trim()) throw new HttpStatusError(400, "runId must be a non-empty string.");
@@ -213,6 +218,9 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     runOwner = generation;
     runOwnerRunId = runId;
     runState = initialRun(runId, body.folderPath.trim(), rules.length);
+    // Details are run-scoped: drop the previous run's payloads synchronously
+    // so a stale job can never be observed through a newer run's store.
+    detailStore.clear();
     const abortController = new AbortController();
     activeAbortController = abortController;
     if (pendingStopRunId === runId) {
@@ -236,6 +244,12 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
         rules,
         signal: abortController.signal,
         loadArchive: archiveLoaderOverride ?? undefined,
+        onDetail: (detail, ruleKey, horizonBars) => {
+            // Same ownership guard as emit: an old job must never write into
+            // a newer run's detail store.
+            if (runOwner !== generation || runOwnerRunId !== runId || runState?.runId !== runId) return;
+            detailStore.store(ruleKey, horizonBars, detail);
+        },
         emit,
         update: (patch) => updateState(generation, patch),
     };
@@ -287,6 +301,54 @@ function handleStatusRequest(rawRunId: unknown): SelectionRulesStatusResponse {
     return statusResponse(parseRunId(rawRunId));
 }
 
+function requireDetailsIntParam(raw: string | null, label: string, min: number, max?: number): number {
+    if (raw === null || !raw.trim()) throw new HttpStatusError(400, `${label} is required.`);
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < min || (max !== undefined && value > max)) {
+        throw new HttpStatusError(400, max !== undefined
+            ? `${label} must be an integer between ${min} and ${max}.`
+            : `${label} must be an integer >= ${min}.`);
+    }
+    return value;
+}
+
+function optionalDetailsIntParam(raw: string | null, label: string, fallback: number, min: number, max?: number): number {
+    if (raw === null || !raw.trim()) return fallback;
+    return requireDetailsIntParam(raw, label, min, max);
+}
+
+function handleDetailsRequest(res: ViteHttpResponse, url: URL): void {
+    const runId = parseRunId(url.searchParams.get("runId"));
+    const rawRuleKey = url.searchParams.get("ruleKey");
+    if (rawRuleKey === null || !rawRuleKey.trim()) throw new HttpStatusError(400, "ruleKey must be a non-empty string.");
+    const ruleKey = rawRuleKey.trim();
+    if (!pairSelectionRuleRegistry.has(ruleKey)) throw new HttpStatusError(400, `Unknown pair-selection rule: ${ruleKey}.`);
+    const horizonBars = requireDetailsIntParam(url.searchParams.get("horizonBars"), "horizonBars", 1);
+    const offset = optionalDetailsIntParam(url.searchParams.get("offset"), "offset", 0, 0);
+    const limit = optionalDetailsIntParam(url.searchParams.get("limit"), "limit", SELECTION_RULES_DETAIL_PAGE_DEFAULT, 1, SELECTION_RULES_DETAIL_PAGE_MAX);
+    if (!runState || runState.runId !== runId) {
+        throw new HttpStatusError(404, "Selection Rules run is not retained; details are unavailable after a newer run or a server restart.");
+    }
+    const entry = detailStore.get(ruleKey, horizonBars);
+    if (!entry) {
+        throw new HttpStatusError(404, `No selection-rule details are retained for ${ruleKey}|${horizonBars}.`);
+    }
+    const rows = entry.rows.slice(offset, offset + limit);
+    const response: SelectionRulesDetailResponse = {
+        ok: true,
+        runId,
+        ruleKey,
+        horizonBars,
+        latest: entry.latest,
+        rows,
+        totalRows: entry.totalRows,
+        hasMore: offset + limit < entry.rows.length,
+        historyTruncated: entry.historyTruncated,
+        pairPerformance: entry.pairPerformance,
+    };
+    sendJson(res, 200, response);
+}
+
 export function selectionRulesVitePlugin(): Plugin {
     return {
         name: "selection-rules",
@@ -330,6 +392,11 @@ export function registerSelectionRulesRoutes(middlewares: LocalRouteMiddlewareSt
         unauthorizedMessage,
         onAuthorized: ({ res, url }) => sendJson(res, 200, handleStatusRequest(url.searchParams.get("runId"))),
     });
+    registerLocalJsonRoute(middlewares, "/api/selection-rules/details", {
+        methods: ["GET"],
+        unauthorizedMessage,
+        onAuthorized: ({ res, url }) => handleDetailsRequest(res, url),
+    });
 }
 
 export const __testInternals = {
@@ -355,9 +422,14 @@ export const __testInternals = {
         pendingStopRunId = null;
         jobRunner = runSelectionRulesJob;
         archiveLoaderOverride = null;
+        detailStore.clear();
     },
     getRunStateForTests(): SelectionRulesStatusRun | null { return runState; },
     getPendingStopRunIdForTests(): string | null { return pendingStopRunId; },
     getRunOwnerForTests(): number { return runOwner; },
     acceptJobEventForTests: acceptJobEvent,
+    handleDetailsRequestForTests: handleDetailsRequest,
+    getDetailEntryForTests(ruleKey: string, horizonBars: number) {
+        return detailStore.get(ruleKey, horizonBars);
+    },
 };

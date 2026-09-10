@@ -4,6 +4,20 @@ import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { ensureLazyStylesheet } from "../lazy-styles";
 import { coalesceAnimationFrame } from "../render-scheduler";
 import { createSelectionRulesDom, type SelectionRulesDom } from "../selection-rules-dom";
+import type { PairSelectionDetailPairPerformance, PairSelectionDetailRow } from "../pair-selection/tally";
+import {
+    appendDetailPage,
+    detailStatusClass,
+    detailStatusLabel,
+    formatDetailPercent,
+    formatDetailPp,
+    formatDetailScore,
+    formatDetailSignalTime,
+    isStaleDetailResponse,
+    parseDetailResultKey,
+    selectionRulesDetailsUrl,
+    SELECTION_RULES_DETAIL_PAGE_DEFAULT,
+} from "./detail-format";
 import {
     normalizeSelectionRulesPreferences,
     SELECTION_RULES_PREFERENCES_STORAGE,
@@ -13,6 +27,7 @@ import type {
     SelectionRuleResult,
     SelectionRulesCatalogEntry,
     SelectionRulesCatalogResponse,
+    SelectionRulesDetailResponse,
     SelectionRulesStatusResponse,
     SelectionRulesStatusRun,
     SelectionRulesStreamEvent,
@@ -148,6 +163,11 @@ export class SelectionRulesService {
     private ruleSelectionInitialized = false;
     private lastRuleToggleKey: string | null = null;
     private readonly reportRenderFrame = coalesceAnimationFrame(() => this.renderReport());
+    private detailRunId: string | null = null;
+    private detailKey: string | null = null;
+    private detailRows: PairSelectionDetailRow[] = [];
+    private detailHasMore = false;
+    private detailLoading = false;
 
     private getDom(): SelectionRulesDom {
         return this.dom ??= createSelectionRulesDom();
@@ -196,9 +216,16 @@ export class SelectionRulesService {
         dom.selectionRulesCopyDiagnosticsBtn.addEventListener("click", () => { void this.copyDiagnostics(); });
         dom.selectionRulesResults.addEventListener("click", (event) => {
             const target = event.target as Element | null;
+            const detailButton = target?.closest<HTMLButtonElement>("button[data-detail-key]");
+            if (detailButton && dom.selectionRulesResults.contains(detailButton)) {
+                void this.openDetails(detailButton.dataset.detailKey ?? null);
+                return;
+            }
             const row = target?.closest<HTMLTableRowElement>("tr[data-result-key]");
             if (row) row.classList.toggle("selection-rules-result-selected");
         });
+        dom.selectionRulesDetailHideBtn.addEventListener("click", () => this.hideDetails());
+        dom.selectionRulesDetailLoadOlderBtn.addEventListener("click", () => { void this.loadOlderDetails(); });
 
         const active = readActiveRun();
         this.activeServerRunId = active?.runId ?? null;
@@ -414,6 +441,15 @@ export class SelectionRulesService {
                 if (index === 6) cell.className = result.successBarPass ? "selection-rules-result-pass" : "selection-rules-result-fail";
                 row.appendChild(cell);
             });
+            const detailCell = document.createElement("td");
+            const detailButton = document.createElement("button");
+            detailButton.type = "button";
+            detailButton.className = "btn btn-quiet btn-compact selection-rules-detail-open";
+            detailButton.dataset.detailKey = resultKey(result);
+            detailButton.textContent = "Details";
+            detailButton.setAttribute("aria-label", `Show details for ${result.ruleName} at ${result.horizonBars} bars`);
+            detailCell.appendChild(detailButton);
+            row.appendChild(detailCell);
             return row;
         }));
         dom.selectionRulesEmpty.hidden = results.length > 0;
@@ -438,6 +474,190 @@ export class SelectionRulesService {
         this.renderResults();
         this.renderReport();
         this.renderDiagnostics();
+        this.hideDetails();
+    }
+
+    private hideDetails(): void {
+        this.detailRunId = null;
+        this.detailKey = null;
+        this.detailRows = [];
+        this.detailHasMore = false;
+        this.detailLoading = false;
+        const dom = this.getDom();
+        dom.selectionRulesDetail.hidden = true;
+        dom.selectionRulesDetailLoadOlderBtn.hidden = true;
+        dom.selectionRulesDetailLoadOlderBtn.disabled = false;
+        dom.selectionRulesDetailStatus.textContent = "";
+    }
+
+    private setDetailStatus(text: string, tone: "neutral" | "warning" | "danger" = "neutral"): void {
+        const dom = this.getDom();
+        dom.selectionRulesDetailStatus.textContent = text;
+        dom.selectionRulesDetailStatus.dataset.tone = tone;
+    }
+
+    private detailIsStale(runId: string, detailKey: string): boolean {
+        return this.detailRunId !== runId || this.detailKey !== detailKey
+            || isStaleDetailResponse({ runId }, this.activeServerRunId);
+    }
+
+    private async openDetails(detailKey: string | null): Promise<void> {
+        if (!detailKey) return;
+        const parsed = parseDetailResultKey(detailKey);
+        const runId = this.activeServerRunId;
+        if (!parsed || !runId) return;
+        this.detailRunId = runId;
+        this.detailKey = detailKey;
+        this.detailRows = [];
+        this.detailHasMore = false;
+        this.detailLoading = false;
+        const dom = this.getDom();
+        dom.selectionRulesDetail.hidden = false;
+        dom.selectionRulesDetailTitle.textContent = `Details — ${parsed.ruleKey} @ ${parsed.horizonBars} bars`;
+        dom.selectionRulesDetailLatest.textContent = "Loading latest selection…";
+        dom.selectionRulesDetailHistorySummary.textContent = "";
+        dom.selectionRulesDetailHistory.replaceChildren();
+        dom.selectionRulesDetailPerformance.replaceChildren();
+        dom.selectionRulesDetailLoadOlderBtn.hidden = true;
+        dom.selectionRulesDetailLoadOlderBtn.disabled = false;
+        this.setDetailStatus("Loading details…");
+        await this.fetchDetailsPage(runId, detailKey, parsed, 0);
+    }
+
+    private async loadOlderDetails(): Promise<void> {
+        const runId = this.detailRunId;
+        const detailKey = this.detailKey;
+        const parsed = detailKey !== null ? parseDetailResultKey(detailKey) : null;
+        if (!runId || !parsed || !this.detailHasMore) return;
+        await this.fetchDetailsPage(runId, detailKey!, parsed, this.detailRows.length);
+    }
+
+    private async fetchDetailsPage(runId: string, detailKey: string, parsed: { ruleKey: string; horizonBars: number }, offset: number): Promise<void> {
+        if (this.detailLoading) return;
+        this.detailLoading = true;
+        this.getDom().selectionRulesDetailLoadOlderBtn.disabled = true;
+        try {
+            const response = await fetch(
+                selectionRulesDetailsUrl(runId, parsed.ruleKey, parsed.horizonBars, offset, SELECTION_RULES_DETAIL_PAGE_DEFAULT),
+                { cache: "no-store" },
+            );
+            if (!response.ok) {
+                const text = await response.text();
+                let message = text;
+                try {
+                    message = (JSON.parse(text) as { error?: string }).error ?? text;
+                } catch {
+                    // keep the raw body text
+                }
+                throw new Error(message || `HTTP ${response.status}`);
+            }
+            const payload = await response.json() as SelectionRulesDetailResponse;
+            if (this.detailIsStale(runId, detailKey) || payload.runId !== runId) return;
+            this.detailHasMore = payload.hasMore;
+            if (offset === 0) this.renderDetailLatest(payload.latest);
+            this.detailRows = appendDetailPage(this.detailRows, payload.rows);
+            this.renderDetailHistory();
+            this.renderDetailPerformance(payload.pairPerformance);
+            const shown = this.detailRows.length.toLocaleString();
+            const total = payload.totalRows.toLocaleString();
+            this.getDom().selectionRulesDetailHistorySummary.textContent =
+                ` — showing ${shown} of ${total}${payload.historyTruncated ? " (older rows omitted by the server cap)" : ""}`;
+            this.getDom().selectionRulesDetailLoadOlderBtn.hidden = !payload.hasMore;
+            this.setDetailStatus("");
+        } catch (error) {
+            if (this.detailIsStale(runId, detailKey)) return;
+            this.setDetailStatus(
+                `Details unavailable: ${error instanceof Error ? error.message : String(error)}`,
+                "danger",
+            );
+        } finally {
+            if (this.detailIsStale(runId, detailKey)) return;
+            this.detailLoading = false;
+            this.getDom().selectionRulesDetailLoadOlderBtn.disabled = !this.detailHasMore;
+        }
+    }
+
+    private renderDetailLatest(row: PairSelectionDetailRow | null): void {
+        const dom = this.getDom();
+        dom.selectionRulesDetailLatest.replaceChildren();
+        if (!row) {
+            dom.selectionRulesDetailLatest.textContent = "No multi-candidate selection by this rule in the loaded ledger (within the probe window for pending events).";
+            return;
+        }
+        const time = document.createElement("strong");
+        time.textContent = `${formatDetailSignalTime(row.signalTime)} UTC`;
+        const pair = document.createElement("strong");
+        pair.textContent = `${row.pair} (${row.baseSymbol}/${row.quoteSymbol}) ${row.direction}`;
+        const score = document.createElement("span");
+        score.textContent = `score ${formatDetailScore(row.score)} · ${row.candidateCount} candidates · ${row.tiedCount} tied`;
+        const status = document.createElement("span");
+        status.className = detailStatusClass(row.status);
+        status.textContent = detailStatusLabel(row.status);
+        dom.selectionRulesDetailLatest.append(time, " — ", pair, " — ", score, " — ", status);
+        if (row.status === "COMPLETE") {
+            const returns = document.createElement("span");
+            returns.textContent = ` — return ${formatDetailPercent(row.selectedReturn)} · others mean ${formatDetailPercent(row.othersMean)} · Δ ${formatDetailPp(row.delta)}`;
+            dom.selectionRulesDetailLatest.append(returns);
+        } else if (row.status === "SELECTED_OUTCOME_KNOWN_POOL_INCOMPLETE") {
+            const note = document.createElement("span");
+            note.textContent = ` — return ${formatDetailPercent(row.selectedReturn)} · others mean n/a (some candidates' outcomes unavailable)`;
+            dom.selectionRulesDetailLatest.append(note);
+        }
+    }
+
+    private renderDetailHistory(): void {
+        const dom = this.getDom();
+        dom.selectionRulesDetailHistory.replaceChildren(...this.detailRows.map((row) => {
+            const tr = document.createElement("tr");
+            const cells = [
+                `${formatDetailSignalTime(row.signalTime)} UTC`,
+                row.pair,
+                row.baseSymbol,
+                row.quoteSymbol,
+                row.direction,
+                formatDetailScore(row.score),
+                String(row.tiedCount),
+                String(row.candidateCount),
+                detailStatusLabel(row.status),
+                formatDetailPercent(row.selectedReturn),
+                formatDetailPercent(row.othersMean),
+                formatDetailPp(row.delta),
+            ];
+            cells.forEach((value, index) => {
+                const cell = document.createElement(index === 0 ? "th" : "td");
+                if (index === 0) cell.scope = "row";
+                cell.textContent = value;
+                if (index === 8) cell.className = detailStatusClass(row.status);
+                if (index === 11 && row.delta !== null) cell.className = row.delta >= 0 ? "selection-rules-detail-pos" : "selection-rules-detail-neg";
+                tr.appendChild(cell);
+            });
+            return tr;
+        }));
+    }
+
+    private renderDetailPerformance(performance: readonly PairSelectionDetailPairPerformance[]): void {
+        const dom = this.getDom();
+        dom.selectionRulesDetailPerformance.replaceChildren(...performance.map((entry) => {
+            const tr = document.createElement("tr");
+            const cells = [
+                entry.pair,
+                entry.direction,
+                String(entry.selectedCount),
+                String(entry.completedCount),
+                String(entry.wins),
+                entry.winRate === null ? "n/a" : `${(entry.winRate * 100).toFixed(1)}%`,
+                formatDetailPercent(entry.meanSelectedReturn),
+                formatDetailPercent(entry.medianSelectedReturn),
+                formatDetailPp(entry.meanDelta),
+            ];
+            cells.forEach((value, index) => {
+                const cell = document.createElement(index === 0 ? "th" : "td");
+                if (index === 0) cell.scope = "row";
+                cell.textContent = value;
+                tr.appendChild(cell);
+            });
+            return tr;
+        }));
     }
 
     private acceptResult(event: SelectionRulesStreamEvent & { type: "rule_result" }): void {
