@@ -157,6 +157,7 @@ function buildInput(args?: {
     strategy?: Strategy;
     paramSets?: Array<Record<string, number>>;
     settings?: BacktestSettings;
+    loadDataset?: FinderMonthlyRankReplayRunInput["loadDataset"];
     exitStrategyCandidates?: FinderMonthlyRankReplayRunInput["exitStrategyCandidates"];
     exitStrategyOverrideEnabled?: boolean;
 }): FinderMonthlyRankReplayRunInput {
@@ -181,12 +182,12 @@ function buildInput(args?: {
             strategy: args?.strategy ?? replayStrategy,
         }],
         ...(args?.exitStrategyCandidates ? { exitStrategyCandidates: args.exitStrategyCandidates } : {}),
-        loadDataset: async (symbol) => {
+        loadDataset: args?.loadDataset ?? (async (symbol) => {
             if (symbol === failingSymbol) throw new Error("load failed for fixture");
             const data = datasets.get(symbol);
             if (!data) throw new Error(`unexpected symbol ${symbol}`);
             return data;
-        },
+        }),
         generateParamSets: () => args?.paramSets ?? [{ period: 5 }, { period: 20 }],
     };
 }
@@ -330,6 +331,57 @@ describe("Monthly Rank Replay runner", () => {
         expect(cancelled).to.equal(false);
         expect(report.performanceDiagnostics?.signalPrecompute.skippedReason).to.equal("none");
         expect(report.performanceDiagnostics?.signalPrecompute.precomputedCandidates).to.equal(1);
+    });
+
+    it("skips exit-alpha counterfactuals when the primary result has no trades", async () => {
+        const noTradeStrategy: Strategy = {
+            ...replayStrategy,
+            name: "No-trade replay fixture",
+            execute: () => [],
+        };
+        const { report } = await run(buildInput({
+            strategy: noTradeStrategy,
+            paramSets: [{ period: 5 }],
+        }));
+
+        expect(report.performanceDiagnostics?.counts.historicalCounterfactualBacktests).to.equal(0);
+        expect(report.selections
+            .filter((selection) => selection.sortKey === "medianExitAlpha")
+            .every((selection) => selection.status === "no_selection"))
+            .to.equal(true);
+    });
+
+    it("keeps coverage-only experiment conventions identical to a scheduled run", async () => {
+        const scheduled = await run(buildInput());
+        const coverageOnly = await run(buildInput({
+            options: buildOptions({ fromYear: 2030 }),
+        }));
+
+        expect(coverageOnly.report.experiment.conventions)
+            .to.deep.equal(scheduled.report.experiment.conventions);
+    });
+
+    it("loads symbols with bounded concurrency while retaining all diagnostics", async () => {
+        const symbols = Array.from({ length: 8 }, (_, index) => `S${index + 1}`);
+        const datasets = new Map(symbols.map((symbol) => [symbol, buildData("UP")]));
+        let activeLoads = 0;
+        let maxActiveLoads = 0;
+        const { report } = await run(buildInput({
+            datasets,
+            options: buildOptions({}, symbols),
+            loadDataset: async (symbol) => {
+                activeLoads += 1;
+                maxActiveLoads = Math.max(maxActiveLoads, activeLoads);
+                await new Promise<void>((resolve) => setImmediate(resolve));
+                activeLoads -= 1;
+                return datasets.get(symbol)!;
+            },
+        }));
+
+        expect(maxActiveLoads).to.be.greaterThan(1);
+        expect(maxActiveLoads).to.be.at.most(4);
+        expect(new Set(report.performanceDiagnostics?.symbolLoads.map((entry) => entry.symbol)))
+            .to.deep.equal(new Set(symbols));
     });
 
     it("selects winners per sort from the complete pool with independently verified scores", async () => {
