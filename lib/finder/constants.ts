@@ -125,8 +125,33 @@ export const UNIVERSE_METRIC_FULL_LABELS: Record<FinderUniverseMetric, string> =
     totalTrades: 'Total Trades',
 };
 
-export const STRATEGY_QUALITY_SORT_OPTIONS: FinderStrategyQualityMetric[] = [
-    'medianExpectancy',
+/**
+ * Every Universe sort shown in the browser dropdown, in dropdown order. This
+ * is the single shared registry: the UI list, ordinary Universe secondary-sort
+ * handling, and Monthly Rank Replay's replayed-sort coverage all read it, so a
+ * new Universe sort automatically joins the replay coverage.
+ */
+export const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
+    "robustUniverseScore",
+    "windowStabilityScore",
+    "profitableActiveRatio",
+    "medianExpectancy",
+    "medianExpectancyWeightedTrades",
+    "medianSharpe",
+    "medianProfitFactor",
+    "medianProfitFactorWeightedTrades",
+    "medianCompositeEdgeRatio",
+    "medianExitAlpha",
+    "worstMaxDrawdownPercent",
+    "medianMaxDrawdownPercent",
+    "medianReturnDrawdownRatio",
+    "worstNetProfit",
+    "totalTrades",
+    "activeSymbols",
+] as const;
+
+
+export const STRATEGY_QUALITY_SORT_OPTIONS: FinderStrategyQualityMetric[] = [    'medianExpectancy',
     'averageExpectancy',
     'averageProfitFactor',
     'profitFactor',

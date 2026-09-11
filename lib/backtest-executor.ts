@@ -131,6 +131,16 @@ export interface BacktestExecutorRequest {
         tradeGate?: import("./batch-backtest/trade-gate").TradeGate;
         /** Pair key used to select the gate's causal feature context. */
         tradeGatePair?: string;
+        /**
+         * Scored-range replay contract (Monthly Rank Replay). Requires the
+         * standard TypeScript engine; forces the scored-range path in
+         * `runBacktest` (warmup-aware signals, scored account/statistics).
+         * Boundaries are bar times from the SAME timeline passed as
+         * `ohlcvData`/`closedCandleDataOverride`. Boundary validation fires
+         * when simulation proceeds; a zero-signal run returns the flat
+         * scored-window result without it (see the engine option doc).
+         */
+        scoredRange?: { startBarTime: OHLCVData["time"]; endBarTime: OHLCVData["time"] };
     };
     dataFetcher?: CrossSymbolDataFetcher;
     crossSymbolInput?: {
@@ -538,6 +548,12 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     const evaluation = strategy.evaluate?.(backtestData, normalizedParams, signals);
     const entryStats = evaluation?.entryStats;
 
+    if (req.backtestRunOptions?.scoredRange && entryStats) {
+        throw new Error(
+            `Scored-range execution is not supported for strategy "${strategy.name}": it bypasses the signal pipeline via a direct evaluation.`,
+        );
+    }
+
     if (strategy.metadata?.role === "entry" && entryStats) {
         const engineStartedAt = executorTimings ? performance.now() : 0;
         let result = buildEntryBacktestResult(entryStats);
@@ -593,6 +609,9 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     if (signalShapeUnsupported) typescriptRequirementReasons.push("signal_shape_unsupported");
     if (req.backtestRunOptions?.forceDisableSignalExits === true) {
         typescriptRequirementReasons.push("Exit Alpha control run requires TypeScript");
+    }
+    if (req.backtestRunOptions?.scoredRange) {
+        typescriptRequirementReasons.push("scored-range replay requires TypeScript");
     }
     if (req.context.tradeGate) {
         typescriptRequirementReasons.push("Trade Gate requires TypeScript");

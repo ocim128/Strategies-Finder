@@ -9,6 +9,8 @@ import { setVisible } from "./dom-utils";
 import { dataManager } from "./data-manager";
 import { settingsManager } from "./settings-manager";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
+import { resolveCapitalSettingsFromRaw } from "./backtest-capital-settings";
+import type { AnyFinderStreamEvent } from "./finder/server/finder-stream-types";
 import { getLocalDailyAssets } from "./local-daily-datasets";
 import { cloneJsonCompatible, parseJsonPreservingNonFinite } from "./json-utils";
 import { debounce } from "./debounce";
@@ -25,6 +27,7 @@ import {
 	STRATEGY_QUALITY_METRIC_FULL_LABELS,
 	STRATEGY_QUALITY_SORT_OPTIONS,
 	UNIVERSE_METRIC_FULL_LABELS,
+	UNIVERSE_SORT_OPTIONS as sharedUniverseSortOptions,
 } from "./finder/constants";
 import { buildFinderEvaluationData, runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
 import { captureTradeFilter, formatCapturedConfiguration } from "./finder/finder-config-capture";
@@ -38,6 +41,13 @@ import {
 	sliceFinderDataWindow,
 } from "./finder/finder-manager-logic";
 import { sortFinderResults } from "./finder/finder-engine";
+import {
+	formatMonthlyRankReplayOutcomeSymbols,
+	formatMonthlyRankReplayReportText,
+	formatMonthlyRankReplaySelectionLine,
+	formatMonthlyRankReplaySummaryRow,
+} from "./finder/finder-monthly-rank-replay-format";
+import type { MonthlyRankReplayReport } from "./finder/finder-monthly-rank-replay";
 import {
 	mergeFinderRiskParamsIntoBacktestSettings,
 } from "./finder/finder-runner-core";
@@ -258,6 +268,11 @@ type FinderPersistedUiState = {
 	universeMinProfitableActiveRatio: number;
 	universeSort: FinderUniverseMetric;
 	universeSortSecondary: FinderUniverseMetric;
+	/** Monthly Rank Replay submode (Symbol Universe only). Default off. */
+	universeReplayEnabled: boolean;
+	universeReplayFromYear: number;
+	universeReplayEvalWindowBars: number;
+	universeReplayForwardBars: number;
 	assetOpportunityCandidatePoolSize: number;
 	assetOpportunityMinFreshSupport: number;
 	assetOpportunityOosMeasurementMode: "fixed_horizon" | "next_exit";
@@ -306,7 +321,7 @@ type FinderPersistedResultsState = {
 
 type FinderPersistedActiveServerRun = {
 	runId: string;
-	scope: 'symbol_universe' | 'asset_opportunity' | 'asset_opportunity_batch';
+	scope: 'symbol_universe' | 'asset_opportunity' | 'asset_opportunity_batch' | 'monthly_rank_replay';
 	startedAt: number;
 };
 
@@ -344,6 +359,10 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	universeMinProfitableActiveRatio: 0.5,
 	universeSort: "robustUniverseScore",
 	universeSortSecondary: "windowStabilityScore",
+	universeReplayEnabled: false,
+	universeReplayFromYear: 2023,
+	universeReplayEvalWindowBars: 240,
+	universeReplayForwardBars: 80,
 	assetOpportunityCandidatePoolSize: 10,
 	assetOpportunityMinFreshSupport: 2,
 	assetOpportunityOosMeasurementMode: "fixed_horizon",
@@ -355,24 +374,7 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	assetOpportunityOosBatchEndBars: 5,
 };
 
-const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
-    "robustUniverseScore",
-    "windowStabilityScore",
-    "profitableActiveRatio",
-    "medianExpectancy",
-    "medianExpectancyWeightedTrades",
-    "medianSharpe",
-    "medianProfitFactor",
-    "medianProfitFactorWeightedTrades",
-    "medianCompositeEdgeRatio",
-    "medianExitAlpha",
-    "worstMaxDrawdownPercent",
-    "medianMaxDrawdownPercent",
-    "medianReturnDrawdownRatio",
-    "worstNetProfit",
-    "totalTrades",
-    "activeSymbols",
-] as const;
+const UNIVERSE_SORT_OPTIONS = sharedUniverseSortOptions;
 const TIMING_SORT_METRICS: readonly FinderMetric[] = ["entryScore", "exitScore"];
 
 function isTimingSortMetric(value: unknown): value is FinderMetric {
@@ -559,6 +561,23 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		universeMinProfitableActiveRatio: minProfitableActiveRatio,
 		universeSort: normalizeFinderUniverseMetric(source.universeSort, DEFAULT_FINDER_UI_STATE.universeSort),
 		universeSortSecondary: normalizeFinderUniverseMetric(source.universeSortSecondary, DEFAULT_FINDER_UI_STATE.universeSortSecondary),
+		universeReplayEnabled: source.universeReplayEnabled === true,
+		universeReplayFromYear: typeof source.universeReplayFromYear === "number"
+			&& Number.isInteger(source.universeReplayFromYear)
+			&& source.universeReplayFromYear >= 1990
+			&& source.universeReplayFromYear <= 2100
+			? source.universeReplayFromYear
+			: DEFAULT_FINDER_UI_STATE.universeReplayFromYear,
+		universeReplayEvalWindowBars: typeof source.universeReplayEvalWindowBars === "number"
+			&& Number.isInteger(source.universeReplayEvalWindowBars)
+			&& source.universeReplayEvalWindowBars > 0
+			? source.universeReplayEvalWindowBars
+			: DEFAULT_FINDER_UI_STATE.universeReplayEvalWindowBars,
+		universeReplayForwardBars: typeof source.universeReplayForwardBars === "number"
+			&& Number.isInteger(source.universeReplayForwardBars)
+			&& source.universeReplayForwardBars > 0
+			? source.universeReplayForwardBars
+			: DEFAULT_FINDER_UI_STATE.universeReplayForwardBars,
 		assetOpportunityCandidatePoolSize,
 		assetOpportunityMinFreshSupport,
 		assetOpportunityOosMeasurementMode,
@@ -722,7 +741,7 @@ export class FinderManager {
 				}
 				const source = data as Partial<FinderPersistedResultsState>;
 				const results = normalizeFinderLatestResultsSnapshot(source.results);
-				if (!results || results.results.length === 0) {
+				if (!results || (results.mode !== 'monthly_rank_replay' && results.results.length === 0)) {
 					return null;
 				}
 				return {
@@ -740,9 +759,10 @@ export class FinderManager {
 		});
 		if (!snapshot) return;
 
-		const restoredResults = snapshot.results.scope === 'asset_opportunity'
+		const restoredResults: FinderLatestResults = snapshot.results.scope === 'asset_opportunity'
 			? {
-				scope: 'asset_opportunity' as const,
+				scope: 'asset_opportunity',
+				mode: undefined,
 				results: deduplicateAssetOpportunityResultsBySymbol(snapshot.results.results),
 			}
 			: snapshot.results;
@@ -753,7 +773,9 @@ export class FinderManager {
 		}
 		debugLogger.event("finder.latest_results_restored", {
 			scope: restoredResults.scope,
-			count: restoredResults.results.length,
+			count: restoredResults.mode === 'monthly_rank_replay'
+				? restoredResults.report.checkpoints.length
+				: restoredResults.results.length,
 			symbol: snapshot.symbol,
 			interval: snapshot.interval,
 			savedAt: snapshot.savedAt,
@@ -761,7 +783,9 @@ export class FinderManager {
 	}
 
 	private saveLatestResultsSnapshot(results: FinderLatestResults): void {
-		if (results.results.length === 0) {
+		// Replay snapshots persist metadata + summary rows only; the ordinary
+		// empty-result skip does not apply to them.
+		if (results.mode !== 'monthly_rank_replay' && results.results.length === 0) {
 			return;
 		}
 		const snapshot: FinderPersistedResultsState = {
@@ -807,7 +831,7 @@ export class FinderManager {
 	private persistActiveServerRun(
 		runId: string,
 		startTime: number,
-		scope: 'symbol_universe' | 'asset_opportunity' | 'asset_opportunity_batch',
+		scope: 'symbol_universe' | 'asset_opportunity' | 'asset_opportunity_batch' | 'monthly_rank_replay',
 	): void {
 		writePersistedJson({
 			...FINDER_ACTIVE_SERVER_RUN_STORAGE,
@@ -846,6 +870,7 @@ export class FinderManager {
 					source.scope !== "symbol_universe"
 					&& source.scope !== "asset_opportunity"
 					&& source.scope !== "asset_opportunity_batch"
+					&& source.scope !== "monthly_rank_replay"
 				) return null;
 				return {
 					runId: source.runId,
@@ -989,6 +1014,10 @@ export class FinderManager {
 		dom.finderUniverseMinActiveSymbols.value = String(this.uiState.universeMinActiveSymbols);
 		dom.finderUniverseMinTotalTrades.value = String(this.uiState.universeMinTotalTrades);
 		dom.finderUniverseMinProfitableActiveRatio.value = String(this.uiState.universeMinProfitableActiveRatio);
+		dom.finderReplayToggle.checked = this.uiState.universeReplayEnabled;
+		dom.finderReplayFromYear.value = String(this.uiState.universeReplayFromYear);
+		dom.finderReplayEvalBars.value = String(this.uiState.universeReplayEvalWindowBars);
+		dom.finderReplayForwardBars.value = String(this.uiState.universeReplayForwardBars);
 		dom.finderAssetCandidatePoolSize.value = String(this.uiState.assetOpportunityCandidatePoolSize);
 		dom.finderAssetMinFreshSupport.value = String(this.uiState.assetOpportunityMinFreshSupport);
 		dom.finderAssetOosMeasurementMode.value = this.uiState.assetOpportunityOosMeasurementMode;
@@ -1073,6 +1102,9 @@ export class FinderManager {
 				return;
 			}
 			if (this.latestResults.scope === "strategy_quality") {
+				return;
+			}
+			if (this.latestResults.scope === "symbol_universe" && this.latestResults.mode === "monthly_rank_replay") {
 				return;
 			}
 			const candidate = this.latestResults.results[index];
@@ -1288,6 +1320,17 @@ export class FinderManager {
 
 	private initUniverseUI(): void {
 		const dom = this.getDom();
+		dom.finderReplayToggle.addEventListener("change", () => {
+			this.captureUniverseUiState(false);
+			this.applyScopeUi();
+			this.persistUiStateDebounced();
+		});
+		for (const input of [dom.finderReplayFromYear, dom.finderReplayEvalBars, dom.finderReplayForwardBars]) {
+			input.addEventListener("change", () => {
+				this.captureUniverseUiState(false);
+				this.persistUiStateDebounced();
+			});
+		}
 
 		dom.finderScope.addEventListener("change", () => {
 			this.uiState.scope = normalizeFinderScope(dom.finderScope.value);
@@ -1354,6 +1397,10 @@ export class FinderManager {
 		);
 		this.uiState.universeSort = normalizeFinderUniverseMetric(dom.finderUniverseSort.value, DEFAULT_FINDER_UI_STATE.universeSort);
 		this.uiState.universeSortSecondary = normalizeFinderUniverseMetric(dom.finderUniverseSortSecondary.value, DEFAULT_FINDER_UI_STATE.universeSortSecondary);
+		this.uiState.universeReplayEnabled = dom.finderReplayToggle.checked;
+		this.uiState.universeReplayFromYear = Math.round(this.readFinderNumberInput(dom.finderReplayFromYear, DEFAULT_FINDER_UI_STATE.universeReplayFromYear, 1990));
+		this.uiState.universeReplayEvalWindowBars = Math.round(this.readFinderNumberInput(dom.finderReplayEvalBars, DEFAULT_FINDER_UI_STATE.universeReplayEvalWindowBars, 1));
+		this.uiState.universeReplayForwardBars = Math.round(this.readFinderNumberInput(dom.finderReplayForwardBars, DEFAULT_FINDER_UI_STATE.universeReplayForwardBars, 1));
 		this.updateUniverseSummary();
 		if (persist) {
 			this.saveUiState();
@@ -1369,10 +1416,15 @@ export class FinderManager {
 		const modeInput = dom.finderMode;
 
 		dom.finderChartSortSection.style.display = multiAssetScope ? "none" : "";
-		dom.finderUniverseSortSection.style.display = universeScope ? "" : "none";
+		// Monthly Rank Replay submode: hide the ordinary Universe ranking +
+		// filter controls while it is on. Their saved values stay untouched.
+		const replayActive = universeScope && dom.finderReplayToggle.checked;
+		dom.finderReplayBlock.style.display = universeScope ? "" : "none";
+		dom.finderUniverseSortSection.style.display = universeScope && !replayActive ? "" : "none";
 		dom.finderUniverseSectionHeader.style.display = multiAssetScope ? "" : "none";
 		dom.finderUniverseSection.style.display = multiAssetScope ? "" : "none";
-		dom.finderUniverseFilters.style.display = universeScope ? "" : "none";
+		dom.finderUniverseFilters.style.display = universeScope && !replayActive ? "" : "none";
+		dom.finderReplaySettings.style.display = universeScope && dom.finderReplayToggle.checked ? "" : "none";
 		dom.finderAssetOpportunitySettings.style.display = assetOpportunityScope ? "" : "none";
 		dom.finderQualitySettings.style.display = qualityScope ? "" : "none";
 		dom.finderPolymarketSection.style.display = multiAssetScope ? "none" : "";
@@ -1988,14 +2040,18 @@ export class FinderManager {
 		this.ui.renderRandomBenchmark(options.mode);
 		// Run-start clear is a volatile UI reset; the previous snapshot was
 		// already cleared explicitly via clearLatestResultsSnapshot().
-		this.setLatestResults({
-			scope: options.scope === 'symbol_universe'
-				? 'symbol_universe'
-				: options.scope === 'asset_opportunity'
-					? 'asset_opportunity'
-					: options.scope === 'strategy_quality' ? 'strategy_quality' : 'current_chart',
-			results: [],
-		}, false);
+		const resetScope = options.scope === 'symbol_universe'
+			? 'symbol_universe' as const
+			: options.scope === 'asset_opportunity'
+				? 'asset_opportunity' as const
+				: options.scope === 'strategy_quality' ? 'strategy_quality' as const : 'current_chart' as const;
+		this.setLatestResults(resetScope === 'symbol_universe'
+			? { scope: 'symbol_universe', results: [] as FinderUniverseCandidate[] }
+			: resetScope === 'asset_opportunity'
+				? { scope: 'asset_opportunity', results: [] as FinderAssetOpportunityResult[] }
+				: resetScope === 'strategy_quality'
+					? { scope: 'strategy_quality', results: [] as import('./types/finder').FinderStrategyQualityResult[] }
+					: { scope: 'current_chart', results: [] as FinderResult[] }, false);
 		this.renderLatestResults();
 
 		try {
@@ -2307,9 +2363,13 @@ export class FinderManager {
 		// a current-chart view while the UI still claims current-chart scope.
 		// A batch job reattaches as the same asset_opportunity scope (the batch
 		// is an orchestration detail, not a distinct render scope).
+		// A replay job reattaches under the symbol_universe UI scope; the
+		// replay submode itself is a persisted UI toggle, not a FinderScope.
 		const uiScope: FinderScope = persisted.scope === 'asset_opportunity_batch'
 			? 'asset_opportunity'
-			: persisted.scope;
+			: persisted.scope === 'monthly_rank_replay'
+				? 'symbol_universe'
+				: persisted.scope;
 		if (this.uiState.scope !== uiScope) {
 			this.uiState.scope = uiScope;
 			dom.finderScope.value = uiScope;
@@ -2327,10 +2387,9 @@ export class FinderManager {
 		this.clearLatestResultsSnapshot();
 		// Volatile reattach progress view — the snapshot was cleared above and
 		// is only re-persisted at a terminal snapshot.
-		this.setLatestResults({
-			scope: uiScope,
-			results: [],
-		}, false);
+		this.setLatestResults(uiScope === 'asset_opportunity'
+			? { scope: 'asset_opportunity', results: [] as FinderAssetOpportunityResult[] }
+			: { scope: 'symbol_universe', results: [] as FinderUniverseCandidate[] }, false);
 		this.renderLatestResults();
 		debugLogger.event("finder.server.reattach_started", {
 			runId,
@@ -2348,7 +2407,9 @@ export class FinderManager {
 		this.setProgress(true, initial.progressPercent, initial.statusText);
 		const jobLabel = persisted.scope === 'asset_opportunity' || persisted.scope === 'asset_opportunity_batch'
 			? 'Asset Opportunity'
-			: 'Universe Finder';
+			: persisted.scope === 'monthly_rank_replay'
+				? 'Monthly Rank Replay'
+				: 'Universe Finder';
 		this.setStatus(`Reattached to ${jobLabel}: ${initial.statusText}`);
 		let clearPersistedRecord = false;
 		let terminalReached = false;
@@ -2377,6 +2438,18 @@ export class FinderManager {
 					}
 					: null);
 				dom.finderCopyDiagnostics.disabled = !snapshot.diagnostics && !this.latestAssetOpportunityDiagnostics;
+			} else if (persisted.scope === 'monthly_rank_replay' && snapshot.terminalReplay) {
+				// Recover the full replay report from the server status
+				// snapshot; the persisted localStorage envelope keeps only the
+				// summary. If the server state is gone the renderer labels
+				// detail unavailable instead of implying it persisted.
+				this.setLatestResults({
+					scope: 'symbol_universe',
+					mode: 'monthly_rank_replay',
+					report: snapshot.terminalReplay,
+				});
+				this.renderLatestResults();
+				this.getDom().finderCopyDiagnostics.disabled = false;
 			} else if (snapshot.phase === "done" && snapshot.terminalCandidates) {
 				// The server slice is already sorted and bounded with the original
 				// run options. Those options are not available after a reload.
@@ -2494,7 +2567,7 @@ export class FinderManager {
 	 */
 	private async recoverActiveServerRun(
 		runId: string,
-		jobKind: 'symbol_universe' | 'asset_opportunity' | 'asset_opportunity_batch',
+		jobKind: 'symbol_universe' | 'asset_opportunity' | 'asset_opportunity_batch' | 'monthly_rank_replay',
 	): Promise<FinderRunStatusSnapshot | null> {
 		const FAILURE_BACKOFF_MS = [2_000, 5_000, 10_000, 15_000] as const;
 		const MAX_CONSECUTIVE_FAILURES = 20;
@@ -2529,7 +2602,11 @@ export class FinderManager {
 						return snapshot;
 					}
 					this.setProgress(true, snapshot.progressPercent, snapshot.statusText);
-					this.setStatus(`${jobKind === 'asset_opportunity' || jobKind === 'asset_opportunity_batch' ? 'Asset Opportunity' : 'Universe Finder'}: ${snapshot.statusText}`);
+					this.setStatus(`${jobKind === 'asset_opportunity' || jobKind === 'asset_opportunity_batch'
+							? 'Asset Opportunity'
+							: jobKind === 'monthly_rank_replay'
+								? 'Monthly Rank Replay'
+								: 'Universe Finder'}: ${snapshot.statusText}`);
 					await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
 				} catch (error) {
 					// An abort (Stop / new run) is not a transient failure — bail
@@ -3086,17 +3163,37 @@ export class FinderManager {
 		// merge, and the optional OOS pass all run server-side. The browser is
 		// the control + rendering layer. Persist the active run id before fetch
 		// so a tab reload can reattach to the same server job.
+		// Monthly Rank Replay submode: same server job lifecycle, replay
+		// stream. Fixed-dollar sizing is a v1 contract — fail before POST.
+		const replayActive = options.monthlyRankReplay !== undefined;
+		if (replayActive) {
+			const resolvedCapital = resolveCapitalSettingsFromRaw(
+				backtestService.getCapitalSettings() as unknown as Record<string, unknown>,
+			);
+			if (resolvedCapital.sizingMode !== 'fixed' || !(resolvedCapital.initialCapital > 0) || !(resolvedCapital.fixedTradeAmount > 0)) {
+				this.setStatus('Monthly Rank Replay requires fixed-dollar sizing with positive initial capital and fixed trade amount.');
+				return false;
+			}
+		}
+
 		const runId = this.generateServerRunId();
 		this.activeServerRunId = runId;
-		this.persistActiveServerRun(runId, startTime, 'symbol_universe');
+		this.persistActiveServerRun(runId, startTime, replayActive ? 'monthly_rank_replay' : 'symbol_universe');
 
-		const outcome = await this.runUniverseFinderServer(
-			options,
-			selectedStrategies,
-			exitStrategyCandidates,
-			runId,
-			startTime,
-		);
+		const outcome = replayActive
+			? await this.runUniverseReplayFinderServer(
+				options,
+				selectedStrategies,
+				exitStrategyCandidates,
+				runId,
+			)
+			: await this.runUniverseFinderServer(
+				options,
+				selectedStrategies,
+				exitStrategyCandidates,
+				runId,
+				startTime,
+			);
 
 		// A stale run that lost ownership (Stop, newer run) must not persist
 		// its active-run record or overwrite rendered state. The stream
@@ -3111,7 +3208,7 @@ export class FinderManager {
 		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
 		this.ui.renderRandomBenchmark(options.mode);
 
-		if (!this.isCancelled && this.activeServerRunId === null) {
+		if (!this.isCancelled && this.activeServerRunId === null && !replayActive) {
 			const totalSymbols = options.universe.symbols.length;
 			const survivors = this.getUniverseResults().length;
 			const segments = [
@@ -3151,6 +3248,7 @@ export class FinderManager {
 		runId: string,
 		startTime: number,
 	): Promise<ServerUniverseRunOutcome> {
+		void startTime; // terminal status text is produced by the replay stream
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
 		// Send a symbol -> provider map so the server's cross-symbol mismatch
@@ -3338,6 +3436,149 @@ export class FinderManager {
 			loadedSymbols,
 			failedSymbolCount,
 			oosRemoved,
+		};
+	}
+
+	/**
+	 * Server-owned Monthly Rank Replay path. POSTs the SAME
+	 * /api/finder/universe-run endpoint (the server detects
+	 * `options.monthlyRankReplay` and dispatches the replay job) and consumes
+	 * the replay NDJSON stream. The terminal `replay_done` report is the
+	 * authoritative payload; a broken stream falls back to status recovery
+	 * exactly like the ordinary universe path. Every callback keeps the
+	 * active-runId guard.
+	 */
+	private async runUniverseReplayFinderServer(
+		options: FinderOptions,
+		selectedStrategies: FinderSelectedStrategy[],
+		exitStrategyCandidates: FinderSelectedStrategy[] | undefined,
+		runId: string,
+	): Promise<ServerUniverseRunOutcome> {
+		const settings = backtestService.getBacktestSettings();
+		const capitalSettings = backtestService.getCapitalSettings();
+		const universeSymbols = options.universe?.symbols ?? [];
+		const providerBySymbol: Record<string, string> = {};
+		for (const symbol of universeSymbols) {
+			providerBySymbol[symbol] = dataManager.getProvider(symbol);
+		}
+		for (const selected of [...selectedStrategies, ...(exitStrategyCandidates ?? [])]) {
+			const secondarySymbol = resolveCrossSymbolSecondaryForStrategy(selected.strategy, settings);
+			if (secondarySymbol) {
+				providerBySymbol[secondarySymbol] = dataManager.getProvider(secondarySymbol);
+			}
+		}
+		const response = await fetch('/api/finder/universe-run', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				runId,
+				symbols: universeSymbols,
+				interval: state.currentInterval,
+				options,
+				settings,
+				capitalSettings,
+				strategyKeys: selectedStrategies.map((s) => s.key),
+				exitStrategyKeys: exitStrategyCandidates?.map((c) => c.key),
+				// Replay is TypeScript-only in v1; never advertise Rust.
+				useRustEnginePreference: false,
+				providerBySymbol,
+			}),
+		});
+
+		if (response.status === 404 || response.status === 405) {
+			throw new Error("Monthly Rank Replay requires a Vite server runtime; static-only deployments are unsupported.");
+		}
+		if (!response.ok || !response.body) {
+			const text = await response.text();
+			let payload: { error?: string } = {};
+			try { payload = JSON.parse(text); } catch { /* ignore */ }
+			throw new Error(payload.error ?? `Monthly Rank Replay failed (${response.status}).`);
+		}
+
+		const isStillActive = (): boolean => this.activeServerRunId === runId;
+		let terminalReport: import('./finder/finder-monthly-rank-replay').MonthlyRankReplayReport | null = null;
+		let loadedSymbols = 0;
+
+		let streamError: unknown = null;
+		try {
+			await consumeNdjsonStream<AnyFinderStreamEvent>(response.body, {
+				onReplayStart: (event) => {
+					if (!isStillActive()) return;
+					this.setStatus(`Monthly Rank Replay: ${event.totalSymbols} symbols, ${event.replayedSortKeys.length} sorts...`);
+				},
+				onReplayProgress: (event) => {
+					if (!isStillActive()) return;
+					this.setProgress(true, event.percent, event.text);
+					this.setStatus(`Monthly Rank Replay: ${event.status}`);
+				},
+				onReplayCheckpoint: (event) => {
+					if (!isStillActive()) return;
+					this.setStatus(`Monthly Rank Replay: ${event.checkpoint.label} ${event.checkpoint.status}`);
+				},
+				onReplayDone: (event) => {
+					if (event.report && isStillActive()) {
+						terminalReport = event.report;
+						loadedSymbols = event.report.experiment.symbols.length;
+						this.setLatestResults({
+							scope: 'symbol_universe',
+							mode: 'monthly_rank_replay',
+							report: event.report,
+						});
+						this.stashAndResetResort();
+						this.populateResortOptions();
+						this.renderLatestResults();
+						this.setStatus(event.cancelled
+							? `Monthly Rank Replay cancelled: ${event.summary}`
+							: `Monthly Rank Replay complete: ${event.summary}`);
+					}
+				},
+				onReplayFatal: (event) => {
+					throw new Error(event.error);
+				},
+				onFatal: (event) => {
+					throw new Error(event.error);
+				},
+			}, { requireTerminal: true });
+		} catch (error) {
+			streamError = error;
+		}
+
+		if (streamError !== null && terminalReport === null && isStillActive()) {
+			const recovered = await this.recoverActiveServerRun(runId, 'monthly_rank_replay');
+			if (recovered?.phase === "fatal") {
+				throw new Error(recovered.error ?? recovered.summary ?? recovered.statusText);
+			}
+			if (recovered?.terminalReplay && isStillActive()) {
+				terminalReport = recovered.terminalReplay;
+				loadedSymbols = recovered.terminalReplay.experiment.symbols.length;
+				this.setLatestResults({
+					scope: 'symbol_universe',
+					mode: 'monthly_rank_replay',
+					report: recovered.terminalReplay,
+				});
+				this.stashAndResetResort();
+				this.populateResortOptions();
+				this.renderLatestResults();
+			}
+		}
+
+		if (streamError !== null && terminalReport === null) {
+			if (this.isCancelled && !isStillActive()) {
+				throw new Error("Finder stopped.");
+			}
+			const message = streamError instanceof Error ? streamError.message : String(streamError);
+			if (isStillActive()) {
+				this.setStatus(`Monthly Rank Replay failed: ${message}`);
+			}
+			throw streamError;
+		}
+
+		return {
+			results: [],
+			diagnostics: null,
+			loadedSymbols,
+			failedSymbolCount: 0,
+			oosRemoved: 0,
 		};
 	}
 
@@ -3562,6 +3803,16 @@ export class FinderManager {
 		if (scope !== "current_chart" && scope !== "symbol_universe") {
 			options.sortPriority = options.sortPriority.filter((metric) => metric !== "exitAlpha");
 		}
+		if (scope === 'symbol_universe' && dom.finderReplayToggle.checked) {
+			const fromYear = Math.round(this.readFinderNumberInput(dom.finderReplayFromYear, DEFAULT_FINDER_UI_STATE.universeReplayFromYear, 1990));
+			const evalWindowBars = Math.round(this.readFinderNumberInput(dom.finderReplayEvalBars, DEFAULT_FINDER_UI_STATE.universeReplayEvalWindowBars, 1));
+			const forwardBars = Math.round(this.readFinderNumberInput(dom.finderReplayForwardBars, DEFAULT_FINDER_UI_STATE.universeReplayForwardBars, 1));
+			options.monthlyRankReplay = {
+				fromYear: Math.min(2100, Math.max(1990, fromYear)),
+				evalWindowBars: Math.max(1, evalWindowBars),
+				forwardBars: Math.max(1, forwardBars),
+			};
+		}
 		if (scope === 'symbol_universe' || scope === 'strategy_quality') {
 			options.universe = buildFinderUniverseOptions({
 				symbols: this.parseUniverseSymbols(dom.finderUniverseSymbols.value),
@@ -3680,7 +3931,162 @@ export class FinderManager {
 	}
 
 	private getUniverseResults(): FinderUniverseCandidate[] {
-		return this.latestResults.scope === 'symbol_universe' ? this.latestResults.results : [];
+		return this.latestResults.scope === 'symbol_universe' && this.latestResults.mode !== 'monthly_rank_replay'
+			? this.latestResults.results
+			: [];
+	}
+
+	private getReplayReport(): import('./finder/finder-monthly-rank-replay').MonthlyRankReplayReport | null {
+		return this.latestResults.scope === 'symbol_universe' && this.latestResults.mode === 'monthly_rank_replay'
+			? this.latestResults.report
+			: null;
+	}
+
+	/**
+	 * Render the Monthly Rank Replay report: one summary row per historical
+	 * sort plus per-checkpoint detail. The detail lines come from the SAME
+	 * formatter as Copy Results, so the display and the copied output can
+	 * never describe different reports.
+	 */
+	private renderReplayReport(report: MonthlyRankReplayReport): void {
+		const dom = this.getDom();
+		const list = dom.finderList;
+		list.innerHTML = '';
+		setVisible('finderEmpty', false);
+		dom.finderCopyTopResults.disabled = false;
+
+		const wrapper = document.createElement('div');
+		wrapper.className = 'finder-replay-report';
+
+		const header = document.createElement('div');
+		header.className = 'finder-title';
+		header.textContent = 'Monthly Rank Replay — forward outcomes of monthly historical rank #1';
+		wrapper.appendChild(header);
+
+		const experimentLine = document.createElement('div');
+		experimentLine.className = 'finder-sub';
+		const experiment = report.experiment;
+		experimentLine.textContent = `From ${experiment.fromYear} | L=${experiment.evalWindowBars} bars | H=${experiment.forwardBars} bars | ${experiment.interval} | engine ${experiment.engine} | ${experiment.sizingMode} sizing | ${experiment.candidatePool.actualCandidates} unique candidates`;
+		wrapper.appendChild(experimentLine);
+
+		const warnLine = document.createElement('div');
+		warnLine.className = 'finder-sub finder-universe-summary';
+		const warnings: string[] = [];
+		if (report.stoppedEarly) warnings.push(`Incomplete: ${report.stoppedEarly.reason} after ${report.stoppedEarly.completedCheckpoints} checkpoints`);
+		if (report.fatal) warnings.push(`Fatal: ${report.fatal}`);
+		if (report.detailUnavailable) warnings.push('Detail unavailable — summary rows only (recoverable from the server while its run state persists)');
+		const failedSymbols = report.symbolCoverage.filter((symbol) => symbol.error);
+		if (failedSymbols.length > 0) {
+			const samples = failedSymbols.slice(0, 4)
+				.map((symbol) => `${symbol.symbol}: ${symbol.error}`)
+				.join('; ');
+			warnings.push(
+				`${failedSymbols.length}/${report.symbolCoverage.length} symbols failed to load — strict coverage makes every checkpoint unavailable. Fix or remove them (see Copy Results for the full list). ${samples}`,
+			);
+		}
+		if (report.experiment.candidatePool.actualCandidates === 0) {
+			warnings.push('No candidate configurations were generated — check Runs/Strategy, Range %, and Steps/Param, then run again.');
+		}
+		const unavailableCheckpoints = report.checkpoints.filter((checkpoint) => checkpoint.status === 'unavailable');
+		if (report.checkpoints.length === 0) {
+			warnings.push('No checkpoints were scheduled.');
+		} else if (unavailableCheckpoints.length === report.checkpoints.length) {
+			warnings.push(`No checkpoint was measurable. First reason: ${unavailableCheckpoints[0]!.reason ?? 'unknown'}`);
+		} else if (unavailableCheckpoints.length > 0) {
+			warnings.push(`${unavailableCheckpoints.length}/${report.checkpoints.length} checkpoints unavailable — reasons under Data coverage below.`);
+		}
+		warnings.push('Retrospective replay; overlapping H-bar windows are not calendar-month returns.');
+		warnLine.textContent = warnings.join(' • ');
+		wrapper.appendChild(warnLine);
+
+		// Data coverage: per-symbol loaded ranges + load errors, and the
+		// per-checkpoint availability reasons. Without this, a coverage-only
+		// run looks like a silent empty result.
+		const coverageTitle = document.createElement('div');
+		coverageTitle.className = 'finder-universe-summary';
+		coverageTitle.textContent = 'Data coverage';
+		wrapper.appendChild(coverageTitle);
+		for (const symbol of report.symbolCoverage) {
+			const row = document.createElement('div');
+			row.className = 'finder-sub finder-symbol-row';
+			const parts = [
+				symbol.symbol,
+				`bars ${symbol.bars}`,
+				symbol.firstOpenLabel ? `first ${symbol.firstOpenLabel.slice(0, 10)}` : undefined,
+				symbol.lastCloseLabel ? `last close ${symbol.lastCloseLabel.slice(0, 10)}` : undefined,
+				`warmup at first checkpoint ${symbol.warmupBarsAtFirstCheckpoint}`,
+				symbol.synthetic ? 'synthetic pair' : undefined,
+			].filter(Boolean);
+			row.textContent = symbol.error
+				? `${parts.join(' | ')} | LOAD ERROR: ${symbol.error}`
+				: parts.join(' | ');
+			wrapper.appendChild(row);
+		}
+		for (const checkpoint of unavailableCheckpoints) {
+			const row = document.createElement('div');
+			row.className = 'finder-sub finder-symbol-row';
+			row.textContent = `${checkpoint.label}: unavailable — ${checkpoint.reason ?? 'unknown reason'}`;
+			wrapper.appendChild(row);
+		}
+
+		const summaryTitle = document.createElement('div');
+		summaryTitle.className = 'finder-universe-summary';
+		summaryTitle.textContent = 'Summary — one row per historical sort (each uses its own valid checkpoints)';
+		wrapper.appendChild(summaryTitle);
+
+		for (const summary of report.sortSummaries) {
+			const row = document.createElement('div');
+			row.className = 'finder-sub finder-symbol-row';
+			row.textContent = formatMonthlyRankReplaySummaryRow(summary);
+			wrapper.appendChild(row);
+		}
+
+		const hasDetail = !report.detailUnavailable
+			&& report.checkpoints.some((checkpoint) => report.selections.some((selection) => selection.checkpointIndex === checkpoint.index));
+		if (hasDetail) {
+			const detailsTitle = document.createElement('div');
+			detailsTitle.className = 'finder-universe-summary';
+			detailsTitle.textContent = 'Monthly details';
+			wrapper.appendChild(detailsTitle);
+
+			for (const checkpoint of report.checkpoints) {
+				const selections = report.selections.filter((selection) => selection.checkpointIndex === checkpoint.index);
+				if (selections.length === 0) continue;
+				const details = document.createElement('details');
+				const summary = document.createElement('summary');
+				const retainedLabel = checkpoint.retainedSymbols !== undefined
+					? `, ${checkpoint.retainedSymbols} symbols evaluated`
+					: '';
+				summary.textContent = `${checkpoint.label}${checkpoint.status !== 'measured' ? ` — ${checkpoint.status}` : ''} (${selections.length} sorts, ${checkpoint.distinctWinners} distinct winners${retainedLabel})`;
+				details.appendChild(summary);
+
+				let populated = false;
+				details.addEventListener('toggle', () => {
+					if (!details.open || populated) return;
+					populated = true;
+					for (const selection of selections) {
+						const outcome = selection.forwardOutcomeIndex !== undefined
+							? report.forwardOutcomes[selection.forwardOutcomeIndex]
+							: undefined;
+						const line = document.createElement('div');
+						line.className = 'finder-sub finder-symbol-row';
+						line.textContent = formatMonthlyRankReplaySelectionLine(selection, outcome);
+						details.appendChild(line);
+						if (outcome) {
+							for (const symbolText of formatMonthlyRankReplayOutcomeSymbols(outcome)) {
+								const symbolLine = document.createElement('div');
+								symbolLine.className = 'finder-sub';
+								symbolLine.textContent = symbolText;
+								details.appendChild(symbolLine);
+							}
+						}
+					}
+				});
+				wrapper.appendChild(details);
+			}
+		}
+
+		list.appendChild(wrapper);
 	}
 
 	private getAssetOpportunityResults(): FinderAssetOpportunityResult[] {
@@ -3885,7 +4291,7 @@ export class FinderManager {
 		const scope = this.getScope();
 		const options: Array<{ value: string; label: string }> = [];
 		if (scope === 'symbol_universe') {
-			const results = this.latestResults.scope === "symbol_universe" ? this.latestResults.results : [];
+			const results = this.getUniverseResults();
 			const hasMedianExitAlpha = results.some((result) => result.oosAggregate !== undefined
 				? Number.isFinite(result.medianOosExitAlpha)
 				: Number.isFinite(result.medianExitAlpha));
@@ -3997,7 +4403,7 @@ export class FinderManager {
 			});
 			this.setLatestResults({ scope: 'current_chart', results: sorted });
 		} else if (scope === 'symbol_universe') {
-			const results = this.latestResults.results;
+			const results = this.getUniverseResults();
 			const sorted = sortFinderUniverseCandidates(results, [metric as FinderUniverseMetric], {
 				useOosValues: metric === "medianExitAlpha" && results.some((result) => result.oosAggregate !== undefined),
 			});
@@ -4046,7 +4452,12 @@ export class FinderManager {
 
 	private renderLatestResults(): void {
 		if (this.getScope() === 'symbol_universe') {
-			const results = this.latestResults.scope === 'symbol_universe' ? this.latestResults.results : [];
+			const replayReport = this.getReplayReport();
+			if (replayReport) {
+				this.renderReplayReport(replayReport);
+				return;
+			}
+			const results = this.getUniverseResults();
 			this.ui.renderUniverseResults(results);
 			return;
 		}
@@ -4208,6 +4619,17 @@ export class FinderManager {
 	}
 
 	private async copyTopResultsMetadata(): Promise<void> {
+		const replayReport = this.getReplayReport();
+		if (replayReport) {
+			try {
+				await this.copyTextToClipboard(formatMonthlyRankReplayReportText(replayReport));
+				uiManager.showToast('Monthly Rank Replay report copied', 'success');
+			} catch (error) {
+				debugLogger.error('finder.copy_metadata_failed', { error: error instanceof Error ? error.message : String(error) });
+				uiManager.showToast('Copy failed - check browser permissions', 'error');
+			}
+			return;
+		}
 		const chartResults = this.getCurrentChartResults();
 		const universeResults = this.getUniverseResults();
 		const assetResults = this.getAssetOpportunityResults();
@@ -4631,6 +5053,7 @@ export class FinderManager {
 	}
 
 	public getLatestCandidate(): FinderResult | FinderUniverseCandidate | FinderAssetOpportunityResult | FinderStrategyQualityResult | null {
+		if (this.latestResults.mode === 'monthly_rank_replay') return null;
 		if (this.latestResults.results.length === 0) return null;
 		return this.cloneBacktestSettings(this.latestResults.results[0]);
 	}

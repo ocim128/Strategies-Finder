@@ -204,6 +204,34 @@
         <div id="finderQualitySettings" style="display:none;">
             <div class="param-hint">Runs each selected strategy library once per symbol using its normalized default parameters. Results are for baseline quality review, not parameter discovery; OOS is informational and never filters a library.</div>
         </div>
+        <div id="finderReplayBlock">
+        <div class="section-header" style="margin-top: 12px;">
+            <div class="section-title">Monthly Rank Replay</div>
+            <label class="section-toggle" aria-label="Toggle Monthly Rank Replay submode">
+                <input type="checkbox" id="finderReplayToggle">
+                <span class="section-toggle-track"></span>
+            </label>
+        </div>
+        <div id="finderReplaySettings" style="display:none;">
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label" for="finderReplayFromYear">From Year</label>
+                    <input type="number" class="param-input" id="finderReplayFromYear" value="2023" min="1990" max="2100" step="1">
+                </div>
+                <div class="param-group">
+                    <label class="param-label" for="finderReplayEvalBars">Eval Window Bars (L)</label>
+                    <input type="number" class="param-input" id="finderReplayEvalBars" value="240" min="1" max="100000" step="1">
+                </div>
+            </div>
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label" for="finderReplayForwardBars">Forward Bars (H)</label>
+                    <input type="number" class="param-input" id="finderReplayForwardBars" value="80" min="1" max="100000" step="1">
+                </div>
+            </div>
+            <div class="param-hint">Replays every historical Universe sort at each monthly UTC checkpoint: rank #1 is chosen using only data closed by the checkpoint, then measured over the next H bars with a fresh flat account. Uses one fixed random candidate pool, fixed-dollar sizing and the TypeScript engine. Ordinary Universe sort/filter settings above are ignored while this submode is on (they stay saved).</div>
+        </div>
+        </div>
         <div id="finderUniverseFilters">
         <div class="param-row" style="margin-top: 12px;">
             <div class="param-group">
