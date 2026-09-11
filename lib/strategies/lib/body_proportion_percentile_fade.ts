@@ -58,5 +58,6 @@ export const body_proportion_percentile_fade: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback", "pctlExtreme"],
+        monthlyRankReplayCausal: true,
     },
 };

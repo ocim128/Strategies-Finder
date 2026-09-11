@@ -41,5 +41,6 @@ export const typical_price_ema_confirmation: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
+        monthlyRankReplayCausal: true,
     },
 };

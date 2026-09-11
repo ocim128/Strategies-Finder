@@ -81,5 +81,6 @@ export const open_prior_midpoint_displacement_reversion: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
+        monthlyRankReplayCausal: true,
     },
 };

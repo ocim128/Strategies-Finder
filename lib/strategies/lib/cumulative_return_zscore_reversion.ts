@@ -58,5 +58,6 @@ export const cumulative_return_zscore_reversion: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback", "zThreshold"],
+        monthlyRankReplayCausal: true,
     },
 };

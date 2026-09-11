@@ -52,5 +52,6 @@ export const median_deviation_fade_chop: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
+        monthlyRankReplayCausal: true,
     },
 };

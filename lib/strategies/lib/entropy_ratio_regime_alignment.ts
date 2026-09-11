@@ -84,7 +84,9 @@ export const entropy_ratio_regime_alignment: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["slowWindow"] } };
+        walkForwardParams: ["slowWindow"],
+        monthlyRankReplayCausal: true,
+    } };
 
 
 

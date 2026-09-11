@@ -12,6 +12,13 @@ import { buildSyntheticPairDataset, aggregateSyntheticBars } from "../scripts/li
 import { buildFinderPairNeutralMetrics } from "../lib/finder/finder-pair-neutral";
 import { runBacktest } from "../lib/strategies/backtest/backtest-engine";
 import { serializeJsonPreservingNonFinite, parseJsonPreservingNonFinite } from "../lib/json-utils";
+import { formatMonthlyRankReplayReportText } from "../lib/finder/finder-monthly-rank-replay-format";
+import { open_clearance_collapse_reversal } from "../lib/strategies/lib/open_clearance_collapse_reversal";
+import { whipsaw_crossing_burst_reversal } from "../lib/strategies/lib/whipsaw_crossing_burst_reversal";
+import { body_direction_placement_coherence } from "../lib/strategies/lib/body_direction_placement_coherence";
+import { true_range_skew_acceptance } from "../lib/strategies/lib/true_range_skew_acceptance";
+import { ema_confirmation } from "../lib/strategies/lib/ema_confirmation";
+import { ensureBuiltInStrategyLoaded, getAllBuiltInMeta } from "../lib/strategies/built-in-catalog";
 
 // ---------------------------------------------------------------------------
 // Deterministic universe: two daily symbols across the 2023-01..03 checkpoints.
@@ -38,6 +45,24 @@ function buildData(kind: "UP" | "DOWN"): OHLCVData[] {
         close,
         volume: 1000,
     }));
+}
+
+function buildCausalProbeData(): OHLCVData[] {
+    return Array.from({ length: 240 }, (_, i) => {
+        const center = 100 + Math.sin(i * 0.23) * 8 + Math.sin(i * 0.071) * 3 + i * 0.015;
+        const open = center + Math.sin(i * 0.41) * 1.5;
+        const close = center + Math.cos(i * 0.37) * 1.8;
+        const high = Math.max(open, close) + 0.8 + (i % 5) * 0.12;
+        const low = Math.min(open, close) - 0.8 - (i % 4) * 0.1;
+        return {
+            time: (BASE_TIME + i * DAY) as Time,
+            open,
+            high,
+            low,
+            close,
+            volume: 1000 + (i % 17) * 25,
+        };
+    });
 }
 
 // Checkpoint boundary -> index of the last bar CLOSED at or before it.
@@ -131,23 +156,31 @@ function buildInput(args?: {
     failingSymbol?: string;
     strategy?: Strategy;
     paramSets?: Array<Record<string, number>>;
+    settings?: BacktestSettings;
+    exitStrategyCandidates?: FinderMonthlyRankReplayRunInput["exitStrategyCandidates"];
+    exitStrategyOverrideEnabled?: boolean;
 }): FinderMonthlyRankReplayRunInput {
     const datasets = args?.datasets ?? new Map<string, OHLCVData[]>([
         ["UP", buildData("UP")],
         ["DOWN", buildData("DOWN")],
     ]);
     const failingSymbol = args?.failingSymbol;
+    const defaultOptions = buildOptions();
+    if (args?.exitStrategyOverrideEnabled === true) {
+        defaultOptions.exitStrategyOverrideEnabled = true;
+    }
     return {
         runId: "replay-test",
         interval: "1d",
-        options: args?.options ?? buildOptions(),
-        settings,
+        options: args?.options ?? defaultOptions,
+        settings: args?.settings ?? settings,
         capitalSettings,
         selectedStrategies: [{
             key: "replay_fixture",
             name: "Replay Fixture",
             strategy: args?.strategy ?? replayStrategy,
         }],
+        ...(args?.exitStrategyCandidates ? { exitStrategyCandidates: args.exitStrategyCandidates } : {}),
         loadDataset: async (symbol) => {
             if (symbol === failingSymbol) throw new Error("load failed for fixture");
             const data = datasets.get(symbol);
@@ -201,6 +234,104 @@ function expectancy(pnls: number[]): number {
 }
 
 describe("Monthly Rank Replay runner", () => {
+    it("marks optimized entry strategies as prefix-invariant before reusing full-series signals", () => {
+        const data = buildData("UP");
+        const cutoff = 80;
+        const strategies = [
+            open_clearance_collapse_reversal,
+            whipsaw_crossing_burst_reversal,
+            body_direction_placement_coherence,
+            true_range_skew_acceptance,
+        ];
+
+        for (const strategy of strategies) {
+            expect(strategy.metadata?.monthlyRankReplayCausal).to.equal(true);
+            const fullSignals = strategy.execute(data, strategy.defaultParams)
+                .filter((signal) => (signal.barIndex ?? Number.POSITIVE_INFINITY) < cutoff);
+            const prefixSignals = strategy.execute(data.slice(0, cutoff), strategy.defaultParams);
+            expect(prefixSignals).to.deep.equal(fullSignals);
+        }
+    });
+
+    it("keeps every marked built-in strategy prefix-invariant", async () => {
+        const data = buildCausalProbeData();
+        const cutoff = 180;
+        const causalMetas = getAllBuiltInMeta().filter((meta) => meta.metadata?.monthlyRankReplayCausal === true);
+        expect(causalMetas.length).to.be.greaterThan(4);
+
+        for (const meta of causalMetas) {
+            const strategy = await ensureBuiltInStrategyLoaded(meta.key);
+            expect(strategy, meta.key).to.exist;
+            const fullSignals = strategy!.execute(data, strategy!.defaultParams)
+                .filter((signal) => (signal.barIndex ?? Number.POSITIVE_INFINITY) < cutoff);
+            const prefixSignals = strategy!.execute(data.slice(0, cutoff), strategy!.defaultParams);
+            expect(prefixSignals, meta.key).to.deep.equal(fullSignals);
+        }
+    });
+
+    it("precomputes full-series signals for an opted-in strategy", async () => {
+        const { report, cancelled } = await run(buildInput({
+            strategy: body_direction_placement_coherence,
+            paramSets: [{ coherenceThreshold: 0.7 }],
+        }));
+        expect(cancelled).to.equal(false);
+        expect(report.performanceDiagnostics?.phases.signalPrecomputeMs).to.be.greaterThan(0);
+    });
+
+    it("precomputes final signals when the enabled confirmation strategy is causal", async () => {
+        const { report, cancelled } = await run(buildInput({
+            strategy: body_direction_placement_coherence,
+            paramSets: [{ coherenceThreshold: 0.7 }],
+            settings: {
+                ...settings,
+                confirmationStrategiesToggle: true,
+                confirmationStrategies: ["ema_confirmation"],
+                confirmationStrategyParams: {
+                    ema_confirmation: ema_confirmation.defaultParams,
+                },
+            },
+        }));
+        expect(cancelled).to.equal(false);
+        expect(report.performanceDiagnostics?.phases.signalPrecomputeMs).to.be.greaterThan(0);
+    });
+
+    it("precomputes entry signals while retaining a causal exit override", async () => {
+        const { report, cancelled } = await run(buildInput({
+            strategy: body_direction_placement_coherence,
+            paramSets: [{ coherenceThreshold: 0.7 }],
+            settings: {
+                ...settings,
+                disableSignalExits: true,
+                exitStrategyOverrideEnabled: true,
+            },
+            exitStrategyOverrideEnabled: true,
+            exitStrategyCandidates: [{
+                key: "ema_confirmation",
+                name: ema_confirmation.name,
+                strategy: ema_confirmation,
+            }],
+        }));
+        expect(cancelled).to.equal(false);
+        expect(report.performanceDiagnostics?.signalPrecompute.skippedReason).to.equal("none");
+        expect(report.performanceDiagnostics?.signalPrecompute.precomputedCandidates).to.equal(1);
+    });
+
+    it("ignores a stale exit key when signal exits are not disabled", async () => {
+        const { report, cancelled } = await run(buildInput({
+            strategy: body_direction_placement_coherence,
+            paramSets: [{ coherenceThreshold: 0.7 }],
+            settings: {
+                ...settings,
+                exitStrategyOverrideEnabled: true,
+                exitStrategyKey: "rejection_confirmed_depth_fade",
+                disableSignalExits: false,
+            },
+        }));
+        expect(cancelled).to.equal(false);
+        expect(report.performanceDiagnostics?.signalPrecompute.skippedReason).to.equal("none");
+        expect(report.performanceDiagnostics?.signalPrecompute.precomputedCandidates).to.equal(1);
+    });
+
     it("selects winners per sort from the complete pool with independently verified scores", async () => {
         const { report, cancelled } = await run(buildInput());
         expect(cancelled).to.equal(false);
@@ -355,8 +486,22 @@ describe("Monthly Rank Replay runner", () => {
     it("is deterministic across identical runs", async () => {
         const first = await run(buildInput());
         const second = await run(buildInput());
-        expect(serializeJsonPreservingNonFinite(first.report)).to.equal(
-            serializeJsonPreservingNonFinite(second.report),
+        const withoutPerformanceDiagnostics = (report: typeof first.report) => {
+            const { performanceDiagnostics: _performanceDiagnostics, ...deterministicReport } = report;
+            return deterministicReport;
+        };
+        expect(serializeJsonPreservingNonFinite(withoutPerformanceDiagnostics(first.report))).to.equal(
+            serializeJsonPreservingNonFinite(withoutPerformanceDiagnostics(second.report)),
+        );
+        expect(first.report.performanceDiagnostics?.schema).to.equal("monthly_rank_replay.performance.v1");
+        expect(first.report.performanceDiagnostics?.counts.candidates).to.equal(2);
+        expect(first.report.performanceDiagnostics?.counts.historicalPrimaryBacktests).to.equal(12);
+        expect(first.report.performanceDiagnostics?.counts.forwardBacktests).to.equal(12);
+        expect(first.report.performanceDiagnostics?.checkpoints).to.have.length(CHECKPOINTS.length);
+        expect(first.report.performanceDiagnostics?.executorTimings.historicalPrimary.backtests).to.equal(12);
+        expect(first.report.performanceDiagnostics?.executorTimings.forward.backtests).to.equal(12);
+        expect(formatMonthlyRankReplayReportText(first.report)).to.not.contain(
+            'monthly_rank_replay.performance.v1',
         );
     });
 

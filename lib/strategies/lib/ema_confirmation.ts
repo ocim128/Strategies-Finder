@@ -50,5 +50,6 @@ export const ema_confirmation: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["emaPeriod"],
+        monthlyRankReplayCausal: true,
     },
 };

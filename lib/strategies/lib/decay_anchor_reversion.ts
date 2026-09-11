@@ -69,5 +69,6 @@ export const decay_anchor_reversion: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: [],
+        monthlyRankReplayCausal: true,
     },
 };

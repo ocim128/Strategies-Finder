@@ -70,5 +70,6 @@ export const return_sign_streak_fade: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback", "streakMin"],
+        monthlyRankReplayCausal: true,
     },
 };

@@ -56,5 +56,6 @@ export const close_location_gradient_acceleration: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback", "gradientPercentileMin"],
+        monthlyRankReplayCausal: true,
     },
 };

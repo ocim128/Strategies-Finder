@@ -100,5 +100,6 @@ export const lagged_value_anchor_reversion: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
+        monthlyRankReplayCausal: true,
     },
 };

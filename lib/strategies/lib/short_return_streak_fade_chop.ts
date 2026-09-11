@@ -40,5 +40,6 @@ export const short_return_streak_fade_chop: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: [],
+        monthlyRankReplayCausal: true,
     },
 };

@@ -47,7 +47,10 @@ import {
 	formatMonthlyRankReplaySelectionLine,
 	formatMonthlyRankReplaySummaryRow,
 } from "./finder/finder-monthly-rank-replay-format";
-import type { MonthlyRankReplayReport } from "./finder/finder-monthly-rank-replay";
+import type {
+	MonthlyRankReplayPerformanceDiagnostics,
+	MonthlyRankReplayReport,
+} from "./finder/finder-monthly-rank-replay";
 import {
 	mergeFinderRiskParamsIntoBacktestSettings,
 } from "./finder/finder-runner-core";
@@ -620,6 +623,7 @@ export class FinderManager {
 	private originalLatestResults: FinderLatestResults | null = null;
 	private latestDiagnostics: FinderDiagnostics | null = null;
 	private latestAssetOpportunityDiagnostics: FinderDiagnostics['assetOpportunity'] | null = null;
+	private latestReplayPerformanceDiagnostics: MonthlyRankReplayPerformanceDiagnostics | null = null;
 	private lastFinderRunBacktestSettings: ReturnType<typeof settingsManager.getBacktestSettings> | null = null;
 	private lastFinderOptions: FinderOptions | null = null;
 	private lastFinderEvaluationData: { interval: string; data: OHLCVData[] } | null = null;
@@ -767,6 +771,13 @@ export class FinderManager {
 			}
 			: snapshot.results;
 		this.latestResults = restoredResults;
+		this.latestReplayPerformanceDiagnostics = restoredResults.scope === 'symbol_universe'
+			&& restoredResults.mode === 'monthly_rank_replay'
+			? restoredResults.report.performanceDiagnostics ?? null
+			: null;
+		if (this.latestReplayPerformanceDiagnostics) {
+			this.getDom().finderCopyDiagnostics.disabled = false;
+		}
 		if (restoredResults.scope === 'asset_opportunity') {
 			this.assetOpportunityRunResults = [...restoredResults.results];
 			this.assetOpportunityDefaultResults = [...restoredResults.results];
@@ -2005,6 +2016,7 @@ export class FinderManager {
 		this.lastFinderEvaluationData = null;
 		this.latestDiagnostics = null;
 		this.latestAssetOpportunityDiagnostics = null;
+		this.latestReplayPerformanceDiagnostics = null;
 		this.originalLatestResults = null;
 		this.assetOpportunityRunResults = [];
 		this.assetOpportunityDefaultResults = [];
@@ -3205,7 +3217,7 @@ export class FinderManager {
 		}
 
 		this.latestDiagnostics = outcome.diagnostics;
-		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
+		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics && !this.latestReplayPerformanceDiagnostics;
 		this.ui.renderRandomBenchmark(options.mode);
 
 		if (!this.isCancelled && this.activeServerRunId === null && !replayActive) {
@@ -3908,6 +3920,10 @@ export class FinderManager {
 	 */
 	private setLatestResults(results: FinderLatestResults, persist = true): void {
 		this.latestResults = results;
+		this.latestReplayPerformanceDiagnostics = results.scope === 'symbol_universe'
+			&& results.mode === 'monthly_rank_replay'
+			? results.report.performanceDiagnostics ?? null
+			: null;
 		if (persist) {
 			this.saveLatestResultsSnapshot(results);
 		}
@@ -4013,6 +4029,13 @@ export class FinderManager {
 			+ (gapSymbols.length > 0 ? `; forward-coverage gaps: ${gapSymbols.slice(0, 6).join(', ')}${gapSymbols.length > 6 ? ` +${gapSymbols.length - 6}` : ''}` : '')
 			+ '. Per-symbol detail in Copy Results.';
 		wrapper.appendChild(coverageLine);
+		if (report.performanceDiagnostics) {
+			const performanceLine = document.createElement('div');
+			performanceLine.className = 'finder-sub finder-universe-summary';
+			const phases = report.performanceDiagnostics.phases;
+			performanceLine.textContent = `Performance diagnostics: ${report.performanceDiagnostics.totalMs} ms total | historical ${phases.historicalMs} ms | forward ${phases.forwardMs} ms | ${report.performanceDiagnostics.counts.candidates} candidates | ${report.performanceDiagnostics.counts.historicalPrimaryBacktests + report.performanceDiagnostics.counts.historicalCounterfactualBacktests + report.performanceDiagnostics.counts.forwardBacktests} backtests. Full breakdown in Copy Diagnostics.`;
+			wrapper.appendChild(performanceLine);
+		}
 		for (const symbol of report.symbolCoverage.filter((candidate) => candidate.error)) {
 			const row = document.createElement('div');
 			row.className = 'finder-sub finder-symbol-row';
@@ -4743,6 +4766,31 @@ export class FinderManager {
 
 
 	private async copyFinderDiagnostics(): Promise<void> {
+		if (this.latestResults.scope === 'symbol_universe'
+			&& this.latestResults.mode === 'monthly_rank_replay'
+			&& this.latestReplayPerformanceDiagnostics) {
+			try {
+				await this.copyTextToClipboard(JSON.stringify({
+					schema: 'finder.monthly_rank_replay.diagnostics.v1',
+					scope: 'monthly_rank_replay',
+					run: {
+						runId: this.latestResults.report.runId,
+					interval: this.latestResults.report.experiment.interval,
+					fromYear: this.latestResults.report.experiment.fromYear,
+					evalWindowBars: this.latestResults.report.experiment.evalWindowBars,
+					forwardBars: this.latestResults.report.experiment.forwardBars,
+					strategyKeys: this.latestResults.report.experiment.strategyKeys,
+				},
+					performance: this.latestReplayPerformanceDiagnostics,
+				}, null, 2));
+				uiManager.showToast('Monthly Rank Replay diagnostics copied', 'success');
+			} catch (error) {
+				debugLogger.error('finder.copy_diagnostics_failed', { error: error instanceof Error ? error.message : String(error) });
+				uiManager.showToast('Copy failed - check browser permissions', 'error');
+			}
+			return;
+		}
+
 		if (this.latestResults.scope === 'asset_opportunity' && this.latestAssetOpportunityDiagnostics) {
 			try {
 				await this.copyTextToClipboard(JSON.stringify({
@@ -5063,8 +5111,6 @@ export class FinderManager {
 }
 
 export const finderManager = new FinderManager();
-
-
 
 
 

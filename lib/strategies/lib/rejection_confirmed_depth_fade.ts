@@ -59,5 +59,6 @@ export const rejection_confirmed_depth_fade: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
+        monthlyRankReplayCausal: true,
     },
 };

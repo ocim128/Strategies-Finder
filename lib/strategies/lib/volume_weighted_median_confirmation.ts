@@ -76,5 +76,6 @@ export const volume_weighted_median_confirmation: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
+        monthlyRankReplayCausal: true,
     },
 };

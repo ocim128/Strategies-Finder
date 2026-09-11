@@ -60,5 +60,6 @@ export const nested_bar_oscillation_fade: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["rangePctThreshold"],
+        monthlyRankReplayCausal: true,
     },
 };

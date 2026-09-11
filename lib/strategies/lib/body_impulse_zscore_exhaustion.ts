@@ -49,6 +49,7 @@ export const body_impulse_zscore_exhaustion: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["lookback"]
+        walkForwardParams: ["lookback"],
+        monthlyRankReplayCausal: true,
     }
 };

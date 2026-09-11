@@ -567,6 +567,115 @@ export interface MonthlyRankReplaySymbolCoverage {
     error?: string;
 }
 
+/** One bounded timing bucket used by the replay performance report. */
+export interface MonthlyRankReplayPerformanceBucket {
+    key: string;
+    historicalPrimaryBacktests: number;
+    historicalCounterfactualBacktests: number;
+    forwardBacktests: number;
+    historicalPrimaryMs: number;
+    historicalCounterfactualMs: number;
+    forwardMs: number;
+}
+
+export interface MonthlyRankReplaySymbolLoadDiagnostic {
+    symbol: string;
+    status: "loaded" | "empty" | "failed";
+    durationMs: number;
+    bars: number;
+    error?: string;
+}
+
+export interface MonthlyRankReplayCheckpointPerformanceDiagnostic {
+    index: number;
+    label: string;
+    totalMs: number;
+    membershipMs: number;
+    viewConstructionMs: number;
+    historicalMs: number;
+    historicalExecutionMs: number;
+    forwardMs: number;
+    forwardExecutionMs: number;
+    comparisonMs: number;
+    historicalCandidatesVisited: number;
+    completeCandidates: number;
+    incompleteCandidates: number;
+    historicalExecutionFailures: number;
+    filterRejectedCandidates: number;
+    eligibleConfigurationReferences: number;
+    historicalPrimaryBacktests: number;
+    historicalCounterfactualBacktests: number;
+    forwardCandidates: number;
+    forwardBacktests: number;
+    forwardIncompleteHorizons: number;
+    forwardExecutionFailures: number;
+    distinctWinners: number;
+}
+
+export interface MonthlyRankReplayExecutorTimingBucket {
+    backtests: number;
+    signalGenerationMs: number;
+    exitProcessingMs: number;
+    engineMs: number;
+}
+
+/**
+ * Run-scoped performance instrumentation for Monthly Rank Replay.
+ *
+ * This is intentionally scalar/bounded: checkpoint rows are one per month,
+ * strategy buckets are one per selected strategy, and symbol buckets are
+ * reduced to the slowest symbols before transport.
+ */
+export interface MonthlyRankReplayPerformanceDiagnostics {
+    schema: "monthly_rank_replay.performance.v1";
+    totalMs: number;
+    phases: {
+        dataLoadMs: number;
+        candidatePoolMs: number;
+        signalPrecomputeMs: number;
+        setupMs: number;
+        historicalMs: number;
+        forwardMs: number;
+        summaryMs: number;
+    };
+    signalPrecompute: {
+        eligibleCandidates: number;
+        precomputedCandidates: number;
+        skippedReason: "none" | "non_causal_exit_strategy" | "non_causal_confirmation" | "no_causal_entry_candidate";
+    };
+    counts: {
+        requestedSymbols: number;
+        loadAttempts: number;
+        loadedSymbols: number;
+        failedSymbols: number;
+        scheduledCheckpoints: number;
+        completedCheckpoints: number;
+        candidates: number;
+        historicalCandidatesVisited: number;
+        completeCandidates: number;
+        incompleteCandidates: number;
+        historicalExecutionFailures: number;
+        filterRejectedCandidates: number;
+        historicalPrimaryBacktests: number;
+        historicalCounterfactualBacktests: number;
+        forwardCandidates: number;
+        forwardBacktests: number;
+        forwardIncompleteHorizons: number;
+        forwardExecutionFailures: number;
+        distinctWinners: number;
+    };
+    /** Slowest 20 symbol loads; aggregate load counts remain in counts. */
+    symbolLoads: MonthlyRankReplaySymbolLoadDiagnostic[];
+    checkpoints: MonthlyRankReplayCheckpointPerformanceDiagnostic[];
+    executionByStrategy: MonthlyRankReplayPerformanceBucket[];
+    slowestSymbols: MonthlyRankReplayPerformanceBucket[];
+    executorTimings: {
+        historicalPrimary: MonthlyRankReplayExecutorTimingBucket;
+        historicalCounterfactual: MonthlyRankReplayExecutorTimingBucket;
+        forward: MonthlyRankReplayExecutorTimingBucket;
+    };
+}
+
 export interface MonthlyRankReplayExperiment {
     fromYear: number;
     evalWindowBars: number;
@@ -603,6 +712,8 @@ export interface MonthlyRankReplayReport {
     forwardOutcomes: MonthlyRankReplayForwardOutcome[];
     selections: MonthlyRankReplaySelection[];
     sortSummaries: MonthlyRankReplaySortSummary[];
+    /** Run timing/counter instrumentation used to guide performance work. */
+    performanceDiagnostics?: MonthlyRankReplayPerformanceDiagnostics;
     /** Present when the run ended early (cancel/stop) with partial results. */
     stoppedEarly?: { reason: string; completedCheckpoints: number };
     fatal?: string;

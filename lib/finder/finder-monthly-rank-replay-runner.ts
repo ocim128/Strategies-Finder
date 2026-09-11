@@ -23,7 +23,12 @@
  * layer; no second ranking registry, loader pipeline, or execution engine.
  */
 
-import { executeBacktest, resolveExecutorBacktestSettings } from "../backtest-executor";
+import {
+    type BacktestExitSignalCache,
+    executeBacktest,
+    resolveExecutorBacktestSettings,
+    type BacktestExecutorTimings,
+} from "../backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import type { CapitalSettings } from "../types/backtest";
 import type {
@@ -34,6 +39,7 @@ import type {
     BacktestResult,
     BacktestSettings,
     OHLCVData,
+    Signal,
     StrategyParams,
     Time,
 } from "../types/strategies";
@@ -47,6 +53,8 @@ import { computeFinderCompositeEdgeRatio, resolveFinderRiskOverrides } from "./f
 import {
     computeExitAlpha,
 } from "./finder-exit-alpha";
+import { readConfirmationStrategyKeys } from "../confirmation-signal-filter";
+import { ensureBuiltInStrategyLoaded } from "../strategies/built-in-catalog";
 import {
     buildFinderPairNeutralMetrics,
     FINDER_PAIR_NEUTRAL_METRIC_BASIS,
@@ -70,6 +78,11 @@ import {
     type MonthlyRankReplayCheckpointRecord,
     type MonthlyRankReplayForwardOutcome,
     type MonthlyRankReplayOptions,
+    type MonthlyRankReplayPerformanceBucket,
+    type MonthlyRankReplayPerformanceDiagnostics,
+    type MonthlyRankReplayCheckpointPerformanceDiagnostic,
+    type MonthlyRankReplayExecutorTimingBucket,
+    type MonthlyRankReplaySymbolLoadDiagnostic,
     type MonthlyRankReplayReport,
     type MonthlyRankReplaySelection,
     type MonthlyRankReplaySortCoverage,
@@ -123,8 +136,10 @@ interface ReplayCandidate {
     exitStrategyKey?: string;
     exitStrategyName?: string;
     exitStrategyParams?: StrategyParams;
-    /** Entry settings with sampled risk overrides applied (universe parity). */
+    /** Effective settings with sampled risk and exit overrides applied. */
     backtestSettings: BacktestSettings;
+    /** Resolved once per frozen candidate; reused across all replay windows. */
+    preResolvedSettings: BacktestSettings;
 }
 
 interface ReplaySymbolSeries {
@@ -227,6 +242,299 @@ function trimToClosedBars(data: OHLCVData[], interval: string, nowSec: number): 
     return end === data.length ? data : data.slice(0, end);
 }
 
+function replayNowMs(): number {
+    return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
+function roundReplayMs(value: number): number {
+    return Math.round(value * 100) / 100;
+}
+
+function createPerformanceBucket(key: string): MonthlyRankReplayPerformanceBucket {
+    return {
+        key,
+        historicalPrimaryBacktests: 0,
+        historicalCounterfactualBacktests: 0,
+        forwardBacktests: 0,
+        historicalPrimaryMs: 0,
+        historicalCounterfactualMs: 0,
+        forwardMs: 0,
+    };
+}
+
+function createCheckpointPerformanceDiagnostic(
+    index: number,
+    label: string,
+): MonthlyRankReplayCheckpointPerformanceDiagnostic {
+    return {
+        index,
+        label,
+        totalMs: 0,
+        membershipMs: 0,
+        viewConstructionMs: 0,
+        historicalMs: 0,
+        historicalExecutionMs: 0,
+        forwardMs: 0,
+        forwardExecutionMs: 0,
+        comparisonMs: 0,
+        historicalCandidatesVisited: 0,
+        completeCandidates: 0,
+        incompleteCandidates: 0,
+        historicalExecutionFailures: 0,
+        filterRejectedCandidates: 0,
+        eligibleConfigurationReferences: 0,
+        historicalPrimaryBacktests: 0,
+        historicalCounterfactualBacktests: 0,
+        forwardCandidates: 0,
+        forwardBacktests: 0,
+        forwardIncompleteHorizons: 0,
+        forwardExecutionFailures: 0,
+        distinctWinners: 0,
+    };
+}
+
+interface ReplayPerformanceState {
+    startedAt: number;
+    diagnostics: MonthlyRankReplayPerformanceDiagnostics;
+    executionByStrategy: Map<string, MonthlyRankReplayPerformanceBucket>;
+    executionBySymbol: Map<string, MonthlyRankReplayPerformanceBucket>;
+}
+
+type SignalPrecomputeDecision = {
+    enabled: boolean;
+    skippedReason: MonthlyRankReplayPerformanceDiagnostics["signalPrecompute"]["skippedReason"];
+};
+
+function createPerformanceState(startedAt: number): ReplayPerformanceState {
+    return {
+        startedAt,
+        diagnostics: {
+            schema: "monthly_rank_replay.performance.v1",
+            totalMs: 0,
+            phases: {
+                dataLoadMs: 0,
+                candidatePoolMs: 0,
+                signalPrecomputeMs: 0,
+                setupMs: 0,
+                historicalMs: 0,
+                forwardMs: 0,
+                summaryMs: 0,
+            },
+            signalPrecompute: {
+                eligibleCandidates: 0,
+                precomputedCandidates: 0,
+                skippedReason: "none",
+            },
+            counts: {
+                requestedSymbols: 0,
+                loadAttempts: 0,
+                loadedSymbols: 0,
+                failedSymbols: 0,
+                scheduledCheckpoints: 0,
+                completedCheckpoints: 0,
+                candidates: 0,
+                historicalCandidatesVisited: 0,
+                completeCandidates: 0,
+                incompleteCandidates: 0,
+                historicalExecutionFailures: 0,
+                filterRejectedCandidates: 0,
+                historicalPrimaryBacktests: 0,
+                historicalCounterfactualBacktests: 0,
+                forwardCandidates: 0,
+                forwardBacktests: 0,
+                forwardIncompleteHorizons: 0,
+                forwardExecutionFailures: 0,
+                distinctWinners: 0,
+            },
+            symbolLoads: [],
+            checkpoints: [],
+            executionByStrategy: [],
+            slowestSymbols: [],
+            executorTimings: {
+                historicalPrimary: createExecutorTimingBucket(),
+                historicalCounterfactual: createExecutorTimingBucket(),
+                forward: createExecutorTimingBucket(),
+            },
+        },
+        executionByStrategy: new Map(),
+        executionBySymbol: new Map(),
+    };
+}
+
+type ReplayExecutionPhase = "historicalPrimary" | "historicalCounterfactual" | "forward";
+
+function createExecutorTimingBucket(): MonthlyRankReplayExecutorTimingBucket {
+    return {
+        backtests: 0,
+        signalGenerationMs: 0,
+        exitProcessingMs: 0,
+        engineMs: 0,
+    };
+}
+
+async function resolveSignalPrecomputeDecision(
+    input: FinderMonthlyRankReplayRunInput,
+    exitStrategyKeys: readonly string[],
+): Promise<SignalPrecomputeDecision> {
+    for (const key of exitStrategyKeys) {
+        const strategy = await ensureBuiltInStrategyLoaded(key);
+        if (strategy?.metadata?.monthlyRankReplayCausal !== true) {
+            return { enabled: false, skippedReason: "non_causal_exit_strategy" };
+        }
+    }
+    if (input.settings.confirmationStrategiesToggle === false) {
+        return { enabled: true, skippedReason: "none" };
+    }
+
+    const confirmationKeys = readConfirmationStrategyKeys(input.settings.confirmationStrategies);
+    for (const key of confirmationKeys) {
+        const strategy = await ensureBuiltInStrategyLoaded(key);
+        if (strategy?.metadata?.monthlyRankReplayCausal !== true) {
+            return { enabled: false, skippedReason: "non_causal_confirmation" };
+        }
+    }
+    return { enabled: true, skippedReason: "none" };
+}
+
+function recordReplayExecution(
+    state: ReplayPerformanceState,
+    checkpoint: MonthlyRankReplayCheckpointPerformanceDiagnostic,
+    strategyKey: string,
+    symbol: string,
+    phase: ReplayExecutionPhase,
+    durationMs: number,
+    executorTimings?: BacktestExecutorTimings,
+): void {
+    const strategyBucket = state.executionByStrategy.get(strategyKey) ?? createPerformanceBucket(strategyKey);
+    const symbolBucket = state.executionBySymbol.get(symbol) ?? createPerformanceBucket(symbol);
+    for (const bucket of [strategyBucket, symbolBucket]) {
+        if (phase === "historicalPrimary") {
+            bucket.historicalPrimaryBacktests += 1;
+            bucket.historicalPrimaryMs += durationMs;
+        } else if (phase === "historicalCounterfactual") {
+            bucket.historicalCounterfactualBacktests += 1;
+            bucket.historicalCounterfactualMs += durationMs;
+        } else {
+            bucket.forwardBacktests += 1;
+            bucket.forwardMs += durationMs;
+        }
+    }
+    state.executionByStrategy.set(strategyKey, strategyBucket);
+    state.executionBySymbol.set(symbol, symbolBucket);
+
+    const executorBucket = state.diagnostics.executorTimings[phase];
+    executorBucket.backtests += 1;
+    if (executorTimings) {
+        executorBucket.signalGenerationMs += executorTimings.signalGenerationMs;
+        executorBucket.exitProcessingMs += executorTimings.exitProcessingMs;
+        executorBucket.engineMs += executorTimings.engineMs;
+    }
+
+    if (phase === "historicalPrimary") {
+        checkpoint.historicalPrimaryBacktests += 1;
+        checkpoint.historicalExecutionMs += durationMs;
+        state.diagnostics.counts.historicalPrimaryBacktests += 1;
+    } else if (phase === "historicalCounterfactual") {
+        checkpoint.historicalCounterfactualBacktests += 1;
+        checkpoint.historicalExecutionMs += durationMs;
+        state.diagnostics.counts.historicalCounterfactualBacktests += 1;
+    } else {
+        checkpoint.forwardBacktests += 1;
+        checkpoint.forwardExecutionMs += durationMs;
+        state.diagnostics.counts.forwardBacktests += 1;
+    }
+}
+
+function finalizePerformanceDiagnostics(state: ReplayPerformanceState): void {
+    const { diagnostics } = state;
+    diagnostics.totalMs = roundReplayMs(replayNowMs() - state.startedAt);
+    const checkpointTotals = diagnostics.checkpoints.reduce((totals, checkpoint) => ({
+        historicalMs: totals.historicalMs + checkpoint.historicalMs,
+        forwardMs: totals.forwardMs + checkpoint.forwardMs,
+        historicalCandidatesVisited: totals.historicalCandidatesVisited + checkpoint.historicalCandidatesVisited,
+        completeCandidates: totals.completeCandidates + checkpoint.completeCandidates,
+        incompleteCandidates: totals.incompleteCandidates + checkpoint.incompleteCandidates,
+        historicalExecutionFailures: totals.historicalExecutionFailures + checkpoint.historicalExecutionFailures,
+        filterRejectedCandidates: totals.filterRejectedCandidates + checkpoint.filterRejectedCandidates,
+        historicalPrimaryBacktests: totals.historicalPrimaryBacktests + checkpoint.historicalPrimaryBacktests,
+        historicalCounterfactualBacktests: totals.historicalCounterfactualBacktests + checkpoint.historicalCounterfactualBacktests,
+        forwardCandidates: totals.forwardCandidates + checkpoint.forwardCandidates,
+        forwardBacktests: totals.forwardBacktests + checkpoint.forwardBacktests,
+        forwardIncompleteHorizons: totals.forwardIncompleteHorizons + checkpoint.forwardIncompleteHorizons,
+        forwardExecutionFailures: totals.forwardExecutionFailures + checkpoint.forwardExecutionFailures,
+        distinctWinners: totals.distinctWinners + checkpoint.distinctWinners,
+    }), {
+        historicalMs: 0,
+        forwardMs: 0,
+        historicalCandidatesVisited: 0,
+        completeCandidates: 0,
+        incompleteCandidates: 0,
+        historicalExecutionFailures: 0,
+        filterRejectedCandidates: 0,
+        historicalPrimaryBacktests: 0,
+        historicalCounterfactualBacktests: 0,
+        forwardCandidates: 0,
+        forwardBacktests: 0,
+        forwardIncompleteHorizons: 0,
+        forwardExecutionFailures: 0,
+        distinctWinners: 0,
+    });
+    diagnostics.phases.historicalMs = checkpointTotals.historicalMs;
+    diagnostics.phases.forwardMs = checkpointTotals.forwardMs;
+    diagnostics.counts.historicalCandidatesVisited = checkpointTotals.historicalCandidatesVisited;
+    diagnostics.counts.completeCandidates = checkpointTotals.completeCandidates;
+    diagnostics.counts.incompleteCandidates = checkpointTotals.incompleteCandidates;
+    diagnostics.counts.historicalExecutionFailures = checkpointTotals.historicalExecutionFailures;
+    diagnostics.counts.filterRejectedCandidates = checkpointTotals.filterRejectedCandidates;
+    diagnostics.counts.historicalPrimaryBacktests = checkpointTotals.historicalPrimaryBacktests;
+    diagnostics.counts.historicalCounterfactualBacktests = checkpointTotals.historicalCounterfactualBacktests;
+    diagnostics.counts.forwardCandidates = checkpointTotals.forwardCandidates;
+    diagnostics.counts.forwardBacktests = checkpointTotals.forwardBacktests;
+    diagnostics.counts.forwardIncompleteHorizons = checkpointTotals.forwardIncompleteHorizons;
+    diagnostics.counts.forwardExecutionFailures = checkpointTotals.forwardExecutionFailures;
+    diagnostics.counts.distinctWinners = checkpointTotals.distinctWinners;
+    for (const key of Object.keys(diagnostics.phases) as Array<keyof typeof diagnostics.phases>) {
+        diagnostics.phases[key] = roundReplayMs(diagnostics.phases[key]);
+    }
+    diagnostics.symbolLoads = diagnostics.symbolLoads
+        .sort((a, b) => b.durationMs - a.durationMs)
+        .slice(0, 20)
+        .map((entry) => ({
+            ...entry,
+            durationMs: roundReplayMs(entry.durationMs),
+        }));
+    diagnostics.checkpoints = diagnostics.checkpoints.map((entry) => ({
+        ...entry,
+        totalMs: roundReplayMs(entry.totalMs),
+        membershipMs: roundReplayMs(entry.membershipMs),
+        viewConstructionMs: roundReplayMs(entry.viewConstructionMs),
+        historicalMs: roundReplayMs(entry.historicalMs),
+        historicalExecutionMs: roundReplayMs(entry.historicalExecutionMs),
+        forwardMs: roundReplayMs(entry.forwardMs),
+        forwardExecutionMs: roundReplayMs(entry.forwardExecutionMs),
+        comparisonMs: roundReplayMs(entry.comparisonMs),
+    }));
+    const normalizeBuckets = (buckets: MonthlyRankReplayPerformanceBucket[]): MonthlyRankReplayPerformanceBucket[] =>
+        buckets
+            .map((bucket) => ({
+                ...bucket,
+                historicalPrimaryMs: roundReplayMs(bucket.historicalPrimaryMs),
+                historicalCounterfactualMs: roundReplayMs(bucket.historicalCounterfactualMs),
+                forwardMs: roundReplayMs(bucket.forwardMs),
+            }))
+            .sort((a, b) => (
+                (b.historicalPrimaryMs + b.historicalCounterfactualMs + b.forwardMs)
+                - (a.historicalPrimaryMs + a.historicalCounterfactualMs + a.forwardMs)
+            ));
+    diagnostics.executionByStrategy = normalizeBuckets([...state.executionByStrategy.values()]);
+    diagnostics.slowestSymbols = normalizeBuckets([...state.executionBySymbol.values()]).slice(0, 20);
+    for (const bucket of Object.values(diagnostics.executorTimings)) {
+        bucket.signalGenerationMs = roundReplayMs(bucket.signalGenerationMs);
+        bucket.exitProcessingMs = roundReplayMs(bucket.exitProcessingMs);
+        bucket.engineMs = roundReplayMs(bucket.engineMs);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Symbol result reduction (mirrors the ordinary universe symbol reduction)
 // ---------------------------------------------------------------------------
@@ -325,6 +633,12 @@ export async function runFinderMonthlyRankReplay(
     const { replay, capital, universe } = assertReplayRunSupported(input);
     const { replayed, excluded } = resolveMonthlyRankReplaySortCoverage();
     const nowSec = Math.floor(Date.now() / 1000);
+    const performanceState = createPerformanceState(replayNowMs());
+    const finishReport = (report: MonthlyRankReplayReport): MonthlyRankReplayReport => {
+        finalizePerformanceDiagnostics(performanceState);
+        report.performanceDiagnostics = performanceState.diagnostics;
+        return report;
+    };
 
     // ------------------------------------------------------------------
     // Load once per symbol; the fixed symbol set shares every checkpoint.
@@ -341,48 +655,70 @@ export async function runFinderMonthlyRankReplay(
             }
         }
     }
+    performanceState.diagnostics.counts.requestedSymbols = symbols.length;
 
     const seriesBySymbol = new Map<string, ReplaySymbolSeries>();
     const symbolLoadErrors = new Map<string, string>();
+    const dataLoadStartedAt = replayNowMs();
     for (let i = 0; i < symbols.length; i += 1) {
         const symbol = symbols[i]!;
         if (callbacks.isCancelled()) {
-            return { report: buildCancelledReport(input, replay, symbols, replayed, excluded, capital), cancelled: true };
+            return {
+                report: finishReport(buildCancelledReport(input, replay, symbols, replayed, excluded, capital)),
+                cancelled: true,
+            };
         }
         callbacks.setProgress(
             ((i + 1) / Math.max(1, symbols.length)) * 10,
             `Monthly Rank Replay: loading ${symbol} (${i + 1}/${symbols.length})...`,
         );
+        performanceState.diagnostics.counts.loadAttempts += 1;
+        const loadStartedAt = replayNowMs();
+        let loadStatus: MonthlyRankReplaySymbolLoadDiagnostic["status"] = "failed";
+        let loadBars = 0;
+        let loadError: string | undefined;
         try {
             const data = await input.loadDataset(symbol, input.interval);
             const closed = (!Array.isArray(data) || data.length === 0)
                 ? []
                 : trimToClosedBars(data, input.interval, nowSec);
             if (closed.length === 0) {
-                symbolLoadErrors.set(symbol, "No closed candles returned.");
-                continue;
+                loadStatus = "empty";
+                loadError = "No closed candles returned.";
+                symbolLoadErrors.set(symbol, loadError);
+            } else {
+                loadStatus = "loaded";
+                loadBars = closed.length;
+                seriesBySymbol.set(symbol, {
+                    symbol,
+                    data: closed,
+                    bars: closed.length,
+                    firstOpenSec: toUnixSecOrNull(closed[0]!.time),
+                    lastCloseSec: toUnixSecOrNull(closed[closed.length - 1]!.time) === null
+                        ? null
+                        : resolveBarCloseTimeSec(
+                            toUnixSecOrNull(closed[closed.length - 1]!.time)!,
+                            input.interval,
+                        ),
+                    synthetic: isSyntheticPairFinderSymbol(symbol),
+                });
             }
-            seriesBySymbol.set(symbol, {
-                symbol,
-                data: closed,
-                bars: closed.length,
-                firstOpenSec: toUnixSecOrNull(closed[0]!.time),
-                lastCloseSec: toUnixSecOrNull(closed[closed.length - 1]!.time) === null
-                    ? null
-                    : resolveBarCloseTimeSec(
-                        toUnixSecOrNull(closed[closed.length - 1]!.time)!,
-                        input.interval,
-                    ),
-                synthetic: isSyntheticPairFinderSymbol(symbol),
-            });
         } catch (error) {
-            symbolLoadErrors.set(
-                symbol,
-                error instanceof Error ? error.message : String(error),
-            );
+            loadError = error instanceof Error ? error.message : String(error);
+            symbolLoadErrors.set(symbol, loadError);
         }
+        performanceState.diagnostics.symbolLoads.push({
+            symbol,
+            status: loadStatus,
+            durationMs: replayNowMs() - loadStartedAt,
+            bars: loadBars,
+            ...(loadError ? { error: loadError } : {}),
+        });
         await callbacks.yieldControl();
     }
+    performanceState.diagnostics.phases.dataLoadMs = replayNowMs() - dataLoadStartedAt;
+    performanceState.diagnostics.counts.loadedSymbols = seriesBySymbol.size;
+    performanceState.diagnostics.counts.failedSymbols = symbolLoadErrors.size;
 
     // Symbols that failed to load are excluded from EVERY checkpoint (with
     // the load error as the recorded reason) instead of blocking the whole
@@ -394,7 +730,7 @@ export async function runFinderMonthlyRankReplay(
     if (seriesBySymbol.size === 0) {
         return {
             cancelled: false,
-            report: buildCoverageOnlyReport(input, replay, symbols, replayed, excluded, capital, seriesBySymbol, symbolLoadErrors),
+            report: finishReport(buildCoverageOnlyReport(input, replay, symbols, replayed, excluded, capital, seriesBySymbol, symbolLoadErrors)),
         };
     }
 
@@ -403,6 +739,7 @@ export async function runFinderMonthlyRankReplay(
     // selected strategies, deduplicated by canonical identity.
     // ------------------------------------------------------------------
     const pool: ReplayCandidate[] = [];
+    const candidatePoolStartedAt = replayNowMs();
     {
         const seenIdentities = new Set<string>();
         let ordinal = 0;
@@ -443,6 +780,11 @@ export async function runFinderMonthlyRankReplay(
                     plan.params,
                     input.options,
                 );
+                const backtestSettings = buildReplayBacktestSettings({
+                    candidateSettings: riskAdjustedSettings,
+                    exitStrategyKey: plan.exitStrategyKey,
+                    exitStrategyParams: plan.exitStrategyParams,
+                });
                 pool.push({
                     ordinal: ordinal++,
                     identityKey,
@@ -451,7 +793,11 @@ export async function runFinderMonthlyRankReplay(
                     strategy: selectedStrategy.strategy,
                     params: plan.params,
                     entryParams,
-                    backtestSettings: riskAdjustedSettings,
+                    backtestSettings,
+                    preResolvedSettings: resolveExecutorBacktestSettings(
+                        { ...(backtestSettings as Record<string, unknown>), interval: input.interval } as BacktestSettings,
+                        input.interval,
+                    ),
                     exitStrategyKey: plan.exitStrategyKey,
                     exitStrategyName: plan.exitStrategyName,
                     exitStrategyParams: plan.exitStrategyParams,
@@ -459,6 +805,8 @@ export async function runFinderMonthlyRankReplay(
             }
         }
     }
+    performanceState.diagnostics.phases.candidatePoolMs = replayNowMs() - candidatePoolStartedAt;
+    performanceState.diagnostics.counts.candidates = pool.length;
 
     if (pool.length === 0) {
         const report = buildCoverageOnlyReport(
@@ -479,7 +827,7 @@ export async function runFinderMonthlyRankReplay(
         for (const summary of report.sortSummaries) {
             summary.excludedCounts.unshift({ reason: "no candidate configurations", count: 1 });
         }
-        return { cancelled: false, report };
+        return { cancelled: false, report: finishReport(report) };
     }
 
     // ------------------------------------------------------------------
@@ -489,6 +837,7 @@ export async function runFinderMonthlyRankReplay(
     // bar across loaded series); per-checkpoint membership trims symbols
     // whose own data ends earlier, instead of truncating the schedule for
     // every symbol.
+    const setupStartedAt = replayNowMs();
     const lastClosedTimeSec = Math.max(
         ...[...seriesBySymbol.values()].map((series) => series.lastCloseSec ?? Number.NEGATIVE_INFINITY),
     );
@@ -593,6 +942,8 @@ export async function runFinderMonthlyRankReplay(
                     "per sort: randomExpectedReturn = equal-weight mean of that sort's eligible configurations' forward returns at the same checkpoint (winner included, each unique configuration once); excess = top-1 − random mean",
         },
     };
+    performanceState.diagnostics.phases.setupMs = replayNowMs() - setupStartedAt;
+    performanceState.diagnostics.counts.scheduledCheckpoints = schedule.length;
 
     // ------------------------------------------------------------------
     // No feasible checkpoints: return the coverage report without search.
@@ -612,8 +963,71 @@ export async function runFinderMonthlyRankReplay(
             distinctWinners: 0,
             reason: "January of the From year is after the latest closed candle; no checkpoint is schedulable.",
         });
-        return { cancelled: false, report };
+        return { cancelled: false, report: finishReport(report) };
     }
+
+    const preResolvedCapital = capital;
+    const replaySignalCacheByCandidate = new Map<number, Map<string, Signal[]>>();
+    let completedCheckpoints = 0;
+    let cancelled = false;
+    const signalPrecomputeStartedAt = replayNowMs();
+    const exitStrategyKeys = [
+        ...new Set([
+            ...pool
+                .filter((candidate) => (
+                    candidate.backtestSettings.exitStrategyOverrideEnabled === true
+                    && candidate.backtestSettings.disableSignalExits === true
+                ))
+                .map((candidate) => candidate.exitStrategyKey),
+            ...(input.settings.exitStrategyOverrideEnabled === true
+                && input.settings.disableSignalExits === true
+                && typeof input.settings.exitStrategyKey === "string"
+                ? [input.settings.exitStrategyKey]
+                : []),
+        ].filter((key): key is string => Boolean(key && key.trim()))),
+    ];
+    const signalPrecomputeDecision = await resolveSignalPrecomputeDecision(input, exitStrategyKeys);
+    const causalCandidateCount = pool.filter(
+        (candidate) => candidate.strategy.metadata?.monthlyRankReplayCausal === true,
+    ).length;
+    performanceState.diagnostics.signalPrecompute.eligibleCandidates = causalCandidateCount;
+    if (!signalPrecomputeDecision.enabled) {
+        performanceState.diagnostics.signalPrecompute.skippedReason = signalPrecomputeDecision.skippedReason;
+    } else if (causalCandidateCount === 0) {
+        performanceState.diagnostics.signalPrecompute.skippedReason = "no_causal_entry_candidate";
+    }
+    if (signalPrecomputeDecision.enabled && causalCandidateCount > 0) {
+        for (const candidate of pool) {
+            if (!candidate.strategy.metadata?.monthlyRankReplayCausal) continue;
+            const signalsBySymbol = new Map<string, Signal[]>();
+            for (const [symbol, series] of seriesBySymbol) {
+                if (callbacks.isCancelled()) {
+                    cancelled = true;
+                    break;
+                }
+                const output = await executeReplayBacktest({
+                    input,
+                    strategyKey: candidate.strategyKey,
+                    strategy: candidate.strategy,
+                    entryParams: candidate.entryParams,
+                    candidateSettings: candidate.backtestSettings,
+                    preResolvedSettings: candidate.preResolvedSettings,
+                    data: series.data,
+                    interval: input.interval,
+                    capital: preResolvedCapital,
+                    requireTradeHistory: false,
+                    signalsOnly: true,
+                    forceDisableSignalExits: candidate.backtestSettings.exitStrategyOverrideEnabled === true,
+                });
+                signalsBySymbol.set(symbol, output.signals);
+                await callbacks.yieldControl();
+            }
+            if (cancelled) break;
+            replaySignalCacheByCandidate.set(candidate.ordinal, signalsBySymbol);
+            performanceState.diagnostics.signalPrecompute.precomputedCandidates += 1;
+        }
+    }
+    performanceState.diagnostics.phases.signalPrecomputeMs = replayNowMs() - signalPrecomputeStartedAt;
 
     // ------------------------------------------------------------------
     // Monthly loop.
@@ -627,11 +1041,8 @@ export async function runFinderMonthlyRankReplay(
         forwardOutcomes: [],
         selections: [],
         sortSummaries: [],
+        performanceDiagnostics: performanceState.diagnostics,
     };
-    const preResolvedCapital = capital;
-    let completedCheckpoints = 0;
-    let cancelled = false;
-
     // Any error escaping the monthly loop must carry the partial report
     // (fatal-flagged) so the job-level failure retains partial results on
     // /status instead of discarding completed checkpoints.
@@ -642,7 +1053,11 @@ export async function runFinderMonthlyRankReplay(
             break;
         }
         const checkpoint = schedule[checkpointIndex]!;
+        const checkpointStartedAt = replayNowMs();
+        const checkpointDiagnostics = createCheckpointPerformanceDiagnostic(checkpoint.index, checkpoint.label);
+        const membershipStartedAt = replayNowMs();
         const { histEndBySymbol, excluded: excludedSymbols } = resolveCheckpointMembership(checkpoint.timeSec);
+        checkpointDiagnostics.membershipMs = replayNowMs() - membershipStartedAt;
 
         const checkpointRecord: MonthlyRankReplayCheckpointRecord = {
             index: checkpoint.index,
@@ -671,6 +1086,8 @@ export async function runFinderMonthlyRankReplay(
                 10 + ((checkpointIndex + 1) / schedule.length) * 90,
                 `Monthly Rank Replay: ${checkpoint.label} unavailable (no symbol has sufficient coverage)`,
             );
+            checkpointDiagnostics.totalMs = replayNowMs() - checkpointStartedAt;
+            performanceState.diagnostics.checkpoints.push(checkpointDiagnostics);
             await callbacks.yieldControl();
             continue;
         }
@@ -678,13 +1095,17 @@ export async function runFinderMonthlyRankReplay(
         // Causal views for this checkpoint. Historical: prefix ending at the
         // scored end bar. Forward: prefix ending H bars later. Immutable
         // copies of the reference arrays — no view mutates another.
+        const viewConstructionStartedAt = replayNowMs();
         const histViews = new Map<string, OHLCVData[]>();
         const forwardViews = new Map<string, OHLCVData[]>();
+        const exitSignalCacheBySymbol = new Map<string, BacktestExitSignalCache>();
         for (const [symbol, histEnd] of histEndBySymbol) {
             const series = seriesBySymbol.get(symbol)!;
             histViews.set(symbol, series.data.slice(0, histEnd + 1));
             forwardViews.set(symbol, series.data.slice(0, histEnd + replay.forwardBars + 1));
+            exitSignalCacheBySymbol.set(symbol, new Map());
         }
+        checkpointDiagnostics.viewConstructionMs = replayNowMs() - viewConstructionStartedAt;
 
         // ------------------ historical evaluation ------------------
         const accumulator = new MonthlyRankReplayWinnerAccumulator(replayed.map((sort) => sort.key));
@@ -696,6 +1117,7 @@ export async function runFinderMonthlyRankReplay(
         let completeCandidates = 0;
         let incompleteCandidates = 0;
         let candidateExecutionFailures = 0;
+        const historicalStartedAt = replayNowMs();
 
         for (let candidateIndex = 0; candidateIndex < pool.length; candidateIndex += 1) {
             if (callbacks.isCancelled()) {
@@ -703,6 +1125,7 @@ export async function runFinderMonthlyRankReplay(
                 break;
             }
             const candidate = pool[candidateIndex]!;
+            checkpointDiagnostics.historicalCandidatesVisited += 1;
             const evaluations = new Map<string, ReplaySymbolEvaluation>();
             let candidateFailed = false;
             let candidateIncomplete = false;
@@ -718,6 +1141,7 @@ export async function runFinderMonthlyRankReplay(
                 const warmupBars = scoredStart;
 
                 let output;
+                const executionStartedAt = replayNowMs();
                 try {
                     output = await executeReplayBacktest({
                         input,
@@ -725,17 +1149,36 @@ export async function runFinderMonthlyRankReplay(
                         strategy: candidate.strategy,
                         entryParams: candidate.entryParams,
                         candidateSettings: candidate.backtestSettings,
-                        exitStrategyKey: candidate.exitStrategyKey,
-                        exitStrategyParams: candidate.exitStrategyParams,
+                        preResolvedSettings: candidate.preResolvedSettings,
                         data: view,
                         interval: input.interval,
                         scoredRange,
                         capital: preResolvedCapital,
                         requireTradeHistory: true,
+                        preGeneratedSignals: replaySignalCacheByCandidate.get(candidate.ordinal)?.get(symbol),
+                        exitSignalCache: exitSignalCacheBySymbol.get(symbol),
                     });
+                    recordReplayExecution(
+                        performanceState,
+                        checkpointDiagnostics,
+                        candidate.strategyKey,
+                        symbol,
+                        "historicalPrimary",
+                        replayNowMs() - executionStartedAt,
+                        output.executorTimings,
+                    );
                 } catch (error) {
+                    recordReplayExecution(
+                        performanceState,
+                        checkpointDiagnostics,
+                        candidate.strategyKey,
+                        symbol,
+                        "historicalPrimary",
+                        replayNowMs() - executionStartedAt,
+                    );
                     candidateFailed = true;
                     candidateExecutionFailures += 1;
+                    checkpointDiagnostics.historicalExecutionFailures += 1;
                     evaluations.set(symbol, {
                         symbol,
                         status: "run_failed",
@@ -768,6 +1211,7 @@ export async function runFinderMonthlyRankReplay(
 
                 let exitAlpha: number | undefined;
                 if (sortCoverageByKey.has("medianExitAlpha")) {
+                    const counterfactualStartedAt = replayNowMs();
                     try {
                         const controlOutput = await executeReplayBacktest({
                             input,
@@ -775,8 +1219,7 @@ export async function runFinderMonthlyRankReplay(
                             strategy: candidate.strategy,
                             entryParams: candidate.entryParams,
                             candidateSettings: candidate.backtestSettings,
-                            exitStrategyKey: candidate.exitStrategyKey,
-                            exitStrategyParams: candidate.exitStrategyParams,
+                            preResolvedSettings: candidate.preResolvedSettings,
                             data: view,
                             interval: input.interval,
                             scoredRange,
@@ -784,7 +1227,17 @@ export async function runFinderMonthlyRankReplay(
                             requireTradeHistory: true,
                             forceDisableSignalExits: true,
                             preGeneratedSignals: output.signals,
+                            exitSignalCache: exitSignalCacheBySymbol.get(symbol),
                         });
+                        recordReplayExecution(
+                            performanceState,
+                            checkpointDiagnostics,
+                            candidate.strategyKey,
+                            symbol,
+                            "historicalCounterfactual",
+                            replayNowMs() - counterfactualStartedAt,
+                            controlOutput.executorTimings,
+                        );
                         const controlPairNeutral = series.synthetic
                             ? buildFinderPairNeutralMetrics(controlOutput.result, preResolvedCapital)
                             : null;
@@ -794,6 +1247,14 @@ export async function runFinderMonthlyRankReplay(
                                 : undefined)
                             : computeExitAlpha(output.result, controlOutput.result);
                     } catch {
+                        recordReplayExecution(
+                            performanceState,
+                            checkpointDiagnostics,
+                            candidate.strategyKey,
+                            symbol,
+                            "historicalCounterfactual",
+                            replayNowMs() - counterfactualStartedAt,
+                        );
                         // A failed counterfactual is missing, not zero.
                     }
                 }
@@ -830,9 +1291,11 @@ export async function runFinderMonthlyRankReplay(
                 && [...evaluations.values()].every((evaluation) => !evaluation.error);
             if (!complete) {
                 incompleteCandidates += 1;
+                checkpointDiagnostics.incompleteCandidates += 1;
                 continue;
             }
             completeCandidates += 1;
+            checkpointDiagnostics.completeCandidates += 1;
 
             const retainedSymbolList = [...histEndBySymbol.keys()];
             const universeCandidate = buildFinderUniverseCandidate({
@@ -856,7 +1319,10 @@ export async function runFinderMonthlyRankReplay(
 
             // Applicable historical eligibility filters, after the
             // completeness gate.
-            if (!passesFinderUniverseFilters(universeCandidate, universe)) continue;
+            if (!passesFinderUniverseFilters(universeCandidate, universe)) {
+                checkpointDiagnostics.filterRejectedCandidates += 1;
+                continue;
+            }
 
             accumulator.offer(universeCandidate, candidate.identityKey, candidate.ordinal);
             for (const sort of replayed) {
@@ -877,7 +1343,13 @@ export async function runFinderMonthlyRankReplay(
             }
         }
 
-        if (cancelled) break;
+        checkpointDiagnostics.historicalMs = replayNowMs() - historicalStartedAt;
+        for (const cache of exitSignalCacheBySymbol.values()) cache.clear();
+        if (cancelled) {
+            checkpointDiagnostics.totalMs = replayNowMs() - checkpointStartedAt;
+            performanceState.diagnostics.checkpoints.push(checkpointDiagnostics);
+            break;
+        }
 
         // ------------------ forward evaluation ------------------
         const winners = accumulator.winners();
@@ -899,10 +1371,14 @@ export async function runFinderMonthlyRankReplay(
         for (const eligibleList of eligibleBySort.values()) {
             for (const identityKey of eligibleList) neededIdentities.add(identityKey);
         }
+        checkpointDiagnostics.eligibleConfigurationReferences = [...eligibleBySort.values()]
+            .reduce((sum, eligibleList) => sum + eligibleList.length, 0);
+        checkpointDiagnostics.forwardCandidates = neededIdentities.size;
 
         // Transient scalar reductions for the baseline. Only winner outcomes
         // enter report.forwardOutcomes; nonwinner detail is released here.
         const forwardResults = new Map<string, { measured: boolean; value: number | null }>();
+        const forwardStartedAt = replayNowMs();
         for (const identityKey of neededIdentities) {
             if (callbacks.isCancelled()) {
                 cancelled = true;
@@ -923,12 +1399,17 @@ export async function runFinderMonthlyRankReplay(
                     strategy: poolCandidate.strategy,
                     entryParams: poolCandidate.entryParams,
                     backtestSettings: poolCandidate.backtestSettings,
+                    preResolvedSettings: poolCandidate.preResolvedSettings,
+                    replaySignalsBySymbol: replaySignalCacheByCandidate.get(poolCandidate.ordinal),
                     exitStrategyKey: poolCandidate.exitStrategyKey,
                     exitStrategyName: poolCandidate.exitStrategyName,
                     exitStrategyParams: poolCandidate.exitStrategyParams,
                 },
                 replay,
                 capital: preResolvedCapital,
+                performanceState,
+                checkpointDiagnostics,
+                exitSignalCacheBySymbol,
             });
             const measured = outcome.status === "measured"
                 && outcome.windowReturnPercent !== null
@@ -944,7 +1425,10 @@ export async function runFinderMonthlyRankReplay(
                 outcome.symbols.length = 0;
             }
         }
+        checkpointDiagnostics.forwardMs = replayNowMs() - forwardStartedAt;
+        for (const cache of exitSignalCacheBySymbol.values()) cache.clear();
 
+        const comparisonStartedAt = replayNowMs();
         for (const [sortKey, winner] of winners) {
             if (cancelled) break;
             const sort = sortCoverageByKey.get(sortKey)!;
@@ -990,6 +1474,7 @@ export async function runFinderMonthlyRankReplay(
             });
             report.selections.push(selection);
         }
+        checkpointDiagnostics.comparisonMs = replayNowMs() - comparisonStartedAt;
 
         // Sorts with no eligible/available candidate at this checkpoint.
         for (const sort of replayed) {
@@ -1016,6 +1501,7 @@ export async function runFinderMonthlyRankReplay(
         checkpointRecord.status = "measured";
         report.checkpoints.push(checkpointRecord);
         completedCheckpoints += 1;
+        performanceState.diagnostics.counts.completedCheckpoints = completedCheckpoints;
         callbacks.onCheckpoint?.(
             checkpointRecord,
             report.forwardOutcomes.filter((outcome) => outcome.checkpointIndex === checkpoint.index),
@@ -1027,15 +1513,23 @@ export async function runFinderMonthlyRankReplay(
         );
         await callbacks.yieldControl();
 
+        checkpointDiagnostics.distinctWinners = checkpointRecord.distinctWinners;
+        checkpointDiagnostics.totalMs = replayNowMs() - checkpointStartedAt;
+        performanceState.diagnostics.checkpoints.push(checkpointDiagnostics);
+
         // Release this month's views.
         histViews.clear();
         forwardViews.clear();
     }
     } catch (error) {
         const fatal = error as FinderMonthlyRankReplayFatalError;
+        const summaryStartedAt = replayNowMs();
         report.sortSummaries = buildSortSummaries(report, replayed, schedule.length);
+        performanceState.diagnostics.phases.summaryMs = replayNowMs() - summaryStartedAt;
         report.fatal = fatal instanceof Error ? fatal.message : String(fatal);
         report.stoppedEarly = { reason: "fatal", completedCheckpoints };
+        performanceState.diagnostics.counts.completedCheckpoints = completedCheckpoints;
+        finishReport(report);
         fatal.replayReport = report;
         throw fatal;
     }
@@ -1045,14 +1539,32 @@ export async function runFinderMonthlyRankReplay(
     }
 
     // ------------------ summaries ------------------
+    const summaryStartedAt = replayNowMs();
     report.sortSummaries = buildSortSummaries(report, replayed, schedule.length);
+    performanceState.diagnostics.phases.summaryMs = replayNowMs() - summaryStartedAt;
+    performanceState.diagnostics.counts.completedCheckpoints = completedCheckpoints;
     callbacks.setProgress(100, `Monthly Rank Replay complete (${completedCheckpoints}/${schedule.length} checkpoints measured)`);
-    return { report, cancelled };
+    return { report: finishReport(report), cancelled };
 }
 
 // ---------------------------------------------------------------------------
 // Execution helpers
 // ---------------------------------------------------------------------------
+
+function buildReplayBacktestSettings(args: {
+    candidateSettings: BacktestSettings;
+    exitStrategyKey?: string;
+    exitStrategyParams?: StrategyParams;
+}): BacktestSettings {
+    if (!args.exitStrategyKey) return args.candidateSettings;
+    return {
+        ...args.candidateSettings,
+        disableSignalExits: true,
+        exitStrategyOverrideEnabled: true,
+        exitStrategyKey: args.exitStrategyKey,
+        exitStrategyParams: { ...(args.exitStrategyParams ?? {}) },
+    };
+}
 
 async function executeReplayBacktest(args: {
     input: FinderMonthlyRankReplayRunInput;
@@ -1060,30 +1572,18 @@ async function executeReplayBacktest(args: {
     strategy: import("../types/strategies").Strategy;
     entryParams: StrategyParams;
     candidateSettings: BacktestSettings;
-    exitStrategyKey?: string;
-    exitStrategyParams?: StrategyParams;
+    preResolvedSettings: BacktestSettings;
     data: OHLCVData[];
     interval: string;
-    scoredRange: { startBarTime: Time; endBarTime: Time };
+    scoredRange?: { startBarTime: Time; endBarTime: Time };
     capital: ReturnType<typeof resolveCapitalSettingsFromRaw>;
     requireTradeHistory: boolean;
+    signalsOnly?: boolean;
     forceDisableSignalExits?: boolean;
     preGeneratedSignals?: import("../types/strategies").Signal[];
+    exitSignalCache?: BacktestExitSignalCache;
 }) {
     const { input } = args;
-    const backtestSettings: BacktestSettings = args.exitStrategyKey
-        ? {
-            ...args.candidateSettings,
-            disableSignalExits: true,
-            exitStrategyOverrideEnabled: true,
-            exitStrategyKey: args.exitStrategyKey,
-            exitStrategyParams: { ...(args.exitStrategyParams ?? {}) },
-        }
-        : args.candidateSettings;
-    const preResolvedSettings = resolveExecutorBacktestSettings(
-        { ...(backtestSettings as Record<string, unknown>), interval: args.interval } as BacktestSettings,
-        args.interval,
-    );
     return executeBacktest({
         ohlcvData: args.data,
         // The causal view is pre-sliced; skip closed-candle trimming so the
@@ -1094,9 +1594,9 @@ async function executeReplayBacktest(args: {
         strategyKey: args.strategyKey,
         strategy: args.strategy,
         strategyParams: args.entryParams,
-        backtestSettings,
+        backtestSettings: args.candidateSettings,
         capitalSettings: input.capitalSettings,
-        preResolvedSettings,
+        preResolvedSettings: args.preResolvedSettings,
         preResolvedCapital: args.capital,
         ...(args.preGeneratedSignals ? { preGeneratedSignals: args.preGeneratedSignals } : {}),
         context: {
@@ -1107,14 +1607,17 @@ async function executeReplayBacktest(args: {
             nowSec: Math.floor(Date.now() / 1000),
         },
         backtestRunOptions: {
-            scoredRange: args.scoredRange,
+            ...(args.scoredRange ? { scoredRange: args.scoredRange } : {}),
             useCompactBacktest: false,
             includeAdvancedAnalytics: false,
             includeSharpeRatio: true,
+            collectExecutorTimings: true,
             skipDrawdown: false,
             omitEquityCurve: false,
             skipResultPostProcessing: true,
             requireTradeHistory: args.requireTradeHistory,
+            ...(args.signalsOnly ? { signalsOnly: true } : {}),
+            ...(args.exitSignalCache ? { exitSignalCache: args.exitSignalCache } : {}),
             ...(args.forceDisableSignalExits ? { forceDisableSignalExits: true } : {}),
         },
     });
@@ -1133,12 +1636,17 @@ async function evaluateForwardOutcome(args: {
         strategy: import("../types/strategies").Strategy;
         entryParams: StrategyParams;
         backtestSettings: BacktestSettings;
+        preResolvedSettings: BacktestSettings;
+        replaySignalsBySymbol?: Map<string, Signal[]>;
         exitStrategyKey?: string;
         exitStrategyName?: string;
         exitStrategyParams?: StrategyParams;
     };
     replay: MonthlyRankReplayOptions;
     capital: ReturnType<typeof resolveCapitalSettingsFromRaw>;
+    performanceState: ReplayPerformanceState;
+    checkpointDiagnostics: MonthlyRankReplayCheckpointPerformanceDiagnostic;
+    exitSignalCacheBySymbol: Map<string, BacktestExitSignalCache>;
 }): Promise<MonthlyRankReplayForwardOutcome> {
     const { input, replay } = args;
     const symbolOutcomes: MonthlyRankReplaySymbolOutcome[] = [];
@@ -1158,6 +1666,7 @@ async function evaluateForwardOutcome(args: {
             // exactly at the checkpoint (no forward bar exists at all), so
             // the scored-start label is optional here.
             const reason = "incomplete forward horizon in loaded data";
+            args.checkpointDiagnostics.forwardIncompleteHorizons += 1;
             failureReason = failureReason ?? `${symbol}: ${reason}`;
             const scoredStartLabel = forwardStart < view.length
                 ? isoLabel(toUnixSecOrNull(view[forwardStart]!.time)!)
@@ -1177,6 +1686,7 @@ async function evaluateForwardOutcome(args: {
             startBarTime: view[forwardStart]!.time,
             endBarTime: view[forwardEnd]!.time,
         };
+        const executionStartedAt = replayNowMs();
         try {
             const output = await executeReplayBacktest({
                 input,
@@ -1184,14 +1694,24 @@ async function evaluateForwardOutcome(args: {
                 strategy: args.candidate.strategy,
                 entryParams: args.candidate.entryParams,
                 candidateSettings: args.candidate.backtestSettings,
-                exitStrategyKey: args.candidate.exitStrategyKey,
-                exitStrategyParams: args.candidate.exitStrategyParams,
+                preResolvedSettings: args.candidate.preResolvedSettings,
                 data: view,
                 interval: input.interval,
                 scoredRange,
                 capital: args.capital,
                 requireTradeHistory: true,
+                preGeneratedSignals: args.candidate.replaySignalsBySymbol?.get(symbol),
+                exitSignalCache: args.exitSignalCacheBySymbol.get(symbol),
             });
+            recordReplayExecution(
+                args.performanceState,
+                args.checkpointDiagnostics,
+                args.candidate.strategyKey,
+                symbol,
+                "forward",
+                replayNowMs() - executionStartedAt,
+                output.executorTimings,
+            );
             const totalTrades = output.result.totalTrades;
             let returnPercent: number;
             let basis: MonthlyRankReplaySymbolOutcome["measurementBasis"];
@@ -1236,7 +1756,16 @@ async function evaluateForwardOutcome(args: {
             output.result.trades = [];
             output.result.equityCurve = [];
         } catch (error) {
+            recordReplayExecution(
+                args.performanceState,
+                args.checkpointDiagnostics,
+                args.candidate.strategyKey,
+                symbol,
+                "forward",
+                replayNowMs() - executionStartedAt,
+            );
             failed = true;
+            args.checkpointDiagnostics.forwardExecutionFailures += 1;
             const message = error instanceof Error ? error.message : String(error);
             failureReason = failureReason ?? `${symbol}: ${message}`;
             symbolOutcomes.push({

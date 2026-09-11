@@ -50,6 +50,7 @@ export const true_range_skew_acceptance: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
+        monthlyRankReplayCausal: true,
     },
 };
 

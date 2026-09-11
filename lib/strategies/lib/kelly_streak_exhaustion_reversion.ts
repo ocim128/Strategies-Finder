@@ -100,5 +100,6 @@ export const kelly_streak_exhaustion_reversion: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["lookback", "minKellyFraction"],
+		monthlyRankReplayCausal: true,
 	},
 };

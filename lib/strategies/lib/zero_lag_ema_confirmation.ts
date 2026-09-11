@@ -41,5 +41,6 @@ export const zero_lag_ema_confirmation: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
+        monthlyRankReplayCausal: true,
     },
 };

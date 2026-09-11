@@ -90,5 +90,6 @@ export const open_clearance_collapse_reversal: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
+        monthlyRankReplayCausal: true,
     },
 };

@@ -57,6 +57,7 @@ export const true_range_skewness_initiation: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["skew_window", "zscore_trigger"],
+		monthlyRankReplayCausal: true,
 	},
 };
 

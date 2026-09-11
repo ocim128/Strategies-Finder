@@ -63,5 +63,6 @@ export const modern_arbitrage_speed_reversion: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback", "zThreshold", "efficiencyMax"],
+        monthlyRankReplayCausal: true,
     },
 };

@@ -664,5 +664,7 @@ export interface Strategy {
         direction?: 'long' | 'short' | 'both';
         /** Optional allowlist for walk-forward/quick analysis parameter optimization */
         walkForwardParams?: string[];
+        /** Signals at each bar are unchanged when later bars are appended. */
+        monthlyRankReplayCausal?: boolean;
     };
 }

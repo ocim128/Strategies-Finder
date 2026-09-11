@@ -350,6 +350,7 @@ export function generateStrategySummarySource(
         "        role?: string;",
         "        direction?: string;",
         "        walkForwardParams?: string[];",
+        "        monthlyRankReplayCausal?: boolean;",
         "    };",
         "    crossSymbolConfig?: boolean;",
         "    polymarket1sConfig?: boolean;",

@@ -82,7 +82,9 @@ export const wick_responsive_boundary_retest: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["boundary_lookback", "test_threshold", "retest_tolerance"] } };
+		walkForwardParams: ["boundary_lookback", "test_threshold", "retest_tolerance"],
+		monthlyRankReplayCausal: true,
+	} };
 
 
 
