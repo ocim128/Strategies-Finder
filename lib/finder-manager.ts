@@ -3999,27 +3999,24 @@ export class FinderManager {
 		warnLine.textContent = warnings.join(' • ');
 		wrapper.appendChild(warnLine);
 
-		// Data coverage: per-symbol loaded ranges + load errors, and the
-		// per-checkpoint availability reasons. Without this, a coverage-only
-		// run looks like a silent empty result.
-		const coverageTitle = document.createElement('div');
-		coverageTitle.className = 'finder-universe-summary';
-		coverageTitle.textContent = 'Data coverage';
-		wrapper.appendChild(coverageTitle);
-		for (const symbol of report.symbolCoverage) {
+		// Data coverage: one compact line + load errors only. Per-symbol
+		// ranges and checkpoint reasons live in Copy Results; without this a
+		// coverage-only run would look like a silent empty result.
+		const loadedSymbols = report.symbolCoverage.filter((symbol) => !symbol.error);
+		const coverageLine = document.createElement('div');
+		coverageLine.className = 'finder-sub finder-universe-summary';
+		const gapSymbols = loadedSymbols
+			.filter((symbol) => report.checkpoints.some((checkpoint) =>
+				checkpoint.excludedSymbols?.some((entry) => entry.symbol === symbol.symbol)))
+			.map((symbol) => symbol.symbol);
+		coverageLine.textContent = `Data coverage: ${loadedSymbols.length}/${report.symbolCoverage.length} symbols loaded`
+			+ (gapSymbols.length > 0 ? `; forward-coverage gaps: ${gapSymbols.slice(0, 6).join(', ')}${gapSymbols.length > 6 ? ` +${gapSymbols.length - 6}` : ''}` : '')
+			+ '. Per-symbol detail in Copy Results.';
+		wrapper.appendChild(coverageLine);
+		for (const symbol of report.symbolCoverage.filter((candidate) => candidate.error)) {
 			const row = document.createElement('div');
 			row.className = 'finder-sub finder-symbol-row';
-			const parts = [
-				symbol.symbol,
-				`bars ${symbol.bars}`,
-				symbol.firstOpenLabel ? `first ${symbol.firstOpenLabel.slice(0, 10)}` : undefined,
-				symbol.lastCloseLabel ? `last close ${symbol.lastCloseLabel.slice(0, 10)}` : undefined,
-				`warmup at first checkpoint ${symbol.warmupBarsAtFirstCheckpoint}`,
-				symbol.synthetic ? 'synthetic pair' : undefined,
-			].filter(Boolean);
-			row.textContent = symbol.error
-				? `${parts.join(' | ')} | LOAD ERROR: ${symbol.error}`
-				: parts.join(' | ');
+			row.textContent = `${symbol.symbol}: LOAD ERROR — ${symbol.error}`;
 			wrapper.appendChild(row);
 		}
 		for (const checkpoint of unavailableCheckpoints) {

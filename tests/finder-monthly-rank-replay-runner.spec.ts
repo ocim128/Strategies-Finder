@@ -111,6 +111,20 @@ function buildOptions(
     };
 }
 
+function delayedRows(startIdx: number, count: number): OHLCVData[] {
+    return Array.from({ length: count }, (_, j) => {
+        const close = 100 + (startIdx + j);
+        return {
+            time: (BASE_TIME + (startIdx + j) * DAY) as Time,
+            open: close,
+            high: close + 0.5,
+            low: close - 0.5,
+            close,
+            volume: 1000,
+        };
+    });
+}
+
 function buildInput(args?: {
     datasets?: Map<string, OHLCVData[]>;
     options?: FinderOptions;
@@ -295,6 +309,25 @@ describe("Monthly Rank Replay runner", () => {
         expect(cadence5Outcome).to.exist;
         const expected = (windowReturn(up, 5) + windowReturn(down, 5)) / 2;
         expect(cadence5Outcome!.windowReturnPercent).to.be.closeTo(expected, 1e-6);
+
+        // Baseline accounting: the random mean for a sort whose pool contains
+        // the pair combines the PAIR-NEUTRAL outcome with ordinary outcomes —
+        // pair-neutral transform inside the pool mean, no second charge.
+        const expectancySelection = report.selections.find(
+            (selection) => selection.checkpointLabel === jan && selection.sortKey === "medianExpectancy",
+        )!;
+        expect(expectancySelection.comparison!.status).to.equal("measured");
+        expect(expectancySelection.comparison!.eligibleConfigurations).to.equal(2);
+        // Independent: mean over BOTH configurations of the 2-symbol window
+        // returns (this fixture has no pair symbol; the pair-neutral case is
+        // covered in the synthetic-pair test which asserts the transform's
+        // output value feeds windowReturnPercent verbatim).
+        const expectedRandom = (windowReturn(up, 5) + windowReturn(down, 5)
+            + windowReturn(up, 20) + windowReturn(down, 20)) / 4;
+        // Pool = {5, 20} for medianExpectancy? Only if both are available —
+        // the fixture asserts the exact mean over the pool below.
+        expect(expectancySelection.comparison!.randomExpectedReturnPercent)
+            .to.be.closeTo(expectedRandom, 1e-6);
         expect(cadence5Outcome!.symbols.length).to.equal(2);
         expect(cadence5Outcome!.forwardStartSec).to.equal(BASE_TIME + (histEnd + 1) * DAY);
         expect(cadence5Outcome!.forwardEndSec).to.equal(BASE_TIME + forwardEnd * DAY);
@@ -350,21 +383,48 @@ describe("Monthly Rank Replay runner", () => {
                     sortKey: selection.sortKey,
                     score: selection.score,
                     identityKey: selection.identityKey,
+                    retainedSymbols: report.checkpoints.find(
+                        (checkpoint) => checkpoint.label === jan,
+                    )!.retainedSymbols,
+                    eligibleConfigurations: selection.comparison!.eligibleConfigurations,
                 }));
         expect(pick(after.report)).to.deep.equal(pick(before.report));
     });
 
-    it("marks checkpoints with incomplete forward horizons unavailable and keeps the rest measurable", async () => {
+    it("keeps historical ranking when forward horizons are incomplete and invalidates only measurements", async () => {
         // H=25: March's forward end (119+25=144) exceeds the 132 loaded bars.
+        // Membership is CHECKPOINT-TIME information: both symbols still rank
+        // historically in March (missing future bars must not change the
+        // historical winner); forward outcomes and comparisons are the parts
+        // marked incomplete/unavailable.
         const { report } = await run(buildInput({ options: buildOptions({ forwardBars: 25 }) }));
         const march = report.checkpoints.find((checkpoint) => checkpoint.label === "2023-03")!;
-        expect(march.status).to.equal("unavailable");
-        expect(march.reason).to.contain("incomplete forward horizon");
+        expect(march.status).to.equal("measured");
+        expect(march.retainedSymbols).to.equal(2);
+
         const january = report.checkpoints.find((checkpoint) => checkpoint.label === "2023-01")!;
         expect(january.status).to.equal("measured");
+
+        const marchSelections = report.selections.filter((selection) => selection.checkpointLabel === "2023-03");
+        expect(marchSelections.length).to.equal(15);
+        for (const selection of marchSelections) {
+            // Top 1 outcomes preserved separately, labelled incomplete — not
+            // deleted, not replaced, not turned into zeros.
+            expect(selection.status).to.equal("incomplete_horizon");
+            expect(selection.forwardReturnPercent).to.equal(null);
+            // Comparisons unavailable WITHOUT shrinking the pool.
+            expect(selection.comparison!.status).to.equal("unavailable");
+            expect(selection.comparison!.eligibleConfigurations).to.equal(2);
+            expect(selection.comparison!.reason).to.contain("forward evaluation unavailable");
+        }
+
         const expectancySummary = report.sortSummaries.find((summary) => summary.sortKey === "medianExpectancy")!;
         expect(expectancySummary.coverage).to.equal("2/3");
-        expect(expectancySummary.excludedCounts.some((entry) => entry.reason.includes("checkpoint unavailable"))).to.equal(true);
+        expect(expectancySummary.comparisonCoverage).to.equal("2/3");
+        // Paired top-1 mean exposed since comparison months (2) differ from
+        // the full historical window set.
+        expect(expectancySummary.pairedTop1MeanForwardReturnPercent).to.not.equal(null);
+        expect(expectancySummary.excludedCounts.some((entry) => entry.reason.includes("incomplete forward horizon"))).to.equal(true);
     });
 
     it("excludes a failed-load symbol from every checkpoint and runs on the rest", async () => {
@@ -653,6 +713,303 @@ describe("Monthly Rank Replay runner", () => {
         for (const summary of report.sortSummaries) {
             expect(summary.coverage).to.equal("3/3");
         }
+    });
+
+
+    it("computes hand-calculated random means and paired excess returns with uniform weighting", async () => {
+        const { report } = await run(buildInput());
+        const jan = CHECKPOINTS[0]!.label;
+        const histEnd = HIST_END[0]!;
+        const forwardEnd = histEnd + H;
+        const up = symbolCloses("UP");
+        const down = symbolCloses("DOWN");
+        const windowReturn = (closes: number[], period: number): number => {
+            const exit = closes[forwardEnd]!;
+            const pnls = entryIndexes(period, histEnd + 1, forwardEnd).map((entry) => 1000 * (exit / closes[entry]! - 1));
+            return (pnls.reduce((a, b) => a + b, 0) / 10_000) * 100;
+        };
+        // Independent expected forward returns for both pool configurations.
+        const expected: Record<number, number> = {
+            5: (windowReturn(up, 5) + windowReturn(down, 5)) / 2,
+            20: (windowReturn(up, 20) + windowReturn(down, 20)) / 2,
+        };
+
+        const selection = report.selections.find(
+            (candidate) => candidate.checkpointLabel === jan && candidate.sortKey === "medianExpectancy",
+        )!;
+        expect(selection.status).to.equal("measured");
+        // Pool = both historically eligible configurations, winner included,
+        // equal weight per unique configuration.
+        expect(selection.comparison!.status).to.equal("measured");
+        expect(selection.comparison!.eligibleConfigurations).to.equal(2);
+        const winnerPeriod = (selection.params as { period: number }).period;
+        expect(selection.comparison!.randomExpectedReturnPercent)
+            .to.be.closeTo((expected[5]! + expected[20]!) / 2, 1e-9);
+        expect(selection.comparison!.excessReturnPercent)
+            .to.be.closeTo(expected[winnerPeriod as 5 | 20]! - (expected[5]! + expected[20]!) / 2, 1e-9);
+    });
+
+    it("gives different sorts different eligible pools and keeps zero-trade pool members at exactly zero", async () => {
+        // The default fixture has minActiveSymbols 1, so a never-trading
+        // candidate (activeSymbols 0) fails the filters and every pool has
+        // exactly the two trading configurations.
+        const { report } = await run(buildInput());
+        expect(report.selections.every((selection) => selection.comparison!.eligibleConfigurations === 2))
+            .to.equal(true);
+
+        // minActiveSymbols 0 admits the no-trade candidate. totalTrades is
+        // available for every candidate, so its pool grows to 3 — with the
+        // zero-trade member contributing EXACTLY 0 to the random mean.
+        // medianExpectancy requires active symbols, so its pool stays at 2:
+        // different sorts legitimately have different pools.
+        const relaxed = await run(buildInput({
+            options: {
+                ...buildOptions(),
+                universe: {
+                    symbols: ["UP", "DOWN"],
+                    minActiveSymbols: 0,
+                    minTotalTrades: 0,
+                    minProfitableActiveRatio: 0,
+                    sortPriority: ["medianExpectancy"],
+                },
+            },
+            paramSets: [{ period: 5 }, { period: 20 }, { period: 10_000 }],
+        }));
+        const jan = "2023-01";
+        const totalTrades = relaxed.report.selections.find(
+            (selection) => selection.checkpointLabel === jan && selection.sortKey === "totalTrades",
+        )!;
+        expect(totalTrades.comparison!.status).to.equal("measured");
+        expect(totalTrades.comparison!.eligibleConfigurations).to.equal(3);
+        expect((totalTrades.params as { period: number }).period).to.equal(5);
+        const up = symbolCloses("UP");
+        const down = symbolCloses("DOWN");
+        const histEnd = HIST_END[0]!;
+        const forwardEnd = histEnd + H;
+        const windowReturn = (closes: number[], period: number): number => {
+            const exit = closes[forwardEnd]!;
+            const pnls = entryIndexes(period, histEnd + 1, forwardEnd).map((entry) => 1000 * (exit / closes[entry]! - 1));
+            return (pnls.reduce((a, b) => a + b, 0) / 10_000) * 100;
+        };
+        const expected5 = (windowReturn(up, 5) + windowReturn(down, 5)) / 2;
+        expect(totalTrades.comparison!.randomExpectedReturnPercent)
+            .to.be.closeTo((expected5 + 0 + 0) / 3, 1e-9);
+
+        const expectancy = relaxed.report.selections.find(
+            (selection) => selection.checkpointLabel === jan && selection.sortKey === "medianExpectancy",
+        )!;
+        expect(expectancy.comparison!.status).to.equal("measured");
+        expect(expectancy.comparison!.eligibleConfigurations).to.equal(2);
+    });
+
+    it("labels one-candidate comparisons uninformative", async () => {
+        const { report } = await run(buildInput({ paramSets: [{ period: 30 }] }));
+        const measured = report.selections.filter(
+            (selection) => selection.status === "measured" || selection.status === "incomplete_horizon",
+        );
+        expect(measured.length).to.be.greaterThan(0);
+        // Sort-level no_selection rows have no chosen configuration, so no
+        // comparison applies to them; every selected configuration row does.
+        for (const selection of measured) {
+            expect(selection.comparison!.status).to.equal("uninformative");
+            expect(selection.comparison!.eligibleConfigurations).to.equal(1);
+            expect(selection.comparison!.reason).to.contain("fewer than two");
+            expect(selection.comparison!.randomExpectedReturnPercent).to.equal(undefined);
+            expect(selection.comparison!.excessReturnPercent).to.equal(undefined);
+        }
+    });
+
+    it("invalidates a comparison when a pool member fails forward, preserving the top-1 outcome", async () => {
+        // Cadence-20 forward evaluation fails at January only (forward view
+        // length 71); its historical evaluations succeed, so it stays in the
+        // pool. The medianExpectancy winner (cadence-5) keeps its measured
+        // forward outcome; the comparison is unavailable because a REQUIRED
+        // pool member's outcome is missing — the pool is NOT shrunk to the
+        // successful survivor and the winner is not replaced.
+        const forwardThrowingStrategy: Strategy = {
+            ...replayStrategy,
+            execute(data, params) {
+                if (data.length === 71 && Math.round(Number(params.period)) === 20) {
+                    throw new Error("fixture forward failure");
+                }
+                return replayStrategy.execute(data, params);
+            },
+        };
+        const { report } = await run(buildInput({
+            strategy: forwardThrowingStrategy,
+            paramSets: [{ period: 5 }, { period: 20 }],
+        }));
+        const janExpectancy = report.selections.find(
+            (selection) => selection.checkpointLabel === "2023-01" && selection.sortKey === "medianExpectancy",
+        )!;
+        expect(janExpectancy.status).to.equal("measured");
+        expect(janExpectancy.forwardReturnPercent).to.not.equal(null);
+        expect(janExpectancy.comparison!.status).to.equal("unavailable");
+        expect(janExpectancy.comparison!.eligibleConfigurations).to.equal(2);
+        expect(janExpectancy.comparison!.reason).to.contain("1 of 2");
+        expect(janExpectancy.comparison!.randomExpectedReturnPercent).to.equal(undefined);
+    });
+
+    it("summarizes paired excess statistics with explicit comparison coverage", async () => {
+        const { report } = await run(buildInput());
+        const up = symbolCloses("UP");
+        const down = symbolCloses("DOWN");
+        const windowReturn = (closes: number[], histEnd: number, period: number): number => {
+            const exit = closes[histEnd + H]!;
+            const pnls = entryIndexes(period, histEnd + 1, histEnd + H).map((entry) => 1000 * (exit / closes[entry]! - 1));
+            return (pnls.reduce((a, b) => a + b, 0) / 10_000) * 100;
+        };
+        // Independent per-checkpoint expected returns for both pool members;
+        // the winner comes from the report, the arithmetic does not.
+        const winnerPeriod = CHECKPOINTS.map((checkpoint) =>
+            report.selections.find(
+                (selection) => selection.checkpointLabel === checkpoint.label && selection.sortKey === "medianExpectancy",
+            )!.params as unknown as { period: number },
+        ).map((params) => params.period);
+        const randomMeans: number[] = [];
+        const excesses: number[] = [];
+        const top1s: number[] = [];
+        CHECKPOINTS.forEach((_, index) => {
+            const r5 = (windowReturn(up, HIST_END[index]!, 5) + windowReturn(down, HIST_END[index]!, 5)) / 2;
+            const r20 = (windowReturn(up, HIST_END[index]!, 20) + windowReturn(down, HIST_END[index]!, 20)) / 2;
+            const randomMean = (r5 + r20) / 2;
+            const win = winnerPeriod[index] === 5 ? r5 : r20;
+            randomMeans.push(randomMean);
+            excesses.push(win - randomMean);
+            top1s.push(win);
+        });
+        const summary = report.sortSummaries.find((summary) => summary.sortKey === "medianExpectancy")!;
+        expect(summary.comparisonCheckpoints).to.equal(3);
+        expect(summary.comparisonCoverage).to.equal("3/3");
+        expect(summary.randomMeanForwardReturnPercent)
+            .to.be.closeTo(randomMeans.reduce((a, b) => a + b, 0) / 3, 1e-9);
+        expect(summary.meanExcessReturnPercent)
+            .to.be.closeTo(excesses.reduce((a, b) => a + b, 0) / 3, 1e-9);
+        expect(summary.positiveExcessWindows)
+            .to.equal(excesses.filter((excess) => excess > 0).length);
+        // Comparison coverage matches Top 1 coverage here, so the paired
+        // top-1 mean equals the ordinary mean.
+        expect(summary.pairedTop1MeanForwardReturnPercent)
+            .to.be.closeTo(top1s.reduce((a, b) => a + b, 0) / 3, 1e-9);
+    });
+
+    it("keeps historical membership, selection, and pools stable when future data is appended", async () => {
+        // TRUNC ranks at March on 30 closed bars but lacks the 10-bar forward
+        // horizon in run A. Run B appends bars AFTER the March checkpoint.
+        // Membership, winners, scores, and pool sizes must be identical in
+        // both runs (checkpoint-time information only); only comparison
+        // availability flips.
+        const runWith = (count: number) => run(buildInput({
+            datasets: new Map<string, OHLCVData[]>([
+                ["UP", buildData("UP")],
+                ["DOWN", buildData("DOWN")],
+                ["TRUNC", delayedRows(90, count)],
+            ]),
+            options: buildOptions({}, ["UP", "DOWN", "TRUNC"]),
+            paramSets: [{ period: 5 }, { period: 20 }],
+        }));
+        const withoutFuture = await runWith(32); // TRUNC last bar = common idx 121
+        const withFuture = await runWith(42); // horizon completes at March
+
+        const marchSelections = (report: Awaited<ReturnType<typeof run>>["report"]) =>
+            report.selections.filter((selection) => selection.checkpointLabel === "2023-03");
+        const marchCheckpoint = (report: Awaited<ReturnType<typeof run>>["report"]) =>
+            report.checkpoints.find((checkpoint) => checkpoint.label === "2023-03")!;
+
+        const aCheckpoint = marchCheckpoint(withoutFuture.report);
+        const bCheckpoint = marchCheckpoint(withFuture.report);
+        expect(aCheckpoint.status).to.equal("measured");
+        expect(bCheckpoint.status).to.equal("measured");
+        // Historical membership identical in both runs: appended future data
+        // did not change March's historical answer.
+        expect(aCheckpoint.retainedSymbols).to.equal(3);
+        expect(bCheckpoint.retainedSymbols).to.equal(3);
+
+        const strip = (selections: ReturnType<typeof marchSelections>) =>
+            selections.map((selection) => ({
+                sortKey: selection.sortKey,
+                score: selection.score,
+                identityKey: selection.identityKey,
+                eligibleConfigurations: selection.comparison!.eligibleConfigurations,
+            }));
+        expect(strip(marchSelections(withoutFuture.report)))
+            .to.deep.equal(strip(marchSelections(withFuture.report)));
+
+        // Only measurement availability differs.
+        const aCmp = marchSelections(withoutFuture.report).map((selection) => selection.comparison!.status);
+        const bCmp = marchSelections(withFuture.report).map((selection) => selection.comparison!.status);
+        expect(aCmp.every((status) => status === "unavailable")).to.equal(true);
+        expect(bCmp.every((status) => status === "measured")).to.equal(true);
+    });
+
+    it("shares forward execution across sorts and ships only winner outcomes", async () => {
+        const { report } = await run(buildInput());
+        for (const checkpoint of report.checkpoints) {
+            const winnerOutcomes = report.forwardOutcomes.filter(
+                (outcome) => outcome.checkpointLabel === checkpoint.label,
+            );
+            // Report ships ONLY the distinct winner outcomes; nonwinner pool
+            // outcomes stay server-side transient scalars.
+            expect(winnerOutcomes.length).to.equal(checkpoint.distinctWinners);
+            // 15 sort selections share the pool's <=2 distinct outcomes:
+            // sorting never re-executes a configuration already measured.
+            const sortSelections = report.selections.filter(
+                (selection) => selection.checkpointIndex === checkpoint.index,
+            );
+            expect(sortSelections.length).to.equal(15);
+            expect(winnerOutcomes.length).to.be.lessThan(sortSelections.length);
+            expect(checkpoint.distinctWinners).to.be.at.most(2);
+        }
+    });
+
+    it("does not crash when a retained symbol's data ends exactly at the checkpoint", async () => {
+        // EDGE has exactly L bars closed by March (its last bar closes at the
+        // checkpoint) and ZERO forward bars: it ranks historically, its
+        // forward outcome is missing (not zero), comparisons are unavailable,
+        // and the run must complete without a fatal.
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", buildData("UP")],
+            ["DOWN", buildData("DOWN")],
+            ["EDGE", delayedRows(100, 20)],
+        ]);
+        const symbols = ["UP", "DOWN", "EDGE"];
+        const { report } = await run(buildInput({
+            datasets,
+            options: buildOptions({}, symbols),
+            paramSets: [{ period: 5 }, { period: 20 }],
+        }));
+
+        // EDGE lacks history at Jan/Feb, is retained at March.
+        const janCheckpoint = report.checkpoints.find((checkpoint) => checkpoint.label === "2023-01")!;
+        expect(janCheckpoint.retainedSymbols).to.equal(2);
+        expect(janCheckpoint.excludedSymbols!.some((entry) => entry.symbol === "EDGE")).to.equal(true);
+        const marCheckpoint = report.checkpoints.find((checkpoint) => checkpoint.label === "2023-03")!;
+        expect(marCheckpoint.status).to.equal("measured");
+        expect(marCheckpoint.retainedSymbols).to.equal(3);
+
+        const marchSelections = report.selections.filter((selection) => selection.checkpointLabel === "2023-03");
+        expect(marchSelections.length).to.equal(15);
+        for (const selection of marchSelections) {
+            expect(selection.status).to.equal("incomplete_horizon");
+            expect(selection.forwardReturnPercent).to.equal(null);
+            expect(selection.comparison!.status).to.equal("unavailable");
+            expect(selection.comparison!.eligibleConfigurations).to.equal(2);
+        }
+        // The EDGE missing outcome is recorded as an error row, not a zero.
+        const edgeRows = report.forwardOutcomes
+            .flatMap((outcome) => outcome.symbols)
+            .filter((symbol) => symbol.symbol === "EDGE");
+        expect(edgeRows.length).to.be.greaterThan(0);
+        for (const row of edgeRows) {
+            expect(row.error).to.contain("incomplete forward horizon");
+            expect(row.returnPercent).to.be.NaN;
+        }
+        // Jan/Feb comparisons remain fully measured.
+        const janExpectancy = report.selections.find(
+            (selection) => selection.checkpointLabel === "2023-01" && selection.sortKey === "medianExpectancy",
+        )!;
+        expect(janExpectancy.status).to.equal("measured");
+        expect(janExpectancy.comparison!.status).to.equal("measured");
     });
 
     it("surfaces the reason as an unavailable checkpoint when zero candidates are generated", async () => {

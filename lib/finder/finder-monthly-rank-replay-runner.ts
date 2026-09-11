@@ -57,6 +57,8 @@ import { SHARPE_MIN_SAMPLES } from "../strategies/performance-metrics";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import {
     buildMonthlyCheckpointSchedule,
+    buildRandomComparison,
+    isMonthlyRankReplayMetricAvailable,
     computeReplayRobustUniverseScore,
     buildMonthlyRankReplayIdentityKey,
     computeWindowReturnPercent,
@@ -497,10 +499,12 @@ export async function runFinderMonthlyRankReplay(
     };
     // For each scheduled checkpoint, the per-symbol historical end index
     // (last bar closed at or before the boundary).
-    // Point-in-time membership: symbols lacking sufficient closed scored
-    // bars or a complete forward horizon at a checkpoint are excluded from
-    // THAT checkpoint (with the reason recorded); the checkpoint runs on the
-    // retained set.
+    // Point-in-time membership from CHECKPOINT-TIME information only: a
+    // symbol needs sufficient closed scored history to enter the historical
+    // ranking. Forward-horizon availability is NOT a membership condition —
+    // missing future bars must not remove symbols and thereby change the
+    // historical winner; such symbols are retained and their missing forward
+    // outcomes invalidate measurements downstream (never shrink pools).
     const resolveCheckpointMembership = (checkpointSec: number): {
         histEndBySymbol: Map<string, number>;
         excluded: Array<{ symbol: string; reason: string }>;
@@ -526,11 +530,6 @@ export async function runFinderMonthlyRankReplay(
             }
             if (histEnd < replay.evalWindowBars - 1) {
                 excluded.push({ symbol, reason: "insufficient closed history for the eval window" });
-                continue;
-            }
-            const forwardEnd = histEnd + replay.forwardBars;
-            if (forwardEnd >= series.data.length) {
-                excluded.push({ symbol, reason: "incomplete forward horizon in loaded data" });
                 continue;
             }
             histEndBySymbol.set(symbol, histEnd);
@@ -590,6 +589,8 @@ export async function runFinderMonthlyRankReplay(
                 "signal must originate in the scored region AND resolve inside it; terminal liquidation at the final scored close with commission + direction-correct slippage",
             accounting:
                 "equal-weight mean of the checkpoint's retained symbols; symbols lacking sufficient scored/forward bars at that checkpoint are excluded and listed on its record; pair-neutral transform for synthetic pairs",
+                baseline:
+                    "per sort: randomExpectedReturn = equal-weight mean of that sort's eligible configurations' forward returns at the same checkpoint (winner included, each unique configuration once); excess = top-1 − random mean",
         },
     };
 
@@ -688,6 +689,10 @@ export async function runFinderMonthlyRankReplay(
         // ------------------ historical evaluation ------------------
         const accumulator = new MonthlyRankReplayWinnerAccumulator(replayed.map((sort) => sort.key));
         const sortCoverageByKey = new Map(replayed.map((sort) => [sort.key, sort]));
+        // Baseline pools: every historically eligible configuration PER SORT
+        // (completeness gate + filters + this sort's metric availability).
+        // Sorts may legitimately have different pools.
+        const eligibleBySort = new Map<string, string[]>();
         let completeCandidates = 0;
         let incompleteCandidates = 0;
         let candidateExecutionFailures = 0;
@@ -854,6 +859,15 @@ export async function runFinderMonthlyRankReplay(
             if (!passesFinderUniverseFilters(universeCandidate, universe)) continue;
 
             accumulator.offer(universeCandidate, candidate.identityKey, candidate.ordinal);
+            for (const sort of replayed) {
+                if (!isMonthlyRankReplayMetricAvailable(universeCandidate, sort.key)) continue;
+                let eligibleList = eligibleBySort.get(sort.key);
+                if (!eligibleList) {
+                    eligibleList = [];
+                    eligibleBySort.set(sort.key, eligibleList);
+                }
+                eligibleList.push(candidate.identityKey);
+            }
             if ((candidateIndex + 1) % 8 === 0) {
                 callbacks.setProgress(
                     10 + ((checkpointIndex + (candidateIndex + 1) / pool.length) / schedule.length) * 80,
@@ -871,16 +885,68 @@ export async function runFinderMonthlyRankReplay(
         const outcomeIndexByIdentity = new Map<string, number>();
         // Distinct winning CONFIGURATIONS (not sort slots): several sorts can
         // select the same candidate, so this is at most the pool size and is
-        // the number of forward evaluations scheduled for the checkpoint.
+        // the number of forward evaluations shipped for the checkpoint.
         checkpointRecord.distinctWinners = new Set(
             [...winners.values()].map((winner) => winner.identityKey),
         ).size;
 
-        for (const [sortKey, winner] of winners) {
+        // Random-choice baseline: every sort's eligible pool must be measured
+        // over the SAME forward horizon. Union winners with all pool members
+        // so each distinct configuration is evaluated exactly once per
+        // checkpoint; sorts sharing a configuration share its outcome.
+        const winnerIdentities = new Set([...winners.values()].map((winner) => winner.identityKey));
+        const neededIdentities = new Set<string>(winnerIdentities);
+        for (const eligibleList of eligibleBySort.values()) {
+            for (const identityKey of eligibleList) neededIdentities.add(identityKey);
+        }
+
+        // Transient scalar reductions for the baseline. Only winner outcomes
+        // enter report.forwardOutcomes; nonwinner detail is released here.
+        const forwardResults = new Map<string, { measured: boolean; value: number | null }>();
+        for (const identityKey of neededIdentities) {
             if (callbacks.isCancelled()) {
                 cancelled = true;
                 break;
             }
+            const poolCandidate = poolByIdentity.get(identityKey);
+            if (!poolCandidate) continue;
+            const outcome = await evaluateForwardOutcome({
+                checkpoint,
+                input,
+                seriesBySymbol,
+                histEndBySymbol,
+                forwardViews,
+                candidate: {
+                    identityKey,
+                    strategyKey: poolCandidate.strategyKey,
+                    strategyName: poolCandidate.strategyName,
+                    strategy: poolCandidate.strategy,
+                    entryParams: poolCandidate.entryParams,
+                    backtestSettings: poolCandidate.backtestSettings,
+                    exitStrategyKey: poolCandidate.exitStrategyKey,
+                    exitStrategyName: poolCandidate.exitStrategyName,
+                    exitStrategyParams: poolCandidate.exitStrategyParams,
+                },
+                replay,
+                capital: preResolvedCapital,
+            });
+            const measured = outcome.status === "measured"
+                && outcome.windowReturnPercent !== null
+                && Number.isFinite(outcome.windowReturnPercent);
+            forwardResults.set(identityKey, { measured, value: measured ? outcome.windowReturnPercent! : null });
+            if (winnerIdentities.has(identityKey)) {
+                report.forwardOutcomes.push(outcome);
+                outcomeIndexByIdentity.set(identityKey, report.forwardOutcomes.length - 1);
+            }
+            // Release per-symbol rows for nonwinner outcomes immediately; the
+            // baseline only needs the scalar window return.
+            if (!winnerIdentities.has(identityKey)) {
+                outcome.symbols.length = 0;
+            }
+        }
+
+        for (const [sortKey, winner] of winners) {
+            if (cancelled) break;
             const sort = sortCoverageByKey.get(sortKey)!;
             const selection: MonthlyRankReplaySelection = {
                 checkpointIndex: checkpoint.index,
@@ -907,40 +973,21 @@ export async function runFinderMonthlyRankReplay(
                     : {}),
             };
 
-            let outcomeIndex = outcomeIndexByIdentity.get(winner.identityKey);
-            if (outcomeIndex === undefined) {
-                const outcome = await evaluateForwardOutcome({
-                    checkpoint,
-                    input,
-                    seriesBySymbol,
-                    histEndBySymbol,
-                    forwardViews,
-                    candidate: {
-                        identityKey: winner.identityKey,
-                        strategyKey: winner.candidate.strategyKey,
-                        strategyName: winner.candidate.strategyName,
-                        strategy: poolByIdentity.get(winner.identityKey)!.strategy,
-                        entryParams: winner.candidate.params,
-                        backtestSettings: poolByIdentity.get(winner.identityKey)!.backtestSettings,
-                        exitStrategyKey: winner.candidate.exitStrategyKey,
-                        exitStrategyName: winner.candidate.exitStrategyName,
-                        exitStrategyParams: winner.candidate.exitStrategyParams,
-                    },
-                    replay,
-                    capital: preResolvedCapital,
-                });
-                outcomeIndex = report.forwardOutcomes.length;
-                report.forwardOutcomes.push(outcome);
-                outcomeIndexByIdentity.set(winner.identityKey, outcomeIndex);
+            const outcomeIndex = outcomeIndexByIdentity.get(winner.identityKey);
+            if (outcomeIndex !== undefined) {
+                const outcome = report.forwardOutcomes[outcomeIndex]!;
+                selection.forwardOutcomeIndex = outcomeIndex;
+                selection.forwardReturnPercent = outcome.windowReturnPercent;
+                if (outcome.status !== "measured") {
+                    selection.status = outcome.status === "failed" ? "forward_failed" : "incomplete_horizon";
+                    selection.reason = outcome.reason;
+                }
             }
-
-            const outcome = report.forwardOutcomes[outcomeIndex]!;
-            selection.forwardOutcomeIndex = outcomeIndex;
-            selection.forwardReturnPercent = outcome.windowReturnPercent;
-            if (outcome.status !== "measured") {
-                selection.status = outcome.status === "failed" ? "forward_failed" : "incomplete_horizon";
-                selection.reason = outcome.reason;
-            }
+            selection.comparison = buildRandomComparison({
+                eligibleIdentityKeys: eligibleBySort.get(sortKey) ?? [],
+                forwardResults,
+                selectedIdentityKey: winner.identityKey,
+            });
             report.selections.push(selection);
         }
 
@@ -1103,6 +1150,29 @@ async function evaluateForwardOutcome(args: {
         const view = args.forwardViews.get(symbol)!;
         const forwardStart = histEnd + 1;
         const forwardEnd = histEnd + replay.forwardBars;
+        if (forwardEnd >= view.length) {
+            // Membership is historical-only: this symbol ranked, but the
+            // loaded data lacks its forward horizon. Record a MISSING
+            // outcome (never zero); the window/comparison is invalidated
+            // downstream without shrinking any pool. The data may even end
+            // exactly at the checkpoint (no forward bar exists at all), so
+            // the scored-start label is optional here.
+            const reason = "incomplete forward horizon in loaded data";
+            failureReason = failureReason ?? `${symbol}: ${reason}`;
+            const scoredStartLabel = forwardStart < view.length
+                ? isoLabel(toUnixSecOrNull(view[forwardStart]!.time)!)
+                : undefined;
+            symbolOutcomes.push({
+                symbol,
+                measurementBasis: series.synthetic ? "pair_neutral_log" : "cash",
+                returnPercent: Number.NaN,
+                totalTrades: 0,
+                ...(scoredStartLabel ? { scoredStartLabel } : {}),
+                warmupBars: forwardStart,
+                error: reason,
+            });
+            continue;
+        }
         const scoredRange = {
             startBarTime: view[forwardStart]!.time,
             endBarTime: view[forwardEnd]!.time,
@@ -1274,12 +1344,28 @@ function buildSortSummaries(
                 excludedReasons.push(selection.reason ?? selection.status);
             }
         }
+        // Paired random-choice comparisons: valid comparisons only. If
+        // comparison coverage differs from Top 1 coverage the summary's
+        // pairedTop1MeanForwardReturnPercent carries the like-for-like mean.
+        const comparisons = selections
+            .filter((selection) => selection.comparison?.status === "measured"
+                && selection.forwardReturnPercent !== null
+                && selection.forwardReturnPercent !== undefined
+                && Number.isFinite(selection.forwardReturnPercent)
+                && Number.isFinite(selection.comparison.randomExpectedReturnPercent ?? NaN)
+                && Number.isFinite(selection.comparison.excessReturnPercent ?? NaN))
+            .map((selection) => ({
+                top1Return: selection.forwardReturnPercent!,
+                randomExpected: selection.comparison!.randomExpectedReturnPercent!,
+                excess: selection.comparison!.excessReturnPercent!,
+            }));
         return summarizeMonthlyRankReplaySort({
             coverage: sort,
             scheduledCheckpoints,
             validReturns,
             zeroTradeValid,
             excludedReasons,
+            comparisons,
         });
     });
 }
@@ -1323,6 +1409,8 @@ function buildCoverageOnlyReport(
                     "signal must originate in the scored region AND resolve inside it; terminal liquidation at the final scored close with commission + direction-correct slippage",
                 accounting:
                     "equal-weight mean of per-symbol scored returns; pair-neutral transform for synthetic pairs",
+                    baseline:
+                        "per sort: randomExpectedReturn = equal-weight mean of that sort's eligible configurations' forward returns at the same checkpoint (winner included)",
             },
         },
         checkpoints: [],
@@ -1369,6 +1457,7 @@ function buildCoverageOnlyReport(
             validReturns: [],
             zeroTradeValid: 0,
             excludedReasons: ["no measurable checkpoint"],
+            comparisons: [],
         }));
     }
     return report;

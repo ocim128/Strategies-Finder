@@ -168,6 +168,17 @@ This document was the implementation plan. Implementation status and deviations:
 - **F6**: the forward-window convention now discloses that on intervals not aligned to the month boundary the first forward bar may open before the boundary (no pre-boundary fill price is used).
 - **F9/F11/F12**: scored backtests skip advanced performance analytics; selection `exitStrategyParams` is the params object (matching outcomes); empty summary rows say "no valid observations".
 - F7/F8 noted as documented behavior (the discarded Rust-mirror argument; zero-signal runs skip boundary validation by construction).
+- **Exact random-choice baseline (user-directed addition, 2026-09-11)**: for
+  each sort, every historically eligible configuration is measured forward at
+  each checkpoint (each distinct configuration once, outcome shared across
+  sorts); random mean = equal-weight pool mean (winner included); excess =
+  top-1 − random, computed from paired monthly observations. Comparisons are
+  unavailable when any required outcome is missing (pools never shrink to
+  survivors) and uninformative below two eligible configurations. Nonwinner
+  outcomes are reduced to transient server-side scalars and never shipped.
+  This supersedes the blueprint's "no all-candidate forward baseline in v1"
+  line for this implementation. Forward-evaluation cost grows from distinct
+  winners to the union of all sorts' eligible pools per checkpoint.
 - **Point-in-time symbol membership (user-directed override of blueprint §5's
   strict fixed-symbol rule, 2026-09-11)**: symbols with insufficient scored
   history, an incomplete forward horizon, or a failed load are excluded from

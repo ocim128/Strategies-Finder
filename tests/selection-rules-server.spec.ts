@@ -63,8 +63,12 @@ function makeResponse(): any {
 
 /** The run route installs its owner across several async hops; wait for it. */
 async function waitForRunInstall(): Promise<void> {
-    for (let tick = 0; tick < 100 && getRunOwnerForTests() === 0; tick += 1) {
-        await new Promise((resolve) => setImmediate(resolve));
+    // Wall-clock deadline, not a tick count: under load the async route
+    // handler can take more than any fixed number of event-loop turns to
+    // reach ownership, which made the mid-run read 404 spuriously.
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && getRunOwnerForTests() === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
     }
 }
 
