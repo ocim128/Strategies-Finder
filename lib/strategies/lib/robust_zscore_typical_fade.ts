@@ -52,6 +52,5 @@ export const robust_zscore_typical_fade: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
-        monthlyRankReplayCausal: true,
     },
 };

@@ -59,6 +59,5 @@ export const vwap_deviation_reversion: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["period"],
-        monthlyRankReplayCausal: true,
     },
 };

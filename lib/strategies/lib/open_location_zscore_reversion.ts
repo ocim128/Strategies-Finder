@@ -69,6 +69,5 @@ export const open_location_zscore_reversion: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
-        monthlyRankReplayCausal: true,
     },
 };

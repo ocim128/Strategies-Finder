@@ -72,6 +72,5 @@ export const short_term_overextension_fade: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
-        monthlyRankReplayCausal: true,
     },
 };

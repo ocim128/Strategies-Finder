@@ -61,7 +61,6 @@ export const whipsaw_crossing_burst_reversal: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["period"],
-        monthlyRankReplayCausal: true,
+        walkForwardParams: ["period"]
     }
 };

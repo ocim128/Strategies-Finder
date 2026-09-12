@@ -44,6 +44,5 @@ export const n_bar_momentum_confirmation: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
-        monthlyRankReplayCausal: true,
     },
 };

@@ -44,6 +44,5 @@ export const dmi_direction_confirmation: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["dmiPeriod"],
-        monthlyRankReplayCausal: true,
     },
 };

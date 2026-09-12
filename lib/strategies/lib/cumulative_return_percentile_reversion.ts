@@ -70,6 +70,5 @@ export const cumulative_return_percentile_reversion: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback", "pctlExtreme"],
-        monthlyRankReplayCausal: true,
     },
 };

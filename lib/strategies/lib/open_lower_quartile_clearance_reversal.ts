@@ -92,6 +92,5 @@ export const open_lower_quartile_clearance_reversal: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
-        monthlyRankReplayCausal: true,
     },
 };

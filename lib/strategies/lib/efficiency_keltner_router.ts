@@ -82,6 +82,5 @@ export const efficiency_keltner_router: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["er_lookback", "keltner_lookback", "er_threshold"],
-		monthlyRankReplayCausal: true,
 	},
 };

@@ -58,6 +58,5 @@ export const parabolic_sar_confirmation: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["accelerationStep"],
-        monthlyRankReplayCausal: true,
     },
 };

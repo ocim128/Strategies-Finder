@@ -55,6 +55,5 @@ export const body_direction_placement_coherence: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["coherenceThreshold"],
-        monthlyRankReplayCausal: true,
     },
 };

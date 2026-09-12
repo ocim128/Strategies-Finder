@@ -66,6 +66,5 @@ export const typical_close_skewness_acceptance: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback", "minSkew"],
-        monthlyRankReplayCausal: true,
     },
 };

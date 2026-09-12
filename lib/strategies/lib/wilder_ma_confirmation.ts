@@ -41,6 +41,5 @@ export const wilder_ma_confirmation: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
-        monthlyRankReplayCausal: true,
     },
 };

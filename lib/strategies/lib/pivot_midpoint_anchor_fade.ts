@@ -69,9 +69,7 @@ export const pivot_midpoint_anchor_fade: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["pivotLeftBars", "deviationMultiplier"],
-		monthlyRankReplayCausal: true,
-	} };
+		walkForwardParams: ["pivotLeftBars", "deviationMultiplier"] } };
 
 
 

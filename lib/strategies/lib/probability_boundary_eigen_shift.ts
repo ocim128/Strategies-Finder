@@ -35,7 +35,7 @@ export const probability_boundary_eigen_shift: Strategy = {
 	defaultParams: { stateLookback: 50, eigenLimit: 3.0 },
 	paramLabels: { stateLookback: "State Lookback", eigenLimit: "Eigen Limit (Z-Score)" },
 	normalizeParams,
-	metadata: { role: "entry", direction: "both", walkForwardParams: ["stateLookback", "eigenLimit"], monthlyRankReplayCausal: true },
+	metadata: { role: "entry", direction: "both", walkForwardParams: ["stateLookback", "eigenLimit"] },
 	prepareFinderData: (data) => prepareProbabilityBoundaryEigenShiftData(data),
 	executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
 		const prepared = getPreparedData(preparedData, data);

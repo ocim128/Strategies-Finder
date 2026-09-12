@@ -69,6 +69,5 @@ export const return_autocorrelation_alternation: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["lookback"],
-        monthlyRankReplayCausal: true,
     },
 };
