@@ -112,7 +112,6 @@ async function runReplayJob(args?: {
     abortSignal?: AbortSignal;
     owner?: number;
     options?: FinderOptions;
-    runLog?: (event: string, data: Record<string, unknown>) => void;
 }): Promise<RunResult> {
     const runId = args?.runId ?? "replay-server-test";
     const owner = args?.owner ?? 9100;
@@ -136,7 +135,6 @@ async function runReplayJob(args?: {
             },
             generateParamSets: () => [{ period: 5 }, { period: 10 }],
             abortSignal: args?.abortSignal,
-            runLog: args?.runLog,
         },
         (event) => events.push(event),
         owner,
@@ -235,29 +233,6 @@ describe("finder server Monthly Rank Replay job", () => {
         expect(snapshot.terminalReplay?.kind).to.equal("monthly_rank_replay");
         expect(snapshot.terminalCandidates).to.equal(null);
         expect(snapshot.summary).to.contain("Done");
-    });
-
-    it("writes durable lifecycle log events and truthful checkpoint totals", async () => {
-        const logEvents: Array<[string, Record<string, unknown>]> = [];
-        const { events } = await runReplayJob({
-            runId: "replay-log-check",
-            runLog: (event, data) => logEvents.push([event, data]),
-        });
-        const done = events[events.length - 1]! as Extract<FinderReplayStreamEvent, { type: "replay_done" }>;
-        const logNames = logEvents.map(([event]) => event);
-        expect(logNames[0]).to.equal("replay_start");
-        expect(logNames.filter((event) => event === "replay_checkpoint").length)
-            .to.equal(done.report.checkpoints.length);
-        expect(logNames.at(-1)).to.equal("replay_done");
-        expect(logEvents
-            .filter(([event]) => event === "replay_checkpoint")
-            .every(([, data]) => typeof data.outcomeCount === "number"
-                && typeof data.selectionCount === "number"))
-            .to.equal(true);
-
-        const progress = events.filter((event) => event.type === "replay_progress");
-        expect((progress.at(-1) as Extract<FinderReplayStreamEvent, { type: "replay_progress" }>).totalCheckpoints)
-            .to.equal(done.report.checkpoints.length);
     });
 
     it("completes as cancelled when the abort signal fires", async () => {

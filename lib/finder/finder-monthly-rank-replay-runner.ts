@@ -63,7 +63,6 @@ import {
 } from "./finder-pair-neutral";
 import { SHARPE_MIN_SAMPLES } from "../strategies/performance-metrics";
 import { parseTimeToUnixSeconds } from "../time-normalization";
-import { parseIntervalSeconds } from "../interval-utils";
 import {
     buildMonthlyCheckpointSchedule,
     buildRandomComparison,
@@ -82,7 +81,6 @@ import {
     type MonthlyRankReplayPerformanceBucket,
     type MonthlyRankReplayPerformanceDiagnostics,
     type MonthlyRankReplayCheckpointPerformanceDiagnostic,
-    type MonthlyRankReplayExperiment,
     type MonthlyRankReplayExecutorTimingBucket,
     type MonthlyRankReplaySymbolLoadDiagnostic,
     type MonthlyRankReplayReport,
@@ -101,8 +99,6 @@ export interface FinderMonthlyRankReplayRunInput {
     exitStrategyCandidates?: FinderSelectedStrategy[];
     loadDataset: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
     generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[];
-    /** Optional server-side durable post-mortem log sink. */
-    runLog?: (event: string, data: Record<string, unknown>) => void;
 }
 
 export interface FinderMonthlyRankReplayRunCallbacks {
@@ -116,7 +112,6 @@ export interface FinderMonthlyRankReplayRunCallbacks {
         outcomes: MonthlyRankReplayForwardOutcome[],
         selections: MonthlyRankReplaySelection[],
     ) => void;
-    onSchedule?: (totalCheckpoints: number) => void;
 }
 
 export interface FinderMonthlyRankReplayRunOutput {
@@ -154,8 +149,6 @@ interface ReplaySymbolSeries {
     firstOpenSec: number | null;
     lastCloseSec: number | null;
     synthetic: boolean;
-    closeTimes: Float64Array;
-    closeTimesMonotone: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,52 +224,6 @@ function toUnixSecOrNull(time: Time | undefined): number | null {
 
 function isoLabel(timeSec: number): string {
     return new Date(timeSec * 1000).toISOString();
-}
-
-function buildCloseTimeIndex(data: OHLCVData[], intervalSec: number | null): {
-    closeTimes: Float64Array;
-    monotone: boolean;
-} {
-    const closeTimes = new Float64Array(data.length);
-    let monotone = intervalSec !== null;
-    let previousCloseSec = Number.NEGATIVE_INFINITY;
-    for (let i = 0; i < data.length; i += 1) {
-        const openSec = toUnixSecOrNull(data[i]!.time);
-        const closeSec = openSec === null || intervalSec === null
-            ? Number.NaN
-            : openSec + intervalSec;
-        closeTimes[i] = closeSec;
-        if (!Number.isFinite(closeSec) || (i > 0 && closeSec < previousCloseSec)) {
-            monotone = false;
-        }
-        previousCloseSec = closeSec;
-    }
-    return { closeTimes, monotone };
-}
-
-function findLastClosedBarIndex(
-    series: ReplaySymbolSeries,
-    checkpointSec: number,
-): number {
-    if (series.closeTimesMonotone) {
-        let low = 0;
-        let high = series.closeTimes.length;
-        while (low < high) {
-            const middle = (low + high) >> 1;
-            if (series.closeTimes[middle]! <= checkpointSec) {
-                low = middle + 1;
-            } else {
-                high = middle;
-            }
-        }
-        return low - 1;
-    }
-    for (let i = series.closeTimes.length - 1; i >= 0; i -= 1) {
-        if (Number.isFinite(series.closeTimes[i]!) && series.closeTimes[i]! <= checkpointSec) {
-            return i;
-        }
-    }
-    return -1;
 }
 
 /**
@@ -713,13 +660,18 @@ export async function runFinderMonthlyRankReplay(
     const seriesBySymbol = new Map<string, ReplaySymbolSeries>();
     const symbolLoadErrors = new Map<string, string>();
     const dataLoadStartedAt = replayNowMs();
-    const intervalSec = parseIntervalSeconds(input.interval);
-    const symbolLoadDiagnostics: Array<MonthlyRankReplaySymbolLoadDiagnostic | undefined> = new Array(symbols.length);
-    let nextSymbolIndex = 0;
-    let completedLoads = 0;
-    let cancelledDuringLoad = false;
-    const loadSymbol = async (index: number): Promise<void> => {
-        const symbol = symbols[index]!;
+    for (let i = 0; i < symbols.length; i += 1) {
+        const symbol = symbols[i]!;
+        if (callbacks.isCancelled()) {
+            return {
+                report: finishReport(buildCancelledReport(input, replay, symbols, replayed, excluded, capital)),
+                cancelled: true,
+            };
+        }
+        callbacks.setProgress(
+            ((i + 1) / Math.max(1, symbols.length)) * 10,
+            `Monthly Rank Replay: loading ${symbol} (${i + 1}/${symbols.length})...`,
+        );
         performanceState.diagnostics.counts.loadAttempts += 1;
         const loadStartedAt = replayNowMs();
         let loadStatus: MonthlyRankReplaySymbolLoadDiagnostic["status"] = "failed";
@@ -737,60 +689,32 @@ export async function runFinderMonthlyRankReplay(
             } else {
                 loadStatus = "loaded";
                 loadBars = closed.length;
-                const closeTimeIndex = buildCloseTimeIndex(closed, intervalSec);
-                const lastCloseSec = closeTimeIndex.closeTimes[closed.length - 1];
                 seriesBySymbol.set(symbol, {
                     symbol,
                     data: closed,
                     bars: closed.length,
                     firstOpenSec: toUnixSecOrNull(closed[0]!.time),
-                    lastCloseSec: lastCloseSec !== undefined && Number.isFinite(lastCloseSec) ? lastCloseSec : null,
+                    lastCloseSec: toUnixSecOrNull(closed[closed.length - 1]!.time) === null
+                        ? null
+                        : resolveBarCloseTimeSec(
+                            toUnixSecOrNull(closed[closed.length - 1]!.time)!,
+                            input.interval,
+                        ),
                     synthetic: isSyntheticPairFinderSymbol(symbol),
-                    closeTimes: closeTimeIndex.closeTimes,
-                    closeTimesMonotone: closeTimeIndex.monotone,
                 });
             }
         } catch (error) {
             loadError = error instanceof Error ? error.message : String(error);
             symbolLoadErrors.set(symbol, loadError);
         }
-        symbolLoadDiagnostics[index] = {
+        performanceState.diagnostics.symbolLoads.push({
             symbol,
             status: loadStatus,
             durationMs: replayNowMs() - loadStartedAt,
             bars: loadBars,
             ...(loadError ? { error: loadError } : {}),
-        };
-        completedLoads += 1;
-        callbacks.setProgress(
-            (completedLoads / Math.max(1, symbols.length)) * 10,
-            `Monthly Rank Replay: loaded ${symbol} (${completedLoads}/${symbols.length})...`,
-        );
+        });
         await callbacks.yieldControl();
-    };
-    const loadWorker = async (): Promise<void> => {
-        while (true) {
-            if (callbacks.isCancelled()) {
-                cancelledDuringLoad = true;
-                return;
-            }
-            const index = nextSymbolIndex;
-            nextSymbolIndex += 1;
-            if (index >= symbols.length) return;
-            await loadSymbol(index);
-        }
-    };
-    await Promise.all(
-        Array.from({ length: Math.min(4, symbols.length) }, () => loadWorker()),
-    );
-    performanceState.diagnostics.symbolLoads.push(
-        ...symbolLoadDiagnostics.filter((diagnostic): diagnostic is MonthlyRankReplaySymbolLoadDiagnostic => diagnostic !== undefined),
-    );
-    if (cancelledDuringLoad || callbacks.isCancelled()) {
-        return {
-            report: finishReport(buildCancelledReport(input, replay, symbols, replayed, excluded, capital)),
-            cancelled: true,
-        };
     }
     performanceState.diagnostics.phases.dataLoadMs = replayNowMs() - dataLoadStartedAt;
     performanceState.diagnostics.counts.loadedSymbols = seriesBySymbol.size;
@@ -918,7 +842,10 @@ export async function runFinderMonthlyRankReplay(
         ...[...seriesBySymbol.values()].map((series) => series.lastCloseSec ?? Number.NEGATIVE_INFINITY),
     );
     const schedule = buildMonthlyCheckpointSchedule(replay.fromYear, lastClosedTimeSec);
-    callbacks.onSchedule?.(schedule.length);
+    const intervalClose = (series: ReplaySymbolSeries, index: number): number | null => {
+        const openSec = toUnixSecOrNull(series.data[index]!.time);
+        return openSec === null ? null : resolveBarCloseTimeSec(openSec, input.interval);
+    };
     // For each scheduled checkpoint, the per-symbol historical end index
     // (last bar closed at or before the boundary).
     // Point-in-time membership from CHECKPOINT-TIME information only: a
@@ -942,7 +869,14 @@ export async function runFinderMonthlyRankReplay(
                 excluded.push({ symbol, reason: loadFailure ?? "load failed: no data" });
                 continue;
             }
-            const histEnd = findLastClosedBarIndex(series, checkpointSec);
+            let histEnd = -1;
+            for (let i = series.data.length - 1; i >= 0; i -= 1) {
+                const closeSec = intervalClose(series, i);
+                if (closeSec !== null && closeSec <= checkpointSec) {
+                    histEnd = i;
+                    break;
+                }
+            }
             if (histEnd < replay.evalWindowBars - 1) {
                 excluded.push({ symbol, reason: "insufficient closed history for the eval window" });
                 continue;
@@ -959,8 +893,13 @@ export async function runFinderMonthlyRankReplay(
         const referenceCheckpoint = schedule.length > 0 ? schedule[0]!.timeSec : lastClosedTimeSec;
         let warmupBars = 0;
         if (series) {
-            const histEnd = findLastClosedBarIndex(series, referenceCheckpoint);
-            if (histEnd >= 0) warmupBars = Math.max(0, histEnd + 1 - replay.evalWindowBars);
+            for (let i = series.data.length - 1; i >= 0; i -= 1) {
+                const closeSec = intervalClose(series, i);
+                if (closeSec !== null && closeSec <= referenceCheckpoint) {
+                    warmupBars = Math.max(0, i + 1 - replay.evalWindowBars);
+                    break;
+                }
+            }
         }
         return {
             symbol,
@@ -973,15 +912,36 @@ export async function runFinderMonthlyRankReplay(
         };
     });
 
-    const experiment = buildReplayExperiment({
-        input,
-        replay,
+    const experiment = {
+        fromYear: replay.fromYear,
+        evalWindowBars: replay.evalWindowBars,
+        forwardBars: replay.forwardBars,
+        interval: input.interval,
         symbols,
-        replayed,
-        excluded,
-        capital,
-        actualCandidates: pool.length,
-    });
+        strategyKeys: input.selectedStrategies.map((strategy) => strategy.key),
+        replayedSorts: replayed.map((sort) => ({ key: sort.key, label: sort.label, direction: sort.direction })),
+        excludedSorts: excluded,
+        engine: "typescript" as const,
+        sizingMode: "fixed" as const,
+        capitalSettings: capital as unknown as Record<string, unknown>,
+        candidatePool: {
+            requestedRunsPerStrategy: Math.max(1, Math.floor(input.options.maxRuns || 0)),
+            actualCandidates: pool.length,
+            seed: typeof input.options.randomSeed === "number" ? input.options.randomSeed : null,
+        },
+        conventions: {
+            checkpoint: "UTC month boundary; a bar is closed when barOpenTime + intervalDuration <= checkpoint",
+            historicalWindow: "last L closed bars per symbol; earlier closed bars are indicator warmup only",
+            forwardWindow:
+                "H bars starting with the first bar after the checkpoint's last closed bar; on intervals not aligned to the boundary that first bar may open before the boundary (its close and all fills still occur at/after it); fresh flat account",
+            signalPolicy:
+                "signal must originate in the scored region AND resolve inside it; terminal liquidation at the final scored close with commission + direction-correct slippage",
+            accounting:
+                "equal-weight mean of the checkpoint's retained symbols; symbols lacking sufficient scored/forward bars at that checkpoint are excluded and listed on its record; pair-neutral transform for synthetic pairs",
+                baseline:
+                    "per sort: randomExpectedReturn = equal-weight mean of that sort's eligible configurations' forward returns at the same checkpoint (winner included, each unique configuration once); excess = top-1 − random mean",
+        },
+    };
     performanceState.diagnostics.phases.setupMs = replayNowMs() - setupStartedAt;
     performanceState.diagnostics.counts.scheduledCheckpoints = schedule.length;
 
@@ -990,10 +950,11 @@ export async function runFinderMonthlyRankReplay(
     // ------------------------------------------------------------------
     if (schedule.length === 0) {
         const report = buildCoverageOnlyReport(
-            input, replay, symbols, replayed, excluded, capital, seriesBySymbol, symbolLoadErrors, pool.length,
+            input, replay, symbols, replayed, excluded, capital, seriesBySymbol, symbolLoadErrors,
         );
         report.symbolCoverage.length = 0;
         report.symbolCoverage.push(...symbolCoverage);
+        (report as { experiment?: unknown }).experiment = experiment;
         report.checkpoints.push({
             index: 0,
             label: replay.fromYear + "-01",
@@ -1082,9 +1043,6 @@ export async function runFinderMonthlyRankReplay(
         sortSummaries: [],
         performanceDiagnostics: performanceState.diagnostics,
     };
-    const sortCoverageByKey = new Map(replayed.map((sort) => [sort.key, sort]));
-    const poolByIdentity = new Map(pool.map((entry) => [entry.identityKey, entry]));
-    const isoLabelCache = new Map<number, string>();
     // Any error escaping the monthly loop must carry the partial report
     // (fatal-flagged) so the job-level failure retains partial results on
     // /status instead of discarding completed checkpoints.
@@ -1151,6 +1109,7 @@ export async function runFinderMonthlyRankReplay(
 
         // ------------------ historical evaluation ------------------
         const accumulator = new MonthlyRankReplayWinnerAccumulator(replayed.map((sort) => sort.key));
+        const sortCoverageByKey = new Map(replayed.map((sort) => [sort.key, sort]));
         // Baseline pools: every historically eligible configuration PER SORT
         // (completeness gate + filters + this sort's metric availability).
         // Sorts may legitimately have different pools.
@@ -1251,7 +1210,7 @@ export async function runFinderMonthlyRankReplay(
                 }
 
                 let exitAlpha: number | undefined;
-                if (sortCoverageByKey.has("medianExitAlpha") && output.result.totalTrades > 0) {
+                if (sortCoverageByKey.has("medianExitAlpha")) {
                     const counterfactualStartedAt = replayNowMs();
                     try {
                         const controlOutput = await executeReplayBacktest({
@@ -1394,17 +1353,20 @@ export async function runFinderMonthlyRankReplay(
 
         // ------------------ forward evaluation ------------------
         const winners = accumulator.winners();
+        const poolByIdentity = new Map(pool.map((entry) => [entry.identityKey, entry]));
         const outcomeIndexByIdentity = new Map<string, number>();
         // Distinct winning CONFIGURATIONS (not sort slots): several sorts can
         // select the same candidate, so this is at most the pool size and is
         // the number of forward evaluations shipped for the checkpoint.
-        const winnerIdentities = new Set([...winners.values()].map((winner) => winner.identityKey));
-        checkpointRecord.distinctWinners = winnerIdentities.size;
+        checkpointRecord.distinctWinners = new Set(
+            [...winners.values()].map((winner) => winner.identityKey),
+        ).size;
 
         // Random-choice baseline: every sort's eligible pool must be measured
         // over the SAME forward horizon. Union winners with all pool members
         // so each distinct configuration is evaluated exactly once per
         // checkpoint; sorts sharing a configuration share its outcome.
+        const winnerIdentities = new Set([...winners.values()].map((winner) => winner.identityKey));
         const neededIdentities = new Set<string>(winnerIdentities);
         for (const eligibleList of eligibleBySort.values()) {
             for (const identityKey of eligibleList) neededIdentities.add(identityKey);
@@ -1448,7 +1410,6 @@ export async function runFinderMonthlyRankReplay(
                 performanceState,
                 checkpointDiagnostics,
                 exitSignalCacheBySymbol,
-                isoLabelCache,
             });
             const measured = outcome.status === "measured"
                 && outcome.windowReturnPercent !== null
@@ -1686,30 +1647,11 @@ async function evaluateForwardOutcome(args: {
     performanceState: ReplayPerformanceState;
     checkpointDiagnostics: MonthlyRankReplayCheckpointPerformanceDiagnostic;
     exitSignalCacheBySymbol: Map<string, BacktestExitSignalCache>;
-    isoLabelCache: Map<number, string>;
 }): Promise<MonthlyRankReplayForwardOutcome> {
     const { input, replay } = args;
     const symbolOutcomes: MonthlyRankReplaySymbolOutcome[] = [];
     let failed = false;
     let failureReason: string | undefined;
-    let forwardStartSec: number | null = null;
-    let forwardEndSec: number | null = null;
-    const labelForSec = (timeSec: number | null): string | undefined => {
-        if (timeSec === null) return undefined;
-        const cached = args.isoLabelCache.get(timeSec);
-        if (cached) return cached;
-        const label = isoLabel(timeSec);
-        args.isoLabelCache.set(timeSec, label);
-        return label;
-    };
-    const recordBounds = (startSec: number | null, endSec: number | null): void => {
-        if (startSec !== null) forwardStartSec = forwardStartSec === null
-            ? startSec
-            : Math.min(forwardStartSec, startSec);
-        if (endSec !== null) forwardEndSec = forwardEndSec === null
-            ? endSec
-            : Math.max(forwardEndSec, endSec);
-    };
 
     for (const [symbol, histEnd] of args.histEndBySymbol) {
         const series = args.seriesBySymbol.get(symbol)!;
@@ -1726,13 +1668,9 @@ async function evaluateForwardOutcome(args: {
             const reason = "incomplete forward horizon in loaded data";
             args.checkpointDiagnostics.forwardIncompleteHorizons += 1;
             failureReason = failureReason ?? `${symbol}: ${reason}`;
-            const scoredStartSec = forwardStart < view.length
-                ? toUnixSecOrNull(view[forwardStart]!.time)
-                : null;
             const scoredStartLabel = forwardStart < view.length
-                ? labelForSec(scoredStartSec)
+                ? isoLabel(toUnixSecOrNull(view[forwardStart]!.time)!)
                 : undefined;
-            recordBounds(scoredStartSec, null);
             symbolOutcomes.push({
                 symbol,
                 measurementBasis: series.synthetic ? "pair_neutral_log" : "cash",
@@ -1748,11 +1686,6 @@ async function evaluateForwardOutcome(args: {
             startBarTime: view[forwardStart]!.time,
             endBarTime: view[forwardEnd]!.time,
         };
-        const scoredStartSec = toUnixSecOrNull(scoredRange.startBarTime);
-        const scoredEndSec = toUnixSecOrNull(scoredRange.endBarTime);
-        recordBounds(scoredStartSec, scoredEndSec);
-        const scoredStartLabel = labelForSec(scoredStartSec);
-        const scoredEndLabel = labelForSec(scoredEndSec);
         const executionStartedAt = replayNowMs();
         try {
             const output = await executeReplayBacktest({
@@ -1796,8 +1729,8 @@ async function evaluateForwardOutcome(args: {
                         measurementBasis: "pair_neutral_log",
                         returnPercent: Number.NaN,
                         totalTrades,
-                        ...(scoredStartLabel ? { scoredStartLabel } : {}),
-                        ...(scoredEndLabel ? { scoredEndLabel } : {}),
+                        scoredStartLabel: isoLabel(toUnixSecOrNull(scoredRange.startBarTime)!),
+                        scoredEndLabel: isoLabel(toUnixSecOrNull(scoredRange.endBarTime)!),
                         warmupBars: forwardStart,
                         error: failureReason,
                     });
@@ -1816,8 +1749,8 @@ async function evaluateForwardOutcome(args: {
                 measurementBasis: basis,
                 returnPercent,
                 totalTrades,
-                ...(scoredStartLabel ? { scoredStartLabel } : {}),
-                ...(scoredEndLabel ? { scoredEndLabel } : {}),
+                scoredStartLabel: isoLabel(toUnixSecOrNull(scoredRange.startBarTime)!),
+                scoredEndLabel: isoLabel(toUnixSecOrNull(scoredRange.endBarTime)!),
                 warmupBars: forwardStart,
             });
             output.result.trades = [];
@@ -1840,8 +1773,8 @@ async function evaluateForwardOutcome(args: {
                 measurementBasis: series.synthetic ? "pair_neutral_log" : "cash",
                 returnPercent: Number.NaN,
                 totalTrades: 0,
-                ...(scoredStartLabel ? { scoredStartLabel } : {}),
-                ...(scoredEndLabel ? { scoredEndLabel } : {}),
+                scoredStartLabel: isoLabel(toUnixSecOrNull(scoredRange.startBarTime)!),
+                scoredEndLabel: isoLabel(toUnixSecOrNull(scoredRange.endBarTime)!),
                 warmupBars: forwardStart,
                 error: message,
             });
@@ -1852,6 +1785,18 @@ async function evaluateForwardOutcome(args: {
         .filter((outcome) => !outcome.error && Number.isFinite(outcome.returnPercent))
         .map((outcome) => outcome.returnPercent);
     const complete = !failed && validReturns.length === args.histEndBySymbol.size;
+    // Window bounds are the UNION across symbols: with mixed calendars the
+    // per-symbol scored bounds legitimately differ, so presenting one symbol's
+    // range as the window's would understate the span.
+    const boundSecs = (labels: Array<string | undefined>, pick: (values: number[]) => number): number | null => {
+        const values = labels
+            .filter((label): label is string => Boolean(label))
+            .map((label) => toUnixSecOrNull(label as Time))
+            .filter((value): value is number => value !== null);
+        return values.length > 0 ? pick(values) : null;
+    };
+    const startSec = boundSecs(symbolOutcomes.map((outcome) => outcome.scoredStartLabel), (values) => Math.min(...values));
+
     return {
         checkpointIndex: args.checkpoint.index,
         checkpointLabel: args.checkpoint.label,
@@ -1870,8 +1815,8 @@ async function evaluateForwardOutcome(args: {
         ...(complete ? {} : { reason: failureReason ?? "incomplete forward horizon" }),
         windowReturnPercent: complete ? computeWindowReturnPercent(validReturns) : null,
         totalTrades: symbolOutcomes.reduce((sum, outcome) => sum + (Number.isFinite(outcome.totalTrades) ? outcome.totalTrades : 0), 0),
-        forwardStartSec,
-        forwardEndSec,
+        forwardStartSec: startSec,
+        forwardEndSec: boundSecs(symbolOutcomes.map((outcome) => outcome.scoredEndLabel), (values) => Math.max(...values)),
         symbols: symbolOutcomes,
     };
 }
@@ -1879,47 +1824,6 @@ async function evaluateForwardOutcome(args: {
 // ---------------------------------------------------------------------------
 // Report assembly helpers
 // ---------------------------------------------------------------------------
-
-function buildReplayExperiment(args: {
-    input: FinderMonthlyRankReplayRunInput;
-    replay: MonthlyRankReplayOptions;
-    symbols: string[];
-    replayed: MonthlyRankReplaySortCoverage[];
-    excluded: ReturnType<typeof resolveMonthlyRankReplaySortCoverage>["excluded"];
-    capital: ReturnType<typeof resolveCapitalSettingsFromRaw>;
-    actualCandidates: number;
-}): MonthlyRankReplayExperiment {
-    return {
-        fromYear: args.replay.fromYear,
-        evalWindowBars: args.replay.evalWindowBars,
-        forwardBars: args.replay.forwardBars,
-        interval: args.input.interval,
-        symbols: args.symbols,
-        strategyKeys: args.input.selectedStrategies.map((strategy) => strategy.key),
-        replayedSorts: args.replayed.map((sort) => ({ key: sort.key, label: sort.label, direction: sort.direction })),
-        excludedSorts: args.excluded,
-        engine: "typescript",
-        sizingMode: "fixed",
-        capitalSettings: args.capital as unknown as Record<string, unknown>,
-        candidatePool: {
-            requestedRunsPerStrategy: Math.max(1, Math.floor(args.input.options.maxRuns || 0)),
-            actualCandidates: args.actualCandidates,
-            seed: typeof args.input.options.randomSeed === "number" ? args.input.options.randomSeed : null,
-        },
-        conventions: {
-            checkpoint: "UTC month boundary; a bar is closed when barOpenTime + intervalDuration <= checkpoint",
-            historicalWindow: "last L closed bars per symbol; earlier closed bars are indicator warmup only",
-            forwardWindow:
-                "H bars starting with the first bar after the checkpoint's last closed bar; on intervals not aligned to the boundary that first bar may open before the boundary (its close and all fills still occur at/after it); fresh flat account",
-            signalPolicy:
-                "signal must originate in the scored region AND resolve inside it; terminal liquidation at the final scored close with commission + direction-correct slippage",
-            accounting:
-                "equal-weight mean of the checkpoint's retained symbols; symbols lacking sufficient scored/forward bars at that checkpoint are excluded and listed on its record; pair-neutral transform for synthetic pairs",
-            baseline:
-                "per sort: randomExpectedReturn = equal-weight mean of that sort's eligible configurations' forward returns at the same checkpoint (winner included, each unique configuration once); excess = top-1 − random mean",
-        },
-    };
-}
 
 function appendUnselectedSorts(
     report: MonthlyRankReplayReport,
@@ -2004,20 +1908,40 @@ function buildCoverageOnlyReport(
     capital: ReturnType<typeof resolveCapitalSettingsFromRaw>,
     seriesBySymbol: Map<string, ReplaySymbolSeries>,
     symbolLoadErrors: Map<string, string>,
-    actualCandidates = 0,
 ): MonthlyRankReplayReport {
     const report: MonthlyRankReplayReport = {
         kind: "monthly_rank_replay",
         runId: input.runId,
-        experiment: buildReplayExperiment({
-            input,
-            replay,
+        experiment: {
+            fromYear: replay.fromYear,
+            evalWindowBars: replay.evalWindowBars,
+            forwardBars: replay.forwardBars,
+            interval: input.interval,
             symbols,
-            replayed,
-            excluded,
-            capital,
-            actualCandidates,
-        }),
+            strategyKeys: input.selectedStrategies.map((strategy) => strategy.key),
+            replayedSorts: replayed.map((sort) => ({ key: sort.key, label: sort.label, direction: sort.direction })),
+            excludedSorts: excluded,
+            engine: "typescript",
+            sizingMode: "fixed",
+            capitalSettings: capital as unknown as Record<string, unknown>,
+            candidatePool: {
+                requestedRunsPerStrategy: Math.max(1, Math.floor(input.options.maxRuns || 0)),
+                actualCandidates: 0,
+                seed: typeof input.options.randomSeed === "number" ? input.options.randomSeed : null,
+            },
+            conventions: {
+                checkpoint: "UTC month boundary; a bar is closed when barOpenTime + intervalDuration <= checkpoint",
+                historicalWindow: "last L closed bars per symbol; earlier closed bars are indicator warmup only",
+                forwardWindow:
+                    "H bars starting with the first bar after the checkpoint's last closed bar; on intervals not aligned to the boundary that first bar may open before the boundary (its close and all fills still occur at/after it); fresh flat account",
+                signalPolicy:
+                    "signal must originate in the scored region AND resolve inside it; terminal liquidation at the final scored close with commission + direction-correct slippage",
+                accounting:
+                    "equal-weight mean of per-symbol scored returns; pair-neutral transform for synthetic pairs",
+                    baseline:
+                        "per sort: randomExpectedReturn = equal-weight mean of that sort's eligible configurations' forward returns at the same checkpoint (winner included)",
+            },
+        },
         checkpoints: [],
         symbolCoverage: symbols.map((symbol) => {
             const series = seriesBySymbol.get(symbol);
@@ -2028,8 +1952,14 @@ function buildCoverageOnlyReport(
             let warmupBars = 0;
             if (series) {
                 const referenceCheckpointSec = Date.UTC(replay.fromYear, 0, 1) / 1000;
-                const histEnd = findLastClosedBarIndex(series, referenceCheckpointSec);
-                if (histEnd >= 0) warmupBars = Math.max(0, histEnd + 1 - replay.evalWindowBars);
+                for (let i = series.data.length - 1; i >= 0; i -= 1) {
+                    const openSec = toUnixSecOrNull(series.data[i]!.time);
+                    const closeSec = openSec === null ? null : resolveBarCloseTimeSec(openSec, input.interval);
+                    if (closeSec !== null && closeSec <= referenceCheckpointSec) {
+                        warmupBars = Math.max(0, i + 1 - replay.evalWindowBars);
+                        break;
+                    }
+                }
             }
             return {
                 symbol,

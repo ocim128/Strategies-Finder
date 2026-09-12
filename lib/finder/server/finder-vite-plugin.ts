@@ -1183,8 +1183,6 @@ export async function processFinderMonthlyRankReplayRun(
     const selectedStrategies = input.selectedStrategies;
     const strategyCount = selectedStrategies.length;
     const sortCoverage = resolveMonthlyRankReplaySortCoverage();
-    const runLog = input.runLog;
-    let totalCheckpoints = 0;
 
     runState = {
         runId: input.runId,
@@ -1231,13 +1229,6 @@ export async function processFinderMonthlyRankReplayRun(
         replayedSortKeys: sortCoverage.replayed.map((sort) => sort.key),
         excludedSortKeys: sortCoverage.excluded.map((sort) => sort.key),
     });
-    runLog?.("replay_start", {
-        interval: input.interval,
-        totalSymbols: input.symbols.length,
-        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
-        replayedSortKeys: sortCoverage.replayed.map((sort) => sort.key),
-        excludedSortKeys: sortCoverage.excluded.map((sort) => sort.key),
-    });
 
     const emitProgress = (percent: number, text: string): void => {
         snapshot.progressPercent = percent;
@@ -1250,7 +1241,7 @@ export async function processFinderMonthlyRankReplayRun(
             status: text,
             phase: snapshot.phase,
             checkpointIndex: snapshot.replayCompletedCheckpoints ?? 0,
-            totalCheckpoints,
+            totalCheckpoints: 0,
         });
     };
 
@@ -1286,21 +1277,8 @@ export async function processFinderMonthlyRankReplayRun(
                     assertReplayCheckpointIsScalar({ checkpoint, outcomes, selections });
                     snapshot.replayCompletedCheckpoints = checkpoint.index;
                     snapshot.loadedSymbols = input.symbols.length;
-                    runLog?.("replay_checkpoint", {
-                        checkpointIndex: checkpoint.index,
-                        checkpointLabel: checkpoint.label,
-                        checkpointStatus: checkpoint.status,
-                        retainedSymbols: checkpoint.retainedSymbols ?? 0,
-                        distinctWinners: checkpoint.distinctWinners,
-                        outcomeCount: outcomes.length,
-                        selectionCount: selections.length,
-                        measuredSelections: selections.filter((selection) => selection.status === "measured").length,
-                    });
                     if (runOwner !== owner) return;
                     writer({ type: "replay_checkpoint", runId: input.runId, checkpoint, outcomes, selections });
-                },
-                onSchedule: (count) => {
-                    totalCheckpoints = count;
                 },
             },
         );
@@ -1332,15 +1310,6 @@ export async function processFinderMonthlyRankReplayRun(
             interval: input.interval,
             summary: snapshot.summary,
             report,
-        });
-        runLog?.("replay_done", {
-            interval: input.interval,
-            cancelled: output.cancelled,
-            summary: snapshot.summary,
-            checkpoints: report.checkpoints.length,
-            measuredCheckpoints: report.checkpoints.filter((checkpoint) => checkpoint.status === "measured").length,
-            forwardOutcomes: report.forwardOutcomes.length,
-            selections: report.selections.length,
         });
 
         debugLogger.event(output.cancelled ? "finder.replay.cancelled" : "finder.replay.complete", {
@@ -1377,10 +1346,6 @@ export async function processFinderMonthlyRankReplayRun(
         snapshot.statusText = "Monthly Rank Replay failed: " + message;
         snapshot.summary = snapshot.statusText;
         snapshot.error = message;
-        runLog?.("replay_fatal", {
-            error: message,
-            completedCheckpoints: snapshot.replayCompletedCheckpoints ?? 0,
-        });
         debugLogger.warn("finder.replay.fatal", { runId: input.runId, error: message });
         writer({ type: "replay_fatal", runId: input.runId, error: message });
     }
@@ -3009,11 +2974,7 @@ interface FinderUniverseRequestBody {
     providerBySymbol?: unknown;
 }
 
-async function handleRunRequest(
-    res: ViteHttpResponse,
-    body: FinderUniverseRequestBody,
-    runLogRoot: string,
-): Promise<void> {
+async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseRequestBody): Promise<void> {
     if (runOwner !== RUN_OWNER_NONE) {
         throw new HttpStatusError(409, "A Finder universe run is already running. Use Stop first.");
     }
@@ -3121,12 +3082,6 @@ async function handleRunRequest(
                     generateParamSets: (defaultParams, finderOptions) =>
                         paramSpace.generateParamSets(defaultParams, finderOptions),
                     abortSignal: runAbortController.signal,
-                    runLog: buildFinderRunLogSink(runLogRoot, runId, new Set([
-                        "replay_start",
-                        "replay_checkpoint",
-                        "replay_done",
-                        "replay_fatal",
-                    ])),
                 },
                 safeWrite,
                 owner,
@@ -3494,13 +3449,8 @@ function resolveServerProvider(symbol: string, providerBySymbol: Map<string, str
  * the debug logger and never propagate, so a disk hiccup can never fail a
  * Finder run.
  */
-function buildFinderRunLogSink(
-    root: string,
-    runId: string,
-    boundaryEvents?: ReadonlySet<string>,
-): FinderRunLogSink {
+function buildFinderRunLogSink(root: string, runId: string): FinderRunLogSink {
     return createBufferedFinderRunLogSink(root, runId, {
-        ...(boundaryEvents ? { boundaryEvents } : {}),
         onWriteError: (error) => {
             debugLogger.warn("finder.run_log.append_failed", {
                 runId,
@@ -3560,7 +3510,7 @@ function registerFinderRoutes(middlewares: any, serverRoot?: string): void {
         onAuthorizedRequest: (req) => rememberLocalApiOriginFromRequest(req),
         unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
         onAuthorized: async ({ res, body }) => {
-            await handleRunRequest(res, body as unknown as FinderUniverseRequestBody, runLogRoot);
+            await handleRunRequest(res, body as unknown as FinderUniverseRequestBody);
         },
     });
 
