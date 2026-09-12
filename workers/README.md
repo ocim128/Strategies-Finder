@@ -32,14 +32,12 @@ It deduplicates signals in D1, so the same entry is only produced once.
 
 ```json
 {
-  "streamId": "ethusdt-1h-exhaustion",
+  "streamId": "ethusdt-1h-ema-confirm",
   "symbol": "ETHUSDT",
   "interval": "1h",
-  "strategyKey": "exhaustion_spike_pullback",
+  "strategyKey": "ema_confirmation",
   "strategyParams": {
-    "spikeAtrMult": 2.5,
-    "pullbackEma": 21,
-    "maxWaitBars": 4
+    "emaPeriod": 50
   },
   "backtestSettings": {
     "tradeDirection": "both",
@@ -56,7 +54,7 @@ It deduplicates signals in D1, so the same entry is only produced once.
 Notes:
 - Send at least `MIN_CLOSED_CANDLES` closed candles per call. The code fallback is `200`; `wrangler.toml` currently sets `120`.
 - `time` can be unix seconds, unix milliseconds, ISO string, or business-day object.
-- Subscription `backtestSettings` preserve the surviving percentage take-profit modes: `fixed` and `mfe_bootstrap`.
+- Subscription `backtestSettings` normalize the percentage take-profit mode through `resolveTakeProfitMode` (`lib/take-profit-settings.ts`): unknown values fall back to `fixed`, and the adaptive percentage modes (`mfe_bootstrap`, `edge_weighted`, `expectancy_optimal`, `regime_calibrated`, `information_coefficient`, `path_efficiency`, `serial_dependency`, `minimum_surprisal`) are accepted.
 
 ## Automatic Scheduled Runs (new candle only)
 
@@ -86,11 +84,11 @@ Create subscription example:
 
 ```json
 {
-  "streamId": "ethusdt-120m-testa2",
+  "streamId": "ethusdt-120m-ema-confirm",
   "symbol": "ETHUSDT",
   "interval": "120m",
-  "strategyKey": "exhaustion_spike_pullback",
-  "strategyParams": { "spikeAtrMult": 0, "pullbackEma": -28, "maxWaitBars": 32 },
+  "strategyKey": "ema_confirmation",
+  "strategyParams": { "emaPeriod": 50 },
   "backtestSettings": { "tradeDirection": "both", "executionModel": "next_open" },
   "freshnessBars": 1,
   "notifyTelegram": true,
@@ -108,20 +106,23 @@ wrangler d1 migrations apply signal --local
 wrangler d1 migrations apply signal --remote
 ```
 
-Migration file:
+Migration files:
 - `workers/migrations/0001_entry_signals.sql`
 - `workers/migrations/0002_signal_subscriptions.sql`
 - `workers/migrations/0003_exit_alerts.sql`
 - `workers/migrations/0004_rename_candle_time_col.sql`
 - `workers/migrations/0005_actionable_entry_signal_index.sql`
-- `workers/migrations/0006_committee_state_columns.sql`
-- `workers/migrations/0007_committee_tag.sql`
-- `workers/migrations/0008_committee_alert_rules.sql`
+
+Known gap: the worker still reads/writes a `committee_tag` column on
+`signal_subscriptions` for compatibility with older deployments, but no
+migration in this repo creates it. A D1 database built only from the
+migrations above will not have that column until one is added.
 
 ## Strategy Support Contract
 
-- Worker strategy support is derived from `lib/strategies/manifest.ts` through the shared strategy library.
-- If you add or rename a built-in strategy, redeploy the Worker after the manifest change or subscriptions can fail with `worker_strategy_not_supported:<key>`.
+- Worker strategy support is derived from the generated eager manifest
+  (`lib/strategies/manifest-eager.ts`) through `lib/strategies/library.ts`.
+- If you add or rename a built-in strategy, run `npm run strategies:sync-manifest` and redeploy the Worker after the manifest change or subscriptions can fail with `worker_strategy_not_supported:<key>`.
 - `GET /health` exposes the worker's current supported strategy keys so the UI can detect an outdated deployment.
 
 ## Telegram (Optional)

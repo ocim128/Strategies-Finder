@@ -435,6 +435,8 @@ uniform-control P95 of `$13,157.44`.
 The walk-forward implementation, plan, scripts, and focused tests are retired as
 completed research machinery; the immutable archive artifacts remain for audit and
 reproducibility. R3 artifacts remain preserved but are superseded by corrected R4.
+Note: `archive/` is gitignored, so these artifact paths are machine-local research
+records, not repository files.
 
 `TOP_MEAN_RAW_UNIQUE_V1` is nevertheless retained in OPEN_SCORE as an offline
 diagnostic arm. Its rule is: form the TOP_MEAN tied set, select its unique maximum

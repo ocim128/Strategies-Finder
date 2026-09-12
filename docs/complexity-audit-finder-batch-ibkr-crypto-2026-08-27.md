@@ -1,5 +1,12 @@
 # Complexity audit: Finder, Batch, IBKR, and Crypto
 
+> **Status: historical audit (2026-08-27).** Kept as the rationale record for the
+> `chore/complexity-reduction` work. Some findings have already been addressed on
+> that branch (for example F11: the synthetic-pair parser copy is gone and the
+> server imports the leaf `lib/synthetic-pair-token.ts`; F13: the crypto DOM
+> contract is now enforced by `tests/feature-dom-contracts.spec.ts`). Treat the
+> findings as a checklist of decisions, not a description of the current tree.
+
 Date: 2026-08-27  
 Worktree: `Strategies-Finder-complexity-audit`  
 Base: `5752bb07ea55b058f446e014e2f4d8356668251d`

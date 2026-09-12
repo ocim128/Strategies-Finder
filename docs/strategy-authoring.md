@@ -12,7 +12,7 @@ That means:
 - the source file lives under `lib/strategies/lib/*.ts`
 - the file contains exactly one `export const <strategy-key>: Strategy = ...`; the exported key is the registry identity
 - a new strategy should normally keep its file name and exported key aligned, even though the generator uses the exported key and actual file name independently
-- `npm run strategies:sync-manifest` regenerates `manifest.ts`, `manifest-eager.ts`, `manifest-meta.ts`, `manifest-summary.ts`, `manifest-loaders.ts`, and `manifest-keys.ts`
+- `npm run strategies:sync-manifest` regenerates the four generated manifest files: `manifest-eager.ts`, `manifest-summary.ts`, `manifest-loaders.ts`, and `manifest-keys.ts` under `lib/strategies/`
 - built-in runtime discovery uses the generated catalog; do not manually wire a built-in into a separate registry
 - `normalizeParams(...)` exposes the same canonical parameter semantics that `execute(...)` actually uses
 
@@ -22,8 +22,8 @@ If a strategy silently clamps, rounds, or flips a parameter inside `execute(...)
 
 1. Pick a stable key and keep the file name and exported const aligned with that key.
 2. Start from a nearby example:
-   - `lib/strategies/lib/close_location_median_alignment.ts` for a small direct `execute(...)` pattern
-   - `lib/strategies/lib/rolling_vwap_center.ts` for normalized thresholds and Finder precompute
+   - `lib/strategies/lib/ema_confirmation.ts` for a small direct `execute(...)` pattern
+   - `lib/strategies/lib/mcginley_dynamic_confirmation.ts` for normalized thresholds and Finder precompute
    - `lib/strategies/lib/cross-symbol-helpers.ts` for cross-symbol alignment helpers
    - `lib/strategies/lib/polymarket-1s-helpers.ts` for supported 1s Polymarket context
 3. Write the raw signal idea first with `ensureCleanData(...)` and `createSignalLoop(...)`.

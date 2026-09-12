@@ -29,6 +29,14 @@ exits, and max-hold time stops. A forced `end_of_data` close is reported as
 `censored` without a realized PnL. The setting is disabled when N is `0`,
 which retains the normal latest-closed-candle opportunity behavior.
 
+The separate `Eval Window Bars` control (`finderAssetEvalWindowBars`, option
+`evalLastBars`) caps the historical search window to the last N bars. The cap
+is applied AFTER the holdout trim and the data-slice fraction, so the two
+compose: an eval window of 1000 with a 1000-bar holdout evaluates bars
+`[-2000, -1001]`, never the reserved holdout itself. `0` evaluates all
+available bars. Shorter datasets keep all their bars before the gap
+(`slice(-N)` semantics).
+
 The server caps a run at 1,000 symbols. It records an estimated candidate-work
 count as a diagnostic, but does not reject a run based on that estimate. The
 server requires random Finder mode and clamps the candidate pool to
@@ -209,6 +217,35 @@ Batch debug events: `finder.asset_opportunity_batch.start`,
 `finder.asset_opportunity_batch.cancelled`, and
 `finder.asset_opportunity_batch.complete` — counts, N, filenames, byte
 counts, timings, and errors only.
+
+Two further production-path details:
+
+- Server IS-search exit-param spaces are cached per exit library
+  (`exitParamSetsByKey` in
+  `lib/finder/server/server-asset-is-search.ts`), mirroring the browser and
+  Universe runners. Regenerating them inside the per-candidate loop is
+  O(maxRuns²).
+- `asset_progress` / `asset_batch_progress` STREAM writes pass through
+  `createProgressEventThrottle` (first event, ≥250 ms, ≥1% aggregate delta,
+  or phase transition). The `/status` snapshot mirroring stays per-event so
+  reattach remains fresh; do not throttle the snapshot assignments.
+
+## Per-run JSONL diagnostics log
+
+Single and batch Asset Opportunity runs append one JSON line per event
+(`iteration_start`, `asset_complete`, `asset_failed`,
+`iteration_complete`, plus per-iteration `datasetCacheHits` /
+`datasetCacheMisses`) to
+`<server.config.root>/archive/finder-runs/<runId>.jsonl`.
+Set `FINDER_RUN_LOG_DIR` to override the directory, or set it to an empty
+string to disable logging. This file is the durable post-mortem trace when
+the Vite process dies mid-run — the in-memory debug ring buffer does not
+survive. The production sink is `createBufferedFinderRunLogSink`
+(`lib/finder/server/finder-run-log.ts`), which batches appends (256 lines /
+250 ms / iteration boundaries) instead of one syscall per event; it is
+fire-and-forget and must never throw into a run. In the parallel sweep,
+per-asset run-log events route through the main thread so the JSONL stays a
+single file.
 
 ## Browser-owned Finder modes
 

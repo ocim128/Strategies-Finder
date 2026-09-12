@@ -125,7 +125,7 @@ Recent refactor seams worth preserving:
 
 ### 1. UI DOM contracts
 - Structural ids are defined in feature-local `*-dom.ts` modules next to the consuming handler, renderer, or service
-- `lib/feature-dom-contracts.ts` is only a compatibility barrel that re-exports those contracts
+- There is no central barrel; `tests/feature-dom-contracts.spec.ts` imports every feature-local contract directly
 - HTML source of truth is `html-partials/*`
 - Consumers live in handlers and managers such as:
   - `lib/handlers/ui-event-handlers.ts`
@@ -236,7 +236,7 @@ Strategy-lib contract notes:
 - If you add `prepareFinderData(...)`, keep `executePrepared(...)` behavior identical to `execute(...)`
 
 Recommended strategy-lib skeleton:
-Read `lib/strategies/lib/close_location_median_alignment.ts` for a simple implementation or `lib/strategies/lib/rolling_vwap_center.ts` for a Finder-prepared implementation.
+Read `lib/strategies/lib/ema_confirmation.ts` for a simple implementation or `lib/strategies/lib/mcginley_dynamic_confirmation.ts` for a Finder-prepared implementation.
 
 Useful helper maps:
 - `lib/strategies/strategy-helpers.ts`: Core signals (`createSignalLoop`, `createBuySignal`, `createSellSignal`) & base OHLCV array extractors (`getCloses`, `getHighs`, `getVolumes`, `ensureCleanData`).
@@ -250,9 +250,9 @@ Important Type and Dependency Gotchas:
 - Array indexing: ensure you loop against generic padding `if (i < lookback || indicator[i] === null) return null;` securely within closures.
 
 Useful examples:
-- `lib/strategies/lib/close_location_median_alignment.ts`
+- `lib/strategies/lib/ema_confirmation.ts`
   - small strategy with explicit normalization and direct `execute(...)` use
-- `lib/strategies/lib/rolling_vwap_center.ts`
+- `lib/strategies/lib/mcginley_dynamic_confirmation.ts`
   - Finder-safe prepared-data reuse with normalized params
 - search `prepareFinderData` under `lib/strategies/lib/*`
   - only for strategies where dataset-derived precompute materially reduces Finder cost
@@ -265,7 +265,7 @@ Strategy-lib checklist before you stop:
 - `normalizeParams` exists if execution sanitizes params
 - `metadata.walkForwardParams` only references real params
 - `execute(...)` uses normalized params if bounds or trigger semantics depend on them
-- `npm run strategies:sync-manifest` run so `lib/strategies/manifest.ts` is up to date
+- `npm run strategies:sync-manifest` run so the generated `lib/strategies/manifest-*.ts` files are up to date
 - `npm run typecheck` passes
 - add or update a focused strategy spec if normalization, Finder, or WFA behavior is non-trivial; run `tests/new-strategy-lib-smoke.spec.ts` as baseline sanity
 - manually confirm the strategy appears in the dropdown if UI behavior changed

@@ -1,5 +1,13 @@
 # Rust Engine Complexity Audit
 
+> **Status: implemented decision record.** The deletions described here landed in
+> the main worktree: the Asset Opportunity Rust batch/fresh-entry modules are gone
+> from `lib/finder/server/`, the Rust service is generic-only, and
+> `run_playground.bat` starts Rust only with `START_RUST_ENGINE=1`. The current
+> architecture contract lives in
+> [`backtest-engines-typescript-rust.md`](backtest-engines-typescript-rust.md);
+> read this file for why the specialized paths were removed.
+
 Date: 2026-08-29
 Audited commit: `bd1a89ce`
 Worktree: `Strategies-Finder-rust-engine-audit-tmp`

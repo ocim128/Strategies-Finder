@@ -144,8 +144,7 @@ The important rule is:
 - markup lives in `html-partials/*`
 - binding happens in `lib/handlers/*`, feature managers, and renderers
 - required structural ids are defined in feature-local `*-dom.ts` modules next to their handlers, renderers, or services
-- `lib/feature-dom-contracts.ts` is a compatibility barrel that re-exports those feature-local contracts
-- the smoke test `tests/feature-dom-contracts.spec.ts` fails if a required id disappears from the partials
+- the smoke test `tests/feature-dom-contracts.spec.ts` imports every feature-local contract directly and fails if a required id disappears from the partials
 
 If you rename a UI id, update the partial, the feature DOM contract, and the consuming code together.
 
@@ -175,8 +174,7 @@ in parallel across a bounded worker-thread pool sized from your cores and
 RAM (~9 MB per symbol per worker against 75% of system RAM).
 `FINDER_ASSET_BATCH_WORKERS=1` forces the original sequential loop (rollback
 lever); Rust-engine runs prefer at most 2 workers. See
-[docs/finder-server-side.md](docs/finder-server-side.md) and
-[docs/finder-asset-opportunity-batch-parallelization.md](docs/finder-asset-opportunity-batch-parallelization.md).
+[docs/finder-server-side.md](docs/finder-server-side.md).
 
 Reattach after a tab reload is automatic (2s poll). The last completed Batch output is restored from a compact local snapshot after reload, and Copy summary in server-side mode preserves B&H and OPEN_SCORE sections through scalar summary fields; see [docs/batch-backtest-server-side.md](docs/batch-backtest-server-side.md).
 
@@ -234,7 +232,7 @@ The short version:
 3. Run `npm run strategies:sync-manifest`.
 4. Keep `normalizeParams(...)` aligned with `execute(...)`.
 5. Run `npm run typecheck` and confirm the strategy appears in the UI.
-6. To remove built-in strategies from disk, use `Library Tools` in the Settings tab. It can delete the current strategy or a pasted bulk list of keys, names, or filenames, archives each file to `archive/strategy/*`, and re-syncs `lib/strategies/manifest.ts` automatically.
+6. To remove built-in strategies from disk, use `Library Tools` in the Settings tab. It can delete the current strategy or a pasted bulk list of keys, names, or filenames, archives each file to `archive/strategy/*`, and re-syncs the generated manifest files under `lib/strategies/` automatically.
 
 Dev note:
 - `npm run dev` ignores `lib/strategies/**` changes by default so Finder work is not interrupted while you author or edit strategies.
@@ -305,6 +303,13 @@ The exported `latest-entry-signal.json` preserves the selected `polymarketEntryO
 
 The generated `<config>.refresh.ps1` is intended for unattended refresh. Point the bot's `EXTERNAL_SIGNAL_REFRESH_SCRIPT` at that file and it can regenerate the latest signal automatically on each new 5-minute bucket.
 
+### Check local data and exit curves
+Two CLI research tools operate on the synced IBKR `30m` CSV tree (`price-data/ibkr/csv/30m/`):
+- `npm run data:preflight` scans that tree for deterministic data defects (add `-- --json` for machine-readable output). Implementation: `lib/market-data/data-integrity-scan.ts`.
+- `npm run analyze:sleeve-exit-curve` builds the 30m→4H ratio series and reports fixed-horizon exit curves per sleeve with a uniform-random control. Implementation: `lib/research/sleeve-exit-curve.ts`.
+
+Both are descriptive diagnostics, not trade signals.
+
 ### Change UI safely
 1. Add or update markup in `html-partials/*`.
 2. Add the required id to the matching feature-local `*-dom.ts` contract if it is structural.
@@ -368,16 +373,22 @@ These are intentionally narrower than the repo itself:
 - `docs/README.md`: maintained documentation index
 - `AGENTS.md`: safe-change handbook for coding agents
 - `docs/backtest-endpoint.md`: local backtest endpoint usage and request contract
+- `docs/backtest-engines-typescript-rust.md`: TypeScript/Rust engine split, engine-selection rules, and wire contracts
 - `docs/polymarket.md`: Polymarket scoring, signal-exit, diagnostics, bridge, and Execution Lab live-trade contracts
 - `docs/execution-lab-live-trading.md`: Execution Lab live-trade executor boundary, request/response schema, and safety rules
 - `docs/batch-backtest-server-side.md`: server-side Batch Backtest, artifact retention, OPEN_SCORE USD Replay, S&P 500 TOP_MEAN, and memory budget
 - `docs/finder-server-side.md`: server-owned Finder Symbol Universe (one server job owns all strategies + OOS), heap budget, scalar-only wire contract, Stop scoped by run id, and tab-reload reattach via `/api/finder/status`
+- `docs/trade-ledger.md`: Batch trade-ledger export (v3), replay checker, and anti-leakage contract
+- `docs/trade-ledger-sweep.md`: server-owned Ledger Rule Sweep contracts
+- `docs/trade-gate.md`: Trade Gate Batch certification workflow and records
+- `docs/selection-rules.md`: pair-selection rule contract, diagnostics, and detailed selection view
+- `docs/rank-pairs.md`: Rank Pairs regime classification contract
 - `docs/alpaca-ibkr-sync.md`: Alpaca-backed IBKR Data workflow, source guards, and aggregation
 - `docs/cross-symbol.md`: cross-symbol strategy runtime and support matrix
 - `docs/synthetic-pairs.md`: synthetic pair generation and supported surfaces
-- `docs/rank-pairs.md`: Rank Pairs regime classification contract
 - `docs/path-dependent-exits.md`: path-dependent Risk Management exits
 - `docs/strategy-authoring.md`: built-in strategy authoring guide
 - `docs/mine-timing-validation-findings.md`: historical negative findings behind the removal of Mine/selection diagnostic surfaces
+- `docs/pairlist-selection-research.md`: completed preregistered pool-selection research record (candidate failed its adoption rule)
 - `workers/README.md`: Worker endpoints, cron behavior, D1 setup, Telegram
 - `DEPLOY_TO_VERCEL.md`: deployment notes
