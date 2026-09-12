@@ -1,0 +1,42 @@
+{
+  "9": {
+    "cik_str": 1067983,
+    "ticker": "BRK-B",
+    "title": "BERKSHIRE HATHAWAY INC"
+  },
+  "1111": {
+    "cik_str": 1109354,
+    "ticker": "BRKR",
+    "title": "BRUKER CORP"
+  },
+  "4599": {
+    "cik_str": 2098707,
+    "ticker": "BRKH",
+    "title": "Burtech Acquisition Corp II"
+  },
+  "5468": {
+    "cik_str": 1019742,
+    "ticker": "BRKCF",
+    "title": "BARKSDALE RESOURCES CORP."
+  },
+  "7493": {
+    "cik_str": 1067983,
+    "ticker": "BRK-A",
+    "title": "BERKSHIRE HATHAWAY INC"
+  },
+  "9320": {
+    "cik_str": 2098707,
+    "ticker": "BRKHU",
+    "title": "Burtech Acquisition Corp II"
+  },
+  "9321": {
+    "cik_str": 2098707,
+    "ticker": "BRKHW",
+    "title": "Burtech Acquisition Corp II"
+  },
+  "9895": {
+    "cik_str": 1109354,
+    "ticker": "BRKRP",
+    "title": "BRUKER CORP"
+  }
+}

@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message><Key>api/xbrl/companyconcept/CIK0001652044/dei/EntityCommonStockSharesOutstanding.json</Key><RequestId>4PBG9YREXQFK9P5H</RequestId><HostId>O+YAPbWgMCdoCjo7sz7oEbPY0yl6UazoUsAualgn/gmlraD9uSVgO5St3J8IqhbKUoRptHEaLCI=</HostId></Error>

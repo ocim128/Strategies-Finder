@@ -69,15 +69,19 @@ export type IbkrIntervalMeta = {
  */
 export type IbkrSyncRunSnapshot = {
     startedAt: string;
-    mode: "sync" | "download";
+    mode: "sync" | "download" | "marketcap";
     interval: string;
     period: string | null;
     /**
      * Data source for this run. Absent on snapshots written before Alpaca
      * support landed — treated as `"ibkr"` for backward compatibility during
      * reattach, so a pre-Alpaca in-flight run still renders as IBKR.
+     * `"edgar"` marks a Download MarketCap run (SEC EDGAR shares outstanding
+     * joined against local 1d closes); it is run provenance only — never a
+     * candle source, so `IbkrDataSource` in the plugin deliberately does not
+     * include it.
      */
-    source?: "ibkr" | "alpaca";
+    source?: "ibkr" | "alpaca" | "edgar";
     total: number;
     /** Index of the next symbol to process. */
     index: number;
@@ -103,9 +107,21 @@ export type IbkrSyncRunSnapshot = {
  * per item plus a terminal `done` or `fatal`.
  */
 export type IbkrStreamEvent =
-    | { type: "start"; total: number; interval?: string; mode?: string; source?: "ibkr" | "alpaca"; period?: string | null }
+    | { type: "start"; total: number; interval?: string; mode?: string; source?: "ibkr" | "alpaca" | "edgar"; period?: string | null }
     | { type: "symbol"; index: number; total: number; symbol: string; markedSymbol?: string; bars?: number; fetchedBars?: number }
     | { type: "symbol_failed"; index: number; total: number; symbol: string; error: string }
     | { type: "symbol_warning"; index: number; total: number; symbol: string; reason: string; complete: false }
-    | { type: "done"; ok: boolean; cancelled?: boolean; interval?: string; source?: "ibkr" | "alpaca"; totals?: { bars: number; fetchedBars: number }; results?: unknown[]; failed?: unknown[] }
+    | { type: "done"; ok: boolean; cancelled?: boolean; interval?: string; source?: "ibkr" | "alpaca" | "edgar"; totals?: { bars: number; fetchedBars: number }; results?: unknown[]; failed?: unknown[] }
     | { type: "fatal"; error: string };
+
+/**
+ * Human-readable provider label for a run `source`. Shared by the server
+ * snapshot rendering and the browser service so "edgar" (a market-cap run)
+ * never renders as "IBKR". Exported as a pure helper so tests can cover the
+ * map without DOM setup.
+ */
+export function providerLabelForSource(source: string | null | undefined): string {
+    if (source === "alpaca") return "Alpaca";
+    if (source === "edgar") return "EDGAR";
+    return "IBKR";
+}

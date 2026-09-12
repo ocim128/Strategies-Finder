@@ -19,6 +19,16 @@ import {
     resolveAlpacaConfig,
     type AlpacaConfig,
 } from "./alpaca-fetcher";
+import {
+    applySplitFactors,
+    fetchAlpacaSplits,
+    fetchEdgarSharesOutstanding,
+    loadCompanyTickersCached,
+    lookupSharesForDate,
+    parseSharesOutstandingFacts,
+    type SharesFactPoint,
+    type SplitEvent,
+} from "./shares-outstanding-fetcher";
 
 // Re-export so existing imports of the wire types and snapshot type from the
 // plugin module keep resolving. The single source of truth now lives in the
@@ -30,6 +40,11 @@ const APP_ROOT = process.cwd();
 const IBKR_DATA_DIR = resolve(APP_ROOT, "price-data", "ibkr");
 const IBKR_CSV_DIR = resolve(IBKR_DATA_DIR, "csv");
 const IBKR_CATALOG_PATH = resolve(IBKR_DATA_DIR, "catalog.json");
+// Market-cap dataset: a SIBLING of the candle csv/ tree, never inside it.
+// Candle loaders scan csv/<interval>/*.csv only, so these files stay invisible
+// to them (docs/marketcap-download.md, Storage contract).
+const IBKR_MARKETCAP_DIR = resolve(IBKR_DATA_DIR, "marketcap");
+const IBKR_MARKETCAP_CATALOG_PATH = resolve(IBKR_MARKETCAP_DIR, "catalog.json");
 // Pin to 127.0.0.1, not "localhost": Node resolves localhost to ::1 first and
 // the gateway listens on IPv6 too, but its conf.yaml IP allowlist only permits
 // 127.0.0.1 — an IPv6 connection gets a 404 "Access Denied" from the gateway
@@ -120,7 +135,7 @@ const IBKR_NO_ADVANCE_STALE_MS = 5 * 24 * 60 * 60 * 1000;
 // that doesn't present the shared bearer token, so the tunnel can't be used
 // to drive auth recovery / CSV writes / Stop remotely.
 const IBKR_BODY_LIMIT_BYTES = 64 * 1024;
-const IBKR_MAX_SYNC_SYMBOLS = 500;
+const IBKR_MAX_SYNC_SYMBOLS = 5000;
 let syncAbortController: AbortController | null = null;
 // Sync lock: instead of a bare boolean, an owner-generation counter. Stop
 // aborts the in-flight run via `syncAbortController` but does NOT release
@@ -1992,6 +2007,448 @@ const ALPACA_SYNC_OVERLAP_MS_BY_INTERVAL: Record<string, number> = {
     "1d": 2 * 24 * 60 * 60 * 1000,
 };
 
+// ---------------------------------------------------------------------------
+// Download MarketCap (docs/marketcap-download.md). Assembles, per symbol:
+// marketcap(t) = local 1d close(t) × split-corrected EDGAR shares(t). The
+// EDGAR step function is keyed by `filed` (availability), never backdated to
+// `end` (measurement), and split factors are SHARE-COUNT multipliers applied
+// with MULTIPLY — `adjustedShares = edgarShares × F(filed → now)` — so the
+// cap invariant `adjPrice × adjustedShares === rawPrice × rawShares` holds.
+// Writes ONLY under `price-data/ibkr/marketcap/` plus this directory's own
+// catalog; the candle csv/ tree and its catalog are untouched.
+// ---------------------------------------------------------------------------
+
+type MarketCapCatalogEntry = {
+    symbol: string;
+    markedSymbol: string;
+    firstTime: string | null;
+    lastTime: string | null;
+    points: number;
+    lastSyncAt: string;
+    sharesSource: string;
+};
+
+/**
+ * Symbols whose newest published dei count is older than this are refused
+ * instead of writing a series built from a long-stale count (the join would
+ * happily pair a 2011 cover-page number with 2026 prices — smooth-looking and
+ * wrong-level, the exact failure docs/marketcap-download.md forbids). Live
+ * evidence: Berkshire's dei facts stop 2011-05-06 (and report Class-A counts
+ * on BRK-B prices), TAP's stop 2010-05-05.
+ */
+const MARKETCAP_MAX_FACT_AGE_MS = 3 * 365 * 24 * 60 * 60 * 1000;
+
+type MarketCapCatalog = {
+    updatedAt: string;
+    entries: MarketCapCatalogEntry[];
+};
+
+/** One joined daily row, also the CSV row layout (`time,close,...`). */
+export type MarketCapRow = {
+    /** ISO UTC date key of the 1d close used (e.g. "2024-06-07"). */
+    time: string;
+    close: number;
+    sharesOutstanding: number;
+    marketCap: number;
+};
+
+function getMarketCapCsvPath(symbol: string): string {
+    // Same filename rule as getCsvPath: marker-stripped, slash-free,
+    // encodeURIComponent-ed.
+    const storageSymbol = stripIbkrMarker(symbol).replace(/\//g, "");
+    return resolve(IBKR_MARKETCAP_DIR, `${encodeURIComponent(storageSymbol)}.csv`);
+}
+
+function readMarketCapCatalog(): MarketCapCatalog {
+    if (!existsSync(IBKR_MARKETCAP_CATALOG_PATH)) {
+        return { updatedAt: new Date(0).toISOString(), entries: [] };
+    }
+    try {
+        const parsed = JSON.parse(readFileSync(IBKR_MARKETCAP_CATALOG_PATH, "utf8")) as Partial<MarketCapCatalog>;
+        const rawEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
+        // Defensive per-field normalization, mirroring readCatalog: the on-disk
+        // JSON may be hand-edited or written by an older version.
+        const entries: MarketCapCatalogEntry[] = rawEntries.map((entry) => {
+            const e = entry as Partial<MarketCapCatalogEntry>;
+            const points = Number(e.points);
+            return {
+                symbol: typeof e.symbol === "string" ? e.symbol : "",
+                markedSymbol: typeof e.markedSymbol === "string" ? e.markedSymbol : "",
+                firstTime: typeof e.firstTime === "string" ? e.firstTime : null,
+                lastTime: typeof e.lastTime === "string" ? e.lastTime : null,
+                points: Number.isFinite(points) ? points : 0,
+                lastSyncAt: typeof e.lastSyncAt === "string" ? e.lastSyncAt : "",
+                sharesSource: typeof e.sharesSource === "string" ? e.sharesSource : "",
+            };
+        });
+        return {
+            updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
+            entries,
+        };
+    } catch {
+        return { updatedAt: new Date(0).toISOString(), entries: [] };
+    }
+}
+
+function writeMarketCapCatalog(catalog: MarketCapCatalog): void {
+    // Own small writer with the candle catalog's atomic temp+rename idiom.
+    mkdirSync(dirname(IBKR_MARKETCAP_CATALOG_PATH), { recursive: true });
+    const tempPath = `${IBKR_MARKETCAP_CATALOG_PATH}.tmp`;
+    writeFileSync(tempPath, JSON.stringify(catalog, null, 2));
+    replaceFileWithRetry(tempPath, IBKR_MARKETCAP_CATALOG_PATH);
+}
+
+function upsertMarketCapCatalogEntry(catalog: MarketCapCatalog, entry: MarketCapCatalogEntry): void {
+    const existing = catalog.entries.find((item) => item.symbol === entry.symbol);
+    if (existing) {
+        Object.assign(existing, entry);
+    } else {
+        catalog.entries.push(entry);
+    }
+    catalog.entries.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    catalog.updatedAt = entry.lastSyncAt;
+}
+
+export function writeMarketCapCsv(symbol: string, rows: MarketCapRow[]): void {
+    const filePath = getMarketCapCsvPath(symbol);
+    mkdirSync(dirname(filePath), { recursive: true });
+    const lines = ["time,close,shares_outstanding,market_cap"];
+    for (const row of rows) {
+        lines.push([row.time, row.close, row.sharesOutstanding, row.marketCap].join(","));
+    }
+    const tempPath = `${filePath}.tmp`;
+    writeFileSync(tempPath, `${lines.join("\n")}\n`);
+    // Same .bak + Windows-lock fallback discipline as writeCsv: a prior file
+    // is snapshotted before the atomic rename destroys it.
+    if (existsSync(filePath)) {
+        copyFileSync(filePath, `${filePath}.bak`);
+    }
+    replaceFileWithRetry(tempPath, filePath, {
+        fallback: (sourcePath, targetPath, error) => {
+            const code = (error as NodeJS.ErrnoException | null)?.code;
+            const isWindowsLock = process.platform === "win32"
+                && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
+            if (!isWindowsLock || !existsSync(`${targetPath}.bak`)) return false;
+            copyFileSync(sourcePath, targetPath);
+            try {
+                rmSync(sourcePath, { force: true });
+            } catch {
+                // The destination is complete; a leftover temp file is safe.
+            }
+            debugLogger.warn("marketcap.csv.atomic_replace_fallback", { targetPath, code });
+            return true;
+        },
+    });
+}
+
+/**
+ * Joins the split-corrected step function against the local 1d closes.
+ * Trading days before the first fact's `filed` date are skipped (the step
+ * function has no look-ahead). The 1d CSVs can hold multiple timestamps per
+ * trading day (mixed IBKR/Alpaca merges); the day's LATEST close wins so the
+ * dataset has exactly one row per trading day. Exported for unit tests.
+ */
+export function joinMarketCapRows(closes: OHLCVData[], facts: SharesFactPoint[]): MarketCapRow[] {
+    const latestCloseByDate = new Map<string, { seconds: number; close: number }>();
+    for (const candle of closes) {
+        const dateKey = toUtcDateKey(candle.time);
+        if (!dateKey || !Number.isFinite(candle.close)) continue;
+        const seconds = Number(parseTimeToUnixSeconds(candle.time));
+        const existing = latestCloseByDate.get(dateKey);
+        if (!existing || seconds >= existing.seconds) {
+            latestCloseByDate.set(dateKey, { seconds, close: candle.close });
+        }
+    }
+    const rows: MarketCapRow[] = [];
+    for (const dateKey of Array.from(latestCloseByDate.keys()).sort()) {
+        const shares = lookupSharesForDate(facts, dateKey);
+        if (shares === null) continue;
+        const close = latestCloseByDate.get(dateKey)!.close;
+        rows.push({ time: dateKey, close, sharesOutstanding: shares, marketCap: close * shares });
+    }
+    return rows;
+}
+
+/**
+ * Per-symbol fetch surface, injectable for tests. Production passes the
+ * phase-1 leaf fetchers; `fetchSplits` resolves `resolveAlpacaConfig()` lazily
+ * so a missing-env error surfaces per-run.
+ */
+export type MarketCapSymbolDeps = {
+    /** NormalizedTicker → CIK map, loaded once per run. */
+    tickers: Record<string, number>;
+    fetchFacts: (cik: number, signal?: AbortSignal) => Promise<unknown>;
+    fetchSplits: (symbol: string, signal?: AbortSignal) => Promise<SplitEvent[]>;
+};
+
+function cancelledMarketCapResult(symbol: string): Record<string, unknown> {
+    return {
+        symbol,
+        markedSymbol: markIbkrSymbol(symbol),
+        points: 0,
+        firstTime: null,
+        lastTime: null,
+        cancelled: true,
+    };
+}
+
+function logMarketCapCancelled(symbol: string, points: number, startedAt: number): void {
+    debugLogger.info("marketcap.symbol.cancelled", {
+        target: "edgar",
+        symbol,
+        points,
+        durationMs: Date.now() - startedAt,
+    });
+}
+
+/**
+ * Per-symbol market-cap worker: EDGAR facts → strict split correction → join
+ * vs the local 1d closes → CSV write → catalog upsert. Every failure throws
+ * (the batch loop emits `symbol_failed` and continues); a cancellation
+ * returns a `cancelled` result. Invariant: nothing is written unless BOTH the
+ * EDGAR fetch and the splits fetch succeeded and the join produced rows, and
+ * the abort signal is re-checked immediately before EACH write.
+ */
+export async function buildMarketCapForSymbol(
+    symbol: string,
+    catalog: MarketCapCatalog,
+    deps: MarketCapSymbolDeps,
+    signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+    const startedAt = Date.now();
+    if (signal?.aborted) return cancelledMarketCapResult(symbol);
+
+    const cik = deps.tickers[symbol];
+    if (!cik) {
+        throw new HttpStatusError(
+            404,
+            `${symbol} was not found in the EDGAR company_tickers map (share-class tickers are mapped '.' -> '-', e.g. BRK.B -> BRK-B).`,
+        );
+    }
+    let rawFacts: SharesFactPoint[];
+    try {
+        rawFacts = parseSharesOutstandingFacts(await deps.fetchFacts(cik, signal));
+    } catch (error) {
+        // EDGAR's companyconcept endpoint answers 404 (NoSuchKey) for issuers
+        // that never published this dei tag (verified live: GOOGL, META,
+        // PLTR, APP, DELL…). Surface the plan's actionable no-facts failure
+        // instead of a raw 404 with an XML body snippet.
+        if (error instanceof HttpStatusError && error.status === 404) {
+            throw new HttpStatusError(502, `No shares-outstanding facts on EDGAR for ${symbol} (dei:EntityCommonStockSharesOutstanding).`);
+        }
+        throw error;
+    }
+    if (rawFacts.length === 0) {
+        throw new HttpStatusError(502, `No shares-outstanding facts on EDGAR for ${symbol} (dei:EntityCommonStockSharesOutstanding).`);
+    }
+    const newestFiled = rawFacts[rawFacts.length - 1]!.filed;
+    const oldestAllowed = new Date(Date.now() - MARKETCAP_MAX_FACT_AGE_MS).toISOString().slice(0, 10);
+    if (newestFiled < oldestAllowed) {
+        throw new HttpStatusError(
+            502,
+            `Newest shares-outstanding fact for ${symbol} is from ${newestFiled} — too stale to build a current market-cap series (the join would price every recent day with that count).`,
+        );
+    }
+    // Strict split-failure: an error here propagates — no unadjusted write.
+    const splits = await deps.fetchSplits(symbol, signal);
+    const adjustedFacts = applySplitFactors(rawFacts, splits);
+
+    const closes = readCsvCandles(symbol, "1d");
+    if (closes.length === 0) {
+        throw new HttpStatusError(404, `No local 1d prices for ${symbol}; download 1d prices first.`);
+    }
+    const rows = joinMarketCapRows(closes, adjustedFacts);
+    if (rows.length === 0) {
+        throw new HttpStatusError(502, `Every local 1d bar for ${symbol} predates its first EDGAR shares filing (${rawFacts[0]!.filed}); nothing to write.`);
+    }
+
+    if (signal?.aborted) {
+        logMarketCapCancelled(symbol, rows.length, startedAt);
+        return cancelledMarketCapResult(symbol);
+    }
+    writeMarketCapCsv(symbol, rows);
+    if (signal?.aborted) {
+        logMarketCapCancelled(symbol, rows.length, startedAt);
+        return cancelledMarketCapResult(symbol);
+    }
+    const lastSyncAt = new Date().toISOString();
+    const firstTime = rows[0]!.time;
+    const lastTime = rows[rows.length - 1]!.time;
+    upsertMarketCapCatalogEntry(catalog, {
+        symbol,
+        markedSymbol: markIbkrSymbol(symbol),
+        firstTime,
+        lastTime,
+        points: rows.length,
+        lastSyncAt,
+        sharesSource: "dei:EntityCommonStockSharesOutstanding",
+    });
+    writeMarketCapCatalog(catalog);
+    debugLogger.info("marketcap.symbol", {
+        target: "edgar",
+        symbol,
+        points: rows.length,
+        facts: rawFacts.length,
+        splits: splits.length,
+        durationMs: Date.now() - startedAt,
+    });
+    return { symbol, markedSymbol: markIbkrSymbol(symbol), points: rows.length, firstTime, lastTime };
+}
+
+type MarketCapSymbolWorker = (
+    symbol: string,
+    catalog: MarketCapCatalog,
+    deps: MarketCapSymbolDeps,
+    signal?: AbortSignal,
+) => Promise<Record<string, unknown>>;
+
+type ProcessMarketCapBatchOptions = {
+    /** Override the per-symbol worker (test seam — mirrors ProcessSyncBatchOptions.fetcher). */
+    fetcher?: MarketCapSymbolWorker;
+    /** Abort signal from the run's AbortController; Stop aborts this. */
+    signal?: AbortSignal;
+    /** Override the tickers-map loader (test seam; production uses the disk-cached EDGAR fetch). */
+    tickersLoader?: typeof loadCompanyTickersCached;
+};
+
+/**
+ * Market-cap batch loop — mirrors `processSyncBatch`'s structure (same lock,
+ * snapshot, stop, and per-symbol event semantics) but drives the EDGAR
+ * worker and writes ONLY market-cap files. Reuses the existing
+ * `syncOwner`/`syncOwnerGen`/`syncAbortController` domain, so a market-cap
+ * run 409-conflicts with an in-flight candle sync and vice versa, and
+ * `/api/ibkr/stop` cancels it. It must never invoke
+ * `ensureBrokerageSession` or the Gateway keepalive — those belong to the
+ * IBKR worker path only.
+ */
+export async function processMarketCapBatch(
+    body: Record<string, unknown>,
+    writer: SyncStreamWriter,
+    owner: number,
+    options?: ProcessMarketCapBatchOptions,
+): Promise<void> {
+    const signal = options?.signal;
+    const symbols = normalizeSymbols(body.symbols ?? body.symbol);
+    // Ticker→CIK map, loaded once per run through the disk-cached EDGAR
+    // fetch. Failure is fatal: no per-symbol work is possible without CIK
+    // resolution.
+    const tickers = await (options?.tickersLoader ?? loadCompanyTickersCached)({ signal });
+    const marketCapCatalog = readMarketCapCatalog();
+    const deps: MarketCapSymbolDeps = {
+        tickers,
+        fetchFacts: (cik, fetchSignal) => fetchEdgarSharesOutstanding(cik, fetchSignal),
+        fetchSplits: (symbol, fetchSignal) => fetchAlpacaSplits(resolveAlpacaConfig(), symbol, fetchSignal),
+    };
+    const worker = options?.fetcher ?? buildMarketCapForSymbol;
+
+    syncRunState = {
+        startedAt: new Date().toISOString(),
+        mode: "marketcap",
+        interval: "1d",
+        period: null,
+        source: "edgar",
+        total: symbols.length,
+        index: 0,
+        completed: 0,
+        failed: 0,
+        currentSymbol: null,
+        failedSymbols: [],
+        cancelled: false,
+        completedSymbols: [],
+        updatedAt: new Date().toISOString(),
+    };
+    const runState = syncRunState;
+    const touchRunState = () => {
+        if (syncRunState === runState) runState.updatedAt = new Date().toISOString();
+    };
+
+    writer({ type: "start", total: symbols.length, interval: "1d", mode: "marketcap", source: "edgar", period: null });
+
+    const results: unknown[] = [];
+    const failed: unknown[] = [];
+    let cancelled = false;
+    const lostOwnership = () => syncOwner !== owner;
+    const wasCancelled = () => lostOwnership() || signal?.aborted === true;
+
+    try {
+        for (let index = 0; index < symbols.length; index += 1) {
+            if (wasCancelled()) {
+                cancelled = true;
+                if (syncRunState === runState) runState.cancelled = true;
+                break;
+            }
+            const symbol = symbols[index]!;
+            if (syncRunState === runState) {
+                runState.index = index;
+                runState.currentSymbol = symbol;
+            }
+            try {
+                const result = await worker(symbol, marketCapCatalog, deps, signal);
+                // Re-check ownership/abort after the await (mirrors
+                // processSyncBatch): a Stop or newer run may have arrived
+                // mid-fetch.
+                if (wasCancelled()) {
+                    cancelled = true;
+                    if (syncRunState === runState) runState.cancelled = true;
+                    break;
+                }
+                if ((result as Record<string, unknown>).cancelled === true) {
+                    cancelled = true;
+                    if (syncRunState === runState) runState.cancelled = true;
+                    break;
+                }
+                results.push(result);
+                const marked = String((result as Record<string, unknown>).markedSymbol ?? "");
+                if (syncRunState === runState) {
+                    runState.completed += 1;
+                    if (marked && !runState.completedSymbols!.includes(marked)) {
+                        runState.completedSymbols!.push(marked);
+                    }
+                }
+                writer({ type: "symbol", index, total: symbols.length, ...result });
+                touchRunState();
+            } catch (error) {
+                if (signal?.aborted || isAbortError(error)) {
+                    cancelled = true;
+                    if (syncRunState === runState) runState.cancelled = true;
+                    break;
+                }
+                const message = error instanceof Error ? error.message : String(error);
+                debugLogger.warn("marketcap.symbol.failed", {
+                    target: "edgar",
+                    symbol,
+                    error: message,
+                });
+                failed.push({ symbol, error: message });
+                if (syncRunState === runState) {
+                    runState.failed += 1;
+                    runState.failedSymbols.push({ symbol, error: message });
+                }
+                writer({ type: "symbol_failed", index, total: symbols.length, symbol, error: message });
+                touchRunState();
+            }
+        }
+    } finally {
+        if (syncRunState === runState) {
+            runState.index = runState.completed + runState.failed;
+            runState.currentSymbol = null;
+            touchRunState();
+        }
+    }
+
+    // No `totals`: market-cap rows carry `points`, not candle `bars`, and the
+    // browser service does not consume `totals`.
+    writer({
+        type: "done",
+        ok: failed.length === 0 && !cancelled,
+        cancelled,
+        interval: "1d",
+        source: "edgar",
+        results,
+        failed,
+    });
+}
+
 type ProcessSyncBatchOptions = {
     /** Override the per-symbol worker (test seam — mirrors crypto's fetcher). */
     fetcher?: typeof syncOneSymbol;
@@ -2196,8 +2653,9 @@ export async function processSyncBatch(
 async function handleSyncRequest(res: ViteHttpResponse, body: Record<string, unknown>, syncOnly: boolean): Promise<void> {
     if (syncOwner !== SYNC_OWNER_NONE) {
         // Thrown before the stream is opened, so the endpoint handler's catch
-        // sends this as a normal JSON error.
-        throw new HttpStatusError(409, "An IBKR sync is already running. Use Stop first.");
+        // sends this as a normal JSON error. Mode-neutral wording: the shared
+        // lock may be held by a candle sync/download OR a market-cap run.
+        throw new HttpStatusError(409, "An IBKR Data run is already in progress. Use Stop first.");
     }
     const owner = ++syncOwnerGen;
     syncOwner = owner;
@@ -2248,6 +2706,51 @@ async function handleSyncRequest(res: ViteHttpResponse, body: Record<string, unk
         // Clear the in-progress snapshot only if we still own it. A newer
         // sync that started after a Stop will have repopulated
         // `syncRunState` itself; don't wipe its state.
+        if (syncRunState && syncOwner === SYNC_OWNER_NONE) {
+            syncRunState = null;
+        }
+    }
+}
+
+/**
+ * Market-cap request handler — mirrors `handleSyncRequest`'s lock, stream,
+ * and cleanup structure exactly (same shared `syncOwner` domain). No IBKR
+ * Gateway interaction happens anywhere in this path.
+ */
+async function handleMarketCapRequest(res: ViteHttpResponse, body: Record<string, unknown>): Promise<void> {
+    if (syncOwner !== SYNC_OWNER_NONE) {
+        // Mode-neutral wording: the shared lock may be held by a candle
+        // sync/download OR another market-cap run.
+        throw new HttpStatusError(409, "An IBKR Data run is already in progress. Use Stop first.");
+    }
+    const owner = ++syncOwnerGen;
+    syncOwner = owner;
+    const abortController = new AbortController();
+    syncAbortController = abortController;
+    let stream: ReturnType<typeof beginNdjsonStream> | null = null;
+    try {
+        stream = beginNdjsonStream(res);
+        await processMarketCapBatch(body, stream.write, owner, { signal: abortController.signal });
+        stream.end();
+    } catch (error) {
+        if (!stream) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        debugLogger.warn("marketcap.run.fatal", {
+            target: "edgar",
+            error: message,
+        });
+        try {
+            stream.end({ type: "fatal", error: message });
+        } catch {
+            // Best-effort: the connection is likely already gone.
+        }
+    } finally {
+        if (syncOwner === owner) {
+            syncOwner = SYNC_OWNER_NONE;
+        }
+        if (syncAbortController === abortController) {
+            syncAbortController = null;
+        }
         if (syncRunState && syncOwner === SYNC_OWNER_NONE) {
             syncRunState = null;
         }
@@ -2415,6 +2918,25 @@ export function ibkrDataVitePlugin(): Plugin {
             }
         });
 
+        // Download MarketCap (docs/marketcap-download.md). Shares no path
+        // prefix with /api/ibkr/sync, so route order is free; grouped here
+        // for readability.
+        middlewares.use("/api/ibkr/marketcap", async (req: any, res: any) => {
+            if (req.method !== "POST") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: IBKR routes are local-only." });
+                return;
+            }
+            try {
+                await handleMarketCapRequest(res as ViteHttpResponse, await readJsonBody(req, IBKR_BODY_LIMIT_BYTES));
+            } catch (error) {
+                sendCaughtErrorJson(res, error);
+            }
+        });
+
         middlewares.use("/api/ibkr/stop", async (req: any, res: any) => {
             if (req.method !== "POST") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
@@ -2479,4 +3001,9 @@ export function __acquireIbkrSyncOwnerForTests(): number {
     const owner = ++syncOwnerGen;
     syncOwner = owner;
     return owner;
+}
+
+/** Read the in-progress run snapshot (if any). Exported for test isolation. */
+export function __getIbkrSyncRunStateForTests(): SyncRunState | null {
+    return syncRunState;
 }

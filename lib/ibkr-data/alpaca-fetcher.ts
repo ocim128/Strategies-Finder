@@ -126,7 +126,14 @@ const alpacaLookup: ConnectLookup = (hostname, options, callback) => {
         });
 };
 
-function getAlpacaIpv4Dispatcher(url: string): unknown | undefined {
+/**
+ * Host-scoped IPv4/DoH dispatcher for the public Alpaca data host. Some ISP
+ * DNS resolvers cannot resolve data.alpaca.markets (verified live: plain
+ * fetch fails with "fetch failed" while the DoH lookup succeeds), so every
+ * fetch to this host — bars AND corporate-actions — must go through this.
+ * Exported for the shares-outstanding fetcher's corporate-actions calls.
+ */
+export function getAlpacaIpv4Dispatcher(url: string): unknown | undefined {
     if (new URL(url).origin !== ALPACA_DATA_HOST || undiciUnavailable) return undefined;
     if (alpacaIpv4Dispatcher) return alpacaIpv4Dispatcher;
     try {
