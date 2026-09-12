@@ -602,12 +602,12 @@ describe("Finder Exit Alpha", () => {
         expect(scalar.symbols[0]?.result?.exitAlpha).to.equal(1.25);
         expect("trades" in scalar.symbols[0]!).to.equal(false);
 
-        const snapshot = compactFinderLatestResults({ scope: "symbol_universe", results: [candidate] }) as { scope: "symbol_universe"; results: FinderUniverseCandidate[] };
-        const saved = snapshot.results[0];
+        const snapshot = compactFinderLatestResults({ scope: "symbol_universe", results: [candidate] });
+        const saved = snapshot.results[0] as FinderUniverseCandidate;
         expect(saved.medianExitAlpha).to.equal(1.25);
         expect(saved.symbols[0]?.result?.exitAlpha).to.equal(1.25);
 
-        const legacy = compactFinderLatestResults({ scope: "current_chart", results: [makeFinderResult("legacy")] }) as { scope: "current_chart"; results: FinderResult[] };
+        const legacy = compactFinderLatestResults({ scope: "current_chart", results: [makeFinderResult("legacy")] });
         expect("exitAlpha" in legacy.results[0]!).to.equal(false);
     });
 

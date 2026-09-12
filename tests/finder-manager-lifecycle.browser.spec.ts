@@ -233,7 +233,6 @@ function runningSnapshot(runId: string): FinderRunStatusSnapshot {
         cancelled: false,
         terminalCandidates: null,
         terminalAssets: null,
-        terminalReplay: null,
         summary: null,
         error: null,
         diagnostics: null,

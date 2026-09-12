@@ -88,23 +88,11 @@ import {
 } from "./server-finder-data-loader";
 import {
     assertCandidateIsScalar,
-    assertReplayCheckpointIsScalar,
-    assertReplayReportIsScalar,
     toScalarCandidate,
     type FinderJobPhase,
     type FinderRunStatusSnapshot,
-    type FinderReplayStreamEvent,
     type FinderStreamEvent,
 } from "./finder-stream-types";
-import {
-    runFinderMonthlyRankReplay,
-    type FinderMonthlyRankReplayRunInput,
-} from "../finder-monthly-rank-replay-runner";
-import {
-    resolveMonthlyRankReplaySortCoverage,
-    validateMonthlyRankReplayOptions,
-} from "../finder-monthly-rank-replay";
-import type { MonthlyRankReplayReport } from "../finder-monthly-rank-replay";
 import { resolveFinderUniverseHeapWarning } from "./finder-server-heap-guard";
 import {
     releaseIfOwner as releaseResearchWorkloadIfOwner,
@@ -534,7 +522,7 @@ export type FinderRunSnapshot = {
     finishedAt: number | null;
     interval: string;
     /** Job kind discriminator; defaults to symbol_universe for legacy state. */
-    jobKind?: "symbol_universe" | "asset_opportunity" | "asset_opportunity_batch" | "monthly_rank_replay";
+    jobKind?: "symbol_universe" | "asset_opportunity" | "asset_opportunity_batch";
     /** Ordered selected entry strategy keys for the whole job. */
     strategyKeys: string[];
     /** 0-based index of the strategy currently being evaluated. */
@@ -576,10 +564,6 @@ export type FinderRunSnapshot = {
     assetDiagnostics?: FinderAssetOpportunityDiagnostics | null;
     /** Bounded batch counts for asset_opportunity_batch jobs; undefined otherwise. */
     batch?: FinderBatchStatus;
-    /** Terminal Monthly Rank Replay report retained for reload reattach. */
-    replayReport?: MonthlyRankReplayReport | null;
-    /** Completed checkpoint count for running monthly_rank_replay jobs. */
-    replayCompletedCheckpoints?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -1160,194 +1144,6 @@ export async function processFinderUniverseRun(
         writer({ type: "fatal", runId: input.runId, error: message });
     } finally {
         jobDatasetCache.clear();
-    }
-}
-
-
-// ---------------------------------------------------------------------------
-// Monthly Rank Replay job core
-// ---------------------------------------------------------------------------
-
-/**
- * Core Monthly Rank Replay job. Mirrors {@link processFinderUniverseRun}'s
- * ownership/stream/snapshot semantics but dispatches the replay runner and
- * streams scalar per-checkpoint records. Stop cancels through BOTH the owner
- * lock and the shared abort signal (the replay checks both), and a browser
- * disconnect leaves the run recoverable via `/status`.
- */
-export async function processFinderMonthlyRankReplayRun(
-    input: FinderMonthlyRankReplayRunInput & { symbols: string[]; abortSignal?: AbortSignal },
-    writer: (event: FinderReplayStreamEvent) => void,
-    owner: number,
-): Promise<void> {
-    const selectedStrategies = input.selectedStrategies;
-    const strategyCount = selectedStrategies.length;
-    const sortCoverage = resolveMonthlyRankReplaySortCoverage();
-
-    runState = {
-        runId: input.runId,
-        startedAt: Date.now(),
-        finishedAt: null,
-        interval: input.interval,
-        jobKind: "monthly_rank_replay",
-        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
-        strategyIndex: 0,
-        strategyCount,
-        phase: "loading",
-        totalSymbols: input.symbols.length,
-        progressPercent: 0,
-        statusText: "Starting...",
-        loadedSymbols: 0,
-        failedSymbols: 0,
-        candidates: [],
-        assetResults: [],
-        diagnostics: null,
-        cancelled: false,
-        summary: null,
-        error: null,
-        totals: null,
-        assetTotals: null,
-        replayReport: null,
-        replayCompletedCheckpoints: 0,
-    };
-    const snapshot = runState;
-
-    debugLogger.event("finder.replay.start", {
-        runId: input.runId,
-        interval: input.interval,
-        symbols: input.symbols.length,
-        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
-        replay: input.options.monthlyRankReplay ?? null,
-    });
-
-    writer({
-        type: "replay_start",
-        runId: input.runId,
-        interval: input.interval,
-        totalSymbols: input.symbols.length,
-        strategyKeys: selectedStrategies.map((strategy) => strategy.key),
-        replayedSortKeys: sortCoverage.replayed.map((sort) => sort.key),
-        excludedSortKeys: sortCoverage.excluded.map((sort) => sort.key),
-    });
-
-    const emitProgress = (percent: number, text: string): void => {
-        snapshot.progressPercent = percent;
-        snapshot.statusText = text;
-        writer({
-            type: "replay_progress",
-            runId: input.runId,
-            percent,
-            text,
-            status: text,
-            phase: snapshot.phase,
-            checkpointIndex: snapshot.replayCompletedCheckpoints ?? 0,
-            totalCheckpoints: 0,
-        });
-    };
-
-    try {
-        const output = await runFinderMonthlyRankReplay(
-            {
-                runId: input.runId,
-                interval: input.interval,
-                options: input.options,
-                settings: input.settings,
-                capitalSettings: input.capitalSettings,
-                selectedStrategies,
-                exitStrategyCandidates: input.exitStrategyCandidates,
-                loadDataset: input.loadDataset,
-                generateParamSets: input.generateParamSets ?? (() => []),
-            },
-            {
-                setProgress: (percent, text) => emitProgress(percent, text),
-                setStatus: (text) => {
-                    snapshot.statusText = text;
-                },
-                yieldControl: async () => {
-                    // Yield to the Node event loop so /stop and /status are serviced.
-                    await new Promise<void>((resolve) => setImmediate(resolve));
-                },
-                isCancelled: () => {
-                    if (runOwner !== owner || input.abortSignal?.aborted) {
-                        return true;
-                    }
-                    return false;
-                },
-                onCheckpoint: (checkpoint, outcomes, selections) => {
-                    assertReplayCheckpointIsScalar({ checkpoint, outcomes, selections });
-                    snapshot.replayCompletedCheckpoints = checkpoint.index;
-                    snapshot.loadedSymbols = input.symbols.length;
-                    if (runOwner !== owner) return;
-                    writer({ type: "replay_checkpoint", runId: input.runId, checkpoint, outcomes, selections });
-                },
-            },
-        );
-
-        const report = output.report;
-        // Authoritative terminal payload. Scalar-by-construction in the
-        // runner; asserted here so a future field cannot ship heavy arrays
-        // (same terminal-slice guard the universe path applies).
-        assertReplayReportIsScalar(report);
-        snapshot.replayReport = report;
-        snapshot.replayCompletedCheckpoints = report.checkpoints.filter(
-            (checkpoint) => checkpoint.status === "measured",
-        ).length;
-        snapshot.cancelled = output.cancelled;
-        snapshot.phase = output.cancelled ? "cancelled" : "done";
-        snapshot.finishedAt = Date.now();
-        const measuredCount = report.sortSummaries.filter((summary) => summary.validCheckpoints > 0).length;
-        snapshot.summary = output.cancelled
-            ? "Cancelled - " + (report.stoppedEarly?.completedCheckpoints ?? 0) + " checkpoints measured"
-            : "Done - " + report.checkpoints.length + " checkpoints, "
-                + measuredCount + "/" + report.sortSummaries.length + " sorts with valid observations";
-        snapshot.statusText = snapshot.summary;
-
-        writer({
-            type: "replay_done",
-            ok: !output.cancelled,
-            cancelled: output.cancelled,
-            runId: input.runId,
-            interval: input.interval,
-            summary: snapshot.summary,
-            report,
-        });
-
-        debugLogger.event(output.cancelled ? "finder.replay.cancelled" : "finder.replay.complete", {
-            runId: input.runId,
-            checkpoints: report.checkpoints.length,
-            forwardOutcomes: report.forwardOutcomes.length,
-            selections: report.selections.length,
-            durationMs: Date.now() - snapshot.startedAt,
-            heapUsedMb: Math.round(process.memoryUsage().heapUsed / HEAP_MB),
-        });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        // Blueprint section 5: a job-level failure terminates the run as
-        // fatal WITH partial results labelled incomplete. The runner attaches
-        // its partial report (fatal-flagged) to the thrown error; keep it on
-        // the snapshot so /status recovery survives a reload after a fatal.
-        const partialReport = (error as { replayReport?: MonthlyRankReplayReport }).replayReport;
-        if (partialReport) {
-            try {
-                assertReplayReportIsScalar(partialReport);
-                snapshot.replayReport = partialReport;
-                snapshot.replayCompletedCheckpoints = partialReport.checkpoints.filter(
-                    (checkpoint) => checkpoint.status === "measured",
-                ).length;
-            } catch (scalarError) {
-                debugLogger.warn("finder.replay.partial_report_scalar_violation", {
-                    runId: input.runId,
-                    error: scalarError instanceof Error ? scalarError.message : String(scalarError),
-                });
-            }
-        }
-        snapshot.phase = "fatal";
-        snapshot.finishedAt = Date.now();
-        snapshot.statusText = "Monthly Rank Replay failed: " + message;
-        snapshot.summary = snapshot.statusText;
-        snapshot.error = message;
-        debugLogger.warn("finder.replay.fatal", { runId: input.runId, error: message });
-        writer({ type: "replay_fatal", runId: input.runId, error: message });
     }
 }
 
@@ -3005,31 +2801,6 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
     // truth so a direct caller cannot bypass the heap guard with a tiny outer
     // list and a large nested universe list.
     const options = withCanonicalUniverseSymbols(parsedOptions, symbols);
-
-    // Validate Monthly Rank Replay options BEFORE acquiring run ownership.
-    // Everything between acquisition and withFinderRunStream runs inside no
-    // release path for the owner lock, so a 400 thrown there would brick all
-    // Finder runs (replay AND ordinary) until process restart. The Asset
-    // Opportunity handler follows the same validate-first pattern.
-    {
-        const rawReplayOptions = (options as { monthlyRankReplay?: unknown }).monthlyRankReplay;
-        if (rawReplayOptions !== undefined && rawReplayOptions !== null) {
-            let replayOptions;
-            try {
-                replayOptions = validateMonthlyRankReplayOptions(rawReplayOptions);
-            } catch (error) {
-                throw new HttpStatusError(
-                    400,
-                    error instanceof Error ? error.message : String(error),
-                );
-            }
-            if (options.scope !== "symbol_universe") {
-                throw new HttpStatusError(400, "Monthly Rank Replay requires the Symbol Universe scope.");
-            }
-            options.monthlyRankReplay = replayOptions;
-        }
-    }
-
     const settings = (body.settings ?? {}) as BacktestSettings;
     const capitalSettings = (body.capitalSettings ?? {}) as CapitalSettings;
     const useRustEnginePreference = body.useRustEnginePreference === true;
@@ -3049,47 +2820,6 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
     try {
     const runAbortController = new AbortController();
     abortController = runAbortController;
-
-    // --- Monthly Rank Replay dispatch -----------------------------------
-    // Detected BEFORE ordinary Universe slicing/OOS/Rust setup: replay owns
-    // its data windows (checkpoint boundaries), forces TypeScript, and never
-    // runs the OOS pass. Options were validated BEFORE ownership acquisition
-    // (see above) so a malformed request can never leak the run-owner lock.
-    if (parsedOptions.monthlyRankReplay) {
-        const loadDatasetRaw = (sym: string, intv: string, signal?: AbortSignal): Promise<OHLCVData[]> =>
-            loadServerFinderDataset(sym, intv, signal);
-        await withFinderRunStream({
-            res,
-            runId,
-            owner,
-            abortController: runAbortController,
-            buildFatal: (message): FinderReplayStreamEvent => ({
-                type: "replay_fatal",
-                runId,
-                error: message,
-            }),
-            run: (safeWrite) => processFinderMonthlyRankReplayRun(
-                {
-                    runId,
-                    interval,
-                    symbols,
-                    options,
-                    settings,
-                    capitalSettings,
-                    selectedStrategies,
-                    exitStrategyCandidates,
-                    loadDataset: loadDatasetRaw,
-                    generateParamSets: (defaultParams, finderOptions) =>
-                        paramSpace.generateParamSets(defaultParams, finderOptions),
-                    abortSignal: runAbortController.signal,
-                },
-                safeWrite,
-                owner,
-            ),
-        });
-        return;
-    }
-
     const rustCapabilities = await resolveServerRustCapabilities(
         useRustEnginePreference,
         runAbortController.signal,
@@ -3229,10 +2959,8 @@ function buildStatusSnapshot(): FinderRunStatusSnapshot {
         // large universe runs. Asset-opportunity terminal snapshots (single
         // and batch) carry the full scalar asset result set of the run / last
         // completed iteration on `terminalAssets` instead.
-        terminalCandidates: terminal && jobKind === "symbol_universe" && !state.replayReport ? state.candidates : null,
+        terminalCandidates: terminal && jobKind === "symbol_universe" ? state.candidates : null,
         terminalAssets: terminal && assetOpportunityKind ? state.assetResults ?? [] : null,
-        terminalReplay: terminal && jobKind === "monthly_rank_replay" ? state.replayReport ?? null : null,
-        replayCompletedCheckpoints: state.replayCompletedCheckpoints,
         summary: state.summary,
         error: state.error,
         diagnostics: state.diagnostics,
@@ -3608,9 +3336,6 @@ export const __testInternals = {
     withCanonicalUniverseSymbols,
     setRunOwnerForTests(owner: number): void {
         runOwner = owner;
-    },
-    getRunOwnerForTests(): number {
-        return runOwner;
     },
     getPendingDatasetCacheInvalidation(): boolean {
         return pendingDatasetCacheInvalidation;

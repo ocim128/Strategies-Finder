@@ -57,20 +57,6 @@ type BacktestRunOptions = {
     omitEquityCurve?: boolean;
     skipDrawdown?: boolean;
     requireTradeHistory?: boolean;
-    /**
-     * Scored-range replay contract (Monthly Rank Replay). Indicators and
-     * signals are prepared over the FULL provided timeline (warmup prefix
-     * preserved), while account state, statistics, and equity samples start
-     * flat at the first scored bar and end at the scored end bar. Signal
-     * origin AND resolved execution bar must both fall inside the range.
-     * Boundaries are bar times resolved against the cleaned timeline;
-     * unresolved boundaries throw rather than silently shifting. Boundary
-     * validation runs when simulation proceeds; a run with zero surviving
-     * signals returns the flat scored-window result early (the replay runner
-     * constructs boundaries from actual bar indices, so its ranges always
-     * resolve).
-     */
-    scoredRange?: { startBarTime: Time; endBarTime: Time };
     /** Build endpoint-adjusted selection metrics without allocating Trade objects. */
     endpointSelectionLastDataTime?: Time | null;
     endpointSelectionInitialCapital?: number;
@@ -438,68 +424,6 @@ type IndexedFinderSignals = {
     count: number;
 };
 
-type ResolvedScoredRange = { startIndex: number; endIndex: number };
-
-/**
- * Resolve scored-range bar times against the cleaned timeline. Unresolved or
- * out-of-bounds boundaries throw — they are never silently shifted after
- * data cleanup/trimming.
- */
-function resolveScoredRangeIndices(
-    data: OHLCVData[],
-    range: { startBarTime: Time; endBarTime: Time },
-): ResolvedScoredRange {
-    const timeIndex = getTimeIndex(data);
-    const startIndex = getTimeIndexValue(timeIndex, range.startBarTime);
-    const endIndex = getTimeIndexValue(timeIndex, range.endBarTime);
-    if (startIndex === undefined || endIndex === undefined) {
-        throw new Error("Scored-range boundaries do not resolve against the backtest timeline.");
-    }
-    if (startIndex < 0 || endIndex >= data.length || startIndex > endIndex) {
-        throw new Error("Scored-range boundaries fall outside the backtest timeline.");
-    }
-    return { startIndex, endIndex };
-}
-
-/**
- * Scored-range signal-origin filter: a signal participates only when its
- * ORIGIN (decision bar) falls inside the scored window. The resolved
- * execution bar is checked against the range end AFTER preparation (see
- * filterPreparedSignalsByScoredRangeEnd), because preparation shifts
- * execution forward by the execution-model shift. This preserves the fresh-
- * start policy: a signal on the last warmup bar is never carried into the
- * scored account as a next_open/next_close order.
- */
-function filterSignalsByScoredRangeOrigin(
-    data: OHLCVData[],
-    signals: Signal[],
-    range: ResolvedScoredRange,
-): Signal[] {
-    let timeIndex: Map<string, number> | null = null;
-    const filtered: Signal[] = [];
-    for (const signal of signals) {
-        const originIndex = Number.isFinite(signal.barIndex)
-            ? Math.trunc(signal.barIndex as number)
-            : getTimeIndexValue(timeIndex ??= getTimeIndex(data), signal.time);
-        if (originIndex === undefined || originIndex < range.startIndex) continue;
-        filtered.push(signal);
-    }
-    return filtered;
-}
-
-/** Drop prepared signals whose RESOLVED execution bar falls after the range end. */
-function filterPreparedSignalsByScoredRangeEnd(
-    preparedSignals: Signal[],
-    range: ResolvedScoredRange,
-): Signal[] {
-    return preparedSignals.filter((signal) => {
-        const executionIndex = Number.isFinite(signal.barIndex)
-            ? Math.trunc(signal.barIndex as number)
-            : Number.POSITIVE_INFINITY;
-        return executionIndex <= range.endIndex;
-    });
-}
-
 function hasActiveSignalRegimeFilters(config: NormalizedSettings): boolean {
     return config.marketMode !== 'all'
         || config.trendEmaPeriod > 0
@@ -565,7 +489,6 @@ function getSinglePositionFinderFastPathBlockers(
 ): string[] {
     const blockers: string[] = [];
     if (options?.tradeGate) blockers.push("trade_gate");
-    if (options?.scoredRange) blockers.push("scored_range");
     if (options?.omitEquityCurve !== true) blockers.push("equity_curve_required");
     if (config.maxOpenTrades !== 1) blockers.push("max_open_trades");
     if (tradeDirection !== "long" && tradeDirection !== "short" && tradeDirection !== "both") blockers.push(`trade_direction_${tradeDirection}`);
@@ -1784,9 +1707,6 @@ export function runBacktestCompact(
     const equityOut = optionsOrEquityOut instanceof Float64Array ? optionsOrEquityOut : undefined;
     const options = optionsOrEquityOut instanceof Float64Array ? maybeOptions : optionsOrEquityOut;
     const runStartedAt = performance.now();
-    if (options?.scoredRange) {
-        throw new Error("Scored-range execution requires the standard engine (useCompactBacktest: false).");
-    }
     const diagnostics = options?.collectDiagnostics
         ? createBacktestDiagnostics(data.length, signals.length)
         : undefined;
@@ -2476,9 +2396,6 @@ export function runBacktest(
 
     const tradeDirection = normalizeTradeDirection(settings);
     if (tradeDirection === 'combined') {
-        if (options?.scoredRange) {
-            throw new Error("Scored-range replay does not support combined direction execution.");
-        }
         if (diagnostics) {
             diagnostics.fastPath = {
                 used: false,
@@ -2500,13 +2417,7 @@ export function runBacktest(
     }
 
     const config = normalizeEngineSettings(settings, options);
-    const scored = options?.scoredRange
-        ? resolveScoredRangeIndices(data, options.scoredRange)
-        : null;
-    const scoredSignals = scored
-        ? filterSignalsByScoredRangeOrigin(data, signals, scored)
-        : signals;
-    const omitEquityCurve = !scored && options?.omitEquityCurve === true && options?.includeSharpeRatio === false;
+    const omitEquityCurve = options?.omitEquityCurve === true && options?.includeSharpeRatio === false;
     const learningState: PathExitLearningState = {
         hazardSamples: new Map(),
         barrierSamples: new Map(),
@@ -2522,19 +2433,16 @@ export function runBacktest(
     const fastPathBlockers = getSinglePositionFinderFastPathBlockers(config, tradeDirection, sizingMode, options);
     const signalPreparationStartedAt = performance.now();
     const indexedSignals = fastPathBlockers.length === 0
-        ? prepareIndexedFinderSignals(data, scoredSignals, config, tradeDirection)
+        ? prepareIndexedFinderSignals(data, signals, config, tradeDirection)
         : null;
     const preparedSignals = indexedSignals
-        ? scoredSignals
-        : prepareSignals(data, scoredSignals, config, indicatorSeries, tradeDirection);
-    const rangeFilteredPreparedSignals = scored
-        ? filterPreparedSignalsByScoredRangeEnd(preparedSignals, scored)
-        : preparedSignals;
-    diagnostics && (diagnostics.counts.preparedSignals = indexedSignals?.count ?? rangeFilteredPreparedSignals.length);
+        ? signals
+        : prepareSignals(data, signals, config, indicatorSeries, tradeDirection);
+    diagnostics && (diagnostics.counts.preparedSignals = indexedSignals?.count ?? preparedSignals.length);
     addBacktestDiagnosticElapsed(diagnostics, "signalPreparation", signalPreparationStartedAt);
     const signalIndexingStartedAt = performance.now();
     const preparedSignalBarIndexes = indexedSignals?.barIndexes
-        ?? resolvePreparedSignalBarIndexes(data, rangeFilteredPreparedSignals);
+        ?? resolvePreparedSignalBarIndexes(data, preparedSignals);
     addBacktestDiagnosticElapsed(diagnostics, "signalIndexing", signalIndexingStartedAt);
 
     if (diagnostics) {
@@ -2557,7 +2465,7 @@ export function runBacktest(
         };
         const result = runSinglePositionFinderFastPath({
             data,
-            preparedSignals: rangeFilteredPreparedSignals,
+            preparedSignals,
             preparedSignalBarIndexes,
             indexedSignals: indexedSignals ?? undefined,
             initialCapital,
@@ -2808,14 +2716,9 @@ export function runBacktest(
     };
 
     const tradeSimulationStartedAt = performance.now();
-    // Scored-range bounds: the simulation loop starts at the first scored bar
-    // with a fresh flat account and ends at the scored end bar (inclusive).
-    // Without a range these are the ordinary full-timeline bounds.
-    const loopStart = scored ? scored.startIndex : 0;
-    const loopEnd = scored ? scored.endIndex : data.length - 1;
     let barIterations = 0;
     let signalScanIterations = 0;
-    for (let i = loopStart; i <= loopEnd; i++) {
+    for (let i = 0; i < data.length; i++) {
         throwIfBacktestEngineCancelled(options);
         barIterations += 1;
         assertBacktestLoopBound(barIterations, data.length + 1, "standard bar scan");
@@ -2860,12 +2763,12 @@ export function runBacktest(
                 }
             }
 
-            while (signalIdx < rangeFilteredPreparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
+            while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
                 signalScanIterations += 1;
-                assertBacktestLoopBound(signalScanIterations, rangeFilteredPreparedSignals.length + 1, "standard signal scan");
+                assertBacktestLoopBound(signalScanIterations, preparedSignals.length + 1, "standard signal scan");
                 throwIfBacktestEngineCancelled(options);
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
-                const signal = rangeFilteredPreparedSignals[signalIdx++];
+                const signal = preparedSignals[signalIdx++];
                 if (signalBarIndex !== i) {
                     continue;
                 }
@@ -2977,12 +2880,12 @@ export function runBacktest(
         }
 
         if (config.executionModel !== 'next_open') {
-            while (signalIdx < rangeFilteredPreparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
+            while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
                 signalScanIterations += 1;
-                assertBacktestLoopBound(signalScanIterations, rangeFilteredPreparedSignals.length + 1, "standard signal scan");
+                assertBacktestLoopBound(signalScanIterations, preparedSignals.length + 1, "standard signal scan");
                 throwIfBacktestEngineCancelled(options);
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
-                const signal = rangeFilteredPreparedSignals[signalIdx++];
+                const signal = preparedSignals[signalIdx++];
                 if (signalBarIndex === i) {
                     const forcedExitReason = getForcedPolymarketSignalExitReason(signal);
                     const isExitOnly = signal.exitOnly === true;
@@ -3084,24 +2987,17 @@ export function runBacktest(
 
     const forcedCloseStartedAt = performance.now();
     if (positions.length > 0 && data.length > 0) {
-        // Scored-range terminal liquidation happens at the scored END bar's
-        // close (not the last data bar) with direction-correct exit slippage
-        // plus commission. Ordinary end-of-data behavior (raw close) is kept
-        // when no range is present.
-        const candle = data[loopEnd];
+        const candle = data[data.length - 1];
         let forcedCloseIterations = 0;
-        const forcedCloseBound = data.length + rangeFilteredPreparedSignals.length + 1;
+        const forcedCloseBound = data.length + preparedSignals.length + 1;
         while (positions.length > 0) {
             forcedCloseIterations += 1;
             assertBacktestLoopBound(forcedCloseIterations, forcedCloseBound, "standard forced-close");
             throwIfBacktestEngineCancelled(options);
             const pos = positions[0];
-            const terminalExitPrice = scored
-                ? applySlippage(candle.close, exitSideForDirection(pos.direction), slippageRate)
-                : candle.close;
-            const d = calculateTradeExitDetails(pos, terminalExitPrice, pos.size, commissionRate);
+            const d = calculateTradeExitDetails(pos, candle.close, pos.size, commissionRate);
             capital += d.rawPnl - d.commission;
-            const eodTrade: Trade = { id: ++tradeId, type: pos.direction, entryTime: pos.entryTime, entryPrice: pos.entryPrice, exitTime: candle.time, exitPrice: terminalExitPrice, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: 'end_of_data', stopLossPrice: pos.stopLossPrice, takeProfitPrice: pos.takeProfitPrice };
+            const eodTrade: Trade = { id: ++tradeId, type: pos.direction, entryTime: pos.entryTime, entryPrice: pos.entryPrice, exitTime: candle.time, exitPrice: candle.close, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: 'end_of_data', stopLossPrice: pos.stopLossPrice, takeProfitPrice: pos.takeProfitPrice };
             trades.push(eodTrade);
             if (diagnostics) {
                 diagnostics.counts.tradesClosed++;

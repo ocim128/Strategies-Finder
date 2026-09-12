@@ -190,23 +190,6 @@ function compactStrategyQualityResult(result: FinderStrategyQualityResult): Find
 
 export function compactFinderLatestResults(results: FinderLatestResults): FinderLatestResults {
     if (results.scope === "symbol_universe") {
-        // Monthly Rank Replay snapshots keep the experiment metadata + summary
-        // rows only. Per-checkpoint detail (selections + forward outcomes with
-        // per-symbol rows) is recovered from the server status snapshot after
-        // a reload; when that server state is gone the UI labels detail
-        // unavailable instead of pretending the full report persisted.
-        if (results.mode === "monthly_rank_replay") {
-            return {
-                scope: "symbol_universe",
-                mode: "monthly_rank_replay",
-                report: {
-                    ...results.report,
-                    selections: [],
-                    forwardOutcomes: [],
-                    detailUnavailable: true,
-                },
-            };
-        }
         return {
             scope: "symbol_universe",
             results: results.results
@@ -245,7 +228,7 @@ export function normalizeFinderLatestResultsSnapshot(value: unknown): FinderLate
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         return null;
     }
-    const candidate = value as Partial<FinderLatestResults> & { mode?: unknown; report?: unknown };
+    const candidate = value as Partial<FinderLatestResults>;
     if (
         candidate.scope !== "current_chart"
         && candidate.scope !== "symbol_universe"
@@ -254,28 +237,8 @@ export function normalizeFinderLatestResultsSnapshot(value: unknown): FinderLate
     ) {
         return null;
     }
-    // Legacy snapshots (and anything malformed) restore as ordinary mode.
-    if (candidate.scope === "symbol_universe" && candidate.mode === "monthly_rank_replay") {
-        const report = candidate.report;
-        if (!report || typeof report !== "object" || Array.isArray(report)) {
-            return null;
-        }
-        const compacted = compactFinderLatestResults({
-            scope: "symbol_universe",
-            mode: "monthly_rank_replay",
-            report: report as Extract<
-                FinderLatestResults,
-                { scope: "symbol_universe"; mode: "monthly_rank_replay" }
-            >["report"],
-        });
-        return compacted;
-    }
-    if (!Array.isArray((candidate as { results?: unknown }).results)) {
+    if (!Array.isArray(candidate.results)) {
         return null;
     }
-    // The replay variant was excluded above; the remaining union is the
-    // ordinary result shapes compactFinderLatestResults switches on.
-    return compactFinderLatestResults(
-        candidate as Exclude<FinderLatestResults, { scope: 'symbol_universe'; mode: 'monthly_rank_replay' }>,
-    );
+    return compactFinderLatestResults(candidate as FinderLatestResults);
 }

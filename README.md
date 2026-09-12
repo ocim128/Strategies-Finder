@@ -84,7 +84,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Backtest analysis helpers: `lib/backtest-result-analysis.ts`
 
 ### Research tools
-- Finder: `lib/finder-manager.ts`, `lib/finder/*` (server-side Symbol Universe in `lib/finder/server/*`; see [docs/finder-server-side.md](docs/finder-server-side.md)). Symbol Universe includes a **Monthly Rank Replay** submode: at each monthly UTC checkpoint it re-selects rank #1 for every historical Universe sort using only data closed then, and reports each sort's forward H-bar outcomes (`lib/finder/finder-monthly-rank-replay*.ts`).
+- Finder: `lib/finder-manager.ts`, `lib/finder/*` (server-side Symbol Universe in `lib/finder/server/*`; see [docs/finder-server-side.md](docs/finder-server-side.md))
 - Walk Forward: `lib/walk-forward-service.ts`
 - Monte Carlo: `lib/monte-carlo-service.ts`, `lib/strategies/monte-carlo/*`
 - Execution Lab: `lib/execution-lab/*`

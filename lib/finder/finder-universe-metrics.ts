@@ -83,7 +83,7 @@ function computeOosPassReliability(symbols: readonly FinderUniverseSymbolResult[
     };
 }
 
-export function isAscendingUniverseMetric(metric: FinderUniverseMetric): boolean {
+function isAscendingUniverseMetric(metric: FinderUniverseMetric): boolean {
     return metric === "worstMaxDrawdownPercent" || metric === "medianMaxDrawdownPercent";
 }
 

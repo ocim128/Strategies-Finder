@@ -395,7 +395,7 @@ function passesUniverseFiltersFromCounts(
  * `executeBacktest`, plus the sampled exit-strategy identity (when Exit Strategy
  * Override is active) so the survivor row can show which lib was used.
  */
-export interface UniverseCandidatePlan {
+interface UniverseCandidatePlan {
     params: StrategyParams;
     exitStrategyKey?: string;
     exitStrategyName?: string;
@@ -412,11 +412,8 @@ export interface UniverseCandidatePlan {
  * is paired with one randomly-sampled exit strategy lib + one of its param
  * sets, merged via the `_exit__` prefix. The exit half is split back out so
  * `executeBacktest` receives clean entry params and a separate exit descriptor.
- *
- * Exported for Monthly Rank Replay, which freezes ONE seeded plan pool per
- * run (across all selected strategies) instead of reusing the ordinary loop.
  */
-export function buildUniverseCandidatePlans(args: {
+function buildUniverseCandidatePlans(args: {
     selectedStrategy: FinderSelectedStrategy;
     exitStrategyCandidates: readonly FinderSelectedStrategy[];
     settings: BacktestSettings;

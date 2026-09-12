@@ -41,12 +41,6 @@ import type {
     FinderUniverseSymbolResult,
 } from "../../types/finder";
 import type { StrategyParams } from "../../types/strategies";
-import type {
-    MonthlyRankReplayCheckpointRecord,
-    MonthlyRankReplayForwardOutcome,
-    MonthlyRankReplayReport,
-    MonthlyRankReplaySelection,
-} from "../finder-monthly-rank-replay";
 
 // ---------------------------------------------------------------------------
 // Job phase + run identity
@@ -68,7 +62,7 @@ export type FinderJobPhase = "loading" | "evaluating" | "oos" | "done" | "cancel
  * wire-level field so the status snapshot + terminal payload can distinguish
  * which terminal slice they carry.
  */
-export type FinderJobKind = "symbol_universe" | "asset_opportunity" | "asset_opportunity_batch" | "monthly_rank_replay";
+export type FinderJobKind = "symbol_universe" | "asset_opportunity" | "asset_opportunity_batch";
 
 // ---------------------------------------------------------------------------
 // Stream events (NDJSON, one JSON object per line)
@@ -306,54 +300,6 @@ export interface FinderBatchStatus {
 }
 
 /**
- * Monthly Rank Replay job stream events. The replay keeps the same job
- * lifecycle (start / progress / terminal) but streams scalar per-checkpoint
- * records instead of survivor candidates. The terminal `replay_done` carries
- * the authoritative full report — every field is scalar or a scalar array
- * (no OHLCV / signals / trades).
- */
-export type FinderReplayStreamEvent =
-    | {
-        type: "replay_start";
-        runId: string;
-        interval: string;
-        totalSymbols: number;
-        strategyKeys: string[];
-        replayedSortKeys: string[];
-        excludedSortKeys: string[];
-    }
-    | {
-        type: "replay_progress";
-        runId: string;
-        percent: number;
-        text: string;
-        status: string;
-        phase: FinderJobPhase;
-        /** 1-based ordinal of the checkpoint in flight (0 while loading). */
-        checkpointIndex: number;
-        totalCheckpoints: number;
-    }
-    | {
-        type: "replay_checkpoint";
-        runId: string;
-        /** Scalar checkpoint record + its outcomes/selections (no arrays of bars/trades). */
-        checkpoint: MonthlyRankReplayCheckpointRecord;
-        outcomes: MonthlyRankReplayForwardOutcome[];
-        selections: MonthlyRankReplaySelection[];
-    }
-    | {
-        type: "replay_done";
-        ok: boolean;
-        cancelled: boolean;
-        runId: string;
-        interval: string;
-        summary: string;
-        /** Authoritative full replay report (scalar-only). */
-        report: MonthlyRankReplayReport;
-    }
-    | { type: "replay_fatal"; runId: string; error: string };
-
-/**
  * Union of every event the Finder server can emit. The browser's
  * `consumeNdjsonStream` dispatches by the `type` field; the asset-opportunity
  * events share the same wire shape as the universe events but with distinct
@@ -362,8 +308,7 @@ export type FinderReplayStreamEvent =
 export type AnyFinderStreamEvent =
     | FinderStreamEvent
     | FinderAssetOpportunityStreamEvent
-    | FinderAssetOpportunityBatchStreamEvent
-    | FinderReplayStreamEvent;
+    | FinderAssetOpportunityBatchStreamEvent;
 
 // ---------------------------------------------------------------------------
 // Status snapshot (GET /api/finder/status?runId=...)
@@ -419,14 +364,6 @@ export type FinderRunStatusSnapshot = {
     terminalCandidates: FinderUniverseCandidate[] | null;
     /** Present and authoritative only on the terminal asset_opportunity snapshot. */
     terminalAssets: FinderAssetOpportunityResult[] | null;
-    /**
-     * Present and authoritative only on the terminal monthly_rank_replay
-     * snapshot. The full report (scalar-only) replaces the universe candidate
-     * slice; replay records never appear in `terminalCandidates`.
-     */
-    terminalReplay: MonthlyRankReplayReport | null;
-    /** Completed checkpoint count while a replay is running (poll summary). */
-    replayCompletedCheckpoints?: number;
     summary: string | null;
     /** Terminal fatal error; null for running, done, and cancelled jobs. */
     error: string | null;
@@ -547,72 +484,6 @@ export function assertCandidateIsScalar(candidate: FinderUniverseCandidate): voi
             }
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Monthly Rank Replay scalar contract enforcement
-// ---------------------------------------------------------------------------
-
-/**
- * Assertion that a replay checkpoint payload carries no forbidden array
- * fields. The replay record shape is scalar-by-construction (per-symbol rows
- * hold numbers and status strings only); this guard keeps a future field from
- * shipping OHLCV / trade arrays over the wire, mirroring
- * {@link assertCandidateIsScalar}.
- */
-export function assertReplayCheckpointIsScalar(args: {
-    checkpoint: MonthlyRankReplayCheckpointRecord;
-    outcomes: MonthlyRankReplayForwardOutcome[];
-    selections: MonthlyRankReplaySelection[];
-}): void {
-    const checkObject = (value: unknown, label: string): void => {
-        if (!value || typeof value !== "object") return;
-        for (const key of FINDER_CANDIDATE_FORBIDDEN_ARRAY_FIELDS) {
-            if (key in (value as Record<string, unknown>)) {
-                throw new Error(
-                    `Monthly Rank Replay ${label} carries forbidden array field "${key}" on the wire; ` +
-                    "the server must strip it before streaming.",
-                );
-            }
-        }
-    };
-    checkObject(args.checkpoint, "checkpoint record");
-    for (const selection of args.selections) checkObject(selection, "selection record");
-    for (const outcome of args.outcomes) {
-        checkObject(outcome, "forward outcome");
-        for (const symbol of outcome.symbols) checkObject(symbol, "symbol outcome");
-    }
-}
-
-/**
- * Assertion that a FULL replay report (terminal `replay_done` payload and
- * `/status` `terminalReplay`) carries no forbidden heavy-array fields on any
- * of its records. Mirrors the terminal candidate-slice assertion on the
- * universe path: the report is scalar-by-construction (per-symbol outcome
- * rows hold numbers, status strings, and ISO labels only), and this guard
- * keeps a future field from shipping OHLCV / trades / equity arrays.
- */
-export function assertReplayReportIsScalar(report: MonthlyRankReplayReport): void {
-    const checkObject = (value: unknown, label: string): void => {
-        if (!value || typeof value !== "object") return;
-        for (const key of FINDER_CANDIDATE_FORBIDDEN_ARRAY_FIELDS) {
-            if (key in (value as Record<string, unknown>)) {
-                throw new Error(
-                    `Monthly Rank Replay report ${label} carries forbidden array field "${key}" on the wire; ` +
-                    "the server must strip it before transport.",
-                );
-            }
-        }
-    };
-    checkObject(report.experiment, "experiment");
-    for (const checkpoint of report.checkpoints) checkObject(checkpoint, "checkpoint record");
-    for (const symbol of report.symbolCoverage) checkObject(symbol, "symbol coverage");
-    for (const selection of report.selections) checkObject(selection, "selection record");
-    for (const outcome of report.forwardOutcomes) {
-        checkObject(outcome, "forward outcome");
-        for (const symbol of outcome.symbols) checkObject(symbol, "symbol outcome");
-    }
-    for (const summary of report.sortSummaries) checkObject(summary, "sort summary");
 }
 
 // ---------------------------------------------------------------------------

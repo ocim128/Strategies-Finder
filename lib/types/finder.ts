@@ -75,21 +75,6 @@ export interface FinderUniverseOptions {
 }
 
 /**
- * Monthly Rank Replay submode options (Symbol Universe only). Presence on
- * `FinderOptions` switches the universe run into replay; absence means
- * ordinary Universe. Validated by `validateMonthlyRankReplayOptions`
- * (lib/finder/finder-monthly-rank-replay.ts).
- */
-export interface FinderMonthlyRankReplayOptions {
-    /** First scheduled checkpoint is January 1 of this year (UTC). */
-    fromYear: number;
-    /** Trailing scored historical bars per symbol at each checkpoint. */
-    evalWindowBars: number;
-    /** Forward scored bars per symbol for each frozen winner. */
-    forwardBars: number;
-}
-
-/**
  * Asset Opportunity scope options. Drives the per-asset fresh-entry search.
  *
  * - `symbols`: asset list to search independently.
@@ -173,11 +158,6 @@ export interface FinderOptions {
      */
     oosValidationEnabled?: boolean;
     universe?: FinderUniverseOptions;
-    /**
-     * Monthly Rank Replay submode. Honored only when `scope === 'symbol_universe'`;
-     * validated by the runner/plugin before any work starts.
-     */
-    monthlyRankReplay?: FinderMonthlyRankReplayOptions;
     /**
      * Asset Opportunity scope options. Honored only when `scope === 'asset_opportunity'`.
      */
@@ -578,16 +558,10 @@ export interface FinderStrategyQualityResult {
 }
 
 export type FinderLatestResults =
-    | { scope: 'current_chart'; mode?: undefined; results: FinderResult[] }
-    | { scope: 'symbol_universe'; mode?: undefined; results: FinderUniverseCandidate[] }
-    | {
-        scope: 'symbol_universe';
-        mode: 'monthly_rank_replay';
-        /** Full replay report. Detail may be summarized after a reload (see recovery). */
-        report: import('../finder/finder-monthly-rank-replay').MonthlyRankReplayReport;
-      }
-    | { scope: 'asset_opportunity'; mode?: undefined; results: FinderAssetOpportunityResult[] }
-    | { scope: 'strategy_quality'; mode?: undefined; results: FinderStrategyQualityResult[] };
+    | { scope: 'current_chart'; results: FinderResult[] }
+    | { scope: 'symbol_universe'; results: FinderUniverseCandidate[] }
+    | { scope: 'asset_opportunity'; results: FinderAssetOpportunityResult[] }
+    | { scope: 'strategy_quality'; results: FinderStrategyQualityResult[] };
 
 export interface FinderRandomBenchmark {
     pipeline: 'standard' | 'rust_native' | 'ts_funnel' | 'rust_funnel';
