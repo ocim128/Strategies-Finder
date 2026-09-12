@@ -552,6 +552,9 @@ export interface OpenScoreUsdTarget {
     data: OHLCVData[];
 }
 
+/** Cap-tilt weighting for OPEN_SCORE USD (docs/open-score-cap-tilt.md). */
+export type OpenScoreUsdCapTiltWeight = "off" | "smallBase2x" | "largeBase2x";
+
 export interface RunOpenScoreUsdReplayOptions {
     /** Required in v1: positive bar horizons. Must be non-empty. */
     horizons: number[];
@@ -592,6 +595,19 @@ export interface RunOpenScoreUsdReplayOptions {
     onPhase?: (phase: "scan" | "events" | "targets" | "outcomes" | "aggregate", detail: string, completed: number, total: number) => void;
     /** Polled between bounded chunks; return true to stop early (cancellation). */
     shouldStop?: () => boolean;
+    /**
+     * Cap-tilt weighting (docs/open-score-cap-tilt.md): the base leg of LONG
+     * trades gets entry delta +2 (instead of +1) when the entry-time market
+     * cap matches the tilt condition. Absent = off. Set WITHOUT
+     * `lookupMarketCap` is defensively treated as off (the route always
+     * passes both or neither).
+     */
+    capTiltWeight?: "smallBase2x" | "largeBase2x";
+    /**
+     * Injected market-cap lookup (USD, as-of unix seconds). `null` result =
+     * unknown cap for that symbol/date -> tilt weight falls back to 1.
+     */
+    lookupMarketCap?: (symbol: string, timeSec: number) => number | null;
 }
 
 // ============================================================================
@@ -1020,6 +1036,11 @@ export async function runOpenScoreUsdReplay(
     const startedAt = Date.now();
     const shouldStop = options.shouldStop ?? (() => false);
     const onPhase = options.onPhase ?? (() => undefined);
+    // Cap-tilt weighting. Active only when BOTH the weight and the injected
+    // lookup are present (defensive: the route always passes both or neither).
+    const capTiltWeight = options.capTiltWeight ?? null;
+    const lookupMarketCap = options.lookupMarketCap ?? null;
+    const capTiltActive = capTiltWeight !== null && lookupMarketCap !== null;
     const slippageRate = options.slippageRate ?? 0;
     const commissionRate = options.commissionRate ?? 0;
     // Phase 0 freeze: block count and bootstrap samples default to the frozen
@@ -1116,15 +1137,32 @@ export async function runOpenScoreUsdReplay(
             if (entrySec === null) continue;
             const sign = trade.type === "long" ? 1 : trade.type === "short" ? -1 : 0;
             if (sign === 0) continue;
+            // Cap-tilt weight (docs/open-score-cap-tilt.md): classified ONCE
+            // per LONG trade from the entry-time caps and stamped on BOTH the
+            // entry and exit base deltas, so rawScore returns exactly to its
+            // prior value after every round-trip (re-classifying at exit would
+            // drift every accumulator). Quote legs and short trades stay ±1;
+            // equal caps or any unknown cap weight 1.
+            let baseWeight = 1;
+            if (sign === 1 && capTiltActive) {
+                const capBase = lookupMarketCap(artifact.baseSymbol?.trim() || base, entrySec);
+                const capQuote = qi !== null
+                    ? lookupMarketCap(artifact.quoteSymbol?.trim() || quote, entrySec)
+                    : null;
+                if (capBase !== null && capQuote !== null) {
+                    if (capTiltWeight === "smallBase2x" && capBase < capQuote) baseWeight = 2;
+                    else if (capTiltWeight === "largeBase2x" && capBase > capQuote) baseWeight = 2;
+                }
+            }
             // Entry deltas (long: base+1/quote-1; short: base-1/quote+1).
-            stream.push({ timeSec: entrySec, assetIndex: bi, delta: sign, isEntry: 1 });
+            stream.push({ timeSec: entrySec, assetIndex: bi, delta: sign * baseWeight, isEntry: 1 });
             if (qi !== null) {
                 stream.push({ timeSec: entrySec, assetIndex: qi, delta: -sign, isEntry: 1 });
             }
             // Exit deltas are the exact inverse. end_of_data / missing exit time
             // means the position is still open at the artifact end -> no exit delta.
             if (exitSec !== null && trade.exitReason !== "end_of_data") {
-                stream.push({ timeSec: exitSec, assetIndex: bi, delta: -sign, isEntry: 0 });
+                stream.push({ timeSec: exitSec, assetIndex: bi, delta: -sign * baseWeight, isEntry: 0 });
                 if (qi !== null) {
                     stream.push({ timeSec: exitSec, assetIndex: qi, delta: sign, isEntry: 0 });
                 }
@@ -3147,6 +3185,9 @@ export async function runOpenScoreUsdReplay(
         sampleFromSec: options.sampleFromSec ?? null,
         sampleToSec: options.sampleToSec ?? null,
         slippageRate, commissionRate,
+        // Echo the EFFECTIVE weighting: a weight set without the lookup is
+        // defensively off, and the report must not claim otherwise.
+        capTilt: capTiltWeight !== null && lookupMarketCap !== null ? capTiltWeight : "off",
     });
 
     return {
@@ -3341,6 +3382,7 @@ function buildReportLines(args: {
     degree: DegreeSummary; warnings: string[]; startedAt: number; horizonsList: number[];
     interval: string | null; sampleFromSec: number | null; sampleToSec: number | null;
     slippageRate: number; commissionRate: number;
+    capTilt: OpenScoreUsdCapTiltWeight;
 }): string[] {
     const lines: string[] = [];
     const status = args.complete ? "DATA_COMPLETE" : "DATA_INCOMPLETE";
@@ -3366,7 +3408,12 @@ function buildReportLines(args: {
         `peakCapital=${fmtUsd(summary.peakCapital)} return/peak=${fmtPct(summary.returnOnPeakCapital)} ` +
         `skippedTie=${summary.skippedTies} skippedActive=${summary.skippedActiveAsset}`;
     lines.push(`OPEN_SCORE USD | ${status} | pairs=${args.pairs} assets=${args.assets} events=${args.totalEvents} comparable=${args.candidateEvents} eligible=${args.eligibleEvents}`);
-    lines.push(`config | interval=${args.interval ?? "n/a"} window=${args.sampleFromSec === null ? "start" : new Date(args.sampleFromSec * 1000).toISOString().slice(0, 10)}..${args.sampleToSec === null ? "end" : new Date(args.sampleToSec * 1000).toISOString().slice(0, 10)} horizons=[${args.horizonsList.join(",")}] slippageRate=${args.slippageRate} commissionRate=${args.commissionRate}`);
+    lines.push(`config | interval=${args.interval ?? "n/a"} window=${args.sampleFromSec === null ? "start" : new Date(args.sampleFromSec * 1000).toISOString().slice(0, 10)}..${args.sampleToSec === null ? "end" : new Date(args.sampleToSec * 1000).toISOString().slice(0, 10)} horizons=[${args.horizonsList.join(",")}] slippageRate=${args.slippageRate} commissionRate=${args.commissionRate} capTilt=${args.capTilt}`);
+    if (args.capTilt === "smallBase2x") {
+        lines.push("cap tilt | base leg of long pairs x2 when base cap < quote cap at entry; unknown caps weight 1; same weight applied at exit (round-trip neutral)");
+    } else if (args.capTilt === "largeBase2x") {
+        lines.push("cap tilt | base leg of long pairs x2 when base cap > quote cap at entry; unknown caps weight 1; same weight applied at exit (round-trip neutral)");
+    }
     lines.push(`retained pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
     lines.push("controls | TOP_MEAN=raw/activePairs TOP_RAW_6BAR=signed score changes in current+prior 5 bars TOP_MEAN_6BAR=TOP_RAW_6BAR/activePairs TOP_MEAN_TREND=target EMA200 breadth>50%, then prior close>EMA200, TOP_MEAN, activePairs tie-break REGIME_MEAN=TOP_MEAN_TREND long above 50% breadth, BOTTOM_MEAN short below MAX_ACTIVE=most open pairs MAX_ACTIVE_REVERSION=most open pairs among negative-score assets, shorted vs USD MAX_SUBMITTED=most submitted pairs MAX_RETAINED=most loaded artifacts");
     lines.push("TOP_MEAN_RAW_UNIQUE_V1 rule | TOP_MEAN tied set -> unique raw-score maximum; residual raw ties skipped; control=mean return of the TOP_MEAN tied set");

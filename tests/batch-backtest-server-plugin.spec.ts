@@ -1732,6 +1732,28 @@ describe("batch-backtest server plugin open-score-usd route-level authorization"
         expect(parsed.ok).to.equal(false);
         expect(String(parsed.error)).to.include("sampleFrom");
     });
+
+    it("rejects an unknown capTiltWeight with 400 before any run starts", async () => {
+        // docs/open-score-cap-tilt.md: a garbage capTiltWeight must be a 400,
+        // never a silent baseline run. The clean JSON 400 (pre-stream) also
+        // pins the audit-F6 ordering: client input validation runs before the
+        // owner/artifact guards.
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/open-score-usd");
+        expect(handler).to.not.equal(undefined);
+        const req = Readable.from([JSON.stringify({ capTiltWeight: "bogus", horizons: [12] })]) as any;
+        req.method = "POST";
+        req.url = "/api/batch-backtest/open-score-usd";
+        req.headers = { "content-type": "application/json", host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" };
+        req.socket = { remoteAddress: "127.0.0.1" };
+        const res = makeRouteResponse();
+        await handler!(req, res);
+        expect(res.statusCode).to.equal(400);
+        const parsed = JSON.parse(res.body);
+        expect(parsed.ok).to.equal(false);
+        expect(String(parsed.error)).to.include("capTiltWeight");
+        expect(String(parsed.error)).to.include("smallBase2x");
+    });
 });
 
 describe("batch-backtest server plugin processOpenScoreUsdReplay", () => {
@@ -1823,6 +1845,73 @@ describe("batch-backtest server plugin processOpenScoreUsdReplay", () => {
             }
             setAnalysisOwnerForTests(0);
             expect(hasStoredMineArtifacts()).to.equal(true);
+        } finally {
+            await releaseLastResults("test_end");
+        }
+    });
+
+    it("fatals when a capTiltWeight is requested but the marketcap dataset is missing", async () => {
+        // docs/open-score-cap-tilt.md: a weighting without cap data must fail
+        // loud with the actionable message — never silently run baseline. The
+        // marketcap dir is resolved from process.cwd() at call time, so the
+        // test points cwd at an empty temp dir instead of touching the real
+        // price-data tree.
+        const { fingerprint, interval } = await setupOnePairArtifacts();
+        const emptyDir = mkdtempSync(path.join(tmpdir(), "no-mktcap-"));
+        const previousCwd = process.cwd();
+        try {
+            process.chdir(emptyDir);
+            const analysisOwner = 9059;
+            setAnalysisOwnerForTests(analysisOwner);
+            const events: unknown[] = [];
+            await processOpenScoreUsdReplay(
+                fingerprint,
+                interval,
+                (e) => events.push(e),
+                analysisOwner,
+                [3],
+                null,
+                null,
+                () => Promise.resolve([]),
+                "smallBase2x",
+            );
+            setAnalysisOwnerForTests(0);
+            const first = events[0] as { type: string; error?: string };
+            expect(first.type).to.equal("fatal");
+            expect(first.error).to.match(/Download MarketCap in the IBKR Data tab first/);
+            expect(hasStoredMineArtifacts()).to.equal(true);
+        } finally {
+            process.chdir(previousCwd);
+            rmSync(emptyDir, { recursive: true, force: true });
+            await releaseLastResults("test_end");
+        }
+    });
+
+    it("runs baseline byte-identically when capTiltWeight is absent (existing callers compile unchanged)", async () => {
+        // Trailing optional parameter: the pre-existing call shape (8 args)
+        // must keep producing a normal done event with no cap-tilt echo.
+        const { fingerprint, interval } = await setupOnePairArtifacts();
+        try {
+            const analysisOwner = 9060;
+            setAnalysisOwnerForTests(analysisOwner);
+            const events: unknown[] = [];
+            const targetData = makeCandles([100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]);
+            await processOpenScoreUsdReplay(
+                fingerprint,
+                interval,
+                (e) => events.push(e),
+                analysisOwner,
+                [3],
+                null,
+                null,
+                () => Promise.resolve(targetData),
+            );
+            setAnalysisOwnerForTests(0);
+            const done = events[events.length - 1] as { type: string; ok: boolean; result?: { reportLines: string[] } };
+            expect(done.type).to.equal("done");
+            expect(done.ok).to.equal(true);
+            const report = (done.result?.reportLines ?? []).join("\n");
+            expect(report).to.include("capTilt=off");
         } finally {
             await releaseLastResults("test_end");
         }

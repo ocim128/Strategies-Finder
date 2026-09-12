@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../types/backtest";
@@ -40,6 +41,10 @@ import {
     type ReplayComparison,
 } from "./batch-open-score-usd-replay-engine";
 import { loadServerBatchDataset } from "./server-batch-data-loader";
+// Import hygiene (docs/open-score-cap-tilt.md): the ONLY import allowed from
+// lib/ibkr-data/ — the reader is a dependency-free leaf, safe for the
+// vite.config esbuild bundle. NEVER import ibkr-data-vite-plugin.ts here.
+import { loadMarketCapLookup } from "../ibkr-data/marketcap-series-reader";
 import {
     computeCurrentTopMeanSnapshot,
     type CurrentTopMeanResult,
@@ -89,6 +94,13 @@ export interface TopMeanCoordinatorRunRequest {
      */
     sampleFromSec?: number;
     sampleToSec?: number;
+    /**
+     * Cap-tilt weighting (docs/open-score-cap-tilt.md Phase 5) for the
+     * phase-3 OPEN_SCORE USD replay — both the full-range and the
+     * calendar-year passes. Absent = baseline. Requires the Download
+     * MarketCap dataset; a requested weighting without it fails the run.
+     */
+    capTiltWeight?: "smallBase2x" | "largeBase2x";
 }
 
 export interface TopMeanHorizonSummary {
@@ -378,6 +390,10 @@ export class TopMeanCoordinatorEngine {
         manifest.actualEngineMode = this.resolveActualEngineMode();
         manifest.engineUsage = { ...this.engineUsage };
         manifest.workerCount = resolveTopMeanWorkerCount(this._request.workerCount);
+        // Provenance: every manifest save (fresh run, resume, stop, failure)
+        // records the requested cap-tilt weighting so archived runs are
+        // self-describing.
+        manifest.capTiltWeight = this._request.capTiltWeight;
     }
 
     private async buildArchiveManifest(): Promise<TopMeanArchiveManifest> {
@@ -587,6 +603,32 @@ export class TopMeanCoordinatorEngine {
             this.updateManifestEngineTelemetry(manifest);
             saveManifest(manifest, this.baseDir);
             this.performanceDiagnostic.phases.preflightMs = performance.now() - preflightStartedAt;
+
+            // Cap-tilt weighting (docs/open-score-cap-tilt.md Phase 5): build
+            // the market-cap lookup ONCE per run, in preflight — before any
+            // pair backtests spend time. A requested weighting without the
+            // dataset fails the run loudly through the engine's existing
+            // run-failure path (manifest status "failed" + fatal NDJSON
+            // event) — never a silent baseline run. The dir uses the same
+            // process.cwd()-rooted convention as the Batch plugin.
+            let replayCapTiltLookup: ((symbol: string, timeSec: number) => number | null) | undefined;
+            if (this._request.capTiltWeight) {
+                const marketCapDir = resolve(process.cwd(), "price-data", "ibkr", "marketcap");
+                let csvFileCount = 0;
+                try {
+                    csvFileCount = readdirSync(marketCapDir).filter((name) => name.toLowerCase().endsWith(".csv")).length;
+                } catch {
+                    csvFileCount = 0;
+                }
+                if (csvFileCount === 0) {
+                    throw new Error(
+                        `capTiltWeight="${this._request.capTiltWeight}" requires the market-cap dataset, but ${marketCapDir} is missing or empty. Download MarketCap in the IBKR Data tab first.`,
+                    );
+                }
+                const marketCapLookup = loadMarketCapLookup(marketCapDir);
+                debugLogger.info("sp500_top_mean.cap_tilt", { weight: this._request.capTiltWeight, symbols: marketCapLookup.symbols });
+                replayCapTiltLookup = marketCapLookup.lookup;
+            }
 
             if (this.isStopped) {
                 this.emitInterrupted(emitNdjson);
@@ -800,6 +842,12 @@ export class TopMeanCoordinatorEngine {
                             }
                             : {}),
                         shouldStop: () => this.isStopped,
+                        // Cap-tilt weighting: both fields ride together or
+                        // neither; this closure covers the full-range pass
+                        // AND every calendar-year pass.
+                        ...(this._request.capTiltWeight && replayCapTiltLookup
+                            ? { capTiltWeight: this._request.capTiltWeight, lookupMarketCap: replayCapTiltLookup }
+                            : {}),
                         onPhase: (phase) => {
                             if (phase === activeReplayPhase) return;
                             finishActiveReplayPhase();

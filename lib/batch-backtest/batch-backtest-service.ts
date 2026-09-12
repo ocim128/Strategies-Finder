@@ -1954,6 +1954,10 @@ export class BatchBacktestService {
             // Optional decision-event date window (YYYY-MM-DD); blank = full side.
             const sampleFrom = dom.batchBacktestOpenScoreUsdFrom.value.trim();
             const sampleTo = dom.batchBacktestOpenScoreUsdTo.value.trim();
+            // Cap-tilt weighting (docs/open-score-cap-tilt.md). "off" is
+            // omitted from the body so baseline requests stay byte-identical
+            // to the pre-cap-tilt shape.
+            const capTiltWeight = dom.batchBacktestOpenScoreUsdCapTilt.value;
             // Slippage/commission are NOT request fields: the server derives
             // them from the retained Batch run's slippageBps / commission so
             // the OPEN_SCORE USD replay uses the same execution-cost
@@ -1971,6 +1975,9 @@ export class BatchBacktestService {
                     horizons,
                     ...(sampleFrom ? { sampleFrom } : {}),
                     ...(sampleTo ? { sampleTo } : {}),
+                    ...(capTiltWeight === "smallBase2x" || capTiltWeight === "largeBase2x"
+                        ? { capTiltWeight }
+                        : {}),
                 },
                 onResponse: () => this.reissueStopIfNeeded(),
                 handlers: {
@@ -2736,6 +2743,11 @@ export class BatchBacktestService {
         const sampleFrom = dom.batchBacktestSp500TopMeanFrom.value.trim();
         const sampleTo = dom.batchBacktestSp500TopMeanTo.value.trim();
         const saveArchiveLog = dom.batchBacktestSp500TopMeanArchiveToggle.checked;
+        // Coordinator-owned cap-tilt weighting (docs/open-score-cap-tilt.md
+        // Phase 5) — independent of the standalone OPEN_SCORE USD section's
+        // select. "off" is omitted from the payload so baseline requests stay
+        // byte-identical to the pre-Phase-5 shape.
+        const capTiltWeight = dom.batchBacktestSp500TopMeanCapTilt.value;
 
         const payload = {
             runId,
@@ -2752,6 +2764,9 @@ export class BatchBacktestService {
             useRustEnginePreference: shouldUseRustEngine(),
             ...(sampleFrom ? { sampleFrom } : {}),
             ...(sampleTo ? { sampleTo } : {}),
+            ...(capTiltWeight === "smallBase2x" || capTiltWeight === "largeBase2x"
+                ? { capTiltWeight }
+                : {}),
         };
         const diagnosticPayload = {
             ...payload,

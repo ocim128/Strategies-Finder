@@ -213,6 +213,10 @@ function computeArchiveFingerprint(
         capitalSettings: request.capitalSettings,
         interval: request.interval,
         useRustEnginePreference: request.useRustEnginePreference,
+        // Cap-tilt weighting changes the replay reports, so archives of
+        // differently-weighted runs must not collide. JSON.stringify omits
+        // the key when undefined, so baseline fingerprints are unchanged.
+        capTiltWeight: request.capTiltWeight,
         canonicalAssets,
     })).digest("hex");
 }

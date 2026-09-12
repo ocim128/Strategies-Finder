@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
     runOpenScoreUsdReplay,
     type OpenScoreUsdTarget,
+    type PoolSnapshotRecord,
 } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
 import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-artifact";
 import type { BacktestResult, OHLCVData, Time, Trade } from "../lib/types/strategies";
@@ -967,5 +968,238 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(horizon.regimeFloor.events).to.equal(1);
         expect(horizon.lossVeto.allMean).to.be.closeTo(-0.10, 1e-9);
         expect(horizon.regimeFloor.allMean).to.be.closeTo(-0.10, 1e-9);
+    });
+});
+
+// ============================================================================
+// Cap-tilt weighting (docs/open-score-cap-tilt.md)
+// ============================================================================
+
+/** Pair artifact carrying marked leg symbols, as the Batch server stores them. */
+function makePairWithSymbols(
+    base: string,
+    quote: string,
+    baseSymbol: string,
+    quoteSymbol: string,
+    trades: Trade[],
+): BatchSyntheticPairArtifact {
+    return { ...makePair(base, quote, trades), baseSymbol, quoteSymbol };
+}
+
+/**
+ * Round-trip fixture: pair AAA/BBB long enters at T0+1000 and exits at
+ * T0+3000; an UNRELATED pair CCC/DDD long enters (open, end_of_data) at
+ * T0+5000. Decision events exist at the two entry timestamps; because the
+ * second event's pair does not touch AAA/BBB, the snapshot at T0+5000
+ * observes AAA/BBB's rawScore AFTER the round trip exactly — the
+ * exact-return invariant.
+ */
+function capTiltFixture() {
+    const roundTrip = makePairWithSymbols("AAA", "BBB", "AAA•", "BBB•", [makeTrade("long", T0 + 1000, T0 + 3000)]);
+    const laterEntry = makePairWithSymbols("CCC", "DDD", "CCC•", "DDD•", [makeTrade("long", T0 + 5000, null)]);
+    const targets = [
+        makeTarget("AAA", 10, () => 100),
+        makeTarget("BBB", 10, () => 50),
+        makeTarget("CCC", 10, () => 100),
+        makeTarget("DDD", 10, () => 100),
+    ];
+    return { pairs: [roundTrip, laterEntry], targets };
+}
+
+function signedVotesByAsset(snapshots: PoolSnapshotRecord[], timeSec: number): Map<string, number> {
+    const byAsset = new Map<string, number>();
+    for (const row of snapshots) {
+        if (row.decisionTimeSec === timeSec) byAsset.set(row.asset, row.signedVotes);
+    }
+    return byAsset;
+}
+
+describe("batch-open-score-usd-replay-engine cap-tilt weighting", () => {
+    const T_ENTRY = T0 + 1000;
+    const T_AFTER_EXIT = T0 + 5000;
+
+    it("smallBase2x doubles the base entry delta when base cap < quote cap, and rawScore returns exactly to its prior value after the round trip", async () => {
+        const fixture = capTiltFixture();
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs),
+            () => fromArray(fixture.targets),
+            {
+                horizons: [2],
+                capTiltWeight: "smallBase2x",
+                lookupMarketCap: (symbol) => (symbol === "AAA•" ? 100 : symbol === "BBB•" ? 500 : null),
+                includePoolSnapshots: true,
+            },
+        );
+        const atEntry = signedVotesByAsset(result.poolSnapshots ?? [], T_ENTRY);
+        // Base leg weighted +2; quote leg stays -1.
+        expect(atEntry.get("AAA")).to.equal(2);
+        expect(atEntry.get("BBB")).to.equal(-1);
+        // Round-trip invariant: the exit applies the SAME weight (-2), so the
+        // rawScore at the next entry event is exactly its pre-trade value (0).
+        const afterRoundTrip = signedVotesByAsset(result.poolSnapshots ?? [], T_AFTER_EXIT);
+        expect(afterRoundTrip.get("AAA")).to.equal(0);
+        expect(afterRoundTrip.get("BBB")).to.equal(0);
+    });
+
+    it("largeBase2x mirrors: doubles the base entry delta when base cap > quote cap", async () => {
+        const fixture = capTiltFixture();
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs),
+            () => fromArray(fixture.targets),
+            {
+                horizons: [2],
+                capTiltWeight: "largeBase2x",
+                lookupMarketCap: (symbol) => (symbol === "AAA•" ? 500 : symbol === "BBB•" ? 100 : null),
+                includePoolSnapshots: true,
+            },
+        );
+        const atEntry = signedVotesByAsset(result.poolSnapshots ?? [], T_ENTRY);
+        expect(atEntry.get("AAA")).to.equal(2);
+        expect(atEntry.get("BBB")).to.equal(-1);
+        const afterRoundTrip = signedVotesByAsset(result.poolSnapshots ?? [], T_AFTER_EXIT);
+        expect(afterRoundTrip.get("AAA")).to.equal(0);
+        expect(afterRoundTrip.get("BBB")).to.equal(0);
+    });
+
+    it("falls back to weight 1 when either leg's cap is unknown", async () => {
+        const fixture = capTiltFixture();
+        const lookups = [
+            (symbol: string) => (symbol === "AAA•" ? 100 : null), // quote unknown
+            (symbol: string) => (symbol === "BBB•" ? 500 : null), // base unknown
+        ];
+        for (const lookup of lookups) {
+            const result = await runOpenScoreUsdReplay(
+                () => fromArray(fixture.pairs),
+                () => fromArray(fixture.targets),
+                { horizons: [2], capTiltWeight: "smallBase2x", lookupMarketCap: lookup, includePoolSnapshots: true },
+            );
+            const atEntry = signedVotesByAsset(result.poolSnapshots ?? [], T_ENTRY);
+            expect(atEntry.get("AAA")).to.equal(1);
+            expect(atEntry.get("BBB")).to.equal(-1);
+        }
+    });
+
+    it("leaves short pairs at ±1 even when the cap tilt would qualify", async () => {
+        const fixture = capTiltFixture();
+        const shortRoundTrip = makePairWithSymbols("AAA", "BBB", "AAA•", "BBB•", [makeTrade("short", T0 + 1000, T0 + 3000)]);
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray([shortRoundTrip, fixture.pairs[1]!]),
+            () => fromArray(capTiltFixture().targets),
+            {
+                horizons: [2],
+                capTiltWeight: "smallBase2x",
+                lookupMarketCap: (symbol) => (symbol === "AAA•" ? 100 : symbol === "BBB•" ? 500 : null),
+                includePoolSnapshots: true,
+            },
+        );
+        const atEntry = signedVotesByAsset(result.poolSnapshots ?? [], T_ENTRY);
+        expect(atEntry.get("AAA")).to.equal(-1);
+        expect(atEntry.get("BBB")).to.equal(1);
+        const afterRoundTrip = signedVotesByAsset(result.poolSnapshots ?? [], T_AFTER_EXIT);
+        expect(afterRoundTrip.get("AAA")).to.equal(0);
+        expect(afterRoundTrip.get("BBB")).to.equal(0);
+    });
+
+    it("keeps the quote leg at ±1 and treats equal caps as weight 1", async () => {
+        const fixture = capTiltFixture();
+        // Equal caps: neither tilt condition matches -> weight 1 everywhere.
+        const equal = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs),
+            () => fromArray(fixture.targets),
+            {
+                horizons: [2],
+                capTiltWeight: "smallBase2x",
+                lookupMarketCap: () => 100,
+                includePoolSnapshots: true,
+            },
+        );
+        const equalAtEntry = signedVotesByAsset(equal.poolSnapshots ?? [], T_ENTRY);
+        expect(equalAtEntry.get("AAA")).to.equal(1);
+        expect(equalAtEntry.get("BBB")).to.equal(-1);
+        const equalAfter = signedVotesByAsset(equal.poolSnapshots ?? [], T_AFTER_EXIT);
+        expect(equalAfter.get("AAA")).to.equal(0);
+        expect(equalAfter.get("BBB")).to.equal(0);
+
+        // Qualifying tilt: the quote is still exactly -1 at entry and returns
+        // to 0 after the round trip (+1 exit delta).
+        const tilted = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs),
+            () => fromArray(fixture.targets),
+            {
+                horizons: [2],
+                capTiltWeight: "smallBase2x",
+                lookupMarketCap: (symbol) => (symbol === "AAA•" ? 100 : 500),
+                includePoolSnapshots: true,
+            },
+        );
+        const tiltedAtEntry = signedVotesByAsset(tilted.poolSnapshots ?? [], T_ENTRY);
+        expect(tiltedAtEntry.get("AAA")).to.equal(2);
+        expect(tiltedAtEntry.get("BBB")).to.equal(-1);
+        const tiltedAfter = signedVotesByAsset(tilted.poolSnapshots ?? [], T_AFTER_EXIT);
+        expect(tiltedAfter.get("BBB")).to.equal(0);
+    });
+
+    it("falls back to the asset name when the artifact carries no leg symbols", async () => {
+        const trades = [makeTrade("long", T0 + 1000, null)];
+        const pair = makePair("AAA", "BBB", trades); // no baseSymbol/quoteSymbol
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray([pair]),
+            () => fromArray(capTiltFixture().targets),
+            {
+                horizons: [2],
+                capTiltWeight: "smallBase2x",
+                lookupMarketCap: (symbol) => (symbol === "AAA" ? 100 : symbol === "BBB" ? 500 : null),
+                includePoolSnapshots: true,
+            },
+        );
+        const atEntry = signedVotesByAsset(result.poolSnapshots ?? [], T0 + 1000);
+        expect(atEntry.get("AAA")).to.equal(2);
+        expect(atEntry.get("BBB")).to.equal(-1);
+    });
+
+    it("treats capTiltWeight set without a lookup as off (defensive)", async () => {
+        const fixture = capTiltFixture();
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs),
+            () => fromArray(fixture.targets),
+            { horizons: [2], capTiltWeight: "smallBase2x", includePoolSnapshots: true },
+        );
+        const atEntry = signedVotesByAsset(result.poolSnapshots ?? [], T_ENTRY);
+        expect(atEntry.get("AAA")).to.equal(1);
+        expect(atEntry.get("BBB")).to.equal(-1);
+        const report = result.reportLines.join("\n");
+        expect(report).to.include("capTilt=off");
+        expect(report).to.not.include("cap tilt |");
+    });
+
+    it("echoes the weighting in the config line and documents the semantics when active", async () => {
+        const fixture = capTiltFixture();
+        const off = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs),
+            () => fromArray(fixture.targets),
+            { horizons: [2] },
+        );
+        const offReport = off.reportLines.join("\n");
+        expect(offReport).to.include("capTilt=off");
+        expect(offReport).to.not.include("cap tilt |");
+
+        const cases = [
+            { weight: "smallBase2x", semanticFragment: "base cap < quote cap" },
+            { weight: "largeBase2x", semanticFragment: "base cap > quote cap" },
+        ] as const;
+        for (const { weight, semanticFragment } of cases) {
+            const tilted = await runOpenScoreUsdReplay(
+                () => fromArray(fixture.pairs),
+                () => fromArray(fixture.targets),
+                {
+                    horizons: [2],
+                    capTiltWeight: weight,
+                    lookupMarketCap: (symbol) => (symbol === "AAA•" ? 100 : 500),
+                },
+            );
+            const report = tilted.reportLines.join("\n");
+            expect(report).to.include(`capTilt=${weight}`);
+            expect(report).to.include(`cap tilt | base leg of long pairs x2 when ${semanticFragment} at entry`);
+        }
     });
 });

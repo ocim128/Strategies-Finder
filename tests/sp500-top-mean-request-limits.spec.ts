@@ -40,4 +40,32 @@ describe("validateTopMeanRequestLimits", () => {
         expect(validateTopMeanRequestLimits({ horizons: [12], maxPairs: 0 }).ok).to.equal(false);
         expect(validateTopMeanRequestLimits({ horizons: [12], maxPairs: TOP_MEAN_MAX_PAIRS_MAX + 1 }).ok).to.equal(false);
     });
+
+    it("normalizes absent/null/off capTiltWeight to baseline (field omitted)", () => {
+        for (const capTiltWeight of [undefined, null, "off"]) {
+            const result = validateTopMeanRequestLimits({ horizons: [12], capTiltWeight });
+            expect(result.ok).to.equal(true);
+            if (result.ok) {
+                expect(result.value.capTiltWeight, `capTiltWeight=${String(capTiltWeight)}`).to.equal(undefined);
+            }
+        }
+    });
+
+    it("accepts the active capTiltWeight enum values and rejects anything else", () => {
+        const small = validateTopMeanRequestLimits({ horizons: [12], capTiltWeight: "smallBase2x" });
+        expect(small.ok).to.equal(true);
+        if (small.ok) expect(small.value.capTiltWeight).to.equal("smallBase2x");
+        const large = validateTopMeanRequestLimits({ horizons: [12], capTiltWeight: "largeBase2x" });
+        expect(large.ok).to.equal(true);
+        if (large.ok) expect(large.value.capTiltWeight).to.equal("largeBase2x");
+
+        for (const bad of ["bogus", "OFF", "SmallBase2x", "", 5, true]) {
+            const result = validateTopMeanRequestLimits({ horizons: [12], capTiltWeight: bad });
+            expect(result.ok, `capTiltWeight=${String(bad)} must be rejected`).to.equal(false);
+            if (!result.ok) {
+                expect(result.error).to.include("capTiltWeight");
+                expect(result.error).to.include("smallBase2x");
+            }
+        }
+    });
 });

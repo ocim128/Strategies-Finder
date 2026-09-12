@@ -190,6 +190,7 @@ async function handleSp500TopMeanRunRequest(
         horizons: req.horizons,
         workerCount: req.workerCount,
         maxPairs: req.maxPairs,
+        capTiltWeight: req.capTiltWeight,
     });
     if (!limitCheck.ok) {
         throw new HttpStatusError(400, limitCheck.error);
@@ -200,6 +201,9 @@ async function handleSp500TopMeanRunRequest(
     }
     if (limitCheck.value.maxPairs !== undefined) {
         req.maxPairs = limitCheck.value.maxPairs;
+    }
+    if (limitCheck.value.capTiltWeight !== undefined) {
+        req.capTiltWeight = limitCheck.value.capTiltWeight;
     }
 
     const strategy = strategies[req.strategyKey];

@@ -25,10 +25,10 @@
 
 import type { Plugin } from "vite";
 import { deserialize, serialize } from "node:v8";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { debugLogger } from "../debug-logger";
 import { createDisconnectSafeStream, HttpStatusError, registerLocalJsonRoute, sendJson, type ViteHttpResponse } from "../vite-http-utils";
 import { FINDER_BATCH_MAX_BODY_BYTES } from "../server-request-limits";
@@ -73,7 +73,8 @@ import { buildBatchRunFingerprint, normalizeBatchSymbols, BATCH_MAX_SYMBOLS, val
 import { fnv1a64Hex, type MaxActiveResearchRegistrationV1 } from "./max-active-research-contract";
 import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
-import { runOpenScoreUsdReplay, type OpenScoreUsdTarget } from "./batch-open-score-usd-replay-engine";
+import { runOpenScoreUsdReplay, type OpenScoreUsdTarget, type OpenScoreUsdCapTiltWeight } from "./batch-open-score-usd-replay-engine";
+import { loadMarketCapLookup } from "../ibkr-data/marketcap-series-reader";
 import { createEmptyBacktestResult } from "../strategies/backtest/position-stats";
 import { registerSp500TopMeanRoutes, type BatchOwnerLocks } from "./sp500-top-mean-vite-routes";
 import { isValidRunId } from "./sp500-top-mean-artifact-store";
@@ -2116,6 +2117,7 @@ export async function processOpenScoreUsdReplay(
     sampleFromSec: number | null = null,
     sampleToSec: number | null = null,
     loadTargetDataset: (symbol: string, interval: string, signal?: AbortSignal) => Promise<unknown> = loadServerBatchDataset,
+    capTiltWeight: OpenScoreUsdCapTiltWeight = "off",
 ): Promise<void> {
     const artifactMetas = collectStoredMineArtifactMetas();
     if (artifactMetas.length === 0) {
@@ -2147,6 +2149,33 @@ export async function processOpenScoreUsdReplay(
     // drift from the run's actual execution-cost assumptions.
     const slippageRate = (lastRunBacktestSettings.slippageBps ?? 0) / 10000;
     const commissionRate = (lastRunCapitalSettings.commission ?? 0) / 100;
+
+    // Cap-tilt weighting (docs/open-score-cap-tilt.md): build the market-cap
+    // lookup ONCE per run, inside this scope (dropped when the call returns —
+    // never module-level). Required caps missing/empty -> fatal with an
+    // actionable message; never silently run baseline (fail loud). The dir is
+    // resolved at call time from the same process.cwd()-rooted convention the
+    // IBKR plugin uses for price-data.
+    let lookupMarketCap: ((symbol: string, timeSec: number) => number | null) | undefined;
+    if (capTiltWeight !== "off") {
+        const marketCapDir = resolve(process.cwd(), "price-data", "ibkr", "marketcap");
+        let csvFileCount = 0;
+        try {
+            csvFileCount = readdirSync(marketCapDir).filter((name) => name.toLowerCase().endsWith(".csv")).length;
+        } catch {
+            csvFileCount = 0;
+        }
+        if (csvFileCount === 0) {
+            writer({
+                type: "fatal",
+                error: `capTiltWeight="${capTiltWeight}" requires the market-cap dataset, but ${marketCapDir} is missing or empty. Download MarketCap in the IBKR Data tab first.`,
+            });
+            return;
+        }
+        const marketCapLookup = loadMarketCapLookup(marketCapDir);
+        debugLogger.info("batch.server.open_score_usd.cap_tilt", { weight: capTiltWeight, symbols: marketCapLookup.symbols });
+        lookupMarketCap = marketCapLookup.lookup;
+    }
 
     clearArtifactReleaseTimer();
     const lostOwnership = () => analysisOwner !== owner;
@@ -2235,6 +2264,12 @@ export async function processOpenScoreUsdReplay(
                 // MAX_RETAINED (which counts loaded-artifact legs).
                 ...(runState?.universeCounts?.submittedDegreeByAsset
                     ? { submittedDegreeByAsset: runState.universeCounts.submittedDegreeByAsset }
+                    : {}),
+                // Cap-tilt weighting: both fields ride together or neither
+                // (the engine defensively treats a weight without a lookup
+                // as off).
+                ...(capTiltWeight !== "off" && lookupMarketCap
+                    ? { capTiltWeight, lookupMarketCap }
                     : {}),
                 shouldStop: () => lostOwnership(),
                 onPhase: (phase, detail, completed, total) => {
@@ -2326,6 +2361,23 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
         validatedHorizons = cleaned;
     }
 
+    // capTiltWeight enum validation (docs/open-score-cap-tilt.md). Absent,
+    // empty, or "off" is the baseline; anything else outside the enum is a
+    // 400 — never a silent baseline run. Like the date/horizons checks above,
+    // this runs BEFORE the owner/artifact guards (audit Finding 6 ordering:
+    // client input validation first).
+    let validatedCapTilt: OpenScoreUsdCapTiltWeight = "off";
+    const rawCapTilt = body.capTiltWeight;
+    if (rawCapTilt !== undefined && rawCapTilt !== null && rawCapTilt !== "") {
+        if (rawCapTilt !== "off" && rawCapTilt !== "smallBase2x" && rawCapTilt !== "largeBase2x") {
+            throw new HttpStatusError(
+                400,
+                `Invalid capTiltWeight "${String(rawCapTilt)}". Allowed values: off, smallBase2x, largeBase2x.`,
+            );
+        }
+        validatedCapTilt = rawCapTilt;
+    }
+
     if (analysisOwner !== RUN_OWNER_NONE) {
         throw new HttpStatusError(409, "An analysis is already running. Use Stop first.");
     }
@@ -2355,6 +2407,8 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
             validatedHorizons,
             sampleFromSec,
             sampleToSec,
+            undefined,
+            validatedCapTilt,
         );
         stream.end();
     } catch (error) {

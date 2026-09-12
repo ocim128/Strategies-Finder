@@ -53,6 +53,13 @@ export interface TopMeanRunManifest {
     actualEngineMode?: string;
     engineUsage?: { rust: number; typescript: number };
     workerCount?: number;
+    /**
+     * Requested cap-tilt weighting for the phase-3 OPEN_SCORE USD replay
+     * (docs/open-score-cap-tilt.md Phase 5). Absent = baseline. Written by
+     * the coordinator engine on every manifest save so archived runs are
+     * self-describing.
+     */
+    capTiltWeight?: "smallBase2x" | "largeBase2x";
     error?: string;
     archiveComplete?: boolean;
     archiveRequested?: boolean;

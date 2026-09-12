@@ -12,10 +12,16 @@ export const TOP_MEAN_WORKER_COUNT_MAX = 24;
 /** Matches the Balanced Generator UI clamp (1..1_000_000). */
 export const TOP_MEAN_MAX_PAIRS_MAX = 1_000_000;
 
+/** Cap-tilt weighting enum (docs/open-score-cap-tilt.md); "off" = baseline. */
+export const TOP_MEAN_CAP_TILT_WEIGHTS = ["off", "smallBase2x", "largeBase2x"] as const;
+export type TopMeanCapTiltWeight = (typeof TOP_MEAN_CAP_TILT_WEIGHTS)[number];
+export type TopMeanActiveCapTiltWeight = Exclude<TopMeanCapTiltWeight, "off">;
+
 export type TopMeanValidatedLimits = {
     horizons: number[];
     workerCount?: number;
     maxPairs?: number;
+    capTiltWeight?: TopMeanActiveCapTiltWeight;
 };
 
 export type TopMeanLimitValidationResult =
@@ -31,6 +37,7 @@ export function validateTopMeanRequestLimits(input: {
     horizons: unknown;
     workerCount?: unknown;
     maxPairs?: unknown;
+    capTiltWeight?: unknown;
 }): TopMeanLimitValidationResult {
     if (!Array.isArray(input.horizons) || input.horizons.length === 0) {
         return { ok: false, error: "Missing required non-empty array: horizons." };
@@ -98,12 +105,27 @@ export function validateTopMeanRequestLimits(input: {
         maxPairs = input.maxPairs;
     }
 
+    let capTiltWeight: TopMeanActiveCapTiltWeight | undefined;
+    if (input.capTiltWeight !== undefined && input.capTiltWeight !== null && input.capTiltWeight !== "off") {
+        if (
+            typeof input.capTiltWeight !== "string"
+            || (input.capTiltWeight !== "smallBase2x" && input.capTiltWeight !== "largeBase2x")
+        ) {
+            return {
+                ok: false,
+                error: `Invalid capTiltWeight "${String(input.capTiltWeight)}". Allowed values: ${TOP_MEAN_CAP_TILT_WEIGHTS.join(", ")}.`,
+            };
+        }
+        capTiltWeight = input.capTiltWeight;
+    }
+
     return {
         ok: true,
         value: {
             horizons,
             ...(workerCount !== undefined ? { workerCount } : {}),
             ...(maxPairs !== undefined ? { maxPairs } : {}),
+            ...(capTiltWeight !== undefined ? { capTiltWeight } : {}),
         },
     };
 }
