@@ -240,15 +240,10 @@ What the job does, per UTC month boundary T starting at January of `From Year`:
    ascending/descending direction, with metric-specific availability
    (unavailable metrics never rank as fabricated zeroes) and full canonical
    identity tie-breaking. Drawdown sorts select minima.
-4. Forward-test each DISTINCT configuration the sorts need — every sort's
-   eligible pool for the random-choice baseline, plus each sort's rank #1 —
-   over the next H bars with a fresh flat account: signals must originate in
-   the forward region AND resolve inside it; remaining positions are
-   liquidated at the final scored close with commission and direction-
-   correct slippage. Each distinct configuration is evaluated exactly once
-   per checkpoint and its outcome is shared across every sort requiring it.
-   Nonwinner outcomes are reduced to transient scalars server-side and never
-   reach the report, the browser, or localStorage. The forward region begins with
+4. Forward-test each DISTINCT winner over the next H bars with a fresh flat
+   account: signals must originate in the forward region AND resolve inside
+   it; remaining positions are liquidated at the final scored close with
+   commission and direction-correct slippage. The forward region begins with
    the first bar after the checkpoint's last closed bar; on intervals not
    aligned to the month boundary that bar may open before the boundary (its
    close and all fills still occur at or after it — no pre-boundary fill
@@ -262,26 +257,6 @@ What the job does, per UTC month boundary T starting at January of `From Year`:
    so replay recomputes the robust score with the profit-factor fallback even
    though CER is computed for the separate edge sort
    (`computeReplayRobustUniverseScore`).
-
-   Exact random-choice baseline: for each sort, the eligible pool (that
-   sort's completeness + filters + metric-availability rules, historical
-   information only) is measured forward and averaged with equal weight per
-   unique configuration, the winner included. `excess = top-1 − random mean`
-   is computed from paired monthly observations; summaries show the random
-   mean, mean excess (pp), windows above random, and explicit comparison
-   coverage — plus a paired top-1 mean whenever comparison coverage differs
-   from Top 1 coverage. A comparison is marked unavailable when any required
-   outcome is missing (pools are never shrunk to survivors) and
-   uninformative with fewer than two eligible configurations. This measures
-   random configuration selection, not random symbols or trades; it is not a
-   significance test and windows-above-random is not a per-draw probability.
-
-   Membership and measurement ordering: membership and the frozen Top 1 are
-   determined from checkpoint-time information only. Missing future bars
-   never remove a symbol from historical ranking — they make the affected
-   forward outcomes (and any comparison requiring them) unavailable, while
-   the preserved Top 1 outcome is reported separately as
-   `incomplete_horizon`/`forward_failed`.
 
 Coverage and v1 limits (point-in-time membership, user-directed override of
 the blueprint's strict fixed-symbol rule): the run reports per-symbol loaded

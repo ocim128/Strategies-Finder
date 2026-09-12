@@ -22,10 +22,6 @@ import { computeReplayRobustUniverseScore } from "../lib/finder/finder-monthly-r
 import { UNIVERSE_SORT_OPTIONS, UNIVERSE_METRIC_FULL_LABELS } from "../lib/finder/constants";
 import type { FinderUniverseMetric, FinderUniverseSymbolMetrics, FinderUniverseSymbolResult } from "../lib/types/finder";
 import { serializeJsonPreservingNonFinite, parseJsonPreservingNonFinite } from "../lib/json-utils";
-import {
-    formatMonthlyRankReplayReportText,
-    formatMonthlyRankReplaySelectionLine,
-} from "../lib/finder/finder-monthly-rank-replay-format";
 import type { Time } from "../lib/types/strategies";
 
 function makeSymbolMetrics(overrides: Partial<FinderUniverseSymbolMetrics> = {}): FinderUniverseSymbolMetrics {
@@ -356,7 +352,6 @@ describe("Monthly Rank Replay summary arithmetic", () => {
             validReturns: [10, -4, 0, 2],
             zeroTradeValid: 1,
             excludedReasons: ["no selection", "no selection", "incomplete horizon"],
-            comparisons: [],
         });
         expect(summary.validCheckpoints).to.equal(4);
         expect(summary.meanForwardReturnPercent).to.equal(2);
@@ -380,7 +375,6 @@ describe("Monthly Rank Replay summary arithmetic", () => {
             validReturns: [-3, 0],
             zeroTradeValid: 1,
             excludedReasons: [],
-            comparisons: [],
         });
         expect(losing.meanForwardReturnPercent).to.equal(-1.5);
         expect(losing.positiveWindows).to.equal(0);
@@ -391,7 +385,6 @@ describe("Monthly Rank Replay summary arithmetic", () => {
             validReturns: [],
             zeroTradeValid: 0,
             excludedReasons: ["no selection"],
-            comparisons: [],
         });
         expect(empty.meanForwardReturnPercent).to.equal(null);
         expect(empty.medianForwardReturnPercent).to.equal(null);
@@ -401,127 +394,6 @@ describe("Monthly Rank Replay summary arithmetic", () => {
     it("weights symbols equally inside a window regardless of trade counts", () => {
         expect(computeWindowReturnPercent([6, -2])).to.equal(2);
         expect(computeWindowReturnPercent([])).to.equal(null);
-    });
-});
-
-describe("Monthly Rank Replay comparison rendering and copying", () => {
-    const baseSelection = {
-        checkpointIndex: 1,
-        checkpointLabel: "2023-01",
-        sortKey: "medianSharpe" as const,
-        sortLabel: "Median Sharpe Ratio",
-        direction: "descending" as const,
-        score: 1.5,
-        aggregationLabel: "Median Sharpe Ratio",
-        historicalActiveSymbols: 2,
-        historicalSharpeContributors: 2,
-        status: "measured" as const,
-        identityKey: "x",
-        strategyKey: "demo",
-        strategyName: "Demo",
-        params: { period: 5 },
-        forwardOutcomeIndex: 0,
-        forwardReturnPercent: 0.5,
-        comparison: {
-            status: "measured" as const,
-            eligibleConfigurations: 4,
-            randomExpectedReturnPercent: 0.3,
-            excessReturnPercent: 0.2,
-        },
-    };
-
-    it("renders comparison values in selection detail and copy output identically", () => {
-        const line = formatMonthlyRankReplaySelectionLine(baseSelection, undefined);
-        expect(line).to.contain("pool 4");
-        expect(line).to.contain("random +0.30%");
-        expect(line).to.contain("excess +0.20 pp");
-
-        const report = {
-            kind: "monthly_rank_replay" as const,
-            runId: "r",
-            experiment: {
-                fromYear: 2023,
-                evalWindowBars: 1,
-                forwardBars: 1,
-                interval: "1d",
-                symbols: ["A"],
-                strategyKeys: ["demo"],
-                replayedSorts: [],
-                excludedSorts: [],
-                engine: "typescript" as const,
-                sizingMode: "fixed" as const,
-                capitalSettings: {},
-                candidatePool: { requestedRunsPerStrategy: 1, actualCandidates: 1, seed: 1 },
-                conventions: {
-                    checkpoint: "c",
-                    historicalWindow: "h",
-                    forwardWindow: "f",
-                    signalPolicy: "s",
-                    accounting: "a",
-                    baseline: "b",
-                },
-            },
-            checkpoints: [{
-                index: 1,
-                label: "2023-01",
-                timeSec: 1,
-                status: "measured" as const,
-                distinctWinners: 1,
-            }],
-            symbolCoverage: [],
-            forwardOutcomes: [],
-            selections: [baseSelection],
-            sortSummaries: [],
-        };
-        const text = formatMonthlyRankReplayReportText(report);
-        expect(text).to.contain("pool 4");
-        expect(text).to.contain("random +0.30%");
-        expect(text).to.contain("excess +0.20 pp");
-
-        // Unavailable comparisons show status + reason alongside the preserved
-        // (incomplete) top-1 outcome.
-        const unavailableLine = formatMonthlyRankReplaySelectionLine(
-            {
-                ...baseSelection,
-                status: "incomplete_horizon",
-                forwardReturnPercent: null,
-                comparison: {
-                    status: "unavailable",
-                    reason: "forward evaluation unavailable for 2 of 4 pool configurations",
-                    eligibleConfigurations: 4,
-                },
-            },
-            undefined,
-        );
-        expect(unavailableLine).to.contain("comparison unavailable");
-        expect(unavailableLine).to.contain("forward evaluation unavailable for 2 of 4");
-    });
-});
-
-describe("Monthly Rank Replay paired excess arithmetic", () => {
-    it("computes random mean, mean excess, and positive windows from paired observations", () => {
-        const summary = summarizeMonthlyRankReplaySort({
-            coverage: { key: "medianSharpe", label: "Median Sharpe Ratio", direction: "descending", ascending: false },
-            scheduledCheckpoints: 4,
-            validReturns: [1.0, 0.5, 0.2],
-            zeroTradeValid: 0,
-            excludedReasons: ["comparison unavailable"],
-            // Paired: (top1 - randomMean) per comparison checkpoint.
-            comparisons: [
-                { top1Return: 1.0, randomExpected: 0.4, excess: 0.6 },
-                { top1Return: 0.5, randomExpected: 0.6, excess: -0.1 },
-                { top1Return: 0.2, randomExpected: 0.2, excess: 0.0 },
-            ],
-        });
-        // Random mean over comparison checkpoints: (0.4 + 0.6 + 0.2) / 3.
-        expect(summary.randomMeanForwardReturnPercent).to.be.closeTo(0.4, 1e-9);
-        // Mean excess: (0.6 - 0.1 + 0.0) / 3.
-        expect(summary.meanExcessReturnPercent).to.be.closeTo(0.5 / 3, 1e-9);
-        expect(summary.positiveExcessWindows).to.equal(1);
-        expect(summary.comparisonCheckpoints).to.equal(3);
-        expect(summary.comparisonCoverage).to.equal("3/4");
-        // Paired top-1 mean over comparison checkpoints only.
-        expect(summary.pairedTop1MeanForwardReturnPercent).to.be.closeTo(1.7 / 3, 1e-9);
     });
 });
 

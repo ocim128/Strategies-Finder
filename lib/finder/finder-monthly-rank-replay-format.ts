@@ -27,29 +27,6 @@ function formatPercent(value: number | null | undefined): string {
     return `${sign}${(Math.round(value * 100) / 100).toFixed(2)}%`;
 }
 
-function formatExcludedCounts(counts: Array<{ reason: string; count: number }>): string {
-    // Strip per-symbol prefixes and merge duplicates so long reason strings
-    // do not flood the summary row ("SYMBOL: incomplete forward horizon...").
-    const merged = new Map<string, number>();
-    for (const entry of counts) {
-        const short = entry.reason
-            .replace(/^[^:]+:\s*/, "")
-            .replace(" in loaded data", "")
-            .replace("insufficient closed history for the eval window", "insufficient history");
-        merged.set(short, (merged.get(short) ?? 0) + entry.count);
-    }
-    return [...merged.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .map(([reason, count]) => `${reason} x${count}`)
-        .join(", ");
-}
-
-function formatExcessPp(value: number | null | undefined): string {
-    if (value === null || value === undefined || !Number.isFinite(value)) return "--";
-    const sign = value > 0 ? "+" : "";
-    return `${sign}${(Math.round(value * 100) / 100).toFixed(2)} pp`;
-}
-
 function formatDirection(direction: MonthlyRankReplaySelection["direction"]): string {
     return direction === "ascending" ? "lower first" : "higher first";
 }
@@ -59,7 +36,7 @@ export function formatMonthlyRankReplaySummaryRow(summary: MonthlyRankReplaySort
     const validityLabel = summary.validCheckpoints === 0
         ? "no valid observations"
         : `valid ${summary.coverage}`;
-    const parts = [
+    return [
         `${summary.sortLabel} — rank #1`,
         validityLabel,
         `mean ${formatPercent(summary.meanForwardReturnPercent)}`,
@@ -68,23 +45,9 @@ export function formatMonthlyRankReplaySummaryRow(summary: MonthlyRankReplaySort
         `worst ${formatPercent(summary.worstWindowReturnPercent)}`,
         `zero-trade ${summary.zeroTradeWindows}`,
         summary.excludedCounts.length > 0
-            ? `excluded: ${formatExcludedCounts(summary.excludedCounts)}`
+            ? `excluded: ${summary.excludedCounts.map((entry) => `${entry.reason} x${entry.count}`).join(", ")}`
             : "excluded: none",
-    ];
-    if (summary.comparisonCheckpoints > 0) {
-        parts.push(
-            `random mean ${formatPercent(summary.randomMeanForwardReturnPercent)}`,
-            `mean excess ${formatExcessPp(summary.meanExcessReturnPercent)}`,
-            `above random ${summary.positiveExcessWindows}/${summary.comparisonCheckpoints}`,
-            `comparisons ${summary.comparisonCoverage}`,
-        );
-        if (summary.comparisonCheckpoints !== summary.validCheckpoints && summary.pairedTop1MeanForwardReturnPercent !== null) {
-            parts.push(`paired top-1 mean ${formatPercent(summary.pairedTop1MeanForwardReturnPercent)}`);
-        }
-    } else {
-        parts.push("comparisons: none valid");
-    }
-    return parts.join(" | ");
+    ].join(" | ");
 }
 
 /** One line per selection (checkpoint × sort), including forward outcome. */
@@ -111,30 +74,19 @@ export function formatMonthlyRankReplaySelectionLine(
         );
     } else {
         parts.push(`status ${selection.status}${selection.reason ? ` (${selection.reason})` : ""}`);
+        return parts.join(" | ");
     }
-    if (outcome) {
-        parts.push(
-            `forward ${formatPercent(outcome.windowReturnPercent)}`,
-            `trades ${outcome.totalTrades}`,
-            `window ${outcome.forwardStartSec !== null ? new Date(outcome.forwardStartSec * 1000).toISOString().slice(0, 10) : "--"} → ${outcome.forwardEndSec !== null ? new Date(outcome.forwardEndSec * 1000).toISOString().slice(0, 10) : "--"}`,
-        );
-        if (outcome.status !== "measured") {
-            parts.push(`${outcome.status}${outcome.reason ? ` (${outcome.reason})` : ""}`);
-        }
-    } else {
+    if (!outcome) {
         parts.push("forward outcome unavailable");
+        return parts.join(" | ");
     }
-    const comparison = selection.comparison;
-    if (comparison) {
-        parts.push(`pool ${comparison.eligibleConfigurations}`);
-        if (comparison.status === "measured") {
-            parts.push(
-                `random ${formatPercent(comparison.randomExpectedReturnPercent)}`,
-                `excess ${formatExcessPp(comparison.excessReturnPercent)}`,
-            );
-        } else {
-            parts.push(`comparison ${comparison.status}${comparison.reason ? ` (${comparison.reason})` : ""}`);
-        }
+    parts.push(
+        `forward ${formatPercent(outcome.windowReturnPercent)}`,
+        `trades ${outcome.totalTrades}`,
+        `window ${outcome.forwardStartSec !== null ? new Date(outcome.forwardStartSec * 1000).toISOString().slice(0, 10) : "--"} → ${outcome.forwardEndSec !== null ? new Date(outcome.forwardEndSec * 1000).toISOString().slice(0, 10) : "--"}`,
+    );
+    if (outcome.status !== "measured") {
+        parts.push(`${outcome.status}${outcome.reason ? ` (${outcome.reason})` : ""}`);
     }
     return parts.join(" | ");
 }

@@ -250,7 +250,6 @@ describe("Finder result snapshots", () => {
                     forwardWindow: "f",
                     signalPolicy: "s",
                     accounting: "a",
-                    baseline: "b",
                 },
             },
             checkpoints: [{ index: 1, label: "2023-01", timeSec: 1, status: "measured" as const, distinctWinners: 1 }],
@@ -283,36 +282,7 @@ describe("Finder result snapshots", () => {
                 forwardOutcomeIndex: 0,
                 forwardReturnPercent: 1.5,
             }],
-            sortSummaries: [{
-                sortKey: "medianSharpe" as const,
-                sortLabel: "Median Sharpe Ratio",
-                direction: "descending" as const,
-                scheduledCheckpoints: 3,
-                validCheckpoints: 2,
-                meanForwardReturnPercent: 0.3,
-                medianForwardReturnPercent: 0.3,
-                positiveWindows: 1,
-                negativeWindows: 1,
-                zeroTradeWindows: 0,
-                worstWindowReturnPercent: -0.5,
-                bestWindowReturnPercent: 0.8,
-                coverage: "2/3",
-                excludedCounts: [{ reason: "comparison unavailable", count: 1 }],
-                comparisonCheckpoints: 2,
-                comparisonCoverage: "2/3",
-                randomMeanForwardReturnPercent: 0.25,
-                meanExcessReturnPercent: 0.05,
-                positiveExcessWindows: 1,
-                pairedTop1MeanForwardReturnPercent: 0.3,
-            }],
-        };
-        // The selection carries a comparison too; it must be stripped with the
-        // rest of the per-checkpoint detail.
-        (report as { selections: Array<Record<string, unknown>> }).selections[0]!.comparison = {
-            status: "measured",
-            eligibleConfigurations: 3,
-            randomExpectedReturnPercent: 0.25,
-            excessReturnPercent: 0.05,
+            sortSummaries: [],
         };
         const compact = compactFinderLatestResults({
             scope: "symbol_universe",
@@ -325,15 +295,7 @@ describe("Finder result snapshots", () => {
         // Summary survives; heavy per-checkpoint detail is dropped so a reload
         // recovers it from the server status snapshot, not localStorage.
         expect(compact.report.experiment.fromYear).to.equal(2023);
-        // Summary rows (including baseline comparison statistics) survive
-        // compaction — they are the reload-recovery surface.
-        expect(compact.report.sortSummaries).to.have.length(1);
-        expect(compact.report.sortSummaries[0]!.comparisonCheckpoints).to.equal(2);
-        expect(compact.report.sortSummaries[0]!.comparisonCoverage).to.equal("2/3");
-        expect(compact.report.sortSummaries[0]!.randomMeanForwardReturnPercent).to.be.closeTo(0.25, 1e-9);
-        expect(compact.report.sortSummaries[0]!.meanExcessReturnPercent).to.be.closeTo(0.05, 1e-9);
-        expect(compact.report.sortSummaries[0]!.positiveExcessWindows).to.equal(1);
-        expect(compact.report.sortSummaries[0]!.pairedTop1MeanForwardReturnPercent).to.be.closeTo(0.3, 1e-9);
+        expect(compact.report.sortSummaries).to.deep.equal([]);
         expect(compact.report.selections).to.deep.equal([]);
         expect(compact.report.forwardOutcomes).to.deep.equal([]);
         expect(compact.report.detailUnavailable).to.equal(true);

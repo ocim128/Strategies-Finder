@@ -195,25 +195,6 @@ describe("finder server Monthly Rank Replay job", () => {
         expect(done.report.experiment.engine).to.equal("typescript");
         expect(done.report.sortSummaries.length).to.equal(15);
         expect(done.report.selections.some((selection) => selection.status === "measured")).to.equal(true);
-        // Every measured selection carries its random-choice comparison; with
-        // the fixture's 2-candidate pool the comparisons are measured.
-        const measuredSelections = done.report.selections.filter(
-            (selection) => selection.status === "measured",
-        );
-        expect(measuredSelections.length).to.be.greaterThan(0);
-        for (const selection of measuredSelections) {
-            expect(selection.comparison!.status).to.equal("measured");
-            expect(selection.comparison!.eligibleConfigurations).to.be.at.least(2);
-            expect(selection.comparison!.randomExpectedReturnPercent).to.not.equal(null);
-        }
-        // Scalar transport: the report ships only distinct winner outcomes per
-        // checkpoint (nonwinner baseline outcomes never reach the wire).
-        for (const checkpoint of done.report.checkpoints) {
-            const winnerOutcomes = done.report.forwardOutcomes.filter(
-                (outcome) => outcome.checkpointIndex === checkpoint.index,
-            );
-            expect(winnerOutcomes.length).to.equal(checkpoint.distinctWinners);
-        }
         // The terminal payload passes the same scalar guard the checkpoint
         // events use (defense-in-depth on the done/report transport path).
         expect(() => assertReplayReportIsScalar(done.report)).to.not.throw();
@@ -325,7 +306,6 @@ describe("finder server Monthly Rank Replay job", () => {
                     forwardWindow: "f",
                     signalPolicy: "s",
                     accounting: "a",
-                    baseline: "b",
                 },
             },
             checkpoints: [],

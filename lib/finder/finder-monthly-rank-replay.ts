@@ -455,24 +455,6 @@ export interface MonthlyRankReplayForwardOutcome {
     symbols: MonthlyRankReplaySymbolOutcome[];
 }
 
-/**
- * Exact random-choice baseline for one sort at one checkpoint: the eligible
- * pool (historical completeness + filters + metric availability, checkpoint
- * information only) is measured forward and averaged with equal weight per
- * unique configuration, winner included. Excess = top-1 − random mean.
- */
-export type MonthlyRankReplayComparisonStatus = "measured" | "uninformative" | "unavailable";
-
-export interface MonthlyRankReplayComparison {
-    status: MonthlyRankReplayComparisonStatus;
-    /** Why the comparison is uninformative/unavailable (status != measured). */
-    reason?: string;
-    /** Eligible pool size for THIS sort (sorts may have different pools). */
-    eligibleConfigurations: number;
-    randomExpectedReturnPercent?: number | null;
-    excessReturnPercent?: number | null;
-}
-
 /** One sort's selection record at one checkpoint. */
 export interface MonthlyRankReplaySelection {
     checkpointIndex: number;
@@ -497,8 +479,6 @@ export interface MonthlyRankReplaySelection {
     /** Index into report.forwardOutcomes when a forward evaluation exists. */
     forwardOutcomeIndex?: number;
     forwardReturnPercent?: number | null;
-    /** Exact random-choice baseline comparison for this sort/checkpoint. */
-    comparison?: MonthlyRankReplayComparison;
 }
 
 export interface MonthlyRankReplaySortSummary {
@@ -520,21 +500,6 @@ export interface MonthlyRankReplaySortSummary {
     /** Valid-checkpoint / scheduled denominator shown with the row. */
     coverage: string;
     excludedCounts: Array<{ reason: string; count: number }>;
-    /** Checkpoints with a valid (measured) random comparison. */
-    comparisonCheckpoints: number;
-    comparisonCoverage: string;
-    /** Mean of the random-pool expected returns over comparison checkpoints. */
-    randomMeanForwardReturnPercent: number | null;
-    /** Mean of (top-1 − random mean) over comparison checkpoints, in pp. */
-    meanExcessReturnPercent: number | null;
-    /** Comparison checkpoints whose top-1 exceeded the random mean. */
-    positiveExcessWindows: number;
-    /**
-     * Top-1 mean over the COMPARISON checkpoints. Surfaced when comparison
-     * coverage differs from the Top 1 coverage so the displayed averages
-     * cannot suggest a comparison across different months.
-     */
-    pairedTop1MeanForwardReturnPercent: number | null;
 }
 
 export interface MonthlyRankReplayCheckpointRecord {
@@ -590,7 +555,6 @@ export interface MonthlyRankReplayExperiment {
         forwardWindow: string;
         signalPolicy: string;
         accounting: string;
-        baseline: string;
     };
 }
 
@@ -619,13 +583,6 @@ export interface MonthlyRankReplayReport {
 // Summary arithmetic
 // ---------------------------------------------------------------------------
 
-/** One valid paired comparison observation for a sort. */
-export interface MonthlyRankReplayComparisonObservation {
-    top1Return: number;
-    randomExpected: number;
-    excess: number;
-}
-
 export interface MonthlyRankReplaySummaryInput {
     coverage: MonthlyRankReplaySortCoverage;
     scheduledCheckpoints: number;
@@ -633,8 +590,6 @@ export interface MonthlyRankReplaySummaryInput {
     validReturns: number[];
     zeroTradeValid: number;
     excludedReasons: string[];
-    /** Valid paired comparisons (top-1 vs random pool mean) for this sort. */
-    comparisons: MonthlyRankReplayComparisonObservation[];
 }
 
 /**
@@ -654,25 +609,7 @@ export function summarizeMonthlyRankReplaySort(input: MonthlyRankReplaySummaryIn
     for (const reason of input.excludedReasons) {
         excludedCounts.set(reason, (excludedCounts.get(reason) ?? 0) + 1);
     }
-    const comparisons = input.comparisons;
-    const comparisonCheckpoints = comparisons.length;
-    const randomMean = comparisonCheckpoints > 0
-        ? comparisons.reduce((sum, entry) => sum + entry.randomExpected, 0) / comparisonCheckpoints
-        : null;
-    const meanExcess = comparisonCheckpoints > 0
-        ? comparisons.reduce((sum, entry) => sum + entry.excess, 0) / comparisonCheckpoints
-        : null;
-    const positiveExcess = comparisons.filter((entry) => entry.excess > 0).length;
-    const pairedTop1 = comparisonCheckpoints > 0
-        ? comparisons.reduce((sum, entry) => sum + entry.top1Return, 0) / comparisonCheckpoints
-        : null;
     return {
-        comparisonCheckpoints,
-        comparisonCoverage: `${comparisonCheckpoints}/${input.scheduledCheckpoints}`,
-        randomMeanForwardReturnPercent: randomMean,
-        meanExcessReturnPercent: meanExcess,
-        positiveExcessWindows: positiveExcess,
-        pairedTop1MeanForwardReturnPercent: pairedTop1,
         sortKey: input.coverage.key,
         sortLabel: input.coverage.label,
         direction: input.coverage.direction,
@@ -698,64 +635,6 @@ function medianOf(values: number[]): number {
     return sorted.length % 2 === 1
         ? sorted[mid]!
         : (sorted[mid - 1]! + sorted[mid]!) / 2;
-}
-
-/**
- * Build one sort's random-choice comparison at one checkpoint.
- *
- * Pool = every historically eligible configuration for the sort (equal
- * probability per unique configuration, winner included). A comparison is
- * valid only when EVERY pool member's forward evaluation succeeded — a
- * missing/failed outcome marks the comparison unavailable without shrinking
- * the pool. Fewer than two eligible configurations is uninformative: the
- * random mean collapses to the selected configuration itself.
- */
-export function buildRandomComparison(args: {
-    eligibleIdentityKeys: readonly string[];
-    forwardResults: ReadonlyMap<string, { measured: boolean; value: number | null }>;
-    selectedIdentityKey: string;
-}): MonthlyRankReplayComparison {
-    const poolSize = args.eligibleIdentityKeys.length;
-    if (poolSize < 2) {
-        return {
-            status: "uninformative",
-            reason: "fewer than two eligible configurations",
-            eligibleConfigurations: poolSize,
-        };
-    }
-    const values: number[] = [];
-    let missing = 0;
-    for (const identityKey of args.eligibleIdentityKeys) {
-        const result = args.forwardResults.get(identityKey);
-        if (!result || !result.measured || result.value === null || !Number.isFinite(result.value)) {
-            missing += 1;
-            continue;
-        }
-        values.push(result.value);
-    }
-    if (missing > 0) {
-        return {
-            status: "unavailable",
-            reason: `forward evaluation unavailable for ${missing} of ${poolSize} pool configurations`,
-            eligibleConfigurations: poolSize,
-        };
-    }
-    const selected = args.forwardResults.get(args.selectedIdentityKey);
-    const selectedValue = selected && selected.measured && selected.value !== null ? selected.value : Number.NaN;
-    if (!Number.isFinite(selectedValue)) {
-        return {
-            status: "unavailable",
-            reason: "selected configuration's forward evaluation is unavailable",
-            eligibleConfigurations: poolSize,
-        };
-    }
-    const randomMean = values.reduce((sum, value) => sum + value, 0) / values.length;
-    return {
-        status: "measured",
-        eligibleConfigurations: poolSize,
-        randomExpectedReturnPercent: randomMean,
-        excessReturnPercent: selectedValue - randomMean,
-    };
 }
 
 /**
