@@ -6,7 +6,7 @@ import { debugLogger } from "../debug-logger";
 import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { OHLCVData } from "../types/strategies";
-import { beginNdjsonStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson, type ViteHttpResponse } from "../vite-http-utils";
+import { beginNdjsonStream, createDisconnectSafeStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson, type ViteHttpResponse } from "../vite-http-utils";
 import { isAllowedLocalRequest } from "../local-route-authorization";
 import { createFetchTimeoutSignal, isAbortError } from "../dataProviders/fetch-helpers";
 import type { IbkrIntervalMeta, IbkrStreamEvent, IbkrSyncRunSnapshot } from "./ibkr-data-stream-types";
@@ -2208,12 +2208,18 @@ function logMarketCapCancelled(symbol: string, points: number, startedAt: number
  * returns a `cancelled` result. Invariant: nothing is written unless BOTH the
  * EDGAR fetch and the splits fetch succeeded and the join produced rows, and
  * the abort signal is re-checked immediately before EACH write.
+ *
+ * `options.persistCatalog` defaults to true (legacy direct-call behavior:
+ * the catalog file is rewritten after every symbol). `processMarketCapBatch`
+ * passes false and checkpoints the file itself — the in-memory upsert below
+ * always runs so a batch-level checkpoint persists real entries.
  */
 export async function buildMarketCapForSymbol(
     symbol: string,
     catalog: MarketCapCatalog,
     deps: MarketCapSymbolDeps,
     signal?: AbortSignal,
+    options?: { persistCatalog?: boolean },
 ): Promise<Record<string, unknown>> {
     const startedAt = Date.now();
     if (signal?.aborted) return cancelledMarketCapResult(symbol);
@@ -2283,7 +2289,9 @@ export async function buildMarketCapForSymbol(
         lastSyncAt,
         sharesSource: "dei:EntityCommonStockSharesOutstanding",
     });
-    writeMarketCapCatalog(catalog);
+    if (options?.persistCatalog !== false) {
+        writeMarketCapCatalog(catalog);
+    }
     debugLogger.info("marketcap.symbol", {
         target: "edgar",
         symbol,
@@ -2300,7 +2308,16 @@ type MarketCapSymbolWorker = (
     catalog: MarketCapCatalog,
     deps: MarketCapSymbolDeps,
     signal?: AbortSignal,
+    options?: { persistCatalog?: boolean },
 ) => Promise<Record<string, unknown>>;
+
+/**
+ * Catalog persistence is checkpointed by the batch loop (every N successful
+ * symbols + one final flush) instead of rewritten per symbol. Direct callers
+ * keep the legacy per-symbol write; the batch loop disables it and owns
+ * persistence so a 500-symbol run does ~32 catalog rewrites instead of ~500.
+ */
+const MARKETCAP_CATALOG_CHECKPOINT_EVERY = 16;
 
 type ProcessMarketCapBatchOptions = {
     /** Override the per-symbol worker (test seam — mirrors ProcessSyncBatchOptions.fetcher). */
@@ -2320,6 +2337,13 @@ type ProcessMarketCapBatchOptions = {
  * `/api/ibkr/stop` cancels it. It must never invoke
  * `ensureBrokerageSession` or the Gateway keepalive — those belong to the
  * IBKR worker path only.
+ *
+ * The run snapshot + start event are published BEFORE the EDGAR ticker-map
+ * preflight so a reload during a cold preflight can still reattach via
+ * `/api/ibkr/sync/status`. Catalog persistence is checkpointed: the worker
+ * upserts in memory, this loop rewrites the catalog file every
+ * MARKETCAP_CATALOG_CHECKPOINT_EVERY successful symbols and flushes the tail
+ * once after the loop — CSVs stay per-symbol durable.
  */
 export async function processMarketCapBatch(
     body: Record<string, unknown>,
@@ -2328,19 +2352,14 @@ export async function processMarketCapBatch(
     options?: ProcessMarketCapBatchOptions,
 ): Promise<void> {
     const signal = options?.signal;
+    const runStartedAt = Date.now();
     const symbols = normalizeSymbols(body.symbols ?? body.symbol);
-    // Ticker→CIK map, loaded once per run through the disk-cached EDGAR
-    // fetch. Failure is fatal: no per-symbol work is possible without CIK
-    // resolution.
-    const tickers = await (options?.tickersLoader ?? loadCompanyTickersCached)({ signal });
-    const marketCapCatalog = readMarketCapCatalog();
-    const deps: MarketCapSymbolDeps = {
-        tickers,
-        fetchFacts: (cik, fetchSignal) => fetchEdgarSharesOutstanding(cik, fetchSignal),
-        fetchSplits: (symbol, fetchSignal) => fetchAlpacaSplits(resolveAlpacaConfig(), symbol, fetchSignal),
-    };
-    const worker = options?.fetcher ?? buildMarketCapForSymbol;
+    debugLogger.info("marketcap.run.start", { requested: symbols.length });
 
+    // Publish the in-progress snapshot + start event BEFORE any preflight:
+    // a cold company_tickers fetch can take a while, and a reload during
+    // that window must observe a reattachable run instead of "no active
+    // run" (0/N, currentSymbol null while preflight finishes).
     syncRunState = {
         startedAt: new Date().toISOString(),
         mode: "marketcap",
@@ -2364,6 +2383,20 @@ export async function processMarketCapBatch(
 
     writer({ type: "start", total: symbols.length, interval: "1d", mode: "marketcap", source: "edgar", period: null });
 
+    // Ticker→CIK map, loaded once per run through the disk-cached EDGAR
+    // fetch. Failure is fatal: no per-symbol work is possible without CIK
+    // resolution. The throw propagates to the route handler, whose catch
+    // emits the terminal fatal event and whose finally releases the owner
+    // and clears the snapshot above.
+    const tickers = await (options?.tickersLoader ?? loadCompanyTickersCached)({ signal });
+    const marketCapCatalog = readMarketCapCatalog();
+    const deps: MarketCapSymbolDeps = {
+        tickers,
+        fetchFacts: (cik, fetchSignal) => fetchEdgarSharesOutstanding(cik, fetchSignal),
+        fetchSplits: (symbol, fetchSignal) => fetchAlpacaSplits(resolveAlpacaConfig(), symbol, fetchSignal),
+    };
+    const worker = options?.fetcher ?? buildMarketCapForSymbol;
+
     const results: unknown[] = [];
     const failed: unknown[] = [];
     let cancelled = false;
@@ -2383,7 +2416,7 @@ export async function processMarketCapBatch(
                 runState.currentSymbol = symbol;
             }
             try {
-                const result = await worker(symbol, marketCapCatalog, deps, signal);
+                const result = await worker(symbol, marketCapCatalog, deps, signal, { persistCatalog: false });
                 // Re-check ownership/abort after the await (mirrors
                 // processSyncBatch): a Stop or newer run may have arrived
                 // mid-fetch.
@@ -2427,6 +2460,14 @@ export async function processMarketCapBatch(
                 writer({ type: "symbol_failed", index, total: symbols.length, symbol, error: message });
                 touchRunState();
             }
+            // Catalog checkpoint, OUTSIDE the per-symbol catch: this persists
+            // already-succeeded symbols' metadata, so a disk failure here
+            // must abort the run loudly (fatal), not mark a succeeded symbol
+            // as failed. The modulo guard means a run with zero successes
+            // never writes the catalog — same as the legacy per-symbol write.
+            if (results.length > 0 && results.length % MARKETCAP_CATALOG_CHECKPOINT_EVERY === 0) {
+                writeMarketCapCatalog(marketCapCatalog);
+            }
         }
     } finally {
         if (syncRunState === runState) {
@@ -2434,6 +2475,11 @@ export async function processMarketCapBatch(
             runState.currentSymbol = null;
             touchRunState();
         }
+    }
+    // Final flush for the checkpoint tail (skipped when nothing succeeded
+    // or the last success landed exactly on a checkpoint boundary).
+    if (results.length % MARKETCAP_CATALOG_CHECKPOINT_EVERY !== 0) {
+        writeMarketCapCatalog(marketCapCatalog);
     }
 
     // No `totals`: market-cap rows carry `points`, not candle `bars`, and the
@@ -2446,6 +2492,22 @@ export async function processMarketCapBatch(
         source: "edgar",
         results,
         failed,
+    });
+
+    // Run-level completion metric: one event for duration, throughput, and
+    // cancellation so slow/failure-heavy downloads are diagnosable without
+    // replaying per-symbol events.
+    const points = results.reduce<number>((sum, result) => {
+        const value = Number((result as Record<string, unknown>).points);
+        return sum + (Number.isFinite(value) ? value : 0);
+    }, 0);
+    debugLogger.info("marketcap.run.complete", {
+        requested: symbols.length,
+        completed: results.length,
+        failed: failed.length,
+        cancelled,
+        points,
+        durationMs: Date.now() - runStartedAt,
     });
 }
 
@@ -2715,9 +2777,14 @@ async function handleSyncRequest(res: ViteHttpResponse, body: Record<string, unk
 /**
  * Market-cap request handler — mirrors `handleSyncRequest`'s lock, stream,
  * and cleanup structure exactly (same shared `syncOwner` domain). No IBKR
- * Gateway interaction happens anywhere in this path.
+ * Gateway interaction happens anywhere in this path. Exported for tests
+ * (injected batch options keep the worker/tickers seams offline).
  */
-async function handleMarketCapRequest(res: ViteHttpResponse, body: Record<string, unknown>): Promise<void> {
+export async function handleMarketCapRequest(
+    res: ViteHttpResponse,
+    body: Record<string, unknown>,
+    options?: ProcessMarketCapBatchOptions,
+): Promise<void> {
     if (syncOwner !== SYNC_OWNER_NONE) {
         // Mode-neutral wording: the shared lock may be held by a candle
         // sync/download OR another market-cap run.
@@ -2727,10 +2794,16 @@ async function handleMarketCapRequest(res: ViteHttpResponse, body: Record<string
     syncOwner = owner;
     const abortController = new AbortController();
     syncAbortController = abortController;
-    let stream: ReturnType<typeof beginNdjsonStream> | null = null;
+    let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
     try {
-        stream = beginNdjsonStream(res);
-        await processMarketCapBatch(body, stream.write, owner, { signal: abortController.signal });
+        // Disconnect-safe writer (mirrors the Batch/Finder routes): a browser
+        // reload mid-run flips the internal flag and silently drops further
+        // writes instead of throwing into the batch loop. The run keeps
+        // going and updates the shared snapshot, so the reloaded tab
+        // reattaches via GET /api/ibkr/sync/status. Disconnect must NOT
+        // cancel the run — the streamed result is recoverable via /status.
+        stream = createDisconnectSafeStream(res);
+        await processMarketCapBatch(body, stream.write, owner, { ...options, signal: abortController.signal });
         stream.end();
     } catch (error) {
         if (!stream) throw error;

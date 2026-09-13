@@ -43,14 +43,29 @@ function normalizeLookupSymbol(symbol: string): string {
 }
 
 /**
- * Indexes every `*.csv` directly in `dir` (skipping `.bak` companions and
- * `catalog.json`, which the `.csv`-suffix filter already excludes). Malformed
- * rows are skipped silently — the Download MarketCap writer is the only
- * producer, and a truncated file must degrade to fewer known dates, never to
- * wrong weights. Row order on disk is ascending but the series re-sorts
- * defensively.
+ * Optional demand filter for {@link loadMarketCapLookup}: when `symbols` is
+ * provided, only CSVs whose normalized file stem matches one of the listed
+ * symbols are opened. Callers pass the exact symbols their lookups will use
+ * (leg symbols plus asset-name fallbacks); a required symbol with no file on
+ * disk keeps answering `null` — "weight 1" — exactly as before.
  */
-export function loadMarketCapLookup(dir: string): MarketCapLookup {
+export interface MarketCapLookupFilter {
+    symbols?: Iterable<string>;
+}
+
+/**
+ * Indexes every `*.csv` directly in `dir` (skipping `.bak` companions and
+ * `catalog.json`, which the `.csv`-suffix filter already excludes). With a
+ * {@link MarketCapLookupFilter}, unrelated files are skipped before any read.
+ * Malformed rows are skipped silently — the Download MarketCap writer is the
+ * only producer, and a truncated file must degrade to fewer known dates,
+ * never to wrong weights. Row order on disk is ascending but the series
+ * re-sorts defensively.
+ */
+export function loadMarketCapLookup(dir: string, filter?: MarketCapLookupFilter): MarketCapLookup {
+    // Normalize the allow-list ONCE through the same normalizer the map keys
+    // use, so filtered and unfiltered lookups answer identically.
+    const allowed = filter?.symbols ? new Set(Array.from(filter.symbols, normalizeLookupSymbol)) : null;
     const bySymbol = new Map<string, CapSeries>();
     for (const name of readdirSync(dir)) {
         if (!name.toLowerCase().endsWith(".csv")) continue;
@@ -62,6 +77,7 @@ export function loadMarketCapLookup(dir: string): MarketCapLookup {
         } catch {
             // Keep the raw stem — an invalid escape still identifies the file.
         }
+        if (allowed && !allowed.has(normalizeLookupSymbol(symbol))) continue;
         const times: number[] = [];
         const caps: number[] = [];
         for (const line of readFileSync(join(dir, name), "utf8").split(/\r?\n/)) {

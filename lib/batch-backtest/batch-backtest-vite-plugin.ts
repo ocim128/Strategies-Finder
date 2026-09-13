@@ -75,6 +75,7 @@ import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import { runOpenScoreUsdReplay, type OpenScoreUsdTarget, type OpenScoreUsdCapTiltWeight } from "./batch-open-score-usd-replay-engine";
 import { loadMarketCapLookup } from "../ibkr-data/marketcap-series-reader";
+import { CAP_TILT_WEIGHTS, isActiveCapTiltWeight } from "./cap-tilt-contract";
 import { createEmptyBacktestResult } from "../strategies/backtest/position-stats";
 import { registerSp500TopMeanRoutes, type BatchOwnerLocks } from "./sp500-top-mean-vite-routes";
 import { isValidRunId } from "./sp500-top-mean-artifact-store";
@@ -2155,7 +2156,10 @@ export async function processOpenScoreUsdReplay(
     // never module-level). Required caps missing/empty -> fatal with an
     // actionable message; never silently run baseline (fail loud). The dir is
     // resolved at call time from the same process.cwd()-rooted convention the
-    // IBKR plugin uses for price-data.
+    // IBKR plugin uses for price-data. The reader only opens CSVs for symbols
+    // this replay can actually look up (artifact leg symbols + their asset
+    // fallbacks), so a 10-asset replay against a 500-file universe does not
+    // pay for the other 490 files.
     let lookupMarketCap: ((symbol: string, timeSec: number) => number | null) | undefined;
     if (capTiltWeight !== "off") {
         const marketCapDir = resolve(process.cwd(), "price-data", "ibkr", "marketcap");
@@ -2172,7 +2176,17 @@ export async function processOpenScoreUsdReplay(
             });
             return;
         }
-        const marketCapLookup = loadMarketCapLookup(marketCapDir);
+        const requiredSymbols = new Set<string>();
+        for (const meta of artifactMetas) {
+            // The engine looks up `baseSymbol || baseAsset` and
+            // `quoteSymbol || quoteAsset`; allow both so the filtered lookup
+            // answers exactly what the unfiltered one did.
+            if (meta.baseSymbol) requiredSymbols.add(meta.baseSymbol);
+            if (meta.quoteSymbol) requiredSymbols.add(meta.quoteSymbol);
+            if (meta.baseAsset) requiredSymbols.add(meta.baseAsset);
+            if (meta.quoteAsset) requiredSymbols.add(meta.quoteAsset);
+        }
+        const marketCapLookup = loadMarketCapLookup(marketCapDir, { symbols: requiredSymbols });
         debugLogger.info("batch.server.open_score_usd.cap_tilt", { weight: capTiltWeight, symbols: marketCapLookup.symbols });
         lookupMarketCap = marketCapLookup.lookup;
     }
@@ -2369,10 +2383,10 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
     let validatedCapTilt: OpenScoreUsdCapTiltWeight = "off";
     const rawCapTilt = body.capTiltWeight;
     if (rawCapTilt !== undefined && rawCapTilt !== null && rawCapTilt !== "") {
-        if (rawCapTilt !== "off" && rawCapTilt !== "smallBase2x" && rawCapTilt !== "largeBase2x") {
+        if (rawCapTilt !== "off" && !isActiveCapTiltWeight(rawCapTilt)) {
             throw new HttpStatusError(
                 400,
-                `Invalid capTiltWeight "${String(rawCapTilt)}". Allowed values: off, smallBase2x, largeBase2x.`,
+                `Invalid capTiltWeight "${String(rawCapTilt)}". Allowed values: ${CAP_TILT_WEIGHTS.join(", ")}.`,
             );
         }
         validatedCapTilt = rawCapTilt;

@@ -4,6 +4,7 @@
  * Used by the server route (hard 400s) and kept as the single source of truth
  * for the legitimate UI range so browser defaults and server caps cannot drift.
  */
+import { CAP_TILT_WEIGHTS, isActiveCapTiltWeight, type ActiveCapTiltWeight, type CapTiltWeight } from "./cap-tilt-contract";
 
 export const TOP_MEAN_HORIZONS_MAX_LENGTH = 8;
 export const TOP_MEAN_HORIZONS_MAX_VALUE = 1000;
@@ -12,10 +13,12 @@ export const TOP_MEAN_WORKER_COUNT_MAX = 24;
 /** Matches the Balanced Generator UI clamp (1..1_000_000). */
 export const TOP_MEAN_MAX_PAIRS_MAX = 1_000_000;
 
-/** Cap-tilt weighting enum (docs/open-score-cap-tilt.md); "off" = baseline. */
-export const TOP_MEAN_CAP_TILT_WEIGHTS = ["off", "smallBase2x", "largeBase2x"] as const;
-export type TopMeanCapTiltWeight = (typeof TOP_MEAN_CAP_TILT_WEIGHTS)[number];
-export type TopMeanActiveCapTiltWeight = Exclude<TopMeanCapTiltWeight, "off">;
+/** Cap-tilt weighting enum (docs/open-score-cap-tilt.md); "off" = baseline.
+ *  Re-exported from the shared contract leaf so this route and the standalone
+ *  OPEN_SCORE USD route cannot drift apart. */
+export const TOP_MEAN_CAP_TILT_WEIGHTS = CAP_TILT_WEIGHTS;
+export type TopMeanCapTiltWeight = CapTiltWeight;
+export type TopMeanActiveCapTiltWeight = ActiveCapTiltWeight;
 
 export type TopMeanValidatedLimits = {
     horizons: number[];
@@ -107,10 +110,7 @@ export function validateTopMeanRequestLimits(input: {
 
     let capTiltWeight: TopMeanActiveCapTiltWeight | undefined;
     if (input.capTiltWeight !== undefined && input.capTiltWeight !== null && input.capTiltWeight !== "off") {
-        if (
-            typeof input.capTiltWeight !== "string"
-            || (input.capTiltWeight !== "smallBase2x" && input.capTiltWeight !== "largeBase2x")
-        ) {
+        if (!isActiveCapTiltWeight(input.capTiltWeight)) {
             return {
                 ok: false,
                 error: `Invalid capTiltWeight "${String(input.capTiltWeight)}". Allowed values: ${TOP_MEAN_CAP_TILT_WEIGHTS.join(", ")}.`,

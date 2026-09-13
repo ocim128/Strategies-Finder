@@ -94,4 +94,43 @@ describe("marketcap-series-reader", () => {
         const lookup = loadMarketCapLookup(dir);
         assert.equal(lookup.lookup("ZZZ", Math.floor(Date.parse("2024-01-02") / 1000)), null);
     });
+
+    describe("allow-list filter (demand-driven loading)", () => {
+        const t = (date: string) => Math.floor(Date.parse(date) / 1000);
+
+        it("opens only the CSVs whose normalized stem is in the allow-list", () => {
+            writeCsv("AAA.csv", ["2024-01-02,1,10,1000"]);
+            writeCsv("BBB.csv", ["2024-01-02,1,10,2000"]);
+            writeCsv("CCC.csv", ["2024-01-02,1,10,3000"]);
+            const lookup = loadMarketCapLookup(dir, { symbols: ["AAA", "CCC"] });
+            assert.equal(lookup.symbols, 2);
+            assert.equal(lookup.lookup("AAA", t("2024-01-02")), 1000);
+            assert.equal(lookup.lookup("CCC", t("2024-01-02")), 3000);
+            // A required-looking symbol whose file was filtered out answers
+            // null — "weight 1" — never a wrong cap.
+            assert.equal(lookup.lookup("BBB", t("2024-01-02")), null);
+        });
+
+        it("normalizes markers/slashes in the allow-list exactly like file stems and lookups", () => {
+            writeCsv("BRK-B.csv", ["2024-01-02,1,10,700000000000"]);
+            // The caller passes the marked artifact-leg form; the file stem
+            // is the marker-stripped download symbol.
+            const lookup = loadMarketCapLookup(dir, { symbols: ["BRK-B•"] });
+            assert.equal(lookup.symbols, 1);
+            assert.equal(lookup.lookup("BRK-B•", t("2024-01-02")), 700000000000);
+        });
+
+        it("an allow-listed symbol with no file on disk stays null (weight 1)", () => {
+            writeCsv("AAA.csv", ["2024-01-02,1,10,1000"]);
+            const lookup = loadMarketCapLookup(dir, { symbols: ["AAA", "ZZZ"] });
+            assert.equal(lookup.symbols, 1);
+            assert.equal(lookup.lookup("ZZZ", t("2024-01-02")), null);
+        });
+
+        it("no filter keeps the unfiltered whole-directory behavior", () => {
+            writeCsv("AAA.csv", ["2024-01-02,1,10,1000"]);
+            writeCsv("BBB.csv", ["2024-01-02,1,10,2000"]);
+            assert.equal(loadMarketCapLookup(dir).symbols, 2);
+        });
+    });
 });

@@ -148,7 +148,12 @@ The batch reuses the existing lock, snapshot, Stop, and reattach machinery so
 a market-cap run is mutually exclusive with candle sync/download and the
 existing Stop button works unchanged. A market-cap run must NOT touch the
 IBKR Gateway: no `ensureBrokerageSession`, no keepalive interaction — those
-belong to the IBKR worker path only.
+belong to the IBKR worker path only. The run snapshot and `start` event are
+published BEFORE the EDGAR ticker-map preflight, so a reload during a cold
+`company_tickers` fetch still reattaches via `/api/ibkr/sync/status` instead
+of seeing "no active run". The response stream is disconnect-safe (the same
+`createDisconnectSafeStream` wrapper the Batch/Finder routes use): a browser
+reload mid-run drops further writes instead of aborting the run.
 
 ### Data flow
 
@@ -156,13 +161,18 @@ belong to the IBKR worker path only.
 UI button (tab-ibkr-data.html)
   → ibkr-data-service.ts runAction("/api/ibkr/marketcap")     [symbols only]
     → POST /api/ibkr/marketcap (isAllowedLocalRequest gate)
-      → handleMarketCapRequest (owner lock, 409 conflict path, AbortController)
+      → handleMarketCapRequest (owner lock, 409 conflict path, AbortController,
+        disconnect-safe stream)
         → processMarketCapBatch(writer, owner, {signal, fetcher?})
+            preflight: snapshot + start event, then the EDGAR ticker map
             per symbol:
               shares-outstanding-fetcher.ts  (EDGAR + Alpaca splits)
               readCsvCandles(symbol, "1d")   (same-module private helper)
-              writeMarketCapCsv + writeMarketCapCatalog
+              writeMarketCapCsv + in-memory catalog upsert
                 (re-check signal immediately before each write)
+            catalog checkpoint: the coordinator rewrites catalog.json every
+            16 successful symbols + one final flush (CSVs stay per-symbol
+            durable)
             NDJSON: start / symbol / symbol_failed / done
   → status line + ibkrDataOutput rendering (existing event handlers)
 ```
@@ -204,10 +214,11 @@ read; nothing consumes it in this feature.
 
 ### API contract
 
-- `POST /api/ibkr/marketcap` — body `{symbols: string[]}` (interval/source/
-  period fields are accepted and ignored, so the browser can reuse the
-  existing request builder). Response is the same NDJSON event stream as
-  `/api/ibkr/download`: `start` → per-symbol `symbol`/`symbol_failed` →
+- `POST /api/ibkr/marketcap` — body `{symbols: string[]}`. The browser sends
+  ONLY the symbols (dedicated `getMarketCapRequestBody()`); the candle
+  interval/source/period fields are still accepted and ignored for backward
+  compatibility with older payloads. Response is the same NDJSON event stream
+  as `/api/ibkr/download`: `start` → per-symbol `symbol`/`symbol_failed` →
   `done`/`fatal`. Result rows carry `{symbol, markedSymbol, points,
   firstTime, lastTime}`. `done.totals` is left untouched — the browser
   service does not consume it, so no `bars`-aliasing hack.

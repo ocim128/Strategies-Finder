@@ -9,7 +9,12 @@
  *  - per-symbol `symbol_failed` isolation (run continues)
  *  - strict split-failure: a failed/unrecognized splits fetch writes NOTHING
  *  - cancel → no write: neither the sentinel CSV nor the catalog is touched
- *  - per-symbol catalog persistence that preserves other entries
+ *  - checkpointed catalog persistence: the worker upserts in memory, the
+ *    batch coordinator rewrites the catalog file (every N successes + final
+ *    flush); a run with zero successes never writes the catalog
+ *  - the run snapshot is published BEFORE the EDGAR ticker-map preflight
+ *  - a disconnected response stream must not abort the run (reattach via
+ *    /api/ibkr/sync/status stays available)
  *  - the loopback authorization gate, exercised the same direct way the
  *    existing lifecycle specs do it (no middleware harness)
  *
@@ -29,6 +34,7 @@ import {
     __getIbkrSyncRunStateForTests,
     __resetIbkrSyncStateForTests,
     buildMarketCapForSymbol,
+    handleMarketCapRequest,
     joinMarketCapRows,
     processMarketCapBatch,
     type MarketCapSymbolDeps,
@@ -36,7 +42,7 @@ import {
 import { isAllowedLocalRequest } from "../lib/local-route-authorization";
 import { markIbkrSymbol } from "../lib/local-daily-datasets";
 import { providerLabelForSource } from "../lib/ibkr-data/ibkr-data-stream-types";
-import { HttpStatusError } from "../lib/vite-http-utils";
+import { HttpStatusError, type ViteHttpResponse } from "../lib/vite-http-utils";
 import type { OHLCVData } from "../lib/types/strategies";
 
 // Unique sentinel symbol — never a real listing, so cleanup can only ever
@@ -314,6 +320,21 @@ describe("buildMarketCapForSymbol + marketcap storage (sentinel)", () => {
         assert.ok(catalog.entries.some((e) => e.symbol === "ZZTESTOTHER"));
     });
 
+    it("persistCatalog:false upserts the in-memory catalog but leaves the catalog file untouched (batch checkpoint seam)", async () => {
+        writeSentinel1dCloses();
+        const before = catalogBytes();
+        const catalog: { updatedAt: string; entries: Array<Record<string, unknown>> } = { updatedAt: "", entries: [] };
+
+        const result = await buildMarketCapForSymbol(SENTINEL, catalog as never, sentinelDeps(), undefined, { persistCatalog: false });
+
+        assert.equal(result.points, 4);
+        // The in-memory upsert still ran (the coordinator's checkpoint
+        // persists THIS state), but the file on disk must be byte-identical.
+        assert.equal(catalog.entries.length, 1);
+        assert.equal((catalog.entries[0] as { symbol: string }).symbol, SENTINEL);
+        assert.equal(catalogBytes(), before);
+    });
+
     it("strict split-failure: a failing splits fetch writes neither CSV nor catalog", async () => {
         writeSentinel1dCloses();
         const before = catalogBytes();
@@ -409,6 +430,136 @@ describe("buildMarketCapForSymbol + marketcap storage (sentinel)", () => {
         assert.equal(result.cancelled, true);
         assert.ok(!existsSync(SENTINEL_CSV), "cancelled run must not write the CSV");
         assert.equal(catalogBytes(), before, "cancelled run must not touch the catalog");
+    });
+});
+
+describe("marketcap catalog checkpointing (batch coordinator)", () => {
+    /** Mutates the shared catalog like the real worker's in-memory upsert. */
+    const catalogUpsertingWorker = async (symbol: string, catalog: { entries: unknown[] }): Promise<Record<string, unknown>> => {
+        catalog.entries.push({
+            symbol,
+            markedSymbol: markIbkrSymbol(symbol),
+            firstTime: "2024-06-05",
+            lastTime: "2024-06-11",
+            points: 3,
+            lastSyncAt: new Date().toISOString(),
+            sharesSource: "dei:EntityCommonStockSharesOutstanding",
+        });
+        return fakeWorker(symbol);
+    };
+
+    it("persists worker catalog upserts to disk via the coordinator's final flush", async () => {
+        rmSync(CATALOG_PATH, { force: true });
+        const recorder = collect();
+        await processMarketCapBatch(
+            { symbols: ["AAPL", "MSFT"] },
+            recorder.write,
+            __acquireIbkrSyncOwnerForTests(),
+            // Below the checkpoint interval: the final flush is what lands
+            // the entries on disk.
+            { fetcher: catalogUpsertingWorker as never, tickersLoader: stubTickersLoader() as never },
+        );
+        const done = recorder.events[recorder.events.length - 1]!;
+        assert.equal(done.ok, true);
+        assert.ok(existsSync(CATALOG_PATH), "final flush must persist completed symbols");
+        const persisted = JSON.parse(readFileSync(CATALOG_PATH, "utf8")) as { entries: Array<{ symbol: string }> };
+        assert.deepEqual(persisted.entries.map((e) => e.symbol).sort(), ["AAPL", "MSFT"]);
+    });
+
+    it("never writes the catalog when no symbol succeeded", async () => {
+        rmSync(CATALOG_PATH, { force: true });
+        const worker = async (symbol: string): Promise<Record<string, unknown>> => {
+            throw new Error(`no facts on EDGAR for ${symbol}`);
+        };
+        const recorder = collect();
+        await processMarketCapBatch(
+            { symbols: ["AAPL", "MSFT"] },
+            recorder.write,
+            __acquireIbkrSyncOwnerForTests(),
+            { fetcher: worker as never, tickersLoader: stubTickersLoader() as never },
+        );
+        const done = recorder.events[recorder.events.length - 1]!;
+        assert.equal(done.ok, false);
+        assert.ok(!existsSync(CATALOG_PATH), "a zero-success run must not create the catalog");
+    });
+});
+
+describe("marketcap run snapshot vs EDGAR preflight", () => {
+    it("publishes the snapshot (and start event) BEFORE the ticker-map preflight resolves", async () => {
+        let releaseLoader: (() => void) | null = null;
+        const gate = new Promise<void>((resolve) => { releaseLoader = resolve; });
+        const gatedLoader = async () => {
+            await gate;
+            return { [SENTINEL]: 999999 } as Record<string, number>;
+        };
+        const run = processMarketCapBatch(
+            { symbols: ["AAPL", "MSFT"] },
+            () => {},
+            __acquireIbkrSyncOwnerForTests(),
+            { fetcher: fakeWorker as never, tickersLoader: gatedLoader as never },
+        );
+        // One tick: the sync prefix (normalize → snapshot → start event →
+        // awaited loader call) must have run while the loader is still gated.
+        await new Promise((resolve) => setImmediate(resolve));
+        const snapshot = __getIbkrSyncRunStateForTests() as unknown as Record<string, unknown> | null;
+        assert.equal(snapshot?.mode, "marketcap");
+        assert.equal(snapshot?.total, 2);
+        assert.equal(snapshot?.currentSymbol, null);
+        assert.equal(snapshot?.completed, 0);
+        releaseLoader!();
+        await run;
+    });
+});
+
+describe("handleMarketCapRequest disconnect safety", () => {
+    type EventEmitter = { on?: (event: string, listener: () => void) => void };
+
+    function makeStreamingResponse(): { res: ViteHttpResponse & EventEmitter; writes: string[]; emit: (event: "close") => void; ended: () => boolean } {
+        const listeners: Record<string, Array<() => void>> = {};
+        const writes: string[] = [];
+        const state: { ended: boolean } = { ended: false };
+        const res = {
+            statusCode: 0,
+            setHeader: () => {},
+            write(chunk: string) { writes.push(chunk); },
+            end() { state.ended = true; },
+            on(event: string, listener: () => void) {
+                (listeners[event] ??= []).push(listener);
+            },
+        } as unknown as ViteHttpResponse & EventEmitter;
+        return {
+            res,
+            writes,
+            emit: (event) => {
+                for (const l of listeners[event] ?? []) l();
+            },
+            ended: () => state.ended,
+        };
+    }
+
+    it("keeps the run alive and finishes cleanly when the tab reloads mid-run", async () => {
+        const { res, writes, emit, ended } = makeStreamingResponse();
+        let workerCalls = 0;
+        const worker = async (symbol: string): Promise<Record<string, unknown>> => {
+            workerCalls += 1;
+            if (workerCalls === 2) {
+                // A reload lands after symbol 1 was written, before symbol 2:
+                // the response emits 'close' mid-run.
+                emit("close");
+            }
+            return fakeWorker(symbol);
+        };
+        // Must resolve without throwing; the run keeps going past the dead
+        // stream and releases the lock/snapshot in the handler's finally.
+        await handleMarketCapRequest(
+            res,
+            { symbols: ["AAPL", "MSFT", "NVDA"] },
+            { fetcher: worker as never, tickersLoader: stubTickersLoader() as never },
+        );
+        assert.equal(workerCalls, 3, "every symbol's worker ran despite the disconnect");
+        assert.ok(writes.length >= 2, "start + first symbol events were written before the disconnect");
+        assert.equal(__getIbkrSyncRunStateForTests(), null, "run completed: snapshot cleared by the handler finally");
+        assert.equal(ended(), false, "end() after disconnect is a no-op, not a double-end");
     });
 });
 

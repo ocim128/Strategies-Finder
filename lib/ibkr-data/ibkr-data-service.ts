@@ -194,6 +194,14 @@ class IbkrDataService {
         };
     }
 
+    private getMarketCapRequestBody(): Record<string, unknown> {
+        // MarketCap is an EDGAR-only, interval-less operation: send ONLY the
+        // symbols so candle-download controls (interval/source/period) cannot
+        // leak into this request's diagnostics. The route still accepts and
+        // ignores the candle fields for backward compatibility.
+        return { symbols: this.parseSymbols() };
+    }
+
     private setBusy(busy: boolean): void {
         const dom = this.getDom();
         dom.ibkrDataStatusBtn.disabled = busy;
@@ -289,16 +297,16 @@ class IbkrDataService {
     }
 
     private async runAction(url: string, invalidate = false, providerLabelOverride?: string): Promise<void> {
-        const body = this.getRequestBody();
+        const body = url === "/api/ibkr/marketcap" ? this.getMarketCapRequestBody() : this.getRequestBody();
         if (!Array.isArray(body.symbols) || body.symbols.length === 0) {
             this.setStatus("Add at least one symbol.", "error");
             return;
         }
 
         this.setBusy(true);
-        // Market-cap passes "EDGAR" explicitly: its request reuses the candle
-        // request builder (whose `source` select is ignored by that route), so
-        // the label must not be derived from it. Every other action derives
+        // Market-cap passes "EDGAR" explicitly: its request body carries only
+        // symbols (no candle `source` field), so the label must not be derived
+        // from a source that is not in the payload. Every other action derives
         // the provider from the request's `source`.
         const requestedProvider = providerLabelOverride
             ?? providerLabelForSource(typeof body.source === "string" ? body.source : undefined);

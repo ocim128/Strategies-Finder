@@ -175,6 +175,24 @@ describe("pair feature compatibility", () => {
         expect(error).to.contain("Re-run the batch");
     });
 
+    it("ignores standalone target rows while preserving pair-row ordinals", async () => {
+        const mixedFolder = path.join(root, "archive", "mining-ledger", "mixed-targets");
+        await mkdir(mixedFolder, { recursive: true });
+        await writeFolder(mixedFolder);
+        const standalone = {
+            ...makeRow(100, "AAPL\u2022", 5),
+            baseSymbol: "",
+            quoteSymbol: "",
+        };
+        const ledgerPath = path.join(mixedFolder, "ledger.jsonl");
+        await writeFile(ledgerPath, `${await readFile(ledgerPath, "utf8")}${JSON.stringify(standalone)}\n`, "utf8");
+
+        const archive = await loadPairSelectionArchive(mixedFolder);
+        expect(archive.diagnostics.rowsParsed).to.equal(3);
+        expect(archive.diagnostics.rows).to.equal(2);
+        expect(archive.events[0]!.candidates.map((candidate) => candidate.pair)).to.deep.equal(["A+B", "C+D"]);
+    });
+
     it("names a missing rule capability without applying a global release gate", async () => {
         const archive = await loadPairSelectionArchive(folder);
         const unavailableRule: PairSelectionRule = {

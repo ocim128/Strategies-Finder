@@ -1202,4 +1202,117 @@ describe("batch-open-score-usd-replay-engine cap-tilt weighting", () => {
             expect(report).to.include(`cap tilt | base leg of long pairs x2 when ${semanticFragment} at entry`);
         }
     });
+
+    // Coverage telemetry: the tilt can be ON while silently applying weight 1
+    // to most long trades (unknown caps / unmet condition). The report line
+    // makes under-covered runs visible; known + unknown = long and
+    // weighted <= known. The UI renders reportLines verbatim, so an opaque
+    // line is the whole contract.
+    const coverageLine = (result: { reportLines: string[] }): string =>
+        result.reportLines.find((line) => line.startsWith("cap tilt coverage |")) ?? "";
+
+    it("reports full coverage when every long trade has known caps (weighted per tilt condition)", async () => {
+        const fixture = capTiltFixture();
+        // AAA/BBB long qualifies (100 < 500); CCC/DDD long has equal caps
+        // (500/500) so it counts as known but not weighted.
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs),
+            () => fromArray(fixture.targets),
+            {
+                horizons: [2],
+                capTiltWeight: "smallBase2x",
+                lookupMarketCap: (symbol) => (symbol === "AAA•" ? 100 : 500),
+            },
+        );
+        expect(coverageLine(result)).to.equal("cap tilt coverage | long=2 known=2 weighted=1 unknown=0");
+    });
+
+    it("reports partial coverage when a leg's cap is unknown (weight degraded to 1)", async () => {
+        const fixture = capTiltFixture();
+        // Only AAA•/BBB• resolve; the CCC/DDD trade has both caps unknown.
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs),
+            () => fromArray(fixture.targets),
+            {
+                horizons: [2],
+                capTiltWeight: "smallBase2x",
+                lookupMarketCap: (symbol) => (symbol === "AAA•" ? 100 : symbol === "BBB•" ? 500 : null),
+            },
+        );
+        expect(coverageLine(result)).to.equal("cap tilt coverage | long=2 known=1 weighted=1 unknown=1");
+    });
+
+    it("separates window entries from old history and unknown carry-in without changing entry weights", async () => {
+        const fixture = capTiltFixture();
+        fixture.pairs[0]!.result.trades.push(makeTrade("long", T0 + 2000, null));
+        fixture.pairs[1]!.result.trades.push(makeTrade("long", T0 + 7000, null));
+        const lookupMarketCap = (symbol: string, time: number) =>
+            symbol === "AAA•" && time < T0 + 4000 ? null : symbol === "CCC•" ? 100 : 500;
+        const options = {
+            horizons: [2], capTiltWeight: "smallBase2x" as const,
+            lookupMarketCap, includePoolSnapshots: true,
+        };
+        const full = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs), () => fromArray(fixture.targets), options,
+        );
+        const bounded = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs), () => fromArray(fixture.targets),
+            { ...options, sampleFromSec: T0 + 5000, sampleToSec: T0 + 5000 },
+        );
+        expect(coverageLine(bounded)).to.equal("cap tilt coverage | long=4 known=2 weighted=2 unknown=2");
+        expect(bounded.reportLines).to.include("cap tilt entries in window | long=1 known=1 weighted=1 unknown=0");
+        expect(bounded.reportLines).to.include("cap tilt carried into window | long=1 known=0 weighted=0 unknown=1");
+        expect(bounded.reportLines).to.include("cap tilt unknown assets | window entries + carry-in, missing leg counts (a trade can count twice): AAA=1");
+        // Looking up the carry-in at window start would wrongly use its now
+        // available cap. Restricting report dates must preserve historical votes.
+        expect(signedVotesByAsset(bounded.poolSnapshots ?? [], T0 + 5000)).to.deep.equal(
+            signedVotesByAsset(full.poolSnapshots ?? [], T0 + 5000),
+        );
+        expect(signedVotesByAsset(bounded.poolSnapshots ?? [], T0 + 5000).get("AAA")).to.equal(1);
+    });
+
+    it("reports zero qualifying trades (short-only universe) without omitting the line", async () => {
+        const shortRoundTrip = makePairWithSymbols("AAA", "BBB", "AAA•", "BBB•", [makeTrade("short", T0 + 1000, T0 + 3000)]);
+        const laterShort = makePairWithSymbols("CCC", "DDD", "CCC•", "DDD•", [makeTrade("short", T0 + 5000, null)]);
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray([shortRoundTrip, laterShort]),
+            () => fromArray(capTiltFixture().targets),
+            {
+                horizons: [2],
+                capTiltWeight: "smallBase2x",
+                lookupMarketCap: () => 100,
+            },
+        );
+        expect(coverageLine(result)).to.equal("cap tilt coverage | long=0 known=0 weighted=0 unknown=0");
+    });
+
+    it("reports equal-cap fallback as known but never weighted", async () => {
+        const fixture = capTiltFixture();
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs),
+            () => fromArray(fixture.targets),
+            {
+                horizons: [2],
+                capTiltWeight: "largeBase2x",
+                lookupMarketCap: () => 100,
+            },
+        );
+        expect(coverageLine(result)).to.equal("cap tilt coverage | long=2 known=2 weighted=0 unknown=0");
+    });
+
+    it("omits the coverage line when the effective tilt is off (weight without lookup, or not requested)", async () => {
+        const fixture = capTiltFixture();
+        const weightNoLookup = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs),
+            () => fromArray(fixture.targets),
+            { horizons: [2], capTiltWeight: "smallBase2x" },
+        );
+        expect(coverageLine(weightNoLookup)).to.equal("");
+        const noTilt = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs),
+            () => fromArray(fixture.targets),
+            { horizons: [2] },
+        );
+        expect(coverageLine(noTilt)).to.equal("");
+    });
 });

@@ -35,6 +35,7 @@ import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import { buildBatchRunFingerprint, parseBatchSymbols, BATCH_MAX_SYMBOLS } from "./batch-run-contract";
 import { BALANCED_PAIR_LIST_MAX_PAIRS, generateBalancedPairList, type BalancedPairListResult, type PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import { fnv1a64Hex } from "./max-active-research-contract";
+import { isActiveCapTiltWeight } from "./cap-tilt-contract";
 // The template blob lives in the lazy-loaded batch feature chunk (via ?raw),
 // so it never lands in the cold-start bundle.
 import { getBatchSymbolTemplate, type BatchSymbolTemplateKey } from "./batch-symbol-templates";
@@ -1975,9 +1976,7 @@ export class BatchBacktestService {
                     horizons,
                     ...(sampleFrom ? { sampleFrom } : {}),
                     ...(sampleTo ? { sampleTo } : {}),
-                    ...(capTiltWeight === "smallBase2x" || capTiltWeight === "largeBase2x"
-                        ? { capTiltWeight }
-                        : {}),
+                    ...(isActiveCapTiltWeight(capTiltWeight) ? { capTiltWeight } : {}),
                 },
                 onResponse: () => this.reissueStopIfNeeded(),
                 handlers: {
@@ -2764,9 +2763,7 @@ export class BatchBacktestService {
             useRustEnginePreference: shouldUseRustEngine(),
             ...(sampleFrom ? { sampleFrom } : {}),
             ...(sampleTo ? { sampleTo } : {}),
-            ...(capTiltWeight === "smallBase2x" || capTiltWeight === "largeBase2x"
-                ? { capTiltWeight }
-                : {}),
+            ...(isActiveCapTiltWeight(capTiltWeight) ? { capTiltWeight } : {}),
         };
         const diagnosticPayload = {
             ...payload,

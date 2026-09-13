@@ -107,6 +107,44 @@ small server-side market-cap reader that backs an injected
 - Everything else (quote −1, short pairs, `end_of_data` no-exit rule,
   positive pool, ties/digest tie-breaks) is untouched.
 
+**Coverage telemetry (locked):** while the effective tilt is active, the
+engine counts every scanned LONG trade and emits one opaque `reportLines`
+line (rendered verbatim by the summary div and both Copy paths — no
+per-arm UI plumbing):
+
+```
+cap tilt coverage | long=<longTrades> known=<bothCapsNonNull> weighted=<w=2> unknown=<someCapNull>
+```
+
+`known + unknown = long` and `weighted <= known`. `unknown` measures missing
+coverage; a known trade can legitimately stay at weight 1 because its base
+does not meet the selected size comparison. This legacy line counts **all
+scanned historical entries**, including entries outside the report dates.
+The report also emits `cap tilt entries in window` and `cap tilt carried
+into window` with the same counters. Carry-in means a pre-window long
+position whose exit is at/after the window start, is missing, or is
+`end_of_data`. Its cap is still classified at the original entry, never
+reclassified at the window start. Window boundaries are inclusive.
+
+`cap tilt unknown assets` lists missing-leg counts for window entries plus
+carry-in positions (one trade can count against both legs). Check the named
+symbols' files under `price-data/ibkr/marketcap/` and their first covered
+dates. Re-downloading cannot recover dates for which the source has no
+historical shares facts; never backfill with future counts. The SEC concept
+API only aggregates facts applying to the entire filing entity, so it is
+not a complete source for share-class disclosures; see the
+[SEC API documentation](https://www.sec.gov/search-filings/edgar-application-programming-interfaces).
+For a covered-only comparison, remove uncovered assets and use the **same
+reduced pair list and dates** for Off and Small-base ×2. This changes the
+universe, so results are not directly comparable to the original full run.
+
+Coverage telemetry is
+omitted when the tilt is effectively off (weight absent, or set without a
+lookup). The enum and its active-value predicate live in the shared
+dependency-free leaf `lib/batch-backtest/cap-tilt-contract.ts`; both UI
+payload builders and both server validators import it so the routes cannot
+drift apart.
+
 ### Data flow
 
 ```

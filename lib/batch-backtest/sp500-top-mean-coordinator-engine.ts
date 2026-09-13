@@ -45,6 +45,8 @@ import { loadServerBatchDataset } from "./server-batch-data-loader";
 // lib/ibkr-data/ — the reader is a dependency-free leaf, safe for the
 // vite.config esbuild bundle. NEVER import ibkr-data-vite-plugin.ts here.
 import { loadMarketCapLookup } from "../ibkr-data/marketcap-series-reader";
+import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
+import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import {
     computeCurrentTopMeanSnapshot,
     type CurrentTopMeanResult,
@@ -610,7 +612,11 @@ export class TopMeanCoordinatorEngine {
             // dataset fails the run loudly through the engine's existing
             // run-failure path (manifest status "failed" + fatal NDJSON
             // event) — never a silent baseline run. The dir uses the same
-            // process.cwd()-rooted convention as the Batch plugin.
+            // process.cwd()-rooted convention as the Batch plugin. The reader
+            // only opens CSVs for symbols the replay can look up (the pair
+            // legs, resolved exactly as the worker resolves them, plus the
+            // canonical assets as fallbacks), so a subset run does not pay
+            // for the rest of the market-cap universe.
             let replayCapTiltLookup: ((symbol: string, timeSec: number) => number | null) | undefined;
             if (this._request.capTiltWeight) {
                 const marketCapDir = resolve(process.cwd(), "price-data", "ibkr", "marketcap");
@@ -625,7 +631,18 @@ export class TopMeanCoordinatorEngine {
                         `capTiltWeight="${this._request.capTiltWeight}" requires the market-cap dataset, but ${marketCapDir} is missing or empty. Download MarketCap in the IBKR Data tab first.`,
                     );
                 }
-                const marketCapLookup = loadMarketCapLookup(marketCapDir);
+                const requiredCapSymbols = new Set<string>(this.canonicalAssets);
+                for (const pair of enumRes.canonicalPairs) {
+                    const parsed = parsePortfolioSyntheticPairSymbol(pair);
+                    if (parsed) {
+                        requiredCapSymbols.add(parsed.baseSymbol);
+                        requiredCapSymbols.add(parsed.quoteSymbol);
+                    } else {
+                        const direct = canonicalizeLegIdentity(pair);
+                        requiredCapSymbols.add(direct?.loaderSymbol ?? pair);
+                    }
+                }
+                const marketCapLookup = loadMarketCapLookup(marketCapDir, { symbols: requiredCapSymbols });
                 debugLogger.info("sp500_top_mean.cap_tilt", { weight: this._request.capTiltWeight, symbols: marketCapLookup.symbols });
                 replayCapTiltLookup = marketCapLookup.lookup;
             }

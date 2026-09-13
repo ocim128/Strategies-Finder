@@ -48,6 +48,7 @@ import {
     MAX_ACTIVE_BOOTSTRAP_SAMPLES,
     MAX_ACTIVE_BOOTSTRAP_SEED,
 } from "./max-active-research-contract";
+import type { ActiveCapTiltWeight, CapTiltWeight } from "./cap-tilt-contract";
 
 // ============================================================================
 // Public types
@@ -553,7 +554,7 @@ export interface OpenScoreUsdTarget {
 }
 
 /** Cap-tilt weighting for OPEN_SCORE USD (docs/open-score-cap-tilt.md). */
-export type OpenScoreUsdCapTiltWeight = "off" | "smallBase2x" | "largeBase2x";
+export type OpenScoreUsdCapTiltWeight = CapTiltWeight;
 
 export interface RunOpenScoreUsdReplayOptions {
     /** Required in v1: positive bar horizons. Must be non-empty. */
@@ -602,7 +603,7 @@ export interface RunOpenScoreUsdReplayOptions {
      * `lookupMarketCap` is defensively treated as off (the route always
      * passes both or neither).
      */
-    capTiltWeight?: "smallBase2x" | "largeBase2x";
+    capTiltWeight?: ActiveCapTiltWeight;
     /**
      * Injected market-cap lookup (USD, as-of unix seconds). `null` result =
      * unknown cap for that symbol/date -> tilt weight falls back to 1.
@@ -1097,6 +1098,15 @@ export async function runOpenScoreUsdReplay(
     const streams: ScoreDelta[][] = [];
     let pairCount = 0;
     let omittedPairs = 0;
+    // Cap-tilt coverage counters (docs/open-score-cap-tilt.md): LONG trades
+    // scanned while the tilt is active, split by whether the entry-time caps
+    // were known and whether the tilt actually applied. The report line turns
+    // a silently-under-covered tilted run (weights degraded to 1) visible —
+    // weighting semantics are unchanged.
+    const capTiltCoverage = capTiltActive ? { long: 0, known: 0, weighted: 0, unknown: 0 } : null;
+    const capTiltWindowCoverage = { long: 0, known: 0, weighted: 0, unknown: 0 };
+    const capTiltCarryInCoverage = { long: 0, known: 0, weighted: 0, unknown: 0 };
+    const capTiltUnknownAssets = new Map<string, number>();
 
     const assetIndex = (name: string): number => {
         let idx = assetIndexByName.get(name);
@@ -1144,14 +1154,45 @@ export async function runOpenScoreUsdReplay(
             // drift every accumulator). Quote legs and short trades stay ±1;
             // equal caps or any unknown cap weight 1.
             let baseWeight = 1;
-            if (sign === 1 && capTiltActive) {
+            if (sign === 1 && capTiltActive && capTiltCoverage) {
+                capTiltCoverage.long += 1;
                 const capBase = lookupMarketCap(artifact.baseSymbol?.trim() || base, entrySec);
                 const capQuote = qi !== null
                     ? lookupMarketCap(artifact.quoteSymbol?.trim() || quote, entrySec)
                     : null;
                 if (capBase !== null && capQuote !== null) {
-                    if (capTiltWeight === "smallBase2x" && capBase < capQuote) baseWeight = 2;
-                    else if (capTiltWeight === "largeBase2x" && capBase > capQuote) baseWeight = 2;
+                    capTiltCoverage.known += 1;
+                    if (capTiltWeight === "smallBase2x" && capBase < capQuote) {
+                        baseWeight = 2;
+                        capTiltCoverage.weighted += 1;
+                    } else if (capTiltWeight === "largeBase2x" && capBase > capQuote) {
+                        baseWeight = 2;
+                        capTiltCoverage.weighted += 1;
+                    }
+                } else {
+                    capTiltCoverage.unknown += 1;
+                }
+                // Reconstruction scans the entire ledger, even for a bounded
+                // report. Separate new entries from positions carried into
+                // the window; both retain their original entry-time weight.
+                const from = options.sampleFromSec ?? -Infinity;
+                const to = options.sampleToSec ?? Infinity;
+                const coverage = entrySec >= from && entrySec <= to
+                    ? capTiltWindowCoverage
+                    : entrySec < from && entrySec <= to
+                        && (trade.exitReason === "end_of_data" || exitSec === null || exitSec >= from)
+                        ? capTiltCarryInCoverage
+                        : null;
+                if (coverage) {
+                    coverage.long += 1;
+                    if (capBase !== null && capQuote !== null) {
+                        coverage.known += 1;
+                        if (baseWeight === 2) coverage.weighted += 1;
+                    } else {
+                        coverage.unknown += 1;
+                        if (capBase === null) capTiltUnknownAssets.set(base, (capTiltUnknownAssets.get(base) ?? 0) + 1);
+                        if (capQuote === null && quote) capTiltUnknownAssets.set(quote, (capTiltUnknownAssets.get(quote) ?? 0) + 1);
+                    }
                 }
             }
             // Entry deltas (long: base+1/quote-1; short: base-1/quote+1).
@@ -3188,6 +3229,10 @@ export async function runOpenScoreUsdReplay(
         // Echo the EFFECTIVE weighting: a weight set without the lookup is
         // defensively off, and the report must not claim otherwise.
         capTilt: capTiltWeight !== null && lookupMarketCap !== null ? capTiltWeight : "off",
+        capTiltCoverage,
+        capTiltWindowCoverage,
+        capTiltCarryInCoverage,
+        capTiltUnknownAssets,
     });
 
     return {
@@ -3383,6 +3428,11 @@ function buildReportLines(args: {
     interval: string | null; sampleFromSec: number | null; sampleToSec: number | null;
     slippageRate: number; commissionRate: number;
     capTilt: OpenScoreUsdCapTiltWeight;
+    /** Present only while the tilt was active (effective weight ≠ off). */
+    capTiltCoverage?: { long: number; known: number; weighted: number; unknown: number } | null;
+    capTiltWindowCoverage: { long: number; known: number; weighted: number; unknown: number };
+    capTiltCarryInCoverage: { long: number; known: number; weighted: number; unknown: number };
+    capTiltUnknownAssets: Map<string, number>;
 }): string[] {
     const lines: string[] = [];
     const status = args.complete ? "DATA_COMPLETE" : "DATA_INCOMPLETE";
@@ -3413,6 +3463,23 @@ function buildReportLines(args: {
         lines.push("cap tilt | base leg of long pairs x2 when base cap < quote cap at entry; unknown caps weight 1; same weight applied at exit (round-trip neutral)");
     } else if (args.capTilt === "largeBase2x") {
         lines.push("cap tilt | base leg of long pairs x2 when base cap > quote cap at entry; unknown caps weight 1; same weight applied at exit (round-trip neutral)");
+    }
+    if (args.capTiltCoverage) {
+        const cov = args.capTiltCoverage;
+        // This legacy count covers all scanned history, not the report window.
+        lines.push(`cap tilt coverage | long=${cov.long} known=${cov.known} weighted=${cov.weighted} unknown=${cov.unknown}`);
+        lines.push("cap tilt coverage scope | above=all historical long entries; below=report-window entries and pre-window positions still open at window start; caps classified at original entry");
+        for (const [label, coverage] of [
+            ["entries in window", args.capTiltWindowCoverage],
+            ["carried into window", args.capTiltCarryInCoverage],
+        ] as const) {
+            lines.push(`cap tilt ${label} | long=${coverage.long} known=${coverage.known} weighted=${coverage.weighted} unknown=${coverage.unknown}`);
+        }
+        if (args.capTiltUnknownAssets.size > 0) {
+            const missing = [...args.capTiltUnknownAssets].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+            lines.push(`cap tilt unknown assets | window entries + carry-in, missing leg counts (a trade can count twice): ${missing.map(([asset, count]) => `${asset}=${count}`).join(", ")}`);
+            lines.push("cap tilt coverage warning | unknown entry caps use weight 1; check marketcap files and first covered dates for the listed assets before comparing tilted runs");
+        }
     }
     lines.push(`retained pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
     lines.push("controls | TOP_MEAN=raw/activePairs TOP_RAW_6BAR=signed score changes in current+prior 5 bars TOP_MEAN_6BAR=TOP_RAW_6BAR/activePairs TOP_MEAN_TREND=target EMA200 breadth>50%, then prior close>EMA200, TOP_MEAN, activePairs tie-break REGIME_MEAN=TOP_MEAN_TREND long above 50% breadth, BOTTOM_MEAN short below MAX_ACTIVE=most open pairs MAX_ACTIVE_REVERSION=most open pairs among negative-score assets, shorted vs USD MAX_SUBMITTED=most submitted pairs MAX_RETAINED=most loaded artifacts");

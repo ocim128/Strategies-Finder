@@ -324,7 +324,7 @@ function validateHorizonOutcomes(
     return outcomes;
 }
 
-function validateLedgerRow(value: unknown, index: number, retainHorizonBars?: number): ValidatedRow {
+function validateLedgerRow(value: unknown, index: number, retainHorizonBars?: number): ValidatedRow | null {
     const label = `ledger.jsonl:${index + 1}`;
     if (!isRecord(value)) dataBug(`${label} must contain an object`);
     const ledgerVersion = requiredInteger(value, "ledgerVersion", label);
@@ -346,8 +346,14 @@ function validateLedgerRow(value: unknown, index: number, retainHorizonBars?: nu
     const feat_legVolatilityRatio20 = nullableFinite(value, "feat_legVolatilityRatio20", label);
     const feat_candidatesAtTime = nullableFinite(value, "feat_candidatesAtTime", label);
     const pair = requiredString(value, "pair", label);
-    const baseSymbol = requiredString(value, "baseSymbol", label);
-    const quoteSymbol = requiredString(value, "quoteSymbol", label);
+    if (!hasOwn(value, "baseSymbol") || typeof value.baseSymbol !== "string") {
+        dataBug(`${label}.baseSymbol must be a string`);
+    }
+    if (!hasOwn(value, "quoteSymbol") || typeof value.quoteSymbol !== "string") {
+        dataBug(`${label}.quoteSymbol must be a string`);
+    }
+    const baseSymbol = value.baseSymbol;
+    const quoteSymbol = value.quoteSymbol;
     const signalTime = requiredInteger(value, "signalTime", label);
     const signalBarIndex = requiredInteger(value, "signalBarIndex", label);
     nullableFinite(value, "fillTime", label);
@@ -356,6 +362,13 @@ function validateLedgerRow(value: unknown, index: number, retainHorizonBars?: nu
     nullableString(value, "notExecutedReason", label);
     const pairTradesPrior = requiredFinite(value, "feat_pairTradesPrior", label);
     if (!Number.isInteger(pairTradesPrior) || pairTradesPrior < 0) dataBug(`${label}.feat_pairTradesPrior must be a non-negative integer`);
+    // Batch ledgers may also contain standalone target-symbol rows. They are
+    // valid trade-ledger rows, but they are not pair-selection candidates and
+    // have no leg metadata to expose. Keep validating their shared schema,
+    // then exclude only this unambiguous standalone shape.
+    if (baseSymbol.length === 0 && quoteSymbol.length === 0 && !pair.includes("+")) return null;
+    if (baseSymbol.length === 0) dataBug(`${label}.baseSymbol must be a non-empty string`);
+    if (quoteSymbol.length === 0) dataBug(`${label}.quoteSymbol must be a non-empty string`);
     return {
         candidate: {
             pair,
@@ -423,6 +436,7 @@ export async function loadPairSelectionArchive(
     const horizonReturns = new Map<string, number | null>();
     const seen = new Set<string>();
     let rows = 0;
+    let ledgerRowOrdinal = 0;
     let compatibility: PairFeatureCompatibilityResult | null = null;
     const loaded = await loadLedgerForReplay(folderPath, {
         includeSignalRanks: options.includeSignalRanks,
@@ -431,11 +445,14 @@ export async function loadPairSelectionArchive(
             compatibility = validatePairSelectionProvenance(provenance);
         },
         onLedgerRow: (value) => {
-            const validated = validateLedgerRow(value, rows, options.retainHorizonBars);
+            const rowOrdinal = ledgerRowOrdinal;
+            ledgerRowOrdinal += 1;
+            const validated = validateLedgerRow(value, rowOrdinal, options.retainHorizonBars);
+            if (validated === null) return;
             const candidate = validated.candidate as ArchivedCandidate;
             // Keep the ordinal private without copying and deleting a symbol
             // on every scoring pass (which deoptimizes the candidate shape).
-            Object.defineProperty(candidate, PRIVATE_ROW_ORDINAL, { value: rows });
+            Object.defineProperty(candidate, PRIVATE_ROW_ORDINAL, { value: rowOrdinal });
             const key = candidateKey(candidate.signalTime, candidate.pair, candidate.direction);
             if (seen.has(key)) dataBug(`duplicate candidate ${key}`);
             seen.add(key);
