@@ -93,6 +93,11 @@ export interface BacktestSettingsData {
     /** When true, block new entries for riskCooldownBars after any trade closes. */
     riskCooldownEnabled: boolean;
     riskCooldownBars: number;
+    /** Wait for a favorable price move before creating the real entry. */
+    riskEntryConfirmationEnabled: boolean;
+    riskEntryConfirmationPercent: number;
+    riskEntryConfirmationBars: number;
+    riskEntryConfirmationMove: NonNullable<BacktestSettings['riskEntryConfirmationMove']>;
     riskWinStreakStopLossEnabled: boolean;
     riskWinStreakStopLossAfterWins: number;
     riskWinStreakStopLossPercent: number;

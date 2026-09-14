@@ -37,6 +37,96 @@ describe('Backtesting Engine', () => {
         expect(result.profitFactor).to.equal(Infinity); // No losses
     });
 
+    it('waits for a favorable move before next-bar entry and expires unmatched signals', () => {
+        const data: OHLCVData[] = [
+            { time: 0 as Time, open: 100, high: 100.5, low: 99.5, close: 100, volume: 1000 },
+            { time: 1 as Time, open: 100.2, high: 100.8, low: 99, close: 100.5, volume: 1000 },
+            { time: 2 as Time, open: 100.7, high: 101.5, low: 100.4, close: 101.2, volume: 1000 },
+            { time: 3 as Time, open: 101.1, high: 102, low: 100.9, close: 101.8, volume: 1000 },
+            { time: 4 as Time, open: 101.8, high: 102, low: 101.5, close: 101.9, volume: 1000 },
+        ];
+        const settings = {
+            tradeDirection: 'long' as const,
+            executionModel: 'next_open' as const,
+            riskEntryConfirmationEnabled: true,
+            riskEntryConfirmationPercent: 1,
+            riskEntryConfirmationBars: 3,
+            riskEntryConfirmationMove: 'up' as const,
+        };
+        const options = {
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+            skipDrawdown: true,
+            requireTradeHistory: true,
+        } as const;
+        const signals: Signal[] = [{ time: data[0]!.time, type: 'buy', price: 100 }];
+
+        const full = runBacktest(data, signals, 1000, 100, 0, settings, undefined, undefined, options);
+        const compact = runBacktestCompact(data, signals, 1000, 100, 0, settings, undefined, undefined, options);
+
+        for (const result of [full, compact]) {
+            expect(result.trades).to.have.length(1);
+            expect(result.trades[0]!.entryTime).to.equal(data[3]!.time);
+            expect(result.trades[0]!.entryPrice).to.equal(data[3]!.open);
+        }
+
+        const expiredData = data.map((candle) => ({ ...candle, high: Math.min(candle.high, 100.8) }));
+        const expired = runBacktest(expiredData, signals, 1000, 100, 0, {
+            ...settings,
+            riskEntryConfirmationBars: 2,
+        });
+        expect(expired.trades).to.have.length(0);
+    });
+
+    it('uses the favorable downward move for short entry confirmation', () => {
+        const data: OHLCVData[] = [
+            { time: 0 as Time, open: 100, high: 100.5, low: 99.5, close: 100, volume: 1000 },
+            { time: 1 as Time, open: 99.8, high: 100.2, low: 99.2, close: 99.5, volume: 1000 },
+            { time: 2 as Time, open: 99.4, high: 99.8, low: 98.5, close: 98.9, volume: 1000 },
+            { time: 3 as Time, open: 98.7, high: 99, low: 98, close: 98.4, volume: 1000 },
+        ];
+        const result = runBacktest(data, [
+            { time: data[0]!.time, type: 'sell', price: 100 },
+        ], 1000, 100, 0, {
+            tradeDirection: 'short',
+            executionModel: 'next_open',
+            riskEntryConfirmationEnabled: true,
+            riskEntryConfirmationPercent: 1,
+            riskEntryConfirmationBars: 3,
+            riskEntryConfirmationMove: 'down' as const,
+        });
+
+        expect(result.trades).to.have.length(1);
+        expect(result.trades[0]!.entryTime).to.equal(data[3]!.time);
+        expect(result.trades[0]!.entryPrice).to.equal(data[3]!.open);
+    });
+
+    it('keeps opposite-signal exits immediate in both-direction mode', () => {
+        const data: OHLCVData[] = [
+            { time: 0 as Time, open: 100, high: 100.5, low: 99.5, close: 100, volume: 1000 },
+            { time: 1 as Time, open: 100, high: 101.5, low: 99.5, close: 101, volume: 1000 },
+            { time: 2 as Time, open: 101.5, high: 102, low: 100.5, close: 101.5, volume: 1000 },
+            { time: 3 as Time, open: 100.8, high: 101, low: 100, close: 100.5, volume: 1000 },
+            { time: 4 as Time, open: 100.4, high: 100.8, low: 99.5, close: 100, volume: 1000 },
+        ];
+        const result = runBacktest(data, [
+            { time: data[0]!.time, type: 'buy', price: 100 },
+            { time: data[2]!.time, type: 'sell', price: 101.5 },
+        ], 1000, 100, 0, {
+            tradeDirection: 'both',
+            executionModel: 'next_open',
+            riskEntryConfirmationEnabled: true,
+            riskEntryConfirmationPercent: 1,
+            riskEntryConfirmationBars: 3,
+            riskEntryConfirmationMove: 'both' as const,
+        });
+
+        const firstTrade = result.trades.find((trade) => trade.type === 'long');
+        expect(firstTrade?.entryTime).to.equal(data[2]!.time);
+        expect(firstTrade?.exitTime).to.equal(data[3]!.time);
+        expect(firstTrade?.exitReason).to.equal('signal');
+    });
+
     it('preserves chronological execution for out-of-order raw signals', () => {
         const data: OHLCVData[] = [
             { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },

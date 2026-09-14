@@ -326,6 +326,34 @@
                         <div class="param-hint">Block new entries for N bars after any trade closes. Default 1 preserves prior behavior (one-bar re-entry guard after signal exits).</div>
                     </div>
                 </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div class="param-row-header">
+                            <label class="param-label">Entry Move Confirmation</label>
+                            <label class="section-toggle section-toggle--sm" aria-label="Toggle entry move confirmation">
+                                <input type="checkbox" id="riskEntryConfirmationToggle">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">After a signal, wait for price to move in the selected direction by the target %. The actual entry uses the next bar under the selected execution model.</div>
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label" for="riskEntryConfirmationMove">Move Direction</label>
+                        <select class="param-input" id="riskEntryConfirmationMove">
+                            <option value="down">Down</option>
+                            <option value="up">Up</option>
+                            <option value="both" selected>Both</option>
+                        </select>
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label">Move (%)</label>
+                        <input type="number" class="param-input" id="riskEntryConfirmationPercent" value="1" min="0.01" max="100" step="0.1">
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label">Expires After (bars)</label>
+                        <input type="number" class="param-input" id="riskEntryConfirmationBars" value="3" min="1" step="1">
+                    </div>
+                </div>
                 <div class="risk-percentage is-hidden" id="riskPercentage">
                     <div class="param-row">
                         <div class="param-group">

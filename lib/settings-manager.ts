@@ -547,6 +547,7 @@ class SettingsManager {
             'takeProfitToggle',
             'riskMinHoldToggle',
             'riskMaxHoldToggle',
+            'riskEntryConfirmationToggle',
             'pathExitEnabled'
         ];
 

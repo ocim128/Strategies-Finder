@@ -89,6 +89,14 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         riskMaxHoldEnabled: settings?.riskMaxHoldEnabled ?? false,
         riskCooldownEnabled: settings?.riskCooldownEnabled ?? true,
         riskCooldownBars: Math.max(0, Math.round(toNumberOr(settings?.riskCooldownBars, 1))),
+        riskEntryConfirmationEnabled: settings?.riskEntryConfirmationEnabled ?? false,
+        riskEntryConfirmationPercent: clamp(toNumberOr(settings?.riskEntryConfirmationPercent, 0), 0, 100),
+        riskEntryConfirmationBars: Math.max(0, Math.round(toNumberOr(settings?.riskEntryConfirmationBars, 0))),
+        riskEntryConfirmationMove: settings?.riskEntryConfirmationMove === 'down'
+            || settings?.riskEntryConfirmationMove === 'up'
+            || settings?.riskEntryConfirmationMove === 'both'
+            ? settings.riskEntryConfirmationMove
+            : 'both',
         riskWinStreakStopLossEnabled: false,
         riskWinStreakStopLossAfterWins: 3,
         riskWinStreakStopLossPercent: 0,

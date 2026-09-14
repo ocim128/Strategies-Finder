@@ -295,6 +295,8 @@ export type PathExitMode =
     | 'structure_reclaim'
     | 'profit_compression';
 
+export type EntryConfirmationMove = 'down' | 'up' | 'both';
+
 export interface BacktestSettings {
     atrPeriod?: number;
     stopLossAtr?: number;
@@ -342,6 +344,14 @@ export interface BacktestSettings {
     riskCooldownBars?: number;
     /** Enable the post-exit entry cooldown. */
     riskCooldownEnabled?: boolean;
+    /** Wait for a favorable price move before creating the real entry. */
+    riskEntryConfirmationEnabled?: boolean;
+    /** Favorable move required after an entry signal, in percent. */
+    riskEntryConfirmationPercent?: number;
+    /** Maximum number of bars after the signal in which the move may occur. */
+    riskEntryConfirmationBars?: number;
+    /** Absolute move direction required after an entry signal. */
+    riskEntryConfirmationMove?: EntryConfirmationMove;
     /** Enable the win-streak stop loss override in percentage mode */
     riskWinStreakStopLossEnabled?: boolean;
     /** After N consecutive winning trades, new entries switch to the override stop loss % */
@@ -462,6 +472,10 @@ export interface Signal {
     reason?: string;
     /** Optional bar index to align execution timing in backtests/replay. */
     barIndex?: number;
+    /** Original signal bar when entry execution is delayed by a risk rule. */
+    decisionBarIndex?: number;
+    /** In both-direction mode, this signal may close but not open a position. */
+    confirmationExitOnly?: boolean;
     /**
      * Optional exit size fraction (0..1] for signal-driven exits.
      * Omitted means full exit.

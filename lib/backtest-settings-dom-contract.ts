@@ -42,6 +42,7 @@ export type BacktestDomSettingParser =
     | "number"
     | "boolean"
     | "string"
+    | "entryConfirmationMove"
     | "stringArray"
     | "confirmationMode"
     | "confirmationStrategyParams"
@@ -107,6 +108,8 @@ function inferParser(settingKey: BacktestDomSettingKey): BacktestDomSettingParse
             return "riskMode";
         case "takeProfitMode":
             return "takeProfitMode";
+        case "riskEntryConfirmationMove":
+            return "entryConfirmationMove";
         case "tradeDirection":
             return "tradeDirection";
         case "marketMode":
@@ -276,6 +279,15 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         legacyAliases: ["riskCooldownEnabled"],
         rustSupport: "conditional",
     }),
+    createField("riskEntryConfirmationToggle", {
+        settingKey: "riskEntryConfirmationEnabled",
+        parser: "boolean",
+        legacyAliases: ["riskEntryConfirmationEnabled"],
+        rustSupport: "unsupported",
+    }),
+    createField("riskEntryConfirmationPercent", { rustSupport: "unsupported" }),
+    createField("riskEntryConfirmationBars", { rustSupport: "unsupported" }),
+    createField("riskEntryConfirmationMove", { parser: "entryConfirmationMove", rustSupport: "unsupported" }),
     createField("disableSignalExits", { rustSupport: "unsupported" }),
     createField("exitStrategyOverrideEnabled", { rustSupport: "unsupported" }),
     createField("exitStrategyKey", { rustSupport: "unsupported" }),
@@ -497,6 +509,15 @@ export function coerceBacktestDomSettingValue(
             return resolveRiskModeValue(value, DEFAULT_BACKTEST_SETTINGS);
         case "takeProfitMode":
             return resolveTakeProfitMode(value);
+        case "entryConfirmationMove": {
+            if (typeof value === "string") {
+                const normalized = value.trim().toLowerCase();
+                if (normalized === "down" || normalized === "up" || normalized === "both") {
+                    return normalized;
+                }
+            }
+            return DEFAULT_BACKTEST_SETTINGS.riskEntryConfirmationMove;
+        }
         case "tradeDirection":
             return resolveTradeDirection({ tradeDirection: value as any }, DEFAULT_BACKTEST_SETTINGS);
         case "marketMode":

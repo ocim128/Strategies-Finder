@@ -61,6 +61,10 @@ export function getTypescriptEngineRequirementReasons(
     const usesRiskCooldown =
         settings.riskCooldownEnabled === true
         && (settings.riskCooldownBars ?? 0) > 0;
+    const usesEntryConfirmation =
+        settings.riskEntryConfirmationEnabled === true
+        && (settings.riskEntryConfirmationPercent ?? 0) > 0
+        && (settings.riskEntryConfirmationBars ?? 0) > 0;
     const usesAdaptivePercentageTakeProfit =
         settings.riskMode === 'percentage'
         && settings.takeProfitEnabled === true
@@ -100,6 +104,7 @@ export function getTypescriptEngineRequirementReasons(
         if (!reasons.includes('rust_capability_missing')) reasons.push('rust_capability_missing');
     }
     if (usesRiskMinHold) reasons.push('minimum hold bars are enabled');
+    if (usesEntryConfirmation) reasons.push('entry confirmation is enabled');
     if (usesRiskCooldown && !hasRustCapability(capabilities, RUST_RISK_COOLDOWN_CAPABILITY)) {
         if (!reasons.includes('rust_capability_missing')) reasons.push('rust_capability_missing');
     }
@@ -131,6 +136,10 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "marketMode",
     "riskMinHoldBars",
     "riskMinHoldEnabled",
+    "riskEntryConfirmationEnabled",
+    "riskEntryConfirmationPercent",
+    "riskEntryConfirmationBars",
+    "riskEntryConfirmationMove",
     "riskWinStreakStopLossEnabled",
     "riskWinStreakStopLossAfterWins",
     "riskWinStreakStopLossPercent",

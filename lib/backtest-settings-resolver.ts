@@ -6,6 +6,7 @@ import type {
     StrategyParams,
     TradeDirection,
     PathExitMode,
+    EntryConfirmationMove,
 } from "./types/strategies";
 import { MAX_OPEN_TRADES_UNLIMITED } from "./types/backtest";
 import {
@@ -85,6 +86,10 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     riskMaxHoldEnabled: false,
     riskCooldownEnabled: true,
     riskCooldownBars: 1,
+    riskEntryConfirmationEnabled: false,
+    riskEntryConfirmationPercent: 1,
+    riskEntryConfirmationBars: 3,
+    riskEntryConfirmationMove: "both" as EntryConfirmationMove,
     riskWinStreakStopLossEnabled: false,
     riskWinStreakStopLossAfterWins: 3,
     riskWinStreakStopLossPercent: 0,
@@ -170,6 +175,8 @@ type NumericResolverKey =
     | "riskMinHoldBars"
     | "riskMaxHoldBars"
     | "riskCooldownBars"
+    | "riskEntryConfirmationPercent"
+    | "riskEntryConfirmationBars"
     | "riskWinStreakStopLossAfterWins"
     | "riskWinStreakStopLossPercent"
     | "confirmationWindowBars"
@@ -195,6 +202,7 @@ type BooleanResolverKey =
     | "riskMinHoldEnabled"
     | "riskMaxHoldEnabled"
     | "riskCooldownEnabled"
+    | "riskEntryConfirmationEnabled"
     | "riskWinStreakStopLossEnabled"
     | "invertSignals"
     | "allowSameBarExit"
@@ -289,6 +297,18 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
         resolve: (raw) => Math.max(0, Math.round(readDefaultedNumber(raw, "riskCooldownBars"))),
     },
     {
+        key: "riskEntryConfirmationPercent",
+        guard: "useRiskManagement",
+        disabledValue: 0,
+        resolve: (raw) => Math.max(0, Math.min(100, readDefaultedNumber(raw, "riskEntryConfirmationPercent"))),
+    },
+    {
+        key: "riskEntryConfirmationBars",
+        guard: "useRiskManagement",
+        disabledValue: 0,
+        resolve: (raw) => Math.max(1, Math.round(readDefaultedNumber(raw, "riskEntryConfirmationBars"))),
+    },
+    {
         key: "riskWinStreakStopLossAfterWins",
         guard: "useAdvancedRisk",
         disabledValue: EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossAfterWins,
@@ -352,6 +372,12 @@ const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
     { key: "riskMinHoldEnabled", keys: ["riskMinHoldEnabled", "riskMinHoldToggle"], guard: "useRiskMinHold", disabledValue: false },
     { key: "riskMaxHoldEnabled", keys: ["riskMaxHoldEnabled", "riskMaxHoldToggle"], guard: "useRiskMaxHold", disabledValue: false },
     { key: "riskCooldownEnabled", keys: ["riskCooldownEnabled", "riskCooldownToggle"], guard: "useRiskCooldown", disabledValue: false },
+    {
+        key: "riskEntryConfirmationEnabled",
+        keys: ["riskEntryConfirmationEnabled", "riskEntryConfirmationToggle"],
+        guard: "useRiskManagement",
+        disabledValue: false,
+    },
     {
         key: "riskWinStreakStopLossEnabled",
         keys: ["riskWinStreakStopLossEnabled", "riskWinStreakStopLossToggle"],
@@ -455,6 +481,14 @@ function resolvePathExitMode(rawValue: unknown): PathExitMode {
         }
     }
     return "off";
+}
+
+function resolveEntryConfirmationMove(rawValue: unknown): EntryConfirmationMove {
+    if (typeof rawValue === "string") {
+        const move = rawValue.trim().toLowerCase() as EntryConfirmationMove;
+        if (move === "down" || move === "up" || move === "both") return move;
+    }
+    return EFFECTIVE_BACKTEST_DEFAULTS.riskEntryConfirmationMove;
 }
 
 function readNumber(raw: Record<string, unknown>, key: string, fallback: number): number {
@@ -680,6 +714,7 @@ export function resolveBacktestSettingsFromRaw(
         coerced.polymarketEntryCutoffEnabled = readBooleanAny(raw, ["polymarketEntryCutoffEnabled", "polymarketEntryCutoffToggle"], EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffEnabled);
         coerced.polymarketEntryCutoffSeconds = clampPolymarketEntryCutoffSeconds(raw["polymarketEntryCutoffSeconds"]);
         coerced.disableSignalExits = readBoolean(raw, "disableSignalExits", EFFECTIVE_BACKTEST_DEFAULTS.disableSignalExits);
+        coerced.riskEntryConfirmationMove = resolveEntryConfirmationMove(coerced.riskEntryConfirmationMove);
         coerced.exitStrategyOverrideEnabled = readBoolean(raw, "exitStrategyOverrideEnabled", false);
         coerced.exitStrategyKey = typeof raw["exitStrategyKey"] === "string" ? raw["exitStrategyKey"].trim() : "";
         coerced.exitStrategyParams = readStrategyParams(raw["exitStrategyParams"]);
@@ -773,6 +808,7 @@ export function resolveBacktestSettingsFromRaw(
             ? resolveTakeProfitMode(raw["takeProfitMode"])
             : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMode,
         ...booleanSettings,
+        riskEntryConfirmationMove: resolveEntryConfirmationMove(raw["riskEntryConfirmationMove"]),
         marketMode,
         trendEmaPeriod: 0,
         trendEmaSlopeBars: 0,

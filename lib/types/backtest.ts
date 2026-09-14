@@ -1,4 +1,4 @@
-import { Time, MarketMode, PercentageTakeProfitMode, PathExitMode } from './strategies';
+import { Time, MarketMode, PercentageTakeProfitMode, PathExitMode, EntryConfirmationMove } from './strategies';
 
 export interface NormalizedSettings {
     atrPeriod: number;
@@ -32,6 +32,10 @@ export interface NormalizedSettings {
     riskMaxHoldEnabled: boolean;
     riskCooldownEnabled: boolean;
     riskCooldownBars: number;
+    riskEntryConfirmationEnabled: boolean;
+    riskEntryConfirmationPercent: number;
+    riskEntryConfirmationBars: number;
+    riskEntryConfirmationMove: EntryConfirmationMove;
     riskWinStreakStopLossEnabled: boolean;
     riskWinStreakStopLossAfterWins: number;
     riskWinStreakStopLossPercent: number;

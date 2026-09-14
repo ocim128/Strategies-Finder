@@ -35,7 +35,10 @@ export function prepareSignals(
         barIndex: number,
         signal: Signal,
         type: Signal['type'],
-        price: number
+        price: number,
+        triggerPrice = signal.price,
+        decisionBarIndex?: number,
+        confirmationExitOnly = false,
     ): void => {
         if (barIndex < lastPreparedBarIndex) {
             isPreparedOrderSorted = false;
@@ -46,11 +49,53 @@ export function prepareSignals(
             time: data[barIndex].time,
             type,
             price,
-            triggerPrice: signal.price,
+            triggerPrice,
             reason: signal.reason,
             sizeFraction: signal.sizeFraction,
-            exitOnly: signal.exitOnly
+            exitOnly: signal.exitOnly,
+            ...(decisionBarIndex === undefined ? {} : { decisionBarIndex }),
+            ...(confirmationExitOnly ? { confirmationExitOnly: true } : {}),
         });
+    };
+
+    const useEntryConfirmation = config.riskEntryConfirmationEnabled
+        && config.riskEntryConfirmationPercent > 0
+        && config.riskEntryConfirmationBars > 0;
+
+    const resolveConfirmedEntry = (signal: Signal, signalIndex: number): {
+        executionIndex: number;
+        entryPrice: number;
+    } | null => {
+        const referencePrice = signal.price;
+        if (!Number.isFinite(referencePrice) || referencePrice <= 0) return null;
+
+        const upTargetPrice = referencePrice * (1 + config.riskEntryConfirmationPercent / 100);
+        const downTargetPrice = referencePrice * (1 - config.riskEntryConfirmationPercent / 100);
+        const firstWaitBar = signalIndex + 1;
+        const lastWaitBar = Math.min(data.length - 1, signalIndex + config.riskEntryConfirmationBars);
+        for (let triggerIndex = firstWaitBar; triggerIndex <= lastWaitBar; triggerIndex++) {
+            const candle = data[triggerIndex];
+            const touchedUp = candle.high >= upTargetPrice;
+            const touchedDown = candle.low <= downTargetPrice;
+            const touched = config.riskEntryConfirmationMove === 'up'
+                ? touchedUp
+                : config.riskEntryConfirmationMove === 'down'
+                    ? touchedDown
+                    : touchedUp || touchedDown;
+            if (!touched) continue;
+
+            const executionIndex = triggerIndex + executionShift;
+            if (executionIndex < 0 || executionIndex >= data.length) return null;
+
+            const executionSignal = config.executionModel === 'signal_close'
+                ? { ...signal, price: candle.close }
+                : signal;
+            return {
+                executionIndex,
+                entryPrice: resolveExecutionPrice(data, executionSignal, triggerIndex, executionIndex, config),
+            };
+        }
+        return null;
     };
 
     for (let order = 0; order < signals.length; order++) {
@@ -79,9 +124,22 @@ export function prepareSignals(
 
             if (hasRegimeFilters && !passesRegimeFilters(data, decisionIndex, config, indicators, tradeDirection)) continue;
 
-            const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
+            const confirmedEntry = useEntryConfirmation
+                ? resolveConfirmedEntry(signal, decisionIndex)
+                : null;
+            if (useEntryConfirmation && !confirmedEntry) continue;
 
-            pushPreparedSignal(executionIndex, signal, entryType, entryPrice);
+            const entryPrice = confirmedEntry?.entryPrice
+                ?? resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
+
+            pushPreparedSignal(
+                confirmedEntry?.executionIndex ?? executionIndex,
+                signal,
+                entryType,
+                entryPrice,
+                signal.price,
+                confirmedEntry ? decisionIndex : undefined,
+            );
             continue;
         }
 
@@ -99,8 +157,25 @@ export function prepareSignals(
         }
 
         const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
+        if (!useEntryConfirmation || signal.exitOnly === true) {
+            pushPreparedSignal(executionIndex, signal, signal.type, entryPrice);
+            continue;
+        }
 
-        pushPreparedSignal(executionIndex, signal, signal.type, entryPrice);
+        // In both-direction mode the original signal must still be able to
+        // close an opposite position immediately, but it must not open one.
+        pushPreparedSignal(executionIndex, signal, signal.type, entryPrice, signal.price, undefined, true);
+
+        const confirmedEntry = resolveConfirmedEntry(signal, decisionIndex);
+        if (!confirmedEntry) continue;
+        pushPreparedSignal(
+            confirmedEntry.executionIndex,
+            signal,
+            signal.type,
+            confirmedEntry.entryPrice,
+            signal.price,
+            decisionIndex,
+        );
     }
 
     if (isPreparedOrderSorted) {

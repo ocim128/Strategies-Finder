@@ -446,6 +446,11 @@ function prepareIndexedFinderSignals(
     tradeDirection: ReturnType<typeof normalizeTradeDirection>
 ): IndexedFinderSignals | null {
     if (hasActiveSignalRegimeFilters(config)) return null;
+    if (
+        config.riskEntryConfirmationEnabled
+        && config.riskEntryConfirmationPercent > 0
+        && config.riskEntryConfirmationBars > 0
+    ) return null;
 
     const sourceIndexes = new Int32Array(signals.length);
     const barIndexes = new Int32Array(signals.length);
@@ -533,7 +538,9 @@ function createTradeGateController(
                 );
             }
             const pairContext = gate.pairs.get(pair);
-            const decisionBarIndex = executionBarIndex - getExecutionShift(config);
+            const decisionBarIndex = Number.isFinite(signal.decisionBarIndex)
+                ? Math.trunc(signal.decisionBarIndex as number)
+                : executionBarIndex - getExecutionShift(config);
             const direction = signalToPositionDirection(signal.type);
             const row = pairContext?.featuresBySignalKey.get(tradeGateSignalKey(decisionBarIndex, direction));
             if (!row) {
@@ -933,7 +940,7 @@ function runSinglePositionFinderFastPath(args: {
             : null;
 
         if (!exitTarget && !position) {
-            if (forcedExitReason !== null || isExitOnly) return null;
+            if (forcedExitReason !== null || isExitOnly || signal.confirmationExitOnly === true) return null;
             if (
                 (
                     config.executionModel === "next_open"
@@ -2116,7 +2123,7 @@ export function runBacktestCompact(
                     : findSignalExitTargets(positions, signal, config.allowSameBarExit, isUnlimitedOverlap(config));
 
                 if ((!exitTargets || exitTargets.length === 0) && positions.length < maxOpenTrades) {
-                    if (forcedExitReason !== null || isExitOnly) {
+                    if (forcedExitReason !== null || isExitOnly || signal.confirmationExitOnly === true) {
                         continue;
                     }
                     if (!gateDecision.admitted) {
@@ -2230,7 +2237,7 @@ export function runBacktestCompact(
 
                     if ((!exitTargets || exitTargets.length === 0) && positions.length < maxOpenTrades) {
                         // New entry (no opposite position to close, and we have room)
-                        if (forcedExitReason !== null || isExitOnly) {
+                        if (forcedExitReason !== null || isExitOnly || signal.confirmationExitOnly === true) {
                             continue;
                         }
                         if (!gateDecision.admitted) {
@@ -2782,7 +2789,7 @@ export function runBacktest(
 
                 if ((!exitTargets || exitTargets.length === 0) && positions.length < maxOpenTrades) {
                     // New entry
-                    if (forcedExitReason !== null || isExitOnly) {
+                    if (forcedExitReason !== null || isExitOnly || signal.confirmationExitOnly === true) {
                         continue;
                     }
                     if (!gateDecision.admitted) {
@@ -2896,7 +2903,7 @@ export function runBacktest(
 
                     if ((!exitTargets || exitTargets.length === 0) && positions.length < maxOpenTrades) {
                         // New entry
-                        if (forcedExitReason !== null || isExitOnly) {
+                        if (forcedExitReason !== null || isExitOnly || signal.confirmationExitOnly === true) {
                             continue;
                         }
                         if (!gateDecision.admitted) {
