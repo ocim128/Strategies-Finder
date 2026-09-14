@@ -12,11 +12,17 @@ whether **market-cap tilt** between the two legs carries selection information:
   when the base's market cap at entry is **lower** than the quote's.
 - `largeBase2x` — same, when the base's cap at entry is **higher** than the
   quote's.
+- `similarCap2x` — both legs of a LONG pair contribute **+2 / −2** when
+  `max(baseCap, quoteCap) / min(baseCap, quoteCap) <= 3` at entry. The
+  threshold is fixed and inclusive; equal caps qualify. Both caps must be
+  finite and positive. Other pairs keep +1 / −1; short trades stay unchanged.
 
-Quotes stay −1, short pairs stay ±1, and the positive pool is still
-`rawScore > 0` — so the weighting can only change how candidates **rank**,
-never who is a candidate. The experiment is run three times (off /
-smallBase2x / largeBase2x) and the TOP_MEAN delta-vs-random lines are
+Quotes stay −1 in the original small/large modes; similar-cap weights both
+legs equally, keeping each pair's score contribution balanced. Short pairs
+stay ±1. The positive-pool rule is still `rawScore > 0`, but weighting can
+change both rankings and pool membership. TOP_MEAN still divides by the
+unweighted active-pair count. Run the experiment with the same pair list
+and dates (off / smallBase2x / largeBase2x / similarCap2x); the TOP_MEAN delta-vs-random lines are
 compared across reports. Deliberately **not** in scope: new selector arms
 (`TOP_MEAN_SMALL2X` etc.), cap-tilt diagnostics, and changes to any other
 arm's semantics. If the experiment survives, a follow-up plan promotes it to
@@ -84,28 +90,33 @@ proper parallel-counter arms.
 
 ## Design overview
 
-One new enum request field, `capTiltWeight: "off" | "smallBase2x" |
-"largeBase2x"` (default `"off"`), threaded browser → route → engine, plus a
+One enum request field, `capTiltWeight: "off" | "smallBase2x" |
+"largeBase2x" | "similarCap2x"` (default `"off"`), threaded browser → route → engine, plus a
 small server-side market-cap reader that backs an injected
 `lookupMarketCap(symbol, timeSec): number | null` callback.
 
 **Weighting semantics (locked):**
 
-- Applies ONLY to the base leg of LONG trades (`sign === 1`): entry delta
-  `+w` instead of `+1`, where `w = 2` when the tilt condition matches.
+- Applies ONLY to LONG trades (`sign === 1`): base entry delta `+w` instead
+  of `+1`, where `w = 2` when the condition matches. In `similarCap2x`, the
+  quote also gets `−w`; in the original small/large modes it stays −1.
 - The tilt is classified **once per trade at entry** using caps at the entry
-  timestamp, and the SAME `w` is applied to the exit delta (`−w`). This keeps
+  timestamp, and the SAME weights are reversed at exit (`−w` for the base,
+  `+w` for a similarly weighted quote). This keeps
   `rawScore` returning to its prior level after every round-trip —
   re-classifying at exit (caps moved) would make every accumulator drift
   monotonically and corrupt the whole replay.
 - Tilt condition: `lookupMarketCap(baseSymbol, entrySec)` and
   `lookupMarketCap(quoteSymbol, entrySec)` both non-null; `smallBase2x`
   requires `capBase < capQuote`, `largeBase2x` requires `capBase >
-  capQuote`. Either lookup null (no cap data for that symbol or date) →
+  capQuote`. `similarCap2x` requires finite positive caps whose larger/smaller
+  ratio is at most 3, regardless of which leg is larger.
+  Either lookup null (no cap data for that symbol or date) →
   `w = 1` (documented fallback: the run keeps full coverage and only differs
   from baseline where cap data exists).
-- Everything else (quote −1, short pairs, `end_of_data` no-exit rule,
-  positive pool, ties/digest tie-breaks) is untouched.
+- Short pairs, the `end_of_data` no-exit rule, and ties/digest tie-break
+  rules are untouched. Coverage `weighted` counts qualifying long trades,
+  not weighted legs, including in `similarCap2x`.
 
 **Coverage telemetry (locked):** while the effective tilt is active, the
 engine counts every scanned LONG trade and emits one opaque `reportLines`
@@ -172,7 +183,7 @@ UI select (tab-batch-backtest.html, OPEN_SCORE USD section)
   `capTiltWeight: OpenScoreUsdCapTiltWeight = "off"` (after
   `loadTargetDataset`, so existing call sites and tests compile unchanged).
 - `RunOpenScoreUsdReplayOptions` gains:
-  - `capTiltWeight?: "smallBase2x" | "largeBase2x"` (absent = off), and
+  - `capTiltWeight?: ActiveCapTiltWeight` (absent = off), and
   - `lookupMarketCap?: (symbol: string, timeSec: number) => number | null`.
   The engine treats `capTiltWeight` set without `lookupMarketCap` as off
   (defensive; the route always passes both or neither).
@@ -267,7 +278,7 @@ with a two-line replace rather than importing `stripIbkrMarker` from
     untouched. Resolve the symbol for the lookup from
     `artifact.baseSymbol` / `artifact.quoteSymbol` (fall back to the asset
     name when absent — the reader normalizes markers).
-  - Extend the `config |` report line with `capTilt=off|smallBase2x|largeBase2x`
+  - Extend the `config |` report line with `capTilt=off|smallBase2x|largeBase2x|similarCap2x`
     and, when active, add one fixed line documenting the semantics
     ("base leg of long pairs ×2 when base cap < / > quote cap at entry;
     unknown caps weight 1").
@@ -390,7 +401,7 @@ with a two-line replace rather than importing `stripIbkrMarker` from
     `vite.config.ts`).
 - **Tasks**:
   - `TopMeanCoordinatorRunRequest`: add
-    `capTiltWeight?: "smallBase2x" | "largeBase2x"` (absent/`"off"` =
+    `capTiltWeight?: ActiveCapTiltWeight` (absent/`"off"` =
     baseline).
   - `sp500-top-mean-request-limits.ts`: validate the enum in
     `validateTopMeanRequestLimits` (absent/`"off"` passes through; any other
@@ -469,5 +480,6 @@ with a two-line replace rather than importing `stripIbkrMarker` from
   passes. The standalone OPEN_SCORE USD rerun and the coordinator have
   INDEPENDENT selects (matching the existing pattern where each section owns
   its horizons/From/To); neither changes the other's stored results.
-- **Tie behavior**: equal caps (`capBase === capQuote`) match neither tilt
-  condition → `w = 1`.
+- **Equal-cap behavior**: equal positive caps (`capBase === capQuote`) match
+  neither small/large condition → `w = 1`; they qualify for `similarCap2x`
+  → both legs have `w = 2`.

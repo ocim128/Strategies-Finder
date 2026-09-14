@@ -1061,6 +1061,60 @@ describe("batch-open-score-usd-replay-engine cap-tilt weighting", () => {
         expect(afterRoundTrip.get("BBB")).to.equal(0);
     });
 
+    it("similarCap2x balances both legs at the inclusive 3x boundary and freezes their exit weights", async () => {
+        for (const [baseCap, quoteCap, weight] of [
+            [100, 100, 2], [100, 300, 2], [300, 100, 2],
+            [100, 300.01, 1], [300.01, 100, 1],
+            [100, null, 1], [null, 100, 1], [0, 100, 1],
+        ] as const) {
+            const fixture = capTiltFixture();
+            const result = await runOpenScoreUsdReplay(
+                () => fromArray(fixture.pairs), () => fromArray(fixture.targets),
+                {
+                    horizons: [2], capTiltWeight: "similarCap2x", includePoolSnapshots: true,
+                    lookupMarketCap: (symbol, time) => {
+                        // Reverse qualification after entry: exit must undo
+                        // the original votes, never look up a new weight.
+                        if (symbol === "AAA•") return time === T_ENTRY ? baseCap : weight === 2 ? 10000 : 100;
+                        if (symbol === "BBB•") return time === T_ENTRY ? quoteCap : 100;
+                        return null;
+                    },
+                },
+            );
+            const entry = signedVotesByAsset(result.poolSnapshots ?? [], T_ENTRY);
+            expect(entry.get("AAA")).to.equal(weight);
+            expect(entry.get("BBB")).to.equal(-weight);
+            const afterExit = signedVotesByAsset(result.poolSnapshots ?? [], T_AFTER_EXIT);
+            expect(afterExit.get("AAA")).to.equal(0);
+            expect(afterExit.get("BBB")).to.equal(0);
+            expect(result.reportLines.join("\n")).to.include("capTilt=similarCap2x");
+            expect(result.reportLines.join("\n")).to.include("both legs of long pairs x2 (+2/-2) when larger/smaller entry cap <= 3");
+            const known = baseCap !== null && quoteCap !== null ? 1 : 0;
+            expect(coverageLine(result)).to.equal(`cap tilt coverage | long=2 known=${known} weighted=${weight === 2 ? 1 : 0} unknown=${2 - known}`);
+        }
+    });
+
+    it("similarCap2x leaves shorts unchanged and retains both votes for open longs in a mixed book", async () => {
+        const fixture = capTiltFixture();
+        fixture.pairs[0]!.result.trades[0]!.type = "short";
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(fixture.pairs), () => fromArray(fixture.targets),
+            {
+                horizons: [2], capTiltWeight: "similarCap2x", includePoolSnapshots: true,
+                lookupMarketCap: () => 100,
+            },
+        );
+        const entry = signedVotesByAsset(result.poolSnapshots ?? [], T_ENTRY);
+        expect(entry.get("AAA")).to.equal(-1);
+        expect(entry.get("BBB")).to.equal(1);
+        const later = signedVotesByAsset(result.poolSnapshots ?? [], T_AFTER_EXIT);
+        expect(later.get("AAA")).to.equal(0);
+        expect(later.get("BBB")).to.equal(0);
+        expect(later.get("CCC")).to.equal(2);
+        expect(later.get("DDD")).to.equal(-2);
+        expect(coverageLine(result)).to.equal("cap tilt coverage | long=1 known=1 weighted=1 unknown=0");
+    });
+
     it("falls back to weight 1 when either leg's cap is unknown", async () => {
         const fixture = capTiltFixture();
         const lookups = [

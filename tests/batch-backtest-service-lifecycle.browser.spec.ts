@@ -302,9 +302,11 @@ describe("BatchBacktestService analysis lifecycle", () => {
         svc().batchActionInFlight = false;
     });
 
-    it("runs custom crypto TOP_MEAN markets at the current chart interval", async () => {
+    it("submits the coordinator's own similar-cap mode and current interval for custom markets", async () => {
         const dom = setupForAnalysis();
         const service = svc();
+        dom.batchBacktestSp500TopMeanCapTilt.value = "similarCap2x";
+        dom.batchBacktestOpenScoreUsdCapTilt.value = "largeBase2x";
         dom.batchBacktestSymbols.value = "BTCUSDT\nZEC+APT";
         state.currentInterval = "15m";
         let requestBody: any = null;
@@ -348,8 +350,24 @@ describe("BatchBacktestService analysis lifecycle", () => {
         }
 
         expect(requestBody.interval).to.equal("15m");
+        expect(requestBody.capTiltWeight).to.equal("similarCap2x");
         expect(requestBody.pairListText).to.equal("BTCUSDT\nZEC+APT");
         expect(requestBody.saveArchiveLog).to.equal(false);
+    });
+
+    it("submits standalone similar-cap mode independently of the coordinator select", async () => {
+        const dom = setupForAnalysis();
+        dom.batchBacktestOpenScoreUsdCapTilt.value = "similarCap2x";
+        dom.batchBacktestSp500TopMeanCapTilt.value = "smallBase2x";
+        dom.batchBacktestOpenScoreUsdHorizons.value = "24";
+        let requestBody: any = null;
+        await withMockFetch((_url, init) => {
+            requestBody = JSON.parse(String(init?.body ?? "{}"));
+            return { ok: false, status: 400, text: "test stop before server run" };
+        }, async () => {
+            await svc().runOpenScoreUsdReplay();
+        });
+        expect(requestBody.capTiltWeight).to.equal("similarCap2x");
     });
 
     it("submits an explicitly checked archive toggle and does not persist it", async () => {

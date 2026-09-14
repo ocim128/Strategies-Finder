@@ -599,7 +599,8 @@ export interface RunOpenScoreUsdReplayOptions {
     /**
      * Cap-tilt weighting (docs/open-score-cap-tilt.md): the base leg of LONG
      * trades gets entry delta +2 (instead of +1) when the entry-time market
-     * cap matches the tilt condition. Absent = off. Set WITHOUT
+     * cap matches the tilt condition. similarCap2x also doubles the quote's
+     * negative delta when larger/smaller cap <= 3. Absent = off. Set WITHOUT
      * `lookupMarketCap` is defensively treated as off (the route always
      * passes both or neither).
      */
@@ -1151,9 +1152,10 @@ export async function runOpenScoreUsdReplay(
             // per LONG trade from the entry-time caps and stamped on BOTH the
             // entry and exit base deltas, so rawScore returns exactly to its
             // prior value after every round-trip (re-classifying at exit would
-            // drift every accumulator). Quote legs and short trades stay ±1;
-            // equal caps or any unknown cap weight 1.
+            // drift every accumulator). similarCap2x weights both legs;
+            // other modes leave the quote unchanged. Shorts stay ±1.
             let baseWeight = 1;
+            let quoteWeight = 1;
             if (sign === 1 && capTiltActive && capTiltCoverage) {
                 capTiltCoverage.long += 1;
                 const capBase = lookupMarketCap(artifact.baseSymbol?.trim() || base, entrySec);
@@ -1167,6 +1169,13 @@ export async function runOpenScoreUsdReplay(
                         capTiltCoverage.weighted += 1;
                     } else if (capTiltWeight === "largeBase2x" && capBase > capQuote) {
                         baseWeight = 2;
+                        capTiltCoverage.weighted += 1;
+                    } else if (capTiltWeight === "similarCap2x"
+                        && Number.isFinite(capBase) && capBase > 0
+                        && Number.isFinite(capQuote) && capQuote > 0
+                        && Math.max(capBase, capQuote) / Math.min(capBase, capQuote) <= 3) {
+                        baseWeight = 2;
+                        quoteWeight = 2;
                         capTiltCoverage.weighted += 1;
                     }
                 } else {
@@ -1198,14 +1207,14 @@ export async function runOpenScoreUsdReplay(
             // Entry deltas (long: base+1/quote-1; short: base-1/quote+1).
             stream.push({ timeSec: entrySec, assetIndex: bi, delta: sign * baseWeight, isEntry: 1 });
             if (qi !== null) {
-                stream.push({ timeSec: entrySec, assetIndex: qi, delta: -sign, isEntry: 1 });
+                stream.push({ timeSec: entrySec, assetIndex: qi, delta: -sign * quoteWeight, isEntry: 1 });
             }
             // Exit deltas are the exact inverse. end_of_data / missing exit time
             // means the position is still open at the artifact end -> no exit delta.
             if (exitSec !== null && trade.exitReason !== "end_of_data") {
                 stream.push({ timeSec: exitSec, assetIndex: bi, delta: -sign * baseWeight, isEntry: 0 });
                 if (qi !== null) {
-                    stream.push({ timeSec: exitSec, assetIndex: qi, delta: sign, isEntry: 0 });
+                    stream.push({ timeSec: exitSec, assetIndex: qi, delta: sign * quoteWeight, isEntry: 0 });
                 }
             }
         }
@@ -3463,6 +3472,8 @@ function buildReportLines(args: {
         lines.push("cap tilt | base leg of long pairs x2 when base cap < quote cap at entry; unknown caps weight 1; same weight applied at exit (round-trip neutral)");
     } else if (args.capTilt === "largeBase2x") {
         lines.push("cap tilt | base leg of long pairs x2 when base cap > quote cap at entry; unknown caps weight 1; same weight applied at exit (round-trip neutral)");
+    } else if (args.capTilt === "similarCap2x") {
+        lines.push("cap tilt | both legs of long pairs x2 (+2/-2) when larger/smaller entry cap <= 3; unknown or nonpositive caps weight 1; shorts unchanged; same weights applied at exit (round-trip neutral)");
     }
     if (args.capTiltCoverage) {
         const cov = args.capTiltCoverage;

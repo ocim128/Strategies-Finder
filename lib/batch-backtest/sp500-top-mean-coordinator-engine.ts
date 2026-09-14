@@ -24,6 +24,7 @@ import {
 } from "./sp500-top-mean-artifact-store";
 import { enumerateSp500Pairs, type CoverageCounts } from "./sp500-pair-enumerator";
 import type { TopMeanRunManifest } from "./compact-pair-artifact";
+import type { ActiveCapTiltWeight } from "./cap-tilt-contract";
 import {
     TopMeanWorkerPool,
     resolveTopMeanShardSize,
@@ -102,7 +103,7 @@ export interface TopMeanCoordinatorRunRequest {
      * calendar-year passes. Absent = baseline. Requires the Download
      * MarketCap dataset; a requested weighting without it fails the run.
      */
-    capTiltWeight?: "smallBase2x" | "largeBase2x";
+    capTiltWeight?: ActiveCapTiltWeight;
 }
 
 export interface TopMeanHorizonSummary {

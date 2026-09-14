@@ -236,12 +236,13 @@
                     <label class="batch-field-label" for="batchBacktestOpenScoreUsdHorizons">Horizons</label>
                     <input class="batch-field-input batch-field-input--auto" id="batchBacktestOpenScoreUsdHorizons" type="text" value="12,24,48" placeholder="12,24,48">
                 </div>
-                <div class="batch-field batch-field--inline" title="Cap-tilt weighting: base leg of long pairs ×2 when the base's market cap is below (Small-base ×2) or above (Large-base ×2) the quote's at entry; unknown caps weight 1; quotes, shorts, and ties stay ±1. Requires the Download MarketCap dataset.">
+                <div class="batch-field batch-field--inline" title="Small-base/Large-base ×2 doubles the qualifying long base vote. Similar-cap ×2 doubles both long legs (+2/−2) when the larger entry cap is at most 3× the smaller. Unknown caps weight 1; shorts unchanged. Requires the Download MarketCap dataset.">
                     <label class="batch-field-label" for="batchBacktestOpenScoreUsdCapTilt">Cap tilt</label>
                     <select class="batch-field-input batch-field-input--auto" id="batchBacktestOpenScoreUsdCapTilt">
                         <option value="off" selected>Off</option>
                         <option value="smallBase2x">Small-base ×2</option>
                         <option value="largeBase2x">Large-base ×2</option>
+                        <option value="similarCap2x">Similar-cap ×2</option>
                     </select>
                 </div>
             </div>
@@ -277,12 +278,13 @@
                 <label class="batch-field-label" for="batchBacktestSp500TopMeanTo">To</label>
                 <input class="batch-field-input batch-field-input--auto" id="batchBacktestSp500TopMeanTo" type="date">
             </div>
-            <div class="batch-field batch-field--inline" title="Cap-tilt weighting for the OPEN_SCORE replay: base leg of long pairs ×2 when the base's market cap is below (Small-base ×2) or above (Large-base ×2) the quote's at entry; unknown caps weight 1; quotes, shorts, and ties stay ±1. Requires the Download MarketCap dataset.">
+            <div class="batch-field batch-field--inline" title="Small-base/Large-base ×2 doubles the qualifying long base vote. Similar-cap ×2 doubles both long legs (+2/−2) when the larger entry cap is at most 3× the smaller. Unknown caps weight 1; shorts unchanged. Requires the Download MarketCap dataset.">
                 <label class="batch-field-label" for="batchBacktestSp500TopMeanCapTilt">CAP TILT</label>
                 <select class="batch-field-input batch-field-input--auto" id="batchBacktestSp500TopMeanCapTilt">
                     <option value="off" selected>Off</option>
                     <option value="smallBase2x">Small-base ×2</option>
                     <option value="largeBase2x">Large-base ×2</option>
+                    <option value="similarCap2x">Similar-cap ×2</option>
                 </select>
             </div>
             <div class="batch-field batch-field--inline" title="Write the completed run's permanent mining ledger to archive/batch-open-score/. Saved archives are not automatically removed.">

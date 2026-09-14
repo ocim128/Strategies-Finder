@@ -9,7 +9,7 @@
  * import from the browser service, the vite.config-bundled server plugins,
  * and the replay engine alike (no imports at all).
  */
-export const CAP_TILT_WEIGHTS = ["off", "smallBase2x", "largeBase2x"] as const;
+export const CAP_TILT_WEIGHTS = ["off", "smallBase2x", "largeBase2x", "similarCap2x"] as const;
 
 export type CapTiltWeight = (typeof CAP_TILT_WEIGHTS)[number];
 
@@ -18,5 +18,5 @@ export type ActiveCapTiltWeight = Exclude<CapTiltWeight, "off">;
 
 /** True for the weight values that apply a tilt; "off"/absent/garbage → false. */
 export function isActiveCapTiltWeight(value: unknown): value is ActiveCapTiltWeight {
-    return value === "smallBase2x" || value === "largeBase2x";
+    return value === "smallBase2x" || value === "largeBase2x" || value === "similarCap2x";
 }

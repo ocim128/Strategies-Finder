@@ -58,6 +58,9 @@ describe("validateTopMeanRequestLimits", () => {
         const large = validateTopMeanRequestLimits({ horizons: [12], capTiltWeight: "largeBase2x" });
         expect(large.ok).to.equal(true);
         if (large.ok) expect(large.value.capTiltWeight).to.equal("largeBase2x");
+        const similar = validateTopMeanRequestLimits({ horizons: [12], capTiltWeight: "similarCap2x" });
+        expect(similar.ok).to.equal(true);
+        if (similar.ok) expect(similar.value.capTiltWeight).to.equal("similarCap2x");
 
         for (const bad of ["bogus", "OFF", "SmallBase2x", "", 5, true]) {
             const result = validateTopMeanRequestLimits({ horizons: [12], capTiltWeight: bad });

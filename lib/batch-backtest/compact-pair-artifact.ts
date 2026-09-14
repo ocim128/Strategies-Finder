@@ -1,4 +1,5 @@
 import type { Time } from "lightweight-charts";
+import type { ActiveCapTiltWeight } from "./cap-tilt-contract";
 
 export interface CompactTrade {
     type: "long" | "short";
@@ -59,7 +60,7 @@ export interface TopMeanRunManifest {
      * the coordinator engine on every manifest save so archived runs are
      * self-describing.
      */
-    capTiltWeight?: "smallBase2x" | "largeBase2x";
+    capTiltWeight?: ActiveCapTiltWeight;
     error?: string;
     archiveComplete?: boolean;
     archiveRequested?: boolean;
