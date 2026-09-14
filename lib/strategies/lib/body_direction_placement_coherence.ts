@@ -45,7 +45,7 @@ export const body_direction_placement_coherence: Strategy = {
             if (corr > coherenceThreshold && bodyDirection[i] > 0) {
                 return createBuySignal(cleanData, i, `Coherent up bar: direction-placement correlation ${corr.toFixed(2)}`);
             }
-            if (corr < -coherenceThreshold && bodyDirection[i] < 0) {
+            if (corr > coherenceThreshold && bodyDirection[i] < 0) {
                 return createSellSignal(cleanData, i, `Coherent down bar: direction-placement correlation ${corr.toFixed(2)}`);
             }
             return null;
