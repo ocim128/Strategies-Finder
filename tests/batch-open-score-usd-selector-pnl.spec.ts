@@ -326,7 +326,9 @@ async function testIntegrationReportContainsPnlLines(): Promise<void> {
     // Lines must carry the per-trade-normalized fields. Absolute total/maxDD
     // are intentionally NOT rendered (they scale with trade count + the
     // 1-unit-notional assumption and would mislead cross-config comparison).
-    const topMeanPnlLine = result.reportLines.find((l) => l.startsWith("TOP_MEAN_PNL"));
+    // Trailing space required: TOP_MEAN_PNL_POS (comparison line) shares the
+    // prefix, and only the pnlLine carries the per-trade fields.
+    const topMeanPnlLine = result.reportLines.find((l) => l.startsWith("TOP_MEAN_PNL "));
     assert.ok(topMeanPnlLine, "TOP_MEAN_PNL line present");
     assert.match(topMeanPnlLine!, /trades=/);
     assert.match(topMeanPnlLine!, /sharpe=/);

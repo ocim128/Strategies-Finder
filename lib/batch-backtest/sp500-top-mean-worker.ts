@@ -288,6 +288,9 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                 baseSymbol,
                 quoteSymbol,
                 trades: compactTrades,
+                // Dropped by JSON.stringify when undefined, so artifacts from
+                // results without a netProfit keep the old shape.
+                netProfit: output.result?.netProfit,
                 ...(dataEndTime !== null && Number.isFinite(dataEndTime)
                     ? { dataEndTime }
                     : {}),

@@ -18,6 +18,15 @@ export interface CompactPairArtifact {
     quoteSymbol: string;
     trades: CompactTrade[];
     /**
+     * Full-backtest net P&L carried from the pair's `BacktestResult`. Feeds
+     * the pnl-gated OPEN_SCORE arms (TOP_RAW_PNL_POS / TOP_MEAN_PNL_POS),
+     * which count a pair's votes only when this value is strictly positive.
+     * Optional for backward compatibility: artifacts written before this
+     * field existed omit it and remain readable, but the pnl-gated arms see
+     * them as non-profitable (those arms report 0 events for such archives).
+     */
+    netProfit?: number;
+    /**
      * Unix-second timestamp of the last closed candle the worker fed to
      * `executeBacktest(...)`. Used by the Phase-1 current-snapshot reducer to
      * align artifacts to a common cross-sectional endpoint before voting.
@@ -78,6 +87,8 @@ export interface BatchSyntheticPairArtifactAdapter {
     signals: never[];
     result: {
         trades: CompactTrade[];
+        /** Present only when the stored compact artifact carries it. */
+        netProfit?: number;
     };
 }
 
@@ -92,6 +103,7 @@ export function toBatchSyntheticPairAdapter(artifact: CompactPairArtifact): Batc
         signals: [],
         result: {
             trades: artifact.trades,
+            netProfit: artifact.netProfit,
         },
     };
 }

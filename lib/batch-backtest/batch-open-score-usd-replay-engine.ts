@@ -21,6 +21,11 @@
  * adjustedScore[a]   = rawScore / sqrt(activePairCount)  (coverage-adjusted,
  *                      NOT a statistically calibrated z-score)
  *
+ * PNL-gated variants (TOP_RAW_PNL_POS / TOP_MEAN_PNL_POS): the same raw/mean
+ * ranking computed from deltas of pairs whose pair backtest netProfit was
+ * strictly positive. A pair's full-window P&L is only known after the fact,
+ * so this is a research-only look-ahead filter, not a live-selectable signal.
+ *
  * Timing (conservative causal rule): the score is updated with ALL entries and
  * exits at a timestamp before candidates are formed (a fixture proves a
  * same-timestamp exit/entry cannot leak a later target bar's price). The USD
@@ -195,6 +200,8 @@ export type OpenScoreUsdEventDetailSelector =
     | "TOP_MEAN"
     | "TOP_MEAN_RAW_UNIQUE_V1"
     | "TOP_MEAN_TREND"
+    | "TOP_RAW_PNL_POS"
+    | "TOP_MEAN_PNL_POS"
     | "MAX_ACTIVE"
     | "MAX_SUBMITTED"
     | "MAX_RETAINED";
@@ -295,6 +302,28 @@ export interface OpenScoreUsdReplayResult {
         topMeanRawUniqueV1ExDominant: ReplayComparison;
         /** Asset excluded from TOP_MEAN_RAW_UNIQUE_V1_EX_*. */
         topMeanRawUniqueV1DominantAsset: string | null;
+        /**
+         * PNL-gated TOP_RAW: identical raw-score ranking, but only pairs whose
+         * pair backtest netProfit was strictly positive contribute votes.
+         * Research-only look-ahead filter (a pair's full-window P&L is not
+         * known at decision time). Fires only on events that form a view
+         * (>= 2 unfiltered positives) AND have >= 2 pnl-gated positives.
+         */
+        topRawPnlPositive: ReplayComparison;
+        /** Per-asset breakdown for the pnl-gated TOP_RAW selector. */
+        topRawPnlPositiveByAsset: AssetSelectionSummary[];
+        /** PNL-gated TOP_RAW after removing its most-frequently-selected asset. */
+        topRawPnlPositiveExDominant: ReplayComparison;
+        /** Asset excluded from {@link topRawPnlPositiveExDominant}. */
+        topRawPnlPositiveDominantAsset: string | null;
+        /** PNL-gated TOP_MEAN: filtered raw score / open pnl-positive pair count. */
+        topMeanPnlPositive: ReplayComparison;
+        /** Per-asset breakdown for the pnl-gated TOP_MEAN selector. */
+        topMeanPnlPositiveByAsset: AssetSelectionSummary[];
+        /** PNL-gated TOP_MEAN after removing its most-frequently-selected asset. */
+        topMeanPnlPositiveExDominant: ReplayComparison;
+        /** Asset excluded from {@link topMeanPnlPositiveExDominant}. */
+        topMeanPnlPositiveDominantAsset: string | null;
         /**
          * Long-side trend filter: require target-universe EMA200 breadth above
          * 50%, keep positive-score assets above their own target EMA200, then
@@ -929,6 +958,13 @@ interface DecisionEvent {
     /** Per-asset rawScore snapshot after applying all deltas at this time. */
     rawScore: number[];
     activePairCount: number[];
+    /**
+     * PNL-gated snapshots: the same accumulation restricted to deltas from
+     * pairs whose pair backtest netProfit was strictly positive. Drives the
+     * TOP_RAW_PNL_POS / TOP_MEAN_PNL_POS arms only.
+     */
+    rawScorePnlPositive: number[];
+    activePairCountPnlPositive: number[];
 }
 
 // ============================================================================
@@ -1002,6 +1038,9 @@ export async function runOpenScoreUsdReplay(
         }
     }
     const streams: ScoreDelta[][] = [];
+    // Index i describes streams[i]: true when that pair's full backtest
+    // netProfit was strictly positive (drives the PNL-gated arms only).
+    const pnlPositiveStreams: boolean[] = [];
     let pairCount = 0;
     let omittedPairs = 0;
     // Cap-tilt coverage counters (docs/open-score-cap-tilt.md): LONG trades
@@ -1128,6 +1167,11 @@ export async function runOpenScoreUsdReplay(
         // Stop / progress from firing during the long sort.
         stream.sort(compareDeltas);
         streams.push(stream);
+        // PNL-gated arms: a pair feeds the filtered accumulators only when its
+        // full backtest netted strictly positive. Kept in lockstep with
+        // `streams` (index i describes streams[i]).
+        const pairNetProfit = artifact.result?.netProfit;
+        pnlPositiveStreams.push(Number.isFinite(pairNetProfit) && pairNetProfit > 0);
         if (pairCount % 25 === 0) {
             onPhase("scan", `scanned ${pairCount} pairs`, pairCount, 0);
             await yieldLoop();
@@ -1148,6 +1192,11 @@ export async function runOpenScoreUsdReplay(
     onPhase("events", "merging score deltas", 0, totalDeltas);
     const rawScore = new Array<number>(assetCount).fill(0);
     const activePairCount = new Array<number>(assetCount).fill(0);
+    // PNL-gated accumulators: identical bookkeeping, fed only by deltas from
+    // pnl-positive pairs. The TOP_RAW_PNL_POS / TOP_MEAN_PNL_POS arms read
+    // these; every other arm is untouched by the filter.
+    const pnlPositiveRawScore = new Array<number>(assetCount).fill(0);
+    const pnlPositivePairCount = new Array<number>(assetCount).fill(0);
     const events: DecisionEvent[] = [];
     const sampleFrom = options.sampleFromSec;
     const sampleTo = options.sampleToSec;
@@ -1171,6 +1220,12 @@ export async function runOpenScoreUsdReplay(
             const countDelta = d.isEntry === 1 ? 1 : -1;
             const next = activePairCount[d.assetIndex]! + countDelta;
             activePairCount[d.assetIndex] = next > 0 ? next : 0;
+            // PNL-gated mirror: only deltas from pnl-positive pairs.
+            if (pnlPositiveStreams[heap.lastPoppedStream]!) {
+                pnlPositiveRawScore[d.assetIndex]! += d.delta;
+                const nextPnl = pnlPositivePairCount[d.assetIndex]! + countDelta;
+                pnlPositivePairCount[d.assetIndex] = nextPnl > 0 ? nextPnl : 0;
+            }
             if (d.isEntry === 1) hasEntry = true;
             popped += 1;
             // A single timestamp can contain many pair deltas. Check and yield
@@ -1189,6 +1244,8 @@ export async function runOpenScoreUsdReplay(
                     timeSec: t,
                     rawScore: [...rawScore],
                     activePairCount: [...activePairCount],
+                    rawScorePnlPositive: [...pnlPositiveRawScore],
+                    activePairCountPnlPositive: [...pnlPositivePairCount],
                 });
             }
         }
@@ -1214,6 +1271,13 @@ export async function runOpenScoreUsdReplay(
         timeSec: number;
         positives: Candidate[];
         negatives: Candidate[];
+        /**
+         * PNL-gated positives: assets whose score, counted only from
+         * pnl-positive pairs, is strictly positive. A candidate here need not
+         * be in `positives` (offsetting losing-pair votes can zero its
+         * unfiltered score).
+         */
+        pnlPositives: Candidate[];
         topRaw: number;      // assetIndex
         topAdjusted: number; // assetIndex
         topMean: number;     // assetIndex
@@ -1221,6 +1285,9 @@ export async function runOpenScoreUsdReplay(
         topMeanRawUniqueV1: number;
         /** TOP_MEAN tied set used as the exact research control pool. */
         topMeanRawUniqueV1Pool: Candidate[];
+        /** PNL-gated picks, or -1 when the pnl-gated pool has < 2 members. */
+        topRawPnlPositive: number;  // assetIndex
+        topMeanPnlPositive: number; // assetIndex
         topMeanRank2: number; // assetIndex
         maxActive: number;   // assetIndex
         maxStatic: number;   // assetIndex (alias for maxRetained — legacy)
@@ -1260,6 +1327,7 @@ export async function runOpenScoreUsdReplay(
         const ev = events[e]!;
         const positives: Candidate[] = [];
         const negatives: Candidate[] = [];
+        const pnlPositives: Candidate[] = [];
         let maxActivePairs = 0;
         for (let a = 0; a < assetCount; a += 1) {
             const raw = ev.rawScore[a]!;
@@ -1280,6 +1348,20 @@ export async function runOpenScoreUsdReplay(
                 positives.push(candidate);
             } else if (raw < 0) {
                 negatives.push(candidate);
+            }
+            // PNL-gated pool: same shape, filtered scores only.
+            const rawPnl = ev.rawScorePnlPositive[a]!;
+            if (rawPnl > 0) {
+                const cntPnl = ev.activePairCountPnlPositive[a]!;
+                pnlPositives.push({
+                    assetIndex: a,
+                    raw: rawPnl,
+                    adjusted: cntPnl > 0 ? rawPnl / Math.sqrt(cntPnl) : rawPnl,
+                    mean: cntPnl > 0 ? rawPnl / cntPnl : rawPnl,
+                    activePairs: cntPnl,
+                    staticPairs: candidate.staticPairs,
+                    submittedPairs: candidate.submittedPairs,
+                });
             }
         }
         // Need >= 2 positive candidates for a top-vs-random comparison.
@@ -1350,6 +1432,9 @@ export async function runOpenScoreUsdReplay(
             const maxActive = pickMax(positives, "activePairs");
             const maxStatic = pickMax(positives, "staticPairs");
             const maxSubmitted = pickMax(positives, "submittedPairs");
+            // PNL-gated picks: same digest tie-break, own >= 2 pool gate.
+            const topRawPnlPositive = pnlPositives.length >= 2 ? pickMax(pnlPositives, "raw") : null;
+            const topMeanPnlPositive = pnlPositives.length >= 2 ? pickMax(pnlPositives, "mean") : null;
             // --- Conditional-split features (Phase 3) -------------------------
             const topRawIdx = topRaw.winner.assetIndex;
             // Cross-sectional HHI of positive raw scores. raw > 0 is guaranteed
@@ -1371,11 +1456,14 @@ export async function runOpenScoreUsdReplay(
             currentStreakLength = fresh ? 1 : currentStreakLength + 1;
             views.push({
                 timeSec: ev.timeSec, positives, negatives,
+                pnlPositives,
                 topRaw: topRawIdx,
                 topAdjusted: topAdjusted.winner.assetIndex,
                 topMean: topMean.winner.assetIndex,
                 topMeanRawUniqueV1,
                 topMeanRawUniqueV1Pool,
+                topRawPnlPositive: topRawPnlPositive?.winner.assetIndex ?? -1,
+                topMeanPnlPositive: topMeanPnlPositive?.winner.assetIndex ?? -1,
                 topMeanRank2: meanRanked[1]!.assetIndex,
                 maxActive: maxActive.winner.assetIndex,
                 maxStatic: maxStatic.winner.assetIndex,
@@ -1477,6 +1565,14 @@ export async function runOpenScoreUsdReplay(
             // O(N²) defensiveness over a uniqueness invariant that already
             // holds — the positives branch never needed it for the same reason.
             list.push(v);
+        }
+        // A pnl-gated candidate may have a non-positive unfiltered score
+        // (offsetting losing-pair votes). Add it after the positive/negative
+        // passes so the same view index cannot be appended twice for an asset.
+        for (const c of views[v]!.pnlPositives) {
+            let list = requestsByAsset.get(c.assetIndex);
+            if (!list) { list = []; requestsByAsset.set(c.assetIndex, list); }
+            if (list[list.length - 1] !== v) list.push(v);
         }
     }
 
@@ -1904,6 +2000,8 @@ export async function runOpenScoreUsdReplay(
         const lossVeto = createTakeSkipSeries();
         const regimeFloor = createTakeSkipSeries();
         const topMeanRawUniqueV1 = createSeries();
+        const topRawPnlPositive = createSeries();
+        const topMeanPnlPositive = createSeries();
         const topMeanTrend = createSeries();
         const topMeanVsRaw = createSeries();
         const topMeanVsRank2 = createSeries();
@@ -1994,6 +2092,10 @@ export async function runOpenScoreUsdReplay(
         const topMeanSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
         const topMeanRawUniqueV1SelectedByAsset = new Map<string, number>();
         const topMeanRawUniqueV1SamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const topRawPnlPositiveSelectedByAsset = new Map<string, number>();
+        const topRawPnlPositiveSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const topMeanPnlPositiveSelectedByAsset = new Map<string, number>();
+        const topMeanPnlPositiveSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
         const topMeanTrendSelectedByAsset = new Map<string, number>();
         const topMeanTrendSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
         // Phase 3 MAX_ACTIVE: parallel per-asset selection map for MAX_ACTIVE.
@@ -2118,6 +2220,71 @@ export async function runOpenScoreUsdReplay(
                         netReturn: selectedReturn,
                         tied,
                     });
+                }
+            }
+
+            // PNL-gated arms: independent eligibility gate over the
+            // pnl-positive pool. Missing data on a gated candidate omits the
+            // event from these arms only (never zero-filled); missing data on
+            // a non-gated positive is irrelevant here.
+            if (view.pnlPositives.length >= 2 && view.topRawPnlPositive >= 0 && view.topMeanPnlPositive >= 0) {
+                const pnlPosRetByAsset = new Map<number, number>();
+                let pnlPosValid = true;
+                for (const c of view.pnlPositives) {
+                    const r = perAsset.get(c.assetIndex)?.long[hIdx];
+                    if (r === undefined || !Number.isFinite(r)) { pnlPosValid = false; break; }
+                    pnlPosRetByAsset.set(c.assetIndex, r);
+                }
+                if (pnlPosValid) {
+                    let pnlPosTotal = 0;
+                    for (const r of pnlPosRetByAsset.values()) pnlPosTotal += r;
+                    const appendPnlPositiveSelection = (
+                        series: SelectorSeries,
+                        selector: OpenScoreUsdEventDetailSelector,
+                        selectedIdx: number,
+                        selectedByAsset: Map<string, number>,
+                        samplesByAsset: Map<string, { returns: number[]; deltas: number[] }>,
+                    ): void => {
+                        const selectedReturn = pnlPosRetByAsset.get(selectedIdx);
+                        if (selectedReturn === undefined) return;
+                        const randomReturn = (pnlPosTotal - selectedReturn) / (pnlPosRetByAsset.size - 1);
+                        const delta = selectedReturn - randomReturn;
+                        series.returns.push(selectedReturn);
+                        series.deltas.push(delta);
+                        series.times.push(view.timeSec);
+                        series.assets.push(assetNames[selectedIdx]!);
+                        appendEventDetail(
+                            selector,
+                            "long",
+                            view.pnlPositives.find((candidate) => candidate.assetIndex === selectedIdx)!,
+                            selectedReturn,
+                            randomReturn,
+                            pnlPosRetByAsset.size,
+                        );
+                        const asset = assetNames[selectedIdx]!;
+                        selectedByAsset.set(asset, (selectedByAsset.get(asset) ?? 0) + 1);
+                        let samples = samplesByAsset.get(asset);
+                        if (!samples) {
+                            samples = { returns: [], deltas: [] };
+                            samplesByAsset.set(asset, samples);
+                        }
+                        samples.returns.push(selectedReturn);
+                        samples.deltas.push(delta);
+                    };
+                    appendPnlPositiveSelection(
+                        topRawPnlPositive,
+                        "TOP_RAW_PNL_POS",
+                        view.topRawPnlPositive,
+                        topRawPnlPositiveSelectedByAsset,
+                        topRawPnlPositiveSamplesByAsset,
+                    );
+                    appendPnlPositiveSelection(
+                        topMeanPnlPositive,
+                        "TOP_MEAN_PNL_POS",
+                        view.topMeanPnlPositive,
+                        topMeanPnlPositiveSelectedByAsset,
+                        topMeanPnlPositiveSamplesByAsset,
+                    );
                 }
             }
 
@@ -2447,6 +2614,26 @@ export async function runOpenScoreUsdReplay(
             topMeanRawUniqueV1DominantAsset,
             buildComparison,
         );
+        const topRawPnlPositiveByAsset = buildAssetSelectionBreakdown(
+            topRawPnlPositiveSelectedByAsset,
+            topRawPnlPositiveSamplesByAsset,
+        ).byAsset;
+        const topRawPnlPositiveDominantAsset = topRawPnlPositiveByAsset[0]?.asset ?? null;
+        const topRawPnlPositiveExDominant = buildExDominantComparison(
+            topRawPnlPositive,
+            topRawPnlPositiveDominantAsset,
+            buildComparison,
+        );
+        const topMeanPnlPositiveByAsset = buildAssetSelectionBreakdown(
+            topMeanPnlPositiveSelectedByAsset,
+            topMeanPnlPositiveSamplesByAsset,
+        ).byAsset;
+        const topMeanPnlPositiveDominantAsset = topMeanPnlPositiveByAsset[0]?.asset ?? null;
+        const topMeanPnlPositiveExDominant = buildExDominantComparison(
+            topMeanPnlPositive,
+            topMeanPnlPositiveDominantAsset,
+            buildComparison,
+        );
         const topMeanTrendByAsset = buildAssetSelectionBreakdown(
             topMeanTrendSelectedByAsset,
             topMeanTrendSamplesByAsset,
@@ -2515,6 +2702,14 @@ export async function runOpenScoreUsdReplay(
             topMeanRawUniqueV1ByAsset,
             topMeanRawUniqueV1ExDominant,
             topMeanRawUniqueV1DominantAsset,
+            topRawPnlPositive: buildComparison(topRawPnlPositive.deltas, topRawPnlPositive.returns, topRawPnlPositive.times),
+            topRawPnlPositiveByAsset,
+            topRawPnlPositiveExDominant,
+            topRawPnlPositiveDominantAsset,
+            topMeanPnlPositive: buildComparison(topMeanPnlPositive.deltas, topMeanPnlPositive.returns, topMeanPnlPositive.times),
+            topMeanPnlPositiveByAsset,
+            topMeanPnlPositiveExDominant,
+            topMeanPnlPositiveDominantAsset,
             topMeanTrend: buildComparison(topMeanTrend.deltas, topMeanTrend.returns, topMeanTrend.times),
             topMeanTrendByAsset,
             topMeanTrendExDominant,
@@ -2694,6 +2889,12 @@ class KWayMergeHeap {
     private readonly heap: number[] = [];
     /** Current read offset in each stream. */
     private readonly offsets: Int32Array;
+    /**
+     * Index of the stream the last successful pop() came from. Lets the merge
+     * loop read per-pair metadata (pnl-gated profitability) without storing it
+     * on every delta. Valid only immediately after a non-undefined pop().
+     */
+    lastPoppedStream = -1;
     constructor(streams: readonly ScoreDelta[][]) {
         this.streams = streams;
         this.offsets = new Int32Array(streams.length);
@@ -2711,6 +2912,7 @@ class KWayMergeHeap {
     pop(): ScoreDelta | undefined {
         if (this.heap.length === 0) return undefined;
         const s = this.heap[0]!;
+        this.lastPoppedStream = s;
         const off = this.offsets[s]!;
         const d = this.streams[s]![off]!;
         const next = off + 1;
@@ -2889,7 +3091,7 @@ function buildReportLines(args: {
         }
     }
     lines.push(`retained pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
-    lines.push("controls | TOP_MEAN=raw/activePairs TOP_MEAN_TREND=target EMA200 breadth>50%, then prior close>EMA200, TOP_MEAN, activePairs tie-break MAX_ACTIVE=most open pairs MAX_SUBMITTED=most submitted pairs MAX_RETAINED=most loaded artifacts");
+    lines.push("controls | TOP_MEAN=raw/activePairs TOP_RAW_PNL_POS=raw score counted only from pairs whose pair backtest netted >0 TOP_MEAN_PNL_POS=that raw / open pnl-positive pair count TOP_MEAN_TREND=target EMA200 breadth>50%, then prior close>EMA200, TOP_MEAN, activePairs tie-break MAX_ACTIVE=most open pairs MAX_SUBMITTED=most submitted pairs MAX_RETAINED=most loaded artifacts");
     lines.push("TOP_MEAN_RAW_UNIQUE_V1 rule | TOP_MEAN tied set -> unique raw-score maximum; residual raw ties skipped; control=mean return of the TOP_MEAN tied set");
     lines.push("pnl model | OVERLAP=long selector vs same-pool random positive, every eligible event; *_1K=$1000/trade, exact selector ties skipped, one open trade per asset");
     for (const h of args.horizons) {
@@ -2907,6 +3109,10 @@ function buildReportLines(args: {
         lines.push(takeSkipLine("REGIME_FLOOR", h.regimeFloor));
         lines.push(comparisonLine("TOP_MEAN_RAW_UNIQUE_V1", h.topMeanRawUniqueV1));
         lines.push(comparisonLine(`TOP_MEAN_RAW_UNIQUE_V1_EX_${h.topMeanRawUniqueV1DominantAsset ?? "NONE"}`, h.topMeanRawUniqueV1ExDominant));
+        lines.push(comparisonLine("TOP_RAW_PNL_POS", h.topRawPnlPositive));
+        lines.push(comparisonLine(`RAW_PNL_POS_EX_${h.topRawPnlPositiveDominantAsset ?? "NONE"}`, h.topRawPnlPositiveExDominant));
+        lines.push(comparisonLine("TOP_MEAN_PNL_POS", h.topMeanPnlPositive));
+        lines.push(comparisonLine(`MEAN_PNL_POS_EX_${h.topMeanPnlPositiveDominantAsset ?? "NONE"}`, h.topMeanPnlPositiveExDominant));
         lines.push(comparisonLine("TOP_MEAN_TREND", h.topMeanTrend));
         lines.push(pnlLine("TOP_MEAN_TREND_PNL", h.pnl.topMeanTrend));
         lines.push(portfolioLine("TOP_MEAN_TREND", h.pnl.topMeanTrendPortfolio));
@@ -2970,6 +3176,14 @@ function buildReportLines(args: {
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");
         lines.push(`TOP_MEAN_RAW_UNIQUE_V1 selected assets = ${topMeanRawUniqueV1Breakdown || "n/a"}${h.topMeanRawUniqueV1ByAsset.length > 5 ? ` | other=${h.topMeanRawUniqueV1ByAsset.length - 5} assets` : ""}`);
+        const topRawPnlPositiveBreakdown = h.topRawPnlPositiveByAsset.slice(0, 5).map((x) =>
+            `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
+        ).join(" | ");
+        lines.push(`TOP_RAW_PNL_POS selected assets = ${topRawPnlPositiveBreakdown || "n/a"}${h.topRawPnlPositiveByAsset.length > 5 ? ` | other=${h.topRawPnlPositiveByAsset.length - 5} assets` : ""}`);
+        const topMeanPnlPositiveBreakdown = h.topMeanPnlPositiveByAsset.slice(0, 5).map((x) =>
+            `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
+        ).join(" | ");
+        lines.push(`TOP_MEAN_PNL_POS selected assets = ${topMeanPnlPositiveBreakdown || "n/a"}${h.topMeanPnlPositiveByAsset.length > 5 ? ` | other=${h.topMeanPnlPositiveByAsset.length - 5} assets` : ""}`);
         const topMeanTrendBreakdown = h.topMeanTrendByAsset.slice(0, 5).map((x) =>
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");

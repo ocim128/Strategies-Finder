@@ -81,8 +81,16 @@ Clicking OPEN_SCORE USD streams the replay report back via
 
 The replay is a descriptive event-level study, not an order allocator. The
 current engine includes long-side raw/adjusted/mean selectors, active-pair and
-submitted/retained-degree selectors, and the EMA200-breadth-gated
-`TOP_MEAN_TREND` variant, plus pairwise comparisons. It also emits per-asset
+submitted/retained-degree selectors, the EMA200-breadth-gated
+`TOP_MEAN_TREND` variant, the pnl-gated `TOP_RAW_PNL_POS` /
+`TOP_MEAN_PNL_POS` variants (scores count only pairs whose pair backtest
+netProfit was strictly positive — a research-only look-ahead filter, since a
+pair's full-window P&L is not known at decision time), and pairwise
+comparisons. The pnl gate reads the artifact's `result.netProfit`: the
+standalone route loads full Batch mine artifacts (always carry it), while the
+TOP_MEAN coordinator replays compact artifacts that carry `netProfit` only
+when written by a worker from its introduction onward — older archives show
+`n=0` on both gated lines. It also emits per-asset
 breakdown and dominant-asset exclusion diagnostics where the selector supports
 them. The
 TOP_MEAN series additionally reports two causal take/skip gates

@@ -36,14 +36,14 @@ function makeTrade(type: "long" | "short", entrySec: number, exitSec: number | n
 }
 
 /** Pair artifact whose data/signals are unused by the replay engine (only trades matter). */
-function makePair(base: string, quote: string, trades: Trade[]): BatchSyntheticPairArtifact {
+function makePair(base: string, quote: string, trades: Trade[], netProfit = 0): BatchSyntheticPairArtifact {
     return {
         symbol: `${base}+${quote}`,
         baseAsset: base,
         quoteAsset: quote,
         data: [],
         signals: [],
-        result: { ...emptyResult(), totalTrades: trades.length, trades },
+        result: { ...emptyResult(), totalTrades: trades.length, trades, netProfit },
     };
 }
 
@@ -486,6 +486,102 @@ describe("batch-open-score-usd-replay-engine", () => {
         // Adjusted = raw/sqrt(activePairCount): AAA 3/sqrt(3)=1.732, BBB 1/sqrt(1)=1.
         // So TOP_RAW picks AAA (3>1); both arms still produce a finite delta.
         expect(result.horizons[0]!.topRaw.topMean).to.not.equal(null);
+    });
+
+    it("pnl-gated arms rank only pairs whose pair backtest netted positive", async () => {
+        // Event at T1. Unfiltered raw: AAA=2 (2 winning pairs), BBB=3 (3
+        // losing pairs), CCC=1 (1 winning pair) -> TOP_RAW picks BBB.
+        // PNL-gated pool: only AAA(2) and CCC(1) -> TOP_RAW_PNL_POS picks AAA
+        // outright, so its selected return is AAA's known ramp return while
+        // TOP_RAW's is BBB's flat 0.
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)], 100),
+            makePair("AAA", "X2", [makeTrade("long", T0 + 1000, null)], 100),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)], -50),
+            makePair("BBB", "Y2", [makeTrade("long", T0 + 1000, null)], -50),
+            makePair("BBB", "Y3", [makeTrade("long", T0 + 1000, null)], -50),
+            makePair("CCC", "Z1", [makeTrade("long", T0 + 1000, null)], 10),
+        ];
+        const flat = () => 100;
+        const targets = [
+            makeTarget("AAA", 10, (i) => 100 * (1 + 0.10 * i)),
+            makeTarget("BBB", 10, flat),
+            makeTarget("CCC", 10, flat),
+            makeTarget("X1", 10, flat), makeTarget("X2", 10, flat),
+            makeTarget("Y1", 10, flat), makeTarget("Y2", 10, flat), makeTarget("Y3", 10, flat),
+            makeTarget("Z1", 10, flat),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        const h = result.horizons[0]!;
+        // Unfiltered arms are untouched by the pnl filter.
+        expect(h.topRaw.events).to.equal(1);
+        expect(h.topRaw.topMean).to.be.closeTo(0, 1e-9);
+        expect(h.topMean.events).to.equal(1);
+        // The gated pool is {AAA, CCC}; TOP_RAW_PNL_POS picks AAA (2 > 1).
+        // AAA: entry bar 2 open=120, exit bar 3 close=130 -> 130/120-1.
+        expect(h.topRawPnlPositive.events).to.equal(1);
+        expect(h.topRawPnlPositive.topMean).to.be.closeTo(130 / 120 - 1, 1e-9);
+        expect(h.topRawPnlPositiveByAsset.map((x) => x.asset)).to.deep.equal(["AAA"]);
+        expect(h.topRawPnlPositiveDominantAsset).to.equal("AAA");
+        expect(h.topRawPnlPositiveExDominant.events).to.equal(0);
+        // TOP_MEAN_PNL_POS ties AAA (mean 1.0) vs CCC (mean 1.0) -> digest
+        // decides, but exactly one selection is recorded per event.
+        expect(h.topMeanPnlPositive.events).to.equal(1);
+        expect(h.topMeanPnlPositiveByAsset).to.have.length(1);
+        // Scalar detail rows exist for both gated arms (Show OPEN_SCORE
+        // Details): pool is the pnl-gated {AAA, CCC}, direction is long.
+        const rawPnlDetail = result.eventDetails?.find((row) => row.selector === "TOP_RAW_PNL_POS");
+        expect(rawPnlDetail?.asset).to.equal("AAA");
+        expect(rawPnlDetail?.direction).to.equal("long");
+        expect(rawPnlDetail?.eligibleCandidates).to.equal(2);
+        expect(rawPnlDetail?.selectedReturn).to.be.closeTo(130 / 120 - 1, 1e-9);
+        expect(result.eventDetails?.some((row) => row.selector === "TOP_MEAN_PNL_POS")).to.equal(true);
+        // Report carries both arms + breakdowns + exclusions.
+        const report = result.reportLines.join("\n");
+        expect(report).to.include("TOP_RAW_PNL_POS");
+        expect(report).to.include("RAW_PNL_POS_EX_AAA");
+        expect(report).to.include("TOP_MEAN_PNL_POS");
+        expect(report).to.include("MEAN_PNL_POS_EX_");
+        expect(report).to.include("TOP_RAW_PNL_POS selected assets = ");
+        expect(report).to.include("TOP_MEAN_PNL_POS selected assets = ");
+        expect(report).to.include("TOP_RAW_PNL_POS=raw score counted only from pairs whose pair backtest netted >0");
+    });
+
+    it("losing pairs' votes never reach the pnl-gated pool (no zero-fill)", async () => {
+        // AAA's two votes both come from losing pairs; BBB's single vote from
+        // a winner. The unfiltered pool is {AAA(2), BBB(1)} so TOP_RAW fires,
+        // but the pnl-gated pool is {BBB} (< 2) -> both gated arms are empty,
+        // not zero-filled.
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)], -1),
+            makePair("AAA", "X2", [makeTrade("long", T0 + 1000, null)], -1),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)], 5),
+        ];
+        const flat = () => 100;
+        const targets = [
+            makeTarget("AAA", 10, flat),
+            makeTarget("BBB", 10, flat),
+            makeTarget("X1", 10, flat), makeTarget("X2", 10, flat),
+            makeTarget("Y1", 10, flat),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        const h = result.horizons[0]!;
+        expect(h.topRaw.events).to.equal(1);
+        expect(h.topRawPnlPositive.events).to.equal(0);
+        expect(h.topMeanPnlPositive.events).to.equal(0);
+        expect(h.topRawPnlPositiveDominantAsset).to.equal(null);
+        expect(h.topMeanPnlPositiveDominantAsset).to.equal(null);
+        const report = result.reportLines.join("\n");
+        expect(report).to.include("TOP_RAW_PNL_POS ");
+        expect(report).to.include("TOP_MEAN_PNL_POS ");
     });
 
     it("reports coverage controls that separate score edge from pair-degree concentration", async () => {
