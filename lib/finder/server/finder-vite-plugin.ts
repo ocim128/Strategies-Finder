@@ -1172,13 +1172,18 @@ export async function processFinderUniverseRun(
             snapshot.phase = "oos";
             snapshot.strategyIndex = strategyCount; // OOS is post-strategy
             const oosSlice = resolveUniverseOosSlice(input.options.dataSlice);
-            if (oosSlice) {
+            // A date-range window without a usable `To` bound runs to the
+            // newest data, so a forward OOS window cannot exist — skip instead
+            // of loading the whole universe just to slice it into empty rows.
+            // (Verdicts would all be inconclusive, which keeps candidates —
+            // identical outcome to not running OOS at all.)
+            const oosDateRange = normalizeFinderDateRange(input.options.dataRangeFrom, input.options.dataRangeTo);
+            const oosWindowUsable = oosSlice !== null
+                && !(input.options.dataSlice === "date_range" && oosDateRange.to === undefined);
+            if (oosWindowUsable) {
                 const strategyByKey: UniverseOosStrategyLookup = new Map(
                     selectedStrategies.map((s) => [s.key, s.strategy]),
                 );
-                // The date-range OOS complement ("every bar after `to`") needs
-                // the range boundaries at slice time; the other modes ignore it.
-                const oosDateRange = normalizeFinderDateRange(input.options.dataRangeFrom, input.options.dataRangeTo);
                 // OOS loader wrapper: apply the OOS data slice EXACTLY ONCE.
                 // Cache the sliced series per symbol so the same symbol is not
                 // re-sliced across candidates/strategies (mirrors the prior

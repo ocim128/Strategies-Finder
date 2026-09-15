@@ -50,8 +50,8 @@ defaults and normalization.
 | `Search Mode` | `Grid Sweep`, `Random Search`, or `Genetic Search`. Server-owned Asset Opportunity currently requires random mode. |
 | `Range (%)` | Parameter variation range used by the candidate generator. |
 | `Steps / Param` | Number of values per parameter for grid-style generation. |
-| `Data Window` | Full chart, a fifth, an oldest/newest half, or a `Date range` (From/To, UTC, inclusive on both ends). Invalid bounds degrade to unbounded; an inverted range is swapped. |
-| `OOS Validation` | Validates eligible top survivors on a complementary holdout window where one exists. For `Date range` the holdout is every bar AFTER the `To` date (forward validation); when `To` is at or near the newest data that window is empty and OOS verdicts are `inconclusive`, which keeps the candidate. |
+| `Data Window` | Full chart, a fifth, an oldest/newest half, or a `Date range` (From/To, UTC, inclusive on both ends). A missing bound is unbounded: `From` only runs to the newest data, `To` only runs from the oldest. Invalid bounds degrade to unbounded; an inverted range is swapped. |
+| `OOS Validation` | Validates eligible top survivors on a complementary holdout window where one exists. For `Date range` the holdout is every bar AFTER the `To` date (forward validation); when `To` is unset or at/near the newest data that window is empty, the OOS pass is skipped (server Universe) or verdicts are `inconclusive` — either way the candidate is kept. |
 
 The exact candidate count is strategy-dependent. Do not infer it from
 `Runs / Strategy` alone: parameter-space constraints, strategy metadata,

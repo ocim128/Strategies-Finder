@@ -257,6 +257,8 @@ async function runUniverseJob(args: {
     factory?: FinderUniverseStrategyRunnerFactory;
     onEvent?: (event: FinderStreamEvent, events: FinderStreamEvent[]) => void;
     options?: FinderOptions;
+    /** OOS loader spy; wired into the input so OOS-pass behavior is observable. */
+    loadOosDataset?: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
 }): Promise<FinderStreamEvent[]> {
     const events: FinderStreamEvent[] = [];
     setRunOwnerForTests(args.owner);
@@ -294,6 +296,7 @@ async function runUniverseJob(args: {
                 return data;
             },
             generateParamSets: realGenerateParamSets,
+            ...(args.loadOosDataset ? { loadOosDataset: args.loadOosDataset } : {}),
             ...(args.strategyWorkerCount !== undefined ? { strategyWorkerCount: args.strategyWorkerCount } : {}),
             ...(args.factory ? { strategyRunnerFactory: args.factory } : {}),
         },
@@ -524,5 +527,33 @@ describe("finder universe parallel strategy sweep", () => {
         const emptyDelta = cache.consumeDeltaStats();
         expect(emptyDelta.requests).to.equal(0);
         expect(emptyDelta.cacheEntries).to.equal(1);
+    });
+
+    it("a date-range window without `To` reaches the latest data and skips the OOS pass", async () => {
+        // `From` only means "to the latest data": the IS window is valid, but
+        // no forward OOS window can exist. The job must complete WITHOUT
+        // loading a single OOS dataset (the sequential path's earlier
+        // behavior — slicing into empty rows per symbol — would burn a full
+        // universe data load for nothing).
+        let oosLoads = 0;
+        const options = {
+            ...makeOptions(SYMBOLS),
+            dataSlice: "date_range",
+            dataRangeFrom: "2020-01-01",
+            oosValidationEnabled: true,
+        } as unknown as FinderOptions;
+        const events = await runUniverseJob({
+            strategyKeys: [STRATEGY_A],
+            owner: 8107,
+            options,
+            loadOosDataset: async () => {
+                oosLoads += 1;
+                return [];
+            },
+        });
+        const done = doneEventOf(events);
+        expect(done.cancelled).to.equal(false);
+        expect(done.candidates.length).to.be.greaterThan(0);
+        expect(oosLoads).to.equal(0);
     });
 });
