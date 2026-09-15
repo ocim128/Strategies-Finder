@@ -5,7 +5,7 @@
  * One server job owns all selected entry strategies: it sequences each
  * through the unchanged `runFinderUniverseExecution(...)` core, merges the
  * scalar survivors, runs the optional OOS pass, and publishes one
- * authoritative terminal candidate slice. The browser remains the control +
+ * authoritative terminal candidate inventory. The browser remains the control +
  * rendering layer and reattaches after a tab reload by polling
  * `GET /api/finder/status?runId=...`.
  *
@@ -784,9 +784,10 @@ export async function processFinderUniverseRun(
 
     const lostOwnership = () => runOwner !== owner;
     // Completed strategies and the active strategy are tracked separately.
-    // `onResultsUpdate` is a replacement snapshot, not an append-only stream:
-    // retaining candidates evicted from a later top-K update would keep their
-    // per-symbol arrays alive for the rest of the job.
+    // `activeSurvivorByKey` receives bounded live snapshots, while the
+    // completed map receives the runner's full terminal result set. The full
+    // map is needed for the terminal re-sort inventory; `snapshot.candidates`
+    // remains topN-bounded until the job is terminal.
     const completedSurvivorByKey = new Map<string, FinderUniverseCandidate>();
     let activeSurvivorByKey = new Map<string, FinderUniverseCandidate>();
     const emittedKeys = new Set<string>();
@@ -930,18 +931,13 @@ export async function processFinderUniverseRun(
                 break;
             }
 
-            // The runner's terminal slice replaces every incremental snapshot
-            // for this strategy. Merge it into the bounded completed set, then
-            // release the active set before the next strategy starts.
+            // The runner's terminal result set replaces every incremental
+            // snapshot for this strategy. Retain all of it for terminal
+            // re-sort, then release the active set before the next strategy.
             activeSurvivorByKey = new Map(
                 output.results.map((candidate) => [identityKey(candidate), candidate]),
             );
             for (const candidate of output.results) {
-                completedSurvivorByKey.set(identityKey(candidate), candidate);
-            }
-            const boundedCompleted = rankAndBound([...completedSurvivorByKey.values()]);
-            completedSurvivorByKey.clear();
-            for (const candidate of boundedCompleted) {
                 completedSurvivorByKey.set(identityKey(candidate), candidate);
             }
             activeSurvivorByKey.clear();
@@ -950,9 +946,9 @@ export async function processFinderUniverseRun(
             failedLoadAttempts += output.failedSymbols.length;
             if (output.diagnostics) diagnosticsParts.push(output.diagnostics);
 
-            // Re-sort + bound the merged snapshot to topN so `runState` never
-            // retains candidates that would later be evicted.
-            snapshot.candidates = [...boundedCompleted];
+            // Re-sort + bound the running snapshot. The full completed map is
+            // retained separately for the terminal result and re-sort UI.
+            snapshot.candidates = rankAndBound([...completedSurvivorByKey.values()]);
 
             snapshot.loadedSymbols = loadedSymbolsMax;
             snapshot.failedSymbols = failedSymbolSet.size;
@@ -971,11 +967,12 @@ export async function processFinderUniverseRun(
             });
         }
 
-        // Job-level merged IS survivors (authoritative, sorted + bounded).
-        let terminalResults = rankAndBound([
+        // Job-level merged IS survivors. Keep the complete set for OOS and
+        // terminal re-sort; only running snapshots are display-bounded.
+        let terminalResults = sortFinderUniverseCandidates([
             ...completedSurvivorByKey.values(),
             ...activeSurvivorByKey.values(),
-        ]);
+        ], sortPriority);
 
         if (!cancelled && !lostOwnership() && input.options.oosValidationEnabled && input.loadOosDataset) {
             snapshot.phase = "oos";
@@ -1016,6 +1013,7 @@ export async function processFinderUniverseRun(
                     getProvider: input.getProvider,
                     useRustEnginePreference: input.useRustEnginePreference,
                     rustCapabilities: input.rustCapabilities,
+                    retainAllResults: true,
                     isCancelled: () => {
                         if (lostOwnership()) {
                             cancelled = true;
@@ -2910,7 +2908,7 @@ async function handleStopRequest(runId: unknown): Promise<{ ok: boolean; stopped
  *
  * In-progress snapshots are SUMMARY-ONLY (candidate counts, never the
  * per-symbol payload) so polling stays small. The terminal snapshot carries
- * the authoritative final candidate slice once.
+ * the authoritative full candidate inventory once.
  */
 function handleStatusRequest(runIdFilter: string | null): FinderRunStatusSnapshot | { ok: false; error: string } {
     if (!runState) {
@@ -2954,7 +2952,7 @@ function buildStatusSnapshot(): FinderRunStatusSnapshot {
         loadedSymbols: state.loadedSymbols,
         failedSymbols: state.failedSymbols,
         cancelled: state.cancelled,
-        // The terminal candidate slice ships ONCE here, only for universe runs.
+        // The terminal candidate inventory ships ONCE here, only for universe runs.
         // In-progress snapshots return null so polling stays small while a
         // large universe runs. Asset-opportunity terminal snapshots (single
         // and batch) carry the full scalar asset result set of the run / last

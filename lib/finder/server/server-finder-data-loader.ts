@@ -173,6 +173,7 @@ export function createServerFinderAssetOpportunityLoadContext(symbolCount?: numb
     return {
         legCache: new SyntheticLegCache(ASSET_OPPORTUNITY_RUN_LEG_CACHE_MAX_ENTRIES),
         pairCache: new SyntheticLegCache(pairCacheMaxEntries),
+        pairMetadataCache: new SyntheticLegCache(pairCacheMaxEntries),
         preferInMemorySyntheticPairs: true,
         diagnostics: createBatchDatasetLoadDiagnostics(),
         ...(symbolCount !== undefined

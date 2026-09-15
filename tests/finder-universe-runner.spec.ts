@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 import { performance } from "node:perf_hooks";
 import { runFinderUniverseExecution } from "../lib/finder/finder-runner-universe";
 import { buildFinderUniverseCandidate, FinderUniverseSurvivorRanker, sortFinderUniverseCandidates } from "../lib/finder/finder-universe-metrics";
+import { rustEngine } from "../lib/rust-engine-client";
+import { runBacktestCompact } from "../lib/strategies";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions, FinderUniverseCandidate, FinderUniverseMetric } from "../lib/types/finder";
 import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
@@ -63,6 +65,88 @@ const capitalSettings: CapitalSettings = {
 };
 
 describe("Finder universe runner", () => {
+    it("batches Rust-eligible candidates per symbol while preserving scalar results", async () => {
+        const originalCheckHealth = rustEngine.checkHealth;
+        const originalBatch = rustEngine.runBatchBacktestWithStatus;
+        let batchCalls = 0;
+        rustEngine.checkHealth = async () => true;
+        rustEngine.runBatchBacktestWithStatus = async (...args) => {
+            batchCalls += 1;
+            const [data, items, initialCapital, positionSize, commission, baseSettings, sizing] = args;
+            return {
+                ok: true,
+                response: {
+                    results: items.map((item) => ({
+                        id: item.id,
+                        result: runBacktestCompact(
+                            data,
+                            item.signals,
+                            initialCapital,
+                            positionSize,
+                            commission,
+                            item.settings ?? baseSettings,
+                            sizing,
+                            undefined,
+                            { skipDrawdown: true, includeSharpeRatio: false },
+                        ),
+                    })),
+                },
+                requestBytes: 0,
+                elapsedMs: 0,
+            };
+        };
+
+        try {
+            const options: FinderOptions = {
+                scope: "symbol_universe",
+                mode: "random",
+                sortPriority: ["netProfit"],
+                useAdvancedSort: false,
+                topN: 3,
+                steps: 1,
+                rangePercent: 0,
+                maxRuns: 3,
+                tradeFilterEnabled: false,
+                minTrades: 0,
+                maxTrades: Number.POSITIVE_INFINITY,
+                universe: {
+                    symbols: ["UP", "UP2"],
+                    minActiveSymbols: 1,
+                    minTotalTrades: 1,
+                    minProfitableActiveRatio: 0,
+                    sortPriority: ["medianExpectancy"],
+                },
+            };
+            const output = await runFinderUniverseExecution(
+                {
+                    interval: "5m",
+                    options,
+                    settings,
+                    capitalSettings,
+                    selectedStrategy: { key: "rust_universe", name: testStrategy.name, strategy: testStrategy },
+                    loadDataset: async () => makePositiveCandles([100, 105, 110, 115, 120]),
+                    generateParamSets: () => [{ threshold: 1 }, { threshold: 2 }, { threshold: 3 }],
+                    useRustEnginePreference: true,
+                },
+                {
+                    setProgress: () => {},
+                    setStatus: () => {},
+                    yieldControl: async () => {},
+                    isCancelled: () => false,
+                },
+            );
+
+            expect(batchCalls).to.equal(2);
+            expect(output.diagnostics?.counts.rustCompletedRuns).to.equal(6);
+            expect(output.diagnostics?.counts.typescriptCompletedRuns).to.equal(0);
+            expect(output.diagnostics?.data.batchSize).to.equal(3);
+            expect(output.results).to.have.length(3);
+        } finally {
+            rustEngine.checkHealth = originalCheckHealth;
+            rustEngine.runBatchBacktestWithStatus = originalBatch;
+        }
+    });
+
     it("uses pair-neutral metrics for synthetic-pair rows and keeps reciprocal direction scores aligned", async () => {
         const pairOptions = (symbol: string): FinderOptions => ({
             scope: "symbol_universe",
@@ -410,6 +494,54 @@ describe("Finder universe runner", () => {
         expect(output.diagnostics?.backtest?.fastPathBlockers ?? []).to.deep.equal([]);
     });
 
+    it("retains Median Sharpe for post-run re-sort when the initial sort is different", async () => {
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 1,
+            rangePercent: 0,
+            maxRuns: 1,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols: ["UP"],
+                minActiveSymbols: 1,
+                minTotalTrades: 1,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["profitableActiveRatio"],
+            },
+        };
+
+        const output = await runFinderUniverseExecution(
+            {
+                interval: "5m",
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategy: {
+                    key: "universe_test",
+                    name: testStrategy.name,
+                    strategy: testStrategy,
+                },
+                loadDataset: async () => makeCandles([100, 105, 103, 110, 108, 115]),
+                generateParamSets: () => [{ threshold: 1 }],
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                yieldControl: async () => {},
+                isCancelled: () => false,
+            },
+        );
+
+        expect(output.results[0]!.medianSharpeAvailable).to.equal(true);
+        expect(output.results[0]!.symbols[0]!.result?.sharpeRatioAvailable).to.equal(true);
+    });
+
     it("keeps non-zero median Sharpe for combined-direction compact runs when drawdown is skipped", async () => {
         const data = makeCandles(Array.from({ length: 60 }, (_, index) =>
             100 + index * 0.35 + Math.sin(index / 4) * 2
@@ -544,7 +676,7 @@ describe("Finder universe runner", () => {
         expect(output.diagnostics?.failureBreakdown?.[0]?.reason).to.equal("Broken symbol execution");
     });
 
-    it("keeps only the ranked top N survivors in memory and output", async () => {
+	it("retains the full survivor set for terminal re-sort while live updates stay bounded", async () => {
         const datasets = new Map<string, OHLCVData[]>([
             ["UP_A", makeCandles([100, 104, 108, 112, 116])],
             ["UP_B", makeCandles([120, 123, 126, 129, 132])],
@@ -569,6 +701,7 @@ describe("Finder universe runner", () => {
                 sortPriority: ["profitableActiveRatio", "medianExpectancy", "worstNetProfit"],
             },
         };
+        const liveResultSizes: number[] = [];
 
         const output = await runFinderUniverseExecution(
             {
@@ -589,11 +722,14 @@ describe("Finder universe runner", () => {
                 setStatus: () => {},
                 yieldControl: async () => {},
                 isCancelled: () => false,
+                onResultsUpdate: (results) => liveResultSizes.push(results.length),
             }
         );
 
-        expect(output.results).to.have.length(1);
+        expect(output.results).to.have.length(2);
         expect(output.results[0]!.params.threshold).to.equal(1);
+        expect(output.results[1]!.params.threshold).to.equal(2);
+        expect(liveResultSizes.every((size) => size <= options.topN)).to.equal(true);
     });
 
     it("loads universe datasets concurrently so large symbol lists do not serialize I/O", async () => {

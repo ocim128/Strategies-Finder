@@ -22,8 +22,8 @@
  *     analytics), attach `oosResult` + `oosVerdict`; on throw, mark
  *     inconclusive and continue
  *   - per-candidate aggregate + score refresh
- *   - filter out aggregate failures, re-sort, slice to topN (mutates the
- *     results array in place like the prior method did)
+ *   - filter out aggregate failures and re-sort (the caller can request that
+ *     the full survivor set remain available for post-run re-sort)
  *
  * Leaf import hygiene: only depends on type imports plus the existing
  * `./finder-universe-metrics`, `./finder-runner-core`,
@@ -106,8 +106,8 @@ export function backtestResultToUniverseMetrics(
 export type UniverseOosStrategyLookup = Map<string, Strategy>;
 
 export interface UniverseOosDeps {
-    /** Finalized IS survivors (topN). Mutated in place: OOS fields attached,
-     * aggregate failures removed, re-sorted + sliced to topN. */
+    /** Finalized IS survivors. Mutated in place: OOS fields attached,
+     * aggregate failures removed, and results re-sorted. */
     results: FinderUniverseCandidate[];
     /** Resolved entry strategies, keyed by strategy key. */
     strategyByKey: UniverseOosStrategyLookup;
@@ -143,6 +143,8 @@ export interface UniverseOosDeps {
     onProgress: (percent: number, text: string) => void;
     /** Yield to the event loop between symbols (server) / to the browser. */
     yieldControl: () => Promise<void>;
+    /** Keep every OOS-passing survivor instead of applying the display topN. */
+    retainAllResults?: boolean;
 }
 
 /**
@@ -160,7 +162,9 @@ export interface UniverseOosResult {
  * Mirrors `FinderManager.applyUniverseOosValidationIfNeeded` exactly. Returns
  * the number of candidates removed by the aggregate `fail` filter; the
  * `deps.results` array is mutated in place (OOS fields attached, failures
- * filtered out, survivors re-sorted + sliced to topN).
+ * filtered out, and survivors re-sorted). The default still applies the
+ * historical topN limit; server-owned Universe runs retain all results so the
+ * browser can re-sort the complete run.
  */
 export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<UniverseOosResult> {
     const { results, options } = deps;
@@ -379,9 +383,12 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
         results,
         options.universe?.sortPriority ?? [],
         { useOosValues: true },
-    ).slice(0, options.topN);
+    );
+    const retainedResults = deps.retainAllResults
+        ? sortedResults
+        : sortedResults.slice(0, options.topN);
     results.length = 0;
-    results.push(...sortedResults);
+    results.push(...retainedResults);
     return { oosRemoved: removedCount, cancelled };
 }
 

@@ -1,4 +1,6 @@
 import { executeBacktest, prepareClosedCandleData, resolveExecutorBacktestSettings } from "../backtest-executor";
+import type { BacktestExecutorResult } from "../backtest-executor";
+import { shouldUseRustEngine } from "../engine-preferences";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { mapWithConcurrencyLimit } from "../async-pool";
 import type { CrossSymbolDataFetcher } from "../cross-symbol-runtime";
@@ -11,6 +13,7 @@ import { createSeededRandom } from "../param-math-utils";
 import { SHARPE_MIN_SAMPLES } from "../strategies/performance-metrics";
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../types/backtest";
 import type { RustCapabilities } from "../rust-engine-client";
+import { hasUnsupportedRustSignalShape, rustEngine } from "../rust-engine-client";
 import type {
     FinderOptions,
     FinderDiagnostics,
@@ -26,6 +29,7 @@ import type {
     Strategy,
     StrategyParams,
     Time,
+    Signal,
 } from "../types/strategies";
 import {
     buildFinderSearchBaseParams,
@@ -55,7 +59,13 @@ import {
     toFinderStrategyDiagnostics,
     type FinderStrategyDiagnosticsStats,
 } from "./finder-diagnostics";
-import { buildFinderUniverseCandidate, passesFinderUniverseFilters, FinderUniverseSurvivorRanker } from "./finder-universe-metrics";
+import { isBacktestResultConsistent } from "./finder-runner-shared";
+import {
+    buildFinderUniverseCandidate,
+    passesFinderUniverseFilters,
+    sortFinderUniverseCandidates,
+    FinderUniverseSurvivorRanker,
+} from "./finder-universe-metrics";
 import type { FinderSelectedStrategy } from "./finder-runner";
 import {
     buildFinderPairNeutralMetrics,
@@ -80,12 +90,36 @@ const UNIVERSE_BACKTEST_DIAGNOSTIC_SAMPLE_INTERVAL = 16;
  * loop. The previous path fired onResultsUpdate (which re-sorted and re-rendered)
  * once per surviving candidate — on a 100-symbol × 1000-candidate run that was
  * hundreds of full re-sorts + DOM rebuilds of the survivor table. Throttling
- * matches the current-chart Finder's 750ms results-update cadence; the final
- * getSortedSurvivors(topN) at loop end is still the source of truth for ranking.
+ * matches the current-chart Finder's 750ms results-update cadence. The live
+ * callback remains topN-bounded; the terminal result keeps every survivor so
+ * the Symbol Universe re-sort can rank the full run.
  */
 const UNIVERSE_RESULTS_UPDATE_MIN_MS = 750;
 const UNIVERSE_ZERO_SIGNAL_BAIL_THRESHOLD = 5;
 const DIRECTIONAL_LOOKBACK_BARS = 96;
+const UNIVERSE_RUST_BATCH_SIZE = 64;
+
+const CACHED_NONEMPTY_SIGNAL = {} as Signal;
+
+type UniverseCandidateExecution = {
+    plan: UniverseCandidatePlan;
+    entryParams: StrategyParams;
+    backtestSettings: BacktestSettings;
+    preResolvedSettings: BacktestSettings;
+    typescriptRequirementReasons: string[];
+};
+
+type BatchedUniverseOutput = {
+    result: BacktestResult;
+    signalCount: number;
+    engineUsed: BacktestExecutorResult["engineUsed"];
+    signalTiming: {
+        preparedDataMs: number;
+        signalMs: number;
+        totalMs: number;
+        observed: boolean;
+    };
+};
 
 interface FinderUniverseLoadedSymbol {
     symbol: string;
@@ -140,6 +174,7 @@ export interface FinderUniverseRunCallbacks {
 }
 
 export interface FinderUniverseRunOutput {
+    /** All candidates that passed Universe filters, sorted by run priority. */
     results: FinderUniverseCandidate[];
     loadedSymbols: number;
     failedSymbols: string[];
@@ -763,7 +798,9 @@ export async function runFinderUniverseExecution(
     const evaluationStart = performance.now();
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
     const requiresExitAlpha = universe.sortPriority.includes("medianExitAlpha");
-    const requiresSharpeRatio = universe.sortPriority.includes("medianSharpe");
+    // Median Sharpe is available in the post-run re-sort menu, so it must be
+    // computed even when it was not the initial Universe sort priority.
+    const requiresSharpeRatio = true;
     const requiresDrawdown = universe.sortPriority.some((metric) =>
         metric === "worstMaxDrawdownPercent"
         || metric === "medianMaxDrawdownPercent"
@@ -781,6 +818,9 @@ export async function runFinderUniverseExecution(
     // entries) on onResultsUpdate. The ranker keeps survivor SET parity with the
     // old path via an explicit insertion-order tie-breaker.
     const survivorRanker = new FinderUniverseSurvivorRanker(maxStoredSurvivors, universe.sortPriority);
+    // The ranker is only the bounded live-progress view. Keep the complete
+    // scalar survivor set for terminal delivery and post-run re-sort.
+    const allSurvivors: FinderUniverseCandidate[] = [];
     let keptCandidateCount = 0;
     // -Infinity so the FIRST surviving candidate always fires onResultsUpdate
     // immediately (now - (-Infinity) >= throttle is always true). Subsequent
@@ -791,6 +831,7 @@ export async function runFinderUniverseExecution(
     const getSortedSurvivors = (limit: number): FinderUniverseCandidate[] =>
         survivorRanker.toSortedArray(limit);
     const offerSurvivor = (candidate: FinderUniverseCandidate): void => {
+        allSurvivors.push(candidate);
         survivorRanker.offer(candidate);
         keptCandidateCount += 1;
     };
@@ -827,20 +868,20 @@ export async function runFinderUniverseExecution(
             }
         }
     );
-    for (let candidateIndex = 0; candidateIndex < candidatePlans.length; candidateIndex += 1) {
-        if (callbacks.isCancelled()) {
-            break;
-        }
 
-        const plan = candidatePlans[candidateIndex];
+    const buildCandidateExecution = (plan: UniverseCandidatePlan): UniverseCandidateExecution => {
         const params = plan.params;
-        // When Exit Strategy Override is active, split the `_exit__`-prefixed half
-        // out so the entry strategy sees only its own params, and inject the sampled
-        // exit descriptor into per-candidate backtest settings for executeBacktest.
+        // When Exit Strategy Override is active, split the `_exit__`-prefixed
+        // half out so the entry strategy sees only its own params.
         const { entryParams, exitParams } = plan.exitStrategyKey
             ? splitExitStrategyParams(params)
             : { entryParams: params, exitParams: undefined };
-        const { backtestSettings: riskAdjustedSettings } = resolveFinderRiskOverrides(input.settings, rustSettings, params, input.options);
+        const { backtestSettings: riskAdjustedSettings } = resolveFinderRiskOverrides(
+            input.settings,
+            rustSettings,
+            params,
+            input.options,
+        );
         const backtestSettings: BacktestSettings = plan.exitStrategyKey
             ? {
                 ...riskAdjustedSettings,
@@ -850,7 +891,6 @@ export async function runFinderUniverseExecution(
                 exitStrategyParams: { ...(exitParams ?? {}) },
             }
             : riskAdjustedSettings;
-        currentBacktestSettings = backtestSettings;
         const preResolvedSettings = resolveExecutorBacktestSettings(
             { ...(backtestSettings as Record<string, unknown>), interval: input.interval } as BacktestSettings,
             input.interval,
@@ -865,6 +905,181 @@ export async function runFinderUniverseExecution(
         if (requiresExitAlpha) {
             typescriptRequirementReasons.push("Exit Alpha requires paired TypeScript backtests");
         }
+        return {
+            plan,
+            entryParams,
+            backtestSettings,
+            preResolvedSettings,
+            typescriptRequirementReasons,
+        };
+    };
+    const candidateExecutions = candidatePlans.map(buildCandidateExecution);
+
+    /**
+     * Prepare the common, Rust-eligible Symbol Universe path by symbol rather
+     * than by candidate. The Rust batch API shares one OHLCV array across all
+     * items, so this removes one request/data serialization boundary per
+     * candidate chunk while keeping the existing TypeScript path untouched
+     * for cross-symbol, synthetic-pair, exit-override, and capability-gated
+     * runs.
+     */
+    const universeBatchOutputs = new Map<number, Map<string, BatchedUniverseOutput>>();
+    let largestUniverseRustBatch = 1;
+    const rustPreferenceEnabled = input.useRustEnginePreference === true
+        || (typeof document !== "undefined" && shouldUseRustEngine());
+    const canPrepareUniverseRustBatches = rustPreferenceEnabled
+        && !hasCrossSymbol
+        && !requiresExitAlpha
+        && !input.options.exitStrategyOverrideEnabled
+        && !input.selectedStrategy.strategy.metadata?.role
+        && candidateExecutions.length > 1
+        && loadedSymbols.every((symbol) => !isSyntheticPairFinderSymbol(symbol.symbol));
+    if (canPrepareUniverseRustBatches && await rustEngine.checkHealth()) {
+        for (const symbol of loadedSymbols) {
+            if (callbacks.isCancelled()) break;
+            const closedData = closedDataBySymbol.get(symbol.symbol);
+            if (!closedData) continue;
+            const batchRuns: Array<{
+                candidateIndex: number;
+                signals: Signal[];
+                execution: UniverseCandidateExecution;
+                signalTiming: BatchedUniverseOutput["signalTiming"];
+            }> = [];
+
+            for (let candidateIndex = 0; candidateIndex < candidateExecutions.length; candidateIndex += 1) {
+                const execution = candidateExecutions[candidateIndex]!;
+                if (execution.typescriptRequirementReasons.length > 0) continue;
+
+                currentBacktestSettings = execution.backtestSettings;
+                signalTimingByRun.preparedDataMs = 0;
+                signalTimingByRun.signalMs = 0;
+                signalTimingByRun.totalMs = 0;
+                signalTimingByRun.observed = false;
+                try {
+                    const signalOutput = await executeBacktest({
+                        ohlcvData: symbol.data,
+                        closedCandleDataOverride: closedData,
+                        interval: input.interval,
+                        primarySymbol: symbol.symbol,
+                        strategyKey: input.selectedStrategy.key,
+                        strategy: preparedStrategy,
+                        strategyParams: execution.entryParams,
+                        backtestSettings: execution.backtestSettings,
+                        capitalSettings: input.capitalSettings,
+                        preResolvedSettings: execution.preResolvedSettings,
+                        preResolvedCapital,
+                        context: {
+                            blockRange: null,
+                            annotatePolymarket: false,
+                            engineMode: "typescript",
+                            useRustEnginePreference: input.useRustEnginePreference,
+                            rustCapabilities: input.rustCapabilities,
+                            nowSec: runNowSec,
+                        },
+                        backtestRunOptions: {
+                            includeAdvancedAnalytics: false,
+                            includeSharpeRatio: false,
+                            omitEquityCurve: true,
+                            skipDrawdown: true,
+                            skipResultPostProcessing: true,
+                            signalsOnly: true,
+                        },
+                    });
+                    const signalTiming = { ...signalTimingByRun };
+                    if (signalOutput.signals.length === 0) {
+                        const outputs = universeBatchOutputs.get(candidateIndex) ?? new Map<string, BatchedUniverseOutput>();
+                        outputs.set(symbol.symbol, {
+                            result: signalOutput.result,
+                            signalCount: 0,
+                            engineUsed: "typescript",
+                            signalTiming,
+                        });
+                        universeBatchOutputs.set(candidateIndex, outputs);
+                    } else if (!hasUnsupportedRustSignalShape(signalOutput.signals)) {
+                        batchRuns.push({
+                            candidateIndex,
+                            signals: signalOutput.signals,
+                            execution,
+                            signalTiming,
+                        });
+                    }
+                } catch {
+                    // The normal per-candidate executor below remains the
+                    // authoritative fallback for signal-generation failures.
+                }
+            }
+
+            for (let offset = 0; offset < batchRuns.length; offset += UNIVERSE_RUST_BATCH_SIZE) {
+                const chunk = batchRuns.slice(offset, offset + UNIVERSE_RUST_BATCH_SIZE);
+                largestUniverseRustBatch = Math.max(largestUniverseRustBatch, chunk.length);
+                const batchItems = chunk.map((run) => ({
+                    id: String(run.candidateIndex),
+                    signals: run.signals,
+                    settings: run.execution.preResolvedSettings,
+                }));
+                let batchResponse: { results: Array<{ id: string; result: BacktestResult }> } | null = null;
+                try {
+                    const response = await rustEngine.runBatchBacktestWithStatus(
+                        closedData,
+                        batchItems,
+                        preResolvedCapital.initialCapital,
+                        preResolvedCapital.positionSize,
+                        preResolvedCapital.commission,
+                        rustSettings,
+                        {
+                            mode: preResolvedCapital.sizingMode,
+                            fixedTradeAmount: preResolvedCapital.fixedTradeAmount,
+                            advancedSizing: preResolvedCapital.advancedSizing,
+                        },
+                        true,
+                        {
+                            skipDrawdown: !requiresDrawdown,
+                            skipSharpeRatio: !requiresSharpeRatio,
+                        },
+                    );
+                    if (response.ok) {
+                        const parsed = response.response as { results?: Array<{ id?: unknown; result?: BacktestResult }> };
+                        if (Array.isArray(parsed.results)) {
+                            batchResponse = {
+                                results: parsed.results.filter((entry): entry is { id: string; result: BacktestResult } =>
+                                    typeof entry.id === "string"
+                                    && entry.result !== undefined
+                                    && isBacktestResultConsistent(entry.result)
+                                ),
+                            };
+                        }
+                    }
+                } catch {
+                    // Each missing batch item is replayed through the normal
+                    // TypeScript executor below.
+                }
+
+                const responseById = new Map((batchResponse?.results ?? []).map((entry) => [entry.id, entry.result]));
+                for (const run of chunk) {
+                    const rustResult = responseById.get(String(run.candidateIndex));
+                    if (!rustResult) continue;
+                    const outputs = universeBatchOutputs.get(run.candidateIndex) ?? new Map<string, BatchedUniverseOutput>();
+                    outputs.set(symbol.symbol, {
+                        result: rustResult,
+                        signalCount: run.signals.length,
+                        engineUsed: "rust",
+                        signalTiming: run.signalTiming,
+                    });
+                    universeBatchOutputs.set(run.candidateIndex, outputs);
+                }
+                for (const run of chunk) run.signals.length = 0;
+            }
+        }
+    }
+
+    for (let candidateIndex = 0; candidateIndex < candidatePlans.length; candidateIndex += 1) {
+        if (callbacks.isCancelled()) {
+            break;
+        }
+
+        const execution = candidateExecutions[candidateIndex]!;
+        const { plan, entryParams, backtestSettings, preResolvedSettings, typescriptRequirementReasons } = execution;
+        currentBacktestSettings = backtestSettings;
 
         const symbolResults = new Map<string, FinderUniverseSymbolResult>();
         let evaluationStoppedEarly = false;
@@ -900,48 +1115,62 @@ export async function runFinderUniverseExecution(
             const runStartedAt = performance.now();
             try {
                 const collectBacktestDiagnostics = backtestRunsUntilDiagnosticSample === 0;
-                signalTimingByRun.preparedDataMs = 0;
-                signalTimingByRun.signalMs = 0;
-                signalTimingByRun.totalMs = 0;
-                signalTimingByRun.observed = false;
-                const output = await executeBacktest({
-                    ohlcvData: symbol.data,
-                    closedCandleDataOverride: hasCrossSymbol ? undefined : closedDataBySymbol.get(symbol.symbol),
-                    interval: input.interval,
-                    primarySymbol: symbol.symbol,
-                    strategyKey: input.selectedStrategy.key,
-                    strategy: preparedStrategy,
-                    strategyParams: entryParams,
-                    backtestSettings,
-                    capitalSettings: input.capitalSettings,
-                    preResolvedSettings,
-                    preResolvedCapital,
-                    dataFetcher: crossSymbolDataFetcher,
-                    context: {
-                        blockRange: null,
-                        annotatePolymarket: false,
-                        engineMode: requiresExitAlpha ? "typescript" : "auto",
-                        // Thread the server-side Rust preference through. In the
-                        // browser this is undefined (shouldAttemptRust reads the
-                        // DOM); in Node it's the only signal that opts in to
-                        // Rust (the documented Rust-engine trap fix).
-                        useRustEnginePreference: input.useRustEnginePreference,
-                        rustCapabilities: input.rustCapabilities,
-                        nowSec: runNowSec,
-                    },
-                    backtestRunOptions: {
-                        includeAdvancedAnalytics: false,
-                        includeSharpeRatio: requiresSharpeRatio,
-                        // Universe ranking only consumes the scalar Sharpe value.
-                        // The compact engine can calculate it from an internal
-                        // typed buffer without returning an equity-curve artifact.
-                        omitEquityCurve: true,
-                        skipDrawdown: !requiresDrawdown,
-                        skipResultPostProcessing: true,
-                        collectDiagnostics: collectBacktestDiagnostics,
-                        ...(isSyntheticPair ? { useCompactBacktest: false } : {}),
-                    },
-                });
+                const cachedOutput = universeBatchOutputs.get(candidateIndex)?.get(symbol.symbol);
+                if (cachedOutput) {
+                    signalTimingByRun.preparedDataMs = cachedOutput.signalTiming.preparedDataMs;
+                    signalTimingByRun.signalMs = cachedOutput.signalTiming.signalMs;
+                    signalTimingByRun.totalMs = cachedOutput.signalTiming.totalMs;
+                    signalTimingByRun.observed = cachedOutput.signalTiming.observed;
+                } else {
+                    signalTimingByRun.preparedDataMs = 0;
+                    signalTimingByRun.signalMs = 0;
+                    signalTimingByRun.totalMs = 0;
+                    signalTimingByRun.observed = false;
+                }
+                const output: BacktestExecutorResult = cachedOutput
+                    ? {
+                        result: cachedOutput.result,
+                        signals: cachedOutput.signalCount > 0 ? [CACHED_NONEMPTY_SIGNAL] : [],
+                        engineUsed: cachedOutput.engineUsed,
+                    }
+                    : await executeBacktest({
+                        ohlcvData: symbol.data,
+                        closedCandleDataOverride: hasCrossSymbol ? undefined : closedDataBySymbol.get(symbol.symbol),
+                        interval: input.interval,
+                        primarySymbol: symbol.symbol,
+                        strategyKey: input.selectedStrategy.key,
+                        strategy: preparedStrategy,
+                        strategyParams: entryParams,
+                        backtestSettings,
+                        capitalSettings: input.capitalSettings,
+                        preResolvedSettings,
+                        preResolvedCapital,
+                        dataFetcher: crossSymbolDataFetcher,
+                        context: {
+                            blockRange: null,
+                            annotatePolymarket: false,
+                            engineMode: requiresExitAlpha ? "typescript" : "auto",
+                            // Thread the server-side Rust preference through. In the
+                            // browser this is undefined (shouldAttemptRust reads the
+                            // DOM); in Node it's the only signal that opts in to
+                            // Rust (the documented Rust-engine trap fix).
+                            useRustEnginePreference: input.useRustEnginePreference,
+                            rustCapabilities: input.rustCapabilities,
+                            nowSec: runNowSec,
+                        },
+                        backtestRunOptions: {
+                            includeAdvancedAnalytics: false,
+                            includeSharpeRatio: requiresSharpeRatio,
+                            // Universe ranking only consumes the scalar Sharpe value.
+                            // The compact engine can calculate it from an internal
+                            // typed buffer without returning an equity-curve artifact.
+                            omitEquityCurve: true,
+                            skipDrawdown: !requiresDrawdown,
+                            skipResultPostProcessing: true,
+                            collectDiagnostics: collectBacktestDiagnostics,
+                            ...(isSyntheticPair ? { useCompactBacktest: false } : {}),
+                        },
+                    });
                 if (output.result.diagnostics) {
                     recordFinderBacktestDiagnostics(strategyStats.backtest, output.result.diagnostics);
                     recordFinderBacktestDiagnostics(backtestStats, output.result.diagnostics);
@@ -1141,9 +1370,8 @@ export async function runFinderUniverseExecution(
             addElapsed(timings, "resultRanking", rankingStartedAt);
             // Throttle the (re-sort + render) callback to a time budget instead
             // of firing once per surviving candidate. The final
-            // getSortedSurvivors(topN) at loop end is still the source of truth
-            // for ranking, so a stale mid-run view is acceptable. The sort
-            // itself only happens inside onResultsUpdate when it actually fires.
+            // The live view is intentionally bounded; terminal ranking uses
+            // allSurvivors so post-run re-sort can inspect the complete run.
             if (callbacks.onResultsUpdate) {
                 const now = performance.now();
                 if (now - lastResultsUpdateAt >= UNIVERSE_RESULTS_UPDATE_MIN_MS) {
@@ -1159,6 +1387,7 @@ export async function runFinderUniverseExecution(
     }
 
     // All candidate plans have finished consuming per-symbol OHLCV data.
+    universeBatchOutputs.clear();
     // Release the loaded datasets and the prepared closed-candle map so the
     // final ranking, diagnostics, and the caller's downstream work (Apply,
     // OOS pass, next strategy iteration) don't carry N full symbol arrays.
@@ -1170,7 +1399,7 @@ export async function runFinderUniverseExecution(
     closedDataBySymbol.clear();
 
     const finalRankingStartedAt = performance.now();
-    const results = getSortedSurvivors(input.options.topN);
+    const results = sortFinderUniverseCandidates(allSurvivors, universe.sortPriority);
     addElapsed(timings, "resultRanking", finalRankingStartedAt);
     const evaluationMs = performance.now() - evaluationStart;
     timings.total = performance.now() - totalRunStart;
@@ -1184,7 +1413,7 @@ export async function runFinderUniverseExecution(
         evaluationBars: totalInputBars,
         selectedStrategies: 1,
         totalParamRuns: candidatePlans.length * normalizedSymbols.length,
-        batchSize: 1,
+        batchSize: largestUniverseRustBatch,
         processedRuns,
         filteredRuns: keptCandidateCount,
         shownResults: results.length,
@@ -1218,7 +1447,7 @@ export async function runFinderUniverseExecution(
                     .sort((a, b) => b.avoidedEvaluations - a.avoidedEvaluations || a.reason.localeCompare(b.reason)),
             },
             engineUsage: {
-                rustRequested: input.useRustEnginePreference === true,
+                rustRequested: rustPreferenceEnabled,
                 rustCompletedRuns,
                 typescriptCompletedRuns,
                 typescriptReasons: [...typescriptReasonCounts.entries()]

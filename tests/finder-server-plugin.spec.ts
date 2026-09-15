@@ -613,10 +613,10 @@ describe("finder server plugin processFinderUniverseRun", () => {
         expect(done.diagnostics?.universe?.jobDatasetCache?.successfulLoads).to.equal(2);
     });
 
-    it("a candidate evicted from a later top-K update does not remain in runState", async () => {
-        // With topN=1 and two strategies each producing multiple survivors,
-        // the merged snapshot must NEVER carry more than topN candidates —
-        // later strategy merges replace, not append, evicted identities.
+    it("retains the full terminal survivor inventory beyond the display topN", async () => {
+        // With topN=1 and two strategies producing multiple survivors, the
+        // terminal event retains every survivor beyond topN.
+        // The running snapshot remains bounded; terminal output is complete.
         const opts = makeOptions(["UP", "DOWN"]);
         opts.topN = 1;
         const events = await runPlugin({
@@ -627,7 +627,8 @@ describe("finder server plugin processFinderUniverseRun", () => {
             options: opts,
         });
         const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
-        expect(done.candidates.length).to.be.at.most(1);
+        expect(done.candidates.length).to.be.greaterThan(1);
+        expect(done.totals.survivors).to.equal(done.candidates.length);
     });
 
     it("Stop during a later strategy prevents remaining strategies from starting", async () => {

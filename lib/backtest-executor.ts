@@ -84,6 +84,7 @@ import {
 } from "./backtest-edge-analysis";
 import { attachTradeTimingQuality } from "./trade-timing-quality";
 import { resolveBinanceMarketType } from "./binance-market";
+import { buildSelectionResult } from "./finder/endpoint";
 
 // ============================================================================
 // Executor request / response
@@ -609,6 +610,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     let rustFailureReason: RustBacktestFailureReason | undefined;
     if (rustAttempted) {
         const engineStartedAt = executorTimings ? performance.now() : 0;
+        const endpointSelectionRequested = req.backtestRunOptions?.endpointSelectionLastDataTime !== undefined;
         const rustResult = await tryRustBacktest(
             backtestData,
             mergedSignals,
@@ -616,7 +618,11 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             resolvedSettings,
             {
                 compact: shouldUseCompactBacktest(req),
-                retainTrades: req.backtestRunOptions?.requireTradeHistory === true,
+                // Endpoint selection needs the completed trades in order to
+                // remove exits on the final data bar. This is opt-in and only
+                // affects the Asset Opportunity compact endpoint path.
+                retainTrades: req.backtestRunOptions?.requireTradeHistory === true
+                    || endpointSelectionRequested,
                 skipDrawdown: req.backtestRunOptions?.skipDrawdown === true,
                 skipSharpeRatio: req.backtestRunOptions?.includeSharpeRatio === false,
             },
@@ -628,6 +634,20 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         throwIfBacktestCancelled(req.context.signal);
         if (rustResult.result && isResultConsistent(rustResult.result)) {
             let result = rustResult.result;
+            const endpointSelection = endpointSelectionRequested
+                ? buildSelectionResult(
+                    result,
+                    req.backtestRunOptions?.endpointSelectionLastDataTime ?? null,
+                    req.backtestRunOptions?.endpointSelectionInitialCapital ?? resolvedCapital.initialCapital,
+                )
+                : undefined;
+            if (endpointSelection) {
+                // Keep Rust endpoint selection semantically identical to the
+                // compact TypeScript path without leaking the temporary trade
+                // history through the executor result.
+                endpointSelection.result.trades = [];
+                result.trades = [];
+            }
             result.exitControlDiagnostics = exitControlDiagnostics;
             if (!shouldSkipResultPostProcessing(req)) {
                 finalizeResult(result, backtestData, interval, settingsWithMeta);
@@ -638,7 +658,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
                 result = annotatedResult;
             }
             registerBacktestEdgeAnalysisInput(result, backtestData);
-            return finish(result, "rust", primarySignals, { rustAttempted: true });
+            return finish(result, "rust", primarySignals, { rustAttempted: true }, endpointSelection);
         }
         if (rustResult.reason === "cancelled") throwBacktestCancelled();
         rustFailureReason = rustResult.result ? "inconsistent_result" : rustResult.reason;

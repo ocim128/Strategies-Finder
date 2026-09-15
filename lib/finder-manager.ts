@@ -589,6 +589,10 @@ export class FinderManager {
 	private isCancelled = false;
 	private finderRunAbortController: AbortController | null = null;
 	private latestResults: FinderLatestResults = { scope: "current_chart", results: [] };
+	/** Full scalar Symbol Universe survivors for post-run re-sort. */
+	private symbolUniverseRunResults: FinderUniverseCandidate[] = [];
+	/** Display limit captured from the completed Symbol Universe run. */
+	private symbolUniverseDisplayLimit = DEFAULT_FINDER_UI_STATE.topN;
 	/** Full scalar Asset Opportunity rows for the current run. */
 	private assetOpportunityRunResults: FinderAssetOpportunityResult[] = [];
 	/** Default-order full rows used when the re-sort control is reset. */
@@ -1954,6 +1958,7 @@ export class FinderManager {
 		this.latestDiagnostics = null;
 		this.latestAssetOpportunityDiagnostics = null;
 		this.originalLatestResults = null;
+		this.symbolUniverseRunResults = [];
 		this.assetOpportunityRunResults = [];
 		this.assetOpportunityDefaultResults = [];
 		this.clearLatestResultsSnapshot();
@@ -1962,6 +1967,7 @@ export class FinderManager {
 		this.lastFinderRunBacktestSettings = this.cloneBacktestSettings(settingsSnapshot);
 		const options = this.readOptions(settingsSnapshot);
 		this.lastFinderOptions = this.cloneBacktestSettings(options);
+		this.symbolUniverseDisplayLimit = Math.max(1, options.topN);
 
 		const dom = this.getDom();
 		const runButton = dom.runFinder;
@@ -2322,6 +2328,8 @@ export class FinderManager {
 		// not to this server job. Clear it before showing reattach progress so a
 		// reload cannot display stale asset rows while the job is still running.
 		this.originalLatestResults = null;
+		this.symbolUniverseRunResults = [];
+		this.symbolUniverseDisplayLimit = Math.max(1, this.uiState.topN);
 		this.assetOpportunityRunResults = [];
 		this.assetOpportunityDefaultResults = [];
 		this.clearLatestResultsSnapshot();
@@ -2378,12 +2386,10 @@ export class FinderManager {
 					: null);
 				dom.finderCopyDiagnostics.disabled = !snapshot.diagnostics && !this.latestAssetOpportunityDiagnostics;
 			} else if (snapshot.phase === "done" && snapshot.terminalCandidates) {
-				// The server slice is already sorted and bounded with the original
-				// run options. Those options are not available after a reload.
-				this.setLatestResults({
-					scope: "symbol_universe",
-					results: [...snapshot.terminalCandidates],
-				});
+				// The terminal snapshot is the full scalar run inventory. Keep it
+				// for post-run re-sort and display only the persisted topN.
+				this.adoptSymbolUniverseResults(snapshot.terminalCandidates);
+				this.populateResortOptions();
 				this.renderLatestResults();
 				this.latestDiagnostics = snapshot.diagnostics;
 				dom.finderCopyDiagnostics.disabled = !snapshot.diagnostics;
@@ -3113,7 +3119,7 @@ export class FinderManager {
 
 		if (!this.isCancelled && this.activeServerRunId === null) {
 			const totalSymbols = options.universe.symbols.length;
-			const survivors = this.getUniverseResults().length;
+			const survivors = outcome.results.length;
 			const segments = [
 				`Universe Finder complete. ${survivors} survivor${survivors === 1 ? '' : 's'}`,
 				`${selectedStrategies.length} strateg${selectedStrategies.length === 1 ? 'y' : 'ies'}`,
@@ -3135,7 +3141,7 @@ export class FinderManager {
 	 * Server-owned Finder Universe path: POST ONE request containing all
 	 * selected entry strategy keys + a browser-generated runId, consume the
 	 * NDJSON stream of scalar survivor candidates, and adopt the server's
-	 * authoritative terminal slice + diagnostics. The server sequences
+	 * authoritative terminal inventory + diagnostics. The server sequences
 	 * strategies, merges survivors, runs OOS, and publishes one terminal
 	 * snapshot; the browser only renders.
 	 *
@@ -3276,9 +3282,8 @@ export class FinderManager {
 					if (terminalCandidates && isStillActive()) {
 						const displayed = sortFinderUniverseCandidates(terminalCandidates, sortPriority, {
 							useOosValues: terminalCandidates.some((candidate) => candidate.oosAggregate !== undefined),
-						})
-							.slice(0, options.topN);
-						this.setLatestResults({ scope: 'symbol_universe', results: displayed });
+						});
+						this.adoptSymbolUniverseResults(displayed, true, options.topN);
 						this.stashAndResetResort();
 						this.populateResortOptions();
 						this.renderLatestResults();
@@ -3306,7 +3311,7 @@ export class FinderManager {
 				oosRemoved = recovered.totals?.oosRemoved ?? 0;
 				finalized = true;
 				if (isStillActive()) {
-					this.setLatestResults({ scope: "symbol_universe", results: [...terminalCandidates] });
+					this.adoptSymbolUniverseResults(terminalCandidates);
 					this.stashAndResetResort();
 					this.populateResortOptions();
 					this.renderLatestResults();
@@ -3326,7 +3331,7 @@ export class FinderManager {
 		}
 
 		const finalResults = terminalCandidates
-			?? sortFinderUniverseCandidates([...survivorByKey.values()], sortPriority).slice(0, options.topN);
+			?? sortFinderUniverseCandidates([...survivorByKey.values()], sortPriority);
 
 		if (!this.isCancelled && isStillActive()) {
 			this.setStatus(`Server Finder: ${finalResults.length} survivors (${Math.round(performance.now() - startTime)}ms)`);
@@ -3675,6 +3680,19 @@ export class FinderManager {
 		}, persist);
 	}
 
+	/** Retain the full terminal Universe run while rendering only the display topN. */
+	private adoptSymbolUniverseResults(
+		results: readonly FinderUniverseCandidate[],
+		persist = true,
+		limit = this.symbolUniverseDisplayLimit,
+	): void {
+		this.symbolUniverseRunResults = [...results];
+		this.setLatestResults({
+			scope: 'symbol_universe',
+			results: this.symbolUniverseRunResults.slice(0, Math.max(1, limit)),
+		}, persist);
+	}
+
 	private getCurrentChartResults(): FinderResult[] {
 		return this.latestResults.scope === 'current_chart' ? this.latestResults.results : [];
 	}
@@ -3885,7 +3903,9 @@ export class FinderManager {
 		const scope = this.getScope();
 		const options: Array<{ value: string; label: string }> = [];
 		if (scope === 'symbol_universe') {
-			const results = this.latestResults.scope === "symbol_universe" ? this.latestResults.results : [];
+			const results = this.symbolUniverseRunResults.length > 0
+				? this.symbolUniverseRunResults
+				: this.latestResults.scope === "symbol_universe" ? this.latestResults.results : [];
 			const hasMedianExitAlpha = results.some((result) => result.oosAggregate !== undefined
 				? Number.isFinite(result.medianOosExitAlpha)
 				: Number.isFinite(result.medianExitAlpha));
@@ -3983,6 +4003,11 @@ export class FinderManager {
 			if (scope === 'asset_opportunity' && this.assetOpportunityDefaultResults.length > 0) {
 				this.assetOpportunityRunResults = [...this.assetOpportunityDefaultResults];
 				this.setAssetOpportunityLatestResults(this.assetOpportunityRunResults);
+			} else if (scope === 'symbol_universe' && this.symbolUniverseRunResults.length > 0) {
+				this.setLatestResults({
+					scope: 'symbol_universe',
+					results: this.symbolUniverseRunResults.slice(0, Math.max(1, this.symbolUniverseDisplayLimit)),
+				});
 			} else if (this.originalLatestResults && this.originalLatestResults.scope === scope) {
 				this.setLatestResults(this.originalLatestResults);
 			}
@@ -3997,11 +4022,16 @@ export class FinderManager {
 			});
 			this.setLatestResults({ scope: 'current_chart', results: sorted });
 		} else if (scope === 'symbol_universe') {
-			const results = this.latestResults.results;
-			const sorted = sortFinderUniverseCandidates(results, [metric as FinderUniverseMetric], {
-				useOosValues: metric === "medianExitAlpha" && results.some((result) => result.oosAggregate !== undefined),
+			const source = this.symbolUniverseRunResults.length > 0
+				? this.symbolUniverseRunResults
+				: this.latestResults.results;
+			const sorted = sortFinderUniverseCandidates(source, [metric as FinderUniverseMetric], {
+				useOosValues: metric === "medianExitAlpha" && source.some((result) => result.oosAggregate !== undefined),
 			});
-			this.setLatestResults({ scope: 'symbol_universe', results: sorted });
+			this.setLatestResults({
+				scope: 'symbol_universe',
+				results: sorted.slice(0, Math.max(1, this.symbolUniverseDisplayLimit)),
+			});
 		} else if (scope === 'asset_opportunity') {
 			if (metric === ASSET_OPPORTUNITY_ALL_SORTS) {
 				this.setStatus('All Sorts is for batch archive output; choose a specific metric to re-sort displayed results.');

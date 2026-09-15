@@ -19,7 +19,8 @@
  * - IS search candidate loop:  compact, no trades, endpoint selection "auto"
  *   (compact endpoint-adjusted scalars unless the trade direction is
  *   `combined`, which retains trades instead), full analytics only when the
- *   sort priority requires them.
+ *   sort priority requires them. Rust retains temporary trades only for
+ *   endpoint selection and the executor discards them before returning.
  * - Fresh-entry recheck (signal_close): full engine, trade history retained
  *   (`detectFreshEntry` reads `latestTrade`), no full analytics.
  * - Fresh-entry recheck (next_open/next_close, fixed-horizon mode): same as
@@ -216,12 +217,6 @@ export async function runAssetCandidateBacktest(args: {
         args.data,
         preResolvedSettings.tradeDirection,
     );
-    // Rust does not implement endpoint selection, and compact Rust results
-    // may omit trades. Keep the historical ranking path on TypeScript when it
-    // needs the capital-aware end-of-data adjustment; follow-up replays that
-    // retain trades can still use the generic Rust kernel.
-    const requiresTypescriptEndpointSelection =
-        backtestRunOptions.endpointSelectionLastDataTime !== undefined;
     if (args.needs.endpointSelection === true || args.needs.endpointSelection === "auto") {
         // Only the "auto" path can enable endpoint selection here; the
         // resolved-options builder decides. Attach initial capital so the
@@ -250,7 +245,7 @@ export async function runAssetCandidateBacktest(args: {
         context: {
             blockRange: null,
             annotatePolymarket: false,
-            engineMode: requiresTypescriptEndpointSelection ? "typescript" : "auto",
+            engineMode: "auto",
             nowSec: Math.floor(Date.now() / 1000),
             useRustEnginePreference: args.useRustEnginePreference,
             rustCapabilities: args.rustCapabilities,
@@ -264,20 +259,11 @@ export async function runAssetCandidateBacktest(args: {
         ...(args.exitSignalCache ? { exitSignalCache: args.exitSignalCache } : {}),
         backtestRunOptions,
     });
-    const engineDiagnostics = args.useRustEnginePreference === true
-        && requiresTypescriptEndpointSelection
-        && output.engineUsed === "typescript"
-        && output.engineDiagnostics?.typescriptReason === "Rust was not requested"
-        ? {
-            ...(output.engineDiagnostics ?? { rustAttempted: false }),
-            typescriptReason: "endpoint selection requires TypeScript",
-        }
-        : output.engineDiagnostics;
     return {
         result: output.result,
         signals: output.signals,
         engineUsed: output.engineUsed,
-        engineDiagnostics,
+        engineDiagnostics: output.engineDiagnostics,
         backtestSettings,
         ...(output.endpointSelection ? { endpointSelection: output.endpointSelection } : {}),
     };

@@ -201,12 +201,15 @@ function makeSymbolResult(symbol: string, netProfit: number): FinderUniverseSymb
     };
 }
 
-function makeCandidate(params: Record<string, number> = { threshold: 1 }): FinderUniverseCandidate {
+function makeCandidate(
+    params: Record<string, number> = { threshold: 1 },
+    netProfit = 10,
+): FinderUniverseCandidate {
     return buildFinderUniverseCandidate({
         strategyKey: "universe_test",
         strategyName: "Universe Test",
         params,
-        symbols: [makeSymbolResult("AAA", 10), makeSymbolResult("BBB", 5)],
+        symbols: [makeSymbolResult("AAA", netProfit), makeSymbolResult("BBB", netProfit / 2)],
     });
 }
 
@@ -325,6 +328,8 @@ beforeEach(() => {
     m.reattachAbortController = null;
     m.latestResults = { scope: "current_chart", results: [] };
     m.originalLatestResults = null;
+    m.symbolUniverseRunResults = [];
+    m.symbolUniverseDisplayLimit = 10;
     m.assetOpportunityRunResults = [];
     m.assetOpportunityDefaultResults = [];
     m.uiState.scope = "current_chart";
@@ -432,6 +437,25 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
         expect(manager().activeServerRunId).to.equal(null);
         const stored = JSON.parse((globalThis as any).localStorage.getItem("playground_finder_active_server_run"));
         expect(stored.data).to.equal(null);
+    });
+
+    it("re-sorts the full terminal Universe inventory, not only the displayed topN", async () => {
+        persistActiveServerRun("universe-resort-run");
+        manager().uiState.topN = 1;
+        const lower = makeCandidate({ threshold: 1 }, 10);
+        const higher = makeCandidate({ threshold: 2 }, 100);
+        const reattach = manager().reattachToActiveServerRun();
+        mockFetch.resolveFirst(terminalDoneSnapshot("universe-resort-run", [lower, higher]));
+        await reattach;
+
+        expect(manager().latestResults.results).to.have.length(1);
+        expect(manager().latestResults.results[0]!.params.threshold).to.equal(1);
+
+        manager().getDom().finderResort.value = "medianExpectancy";
+        manager().applyResort();
+
+        expect(manager().latestResults.results).to.have.length(1);
+        expect(manager().latestResults.results[0]!.params.threshold).to.equal(2);
     });
 });
 

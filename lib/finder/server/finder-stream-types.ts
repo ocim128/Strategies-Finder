@@ -4,7 +4,7 @@
  * One server job owns all selected strategies: it sequences each entry
  * strategy through `runFinderUniverseExecution(...)`, merges the scalar
  * survivors, runs the optional OOS pass, and publishes one authoritative
- * terminal candidate slice. The browser remains the control + rendering
+ * terminal candidate inventory. The browser remains the control + rendering
  * layer and reattaches after a tab reload by polling
  * `GET /api/finder/status?runId=...`.
  *
@@ -129,8 +129,8 @@ export type FinderStreamEvent =
         };
         summary: string;
         /**
-         * Terminal, authoritative survivor slice (already sorted + sliced to
-         * topN by the runner). The browser MUST adopt this on `done` instead
+         * Terminal, authoritative full survivor inventory (sorted by the run's
+         * default priority). The browser MUST adopt this on `done` instead
          * of relying only on incrementally-streamed `candidate` events,
          * because the 750ms results throttle means the final survivors may
          * never have been emitted as `candidate` events (the last flush before
@@ -321,8 +321,8 @@ export type AnyFinderStreamEvent =
  *
  * In-progress snapshots are SUMMARY-ONLY: they carry candidate COUNTS, never
  * the full candidate payload, so polling stays small while a large universe
- * is running. The terminal snapshot is the one place that may carry the
- * authoritative final candidate slice.
+ * is running. The terminal snapshot is the one place that carries the
+ * authoritative full candidate inventory for post-run re-sort.
  *
  * A status response for a run id that does not match the active/last run
  * returns 404 at the HTTP layer; this type only describes a matching run.
@@ -355,7 +355,7 @@ export type FinderRunStatusSnapshot = {
     totalSymbols: number;
     progressPercent: number;
     statusText: string;
-    /** Candidate count only while running; the full slice ships when terminal. */
+    /** Candidate count only while running; the full inventory ships when terminal. */
     candidateCount: number;
     loadedSymbols: number;
     failedSymbols: number;

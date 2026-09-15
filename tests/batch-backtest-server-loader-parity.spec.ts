@@ -6,6 +6,7 @@ import {
     createBatchDatasetLoadDiagnostics,
     createBatchDatasetLoaderCore,
 } from "../lib/batch-backtest/batch-dataset-loader-core";
+import type { BatchDatasetLoadResult } from "../lib/batch-backtest/batch-dataset-loader-core";
 import { SyntheticLegCache } from "../lib/batch-backtest/synthetic-leg-cache";
 import type { OHLCVData, Time } from "../lib/types/strategies";
 
@@ -124,7 +125,7 @@ describe("batch-backtest server loader parity", () => {
         ]);
     });
 
-    it("shares a supplied pair cache across repeated batch iterations", async () => {
+    it("shares pair bars and aligned metadata across repeated batch iterations", async () => {
         const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
             time: time as Time,
             open: 100,
@@ -133,31 +134,41 @@ describe("batch-backtest server loader parity", () => {
             close: 101,
             volume: 10,
         }));
+        let fetches = 0;
         const loader = createBatchDatasetLoaderCore({
             logPrefix: "batch.test",
             fetchDetached: async () => [],
-            fetchHistorical: async () => source,
+            fetchHistorical: async () => {
+                fetches += 1;
+                return source;
+            },
         });
         const pairCache = new SyntheticLegCache<OHLCVData[]>(8);
+        const pairMetadataCache = new SyntheticLegCache<
+            Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">
+        >(8);
         const firstContext = {
             legCache: new SyntheticLegCache<OHLCVData[]>(8),
             pairCache,
+            pairMetadataCache,
             preferInMemorySyntheticPairs: true,
             diagnostics: createBatchDatasetLoadDiagnostics(),
         };
-        await loader.load("BASE\u2022+QUOTE\u2022", "4h", undefined, firstContext);
+        await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", undefined, firstContext);
 
         const secondContext = {
             legCache: new SyntheticLegCache<OHLCVData[]>(8),
             pairCache,
+            pairMetadataCache,
             preferInMemorySyntheticPairs: true,
             diagnostics: createBatchDatasetLoadDiagnostics(),
         };
-        await loader.load("BASE\u2022+QUOTE\u2022", "4h", undefined, secondContext);
+        await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", undefined, secondContext);
 
         expect(firstContext.diagnostics.pairBuilds).to.equal(1);
         expect(secondContext.diagnostics.pairCacheHits).to.equal(1);
         expect(secondContext.diagnostics.pairBuilds).to.equal(0);
+        expect(fetches).to.equal(2);
     });
 
     it("measures resolved disk-cache hits and can bypass them for a scoped run", async () => {

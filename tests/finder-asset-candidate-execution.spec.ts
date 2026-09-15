@@ -5,6 +5,7 @@ import {
     runAssetCandidateBacktest,
 } from "../lib/finder/finder-asset-candidate-execution";
 import { rustEngine } from "../lib/rust-engine-client";
+import { runBacktest } from "../lib/strategies";
 import {
     RUST_EXIT_REASON_CAPABILITY,
     RUST_NEXT_OPEN_CAPABILITY,
@@ -35,7 +36,7 @@ const data: OHLCVData[] = [
  * the new flag must land here too.
  */
 describe("Asset Opportunity candidate execution run options", () => {
-    it("keeps endpoint-selection candidates on TypeScript and preserves final-bar removal", async () => {
+    it("uses Rust for endpoint-selection candidates and preserves final-bar removal", async () => {
         const strategy: Strategy = {
             name: "Endpoint Selection Test",
             description: "Produces a trade that exits on the final bar.",
@@ -80,10 +81,25 @@ describe("Asset Opportunity candidate execution run options", () => {
             maxTrades: Number.POSITIVE_INFINITY,
         } satisfies FinderOptions;
         const originalRunBacktest = rustEngine.runBacktestWithStatus;
+        const originalCheckHealth = rustEngine.checkHealth;
         let rustCalls = 0;
-        rustEngine.runBacktestWithStatus = async () => {
+        rustEngine.checkHealth = async () => true;
+        rustEngine.runBacktestWithStatus = async (...args) => {
             rustCalls += 1;
-            throw new Error("Rust must not receive endpoint-selection candidates");
+            return {
+                ok: true,
+                result: runBacktest(
+                    args[0],
+                    args[1],
+                    args[2],
+                    args[3],
+                    args[4],
+                    args[5],
+                    args[6] as never,
+                    undefined,
+                    { includeAdvancedAnalytics: false, includeSharpeRatio: false },
+                ),
+            };
         };
 
         try {
@@ -106,14 +122,15 @@ describe("Asset Opportunity candidate execution run options", () => {
                     endpointSelection: "auto",
                 },
             });
-            expect(rustCalls).to.equal(0);
-            expect(output.engineUsed).to.equal("typescript");
-            expect(output.engineDiagnostics?.typescriptReason).to.equal("endpoint selection requires TypeScript");
+            expect(rustCalls).to.equal(1);
+            expect(output.engineUsed).to.equal("rust");
+            expect(output.engineDiagnostics?.typescriptReason).to.equal(undefined);
             expect(output.endpointSelection?.adjusted).to.equal(true);
             expect(output.endpointSelection?.removedTrades).to.equal(1);
             expect(output.endpointSelection?.result.totalTrades).to.equal(0);
         } finally {
             rustEngine.runBacktestWithStatus = originalRunBacktest;
+            rustEngine.checkHealth = originalCheckHealth;
         }
     });
 

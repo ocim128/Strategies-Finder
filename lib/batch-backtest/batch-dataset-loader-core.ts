@@ -88,6 +88,13 @@ export interface BatchDatasetLoadContext {
     /** Optional bounded pair cache; useful when a batch repeats the same assets. */
     pairCache?: SyntheticLegCache<OHLCVData[]>;
     /**
+     * Metadata paired with `pairCache`. Keeping aligned leg closes here avoids
+     * resampling and remapping both legs on every metadata cache hit.
+     */
+    pairMetadataCache?: SyntheticLegCache<
+        Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">
+    >;
+    /**
      * Optional bounded PLAIN-dataset cache for callers that reload the same
      * symbol|interval series repeatedly across iterations (Asset Opportunity
      * batch holdout sweeps). Consulted by the caller's load wrapper, NOT by
@@ -170,6 +177,9 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
     const pairCacheMaxEntries = Math.max(1, Math.floor(options.pairCacheMaxEntries ?? 16));
     const legCache = new SyntheticLegCache<OHLCVData[]>(legCacheMaxEntries);
     const pairCache = new SyntheticLegCache<OHLCVData[]>(pairCacheMaxEntries);
+    const pairMetadataCache = new SyntheticLegCache<
+        Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">
+    >(pairCacheMaxEntries);
     const diskStats = { hits: 0, misses: 0, writes: 0 };
 
     async function load(
@@ -196,6 +206,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                     effectiveInterval,
                     signal,
                     context,
+                    false,
                 )).data;
             }
 
@@ -270,6 +281,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
             effectiveInterval,
             signal,
             context,
+            true,
         );
     }
 
@@ -279,6 +291,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         interval: string,
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
+        includeMetadata = false,
     ): Promise<BatchDatasetLoadResult> {
         if (signal?.aborted) return { data: [] };
         const diagnostics = context?.diagnostics;
@@ -300,6 +313,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         });
 
         const activePairCache = context?.pairCache ?? pairCache;
+        const activePairMetadataCache = context?.pairMetadataCache ?? pairMetadataCache;
         const cachedPair = activePairCache.get(pairKey);
         if (cachedPair) {
             if (diagnostics) diagnostics.pairCacheHits += 1;
@@ -307,11 +321,21 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                 syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
             });
             const data = await cachedPair;
+            if (!includeMetadata) return { data, baseSymbol, quoteSymbol };
             return {
                 data,
                 baseSymbol,
                 quoteSymbol,
-                ...(await loadAlignedLegCloses(baseSymbol, quoteSymbol, interval, data, signal, context)),
+                ...(await loadOrCacheAlignedLegCloses(
+                    activePairMetadataCache,
+                    pairKey,
+                    baseSymbol,
+                    quoteSymbol,
+                    interval,
+                    data,
+                    signal,
+                    context,
+                )),
             };
         }
         if (diagnostics) diagnostics.pairCacheMisses += 1;
@@ -344,11 +368,21 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                         const diskPromise = Promise.resolve(cached.bars);
                         activePairCache.set(pairKey, diskPromise);
                         const data = await diskPromise;
+                        if (!includeMetadata) return { data, baseSymbol, quoteSymbol };
                         return {
                             data,
                             baseSymbol,
                             quoteSymbol,
-                            ...(await loadAlignedLegCloses(baseSymbol, quoteSymbol, interval, data, signal, context)),
+                            ...(await loadOrCacheAlignedLegCloses(
+                                activePairMetadataCache,
+                                pairKey,
+                                baseSymbol,
+                                quoteSymbol,
+                                interval,
+                                data,
+                                signal,
+                                context,
+                            )),
                         };
                     }
                     diskStats.misses += 1;
@@ -407,14 +441,49 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                 data,
                 baseSymbol,
                 quoteSymbol,
-                baseCloses: alignLegCloses(data, result.base, interval),
-                quoteCloses: alignLegCloses(data, result.quote, interval),
+                ...(includeMetadata
+                    ? {
+                        baseCloses: alignLegCloses(data, result.base, interval),
+                        quoteCloses: alignLegCloses(data, result.quote, interval),
+                    }
+                    : {}),
             };
         })();
+        if (includeMetadata) {
+            const metadataPromise = pairBuildPromise.then((result) => ({
+                baseCloses: result.baseCloses,
+                quoteCloses: result.quoteCloses,
+            }));
+            cacheSuccessfulLoad(activePairMetadataCache, pairKey, metadataPromise, signal);
+        }
         const barsPromise = pairBuildPromise.then((result) => result.data);
         const data = await cacheSuccessfulLoad(activePairCache, pairKey, barsPromise, signal);
         const built = await pairBuildPromise;
         return { ...built, data };
+    }
+
+    async function loadOrCacheAlignedLegCloses(
+        metadataCache: SyntheticLegCache<Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">>,
+        pairKey: string,
+        baseSymbol: string,
+        quoteSymbol: string,
+        interval: string,
+        pairBars: readonly OHLCVData[],
+        signal?: AbortSignal,
+        context?: BatchDatasetLoadContext,
+    ): Promise<Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">> {
+        const cachedMetadata = metadataCache.get(pairKey);
+        if (cachedMetadata) return cachedMetadata;
+
+        const metadataPromise = loadAlignedLegCloses(
+            baseSymbol,
+            quoteSymbol,
+            interval,
+            pairBars,
+            signal,
+            context,
+        );
+        return cacheSuccessfulLoad(metadataCache, pairKey, metadataPromise, signal);
     }
 
     async function loadAlignedLegCloses(
@@ -520,6 +589,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         clearCaches() {
             legCache.clear();
             pairCache.clear();
+            pairMetadataCache.clear();
             diskStats.hits = 0;
             diskStats.misses = 0;
             diskStats.writes = 0;
@@ -552,13 +622,13 @@ function alignLegCloses(
 }
 
 
-function cacheSuccessfulLoad(
-    cache: SyntheticLegCache<OHLCVData[]>,
+function cacheSuccessfulLoad<T>(
+    cache: SyntheticLegCache<T>,
     key: string,
-    promise: Promise<OHLCVData[]>,
+    promise: Promise<T>,
     signal?: AbortSignal,
-): Promise<OHLCVData[]> {
-    let cached: Promise<OHLCVData[]>;
+): Promise<T> {
+    let cached: Promise<T>;
     cached = promise
         .then((data) => {
             if (signal?.aborted) {
