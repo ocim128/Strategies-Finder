@@ -81,10 +81,10 @@ Clicking OPEN_SCORE USD streams the replay report back via
 
 The replay is a descriptive event-level study, not an order allocator. The
 current engine includes long-side raw/adjusted/mean selectors, active-pair and
-submitted/retained-degree selectors, recent-window and trend/regime variants,
-the causal `ACCELERATING` entry-flow selector, pairwise comparisons, and
-negative-score reversion selectors. It also emits per-asset breakdown and
-dominant-asset exclusion diagnostics where the selector supports them. The
+submitted/retained-degree selectors, and the EMA200-breadth-gated
+`TOP_MEAN_TREND` variant, plus pairwise comparisons. It also emits per-asset
+breakdown and dominant-asset exclusion diagnostics where the selector supports
+them. The
 TOP_MEAN series additionally reports two causal take/skip gates
 (`TakeSkipComparison` in
 `lib/batch-backtest/batch-open-score-usd-replay-engine.ts`): `lossVeto`
@@ -112,9 +112,9 @@ dataset, `price-data/ibkr/marketcap/`, looked up as-of the entry timestamp).
 - Quote legs stay −1, short pairs stay ±1, ties (equal caps) and any unknown
   cap (no file / no row yet) weight 1 — the weighting can change ranking,
   never candidacy (`rawScore > 0` pool untouched).
-- Because every score-derived arm (TOP_RAW/TOP_ADJUSTED/TOP_MEAN, 6-bar,
-  trend/regime, acceleration, HHI, freshness) accumulates the weighted
-  deltas, **all of their numbers shift under a weighting**. That is the point
+- Because every score-derived arm (TOP_RAW/TOP_ADJUSTED/TOP_MEAN, trend,
+  HHI, freshness) accumulates the weighted deltas, **all of their numbers
+  shift under a weighting**. That is the point
   of the experiment: run Off / smallBase2x / largeBase2x and compare the
   TOP_MEAN delta-vs-random lines; each report's `config |` line names its
   `capTilt=` setting so outputs stay self-describing.
@@ -159,9 +159,8 @@ In server-side mode, the `symbol` event still strips `data`, `signals`, and
 The OPEN_SCORE USD replay (POST `/api/batch-backtest/open-score-usd`) produces
 a `reportLines` text array that the engine builds. Both the dedicated
 `Copy OPEN_SCORE USD` button and the main `Copy Results` button render that
-array verbatim, so new selector arms — including the short-side
-`MAX_ACTIVE_REVERSION` line — ride both copy paths automatically without UI
-or service changes.
+array verbatim, so new selector arms ride both copy paths automatically
+without UI or service changes.
 
 The browser tab still avoids heavy per-row arrays, while copied summaries match
 the browser-side Batch path for these sections.

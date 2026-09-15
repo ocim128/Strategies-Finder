@@ -562,7 +562,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
                     reason: "selected",
                 },
                 {
-                    selector: "REGIME_MEAN",
+                    selector: "TOP_MEAN_TREND",
                     direction: "long",
                     asset: null,
                     tiedAssets: ["AAA", "CCC"],
@@ -597,7 +597,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TIE / SKIP: AAA, CCC");
         const copiedLines = svc().formatLatestOpenScoreSelectionLines(result.latestSelections);
         expect(copiedLines).to.include(
-            "REGIME_MEAN NOW | direction=LONG | asset=TIE_SKIP[AAA,CCC] | mean=n/a | score=n/a | activePairs=n/a | pool=2 | reason=tied",
+            "TOP_MEAN_TREND NOW | direction=LONG | asset=TIE_SKIP[AAA,CCC] | mean=n/a | score=n/a | activePairs=n/a | pool=2 | reason=tied",
         );
         expect(copiedLines).to.include(
             "MAX_SUBMITTED NOW | direction=LONG | asset=CCC | mean=0.25 | score=2 | activePairs=8 | pool=3 | reason=selected",

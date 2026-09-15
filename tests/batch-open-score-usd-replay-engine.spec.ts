@@ -177,7 +177,6 @@ describe("batch-open-score-usd-replay-engine", () => {
             "TOP_RAW",
             "TOP_ADJUSTED",
             "TOP_MEAN",
-            "ACCELERATING",
             "MAX_ACTIVE",
             "MAX_SUBMITTED",
             "MAX_RETAINED",
@@ -489,42 +488,6 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(result.horizons[0]!.topRaw.topMean).to.not.equal(null);
     });
 
-    it("adds TOP_RAW_6BAR and TOP_MEAN_6BAR using only the recent score window", async () => {
-        const pairs = [
-            makeDirectMarket("AAA", [
-                makeTrade("long", T0 - 10_000, null),
-                makeTrade("long", T0 - 9_000, null),
-                makeTrade("long", T0 - 8_000, null),
-            ]),
-            makeDirectMarket("BBB", [
-                makeTrade("long", T0 + 1_000, null),
-                makeTrade("long", T0 + 1_000, null),
-            ]),
-            makeDirectMarket("CCC", [makeTrade("long", T0 + 1_000, null)]),
-        ];
-        const targets = [
-            makeTarget("AAA", 10, (i) => i === 3 ? 90 : 100),
-            makeTarget("BBB", 10, (i) => i === 3 ? 120 : 100),
-            makeTarget("CCC", 10, () => 100),
-        ];
-        const result = await runOpenScoreUsdReplay(
-            () => fromArray(pairs),
-            () => fromArray(targets),
-            { horizons: [2], interval: "1s", slippageRate: 0, commissionRate: 0, blockCount: 1 },
-        );
-        const horizon = result.horizons[0]!;
-
-        // All-history TOP_RAW still sees AAA's three old votes. The six-bar
-        // arm excludes them at the T0+1s decision and selects BBB's recent
-        // two-vote score instead.
-        expect(horizon.topRaw.topMean).to.be.closeTo(-0.10, 1e-9);
-        expect(horizon.topRaw6Bar.events).to.equal(1);
-        expect(horizon.topRaw6Bar.topMean).to.be.closeTo(0.20, 1e-9);
-        expect(horizon.topMean6Bar.events).to.equal(1);
-        expect(result.reportLines.join("\n")).to.include("TOP_RAW_6BAR");
-        expect(result.reportLines.join("\n")).to.include("TOP_MEAN_6BAR");
-    });
-
     it("reports coverage controls that separate score edge from pair-degree concentration", async () => {
         // At T1 the positive candidates intentionally produce different
         // winners for every diagnostic rule:
@@ -636,66 +599,8 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(latest.get("TOP_MEAN")?.reason).to.equal("tied");
         expect(latest.get("TOP_MEAN")?.tiedAssets).to.deep.equal(["AAA", "BBB", "CCC"]);
         expect(latest.get("TOP_MEAN_TREND")?.asset).to.equal("BBB");
-        expect(latest.get("REGIME_MEAN")?.asset).to.equal("BBB");
         expect(latest.get("MAX_ACTIVE")?.asset).to.equal("AAA");
         expect(latest.get("MAX_SUBMITTED")?.asset).to.equal("CCC");
-    });
-
-    it("latest REGIME_MEAN selects a below-EMA negative asset in a bearish regime", async () => {
-        const decision = T0 + 200_000;
-        const pairs = [
-            makePair("AAA", "AX0", [makeTrade("short", decision, null)]),
-            makePair("AAA", "AX1", [makeTrade("short", decision, null)]),
-            makePair("BBB", "BX0", [makeTrade("short", decision, null)]),
-        ];
-        const declining = (i: number) => i <= 201 ? 200 - i * 0.5 : 90;
-        const targets = [
-            makeTarget("AAA", 205, declining),
-            makeTarget("BBB", 205, declining),
-            makeTarget("AX0", 205, () => 100),
-            makeTarget("AX1", 205, () => 100),
-            makeTarget("BX0", 205, () => 100),
-        ];
-        const result = await runOpenScoreUsdReplay(
-            () => fromArray(pairs),
-            () => fromArray(targets),
-            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
-        );
-        expect(result.latestSelections?.regime).to.equal("bearish");
-        const regime = result.latestSelections?.selections.find(
-            (selection) => selection.selector === "REGIME_MEAN",
-        );
-        expect(regime?.direction).to.equal("short");
-        expect(regime?.asset).to.equal("AAA");
-        expect(regime?.reason).to.equal("selected");
-        const trend = result.latestSelections?.selections.find(
-            (selection) => selection.selector === "TOP_MEAN_TREND",
-        );
-        expect(trend?.reason).to.equal("insufficient_candidates");
-    });
-
-    it("controls legend documents the MAX_ACTIVE_REVERSION short-side arm", async () => {
-        // Any runnable scenario produces the legend line; the body of the
-        // run is irrelevant. We just need to lock the legend wording so a
-        // future refactor cannot silently drop the reversion entry.
-        const pairs = [
-            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)]),
-            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)]),
-        ];
-        const targets = [
-            makeTarget("AAA", 3, () => 100),
-            makeTarget("BBB", 3, () => 100),
-            makeTarget("X1", 3, () => 100),
-            makeTarget("Y1", 3, () => 100),
-        ];
-        const result = await runOpenScoreUsdReplay(
-            () => fromArray(pairs),
-            () => fromArray(targets),
-            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
-        );
-        expect(result.reportLines.join("\n")).to.include(
-            "MAX_ACTIVE_REVERSION=most open pairs among negative-score assets, shorted vs USD",
-        );
     });
 
     it("labels zero-event horizons as unusable even when all datasets loaded", async () => {

@@ -152,9 +152,9 @@ admitted.
   closed bar. The pool is active only when breadth is strictly greater than 50%;
   otherwise the pool is empty and NO fallback pool is substituted. An asset is admitted
   only when its prior close is strictly above its causal EMA200. Missing feature data
-  excludes that event — never imputed. The existing TOP_MEAN_TREND/REGIME_MEAN arms
-  answer ranking quality only and are regime-sensitive (24-bar delta −1.17% in 2025 vs
-  +4.43% in 2026) — they do not substitute for this.
+  excludes that event — never imputed. The existing TOP_MEAN_TREND arm
+  answers ranking quality only and is regime-sensitive (24-bar delta −1.17% in 2025 vs
+  +4.43% in 2026) — it does not substitute for this.
 - **P2 cross-sectional momentum pool**: rank the frozen catalog by trailing 120-bar
   return minus the cross-sectional median, using only the last fully closed bar. The
   primary pool is EXACTLY the top 35 assets of the 70-asset catalog; the 21-asset and

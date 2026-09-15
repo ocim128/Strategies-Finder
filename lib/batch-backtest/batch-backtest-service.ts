@@ -2972,7 +2972,7 @@ export class BatchBacktestService {
             html += `<tr><td><strong>${escapeHtml(selection.selector)}</strong></td><td class="${directionClass}"><strong>${escapeHtml(selection.direction.toUpperCase())}</strong></td><td>${escapeHtml(selectedText)}</td><td>${escapeHtml(mean)}</td><td>${escapeHtml(score)}</td><td>${escapeHtml(selection.activePairs ?? "--")}</td><td>${escapeHtml(selection.eligibleCandidates)}</td></tr>`;
         }
         html += `</tbody></table>`;
-        html += `<div class="batch-report-note batch-report-note--after">Research selectors only. Tied rows are explicitly skipped; TOP_MEAN_TREND and REGIME_MEAN use target prices known by this decision event.</div>`;
+        html += `<div class="batch-report-note batch-report-note--after">Research selectors only. Tied rows are explicitly skipped; TOP_MEAN_TREND uses target prices known by this decision event.</div>`;
         html += `</div>`;
         return html;
     }
