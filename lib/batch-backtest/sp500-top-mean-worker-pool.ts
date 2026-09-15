@@ -186,6 +186,13 @@ export interface WorkerPoolRunOptions {
     shardSize?: number;
     useRustEnginePreference?: boolean;
     baseDir?: string;
+    /**
+     * Audit (wall-clock-cutoff finding): one closed-candle cutoff for the
+     * WHOLE coordinator run. The coordinator captures it once in preflight;
+     * every worker task reuses it so a long run crossing a candle boundary
+     * cannot produce artifacts with different dataEndTime values.
+     */
+    nowSec?: number;
     /** Test seam for deterministic worker lifecycle specs; production uses the resolved worker bundle. */
     workerPath?: string;
     /** Test seam; production uses the atomic async artifact writer. */
@@ -196,6 +203,39 @@ export interface WorkerPoolRunOptions {
 export interface ShardTask {
     shardIndex: number;
     pairs: Array<{ pairIndex: number; symbol: string }>;
+}
+
+/**
+ * Worker-task payload for one shard. Exported so the run-level `nowSec`
+ * threading (audit wall-clock-cutoff finding: ONE closed-candle cutoff per
+ * coordinator run, injected into every task) stays unit-testable.
+ */
+export function buildTopMeanWorkerTaskData(
+    options: Pick<
+        WorkerPoolRunOptions,
+        | "strategyKey"
+        | "strategyParams"
+        | "backtestSettings"
+        | "capitalSettings"
+        | "interval"
+        | "useRustEnginePreference"
+        | "nowSec"
+    >,
+    task: ShardTask,
+    preferInMemorySyntheticPairs: boolean,
+): TopMeanWorkerTaskData {
+    return {
+        shardIndex: task.shardIndex,
+        pairs: task.pairs,
+        strategyKey: options.strategyKey,
+        strategyParams: options.strategyParams,
+        backtestSettings: options.backtestSettings,
+        capitalSettings: options.capitalSettings,
+        interval: options.interval,
+        useRustEnginePreference: options.useRustEnginePreference,
+        preferInMemorySyntheticPairs,
+        ...(options.nowSec !== undefined ? { nowSec: options.nowSec } : {}),
+    };
 }
 
 function pairAffinityKey(symbol: string): string {
@@ -247,6 +287,15 @@ export function buildTopMeanShardTasks(
 export class TopMeanWorkerPool {
     private activeWorkers = new Set<Worker>();
     private isCancelled = false;
+    /**
+     * Assigned inside execute(): drains queued dispatch callbacks so their
+     * in-flight promises settle. Audit (all-workers-dead hang): a retry that
+     * is queued in `pendingTasks` while every worker dies can never settle —
+     * nothing will ever call its callback — so `Promise.race(activePromises)`
+     * (and the catch path's `Promise.allSettled`) waits forever and even Stop
+     * cannot release the coordinator. Worker loss and cancel() both drain.
+     */
+    private drainQueuedTasks: (() => void) | null = null;
 
     public cancel(): void {
         this.isCancelled = true;
@@ -258,6 +307,9 @@ export class TopMeanWorkerPool {
             }
         }
         this.activeWorkers.clear();
+        // Settle queued dispatch callbacks ("Operation cancelled") so no
+        // chained promise stays pending after cancellation.
+        this.drainQueuedTasks?.();
     }
 
     public async execute(options: WorkerPoolRunOptions): Promise<TopMeanWorkerPoolExecutionResult> {
@@ -415,17 +467,8 @@ export class TopMeanWorkerPool {
         // ONCE with TOP_MEAN workerData metadata; the message listener handles
         // every task, and workers are reused across shards via
         // a free-list, and terminate them only on cancel / end / fatal.
-        const buildTaskData = (task: ShardTask): TopMeanWorkerTaskData => ({
-            shardIndex: task.shardIndex,
-            pairs: task.pairs,
-            strategyKey: options.strategyKey,
-            strategyParams: options.strategyParams,
-            backtestSettings: options.backtestSettings,
-            capitalSettings: options.capitalSettings,
-            interval: options.interval,
-            useRustEnginePreference: options.useRustEnginePreference,
-            preferInMemorySyntheticPairs,
-        });
+        const buildTaskData = (task: ShardTask): TopMeanWorkerTaskData =>
+            buildTopMeanWorkerTaskData(options, task, preferInMemorySyntheticPairs);
 
         type InFlight = {
             task: ShardTask;
@@ -433,10 +476,21 @@ export class TopMeanWorkerPool {
             reject: (err: Error) => void;
             settled: boolean;
         };
+        // Audit (retry-accounting finding): stable pairIndex → already counted
+        // as completed. See the dedupe comment in the progress handler.
+        const countedCompletedPairIndexes = new Set<number>();
         const workerInFlight = new Map<Worker, InFlight>();
         const freeWorkers: Worker[] = [];
         const pendingTasks: Array<() => void> = [];
         let dispatchHalted = false;
+        // Audit (all-workers-dead hang): invoke every queued dispatch callback
+        // so its in-flight promise settles. Worker loss and cancel() both call
+        // this — see the field comment on drainQueuedTasks.
+        const drainPendingTaskCallbacks = (): void => {
+            const stuck = pendingTasks.splice(0);
+            for (const cb of stuck) cb();
+        };
+        this.drainQueuedTasks = drainPendingTaskCallbacks;
 
         const attachWorkerHandlers = (worker: Worker): void => {
             this.activeWorkers.add(worker);
@@ -452,15 +506,25 @@ export class TopMeanWorkerPool {
             const onMessage = (msg: TopMeanWorkerMessage): void => {
                 if (msg.type === "progress") {
                     if (msg.status === "completed") {
-                        completedPairsCount++;
-                        options.manifest.completedPairsCount = completedPairsCount;
-                        if (msg.engineUsed === "rust") engineUsage.rust += 1;
-                        else if (msg.engineUsed === "typescript") engineUsage.typescript += 1;
-                        options.onProgress?.(
-                            completedPairsCount,
-                            totalPairs,
-                            `Backtesting pair ${completedPairsCount}/${totalPairs}: ${msg.symbol}`,
-                        );
+                        // Audit (retry-accounting finding): "completed" progress
+                        // is emitted per ATTEMPT, and a shard whose durable
+                        // write fails retries the whole shard — re-emitting
+                        // progress for pairs already counted. Dedupe by the
+                        // stable pairIndex so each canonical pair contributes
+                        // once to the completed count, engine-usage counters,
+                        // and progress events.
+                        if (!countedCompletedPairIndexes.has(msg.pairIndex)) {
+                            countedCompletedPairIndexes.add(msg.pairIndex);
+                            completedPairsCount++;
+                            options.manifest.completedPairsCount = completedPairsCount;
+                            if (msg.engineUsed === "rust") engineUsage.rust += 1;
+                            else if (msg.engineUsed === "typescript") engineUsage.typescript += 1;
+                            options.onProgress?.(
+                                completedPairsCount,
+                                totalPairs,
+                                `Backtesting pair ${completedPairsCount}/${totalPairs}: ${msg.symbol}`,
+                            );
+                        }
                     } else if (msg.status === "failed") {
                         options.manifest.failedPairsCount = (options.manifest.failedPairsCount || 0) + 1;
                     }
@@ -560,6 +624,14 @@ export class TopMeanWorkerPool {
                 const freeIdx = freeWorkers.indexOf(worker);
                 if (freeIdx >= 0) freeWorkers.splice(freeIdx, 1);
                 this.activeWorkers.delete(worker);
+                // Audit (all-workers-dead hang): when the LAST worker dies,
+                // any task sitting in pendingTasks (e.g. a retry queued while
+                // the other workers were busy) can never be dispatched, so its
+                // promise never settles and Promise.race hangs forever. Drain
+                // the queue so every queued task rejects now.
+                if (this.activeWorkers.size === 0) {
+                    drainPendingTaskCallbacks();
+                }
             };
             worker.on("exit", onExit);
         };
@@ -686,6 +758,42 @@ export class TopMeanWorkerPool {
         let queueIndex = 0;
         const activePromises: Set<Promise<void>> = new Set();
 
+        // All-workers-dead guard (B5 + audit hang finding). If every spawned
+        // worker has died (OOM, script-load error, etc.) there is nothing left
+        // to call `releaseWorker`, which means any task sitting in
+        // `pendingTasks` and any retry whose `runShardOnWorker` chained into
+        // `pendingTasks` will NEVER settle. Without this guard
+        // `Promise.race(activePromises)` hangs forever and the only recovery
+        // is a Stop. Surface the fatal condition so the run terminates with a
+        // diagnostic.
+        //
+        // The check fires when no worker is left alive AND no worker is idle
+        // (freeWorkers empty) AND there is still work to do. It is evaluated
+        // BEFORE awaiting the active race as well as after each settlement —
+        // before the await is the only position that cannot be starved by a
+        // never-settling queued retry.
+        const throwIfAllWorkersDead = (): void => {
+            if (this.isCancelled) return;
+            if (this.activeWorkers.size !== 0 || freeWorkers.length !== 0) return;
+            if (pendingTasks.length === 0 && queueIndex >= pendingShards.length) return;
+            debugLogger.warn("sp500_top_mean.all_workers_died", {
+                runId: options.runId,
+                pendingTaskCount: pendingTasks.length,
+                unqueuedShardCount: Math.max(0, pendingShards.length - queueIndex),
+                activePromiseCount: activePromises.size,
+            });
+            // Reject the queued callbacks so their inflight promises settle
+            // defensively (each callback's "No worker available" branch
+            // handles the empty free-list).
+            const stuckCount = pendingTasks.length;
+            drainPendingTaskCallbacks();
+            throw new Error(
+                `All TOP_MEAN workers died mid-run (runId=${options.runId}); `
+                    + `${stuckCount} queued task(s) and `
+                    + `${Math.max(0, pendingShards.length - queueIndex)} unqueued shard(s) left unprocessed.`,
+            );
+        };
+
         try {
             while (queueIndex < pendingShards.length || activePromises.size > 0) {
                 if (this.isCancelled) {
@@ -712,47 +820,14 @@ export class TopMeanWorkerPool {
                     activePromises.add(promise);
                 }
 
+                // Liveness check BEFORE awaiting: see throwIfAllWorkersDead.
+                throwIfAllWorkersDead();
+
                 if (activePromises.size > 0) {
                     await Promise.race(activePromises);
                 }
 
-                // All-workers-dead guard (B5). If every spawned worker has
-                // died (OOM, script-load error, etc.) there is nothing left
-                // to call `releaseWorker`, which means any task sitting in
-                // `pendingTasks` and any retry whose `runShardOnWorker`
-                // chained into `pendingTasks` will NEVER settle. Without
-                // this guard `Promise.race(activePromises)` hangs forever
-                // and the only recovery is a Stop. Surface the fatal
-                // condition so the run terminates with a diagnostic.
-                //
-                // The check fires when no worker is left alive AND no worker
-                // is idle (freeWorkers empty) AND there is still work to do.
-                // The caught throw's `Promise.allSettled(activePromises)`
-                // lets any in-flight retry settle defensively via the
-                // callback's "No worker available" branch.
-                if (
-                    this.activeWorkers.size === 0
-                    && freeWorkers.length === 0
-                    && (pendingTasks.length > 0 || queueIndex < pendingShards.length)
-                    && !this.isCancelled
-                ) {
-                    debugLogger.warn("sp500_top_mean.all_workers_died", {
-                        runId: options.runId,
-                        pendingTaskCount: pendingTasks.length,
-                        unqueuedShardCount: Math.max(0, pendingShards.length - queueIndex),
-                        activePromiseCount: activePromises.size,
-                    });
-                    // Reject the queued callbacks so their inflight promises
-                    // settle defensively (each callback's "No worker
-                    // available" branch handles the empty free-list).
-                    const stuck = pendingTasks.splice(0);
-                    for (const cb of stuck) cb();
-                    throw new Error(
-                        `All TOP_MEAN workers died mid-run (runId=${options.runId}); `
-                            + `${stuck.length} queued task(s) and `
-                            + `${Math.max(0, pendingShards.length - queueIndex)} unqueued shard(s) left unprocessed.`,
-                    );
-                }
+                throwIfAllWorkersDead();
             }
         } catch (error) {
             // Force-flush whatever we have before propagating so the

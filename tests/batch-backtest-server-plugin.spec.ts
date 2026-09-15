@@ -1406,8 +1406,16 @@ describe("SP500 TOP_MEAN runId path-traversal rejection (security)", () => {
     it("getRunDir refuses a runId that escapes the artifacts root", () => {
         const root = getArtifactsRootDir();
         // A clearly-invalid traversal id must throw from the structural guard.
-        expect(() => getRunDir("../../../../package.json")).to.throw("escapes artifacts root");
-        expect(() => getRunDir("..")).to.throw("escapes artifacts root");
+        // Audit (POST run-id finding): the allow-list now runs FIRST — any id
+        // that could escape (separators / dots) fails it, so the refusal
+        // message is "Invalid runId"; the containment check beneath it stays
+        // as defense-in-depth.
+        expect(() => getRunDir("../../../../package.json")).to.throw("Invalid runId");
+        expect(() => getRunDir("..")).to.throw("Invalid runId");
+        // Path-like ids that CONTAIN the escape must be refused too — the old
+        // containment-only guard accepted `foo/../existing` because it
+        // resolves inside the root, aliasing another run's directory.
+        expect(() => getRunDir("foo/../sp500_top_mean_1234_abcd")).to.throw("Invalid runId");
         // A legitimate browser id resolves cleanly under the root.
         const safe = getRunDir("sp500_top_mean_1234_abcd");
         expect(safe.startsWith(root + sep)).to.equal(true);

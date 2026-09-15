@@ -357,9 +357,89 @@ async function testMarkedRegistryPoolMatch(): Promise<void> {
     }
 }
 
+async function testPhase0bStreamFailurePropagatesWithoutCrashing(): Promise<void> {
+    const root = mkdtempSync(join(tmpdir(), "top-mean-archive-stream-"));
+    try {
+        const request = makeRequest("top_mean_archive_stream_fail_1");
+        const runDir = join(root, "archive", "batch-open-score", request.runId);
+        mkdirSync(runDir, { recursive: true });
+        // Plant a DIRECTORY where events-full.jsonl must be created. The
+        // archive's write stream opens lazily: write() returns true (the line
+        // is buffered) and the open failure (EISDIR on POSIX, EPERM on
+        // Windows) arrives ASYNCHRONOUSLY — the exact unhandled-'error'
+        // window that used to terminate the whole Vite process (audit
+        // archive-stream finding). Best-effort means the failure must
+        // surface as a failed archive outcome, never a crash.
+        mkdirSync(join(runDir, "events-full.jsonl"));
+        const warnings: string[] = [];
+        const outcome = await archiveCompletedTopMeanRun(makeSummary(), request, {
+            root,
+            canonicalAssets: ["AAPL", "MSFT"],
+            fingerprint: "stream-fail-fingerprint",
+            manifest: makeManifest(),
+            warn: (event) => warnings.push(event),
+        });
+        assert.equal(outcome.reason, "failed");
+        assert.match(
+            outcome.error ?? "",
+            /EISDIR|EPERM|directory|operation not permitted/i,
+            `unexpected archive error: ${outcome.error}`,
+        );
+        assert.deepEqual(warnings, ["sp500_top_mean.archive_log_failed"]);
+        // A failed archive must not leave a complete-looking meta.json.
+        assert.equal(existsSync(join(runDir, "meta.json")), false);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+    console.log("PASS: archive JSONL stream failure surfaces as a failed outcome instead of crashing");
+}
+
+async function testReusedRunIdClearsStaleArchiveFiles(): Promise<void> {
+    const root = mkdtempSync(join(tmpdir(), "top-mean-archive-reuse-"));
+    try {
+        const request = makeRequest("top_mean_archive_reuse_1");
+        const archiveOptions = {
+            root,
+            canonicalAssets: ["AAPL", "MSFT"],
+            fingerprint: "reuse-fingerprint",
+            manifest: makeManifest(),
+        };
+
+        const first = await archiveCompletedTopMeanRun(makeSummary(), request, archiveOptions);
+        assert.equal(first.reason, "saved");
+        const runDir = join(root, "archive", "batch-open-score", request.runId);
+        assert.ok(existsSync(join(runDir, "events-annual-2023.jsonl")));
+
+        // Second invocation on the SAME run id with NO annual reports: the
+        // stale annual file from the first invocation must not survive —
+        // it used to remain and was even hashed into the new meta.files
+        // manifest (audit reused-run-id finding).
+        const secondSummary = makeSummary();
+        secondSummary.annualReports = [];
+        const second = await archiveCompletedTopMeanRun(secondSummary, request, archiveOptions);
+        assert.equal(second.reason, "saved");
+        assert.equal(
+            existsSync(join(runDir, "events-annual-2023.jsonl")),
+            false,
+            "stale annual file must not survive into the reused archive",
+        );
+        const meta = JSON.parse(readFileSync(join(runDir, "meta.json"), "utf8")) as {
+            files: Record<string, string>;
+        };
+        assert.equal(meta.files["events-annual-2023.jsonl"], undefined);
+        assert.ok(meta.files["events-full.jsonl"], "current-invocation files are still archived and hashed");
+        assert.ok(meta.files["meta.json"] === undefined, "meta.json never hashes itself");
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+    console.log("PASS: reused run id clears stale archive files");
+}
+
 async function main(): Promise<void> {
     await testCompletedRunWritesArchive();
     await testDisabledAndFailedWritesAreBestEffort();
+    await testPhase0bStreamFailurePropagatesWithoutCrashing();
+    await testReusedRunIdClearsStaleArchiveFiles();
     await testMarkedRegistryPoolMatch();
     console.log("PASS: sp500-top-mean-archive-log.spec.ts");
 }

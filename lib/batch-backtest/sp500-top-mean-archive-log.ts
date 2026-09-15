@@ -1,4 +1,5 @@
 import { createReadStream, createWriteStream, type WriteStream } from "node:fs";
+import { finished } from "node:stream";
 import { mkdir, readFile, readdir, rm, writeFile, copyFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
@@ -123,9 +124,37 @@ export interface TopMeanPhase0bArchiveWriter {
     dispose(): Promise<void>;
 }
 
-async function writeStreamLine(stream: WriteStream, row: unknown): Promise<void> {
+/**
+ * A JSONL write stream with a persistent 'error' listener attached at
+ * creation. Audit (archive-stream-crash finding): `write()` returning true
+ * means "buffered", not "durable" — a later asynchronous failure (disk full,
+ * permission, ENOENT) used to surface as an UNHANDLED 'error' event, which
+ * terminates the Node process. The archive is best-effort and must never
+ * crash the Vite server, so the failure is captured here and propagated
+ * through the writer's promise lifecycle instead (subsequent writes and
+ * close() reject with it).
+ */
+interface TrackedJsonlStream {
+    stream: WriteStream;
+    /** First asynchronous error observed on the stream, if any. */
+    error: Error | null;
+}
+
+function createTrackedJsonlStream(filePath: string): TrackedJsonlStream {
+    const stream = createWriteStream(filePath, { encoding: "utf8" });
+    const tracked: TrackedJsonlStream = { stream, error: null };
+    stream.on("error", (error: Error) => {
+        tracked.error ??= error;
+    });
+    return tracked;
+}
+
+async function writeStreamLine(tracked: TrackedJsonlStream, row: unknown): Promise<void> {
+    // A previous asynchronous failure must fail every later write too — a
+    // destroyed stream can still accept buffered writes that go nowhere.
+    if (tracked.error) throw tracked.error;
     const line = `${JSON.stringify(row)}\n`;
-    if (stream.write(line)) return;
+    if (tracked.stream.write(line)) return;
     await new Promise<void>((resolve, reject) => {
         const onDrain = (): void => {
             cleanup();
@@ -136,18 +165,29 @@ async function writeStreamLine(stream: WriteStream, row: unknown): Promise<void>
             reject(error);
         };
         const cleanup = (): void => {
-            stream.off("drain", onDrain);
-            stream.off("error", onError);
+            tracked.stream.off("drain", onDrain);
+            tracked.stream.off("error", onError);
         };
-        stream.once("drain", onDrain);
-        stream.once("error", onError);
+        tracked.stream.once("drain", onDrain);
+        tracked.stream.once("error", onError);
     });
 }
 
-function closeWriteStream(stream: WriteStream): Promise<void> {
+function closeWriteStream(tracked: TrackedJsonlStream): Promise<void> {
+    // finished() is race-safe by construction: it settles when the stream
+    // actually finishes, errors, or closes. A plain end() callback is NOT
+    // safe here — on an open failure the callback can fire BEFORE the
+    // 'error' event (the open is still in flight), which reported a clean
+    // close for a stream that never wrote a byte.
+    tracked.stream.end();
     return new Promise((resolve, reject) => {
-        stream.once("error", reject);
-        stream.end(() => resolve());
+        finished(tracked.stream, (err) => {
+            // The persistent listener runs before this callback, so
+            // tracked.error always holds the ORIGINAL stream error.
+            if (tracked.error) reject(tracked.error);
+            else if (err) reject(err);
+            else resolve();
+        });
     });
 }
 
@@ -160,8 +200,8 @@ export async function createTopMeanPhase0bArchiveWriter(
     await mkdir(stagingDir, { recursive: true });
     const poolSnapshotsPath = path.join(stagingDir, "pool-snapshots.jsonl");
     const candidateOutcomesPath = path.join(stagingDir, "candidate-outcomes.jsonl");
-    const poolStream = createWriteStream(poolSnapshotsPath, { encoding: "utf8" });
-    const candidateStream = createWriteStream(candidateOutcomesPath, { encoding: "utf8" });
+    const poolStream = createTrackedJsonlStream(poolSnapshotsPath);
+    const candidateStream = createTrackedJsonlStream(candidateOutcomesPath);
     let closePromise: Promise<void> | null = null;
     const closeStreams = (): Promise<void> => {
         closePromise ??= Promise.all([
@@ -336,11 +376,11 @@ export async function findRegistryPoolMatch(
 }
 
 async function writeJsonlFile<T>(filename: string, rows: readonly T[]): Promise<void> {
-    const stream = createWriteStream(filename, { encoding: "utf8" });
+    const tracked = createTrackedJsonlStream(filename);
     try {
-        for (const row of rows) await writeStreamLine(stream, row);
+        for (const row of rows) await writeStreamLine(tracked, row);
     } finally {
-        await closeWriteStream(stream);
+        await closeWriteStream(tracked);
     }
 }
 
@@ -481,9 +521,19 @@ export async function archiveCompletedTopMeanRun(
         }));
 
         await mkdir(runDir, { recursive: true });
-        // A rerun must not leave a previous complete meta.json claiming that
-        // a newly assembled archive is complete if finalization later fails.
-        await rm(path.join(runDir, "meta.json"), { force: true });
+        // Audit (reused-run-id finding): only meta.json used to be removed
+        // before assembly, so rerunning/resuming a run id left stale files
+        // (e.g. events-annual-YYYY.jsonl from a different annual window set)
+        // in place — validly hashed by the manifest below, but semantically
+        // from an earlier invocation. runDir is exclusively owned by this
+        // assembler, so clear every file from the previous invocation first.
+        // This also preserves the original invariant: a previous complete
+        // meta.json must not survive into a partially assembled archive.
+        for (const entry of await readdir(runDir, { withFileTypes: true })) {
+            if (entry.isFile()) {
+                await rm(path.join(runDir, entry.name), { force: true });
+            }
+        }
         await Promise.all([
             writeFile(path.join(runDir, "report.txt"), result.reportLines.join("\n"), "utf8"),
         ]);

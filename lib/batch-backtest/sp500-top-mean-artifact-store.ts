@@ -33,10 +33,14 @@ export function getArtifactsRootDir(baseDir?: string): string {
 
 export function getRunDir(runId: string, baseDir?: string): string {
     const root = getArtifactsRootDir(baseDir);
-    // Defense-in-depth: even if a caller forgets to validate at the HTTP
-    // boundary, refuse to build a path that escapes the artifacts root. This
-    // is the structural guard that covers EVERY fs consumer of runId,
-    // including the coordinator-engine write path.
+    // Audit (POST run-id finding): the containment check below only rejects
+    // paths that ESCAPE the root — an id like `foo/../existing` resolves
+    // INSIDE the root and would alias another run's directory. The allow-list
+    // is therefore the primary structural guard; the containment check stays
+    // as defense-in-depth beneath it.
+    if (!isValidRunId(runId)) {
+        throw new Error("Invalid runId");
+    }
     const resolved = resolve(root, runId);
     if (resolved !== root && !resolved.startsWith(root + sep)) {
         throw new Error("runId escapes artifacts root");
@@ -65,6 +69,14 @@ export function computeRunFingerprint(payload: {
     interval: string;
     useRustEnginePreference?: boolean;
     canonicalAssets: string[];
+    /**
+     * Ordered canonical pair sequence. Load-bearing for resume safety (audit
+     * resume-fingerprint finding): assets alone cannot distinguish two runs
+     * with a different pair composition, and a fingerprint mismatch is the
+     * only thing that stops a resumed run from reusing shards computed for
+     * pairs that were never requested.
+     */
+    canonicalPairs: string[];
 }): string {
     const jsonStr = JSON.stringify(payload);
     return createHash("sha256").update(jsonStr).digest("hex");
@@ -309,10 +321,16 @@ export function reconcileInterruptedManifestsOnStartup(baseDir?: string): void {
     try {
         const entries = readdirSync(rootDir);
         for (const runId of entries) {
-            const manifest = loadManifest(runId, baseDir);
-            if (manifest && manifest.status === "running") {
-                manifest.status = "interrupted";
-                saveManifest(manifest, baseDir);
+            try {
+                const manifest = loadManifest(runId, baseDir);
+                if (manifest && manifest.status === "running") {
+                    manifest.status = "interrupted";
+                    saveManifest(manifest, baseDir);
+                }
+            } catch {
+                // Skip entries whose names fail the run-id allow-list
+                // (getRunDir throws on them) or that cannot be read; they
+                // must not abort reconciliation of the remaining runs.
             }
         }
     } catch {

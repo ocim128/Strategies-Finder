@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
+import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { parseSyntheticPairToken } from "../synthetic-pair-token";
 import { canonicalizeLegIdentity, type CanonicalLegIdentity } from "../synthetic-leg-identity";
 
@@ -287,4 +288,39 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
         canonicalPairs,
         excludedAssets: excludedAssetsList,
     };
+}
+
+/**
+ * Replay target set for exactly the pairs a run will execute (audit
+ * smoke-replay-bounds finding). `eligibleTargets` always covers the FULL
+ * universe — even when `maxPairs` sliced `canonicalPairs` down to a smoke
+ * subset — so a coordinator replay driven from it loaded and cached datasets
+ * for assets no retained artifact ever references. This derives the same
+ * `{ asset, symbol }` shape from the pair list itself: synthetic
+ * `BASE+QUOTE` tokens contribute both legs, direct symbols contribute
+ * themselves. Deduped by scoring asset, sorted by asset for deterministic
+ * traversal.
+ */
+export function deriveReplayTargetsFromCanonicalPairs(
+    canonicalPairs: readonly string[],
+): Array<{ asset: string; symbol: string }> {
+    const symbolByAsset = new Map<string, string>();
+    const addLeg = (asset: string, symbol: string): void => {
+        const key = asset.trim().toUpperCase();
+        if (key !== "" && !symbolByAsset.has(key)) {
+            symbolByAsset.set(key, symbol);
+        }
+    };
+    for (const pair of canonicalPairs) {
+        const parsed = parsePortfolioSyntheticPairSymbol(pair);
+        if (parsed) {
+            addLeg(parsed.baseAsset, parsed.baseSymbol);
+            addLeg(parsed.quoteAsset, parsed.quoteSymbol);
+        } else {
+            const direct = canonicalizeLegIdentity(pair);
+            addLeg(direct?.scoringAsset ?? pair, direct?.loaderSymbol ?? pair);
+        }
+    }
+    return Array.from(symbolByAsset, ([asset, symbol]) => ({ asset, symbol }))
+        .sort((a, b) => a.asset.localeCompare(b.asset));
 }

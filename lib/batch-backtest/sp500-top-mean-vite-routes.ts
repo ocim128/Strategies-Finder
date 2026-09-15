@@ -41,7 +41,7 @@ import {
     type TopMeanCoordinatorRunRequest,
     type TopMeanStatusResponse,
 } from "./sp500-top-mean-coordinator-engine";
-import { getRunDir, isValidRunId, loadManifest } from "./sp500-top-mean-artifact-store";
+import { getRunDir, isValidRunId, loadManifest, saveManifest } from "./sp500-top-mean-artifact-store";
 import { validateTopMeanRequestLimits } from "./sp500-top-mean-request-limits";
 import type { ResearchWorkloadToken } from "../server-research-job-coordinator";
 
@@ -174,6 +174,14 @@ async function handleSp500TopMeanRunRequest(
     if (!req.runId || typeof req.runId !== "string") {
         throw new HttpStatusError(400, "Missing required string property: runId.");
     }
+    // Audit (POST run-id finding): the GET routes validate with isValidRunId
+    // but POST only checked stringiness, so an id like `foo/../existing`
+    // passed the structural containment check and aliased another run's
+    // artifact directory. Reject invalid ids at the boundary (getRunDir now
+    // enforces the same allow-list structurally).
+    if (!isValidRunId(req.runId)) {
+        throw new HttpStatusError(400, "Invalid runId.");
+    }
     if (!req.strategyKey || typeof req.strategyKey !== "string") {
         throw new HttpStatusError(400, "Missing required string property: strategyKey.");
     }
@@ -206,6 +214,29 @@ async function handleSp500TopMeanRunRequest(
         req.capTiltWeight = limitCheck.value.capTiltWeight;
     }
 
+    // Optional decision-event date window for the phase-3 OPEN_SCORE USD
+    // replay. Mirrors handleOpenScoreUsdRequest's parseBodyDateSec: YYYY-MM-DD
+    // parses as UTC midnight; sampleTo adds 24h-1s so the whole end day is
+    // inclusive. Audit (date-window finding): blank still means "no filter"
+    // (full history), but a NON-blank malformed date is a 400 — it used to
+    // become "no filter" and silently trigger a full-history replay — and a
+    // reversed From/To window is a 400 instead of an empty "successful"
+    // report. Validated before the owner lock is acquired.
+    const parseBodyDateSec = (key: "sampleFrom" | "sampleTo", endOfDay = false): number | undefined => {
+        const raw = (body as Record<string, unknown>)[key];
+        if (typeof raw !== "string" || raw.trim() === "") return undefined;
+        const ms = Date.parse(raw);
+        if (!Number.isFinite(ms)) {
+            throw new HttpStatusError(400, `Invalid ${key} date: "${raw}".`);
+        }
+        return Math.floor(ms / 1000) + (endOfDay ? 24 * 3600 - 1 : 0);
+    };
+    const sampleFromSec = parseBodyDateSec("sampleFrom", false);
+    const sampleToSec = parseBodyDateSec("sampleTo", true);
+    if (sampleFromSec !== undefined && sampleToSec !== undefined && sampleFromSec > sampleToSec) {
+        throw new HttpStatusError(400, "TOP_MEAN date window is reversed; sampleFrom must not be after sampleTo.");
+    }
+
     const strategy = strategies[req.strategyKey];
     if (!strategy) {
         throw new HttpStatusError(
@@ -217,20 +248,6 @@ async function handleSp500TopMeanRunRequest(
     if (ownerLocks.isBusy() || getActiveTopMeanCoordinatorEngine() !== null) {
         throw new HttpStatusError(409, "A batch, analysis, or TOP_MEAN operation is already running.");
     }
-
-    // Optional decision-event date window for the phase-3 OPEN_SCORE USD
-    // replay. Mirrors handleOpenScoreUsdRequest's parseBodyDateSec: YYYY-MM-DD
-    // parses as UTC midnight; sampleTo adds 24h-1s so the whole end day is
-    // inclusive. Malformed/blank -> null (no filter, full history).
-    const parseBodyDateSec = (key: "sampleFrom" | "sampleTo", endOfDay = false): number | undefined => {
-        const raw = (body as Record<string, unknown>)[key];
-        if (typeof raw !== "string" || raw.trim() === "") return undefined;
-        const ms = Date.parse(raw);
-        if (!Number.isFinite(ms)) return undefined;
-        return Math.floor(ms / 1000) + (endOfDay ? 24 * 3600 - 1 : 0);
-    };
-    const sampleFromSec = parseBodyDateSec("sampleFrom", false);
-    const sampleToSec = parseBodyDateSec("sampleTo", true);
 
     const token = ownerLocks.acquire(req.runId);
 
@@ -278,6 +295,23 @@ export async function handleSp500TopMeanStatusRequest(
         }
         const manifest = loadManifest(runId, baseDir);
         if (manifest) {
+            // Audit (restart-reattach finding): a persisted "running" manifest
+            // is only legitimate while an engine in THIS process owns the run
+            // (single-flight), and that case is handled by the active-engine
+            // branch above. Reaching here with status "running" means the
+            // server restarted mid-run and nothing will ever advance the
+            // manifest — the browser's terminal check keys on `status`, so it
+            // would poll forever. Reconcile to a terminal interrupted state
+            // (same semantics as reconcileInterruptedManifestsOnStartup).
+            if (manifest.status === "running") {
+                manifest.status = "interrupted";
+                try {
+                    saveManifest(manifest, baseDir);
+                } catch {
+                    // Best-effort persistence; the response below still
+                    // reports a terminal state so the reattach loop ends.
+                }
+            }
             // Audit: read multi-MB result files ASYNC. The prior
             // `existsSync` + `readFileSync` blocked the Vite event loop on
             // every reattach poll (this route is hit every ~2s during a

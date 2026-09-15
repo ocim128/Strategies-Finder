@@ -36,6 +36,10 @@ import { buildBatchRunFingerprint, parseBatchSymbols, BATCH_MAX_SYMBOLS } from "
 import { BALANCED_PAIR_LIST_MAX_PAIRS, generateBalancedPairList, type BalancedPairListResult, type PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import { fnv1a64Hex } from "./max-active-research-contract";
 import { isActiveCapTiltWeight } from "./cap-tilt-contract";
+import {
+    parseTopMeanMenuHorizons,
+    parseTopMeanMenuOptionalPositiveInt,
+} from "./sp500-top-mean-request-limits";
 // The template blob lives in the lazy-loaded batch feature chunk (via ?raw),
 // so it never lands in the cold-start bundle.
 import { getBatchSymbolTemplate, type BatchSymbolTemplateKey } from "./batch-symbol-templates";
@@ -2681,11 +2685,6 @@ export class BatchBacktestService {
         return { strategyKey, strategy };
     }
 
-    private parseTopMeanOptionalPositiveInt(rawValue: string): number | undefined {
-        const parsed = Number.parseInt(rawValue, 10);
-        return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-    }
-
     private generateTopMeanRunId(): string {
         return `sp500_top_mean_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     }
@@ -2695,19 +2694,32 @@ export class BatchBacktestService {
         if (!resolved) return;
         const { strategyKey, strategy } = resolved;
 
-        const horizonsText = dom.batchBacktestSp500TopMeanHorizons.value.trim() || "12,24,48";
-        const horizons = horizonsText
-            .split(",")
-            .map((s) => Number.parseInt(s.trim(), 10))
-            .filter((n) => Number.isFinite(n) && n > 0);
-
-        if (horizons.length === 0) {
-            dom.batchBacktestSp500TopMeanProgressText.textContent = "Error: Invalid horizons format.";
+        // Audit (menu-numeric finding): strict input parsing. "0"/"12.5"/"abc"
+        // in Workers or Max Pairs used to fall through to "not set" — silently
+        // launching the auto-worker or full-universe workload — and invalid
+        // horizon tokens were silently dropped while valid ones remained.
+        const horizonsParsed = parseTopMeanMenuHorizons(dom.batchBacktestSp500TopMeanHorizons.value);
+        if (horizonsParsed.kind === "invalid") {
+            dom.batchBacktestSp500TopMeanProgressText.textContent =
+                `Error: Invalid horizons value "${horizonsParsed.token}". Use comma-separated positive integers, e.g. 12,24,48.`;
             return;
         }
+        const horizons = horizonsParsed.horizons;
 
-        const workerCount = this.parseTopMeanOptionalPositiveInt(dom.batchBacktestSp500TopMeanWorkers.value);
-        const maxPairs = this.parseTopMeanOptionalPositiveInt(dom.batchBacktestSp500TopMeanMaxPairs.value);
+        const workersParsed = parseTopMeanMenuOptionalPositiveInt(dom.batchBacktestSp500TopMeanWorkers.value);
+        if (workersParsed.kind === "invalid") {
+            dom.batchBacktestSp500TopMeanProgressText.textContent =
+                "Error: Workers must be a positive whole number, or blank for automatic.";
+            return;
+        }
+        const maxPairsParsed = parseTopMeanMenuOptionalPositiveInt(dom.batchBacktestSp500TopMeanMaxPairs.value);
+        if (maxPairsParsed.kind === "invalid") {
+            dom.batchBacktestSp500TopMeanProgressText.textContent =
+                "Error: Max Pairs must be a positive whole number, or blank for the full universe.";
+            return;
+        }
+        const workerCount = workersParsed.kind === "valid" ? workersParsed.value : undefined;
+        const maxPairs = maxPairsParsed.kind === "valid" ? maxPairsParsed.value : undefined;
 
         const runId = this.generateTopMeanRunId();
         this.activeTopMeanRunId = runId;

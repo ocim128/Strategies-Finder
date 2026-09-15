@@ -78,7 +78,7 @@ import { loadMarketCapLookup } from "../ibkr-data/marketcap-series-reader";
 import { CAP_TILT_WEIGHTS, isActiveCapTiltWeight } from "./cap-tilt-contract";
 import { createEmptyBacktestResult } from "../strategies/backtest/position-stats";
 import { registerSp500TopMeanRoutes, type BatchOwnerLocks } from "./sp500-top-mean-vite-routes";
-import { isValidRunId } from "./sp500-top-mean-artifact-store";
+import { isValidRunId, reconcileInterruptedManifestsOnStartup } from "./sp500-top-mean-artifact-store";
 import { getV8HeapLimitMb, resolveServerHeapWarning } from "../server-heap-guard";
 import { releaseIfOwner as releaseResearchWorkloadIfOwner, tryAcquire as tryAcquireResearchWorkload } from "../server-research-job-coordinator";
 
@@ -2591,11 +2591,20 @@ export function batchBacktestVitePlugin(): Plugin {
             // Best-effort: sweep orphaned dirs from a prior crash without
             // blocking dev-server registration (audit Finding 4).
             void sweepOrphanedMineArtifactDirs();
+            // Audit (restart-reattach finding): reconcile TOP_MEAN manifests
+            // left "running" by a previous process. Previously this only ran
+            // when a NEW TOP_MEAN engine started, so a server restart before
+            // that left the browser reattach loop polling a stale "running"
+            // manifest forever. Best-effort + async-safe: it is synchronous
+            // and small (one manifest per run dir), and failures are swallowed
+            // inside.
+            reconcileInterruptedManifestsOnStartup(ledgerRootDir);
             registerBatchRoutes(server.middlewares);
         },
         configurePreviewServer(server) {
             ledgerRootDir = server.config.root ?? process.cwd();
             void sweepOrphanedMineArtifactDirs();
+            reconcileInterruptedManifestsOnStartup(ledgerRootDir);
             registerBatchRoutes(server.middlewares);
         },
     };

@@ -1,6 +1,8 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
+    parseTopMeanMenuHorizons,
+    parseTopMeanMenuOptionalPositiveInt,
     TOP_MEAN_HORIZONS_MAX_LENGTH,
     TOP_MEAN_HORIZONS_MAX_VALUE,
     TOP_MEAN_MAX_PAIRS_MAX,
@@ -70,5 +72,61 @@ describe("validateTopMeanRequestLimits", () => {
                 expect(result.error).to.include("smallBase2x");
             }
         }
+    });
+});
+
+describe("parseTopMeanMenuOptionalPositiveInt", () => {
+    it("treats blank input as not set (auto workers / full universe)", () => {
+        for (const raw of ["", "   ", "\t"]) {
+            const result = parseTopMeanMenuOptionalPositiveInt(raw);
+            expect(result.kind, JSON.stringify(raw)).to.equal("blank");
+        }
+    });
+
+    it("accepts strict positive integers", () => {
+        for (const [raw, value] of [["1", 1], [" 12 ", 12], ["24", 24]] as const) {
+            const result = parseTopMeanMenuOptionalPositiveInt(raw);
+            expect(result.kind, raw).to.equal("valid");
+            if (result.kind === "valid") expect(result.value).to.equal(value);
+        }
+    });
+
+    // Audit (menu-numeric finding): "0" used to become undefined and silently
+    // launch the automatic/full-universe workload; "12.5" was truncated to 12.
+    it("rejects zero, fractional, negative, and non-numeric input as invalid", () => {
+        for (const raw of ["0", "12.5", "-4", "abc", "12abc", "1e3", "+8"]) {
+            const result = parseTopMeanMenuOptionalPositiveInt(raw);
+            expect(result.kind, raw).to.equal("invalid");
+        }
+    });
+});
+
+describe("parseTopMeanMenuHorizons", () => {
+    it("defaults blank input to 12,24,48", () => {
+        const result = parseTopMeanMenuHorizons("");
+        expect(result.kind).to.equal("valid");
+        if (result.kind === "valid") expect(result.horizons).to.deep.equal([12, 24, 48]);
+    });
+
+    it("parses comma-separated positive integers and skips blank tokens", () => {
+        const result = parseTopMeanMenuHorizons(" 6 , , 18 ");
+        expect(result.kind).to.equal("valid");
+        if (result.kind === "valid") expect(result.horizons).to.deep.equal([6, 18]);
+    });
+
+    // Audit (menu-numeric finding): invalid tokens used to be silently dropped
+    // as long as one valid token remained.
+    it("rejects any non-blank token that is not a positive integer", () => {
+        for (const raw of ["12,abc", "abc", "12.5,24", "12,0,24", "-3", "12,1e2"]) {
+            const result = parseTopMeanMenuHorizons(raw);
+            expect(result.kind, raw).to.equal("invalid");
+            if (result.kind === "invalid") {
+                expect(result.token, raw).to.be.a("string").with.length.greaterThan(0);
+            }
+        }
+    });
+
+    it("rejects an all-blank token list", () => {
+        expect(parseTopMeanMenuHorizons(" , , ").kind).to.equal("invalid");
     });
 });

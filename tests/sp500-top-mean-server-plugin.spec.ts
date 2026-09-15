@@ -13,6 +13,7 @@ import {
     computeRunFingerprint,
     getRunDir,
     iterateRunRawCompactArtifacts,
+    loadManifest,
     saveManifest,
     writeShardArtifacts,
 } from "../lib/batch-backtest/sp500-top-mean-artifact-store";
@@ -405,6 +406,7 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
         interval: "4h",
         useRustEnginePreference: false,
         canonicalAssets: enumRes.eligibleAssets,
+        canonicalPairs: enumRes.canonicalPairs,
     });
 
     // Pre-write a completed manifest + shard 0 with six open long pairs that
@@ -629,6 +631,7 @@ function openArtifact(
     symbol: string,
     type: "long" | "short",
     dataEndTime: number,
+    trades?: CompactPairArtifact["trades"],
 ): CompactPairArtifact {
     const [baseAsset = symbol, quoteAsset = symbol] = symbol.split("+");
     return {
@@ -639,9 +642,252 @@ function openArtifact(
         quoteAsset,
         baseSymbol: `${baseAsset}USDT`,
         quoteSymbol: `${quoteAsset}USDT`,
-        trades: [{ type, entryTime: 1 as Time, exitTime: 2 as Time, exitReason: "end_of_data" }],
+        trades: trades ?? [{ type, entryTime: 1 as Time, exitTime: 2 as Time, exitReason: "end_of_data" }],
         dataEndTime,
     };
+}
+
+/**
+ * Audit (restart-reattach finding): a manifest left "running" by a previous
+ * process must not keep the browser reattach loop polling forever. The
+ * status route observes it with no active engine, reconciles it to
+ * "interrupted", persists that, and returns the terminal state.
+ */
+async function testStaleRunningManifestReconcilesToInterrupted(): Promise<void> {
+    const baseDir = mkdtempSync(join(tmpdir(), "sp500-top-mean-stale-"));
+    const runId = "spec_stale_reattach_1";
+    try {
+        saveManifest({
+            schema: "top_mean_run_manifest.v1",
+            runId,
+            status: "running",
+            fingerprint: "stale-fingerprint",
+            strategyKey: "close_location_median_alignment",
+            interval: "4h",
+            pairCount: 2,
+            shardSize: 50,
+            totalShards: 1,
+            completedShards: [],
+            failedShards: [],
+            completedPairsCount: 1,
+            failedPairsCount: 0,
+            createdAt: Date.now() - 60_000,
+            updatedAt: Date.now() - 60_000,
+        }, baseDir);
+
+        const status = await handleSp500TopMeanStatusRequest(runId, baseDir);
+        assert.equal("ok" in status, false, "a persisted manifest must resolve, not 404");
+        if ("ok" in status) return;
+        assert.equal(status.status, "interrupted", "stale running manifest must surface as terminal interrupted");
+        assert.equal(status.phase, "interrupted");
+        assert.equal(status.pairTotals, 2);
+
+        const onDisk = loadManifest(runId, baseDir);
+        assert.equal(onDisk?.status, "interrupted", "the reconcile must be persisted so other surfaces agree");
+    } finally {
+        rmSync(baseDir, { recursive: true, force: true });
+    }
+    console.log("PASS: stale running manifest reconciles to interrupted on status");
+}
+
+/**
+ * Shared POST /run harness for route-boundary validation tests (mirrors the
+ * saveArchiveLog rejection test below).
+ */
+async function postTopMeanRunBody(
+    body: Record<string, unknown>,
+): Promise<{ statusCode: number; payload: Record<string, unknown> }> {
+    const routes = new Map<string, (req: any, res: any) => void | Promise<void>>();
+    registerSp500TopMeanRoutes({
+        use(path: string, handler: any) {
+            routes.set(path, handler);
+        },
+    }, {
+        maxBodyBytes: 1024 * 1024,
+        rememberLocalApiOriginFromRequest: () => undefined,
+        ownerLocks: {
+            isBusy: () => false,
+            acquire: () => ({ runOwner: 1, analysisOwner: 1 }),
+            releaseIfStillOwner: () => undefined,
+        },
+    });
+
+    const response: any = {
+        statusCode: 0,
+        headers: {} as Record<string, string>,
+        body: "",
+        setHeader(name: string, value: string) { this.headers[name] = value; },
+        end(body: string) { this.body = body; },
+    };
+    const request: any = Readable.from([JSON.stringify(body)]);
+    request.method = "POST";
+    request.url = "/api/batch-backtest/sp500-top-mean/run";
+    request.headers = { host: "127.0.0.1:5173" };
+    request.socket = { remoteAddress: "127.0.0.1" };
+
+    await routes.get("/api/batch-backtest/sp500-top-mean/run")!(request, response);
+    return {
+        statusCode: response.statusCode,
+        payload: response.body ? JSON.parse(response.body) as Record<string, unknown> : {},
+    };
+}
+
+/**
+ * Audit (POST run-id + date-window findings): the run route must reject
+ * path-like run ids at the boundary (the structural containment check alone
+ * lets `foo/../existing` alias another run's artifact directory) and must
+ * reject malformed non-blank From/To dates and reversed windows with a 400 —
+ * they used to become "no filter" (full-history replay) or an empty
+ * "successful" report. All before any owner lock is acquired.
+ */
+async function testTopMeanRouteRejectsInvalidRunIdsAndDates(): Promise<void> {
+    // Any eagerly-manifested built-in satisfies the route's strategy gate.
+    const baseRequest = {
+        strategyKey: "entropy_ratio_regime_alignment",
+        strategyParams: { lookback: 20, threshold: 0.5 },
+        backtestSettings: { direction: "long", slippage: 0, commission: 0 },
+        capitalSettings: { initialCapital: 10000 },
+        interval: "4h",
+        horizons: [12],
+    };
+
+    const pathLike = await postTopMeanRunBody({
+        ...baseRequest,
+        runId: "spec_evil/../spec_result_json_1",
+    });
+    assert.equal(pathLike.statusCode, 400);
+    assert.equal(pathLike.payload.error, "Invalid runId.");
+
+    const spaces = await postTopMeanRunBody({ ...baseRequest, runId: "spec evil id" });
+    assert.equal(spaces.statusCode, 400);
+    assert.equal(spaces.payload.error, "Invalid runId.");
+
+    const malformedDate = await postTopMeanRunBody({
+        ...baseRequest,
+        runId: "spec_date_guard_run",
+        sampleFrom: "not-a-date",
+    });
+    assert.equal(malformedDate.statusCode, 400);
+    assert.match(String(malformedDate.payload.error), /Invalid sampleFrom date/);
+
+    const reversed = await postTopMeanRunBody({
+        ...baseRequest,
+        runId: "spec_date_guard_run",
+        sampleFrom: "2026-01-02",
+        sampleTo: "2026-01-01",
+    });
+    assert.equal(reversed.statusCode, 400);
+    assert.match(String(reversed.payload.error), /reversed/);
+
+    console.log("PASS: TOP_MEAN route rejects invalid run ids and date windows with 400");
+}
+
+/**
+ * Audit (stop-during-archive finding): Stop fired while the archive
+ * finalization is awaiting disk work must win — the run ends interrupted
+ * (manifest + done event), never "completed" with a successful result.
+ *
+ * Uses the archive test seam: the injected archive function calls stop() and
+ * then resolves successfully, reproducing the exact race. The pair list and
+ * pre-completed empty-trades shard let the pipeline reach the archive phase
+ * without market data (the replay short-circuits on zero trade deltas).
+ */
+async function testStopDuringArchiveStaysInterrupted(): Promise<void> {
+    const pairListText = "AAPL•+MSFT•\nAAPL•+NVDA•";
+    const enumRes = enumerateSp500Pairs({ interval: "4h", pairListText });
+    if (enumRes.canonicalPairs.length === 0) {
+        console.log("SKIP: stop-during-archive test (S&P 500 catalog not available in this env)");
+        return;
+    }
+    const baseDir = undefined;
+    const runId = `spec_stop_archive_${Date.now()}`;
+    try {
+        const request: Record<string, unknown> = {
+            runId,
+            strategyKey: "close_location_median_alignment",
+            strategyParams: { lookback: 20, threshold: 0.5 },
+            backtestSettings: { direction: "long", slippage: 0, commission: 0 },
+            capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 },
+            interval: "4h",
+            horizons: [12],
+            pairListText,
+            resume: true,
+            saveArchiveLog: true,
+            useRustEnginePreference: false,
+        };
+        const fingerprint = computeRunFingerprint({
+            strategyKey: request.strategyKey as string,
+            strategyParams: request.strategyParams,
+            backtestSettings: request.backtestSettings,
+            capitalSettings: request.capitalSettings,
+            interval: "4h",
+            useRustEnginePreference: false,
+            canonicalAssets: enumRes.eligibleAssets,
+            canonicalPairs: enumRes.canonicalPairs,
+        });
+
+        // One completed shard with EMPTY trades: the replay scan finds zero
+        // trade deltas and returns an empty result instead of failing on
+        // missing target datasets.
+        writeShardArtifacts(runId, 0, [openArtifact(0, "AAPL+Q1", "long", 1_700_000_000, [])], baseDir);
+        saveManifest({
+            schema: "top_mean_run_manifest.v1",
+            runId,
+            status: "running",
+            fingerprint,
+            strategyKey: "close_location_median_alignment",
+            interval: "4h",
+            pairCount: enumRes.canonicalPairs.length,
+            shardSize: 50,
+            totalShards: 1,
+            completedShards: [0],
+            failedShards: [],
+            completedPairsCount: 1,
+            failedPairsCount: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        }, baseDir);
+
+        let engine: TopMeanCoordinatorEngine | null = null;
+        let archiveCalls = 0;
+        engine = new TopMeanCoordinatorEngine(request as any, baseDir, {
+            archiveCompletedRun: async () => {
+                archiveCalls += 1;
+                // Stop DURING the archive await — the completion commit below
+                // must observe it and stay interrupted.
+                engine!.stop();
+                await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 25));
+                return { reason: "saved", archiveDir: "archive-unused" };
+            },
+        });
+
+        const events: Array<{ type: string; interrupted?: unknown; result?: unknown; error?: unknown }> = [];
+        await engine.run((event: unknown) => {
+            events.push(event as { type: string });
+        });
+
+        assert.equal(
+            archiveCalls,
+            1,
+            `the injected archive phase must have run; events=${JSON.stringify(events.map((e) => ({ ...e, result: undefined })))}`,
+        );
+        const lastEvent = events[events.length - 1]!;
+        assert.equal(lastEvent.type, "done", "the run must terminate with a done event");
+        assert.equal(lastEvent.interrupted, true, "Stop during the archive await must win: interrupted done event");
+        assert.equal(lastEvent.result, undefined, "no successful result may follow a Stop");
+
+        const persisted = loadManifest(runId, baseDir);
+        assert.equal(persisted?.status, "interrupted", "manifest must remain interrupted after Stop");
+    } finally {
+        // baseDir is undefined (worktree artifact root) so enumeration can
+        // resolve the S&P catalog; clean only this run's dir.
+        try {
+            rmSync(getRunDir(runId, baseDir), { recursive: true, force: true });
+        } catch {
+            // Best-effort cleanup.
+        }
+    }
+    console.log("PASS: stop during archive finalization stays interrupted");
 }
 
 async function main(): Promise<void> {
@@ -654,6 +900,9 @@ async function main(): Promise<void> {
     await testResultSummaryFieldIsOptional();
     await testRunIntegratesSnapshotAndPersistsBeforeReplay();
     await testTopMeanRouteRejectsNonBooleanArchiveFlag();
+    await testStaleRunningManifestReconcilesToInterrupted();
+    await testTopMeanRouteRejectsInvalidRunIdsAndDates();
+    await testStopDuringArchiveStaysInterrupted();
     await testManifestBackedStatusPreservesArchiveOutcome();
     console.log("PASS: sp500-top-mean-server-plugin.spec.ts");
 }

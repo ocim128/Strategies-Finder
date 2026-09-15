@@ -33,6 +33,7 @@ async function runTests(): Promise<void> {
             capitalSettings: { initial: 10000 },
             interval: "4h",
             canonicalAssets: ["AAPL", "MSFT"],
+            canonicalPairs: ["AAPL•+MSFT•"],
         });
         const fp2 = computeRunFingerprint({
             strategyKey: "test_strategy",
@@ -41,8 +42,23 @@ async function runTests(): Promise<void> {
             capitalSettings: { initial: 10000 },
             interval: "4h",
             canonicalAssets: ["AAPL", "MSFT"],
+            canonicalPairs: ["AAPL•+MSFT•"],
         });
         assert.equal(fp1, fp2, "Identical inputs must yield identical fingerprints");
+
+        // 1b. Resume safety (audit resume-fingerprint finding): the ordered
+        // pair sequence is part of the fingerprint — a resume against the
+        // same assets but a re-cut pair list must NOT match.
+        const fpDifferentPairs = computeRunFingerprint({
+            strategyKey: "test_strategy",
+            strategyParams: { p: 1 },
+            backtestSettings: { mode: "long" },
+            capitalSettings: { initial: 10000 },
+            interval: "4h",
+            canonicalAssets: ["AAPL", "MSFT"],
+            canonicalPairs: ["MSFT•+AAPL•", "AAPL•+MSFT•"],
+        });
+        assert.notEqual(fp1, fpDifferentPairs, "Different pair composition must change the fingerprint");
 
         // 2. Test Manifest Save & Load
         const runId = "test_run_123";

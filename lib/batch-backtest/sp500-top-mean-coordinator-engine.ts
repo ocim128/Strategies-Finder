@@ -22,7 +22,7 @@ import {
     reconcileInterruptedManifestsOnStartup,
     saveManifest,
 } from "./sp500-top-mean-artifact-store";
-import { enumerateSp500Pairs, type CoverageCounts } from "./sp500-pair-enumerator";
+import { enumerateSp500Pairs, deriveReplayTargetsFromCanonicalPairs, type CoverageCounts } from "./sp500-pair-enumerator";
 import type { TopMeanRunManifest } from "./compact-pair-artifact";
 import type { ActiveCapTiltWeight } from "./cap-tilt-contract";
 import {
@@ -239,6 +239,15 @@ export function getActiveTopMeanCoordinatorEngine(): TopMeanCoordinatorEngine | 
     return activeEngineInstance;
 }
 
+/**
+ * Injectable collaborators (test seam only — production constructs the engine
+ * with two arguments). Lets specs inject a delayed/observed archive phase so
+ * the stop-during-archive commit boundary is deterministically testable.
+ */
+export interface TopMeanCoordinatorEngineDeps {
+    archiveCompletedRun?: typeof archiveCompletedTopMeanRun;
+}
+
 export class TopMeanCoordinatorEngine {
     private pool: TopMeanWorkerPool | null = null;
     private isStopped = false;
@@ -279,6 +288,7 @@ export class TopMeanCoordinatorEngine {
     constructor(
         private readonly _request: TopMeanCoordinatorRunRequest,
         private readonly baseDir?: string,
+        private readonly deps?: TopMeanCoordinatorEngineDeps,
     ) {
         this.archiveRequested = _request.saveArchiveLog !== false;
     }
@@ -498,6 +508,11 @@ export class TopMeanCoordinatorEngine {
             },
         };
         const preflightStartedAt = performance.now();
+        // Audit (wall-clock-cutoff finding): each shard used to capture its
+        // own Date.now(), so a long run crossing a candle boundary produced
+        // artifacts with different closed-candle cutoffs. One timestamp per
+        // coordinator run is threaded through every worker task instead.
+        const runNowSec = Math.floor(Date.now() / 1000);
         activeEngineInstance = this;
         this.archiveRoot = this.archiveRequested
             ? resolveTopMeanArchiveLogDir(this.baseDir ?? process.cwd())
@@ -544,6 +559,14 @@ export class TopMeanCoordinatorEngine {
                 interval: this._request.interval,
                 useRustEnginePreference: this._request.useRustEnginePreference,
                 canonicalAssets: enumRes.eligibleAssets,
+                // Audit (resume-fingerprint finding): eligibleAssets alone
+                // cannot distinguish two runs over the SAME assets with a
+                // DIFFERENT pair composition (order, membership, count), so a
+                // resume against a re-cut pair list reused shards computed for
+                // pairs that were never requested. The ordered canonical pair
+                // sequence covers composition, order, count, and therefore
+                // every maxPairs/pairListText variation.
+                canonicalPairs: enumRes.canonicalPairs,
             });
             this.canonicalAssets = [...enumRes.eligibleAssets];
             this.runFingerprint = fingerprint;
@@ -672,6 +695,7 @@ export class TopMeanCoordinatorEngine {
                 workerCount: this._request.workerCount,
                 useRustEnginePreference: this._request.useRustEnginePreference,
                 baseDir: this.baseDir,
+                nowSec: runNowSec,
                 onProgress: (completed, total, text) => {
                     this.progressText = text;
                     emitNdjson({
@@ -756,7 +780,18 @@ export class TopMeanCoordinatorEngine {
                 activeReplayPhase = null;
             };
 
-            const eligibleTargets = enumRes.eligibleTargets;
+            // Audit (smoke-replay-bounds finding): eligibleTargets covers the
+            // FULL universe even when maxPairs sliced canonicalPairs down to a
+            // one-pair smoke run, so the target loader below loaded and cached
+            // hundreds/thousands of datasets the replay never consumed (an
+            // unrelated load failure could even fail the run). The replay only
+            // evaluates candidate assets derived from retained artifacts, so
+            // targets are bounded to the run's pair legs — unless Phase 0b
+            // full-catalog diagnostics are staged, which genuinely consume
+            // every catalog target.
+            const replayTargets = phase0bWriter !== null
+                ? enumRes.eligibleTargets
+                : deriveReplayTargetsFromCanonicalPairs(enumRes.canonicalPairs);
             const requestInterval = this._request.interval;
 
             const targetPerformance = this.performanceDiagnostic;
@@ -769,7 +804,7 @@ export class TopMeanCoordinatorEngine {
                 Awaited<ReturnType<typeof loadServerBatchDataset>>
             >();
             const coordinator = this;
-            const targetLoader = (targets: readonly typeof eligibleTargets[number][]) => () => (async function* () {
+            const targetLoader = (targets: readonly typeof replayTargets[number][]) => () => (async function* () {
                 for (let i = 0; i < targets.length; i++) {
                     const { asset, symbol } = targets[i]!;
                     let data = replayTargetCache.get(symbol);
@@ -814,7 +849,7 @@ export class TopMeanCoordinatorEngine {
                 sampleToSec: number | undefined,
             ): Promise<OpenScoreUsdReplayResult> => {
                 const includePhase0bDiagnostics = replayPassIndex === 0 && phase0bWriter !== null && !phase0bWriterFailed;
-                const targets = orderTopMeanReplayTargets(eligibleTargets, replayPassIndex);
+                const targets = orderTopMeanReplayTargets(replayTargets, replayPassIndex);
                 replayPassIndex += 1;
                 return runOpenScoreUsdReplay(
                     () => iterateRunCompactArtifacts(this._request.runId, this.baseDir) as unknown as AsyncIterable<BatchSyntheticPairArtifact>,
@@ -1001,7 +1036,8 @@ export class TopMeanCoordinatorEngine {
                 archiveOutcome = { reason: "disabled" };
             } else {
                 try {
-                    archiveOutcome = await archiveCompletedTopMeanRun(this.resultSummary, this._request, {
+                    const archiveCompletedRun = this.deps?.archiveCompletedRun ?? archiveCompletedTopMeanRun;
+                    archiveOutcome = await archiveCompletedRun(this.resultSummary, this._request, {
                         root: this.baseDir,
                         archiveRoot: this.archiveRoot,
                         canonicalAssets: this.canonicalAssets,
@@ -1025,6 +1061,19 @@ export class TopMeanCoordinatorEngine {
                 this.resultSummary.archiveDir = archiveOutcome.archiveDir;
             } else if (archiveOutcome.reason === "failed") {
                 this.resultSummary.archiveError = archiveOutcome.error;
+            }
+
+            // Audit (stop-during-archive finding): this is the completion
+            // commit boundary. `stop()` may have fired while the archive
+            // finalization above was awaiting disk work — execution used to
+            // resume and overwrite the interrupted manifest with "completed"
+            // and emit a successful done event. Stop must win: recheck
+            // immediately before claiming completion. The archive output is
+            // best-effort and is discarded here; the run reports interrupted.
+            if (this.isStopped) {
+                this.resultSummary = null;
+                this.emitInterrupted(emitNdjson);
+                return;
             }
 
             this.currentPhase = "completed";

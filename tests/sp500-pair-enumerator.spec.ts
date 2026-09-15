@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseSp500CompanyInfoCsv, enumerateSp500Pairs } from "../lib/batch-backtest/sp500-pair-enumerator";
+import { parseSp500CompanyInfoCsv, enumerateSp500Pairs, deriveReplayTargetsFromCanonicalPairs } from "../lib/batch-backtest/sp500-pair-enumerator";
 import { stripIbkrMarker } from "../lib/local-daily-datasets";
 
 const FIXTURE_TICKERS = ["AAPL", "AMGN", "CVX", "GOOGL", "KO", "MSFT", "PANW"];
@@ -97,6 +97,35 @@ function testCustomCryptoMarkets(): void {
     assert.equal(res.counts.excludedPairsCount, 0);
 }
 
+function testDeriveReplayTargetsFromCanonicalPairs(): void {
+    // Audit (smoke-replay-bounds finding): the coordinator's replay target
+    // loader must be derivable from the pairs a run actually executes, so a
+    // maxPairs smoke run never loads the full universe's datasets.
+    const targets = deriveReplayTargetsFromCanonicalPairs([
+        "BTCUSDT+ETHUSDT",
+        "ZECUSDT+APTUSDT",
+        "BTCUSDT+APTUSDT",
+        "MSFTUSDT",
+    ]);
+    assert.deepEqual(
+        targets,
+        [
+            { asset: "APT", symbol: "APTUSDT" },
+            { asset: "BTC", symbol: "BTCUSDT" },
+            { asset: "ETH", symbol: "ETHUSDT" },
+            { asset: "MSFT", symbol: "MSFTUSDT" },
+            { asset: "ZEC", symbol: "ZECUSDT" },
+        ],
+        "targets must cover exactly the pair legs, deduped and asset-sorted",
+    );
+
+    assert.deepEqual(
+        deriveReplayTargetsFromCanonicalPairs([]),
+        [],
+        "an empty pair list derives an empty target set",
+    );
+}
+
 function main(): void {
     const baseDir = createPriceDataFixture();
     try {
@@ -104,6 +133,7 @@ function main(): void {
         testEnumerationOrderingAndExclusion(baseDir);
         testCustomPairListText(baseDir);
         testCustomCryptoMarkets();
+        testDeriveReplayTargetsFromCanonicalPairs();
         console.log("PASS: sp500-pair-enumerator.spec.ts");
     } finally {
         rmSync(baseDir, { recursive: true, force: true });

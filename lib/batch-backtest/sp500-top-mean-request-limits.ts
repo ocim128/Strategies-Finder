@@ -129,3 +129,48 @@ export function validateTopMeanRequestLimits(input: {
         },
     };
 }
+
+/**
+ * Strict parse of an OPTIONAL positive-integer menu input (Workers, Max
+ * Pairs). Audit (menu-numeric finding): blank means "not set" (auto workers /
+ * full universe), but any NON-blank value must be a strict positive integer.
+ * The old parseInt coercion mapped "0" and "abc" to undefined — silently
+ * launching the automatic/full-universe workload instead of the small smoke
+ * run the user typed — and truncated "12.5" to 12.
+ */
+export type TopMeanMenuOptionalPositiveInt =
+    | { kind: "blank" }
+    | { kind: "valid"; value: number }
+    | { kind: "invalid" };
+
+export function parseTopMeanMenuOptionalPositiveInt(rawValue: string): TopMeanMenuOptionalPositiveInt {
+    const text = rawValue.trim();
+    if (text === "") return { kind: "blank" };
+    if (!/^\d+$/.test(text)) return { kind: "invalid" };
+    const parsed = Number.parseInt(text, 10);
+    return parsed > 0 ? { kind: "valid", value: parsed } : { kind: "invalid" };
+}
+
+/**
+ * Strict parse of the horizons menu input. Blank/whitespace tokens are
+ * skipped; every non-blank token must be a positive integer — the old filter
+ * silently dropped invalid tokens as long as one valid token remained.
+ */
+export type TopMeanMenuHorizonsParse =
+    | { kind: "valid"; horizons: number[] }
+    | { kind: "invalid"; token: string };
+
+export function parseTopMeanMenuHorizons(rawValue: string): TopMeanMenuHorizonsParse {
+    const text = rawValue.trim() || "12,24,48";
+    const horizons: number[] = [];
+    for (const token of text.split(",")) {
+        const tokenText = token.trim();
+        if (tokenText === "") continue;
+        if (!/^\d+$/.test(tokenText)) return { kind: "invalid", token: tokenText };
+        const parsed = Number.parseInt(tokenText, 10);
+        if (parsed <= 0) return { kind: "invalid", token: tokenText };
+        horizons.push(parsed);
+    }
+    if (horizons.length === 0) return { kind: "invalid", token: text };
+    return { kind: "valid", horizons };
+}

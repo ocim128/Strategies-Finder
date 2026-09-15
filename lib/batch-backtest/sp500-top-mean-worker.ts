@@ -36,6 +36,13 @@ export interface TopMeanWorkerTaskData {
     interval: string;
     useRustEnginePreference?: boolean;
     preferInMemorySyntheticPairs?: boolean;
+    /**
+     * Run-level closed-candle cutoff (unix seconds). The coordinator captures
+     * ONE timestamp per run and threads it through every task so all pairs in
+     * a run share the same dataEndTime semantics; per-shard Date.now() made a
+     * long run crossing a candle boundary temporally inconsistent.
+     */
+    nowSec?: number;
 }
 
 export type TopMeanWorkerMessage =
@@ -91,7 +98,7 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
 
     const preResolvedSettings = resolveExecutorBacktestSettings(data.backtestSettings, data.interval);
     const preResolvedCapital = resolveCapitalSettingsFromRaw(data.capitalSettings as any);
-    const nowSec = Math.floor(Date.now() / 1000);
+    const nowSec = data.nowSec ?? Math.floor(Date.now() / 1000);
 
     const artifacts: CompactPairArtifact[] = [];
     let rustCount = 0;

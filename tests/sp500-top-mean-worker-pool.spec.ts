@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import { availableParallelism } from "node:os";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import {
     buildTopMeanShardTasks,
+    buildTopMeanWorkerTaskData,
     resolveTopMeanShardSize,
     resolveTopMeanWorkerCount,
     shouldBypassTopMeanSyntheticPairDiskCache,
@@ -13,6 +17,7 @@ import type { TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-arti
 import { TOP_MEAN_WORKER_COUNT_MAX } from "../lib/batch-backtest/sp500-top-mean-request-limits";
 
 const testWorkerPath = fileURLToPath(new URL("./helpers/top-mean-test-worker.cjs", import.meta.url));
+const dieOnFirstTaskWorkerPath = fileURLToPath(new URL("./helpers/top-mean-die-on-retry-worker.cjs", import.meta.url));
 
 function testWorkerCountResolution(): void {
     const defaultCount = resolveTopMeanWorkerCount();
@@ -298,6 +303,7 @@ async function testShardCompletesOnlyAfterDurableWrite(): Promise<void> {
         updatedAt: Date.now(),
     };
     let writes = 0;
+    const progressCalls: Array<{ completed: number; total: number }> = [];
     const pool = new TopMeanWorkerPool();
     try {
         await pool.execute({
@@ -317,12 +323,124 @@ async function testShardCompletesOnlyAfterDurableWrite(): Promise<void> {
                 writes += 1;
                 if (writes === 1) throw new Error("simulated disk failure");
             },
+            onProgress: (completed, total, _text) => {
+                progressCalls.push({ completed, total });
+            },
         });
     } finally {
         pool.cancel();
     }
     assert.equal(writes, 2, "failed durable write uses the existing one-retry path");
     assert.deepEqual(manifest.completedShards, [0], "manifest acknowledges the shard only after the successful retry");
+    // Audit (retry-accounting finding): the shard retry re-runs every pair and
+    // re-emits "completed" progress. Counters and progress events must be
+    // deduped by the stable pairIndex — a one-pair shard retried once must
+    // still report exactly one completed pair, never completed > total.
+    assert.equal(manifest.completedPairsCount, 1, "retried shard must not double-count the completed pair");
+    assert.equal(progressCalls.length, 1, "retried pair must emit progress exactly once");
+}
+
+/**
+ * Audit (all-workers-dead hang): a retry that is queued in pendingTasks while
+ * the LAST worker dies can never settle — nothing will ever call its dispatch
+ * callback — so Promise.race(activePromises) used to hang forever and even
+ * Stop could not release the coordinator. With the fixture worker (silently
+ * exits on its first task), both shards fail in flight, both retries queue,
+ * and execute() must REJECT (drain-on-worker-loss / liveness guard) within a
+ * bounded time instead of hanging.
+ */
+async function testAllWorkersDyingDuringQueuedRetryRejects(): Promise<void> {
+    const baseDir = mkdtempSync(join(tmpdir(), "sp500-pool-die-"));
+    try {
+        const pairs = ["FAKE_A•+FAKE_B•", "FAKE_C•+FAKE_D•"];
+        const manifest: TopMeanRunManifest = {
+            schema: "top_mean_run_manifest.v1",
+            runId: "smoke_test_all_workers_die",
+            status: "running",
+            fingerprint: "smoke",
+            strategyKey: "__test_success__",
+            interval: "4h",
+            pairCount: pairs.length,
+            shardSize: 1,
+            totalShards: 2,
+            completedShards: [],
+            failedShards: [],
+            completedPairsCount: 0,
+            failedPairsCount: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        };
+        const pool = new TopMeanWorkerPool();
+        try {
+            await Promise.race([
+                pool.execute({
+                    runId: manifest.runId,
+                    manifest,
+                    canonicalPairs: pairs,
+                    strategyKey: "__test_success__",
+                    strategyParams: { lookback: 20, threshold: 0.5 },
+                    backtestSettings: { direction: "long", slippage: 0, commission: 0 } as any,
+                    capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 } as any,
+                    interval: "4h",
+                    workerCount: 2,
+                    shardSize: 1,
+                    useRustEnginePreference: false,
+                    workerPath: dieOnFirstTaskWorkerPath,
+                    baseDir,
+                }),
+                new Promise<never>((_resolve, reject) => {
+                    setTimeout(
+                        () => reject(new Error(
+                            "execute() hung: worker death with queued retries must terminate the run, not wait forever",
+                        )),
+                        15_000,
+                    );
+                }),
+            ]);
+            assert.fail("execute() must not resolve: the fixture workers never produce shard_complete");
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            assert.match(
+                message,
+                /No worker available|All TOP_MEAN workers died|Worker stopped with exit code|Operation cancelled/,
+                `execute() must reject with a worker-loss diagnostic, got: ${message}`,
+            );
+        } finally {
+            pool.cancel();
+        }
+    } finally {
+        rmSync(baseDir, { recursive: true, force: true });
+    }
+    console.log("PASS: all-workers-die during queued retries rejects instead of hanging");
+}
+
+function testRunLevelNowSecThreadsIntoWorkerTasks(): void {
+    const options = {
+        strategyKey: "close_location_median_alignment",
+        strategyParams: { lookback: 20 },
+        backtestSettings: { direction: "long" } as any,
+        capitalSettings: { initialCapital: 10000 } as any,
+        interval: "4h",
+        useRustEnginePreference: false,
+        nowSec: 1_760_000_000,
+    };
+    const task = { shardIndex: 3, pairs: [{ pairIndex: 7, symbol: "AAPL•+MSFT•" }] };
+    const data = buildTopMeanWorkerTaskData(options, task, true);
+    // Audit (wall-clock-cutoff finding): the coordinator captures ONE cutoff
+    // per run and every worker task must carry it verbatim so all shards
+    // share the same closed-candle semantics.
+    assert.equal(data.nowSec, 1_760_000_000);
+    assert.equal(data.shardIndex, 3);
+    assert.deepEqual(data.pairs, task.pairs);
+    assert.equal(data.preferInMemorySyntheticPairs, true);
+
+    const noNowSec = buildTopMeanWorkerTaskData({ ...options, nowSec: undefined }, task, false);
+    assert.equal(
+        "nowSec" in noNowSec,
+        false,
+        "a run without an injected cutoff must keep the worker's own Date.now() fallback",
+    );
+    assert.equal(noNowSec.preferInMemorySyntheticPairs, false);
 }
 
 async function main(): Promise<void> {
@@ -331,10 +449,12 @@ async function main(): Promise<void> {
     testLargeRunsBypassSyntheticDiskCache();
     testCacheAwareShardPlanning();
     testWorkerPoolCancel();
+    testRunLevelNowSecThreadsIntoWorkerTasks();
     await testWorkerPathResolution();
     await testPersistentWorkerPoolEndToEnd();
     await testRetryDrainsAcrossWorkerRelease();
     await testShardCompletesOnlyAfterDurableWrite();
+    await testAllWorkersDyingDuringQueuedRetryRejects();
     console.log("PASS: sp500-top-mean-worker-pool.spec.ts");
 }
 
