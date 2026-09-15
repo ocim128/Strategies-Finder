@@ -23,13 +23,16 @@ import type {
 } from "../types/finder";
 import { parseSyntheticPairToken } from "../synthetic-pair-token";
 import type { FinderSelectedStrategy } from "./finder-runner";
-import { resolveOosDataSlice, sliceFinderDataWindow } from "./finder-manager-logic";
+import { normalizeFinderDateRange, resolveOosDataSlice, sliceFinderDataWindow } from "./finder-manager-logic";
 
 export interface FinderStrategyQualityRunInput {
     selectedStrategies: FinderSelectedStrategy[];
     symbols: string[];
     interval: string;
     dataSlice: FinderDataSlice;
+    /** Date-window boundaries honored when dataSlice is 'date_range'. */
+    dataRangeFrom?: string;
+    dataRangeTo?: string;
     oosValidationEnabled: boolean;
     settings: BacktestSettings;
     capitalSettings: CapitalSettings;
@@ -369,6 +372,7 @@ export async function runStrategyQualityAudit(
     }));
     const oosSlice = input.oosValidationEnabled ? resolveOosDataSlice(input.dataSlice) : null;
     const oosEnabled = oosSlice !== null;
+    const dateRange = normalizeFinderDateRange(input.dataRangeFrom, input.dataRangeTo);
     const dataFetcher: CrossSymbolDataFetcher = {
         getProvider: input.getProvider,
         fetchDataDetached: (symbol, interval) => input.loadDataset(symbol, interval),
@@ -482,8 +486,8 @@ export async function runStrategyQualityAudit(
             maxBars = Math.max(maxBars, rawData.length);
 
             const dataPreparationStartedAt = performance.now();
-            const inSampleData = sliceFinderDataWindow(rawData, input.dataSlice);
-            const oosData = oosSlice ? sliceFinderDataWindow(rawData, oosSlice) : null;
+            const inSampleData = sliceFinderDataWindow(rawData, input.dataSlice, dateRange);
+            const oosData = oosSlice ? sliceFinderDataWindow(rawData, oosSlice, dateRange) : null;
             const closedData = prepareClosedCandleData(inSampleData, input.interval, resolvedSettings, runNowSec);
             const closedOosData = oosData
                 ? prepareClosedCandleData(oosData, input.interval, resolvedSettings, runNowSec)

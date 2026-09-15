@@ -50,8 +50,8 @@ defaults and normalization.
 | `Search Mode` | `Grid Sweep`, `Random Search`, or `Genetic Search`. Server-owned Asset Opportunity currently requires random mode. |
 | `Range (%)` | Parameter variation range used by the candidate generator. |
 | `Steps / Param` | Number of values per parameter for grid-style generation. |
-| `Data Window` | Full chart, a fifth, or an oldest/newest half of the loaded data. |
-| `OOS Validation` | Validates eligible top survivors on a complementary holdout window where one exists. |
+| `Data Window` | Full chart, a fifth, an oldest/newest half, or a `Date range` (From/To, UTC, inclusive on both ends). Invalid bounds degrade to unbounded; an inverted range is swapped. |
+| `OOS Validation` | Validates eligible top survivors on a complementary holdout window where one exists. For `Date range` the holdout is every bar AFTER the `To` date (forward validation); when `To` is at or near the newest data that window is empty and OOS verdicts are `inconclusive`, which keeps the candidate. |
 
 The exact candidate count is strategy-dependent. Do not infer it from
 `Runs / Strategy` alone: parameter-space constraints, strategy metadata,
@@ -203,7 +203,8 @@ in-process loop.
 
 Universe OOS uses a complementary half-window when the IS data slice is
 `1/2 oldest` or `1/2 newest`. Fifth-window slices do not have one single
-complementary OOS half. The OOS gate is based on non-negative OOS net profit
+complementary OOS half. A `Date range` IS window validates forward on every
+bar after its `To` date. The OOS gate is based on non-negative OOS net profit
 and OOS profit factor at least `1.0`; a result with fewer OOS trades than the
 minimum trade floor is `inconclusive`, not automatically rejected.
 
@@ -420,6 +421,7 @@ npm run typecheck:tests
 ..\..\..\node_modules\.bin\esno tests\finder-universe-runner.spec.ts
 ..\..\..\node_modules\.bin\esno tests\finder-server-plugin.spec.ts
 ..\..\..\node_modules\.bin\esno tests\finder-universe-parallel.spec.ts
+..\..\..\node_modules\.bin\esno tests\finder-date-range.spec.ts
 ..\..\..\node_modules\.bin\esno tests\finder-manager-lifecycle.browser.spec.ts
 ..\..\..\node_modules\.bin\esno tests\finder-universe-oos.spec.ts
 npm test

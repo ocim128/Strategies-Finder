@@ -63,7 +63,7 @@ import { runFinderUniverseExecution } from "../finder-runner-universe";
 import type { FinderUniverseRunOutput } from "../finder-runner-universe";
 import type { FinderSelectedStrategy } from "../finder-runner";
 import { FinderParamSpace } from "../finder-param-space";
-import { sliceFinderDataWindow } from "../finder-manager-logic";
+import { normalizeFinderDateRange, sliceFinderDataWindow } from "../finder-manager-logic";
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../../types/backtest";
 import type {
     FinderAssetOpportunityResult,
@@ -1176,6 +1176,9 @@ export async function processFinderUniverseRun(
                 const strategyByKey: UniverseOosStrategyLookup = new Map(
                     selectedStrategies.map((s) => [s.key, s.strategy]),
                 );
+                // The date-range OOS complement ("every bar after `to`") needs
+                // the range boundaries at slice time; the other modes ignore it.
+                const oosDateRange = normalizeFinderDateRange(input.options.dataRangeFrom, input.options.dataRangeTo);
                 // OOS loader wrapper: apply the OOS data slice EXACTLY ONCE.
                 // Cache the sliced series per symbol so the same symbol is not
                 // re-sliced across candidates/strategies (mirrors the prior
@@ -1187,7 +1190,7 @@ export async function processFinderUniverseRun(
                     if (cached) return cached;
                     try {
                         const full = await input.loadOosDataset!(symbol, interval, input.abortSignal);
-                        const sliced = sliceFinderDataWindow(full, oosSlice);
+                        const sliced = sliceFinderDataWindow(full, oosSlice, oosDateRange);
                         oosCache.set(cacheKey, sliced);
                         return sliced;
                     } catch {
@@ -3024,8 +3027,9 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
     // data-slice runs. The OOS pass resolves its OWN complementary slice and
     // applies it inside the OOS loader wrapper (not here).
     const dataSlice = (options.dataSlice ?? "all") as FinderDataSlice;
+    const dataRange = normalizeFinderDateRange(options.dataRangeFrom, options.dataRangeTo);
     const loadDatasetWithSlice = (sym: string, intv: string, signal?: AbortSignal): Promise<OHLCVData[]> =>
-        loadServerFinderDataset(sym, intv, signal).then((data) => sliceFinderDataWindow(data, dataSlice));
+        loadServerFinderDataset(sym, intv, signal).then((data) => sliceFinderDataWindow(data, dataSlice, dataRange));
 
     await withFinderRunStream({
         res,

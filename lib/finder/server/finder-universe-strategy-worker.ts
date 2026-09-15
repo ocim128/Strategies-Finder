@@ -46,8 +46,19 @@ import type { RustCapabilities } from "../../rust-engine-client";
 import { loadBuiltInStrategyByKey } from "../../../strategyRegistry";
 import { runFinderUniverseExecution } from "../finder-runner-universe";
 import { FinderParamSpace } from "../finder-param-space";
-import { sliceFinderDataWindow } from "../finder-manager-logic";
+import { normalizeFinderDateRange, sliceFinderDataWindow, type FinderDateRange } from "../finder-manager-logic";
 import { loadServerFinderDataset } from "./server-finder-data-loader";
+
+/** Normalized data-window inputs shared by the worker cache's slice path. */
+function resolveWorkerWindowSlice(options: FinderOptions): {
+    dataSlice: FinderDataSlice;
+    dateRange: FinderDateRange;
+} {
+    return {
+        dataSlice: (options.dataSlice ?? "all") as FinderDataSlice,
+        dateRange: normalizeFinderDateRange(options.dataRangeFrom, options.dataRangeTo),
+    };
+}
 
 export interface FinderUniverseStrategyWorkerTask {
     /** Strategy index in the job's ordered selection (ascending release order). */
@@ -129,6 +140,8 @@ export interface FinderUniverseWorkerDatasetCache {
 
 export function createUniverseWorkerDatasetCache(args: {
     dataSlice: FinderDataSlice;
+    /** Date-window boundaries honored when dataSlice is 'date_range'. */
+    dateRange?: FinderDateRange;
     loadDataset: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
 }): FinderUniverseWorkerDatasetCache {
     const ready = new Map<string, OHLCVData[]>();
@@ -162,6 +175,7 @@ export function createUniverseWorkerDatasetCache(args: {
             stats.misses += 1;
             const loadStartedAt = performance.now();
             const promise = args.loadDataset(symbol, interval, signal)
+                .then((data) => sliceFinderDataWindow(data, args.dataSlice, args.dateRange))
                 .then((data) => {
                     if (!Array.isArray(data) || data.length === 0) {
                         inFlight.delete(key);
@@ -227,9 +241,11 @@ export async function runFinderUniverseStrategyWorkerTask(args: {
     onProgress: (progress: { percent: number; status: string; phase: "loading" | "evaluating" }) => void;
 }): Promise<FinderUniverseStrategyWorkerResult> {
     const { task } = args;
+    const windowSlice = resolveWorkerWindowSlice(task.options);
     const datasetCache = args.datasetCache
         ?? createUniverseWorkerDatasetCache({
-            dataSlice: (task.options.dataSlice ?? "all") as FinderDataSlice,
+            dataSlice: windowSlice.dataSlice,
+            dateRange: windowSlice.dateRange,
             loadDataset: args.loadDataset,
         });
 
@@ -358,11 +374,11 @@ if (!isMainThread && parentPort) {
                 selectionKey = nextSelectionKey;
             }
             datasetCache ??= createUniverseWorkerDatasetCache({
-                dataSlice: (task.options.dataSlice ?? "all") as FinderDataSlice,
+                ...resolveWorkerWindowSlice(task.options),
+                // The cache applies the IS window (slice + date range) exactly
+                // once to the raw server loader series.
                 loadDataset: (symbol, interval, signal) =>
-                    loadServerFinderDataset(symbol, interval, signal).then((data) =>
-                        sliceFinderDataWindow(data, (task.options.dataSlice ?? "all") as FinderDataSlice),
-                    ),
+                    loadServerFinderDataset(symbol, interval, signal),
             });
         } catch (error) {
             post({

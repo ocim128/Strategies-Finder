@@ -405,6 +405,16 @@ OOS pass (loads complementary datasets through the same loader, sliced at the
 caller), and releases datasets when the job ends. There is no Mine artifact
 directory or TTL. The browser loads **no** Universe OHLCV for IS or OOS.
 
+The IS data window is applied once per dataset by the handler's
+`loadDatasetWithSlice` wrapper (and, in the parallel sweep, once per dataset
+inside each worker's cache): `sliceFinderDataWindow(data, dataSlice,
+dateRange)`. The `date_range` mode filters bars to the inclusive UTC range
+`dataRangeFrom`/`dataRangeTo`; its OOS complement (`date_range_after`,
+resolved by `resolveUniverseOosSlice`) is every bar strictly AFTER the `To`
+date, sliced in the OOS loader wrapper with the same range. Range bounds
+arrive as `options.dataRangeFrom`/`options.dataRangeTo` and flow to workers
+inside the task's `options` object — never as functions.
+
 For offline-first leg and target loads, the server wrapper reads synced IBKR
 and crypto CSVs directly with bounded mtime-aware parsed-file caches. Missing
 crypto files retain the existing `DataFetcher` fallback path. A present crypto

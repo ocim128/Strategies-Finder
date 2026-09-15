@@ -15,7 +15,16 @@ export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'accuracyTrades
  *   across the supplied symbols for baseline library-quality review.
  */
 export type FinderScope = 'current_chart' | 'symbol_universe' | 'asset_opportunity' | 'strategy_quality';
-export type FinderDataSlice = 'all' | '1' | '2' | '3' | '4' | '5' | 'half_oldest' | 'half_newest';
+export type FinderDataSlice = 'all' | '1' | '2' | '3' | '4' | '5' | 'half_oldest' | 'half_newest' | 'date_range';
+/**
+ * OOS-only complement of the `date_range` IS window: every bar strictly AFTER
+ * the range's `to` date. Never produced by normalizeFinderDataSlice (users
+ * cannot select it); resolveOosDataSlice/resolveUniverseOosSlice return it so
+ * the OOS loader slices the forward window.
+ */
+export type FinderOosDateSlice = 'date_range_after';
+/** Data-slice values the OOS resolvers may hand to sliceFinderDataWindow. */
+export type FinderOosDataSlice = FinderDataSlice | FinderOosDateSlice;
 /**
  * Out-of-sample validation verdict for the complementary data window.
  * - `pass`: OOS net profit >= 0 AND profit factor >= 1.0
@@ -109,6 +118,10 @@ export interface FinderOptions {
     useAdvancedSort: boolean;
     scope?: FinderScope;
     dataSlice?: FinderDataSlice;
+    /** Inclusive range-start date ('YYYY-MM-DD'), honored when dataSlice is 'date_range'. */
+    dataRangeFrom?: string;
+    /** Inclusive range-end date ('YYYY-MM-DD'), honored when dataSlice is 'date_range'. */
+    dataRangeTo?: string;
     randomSeed?: number;
     topN: number;
     steps: number;

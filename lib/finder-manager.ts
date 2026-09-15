@@ -34,6 +34,8 @@ import {
 	buildFinderOptions,
 	buildFinderUniverseOptions,
 	normalizeFinderDataSlice,
+	normalizeFinderDateInput,
+	normalizeFinderDateRange,
 	resolveOosDataSlice,
 	sliceFinderDataWindow,
 } from "./finder/finder-manager-logic";
@@ -235,6 +237,8 @@ type FinderPersistedUiState = {
 	advancedOptionalSortEnabled: FinderMetric[];
 	mode: FinderMode;
 	dataSlice: FinderDataSlice;
+	dataRangeFrom: string;
+	dataRangeTo: string;
 	topN: number;
 	maxRuns: number;
 	rangePercent: number;
@@ -322,6 +326,8 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	advancedOptionalSortEnabled: [],
 	mode: "random",
 	dataSlice: "all",
+	dataRangeFrom: "",
+	dataRangeTo: "",
 	topN: 10,
 	maxRuns: 120,
 	rangePercent: 555,
@@ -537,6 +543,8 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		advancedOptionalSortEnabled: normalizeAdvancedOptionalSortMetrics(source.advancedOptionalSortEnabled),
 		mode: normalizeFinderMode(source.mode),
 		dataSlice: normalizeFinderDataSlice(source.dataSlice),
+		dataRangeFrom: normalizeFinderDateInput(source.dataRangeFrom) ?? "",
+		dataRangeTo: normalizeFinderDateInput(source.dataRangeTo) ?? "",
 		topN: Math.round(normalizeNumber(source.topN, DEFAULT_FINDER_UI_STATE.topN, 1)),
 		maxRuns: Math.round(normalizeNumber(source.maxRuns, DEFAULT_FINDER_UI_STATE.maxRuns, 1)),
 		rangePercent: normalizeNumber(source.rangePercent, DEFAULT_FINDER_UI_STATE.rangePercent, 0),
@@ -973,6 +981,8 @@ export class FinderManager {
 		this.applyAdvancedSortStateToDom();
 		dom.finderMode.value = this.uiState.mode;
 		dom.finderDataSlice.value = this.uiState.dataSlice;
+		dom.finderDataRangeFrom.value = this.uiState.dataRangeFrom;
+		dom.finderDataRangeTo.value = this.uiState.dataRangeTo;
 		dom.finderTopN.value = String(this.uiState.topN);
 		dom.finderMaxRuns.value = String(this.uiState.maxRuns);
 		dom.finderRange.value = String(this.uiState.rangePercent);
@@ -1108,10 +1118,24 @@ export class FinderManager {
 
 	private initOosValidationUI(): void {
 		const dom = this.getDom();
-		const refresh = () => this.syncOosValidationControlState();
+		const refresh = () => {
+			this.syncOosValidationControlState();
+			this.syncDataRangeControlState();
+		};
 		dom.finderDataSlice.addEventListener('change', refresh);
 		dom.finderPolymarketToggle.addEventListener('change', refresh);
 		refresh();
+	}
+
+	/**
+	 * The From/To date inputs only apply when Data Window is "Date range";
+	 * keep the row visibility in step so an inert pair of date fields is never
+	 * shown for the other window modes.
+	 */
+	private syncDataRangeControlState(): void {
+		const dom = this.getDom();
+		const dateRangeActive = normalizeFinderDataSlice(dom.finderDataSlice.value) === 'date_range';
+		dom.finderDataRangeRow.style.display = dateRangeActive ? "" : "none";
 	}
 
 	private initSortingUI(): void {
@@ -1403,17 +1427,20 @@ export class FinderManager {
 
 	/**
 	 * Keeps the OOS Validation toggle visually + functionally in step with the
-	 * conditions it depends on. OOS only applies to half data windows and is
-	 * inert under Polymarket scoring, so the toggle is disabled otherwise to
+	 * conditions it depends on. OOS applies to half data windows and to the
+	 * date-range window (its complement is every bar after the range end), and
+	 * is inert under Polymarket scoring, so the toggle is disabled otherwise to
 	 * make the silent-ignore obvious (the prior behavior silently dropped the
 	 * flag, which made it impossible to tell whether OOS was active).
 	 */
 	private syncOosValidationControlState(): void {
 		const dom = this.getDom();
 		const dataSlice = normalizeFinderDataSlice(dom.finderDataSlice.value);
-		const halfWindowActive = dataSlice === 'half_oldest' || dataSlice === 'half_newest';
+		const oosCapableWindow = dataSlice === 'half_oldest'
+			|| dataSlice === 'half_newest'
+			|| dataSlice === 'date_range';
 		const polymarketOn = dom.finderPolymarketToggle.checked;
-		const applicable = halfWindowActive && !polymarketOn;
+		const applicable = oosCapableWindow && !polymarketOn;
 		dom.finderOosValidationToggle.disabled = !applicable;
 		dom.finderOosValidationRow.classList.toggle('is-disabled', !applicable);
 	}
@@ -1510,6 +1537,8 @@ export class FinderManager {
 			.filter((metric): metric is FinderMetric => isAdvancedOptionalSortMetric(metric));
 		this.uiState.mode = normalizeFinderMode(dom.finderMode.value);
 		this.uiState.dataSlice = normalizeFinderDataSlice(dom.finderDataSlice.value);
+		this.uiState.dataRangeFrom = normalizeFinderDateInput(dom.finderDataRangeFrom.value) ?? "";
+		this.uiState.dataRangeTo = normalizeFinderDateInput(dom.finderDataRangeTo.value) ?? "";
 		this.uiState.topN = Math.round(this.readFinderNumberInput(dom.finderTopN, DEFAULT_FINDER_UI_STATE.topN, 1));
 		this.uiState.maxRuns = Math.round(this.readFinderNumberInput(dom.finderMaxRuns, DEFAULT_FINDER_UI_STATE.maxRuns, 1));
 		this.uiState.rangePercent = this.readFinderNumberInput(dom.finderRange, DEFAULT_FINDER_UI_STATE.rangePercent, 0);
@@ -2094,7 +2123,11 @@ export class FinderManager {
 		const requiresTsEngine = backtestService.requiresTypescriptEngine(settings) || !isRustSupportedTradeSizingMode(capitalSettings.sizingMode);
 
 		const blockSlicedData = sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
-		const windowSlicedData = sliceFinderDataWindow(blockSlicedData, options.dataSlice ?? "all");
+		const windowSlicedData = sliceFinderDataWindow(
+			blockSlicedData,
+			options.dataSlice ?? "all",
+			normalizeFinderDateRange(options.dataRangeFrom, options.dataRangeTo),
+		);
 		const ohlcvData = buildFinderEvaluationData(windowSlicedData, state.currentInterval, settings);
 		if (ohlcvData.length === 0) {
 			this.setStatus('No candles available for finder run.');
@@ -2208,7 +2241,11 @@ export class FinderManager {
 		if (!oosSlice) return null;
 		if (results.length === 0) return { filtered: results, removedCount: 0 };
 
-		const oosWindowData = sliceFinderDataWindow(blockSlicedData, oosSlice);
+		const oosWindowData = sliceFinderDataWindow(
+			blockSlicedData,
+			oosSlice,
+			normalizeFinderDateRange(options.dataRangeFrom, options.dataRangeTo),
+		);
 		const oosData = buildFinderEvaluationData(oosWindowData, state.currentInterval, settings);
 		if (oosData.length === 0) {
 			return { filtered: results, removedCount: 0 };
@@ -3379,6 +3416,8 @@ export class FinderManager {
 			symbols,
 			interval: state.currentInterval,
 			dataSlice: options.dataSlice ?? 'all',
+			dataRangeFrom: options.dataRangeFrom,
+			dataRangeTo: options.dataRangeTo,
 			oosValidationEnabled: options.oosValidationEnabled === true,
 			settings: qualitySettings,
 			capitalSettings: backtestService.getCapitalSettings(),
@@ -3529,6 +3568,8 @@ export class FinderManager {
 		const options = buildFinderOptions({
 			mode,
 			dataSlice,
+			dataRangeFrom: dom.finderDataRangeFrom.value,
+			dataRangeTo: dom.finderDataRangeTo.value,
 			useAdvancedSort,
 			advancedSortValues,
 			primarySort: dom.finderSort.value as FinderMetric,
@@ -3610,9 +3651,11 @@ export class FinderManager {
 			};
 		}
 
-		// OOS gate: half-window only, not under polymarket scoring. Applies to
-		// both current_chart and symbol_universe scopes.
-		const oosWindowActive = dataSlice === 'half_oldest' || dataSlice === 'half_newest';
+		// OOS gate: half-window and date-range windows, not under polymarket
+		// scoring. Applies to both current_chart and symbol_universe scopes.
+		const oosWindowActive = dataSlice === 'half_oldest'
+			|| dataSlice === 'half_newest'
+			|| dataSlice === 'date_range';
 		if (oosWindowActive && !polymarketScoringEnabled) {
 			options.oosValidationEnabled = dom.finderOosValidationToggle.checked;
 		}

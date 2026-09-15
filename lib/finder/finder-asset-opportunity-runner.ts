@@ -85,6 +85,7 @@ import { createEmptyBacktestResult } from "../strategies/index";
 import { buildSelectionResult } from "./endpoint";
 import {
     computeFinderOosVerdict,
+    normalizeFinderDateRange,
     resolveOosDataSlice,
     sliceFinderDataWindow,
     matchesFinderTradeCountFilter,
@@ -540,7 +541,11 @@ export function sliceHistoricalWindow(
     historical: OHLCVData[],
     options: FinderOptions,
 ): OHLCVData[] {
-    return sliceFinderDataWindow(historical, options.dataSlice ?? "all");
+    return sliceFinderDataWindow(
+        historical,
+        options.dataSlice ?? "all",
+        normalizeFinderDateRange(options.dataRangeFrom, options.dataRangeTo),
+    );
 }
 
 /**
@@ -1252,7 +1257,11 @@ async function searchOneAsset(args: {
         const oosSlice = resolveOosDataSlice(input.options.dataSlice ?? "all");
         if (oosSlice) {
             oosWindowData = buildFinderEvaluationData(
-                sliceFinderDataWindow(inSampleHistorical, oosSlice),
+                sliceFinderDataWindow(
+                    inSampleHistorical,
+                    oosSlice,
+                    normalizeFinderDateRange(input.options.dataRangeFrom, input.options.dataRangeTo),
+                ),
                 input.interval,
                 input.settings,
             );

@@ -38,10 +38,12 @@ import type { CapitalSettings } from "../types/backtest";
 import type { RustCapabilities } from "../rust-engine-client";
 import type {
     FinderDataSlice,
+    FinderOosDataSlice,
     FinderOptions,
     FinderUniverseCandidate,
     FinderUniverseSymbolMetrics,
 } from "../types/finder";
+import type { FinderDateRange } from "./finder-manager-logic";
 import {
     computeUniverseOosAggregate,
     computeUniverseSymbolOosVerdict,
@@ -398,13 +400,17 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
  * server plugin does not import `finder-manager-logic` directly for this one
  * constant (it already imports `sliceFinderDataWindow` for IS slicing).
  */
-export function resolveUniverseOosSlice(dataSlice: FinderDataSlice | undefined): FinderDataSlice | null {
+export function resolveUniverseOosSlice(dataSlice: FinderDataSlice | undefined): FinderOosDataSlice | null {
     return resolveOosDataSlice(dataSlice ?? "all");
 }
 
 /** Apply the OOS data slice to a raw dataset. */
-export function applyUniverseOosSlice(data: OHLCVData[], oosSlice: FinderDataSlice): OHLCVData[] {
-    return sliceFinderDataWindow(data, oosSlice);
+export function applyUniverseOosSlice(
+    data: OHLCVData[],
+    oosSlice: FinderOosDataSlice,
+    dateRange?: FinderDateRange,
+): OHLCVData[] {
+    return sliceFinderDataWindow(data, oosSlice, dateRange);
 }
 
 // Re-export the verdict type for callers that need to read OOS outcomes.
