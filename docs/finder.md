@@ -195,7 +195,11 @@ the user-facing total even when multiple strategies were selected.
 Symbol Universe is server-owned. The server performs IS evaluation, merges all
 selected strategies, performs optional OOS validation, combines diagnostics,
 and publishes the terminal candidate inventory. The browser controls the run,
-renders progress, and reattaches after reload.
+renders progress, and reattaches after reload. Multi-strategy jobs evaluate
+their selected strategies in parallel across a bounded worker pool; results
+are released in strategy order so the merged output is identical to the
+sequential loop, and `FINDER_UNIVERSE_WORKERS=1` forces the original
+in-process loop.
 
 Universe OOS uses a complementary half-window when the IS data slice is
 `1/2 oldest` or `1/2 newest`. Fifth-window slices do not have one single
@@ -311,7 +315,9 @@ race.
 - The terminal Symbol Universe snapshot is authoritative and retains the full
   scalar inventory required by Re-Sort.
 - The server job dataset cache is per-job and cleared in the job `finally`
-  path. Failed or empty loads remain retryable.
+  path. Failed or empty loads remain retryable. In the parallel strategy
+  sweep each worker keeps a private per-job cache (one dataset copy per
+  worker); do not share or evict worker caches mid-job.
 - The Finder server loader reuses the shared batch dataset-loader core. Do not
   fork a second synthetic-pair or gap-fill pipeline.
 - Synthetic pair ratios must be built from the seed interval before aggregation;
@@ -362,6 +368,7 @@ drawdown, or Sharpe, check the browser and server paths together.
 | Universe execution | `lib/finder/finder-runner-universe.ts` |
 | Universe metric aggregation/comparison | `lib/finder/finder-universe-metrics.ts` |
 | Universe OOS | `lib/finder/finder-universe-oos.ts` |
+| Universe parallel strategy sweep (pool + worker) | `lib/finder/server/finder-universe-strategy-pool.ts`, `lib/finder/server/finder-universe-strategy-worker.ts` |
 | Finder result types | `lib/types/finder.ts` |
 | Server routes and job lifecycle | `lib/finder/server/finder-vite-plugin.ts` |
 | Server wire types and scalar stripping | `lib/finder/server/finder-stream-types.ts` |
@@ -400,7 +407,9 @@ For a Symbol Universe server change:
 
 - preserve run-id ownership, Stop, reload reattach, local authorization,
   terminal failure visibility, scalar-only events, and full terminal inventory;
-- preserve server/browser loader parity and Rust preference propagation.
+- preserve server/browser loader parity and Rust preference propagation;
+- preserve parallel-sweep ordered release and sequential/parallel parity; keep
+  `FINDER_UNIVERSE_WORKERS=1` as the sequential rollback path.
 
 Recommended validation commands:
 
@@ -410,6 +419,7 @@ npm run typecheck:tests
 ..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts
 ..\..\..\node_modules\.bin\esno tests\finder-universe-runner.spec.ts
 ..\..\..\node_modules\.bin\esno tests\finder-server-plugin.spec.ts
+..\..\..\node_modules\.bin\esno tests\finder-universe-parallel.spec.ts
 ..\..\..\node_modules\.bin\esno tests\finder-manager-lifecycle.browser.spec.ts
 ..\..\..\node_modules\.bin\esno tests\finder-universe-oos.spec.ts
 npm test

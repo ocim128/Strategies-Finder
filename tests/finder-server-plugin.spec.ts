@@ -259,6 +259,13 @@ async function runPlugin(args: {
                 // datasets map (the OOS slice is applied inside the plugin).
                 ...(options?.oosValidationEnabled ? { loadOosDataset: loadDataset } : {}),
                 ...(omitGenerateParamSets ? {} : { generateParamSets }),
+                // These tests target the sequential plugin logic (job cache,
+                // merge bookkeeping, stream contract). The parallel strategy
+                // sweep has its own spec (finder-universe-parallel.spec.ts)
+                // whose in-process fake runners execute the real worker core;
+                // real workers cannot see test-registered strategies or the
+                // stub loaders used here.
+                strategyWorkerCount: 1,
             },
             (event) => {
                 events.push(event);

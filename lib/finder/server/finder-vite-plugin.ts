@@ -60,6 +60,7 @@ import {
     type ViteHttpResponse,
 } from "../../vite-http-utils";
 import { runFinderUniverseExecution } from "../finder-runner-universe";
+import type { FinderUniverseRunOutput } from "../finder-runner-universe";
 import type { FinderSelectedStrategy } from "../finder-runner";
 import { FinderParamSpace } from "../finder-param-space";
 import { sliceFinderDataWindow } from "../finder-manager-logic";
@@ -176,6 +177,16 @@ import {
     type AssetOpportunityBatchSweepResult,
     type AssetOpportunityBatchWorkerTask,
 } from "./finder-asset-opportunity-batch-worker-pool";
+import {
+    createRealWorkerUniverseStrategyRunner,
+    resolveUniverseStrategyWorkerCount,
+    runFinderUniverseStrategySweep,
+    type FinderUniverseStrategyRunnerFactory,
+} from "./finder-universe-strategy-pool";
+import type {
+    FinderUniverseStrategyWorkerResult,
+    FinderUniverseStrategyWorkerTask,
+} from "./finder-universe-strategy-worker";
 
 // Re-exported for importers (tests, docs) that predate the
 // asset-opportunity-iteration leaf extraction.
@@ -648,6 +659,23 @@ export interface FinderUniverseServerRunInput {
     generateParamSets?: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[];
     /** Provider lookup for cross-symbol strategies. */
     getProvider?: (symbol: string) => string;
+    /**
+     * Symbol (trim+upper) -> provider label for the PARALLEL strategy sweep.
+     * Functions cannot cross the worker boundary, so worker-side provider
+     * lookups are rebuilt from this map (binance default, mirroring
+     * `resolveServerProvider`). The sequential path keeps using `getProvider`.
+     */
+    providerBySymbol?: Record<string, string>;
+    /**
+     * Parallel strategy sweep worker count. 1 (or an auto resolution of 1)
+     * keeps the sequential in-process loop — the rollback lever, also forced
+     * by `FINDER_UNIVERSE_WORKERS=1`. Production omits this and lets
+     * {@link resolveUniverseStrategyWorkerCount} decide from the env override,
+     * strategy count, cores, and the per-worker dataset memory ceiling.
+     */
+    strategyWorkerCount?: number;
+    /** Runner factory override for tests (in-process fakes, no real threads). */
+    strategyRunnerFactory?: FinderUniverseStrategyRunnerFactory;
 }
 
 /**
@@ -690,6 +718,9 @@ export async function processFinderUniverseRun(
         failedLoads: 0,
         uniqueBarsLoaded: 0,
     };
+    // Parallel strategy sweep: max dataset-cache entries retained by any
+    // single worker (the main-thread job map stays empty in parallel mode).
+    let parallelDatasetCacheEntries = 0;
     const slowestDatasetLoads: Array<{
         symbol: string;
         interval: string;
@@ -826,7 +857,179 @@ export async function processFinderUniverseRun(
         writer({ type: "progress", percent, text, status: text, phase, strategyIndex: snapshot.strategyIndex, strategyCount });
     };
 
-    try {
+    const mergeCompletedStrategyOutput = (
+        selectedStrategy: FinderSelectedStrategy,
+        strategyIndex: number,
+        output: Pick<FinderUniverseRunOutput, "results" | "loadedSymbols" | "failedSymbols" | "diagnostics">,
+    ): void => {
+        for (const candidate of output.results) {
+            completedSurvivorByKey.set(identityKey(candidate), candidate);
+        }
+        loadedSymbolsMax = Math.max(loadedSymbolsMax, output.loadedSymbols);
+        for (const failed of output.failedSymbols) failedSymbolSet.add(failed);
+        failedLoadAttempts += output.failedSymbols.length;
+        if (output.diagnostics) diagnosticsParts.push(output.diagnostics);
+        // Re-sort + bound the running snapshot. The full completed map is
+        // retained separately for the terminal result and re-sort UI.
+        snapshot.candidates = rankAndBound([...completedSurvivorByKey.values()]);
+        snapshot.loadedSymbols = loadedSymbolsMax;
+        snapshot.failedSymbols = failedSymbolSet.size;
+        debugLogger.event("finder.server.strategy.complete", {
+            runId: input.runId,
+            strategyKey: selectedStrategy.key,
+            strategyIndex,
+            strategyCount,
+            loadedSymbols: output.loadedSymbols,
+            failedSymbols: output.failedSymbols.length,
+            uniqueFailedSymbols: failedSymbolSet.size,
+            survivors: output.results.length,
+            mergedSurvivors: snapshot.candidates.length,
+            durationMs: Date.now() - snapshot.startedAt,
+        });
+    };
+
+    /**
+     * PARALLEL strategy sweep: every selected strategy runs through the
+     * unchanged `runFinderUniverseExecution` core inside a bounded pool of
+     * persistent worker threads. The main thread stays the single writer:
+     * completed strategies are released in ASCENDING strategy order (the
+     * shared sweep coordinator's ordered emission), so survivor merges,
+     * stream events, and the terminal inventory stay identical to the
+     * sequential loop. Worker-count policy lives in
+     * `resolveUniverseStrategyWorkerCount`; `FINDER_UNIVERSE_WORKERS=1`
+     * (or a resolved count of 1) forces the sequential loop.
+     */
+    const runParallelStrategySweep = async (workerCount: number): Promise<void> => {
+        snapshot.phase = "evaluating";
+        emitProgress(
+            "evaluating",
+            0,
+            `Evaluating ${strategyCount} strategies across ${workerCount} parallel workers...`,
+        );
+        const strategyTasks: FinderUniverseStrategyWorkerTask[] = selectedStrategies.map(
+            (selectedStrategy, strategyIndex) => ({
+                taskIndex: strategyIndex,
+                runId: input.runId,
+                interval: input.interval,
+                symbols,
+                options: input.options,
+                settings: input.settings,
+                capitalSettings: input.capitalSettings,
+                strategyKey: selectedStrategy.key,
+                exitStrategyKeys: (input.exitStrategyCandidates ?? []).map((strategy) => strategy.key),
+                useRustEnginePreference: input.useRustEnginePreference === true,
+                ...(input.rustCapabilities ? { rustCapabilities: input.rustCapabilities } : {}),
+                providerBySymbol: input.providerBySymbol ?? null,
+            }),
+        );
+        const percentByStrategy = new Map<number, number>();
+        const aggregatePercent = (): number => {
+            if (strategyCount === 0) return 100;
+            let sum = 0;
+            for (let index = 0; index < strategyCount; index += 1) {
+                sum += percentByStrategy.get(index) ?? 0;
+            }
+            return sum / strategyCount;
+        };
+        // Snapshot mirroring stays per-event so /status reattach stays fresh;
+        // only the NDJSON progress write passes through the shared throttle.
+        const progressThrottle = createProgressEventThrottle();
+        const releaseStrategyResult = async (
+            task: FinderUniverseStrategyWorkerTask,
+            result: FinderUniverseStrategyWorkerResult,
+        ): Promise<void> => {
+            if (lostOwnership()) return;
+            percentByStrategy.set(task.taskIndex, 100);
+            mergeCompletedStrategyOutput(selectedStrategies[task.taskIndex]!, task.taskIndex, {
+                results: result.results,
+                loadedSymbols: result.loadedSymbols,
+                failedSymbols: result.failedSymbols,
+                diagnostics: result.diagnostics,
+            });
+            // Fold this worker's per-strategy dataset-cache deltas into the
+            // job diagnostics. Each worker owns a private dataset copy, so
+            // the summed counts honestly reflect per-worker loads (see the
+            // worker module header).
+            jobDatasetCacheStats.requests += result.datasetCacheDelta.requests;
+            jobDatasetCacheStats.hits += result.datasetCacheDelta.hits;
+            jobDatasetCacheStats.misses += result.datasetCacheDelta.misses;
+            jobDatasetCacheStats.successfulLoads += result.datasetCacheDelta.successfulLoads;
+            jobDatasetCacheStats.failedLoads += result.datasetCacheDelta.failedLoads;
+            jobDatasetCacheStats.uniqueBarsLoaded += result.datasetCacheDelta.uniqueBarsLoaded;
+            parallelDatasetCacheEntries = Math.max(
+                parallelDatasetCacheEntries,
+                result.datasetCacheDelta.cacheEntries,
+            );
+            for (const slow of result.slowLoads) slowestDatasetLoads.push({ ...slow });
+            slowestDatasetLoads.sort((a, b) => b.ms - a.ms);
+            if (slowestDatasetLoads.length > 8) slowestDatasetLoads.length = 8;
+            // Stream new survivors (identity-deduped, same as the sequential
+            // onResultsUpdate path). The terminal done.candidates slice stays
+            // authoritative.
+            for (const candidate of result.results) {
+                const key = identityKey(candidate);
+                if (emittedKeys.has(key)) continue;
+                emittedKeys.add(key);
+                const scalar = toScalarCandidate(candidate);
+                assertCandidateIsScalar(scalar);
+                const idx = snapshot.candidates.findIndex((c) => identityKey(c) === key);
+                writer({
+                    type: "candidate",
+                    index: idx,
+                    totalCandidates: candidatePlansEstimate,
+                    candidate: scalar,
+                });
+            }
+        };
+        const sweep = await runFinderUniverseStrategySweep({
+            tasks: strategyTasks,
+            runnerCount: workerCount,
+            createRunner: input.strategyRunnerFactory ?? createRealWorkerUniverseStrategyRunner,
+            onStrategyResult: releaseStrategyResult,
+            onProgress: (task, progress) => {
+                if (lostOwnership()) return;
+                percentByStrategy.set(task.taskIndex, progress.percent);
+                const phase: FinderJobPhase = progress.phase === "loading" ? "loading" : "evaluating";
+                snapshot.phase = phase;
+                snapshot.strategyIndex = task.taskIndex;
+                snapshot.progressPercent = aggregatePercent();
+                snapshot.statusText = progress.status;
+                const percent = aggregatePercent();
+                progressThrottle({
+                    percent,
+                    phase,
+                    write: () => emitProgress(phase, percent, progress.status),
+                });
+            },
+            isCancelled: () => {
+                // Ownership loss (a newer run took over) AND the run abort
+                // signal (Stop) both cancel; the asset-opportunity paths
+                // combine the same two conditions.
+                if (lostOwnership() || input.abortSignal?.aborted === true) {
+                    cancelled = true;
+                    return true;
+                }
+                return false;
+            },
+        });
+        debugLogger.event("finder.server.parallel_sweep.complete", {
+            runId: input.runId,
+            strategyCount,
+            workers: workerCount,
+            completedStrategies: sweep.completedStrategies,
+            cancelled: sweep.cancelled,
+            durationMs: Date.now() - snapshot.startedAt,
+        });
+        if (sweep.fatal) {
+            throw new Error(sweep.fatal.error);
+        }
+        if (sweep.cancelled || lostOwnership()) {
+            cancelled = true;
+            if (runState === snapshot) snapshot.cancelled = true;
+        }
+    };
+
+    const runSequentialStrategyLoop = async (): Promise<void> => {
         for (let strategyIndex = 0; strategyIndex < strategyCount; strategyIndex += 1) {
             if (lostOwnership()) {
                 cancelled = true;
@@ -937,34 +1140,25 @@ export async function processFinderUniverseRun(
             activeSurvivorByKey = new Map(
                 output.results.map((candidate) => [identityKey(candidate), candidate]),
             );
-            for (const candidate of output.results) {
-                completedSurvivorByKey.set(identityKey(candidate), candidate);
-            }
+            mergeCompletedStrategyOutput(selectedStrategy, strategyIndex, output);
             activeSurvivorByKey.clear();
-            loadedSymbolsMax = Math.max(loadedSymbolsMax, output.loadedSymbols);
-            for (const failed of output.failedSymbols) failedSymbolSet.add(failed);
-            failedLoadAttempts += output.failedSymbols.length;
-            if (output.diagnostics) diagnosticsParts.push(output.diagnostics);
+        }
+    };
 
-            // Re-sort + bound the running snapshot. The full completed map is
-            // retained separately for the terminal result and re-sort UI.
-            snapshot.candidates = rankAndBound([...completedSurvivorByKey.values()]);
+    const universeWorkerCount = input.strategyWorkerCount
+        ?? resolveUniverseStrategyWorkerCount(
+            strategyCount,
+            totalSymbols,
+            process.env,
+            totalmem(),
+            { rustEngine: input.useRustEnginePreference === true },
+        );
 
-            snapshot.loadedSymbols = loadedSymbolsMax;
-            snapshot.failedSymbols = failedSymbolSet.size;
-
-            debugLogger.event("finder.server.strategy.complete", {
-                runId: input.runId,
-                strategyKey: selectedStrategy.key,
-                strategyIndex,
-                strategyCount,
-                loadedSymbols: output.loadedSymbols,
-                failedSymbols: output.failedSymbols.length,
-                uniqueFailedSymbols: failedSymbolSet.size,
-                survivors: output.results.length,
-                mergedSurvivors: snapshot.candidates.length,
-                durationMs: Date.now() - snapshot.startedAt,
-            });
+    try {
+        if (strategyCount > 1 && universeWorkerCount > 1) {
+            await runParallelStrategySweep(universeWorkerCount);
+        } else {
+            await runSequentialStrategyLoop();
         }
 
         // Job-level merged IS survivors. Keep the complete set for OOS and
@@ -1069,7 +1263,7 @@ export async function processFinderUniverseRun(
         if (combinedDiagnostics?.universe) {
             combinedDiagnostics.universe.jobDatasetCache = {
                 ...jobDatasetCacheStats,
-                entries: jobDatasetCache.size,
+                entries: Math.max(jobDatasetCache.size, parallelDatasetCacheEntries),
                 slowestLoads: slowestDatasetLoads,
             };
         }
@@ -2056,7 +2250,7 @@ export async function processFinderAssetOpportunityBatchRun(
                     snapshot.strategyIndex = progress.strategyIndex;
                     snapshot.batch = {
                         ...snapshot.batch!,
-                        currentHoldoutBars: aggregateState.inFlightHoldoutBars[0]
+                        currentHoldoutBars: aggregateState.inFlightTasks[0]?.holdoutBars
                             ?? snapshot.batch!.currentHoldoutBars,
                         currentIteration: Math.floor(task.taskIndex / assetChunkCount) + 1,
                     };
@@ -2858,6 +3052,14 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
                 // same server loader so IS/OOS share the bounded disk cache.
                 loadOosDataset: (sym, intv, signal) => loadServerFinderDataset(sym, intv, signal),
                 getProvider: (symbol) => resolveServerProvider(symbol, providerBySymbol),
+                // Parallel strategy sweep inputs: the provider map (functions
+                // cannot cross the worker boundary; workers rebuild lookups
+                // with the binance default) and the real worker runner.
+                providerBySymbol: Object.fromEntries(
+                    [...providerBySymbol.entries()]
+                        .map(([symbol, provider]) => [symbol.trim().toUpperCase(), provider]),
+                ),
+                strategyRunnerFactory: createRealWorkerUniverseStrategyRunner,
                 generateParamSets: (defaultParams, finderOptions) =>
                     paramSpace.generateParamSets(defaultParams, finderOptions),
             },

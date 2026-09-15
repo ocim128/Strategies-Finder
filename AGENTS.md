@@ -374,9 +374,19 @@ Nine audit findings landed across the Batch and Finder server plugins. The contr
   - `..\..\..\node_modules\.bin\esno tests\finder-universe-runner.spec.ts`
   - `..\..\..\node_modules\.bin\esno tests\finder-universe-metrics.spec.ts`
   - `..\..\..\node_modules\.bin\esno tests\finder-universe-oos.spec.ts`
+  - `..\..\..\node_modules\.bin\esno tests\finder-universe-parallel.spec.ts`
   - `..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-batch-parallel.spec.ts`
   - `..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts`
   - Manual smoke: start `NODE_OPTIONS=--max-old-space-size=16384 npm run dev`, run one and multiple strategies over 50 symbols, then 400 symbols. Confirm progress scaling, server-side OOS filtering, Stop (scoped by run id), diagnostics merging, reload reattach during IS and OOS, and Apply.
+
+### Parallel Symbol Universe strategy sweep
+- Multi-strategy Universe jobs run selected strategies across a bounded `worker_threads` pool (`lib/finder/server/finder-universe-strategy-pool.ts`; worker entry `finder-universe-strategy-worker.ts`), reusing the genericized `runAssetOpportunityBatchSweep` coordinator. Each worker executes whole strategies through the UNCHANGED `runFinderUniverseExecution` core; backtest semantics are untouched. Locked by `tests/finder-universe-parallel.spec.ts`:
+  - The MAIN THREAD is the single writer: completed strategies release in ASCENDING strategy order (shared coordinator's ordered emission), so merges, `candidate` stream events, and the terminal slice stay identical to the sequential loop. Fatal isolation (strategies after the fatal never emit) and cancel flush (completed strategies keep survivors, in-flight are discarded) mirror the sequential loop.
+  - Survivors stream per STRATEGY release, not per candidate plan — the sequential path's live `onResultsUpdate` streaming is sequential-only. The terminal `done.candidates` slice is authoritative on both paths.
+  - Strategy objects never cross the worker boundary: tasks carry keys; workers re-resolve via `loadBuiltInStrategyByKey` and generate plans with their own `FinderParamSpace` (the same seeded generator the handler injects). `generateParamSets` injection is a sequential-path-only test seam — do not "fix" the worker to accept it.
+  - Each worker owns a PRIVATE dataset cache with the job cache's dedupe/eviction semantics; one dataset copy per worker. Per-strategy cache-stat DELTAS are summed into the job diagnostics (`entries` = largest worker cache). Don't "deduplicate" the summed counts — they honestly reflect per-worker loads.
+  - Worker count: `FINDER_UNIVERSE_WORKERS` env override (1 = sequential rollback lever; cap 32; bypasses the memory ceiling AND the Rust cap). Auto = min(strategy count, cores − 2, 75%-RAM ÷ ~9 MB/symbol); with Rust preferred the AUTO value caps at 4 (the external Rust HTTP server serializes) — the env override intentionally bypasses that cap.
+  - Parallel cancellation checks ownership loss AND the run abort signal (same two conditions as the asset paths). Single-strategy jobs always use the sequential in-process loop.
 
 ### Modify Exit Strategy Override
 - Keep it gated on `disableSignalExits`; when normal signal exits are enabled, the override is inert

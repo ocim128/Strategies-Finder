@@ -262,36 +262,36 @@ async function bundleWorkerWithEsbuild(sourcePath: string): Promise<string> {
 // Task runner abstraction (production: real Worker; tests: in-process fakes)
 // ---------------------------------------------------------------------------
 
-export interface AssetOpportunityBatchRunnerEvents {
-    onProgress: (
-        task: AssetOpportunityBatchWorkerTask,
-        progress: {
-            percent: number;
-            status: string;
-            phase: string;
-            assetIndex: number;
-            loadedSymbols: number;
-            failedSymbols: number;
-            strategyIndex: number;
-        },
-    ) => void;
-    onRunLog: (event: string, payload: Record<string, unknown>) => void;
-    onComplete: (task: AssetOpportunityBatchWorkerTask, iteration: AssetOpportunityIterationResult) => void;
-    onFatal: (task: AssetOpportunityBatchWorkerTask, error: string) => void;
+/** Forwarded worker progress payload for Asset Opportunity sweeps. */
+export interface AssetOpportunityBatchProgressPayload {
+    percent: number;
+    status: string;
+    phase: string;
+    assetIndex: number;
+    loadedSymbols: number;
+    failedSymbols: number;
+    strategyIndex: number;
 }
 
-export interface AssetOpportunityBatchTaskRunner {
+export interface AssetOpportunityBatchRunnerEvents<TResult = AssetOpportunityIterationResult, TTask = AssetOpportunityBatchWorkerTask, TProgress = AssetOpportunityBatchProgressPayload> {
+    onProgress: (task: TTask, progress: TProgress) => void;
+    onRunLog: (event: string, payload: Record<string, unknown>) => void;
+    onComplete: (task: TTask, iteration: TResult) => void;
+    onFatal: (task: TTask, error: string) => void;
+}
+
+export interface AssetOpportunityBatchTaskRunner<TTask = AssetOpportunityBatchWorkerTask> {
     /** Start one task; exactly one terminal callback (onComplete/onFatal) follows. */
-    runTask(task: AssetOpportunityBatchWorkerTask): void;
+    runTask(task: TTask): void;
     /** Best-effort abort of the in-flight task (Stop / sweep-fatal). */
     stop(): void;
     /** Terminate the runner; resolves once the underlying worker is gone. */
     dispose(): Promise<void>;
 }
 
-export type AssetOpportunityBatchRunnerFactory = (
-    events: AssetOpportunityBatchRunnerEvents,
-) => AssetOpportunityBatchTaskRunner | Promise<AssetOpportunityBatchTaskRunner>;
+export type AssetOpportunityBatchRunnerFactory<TResult = AssetOpportunityIterationResult, TTask = AssetOpportunityBatchWorkerTask, TProgress = AssetOpportunityBatchProgressPayload> = (
+    events: AssetOpportunityBatchRunnerEvents<TResult, TTask, TProgress>,
+) => AssetOpportunityBatchTaskRunner<TTask> | Promise<AssetOpportunityBatchTaskRunner<TTask>>;
 
 /**
  * Production runner: one persistent worker_threads Worker per runner, one
@@ -409,92 +409,82 @@ export async function createRealWorkerAssetOpportunityBatchRunner(
 // Sweep coordinator
 // ---------------------------------------------------------------------------
 
-export interface AssetOpportunityBatchSweepAggregate {
+export interface AssetOpportunityBatchSweepAggregate<TTask = AssetOpportunityBatchWorkerTask> {
     /** Mean per-iteration progress over ALL tasks (0-100), completed = 100. */
     percent: number;
-    /** Holdout bars of every currently in-flight iteration, ascending. */
-    inFlightHoldoutBars: number[];
+    /** Currently in-flight tasks, ascending by taskIndex. */
+    inFlightTasks: TTask[];
 }
 
-export interface AssetOpportunityBatchSweepArgs {
+export interface AssetOpportunityBatchSweepArgs<TResult extends { cancelled: boolean } = AssetOpportunityIterationResult, TTask = AssetOpportunityBatchWorkerTask, TProgress extends { percent: number } = AssetOpportunityBatchProgressPayload> {
     /** Ordered ascending by taskIndex (iteration order == holdout order). */
-    tasks: AssetOpportunityBatchWorkerTask[];
+    tasks: TTask[];
     runnerCount: number;
-    createRunner: AssetOpportunityBatchRunnerFactory;
+    createRunner: AssetOpportunityBatchRunnerFactory<TResult, TTask, TProgress>;
     /**
      * Called once per COMPLETED iteration in ascending task order; awaited
      * before the next iteration is emitted. Throws propagate out of the
      * sweep (after runners are stopped and disposed) — the caller maps them
      * to its archive-fatal path.
      */
-    onIterationResult: (task: AssetOpportunityBatchWorkerTask, iteration: AssetOpportunityIterationResult) => Promise<void>;
+    onIterationResult: (task: TTask, iteration: TResult) => Promise<void>;
     onProgress: (
-        task: AssetOpportunityBatchWorkerTask,
-        progress: {
-            percent: number;
-            status: string;
-            phase: string;
-            assetIndex: number;
-            loadedSymbols: number;
-            failedSymbols: number;
-            strategyIndex: number;
-        },
-        aggregate: AssetOpportunityBatchSweepAggregate,
+        task: TTask,
+        progress: TProgress,
+        aggregate: AssetOpportunityBatchSweepAggregate<TTask>,
     ) => void;
     onRunLog: (event: string, payload: Record<string, unknown>) => void;
     isCancelled: () => boolean;
 }
 
-export interface AssetOpportunityBatchSweepResult {
+export interface AssetOpportunityBatchSweepResult<TTask = AssetOpportunityBatchWorkerTask> {
     cancelled: boolean;
     /** Iterations whose onIterationResult completed (archived). */
     completedIterations: number;
     /** The first fatal iteration, if any; callers surface it as batch-fatal. */
-    fatal: { task: AssetOpportunityBatchWorkerTask; error: string } | null;
+    fatal: { task: TTask; error: string } | null;
 }
 
 /**
  * Drive the parallel sweep. See the module header for the exact sequential-
  * parity semantics (ordered emission, fatal isolation, cancel flush).
  */
-export async function runAssetOpportunityBatchSweep(
-    args: AssetOpportunityBatchSweepArgs,
-): Promise<AssetOpportunityBatchSweepResult> {
+export async function runAssetOpportunityBatchSweep<TResult extends { cancelled: boolean } = AssetOpportunityIterationResult, TTask extends { taskIndex: number } = AssetOpportunityBatchWorkerTask, TProgress extends { percent: number } = AssetOpportunityBatchProgressPayload>(
+    args: AssetOpportunityBatchSweepArgs<TResult, TTask, TProgress>,
+): Promise<AssetOpportunityBatchSweepResult<TTask>> {
     const tasks = args.tasks;
     const totalTasks = tasks.length;
     const runnerCount = Math.max(1, Math.min(args.runnerCount, totalTasks));
-    const runners: AssetOpportunityBatchTaskRunner[] = [];
+    const runners: AssetOpportunityBatchTaskRunner<TTask>[] = [];
 
     let nextTaskIndex = 0;
     let nextToEmit = 0;
     let completedIterations = 0;
     let cancelledFlag = false;
     let sweepError: unknown = null;
-    let fatal: { task: AssetOpportunityBatchWorkerTask; error: string } | null = null;
-    const buffered = new Map<number, { task: AssetOpportunityBatchWorkerTask; iteration: AssetOpportunityIterationResult }>();
-    const inFlight = new Map<number, AssetOpportunityBatchWorkerTask>();
+    let fatal: { task: TTask; error: string } | null = null;
+    const buffered = new Map<number, { task: TTask; iteration: TResult }>();
+    const inFlight = new Map<number, TTask>();
     const percentByIndex = new Map<number, number>();
-    const freeRunners: AssetOpportunityBatchTaskRunner[] = [];
+    const freeRunners: AssetOpportunityBatchTaskRunner<TTask>[] = [];
     const chunkAffinityMode = tasks.length > 0 && tasks.every(
-        (task) => Number.isInteger(task.assetChunkIndex)
-            && Number.isInteger(task.assetChunkCount)
-            && task.assetChunkCount! > 1,
+        (task) => Number.isInteger((task as unknown as AssetOpportunityBatchWorkerTask).assetChunkIndex)
+            && Number.isInteger((task as unknown as AssetOpportunityBatchWorkerTask).assetChunkCount)
+            && (task as unknown as AssetOpportunityBatchWorkerTask).assetChunkCount! > 1,
     );
     const pendingChunkTasks = chunkAffinityMode ? [...tasks] : [];
-    const chunkRunnerByIndex = new Map<number, AssetOpportunityBatchTaskRunner>();
-    const freeChunkRunners = new Map<number, AssetOpportunityBatchTaskRunner>();
-    const runnerTasks = new Map<AssetOpportunityBatchTaskRunner, AssetOpportunityBatchWorkerTask>();
+    const chunkRunnerByIndex = new Map<number, AssetOpportunityBatchTaskRunner<TTask>>();
+    const freeChunkRunners = new Map<number, AssetOpportunityBatchTaskRunner<TTask>>();
+    const runnerTasks = new Map<AssetOpportunityBatchTaskRunner<TTask>, TTask>();
     let cancelFlushed = false;
     let assignedTaskCount = 0;
 
-    const aggregate = (): AssetOpportunityBatchSweepAggregate => {
+    const aggregate = (): AssetOpportunityBatchSweepAggregate<TTask> => {
         let sum = 0;
         for (const value of percentByIndex.values()) sum += value;
         return {
             percent: totalTasks > 0 ? sum / totalTasks : 100,
-            inFlightHoldoutBars: [...inFlight.values()]
-                .map((task) => task.holdoutBars)
-                .sort((a, b) => a - b),
+            inFlightTasks: [...inFlight.values()].sort((a, b) => a.taskIndex - b.taskIndex),
         };
     };
 
@@ -550,12 +540,12 @@ export async function runAssetOpportunityBatchSweep(
                 // tasks stay on the same runner by assetChunkIndex so the
                 // persistent worker cache survives the holdout sweep.
                 while (fatal === null && !cancelledFlag && !args.isCancelled()) {
-                    let runner: AssetOpportunityBatchTaskRunner | undefined;
-                    let task: AssetOpportunityBatchWorkerTask | undefined;
+                    let runner: AssetOpportunityBatchTaskRunner<TTask> | undefined;
+                    let task: TTask | undefined;
                     if (chunkAffinityMode) {
                         for (const [chunkIndex, readyRunner] of freeChunkRunners) {
                             const pendingIndex = pendingChunkTasks.findIndex(
-                                (candidate) => candidate.assetChunkIndex === chunkIndex,
+                                (candidate) => (candidate as unknown as AssetOpportunityBatchWorkerTask).assetChunkIndex === chunkIndex,
                             );
                             if (pendingIndex >= 0) {
                                 runner = readyRunner;
@@ -567,12 +557,12 @@ export async function runAssetOpportunityBatchSweep(
                         }
                         if (!task && freeRunners.length > 0) {
                             const pendingIndex = pendingChunkTasks.findIndex(
-                                (candidate) => !chunkRunnerByIndex.has(candidate.assetChunkIndex!),
+                                (candidate) => !chunkRunnerByIndex.has((candidate as unknown as AssetOpportunityBatchWorkerTask).assetChunkIndex!),
                             );
                             if (pendingIndex >= 0) {
                                 runner = freeRunners.pop();
                                 task = pendingChunkTasks.splice(pendingIndex, 1)[0];
-                                chunkRunnerByIndex.set(task.assetChunkIndex!, runner!);
+                                chunkRunnerByIndex.set((task as unknown as AssetOpportunityBatchWorkerTask).assetChunkIndex!, runner!);
                             }
                         }
                     } else if (nextTaskIndex < totalTasks && freeRunners.length > 0) {
@@ -657,8 +647,8 @@ export async function runAssetOpportunityBatchSweep(
 
     try {
         for (let index = 0; index < runnerCount; index += 1) {
-            let self!: AssetOpportunityBatchTaskRunner;
-            const eventsForRunner: AssetOpportunityBatchRunnerEvents = {
+            let self!: AssetOpportunityBatchTaskRunner<TTask>;
+            const eventsForRunner: AssetOpportunityBatchRunnerEvents<TResult, TTask, TProgress> = {
                 onProgress: (task, progress) => {
                     percentByIndex.set(task.taskIndex, progress.percent);
                     args.onProgress(task, progress, aggregate());
@@ -669,7 +659,7 @@ export async function runAssetOpportunityBatchSweep(
                     percentByIndex.set(task.taskIndex, 100);
                     runnerTasks.delete(self);
                     if (chunkAffinityMode) {
-                        freeChunkRunners.set(task.assetChunkIndex!, self);
+                        freeChunkRunners.set((task as unknown as AssetOpportunityBatchWorkerTask).assetChunkIndex!, self);
                     } else {
                         freeRunners.push(self);
                     }
@@ -687,15 +677,14 @@ export async function runAssetOpportunityBatchSweep(
                     inFlight.delete(task.taskIndex);
                     runnerTasks.delete(self);
                     if (chunkAffinityMode) {
-                        freeChunkRunners.set(task.assetChunkIndex!, self);
+                        freeChunkRunners.set((task as unknown as AssetOpportunityBatchWorkerTask).assetChunkIndex!, self);
                     } else {
                         freeRunners.push(self);
                     }
                     if (fatal === null && !cancelledFlag) {
                         fatal = { task, error };
-                        debugLogger.warn("finder.asset_opportunity_batch.worker_iteration_failed", {
+                        debugLogger.warn("finder.worker_sweep.task_failed", {
                             taskIndex: task.taskIndex,
-                            holdoutBars: task.holdoutBars,
                             error,
                         });
                         // Iterations after the failed index must never emit.

@@ -230,6 +230,59 @@ Two further production-path details:
   or phase transition). The `/status` snapshot mirroring stays per-event so
   reattach remains fresh; do not throttle the snapshot assignments.
 
+## Symbol Universe parallel strategy sweep (worker pool)
+
+Multi-strategy Symbol Universe jobs run their selected strategies across a
+bounded pool of persistent `worker_threads` (`lib/finder/server/
+finder-universe-strategy-pool.ts`, worker entry
+`finder-universe-strategy-worker.ts`). Each worker executes whole strategies
+through the UNCHANGED `runFinderUniverseExecution` core, so backtest
+semantics are byte-identical to the sequential loop. Load-bearing contracts:
+
+- **The main thread is the single writer.** The shared sweep coordinator
+  (`runAssetOpportunityBatchSweep`, genericized over task/result/progress
+  types) releases completed strategies in ASCENDING strategy order, so
+  survivor merges, `candidate` stream events, and the terminal inventory
+  stay identical to the sequential loop. A fatal strategy stops the sweep
+  after earlier strategies merge; Stop discards in-flight strategies while
+  flushing the ones that already completed.
+- **Survivors stream per strategy, not per candidate plan.** Unlike the
+  sequential path (which streams survivors live during a strategy via
+  `onResultsUpdate`), the parallel path streams each strategy's survivors
+  when that strategy releases. The terminal `done.candidates` slice is
+  authoritative on both paths.
+- **Strategy objects never cross the worker boundary.** Tasks carry keys;
+  workers re-resolve via `loadBuiltInStrategyByKey`. Worker param generation
+  uses its own `FinderParamSpace` — the SAME seeded generator the HTTP
+  handler injects, so plan generation and exit sampling stay deterministic
+  and identical to the sequential path. (A caller-injected
+  `generateParamSets` stub is a sequential-path-only test seam.)
+- **Each worker owns a private dataset cache** with the job cache's
+  dedupe/eviction semantics (failed/empty loads are evicted and retryable),
+  so a worker loads every universe symbol at most once no matter how many
+  strategies it processes. One dataset copy exists per worker; the
+  worker-count memory ceiling budgets for that. Per-strategy cache DELTAS
+  are summed into the job diagnostics (`requests`/`hits`/`misses` reflect
+  real per-worker loads; `entries` reports the largest worker cache).
+- **Worker count policy** (`resolveUniverseStrategyWorkerCount`):
+  `FINDER_UNIVERSE_WORKERS` env override (1 = sequential in-process loop,
+  the rollback lever; capped at 32, bypasses the memory ceiling), otherwise
+  min(strategy count, logical cores − 2, 75%-of-RAM ÷ (~9 MB/symbol)).
+  With the Rust engine preferred, the AUTO value is capped at 4 — the
+  external Rust HTTP server serializes execution.
+- **Cancellation** combines ownership loss and the run abort signal (the
+  same two conditions the asset paths check); Stop terminates in-flight
+  workers immediately so no CPU/RAM-heavy orphan work survives.
+- Single-strategy jobs (or a resolved count of 1) always use the sequential
+  in-process loop.
+
+The parallel contracts are locked by
+`tests/finder-universe-parallel.spec.ts` (sequential/parallel parity,
+ordered release, cancel flush, fatal isolation, worker-count policy, worker
+dataset-cache semantics; in-process fake runners execute the real worker
+task core). The real-thread bootstrap (esbuild bundle + `worker_threads`
+message protocol) is covered by the manual smoke below.
+
 ## Per-run JSONL diagnostics log
 
 Single and batch Asset Opportunity runs append one JSON line per event
@@ -299,7 +352,11 @@ Within one server-owned run, successful sliced datasets are cached by
 increase the runner's peak dataset count because one strategy already loads
 the full universe; it extends that dataset lifetime until Done, Stop, or Fatal,
 when the job cache is cleared. Failed and empty loads are not retained, so a
-later strategy can retry them.
+later strategy can retry them. In the parallel strategy sweep each worker
+keeps its own private copy of that cache — the worker-count memory ceiling
+(`resolveUniverseStrategyWorkerCount`) budgets 75% of system RAM for one full
+dataset copy per worker, so a large universe + many workers cannot silently
+exhaust the host.
 
 ## Wire contract
 
@@ -395,6 +452,7 @@ cancelled instead of starting heavy work. A newer run with a different
 - `..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-metadata.spec.ts`
 - `..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-archive.spec.ts`
 - `..\..\..\node_modules\.bin\esno tests\finder-asset-opportunity-batch-parallel.spec.ts`
+- `..\..\..\node_modules\.bin\esno tests\finder-universe-parallel.spec.ts`
 
 Manual smoke: run one and multiple strategies over 50 symbols, then 400
 symbols with the larger heap. Confirm progress scaling, server-side OOS
@@ -408,4 +466,10 @@ baseline — the per-N archive blocks must be identical for the same inputs,
 and Task Manager should show >100% CPU on the dev-server process during the
 sweep. A real-worker smoke script lives at
 `artifacts/smoke-batch-parallel-worker.ts` (run with esno; it sweeps the
-local IBKR data through three real workers).
+local IBKR data through three real workers). For the Symbol Universe
+parallel sweep, compare a full multi-strategy run against
+`FINDER_UNIVERSE_WORKERS=1` — the terminal candidate inventory must be
+identical for the same inputs (the spec locks this parity in-process), the
+combined diagnostics' `jobDatasetCache` counts should reflect one dataset
+copy per worker, and wall-clock time should drop roughly by the worker
+count.

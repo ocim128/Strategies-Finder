@@ -173,7 +173,10 @@ Opportunity **Batch OOS Holdout** sweeps additionally run holdout iterations
 in parallel across a bounded worker-thread pool sized from your cores and
 RAM (~9 MB per symbol per worker against 75% of system RAM).
 `FINDER_ASSET_BATCH_WORKERS=1` forces the original sequential loop (rollback
-lever); Rust-engine runs prefer at most 2 workers. See
+lever); Rust-engine runs prefer at most 2 workers. Server-owned **Symbol
+Universe** multi-strategy jobs parallelize the same way across selected
+strategies (`FINDER_UNIVERSE_WORKERS=1` forces the sequential loop; Rust
+preference caps the auto pool at 4). See
 [docs/finder-server-side.md](docs/finder-server-side.md).
 
 Reattach after a tab reload is automatic (2s poll). The last completed Batch output is restored from a compact local snapshot after reload, and Copy summary in server-side mode preserves B&H and OPEN_SCORE sections through scalar summary fields; see [docs/batch-backtest-server-side.md](docs/batch-backtest-server-side.md).
