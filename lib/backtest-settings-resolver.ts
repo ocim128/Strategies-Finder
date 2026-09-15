@@ -48,6 +48,7 @@ import {
     resolvePolymarketProtectionSettingFields,
 } from "./polymarket-protection-settings";
 import { ADAPTIVE_TAKE_PROFIT_DEFAULTS, resolveTakeProfitMode } from "./take-profit-settings";
+import { DEFAULT_ENTRY_TIME_FILTER, resolveEntryTimeFilter } from "./entry-time-filter";
 
 export const CAPITAL_DEFAULTS = Object.freeze({
     initialCapital: 10000,
@@ -90,6 +91,8 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     riskEntryConfirmationPercent: 1,
     riskEntryConfirmationBars: 3,
     riskEntryConfirmationMove: "both" as EntryConfirmationMove,
+    entryTimeFilterEnabled: false,
+    entryTimeFilter: DEFAULT_ENTRY_TIME_FILTER,
     riskWinStreakStopLossEnabled: false,
     riskWinStreakStopLossAfterWins: 3,
     riskWinStreakStopLossPercent: 0,
@@ -203,6 +206,7 @@ type BooleanResolverKey =
     | "riskMaxHoldEnabled"
     | "riskCooldownEnabled"
     | "riskEntryConfirmationEnabled"
+    | "entryTimeFilterEnabled"
     | "riskWinStreakStopLossEnabled"
     | "invertSignals"
     | "allowSameBarExit"
@@ -375,6 +379,12 @@ const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
     {
         key: "riskEntryConfirmationEnabled",
         keys: ["riskEntryConfirmationEnabled", "riskEntryConfirmationToggle"],
+        guard: "useRiskManagement",
+        disabledValue: false,
+    },
+    {
+        key: "entryTimeFilterEnabled",
+        keys: ["entryTimeFilterEnabled", "riskEntryTimeFilterToggle"],
         guard: "useRiskManagement",
         disabledValue: false,
     },
@@ -715,6 +725,8 @@ export function resolveBacktestSettingsFromRaw(
         coerced.polymarketEntryCutoffSeconds = clampPolymarketEntryCutoffSeconds(raw["polymarketEntryCutoffSeconds"]);
         coerced.disableSignalExits = readBoolean(raw, "disableSignalExits", EFFECTIVE_BACKTEST_DEFAULTS.disableSignalExits);
         coerced.riskEntryConfirmationMove = resolveEntryConfirmationMove(coerced.riskEntryConfirmationMove);
+        coerced.entryTimeFilterEnabled = readBooleanAny(raw, ["entryTimeFilterEnabled", "riskEntryTimeFilterToggle"], false);
+        coerced.entryTimeFilter = resolveEntryTimeFilter(raw["entryTimeFilter"] ?? raw["riskEntryTimeFilter"]);
         coerced.exitStrategyOverrideEnabled = readBoolean(raw, "exitStrategyOverrideEnabled", false);
         coerced.exitStrategyKey = typeof raw["exitStrategyKey"] === "string" ? raw["exitStrategyKey"].trim() : "";
         coerced.exitStrategyParams = readStrategyParams(raw["exitStrategyParams"]);
@@ -787,6 +799,7 @@ export function resolveBacktestSettingsFromRaw(
             ? executionModelRaw
             : EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
     const tradeDirection = readTradeDirection(raw["tradeDirection"], EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection);
+    const entryTimeFilter = resolveEntryTimeFilter(raw["entryTimeFilter"] ?? raw["riskEntryTimeFilter"]);
 
     const marketMode: MarketMode = EFFECTIVE_BACKTEST_DEFAULTS.marketMode;
     const guards: ResolverGuardState = {
@@ -809,6 +822,7 @@ export function resolveBacktestSettingsFromRaw(
             : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMode,
         ...booleanSettings,
         riskEntryConfirmationMove: resolveEntryConfirmationMove(raw["riskEntryConfirmationMove"]),
+        entryTimeFilter,
         marketMode,
         trendEmaPeriod: 0,
         trendEmaSlopeBars: 0,

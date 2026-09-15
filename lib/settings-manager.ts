@@ -548,6 +548,8 @@ class SettingsManager {
             'riskMinHoldToggle',
             'riskMaxHoldToggle',
             'riskEntryConfirmationToggle',
+            'riskEntryTimeFilterToggle',
+            'riskEntryTimeFilter',
             'pathExitEnabled'
         ];
 

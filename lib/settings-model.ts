@@ -20,13 +20,14 @@ import {
     type PolymarketLimitExitPriceMode,
 } from "./polymarket-post-signal-limit-entry";
 
-import type { BacktestSettings, ConfirmationMode, ExecutionModel, MarketMode, PercentageTakeProfitMode, StrategyParams, TradeDirection, PathExitMode } from "./types/strategies";
+import type { BacktestSettings, ConfirmationMode, ExecutionModel, MarketMode, PercentageTakeProfitMode, StrategyParams, TradeDirection, PathExitMode, EntryTimeFilter } from "./types/strategies";
 import { isTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from "./types/backtest";
 import {
     CAPITAL_DEFAULTS,
     EFFECTIVE_BACKTEST_DEFAULTS,
     resolveBacktestSettingsFromRaw,
 } from "./backtest-settings-resolver";
+import { resolveEntryTimeFilter } from "./entry-time-filter";
 
 // ============================================================================
 // Types
@@ -98,6 +99,8 @@ export interface BacktestSettingsData {
     riskEntryConfirmationPercent: number;
     riskEntryConfirmationBars: number;
     riskEntryConfirmationMove: NonNullable<BacktestSettings['riskEntryConfirmationMove']>;
+    entryTimeFilterEnabled: boolean;
+    entryTimeFilter: EntryTimeFilter;
     riskWinStreakStopLossEnabled: boolean;
     riskWinStreakStopLossAfterWins: number;
     riskWinStreakStopLossPercent: number;
@@ -359,7 +362,9 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
 
         normalizedRecord[key as string] = key === 'takeProfitMode'
             ? resolveTakeProfitModeValue(resolvedValue, DEFAULT_BACKTEST_SETTINGS)
-            : resolvedValue;
+            : key === 'entryTimeFilter'
+                ? resolveEntryTimeFilter(resolvedValue, DEFAULT_BACKTEST_SETTINGS.entryTimeFilter)
+                : resolvedValue;
     }
 
     normalized.initialCapital = readNumber(source.initialCapital, DEFAULT_BACKTEST_SETTINGS.initialCapital);

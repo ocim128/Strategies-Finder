@@ -4,6 +4,7 @@ import { NormalizedSettings, MAX_OPEN_TRADES_UNLIMITED } from '../../types/backt
 import { toTimeKey } from '../../time-key';
 import { parseTimeToUnixSeconds } from '../../time-normalization';
 import { ADAPTIVE_TAKE_PROFIT_DEFAULTS, resolveTakeProfitMode } from '../../take-profit-settings';
+import { resolveEntryTimeFilter } from '../../entry-time-filter';
 
 export function toNumberOr(value: number | undefined, fallback: number): number {
     return Number.isFinite(value) ? value! : fallback;
@@ -97,6 +98,8 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
             || settings?.riskEntryConfirmationMove === 'both'
             ? settings.riskEntryConfirmationMove
             : 'both',
+        entryTimeFilterEnabled: settings?.entryTimeFilterEnabled === true,
+        entryTimeFilter: resolveEntryTimeFilter(settings?.entryTimeFilter),
         riskWinStreakStopLossEnabled: false,
         riskWinStreakStopLossAfterWins: 3,
         riskWinStreakStopLossPercent: 0,

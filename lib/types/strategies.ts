@@ -271,6 +271,7 @@ export interface StrategyParams {
 
 export type TradeDirection = 'long' | 'short' | 'both' | 'both_no_flip' | 'combined';
 export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
+export type EntryTimeFilter = 'day_open' | 'day_close';
 export type ConfirmationMode = 'agree' | 'disagree' | 'veto_opposite' | 'confirm_within_window' | 'veto_within_window';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';
 export type PercentageTakeProfitMode =
@@ -352,6 +353,9 @@ export interface BacktestSettings {
     riskEntryConfirmationBars?: number;
     /** Absolute move direction required after an entry signal. */
     riskEntryConfirmationMove?: EntryConfirmationMove;
+    /** Restrict new entries to the first or last bar of each UTC calendar day. */
+    entryTimeFilterEnabled?: boolean;
+    entryTimeFilter?: EntryTimeFilter;
     /** Enable the win-streak stop loss override in percentage mode */
     riskWinStreakStopLossEnabled?: boolean;
     /** After N consecutive winning trades, new entries switch to the override stop loss % */

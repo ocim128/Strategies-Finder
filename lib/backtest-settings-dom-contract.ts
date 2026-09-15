@@ -35,6 +35,7 @@ import {
 import { clampPolymarketProtectionCents } from "./polymarket-protection-settings";
 import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "./rust-settings-sanitizer";
 import { resolveTakeProfitMode } from "./take-profit-settings";
+import { resolveEntryTimeFilter } from "./entry-time-filter";
 import type { BacktestSettings, StrategyParams, PathExitMode } from "./types/strategies";
 
 export type BacktestDomSettingKey = keyof BacktestSettingsData;
@@ -43,6 +44,7 @@ export type BacktestDomSettingParser =
     | "boolean"
     | "string"
     | "entryConfirmationMove"
+    | "entryTimeFilter"
     | "stringArray"
     | "confirmationMode"
     | "confirmationStrategyParams"
@@ -110,6 +112,8 @@ function inferParser(settingKey: BacktestDomSettingKey): BacktestDomSettingParse
             return "takeProfitMode";
         case "riskEntryConfirmationMove":
             return "entryConfirmationMove";
+        case "entryTimeFilter":
+            return "entryTimeFilter";
         case "tradeDirection":
             return "tradeDirection";
         case "marketMode":
@@ -288,6 +292,17 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("riskEntryConfirmationPercent", { rustSupport: "unsupported" }),
     createField("riskEntryConfirmationBars", { rustSupport: "unsupported" }),
     createField("riskEntryConfirmationMove", { parser: "entryConfirmationMove", rustSupport: "unsupported" }),
+    createField("riskEntryTimeFilterToggle", {
+        settingKey: "entryTimeFilterEnabled",
+        parser: "boolean",
+        legacyAliases: ["entryTimeFilterEnabled"],
+        rustSupport: "unsupported",
+    }),
+    createField("riskEntryTimeFilter", {
+        settingKey: "entryTimeFilter",
+        parser: "entryTimeFilter",
+        rustSupport: "unsupported",
+    }),
     createField("disableSignalExits", { rustSupport: "unsupported" }),
     createField("exitStrategyOverrideEnabled", { rustSupport: "unsupported" }),
     createField("exitStrategyKey", { rustSupport: "unsupported" }),
@@ -524,6 +539,8 @@ export function coerceBacktestDomSettingValue(
             return resolveMarketMode({ marketMode: value as any }, DEFAULT_BACKTEST_SETTINGS);
         case "executionModel":
             return resolveExecutionModelValue(value, DEFAULT_BACKTEST_SETTINGS);
+        case "entryTimeFilter":
+            return resolveEntryTimeFilter(value, DEFAULT_BACKTEST_SETTINGS.entryTimeFilter);
         case "polymarketOutcomeInterval":
             return resolvePolymarketOutcomeInterval(value);
         case "polymarketEntrySelectionMode":

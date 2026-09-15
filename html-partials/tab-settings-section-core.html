@@ -354,6 +354,25 @@
                         <input type="number" class="param-input" id="riskEntryConfirmationBars" value="3" min="1" step="1">
                     </div>
                 </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div class="param-row-header">
+                            <label class="param-label">Entry Time Filter</label>
+                            <label class="section-toggle section-toggle--sm" aria-label="Toggle daily entry time filter">
+                                <input type="checkbox" id="riskEntryTimeFilterToggle">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Allow new entries only on the first or last bar of each UTC trading day. The actual fill price still follows Execution Model; exits are unaffected.</div>
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label" for="riskEntryTimeFilter">Allowed Bar</label>
+                        <select class="param-input" id="riskEntryTimeFilter">
+                            <option value="day_open" selected>Daily opening bar</option>
+                            <option value="day_close">Daily closing bar</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="risk-percentage is-hidden" id="riskPercentage">
                     <div class="param-row">
                         <div class="param-group">

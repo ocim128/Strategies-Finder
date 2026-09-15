@@ -27,6 +27,7 @@ import {
     updateAdaptiveTakeProfitHistory,
 } from './adaptive-take-profit';
 import { PathExitEvaluationContext, PathExitLearningState, learnFromClosedTrade } from './path-exit-rules';
+import { isEntryBarAllowed } from '../../entry-time-filter';
 import { createKellySizingState, updateKellyState } from '../sizing/kelly-criterion';
 import { createMartingaleState, updateMartingaleState } from '../sizing/martingale';
 import { createOptimalFState, updateOptimalFState } from '../sizing/optimal-f';
@@ -504,6 +505,7 @@ function getSinglePositionFinderFastPathBlockers(
     if (config.breakEvenAtR !== 0) blockers.push("break_even_atr");
     if (config.breakEvenPercent !== 0) blockers.push("break_even_percent");
     if (config.riskWinStreakStopLossEnabled) blockers.push("win_streak_stop_loss");
+    if (config.entryTimeFilterEnabled) blockers.push("entry_time_filter");
     return blockers;
 }
 
@@ -2038,9 +2040,11 @@ export function runBacktestCompact(
             && !isExitOnly
             && allowsSignalAsEntry(signal.type, tradeDirection),
         );
+        const entryTimingAllowed = !config.entryTimeFilterEnabled
+            || isEntryBarAllowed(data, barIndex, config.entryTimeFilter);
         return {
             applicable,
-            admitted: !applicable || tradeGate.evaluateEntry(signal, barIndex),
+            admitted: entryTimingAllowed && (!applicable || tradeGate.evaluateEntry(signal, barIndex)),
         };
     };
 
@@ -2709,9 +2713,11 @@ export function runBacktest(
             && !isExitOnly
             && allowsSignalAsEntry(signal.type, tradeDirection),
         );
+        const entryTimingAllowed = !config.entryTimeFilterEnabled
+            || isEntryBarAllowed(data, barIndex, config.entryTimeFilter);
         return {
             applicable,
-            admitted: !applicable || tradeGate.evaluateEntry(signal, barIndex),
+            admitted: entryTimingAllowed && (!applicable || tradeGate.evaluateEntry(signal, barIndex)),
         };
     };
 

@@ -65,6 +65,7 @@ export function getTypescriptEngineRequirementReasons(
         settings.riskEntryConfirmationEnabled === true
         && (settings.riskEntryConfirmationPercent ?? 0) > 0
         && (settings.riskEntryConfirmationBars ?? 0) > 0;
+    const usesEntryTimeFilter = settings.entryTimeFilterEnabled === true;
     const usesAdaptivePercentageTakeProfit =
         settings.riskMode === 'percentage'
         && settings.takeProfitEnabled === true
@@ -105,6 +106,7 @@ export function getTypescriptEngineRequirementReasons(
     }
     if (usesRiskMinHold) reasons.push('minimum hold bars are enabled');
     if (usesEntryConfirmation) reasons.push('entry confirmation is enabled');
+    if (usesEntryTimeFilter) reasons.push('entry time filter is enabled');
     if (usesRiskCooldown && !hasRustCapability(capabilities, RUST_RISK_COOLDOWN_CAPABILITY)) {
         if (!reasons.includes('rust_capability_missing')) reasons.push('rust_capability_missing');
     }
@@ -140,6 +142,8 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "riskEntryConfirmationPercent",
     "riskEntryConfirmationBars",
     "riskEntryConfirmationMove",
+    "entryTimeFilterEnabled",
+    "entryTimeFilter",
     "riskWinStreakStopLossEnabled",
     "riskWinStreakStopLossAfterWins",
     "riskWinStreakStopLossPercent",
