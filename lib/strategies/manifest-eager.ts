@@ -10,7 +10,6 @@ import { pivot_midpoint_anchor_fade } from "./lib/pivot_midpoint_anchor_fade";
 import { true_range_skewness_initiation } from "./lib/true_range_skewness_initiation";
 import { true_range_skew_acceptance } from "./lib/true_range_skew_acceptance";
 import { efficiency_keltner_router } from "./lib/efficiency_keltner_router";
-import { cumulative_return_zscore_reversion } from "./lib/cumulative_return_zscore_reversion";
 import { cumulative_return_percentile_reversion } from "./lib/cumulative_return_percentile_reversion";
 import { body_proportion_percentile_fade } from "./lib/body_proportion_percentile_fade";
 import { return_sign_streak_fade } from "./lib/return_sign_streak_fade";
@@ -31,7 +30,6 @@ import { volume_weighted_median_confirmation } from "./lib/volume_weighted_media
 import { wilder_ma_confirmation } from "./lib/wilder_ma_confirmation";
 import { zero_lag_ema_confirmation } from "./lib/zero_lag_ema_confirmation";
 import { body_direction_placement_coherence } from "./lib/body_direction_placement_coherence";
-import { nested_bar_oscillation_fade } from "./lib/nested_bar_oscillation_fade";
 import { median_deviation_fade_chop } from "./lib/median_deviation_fade_chop";
 import { short_return_streak_fade_chop } from "./lib/short_return_streak_fade_chop";
 import { short_term_overextension_fade } from "./lib/short_term_overextension_fade";
@@ -39,9 +37,7 @@ import { open_location_zscore_reversion } from "./lib/open_location_zscore_rever
 import { decay_anchor_reversion } from "./lib/decay_anchor_reversion";
 import { defended_low_reversion } from "./lib/defended_low_reversion";
 import { lagged_value_anchor_reversion } from "./lib/lagged_value_anchor_reversion";
-import { rejection_confirmed_depth_fade } from "./lib/rejection_confirmed_depth_fade";
 import { vwap_deviation_reversion } from "./lib/vwap_deviation_reversion";
-import { robust_zscore_typical_fade } from "./lib/robust_zscore_typical_fade";
 import { whipsaw_crossing_burst_reversal } from "./lib/whipsaw_crossing_burst_reversal";
 import { body_impulse_zscore_exhaustion } from "./lib/body_impulse_zscore_exhaustion";
 import { open_clearance_collapse_reversal } from "./lib/open_clearance_collapse_reversal";
@@ -63,7 +59,6 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "true_range_skewness_initiation", strategy: true_range_skewness_initiation },
     { key: "true_range_skew_acceptance", strategy: true_range_skew_acceptance },
     { key: "efficiency_keltner_router", strategy: efficiency_keltner_router },
-    { key: "cumulative_return_zscore_reversion", strategy: cumulative_return_zscore_reversion },
     { key: "cumulative_return_percentile_reversion", strategy: cumulative_return_percentile_reversion },
     { key: "body_proportion_percentile_fade", strategy: body_proportion_percentile_fade },
     { key: "return_sign_streak_fade", strategy: return_sign_streak_fade },
@@ -84,7 +79,6 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "wilder_ma_confirmation", strategy: wilder_ma_confirmation },
     { key: "zero_lag_ema_confirmation", strategy: zero_lag_ema_confirmation },
     { key: "body_direction_placement_coherence", strategy: body_direction_placement_coherence },
-    { key: "nested_bar_oscillation_fade", strategy: nested_bar_oscillation_fade },
     { key: "median_deviation_fade_chop", strategy: median_deviation_fade_chop },
     { key: "short_return_streak_fade_chop", strategy: short_return_streak_fade_chop },
     { key: "short_term_overextension_fade", strategy: short_term_overextension_fade },
@@ -92,9 +86,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "decay_anchor_reversion", strategy: decay_anchor_reversion },
     { key: "defended_low_reversion", strategy: defended_low_reversion },
     { key: "lagged_value_anchor_reversion", strategy: lagged_value_anchor_reversion },
-    { key: "rejection_confirmed_depth_fade", strategy: rejection_confirmed_depth_fade },
     { key: "vwap_deviation_reversion", strategy: vwap_deviation_reversion },
-    { key: "robust_zscore_typical_fade", strategy: robust_zscore_typical_fade },
     { key: "whipsaw_crossing_burst_reversal", strategy: whipsaw_crossing_burst_reversal },
     { key: "body_impulse_zscore_exhaustion", strategy: body_impulse_zscore_exhaustion },
     { key: "open_clearance_collapse_reversal", strategy: open_clearance_collapse_reversal },

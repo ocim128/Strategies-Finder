@@ -93,18 +93,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "cumulative_return_zscore_reversion",
-        name: "Cumulative Return Z-Score Reversion",
-        description: "Fades cumulative multi-bar returns when they reach extreme z-scores.",
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "zThreshold"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "cumulative_return_percentile_reversion",
         name: "Cumulative Return Percentile Reversion",
         description: "Fades cumulative return over lookback when it sits at a percentile extreme of its own history.",
@@ -345,18 +333,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "nested_bar_oscillation_fade",
-        name: "Nested Bar Oscillation Fade",
-        description: "Fades the edge of a bar fully nested inside the previous bar while the market coils at a low range percentile.",
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["rangePctThreshold"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "median_deviation_fade_chop",
         name: "Median Deviation Fade Chop",
         description: "Fades closes deviating more than 1.5 standard deviations from the rolling central value, catching chop-range edges that revert to center.",
@@ -441,18 +417,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "rejection_confirmed_depth_fade",
-        name: "Rejection Confirmed Depth Fade",
-        description: "Fades robust z-score extremes only when the extreme bar's wick imbalance shows the push was rejected intrabar.",
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "vwap_deviation_reversion",
         name: "VWAP Deviation Reversion",
         description: "Fades multi-ATR excursions from the rolling participation-weighted VWAP anchor.",
@@ -460,18 +424,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         role: "entry",
         direction: "both",
         walkForwardParams: ["period"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "robust_zscore_typical_fade",
-        name: "Robust Z-Score Typical Fade",
-        description: "Fades typical-price extremes standardized by their own rolling median and MAD instead of mean and standard deviation.",
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback"],
     },
         crossSymbolConfig: false,
         polymarket1sConfig: false,
