@@ -306,12 +306,11 @@ The exported `latest-entry-signal.json` preserves the selected `polymarketEntryO
 
 The generated `<config>.refresh.ps1` is intended for unattended refresh. Point the bot's `EXTERNAL_SIGNAL_REFRESH_SCRIPT` at that file and it can regenerate the latest signal automatically on each new 5-minute bucket.
 
-### Check local data and exit curves
-Two CLI research tools operate on the synced IBKR `30m` CSV tree (`price-data/ibkr/csv/30m/`):
+### Check local data
+One CLI research tool operates on the synced IBKR `30m` CSV tree (`price-data/ibkr/csv/30m/`):
 - `npm run data:preflight` scans that tree for deterministic data defects (add `-- --json` for machine-readable output). Implementation: `lib/market-data/data-integrity-scan.ts`.
-- `npm run analyze:sleeve-exit-curve` builds the 30m→4H ratio series and reports fixed-horizon exit curves per sleeve with a uniform-random control. Implementation: `lib/research/sleeve-exit-curve.ts`.
 
-Both are descriptive diagnostics, not trade signals.
+It is a descriptive diagnostic, not a trade signal.
 
 ### Change UI safely
 1. Add or update markup in `html-partials/*`.
