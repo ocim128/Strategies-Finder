@@ -11,6 +11,10 @@ const trailingHighLowCache = new WeakMap<OHLCVData[], Map<string, { highest: Nul
 const clampedVolumeCache = new WeakMap<OHLCVData[], number[]>();
 const rollingAverageCache = new WeakMap<number[], Map<number, NullableSeries>>();
 const barMetricSeriesCache = new WeakMap<OHLCVData[], Map<BarMetricType, number[]>>();
+const sweepReclaimScoreCache = new WeakMap<OHLCVData[], number[]>();
+const adjacentRangeOverlapCache = new WeakMap<OHLCVData[], number[]>();
+const windowGivebackCache = new WeakMap<OHLCVData[], Map<number, NullableSeries>>();
+const extremeAgeCache = new WeakMap<OHLCVData[], Map<number, { sinceHigh: NullableSeries; sinceLow: NullableSeries }>>();
 
 export interface PriceActionBarMetrics {
 	range: number;
@@ -260,6 +264,173 @@ export function buildTrailingHighLow(
 	const result = { highest, lowest };
 	byKey.set(cacheKey, result);
 
+	return result;
+}
+
+/**
+ * Sweep-and-reclaim score of the CURRENT bar against the PRIOR bar's extremes:
+ * positive = spring (low[i] trades below low[i-1] then closes back above it),
+ * negative = upthrust (high[i] trades above high[i-1] then closes back below).
+ * Each leg scores violation depth (fraction of the prior range) times reclaim
+ * strength (fraction of the current range recovered back inside the prior
+ * extreme), so the total is a continuous fail-through magnitude. A two-sided
+ * sweep nets toward zero by design. Bar 0 falls back to 0.
+ */
+export function buildSweepReclaimScoreSeries(data: OHLCVData[]): number[] {
+	return getCachedMetricSeries(sweepReclaimScoreCache, data, () => {
+		const result: number[] = new Array(data.length).fill(0);
+
+		for (let i = 1; i < data.length; i++) {
+			const priorRange = data[i - 1].high - data[i - 1].low;
+			if (priorRange <= 0) continue;
+			const currentRange = data[i].high - data[i].low;
+
+			let score = 0;
+			if (data[i].low < data[i - 1].low && data[i].close > data[i - 1].low) {
+				const depth = (data[i - 1].low - data[i].low) / priorRange;
+				const reclaim = currentRange > 0 ? clamp((data[i].close - data[i - 1].low) / currentRange, 0, 1) : 0;
+				score += depth * reclaim;
+			}
+			if (data[i].high > data[i - 1].high && data[i].close < data[i - 1].high) {
+				const depth = (data[i].high - data[i - 1].high) / priorRange;
+				const reclaim = currentRange > 0 ? clamp((data[i - 1].high - data[i].close) / currentRange, 0, 1) : 0;
+				score -= depth * reclaim;
+			}
+			result[i] = score;
+		}
+
+		return result;
+	});
+}
+
+/**
+ * Share of price territory two consecutive bars occupy together:
+ * (min(high) - max(low)) / (max(high) - min(low)) over bars i-1 and i.
+ * Unclamped below zero: disjoint ranges go negative with the gap's size
+ * relative to the union. 1 requires identical spans, 0 is an edge touch, and
+ * a contained inner bar scores inner-range/outer-range. Bar 0 falls back to 1
+ * (neutral "no evidence of expansion").
+ */
+export function buildAdjacentRangeOverlapSeries(data: OHLCVData[]): number[] {
+	return getCachedMetricSeries(adjacentRangeOverlapCache, data, () => {
+		const result: number[] = new Array(data.length).fill(1);
+
+		for (let i = 1; i < data.length; i++) {
+			const inter = Math.min(data[i].high, data[i - 1].high) - Math.max(data[i].low, data[i - 1].low);
+			const union = Math.max(data[i].high, data[i - 1].high) - Math.min(data[i].low, data[i - 1].low);
+			result[i] = union > 0 ? inter / union : 1;
+		}
+
+		return result;
+	});
+}
+
+/**
+ * Fraction of the trailing window's completed excursion surrendered against
+ * its own direction, measured close-to-close over [i-lookback, i]:
+ * up window (close[i] >= close[i-lookback]): (peak - close[i]) / (peak - start);
+ * down window: (close[i] - trough) / (start - trough).
+ * 0 = closing at the move's extreme end, 1 = full round trip back to the
+ * window's start close. Null while the window is not yet filled; flat
+ * excursions fall back to 0. Fib retracement thresholds applied by strategies
+ * land on a pure fraction of the window's own excursion, so the series is
+ * scale-free.
+ */
+export function buildWindowGivebackRatio(
+	data: OHLCVData[],
+	lookbackInput: number
+): (number | null)[] {
+	const lookback = Math.max(1, Math.round(lookbackInput));
+	let byKey = windowGivebackCache.get(data);
+	if (!byKey) {
+		byKey = new Map<number, NullableSeries>();
+		windowGivebackCache.set(data, byKey);
+	}
+	const cached = byKey.get(lookback);
+	if (cached) return cached;
+
+	const result: NullableSeries = new Array(data.length).fill(null);
+	const maxDeque: number[] = [];
+	const minDeque: number[] = [];
+
+	for (let i = 0; i < data.length; i++) {
+		const close = data[i].close;
+		while (maxDeque.length > 0 && data[maxDeque[maxDeque.length - 1]].close <= close) maxDeque.pop();
+		maxDeque.push(i);
+		while (minDeque.length > 0 && data[minDeque[minDeque.length - 1]].close >= close) minDeque.pop();
+		minDeque.push(i);
+
+		const start = i - lookback;
+		while (maxDeque.length > 0 && maxDeque[0] < start) maxDeque.shift();
+		while (minDeque.length > 0 && minDeque[0] < start) minDeque.shift();
+
+		if (i < lookback) continue;
+		const startClose = data[start].close;
+		const net = close - startClose;
+		if (net >= 0) {
+			const peak = data[maxDeque[0]].close;
+			const denom = peak - startClose;
+			result[i] = denom > 0 ? (peak - close) / denom : 0;
+		} else {
+			const trough = data[minDeque[0]].close;
+			const denom = startClose - trough;
+			result[i] = denom > 0 ? (close - trough) / denom : 0;
+		}
+	}
+
+	byKey.set(lookback, result);
+	return result;
+}
+
+/**
+ * Age of the trailing window's extremes, in bars:
+ * sinceHigh[i] = i - argmax{ high[j] : j in [i-lookback+1, i] }, sinceLow
+ * symmetric. Ties resolve to the MOST RECENT extreme bar (deque pop conditions
+ * match buildTrailingHighLow), so a freshly re-printed extreme resets the age
+ * to 0. Both outputs are null while the window is not yet full; with
+ * lookback = 1 the current bar is its own window so both ages are always 0.
+ * Bar counts are scale-free by construction and encode WHEN the extreme was
+ * printed — the time axis the trailing extreme LEVELS do not carry.
+ */
+export function buildExtremeAgeSeries(
+	data: OHLCVData[],
+	lookbackInput: number
+): { sinceHigh: (number | null)[]; sinceLow: (number | null)[] } {
+	const lookback = Math.max(1, Math.round(lookbackInput));
+	let byKey = extremeAgeCache.get(data);
+	if (!byKey) {
+		byKey = new Map<number, { sinceHigh: NullableSeries; sinceLow: NullableSeries }>();
+		extremeAgeCache.set(data, byKey);
+	}
+	const cached = byKey.get(lookback);
+	if (cached) return cached;
+
+	const sinceHigh: NullableSeries = new Array(data.length).fill(null);
+	const sinceLow: NullableSeries = new Array(data.length).fill(null);
+	const highDeque: number[] = [];
+	const lowDeque: number[] = [];
+
+	for (let i = 0; i < data.length; i++) {
+		while (highDeque.length > 0 && data[highDeque[highDeque.length - 1]].high <= data[i].high) {
+			highDeque.pop();
+		}
+		highDeque.push(i);
+		while (lowDeque.length > 0 && data[lowDeque[lowDeque.length - 1]].low >= data[i].low) {
+			lowDeque.pop();
+		}
+		lowDeque.push(i);
+
+		const start = i - lookback + 1;
+		while (highDeque.length > 0 && highDeque[0] < start) highDeque.shift();
+		while (lowDeque.length > 0 && lowDeque[0] < start) lowDeque.shift();
+
+		if (i < lookback - 1) continue;
+		sinceHigh[i] = i - highDeque[0];
+		sinceLow[i] = i - lowDeque[0];
+	}
+
+	const result = { sinceHigh, sinceLow };
+	byKey.set(lookback, result);
 	return result;
 }
 

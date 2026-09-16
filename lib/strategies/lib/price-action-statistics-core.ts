@@ -24,6 +24,7 @@ const thresholdCrossingCountCache = new WeakMap<number[], Map<string, NullableSe
 const rollingAutoCorrelationCache = new WeakMap<number[], Map<string, NullableSeries>>();
 const rollingCorrelationCache = new WeakMap<number[], Map<number[], Map<string, NullableSeries>>>();
 const rollingKurtosisCache = new WeakMap<number[], Map<number, NullableSeries>>();
+const varianceRatioCache = new WeakMap<number[], Map<string, NullableSeries>>();
 
 function getCachedSeries<K>(
 	cache: WeakMap<number[], Map<K, NullableSeries>>,
@@ -926,6 +927,69 @@ export function buildRollingKurtosis(
 			if (m2 <= 0) continue;
 
 			result[i] = m4 / (m2 * m2) - 3;
+		}
+
+		return result;
+	});
+}
+
+/**
+ * Lo-MacKinlay style rolling variance ratio:
+ * VR = Var(k-bar changes) / (k * Var(1-bar changes)) over the lookback window.
+ * Read as a noisy finite-sample benchmark: values above 1 say the window's
+ * multi-bar variance grew faster than linear (consistent with positive serial
+ * dependence / trending), below 1 slower (consistent with mean reversion), and
+ * near 1 with a random walk — any finite window is a noisy estimate of these,
+ * not a deterministic regime label. Uses population variance (N divisor,
+ * matching buildRollingStdDev) over the L most recent overlapping samples of
+ * each change series. No bias correction is applied so the output stays a pure
+ * variance ratio. Inputs must be finite (NaN/Infinity contaminate later
+ * windows rather than being detected). Returns null during warmup or when the
+ * 1-bar change window is flat.
+ */
+export function buildVarianceRatio(
+	values: number[],
+	lookbackInput: number,
+	horizonInput = 4
+): (number | null)[] {
+	const lookback = Math.max(2, Math.round(lookbackInput));
+	const horizon = Math.max(2, Math.round(horizonInput));
+	const key = `${lookback}|${horizon}`;
+	return getCachedSeries(varianceRatioCache, values, key, () => {
+		const result: NullableSeries = new Array(values.length).fill(null);
+		let sum1 = 0;
+		let sumSq1 = 0;
+		let sumK = 0;
+		let sumSqK = 0;
+
+		for (let i = 1; i < values.length; i++) {
+			const change1 = values[i] - values[i - 1];
+			sum1 += change1;
+			sumSq1 += change1 * change1;
+			if (i > lookback) {
+				const removed1 = values[i - lookback] - values[i - lookback - 1];
+				sum1 -= removed1;
+				sumSq1 -= removed1 * removed1;
+			}
+
+			if (i >= horizon) {
+				const changeK = values[i] - values[i - horizon];
+				sumK += changeK;
+				sumSqK += changeK * changeK;
+				if (i > lookback + horizon - 1) {
+					const removedK = values[i - lookback] - values[i - lookback - horizon];
+					sumK -= removedK;
+					sumSqK -= removedK * removedK;
+				}
+			}
+
+			if (i < lookback + horizon - 1) continue;
+			const mean1 = sum1 / lookback;
+			const var1 = Math.max(0, sumSq1 / lookback - mean1 * mean1);
+			if (var1 <= 0) continue;
+			const meanK = sumK / lookback;
+			const varK = Math.max(0, sumSqK / lookback - meanK * meanK);
+			result[i] = varK / (horizon * var1);
 		}
 
 		return result;

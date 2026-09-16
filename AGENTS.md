@@ -240,8 +240,8 @@ Read `lib/strategies/lib/ema_confirmation.ts` for a simple implementation or `li
 
 Useful helper maps:
 - `lib/strategies/strategy-helpers.ts`: Core signals (`createSignalLoop`, `createBuySignal`, `createSellSignal`) & base OHLCV array extractors (`getCloses`, `getHighs`, `getVolumes`, `ensureCleanData`).
-- `lib/strategies/lib/price-action-frequency-core.ts`: For individual bar geometry (`computePriceActionBarMetrics`) extracting wicks, body, and range metrics seamlessly.
-- `lib/strategies/lib/price-action-statistics-core.ts`: Essential for robustness constraints (`buildRollingEntropy`, `buildEfficiencyRatio`, `buildRollingMedian`, `buildRollingZScore`, `buildStreakCount`).
+- `lib/strategies/lib/price-action-frequency-core.ts`: For individual bar geometry (`computePriceActionBarMetrics`) extracting wicks, body, and range metrics seamlessly, plus relative bar-relation series (`buildSweepReclaimScoreSeries` spring/upthrust score, `buildAdjacentRangeOverlapSeries` two-bar territory share, `buildWindowGivebackRatio` excursion retracement fraction, `buildExtremeAgeSeries` bars-since-window-extremes).
+- `lib/strategies/lib/price-action-statistics-core.ts`: Essential for robustness constraints (`buildRollingEntropy`, `buildEfficiencyRatio`, `buildRollingMedian`, `buildRollingZScore`, `buildStreakCount`) and second-moment regime structure (`buildVarianceRatio` Lo-MacKinlay trending-vs-mean-reverting router).
 - If you edit `archive/prompt.txt`, only list helpers that already exist as exported strategy-layer utilities. Prefer low-complexity primitives such as price extractors (`getOpens`, `getTypicalPrices`), bar geometry series (`buildRangeSeries`, `buildBodyPctSeries`, `buildCloseLocationSeries`), crossover, pivot-flag, and timeframe-alignment helpers over prompt-only or speculative surfaces.
 
 Important Type and Dependency Gotchas:
