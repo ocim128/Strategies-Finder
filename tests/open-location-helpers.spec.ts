@@ -1,10 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { OHLCVData, Time } from "../lib/types/strategies";
-import {
-    buildOpenLocationSeries,
-    buildOpenGapPctSeries,
-} from "../lib/strategies/lib/price-action-frequency-core";
+import { buildOpenLocationSeries } from "../lib/strategies/lib/price-action-frequency-core";
 
 function bar(time: number, open: number, high: number, low: number, close: number): OHLCVData {
     return { time: time as Time, open, high, low, close, volume: 1000 };
@@ -37,16 +34,4 @@ test("buildOpenLocationSeries falls back to 0.5 when the prior bar has no range"
     const data = [bar(1, 10, 10, 10, 10), bar(2, 12, 13, 11, 12.5)];
     const loc = buildOpenLocationSeries(data);
     assert.equal(loc[1], 0.5, "zero-range prior bar keeps the neutral fallback");
-});
-
-test("buildOpenGapPctSeries signs the gap relative to the prior close", () => {
-    const data = [
-        bar(1, 100, 110, 95, 105),
-        bar(2, 110.25, 120, 108, 115), // gap up: 110.25 / 105 - 1 = +5%
-        bar(3, 103.5, 112, 100, 108), // gap down: 103.5 / 115 - 1 = -10%
-    ];
-    const gap = buildOpenGapPctSeries(data);
-    assert.equal(gap[0], 0, "first bar falls back to 0");
-    assert.ok(Math.abs(gap[1] - 0.05) < 1e-9, `gap up ≈ +5%, got ${gap[1]}`);
-    assert.ok(Math.abs(gap[2] + 0.1) < 1e-9, `gap down ≈ -10%, got ${gap[2]}`);
 });

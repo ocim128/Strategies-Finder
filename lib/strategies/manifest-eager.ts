@@ -33,16 +33,11 @@ import { body_direction_placement_coherence } from "./lib/body_direction_placeme
 import { median_deviation_fade_chop } from "./lib/median_deviation_fade_chop";
 import { short_return_streak_fade_chop } from "./lib/short_return_streak_fade_chop";
 import { short_term_overextension_fade } from "./lib/short_term_overextension_fade";
-import { open_location_zscore_reversion } from "./lib/open_location_zscore_reversion";
 import { decay_anchor_reversion } from "./lib/decay_anchor_reversion";
-import { defended_low_reversion } from "./lib/defended_low_reversion";
 import { lagged_value_anchor_reversion } from "./lib/lagged_value_anchor_reversion";
 import { vwap_deviation_reversion } from "./lib/vwap_deviation_reversion";
 import { whipsaw_crossing_burst_reversal } from "./lib/whipsaw_crossing_burst_reversal";
 import { body_impulse_zscore_exhaustion } from "./lib/body_impulse_zscore_exhaustion";
-import { open_clearance_collapse_reversal } from "./lib/open_clearance_collapse_reversal";
-import { open_lower_quartile_clearance_reversal } from "./lib/open_lower_quartile_clearance_reversal";
-import { open_prior_midpoint_displacement_reversion } from "./lib/open_prior_midpoint_displacement_reversion";
 import { return_autocorrelation_alternation } from "./lib/return_autocorrelation_alternation";
 
 export interface StrategyManifestEntry {
@@ -82,16 +77,11 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "median_deviation_fade_chop", strategy: median_deviation_fade_chop },
     { key: "short_return_streak_fade_chop", strategy: short_return_streak_fade_chop },
     { key: "short_term_overextension_fade", strategy: short_term_overextension_fade },
-    { key: "open_location_zscore_reversion", strategy: open_location_zscore_reversion },
     { key: "decay_anchor_reversion", strategy: decay_anchor_reversion },
-    { key: "defended_low_reversion", strategy: defended_low_reversion },
     { key: "lagged_value_anchor_reversion", strategy: lagged_value_anchor_reversion },
     { key: "vwap_deviation_reversion", strategy: vwap_deviation_reversion },
     { key: "whipsaw_crossing_burst_reversal", strategy: whipsaw_crossing_burst_reversal },
     { key: "body_impulse_zscore_exhaustion", strategy: body_impulse_zscore_exhaustion },
-    { key: "open_clearance_collapse_reversal", strategy: open_clearance_collapse_reversal },
-    { key: "open_lower_quartile_clearance_reversal", strategy: open_lower_quartile_clearance_reversal },
-    { key: "open_prior_midpoint_displacement_reversion", strategy: open_prior_midpoint_displacement_reversion },
     { key: "return_autocorrelation_alternation", strategy: return_autocorrelation_alternation },
 ];
 

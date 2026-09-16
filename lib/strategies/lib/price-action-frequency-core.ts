@@ -144,26 +144,6 @@ export function buildOpenLocationSeries(data: OHLCVData[]): number[] {
 	return series;
 }
 
-const openGapSeriesCache = new WeakMap<OHLCVData[], number[]>();
-
-/**
- * Relative session gap: open[i] / close[i-1] - 1. First bar falls back to 0.
- * Positive = gap up into the current bar, negative = gap down.
- */
-export function buildOpenGapPctSeries(data: OHLCVData[]): number[] {
-	const cached = openGapSeriesCache.get(data);
-	if (cached) return cached;
-	const series = new Array<number>(data.length).fill(0);
-	for (let i = 1; i < data.length; i++) {
-		const priorClose = data[i - 1].close;
-		if (priorClose > 0) {
-			series[i] = data[i].open / priorClose - 1;
-		}
-	}
-	openGapSeriesCache.set(data, series);
-	return series;
-}
-
 export function buildRollingAverage(
 	values: number[],
 	lookbackInput: number
