@@ -19,7 +19,7 @@ export interface CompactPairArtifact {
     trades: CompactTrade[];
     /**
      * Full-backtest net P&L carried from the pair's `BacktestResult`. Feeds
-     * the pnl-gated OPEN_SCORE arms (TOP_RAW_PNL_POS / TOP_MEAN_PNL_POS),
+     * the profit-gated OPEN_SCORE arms (TOP_RAW_PROFIT / TOP_MEAN_PROFIT),
      * which count a pair's votes only when this value is strictly positive.
      * Optional for backward compatibility: artifacts written before this
      * field existed omit it and remain readable, but the pnl-gated arms see

@@ -58,45 +58,7 @@ function makeDirectMarket(asset: string, trades: Trade[]): BatchSyntheticPairArt
     };
 }
 
-function makeNamedDirectMarket(asset: string, name: string, trades: Trade[]): BatchSyntheticPairArtifact {
-    return {
-        symbol: `${asset}USDT-${name}`,
-        baseAsset: asset,
-        quoteAsset: "",
-        data: [],
-        signals: [],
-        result: { ...emptyResult(), totalTrades: trades.length, trades },
-    };
-}
 
-function makeTakeSkipFixture(returns: number[]): {
-    pairs: BatchSyntheticPairArtifact[];
-    targets: OpenScoreUsdTarget[];
-} {
-    const spacingBars = 5;
-    const decisionTimes = returns.map((_, i) => T0 + (i + 1) * spacingBars * 1000);
-    const longTrades = decisionTimes.map((time) => makeTrade("long", time, null));
-    const shortTrades = decisionTimes.map((time) => makeTrade("short", time, null));
-    const pairs = [
-        makeNamedDirectMarket("AAA", "A1", longTrades),
-        makeNamedDirectMarket("AAA", "A2", longTrades.map((trade) => ({ ...trade }))),
-        makeNamedDirectMarket("BBB", "B1", longTrades.map((trade) => ({ ...trade }))),
-        makeNamedDirectMarket("BBB", "B2", longTrades.map((trade) => ({ ...trade }))),
-        makeNamedDirectMarket("BBB", "B3", shortTrades),
-    ];
-    const bars = (returns.length + 2) * spacingBars + 5;
-    const aaa = makeTarget("AAA", bars, (i) => {
-        for (let eventIndex = 0; eventIndex < returns.length; eventIndex += 1) {
-            const exitBar = (eventIndex + 1) * spacingBars + 2;
-            if (i === exitBar) return 100 * (1 + returns[eventIndex]!);
-        }
-        return 100;
-    });
-    return {
-        pairs,
-        targets: [aaa, makeTarget("BBB", bars, () => 100)],
-    };
-}
 
 /** Target OHLCV: bars at T0, T0+1000, T0+2000, ... with constant price. */
 function makeTarget(asset: string, bars: number, priceAt: (i: number) => number): OpenScoreUsdTarget {
@@ -178,7 +140,6 @@ describe("batch-open-score-usd-replay-engine", () => {
             "TOP_ADJUSTED",
             "TOP_MEAN",
             "MAX_ACTIVE",
-            "MAX_SUBMITTED",
             "MAX_RETAINED",
         ]);
         const topMean = details.find((row) => row.selector === "TOP_MEAN")!;
@@ -488,10 +449,10 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(result.horizons[0]!.topRaw.topMean).to.not.equal(null);
     });
 
-    it("pnl-gated arms rank only pairs whose pair backtest netted positive", async () => {
+    it("profit-gated arms rank only pairs whose pair backtest netted positive", async () => {
         // Event at T1. Unfiltered raw: AAA=2 (2 winning pairs), BBB=3 (3
         // losing pairs), CCC=1 (1 winning pair) -> TOP_RAW picks BBB.
-        // PNL-gated pool: only AAA(2) and CCC(1) -> TOP_RAW_PNL_POS picks AAA
+        // Profit-gated pool: only AAA(2) and CCC(1) -> TOP_RAW_PROFIT picks AAA
         // outright, so its selected return is AAA's known ramp return while
         // TOP_RAW's is BBB's flat 0.
         const pairs = [
@@ -521,40 +482,40 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(h.topRaw.events).to.equal(1);
         expect(h.topRaw.topMean).to.be.closeTo(0, 1e-9);
         expect(h.topMean.events).to.equal(1);
-        // The gated pool is {AAA, CCC}; TOP_RAW_PNL_POS picks AAA (2 > 1).
+        // The gated pool is {AAA, CCC}; TOP_RAW_PROFIT picks AAA (2 > 1).
         // AAA: entry bar 2 open=120, exit bar 3 close=130 -> 130/120-1.
-        expect(h.topRawPnlPositive.events).to.equal(1);
-        expect(h.topRawPnlPositive.topMean).to.be.closeTo(130 / 120 - 1, 1e-9);
-        expect(h.topRawPnlPositiveByAsset.map((x) => x.asset)).to.deep.equal(["AAA"]);
-        expect(h.topRawPnlPositiveDominantAsset).to.equal("AAA");
-        expect(h.topRawPnlPositiveExDominant.events).to.equal(0);
-        // TOP_MEAN_PNL_POS ties AAA (mean 1.0) vs CCC (mean 1.0) -> digest
+        expect(h.topRawProfit.events).to.equal(1);
+        expect(h.topRawProfit.topMean).to.be.closeTo(130 / 120 - 1, 1e-9);
+        expect(h.topRawProfitByAsset.map((x) => x.asset)).to.deep.equal(["AAA"]);
+        expect(h.topRawProfitDominantAsset).to.equal("AAA");
+        expect(h.topRawProfitExDominant.events).to.equal(0);
+        // TOP_MEAN_PROFIT ties AAA (mean 1.0) vs CCC (mean 1.0) -> digest
         // decides, but exactly one selection is recorded per event.
-        expect(h.topMeanPnlPositive.events).to.equal(1);
-        expect(h.topMeanPnlPositiveByAsset).to.have.length(1);
+        expect(h.topMeanProfit.events).to.equal(1);
+        expect(h.topMeanProfitByAsset).to.have.length(1);
         // Scalar detail rows exist for both gated arms (Show OPEN_SCORE
-        // Details): pool is the pnl-gated {AAA, CCC}, direction is long.
-        const rawPnlDetail = result.eventDetails?.find((row) => row.selector === "TOP_RAW_PNL_POS");
+        // Details): pool is the profit-gated {AAA, CCC}, direction is long.
+        const rawPnlDetail = result.eventDetails?.find((row) => row.selector === "TOP_RAW_PROFIT");
         expect(rawPnlDetail?.asset).to.equal("AAA");
         expect(rawPnlDetail?.direction).to.equal("long");
         expect(rawPnlDetail?.eligibleCandidates).to.equal(2);
         expect(rawPnlDetail?.selectedReturn).to.be.closeTo(130 / 120 - 1, 1e-9);
-        expect(result.eventDetails?.some((row) => row.selector === "TOP_MEAN_PNL_POS")).to.equal(true);
+        expect(result.eventDetails?.some((row) => row.selector === "TOP_MEAN_PROFIT")).to.equal(true);
         // Report carries both arms + breakdowns + exclusions.
         const report = result.reportLines.join("\n");
-        expect(report).to.include("TOP_RAW_PNL_POS");
-        expect(report).to.include("RAW_PNL_POS_EX_AAA");
-        expect(report).to.include("TOP_MEAN_PNL_POS");
-        expect(report).to.include("MEAN_PNL_POS_EX_");
-        expect(report).to.include("TOP_RAW_PNL_POS selected assets = ");
-        expect(report).to.include("TOP_MEAN_PNL_POS selected assets = ");
-        expect(report).to.include("TOP_RAW_PNL_POS=raw score counted only from pairs whose pair backtest netted >0");
+        expect(report).to.include("TOP_RAW_PROFIT");
+        expect(report).to.include("RAW_PROFIT_EX_AAA");
+        expect(report).to.include("TOP_MEAN_PROFIT");
+        expect(report).to.include("MEAN_PROFIT_EX_");
+        expect(report).to.include("TOP_RAW_PROFIT selected assets = ");
+        expect(report).to.include("TOP_MEAN_PROFIT selected assets = ");
+        expect(report).to.include("TOP_RAW_PROFIT=raw score counted only from pairs whose pair backtest netted >0");
     });
 
-    it("losing pairs' votes never reach the pnl-gated pool (no zero-fill)", async () => {
+    it("losing pairs' votes never reach the profit-gated pool (no zero-fill)", async () => {
         // AAA's two votes both come from losing pairs; BBB's single vote from
         // a winner. The unfiltered pool is {AAA(2), BBB(1)} so TOP_RAW fires,
-        // but the pnl-gated pool is {BBB} (< 2) -> both gated arms are empty,
+        // but the profit-gated pool is {BBB} (< 2) -> both gated arms are empty,
         // not zero-filled.
         const pairs = [
             makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)], -1),
@@ -575,13 +536,13 @@ describe("batch-open-score-usd-replay-engine", () => {
         );
         const h = result.horizons[0]!;
         expect(h.topRaw.events).to.equal(1);
-        expect(h.topRawPnlPositive.events).to.equal(0);
-        expect(h.topMeanPnlPositive.events).to.equal(0);
-        expect(h.topRawPnlPositiveDominantAsset).to.equal(null);
-        expect(h.topMeanPnlPositiveDominantAsset).to.equal(null);
+        expect(h.topRawProfit.events).to.equal(0);
+        expect(h.topMeanProfit.events).to.equal(0);
+        expect(h.topRawProfitDominantAsset).to.equal(null);
+        expect(h.topMeanProfitDominantAsset).to.equal(null);
         const report = result.reportLines.join("\n");
-        expect(report).to.include("TOP_RAW_PNL_POS ");
-        expect(report).to.include("TOP_MEAN_PNL_POS ");
+        expect(report).to.include("TOP_RAW_PROFIT ");
+        expect(report).to.include("TOP_MEAN_PROFIT ");
     });
 
     it("reports coverage controls that separate score edge from pair-degree concentration", async () => {
@@ -634,7 +595,7 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(horizon.topMeanVsRaw.positiveBlocks).to.equal(0);
         expect(horizon.topMeanVsRaw.totalBlocks).to.equal(1);
         expect(horizon.maxActive.topMean).to.be.closeTo(0.10, 1e-9);
-        expect(horizon.maxStatic.topMean).to.be.closeTo(0.40, 1e-9);
+        expect(horizon.maxRetained.topMean).to.be.closeTo(0.40, 1e-9);
         expect(horizon.rawAdjustedAgreement).to.deep.equal({ events: 1, sameSelection: 0, rate: 0 });
         expect(horizon.dominantAsset).to.equal("AAA");
         expect(horizon.topRawExDominant.events).to.equal(0);
@@ -647,56 +608,6 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(result.reportLines.join("\n")).to.include("controls | TOP_MEAN=raw/activePairs");
         expect(result.reportLines.join("\n")).to.include("TOP_MEAN_VS_RAW");
         expect(result.reportLines.join("\n")).to.include("TOP_MEAN_VS_RAW_WF deltaByBlock=[-5.00%]");
-    });
-
-    it("TOP_MEAN_TREND uses the prior target close and active-pair tie-break", async () => {
-        const decision = T0 + 200_000;
-        const pairs = [
-            ...Array.from({ length: 3 }, (_, i) =>
-                makePair("AAA", `AX${i}`, [makeTrade("long", decision, null)])),
-            ...Array.from({ length: 2 }, (_, i) =>
-                makePair("BBB", `BX${i}`, [makeTrade("long", decision, null)])),
-            makePair("CCC", "CX0", [makeTrade("long", decision, null)]),
-        ];
-        const targets = [
-            // AAA is below EMA200 on the last known bar, then gaps sharply on
-            // the entry bar. It must remain excluded despite the future jump.
-            makeTarget("AAA", 205, (i) => i <= 200 ? 200 - i * 0.5 : i === 201 ? 300 : 600),
-            // BBB and CCC are both above EMA200 and have equal TOP_MEAN=1.
-            // BBB has more active pairs, so it must win the first tie-break.
-            makeTarget("BBB", 205, (i) => i <= 200 ? 100 + i * 0.1 : i === 201 ? 120 : 132),
-            makeTarget("CCC", 205, (i) => i <= 201 ? 100 + i * 0.1 : 120.1),
-        ];
-        const result = await runOpenScoreUsdReplay(
-            () => fromArray(pairs),
-            () => fromArray(targets),
-            {
-                horizons: [2],
-                slippageRate: 0,
-                commissionRate: 0,
-                blockCount: 1,
-                submittedDegreeByAsset: { AAA: 3, BBB: 2, CCC: 99 },
-            },
-        );
-        const h = result.horizons[0]!;
-        expect(h.topMeanTrend.events).to.equal(1);
-        expect(h.topMeanTrend.topMean).to.be.closeTo(0.10, 1e-9);
-        expect(h.topMeanTrend.randomMean).to.be.closeTo(0, 1e-9);
-        expect(h.topMeanTrendByAsset.map((x) => x.asset)).to.deep.equal(["BBB"]);
-        expect(h.pnl.topMeanTrendPortfolio.trades).to.equal(1);
-        expect(result.reportLines.join("\n")).to.include("TOP_MEAN_TREND selected assets");
-        expect(result.latestSelections?.regime).to.equal("bullish");
-        expect(result.latestSelections?.ema200Breadth).to.be.closeTo(2 / 3, 1e-9);
-        const latest = new Map(result.latestSelections?.selections.map((selection) => [
-            selection.selector,
-            selection,
-        ]));
-        expect(latest.get("TOP_RAW")?.asset).to.equal("AAA");
-        expect(latest.get("TOP_MEAN")?.reason).to.equal("tied");
-        expect(latest.get("TOP_MEAN")?.tiedAssets).to.deep.equal(["AAA", "BBB", "CCC"]);
-        expect(latest.get("TOP_MEAN_TREND")?.asset).to.equal("BBB");
-        expect(latest.get("MAX_ACTIVE")?.asset).to.equal("AAA");
-        expect(latest.get("MAX_SUBMITTED")?.asset).to.equal("CCC");
     });
 
     it("labels zero-event horizons as unusable even when all datasets loaded", async () => {
@@ -893,83 +804,6 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(result.degree.max).to.equal(1);
     });
 
-    it("LOSS_VETO skips the third same-asset pick after two matured losses", async () => {
-        const fixture = makeTakeSkipFixture([-0.10, -0.10, -0.20]);
-        const result = await runOpenScoreUsdReplay(
-            () => fromArray(fixture.pairs),
-            () => fromArray(fixture.targets),
-            { horizons: [2], slippageRate: 0, commissionRate: 0 },
-        );
-        const horizon = result.horizons[0]!;
-        expect(result.eligibleEvents).to.equal(3);
-        // The existing TOP_MEAN series is unchanged and remains the ungated
-        // incumbent series used by both new arms.
-        expect(horizon.topMean.events).to.equal(3);
-        expect(horizon.topMean.topMean).to.be.closeTo(-0.40 / 3, 1e-9);
-        // Regression checks for the pre-existing selector outputs on this same
-        // fixture: adding the gates must not rewrite any incumbent arm.
-        expect(horizon.topRaw.topMean).to.be.closeTo(-0.40 / 3, 1e-9);
-        expect(horizon.topAdjusted.topMean).to.be.closeTo(-0.40 / 3, 1e-9);
-        expect(horizon.maxActive.topMean).to.be.closeTo(0, 1e-9);
-        expect(horizon.lossVeto.events).to.equal(horizon.topMean.events);
-        expect(horizon.lossVeto.gatedMean).to.be.closeTo(-0.20 / 3, 1e-9);
-        expect(horizon.lossVeto.allMean).to.be.closeTo(-0.40 / 3, 1e-9);
-        expect(horizon.lossVeto.skipValue).to.be.closeTo(-0.20, 1e-9);
-        expect(horizon.lossVeto.positiveBlocks).to.equal(1);
-        expect(horizon.lossVeto.totalBlocks).to.equal(10);
-
-        const lines = result.reportLines;
-        const topMeanLine = lines.findIndex((line) => line.startsWith("TOP_MEAN "));
-        expect(topMeanLine).to.be.greaterThanOrEqual(0);
-        expect(lines[topMeanLine + 1]).to.equal(
-            "LOSS_VETO    n=3 top=-6.67% all=-13.33% skip=-20.00pp +blocks=1/10",
-        );
-        expect(lines[topMeanLine + 2]).to.match(
-            /^REGIME_FLOOR n=3 top=-13\.33% all=-13\.33% skip=\+0\.00pp \+blocks=0\/10$/,
-        );
-    });
-
-    it("REGIME_FLOOR skips events after ten completed negative incumbent returns", async () => {
-        const fixture = makeTakeSkipFixture(Array.from({ length: 12 }, () => -0.10));
-        const result = await runOpenScoreUsdReplay(
-            () => fromArray(fixture.pairs),
-            () => fromArray(fixture.targets),
-            { horizons: [2], slippageRate: 0, commissionRate: 0 },
-        );
-        const horizon = result.horizons[0]!;
-        expect(result.eligibleEvents).to.equal(12);
-        expect(horizon.topMean.topMean).to.be.closeTo(-0.10, 1e-9);
-        expect(horizon.regimeFloor.events).to.equal(12);
-        // Events 1..10 are taken; events 11..12 see ten completed losses and
-        // are zeroed. The last two positive deltas occupy the final fixed
-        // chronological block, proving the /10 partition is used.
-        expect(horizon.regimeFloor.gatedMean).to.be.closeTo(-1.00 / 12, 1e-9);
-        expect(horizon.regimeFloor.allMean).to.be.closeTo(-0.10, 1e-9);
-        expect(horizon.regimeFloor.skipValue).to.be.closeTo(-0.20, 1e-9);
-        expect(horizon.regimeFloor.positiveBlocks).to.equal(1);
-        expect(horizon.regimeFloor.totalBlocks).to.equal(10);
-        expect(result.reportLines.join("\n")).to.include(
-            "REGIME_FLOOR n=12 top=-8.33% all=-10.00% skip=-20.00pp +blocks=1/10",
-        );
-    });
-
-    it("keeps a valid incumbent in the gate cohort when another positive is missing", async () => {
-        const fixture = makeTakeSkipFixture([-0.10]);
-        const result = await runOpenScoreUsdReplay(
-            () => fromArray(fixture.pairs),
-            () => fromArray([fixture.targets[0]!]),
-            { horizons: [2], slippageRate: 0, commissionRate: 0 },
-        );
-        const horizon = result.horizons[0]!;
-        // The ordinary comparison rejects the event because BBB has no target,
-        // but the selected AAA incumbent is already a complete outcome and is
-        // therefore part of both deterministic gate series.
-        expect(horizon.topMean.events).to.equal(0);
-        expect(horizon.lossVeto.events).to.equal(1);
-        expect(horizon.regimeFloor.events).to.equal(1);
-        expect(horizon.lossVeto.allMean).to.be.closeTo(-0.10, 1e-9);
-        expect(horizon.regimeFloor.allMean).to.be.closeTo(-0.10, 1e-9);
-    });
 });
 
 // ============================================================================

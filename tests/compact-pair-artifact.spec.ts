@@ -128,7 +128,7 @@ async function runTests(): Promise<void> {
         assert.equal(yielded[0].symbol, "AAPL•+MSFT•");
         assert.equal(yielded[0].result.trades.length, 1);
         // The adapter must carry netProfit through: the pnl-gated OPEN_SCORE
-        // arms (TOP_RAW_PNL_POS / TOP_MEAN_PNL_POS) read it off result.
+        // arms (TOP_RAW_PROFIT / TOP_MEAN_PROFIT) read it off result.
         assert.equal(yielded[0].result.netProfit, 123.45);
 
         // 5. Startup Interrupted Manifest Reconciliation

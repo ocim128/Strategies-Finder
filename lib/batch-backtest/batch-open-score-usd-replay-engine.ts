@@ -21,7 +21,7 @@
  * adjustedScore[a]   = rawScore / sqrt(activePairCount)  (coverage-adjusted,
  *                      NOT a statistically calibrated z-score)
  *
- * PNL-gated variants (TOP_RAW_PNL_POS / TOP_MEAN_PNL_POS): the same raw/mean
+ * Profit-gated variants (TOP_RAW_PROFIT / TOP_MEAN_PROFIT): the same raw/mean
  * ranking computed from deltas of pairs whose pair backtest netProfit was
  * strictly positive. A pair's full-window P&L is only known after the fact,
  * so this is a research-only look-ahead filter, not a live-selectable signal.
@@ -75,20 +75,6 @@ export interface ReplayComparison {
     ciLower: number | null;
     ciUpper: number | null;
     /** Count of blocks whose mean delta is positive. */
-    positiveBlocks: number;
-    totalBlocks: number;
-}
-
-export interface TakeSkipComparison {
-    /** All events in the TOP_MEAN series, including skipped events. */
-    events: number;
-    /** Mean return after the take/skip gate; skipped events contribute zero. */
-    gatedMean: number | null;
-    /** Mean return of the ungated TOP_MEAN series. */
-    allMean: number | null;
-    /** Ungated sum minus gated sum, expressed as a decimal return. */
-    skipValue: number;
-    /** Count of positive means in the fixed ten chronological delta blocks. */
     positiveBlocks: number;
     totalBlocks: number;
 }
@@ -165,10 +151,8 @@ export interface AssetSelectionSummary {
 export type OpenScoreUsdLatestSelectorName =
     | "TOP_RAW"
     | "TOP_MEAN"
-    | "TOP_MEAN_RAW_UNIQUE_V1"
-    | "TOP_MEAN_TREND"
-    | "MAX_ACTIVE"
-    | "MAX_SUBMITTED";
+    | "TOP_MEAN_RAW_UNIQUE"
+    | "MAX_ACTIVE";
 
 export interface OpenScoreUsdLatestSelection {
     selector: OpenScoreUsdLatestSelectorName;
@@ -187,10 +171,6 @@ export interface OpenScoreUsdLatestSelection {
 export interface OpenScoreUsdLatestSelections {
     /** Latest replay decision event represented by these selectors. */
     decisionTime: number;
-    ema200ObservedAssets: number;
-    ema200AssetsAbove: number;
-    ema200Breadth: number | null;
-    regime: "bullish" | "bearish" | "unavailable";
     selections: OpenScoreUsdLatestSelection[];
 }
 
@@ -198,12 +178,10 @@ export type OpenScoreUsdEventDetailSelector =
     | "TOP_RAW"
     | "TOP_ADJUSTED"
     | "TOP_MEAN"
-    | "TOP_MEAN_RAW_UNIQUE_V1"
-    | "TOP_MEAN_TREND"
-    | "TOP_RAW_PNL_POS"
-    | "TOP_MEAN_PNL_POS"
+    | "TOP_MEAN_RAW_UNIQUE"
+    | "TOP_RAW_PROFIT"
+    | "TOP_MEAN_PROFIT"
     | "MAX_ACTIVE"
-    | "MAX_SUBMITTED"
     | "MAX_RETAINED";
 
 export interface OpenScoreUsdEventDetail {
@@ -285,74 +263,48 @@ export interface OpenScoreUsdReplayResult {
         topAdjusted: ReplayComparison;
         /** Highest rawScore / activePairCount (mean signed vote). */
         topMean: ReplayComparison;
-        /** TOP_MEAN with events vetoed after two recent losses on the selected asset. */
-        lossVeto: TakeSkipComparison;
-        /** TOP_MEAN with events vetoed while the last ten completed returns are negative. */
-        regimeFloor: TakeSkipComparison;
         /**
-         * TOP_MEAN_RAW_UNIQUE_V1: form the TOP_MEAN tied set, then select its
+         * TOP_MEAN_RAW_UNIQUE: form the TOP_MEAN tied set, then select its
          * unique raw-score maximum. Residual raw ties are skipped. The control
          * is the mean return of that TOP_MEAN tied set, including the selected
          * asset, matching the frozen walk-forward research contract.
          */
-        topMeanRawUniqueV1: ReplayComparison;
-        /** Per-asset breakdown for TOP_MEAN_RAW_UNIQUE_V1. */
-        topMeanRawUniqueV1ByAsset: AssetSelectionSummary[];
-        /** TOP_MEAN_RAW_UNIQUE_V1 after removing its dominant asset. */
-        topMeanRawUniqueV1ExDominant: ReplayComparison;
-        /** Asset excluded from TOP_MEAN_RAW_UNIQUE_V1_EX_*. */
-        topMeanRawUniqueV1DominantAsset: string | null;
+        topMeanRawUnique: ReplayComparison;
+        /** Per-asset breakdown for TOP_MEAN_RAW_UNIQUE. */
+        topMeanRawUniqueByAsset: AssetSelectionSummary[];
+        /** TOP_MEAN_RAW_UNIQUE after removing its dominant asset. */
+        topMeanRawUniqueExDominant: ReplayComparison;
+        /** Asset excluded from TOP_MEAN_RAW_UNIQUE_EX_*. */
+        topMeanRawUniqueDominantAsset: string | null;
         /**
-         * PNL-gated TOP_RAW: identical raw-score ranking, but only pairs whose
+         * Profit-gated TOP_RAW: identical raw-score ranking, but only pairs whose
          * pair backtest netProfit was strictly positive contribute votes.
          * Research-only look-ahead filter (a pair's full-window P&L is not
          * known at decision time). Fires only on events that form a view
-         * (>= 2 unfiltered positives) AND have >= 2 pnl-gated positives.
+         * (>= 2 unfiltered positives) AND have >= 2 profit-gated positives.
          */
-        topRawPnlPositive: ReplayComparison;
-        /** Per-asset breakdown for the pnl-gated TOP_RAW selector. */
-        topRawPnlPositiveByAsset: AssetSelectionSummary[];
-        /** PNL-gated TOP_RAW after removing its most-frequently-selected asset. */
-        topRawPnlPositiveExDominant: ReplayComparison;
-        /** Asset excluded from {@link topRawPnlPositiveExDominant}. */
-        topRawPnlPositiveDominantAsset: string | null;
-        /** PNL-gated TOP_MEAN: filtered raw score / open pnl-positive pair count. */
-        topMeanPnlPositive: ReplayComparison;
-        /** Per-asset breakdown for the pnl-gated TOP_MEAN selector. */
-        topMeanPnlPositiveByAsset: AssetSelectionSummary[];
-        /** PNL-gated TOP_MEAN after removing its most-frequently-selected asset. */
-        topMeanPnlPositiveExDominant: ReplayComparison;
-        /** Asset excluded from {@link topMeanPnlPositiveExDominant}. */
-        topMeanPnlPositiveDominantAsset: string | null;
-        /**
-         * Long-side trend filter: require target-universe EMA200 breadth above
-         * 50%, keep positive-score assets above their own target EMA200, then
-         * maximize TOP_MEAN and use active-pair count as the first tie-break.
-         */
-        topMeanTrend: ReplayComparison;
-        /** Per-asset breakdown for TOP_MEAN_TREND. */
-        topMeanTrendByAsset: AssetSelectionSummary[];
-        /** TOP_MEAN_TREND after removing its most-frequently-selected asset. */
-        topMeanTrendExDominant: ReplayComparison;
-        /** Asset excluded from {@link topMeanTrendExDominant}. */
-        topMeanTrendDominantAsset: string | null;
+        topRawProfit: ReplayComparison;
+        /** Per-asset breakdown for the profit-gated TOP_RAW selector. */
+        topRawProfitByAsset: AssetSelectionSummary[];
+        /** Profit-gated TOP_RAW after removing its most-frequently-selected asset. */
+        topRawProfitExDominant: ReplayComparison;
+        /** Asset excluded from {@link topRawProfitExDominant}. */
+        topRawProfitDominantAsset: string | null;
+        /** Profit-gated TOP_MEAN: filtered raw score / open profitable-pair count. */
+        topMeanProfit: ReplayComparison;
+        /** Per-asset breakdown for the profit-gated TOP_MEAN selector. */
+        topMeanProfitByAsset: AssetSelectionSummary[];
+        /** Profit-gated TOP_MEAN after removing its most-frequently-selected asset. */
+        topMeanProfitExDominant: ReplayComparison;
+        /** Asset excluded from {@link topMeanProfitExDominant}. */
+        topMeanProfitDominantAsset: string | null;
         /** Same-event return difference: TOP_MEAN versus TOP_RAW. */
         topMeanVsRaw: ReplayComparison;
         /** TOP_MEAN rank 1 versus rank 2 among positive candidates. */
         topMeanVsRank2: ReplayComparison;
         /** Control: positive candidate covered by the most currently-open pairs. */
         maxActive: ReplayComparison;
-        /** Control: positive candidate with the highest submitted pair-list degree. */
-        maxStatic: ReplayComparison;
-        /**
-         * Phase 3 MAX_ACTIVE: positive candidate with the highest SUBMITTED
-         * pair-list degree (the canonical Batch request). Same selector as
-         * {@link maxStatic} (renamed per the plan); kept alongside for
-         * backward compat with existing tests.
-         */
-        maxSubmitted: ReplayComparison;
-        /**
-         * Phase 3 MAX_ACTIVE: positive candidate with the highest RETAINED
+        /** Control: positive candidate with the highest RETAINED
          * artifact degree (computed from successfully loaded artifacts,
          * counting both legs of every canonical artifact regardless of trades).
          */
@@ -374,13 +326,6 @@ export interface OpenScoreUsdReplayResult {
         maxActiveByAsset: AssetSelectionSummary[];
         dominantAsset: string | null;
         rawAdjustedAgreement: SelectorAgreement;
-        /**
-         * Phase 3 MAX_ACTIVE: same-event return difference between MAX_ACTIVE
-         * and MAX_SUBMITTED, only on events where the two selectors pick
-         * different assets. `events === 0` means the selectors never disagreed
-         * on this horizon.
-         */
-        activeVsSubmitted: ReplayComparison;
         /** Same-event return difference: MAX_ACTIVE vs MAX_RETAINED. */
         activeVsRetained: ReplayComparison;
         /** Same-event return difference: MAX_ACTIVE vs TOP_RAW. */
@@ -423,10 +368,6 @@ export interface OpenScoreUsdReplayResult {
             random: SelectorPnlSummary;
             /** Fixed-$1,000 TOP_MEAN trades, skipping ties and same-asset overlap. */
             topMeanPortfolio: TopMeanPortfolioSummary;
-            /** Overlapping event-basket P&L for TOP_MEAN_TREND. */
-            topMeanTrend: SelectorPnlSummary;
-            /** Fixed-$1,000 executable portfolio for TOP_MEAN_TREND. */
-            topMeanTrendPortfolio: TopMeanPortfolioSummary;
         };
         /**
          * Conditional-split arms: TOP_RAW's pick routed into one of two
@@ -496,7 +437,7 @@ export interface OpenScoreUsdReplayResult {
 }
 
 /** Phase 3 MAX_ACTIVE selector labels for tie/agreement diagnostics. */
-export type SelectorName = "RAW" | "ADJUSTED" | "MEAN" | "ACTIVE" | "SUBMITTED" | "RETAINED";
+export type SelectorName = "RAW" | "ADJUSTED" | "MEAN" | "ACTIVE" | "RETAINED";
 
 export interface OpenScoreUsdTarget {
     asset: string;
@@ -522,13 +463,6 @@ export interface RunOpenScoreUsdReplayOptions {
     blockCount?: number;
     /** Deterministic bootstrap resamples. Default 2000. */
     bootstrapSamples?: number;
-    /**
-     * Phase 3 MAX_ACTIVE: submitted scoring-asset degree map from the
-     * canonical Batch request. Drives the MAX_SUBMITTED selector. When
-     * absent, MAX_SUBMITTED mirrors MAX_STATIC (which counts every leg of
-     * every artifact as submitted) so old callers keep working.
-     */
-    submittedDegreeByAsset?: Record<string, number>;
     /** Include scalar per-event selector rows for the coordinator details UI. */
     includeEventDetails?: boolean;
     /** Phase 0b: emit one pool snapshot per decision event and catalog asset. */
@@ -586,25 +520,26 @@ function meanOrNull(values: readonly number[]): number | null {
     return finiteOrNull(s / values.length);
 }
 
-const TOP_MEAN_TREND_EMA_PERIOD = 200;
+const POOL_SNAPSHOT_EMA_PERIOD = 200;
 
 /**
- * Causal target-asset EMA used by TOP_MEAN_TREND. Values before the SMA seed
- * are NaN, so a candidate cannot qualify without 200 fully known closes.
+ * Causal target-asset EMA used by the Phase 0b pool-snapshot diagnostics
+ * (ema200Above / breadth / regime). Values before the SMA seed are NaN, so an
+ * asset cannot qualify without 200 fully known closes.
  */
 function buildEma200(data: readonly OHLCVData[]): number[] {
     const ema = new Array<number>(data.length).fill(Number.NaN);
-    if (data.length < TOP_MEAN_TREND_EMA_PERIOD) return ema;
+    if (data.length < POOL_SNAPSHOT_EMA_PERIOD) return ema;
     let seed = 0;
-    for (let i = 0; i < TOP_MEAN_TREND_EMA_PERIOD; i += 1) {
+    for (let i = 0; i < POOL_SNAPSHOT_EMA_PERIOD; i += 1) {
         const close = data[i]!.close;
         if (!Number.isFinite(close) || close <= 0) return ema;
         seed += close;
     }
-    const seedIndex = TOP_MEAN_TREND_EMA_PERIOD - 1;
-    ema[seedIndex] = seed / TOP_MEAN_TREND_EMA_PERIOD;
-    const alpha = 2 / (TOP_MEAN_TREND_EMA_PERIOD + 1);
-    for (let i = TOP_MEAN_TREND_EMA_PERIOD; i < data.length; i += 1) {
+    const seedIndex = POOL_SNAPSHOT_EMA_PERIOD - 1;
+    ema[seedIndex] = seed / POOL_SNAPSHOT_EMA_PERIOD;
+    const alpha = 2 / (POOL_SNAPSHOT_EMA_PERIOD + 1);
+    for (let i = POOL_SNAPSHOT_EMA_PERIOD; i < data.length; i += 1) {
         const close = data[i]!.close;
         if (!Number.isFinite(close) || close <= 0) continue;
         ema[i] = close * alpha + ema[i - 1]! * (1 - alpha);
@@ -959,12 +894,12 @@ interface DecisionEvent {
     rawScore: number[];
     activePairCount: number[];
     /**
-     * PNL-gated snapshots: the same accumulation restricted to deltas from
+     * Profit-gated snapshots: the same accumulation restricted to deltas from
      * pairs whose pair backtest netProfit was strictly positive. Drives the
-     * TOP_RAW_PNL_POS / TOP_MEAN_PNL_POS arms only.
+     * TOP_RAW_PROFIT / TOP_MEAN_PROFIT arms only.
      */
-    rawScorePnlPositive: number[];
-    activePairCountPnlPositive: number[];
+    rawScoreProfit: number[];
+    activePairCountProfit: number[];
 }
 
 // ============================================================================
@@ -1027,20 +962,10 @@ export async function runOpenScoreUsdReplay(
     const retainedDegree = new Map<string, number>();
     /** @deprecated alias for {@link retainedDegree}; use that name in new code. */
     const staticDegree = retainedDegree;
-    // Phase 3 MAX_ACTIVE: SUBMITTED degree comes from the canonical Batch
-    // request (the user's textarea). When absent, fall back to the retained
-    // degree map so MAX_SUBMITTED mirrors MAX_RETAINED for old callers.
-    const submittedDegreeInput = options.submittedDegreeByAsset ?? null;
-    const submittedDegree = new Map<string, number>();
-    if (submittedDegreeInput) {
-        for (const [k, v] of Object.entries(submittedDegreeInput)) {
-            if (Number.isFinite(v) && v >= 0) submittedDegree.set(k, v);
-        }
-    }
     const streams: ScoreDelta[][] = [];
     // Index i describes streams[i]: true when that pair's full backtest
-    // netProfit was strictly positive (drives the PNL-gated arms only).
-    const pnlPositiveStreams: boolean[] = [];
+    // netProfit was strictly positive (drives the Profit-gated arms only).
+    const profitableStreams: boolean[] = [];
     let pairCount = 0;
     let omittedPairs = 0;
     // Cap-tilt coverage counters (docs/open-score-cap-tilt.md): LONG trades
@@ -1167,11 +1092,11 @@ export async function runOpenScoreUsdReplay(
         // Stop / progress from firing during the long sort.
         stream.sort(compareDeltas);
         streams.push(stream);
-        // PNL-gated arms: a pair feeds the filtered accumulators only when its
+        // Profit-gated arms: a pair feeds the filtered accumulators only when its
         // full backtest netted strictly positive. Kept in lockstep with
         // `streams` (index i describes streams[i]).
         const pairNetProfit = artifact.result?.netProfit;
-        pnlPositiveStreams.push(Number.isFinite(pairNetProfit) && pairNetProfit > 0);
+        profitableStreams.push(Number.isFinite(pairNetProfit) && pairNetProfit > 0);
         if (pairCount % 25 === 0) {
             onPhase("scan", `scanned ${pairCount} pairs`, pairCount, 0);
             await yieldLoop();
@@ -1192,11 +1117,11 @@ export async function runOpenScoreUsdReplay(
     onPhase("events", "merging score deltas", 0, totalDeltas);
     const rawScore = new Array<number>(assetCount).fill(0);
     const activePairCount = new Array<number>(assetCount).fill(0);
-    // PNL-gated accumulators: identical bookkeeping, fed only by deltas from
-    // pnl-positive pairs. The TOP_RAW_PNL_POS / TOP_MEAN_PNL_POS arms read
+    // Profit-gated accumulators: identical bookkeeping, fed only by deltas from
+    // profitable pairs. The TOP_RAW_PROFIT / TOP_MEAN_PROFIT arms read
     // these; every other arm is untouched by the filter.
-    const pnlPositiveRawScore = new Array<number>(assetCount).fill(0);
-    const pnlPositivePairCount = new Array<number>(assetCount).fill(0);
+    const profitRawScore = new Array<number>(assetCount).fill(0);
+    const profitPairCount = new Array<number>(assetCount).fill(0);
     const events: DecisionEvent[] = [];
     const sampleFrom = options.sampleFromSec;
     const sampleTo = options.sampleToSec;
@@ -1220,11 +1145,11 @@ export async function runOpenScoreUsdReplay(
             const countDelta = d.isEntry === 1 ? 1 : -1;
             const next = activePairCount[d.assetIndex]! + countDelta;
             activePairCount[d.assetIndex] = next > 0 ? next : 0;
-            // PNL-gated mirror: only deltas from pnl-positive pairs.
-            if (pnlPositiveStreams[heap.lastPoppedStream]!) {
-                pnlPositiveRawScore[d.assetIndex]! += d.delta;
-                const nextPnl = pnlPositivePairCount[d.assetIndex]! + countDelta;
-                pnlPositivePairCount[d.assetIndex] = nextPnl > 0 ? nextPnl : 0;
+            // Profit-gated mirror: only deltas from profitable pairs.
+            if (profitableStreams[heap.lastPoppedStream]!) {
+                profitRawScore[d.assetIndex]! += d.delta;
+                const nextPnl = profitPairCount[d.assetIndex]! + countDelta;
+                profitPairCount[d.assetIndex] = nextPnl > 0 ? nextPnl : 0;
             }
             if (d.isEntry === 1) hasEntry = true;
             popped += 1;
@@ -1244,8 +1169,8 @@ export async function runOpenScoreUsdReplay(
                     timeSec: t,
                     rawScore: [...rawScore],
                     activePairCount: [...activePairCount],
-                    rawScorePnlPositive: [...pnlPositiveRawScore],
-                    activePairCountPnlPositive: [...pnlPositivePairCount],
+                    rawScoreProfit: [...profitRawScore],
+                    activePairCountProfit: [...profitPairCount],
                 });
             }
         }
@@ -1265,33 +1190,30 @@ export async function runOpenScoreUsdReplay(
         mean: number;
         activePairs: number;
         staticPairs: number;     // RETAINED artifact degree (legacy name; counts every loaded artifact leg).
-        submittedPairs: number;  // SUBMITTED degree from the canonical Batch request.
     }
     interface EventView {
         timeSec: number;
         positives: Candidate[];
-        negatives: Candidate[];
         /**
-         * PNL-gated positives: assets whose score, counted only from
-         * pnl-positive pairs, is strictly positive. A candidate here need not
+         * Profit-gated positives: assets whose score, counted only from
+         * profitable pairs, is strictly positive. A candidate here need not
          * be in `positives` (offsetting losing-pair votes can zero its
          * unfiltered score).
          */
-        pnlPositives: Candidate[];
+        profitPositives: Candidate[];
         topRaw: number;      // assetIndex
         topAdjusted: number; // assetIndex
         topMean: number;     // assetIndex
         /** Unique raw maximum within the TOP_MEAN tied set, or -1 on a residual raw tie. */
-        topMeanRawUniqueV1: number;
+        topMeanRawUnique: number;
         /** TOP_MEAN tied set used as the exact research control pool. */
-        topMeanRawUniqueV1Pool: Candidate[];
-        /** PNL-gated picks, or -1 when the pnl-gated pool has < 2 members. */
-        topRawPnlPositive: number;  // assetIndex
-        topMeanPnlPositive: number; // assetIndex
+        topMeanRawUniquePool: Candidate[];
+        /** Profit-gated picks, or -1 when the profit-gated pool has < 2 members. */
+        topRawProfit: number;  // assetIndex
+        topMeanProfit: number; // assetIndex
         topMeanRank2: number; // assetIndex
         maxActive: number;   // assetIndex
-        maxStatic: number;   // assetIndex (alias for maxRetained — legacy)
-        maxSubmitted: number; // assetIndex (Phase 3: from server's submittedDegreeByAsset)
+        maxStatic: number;   // assetIndex (retained artifact degree; legacy name feeding maxRetained)
         /** Max active-pair count across positive candidates at this event. */
         maxActivePairs: number;
         /**
@@ -1326,8 +1248,7 @@ export async function runOpenScoreUsdReplay(
     for (let e = 0; e < events.length; e += 1) {
         const ev = events[e]!;
         const positives: Candidate[] = [];
-        const negatives: Candidate[] = [];
-        const pnlPositives: Candidate[] = [];
+        const profitPositives: Candidate[] = [];
         let maxActivePairs = 0;
         for (let a = 0; a < assetCount; a += 1) {
             const raw = ev.rawScore[a]!;
@@ -1339,28 +1260,22 @@ export async function runOpenScoreUsdReplay(
                 mean: cnt > 0 ? raw / cnt : raw,
                 activePairs: cnt,
                 staticPairs: retainedDegree.get(assetNames[a]!) ?? 0,
-                submittedPairs: submittedDegree.size > 0
-                    ? (submittedDegree.get(assetNames[a]!) ?? 0)
-                    : (retainedDegree.get(assetNames[a]!) ?? 0),
             };
             if (raw > 0) {
                 if (cnt > maxActivePairs) maxActivePairs = cnt;
                 positives.push(candidate);
-            } else if (raw < 0) {
-                negatives.push(candidate);
             }
-            // PNL-gated pool: same shape, filtered scores only.
-            const rawPnl = ev.rawScorePnlPositive[a]!;
+            // Profit-gated pool: same shape, filtered scores only.
+            const rawPnl = ev.rawScoreProfit[a]!;
             if (rawPnl > 0) {
-                const cntPnl = ev.activePairCountPnlPositive[a]!;
-                pnlPositives.push({
+                const cntPnl = ev.activePairCountProfit[a]!;
+                profitPositives.push({
                     assetIndex: a,
                     raw: rawPnl,
                     adjusted: cntPnl > 0 ? rawPnl / Math.sqrt(cntPnl) : rawPnl,
                     mean: cntPnl > 0 ? rawPnl / cntPnl : rawPnl,
                     activePairs: cntPnl,
                     staticPairs: candidate.staticPairs,
-                    submittedPairs: candidate.submittedPairs,
                 });
             }
         }
@@ -1373,7 +1288,7 @@ export async function runOpenScoreUsdReplay(
             // asset-name order keeps execution deterministic.
             const eventTimeSec = ev.timeSec;
             const digestFor = (c: Candidate): string => tieBreakDigest(eventTimeSec, assetNames[c.assetIndex]!);
-            const pickMax = (candidates: readonly Candidate[], key: "raw" | "adjusted" | "mean" | "activePairs" | "staticPairs" | "submittedPairs"): { winner: Candidate; tiedCount: number } => {
+            const pickMax = (candidates: readonly Candidate[], key: "raw" | "adjusted" | "mean" | "activePairs" | "staticPairs"): { winner: Candidate; tiedCount: number } => {
                 // First pass: find the max value.
                 let maxValue = candidates[0]![key]!;
                 for (let i = 1; i < candidates.length; i += 1) {
@@ -1415,14 +1330,14 @@ export async function runOpenScoreUsdReplay(
             const topRaw = pickMax(positives, "raw");
             const topAdjusted = pickMax(positives, "adjusted");
             const topMean = pickMax(positives, "mean");
-            const topMeanRawUniqueV1Pool = positives.filter((candidate) => candidate.mean === topMean.winner.mean);
-            let topMeanRawUniqueV1 = -1;
+            const topMeanRawUniquePool = positives.filter((candidate) => candidate.mean === topMean.winner.mean);
+            let topMeanRawUnique = -1;
             let maxRawInTopMeanTie = -Infinity;
-            for (const candidate of topMeanRawUniqueV1Pool) {
+            for (const candidate of topMeanRawUniquePool) {
                 if (candidate.raw > maxRawInTopMeanTie) maxRawInTopMeanTie = candidate.raw;
             }
-            const topMeanRawMaxRows = topMeanRawUniqueV1Pool.filter((candidate) => candidate.raw === maxRawInTopMeanTie);
-            if (topMeanRawMaxRows.length === 1) topMeanRawUniqueV1 = topMeanRawMaxRows[0]!.assetIndex;
+            const topMeanRawMaxRows = topMeanRawUniquePool.filter((candidate) => candidate.raw === maxRawInTopMeanTie);
+            if (topMeanRawMaxRows.length === 1) topMeanRawUnique = topMeanRawMaxRows[0]!.assetIndex;
             const meanRanked = [...positives].sort((a, b) => {
                 if (a.mean !== b.mean) return b.mean - a.mean;
                 const aDigest = digestFor(a);
@@ -1431,10 +1346,9 @@ export async function runOpenScoreUsdReplay(
             });
             const maxActive = pickMax(positives, "activePairs");
             const maxStatic = pickMax(positives, "staticPairs");
-            const maxSubmitted = pickMax(positives, "submittedPairs");
-            // PNL-gated picks: same digest tie-break, own >= 2 pool gate.
-            const topRawPnlPositive = pnlPositives.length >= 2 ? pickMax(pnlPositives, "raw") : null;
-            const topMeanPnlPositive = pnlPositives.length >= 2 ? pickMax(pnlPositives, "mean") : null;
+            // Profit-gated picks: same digest tie-break, own >= 2 pool gate.
+            const topRawProfit = profitPositives.length >= 2 ? pickMax(profitPositives, "raw") : null;
+            const topMeanProfit = profitPositives.length >= 2 ? pickMax(profitPositives, "mean") : null;
             // --- Conditional-split features (Phase 3) -------------------------
             const topRawIdx = topRaw.winner.assetIndex;
             // Cross-sectional HHI of positive raw scores. raw > 0 is guaranteed
@@ -1455,19 +1369,18 @@ export async function runOpenScoreUsdReplay(
             // includes itself.
             currentStreakLength = fresh ? 1 : currentStreakLength + 1;
             views.push({
-                timeSec: ev.timeSec, positives, negatives,
-                pnlPositives,
+                timeSec: ev.timeSec, positives,
+                profitPositives,
                 topRaw: topRawIdx,
                 topAdjusted: topAdjusted.winner.assetIndex,
                 topMean: topMean.winner.assetIndex,
-                topMeanRawUniqueV1,
-                topMeanRawUniqueV1Pool,
-                topRawPnlPositive: topRawPnlPositive?.winner.assetIndex ?? -1,
-                topMeanPnlPositive: topMeanPnlPositive?.winner.assetIndex ?? -1,
+                topMeanRawUnique,
+                topMeanRawUniquePool,
+                topRawProfit: topRawProfit?.winner.assetIndex ?? -1,
+                topMeanProfit: topMeanProfit?.winner.assetIndex ?? -1,
                 topMeanRank2: meanRanked[1]!.assetIndex,
                 maxActive: maxActive.winner.assetIndex,
                 maxStatic: maxStatic.winner.assetIndex,
-                maxSubmitted: maxSubmitted.winner.assetIndex,
                 maxActivePairs,
                 hhi,
                 fresh,
@@ -1477,7 +1390,6 @@ export async function runOpenScoreUsdReplay(
                     ADJUSTED: topAdjusted.tiedCount >= 2 ? 1 : 0,
                     MEAN: topMean.tiedCount >= 2 ? 1 : 0,
                     ACTIVE: maxActive.tiedCount >= 2 ? 1 : 0,
-                    SUBMITTED: maxSubmitted.tiedCount >= 2 ? 1 : 0,
                     RETAINED: maxStatic.tiedCount >= 2 ? 1 : 0,
                 },
             });
@@ -1555,21 +1467,10 @@ export async function runOpenScoreUsdReplay(
             if (!list) { list = []; requestsByAsset.set(c.assetIndex, list); }
             list.push(v);
         }
-        for (const c of views[v]!.negatives) {
-            let list = requestsByAsset.get(c.assetIndex);
-            if (!list) { list = []; requestsByAsset.set(c.assetIndex, list); }
-            // No dedupe needed: each `v` is unique (outer loop counter) and
-            // each candidate's `assetIndex` is unique within a view's
-            // negatives array (the candidate loop above iterates each
-            // assetIndex exactly once). The previous `list.includes(v)` was
-            // O(N²) defensiveness over a uniqueness invariant that already
-            // holds — the positives branch never needed it for the same reason.
-            list.push(v);
-        }
-        // A pnl-gated candidate may have a non-positive unfiltered score
-        // (offsetting losing-pair votes). Add it after the positive/negative
-        // passes so the same view index cannot be appended twice for an asset.
-        for (const c of views[v]!.pnlPositives) {
+        // A profit-gated candidate may have a non-positive unfiltered score
+        // (offsetting losing-pair votes). Add it after the positive pass so
+        // the same view index cannot be appended twice for an asset.
+        for (const c of views[v]!.profitPositives) {
             let list = requestsByAsset.get(c.assetIndex);
             if (!list) { list = []; requestsByAsset.set(c.assetIndex, list); }
             if (list[list.length - 1] !== v) list.push(v);
@@ -1583,19 +1484,11 @@ export async function runOpenScoreUsdReplay(
         long: number[];
         entryTimes: number[];
         exitTimes: number[];
-        aboveEma200: boolean;
-        belowEma200: boolean;
     }> | null> = new Array(views.length).fill(null);
     const missingAssets = new Set<number>();
     const censoredEvents = new Set<number>();
     const noDataEvents = new Set<number>();
     const latestView = views[views.length - 1] ?? null;
-    const latestCandidateAssets = new Set<number>(
-        latestView
-            ? [...latestView.positives, ...latestView.negatives].map((candidate) => candidate.assetIndex)
-            : [],
-    );
-    const latestEma200SideByAsset = new Map<number, "above" | "below">();
 
     let targetsSeen = 0;
     const diagnosticTargetsSeen = diagnosticsEnabled ? new Set<number>() : null;
@@ -1611,18 +1504,8 @@ export async function runOpenScoreUsdReplay(
         targetsSeen += 1;
         if (diagnosticIdx !== undefined) diagnosticTargetsSeen?.add(diagnosticIdx);
         const times = target.data.map((b) => timeToNumber(b.time));
-        const ema200 = buildEma200(target.data);
-        if (latestView && aIdx !== undefined && latestCandidateAssets.has(aIdx)) {
-            const nextBar = firstBarAfter(times, latestView.timeSec);
-            const lastKnownBar = nextBar < 0 ? target.data.length - 1 : nextBar - 1;
-            const close = lastKnownBar >= 0 ? target.data[lastKnownBar]!.close : Number.NaN;
-            const ema = lastKnownBar >= 0 ? ema200[lastKnownBar]! : Number.NaN;
-            if (Number.isFinite(close) && Number.isFinite(ema)) {
-                if (close > ema) latestEma200SideByAsset.set(aIdx, "above");
-                else if (close < ema) latestEma200SideByAsset.set(aIdx, "below");
-            }
-        }
         if (diagnosticIdx !== undefined) {
+            const ema200 = buildEma200(target.data);
             let entryBar = 0;
             for (let eventIdx = 0; eventIdx < events.length; eventIdx += 1) {
                 const event = events[eventIdx]!;
@@ -1712,15 +1595,6 @@ export async function runOpenScoreUsdReplay(
             const longReturns: number[] = [];
             const entryTimes: number[] = [];
             const exitTimes: number[] = [];
-            const trendBar = entryBar - 1;
-            const trendClose = trendBar >= 0 ? target.data[trendBar]!.close : Number.NaN;
-            const trendEma = trendBar >= 0 ? ema200[trendBar]! : Number.NaN;
-            const aboveEma200 = Number.isFinite(trendClose)
-                && Number.isFinite(trendEma)
-                && trendClose > trendEma;
-            const belowEma200 = Number.isFinite(trendClose)
-                && Number.isFinite(trendEma)
-                && trendClose < trendEma;
             for (const h of horizons) {
                 const exitBar = entryBar + h - 1; // h bars forward, close of that bar
                 const entryTime = times[entryBar] ?? Number.NaN;
@@ -1756,8 +1630,6 @@ export async function runOpenScoreUsdReplay(
                 long: longReturns,
                 entryTimes,
                 exitTimes,
-                aboveEma200,
-                belowEma200,
             });
             if (longReturns.some((r) => !Number.isFinite(r))) censoredEvents.add(viewIdx);
         }
@@ -1846,17 +1718,6 @@ export async function runOpenScoreUsdReplay(
     const latestSelections: OpenScoreUsdLatestSelections | null = (() => {
         if (!latestView) return null;
 
-        let ema200AssetsAbove = 0;
-        for (const side of latestEma200SideByAsset.values()) {
-            if (side === "above") ema200AssetsAbove += 1;
-        }
-        const ema200ObservedAssets = latestEma200SideByAsset.size;
-        const ema200Breadth = ema200ObservedAssets > 0
-            ? ema200AssetsAbove / ema200ObservedAssets
-            : null;
-        const hasBreadth = ema200ObservedAssets >= 2;
-        const bullish = hasBreadth && ema200AssetsAbove / ema200ObservedAssets > 0.5;
-
         const pick = (
             selector: OpenScoreUsdLatestSelectorName,
             direction: "long" | "short" | "none",
@@ -1921,23 +1782,13 @@ export async function runOpenScoreUsdReplay(
             };
         };
 
-        const trendPool = bullish
-            ? latestView.positives.filter((candidate) => latestEma200SideByAsset.get(candidate.assetIndex) === "above")
-            : [];
-
         return {
             decisionTime: latestView.timeSec,
-            ema200ObservedAssets,
-            ema200AssetsAbove,
-            ema200Breadth,
-            regime: !hasBreadth ? "unavailable" : bullish ? "bullish" : "bearish",
             selections: [
                 pick("TOP_RAW", "long", latestView.positives, (candidate) => candidate.raw, "max"),
                 pick("TOP_MEAN", "long", latestView.positives, (candidate) => candidate.mean, "max"),
-                pick("TOP_MEAN_RAW_UNIQUE_V1", "long", latestView.positives, (candidate) => candidate.mean, "max", (candidate) => candidate.raw),
-                pick("TOP_MEAN_TREND", "long", trendPool, (candidate) => candidate.mean, "max", (candidate) => candidate.activePairs),
+                pick("TOP_MEAN_RAW_UNIQUE", "long", latestView.positives, (candidate) => candidate.mean, "max", (candidate) => candidate.raw),
                 pick("MAX_ACTIVE", "long", latestView.positives, (candidate) => candidate.activePairs, "max"),
-                pick("MAX_SUBMITTED", "long", latestView.positives, (candidate) => candidate.submittedPairs, "max"),
             ],
         };
     })();
@@ -1980,41 +1831,22 @@ export async function runOpenScoreUsdReplay(
             times: number[];
             assets: string[];
         }
-        interface TakeSkipSeries {
-            gatedReturns: number[];
-            incumbentReturns: number[];
-            deltas: number[];
-            times: number[];
-        }
-        interface PendingIncumbentOutcome {
-            assetIndex: number;
-            returnValue: number;
-            exitTimeSec: number;
-            sequence: number;
-        }
         const createSeries = (): SelectorSeries => ({ deltas: [], returns: [], times: [], assets: [] });
-        const createTakeSkipSeries = (): TakeSkipSeries => ({ gatedReturns: [], incumbentReturns: [], deltas: [], times: [] });
         const topRaw = createSeries();
         const topAdjusted = createSeries();
         const topMean = createSeries();
-        const lossVeto = createTakeSkipSeries();
-        const regimeFloor = createTakeSkipSeries();
-        const topMeanRawUniqueV1 = createSeries();
-        const topRawPnlPositive = createSeries();
-        const topMeanPnlPositive = createSeries();
-        const topMeanTrend = createSeries();
+        const topMeanRawUnique = createSeries();
+        const topRawProfit = createSeries();
+        const topMeanProfit = createSeries();
         const topMeanVsRaw = createSeries();
         const topMeanVsRank2 = createSeries();
         const topMeanPortfolioOpportunities: TopMeanPortfolioOpportunity[] = [];
-        const topMeanTrendPortfolioOpportunities: TopMeanPortfolioOpportunity[] = [];
         const maxActive = createSeries();
         const maxStatic = createSeries();
-        const maxSubmitted = createSeries();
         // Phase 3 MAX_ACTIVE pairwise deltas: same-event return differences
         // between MAX_ACTIVE and the other selector, ONLY on events where
         // they pick different assets. Build them as parallel arrays so the
         // buildComparison() helper can derive block means and a CI.
-        const activeVsSubmitted = createSeries();
         const activeVsRetained = createSeries();
         const activeVsRaw = createSeries();
         const activeVsMean = createSeries();
@@ -2033,54 +1865,8 @@ export async function runOpenScoreUsdReplay(
         const topRawSpread = createSeries();
         const topRawHiPairs = createSeries();
         const topRawLoPairs = createSeries();
-        const pendingIncumbents: PendingIncumbentOutcome[] = [];
-        const completedByAsset = new Map<number, PendingIncumbentOutcome[]>();
-        const completedIncumbents: PendingIncumbentOutcome[] = [];
-        let incumbentSequence = 0;
-        const compareMaturity = (a: PendingIncumbentOutcome, b: PendingIncumbentOutcome): number =>
-            a.exitTimeSec - b.exitTimeSec || a.sequence - b.sequence;
-        const insertCompleted = (list: PendingIncumbentOutcome[], item: PendingIncumbentOutcome): void => {
-            let low = 0;
-            let high = list.length;
-            while (low < high) {
-                const mid = Math.floor((low + high) / 2);
-                if (compareMaturity(list[mid]!, item) <= 0) low = mid + 1;
-                else high = mid;
-            }
-            list.splice(low, 0, item);
-        };
-        const flushMaturedIncumbents = (decisionTimeSec: number): void => {
-            const matured: PendingIncumbentOutcome[] = [];
-            let pendingCount = 0;
-            for (const outcome of pendingIncumbents) {
-                if (outcome.exitTimeSec < decisionTimeSec) matured.push(outcome);
-                else pendingIncumbents[pendingCount++] = outcome;
-            }
-            pendingIncumbents.length = pendingCount;
-            matured.sort(compareMaturity);
-            for (const outcome of matured) {
-                let assetHistory = completedByAsset.get(outcome.assetIndex);
-                if (!assetHistory) {
-                    assetHistory = [];
-                    completedByAsset.set(outcome.assetIndex, assetHistory);
-                }
-                insertCompleted(assetHistory, outcome);
-                insertCompleted(completedIncumbents, outcome);
-            }
-        };
-        const appendTakeSkip = (
-            series: TakeSkipSeries,
-            take: boolean,
-            incumbentReturn: number,
-            decisionTimeSec: number,
-        ): void => {
-            series.gatedReturns.push(take ? incumbentReturn : 0);
-            series.incumbentReturns.push(incumbentReturn);
-            series.deltas.push(take ? 0 : -incumbentReturn);
-            series.times.push(decisionTimeSec);
-        };
         // Phase 3 MAX_ACTIVE tie counters per selector.
-        const tieCounts: Record<SelectorName, number> = { RAW: 0, ADJUSTED: 0, MEAN: 0, ACTIVE: 0, SUBMITTED: 0, RETAINED: 0 };
+        const tieCounts: Record<SelectorName, number> = { RAW: 0, ADJUSTED: 0, MEAN: 0, ACTIVE: 0, RETAINED: 0 };
         const selectedDegree: number[] = [];
         const activeCountsAtEvents: number[] = [];
         const selectedByAsset = new Map<string, number>();
@@ -2090,14 +1876,12 @@ export async function runOpenScoreUsdReplay(
         // computed the same way as TOP_RAW's.
         const topMeanSelectedByAsset = new Map<string, number>();
         const topMeanSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
-        const topMeanRawUniqueV1SelectedByAsset = new Map<string, number>();
-        const topMeanRawUniqueV1SamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
-        const topRawPnlPositiveSelectedByAsset = new Map<string, number>();
-        const topRawPnlPositiveSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
-        const topMeanPnlPositiveSelectedByAsset = new Map<string, number>();
-        const topMeanPnlPositiveSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
-        const topMeanTrendSelectedByAsset = new Map<string, number>();
-        const topMeanTrendSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const topMeanRawUniqueSelectedByAsset = new Map<string, number>();
+        const topMeanRawUniqueSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const topRawProfitSelectedByAsset = new Map<string, number>();
+        const topRawProfitSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const topMeanProfitSelectedByAsset = new Map<string, number>();
+        const topMeanProfitSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
         // Phase 3 MAX_ACTIVE: parallel per-asset selection map for MAX_ACTIVE.
         const activeSelectedByAsset = new Map<string, number>();
         const maxActiveSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
@@ -2105,7 +1889,6 @@ export async function runOpenScoreUsdReplay(
 
         for (let v = 0; v < views.length; v += 1) {
             const view = views[v]!;
-            flushMaturedIncumbents(view.timeSec);
             const perAsset = returnsByView[v];
             if (!perAsset) {
                 noDataEvents.add(v);
@@ -2149,88 +1932,14 @@ export async function runOpenScoreUsdReplay(
                 });
             };
 
-            // Independent gate: require a broad target uptrend, then let only
-            // candidates above their own causal EMA200 enter this selector and
-            // its same-pool random control.
-            const trendPool = view.positives.filter((c) => perAsset.get(c.assetIndex)?.aboveEma200 === true);
-            let assetsAboveEma200 = 0;
-            let assetsWithEma200 = 0;
-            for (const outcome of perAsset.values()) {
-                if (outcome.aboveEma200 || outcome.belowEma200) assetsWithEma200 += 1;
-                if (outcome.aboveEma200) assetsAboveEma200 += 1;
-            }
-            const broadUptrend = assetsWithEma200 >= 2 && assetsAboveEma200 / assetsWithEma200 > 0.5;
-            if (broadUptrend && trendPool.length >= 2) {
-                const trendRetByAsset = new Map<number, number>();
-                let trendValid = true;
-                for (const c of trendPool) {
-                    const outcome = perAsset.get(c.assetIndex);
-                    const r = outcome?.long[hIdx];
-                    if (r === undefined || !Number.isFinite(r)) { trendValid = false; break; }
-                    trendRetByAsset.set(c.assetIndex, r);
-                }
-                if (trendValid) {
-                    const ranked = [...trendPool].sort((a, b) => {
-                        if (a.mean !== b.mean) return b.mean - a.mean;
-                        if (a.activePairs !== b.activePairs) return b.activePairs - a.activePairs;
-                        const aDigest = tieBreakDigest(view.timeSec, assetNames[a.assetIndex]!);
-                        const bDigest = tieBreakDigest(view.timeSec, assetNames[b.assetIndex]!);
-                        return aDigest < bDigest
-                            ? -1
-                            : aDigest > bDigest
-                                ? 1
-                                : assetNames[a.assetIndex]!.localeCompare(assetNames[b.assetIndex]!);
-                    });
-                    const selected = ranked[0]!;
-                    const selectedReturn = trendRetByAsset.get(selected.assetIndex)!;
-                    let trendTotal = 0;
-                    for (const r of trendRetByAsset.values()) trendTotal += r;
-                    const randomReturn = (trendTotal - selectedReturn) / (trendRetByAsset.size - 1);
-                    const delta = selectedReturn - randomReturn;
-                    const asset = assetNames[selected.assetIndex]!;
-                    topMeanTrend.returns.push(selectedReturn);
-                    topMeanTrend.deltas.push(delta);
-                    topMeanTrend.times.push(view.timeSec);
-                    topMeanTrend.assets.push(asset);
-                    appendEventDetail(
-                        "TOP_MEAN_TREND",
-                        "long",
-                        selected,
-                        selectedReturn,
-                        randomReturn,
-                        trendRetByAsset.size,
-                    );
-                    topMeanTrendSelectedByAsset.set(asset, (topMeanTrendSelectedByAsset.get(asset) ?? 0) + 1);
-                    let samples = topMeanTrendSamplesByAsset.get(asset);
-                    if (!samples) {
-                        samples = { returns: [], deltas: [] };
-                        topMeanTrendSamplesByAsset.set(asset, samples);
-                    }
-                    samples.returns.push(selectedReturn);
-                    samples.deltas.push(delta);
-                    const outcome = perAsset.get(selected.assetIndex)!;
-                    const tied = ranked.length > 1
-                        && ranked[1]!.mean === selected.mean
-                        && ranked[1]!.activePairs === selected.activePairs;
-                    topMeanTrendPortfolioOpportunities.push({
-                        asset,
-                        decisionTime: view.timeSec,
-                        entryTime: outcome.entryTimes[hIdx]!,
-                        exitTime: outcome.exitTimes[hIdx]!,
-                        netReturn: selectedReturn,
-                        tied,
-                    });
-                }
-            }
-
-            // PNL-gated arms: independent eligibility gate over the
-            // pnl-positive pool. Missing data on a gated candidate omits the
+            // Profit-gated arms: independent eligibility gate over the
+            // profitable pool. Missing data on a gated candidate omits the
             // event from these arms only (never zero-filled); missing data on
             // a non-gated positive is irrelevant here.
-            if (view.pnlPositives.length >= 2 && view.topRawPnlPositive >= 0 && view.topMeanPnlPositive >= 0) {
+            if (view.profitPositives.length >= 2 && view.topRawProfit >= 0 && view.topMeanProfit >= 0) {
                 const pnlPosRetByAsset = new Map<number, number>();
                 let pnlPosValid = true;
-                for (const c of view.pnlPositives) {
+                for (const c of view.profitPositives) {
                     const r = perAsset.get(c.assetIndex)?.long[hIdx];
                     if (r === undefined || !Number.isFinite(r)) { pnlPosValid = false; break; }
                     pnlPosRetByAsset.set(c.assetIndex, r);
@@ -2238,7 +1947,7 @@ export async function runOpenScoreUsdReplay(
                 if (pnlPosValid) {
                     let pnlPosTotal = 0;
                     for (const r of pnlPosRetByAsset.values()) pnlPosTotal += r;
-                    const appendPnlPositiveSelection = (
+                    const appendProfitSelection = (
                         series: SelectorSeries,
                         selector: OpenScoreUsdEventDetailSelector,
                         selectedIdx: number,
@@ -2256,7 +1965,7 @@ export async function runOpenScoreUsdReplay(
                         appendEventDetail(
                             selector,
                             "long",
-                            view.pnlPositives.find((candidate) => candidate.assetIndex === selectedIdx)!,
+                            view.profitPositives.find((candidate) => candidate.assetIndex === selectedIdx)!,
                             selectedReturn,
                             randomReturn,
                             pnlPosRetByAsset.size,
@@ -2271,19 +1980,19 @@ export async function runOpenScoreUsdReplay(
                         samples.returns.push(selectedReturn);
                         samples.deltas.push(delta);
                     };
-                    appendPnlPositiveSelection(
-                        topRawPnlPositive,
-                        "TOP_RAW_PNL_POS",
-                        view.topRawPnlPositive,
-                        topRawPnlPositiveSelectedByAsset,
-                        topRawPnlPositiveSamplesByAsset,
+                    appendProfitSelection(
+                        topRawProfit,
+                        "TOP_RAW_PROFIT",
+                        view.topRawProfit,
+                        topRawProfitSelectedByAsset,
+                        topRawProfitSamplesByAsset,
                     );
-                    appendPnlPositiveSelection(
-                        topMeanPnlPositive,
-                        "TOP_MEAN_PNL_POS",
-                        view.topMeanPnlPositive,
-                        topMeanPnlPositiveSelectedByAsset,
-                        topMeanPnlPositiveSamplesByAsset,
+                    appendProfitSelection(
+                        topMeanProfit,
+                        "TOP_MEAN_PROFIT",
+                        view.topMeanProfit,
+                        topMeanProfitSelectedByAsset,
+                        topMeanProfitSamplesByAsset,
                     );
                 }
             }
@@ -2300,36 +2009,10 @@ export async function runOpenScoreUsdReplay(
                 }
                 retByAsset.set(c.assetIndex, r);
             }
-            // The take/skip arms use the incumbent TOP_MEAN outcome even when
-            // another positive candidate makes the ordinary all-positive
-            // comparison ineligible. This preserves the selected-incumbent
-            // cohort while keeping the existing selector arms unchanged.
+            // The TOP_MEAN portfolio opportunity uses the incumbent outcome even
+            // when another positive candidate makes the ordinary all-positive
+            // comparison ineligible.
             const incumbentOutcome = perAsset.get(view.topMean);
-            const incumbentReturn = incumbentOutcome?.long[hIdx];
-            const incumbentEntryTime = incumbentOutcome?.entryTimes[hIdx];
-            const incumbentExitTime = incumbentOutcome?.exitTimes[hIdx];
-            if (
-                incumbentReturn !== undefined
-                && Number.isFinite(incumbentReturn)
-                && Number.isFinite(incumbentEntryTime)
-                && Number.isFinite(incumbentExitTime)
-            ) {
-                const assetHistory = completedByAsset.get(view.topMean) ?? [];
-                const lossVetoSkip = assetHistory.length >= 2
-                    && assetHistory[assetHistory.length - 1]!.returnValue < 0
-                    && assetHistory[assetHistory.length - 2]!.returnValue < 0;
-                const recentIncumbents = completedIncumbents.slice(-10);
-                const regimeFloorSkip = recentIncumbents.length >= 10
-                    && recentIncumbents.reduce((sum, outcome) => sum + outcome.returnValue, 0) / recentIncumbents.length < 0;
-                appendTakeSkip(lossVeto, !lossVetoSkip, incumbentReturn, view.timeSec);
-                appendTakeSkip(regimeFloor, !regimeFloorSkip, incumbentReturn, view.timeSec);
-                pendingIncumbents.push({
-                    assetIndex: view.topMean,
-                    returnValue: incumbentReturn,
-                    exitTimeSec: incumbentExitTime!,
-                    sequence: incumbentSequence += 1,
-                });
-            }
             if (!allValid) {
                 appendOngoingTopMeanEventDetail(view, perAsset, hIdx);
                 continue; // censored or missing -> omit from both arms
@@ -2352,35 +2035,35 @@ export async function runOpenScoreUsdReplay(
                 series.assets.push(assetNames[selectedIdx]!);
             };
             const appendTopMeanRawUniqueV1Selection = (): void => {
-                if (view.topMeanRawUniqueV1 < 0) return;
-                const tiedReturns = view.topMeanRawUniqueV1Pool
+                if (view.topMeanRawUnique < 0) return;
+                const tiedReturns = view.topMeanRawUniquePool
                     .map((candidate) => retByAsset.get(candidate.assetIndex))
                     .filter((value): value is number => value !== undefined && Number.isFinite(value));
-                if (tiedReturns.length !== view.topMeanRawUniqueV1Pool.length || tiedReturns.length === 0) return;
-                const selectedReturn = retByAsset.get(view.topMeanRawUniqueV1);
+                if (tiedReturns.length !== view.topMeanRawUniquePool.length || tiedReturns.length === 0) return;
+                const selectedReturn = retByAsset.get(view.topMeanRawUnique);
                 if (selectedReturn === undefined) return;
                 const controlReturn = tiedReturns.reduce((sum, value) => sum + value, 0) / tiedReturns.length;
                 const delta = selectedReturn - controlReturn;
-                topMeanRawUniqueV1.returns.push(selectedReturn);
-                topMeanRawUniqueV1.deltas.push(delta);
-                topMeanRawUniqueV1.times.push(view.timeSec);
-                topMeanRawUniqueV1.assets.push(assetNames[view.topMeanRawUniqueV1]!);
-                const asset = assetNames[view.topMeanRawUniqueV1]!;
-                topMeanRawUniqueV1SelectedByAsset.set(asset, (topMeanRawUniqueV1SelectedByAsset.get(asset) ?? 0) + 1);
-                let samples = topMeanRawUniqueV1SamplesByAsset.get(asset);
+                topMeanRawUnique.returns.push(selectedReturn);
+                topMeanRawUnique.deltas.push(delta);
+                topMeanRawUnique.times.push(view.timeSec);
+                topMeanRawUnique.assets.push(assetNames[view.topMeanRawUnique]!);
+                const asset = assetNames[view.topMeanRawUnique]!;
+                topMeanRawUniqueSelectedByAsset.set(asset, (topMeanRawUniqueSelectedByAsset.get(asset) ?? 0) + 1);
+                let samples = topMeanRawUniqueSamplesByAsset.get(asset);
                 if (!samples) {
                     samples = { returns: [], deltas: [] };
-                    topMeanRawUniqueV1SamplesByAsset.set(asset, samples);
+                    topMeanRawUniqueSamplesByAsset.set(asset, samples);
                 }
                 samples.returns.push(selectedReturn);
                 samples.deltas.push(delta);
                 appendEventDetail(
-                    "TOP_MEAN_RAW_UNIQUE_V1",
+                    "TOP_MEAN_RAW_UNIQUE",
                     "long",
-                    view.topMeanRawUniqueV1Pool.find((candidate) => candidate.assetIndex === view.topMeanRawUniqueV1)!,
+                    view.topMeanRawUniquePool.find((candidate) => candidate.assetIndex === view.topMeanRawUnique)!,
                     selectedReturn,
                     controlReturn,
-                    view.topMeanRawUniqueV1Pool.length,
+                    view.topMeanRawUniquePool.length,
                 );
             };
             const appendPairwise = (series: SelectorSeries, aIdx: number, bIdx: number): void => {
@@ -2437,7 +2120,6 @@ export async function runOpenScoreUsdReplay(
             appendPairwise(topMeanVsRank2, view.topMean, view.topMeanRank2);
             appendSelection(maxActive, view.maxActive);
             appendSelection(maxStatic, view.maxStatic);
-            appendSelection(maxSubmitted, view.maxSubmitted);
             appendEventDetail(
                 "MAX_ACTIVE",
                 "long",
@@ -2452,14 +2134,6 @@ export async function runOpenScoreUsdReplay(
                 view.positives.find((candidate) => candidate.assetIndex === view.maxStatic)!,
                 retByAsset.get(view.maxStatic)!,
                 randomMeanOf(view.maxStatic),
-                retByAsset.size,
-            );
-            appendEventDetail(
-                "MAX_SUBMITTED",
-                "long",
-                view.positives.find((candidate) => candidate.assetIndex === view.maxSubmitted)!,
-                retByAsset.get(view.maxSubmitted)!,
-                randomMeanOf(view.maxSubmitted),
                 retByAsset.size,
             );
             // Conditional-split routing: TOP_RAW's selected return into one of
@@ -2482,7 +2156,6 @@ export async function runOpenScoreUsdReplay(
             if (view.maxActivePairs > splitThresholds.pairs) appendSelection(topRawHiPairs, view.topRaw);
             else appendSelection(topRawLoPairs, view.topRaw);
             // Pairwise: MAX_ACTIVE vs each control, only on differing-selection events.
-            appendPairwise(activeVsSubmitted, view.maxActive, view.maxSubmitted);
             appendPairwise(activeVsRetained, view.maxActive, view.maxStatic);
             appendPairwise(activeVsRaw, view.maxActive, view.topRaw);
             appendPairwise(activeVsMean, view.maxActive, view.topMean);
@@ -2604,44 +2277,34 @@ export async function runOpenScoreUsdReplay(
         const topMeanByAsset = buildAssetSelectionBreakdown(topMeanSelectedByAsset, topMeanSamplesByAsset).byAsset;
         const topMeanDominantAsset = topMeanByAsset[0]?.asset ?? null;
         const topMeanExDominant = buildExDominantComparison(topMean, topMeanDominantAsset, buildComparison);
-        const topMeanRawUniqueV1ByAsset = buildAssetSelectionBreakdown(
-            topMeanRawUniqueV1SelectedByAsset,
-            topMeanRawUniqueV1SamplesByAsset,
+        const topMeanRawUniqueByAsset = buildAssetSelectionBreakdown(
+            topMeanRawUniqueSelectedByAsset,
+            topMeanRawUniqueSamplesByAsset,
         ).byAsset;
-        const topMeanRawUniqueV1DominantAsset = topMeanRawUniqueV1ByAsset[0]?.asset ?? null;
-        const topMeanRawUniqueV1ExDominant = buildExDominantComparison(
-            topMeanRawUniqueV1,
-            topMeanRawUniqueV1DominantAsset,
+        const topMeanRawUniqueDominantAsset = topMeanRawUniqueByAsset[0]?.asset ?? null;
+        const topMeanRawUniqueExDominant = buildExDominantComparison(
+            topMeanRawUnique,
+            topMeanRawUniqueDominantAsset,
             buildComparison,
         );
-        const topRawPnlPositiveByAsset = buildAssetSelectionBreakdown(
-            topRawPnlPositiveSelectedByAsset,
-            topRawPnlPositiveSamplesByAsset,
+        const topRawProfitByAsset = buildAssetSelectionBreakdown(
+            topRawProfitSelectedByAsset,
+            topRawProfitSamplesByAsset,
         ).byAsset;
-        const topRawPnlPositiveDominantAsset = topRawPnlPositiveByAsset[0]?.asset ?? null;
-        const topRawPnlPositiveExDominant = buildExDominantComparison(
-            topRawPnlPositive,
-            topRawPnlPositiveDominantAsset,
+        const topRawProfitDominantAsset = topRawProfitByAsset[0]?.asset ?? null;
+        const topRawProfitExDominant = buildExDominantComparison(
+            topRawProfit,
+            topRawProfitDominantAsset,
             buildComparison,
         );
-        const topMeanPnlPositiveByAsset = buildAssetSelectionBreakdown(
-            topMeanPnlPositiveSelectedByAsset,
-            topMeanPnlPositiveSamplesByAsset,
+        const topMeanProfitByAsset = buildAssetSelectionBreakdown(
+            topMeanProfitSelectedByAsset,
+            topMeanProfitSamplesByAsset,
         ).byAsset;
-        const topMeanPnlPositiveDominantAsset = topMeanPnlPositiveByAsset[0]?.asset ?? null;
-        const topMeanPnlPositiveExDominant = buildExDominantComparison(
-            topMeanPnlPositive,
-            topMeanPnlPositiveDominantAsset,
-            buildComparison,
-        );
-        const topMeanTrendByAsset = buildAssetSelectionBreakdown(
-            topMeanTrendSelectedByAsset,
-            topMeanTrendSamplesByAsset,
-        ).byAsset;
-        const topMeanTrendDominantAsset = topMeanTrendByAsset[0]?.asset ?? null;
-        const topMeanTrendExDominant = buildExDominantComparison(
-            topMeanTrend,
-            topMeanTrendDominantAsset,
+        const topMeanProfitDominantAsset = topMeanProfitByAsset[0]?.asset ?? null;
+        const topMeanProfitExDominant = buildExDominantComparison(
+            topMeanProfit,
+            topMeanProfitDominantAsset,
             buildComparison,
         );
         // TOP_MEAN top-contribution exclusion: drop events selecting the asset
@@ -2662,24 +2325,10 @@ export async function runOpenScoreUsdReplay(
             }
         }
         const topMeanExTopContrib = buildExDominantComparison(topMean, topMeanTopContribAsset, buildComparison);
-        // `maxRetained` is a documented backwards-compat alias for `maxStatic`
-        // (identical selector on identical arrays). Compute the 10k-sample block
-        // bootstrap ONCE and reuse the result for both fields — the prior
-        // duplicate `buildComparison(maxStatic.deltas, ...)` burned 10k LCG
-        // iterations + one sort + one 10k-element allocation per horizon.
+        // `maxRetained` is the retained-artifact-degree selector computed from
+        // the `maxStatic` series (the legacy internal name for the same pick).
+        // Compute the 10k-sample block bootstrap ONCE and reuse the result.
         const maxStaticComparison = buildComparison(maxStatic.deltas, maxStatic.returns, maxStatic.times);
-        const lossVetoComparison = buildTakeSkipComparison(
-            lossVeto.gatedReturns,
-            lossVeto.incumbentReturns,
-            lossVeto.deltas,
-            lossVeto.times,
-        );
-        const regimeFloorComparison = buildTakeSkipComparison(
-            regimeFloor.gatedReturns,
-            regimeFloor.incumbentReturns,
-            regimeFloor.deltas,
-            regimeFloor.times,
-        );
         const topMeanPnl = computeSelectorPnl(topMean.returns, topMean.times);
         const randomPnlReturns: number[] = [];
         for (let i = 0; i < topMean.returns.length; i += 1) {
@@ -2689,36 +2338,26 @@ export async function runOpenScoreUsdReplay(
         }
         const randomPnl = computeSelectorPnl(randomPnlReturns, topMean.times);
         const topMeanPortfolio = simulateTopMeanPortfolio(topMeanPortfolioOpportunities);
-        const topMeanTrendPnl = computeSelectorPnl(topMeanTrend.returns, topMeanTrend.times);
-        const topMeanTrendPortfolio = simulateTopMeanPortfolio(topMeanTrendPortfolioOpportunities);
         horizonResults.push({
             bars: horizons[hIdx]!,
             topRaw: buildComparison(topRaw.deltas, topRaw.returns, topRaw.times),
             topAdjusted: buildComparison(topAdjusted.deltas, topAdjusted.returns, topAdjusted.times),
             topMean: buildComparison(topMean.deltas, topMean.returns, topMean.times),
-            lossVeto: lossVetoComparison,
-            regimeFloor: regimeFloorComparison,
-            topMeanRawUniqueV1: buildComparison(topMeanRawUniqueV1.deltas, topMeanRawUniqueV1.returns, topMeanRawUniqueV1.times),
-            topMeanRawUniqueV1ByAsset,
-            topMeanRawUniqueV1ExDominant,
-            topMeanRawUniqueV1DominantAsset,
-            topRawPnlPositive: buildComparison(topRawPnlPositive.deltas, topRawPnlPositive.returns, topRawPnlPositive.times),
-            topRawPnlPositiveByAsset,
-            topRawPnlPositiveExDominant,
-            topRawPnlPositiveDominantAsset,
-            topMeanPnlPositive: buildComparison(topMeanPnlPositive.deltas, topMeanPnlPositive.returns, topMeanPnlPositive.times),
-            topMeanPnlPositiveByAsset,
-            topMeanPnlPositiveExDominant,
-            topMeanPnlPositiveDominantAsset,
-            topMeanTrend: buildComparison(topMeanTrend.deltas, topMeanTrend.returns, topMeanTrend.times),
-            topMeanTrendByAsset,
-            topMeanTrendExDominant,
-            topMeanTrendDominantAsset,
+            topMeanRawUnique: buildComparison(topMeanRawUnique.deltas, topMeanRawUnique.returns, topMeanRawUnique.times),
+            topMeanRawUniqueByAsset,
+            topMeanRawUniqueExDominant,
+            topMeanRawUniqueDominantAsset,
+            topRawProfit: buildComparison(topRawProfit.deltas, topRawProfit.returns, topRawProfit.times),
+            topRawProfitByAsset,
+            topRawProfitExDominant,
+            topRawProfitDominantAsset,
+            topMeanProfit: buildComparison(topMeanProfit.deltas, topMeanProfit.returns, topMeanProfit.times),
+            topMeanProfitByAsset,
+            topMeanProfitExDominant,
+            topMeanProfitDominantAsset,
             topMeanVsRaw: buildComparison(topMeanVsRaw.deltas, topMeanVsRaw.returns, topMeanVsRaw.times),
             topMeanVsRank2: buildComparison(topMeanVsRank2.deltas, topMeanVsRank2.returns, topMeanVsRank2.times),
             maxActive: buildComparison(maxActive.deltas, maxActive.returns, maxActive.times),
-            maxStatic: maxStaticComparison,
-            maxSubmitted: buildComparison(maxSubmitted.deltas, maxSubmitted.returns, maxSubmitted.times),
             maxRetained: maxStaticComparison,
             topRawExDominant,
             topMeanExDominant,
@@ -2734,7 +2373,6 @@ export async function runOpenScoreUsdReplay(
                 sameSelection: rawAdjustedSame,
                 rate: n > 0 ? rawAdjustedSame / n : null,
             },
-            activeVsSubmitted: buildComparison(activeVsSubmitted.deltas, activeVsSubmitted.returns, activeVsSubmitted.times),
             activeVsRetained: buildComparison(activeVsRetained.deltas, activeVsRetained.returns, activeVsRetained.times),
             activeVsRaw: buildComparison(activeVsRaw.deltas, activeVsRaw.returns, activeVsRaw.times),
             activeVsMean: buildComparison(activeVsMean.deltas, activeVsMean.returns, activeVsMean.times),
@@ -2744,8 +2382,6 @@ export async function runOpenScoreUsdReplay(
                 topMean: topMeanPnl,
                 random: randomPnl,
                 topMeanPortfolio,
-                topMeanTrend: topMeanTrendPnl,
-                topMeanTrendPortfolio,
             },
             // Conditional-split comparisons: TOP_RAW's pick on each subset of
             // events defined by the per-view feature split.
@@ -2764,9 +2400,7 @@ export async function runOpenScoreUsdReplay(
                 ADJUSTED: { events: n, sameSelection: tieCounts.ADJUSTED, rate: n > 0 ? tieCounts.ADJUSTED / n : null },
                 MEAN: { events: n, sameSelection: tieCounts.MEAN, rate: n > 0 ? tieCounts.MEAN / n : null },
                 ACTIVE: { events: n, sameSelection: tieCounts.ACTIVE, rate: n > 0 ? tieCounts.ACTIVE / n : null },
-                SUBMITTED: { events: n, sameSelection: tieCounts.SUBMITTED, rate: n > 0 ? tieCounts.SUBMITTED / n : null },
-                RETAINED: { events: n, sameSelection: tieCounts.RETAINED, rate: n > 0 ? tieCounts.RETAINED / n : null },
-            },
+                RETAINED: { events: n, sameSelection: tieCounts.RETAINED, rate: n > 0 ? tieCounts.RETAINED / n : null },            },
         });
         onPhase("aggregate", `aggregated horizon ${horizons[hIdx]}`, hIdx + 1, horizons.length);
         await yieldLoop();
@@ -2803,16 +2437,9 @@ export async function runOpenScoreUsdReplay(
     if (censoredEvents.size > 0) {
         warnings.push(`${censoredEvents.size} event(s) were right-censored near a target dataset end for at least one horizon and excluded from that horizon.`);
     }
-    if (totalEvents > 0 && horizonResults.length > 0) {
-        const anyTrendEvents = horizonResults.some((h) => h.topMeanTrend.events > 0);
-        if (!anyTrendEvents) {
-            warnings.push("TOP_MEAN_TREND contributed 0 events across all horizons; no decision event had at least two positive-score assets above their causal target EMA200.");
-        }
-    }
     warnings.push("Stock/marked-leg datasets may carry split/corporate-action discontinuities; verify adjustment before treating this as a tradeable verdict.");
     warnings.push("P&L experiments use equal 1-unit event notional; overlapping entries are summed without compounding and are not live account returns.");
     warnings.push("TOP_MEAN_1K_PORTFOLIO uses fixed $1,000 entries, skips TOP_MEAN ties and same-asset overlap, and reports realized-only drawdown; no global bankroll cap or mark-to-market equity is assumed.");
-    warnings.push("TOP_MEAN_TREND uses only target closes known before entry; the entry bar and all later prices are excluded from EMA200 qualification and breadth.");
 
     const complete = omittedPairs === 0 && omittedAssets === 0;
     const staticDegrees = assetNames.map((n) => staticDegree.get(n) ?? 0);
@@ -2891,7 +2518,7 @@ class KWayMergeHeap {
     private readonly offsets: Int32Array;
     /**
      * Index of the stream the last successful pop() came from. Lets the merge
-     * loop read per-pair metadata (pnl-gated profitability) without storing it
+     * loop read per-pair metadata (profit-gated profitability) without storing it
      * on every delta. Valid only immediately after a non-undefined pop().
      */
     lastPoppedStream = -1;
@@ -2989,40 +2616,7 @@ function splitIntoBlocks(values: readonly number[], times: readonly number[], bl
     return blocks;
 }
 
-function buildTakeSkipComparison(
-    gatedReturns: readonly number[],
-    incumbentReturns: readonly number[],
-    deltas: readonly number[],
-    times: readonly number[],
-): TakeSkipComparison {
-    let gatedSum = 0;
-    let incumbentSum = 0;
-    for (const value of gatedReturns) gatedSum += value;
-    for (const value of incumbentReturns) incumbentSum += value;
-    const blockMeans = splitIntoBlocks(deltas, times, MAX_ACTIVE_BLOCK_COUNT)
-        .map((block) => block.reduce((sum, value) => sum + value, 0) / block.length);
-    return {
-        events: gatedReturns.length,
-        gatedMean: meanOrNull(gatedReturns),
-        allMean: meanOrNull(incumbentReturns),
-        skipValue: incumbentSum - gatedSum,
-        positiveBlocks: blockMeans.filter((mean) => mean > 0).length,
-        totalBlocks: MAX_ACTIVE_BLOCK_COUNT,
-    };
-}
-
 const fmtPct = (x: number | null): string => (x === null || !Number.isFinite(x) ? "n/a" : `${x >= 0 ? "+" : ""}${(x * 100).toFixed(2)}%`);
-const fmtTakeSkipPct = (x: number | null): string => {
-    if (x === null || !Number.isFinite(x)) return "n/a";
-    const rounded = Number((x * 100).toFixed(2));
-    const normalized = Object.is(rounded, -0) ? 0 : rounded;
-    return `${normalized >= 0 ? "+" : ""}${normalized.toFixed(2)}%`;
-};
-const fmtPp = (x: number): string => {
-    const rounded = Number((x * 100).toFixed(2));
-    const normalized = Object.is(rounded, -0) ? 0 : rounded;
-    return `${normalized >= 0 ? "+" : ""}${normalized.toFixed(2)}`;
-};
 const fmtNum = (x: number | null): string => (x === null || !Number.isFinite(x) ? "n/a" : x.toFixed(2));
 const fmtUsd = (x: number | null): string => (x === null || !Number.isFinite(x)
     ? "n/a"
@@ -3047,9 +2641,6 @@ function buildReportLines(args: {
         `${label.padEnd(14)} n=${comparison.events} top=${fmtPct(comparison.topMean)} rand=${fmtPct(comparison.randomMean)} ` +
         `delta=${fmtPct(comparison.delta)} CI95=[${fmtPct(comparison.ciLower)},${fmtPct(comparison.ciUpper)}] ` +
         `+blocks=${comparison.positiveBlocks}/${comparison.totalBlocks}`;
-    const takeSkipLine = (label: string, comparison: TakeSkipComparison): string =>
-        `${label.padEnd(12)} n=${comparison.events} top=${fmtTakeSkipPct(comparison.gatedMean)} all=${fmtTakeSkipPct(comparison.allMean)} ` +
-        `skip=${fmtPp(comparison.skipValue)}pp +blocks=${comparison.positiveBlocks}/${comparison.totalBlocks}`;
     const pnlLine = (label: string, summary: SelectorPnlSummary): string => {
         const average = summary.trades > 0 && summary.totalReturn !== null
             ? summary.totalReturn / summary.trades
@@ -3091,8 +2682,8 @@ function buildReportLines(args: {
         }
     }
     lines.push(`retained pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
-    lines.push("controls | TOP_MEAN=raw/activePairs TOP_RAW_PNL_POS=raw score counted only from pairs whose pair backtest netted >0 TOP_MEAN_PNL_POS=that raw / open pnl-positive pair count TOP_MEAN_TREND=target EMA200 breadth>50%, then prior close>EMA200, TOP_MEAN, activePairs tie-break MAX_ACTIVE=most open pairs MAX_SUBMITTED=most submitted pairs MAX_RETAINED=most loaded artifacts");
-    lines.push("TOP_MEAN_RAW_UNIQUE_V1 rule | TOP_MEAN tied set -> unique raw-score maximum; residual raw ties skipped; control=mean return of the TOP_MEAN tied set");
+    lines.push("controls | TOP_MEAN=raw/activePairs TOP_RAW_PROFIT=raw score counted only from pairs whose pair backtest netted >0 TOP_MEAN_PROFIT=that raw / open profitable-pair count MAX_ACTIVE=most open pairs MAX_RETAINED=most loaded artifacts");
+    lines.push("TOP_MEAN_RAW_UNIQUE rule | TOP_MEAN tied set -> unique raw-score maximum; residual raw ties skipped; control=mean return of the TOP_MEAN tied set");
     lines.push("pnl model | OVERLAP=long selector vs same-pool random positive, every eligible event; *_1K=$1000/trade, exact selector ties skipped, one open trade per asset");
     for (const h of args.horizons) {
         const coverageRate = args.candidateEvents > 0 ? h.topRaw.events / args.candidateEvents : 0;
@@ -3105,18 +2696,12 @@ function buildReportLines(args: {
         lines.push(comparisonLine("TOP_RAW", h.topRaw));
         lines.push(comparisonLine("TOP_ADJUSTED", h.topAdjusted));
         lines.push(comparisonLine("TOP_MEAN", h.topMean));
-        lines.push(takeSkipLine("LOSS_VETO", h.lossVeto));
-        lines.push(takeSkipLine("REGIME_FLOOR", h.regimeFloor));
-        lines.push(comparisonLine("TOP_MEAN_RAW_UNIQUE_V1", h.topMeanRawUniqueV1));
-        lines.push(comparisonLine(`TOP_MEAN_RAW_UNIQUE_V1_EX_${h.topMeanRawUniqueV1DominantAsset ?? "NONE"}`, h.topMeanRawUniqueV1ExDominant));
-        lines.push(comparisonLine("TOP_RAW_PNL_POS", h.topRawPnlPositive));
-        lines.push(comparisonLine(`RAW_PNL_POS_EX_${h.topRawPnlPositiveDominantAsset ?? "NONE"}`, h.topRawPnlPositiveExDominant));
-        lines.push(comparisonLine("TOP_MEAN_PNL_POS", h.topMeanPnlPositive));
-        lines.push(comparisonLine(`MEAN_PNL_POS_EX_${h.topMeanPnlPositiveDominantAsset ?? "NONE"}`, h.topMeanPnlPositiveExDominant));
-        lines.push(comparisonLine("TOP_MEAN_TREND", h.topMeanTrend));
-        lines.push(pnlLine("TOP_MEAN_TREND_PNL", h.pnl.topMeanTrend));
-        lines.push(portfolioLine("TOP_MEAN_TREND", h.pnl.topMeanTrendPortfolio));
-        lines.push(comparisonLine(`TREND_EX_${h.topMeanTrendDominantAsset ?? "NONE"}`, h.topMeanTrendExDominant));
+        lines.push(comparisonLine("TOP_MEAN_RAW_UNIQUE", h.topMeanRawUnique));
+        lines.push(comparisonLine(`TOP_MEAN_RAW_UNIQUE_EX_${h.topMeanRawUniqueDominantAsset ?? "NONE"}`, h.topMeanRawUniqueExDominant));
+        lines.push(comparisonLine("TOP_RAW_PROFIT", h.topRawProfit));
+        lines.push(comparisonLine(`RAW_PROFIT_EX_${h.topRawProfitDominantAsset ?? "NONE"}`, h.topRawProfitExDominant));
+        lines.push(comparisonLine("TOP_MEAN_PROFIT", h.topMeanProfit));
+        lines.push(comparisonLine(`MEAN_PROFIT_EX_${h.topMeanProfitDominantAsset ?? "NONE"}`, h.topMeanProfitExDominant));
         lines.push(comparisonLine("TOP_MEAN_VS_RAW", h.topMeanVsRaw));
         lines.push(`TOP_MEAN_VS_RAW_WF deltaByBlock=[${h.topMeanVsRaw.blockMeans.map(fmtPct).join(",")}]`);
         lines.push(comparisonLine("TOP_MEAN_VS_RANK2", h.topMeanVsRank2));
@@ -3124,10 +2709,7 @@ function buildReportLines(args: {
         lines.push(pnlLine("RANDOM_PNL", h.pnl.random));
         lines.push(portfolioLine("TOP_MEAN", h.pnl.topMeanPortfolio));
         lines.push(comparisonLine("MAX_ACTIVE", h.maxActive));
-        lines.push(comparisonLine("MAX_SUBMITTED", h.maxSubmitted));
-        if (h.maxRetained.events !== h.maxSubmitted.events || h.maxRetained.delta !== h.maxSubmitted.delta) {
-            lines.push(comparisonLine("MAX_RETAINED", h.maxRetained));
-        }
+        lines.push(comparisonLine("MAX_RETAINED", h.maxRetained));
         // Conditional-split arms (event filters on TOP_RAW's pick).
         // Each split is TOP_RAW's pick restricted to a per-event-feature subset.
         lines.push(comparisonLine("RAW_FRESH", h.topRawFresh));
@@ -3143,10 +2725,7 @@ function buildReportLines(args: {
         lines.push(comparisonLine(`MEAN_EX_TOPCONTRIB_${h.topMeanTopContribAsset ?? "NONE"}`, h.topMeanExTopContrib));
         lines.push(comparisonLine(`ACTIVE_EX_${h.maxActiveDominantAsset ?? "NONE"}`, h.maxActiveExDominant));
         // Phase 3 MAX_ACTIVE: pairwise same-event deltas (only differing-selection events).
-        lines.push(comparisonLine("ACTIVE_VS_SUB", h.activeVsSubmitted));
-        if (h.activeVsRetained.events !== h.activeVsSubmitted.events || h.activeVsRetained.delta !== h.activeVsSubmitted.delta) {
-            lines.push(comparisonLine("ACTIVE_VS_RET", h.activeVsRetained));
-        }
+        lines.push(comparisonLine("ACTIVE_VS_RET", h.activeVsRetained));
         lines.push(comparisonLine("ACTIVE_VS_RAW", h.activeVsRaw));
         lines.push(comparisonLine("ACTIVE_VS_MEAN", h.activeVsMean));
         lines.push(`RAW/ADJUSTED agreement = ${h.rawAdjustedAgreement.sameSelection}/${h.rawAdjustedAgreement.events} (${h.rawAdjustedAgreement.rate === null ? "n/a" : (h.rawAdjustedAgreement.rate * 100).toFixed(1) + "%"})`);
@@ -3158,11 +2737,8 @@ function buildReportLines(args: {
             tieLine("ADJ", "ADJUSTED"),
             tieLine("MEAN", "MEAN"),
             tieLine("ACTIVE", "ACTIVE"),
-            tieLine("SUB", "SUBMITTED"),
+            tieLine("RET", "RETAINED"),
         ];
-        if (h.tieRates.RETAINED.sameSelection !== h.tieRates.SUBMITTED.sameSelection || h.tieRates.RETAINED.events !== h.tieRates.SUBMITTED.events) {
-            tieTokens.push(tieLine("RET", "RETAINED"));
-        }
         lines.push(`tie rates | ${tieTokens.join(" ")}`);
         const assetBreakdown = h.topRawByAsset.slice(0, 5).map((x) =>
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
@@ -3172,22 +2748,18 @@ function buildReportLines(args: {
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");
         lines.push(`TOP_MEAN selected assets = ${topMeanBreakdown || "n/a"}${h.topMeanByAsset.length > 5 ? ` | other=${h.topMeanByAsset.length - 5} assets` : ""}`);
-        const topMeanRawUniqueV1Breakdown = h.topMeanRawUniqueV1ByAsset.slice(0, 5).map((x) =>
+        const topMeanRawUniqueBreakdown = h.topMeanRawUniqueByAsset.slice(0, 5).map((x) =>
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");
-        lines.push(`TOP_MEAN_RAW_UNIQUE_V1 selected assets = ${topMeanRawUniqueV1Breakdown || "n/a"}${h.topMeanRawUniqueV1ByAsset.length > 5 ? ` | other=${h.topMeanRawUniqueV1ByAsset.length - 5} assets` : ""}`);
-        const topRawPnlPositiveBreakdown = h.topRawPnlPositiveByAsset.slice(0, 5).map((x) =>
+        lines.push(`TOP_MEAN_RAW_UNIQUE selected assets = ${topMeanRawUniqueBreakdown || "n/a"}${h.topMeanRawUniqueByAsset.length > 5 ? ` | other=${h.topMeanRawUniqueByAsset.length - 5} assets` : ""}`);
+        const topRawProfitBreakdown = h.topRawProfitByAsset.slice(0, 5).map((x) =>
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");
-        lines.push(`TOP_RAW_PNL_POS selected assets = ${topRawPnlPositiveBreakdown || "n/a"}${h.topRawPnlPositiveByAsset.length > 5 ? ` | other=${h.topRawPnlPositiveByAsset.length - 5} assets` : ""}`);
-        const topMeanPnlPositiveBreakdown = h.topMeanPnlPositiveByAsset.slice(0, 5).map((x) =>
+        lines.push(`TOP_RAW_PROFIT selected assets = ${topRawProfitBreakdown || "n/a"}${h.topRawProfitByAsset.length > 5 ? ` | other=${h.topRawProfitByAsset.length - 5} assets` : ""}`);
+        const topMeanProfitBreakdown = h.topMeanProfitByAsset.slice(0, 5).map((x) =>
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");
-        lines.push(`TOP_MEAN_PNL_POS selected assets = ${topMeanPnlPositiveBreakdown || "n/a"}${h.topMeanPnlPositiveByAsset.length > 5 ? ` | other=${h.topMeanPnlPositiveByAsset.length - 5} assets` : ""}`);
-        const topMeanTrendBreakdown = h.topMeanTrendByAsset.slice(0, 5).map((x) =>
-            `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
-        ).join(" | ");
-        lines.push(`TOP_MEAN_TREND selected assets = ${topMeanTrendBreakdown || "n/a"}${h.topMeanTrendByAsset.length > 5 ? ` | other=${h.topMeanTrendByAsset.length - 5} assets` : ""}`);
+        lines.push(`TOP_MEAN_PROFIT selected assets = ${topMeanProfitBreakdown || "n/a"}${h.topMeanProfitByAsset.length > 5 ? ` | other=${h.topMeanProfitByAsset.length - 5} assets` : ""}`);
         const maxActiveBreakdown = h.maxActiveByAsset.slice(0, 5).map((x) =>
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");

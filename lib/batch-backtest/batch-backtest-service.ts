@@ -3000,12 +3000,9 @@ export class BatchBacktestService {
             .toISOString()
             .slice(0, 19)
             .replace("T", " ") + " UTC";
-        const breadth = latest.ema200Breadth === null
-            ? "n/a"
-            : `${(latest.ema200Breadth * 100).toFixed(1)}%`;
         let html = `<div class="batch-report-card">`;
         html += `<div class="batch-report-title">Latest OPEN_SCORE Selector Picks</div>`;
-        html += `<div class="batch-report-note">decision event: ${escapeHtml(decisionLabel)} | EMA200 breadth ${escapeHtml(breadth)} (${escapeHtml(latest.ema200AssetsAbove)}/${escapeHtml(latest.ema200ObservedAssets)}) | regime ${escapeHtml(latest.regime.toUpperCase())}</div>`;
+        html += `<div class="batch-report-note">decision event: ${escapeHtml(decisionLabel)}</div>`;
         html += `<table class="finder-table batch-report-table"><thead><tr><th>Selector</th><th>Direction</th><th>Selection</th><th>Mean</th><th>Score</th><th>Active Pairs</th><th>Pool</th></tr></thead><tbody>`;
         for (const selection of latest.selections) {
             const selectedText = selection.reason === "selected"
@@ -3025,20 +3022,17 @@ export class BatchBacktestService {
             html += `<tr><td><strong>${escapeHtml(selection.selector)}</strong></td><td class="${directionClass}"><strong>${escapeHtml(selection.direction.toUpperCase())}</strong></td><td>${escapeHtml(selectedText)}</td><td>${escapeHtml(mean)}</td><td>${escapeHtml(score)}</td><td>${escapeHtml(selection.activePairs ?? "--")}</td><td>${escapeHtml(selection.eligibleCandidates)}</td></tr>`;
         }
         html += `</tbody></table>`;
-        html += `<div class="batch-report-note batch-report-note--after">Research selectors only. Tied rows are explicitly skipped; TOP_MEAN_TREND uses target prices known by this decision event.</div>`;
+        html += `<div class="batch-report-note batch-report-note--after">Research selectors only. Tied rows are explicitly skipped.</div>`;
         html += `</div>`;
         return html;
     }
 
     private formatLatestOpenScoreSelectionLines(latest: OpenScoreUsdLatestSelections): string[] {
-        const breadth = latest.ema200Breadth === null
-            ? "n/a"
-            : `${(latest.ema200Breadth * 100).toFixed(1)}%`;
         const lines = [
             "----------------------------------------------------------------------",
             "LATEST OPEN_SCORE SELECTOR PICKS",
             "----------------------------------------------------------------------",
-            `decisionTime=${latest.decisionTime} | EMA200 breadth=${breadth} (${latest.ema200AssetsAbove}/${latest.ema200ObservedAssets}) | regime=${latest.regime.toUpperCase()}`,
+            `decisionTime=${latest.decisionTime}`,
         ];
         for (const selection of latest.selections) {
             const asset = selection.reason === "selected"
@@ -3389,7 +3383,7 @@ export class BatchBacktestService {
                 ongoingRows: ongoingTopMeanRows,
             } satisfies TopMeanOpenScoreDetailSection];
         let html = `<div class="batch-open-score-details-heading">OPEN_SCORE Event Details — ${escapeHtml(selector)}</div>`;
-        html += `<div class="batch-open-score-details-note">Showing ${escapeHtml(selector)} only. Return is the selected asset's net USD return after configured slippage and commission; control is the selector-specific comparison pool (for TOP_MEAN_RAW_UNIQUE_V1, the TOP_MEAN tied set, including the selected asset). TOP_MEAN selections with incomplete horizons are shown as ONGOING; their outcome fields are intentionally n/a. These rows are intentionally excluded from Copy OPEN_SCORE and Copy Result.</div>`;
+        html += `<div class="batch-open-score-details-note">Showing ${escapeHtml(selector)} only. Return is the selected asset's net USD return after configured slippage and commission; control is the selector-specific comparison pool (for TOP_MEAN_RAW_UNIQUE, the TOP_MEAN tied set, including the selected asset). TOP_MEAN selections with incomplete horizons are shown as ONGOING; their outcome fields are intentionally n/a. These rows are intentionally excluded from Copy OPEN_SCORE and Copy Result.</div>`;
         if (fullWindowTruncated || truncatedAnnual.length > 0 || annualRowsNotShipped) {
             const truncationParts: string[] = [];
             if (fullWindowTruncated) {

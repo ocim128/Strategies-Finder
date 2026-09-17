@@ -626,10 +626,6 @@ describe("BatchBacktestService analysis lifecycle", () => {
         };
         result.latestSelections = {
             decisionTime: 1_700_000_000,
-            ema200ObservedAssets: 3,
-            ema200AssetsAbove: 2,
-            ema200Breadth: 2 / 3,
-            regime: "bullish",
             selections: [
                 {
                     selector: "TOP_RAW",
@@ -643,7 +639,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
                     reason: "selected",
                 },
                 {
-                    selector: "TOP_MEAN_TREND",
+                    selector: "MAX_ACTIVE",
                     direction: "long",
                     asset: null,
                     tiedAssets: ["AAA", "CCC"],
@@ -654,7 +650,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
                     reason: "tied",
                 },
                 {
-                    selector: "MAX_SUBMITTED",
+                    selector: "TOP_MEAN_RAW_UNIQUE",
                     direction: "long",
                     asset: "CCC",
                     tiedAssets: [],
@@ -674,14 +670,14 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("one selected strategy configuration only");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("Latest OPEN_SCORE Selector Picks");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TOP_RAW");
-        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("MAX_SUBMITTED");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("MAX_ACTIVE");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TIE / SKIP: AAA, CCC");
         const copiedLines = svc().formatLatestOpenScoreSelectionLines(result.latestSelections);
         expect(copiedLines).to.include(
-            "TOP_MEAN_TREND NOW | direction=LONG | asset=TIE_SKIP[AAA,CCC] | mean=n/a | score=n/a | activePairs=n/a | pool=2 | reason=tied",
+            "MAX_ACTIVE NOW | direction=LONG | asset=TIE_SKIP[AAA,CCC] | mean=n/a | score=n/a | activePairs=n/a | pool=2 | reason=tied",
         );
         expect(copiedLines).to.include(
-            "MAX_SUBMITTED NOW | direction=LONG | asset=CCC | mean=0.25 | score=2 | activePairs=8 | pool=3 | reason=selected",
+            "TOP_MEAN_RAW_UNIQUE NOW | direction=LONG | asset=CCC | mean=0.25 | score=2 | activePairs=8 | pool=3 | reason=selected",
         );
     });
 
@@ -712,10 +708,6 @@ describe("BatchBacktestService analysis lifecycle", () => {
         }];
         result.latestSelections = {
             decisionTime,
-            ema200ObservedAssets: 3,
-            ema200AssetsAbove: 2,
-            ema200Breadth: 2 / 3,
-            regime: "bullish",
             selections: [{
                 selector: "TOP_MEAN",
                 direction: "long",

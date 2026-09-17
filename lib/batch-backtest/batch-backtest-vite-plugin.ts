@@ -91,8 +91,8 @@ import { releaseIfOwner as releaseResearchWorkloadIfOwner, tryAcquire as tryAcqu
  *
  * The `submittedDegreeByAsset` map counts BOTH legs of every canonical
  * relationship (so a `BTC+ETH` pair contributes 1 to BTC and 1 to ETH).
- * This is the "submitted degree" the OPEN_SCORE USD engine distinguishes
- * from the "retained degree" (computed from successfully loaded artifacts).
+ * It is request-time universe telemetry exposed via /status; the OPEN_SCORE
+ * USD engine computes its own retained degree from loaded artifacts.
  */
 function computeUniverseCountsFromSymbols(symbols: readonly string[]): BatchUniverseCounts {
     const normalized = normalizeBatchSymbols(symbols.join("\n"));
@@ -2272,13 +2272,6 @@ export async function processOpenScoreUsdReplay(
                 ...(sampleToSec !== null ? { sampleToSec } : {}),
                 slippageRate,
                 commissionRate,
-                // Phase 3 MAX_ACTIVE: thread the canonical submitted degree
-                // map from the retained Batch run state. The engine uses this
-                // to drive the MAX_SUBMITTED selector distinct from
-                // MAX_RETAINED (which counts loaded-artifact legs).
-                ...(runState?.universeCounts?.submittedDegreeByAsset
-                    ? { submittedDegreeByAsset: runState.universeCounts.submittedDegreeByAsset }
-                    : {}),
                 // Cap-tilt weighting: both fields ride together or neither
                 // (the engine defensively treats a weight without a lookup
                 // as off).

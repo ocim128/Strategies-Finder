@@ -152,9 +152,7 @@ admitted.
   closed bar. The pool is active only when breadth is strictly greater than 50%;
   otherwise the pool is empty and NO fallback pool is substituted. An asset is admitted
   only when its prior close is strictly above its causal EMA200. Missing feature data
-  excludes that event — never imputed. The existing TOP_MEAN_TREND arm
-  answers ranking quality only and is regime-sensitive (24-bar delta −1.17% in 2025 vs
-  +4.43% in 2026) — it does not substitute for this.
+  excludes that event — never imputed.
 - **P2 cross-sectional momentum pool**: rank the frozen catalog by trailing 120-bar
   return minus the cross-sectional median, using only the last fully closed bar. The
   primary pool is EXACTLY the top 35 assets of the 70-asset catalog; the 21-asset and
@@ -403,12 +401,12 @@ pairs `f0bfdac1c686995a80705a2c4f08c6c23833815485453a3a19744da21f60a405`, and
 sorted pair set `11f30dd37269b303a7310904d95b443bd9aabfd37912a25f0854e716f87f9a65`.
 
 The frozen schedule was 36 quarterly cutoffs, with the exact TOP_MEAN tie-skip
-baseline, TOP_MEAN_RAW_UNIQUE_V1 candidate, matched uniform control, existing
+baseline, TOP_MEAN_RAW_UNIQUE candidate, matched uniform control, existing
 horizons/costs/bootstrap/information gate/pass-fail rules. Production TOP_MEAN is
 unchanged. Phase 0 parity passed; the formal outcome run and its disposition are
 recorded below.
 
-## 15. TOP_MEAN_RAW_UNIQUE_V1 final disposition (2026-08-25)
+## 15. TOP_MEAN_RAW_UNIQUE final disposition (2026-08-25)
 
 The corrected R4 formal evaluation is valid but failed the preregistered adoption
 rule. The auditor independently reproduced the outcome calculations and confirmed
@@ -438,7 +436,7 @@ reproducibility. R3 artifacts remain preserved but are superseded by corrected R
 Note: `archive/` is gitignored, so these artifact paths are machine-local research
 records, not repository files.
 
-`TOP_MEAN_RAW_UNIQUE_V1` is nevertheless retained in OPEN_SCORE as an offline
+`TOP_MEAN_RAW_UNIQUE` is nevertheless retained in OPEN_SCORE as an offline
 diagnostic arm. Its rule is: form the TOP_MEAN tied set, select its unique maximum
 raw score, and skip residual raw ties. Its comparison control is the mean return of
 that TOP_MEAN tied set, including the selected asset. OPEN_SCORE also exposes the
