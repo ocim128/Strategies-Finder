@@ -530,6 +530,7 @@ class SettingsManager {
             'exitStrategyKey',
             'exitStrategyParams',
             'confirmationStrategiesToggle',
+            'confirmationSignalExitsToggle',
             'confirmationStrategies',
             'confirmationStrategyParams',
             'invertSignalsToggle',

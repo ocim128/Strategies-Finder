@@ -130,6 +130,7 @@ export interface BacktestSettingsData {
     confirmationStrategiesToggle: boolean;
     confirmationStrategies: string[];
     confirmationMode: ConfirmationMode;
+    confirmationSignalExitsEnabled: boolean;
     confirmationWindowBars: number;
     confirmationStrategyParams: Record<string, StrategyParams>;
 
@@ -243,6 +244,7 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     confirmationStrategiesToggle: false,
     confirmationStrategies: [],
     confirmationMode: EFFECTIVE_BACKTEST_DEFAULTS.confirmationMode,
+    confirmationSignalExitsEnabled: EFFECTIVE_BACKTEST_DEFAULTS.confirmationSignalExitsEnabled,
     confirmationWindowBars: EFFECTIVE_BACKTEST_DEFAULTS.confirmationWindowBars,
     confirmationStrategyParams: {},
 };

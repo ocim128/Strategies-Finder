@@ -54,7 +54,7 @@ export function prepareSignals(
             sizeFraction: signal.sizeFraction,
             exitOnly: signal.exitOnly,
             ...(decisionBarIndex === undefined ? {} : { decisionBarIndex }),
-            ...(confirmationExitOnly ? { confirmationExitOnly: true } : {}),
+            ...(confirmationExitOnly || signal.confirmationExitOnly === true ? { confirmationExitOnly: true } : {}),
         });
     };
 
@@ -115,6 +115,7 @@ export function prepareSignals(
             }
 
             if (signal.type !== entryType) continue;
+            if (signal.confirmationExitOnly === true) continue;
 
             const decisionIndex = signalIndex;
             if (decisionIndex >= data.length) continue;
@@ -157,7 +158,7 @@ export function prepareSignals(
         }
 
         const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
-        if (!useEntryConfirmation || signal.exitOnly === true) {
+        if (!useEntryConfirmation || signal.exitOnly === true || signal.confirmationExitOnly === true) {
             pushPreparedSignal(executionIndex, signal, signal.type, entryPrice);
             continue;
         }

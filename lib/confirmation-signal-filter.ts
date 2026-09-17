@@ -164,7 +164,20 @@ function mergeConfirmationSignals(
     const dataIndexByTime = buildDataIndexByTime(data);
     const confirmationIndex = buildSignalIndex(confirmationSignals, dataIndexByTime);
 
-    return baseSignals.filter((signal) => hasConfirmationMatch(signal, confirmationIndex, dataIndexByTime, mode, windowBars));
+    const matchedSignals = baseSignals.filter((signal) => hasConfirmationMatch(
+        signal,
+        confirmationIndex,
+        dataIndexByTime,
+        mode,
+        windowBars
+    ));
+    if (settings.confirmationSignalExitsEnabled !== false) return matchedSignals;
+
+    const matchedSignalSet = new Set(matchedSignals);
+    return baseSignals.map((signal) => {
+        if (signal.confirmationExitOnly === true || matchedSignalSet.has(signal)) return signal;
+        return { ...signal, confirmationExitOnly: true };
+    });
 }
 
 export function readConfirmationStrategyKeys(value: unknown): string[] {

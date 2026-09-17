@@ -395,6 +395,8 @@ export interface BacktestSettings {
     confirmationStrategies?: string[];
     /** How selected confirmation strategies should interact with base entry signals. */
     confirmationMode?: ConfirmationMode;
+    /** Whether selected confirmations must also agree with signal-based exits. Defaults to true. */
+    confirmationSignalExitsEnabled?: boolean;
     /** Symmetric chart-bar radius used by windowed confirmation modes. */
     confirmationWindowBars?: number;
     /** Optional params keyed by confirmation strategy id. */

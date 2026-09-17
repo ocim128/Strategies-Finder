@@ -294,19 +294,23 @@ describe('Backtest settings compatibility', () => {
 
     it('normalizes selected confirmation strategies from the settings UI payload', () => {
         expect(BACKTEST_DOM_SETTING_IDS.includes('confirmationStrategiesToggle')).to.equal(true);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('confirmationSignalExitsToggle')).to.equal(true);
         expect(BACKTEST_DOM_SETTING_IDS.includes('confirmationStrategies')).to.equal(true);
         expect(BACKTEST_DOM_SETTING_IDS.includes('confirmationMode')).to.equal(true);
         expect(BACKTEST_DOM_SETTING_IDS.includes('confirmationWindowBars')).to.equal(true);
         expect(BACKTEST_DOM_SETTING_IDS.includes('confirmationStrategyParams')).to.equal(true);
 
         const contract = getBacktestDomSettingContract('confirmationStrategies');
+        const exitContract = getBacktestDomSettingContract('confirmationSignalExitsToggle');
         const modeContract = getBacktestDomSettingContract('confirmationMode');
         const windowContract = getBacktestDomSettingContract('confirmationWindowBars');
         const paramsContract = getBacktestDomSettingContract('confirmationStrategyParams');
         expect(contract).to.not.equal(undefined);
+        expect(exitContract).to.not.equal(undefined);
         expect(modeContract).to.not.equal(undefined);
         expect(windowContract).to.not.equal(undefined);
         expect(paramsContract).to.not.equal(undefined);
+        expect(coerceBacktestDomSettingValue(exitContract!, 'false')).to.equal(false);
         expect(coerceBacktestDomSettingValue(
             contract!,
             'entropy_ratio_regime_alignment,close_location_median_alignment,robust_median_channel_breakout'
@@ -354,6 +358,7 @@ describe('Backtest settings compatibility', () => {
             'close_location_median_alignment',
         ]);
         expect(resolved.confirmationMode).to.equal('veto_opposite');
+        expect(resolved.confirmationSignalExitsEnabled).to.equal(true);
         expect(resolved.confirmationWindowBars).to.equal(4);
         expect(resolved.confirmationStrategyParams).to.deep.equal({
             entropy_ratio_regime_alignment: { slowWindow: 21 },
@@ -366,8 +371,17 @@ describe('Backtest settings compatibility', () => {
         } as unknown as BacktestSettings).confirmationMode).to.equal('disagree');
         expect('confirmationStrategies' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
         expect('confirmationMode' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
+        expect('confirmationSignalExitsEnabled' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
         expect('confirmationWindowBars' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
         expect('confirmationStrategyParams' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
+
+        const exitsDisabled = resolveBacktestSettingsFromRaw({
+            confirmationStrategiesToggle: true,
+            confirmationStrategies: ['ema_confirmation'],
+            confirmationSignalExitsToggle: false,
+        } as unknown as BacktestSettings);
+        expect(exitsDisabled.confirmationSignalExitsEnabled).to.equal(false);
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.confirmationSignalExitsEnabled).to.equal(true);
     });
 
     it('normalizes post-signal Polymarket limit-entry settings', () => {

@@ -101,6 +101,7 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     tradeDirection: "short" as TradeDirection,
     invertSignals: false,
     confirmationMode: "agree" as ConfirmationMode,
+    confirmationSignalExitsEnabled: true,
     confirmationWindowBars: 0,
     executionModel: "next_open" as ExecutionModel,
     allowSameBarExit: false,
@@ -213,6 +214,7 @@ type BooleanResolverKey =
     | "strategyTimeframeEnabled"
     | "polymarketEntryCutoffEnabled"
     | "disableSignalExits"
+    | "confirmationSignalExitsEnabled"
     | "polymarketProtectionTakeProfitEnabled"
     | "polymarketProtectionStopLossEnabled"
     | "pathExitEnabled";
@@ -399,6 +401,7 @@ const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
     { key: "strategyTimeframeEnabled", keys: ["strategyTimeframeEnabled", "strategyTimeframeToggle"] },
     { key: "polymarketEntryCutoffEnabled", keys: ["polymarketEntryCutoffEnabled", "polymarketEntryCutoffToggle"] },
     { key: "disableSignalExits", keys: ["disableSignalExits"] },
+    { key: "confirmationSignalExitsEnabled", keys: ["confirmationSignalExitsEnabled", "confirmationSignalExitsToggle"] },
     { key: "polymarketProtectionTakeProfitEnabled", keys: ["polymarketProtectionTakeProfitEnabled"] },
     { key: "polymarketProtectionStopLossEnabled", keys: ["polymarketProtectionStopLossEnabled"] },
     { key: "pathExitEnabled", keys: ["pathExitEnabled", "pathExitToggle"], guard: "useRiskManagement", disabledValue: false },
@@ -662,6 +665,7 @@ export function hasUiToggleSettings(raw: Record<string, unknown>): boolean {
     return [
         "riskSettingsToggle",
         "invertSignalsToggle",
+        "confirmationSignalExitsToggle",
     ].some((key) => key in raw);
 }
 
@@ -724,6 +728,11 @@ export function resolveBacktestSettingsFromRaw(
         coerced.polymarketEntryCutoffEnabled = readBooleanAny(raw, ["polymarketEntryCutoffEnabled", "polymarketEntryCutoffToggle"], EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffEnabled);
         coerced.polymarketEntryCutoffSeconds = clampPolymarketEntryCutoffSeconds(raw["polymarketEntryCutoffSeconds"]);
         coerced.disableSignalExits = readBoolean(raw, "disableSignalExits", EFFECTIVE_BACKTEST_DEFAULTS.disableSignalExits);
+        coerced.confirmationSignalExitsEnabled = readBooleanAny(
+            raw,
+            ["confirmationSignalExitsEnabled", "confirmationSignalExitsToggle"],
+            EFFECTIVE_BACKTEST_DEFAULTS.confirmationSignalExitsEnabled
+        );
         coerced.riskEntryConfirmationMove = resolveEntryConfirmationMove(coerced.riskEntryConfirmationMove);
         coerced.entryTimeFilterEnabled = readBooleanAny(raw, ["entryTimeFilterEnabled", "riskEntryTimeFilterToggle"], false);
         coerced.entryTimeFilter = resolveEntryTimeFilter(raw["entryTimeFilter"] ?? raw["riskEntryTimeFilter"]);

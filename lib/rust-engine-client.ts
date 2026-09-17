@@ -199,6 +199,7 @@ export function hasUnsupportedRustSignalShape(signals: readonly Signal[]): boole
     return signals.some((signal) => signal.triggerPrice !== undefined
         || signal.sizeFraction !== undefined
         || signal.exitOnly === true
+        || signal.confirmationExitOnly === true
         || isBehaviorBearingRustSignalReason(signal.reason));
 }
 

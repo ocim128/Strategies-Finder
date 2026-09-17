@@ -77,4 +77,26 @@ describe("confirmation signal filter", () => {
 
         expect(result).to.deep.equal([]);
     });
+
+    it("keeps unconfirmed signals as close-only when exit confirmation is disabled", () => {
+        const result = applyConfirmationStrategiesToSignals({
+            data: data(),
+            baseSignals: [
+                signal(0, "buy"),
+                signal(1, "sell"),
+            ],
+            settings: {
+                confirmationStrategies: ["test_confirmation"],
+                confirmationMode: "agree",
+                confirmationSignalExitsEnabled: false,
+            },
+            resolveStrategy: () => confirmationStrategy,
+            executeStrategy: () => [signal(0, "buy")],
+        });
+
+        expect(result).to.deep.equal([
+            signal(0, "buy"),
+            { ...signal(1, "sell"), confirmationExitOnly: true },
+        ]);
+    });
 });

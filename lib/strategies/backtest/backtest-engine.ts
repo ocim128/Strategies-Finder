@@ -330,6 +330,7 @@ function canImmediatelyReenterAfterSignalExit(args: {
     barIndex?: number;
 }): boolean {
     if (!args.fullyClosed || args.wasPartial || args.positions.length >= args.maxOpenTrades) return false;
+    if (args.signal.confirmationExitOnly === true) return false;
     if (
         args.signalExitReentryCooldownUntilBarIndex !== undefined
         && args.barIndex !== undefined
@@ -346,7 +347,7 @@ function getConflictingEntryTimes(signals: Signal[]): Set<string> {
 
     for (const signal of signals) {
         const key = timeKey(signal.time);
-        if (signal.exitOnly === true) continue;
+        if (signal.exitOnly === true || signal.confirmationExitOnly === true) continue;
         if (signal.type === 'buy') buyTimes.add(key);
         else if (signal.type === 'sell') sellTimes.add(key);
     }
@@ -799,6 +800,7 @@ function runSinglePositionFinderFastPath(args: {
         indexedSignalView.barIndex = barIndex;
         indexedSignalView.sizeFraction = source.sizeFraction;
         indexedSignalView.exitOnly = source.exitOnly;
+        indexedSignalView.confirmationExitOnly = source.confirmationExitOnly;
         return indexedSignalView;
     };
 
@@ -967,6 +969,7 @@ function runSinglePositionFinderFastPath(args: {
         if (
             forcedExitReason === null
             && !isExitOnly
+            && signal.confirmationExitOnly !== true
             && tradeDirection === "both"
             && fullyClosed
             && !exitOrder.wasPartial

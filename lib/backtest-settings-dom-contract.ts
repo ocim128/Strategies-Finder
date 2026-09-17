@@ -337,6 +337,11 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         rustSupport: "unsupported",
         workerSupport: "ui_only",
     }),
+    createField("confirmationSignalExitsToggle", {
+        settingKey: "confirmationSignalExitsEnabled",
+        parser: "boolean",
+        rustSupport: "unsupported",
+    }),
     createField("confirmationStrategies", {
         parser: "stringArray",
         rustSupport: "unsupported",

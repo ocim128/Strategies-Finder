@@ -181,6 +181,7 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "confirmationStrategiesToggle",
     "confirmationStrategies",
     "confirmationMode",
+    "confirmationSignalExitsEnabled",
     "confirmationWindowBars",
     "confirmationStrategyParams",
     "strategyTimeframeEnabled",

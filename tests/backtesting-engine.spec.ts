@@ -906,6 +906,36 @@ describe('Backtesting Engine', () => {
         expect(result.trades.map((trade) => trade.type)).to.deep.equal(['long']);
     });
 
+    it('allows unconfirmed signals to close but not open positions when confirmation exits are disabled', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 },
+            { time: 3 as Time, open: 101, high: 103, low: 100, close: 102, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100 },
+            { time: 2 as Time, type: 'sell', price: 101, confirmationExitOnly: true },
+            { time: 3 as Time, type: 'sell', price: 102, confirmationExitOnly: true },
+        ];
+        const settings = {
+            tradeDirection: 'both' as const,
+            executionModel: 'signal_close' as const,
+            confirmationSignalExitsEnabled: false,
+        };
+        const options = { requireTradeHistory: true } as const;
+
+        const results = [
+            runBacktest(data, signals, 1000, 100, 0, settings, undefined, undefined, options),
+            runBacktestCompact(data, signals, 1000, 100, 0, settings, undefined, undefined, options),
+        ];
+        for (const result of results) {
+            expect(result.totalTrades).to.equal(1);
+            expect(result.trades.map((trade) => trade.type)).to.deep.equal(['long']);
+            expect(result.trades[0].exitReason).to.equal('signal');
+            expect(result.trades[0].exitTime).to.equal(2 as Time);
+        }
+    });
+
     it('keeps disableSignalExits active when an exit strategy override supplies close-only signals', () => {
         const data: OHLCVData[] = [
             { time: 1 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
