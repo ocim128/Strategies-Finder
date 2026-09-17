@@ -15,42 +15,10 @@ const CONFIRMATION_STRATEGY_CHECKBOXES = [
         ],
     },
     {
-        checkboxKey: "confirmationCloseLocationMedianAlignment",
-        strategyKey: "close_location_median_alignment",
+        checkboxKey: "confirmationBodyDirectionPlacementCoherence",
+        strategyKey: "body_direction_placement_coherence",
         params: [
-            { inputKey: "confirmationCloseLocationLookback", paramKey: "lookback", defaultValue: 63, minValue: 2 },
-        ],
-    },
-    {
-        checkboxKey: "confirmationProbabilityBoundaryEigenShift",
-        strategyKey: "probability_boundary_eigen_shift",
-        params: [
-            { inputKey: "confirmationProbabilityBoundaryStateLookback", paramKey: "stateLookback", defaultValue: 250, minValue: 2 },
-        ],
-        fixedParams: { eigenLimit: -13 },
-    },
-    {
-        checkboxKey: "confirmationDecayMomentumAlignment",
-        strategyKey: "decay_momentum_alignment",
-        params: [
-            { inputKey: "confirmationDecayMomentumDecay", paramKey: "decay", defaultValue: 0.92, minValue: 0.01 },
-            { inputKey: "confirmationDecayMomentumRocPeriod", paramKey: "roc_period", defaultValue: 1, minValue: 1 },
-        ],
-    },
-    {
-        checkboxKey: "confirmationEventDirectionFollow",
-        strategyKey: "event_direction_1s",
-        params: [
-            { inputKey: "confirmationEventDirectionMinSeconds", paramKey: "minSecondsToEventEnd", defaultValue: 0, minValue: 0 },
-        ],
-    },
-    {
-        checkboxKey: "confirmationWidthExpansionZscoreRouter",
-        strategyKey: "width_expansion_zscore_router",
-        params: [
-            { inputKey: "confirmationWidthExpansionVaLookback", paramKey: "va_lookback", defaultValue: 160, minValue: 3 },
-            { inputKey: "confirmationWidthExpansionWidthThreshold", paramKey: "width_threshold", defaultValue: 1, minValue: 0 },
-            { inputKey: "confirmationWidthExpansionZThreshold", paramKey: "z_threshold", defaultValue: 0, minValue: 0 },
+            { inputKey: "confirmationBodyDirectionPlacementCoherenceThreshold", paramKey: "coherenceThreshold", defaultValue: 0.7, minValue: 0.3 },
         ],
     },
     {
@@ -217,7 +185,6 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     const confirmationCheckboxes = CONFIRMATION_STRATEGY_CHECKBOXES.map((definition) => ({
         strategyKey: definition.strategyKey,
         checkbox: dom[definition.checkboxKey],
-        fixedParams: "fixedParams" in definition ? definition.fixedParams : {},
         params: definition.params.map((p) => ({
             paramKey: p.paramKey,
             defaultValue: p.defaultValue,
@@ -282,8 +249,8 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     };
     const syncConfirmationParamsInputFromFields = () => {
         const paramsByStrategy: Record<string, Record<string, number>> = {};
-        confirmationCheckboxes.forEach(({ strategyKey, params, fixedParams }) => {
-            const merged: Record<string, number> = { ...fixedParams };
+        confirmationCheckboxes.forEach(({ strategyKey, params }) => {
+            const merged: Record<string, number> = {};
             params.forEach(({ paramKey, defaultValue, minValue, input }) => {
                 const parsedValue = parseInputNumber(input.value);
                 merged[paramKey] = typeof parsedValue === 'number' && Number.isFinite(parsedValue)

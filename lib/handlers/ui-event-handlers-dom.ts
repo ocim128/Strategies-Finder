@@ -44,19 +44,8 @@ const UI_EVENT_HANDLER_DOM_IDS = {
     confirmationStrategyParams: "confirmationStrategyParams",
     confirmationEntropyRatioRegimeAlignment: "confirmationEntropyRatioRegimeAlignment",
     confirmationEntropySlowWindow: "confirmationEntropySlowWindow",
-    confirmationCloseLocationMedianAlignment: "confirmationCloseLocationMedianAlignment",
-    confirmationCloseLocationLookback: "confirmationCloseLocationLookback",
-    confirmationProbabilityBoundaryEigenShift: "confirmationProbabilityBoundaryEigenShift",
-    confirmationProbabilityBoundaryStateLookback: "confirmationProbabilityBoundaryStateLookback",
-    confirmationDecayMomentumAlignment: "confirmationDecayMomentumAlignment",
-    confirmationDecayMomentumDecay: "confirmationDecayMomentumDecay",
-    confirmationDecayMomentumRocPeriod: "confirmationDecayMomentumRocPeriod",
-    confirmationEventDirectionFollow: "confirmationEventDirectionFollow",
-    confirmationEventDirectionMinSeconds: "confirmationEventDirectionMinSeconds",
-    confirmationWidthExpansionZscoreRouter: "confirmationWidthExpansionZscoreRouter",
-    confirmationWidthExpansionVaLookback: "confirmationWidthExpansionVaLookback",
-    confirmationWidthExpansionWidthThreshold: "confirmationWidthExpansionWidthThreshold",
-    confirmationWidthExpansionZThreshold: "confirmationWidthExpansionZThreshold",
+    confirmationBodyDirectionPlacementCoherence: "confirmationBodyDirectionPlacementCoherence",
+    confirmationBodyDirectionPlacementCoherenceThreshold: "confirmationBodyDirectionPlacementCoherenceThreshold",
     confirmationEmaTrend: "confirmationEmaTrend",
     confirmationEmaPeriod: "confirmationEmaPeriod",
     strategyTimeframeToggle: "strategyTimeframeToggle",
@@ -128,19 +117,8 @@ type UiEventTypedControls = {
     confirmationStrategyParams: HTMLInputElement;
     confirmationEntropyRatioRegimeAlignment: HTMLInputElement;
     confirmationEntropySlowWindow: HTMLInputElement;
-    confirmationCloseLocationMedianAlignment: HTMLInputElement;
-    confirmationCloseLocationLookback: HTMLInputElement;
-    confirmationProbabilityBoundaryEigenShift: HTMLInputElement;
-    confirmationProbabilityBoundaryStateLookback: HTMLInputElement;
-    confirmationDecayMomentumAlignment: HTMLInputElement;
-    confirmationDecayMomentumDecay: HTMLInputElement;
-    confirmationDecayMomentumRocPeriod: HTMLInputElement;
-    confirmationEventDirectionFollow: HTMLInputElement;
-    confirmationEventDirectionMinSeconds: HTMLInputElement;
-    confirmationWidthExpansionZscoreRouter: HTMLInputElement;
-    confirmationWidthExpansionVaLookback: HTMLInputElement;
-    confirmationWidthExpansionWidthThreshold: HTMLInputElement;
-    confirmationWidthExpansionZThreshold: HTMLInputElement;
+    confirmationBodyDirectionPlacementCoherence: HTMLInputElement;
+    confirmationBodyDirectionPlacementCoherenceThreshold: HTMLInputElement;
     confirmationEmaTrend: HTMLInputElement;
     confirmationEmaPeriod: HTMLInputElement;
     strategyTimeframeToggle: HTMLInputElement;

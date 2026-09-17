@@ -91,92 +91,16 @@
                 <div class="param-row">
                     <div class="param-group">
                         <div class="param-row-header">
-                            <label class="param-label">Close Location Median Alignment</label>
-                            <label class="section-toggle section-toggle--sm" aria-label="Toggle close location median alignment confirmation">
-                                <input type="checkbox" id="confirmationCloseLocationMedianAlignment">
+                            <label class="param-label">Body Direction Placement Coherence</label>
+                            <label class="section-toggle section-toggle--sm" aria-label="Toggle body direction placement coherence confirmation">
+                                <input type="checkbox" id="confirmationBodyDirectionPlacementCoherence">
                                 <span class="section-toggle-track"></span>
                             </label>
                         </div>
                         <div class="param-hint">Requires the confirmation strategy to agree on the same buy or sell bar.</div>
                         <div class="param-group">
-                            <label class="param-label">Lookback</label>
-                            <input type="number" class="param-input" id="confirmationCloseLocationLookback" value="63" min="2" step="1">
-                        </div>
-                    </div>
-                </div>
-                <div class="param-row">
-                    <div class="param-group">
-                        <div class="param-row-header">
-                            <label class="param-label">Probability Boundary Eigen-Shift</label>
-                            <label class="section-toggle section-toggle--sm" aria-label="Toggle probability boundary eigen-shift confirmation">
-                                <input type="checkbox" id="confirmationProbabilityBoundaryEigenShift">
-                                <span class="section-toggle-track"></span>
-                            </label>
-                        </div>
-                        <div class="param-hint">Requires the confirmation strategy to agree using a fixed Eigen Limit of -13.</div>
-                        <div class="param-group">
-                            <label class="param-label">State Lookback</label>
-                            <input type="number" class="param-input" id="confirmationProbabilityBoundaryStateLookback" value="250" min="2" step="1">
-                        </div>
-                    </div>
-                </div>
-                <div class="param-row">
-                    <div class="param-group">
-                        <div class="param-row-header">
-                            <label class="param-label">Decay Momentum Alignment</label>
-                            <label class="section-toggle section-toggle--sm" aria-label="Toggle decay momentum alignment confirmation">
-                                <input type="checkbox" id="confirmationDecayMomentumAlignment">
-                                <span class="section-toggle-track"></span>
-                            </label>
-                        </div>
-                        <div class="param-hint">Allows entries while exponentially weighted momentum agrees with the entry direction.</div>
-                        <div class="param-group">
-                            <label class="param-label">Decay Factor</label>
-                            <input type="number" class="param-input" id="confirmationDecayMomentumDecay" value="0.92" min="0.01" max="0.999" step="0.001">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">ROC Period</label>
-                            <input type="number" class="param-input" id="confirmationDecayMomentumRocPeriod" value="1" min="1" step="1">
-                        </div>
-                    </div>
-                </div>
-                <div class="param-row">
-                    <div class="param-group">
-                        <div class="param-row-header">
-                            <label class="param-label">Event Direction Follow</label>
-                            <label class="section-toggle section-toggle--sm" aria-label="Toggle event direction follow confirmation">
-                                <input type="checkbox" id="confirmationEventDirectionFollow">
-                                <span class="section-toggle-track"></span>
-                            </label>
-                        </div>
-                        <div class="param-hint">On 1s charts, requires price to be above 5m event-open for buy or below for sell. 0 = entire event window. No Polymarket data needed.</div>
-                        <div class="param-group">
-                            <label class="param-label">Min Seconds To Event End</label>
-                            <input type="number" class="param-input" id="confirmationEventDirectionMinSeconds" value="0" min="0" max="299" step="1">
-                        </div>
-                    </div>
-                </div>
-                <div class="param-row">
-                    <div class="param-group">
-                        <div class="param-row-header">
-                            <label class="param-label">Width Expansion ZScore Router</label>
-                            <label class="section-toggle section-toggle--sm" aria-label="Toggle width expansion zscore router confirmation">
-                                <input type="checkbox" id="confirmationWidthExpansionZscoreRouter">
-                                <span class="section-toggle-track"></span>
-                            </label>
-                        </div>
-                        <div class="param-hint">Routes z-score extremes to mean reversion in compressed value and momentum in expanded value. VA Lookback controls the rolling window for value area computation.</div>
-                        <div class="param-group">
-                            <label class="param-label">VA Lookback</label>
-                            <input type="number" class="param-input" id="confirmationWidthExpansionVaLookback" value="160" min="3" step="1">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Width Threshold</label>
-                            <input type="number" class="param-input" id="confirmationWidthExpansionWidthThreshold" value="1" min="0" step="0.0001">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Z-Score Threshold</label>
-                            <input type="number" class="param-input" id="confirmationWidthExpansionZThreshold" value="0" min="0" step="0.0001">
+                            <label class="param-label">Coherence Threshold</label>
+                            <input type="number" class="param-input" id="confirmationBodyDirectionPlacementCoherenceThreshold" value="0.7" min="0.3" max="0.95" step="0.01">
                         </div>
                     </div>
                 </div>
