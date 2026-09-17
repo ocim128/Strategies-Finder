@@ -301,6 +301,42 @@ value only when the machine must reserve capacity for another workload.
 The coordinator stream includes a `current_snapshot` event. The final result
 and status payloads carry the same optional `currentSnapshot` field.
 
+### Wire-Safety Cap on OPEN_SCORE Event Details
+
+The terminal `done` result and every `/status` reattach payload are wire-safe
+summaries (`toWireSafeTopMeanResultSummary`): the full-window
+`openScoreEventDetails` array is capped to the most recent
+`TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS` (20,000) rows as a PER-PASS TOTAL, the
+per-calendar-year `eventDetails` arrays do not ride the wire at all (only
+`eventDetailCount` scalars), and the exact pre-cap totals ride along as
+`openScoreEventDetailCount` / `eventDetailCount`. The archive-only
+`poolSnapshots` / `candidateOutcomes` never cross the wire. Measured on a
+20k-pair run (2026-09): the first cap attempt was per-selector and never
+bound — the terminal event shipped 53,967 full-window rows plus every year's
+rows again (30.7 MB; ~110k detail-row objects parsed and retained by the tab).
+With the per-pass cap and per-year rows dropped, the terminal payload is a
+few MB. `result.json` on disk and the research archive keep the FULL rows; the
+OPEN_SCORE details panel shows a loud truncation notice when the in-memory
+rows were capped, and falls back to the capped "Selected Window" section when
+per-year rows are absent.
+
+### Durable TOP_MEAN Diagnostic Log
+
+The Copy Diagnostic log survives a page reload. Entries are persisted to
+localStorage incrementally (progress events on a short debounce; every
+lifecycle event — run start, each NDJSON `done`/`fatal`, errors, Stop — is
+written through immediately), so the evidence is intact after an OOM crash:
+the event timeline, each NDJSON event's approximate byte size, and a
+Chrome-only JS-heap sample per entry. After a reload the log is restored and
+Copy Diagnostic is re-enabled without needing a new run; starting a new run
+replaces the log. Payloads are compacted at record time
+(`compactTopMeanDiagnosticData`): small payloads stay verbatim, oversized ones
+become a two-level shape summary (array lengths, string lengths, previews), so
+the ring, the copied diagnostic, and the persisted log all stay small. Full
+payloads remain available through Copy Result / Copy OPEN_SCORE / the details
+panel. The diagnostic-log contract lives in
+`lib/batch-backtest/sp500-top-mean-diagnostic-log.ts`.
+
 ### Validation Commands
 
 ```bash

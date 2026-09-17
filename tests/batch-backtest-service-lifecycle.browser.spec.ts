@@ -287,6 +287,87 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(stored).to.include("annual");
     });
 
+    it("restores the TOP_MEAN diagnostic log after a reload so Copy Diagnostic survives an OOM crash", () => {
+        // Intent: the diagnostic ring is the OOM evidence path. When the tab
+        // dies, the ring dies with it — the durable log must come back on the
+        // next load with the Copy Diagnostic button enabled.
+        const dom = setupForAnalysis();
+        const dying = svc();
+        dying.topMeanDiagnosticRunId = "sp500_top_mean_crashed";
+        dying.recordTopMeanDiagnostic("run.start", { workerCount: 4 });
+        dying.recordTopMeanNdjsonEvent({ type: "preflight", counts: { pairCount: 20000 } });
+        dying.recordTopMeanNdjsonEvent({ type: "done", result: { runId: "sp500_top_mean_crashed" } });
+        dying.writeTopMeanDiagnosticLogNow();
+
+        // Simulate the reload: fresh service instance, empty in-memory state.
+        currentService.dispose();
+        currentService = createBatchBacktestService();
+        const fresh = svc();
+        fresh.dom = dom;
+        fresh.restorePersistedTopMeanDiagnostics();
+
+        expect(fresh.topMeanDiagnosticRunId).to.equal("sp500_top_mean_crashed");
+        expect(dom.batchBacktestSp500TopMeanCopyDiagnosticBtn.disabled).to.equal(false);
+        const text = fresh.buildTopMeanDiagnosticText();
+        expect(text).to.include("sp500_top_mean_crashed");
+        expect(text).to.include("ndjson.preflight");
+        expect(text).to.include("20000");
+        expect(text).to.include("diagnostic.restored_from_previous_session");
+    });
+
+    it("records the approximate byte size of every ndjson diagnostic entry", () => {
+        // Intent: payload size per event is the primary OOM evidence the user
+        // can copy and share; it must be captured at receipt time.
+        setupForAnalysis();
+        svc().recordTopMeanNdjsonEvent({ type: "preflight", counts: { pairCount: 20000 } });
+        const entry = svc().topMeanDiagnosticEntries.find(
+            (e: any) => e.type === "ndjson.preflight",
+        );
+        expect(entry, "preflight event must be recorded").to.not.equal(undefined);
+        expect(entry.bytes).to.be.a("number");
+        expect(entry.bytes).to.be.greaterThan(0);
+    });
+
+    it("compacts oversized payloads at record time so the ring, copy, and persist stay small", () => {
+        // Intent: a terminal reattach poll carries the whole wire-safe result;
+        // recording it verbatim bloated the copied diagnostic to millions of
+        // lines AND retained multi-MB duplicates in the ring. The diagnostic
+        // evidence is the timeline + byte size + shape, not the payload.
+        setupForAnalysis();
+        const s = svc();
+        s.recordTopMeanDiagnostic("ndjson.done", {
+            result: { runId: "sp500_top_mean_big", blob: "x".repeat(200_000) },
+        });
+
+        // The ring entry is compacted to a shape summary, not the payload.
+        const entry = s.topMeanDiagnosticEntries[s.topMeanDiagnosticEntries.length - 1];
+        expect(entry.data.diagnosticDataTruncated).to.equal(true);
+        expect(entry.data.result.runId).to.equal("sp500_top_mean_big");
+        expect(JSON.stringify(entry.data).length).to.be.lessThan(2_000);
+
+        // The copied diagnostic stays small.
+        const copied = s.buildTopMeanDiagnosticText();
+        expect(copied).to.include("sp500_top_mean_big");
+        expect(copied.length).to.be.lessThan(20_000);
+
+        // The persisted copy carries the same compact shape.
+        const stored = [...(globalThis as any).localStorage._store.values()].join("\n");
+        expect(stored).to.include("diagnosticDataTruncated");
+        expect(stored.length).to.be.lessThan(500_000);
+    });
+
+    it("keeps small payloads verbatim in diagnostic entries", () => {
+        // Intent: compaction must not blur small, high-signal payloads —
+        // progress counts, error messages, request options stay readable.
+        setupForAnalysis();
+        const s = svc();
+        s.recordTopMeanDiagnostic("ndjson.progress", { completed: 1000, total: 20000 });
+        const entry = s.topMeanDiagnosticEntries[s.topMeanDiagnosticEntries.length - 1];
+        expect(entry.data.completed).to.equal(1000);
+        expect(entry.data.total).to.equal(20000);
+        expect(entry.data.diagnosticDataTruncated).to.equal(undefined);
+    });
+
     it("rejects TOP_MEAN coordinator while another Batch action is in flight", async () => {
         const dom = setupForAnalysis();
         svc().batchActionInFlight = true;

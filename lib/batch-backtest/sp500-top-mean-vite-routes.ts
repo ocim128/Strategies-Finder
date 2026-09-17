@@ -38,7 +38,9 @@ import { strategies } from "../strategies/library";
 import {
     TopMeanCoordinatorEngine,
     getActiveTopMeanCoordinatorEngine,
+    toWireSafeTopMeanResultSummary,
     type TopMeanCoordinatorRunRequest,
+    type TopMeanResultSummary,
     type TopMeanStatusResponse,
 } from "./sp500-top-mean-coordinator-engine";
 import { getRunDir, isValidRunId, loadManifest, saveManifest } from "./sp500-top-mean-artifact-store";
@@ -350,11 +352,16 @@ export async function handleSp500TopMeanStatusRequest(
                 archiveDir: manifest.archiveDir,
                 archiveError: manifest.archiveError,
                 error: manifest.error,
-                // `result` is untrusted JSON read from disk; cast at the
-                // boundary rather than widening the parsed local, so the
-                // disk-read stays `unknown` and the response shape stays the
-                // typed contract.
-                result: result as TopMeanStatusResponse["result"],
+            // `result` is untrusted JSON read from disk; cast at the
+            // boundary rather than widening the parsed local, so the
+            // disk-read stays `unknown` and the response shape stays the
+            // typed contract. The wire-safety pass caps the per-row detail
+            // arrays (result.json on disk keeps FULL rows) so a completed
+            // 20k-pair run cannot OOM the reattach poll the same way the
+            // live done event was fixed.
+            result: result
+                ? toWireSafeTopMeanResultSummary(result as TopMeanResultSummary)
+                : undefined,
             };
         }
     }

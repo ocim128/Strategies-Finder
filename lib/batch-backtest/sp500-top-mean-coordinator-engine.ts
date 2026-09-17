@@ -122,6 +122,12 @@ export interface TopMeanAnnualReplayWindow {
 export interface TopMeanAnnualReplaySummary extends TopMeanAnnualReplayWindow {
     horizons: TopMeanHorizonSummary[];
     eventDetails?: OpenScoreUsdEventDetail[];
+    /**
+     * Total eventDetail rows computed for this window, BEFORE the wire cap.
+     * Rides the wire so the UI can say "showing most recent N of M" when the
+     * in-memory rows were truncated by `toWireSafeTopMeanResultSummary`.
+     */
+    eventDetailCount?: number;
     warnings: string[];
     reportLines: string[];
 }
@@ -139,6 +145,13 @@ export interface TopMeanResultSummary {
     annualReports?: TopMeanAnnualReplaySummary[];
     /** Full selected-window scalar rows for the on-demand OPEN_SCORE details UI. */
     openScoreEventDetails?: OpenScoreUsdEventDetail[];
+    /**
+     * Total openScoreEventDetail rows computed for the full window, BEFORE the
+     * wire cap. Rides the wire so the UI can say "showing most recent N of M"
+     * when the in-memory rows were truncated by
+     * `toWireSafeTopMeanResultSummary`.
+     */
+    openScoreEventDetailCount?: number;
     /** TOP_MEAN selections whose requested horizons are not complete yet. */
     ongoingEventDetails?: OpenScoreUsdOngoingEventDetail[];
     /** Full-window Phase 0b pool snapshots, coordinator-only diagnostics. */
@@ -158,6 +171,61 @@ export interface TopMeanResultSummary {
      * Optional for backward compatibility with older payloads.
      */
     currentSnapshot?: CurrentTopMeanResult;
+}
+
+/**
+ * Per-row OPEN_SCORE event details are a UI inspection surface, but they scale
+ * with pairs x history (rows = events x horizons x selector arms, and the
+ * annual reports repeat every row again per calendar year). A 20k-pair run
+ * makes nearly every decision bar eligible: the first wire-cap attempt used a
+ * PER-SELECTOR cap and never bound — a 20k-pair run shipped 53,967 full-window
+ * rows plus every annual year's rows again (a 30.7 MB terminal event, ~110k
+ * detail-row objects parsed and retained by the tab).
+ *
+ * The wire bound is therefore a PER-PASS TOTAL (most recent rows, order
+ * preserved) AND the per-year rows do not ride the wire at all. `result.json`
+ * on disk and the research archive keep the FULL rows (sp500-top-mean-archive-log
+ * reads them from the uncapped summary). The exact pre-cap totals ride along
+ * as `*Count` scalars so the UI can say "showing most recent N of M".
+ */
+export const TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS = 20_000;
+
+/** Keeps the most recent `maxRows` rows overall, preserving row order. */
+export function capTopMeanEventDetailsForWire<Row>(
+    rows: readonly Row[],
+    maxRows = TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS,
+): Row[] {
+    if (rows.length <= maxRows) return [...rows];
+    return rows.slice(rows.length - maxRows);
+}
+
+/**
+ * Build the browser-facing copy of a completed run summary. The input summary
+ * is NOT mutated — the caller keeps the full arrays for the archive path.
+ * `poolSnapshots`/`candidateOutcomes` are coordinator-only diagnostics that
+ * stream to the Phase 0b archive via their callbacks; they have no UI
+ * consumer and must never ride the wire. Per-year `eventDetails` are dropped
+ * too (counts only): the details panel falls back to the capped full-window
+ * "Selected Window" section, and the per-year rows remain in result.json and
+ * the research archive.
+ */
+export function toWireSafeTopMeanResultSummary(
+    result: TopMeanResultSummary,
+): TopMeanResultSummary {
+    return {
+        ...result,
+        openScoreEventDetails: result.openScoreEventDetails
+            ? capTopMeanEventDetailsForWire(result.openScoreEventDetails)
+            : undefined,
+        openScoreEventDetailCount: result.openScoreEventDetails?.length ?? 0,
+        poolSnapshots: undefined,
+        candidateOutcomes: undefined,
+        annualReports: result.annualReports?.map((annual) => ({
+            ...annual,
+            eventDetails: undefined,
+            eventDetailCount: annual.eventDetails?.length ?? 0,
+        })),
+    };
 }
 
 export function buildTopMeanAnnualReplayWindows(
@@ -322,7 +390,9 @@ export class TopMeanCoordinatorEngine {
                 ? { performance: this.performanceSnapshot() }
                 : {}),
             error: this.manifest?.error,
-            result: this.resultSummary || undefined,
+            result: this.resultSummary
+                ? toWireSafeTopMeanResultSummary(this.resultSummary)
+                : undefined,
         };
     }
 
@@ -1093,9 +1163,13 @@ export class TopMeanCoordinatorEngine {
                 saveManifest(this.manifest, this.baseDir);
             }
 
+            // The full-detail summary stays on this.resultSummary for the
+            // archive path; the wire copy caps the per-row arrays (see
+            // toWireSafeTopMeanResultSummary) so a 20k-pair run cannot OOM the
+            // browser tab at the terminal event.
             emitNdjson({
                 type: "done",
-                result: this.resultSummary,
+                result: toWireSafeTopMeanResultSummary(this.resultSummary),
             });
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);

@@ -77,6 +77,15 @@ import type { LedgerSweepCatalogResponse } from "./trade-ledger-sweep-stream-typ
 import type { TopMeanCurrentSnapshot, TopMeanStreamEvent } from "./sp500-top-mean-stream-types";
 import type { CoverageCounts } from "./sp500-pair-enumerator";
 import type { TopMeanResultSummary, TopMeanStatusResponse } from "./sp500-top-mean-coordinator-engine";
+import {
+    approxJsonByteLength,
+    clearTopMeanDiagnosticLog,
+    compactTopMeanDiagnosticData,
+    readTopMeanDiagnosticLogSnapshot,
+    sampleTopMeanHeap,
+    writeTopMeanDiagnosticLogSnapshot,
+    type TopMeanDiagnosticEntry,
+} from "./sp500-top-mean-diagnostic-log";
 import { formatTopMeanPerformanceLines } from "./sp500-top-mean-performance";
 import type {
     OpenScoreUsdEventDetail,
@@ -444,7 +453,7 @@ export class BatchBacktestService {
     private latestTopMeanResult: TopMeanResultSummary | null = null;
     private activeTopMeanRunId: string | null = null;
     private topMeanDiagnosticRunId: string | null = null;
-    private topMeanDiagnosticEntries: Array<{ at: string; type: string; data?: unknown }> = [];
+    private topMeanDiagnosticEntries: TopMeanDiagnosticEntry[] = [];
     private topMeanDiagnosticProgressSeen = 0;
     // The diagnostic panel is a debugging surface — the per-event DOM rewrite
     // previously ran `JSON.stringify` over the ENTIRE accumulated entries
@@ -457,6 +466,25 @@ export class BatchBacktestService {
         if (!dom) return;
         dom.batchBacktestSp500TopMeanDiagnostic.textContent = this.buildTopMeanDiagnosticText();
     }, BatchBacktestService.TOP_MEAN_DIAGNOSTIC_RENDER_DEBOUNCE_MS);
+    // Crash-safety: the in-memory ring dies with the tab, and the failure mode
+    // under investigation is a tab-killing OOM. Progress bursts persist on a
+    // debounce; every lifecycle event (run.start, ndjson.done, ndjson.fatal,
+    // run.error, stop.*, reattach.*) persists immediately — see
+    // recordTopMeanDiagnostic — so the log survives a crash or reload.
+    private static readonly TOP_MEAN_DIAGNOSTIC_PERSIST_DEBOUNCE_MS = 1_500;
+    private readonly persistTopMeanDiagnosticDebounced = debounce(() => {
+        this.writeTopMeanDiagnosticLogNow();
+    }, BatchBacktestService.TOP_MEAN_DIAGNOSTIC_PERSIST_DEBOUNCE_MS);
+
+    private writeTopMeanDiagnosticLogNow(): void {
+        writeTopMeanDiagnosticLogSnapshot(
+            this.topMeanDiagnosticRunId,
+            this.topMeanDiagnosticEntries,
+            (error) => debugLogger.warn("sp500_top_mean.diagnostic_log_save_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            }),
+        );
+    }
 
     private getDom(): BatchBacktestDom {
         return this.dom ??= createBatchBacktestDom();
@@ -475,6 +503,13 @@ export class BatchBacktestService {
         this.resetProgress(dom);
         this.loadPersistedLatestResults(dom);
         this.loadPersistedLatestTopMeanResult(dom);
+        this.restorePersistedTopMeanDiagnostics();
+        // Flush the durable diagnostic log when the page goes away (reload,
+        // navigation, tab close) — the trailing debounce would otherwise lose
+        // the last window of entries.
+        if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+            window.addEventListener("pagehide", () => this.writeTopMeanDiagnosticLogNow());
+        }
         this.activeServerRunId = this.loadPersistedActiveServerRun()?.runId ?? null;
         this.serverRunActive = this.activeServerRunId !== null;
         this.updateSummary(dom);
@@ -2726,6 +2761,12 @@ export class BatchBacktestService {
         this.topMeanDiagnosticRunId = runId;
         this.topMeanDiagnosticEntries = [];
         this.topMeanDiagnosticProgressSeen = 0;
+        // A new run starts a fresh durable log. The previous run's evidence
+        // was copyable up to this point (Copy Diagnostic after a reload); from
+        // here the new run's timeline replaces it.
+        clearTopMeanDiagnosticLog((error) => debugLogger.warn("sp500_top_mean.diagnostic_log_clear_failed", {
+            error: error instanceof Error ? error.message : String(error),
+        }));
         this.latestTopMeanResult = null;
         this.clearPersistedLatestTopMeanResult();
         persistTopMeanActiveRun(runId);
@@ -3206,11 +3247,21 @@ export class BatchBacktestService {
             ? "Hide OPEN_SCORE Details"
             : "Show OPEN_SCORE Details";
         if (show && !dom.batchBacktestSp500TopMeanDetails.innerHTML) {
+            // Recorded (and persisted) BEFORE rendering: if the details table
+            // render is what kills the tab, the log must already say so.
+            this.recordTopMeanDiagnostic("ui.details_render.start", {
+                selector: this.getTopMeanOpenScoreDetailSelector(dom),
+                fullWindowRows: this.latestTopMeanResult.openScoreEventDetails?.length ?? 0,
+                annualSections: this.latestTopMeanResult.annualReports?.length ?? 0,
+            });
             dom.batchBacktestSp500TopMeanDetails.innerHTML =
                 this.renderTopMeanOpenScoreEventDetails(
                     this.latestTopMeanResult,
                     this.getTopMeanOpenScoreDetailSelector(dom),
                 );
+            this.recordTopMeanDiagnostic("ui.details_render.done", {
+                htmlChars: dom.batchBacktestSp500TopMeanDetails.innerHTML.length,
+            });
         }
     }
 
@@ -3299,6 +3350,20 @@ export class BatchBacktestService {
         const ongoingTopMeanRows = selector === "TOP_MEAN"
             ? this.buildOngoingTopMeanEventDetails(summary)
             : [];
+        // The wire payload bounds the per-row detail arrays to the most
+        // recent rows of the full window and drops per-year rows entirely
+        // (coordinator wire-safety; disk/archive keep all rows). The *Count
+        // scalars carry the pre-cap totals so the truncation is loud here
+        // instead of silent.
+        const fullWindowTruncated = (summary.openScoreEventDetailCount ?? 0)
+            > (summary.openScoreEventDetails?.length ?? 0);
+        const truncatedAnnual = annualReports.filter(
+            (annual) => Array.isArray(annual.eventDetails)
+                && (annual.eventDetailCount ?? 0) > annual.eventDetails!.length,
+        );
+        const annualRowsNotShipped = annualReports.some(
+            (annual) => !Array.isArray(annual.eventDetails) && (annual.eventDetailCount ?? 0) > 0,
+        );
         const hasAnnualDetailData = annualReports.some(
             (annual) => Array.isArray(annual.eventDetails) && annual.eventDetails.length > 0,
         );
@@ -3325,6 +3390,25 @@ export class BatchBacktestService {
             } satisfies TopMeanOpenScoreDetailSection];
         let html = `<div class="batch-open-score-details-heading">OPEN_SCORE Event Details — ${escapeHtml(selector)}</div>`;
         html += `<div class="batch-open-score-details-note">Showing ${escapeHtml(selector)} only. Return is the selected asset's net USD return after configured slippage and commission; control is the selector-specific comparison pool (for TOP_MEAN_RAW_UNIQUE_V1, the TOP_MEAN tied set, including the selected asset). TOP_MEAN selections with incomplete horizons are shown as ONGOING; their outcome fields are intentionally n/a. These rows are intentionally excluded from Copy OPEN_SCORE and Copy Result.</div>`;
+        if (fullWindowTruncated || truncatedAnnual.length > 0 || annualRowsNotShipped) {
+            const truncationParts: string[] = [];
+            if (fullWindowTruncated) {
+                truncationParts.push(
+                    `full window: most recent ${(summary.openScoreEventDetails?.length ?? 0).toLocaleString()} of ${(summary.openScoreEventDetailCount ?? 0).toLocaleString()} rows`,
+                );
+            }
+            for (const annual of truncatedAnnual) {
+                truncationParts.push(
+                    `${annual.year}: most recent ${(annual.eventDetails?.length ?? 0).toLocaleString()} of ${(annual.eventDetailCount ?? 0).toLocaleString()} rows`,
+                );
+            }
+            if (annualRowsNotShipped) {
+                truncationParts.push(
+                    "per-year detail rows are not included in the live result — see the research archive or the server result.json",
+                );
+            }
+            html += `<div class="batch-report-warning">TRUNCATED FOR THE UI — ${escapeHtml(truncationParts.join("; "))}.</div>`;
+        }
         if (sections.length === 0 || sections.every((section) => section.rows.length === 0 && section.ongoingRows.length === 0)) {
             html += `<div class="batch-open-score-details-empty">No eligible ${escapeHtml(selector)} events for this replay window.</div>`;
             return html;
@@ -3542,6 +3626,7 @@ export class BatchBacktestService {
 
     public async copySp500TopMeanResults(): Promise<void> {
         if (!this.latestTopMeanResult) return;
+        this.recordTopMeanDiagnostic("ui.copy_result.start", {});
         const res = this.latestTopMeanResult;
 
         const lines: string[] = [
@@ -3589,6 +3674,7 @@ export class BatchBacktestService {
     public async copySp500TopMeanOpenScoreResults(): Promise<void> {
         const text = this.buildTopMeanOpenScoreText();
         if (!text) return;
+        this.recordTopMeanDiagnostic("ui.copy_open_score.start", { textChars: text.length });
         const copied = await copyToClipboard(text);
         const dom = this.getDom();
         dom.batchBacktestSp500TopMeanProgressText.textContent = copied
@@ -3603,6 +3689,10 @@ export class BatchBacktestService {
 
     public async copySp500TopMeanDiagnostic(): Promise<void> {
         const text = this.buildTopMeanDiagnosticText();
+        this.recordTopMeanDiagnostic("ui.copy_diagnostic", {
+            textChars: text.length,
+            entries: this.topMeanDiagnosticEntries.length,
+        });
         await copyToClipboard(text);
         const dom = this.getDom();
         dom.batchBacktestSp500TopMeanProgressText.textContent = "Copied TOP_MEAN diagnostic to clipboard.";
@@ -3643,11 +3733,25 @@ export class BatchBacktestService {
                 return;
             }
         }
-        this.recordTopMeanDiagnostic(`ndjson.${event?.type || "unknown"}`, event);
+        // The approximate wire size of each event is the primary OOM evidence:
+        // it shows exactly which payload stressed the tab, and by how much.
+        this.recordTopMeanDiagnostic(`ndjson.${event?.type || "unknown"}`, event, approxJsonByteLength(event));
     }
 
-    private recordTopMeanDiagnostic(type: string, data?: unknown): void {
-        this.topMeanDiagnosticEntries.push({ at: new Date().toISOString(), type, data });
+    private recordTopMeanDiagnostic(type: string, data?: unknown, bytes?: number): void {
+        // Compact AT RECORD TIME: the ring must never retain multi-MB payload
+        // duplicates (a terminal reattach poll carries the whole wire-safe
+        // result). The diagnostic evidence is the timeline, the byte size,
+        // and the shape — full payloads live in Copy Result / Copy OPEN_SCORE.
+        const entry: TopMeanDiagnosticEntry = {
+            at: new Date().toISOString(),
+            type,
+            data: compactTopMeanDiagnosticData(data),
+        };
+        const heap = sampleTopMeanHeap();
+        if (heap) entry.heap = heap;
+        if (typeof bytes === "number" && Number.isFinite(bytes)) entry.bytes = bytes;
+        this.topMeanDiagnosticEntries.push(entry);
         // Bound the retained history so a multi-hour run does not accumulate
         // unbounded entries (each reattach poll previously appended a full
         // /status payload). Ring-buffer: drop the oldest once over cap.
@@ -3655,18 +3759,53 @@ export class BatchBacktestService {
             this.topMeanDiagnosticEntries.shift();
         }
         const dom = this.dom;
-        if (!dom) return;
-        dom.batchBacktestSp500TopMeanCopyDiagnosticBtn.disabled = false;
-        dom.batchBacktestSp500TopMeanDiagnostic.hidden = false;
-        // Coalesce rapid bursts (progress + per-window + reattach polls) into
-        // one DOM write per debounce window. The Copy button always reads the
-        // current array via `buildTopMeanDiagnosticText()`, so no data is lost.
-        this.renderTopMeanDiagnosticDebounced();
+        if (dom) {
+            dom.batchBacktestSp500TopMeanCopyDiagnosticBtn.disabled = false;
+            dom.batchBacktestSp500TopMeanDiagnostic.hidden = false;
+            // Coalesce rapid bursts (progress + per-window + reattach polls) into
+            // one DOM write per debounce window. The Copy button always reads the
+            // current array via `buildTopMeanDiagnosticText()`, so no data is lost.
+            this.renderTopMeanDiagnosticDebounced();
+        }
+        // Persist the ring so the log survives the tab dying. Progress events
+        // are the only high-frequency type and ride the debounce; everything
+        // else (run.start, ndjson.done/fatal, run.error, stop.*, reattach.*)
+        // is rare and written through immediately.
+        if (type === "ndjson.progress") {
+            this.persistTopMeanDiagnosticDebounced();
+        } else {
+            this.writeTopMeanDiagnosticLogNow();
+        }
+    }
+
+    /**
+     * Adopt the diagnostic log persisted by a previous session so Copy
+     * Diagnostic works after a reload — the expected flow after an OOM crash
+     * killed the tab. Live entries (an in-flight run) always win.
+     */
+    private restorePersistedTopMeanDiagnostics(): void {
+        if (this.topMeanDiagnosticEntries.length > 0) return;
+        const snapshot = readTopMeanDiagnosticLogSnapshot();
+        if (!snapshot || snapshot.entries.length === 0) return;
+        this.topMeanDiagnosticRunId = snapshot.runId;
+        this.topMeanDiagnosticEntries = snapshot.entries;
+        this.recordTopMeanDiagnostic("diagnostic.restored_from_previous_session", {
+            runId: snapshot.runId,
+            savedAt: snapshot.savedAt,
+            restoredEntries: snapshot.entries.length,
+        });
+        const dom = this.dom;
+        if (dom) {
+            dom.batchBacktestSp500TopMeanCopyDiagnosticBtn.disabled = false;
+            dom.batchBacktestSp500TopMeanDiagnostic.hidden = false;
+            dom.batchBacktestSp500TopMeanDiagnostic.textContent = this.buildTopMeanDiagnosticText();
+        }
     }
 
     public downloadSp500TopMeanResults(): void {
         if (!this.latestTopMeanResult) return;
         const text = JSON.stringify(this.latestTopMeanResult, null, 2);
+        this.recordTopMeanDiagnostic("ui.download_result", { jsonChars: text.length });
         const blob = new Blob([text], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -3842,6 +3981,7 @@ export class BatchBacktestService {
         this.stopTopMeanReattachPoll();
         this.cancelLiveRenderRaf();
         this.renderTopMeanDiagnosticDebounced.cancel();
+        this.persistTopMeanDiagnosticDebounced.cancel();
     }
 }
 

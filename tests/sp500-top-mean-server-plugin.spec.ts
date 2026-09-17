@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
     buildTopMeanAnnualReplayWindows,
+    capTopMeanEventDetailsForWire,
     orderTopMeanReplayTargets,
+    toWireSafeTopMeanResultSummary,
+    TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS,
     TopMeanCoordinatorEngine,
     type TopMeanResultSummary,
 } from "../lib/batch-backtest/sp500-top-mean-coordinator-engine";
@@ -890,6 +893,221 @@ async function testStopDuringArchiveStaysInterrupted(): Promise<void> {
     console.log("PASS: stop during archive finalization stays interrupted");
 }
 
+/**
+ * Browser-OOM wire-safety contract (20k-pair runs): the terminal done result
+ * (and the /status reattach result) must never carry uncapped per-row detail
+ * arrays or the coordinator-only poolSnapshots/candidateOutcomes. The cap is
+ * a PER-PASS TOTAL (a per-selector cap never bound: a 20k-pair run shipped
+ * 53,967 full-window rows — 30.7 MB — because no single arm exceeded 20k).
+ * Per-year rows do not ride the wire at all. Full rows stay on disk
+ * (result.json) and in the archive path's summary — the input object must NOT
+ * be mutated.
+ */
+function testWireSafetyCapsEventDetailsAndStripsDiagnostics(): void {
+    const detailRow = (selector: string, i: number): any => ({
+        decisionTime: 1_700_000_000 + i,
+        entryTime: 1_700_003_600,
+        exitTime: 1_700_176_400,
+        horizonBars: 12,
+        selector,
+        direction: "long",
+        asset: `${selector}_ASSET`,
+        selectedReturn: 0.01,
+        controlReturn: 0.02,
+        delta: -0.01,
+        eligibleCandidates: 3,
+    });
+
+    // capTopMeanEventDetailsForWire: most recent N rows OVERALL, order preserved.
+    const rows = [
+        ...Array.from({ length: 35 }, (_, i) => detailRow("TOP_MEAN", i)),
+        ...Array.from({ length: 35 }, (_, i) => detailRow("TOP_RAW", 100 + i)),
+    ];
+    const capped = capTopMeanEventDetailsForWire(rows, 40);
+    assert.equal(capped.length, 40, "the cap is a per-pass total, not per selector");
+    assert.deepEqual(
+        capped.map((r) => r.decisionTime),
+        [...capped.map((r) => r.decisionTime)].sort((a, b) => a - b),
+        "capping must preserve the original row order",
+    );
+    assert.equal(
+        capped[capped.length - 1]!.decisionTime,
+        1_700_000_000 + 134,
+        "the newest row must survive the cap",
+    );
+    assert.equal(
+        capped[0]!.decisionTime,
+        1_700_000_000 + 30,
+        "the oldest capped-out rows are dropped (last 40 of 70 start at index 30)",
+    );
+    assert.equal(rows.length, 70, "capping must not mutate the source array");
+
+    // Below the cap nothing is dropped and the clone is independent.
+    const small = [detailRow("TOP_MEAN", 0)];
+    const cappedSmall = capTopMeanEventDetailsForWire(small, 20);
+    assert.equal(cappedSmall.length, 1);
+    assert.notEqual(cappedSmall, small);
+
+    // toWireSafeTopMeanResultSummary: strip archive-only diagnostics, drop
+    // per-year rows (counts only), keep bounded full-window rows + the exact
+    // pre-cap total, and leave the input untouched (the archive path reads
+    // the FULL arrays from the same object).
+    const fullSummary = {
+        runId: "spec_wire_safety",
+        completed: true,
+        archiveComplete: false,
+        counts: { pairCount: 1, usableTargetIntervalCount: 1, sp500AssetsCount: 1, excludedAssetsCount: 0 },
+        horizons: [],
+        openScoreEventDetails: Array.from({ length: 5 }, (_, i) => detailRow("TOP_MEAN", i)),
+        poolSnapshots: [{ eventId: "p0" }] as any[],
+        candidateOutcomes: [{ eventId: "c0" }] as any[],
+        warnings: [],
+        reportLines: ["report"],
+        annualReports: [{
+            year: 2026,
+            sampleFromSec: 1,
+            sampleToSec: 2,
+            horizons: [],
+            eventDetails: Array.from({ length: 5 }, (_, i) => detailRow("TOP_RAW", i)),
+            warnings: [],
+            reportLines: [],
+        }],
+    } as unknown as TopMeanResultSummary;
+
+    const wire = toWireSafeTopMeanResultSummary(fullSummary);
+    assert.equal(wire.poolSnapshots, undefined, "poolSnapshots must never ride the wire");
+    assert.equal(wire.candidateOutcomes, undefined, "candidateOutcomes must never ride the wire");
+    assert.equal(wire.openScoreEventDetails?.length, 5);
+    assert.equal(wire.openScoreEventDetailCount, 5);
+    assert.equal(
+        wire.annualReports?.[0]!.eventDetails,
+        undefined,
+        "per-year detail rows must not ride the wire",
+    );
+    assert.equal(wire.annualReports?.[0]!.eventDetailCount, 5, "the per-year pre-cap total rides as a count");
+    assert.equal(fullSummary.poolSnapshots?.length, 1, "input summary must keep diagnostics for the archive");
+    assert.equal(fullSummary.openScoreEventDetails?.length, 5, "input summary must keep full rows");
+    assert.equal(fullSummary.annualReports?.[0]!.eventDetails?.length, 5, "input summary keeps per-year rows");
+
+    // A summary above the production cap is truncated with the honest total.
+    const hugeSummary = {
+        ...fullSummary,
+        openScoreEventDetails: Array.from(
+            { length: TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS + 55 },
+            (_, i) => detailRow("TOP_MEAN", i),
+        ),
+    } as unknown as TopMeanResultSummary;
+    const wireHuge = toWireSafeTopMeanResultSummary(hugeSummary);
+    assert.equal(wireHuge.openScoreEventDetails?.length, TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS);
+    assert.equal(
+        wireHuge.openScoreEventDetailCount,
+        TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS + 55,
+        "count reports the PRE-cap total",
+    );
+
+    console.log("PASS: wire safety caps event details and strips archive-only diagnostics");
+}
+
+async function testManifestBackedStatusCapsWireResult(): Promise<void> {
+    const baseDir = mkdtempSync(join(tmpdir(), "sp500-top-mean-wire-"));
+    const runId = "spec_wire_status_1";
+    try {
+        saveManifest({
+            schema: "top_mean_run_manifest.v1",
+            runId,
+            status: "completed",
+            fingerprint: "wire-safety-fingerprint",
+            strategyKey: "close_location_median_alignment",
+            interval: "4h",
+            pairCount: 1,
+            shardSize: 50,
+            totalShards: 1,
+            completedShards: [0],
+            failedShards: [],
+            completedPairsCount: 1,
+            failedPairsCount: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        }, baseDir);
+
+        // result.json on disk carries FULL rows (the research contract); the
+        // reattach status response must cap them exactly like the live done
+        // event.
+        const detailRow = (i: number): any => ({
+            decisionTime: 1_700_000_000 + i,
+            entryTime: 1_700_003_600,
+            exitTime: 1_700_176_400,
+            horizonBars: 12,
+            selector: "TOP_MEAN",
+            direction: "long",
+            asset: "ASSET",
+            selectedReturn: 0.01,
+            controlReturn: 0.02,
+            delta: -0.01,
+            eligibleCandidates: 3,
+        });
+        const runDir = getRunDir(runId, baseDir);
+        mkdirSync(runDir, { recursive: true });
+        writeFileSync(join(runDir, "result.json"), JSON.stringify({
+            runId,
+            completed: true,
+            horizons: [],
+            openScoreEventDetails: Array.from(
+                { length: TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS + 40 },
+                (_, i) => detailRow(i),
+            ),
+            poolSnapshots: [{ eventId: "p0" }],
+            candidateOutcomes: [],
+            warnings: [],
+            reportLines: [],
+            annualReports: [{
+                year: 2026,
+                sampleFromSec: 1,
+                sampleToSec: 2,
+                horizons: [],
+                eventDetails: Array.from({ length: 30 }, (_, i) => detailRow(i)),
+                warnings: [],
+                reportLines: [],
+            }],
+        }));
+
+        const status = await handleSp500TopMeanStatusRequest(runId, baseDir);
+        assert.equal("ok" in status, false);
+        if ("ok" in status) return;
+        const result = status.result as any;
+        assert.ok(result, "completed manifest reattach must surface the result");
+        assert.equal(
+            result.openScoreEventDetails.length,
+            TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS,
+            "wire result rows must be capped to the most recent",
+        );
+        assert.equal(
+            result.openScoreEventDetailCount,
+            TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS + 40,
+            "wire result count reports the pre-cap total",
+        );
+        assert.equal(result.poolSnapshots, undefined, "wire result must drop archive-only diagnostics");
+        assert.equal(result.candidateOutcomes, undefined);
+        assert.equal(
+            result.annualReports[0].eventDetails,
+            undefined,
+            "per-year detail rows must not ride the wire",
+        );
+        assert.equal(result.annualReports[0].eventDetailCount, 30, "per-year pre-cap total rides as a count");
+
+        // Disk fidelity: result.json still holds every row.
+        const disk = JSON.parse(readFileSync(join(runDir, "result.json"), "utf8"));
+        assert.equal(
+            disk.openScoreEventDetails.length,
+            TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS + 40,
+            "result.json on disk keeps FULL rows",
+        );
+    } finally {
+        rmSync(baseDir, { recursive: true, force: true });
+    }
+    console.log("PASS: manifest-backed status caps the wire result like the done event");
+}
+
 async function main(): Promise<void> {
     testAnnualReplayWindowsFollowSelectedRange();
     testReplayTargetOrderAvoidsLruThrash();
@@ -904,6 +1122,8 @@ async function main(): Promise<void> {
     await testTopMeanRouteRejectsInvalidRunIdsAndDates();
     await testStopDuringArchiveStaysInterrupted();
     await testManifestBackedStatusPreservesArchiveOutcome();
+    testWireSafetyCapsEventDetailsAndStripsDiagnostics();
+    await testManifestBackedStatusCapsWireResult();
     console.log("PASS: sp500-top-mean-server-plugin.spec.ts");
 }
 

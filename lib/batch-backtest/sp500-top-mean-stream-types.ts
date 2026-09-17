@@ -23,6 +23,15 @@
  *   - `current_snapshot`: emitted once the phase-1 snapshot is computed.
  *   - `done`:             terminal. Carries `result` on success, or
  *                         `interrupted: true` on a Stop (see `emitInterrupted`).
+ *                         `result` is the wire-safe summary
+ *                         (`toWireSafeTopMeanResultSummary`): per-row detail
+ *                         arrays are capped to the most recent rows per
+ *                         selector (with `*Count` scalars carrying the exact
+ *                         pre-cap totals), and `poolSnapshots`/`candidateOutcomes`
+ *                         never ride the wire — full rows live only in
+ *                         result.json on disk and the research archive. This
+ *                         bound is what keeps a 20k-pair run from OOMing the
+ *                         browser tab at the terminal event.
  *   - `fatal`:            terminal failure; optionally carries the phase-1
  *                         snapshot computed before the replay failure.
  */
