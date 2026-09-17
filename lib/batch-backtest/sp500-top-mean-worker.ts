@@ -267,6 +267,7 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                 entryTime: t.entryTime,
                 exitTime: t.exitTime,
                 exitReason: t.exitReason,
+                pnl: t.pnl,
             }));
 
             // dataEndTime = the authoritative last-closed-candle timestamp

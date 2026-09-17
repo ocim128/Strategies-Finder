@@ -6,6 +6,15 @@ export interface CompactTrade {
     entryTime: Time;
     exitTime: Time;
     exitReason?: string;
+    /**
+     * Net P&L of this trade from the pair's backtest. Feeds the causal
+     * PROFIT_NOW arms (TOP_RAW_PROFIT_NOW / TOP_MEAN_PROFIT_NOW), which count
+     * a pair's votes only when its P&L realized at or before the decision
+     * strictly positive. Optional for backward compatibility: artifacts
+     * written before this field existed carry no per-trade pnl, so those arms
+     * see them as never-profitable and report 0 events.
+     */
+    pnl?: number;
 }
 
 export interface CompactPairArtifact {

@@ -26,6 +26,13 @@
  * strictly positive. A pair's full-window P&L is only known after the fact,
  * so this is a research-only look-ahead filter, not a live-selectable signal.
  *
+ * Causal variants (TOP_RAW_PROFIT_NOW / TOP_MEAN_PROFIT_NOW): the same filter
+ * evaluated point-in-time — a pair's votes count at an event only when its
+ * P&L REALIZED AT OR BEFORE that event (summed over trades closed at or
+ * is strictly positive. Uses the per-trade pnl carried on compact artifacts
+ * from its introduction onward; pairs without per-trade pnl are never
+ * profitable-now.
+ *
  * Timing (conservative causal rule): the score is updated with ALL entries and
  * exits at a timestamp before candidates are formed (a fixture proves a
  * same-timestamp exit/entry cannot leak a later target bar's price). The USD
@@ -181,6 +188,8 @@ export type OpenScoreUsdEventDetailSelector =
     | "TOP_MEAN_RAW_UNIQUE"
     | "TOP_RAW_PROFIT"
     | "TOP_MEAN_PROFIT"
+    | "TOP_RAW_PROFIT_NOW"
+    | "TOP_MEAN_PROFIT_NOW"
     | "MAX_ACTIVE"
     | "MAX_RETAINED";
 
@@ -280,8 +289,8 @@ export interface OpenScoreUsdReplayResult {
          * Profit-gated TOP_RAW: identical raw-score ranking, but only pairs whose
          * pair backtest netProfit was strictly positive contribute votes.
          * Research-only look-ahead filter (a pair's full-window P&L is not
-         * known at decision time). Fires only on events that form a view
-         * (>= 2 unfiltered positives) AND have >= 2 profit-gated positives.
+         * known at decision time). Fires on every event with >= 2 profit-gated
+         * positives, including profit-only events with < 2 ordinary positives.
          */
         topRawProfit: ReplayComparison;
         /** Per-asset breakdown for the profit-gated TOP_RAW selector. */
@@ -298,6 +307,27 @@ export interface OpenScoreUsdReplayResult {
         topMeanProfitExDominant: ReplayComparison;
         /** Asset excluded from {@link topMeanProfitExDominant}. */
         topMeanProfitDominantAsset: string | null;
+        /**
+         * Causal variant of {@link topRawProfit}: the pnl filter is evaluated
+         * point-in-time — a pair votes at an event only when its pnl realized
+         * at or before that event is strictly positive. No look-ahead: live-
+         * selectable in principle (given per-pair realized pnl tracking).
+         */
+        topRawProfitNow: ReplayComparison;
+        /** Per-asset breakdown for the causal TOP_RAW selector. */
+        topRawProfitNowByAsset: AssetSelectionSummary[];
+        /** Causal TOP_RAW after removing its most-frequently-selected asset. */
+        topRawProfitNowExDominant: ReplayComparison;
+        /** Asset excluded from {@link topRawProfitNowExDominant}. */
+        topRawProfitNowDominantAsset: string | null;
+        /** Causal variant of {@link topMeanProfit}. */
+        topMeanProfitNow: ReplayComparison;
+        /** Per-asset breakdown for the causal TOP_MEAN selector. */
+        topMeanProfitNowByAsset: AssetSelectionSummary[];
+        /** Causal TOP_MEAN after removing its most-frequently-selected asset. */
+        topMeanProfitNowExDominant: ReplayComparison;
+        /** Asset excluded from {@link topMeanProfitNowExDominant}. */
+        topMeanProfitNowDominantAsset: string | null;
         /** Same-event return difference: TOP_MEAN versus TOP_RAW. */
         topMeanVsRaw: ReplayComparison;
         /** TOP_MEAN rank 1 versus rank 2 among positive candidates. */
@@ -886,6 +916,21 @@ interface ScoreDelta {
     delta: number;
     /** 1 when this delta comes from a pair entry, 0 for an exit. */
     isEntry: number;
+    /**
+     * Share of the trade's net pnl carried by this delta: half on each exit
+     * leg (full on single-leg direct markets), 0 on entries. The merge loop
+     * accumulates these into the pair's realized-pnl-so-far total, which
+     * drives the causal PROFIT_NOW gate.
+     */
+    pnlShare: number;
+    /**
+     * Causal PROFIT_NOW vote applicability, precomputed per trade at scan
+     * time: true when the pair's pnl realized before the trade's entry was
+     * strictly positive. An entry delta with true adds its vote to the
+     * causal accumulators; its own exit deltas remove it. Exact for any
+     * overlap pattern because the flag travels with the trade.
+     */
+    voteApplied: boolean;
 }
 
 interface DecisionEvent {
@@ -896,10 +941,17 @@ interface DecisionEvent {
     /**
      * Profit-gated snapshots: the same accumulation restricted to deltas from
      * pairs whose pair backtest netProfit was strictly positive. Drives the
-     * TOP_RAW_PROFIT / TOP_MEAN_PROFIT arms only.
+     * TOP_RAW_PROFIT / TOP_MEAN_PROFIT arms only. Look-ahead filter.
      */
     rawScoreProfit: number[];
     activePairCountProfit: number[];
+    /**
+     * Causal snapshots: restricted to deltas from pairs whose pnl realized
+     * at or before this event is strictly positive. Drives the
+     * TOP_RAW_PROFIT_NOW / TOP_MEAN_PROFIT_NOW arms.
+     */
+    rawScoreProfitNow: number[];
+    activePairCountProfitNow: number[];
 }
 
 // ============================================================================
@@ -966,6 +1018,12 @@ export async function runOpenScoreUsdReplay(
     // Index i describes streams[i]: true when that pair's full backtest
     // netProfit was strictly positive (drives the Profit-gated arms only).
     const profitableStreams: boolean[] = [];
+    // Causal PROFIT_NOW per-stream pnl-known flags are pushed in lockstep
+    // with `streams` (index i describes streams[i]): false when ANY trade of
+    // that pair lacks a finite pnl — such pairs are never profitable-now
+    // (documented fallback; a pair with mixed known/missing pnl must not
+    // ride its known wins).
+    const pnlKnownStreams: boolean[] = [];
     let pairCount = 0;
     let omittedPairs = 0;
     // Cap-tilt coverage counters (docs/open-score-cap-tilt.md): LONG trades
@@ -1011,6 +1069,35 @@ export async function runOpenScoreUsdReplay(
             continue;
         }
         const stream: ScoreDelta[] = [];
+        // Causal PROFIT_NOW: decide per trade whether its vote is applied,
+        // by simulating the pair's own ledger chronologically (exits at a
+        // timestamp count as known before entries at that timestamp, so an
+        // entry mask includes same-timestamp exits — consistent with the
+        // merge's post-group rule). A trade entered while pnl-known and
+        // strictly positive carries its vote until its own exit.
+        const tradeVoteApplied: boolean[] = new Array(trades.length).fill(false);
+        let streamPnlKnown = true;
+        {
+            const ledger: Array<{ t: number; out: boolean; idx: number }> = [];
+            trades.forEach((trade, idx) => {
+                const entrySec = timeToNumber(trade.entryTime);
+                if (entrySec === null) return;
+                ledger.push({ t: entrySec, out: false, idx });
+                if (trade.exitReason === "end_of_data") return;
+                const exitSec = timeToNumber(trade.exitTime);
+                if (exitSec === null) return;
+                ledger.push({ t: exitSec, out: true, idx });
+            });
+            ledger.sort((a, b) => a.t - b.t || (a.out === b.out ? 0 : a.out ? -1 : 1));
+            let realized = 0;
+            for (const step of ledger) {
+                const pnl = trades[step.idx]!.pnl;
+                if (!Number.isFinite(pnl)) streamPnlKnown = false;
+                if (step.out) realized += Number.isFinite(pnl) ? pnl! : 0;
+                else tradeVoteApplied[step.idx] = streamPnlKnown && realized > 0;
+            }
+        }
+        let tradeIdx = -1;
         for (const trade of trades) {
             const entrySec = timeToNumber(trade.entryTime);
             const exitSec = timeToNumber(trade.exitTime);
@@ -1073,17 +1160,23 @@ export async function runOpenScoreUsdReplay(
                     }
                 }
             }
+            tradeIdx += 1;
+            const voteApplied = tradeVoteApplied[tradeIdx]!;
             // Entry deltas (long: base+1/quote-1; short: base-1/quote+1).
-            stream.push({ timeSec: entrySec, assetIndex: bi, delta: sign * baseWeight, isEntry: 1 });
+            stream.push({ timeSec: entrySec, assetIndex: bi, delta: sign * baseWeight, isEntry: 1, pnlShare: 0, voteApplied });
             if (qi !== null) {
-                stream.push({ timeSec: entrySec, assetIndex: qi, delta: -sign * quoteWeight, isEntry: 1 });
+                stream.push({ timeSec: entrySec, assetIndex: qi, delta: -sign * quoteWeight, isEntry: 1, pnlShare: 0, voteApplied });
             }
             // Exit deltas are the exact inverse. end_of_data / missing exit time
             // means the position is still open at the artifact end -> no exit delta.
             if (exitSec !== null && trade.exitReason !== "end_of_data") {
-                stream.push({ timeSec: exitSec, assetIndex: bi, delta: -sign * baseWeight, isEntry: 0 });
+                // Split the trade's realized pnl evenly across its exit legs so
+                // summing every leg's share reconstructs the trade pnl exactly.
+                const pnl = Number.isFinite(trade.pnl) ? trade.pnl : 0;
+                const pnlShare = pnl / (qi !== null ? 2 : 1);
+                stream.push({ timeSec: exitSec, assetIndex: bi, delta: -sign * baseWeight, isEntry: 0, pnlShare, voteApplied });
                 if (qi !== null) {
-                    stream.push({ timeSec: exitSec, assetIndex: qi, delta: sign * quoteWeight, isEntry: 0 });
+                    stream.push({ timeSec: exitSec, assetIndex: qi, delta: sign * quoteWeight, isEntry: 0, pnlShare, voteApplied });
                 }
             }
         }
@@ -1097,6 +1190,10 @@ export async function runOpenScoreUsdReplay(
         // `streams` (index i describes streams[i]).
         const pairNetProfit = artifact.result?.netProfit;
         profitableStreams.push(Number.isFinite(pairNetProfit) && pairNetProfit > 0);
+        // Causal PROFIT_NOW arms: per-stream quote asset index (-1 for
+        // single-leg direct markets) so the exact open-vote flags below can
+        // tell a delta's base leg from its quote leg.
+        pnlKnownStreams.push(streamPnlKnown);
         if (pairCount % 25 === 0) {
             onPhase("scan", `scanned ${pairCount} pairs`, pairCount, 0);
             await yieldLoop();
@@ -1122,6 +1219,22 @@ export async function runOpenScoreUsdReplay(
     // these; every other arm is untouched by the filter.
     const profitRawScore = new Array<number>(assetCount).fill(0);
     const profitPairCount = new Array<number>(assetCount).fill(0);
+    // Causal PROFIT_NOW accumulators: fed by deltas from pairs whose pnl
+    // realized SO FAR is strictly positive, evaluated at each event (see the
+    // post-group apply below).
+    const profitNowRawScore = new Array<number>(assetCount).fill(0);
+    const profitNowPairCount = new Array<number>(assetCount).fill(0);
+    // Running realized pnl per stream (sum of exit deltas' pnlShare popped so
+    // far). Exits at the event timestamp are applied before the post-group
+    // mask evaluation, so their pnl is known at that event.
+    const realizedPnlByStream = new Float64Array(streams.length);
+    // Deltas of the current timestamp group, replayed after the group closes
+    // with per-leg open-vote flags (see the post-group apply below).
+    interface GroupDelta { assetIndex: number; delta: number; streamIdx: number; isEntry: number; voteApplied: boolean; }
+    const groupDeltas: GroupDelta[] = [];
+    // Causal PROFIT_NOW vote applicability travels ON each delta
+    // (ScoreDelta.voteApplied, precomputed per trade at scan time), so the
+    // post-group apply below needs no per-stream state.
     const events: DecisionEvent[] = [];
     const sampleFrom = options.sampleFromSec;
     const sampleTo = options.sampleToSec;
@@ -1132,10 +1245,12 @@ export async function runOpenScoreUsdReplay(
         if (shouldStop()) return emptyResult({ pairs: pairCount, assets: assetCount, reportLines: ["OPEN_SCORE USD | cancelled during event sweep."] });
         const t = heap.peekTime();
         let hasEntry = false;
+        groupDeltas.length = 0;
         // Apply ALL deltas at this timestamp before forming candidates.
         while (!heap.empty && heap.peekTime() === t) {
             if (shouldStop()) return emptyResult({ pairs: pairCount, assets: assetCount, reportLines: ["OPEN_SCORE USD | cancelled during event sweep."] });
             const d = heap.pop()!;
+            const streamIdx = heap.lastPoppedStream;
             rawScore[d.assetIndex]! += d.delta;
             // activePairCount tracks currently-open pairs on this asset: an
             // entry adds a vote, an exit removes it (clamped at 0). Using
@@ -1145,12 +1260,16 @@ export async function runOpenScoreUsdReplay(
             const countDelta = d.isEntry === 1 ? 1 : -1;
             const next = activePairCount[d.assetIndex]! + countDelta;
             activePairCount[d.assetIndex] = next > 0 ? next : 0;
-            // Profit-gated mirror: only deltas from profitable pairs.
-            if (profitableStreams[heap.lastPoppedStream]!) {
+            if (d.isEntry === 0) realizedPnlByStream[streamIdx] += d.pnlShare;
+            // Profit-gated mirror: only deltas from pairs whose FULL backtest
+            // netted positive (static mask).
+            if (profitableStreams[streamIdx]!) {
                 profitRawScore[d.assetIndex]! += d.delta;
                 const nextPnl = profitPairCount[d.assetIndex]! + countDelta;
                 profitPairCount[d.assetIndex] = nextPnl > 0 ? nextPnl : 0;
             }
+            // Buffered for the causal PROFIT_NOW apply after the group closes.
+            groupDeltas.push({ assetIndex: d.assetIndex, delta: d.delta, streamIdx, isEntry: d.isEntry, voteApplied: d.voteApplied });
             if (d.isEntry === 1) hasEntry = true;
             popped += 1;
             // A single timestamp can contain many pair deltas. Check and yield
@@ -1162,6 +1281,24 @@ export async function runOpenScoreUsdReplay(
                 await yieldLoop();
             }
         }
+        // Causal PROFIT_NOW apply. Runs for EVERY timestamp group — including
+        // exit-only ones that form no decision event — so the accumulators
+        // stay an exact image of "open votes of pairs profitable so far".
+        // (Gating this on hasEntry leaked votes: a masked pair exiting on an
+        // exit-only timestamp never had its vote subtracted.) The pair's own
+        // exit already updated realizedPnlByStream, so masks here are the
+        // point-in-time profitability AT this event. Pairs whose realized
+        // pnl-so-far is <= 0 (including those with no per-trade pnl) are
+        // muted. Exits are applied before entries so a same-timestamp
+        // re-entry accounts both legs of the round trip exactly.
+        for (let g = 0; g < groupDeltas.length; g += 1) {
+            const gd = groupDeltas[g]!;
+            if (!gd.voteApplied) continue;
+            profitNowRawScore[gd.assetIndex]! += gd.delta;
+            const countDeltaNow = gd.isEntry === 1 ? 1 : -1;
+            const nextNow = profitNowPairCount[gd.assetIndex]! + countDeltaNow;
+            profitNowPairCount[gd.assetIndex] = nextNow > 0 ? nextNow : 0;
+        }
         // Exit-only score changes do not create a decision event.
         if (hasEntry) {
             if ((sampleFrom === undefined || t >= sampleFrom) && (sampleTo === undefined || t <= sampleTo)) {
@@ -1171,6 +1308,8 @@ export async function runOpenScoreUsdReplay(
                     activePairCount: [...activePairCount],
                     rawScoreProfit: [...profitRawScore],
                     activePairCountProfit: [...profitPairCount],
+                    rawScoreProfitNow: [...profitNowRawScore],
+                    activePairCountProfitNow: [...profitNowPairCount],
                 });
             }
         }
@@ -1201,6 +1340,12 @@ export async function runOpenScoreUsdReplay(
          * unfiltered score).
          */
         profitPositives: Candidate[];
+        /**
+         * Causal (point-in-time) positives: assets whose score, counted only
+         * from pairs whose pnl realized BEFORE this event is positive, is
+         * strictly positive.
+         */
+        profitNowPositives: Candidate[];
         topRaw: number;      // assetIndex
         topAdjusted: number; // assetIndex
         topMean: number;     // assetIndex
@@ -1211,6 +1356,9 @@ export async function runOpenScoreUsdReplay(
         /** Profit-gated picks, or -1 when the profit-gated pool has < 2 members. */
         topRawProfit: number;  // assetIndex
         topMeanProfit: number; // assetIndex
+        /** Causal profit picks, or -1 when the causal pool has < 2 members. */
+        topRawProfitNow: number;  // assetIndex
+        topMeanProfitNow: number; // assetIndex
         topMeanRank2: number; // assetIndex
         maxActive: number;   // assetIndex
         maxStatic: number;   // assetIndex (retained artifact degree; legacy name feeding maxRetained)
@@ -1237,6 +1385,18 @@ export async function runOpenScoreUsdReplay(
         ties: Record<SelectorName, number>;
     }
     const views: EventView[] = [];
+    /**
+     * Events with a >= 2-member profit pool (full-window or causal) but fewer
+     * than 2 ordinary positives. They form no EventView (the ordinary arms
+     * cannot fire there), but the profit arms are still evaluated on them so
+     * the causal selector's coverage does not depend on the ordinary pool.
+     */
+    interface ProfitOnlyEvent {
+        timeSec: number;
+        profitPositives: Candidate[];
+        profitNowPositives: Candidate[];
+    }
+    const profitOnlyEvents: ProfitOnlyEvent[] = [];
     // Rank Freshness: previous view's TOP_RAW leader (assetIndex). Updated
     // only when a view is actually pushed, so it tracks the previous *view's*
     // leader, not the previous *event's* (events without ≥2 positives do not
@@ -1249,6 +1409,7 @@ export async function runOpenScoreUsdReplay(
         const ev = events[e]!;
         const positives: Candidate[] = [];
         const profitPositives: Candidate[] = [];
+        const profitNowPositives: Candidate[] = [];
         let maxActivePairs = 0;
         for (let a = 0; a < assetCount; a += 1) {
             const raw = ev.rawScore[a]!;
@@ -1275,6 +1436,19 @@ export async function runOpenScoreUsdReplay(
                     adjusted: cntPnl > 0 ? rawPnl / Math.sqrt(cntPnl) : rawPnl,
                     mean: cntPnl > 0 ? rawPnl / cntPnl : rawPnl,
                     activePairs: cntPnl,
+                    staticPairs: candidate.staticPairs,
+                });
+            }
+            // Causal pool: same shape, realized-so-far filtered scores only.
+            const rawPnlNow = ev.rawScoreProfitNow[a]!;
+            if (rawPnlNow > 0) {
+                const cntPnlNow = ev.activePairCountProfitNow[a]!;
+                profitNowPositives.push({
+                    assetIndex: a,
+                    raw: rawPnlNow,
+                    adjusted: cntPnlNow > 0 ? rawPnlNow / Math.sqrt(cntPnlNow) : rawPnlNow,
+                    mean: cntPnlNow > 0 ? rawPnlNow / cntPnlNow : rawPnlNow,
+                    activePairs: cntPnlNow,
                     staticPairs: candidate.staticPairs,
                 });
             }
@@ -1349,6 +1523,9 @@ export async function runOpenScoreUsdReplay(
             // Profit-gated picks: same digest tie-break, own >= 2 pool gate.
             const topRawProfit = profitPositives.length >= 2 ? pickMax(profitPositives, "raw") : null;
             const topMeanProfit = profitPositives.length >= 2 ? pickMax(profitPositives, "mean") : null;
+            // Causal picks: identical, over the point-in-time pool.
+            const topRawProfitNow = profitNowPositives.length >= 2 ? pickMax(profitNowPositives, "raw") : null;
+            const topMeanProfitNow = profitNowPositives.length >= 2 ? pickMax(profitNowPositives, "mean") : null;
             // --- Conditional-split features (Phase 3) -------------------------
             const topRawIdx = topRaw.winner.assetIndex;
             // Cross-sectional HHI of positive raw scores. raw > 0 is guaranteed
@@ -1371,6 +1548,7 @@ export async function runOpenScoreUsdReplay(
             views.push({
                 timeSec: ev.timeSec, positives,
                 profitPositives,
+                profitNowPositives,
                 topRaw: topRawIdx,
                 topAdjusted: topAdjusted.winner.assetIndex,
                 topMean: topMean.winner.assetIndex,
@@ -1378,6 +1556,8 @@ export async function runOpenScoreUsdReplay(
                 topMeanRawUniquePool,
                 topRawProfit: topRawProfit?.winner.assetIndex ?? -1,
                 topMeanProfit: topMeanProfit?.winner.assetIndex ?? -1,
+                topRawProfitNow: topRawProfitNow?.winner.assetIndex ?? -1,
+                topMeanProfitNow: topMeanProfitNow?.winner.assetIndex ?? -1,
                 topMeanRank2: meanRanked[1]!.assetIndex,
                 maxActive: maxActive.winner.assetIndex,
                 maxStatic: maxStatic.winner.assetIndex,
@@ -1394,6 +1574,11 @@ export async function runOpenScoreUsdReplay(
                 },
             });
             lastTopRawLeaderIdx = topRawIdx;
+        } else if (profitPositives.length >= 2 || profitNowPositives.length >= 2) {
+            // Profit-arm-only event: no ordinary view, but a profit arm can
+            // still fire. Pools are captured verbatim; picks are resolved in
+            // Phase 5 with the same tie-break rule.
+            profitOnlyEvents.push({ timeSec: ev.timeSec, profitPositives, profitNowPositives });
         }
         if (e % 1000 === 0) {
             onPhase("targets", `formed candidates for ${e}/${totalEvents} events`, e, totalEvents);
@@ -1475,6 +1660,28 @@ export async function runOpenScoreUsdReplay(
             if (!list) { list = []; requestsByAsset.set(c.assetIndex, list); }
             if (list[list.length - 1] !== v) list.push(v);
         }
+        // Causal pool candidates may also have a non-positive unfiltered
+        // score; tail-dedupe keeps the same view from appending twice.
+        for (const c of views[v]!.profitNowPositives) {
+            let list = requestsByAsset.get(c.assetIndex);
+            if (!list) { list = []; requestsByAsset.set(c.assetIndex, list); }
+            if (list[list.length - 1] !== v) list.push(v);
+        }
+    }
+    // Profit-only events share the request/outcome indexes, offset after the
+    // real views so every existing view index stays stable.
+    const totalEventCount = views.length + profitOnlyEvents.length;
+    const eventTimeOf = (idx: number): number =>
+        idx < views.length ? views[idx]!.timeSec : profitOnlyEvents[idx - views.length]!.timeSec;
+    const pushEventRequest = (assetIndex: number, idx: number): void => {
+        let list = requestsByAsset.get(assetIndex);
+        if (!list) { list = []; requestsByAsset.set(assetIndex, list); }
+        if (list[list.length - 1] !== idx) list.push(idx);
+    };
+    for (let pi = 0; pi < profitOnlyEvents.length; pi += 1) {
+        const idx = views.length + pi;
+        for (const c of profitOnlyEvents[pi]!.profitPositives) pushEventRequest(c.assetIndex, idx);
+        for (const c of profitOnlyEvents[pi]!.profitNowPositives) pushEventRequest(c.assetIndex, idx);
     }
 
     // --- Phase 4: evaluate USD outcomes per target (load -> consume -> free) -
@@ -1484,7 +1691,7 @@ export async function runOpenScoreUsdReplay(
         long: number[];
         entryTimes: number[];
         exitTimes: number[];
-    }> | null> = new Array(views.length).fill(null);
+    }> | null> = new Array(totalEventCount).fill(null);
     const missingAssets = new Set<number>();
     const censoredEvents = new Set<number>();
     const noDataEvents = new Set<number>();
@@ -1583,9 +1790,9 @@ export async function runOpenScoreUsdReplay(
         }
         if (aIdx === undefined || !requests || requests.length === 0) continue;
         for (const viewIdx of requests) {
-            const view = views[viewIdx]!;
+            const eventTime = eventTimeOf(viewIdx);
             // First target bar strictly after the decision timestamp.
-            const entryBar = firstBarAfter(times, view.timeSec);
+            const entryBar = firstBarAfter(times, eventTime);
             if (entryBar < 0) {
                 if (positiveRequestedAssets.has(aIdx)) noDataEvents.add(viewIdx);
                 continue;
@@ -1838,6 +2045,8 @@ export async function runOpenScoreUsdReplay(
         const topMeanRawUnique = createSeries();
         const topRawProfit = createSeries();
         const topMeanProfit = createSeries();
+        const topRawProfitNow = createSeries();
+        const topMeanProfitNow = createSeries();
         const topMeanVsRaw = createSeries();
         const topMeanVsRank2 = createSeries();
         const topMeanPortfolioOpportunities: TopMeanPortfolioOpportunity[] = [];
@@ -1882,10 +2091,122 @@ export async function runOpenScoreUsdReplay(
         const topRawProfitSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
         const topMeanProfitSelectedByAsset = new Map<string, number>();
         const topMeanProfitSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const topRawProfitNowSelectedByAsset = new Map<string, number>();
+        const topRawProfitNowSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const topMeanProfitNowSelectedByAsset = new Map<string, number>();
+        const topMeanProfitNowSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
         // Phase 3 MAX_ACTIVE: parallel per-asset selection map for MAX_ACTIVE.
         const activeSelectedByAsset = new Map<string, number>();
         const maxActiveSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
         let rawAdjustedSame = 0;
+
+            // Scalar event-detail emitter, hoisted to horizon scope so both the
+        // ordinary views and the profit-only events can push rows.
+        const pushEventDetail = (
+            perAssetOutcomes: ViewReturns,
+            decisionTime: number,
+            selector: OpenScoreUsdEventDetailSelector,
+            direction: "long" | "short",
+            selected: Candidate,
+            selectedReturn: number,
+            controlReturn: number,
+            eligibleCandidates: number,
+        ): void => {
+            if (!options.includeEventDetails) return;
+            const outcome = perAssetOutcomes.get(selected.assetIndex);
+            const entryTime = outcome?.entryTimes[hIdx];
+            const exitTime = outcome?.exitTimes[hIdx];
+            if (
+                entryTime === undefined
+                || exitTime === undefined
+                || !Number.isFinite(entryTime)
+                || !Number.isFinite(exitTime)
+            ) {
+                return;
+            }
+            eventDetails.push({
+                decisionTime,
+                entryTime,
+                exitTime,
+                horizonBars: horizons[hIdx]!,
+                selector,
+                direction,
+                asset: assetNames[selected.assetIndex]!,
+                selectedReturn,
+                controlReturn,
+                delta: selectedReturn - controlReturn,
+                eligibleCandidates,
+            });
+        };
+        // Profit arms (full-window and causal): independent eligibility gates
+        // over their own pools. Missing data on a gated candidate omits the
+        // event from that pair of arms only (never zero-filled); missing data on
+        // a non-gated positive is irrelevant. Hoisted to horizon scope so the
+        // profit-only events (no ordinary view) reuse the identical logic.
+        const appendProfitArms = (
+            timeSec: number,
+            perAssetOutcomes: ViewReturns,
+            pool: readonly Candidate[],
+            rawPick: number,
+            meanPick: number,
+            rawSelector: OpenScoreUsdEventDetailSelector,
+            meanSelector: OpenScoreUsdEventDetailSelector,
+            rawSeries: SelectorSeries,
+            meanSeries: SelectorSeries,
+            rawSelectedByAsset: Map<string, number>,
+            rawSamplesByAsset: Map<string, { returns: number[]; deltas: number[] }>,
+            meanSelectedByAsset: Map<string, number>,
+            meanSamplesByAsset: Map<string, { returns: number[]; deltas: number[] }>,
+        ): void => {
+            if (pool.length < 2 || rawPick < 0 || meanPick < 0) return;
+            const poolRetByAsset = new Map<number, number>();
+            let poolValid = true;
+            for (const c of pool) {
+                const r = perAssetOutcomes.get(c.assetIndex)?.long[hIdx];
+                if (r === undefined || !Number.isFinite(r)) { poolValid = false; break; }
+                poolRetByAsset.set(c.assetIndex, r);
+            }
+            if (!poolValid) return;
+            let poolTotal = 0;
+            for (const r of poolRetByAsset.values()) poolTotal += r;
+            const appendProfitSelection = (
+                series: SelectorSeries,
+                selector: OpenScoreUsdEventDetailSelector,
+                selectedIdx: number,
+                selectedByAsset: Map<string, number>,
+                samplesByAsset: Map<string, { returns: number[]; deltas: number[] }>,
+            ): void => {
+                const selectedReturn = poolRetByAsset.get(selectedIdx);
+                if (selectedReturn === undefined) return;
+                const randomReturn = (poolTotal - selectedReturn) / (poolRetByAsset.size - 1);
+                const delta = selectedReturn - randomReturn;
+                series.returns.push(selectedReturn);
+                series.deltas.push(delta);
+                series.times.push(timeSec);
+                series.assets.push(assetNames[selectedIdx]!);
+                pushEventDetail(
+                    perAssetOutcomes,
+                    timeSec,
+                    selector,
+                    "long",
+                    pool.find((candidate) => candidate.assetIndex === selectedIdx)!,
+                    selectedReturn,
+                    randomReturn,
+                    poolRetByAsset.size,
+                );
+                const asset = assetNames[selectedIdx]!;
+                selectedByAsset.set(asset, (selectedByAsset.get(asset) ?? 0) + 1);
+                let samples = samplesByAsset.get(asset);
+                if (!samples) {
+                    samples = { returns: [], deltas: [] };
+                    samplesByAsset.set(asset, samples);
+                }
+                samples.returns.push(selectedReturn);
+                samples.deltas.push(delta);
+            };
+            appendProfitSelection(rawSeries, rawSelector, rawPick, rawSelectedByAsset, rawSamplesByAsset);
+            appendProfitSelection(meanSeries, meanSelector, meanPick, meanSelectedByAsset, meanSamplesByAsset);
+        };
 
         for (let v = 0; v < views.length; v += 1) {
             const view = views[v]!;
@@ -1905,97 +2226,40 @@ export async function runOpenScoreUsdReplay(
                 controlReturn: number,
                 eligibleCandidates: number,
             ): void => {
-                if (!options.includeEventDetails) return;
-                const outcome = perAsset.get(selected.assetIndex);
-                const entryTime = outcome?.entryTimes[hIdx];
-                const exitTime = outcome?.exitTimes[hIdx];
-                if (
-                    entryTime === undefined
-                    || exitTime === undefined
-                    || !Number.isFinite(entryTime)
-                    || !Number.isFinite(exitTime)
-                ) {
-                    return;
-                }
-                eventDetails.push({
-                    decisionTime: view.timeSec,
-                    entryTime,
-                    exitTime,
-                    horizonBars: horizons[hIdx]!,
-                    selector,
-                    direction,
-                    asset: assetNames[selected.assetIndex]!,
-                    selectedReturn,
-                    controlReturn,
-                    delta: selectedReturn - controlReturn,
-                    eligibleCandidates,
-                });
+                pushEventDetail(perAsset, view.timeSec, selector, direction, selected, selectedReturn, controlReturn, eligibleCandidates);
             };
-
-            // Profit-gated arms: independent eligibility gate over the
-            // profitable pool. Missing data on a gated candidate omits the
-            // event from these arms only (never zero-filled); missing data on
-            // a non-gated positive is irrelevant here.
-            if (view.profitPositives.length >= 2 && view.topRawProfit >= 0 && view.topMeanProfit >= 0) {
-                const pnlPosRetByAsset = new Map<number, number>();
-                let pnlPosValid = true;
-                for (const c of view.profitPositives) {
-                    const r = perAsset.get(c.assetIndex)?.long[hIdx];
-                    if (r === undefined || !Number.isFinite(r)) { pnlPosValid = false; break; }
-                    pnlPosRetByAsset.set(c.assetIndex, r);
-                }
-                if (pnlPosValid) {
-                    let pnlPosTotal = 0;
-                    for (const r of pnlPosRetByAsset.values()) pnlPosTotal += r;
-                    const appendProfitSelection = (
-                        series: SelectorSeries,
-                        selector: OpenScoreUsdEventDetailSelector,
-                        selectedIdx: number,
-                        selectedByAsset: Map<string, number>,
-                        samplesByAsset: Map<string, { returns: number[]; deltas: number[] }>,
-                    ): void => {
-                        const selectedReturn = pnlPosRetByAsset.get(selectedIdx);
-                        if (selectedReturn === undefined) return;
-                        const randomReturn = (pnlPosTotal - selectedReturn) / (pnlPosRetByAsset.size - 1);
-                        const delta = selectedReturn - randomReturn;
-                        series.returns.push(selectedReturn);
-                        series.deltas.push(delta);
-                        series.times.push(view.timeSec);
-                        series.assets.push(assetNames[selectedIdx]!);
-                        appendEventDetail(
-                            selector,
-                            "long",
-                            view.profitPositives.find((candidate) => candidate.assetIndex === selectedIdx)!,
-                            selectedReturn,
-                            randomReturn,
-                            pnlPosRetByAsset.size,
-                        );
-                        const asset = assetNames[selectedIdx]!;
-                        selectedByAsset.set(asset, (selectedByAsset.get(asset) ?? 0) + 1);
-                        let samples = samplesByAsset.get(asset);
-                        if (!samples) {
-                            samples = { returns: [], deltas: [] };
-                            samplesByAsset.set(asset, samples);
-                        }
-                        samples.returns.push(selectedReturn);
-                        samples.deltas.push(delta);
-                    };
-                    appendProfitSelection(
-                        topRawProfit,
-                        "TOP_RAW_PROFIT",
-                        view.topRawProfit,
-                        topRawProfitSelectedByAsset,
-                        topRawProfitSamplesByAsset,
-                    );
-                    appendProfitSelection(
-                        topMeanProfit,
-                        "TOP_MEAN_PROFIT",
-                        view.topMeanProfit,
-                        topMeanProfitSelectedByAsset,
-                        topMeanProfitSamplesByAsset,
-                    );
-                }
-            }
+            // Full-window profit arms: research-only look-ahead filter.
+            appendProfitArms(
+                view.timeSec,
+                perAsset,
+                view.profitPositives,
+                view.topRawProfit,
+                view.topMeanProfit,
+                "TOP_RAW_PROFIT",
+                "TOP_MEAN_PROFIT",
+                topRawProfit,
+                topMeanProfit,
+                topRawProfitSelectedByAsset,
+                topRawProfitSamplesByAsset,
+                topMeanProfitSelectedByAsset,
+                topMeanProfitSamplesByAsset,
+            );
+            // Causal point-in-time profit arms: live-selectable in principle.
+            appendProfitArms(
+                view.timeSec,
+                perAsset,
+                view.profitNowPositives,
+                view.topRawProfitNow,
+                view.topMeanProfitNow,
+                "TOP_RAW_PROFIT_NOW",
+                "TOP_MEAN_PROFIT_NOW",
+                topRawProfitNow,
+                topMeanProfitNow,
+                topRawProfitNowSelectedByAsset,
+                topRawProfitNowSamplesByAsset,
+                topMeanProfitNowSelectedByAsset,
+                topMeanProfitNowSamplesByAsset,
+            );
 
             // Collect returns for all positives this horizon.
             const retByAsset = new Map<number, number>();
@@ -2217,6 +2481,67 @@ export async function runOpenScoreUsdReplay(
             selectedDegree.push(staticDegree.get(selName) ?? 0);
         }
 
+        // Profit-arm-only events (no ordinary view): evaluate the profit arms
+        // on their own pools. Picks resolve here with the same FNV-1a
+        // event-time/asset tie-break the Phase 3 picker uses.
+        const pickFromPool = (pool: readonly Candidate[], key: "raw" | "mean", timeSec: number): number => {
+            if (pool.length < 2) return -1;
+            let best = pool[0]![key]!;
+            for (let i = 1; i < pool.length; i += 1) {
+                const v = pool[i]![key]!;
+                if (v > best) best = v;
+            }
+            const tied = pool.filter((c) => c[key] === best);
+            let winner = tied[0]!;
+            if (tied.length > 1) {
+                let dW = tieBreakDigest(timeSec, assetNames[winner.assetIndex]!);
+                for (let i = 1; i < tied.length; i += 1) {
+                    const c = tied[i]!;
+                    const dC = tieBreakDigest(timeSec, assetNames[c.assetIndex]!);
+                    if (dC < dW || (dC === dW && assetNames[c.assetIndex]! < assetNames[winner.assetIndex]!)) {
+                        winner = c;
+                        dW = dC;
+                    }
+                }
+            }
+            return winner.assetIndex;
+        };
+        for (let pi = 0; pi < profitOnlyEvents.length; pi += 1) {
+            const pe = profitOnlyEvents[pi]!;
+            const perAssetProfitOnly = returnsByView[views.length + pi];
+            if (!perAssetProfitOnly) continue;
+            appendProfitArms(
+                pe.timeSec,
+                perAssetProfitOnly,
+                pe.profitPositives,
+                pickFromPool(pe.profitPositives, "raw", pe.timeSec),
+                pickFromPool(pe.profitPositives, "mean", pe.timeSec),
+                "TOP_RAW_PROFIT",
+                "TOP_MEAN_PROFIT",
+                topRawProfit,
+                topMeanProfit,
+                topRawProfitSelectedByAsset,
+                topRawProfitSamplesByAsset,
+                topMeanProfitSelectedByAsset,
+                topMeanProfitSamplesByAsset,
+            );
+            appendProfitArms(
+                pe.timeSec,
+                perAssetProfitOnly,
+                pe.profitNowPositives,
+                pickFromPool(pe.profitNowPositives, "raw", pe.timeSec),
+                pickFromPool(pe.profitNowPositives, "mean", pe.timeSec),
+                "TOP_RAW_PROFIT_NOW",
+                "TOP_MEAN_PROFIT_NOW",
+                topRawProfitNow,
+                topMeanProfitNow,
+                topRawProfitNowSelectedByAsset,
+                topRawProfitNowSamplesByAsset,
+                topMeanProfitNowSelectedByAsset,
+                topMeanProfitNowSamplesByAsset,
+            );
+        }
+
         const n = topRaw.deltas.length;
         eligibleEventsMax = Math.max(eligibleEventsMax, n);
         const buildComparison = (deltasArr: number[], topReturns: number[], times: number[]): ReplayComparison => {
@@ -2307,6 +2632,26 @@ export async function runOpenScoreUsdReplay(
             topMeanProfitDominantAsset,
             buildComparison,
         );
+        const topRawProfitNowByAsset = buildAssetSelectionBreakdown(
+            topRawProfitNowSelectedByAsset,
+            topRawProfitNowSamplesByAsset,
+        ).byAsset;
+        const topRawProfitNowDominantAsset = topRawProfitNowByAsset[0]?.asset ?? null;
+        const topRawProfitNowExDominant = buildExDominantComparison(
+            topRawProfitNow,
+            topRawProfitNowDominantAsset,
+            buildComparison,
+        );
+        const topMeanProfitNowByAsset = buildAssetSelectionBreakdown(
+            topMeanProfitNowSelectedByAsset,
+            topMeanProfitNowSamplesByAsset,
+        ).byAsset;
+        const topMeanProfitNowDominantAsset = topMeanProfitNowByAsset[0]?.asset ?? null;
+        const topMeanProfitNowExDominant = buildExDominantComparison(
+            topMeanProfitNow,
+            topMeanProfitNowDominantAsset,
+            buildComparison,
+        );
         // TOP_MEAN top-contribution exclusion: drop events selecting the asset
         // with the largest Σ per-event delta (events × mean delta), NOT the most
         // frequent. A low-frequency / high-per-pick asset (e.g. SNDK in the
@@ -2355,6 +2700,14 @@ export async function runOpenScoreUsdReplay(
             topMeanProfitByAsset,
             topMeanProfitExDominant,
             topMeanProfitDominantAsset,
+            topRawProfitNow: buildComparison(topRawProfitNow.deltas, topRawProfitNow.returns, topRawProfitNow.times),
+            topRawProfitNowByAsset,
+            topRawProfitNowExDominant,
+            topRawProfitNowDominantAsset,
+            topMeanProfitNow: buildComparison(topMeanProfitNow.deltas, topMeanProfitNow.returns, topMeanProfitNow.times),
+            topMeanProfitNowByAsset,
+            topMeanProfitNowExDominant,
+            topMeanProfitNowDominantAsset,
             topMeanVsRaw: buildComparison(topMeanVsRaw.deltas, topMeanVsRaw.returns, topMeanVsRaw.times),
             topMeanVsRank2: buildComparison(topMeanVsRank2.deltas, topMeanVsRank2.returns, topMeanVsRank2.times),
             maxActive: buildComparison(maxActive.deltas, maxActive.returns, maxActive.times),
@@ -2682,7 +3035,7 @@ function buildReportLines(args: {
         }
     }
     lines.push(`retained pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
-    lines.push("controls | TOP_MEAN=raw/activePairs TOP_RAW_PROFIT=raw score counted only from pairs whose pair backtest netted >0 TOP_MEAN_PROFIT=that raw / open profitable-pair count MAX_ACTIVE=most open pairs MAX_RETAINED=most loaded artifacts");
+    lines.push("controls | TOP_MEAN=raw/activePairs TOP_RAW_PROFIT=raw score counted only from pairs whose pair backtest netted >0 (look-ahead) TOP_MEAN_PROFIT=that raw / open profitable-pair count TOP_RAW_PROFIT_NOW=same filter using only pnl realized at or before each event (causal) TOP_MEAN_PROFIT_NOW=that raw / open realized-profitable-pair count MAX_ACTIVE=most open pairs MAX_RETAINED=most loaded artifacts");
     lines.push("TOP_MEAN_RAW_UNIQUE rule | TOP_MEAN tied set -> unique raw-score maximum; residual raw ties skipped; control=mean return of the TOP_MEAN tied set");
     lines.push("pnl model | OVERLAP=long selector vs same-pool random positive, every eligible event; *_1K=$1000/trade, exact selector ties skipped, one open trade per asset");
     for (const h of args.horizons) {
@@ -2702,6 +3055,10 @@ function buildReportLines(args: {
         lines.push(comparisonLine(`RAW_PROFIT_EX_${h.topRawProfitDominantAsset ?? "NONE"}`, h.topRawProfitExDominant));
         lines.push(comparisonLine("TOP_MEAN_PROFIT", h.topMeanProfit));
         lines.push(comparisonLine(`MEAN_PROFIT_EX_${h.topMeanProfitDominantAsset ?? "NONE"}`, h.topMeanProfitExDominant));
+        lines.push(comparisonLine("TOP_RAW_PROFIT_NOW", h.topRawProfitNow));
+        lines.push(comparisonLine(`RAW_PROFIT_NOW_EX_${h.topRawProfitNowDominantAsset ?? "NONE"}`, h.topRawProfitNowExDominant));
+        lines.push(comparisonLine("TOP_MEAN_PROFIT_NOW", h.topMeanProfitNow));
+        lines.push(comparisonLine(`MEAN_PROFIT_NOW_EX_${h.topMeanProfitNowDominantAsset ?? "NONE"}`, h.topMeanProfitNowExDominant));
         lines.push(comparisonLine("TOP_MEAN_VS_RAW", h.topMeanVsRaw));
         lines.push(`TOP_MEAN_VS_RAW_WF deltaByBlock=[${h.topMeanVsRaw.blockMeans.map(fmtPct).join(",")}]`);
         lines.push(comparisonLine("TOP_MEAN_VS_RANK2", h.topMeanVsRank2));
@@ -2760,6 +3117,14 @@ function buildReportLines(args: {
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");
         lines.push(`TOP_MEAN_PROFIT selected assets = ${topMeanProfitBreakdown || "n/a"}${h.topMeanProfitByAsset.length > 5 ? ` | other=${h.topMeanProfitByAsset.length - 5} assets` : ""}`);
+        const topRawProfitNowBreakdown = h.topRawProfitNowByAsset.slice(0, 5).map((x) =>
+            `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
+        ).join(" | ");
+        lines.push(`TOP_RAW_PROFIT_NOW selected assets = ${topRawProfitNowBreakdown || "n/a"}${h.topRawProfitNowByAsset.length > 5 ? ` | other=${h.topRawProfitNowByAsset.length - 5} assets` : ""}`);
+        const topMeanProfitNowBreakdown = h.topMeanProfitNowByAsset.slice(0, 5).map((x) =>
+            `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
+        ).join(" | ");
+        lines.push(`TOP_MEAN_PROFIT_NOW selected assets = ${topMeanProfitNowBreakdown || "n/a"}${h.topMeanProfitNowByAsset.length > 5 ? ` | other=${h.topMeanProfitNowByAsset.length - 5} assets` : ""}`);
         const maxActiveBreakdown = h.maxActiveByAsset.slice(0, 5).map((x) =>
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");

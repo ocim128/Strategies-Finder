@@ -85,7 +85,11 @@ current engine includes long-side raw/adjusted/mean selectors, the
 selectors, and the profit-gated `TOP_RAW_PROFIT` / `TOP_MEAN_PROFIT`
 variants (scores count only pairs whose pair backtest netProfit was strictly
 positive — a research-only look-ahead filter, since a pair's full-window P&L
-is not known at decision time), plus pairwise comparisons. The profit gate
+is not known at decision time) and their causal point-in-time counterparts
+`TOP_RAW_PROFIT_NOW` / `TOP_MEAN_PROFIT_NOW` (a pair votes only when its pnl
+realized at or before the event is strictly positive — computed from per-trade pnl
+on compact artifacts written from that field's introduction onward), plus
+pairwise comparisons. The profit gate
 reads the artifact's `result.netProfit`: the standalone route loads full
 Batch mine artifacts (always carry it), while the TOP_MEAN coordinator
 replays compact artifacts that carry `netProfit` only when written by a

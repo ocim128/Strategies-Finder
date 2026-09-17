@@ -20,7 +20,7 @@ function emptyResult(): BacktestResult {
 }
 
 let tradeId = 0;
-function makeTrade(type: "long" | "short", entrySec: number, exitSec: number | null): Trade {
+function makeTrade(type: "long" | "short", entrySec: number, exitSec: number | null, pnl = 0): Trade {
     return {
         id: tradeId += 1,
         type,
@@ -28,7 +28,7 @@ function makeTrade(type: "long" | "short", entrySec: number, exitSec: number | n
         entryPrice: 1,
         exitTime: (exitSec ?? entrySec) as Time,
         exitPrice: 1,
-        pnl: 0,
+        pnl,
         pnlPercent: 0,
         size: 1,
         exitReason: exitSec === null ? "end_of_data" : "signal",
@@ -510,6 +510,292 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(report).to.include("TOP_RAW_PROFIT selected assets = ");
         expect(report).to.include("TOP_MEAN_PROFIT selected assets = ");
         expect(report).to.include("TOP_RAW_PROFIT=raw score counted only from pairs whose pair backtest netted >0");
+    });
+
+    it("PROFIT_NOW arms are causal: a pair only votes once its pnl realized at or before the event is positive", async () => {
+        // P1 (AAA) loses -50 first, then opens a winning trade. P2 (BBB) and
+        // P3 (CCC) each realize +10/+20 before re-entering.
+        // Event T0+1000: everyone open, nothing realized yet -> causal pool
+        // empty -> NOW arms fire 0 (the look-ahead PROFIT arms, whose filter
+        // uses the pairs' FINAL net pnl, fire here — proving the difference).
+        // Event T0+3000: P1 realized -50 (muted), P2/P3 realized +10/+20
+        // (counted) -> causal pool {BBB, CCC}.
+        const pairs = [
+            makePair("AAA", "X1", [
+                makeTrade("long", T0 + 1000, T0 + 2000, -50),
+                makeTrade("long", T0 + 3000, null, 100),
+            ], 50),
+            makePair("BBB", "Y1", [
+                makeTrade("long", T0 + 1000, T0 + 2000, 10),
+                makeTrade("long", T0 + 3000, null, 5),
+            ], 15),
+            makePair("CCC", "Z1", [
+                makeTrade("long", T0 + 1000, T0 + 2000, 20),
+                makeTrade("long", T0 + 3000, null, 5),
+            ], 25),
+        ];
+        const flat = () => 100;
+        const targets = [
+            makeTarget("AAA", 10, flat), makeTarget("BBB", 10, flat), makeTarget("CCC", 10, flat),
+            makeTarget("X1", 10, flat), makeTarget("Y1", 10, flat), makeTarget("Z1", 10, flat),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        const h = result.horizons[0]!;
+        // Two decision events (T0+1000 and T0+3000); both have >= 2 positives.
+        expect(h.topRaw.events).to.equal(2);
+        // Look-ahead PROFIT arms: the pairs' FINAL pnl is +50/+15/+25 (all
+        // positive), so the pool is full at BOTH events.
+        expect(h.topRawProfit.events).to.equal(2);
+        // Causal NOW arms: at T0+1000 nothing is realized yet (pool empty);
+        // at T0+3000 only BBB and CCC have positive realized pnl (P1's -50
+        // mutes AAA). Exactly one of the two events contributes.
+        expect(h.topRawProfitNow.events).to.equal(1);
+        expect(h.topMeanProfitNow.events).to.equal(1);
+        // The causal winner comes from {BBB, CCC} — never AAA.
+        const nowWinner = h.topRawProfitNowByAsset[0]!.asset;
+        expect(["BBB", "CCC"]).to.include(nowWinner);
+        expect(h.topRawProfitNowByAsset).to.have.length(1);
+        expect(h.topRawProfitNowDominantAsset).to.equal(nowWinner);
+        expect(h.topRawProfitNowExDominant.events).to.equal(0);
+        // Detail rows exist for the NOW arms with the causal pool size (2).
+        const nowDetail = result.eventDetails?.find((row) => row.selector === "TOP_RAW_PROFIT_NOW");
+        expect(nowDetail?.direction).to.equal("long");
+        expect(nowDetail?.eligibleCandidates).to.equal(2);
+        expect(nowDetail?.decisionTime).to.equal(T0 + 3000);
+        // Report carries the causal lines + legend.
+        const report = result.reportLines.join("\n");
+        expect(report).to.include("TOP_RAW_PROFIT_NOW");
+        expect(report).to.include("RAW_PROFIT_NOW_EX_" + nowWinner);
+        expect(report).to.include("TOP_RAW_PROFIT_NOW selected assets = ");
+        expect(report).to.include("TOP_MEAN_PROFIT_NOW selected assets = ");
+        expect(report).to.include("TOP_RAW_PROFIT_NOW=same filter using only pnl realized at or before each event (causal)");
+    });
+
+    it("PROFIT_NOW removes a pair's vote when it exits on an exit-only timestamp (no leak)", async () => {
+        // Regression: the causal accumulators were only maintained on
+        // timestamps that produced a decision event, so a profitable pair
+        // exiting on an exit-only timestamp kept its +1 in the filtered score
+        // forever. Exact accounting: AAA's +1 must be subtracted at its
+        // T0+4000 exit (an exit-only timestamp), leaving {BBB, DDD} as the
+        // only positive causal-score assets at the final event.
+        const pairs = [
+            // AAA: wins early so its second trade enters masked; exits at
+            // T0+4000 with no entry anywhere at that timestamp.
+            makePair("AAA", "X1", [
+                makeTrade("long", T0 + 1000, T0 + 2000, 10),
+                makeTrade("long", T0 + 3000, T0 + 4000, 5),
+            ], 15),
+            // BBB: wins before entering, then stays open to end of data.
+            makePair("BBB", "Y1", [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", T0 + 1000, null, 5),
+            ], 15),
+            // CCC: wins before entering; exits again on an exit-only
+            // timestamp so it drops out of the causal pool at the end.
+            makePair("CCC", "Z1", [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", T0 + 3000, T0 + 4500, 5),
+            ], 15),
+            // DDD: wins before entering late, keeps the final pool >= 2.
+            makePair("DDD", "W1", [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", T0 + 5000, null, 5),
+            ], 15),
+        ];
+        const flat = () => 100;
+        const targets = [
+            makeTarget("AAA", 12, flat), makeTarget("BBB", 12, flat),
+            makeTarget("CCC", 12, flat), makeTarget("DDD", 12, flat),
+            makeTarget("X1", 12, flat), makeTarget("Y1", 12, flat),
+            makeTarget("Z1", 12, flat), makeTarget("W1", 12, flat),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        // The final decision event (T0+5000) must see exactly the open
+        // masked votes: BBB (+1, still open) and DDD (+1, just entered).
+        // AAA and CCC exited on exit-only timestamps, so with exact
+        // accounting their filtered scores are back to 0 there — a pool of
+        // exactly 2, never AAA. (With the leak, AAA kept its phantom +1 and
+        // the pool at T0+5000 was 3.)
+        const nowRows = (result.eventDetails ?? []).filter((row) => row.selector === "TOP_RAW_PROFIT_NOW");
+        const finalRow = nowRows.find((row) => row.decisionTime === T0 + 5000);
+        expect(finalRow, "NOW arm must fire at the final event").to.not.equal(undefined);
+        expect(finalRow!.eligibleCandidates).to.equal(2);
+        expect(["BBB", "DDD"]).to.include(finalRow!.asset);
+    });
+
+    it("PROFIT_NOW fires on events with < 2 ordinary positives (causal-only coverage)", async () => {
+        // At T0+1000 exactly ONE asset is ordinarily positive (AAA): BBB's +1
+        // is cancelled by P3's quote leg, and every intermediate +1 is
+        // cancelled by a further -1 (DDD, EEE). But causally, only the two
+        // prior winners (P1 on AAA, P2 on BBB) have realized pnl > 0 -- the
+        // cancelling pairs carry pnl 0 and are muted -- so the causal pool is
+        // {AAA, BBB} and the arm must fire even though no view forms.
+        const pairs = [
+            makePair("AAA", "X1", [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", T0 + 1000, null, 0),
+            ], 10),
+            makePair("BBB", "Y1", [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", T0 + 1000, null, 0),
+            ], 10),
+            // Cancels BBB's +1: DDD +1 / BBB -1 (pnl 0 -> causal-muted).
+            makePair("DDD", "BBB", [makeTrade("long", T0 + 1000, null, 0)], 0),
+            // Cancels DDD's +1: EEE +1 / DDD -1 (pnl 0 -> causal-muted).
+            makePair("EEE", "DDD", [makeTrade("long", T0 + 1000, null, 0)], 0),
+            // Cancels EEE's +1 back onto AAA: AAA +1 / EEE -1.
+            makePair("EEE", "AAA", [makeTrade("short", T0 + 1000, null, 0)], 0),
+        ];
+        const flat = () => 100;
+        const targets = [
+            makeTarget("AAA", 10, flat), makeTarget("BBB", 10, flat),
+            makeTarget("DDD", 10, flat), makeTarget("EEE", 10, flat),
+            makeTarget("X1", 10, flat), makeTarget("Y1", 10, flat),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        // T0+500 forms an ordinary view (AAA,BBB both fresh +1); T0+1000 has
+        // exactly one ordinary positive, so it must NOT produce TOP_RAW rows.
+        expect(result.horizons[0]!.topRawProfitNow.events).to.equal(1);
+        const nowRows = (result.eventDetails ?? []).filter((row) => row.selector === "TOP_RAW_PROFIT_NOW");
+        expect(nowRows).to.have.length(1);
+        expect(nowRows[0]!.decisionTime).to.equal(T0 + 1000);
+        expect(nowRows[0]!.eligibleCandidates).to.equal(2);
+        expect(["AAA", "BBB"]).to.include(nowRows[0]!.asset);
+        const rawRowsAtEvent = (result.eventDetails ?? []).filter(
+            (row) => row.selector === "TOP_RAW" && row.decisionTime === T0 + 1000,
+        );
+        expect(rawRowsAtEvent).to.have.length(0);
+    });
+
+    it("PROFIT_NOW mutes a pair with any missing/non-finite trade pnl (mixed history)", async () => {
+        // AAA has one finite winning trade and one open trade whose pnl is
+        // NaN: the pair must be pnl-unknown and muted for the causal arms
+        // even though its realized-so-far (+10) is positive. BBB and CCC are
+        // fully known winners, so the causal pool is exactly {BBB, CCC}.
+        const pairs = [
+            makePair("AAA", "X1", [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", T0 + 1000, null, NaN),
+            ], 10),
+            makePair("BBB", "Y1", [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", T0 + 1000, null, 5),
+            ], 15),
+            makePair("CCC", "Z1", [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", T0 + 1000, null, 5),
+            ], 15),
+        ];
+        const flat = () => 100;
+        const targets = [
+            makeTarget("AAA", 10, flat), makeTarget("BBB", 10, flat), makeTarget("CCC", 10, flat),
+            makeTarget("X1", 10, flat), makeTarget("Y1", 10, flat), makeTarget("Z1", 10, flat),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        const nowRows = (result.eventDetails ?? []).filter((row) => row.selector === "TOP_RAW_PROFIT_NOW");
+        expect(nowRows).to.have.length(1);
+        expect(nowRows[0]!.eligibleCandidates).to.equal(2);
+        expect(["BBB", "CCC"]).to.include(nowRows[0]!.asset);
+    });
+
+    it("PROFIT_NOW pairs exit-exit bookkeeping exactly under overlapping trades (FIFO)", async () => {
+        // AAA runs three overlapping trades: two applied entries (mask on at
+        // both entry times) and one later entry AFTER a loss flipped the pair
+        // pnl-unknown-negative (mask off at entry). Exact accounting: the two
+        // applied votes are each removed by their own exit; the unapplied
+        // entry stays out. With the old single-flag scheme the last exit
+        // found a stale flag and leaked AAA's vote forever.
+        const pairs = [
+            makePair("AAA", "X1", [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", T0 + 1000, T0 + 4500, 5),
+                makeTrade("long", T0 + 2000, T0 + 3000, -50),
+                makeTrade("long", T0 + 3500, T0 + 4000, 5),
+            ], -30),
+            makePair("BBB", "Y1", [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", T0 + 1000, null, 5),
+            ], 15),
+            makePair("CCC", "Z1", [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", T0 + 4000, null, 5),
+            ], 15),
+            makePair("DDD", "W1", [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", T0 + 5000, null, 5),
+            ], 15),
+        ];
+        const flat = () => 100;
+        const targets = [
+            makeTarget("AAA", 12, flat), makeTarget("BBB", 12, flat),
+            makeTarget("CCC", 12, flat), makeTarget("DDD", 12, flat),
+            makeTarget("X1", 12, flat), makeTarget("Y1", 12, flat),
+            makeTarget("Z1", 12, flat), makeTarget("W1", 12, flat),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        const nowRows = (result.eventDetails ?? []).filter((row) => row.selector === "TOP_RAW_PROFIT_NOW");
+        // Event at T0+4000: AAA's applied entry is still open (its vote is in
+        // the accumulator), so the causal pool is {AAA, BBB, CCC}.
+        const midRow = nowRows.find((row) => row.decisionTime === T0 + 4000);
+        expect(midRow, "NOW arm must fire at T0+4000").to.not.equal(undefined);
+        expect(midRow!.eligibleCandidates).to.equal(3);
+        // Event at T0+5000: AAA exited at T0+4500 and its vote was removed,
+        // so AAA must be OUT of the pool ({BBB, CCC, DDD} only). The leaked
+        // accounting would show a pool of 4 (AAA phantom vote included).
+        const finalRow = nowRows.find((row) => row.decisionTime === T0 + 5000);
+        expect(finalRow, "NOW arm must fire at T0+5000").to.not.equal(undefined);
+        expect(finalRow!.eligibleCandidates).to.equal(3);
+        expect(finalRow!.asset).to.not.equal("AAA");
+    });
+
+    it("PROFIT_NOW output is deterministic under reversed artifact arrival order", async () => {
+        const buildPairs = () => [
+            makePair("AAA", "X1", [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", T0 + 1000, T0 + 2000, 4),
+                makeTrade("long", T0 + 3000, null, 6),
+            ], 20),
+            makePair("BBB", "Y1", [
+                makeTrade("long", T0 + 500, T0 + 800, -5),
+                makeTrade("long", T0 + 2000, T0 + 3000, 25),
+                makeTrade("long", T0 + 3000, null, 1),
+            ], 21),
+            makePair("CCC", "Z1", [
+                makeTrade("long", T0 + 1000, T0 + 2000, 3),
+                makeTrade("long", T0 + 4000, null, 2),
+            ], 5),
+        ];
+        const flat = () => 100;
+        const targets = [
+            makeTarget("AAA", 10, flat), makeTarget("BBB", 10, flat), makeTarget("CCC", 10, flat),
+            makeTarget("X1", 10, flat), makeTarget("Y1", 10, flat), makeTarget("Z1", 10, flat),
+        ];
+        const opts = { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 };
+        const forward = await runOpenScoreUsdReplay(() => fromArray(buildPairs()), () => fromArray(targets), opts);
+        const reverse = await runOpenScoreUsdReplay(() => fromArray(buildPairs().reverse()), () => fromArray(targets), opts);
+        expect(reverse.horizons[0]!.topRawProfitNow).to.deep.equal(forward.horizons[0]!.topRawProfitNow);
+        expect(reverse.horizons[0]!.topMeanProfitNow).to.deep.equal(forward.horizons[0]!.topMeanProfitNow);
+        expect(reverse.reportLines).to.deep.equal(forward.reportLines);
     });
 
     it("losing pairs' votes never reach the profit-gated pool (no zero-fill)", async () => {
