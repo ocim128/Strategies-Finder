@@ -287,6 +287,14 @@
                     <option value="similarCap2x">Similar-cap ×2</option>
                 </select>
             </div>
+            <div class="batch-field batch-field--inline" title="How tied picks are resolved instead of skipped. Off: ties stay unresolved (TIE / SKIP). Alphabetical: the alphabetically-first tied asset is picked. Random: a random tied asset is picked, stable per decision event (seeded, so re-renders and copies agree). Applies to the Latest OPEN_SCORE Selector Picks and the current TOP_MEAN snapshot banner.">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanTieBreak">TIE BREAK</label>
+                <select class="batch-field-input batch-field-input--auto" id="batchBacktestSp500TopMeanTieBreak">
+                    <option value="off" selected>Off (skip ties)</option>
+                    <option value="alpha">Pick alphabetically</option>
+                    <option value="random">Pick randomly</option>
+                </select>
+            </div>
             <div class="batch-field batch-field--inline" title="Write the completed run's permanent mining ledger to archive/batch-open-score/. Saved archives are not automatically removed.">
                 <input id="batchBacktestSp500TopMeanArchiveToggle" type="checkbox">
                 <label class="batch-field-label" for="batchBacktestSp500TopMeanArchiveToggle">Save full research archive (~150 MB / 5k pairs)</label>

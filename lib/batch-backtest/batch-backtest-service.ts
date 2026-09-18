@@ -2995,7 +2995,96 @@ export class BatchBacktestService {
         dom.batchBacktestSp500TopMeanProgressText.textContent = message;
     }
 
-    private renderLatestOpenScoreSelections(latest: OpenScoreUsdLatestSelections): string {
+    /**
+     * TOP_MEAN Coordinator tie-break mode from the TIE BREAK select.
+     *   off    - ties stay unresolved (TIE / SKIP), the historical default.
+     *   alpha  - the alphabetically-first tied asset is picked.
+     *   random - a seeded-random tied asset is picked, stable per event so
+     *            re-renders and copied output always agree.
+     */
+    private topMeanTieBreakMode(): "off" | "alpha" | "random" {
+        const value = this.dom?.batchBacktestSp500TopMeanTieBreak?.value;
+        return value === "alpha" || value === "random" ? value : "off";
+    }
+
+    private pickTieBreakAsset(assets: readonly string[], mode: "alpha" | "random", seed: number): string | null {
+        if (assets.length === 0) return null;
+        const sorted = [...assets].sort((a, b) => a.localeCompare(b));
+        if (mode === "alpha") return sorted[0]!;
+        // Seeded murmur-style finalizer over the seed (decision time), so the
+        // pick is uniform across the tied set yet deterministic per event.
+        let x = (seed ^ 0x9e3779b9) >>> 0;
+        x = Math.imul(x ^ (x >>> 16), 2246822507) >>> 0;
+        x = Math.imul(x ^ (x >>> 13), 3266489909) >>> 0;
+        x = (x ^ (x >>> 16)) >>> 0;
+        return sorted[x % sorted.length]!;
+    }
+
+    /** Resolve `reason: "tied"` rows of the latest OPEN_SCORE picks per mode. */
+    private applyTieBreakToLatest(latest: OpenScoreUsdLatestSelections): OpenScoreUsdLatestSelections {
+        const mode = this.topMeanTieBreakMode();
+        if (mode === "off") return latest;
+        return {
+            ...latest,
+            selections: latest.selections.map((selection) => {
+                if (selection.reason !== "tied" || selection.tiedAssets.length === 0) return selection;
+                const picked = this.pickTieBreakAsset(selection.tiedAssets, mode, latest.decisionTime);
+                if (picked === null) return selection;
+                // Per-tied-asset score/mean are not in the tie row, so they
+                // stay null (rendered as n/a) — the pick is the decision.
+                return { ...selection, asset: picked, reason: "selected" as const };
+            }),
+        };
+    }
+
+    private topMeanTieBreakNote(mode: "alpha" | "random" | "off"): string {
+        return mode === "alpha"
+            ? "Tie-break ALPHABETICAL applied: tied picks resolved to the alphabetically-first tied asset."
+            : "Tie-break RANDOM applied: tied picks resolved to a seeded random tied asset (stable per decision event).";
+    }
+
+    /**
+     * When the current snapshot's top is tied and the mode resolves ties,
+     * return the one picked winner asset (seeded per decisionTime), else null.
+     */
+    private tieBreakPickedAsset(currentSnapshot: TopMeanCurrentSnapshot, mode: "alpha" | "random" | "off"): string | null {
+        if (mode === "off") return null;
+        const snap: any = currentSnapshot.snapshot;
+        const winners: any[] = Array.isArray(snap?.winners) ? snap.winners : [];
+        if (winners.length < 2) return null;
+        const assets = winners.map((w) => String(w.asset ?? "")).filter((a) => a !== "");
+        const seed = currentSnapshot.decision?.decisionTime ?? snap?.asOf ?? 0;
+        return this.pickTieBreakAsset(assets, mode, seed);
+    }
+
+    /** Snapshot winners restricted to the tie-break pick (all of them when null). */
+    private winnersAfterTieBreak(currentSnapshot: TopMeanCurrentSnapshot, picked: string | null): any[] {
+        const snap: any = currentSnapshot.snapshot;
+        const winners: any[] = Array.isArray(snap?.winners) ? snap.winners : [];
+        if (picked === null) return winners;
+        return winners.filter((w) => String(w.asset ?? "") === picked);
+    }
+
+    /**
+     * A tied snapshot decision (reason "tied", asset null) resolves to the
+     * tie-break pick. The entry-window rule is re-checked for the picked
+     * asset: LONG only when the latest reconstructed decision event is not
+     * older than the common closed candle, mirroring the reducer.
+     */
+    private resolveTiedDecision(decision: TopMeanCurrentSnapshot["decision"], picked: string | null, asOfSec: number | null): TopMeanCurrentSnapshot["decision"] {
+        if (!decision || decision.reason !== "tied" || picked === null) return decision;
+        const entryWindowOpen = asOfSec !== null && decision.decisionTime !== null && decision.decisionTime >= asOfSec;
+        return {
+            ...decision,
+            status: entryWindowOpen ? "LONG_NEXT_BAR" : "NO_TRADE",
+            reason: entryWindowOpen ? "latest_decision_event" : "entry_window_expired",
+            asset: picked,
+        };
+    }
+
+    private renderLatestOpenScoreSelections(latestInput: OpenScoreUsdLatestSelections): string {
+        const mode = this.topMeanTieBreakMode();
+        const latest = this.applyTieBreakToLatest(latestInput);
         const decisionLabel = new Date(latest.decisionTime * 1000)
             .toISOString()
             .slice(0, 19)
@@ -3022,12 +3111,13 @@ export class BatchBacktestService {
             html += `<tr><td><strong>${escapeHtml(selection.selector)}</strong></td><td class="${directionClass}"><strong>${escapeHtml(selection.direction.toUpperCase())}</strong></td><td>${escapeHtml(selectedText)}</td><td>${escapeHtml(mean)}</td><td>${escapeHtml(score)}</td><td>${escapeHtml(selection.activePairs ?? "--")}</td><td>${escapeHtml(selection.eligibleCandidates)}</td></tr>`;
         }
         html += `</tbody></table>`;
-        html += `<div class="batch-report-note batch-report-note--after">Research selectors only. Tied rows are explicitly skipped.</div>`;
+        html += `<div class="batch-report-note batch-report-note--after">${escapeHtml(this.topMeanTieBreakNote(mode))} Research selectors only.</div>`;
         html += `</div>`;
         return html;
     }
 
-    private formatLatestOpenScoreSelectionLines(latest: OpenScoreUsdLatestSelections): string[] {
+    private formatLatestOpenScoreSelectionLines(latestInput: OpenScoreUsdLatestSelections): string[] {
+        const latest = this.applyTieBreakToLatest(latestInput);
         const lines = [
             "----------------------------------------------------------------------",
             "LATEST OPEN_SCORE SELECTOR PICKS",
@@ -3483,14 +3573,16 @@ export class BatchBacktestService {
      */
     private renderCurrentTopMeanBanner(currentSnapshot: TopMeanCurrentSnapshot): string {
         const snap = currentSnapshot.snapshot;
-        const winners = Array.isArray(snap?.winners) ? snap.winners : [];
+        const tieMode = this.topMeanTieBreakMode();
+        const tiePicked = this.tieBreakPickedAsset(currentSnapshot, tieMode);
+        const winners = this.winnersAfterTieBreak(currentSnapshot, tiePicked);
         const asOfSec: number | null = snap?.asOf ?? null;
         const asOfLabel = typeof asOfSec === "number"
             ? new Date(asOfSec * 1000).toISOString().slice(0, 19).replace("T", " ") + " UTC"
             : "no common endpoint";
         const reason: string = snap?.reason ?? "empty";
         const stats = currentSnapshot.stats;
-        const decision = currentSnapshot.decision;
+        const decision = this.resolveTiedDecision(currentSnapshot.decision, tiePicked, asOfSec);
         const decisionStatus = (decision as { status?: string } | undefined)?.status;
 
         let html = `<div class="batch-report-card">`;
@@ -3538,7 +3630,7 @@ export class BatchBacktestService {
             const mean = Number(w.mean ?? 0);
             const meanSign = mean >= 0 ? "+" : "";
             html += `<div class="batch-pick-card">`;
-            html += `<div class="batch-pick-label">${winners.length > 1 ? "Tied Winner" : "Current Pick"}</div>`;
+            html += `<div class="batch-pick-label">${winners.length > 1 ? "Tied Winner" : tiePicked !== null ? "Current Pick (tie-break)" : "Current Pick"}</div>`;
             html += `<div class="batch-pick-asset">${escapeHtml(w.asset)}</div>`;
             html += `<div class="batch-pick-meta">mean=${meanSign}${mean.toFixed(2)} | score=${escapeHtml(w.score)} | activePairs=${escapeHtml(w.activePairs)}</div>`;
             html += `</div>`;
@@ -3546,6 +3638,8 @@ export class BatchBacktestService {
         html += `</div>`;
         if (winners.length > 1) {
             html += `<div class="batch-report-note batch-report-note--after">Tie shown as-is — no arbitrary asset-name tie-break. Treat as an unresolved decision.</div>`;
+        } else if (tiePicked !== null) {
+            html += `<div class="batch-report-note batch-report-note--after">${escapeHtml(this.topMeanTieBreakNote(tieMode))}</div>`;
         }
 
         const leaderboard: any[] = Array.isArray(snap?.candidates) ? snap.candidates.slice(0, 10) : [];
@@ -3568,14 +3662,16 @@ export class BatchBacktestService {
      */
     private formatCurrentTopMeanLines(currentSnapshot: any): string[] {
         const snap: any = currentSnapshot.snapshot ?? currentSnapshot;
-        const winners: any[] = Array.isArray(snap?.winners) ? snap.winners : [];
+        const tieMode = this.topMeanTieBreakMode();
+        const tiePicked = this.tieBreakPickedAsset(currentSnapshot, tieMode);
+        const winners: any[] = this.winnersAfterTieBreak(currentSnapshot, tiePicked);
         const asOfSec: number | null = snap?.asOf ?? null;
         const asOfLabel = typeof asOfSec === "number"
             ? new Date(asOfSec * 1000).toISOString().slice(0, 19).replace("T", " ") + " UTC"
             : "no common endpoint";
         const reason: string = snap?.reason ?? "empty";
         const stats: any = currentSnapshot.stats ?? {};
-        const decision: any = currentSnapshot.decision;
+        const decision: any = this.resolveTiedDecision(currentSnapshot.decision, tiePicked, asOfSec);
 
         const lines: string[] = [];
         lines.push("----------------------------------------------------------------------");
@@ -3605,6 +3701,8 @@ export class BatchBacktestService {
             }
             if (winners.length > 1) {
                 lines.push(`CURRENT TOP_MEAN | tie across ${winners.length} assets — unresolved decision`);
+            } else if (tiePicked !== null) {
+                lines.push(`CURRENT TOP_MEAN | ${this.topMeanTieBreakNote(tieMode)}`);
             }
             const leaderboard: any[] = Array.isArray(snap?.candidates) ? snap.candidates.slice(0, 10) : [];
             lines.push(`CURRENT TOP_MEAN LEADERBOARD | top ${leaderboard.length}`);

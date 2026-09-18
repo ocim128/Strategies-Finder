@@ -639,7 +639,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
                     reason: "selected",
                 },
                 {
-                    selector: "MAX_ACTIVE",
+                    selector: "TOP_MEAN_PROFIT_NOW",
                     direction: "long",
                     asset: null,
                     tiedAssets: ["AAA", "CCC"],
@@ -670,15 +670,138 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("one selected strategy configuration only");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("Latest OPEN_SCORE Selector Picks");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TOP_RAW");
-        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("MAX_ACTIVE");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TOP_MEAN_PROFIT_NOW");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TIE / SKIP: AAA, CCC");
         const copiedLines = svc().formatLatestOpenScoreSelectionLines(result.latestSelections);
         expect(copiedLines).to.include(
-            "MAX_ACTIVE NOW | direction=LONG | asset=TIE_SKIP[AAA,CCC] | mean=n/a | score=n/a | activePairs=n/a | pool=2 | reason=tied",
+            "TOP_MEAN_PROFIT_NOW NOW | direction=LONG | asset=TIE_SKIP[AAA,CCC] | mean=n/a | score=n/a | activePairs=n/a | pool=2 | reason=tied",
         );
         expect(copiedLines).to.include(
             "TOP_MEAN_RAW_UNIQUE NOW | direction=LONG | asset=CCC | mean=0.25 | score=2 | activePairs=8 | pool=3 | reason=selected",
         );
+    });
+
+    it("TIE BREAK alphabetical resolves tied latest picks to the first sorted asset", () => {
+        const dom = setupForAnalysis();
+        dom.batchBacktestSp500TopMeanTieBreak.value = "alpha";
+        const result = topMeanResultFixture();
+        result.latestSelections = {
+            decisionTime: 1_700_000_000,
+            selections: [
+                {
+                    selector: "TOP_MEAN_PROFIT_NOW",
+                    direction: "long",
+                    asset: null,
+                    tiedAssets: ["CCC", "AAA"],
+                    score: null,
+                    mean: null,
+                    activePairs: null,
+                    eligibleCandidates: 2,
+                    reason: "tied",
+                },
+            ],
+        };
+
+        svc().renderTopMeanResults(dom, result);
+
+        const html = dom.batchBacktestSp500TopMeanResults.innerHTML;
+        expect(html).to.include("Tie-break ALPHABETICAL applied");
+        // Alphabetically-first tied asset wins even though CCC was listed first.
+        expect(html).to.include(">AAA</div>");
+        const copiedLines = svc().formatLatestOpenScoreSelectionLines(result.latestSelections);
+        expect(copiedLines).to.include(
+            "TOP_MEAN_PROFIT_NOW NOW | direction=LONG | asset=AAA | mean=n/a | score=n/a | activePairs=n/a | pool=2 | reason=selected",
+        );
+        // The unresolved copy path must not leak the tie form.
+        expect(copiedLines.join("\n")).to.not.include("TIE_SKIP");
+    });
+
+    it("TIE BREAK random picks a stable tied asset per decision event", () => {
+        const dom = setupForAnalysis();
+        dom.batchBacktestSp500TopMeanTieBreak.value = "random";
+        const result = topMeanResultFixture();
+        result.latestSelections = {
+            decisionTime: 1_700_000_000,
+            selections: [
+                {
+                    selector: "TOP_MEAN_PROFIT_NOW",
+                    direction: "long",
+                    asset: null,
+                    tiedAssets: ["CCC", "AAA", "BBB"],
+                    score: null,
+                    mean: null,
+                    activePairs: null,
+                    eligibleCandidates: 3,
+                    reason: "tied",
+                },
+            ],
+        };
+
+        svc().renderTopMeanResults(dom, result);
+        const html1 = dom.batchBacktestSp500TopMeanResults.innerHTML;
+        // Stable: a second render/copy of the same event picks the same asset.
+        svc().renderTopMeanResults(dom, result);
+        const html2 = dom.batchBacktestSp500TopMeanResults.innerHTML;
+        expect(html1).to.equal(html2);
+        expect(html1).to.include("Tie-break RANDOM applied");
+
+        const copied1 = svc().formatLatestOpenScoreSelectionLines(result.latestSelections);
+        const copied2 = svc().formatLatestOpenScoreSelectionLines(result.latestSelections);
+        expect(copied1).to.deep.equal(copied2);
+        const pick = copied1.find((l: string) => l.startsWith("TOP_MEAN_PROFIT_NOW NOW"))!;
+        expect(pick).to.include("reason=selected");
+        // The pick must be one of the tied assets.
+        const asset = pick.split("asset=")[1]!.split(" ")[0]!;
+        expect(["AAA", "BBB", "CCC"]).to.include(asset);
+    });
+
+    it("TIE BREAK resolves a tied current-snapshot decision in the banner", () => {
+        const dom = setupForAnalysis();
+        dom.batchBacktestSp500TopMeanTieBreak.value = "alpha";
+        const result = topMeanResultFixture();
+        result.currentSnapshot = {
+            snapshot: {
+                asOf: 1_699_999_000,
+                artifacts: 2,
+                openPositions: 2,
+                reason: "tied",
+                winners: [
+                    { asset: "CCC", mean: 1, score: "2", activePairs: "8" },
+                    { asset: "AAA", mean: 1, score: "2", activePairs: "8" },
+                ],
+                candidates: [
+                    { asset: "CCC", mean: 1, score: "2", activePairs: "8" },
+                    { asset: "AAA", mean: 1, score: "2", activePairs: "8" },
+                ],
+                decisionTime: 1_700_000_000,
+                entryPairs: 2,
+            },
+            stats: {},
+            decision: {
+                status: "NO_TRADE",
+                reason: "tied",
+                asset: null,
+                decisionTime: 1_700_000_000,
+                candidates: [],
+                winners: [],
+                entryPairs: 2,
+                entryRule: "first_target_bar_strictly_after_decision",
+                researchNotionalUsd: 1000,
+                researchHoldBars: 24,
+                researchExitRule: "24th_bar_close",
+                verification: "algorithmic_endpoint_check",
+                configurationAssumption: "one_strategy_configuration",
+            },
+        } as any;
+
+        svc().renderTopMeanResults(dom, result);
+
+        const html = dom.batchBacktestSp500TopMeanResults.innerHTML;
+        // decisionTime (1_700_000_000) >= asOf (1_699_999_000): window open,
+        // so the alphabetical tie-break (AAA) becomes a LONG trade decision.
+        expect(html).to.include("ALGORITHMIC TRADE DECISION — LONG AAA");
+        expect(html).to.include("Current Pick (tie-break)");
+        expect(html).to.include("Tie-break ALPHABETICAL applied");
     });
 
     it("shows the latest TOP_MEAN selection while its horizon is ongoing", () => {
