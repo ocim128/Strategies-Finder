@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
-import { isMainThread, workerData } from "node:worker_threads";
+import { isMainThread } from "node:worker_threads";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { OHLCVData } from "../types/strategies";
 
@@ -9,11 +9,60 @@ const MAX_CANDLES_PER_SERIES = 100_000;
 const CRYPTO_HEADER = "time,open,high,low,close,volume";
 const CRYPTO_SYMBOL_PATTERN = /^[A-Z0-9]{2,30}$/;
 
-// TOP_MEAN workers are isolated blocking boundaries. Keep a parsed CSV cache
-// in each worker so pair-affinity misses do not repeatedly parse the same
-// crypto leg after its small SyntheticLegCache evicts it.
-const PARSED_CSV_CACHE_MAX_ENTRIES = !isMainThread && workerData?.topMean === true ? 128 : 512;
-const parsedCsvCache = new Map<string, { mtimeMs: number; candles: OHLCVData[] }>();
+// Parsed-CSV cache shared by main thread and workers. Entries are COLUMNAR
+// (six Float64Arrays; candle objects materialized per hit) so a worker-sized
+// cache stays off the V8 object graph — an object cache at this capacity
+// poisoned major-GC in TOP_MEAN workers (see the IBKR loader's audit comment).
+const PARSED_CSV_CACHE_MAX_ENTRIES = 512;
+
+interface ParsedSeedColumns {
+    time: Float64Array;
+    open: Float64Array;
+    high: Float64Array;
+    low: Float64Array;
+    close: Float64Array;
+    volume: Float64Array;
+}
+
+function columnsFromCandles(candles: OHLCVData[]): ParsedSeedColumns {
+    const n = candles.length;
+    const columns: ParsedSeedColumns = {
+        time: new Float64Array(n),
+        open: new Float64Array(n),
+        high: new Float64Array(n),
+        low: new Float64Array(n),
+        close: new Float64Array(n),
+        volume: new Float64Array(n),
+    };
+    for (let i = 0; i < n; i += 1) {
+        const bar = candles[i]!;
+        columns.time[i] = Number(bar.time);
+        columns.open[i] = bar.open;
+        columns.high[i] = bar.high;
+        columns.low[i] = bar.low;
+        columns.close[i] = bar.close;
+        columns.volume[i] = bar.volume;
+    }
+    return columns;
+}
+
+function candlesFromColumns(columns: ParsedSeedColumns): OHLCVData[] {
+    const n = columns.time.length;
+    const candles: OHLCVData[] = new Array(n);
+    for (let i = 0; i < n; i += 1) {
+        candles[i] = {
+            time: columns.time[i]! as OHLCVData["time"],
+            open: columns.open[i]!,
+            high: columns.high[i]!,
+            low: columns.low[i]!,
+            close: columns.close[i]!,
+            volume: columns.volume[i]!,
+        };
+    }
+    return candles;
+}
+
+const parsedCsvCache = new Map<string, { mtimeMs: number; columns: ParsedSeedColumns }>();
 
 function normalizeSymbol(symbol: string): string | null {
     const normalized = symbol.trim().toUpperCase();
@@ -110,7 +159,7 @@ async function getCachedCandles(filePath: string): Promise<OHLCVData[] | null> {
         if (mtimeMs === cached.mtimeMs) {
             parsedCsvCache.delete(filePath);
             parsedCsvCache.set(filePath, cached);
-            return cached.candles;
+            return candlesFromColumns(cached.columns);
         }
     } catch {
         // The caller will retry the normal read path below.
@@ -126,7 +175,7 @@ function setCachedCandles(filePath: string, mtimeMs: number, candles: OHLCVData[
         const oldest = parsedCsvCache.keys().next().value;
         if (oldest !== undefined) parsedCsvCache.delete(oldest);
     }
-    parsedCsvCache.set(filePath, { mtimeMs, candles });
+    parsedCsvCache.set(filePath, { mtimeMs, columns: columnsFromCandles(candles) });
 }
 
 export function clearParsedCryptoCsvCache(): void {

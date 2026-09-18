@@ -11,6 +11,7 @@ import {
     resolveTopMeanWorkerCount,
     shouldBypassTopMeanSyntheticPairDiskCache,
     TOP_MEAN_DISK_CACHE_BYPASS_PAIR_THRESHOLD,
+    TOP_MEAN_WORKER_FOOTPRINT_BYTES,
     TopMeanWorkerPool,
 } from "../lib/batch-backtest/sp500-top-mean-worker-pool";
 import type { TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
@@ -22,11 +23,12 @@ const exitZeroOnFirstTaskWorkerPath = fileURLToPath(new URL("./helpers/top-mean-
 const flakyOnceWorkerPath = fileURLToPath(new URL("./helpers/top-mean-flaky-once-worker.cjs", import.meta.url));
 
 function testWorkerCountResolution(): void {
-    const defaultCount = resolveTopMeanWorkerCount();
+    const hugeRam = Number.MAX_SAFE_INTEGER;
+    const defaultCount = resolveTopMeanWorkerCount(undefined, hugeRam);
     assert.equal(
         defaultCount,
         Math.max(1, Math.min(TOP_MEAN_WORKER_COUNT_MAX, availableParallelism())),
-        "Auto worker count should use every available logical core up to the request cap",
+        "Auto worker count should use every available logical core up to the request cap when RAM is not binding",
     );
 
     const explicitCount = resolveTopMeanWorkerCount(12);
@@ -37,6 +39,27 @@ function testWorkerCountResolution(): void {
         clampedHigh,
         TOP_MEAN_WORKER_COUNT_MAX,
         "Worker count above max must be clamped to the request cap",
+    );
+
+    // Audit (parse-thrash finding): each worker keeps a whole-universe parsed
+    // seed cache, so the AUTO count is bounded by 75% of actual RAM over the
+    // sum of per-worker footprints. An explicit count bypasses the ceiling
+    // (operator judgment); the floor never drops below one worker.
+    const budgetBytes = 4 * TOP_MEAN_WORKER_FOOTPRINT_BYTES;
+    assert.equal(
+        resolveTopMeanWorkerCount(undefined, budgetBytes),
+        3,
+        "auto count must be capped at floor(75% RAM / per-worker footprint)",
+    );
+    assert.equal(
+        resolveTopMeanWorkerCount(undefined, 1),
+        1,
+        "the memory ceiling must never resolve below one worker",
+    );
+    assert.equal(
+        resolveTopMeanWorkerCount(24, 1),
+        24,
+        "an explicit worker count bypasses the memory ceiling (operator judgment)",
     );
 }
 

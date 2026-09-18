@@ -274,14 +274,15 @@ export function orderTopMeanReplayTargets<T>(
 }
 
 /**
- * Replay target datasets are ~5–10 MB each, so the coordinator replay cache
- * is an LRU bounded to this many entries (mirrors the shared data-cache cap)
- * instead of retaining every target for the whole run — a 500-target run used
- * to hold several GB alongside the worker caches. Paired with
- * orderTopMeanReplayTargets' alternating traversal so annual passes re-hit
- * the previous pass's tail.
+ * Replay target datasets (~1.1 MB per aggregated 4h series on the S&P
+ * universe) are cached on the coordinator across the full-window AND every
+ * annual replay pass, bounded to this LRU. The capacity must cover the
+ * run's whole target working set (480–1000): a 64-entry cap was measured
+ * reloading ~3.5k target datasets per run (+60s of target load) because
+ * every pass re-reads all targets. 512 keeps retention bounded (~560 MB at
+ * ~1.1 MB per target) while covering real universes.
  */
-export const TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES = 64;
+export const TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES = 512;
 
 const TOP_MEAN_REPLAY_PROGRESS_MIN_INTERVAL_MS = 250;
 const TOP_MEAN_REPLAY_PROGRESS_MIN_FRACTION = 0.01;

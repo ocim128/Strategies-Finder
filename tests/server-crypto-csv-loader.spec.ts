@@ -28,7 +28,10 @@ async function main(): Promise<void> {
         assert.equal(first?.[1]?.volume, 1100);
 
         const second = await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir);
-        assert.strictEqual(second, first, "unchanged crypto CSV should use the parsed cache");
+        // Entries are columnar, so a cache hit materializes a FRESH candle
+        // array (~1-2 ms) instead of re-parsing — same contract as the IBKR
+        // loader spec: content equality, not object identity.
+        assert.deepEqual(second, first, "unchanged crypto CSV should be served from the parsed cache");
 
         const filePath = join(csvDir, "BTCUSDT.csv");
         writeFileSync(filePath, CSV.replace(",100,102,99,101,1000", ",200,202,199,201,1000"), "utf8");
@@ -43,7 +46,9 @@ async function main(): Promise<void> {
             null,
             "missing crypto CSV should fall back to the existing SQLite/network loader",
         );
-        assert.equal(
+        // Interval decorations resolve to the stored crypto timeframe: the
+        // same cache entry, re-materialized (content equality, not identity).
+        assert.deepEqual(
             await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m@spot", undefined, baseDir),
             refreshed,
             "interval decorations should resolve to the stored crypto timeframe",

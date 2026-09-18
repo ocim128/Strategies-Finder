@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
-import { isMainThread, workerData } from "node:worker_threads";
+import { isMainThread } from "node:worker_threads";
 import { extractCandlesFromCsvPayload } from "../candle-cache";
 import { normalizeTradFiDailyCandles } from "../data/data-interval-utils";
 import { isIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
@@ -11,31 +11,85 @@ const MAX_CANDLES_PER_SERIES = 100_000;
 const IBKR_HEADER = "time,open,high,low,close,volume";
 
 /**
- * Parsed-CSV cache for {@link loadFreshIbkrCandlesFromDisk}.
+ * Parsed-seed cache for {@link loadFreshIbkrCandlesFromDisk}.
  *
  * `loadFreshIbkrCandlesFromDisk` reads and parses the full seed CSV on every
  * call — intentionally always-fresh. But the synthetic-pair loader calls it
- * per leg, and the in-memory `SyntheticLegCache` (128 entries) can't hold the
- * ~500 unique legs a 1000-pair Asset Opportunity run touches. When it
- * overflows, the same CSV is re-parsed 3–4× per run.
+ * per leg, and the in-memory `SyntheticLegCache` (24–128 entries) can't hold
+ * the ~500 unique legs a full-universe run touches. When it overflows, the
+ * same CSV would be re-parsed 3–4× per run (measured: ~88k parses × ~137 ms
+ * on a 123k-pair TOP_MEAN run — the single largest load cost).
  *
  * This cache sits BELOW the leg cache and keys on `(filePath, mtimeMs)`. An
  * IBKR sync bumps the seed mtime, invalidating the entry automatically — so
- * it stays always-fresh without an explicit clear. Bounded by entry count;
- * each entry is the parsed candle array (~73k bars, ~3.6 MB at the 30m seed
- * interval). The main-thread cap covers the full IBKR symbol universe (501
- * symbols). TOP_MEAN workers use 128 entries because each worker has its own
- * parsed-CSV cache; this avoids retaining the full universe in every worker.
- * footprint at full occupancy is ~1.8 GB — within the 16 GB
- * `--max-old-space-size` recommended for server-side runs.
+ * it stays always-fresh without an explicit clear.
+ *
+ * The entries are COLUMNAR (six Float64Arrays per seed, ~1.2 MB per 25k-bar
+ * seed) and candle objects are materialized per cache hit. Audit
+ * (parse-thrash/GC finding): storing the candles as OBJECTS at this capacity
+ * poisoned V8's collector — a 512-entry object cache holds ~12.6M live
+ * objects per worker (~1.1 GB live graph), and major-GC cost scales with the
+ * live graph, so every worker slowed 3–12× under GC storms (summed backtest
+ * time 1.42M ms → 17.38M ms on the rerun). Typed-array backing stores live
+ * OFF the V8 heap: the same 512-entry cache is GC-invisible external memory,
+ * while a materialization per leg miss costs ~1–2 ms against ~137 ms for a
+ * full re-parse.
  */
-const PARSED_CSV_CACHE_MAX_ENTRIES = !isMainThread && workerData?.topMean === true ? 128 : 512;
-const parsedCsvCache = new Map<string, { mtimeMs: number; candles: OHLCVData[] }>();
+const PARSED_CSV_CACHE_MAX_ENTRIES = 512;
+
+interface ParsedSeedColumns {
+    time: Float64Array;
+    open: Float64Array;
+    high: Float64Array;
+    low: Float64Array;
+    close: Float64Array;
+    volume: Float64Array;
+}
+
+function columnsFromCandles(candles: OHLCVData[]): ParsedSeedColumns {
+    const n = candles.length;
+    const columns: ParsedSeedColumns = {
+        time: new Float64Array(n),
+        open: new Float64Array(n),
+        high: new Float64Array(n),
+        low: new Float64Array(n),
+        close: new Float64Array(n),
+        volume: new Float64Array(n),
+    };
+    for (let i = 0; i < n; i += 1) {
+        const bar = candles[i]!;
+        columns.time[i] = Number(bar.time);
+        columns.open[i] = bar.open;
+        columns.high[i] = bar.high;
+        columns.low[i] = bar.low;
+        columns.close[i] = bar.close;
+        columns.volume[i] = bar.volume;
+    }
+    return columns;
+}
+
+function candlesFromColumns(columns: ParsedSeedColumns): OHLCVData[] {
+    const n = columns.time.length;
+    const candles: OHLCVData[] = new Array(n);
+    for (let i = 0; i < n; i += 1) {
+        candles[i] = {
+            time: columns.time[i]! as OHLCVData["time"],
+            open: columns.open[i]!,
+            high: columns.high[i]!,
+            low: columns.low[i]!,
+            close: columns.close[i]!,
+            volume: columns.volume[i]!,
+        };
+    }
+    return candles;
+}
+
+const parsedCsvCache = new Map<string, { mtimeMs: number; columns: ParsedSeedColumns }>();
 
 interface CacheCheck {
     filePath: string;
     mtimeMs: number;
-    candles: OHLCVData[];
+    columns: ParsedSeedColumns;
 }
 
 async function checkParsedCsvCache(filePath: string): Promise<CacheCheck | null> {
@@ -49,7 +103,7 @@ async function checkParsedCsvCache(filePath: string): Promise<CacheCheck | null>
             // Move-to-end for LRU recency.
             parsedCsvCache.delete(filePath);
             parsedCsvCache.set(filePath, cached);
-            return { filePath, mtimeMs, candles: cached.candles };
+            return { filePath, mtimeMs, columns: cached.columns };
         }
         parsedCsvCache.delete(filePath);
     } catch {
@@ -65,7 +119,7 @@ function storeParsedCsvCache(filePath: string, mtimeMs: number, candles: OHLCVDa
         const oldest = parsedCsvCache.keys().next().value;
         if (oldest !== undefined) parsedCsvCache.delete(oldest);
     }
-    parsedCsvCache.set(filePath, { mtimeMs, candles });
+    parsedCsvCache.set(filePath, { mtimeMs, columns: columnsFromCandles(candles) });
 }
 
 export function clearParsedIbkrCsvCache(): void {
@@ -171,15 +225,15 @@ export async function loadFreshIbkrCandlesFromDisk(
             const filePath = resolve(root, `${candidate}.csv`);
             if (!filePath.startsWith(`${root}${sep}`)) continue;
             try {
-                // Check the parsed-CSV cache before re-reading. The cache keys
+                // Check the parsed-seed cache before re-reading. The cache keys
                 // on (filePath, mtimeMs), so an IBKR sync that rewrites the
-                // seed invalidates automatically. Without this, a 1000-pair run
-                // whose 500 unique legs overflow the 128-entry SyntheticLegCache
-                // re-parses the same 73k-row CSV 3–4× per leg.
+                // seed invalidates automatically. Cached entries are columnar
+                // (GC-invisible); candle objects are materialized per hit at
+                // ~1–2 ms against ~137 ms for a full re-parse.
                 const cached = await checkParsedCsvCache(filePath);
                 if (cached) {
                     if (signal?.aborted) return null;
-                    return cached.candles;
+                    return candlesFromColumns(cached.columns);
                 }
 
                 // A TOP_MEAN worker is already an isolated blocking boundary.

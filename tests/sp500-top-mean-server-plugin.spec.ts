@@ -978,8 +978,8 @@ function testReplayProgressThrottleAndCacheBound(): void {
     assert.equal(shouldEmitTopMeanReplayProgress(0, 0, 0), false, "zero-total phases must gate on time only");
     assert.equal(
         TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES,
-        64,
-        "the replay target LRU bound keeps cache retention ~320–640 MB instead of multi-GB",
+        512,
+        "the replay target LRU must cover the run's whole target working set while staying bounded (~560 MB at ~1.1 MB per 4h-aggregated target)",
     );
     console.log("PASS: replay progress throttle and target cache bound contract");
 }

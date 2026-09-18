@@ -1206,12 +1206,72 @@ export async function runOpenScoreUsdReplay(
         return emptyResult({ pairs: pairCount, reportLines: ["OPEN_SCORE USD | no trade deltas reconstructed from artifacts."] });
     }
 
-    // --- Phase 2: k-way merge -> decision events + candidates ---------------
-    // Binary min-heap over (timeSec, assetIndex, isEntry, streamIdx, offset)
-    // pops deltas in global timestamp order. The heap is bounded by #streams,
-    // not #deltas; yields fire after bounded pops so progress and Stop reach
+    // --- Phase 2: time-bucketed merge -> decision events + candidates ------
+    // The prior implementation merged streams with a binary k-way heap: that
+    // is O(deltas × log2(streams)) with a cache-hostile random access per pop,
+    // which dominated replay time on a 100k-pair run (hundreds of seconds).
+    // Every accumulator the merge maintains is ADDITIVE within a timestamp
+    // group, so delta order INSIDE a group cannot change results. Deltas are
+    // therefore bucketed by decision time into one flat array (three O(deltas)
+    // sequential passes) and the sweep walks buckets in ascending time order
+    // with the exact same per-group semantics as the heap version. Cross-group
+    // order is strict by timeSec, as before; within-group order is stream-index
+    // order, which is deterministic run-to-run regardless of artifact arrival
+    // order. Yields still fire after bounded pops so progress and Stop reach
     // the server mid-merge on a huge pair list.
     onPhase("events", "merging score deltas", 0, totalDeltas);
+    // 1. Distinct decision times. Each stream is already sorted by timeSec, so
+    // walking its equal-time runs visits each of its distinct times once.
+    const timeIndex = new Map<number, number>();
+    for (let s = 0; s < streams.length; s += 1) {
+        const stream = streams[s]!;
+        for (let i = 0; i < stream.length; i += 1) {
+            const t = stream[i]!.timeSec;
+            if (i > 0 && stream[i - 1]!.timeSec === t) continue;
+            if (!timeIndex.has(t)) timeIndex.set(t, timeIndex.size);
+        }
+        if (s % 25_000 === 24_999) await yieldLoop();
+    }
+    const bucketTimes = Float64Array.from([...timeIndex.keys()].sort((a, b) => a - b));
+    for (let b = 0; b < bucketTimes.length; b += 1) timeIndex.set(bucketTimes[b]!, b);
+    // 2. Count deltas per bucket (run-walking again, one Map lookup per run).
+    const runCounts = new Uint32Array(bucketTimes.length);
+    for (let s = 0; s < streams.length; s += 1) {
+        const stream = streams[s]!;
+        let i = 0;
+        while (i < stream.length) {
+            const t = stream[i]!.timeSec;
+            let j = i + 1;
+            while (j < stream.length && stream[j]!.timeSec === t) j += 1;
+            runCounts[timeIndex.get(t)!] += j - i;
+            i = j;
+        }
+    }
+    const bucketStart = new Uint32Array(bucketTimes.length + 1);
+    for (let b = 0; b < bucketTimes.length; b += 1) {
+        bucketStart[b + 1] = bucketStart[b]! + runCounts[b]!;
+    }
+    // 3. Place deltas into the flat, time-ordered array. Iterating streams in
+    // stream-index order makes within-bucket order deterministic.
+    const flatDeltas = new Array<ScoreDelta>(totalDeltas);
+    const flatStreamIdx = new Uint32Array(totalDeltas);
+    const placementCursor = bucketStart.slice();
+    for (let s = 0; s < streams.length; s += 1) {
+        const stream = streams[s]!;
+        for (let i = 0; i < stream.length; i += 1) {
+            const d = stream[i]!;
+            const bucketIdx = timeIndex.get(d.timeSec)!;
+            const slot = placementCursor[bucketIdx]!;
+            flatDeltas[slot] = d;
+            flatStreamIdx[slot] = s;
+            placementCursor[bucketIdx] = slot + 1;
+        }
+    }
+    // The bucketed arrays now own every delta; drop the per-stream arrays so
+    // the sweep does not retain a second indexing of the delta set.
+    streams.length = 0;
+    timeIndex.clear();
+
     const rawScore = new Array<number>(assetCount).fill(0);
     const activePairCount = new Array<number>(assetCount).fill(0);
     // Profit-gated accumulators: identical bookkeeping, fed only by deltas from
@@ -1227,7 +1287,7 @@ export async function runOpenScoreUsdReplay(
     // Running realized pnl per stream (sum of exit deltas' pnlShare popped so
     // far). Exits at the event timestamp are applied before the post-group
     // mask evaluation, so their pnl is known at that event.
-    const realizedPnlByStream = new Float64Array(streams.length);
+    const realizedPnlByStream = new Float64Array(profitableStreams.length);
     // Deltas of the current timestamp group, replayed after the group closes
     // with per-leg open-vote flags (see the post-group apply below).
     interface GroupDelta { assetIndex: number; delta: number; streamIdx: number; isEntry: number; voteApplied: boolean; }
@@ -1239,18 +1299,18 @@ export async function runOpenScoreUsdReplay(
     const sampleFrom = options.sampleFromSec;
     const sampleTo = options.sampleToSec;
 
-    const heap = new KWayMergeHeap(streams);
     let popped = 0;
-    while (!heap.empty) {
+    for (let b = 0; b < bucketTimes.length; b += 1) {
         if (shouldStop()) return emptyResult({ pairs: pairCount, assets: assetCount, reportLines: ["OPEN_SCORE USD | cancelled during event sweep."] });
-        const t = heap.peekTime();
+        const t = bucketTimes[b]!;
         let hasEntry = false;
         groupDeltas.length = 0;
         // Apply ALL deltas at this timestamp before forming candidates.
-        while (!heap.empty && heap.peekTime() === t) {
+        const bucketEnd = bucketStart[b + 1]!;
+        for (let i = bucketStart[b]!; i < bucketEnd; i += 1) {
             if (shouldStop()) return emptyResult({ pairs: pairCount, assets: assetCount, reportLines: ["OPEN_SCORE USD | cancelled during event sweep."] });
-            const d = heap.pop()!;
-            const streamIdx = heap.lastPoppedStream;
+            const d = flatDeltas[i]!;
+            const streamIdx = flatStreamIdx[i]!;
             rawScore[d.assetIndex]! += d.delta;
             // activePairCount tracks currently-open pairs on this asset: an
             // entry adds a vote, an exit removes it (clamped at 0). Using
@@ -2855,83 +2915,6 @@ function compareDeltas(a: ScoreDelta, b: ScoreDelta): number {
         || b.isEntry - a.isEntry;
 }
 
-/**
- * Binary min-heap k-way merge over per-pair delta streams. Bounded by
- * #streams (one heap slot per stream head), not #deltas — so a 1000+ pair run
- * with hundreds of thousands of deltas still has a small working set.
- *
- * Ties at the head of multiple streams are broken by stream index so the merge
- * order is deterministic run-to-run regardless of artifact arrival order.
- */
-class KWayMergeHeap {
-    private readonly streams: readonly ScoreDelta[][];
-    /** Heap of stream indexes, keyed by the head delta's compareDeltas rank. */
-    private readonly heap: number[] = [];
-    /** Current read offset in each stream. */
-    private readonly offsets: Int32Array;
-    /**
-     * Index of the stream the last successful pop() came from. Lets the merge
-     * loop read per-pair metadata (profit-gated profitability) without storing it
-     * on every delta. Valid only immediately after a non-undefined pop().
-     */
-    lastPoppedStream = -1;
-    constructor(streams: readonly ScoreDelta[][]) {
-        this.streams = streams;
-        this.offsets = new Int32Array(streams.length);
-        for (let s = 0; s < streams.length; s += 1) {
-            if (streams[s]!.length > 0) this.heap.push(s);
-        }
-        // Heapify bottom-up.
-        for (let i = (this.heap.length >> 1) - 1; i >= 0; i -= 1) this.siftDown(i);
-    }
-    get empty(): boolean { return this.heap.length === 0; }
-    peekTime(): number {
-        const s = this.heap[0]!;
-        return this.streams[s]![this.offsets[s]!]!.timeSec;
-    }
-    pop(): ScoreDelta | undefined {
-        if (this.heap.length === 0) return undefined;
-        const s = this.heap[0]!;
-        this.lastPoppedStream = s;
-        const off = this.offsets[s]!;
-        const d = this.streams[s]![off]!;
-        const next = off + 1;
-        this.offsets[s] = next;
-        if (next >= this.streams[s]!.length) {
-            // Stream exhausted: swap head with tail and shrink.
-            const last = this.heap.length - 1;
-            this.heap[0] = this.heap[last]!;
-            this.heap.pop();
-            if (this.heap.length > 0) this.siftDown(0);
-        } else {
-            this.siftDown(0);
-        }
-        return d;
-    }
-    private less(a: number, b: number): boolean {
-        const sa = this.streams[a]![this.offsets[a]!]!;
-        const sb = this.streams[b]![this.offsets[b]!]!;
-        const cmp = compareDeltas(sa, sb);
-        // Stable tie-break on stream index -> deterministic regardless of
-        // artifact arrival order.
-        return cmp < 0 || (cmp === 0 && a < b);
-    }
-    private siftDown(root: number): void {
-        const n = this.heap.length;
-        while (true) {
-            let smallest = root;
-            const l = (root << 1) + 1;
-            const r = (root << 1) + 2;
-            if (l < n && this.less(this.heap[l]!, this.heap[smallest]!)) smallest = l;
-            if (r < n && this.less(this.heap[r]!, this.heap[smallest]!)) smallest = r;
-            if (smallest === root) return;
-            const tmp = this.heap[root]!;
-            this.heap[root] = this.heap[smallest]!;
-            this.heap[smallest] = tmp;
-            root = smallest;
-        }
-    }
-}
 
 /** Binary search: index of the first bar with time strictly greater than t, or -1. */
 function firstBarAfter(times: readonly (number | null)[], t: number): number {

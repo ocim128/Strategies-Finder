@@ -1,4 +1,4 @@
-import { availableParallelism } from "node:os";
+import { availableParallelism, totalmem } from "node:os";
 import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { dirname, join, resolve } from "node:path";
@@ -90,7 +90,21 @@ async function bundleWorkerWithEsbuild(sourcePath: string): Promise<string> {
     return outfile;
 }
 
-export function resolveTopMeanWorkerCount(explicit?: number): number {
+/**
+ * Per-worker steady-state footprint estimate used by the auto worker-count
+ * memory ceiling: base heap plus a parsed-seed CSV cache that (audit
+ * parse-thrash finding) now covers the run's full leg universe — up to 512
+ * COLUMNAR entries (~1.2 MB per 25k-bar 30m seed, held off the V8 heap so
+ * worker GC stays clean).
+ */
+export const TOP_MEAN_WORKER_FOOTPRINT_BYTES = 1_600_000_000;
+/** Share of physical RAM usable for the SUM of worker footprints. */
+const TOP_MEAN_WORKER_MEMORY_BUDGET_RATIO = 0.75;
+
+export function resolveTopMeanWorkerCount(
+    explicit?: number,
+    totalMemoryBytes: number = totalmem(),
+): number {
     if (typeof explicit === "number" && Number.isFinite(explicit) && explicit > 0) {
         return Math.max(1, Math.min(TOP_MEAN_WORKER_COUNT_MAX, Math.floor(explicit)));
     }
@@ -104,7 +118,18 @@ export function resolveTopMeanWorkerCount(explicit?: number): number {
     // using all 24 workers improved 2,271-pair throughput by ~26% versus
     // reserving four cores. The coordinator runs server-side, so an explicit
     // UI value can still reserve capacity when desired.
-    return Math.max(1, Math.min(TOP_MEAN_WORKER_COUNT_MAX, cores));
+    //
+    // Audit (parse-thrash finding): workers now keep a whole-universe parsed
+    // seed cache each (~1.6 GB steady state), so the auto count is also
+    // bounded by 75% of ACTUAL system RAM over the SUM of worker footprints
+    // (the Asset Opportunity pool's policy) — 24 full-cache workers on a
+    // 32 GiB host would otherwise OOM. `--max-old-space-size` is
+    // per-isolate and cannot bound that sum. The explicit override bypasses
+    // the ceiling (operator judgment, still capped at TOP_MEAN_WORKER_COUNT_MAX).
+    const memoryCeiling = Math.max(1, Math.floor(
+        (totalMemoryBytes * TOP_MEAN_WORKER_MEMORY_BUDGET_RATIO) / TOP_MEAN_WORKER_FOOTPRINT_BYTES,
+    ));
+    return Math.max(1, Math.min(TOP_MEAN_WORKER_COUNT_MAX, cores, memoryCeiling));
 }
 
 export function resolveTopMeanShardSize(
@@ -748,15 +773,17 @@ export class TopMeanWorkerPool {
             }
         };
 
-        // Spawn the worker pool. The workerData flag selects the smaller
-        // parsed-CSV cache used by large TOP_MEAN runs.
+        // Spawn the worker pool. Each worker is an isolated blocking boundary
+        // with its own whole-universe parsed-seed cache; the auto worker
+        // count's memory ceiling (resolveTopMeanWorkerCount) bounds the sum
+        // of those caches to 75% of actual system RAM.
         const spawned: Worker[] = [];
         let spawnedWorkerCount = 0;
         const workerStartupStartedAt = performance.now();
         try {
             for (let i = freeWorkers.length; i < workerCount; i++) {
                 if (this.isCancelled) break;
-                const worker = new Worker(workerScriptPath, { workerData: { topMean: true } });
+                const worker = new Worker(workerScriptPath);
                 attachWorkerHandlers(worker);
                 freeWorkers.push(worker);
                 spawned.push(worker);

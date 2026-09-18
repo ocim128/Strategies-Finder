@@ -113,7 +113,10 @@ export function formatTopMeanPerformanceLines(performance: TopMeanPerformanceDia
     }
     lines.push(
         `PERFORMANCE PHASES | preflight=${fixed(p.phases.preflightMs)}ms | backtesting=${fixed(p.phases.backtestingMs)}ms | snapshot=${fixed(p.phases.snapshotMs)}ms | replay=${fixed(p.phases.replayMs)}ms | resultWrite=${fixed(p.phases.resultWriteMs)}ms`,
-        `PERFORMANCE REPLAY | scan=${fixed(p.replay.scanMs)}ms | events=${fixed(p.replay.eventsMs)}ms | targets=${fixed(p.replay.targetsMs)}ms | outcomes=${fixed(p.replay.outcomesMs)}ms | aggregate=${fixed(p.replay.aggregateMs)}ms | targetLoad=${fixed(p.replay.targetLoadMs)}ms/${p.replay.targetDatasets} | targetCache=${p.replay.targetCacheHits} hit/${p.replay.targetCacheMisses} miss/${p.replay.targetCachePeakEntries} peak`,
+        // The targetCache counters postdate older persisted performance
+        // payloads (result.json from earlier runs); ?? 0 keeps Copy Results
+        // from printing "undefined" for them.
+        `PERFORMANCE REPLAY | scan=${fixed(p.replay.scanMs)}ms | events=${fixed(p.replay.eventsMs)}ms | targets=${fixed(p.replay.targetsMs)}ms | outcomes=${fixed(p.replay.outcomesMs)}ms | aggregate=${fixed(p.replay.aggregateMs)}ms | targetLoad=${fixed(p.replay.targetLoadMs)}ms/${p.replay.targetDatasets} | targetCache=${p.replay.targetCacheHits ?? 0} hit/${p.replay.targetCacheMisses ?? 0} miss/${p.replay.targetCachePeakEntries ?? 0} peak`,
     );
 
     const worker = p.worker;
