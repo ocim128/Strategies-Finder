@@ -210,9 +210,25 @@ with a two-line replace rather than importing `stripIbkrMarker` from
 `lib/local-daily-datasets.ts`). Never import
 `lib/ibkr-data/ibkr-data-vite-plugin.ts` (the writer) from the Batch plugin.
 
+### Shared preflight (`marketcap-preflight.ts`)
+
+Both server-side cap-tilt consumers (the standalone OPEN_SCORE USD route and
+the TOP_MEAN coordinator) resolve the dataset through
+`loadMarketCapPreflight(dir, requiredSymbols)` — one owner for directory
+resolution, dataset validation, coverage accounting, and error text. It fails
+LOUD on two silent-degradation cases: a missing/empty dataset directory, and
+CSVs that exist but contain zero valid rows (the old existence-only check let
+a malformed dataset silently index zero symbols and weight every lookup 1).
+Individual missing symbols still fall back to weight 1 and are reported via
+`missingSymbols`. When cap tilt is active, runs append a
+`marketcap dataset | requested=… loaded=… missing=… latest=… catalogUpdatedAt=…`
+report line (plus a staleness warning when the newest cap row trails the run's
+data window by more than 30 days) — observability only; weighting semantics
+are unchanged.
+
 ### Reader contract (`marketcap-series-reader.ts`)
 
-- `loadMarketCapLookup(dir: string): { lookup(symbol, timeSec): number | null; symbols: number }`.
+- `loadMarketCapLookup(dir: string): { lookup(symbol, timeSec): number | null; symbols: number; indexedSymbols: string[]; latestTimeSec: number | null }` (`indexedSymbols`/`latestTimeSec` are the provenance surfaces used by the shared preflight; the original two fields are unchanged).
 - Reads every `*.csv` directly in `dir` (skip `*.bak`, skip `catalog.json`);
   skips malformed rows silently (the writer is the only producer); builds
   per-symbol sorted `(timeSec, marketCap)` arrays from the `time` and

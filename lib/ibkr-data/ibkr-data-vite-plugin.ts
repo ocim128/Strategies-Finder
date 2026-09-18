@@ -10,6 +10,7 @@ import { beginNdjsonStream, createDisconnectSafeStream, HttpStatusError, readJso
 import { isAllowedLocalRequest } from "../local-route-authorization";
 import { createFetchTimeoutSignal, isAbortError } from "../dataProviders/fetch-helpers";
 import type { IbkrIntervalMeta, IbkrStreamEvent, IbkrSyncRunSnapshot } from "./ibkr-data-stream-types";
+import { normalizeMarketCapSymbol } from "./marketcap-series-reader";
 import type { IbkrCatalogAsset } from "./ibkr-stale-symbols";
 import { describeLargeCandleGap } from "./candle-gap";
 import {
@@ -24,7 +25,6 @@ import {
     fetchAlpacaSplits,
     fetchEdgarSharesOutstanding,
     loadCompanyTickersCached,
-    lookupSharesForDate,
     parseSharesOutstandingFacts,
     type SharesFactPoint,
     type SplitEvent,
@@ -2053,10 +2053,41 @@ export type MarketCapRow = {
 };
 
 function getMarketCapCsvPath(symbol: string): string {
-    // Same filename rule as getCsvPath: marker-stripped, slash-free,
-    // encodeURIComponent-ed.
-    const storageSymbol = stripIbkrMarker(symbol).replace(/\//g, "");
+    // Same filename rule as getCsvPath, through the SHARED MarketCap symbol
+    // normalizer (audit symbol-normalization finding): the reader derives
+    // lookup keys with the same function, so a producer-side change can no
+    // longer make newly written files invisible to Batch lookup.
+    const storageSymbol = normalizeMarketCapSymbol(symbol);
     return resolve(IBKR_MARKETCAP_DIR, `${encodeURIComponent(storageSymbol)}.csv`);
+}
+
+/**
+ * Parses raw MarketCap catalog JSON defensively. Shared by the current
+ * `catalog.json` read and the `.bak` recovery path (audit catalog-corruption
+ * finding) so both files go through the identical field normalization.
+ */
+function parseMarketCapCatalogText(text: string): MarketCapCatalog {
+    const parsed = JSON.parse(text) as Partial<MarketCapCatalog>;
+    const rawEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
+    // Defensive per-field normalization, mirroring readCatalog: the on-disk
+    // JSON may be hand-edited or written by an older version.
+    const entries: MarketCapCatalogEntry[] = rawEntries.map((entry) => {
+        const e = entry as Partial<MarketCapCatalogEntry>;
+        const points = Number(e.points);
+        return {
+            symbol: typeof e.symbol === "string" ? e.symbol : "",
+            markedSymbol: typeof e.markedSymbol === "string" ? e.markedSymbol : "",
+            firstTime: typeof e.firstTime === "string" ? e.firstTime : null,
+            lastTime: typeof e.lastTime === "string" ? e.lastTime : null,
+            points: Number.isFinite(points) ? points : 0,
+            lastSyncAt: typeof e.lastSyncAt === "string" ? e.lastSyncAt : "",
+            sharesSource: typeof e.sharesSource === "string" ? e.sharesSource : "",
+        };
+    });
+    return {
+        updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
+        entries,
+    };
 }
 
 function readMarketCapCatalog(): MarketCapCatalog {
@@ -2064,35 +2095,49 @@ function readMarketCapCatalog(): MarketCapCatalog {
         return { updatedAt: new Date(0).toISOString(), entries: [] };
     }
     try {
-        const parsed = JSON.parse(readFileSync(IBKR_MARKETCAP_CATALOG_PATH, "utf8")) as Partial<MarketCapCatalog>;
-        const rawEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
-        // Defensive per-field normalization, mirroring readCatalog: the on-disk
-        // JSON may be hand-edited or written by an older version.
-        const entries: MarketCapCatalogEntry[] = rawEntries.map((entry) => {
-            const e = entry as Partial<MarketCapCatalogEntry>;
-            const points = Number(e.points);
-            return {
-                symbol: typeof e.symbol === "string" ? e.symbol : "",
-                markedSymbol: typeof e.markedSymbol === "string" ? e.markedSymbol : "",
-                firstTime: typeof e.firstTime === "string" ? e.firstTime : null,
-                lastTime: typeof e.lastTime === "string" ? e.lastTime : null,
-                points: Number.isFinite(points) ? points : 0,
-                lastSyncAt: typeof e.lastSyncAt === "string" ? e.lastSyncAt : "",
-                sharesSource: typeof e.sharesSource === "string" ? e.sharesSource : "",
-            };
-        });
-        return {
-            updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
-            entries,
-        };
+        return parseMarketCapCatalogText(readFileSync(IBKR_MARKETCAP_CATALOG_PATH, "utf8"));
     } catch {
-        return { updatedAt: new Date(0).toISOString(), entries: [] };
+        // Audit (catalog-corruption finding): a parse failure used to return
+        // an empty catalog, and the next successful run then rewrote the file
+        // — silently dropping metadata for every previously downloaded symbol
+        // while the CSV data survived. Recover from the writer's .bak
+        // snapshot first; only when both files are unusable fail loudly so
+        // the corruption is diagnosable instead of silently reset.
+        const backupPath = `${IBKR_MARKETCAP_CATALOG_PATH}.bak`;
+        if (existsSync(backupPath)) {
+            try {
+                const recovered = parseMarketCapCatalogText(readFileSync(backupPath, "utf8"));
+                debugLogger.warn("marketcap.catalog.recovered_from_backup", {
+                    catalogPath: IBKR_MARKETCAP_CATALOG_PATH,
+                    entries: recovered.entries.length,
+                });
+                return recovered;
+            } catch {
+                // Both files unusable — fall through to the loud failure.
+            }
+        }
+        throw new HttpStatusError(
+            500,
+            `MarketCap catalog at ${IBKR_MARKETCAP_CATALOG_PATH} is corrupt and no valid backup exists. Delete catalog.json (the CSV data is unaffected) and redownload MarketCap.`,
+        );
     }
 }
 
 function writeMarketCapCatalog(catalog: MarketCapCatalog): void {
     // Own small writer with the candle catalog's atomic temp+rename idiom.
     mkdirSync(dirname(IBKR_MARKETCAP_CATALOG_PATH), { recursive: true });
+    // Snapshot the current catalog before replacement (same .bak discipline
+    // as writeMarketCapCsv) so a later corrupt write can be recovered.
+    if (existsSync(IBKR_MARKETCAP_CATALOG_PATH)) {
+        try {
+            copyFileSync(IBKR_MARKETCAP_CATALOG_PATH, `${IBKR_MARKETCAP_CATALOG_PATH}.bak`);
+        } catch (error) {
+            debugLogger.warn("marketcap.catalog.backup_failed", {
+                catalogPath: IBKR_MARKETCAP_CATALOG_PATH,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
     const tempPath = `${IBKR_MARKETCAP_CATALOG_PATH}.tmp`;
     writeFileSync(tempPath, JSON.stringify(catalog, null, 2));
     replaceFileWithRetry(tempPath, IBKR_MARKETCAP_CATALOG_PATH);
@@ -2160,19 +2205,33 @@ export function joinMarketCapRows(closes: OHLCVData[], facts: SharesFactPoint[])
         }
     }
     const rows: MarketCapRow[] = [];
+    // Audit (linear-join finding): the previous per-date `lookupSharesForDate`
+    // scan made the join O(dates × facts). Both sequences are sorted
+    // ascending (`dateKey` lexicographic ISO = chronological, `facts.filed`
+    // ascending per parseSharesOutstandingFacts), so a monotonic cursor finds
+    // the same nearest-prior fact in O(dates + facts) — identical semantics,
+    // including duplicate `filed` dates where the LAST duplicate wins.
+    let factIndex = 0;
     for (const dateKey of Array.from(latestCloseByDate.keys()).sort()) {
-        const shares = lookupSharesForDate(facts, dateKey);
-        if (shares === null) continue;
+        while (factIndex < facts.length && facts[factIndex]!.filed <= dateKey) {
+            factIndex += 1;
+        }
+        // facts[factIndex - 1] is the rightmost fact with `filed <= dateKey`;
+        // factIndex === 0 means the trading day precedes the first filing
+        // (no look-ahead) and the day is skipped, as before.
+        if (factIndex === 0) continue;
+        const fact = facts[factIndex - 1]!;
         const close = latestCloseByDate.get(dateKey)!.close;
-        rows.push({ time: dateKey, close, sharesOutstanding: shares, marketCap: close * shares });
+        rows.push({ time: dateKey, close, sharesOutstanding: fact.shares, marketCap: close * fact.shares });
     }
     return rows;
 }
 
 /**
  * Per-symbol fetch surface, injectable for tests. Production passes the
- * phase-1 leaf fetchers; `fetchSplits` resolves `resolveAlpacaConfig()` lazily
- * so a missing-env error surfaces per-run.
+ * phase-1 leaf fetchers; `fetchSplits` closes over the Alpaca config resolved
+ * ONCE by `processMarketCapBatch` preflight so a missing-env error surfaces
+ * as a fast fatal before any symbol work (audit fail-fast finding).
  */
 export type MarketCapSymbolDeps = {
     /** NormalizedTicker → CIK map, loaded once per run. */
@@ -2388,12 +2447,23 @@ export async function processMarketCapBatch(
     // resolution. The throw propagates to the route handler, whose catch
     // emits the terminal fatal event and whose finally releases the owner
     // and clears the snapshot above.
+    //
+    // Audit (fail-fast Alpaca config): `resolveAlpacaConfig()` used to run
+    // inside the per-symbol `fetchSplits` callback, so a 500-symbol run with
+    // missing credentials performed hundreds of EDGAR requests first and then
+    // reported hundreds of per-symbol failures. Resolve ONCE, before the
+    // ticker-map fetch: a missing-env error is a fast fatal, and the config
+    // is read once per run instead of once per symbol. A custom worker
+    // (test seam) never invokes `fetchSplits`, so resolution is skipped
+    // there and the injected deps stay inert.
+    const alpacaConfig = options?.fetcher ? null : resolveAlpacaConfig();
     const tickers = await (options?.tickersLoader ?? loadCompanyTickersCached)({ signal });
     const marketCapCatalog = readMarketCapCatalog();
     const deps: MarketCapSymbolDeps = {
         tickers,
         fetchFacts: (cik, fetchSignal) => fetchEdgarSharesOutstanding(cik, fetchSignal),
-        fetchSplits: (symbol, fetchSignal) => fetchAlpacaSplits(resolveAlpacaConfig(), symbol, fetchSignal),
+        fetchSplits: (symbol, fetchSignal) =>
+            fetchAlpacaSplits(alpacaConfig ?? resolveAlpacaConfig(), symbol, fetchSignal),
     };
     const worker = options?.fetcher ?? buildMarketCapForSymbol;
 
@@ -2962,6 +3032,17 @@ export function ibkrDataVitePlugin(): Plugin {
         middlewares.use("/api/ibkr/sync/status", async (req: any, res: any) => {
             if (req.method !== "GET") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            // Audit (status-endpoint finding): this snapshot carries run
+            // symbols, progress, and EDGAR/Alpaca failure details. Every
+            // other IBKR route already gates on the loopback policy; the
+            // status read must not stay an unauthenticated surface on a
+            // --hosted / tunneled / reverse-proxied dev server. Same-origin
+            // loopback browser requests (including the reattach poll) pass
+            // unchanged.
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: IBKR routes are local-only." });
                 return;
             }
             // Snapshot the in-progress run state (if any) for browser-side

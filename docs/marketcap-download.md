@@ -181,7 +181,11 @@ UI button (tab-ibkr-data.html)
 
 ```
 price-data/ibkr/marketcap/
-  catalog.json           # {updatedAt, entries: [...]} — see below
+  catalog.json           # {updatedAt, entries: [...]} — see below; snapshotted
+                         # to catalog.json.bak before every replacement, and the
+                         # reader recovers from the .bak when the current file
+                         # is corrupt (both corrupt -> loud failure, never a
+                         # silently reset catalog)
   <SYMBOL>.csv           # daily series, atomic temp+rename, .bak backup
 ```
 
@@ -189,8 +193,11 @@ price-data/ibkr/marketcap/
   `time` is the ISO date of the `1d` close used (UTC date key from
   `parseTimeToUnixSeconds` / the plugin's existing UTC-date-key helper — no
   ad-hoc `Date` parsing); `market_cap = close × shares_outstanding`, USD.
-  Filename uses the same `encodeURIComponent(stripIbkrMarker(symbol).
-  replace(/\//g, ""))` rule as `getCsvPath`. One row per trading day whose
+  Filename uses the shared `normalizeMarketCapSymbol` contract
+  (`encodeURIComponent(normalizeMarketCapSymbol(symbol))`,
+  `lib/ibkr-data/marketcap-series-reader.ts`) — the same normalizer the
+  reader applies to lookup keys, so a producer-side symbol-format change
+  cannot make newly written files invisible to Batch lookup. One row per trading day whose
   date is ≥ the `filed` date of the latest applicable fact (dates before
   the first filing are skipped — the join keys on filing dates, so
   non-trading `end`/`filed` dates never need special-casing: a fact simply

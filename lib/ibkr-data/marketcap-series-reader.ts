@@ -28,6 +28,19 @@ export interface MarketCapLookup {
     lookup(symbol: string, timeSec: number): number | null;
     /** Number of symbols indexed (files that yielded at least one valid row). */
     symbols: number;
+    /**
+     * Normalized symbols that yielded at least one valid row (the loaded
+     * subset of the filter list). Additive provenance surface (audit
+     * coverage/provenance finding): lets the shared preflight report exactly
+     * WHICH required symbols have no MarketCap data.
+     */
+    indexedSymbols: string[];
+    /**
+     * Latest row time (unix seconds) across indexed symbols, or null when
+     * nothing loaded. Additive provenance surface for the cap-tilt
+     * staleness warning.
+     */
+    latestTimeSec: number | null;
 }
 
 type CapSeries = {
@@ -37,8 +50,15 @@ type CapSeries = {
     caps: number[];
 };
 
-/** Marker/slash stripping, inline by design — see the import-hygiene note. */
-function normalizeLookupSymbol(symbol: string): string {
+/**
+ * Single MarketCap symbol-normalization contract, shared by the producer
+ * (writer filename construction) and this reader (lookup keys). Audit
+ * symbol-normalization finding: writer and reader used to maintain two
+ * independent inline normalizations that could drift apart and make newly
+ * written files invisible to Batch lookup. Dependency-free by design — see
+ * the import-hygiene note above.
+ */
+export function normalizeMarketCapSymbol(symbol: string): string {
     return String(symbol ?? "").replace(/•/g, "").replace(/\//g, "").trim().toUpperCase();
 }
 
@@ -65,8 +85,9 @@ export interface MarketCapLookupFilter {
 export function loadMarketCapLookup(dir: string, filter?: MarketCapLookupFilter): MarketCapLookup {
     // Normalize the allow-list ONCE through the same normalizer the map keys
     // use, so filtered and unfiltered lookups answer identically.
-    const allowed = filter?.symbols ? new Set(Array.from(filter.symbols, normalizeLookupSymbol)) : null;
+    const allowed = filter?.symbols ? new Set(Array.from(filter.symbols, normalizeMarketCapSymbol)) : null;
     const bySymbol = new Map<string, CapSeries>();
+    let latestTimeSec: number | null = null;
     for (const name of readdirSync(dir)) {
         if (!name.toLowerCase().endsWith(".csv")) continue;
         let symbol = name.slice(0, -4);
@@ -77,7 +98,7 @@ export function loadMarketCapLookup(dir: string, filter?: MarketCapLookupFilter)
         } catch {
             // Keep the raw stem — an invalid escape still identifies the file.
         }
-        if (allowed && !allowed.has(normalizeLookupSymbol(symbol))) continue;
+        if (allowed && !allowed.has(normalizeMarketCapSymbol(symbol))) continue;
         const times: number[] = [];
         const caps: number[] = [];
         for (const line of readFileSync(join(dir, name), "utf8").split(/\r?\n/)) {
@@ -92,15 +113,20 @@ export function loadMarketCapLookup(dir: string, filter?: MarketCapLookupFilter)
         }
         if (times.length === 0) continue;
         const order = times.map((t, i) => ({ t, i })).sort((a, b) => a.t - b.t);
-        bySymbol.set(normalizeLookupSymbol(symbol), {
-            times: order.map((entry) => times[entry.i]!),
+        const sortedTimes = order.map((entry) => times[entry.i]!);
+        const lastTime = sortedTimes[sortedTimes.length - 1]!;
+        if (latestTimeSec === null || lastTime > latestTimeSec) latestTimeSec = lastTime;
+        bySymbol.set(normalizeMarketCapSymbol(symbol), {
+            times: sortedTimes,
             caps: order.map((entry) => caps[entry.i]!),
         });
     }
     return {
         symbols: bySymbol.size,
+        indexedSymbols: Array.from(bySymbol.keys()).sort((a, b) => a.localeCompare(b)),
+        latestTimeSec,
         lookup(symbol, timeSec) {
-            const series = bySymbol.get(normalizeLookupSymbol(symbol));
+            const series = bySymbol.get(normalizeMarketCapSymbol(symbol));
             if (!series) return null;
             // Nearest-prior binary search: rightmost times[i] <= timeSec.
             let lo = 0;

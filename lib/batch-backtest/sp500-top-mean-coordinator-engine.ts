@@ -1,5 +1,4 @@
-import { readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../types/backtest";
@@ -46,7 +45,12 @@ import { SyntheticLegCache } from "./synthetic-leg-cache";
 // Import hygiene (docs/open-score-cap-tilt.md): the ONLY import allowed from
 // lib/ibkr-data/ — the reader is a dependency-free leaf, safe for the
 // vite.config esbuild bundle. NEVER import ibkr-data-vite-plugin.ts here.
-import { loadMarketCapLookup } from "../ibkr-data/marketcap-series-reader";
+import {
+    formatMarketCapProvenanceLines,
+    loadMarketCapPreflight,
+    resolveDefaultMarketCapDir,
+    type MarketCapPreflight,
+} from "../ibkr-data/marketcap-preflight";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import {
@@ -403,6 +407,12 @@ export class TopMeanCoordinatorEngine {
     };
     private readonly archiveRequested: boolean;
     private archiveRoot: string | null = null;
+    /**
+     * MarketCap dataset provenance (audit coverage/provenance finding),
+     * captured when cap-tilt preflight succeeds and surfaced in the result
+     * report lines and the research archive manifest.
+     */
+    private marketCapProvenance: MarketCapPreflight | null = null;
 
     constructor(
         private readonly _request: TopMeanCoordinatorRunRequest,
@@ -577,6 +587,19 @@ export class TopMeanCoordinatorEngine {
                 bootstrapSamples: MAX_ACTIVE_BOOTSTRAP_SAMPLES,
                 bootstrapSeed: MAX_ACTIVE_BOOTSTRAP_SEED,
             },
+            // Additive MarketCap dataset provenance (audit coverage/
+            // provenance finding): absent when the run used no cap tilt.
+            ...(this.marketCapProvenance
+                ? {
+                    marketcap: {
+                        requestedSymbols: this.marketCapProvenance.requestedSymbols,
+                        loadedSymbols: this.marketCapProvenance.loadedSymbols,
+                        missingSymbols: this.marketCapProvenance.missingSymbols,
+                        latestDataTimeSec: this.marketCapProvenance.latestDataTimeSec,
+                        catalogUpdatedAt: this.marketCapProvenance.catalogUpdatedAt,
+                    },
+                }
+                : {}),
         };
     }
 
@@ -787,26 +810,18 @@ export class TopMeanCoordinatorEngine {
             // pair backtests spend time. A requested weighting without the
             // dataset fails the run loudly through the engine's existing
             // run-failure path (manifest status "failed" + fatal NDJSON
-            // event) — never a silent baseline run. The dir uses the same
-            // process.cwd()-rooted convention as the Batch plugin. The reader
-            // only opens CSVs for symbols the replay can look up (the pair
-            // legs, resolved exactly as the worker resolves them, plus the
-            // canonical assets as fallbacks), so a subset run does not pay
-            // for the rest of the market-cap universe.
+            // event) — never a silent baseline run. The shared preflight leaf
+            // (audit centralize-preflight + fail-closed findings) owns the
+            // dir convention, the dataset existence/validity checks (CSVs
+            // with zero valid rows fail instead of silently indexing zero
+            // symbols), coverage accounting, and the error text the
+            // standalone OPEN_SCORE route shares. The reader only opens CSVs
+            // for symbols the replay can look up (the pair legs, resolved
+            // exactly as the worker resolves them, plus the canonical assets
+            // as fallbacks), so a subset run does not pay for the rest of
+            // the market-cap universe.
             let replayCapTiltLookup: ((symbol: string, timeSec: number) => number | null) | undefined;
             if (this._request.capTiltWeight) {
-                const marketCapDir = resolve(process.cwd(), "price-data", "ibkr", "marketcap");
-                let csvFileCount = 0;
-                try {
-                    csvFileCount = readdirSync(marketCapDir).filter((name) => name.toLowerCase().endsWith(".csv")).length;
-                } catch {
-                    csvFileCount = 0;
-                }
-                if (csvFileCount === 0) {
-                    throw new Error(
-                        `capTiltWeight="${this._request.capTiltWeight}" requires the market-cap dataset, but ${marketCapDir} is missing or empty. Download MarketCap in the IBKR Data tab first.`,
-                    );
-                }
                 const requiredCapSymbols = new Set<string>(this.canonicalAssets);
                 for (const pair of enumRes.canonicalPairs) {
                     const parsed = parsePortfolioSyntheticPairSymbol(pair);
@@ -818,9 +833,18 @@ export class TopMeanCoordinatorEngine {
                         requiredCapSymbols.add(direct?.loaderSymbol ?? pair);
                     }
                 }
-                const marketCapLookup = loadMarketCapLookup(marketCapDir, { symbols: requiredCapSymbols });
-                debugLogger.info("sp500_top_mean.cap_tilt", { weight: this._request.capTiltWeight, symbols: marketCapLookup.symbols });
-                replayCapTiltLookup = marketCapLookup.lookup;
+                this.marketCapProvenance = loadMarketCapPreflight(
+                    resolveDefaultMarketCapDir(),
+                    requiredCapSymbols,
+                );
+                debugLogger.info("sp500_top_mean.cap_tilt", {
+                    weight: this._request.capTiltWeight,
+                    requested: this.marketCapProvenance.requestedSymbols,
+                    loaded: this.marketCapProvenance.loadedSymbols,
+                    missing: this.marketCapProvenance.missingSymbols.length,
+                    latest: this.marketCapProvenance.latestDataTimeSec,
+                });
+                replayCapTiltLookup = this.marketCapProvenance.lookup.lookup;
             }
 
             if (this.isStopped) {
@@ -1244,7 +1268,21 @@ export class TopMeanCoordinatorEngine {
                 poolSnapshots: replayResult.poolSnapshots,
                 candidateOutcomes: replayResult.candidateOutcomes,
                 warnings: replayResult.warnings,
-                reportLines: [...replayResult.reportLines, ...annualReportLines, "", ...performanceLines],
+                reportLines: [
+                    ...replayResult.reportLines,
+                    ...annualReportLines,
+                    // Additive MarketCap provenance (audit coverage/
+                    // provenance finding): records which dataset weighted
+                    // the run — coverage, freshness vs the replayed data
+                    // window, and catalog time.
+                    ...(this.marketCapProvenance
+                        ? ["", ...formatMarketCapProvenanceLines(this.marketCapProvenance, {
+                            windowEndTimeSec: this.latestTargetBarTimeSec,
+                        })]
+                        : []),
+                    "",
+                    ...performanceLines,
+                ],
                 latestSelections: replayResult.latestSelections,
                 performance: this.performanceDiagnostic,
                 currentSnapshot: currentSnapshotResult,

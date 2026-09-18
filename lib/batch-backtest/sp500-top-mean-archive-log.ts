@@ -81,6 +81,19 @@ export interface TopMeanArchiveManifest {
         bootstrapSamples: number;
         bootstrapSeed: number;
     };
+    /**
+     * MarketCap dataset provenance (audit coverage/provenance finding),
+     * present only when the run used cap-tilt weighting: which dataset
+     * weighted the replay, its coverage, and its freshness, so two runs over
+     * identical artifacts are distinguishable after a dataset refresh.
+     */
+    marketcap?: {
+        requestedSymbols: number;
+        loadedSymbols: number;
+        missingSymbols: string[];
+        latestDataTimeSec: number | null;
+        catalogUpdatedAt: string | null;
+    };
 }
 
 export interface TopMeanArchiveLogOptions {

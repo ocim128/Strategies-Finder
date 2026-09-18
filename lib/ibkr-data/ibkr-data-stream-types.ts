@@ -108,7 +108,22 @@ export type IbkrSyncRunSnapshot = {
  */
 export type IbkrStreamEvent =
     | { type: "start"; total: number; interval?: string; mode?: string; source?: "ibkr" | "alpaca" | "edgar"; period?: string | null }
-    | { type: "symbol"; index: number; total: number; symbol: string; markedSymbol?: string; bars?: number; fetchedBars?: number }
+    | {
+        type: "symbol";
+        index: number;
+        total: number;
+        symbol: string;
+        markedSymbol?: string;
+        bars?: number;
+        fetchedBars?: number;
+        /**
+         * Generated MarketCap rows for `symbol` (market-cap runs only; the
+         * spread result carries `points`, not candle `bars`). Additive wire
+         * field (audit progress-points finding) so long market-cap downloads
+         * show actual output, not just fetch progress.
+         */
+        points?: number;
+    }
     | { type: "symbol_failed"; index: number; total: number; symbol: string; error: string }
     | { type: "symbol_warning"; index: number; total: number; symbol: string; reason: string; complete: false }
     | { type: "done"; ok: boolean; cancelled?: boolean; interval?: string; source?: "ibkr" | "alpaca" | "edgar"; totals?: { bars: number; fetchedBars: number }; results?: unknown[]; failed?: unknown[] }

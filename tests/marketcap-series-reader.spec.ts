@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadMarketCapLookup } from "../lib/ibkr-data/marketcap-series-reader";
+import { loadMarketCapLookup, normalizeMarketCapSymbol } from "../lib/ibkr-data/marketcap-series-reader";
 
 describe("marketcap-series-reader", () => {
     let dir: string;
@@ -131,6 +131,33 @@ describe("marketcap-series-reader", () => {
             writeCsv("AAA.csv", ["2024-01-02,1,10,1000"]);
             writeCsv("BBB.csv", ["2024-01-02,1,10,2000"]);
             assert.equal(loadMarketCapLookup(dir).symbols, 2);
+        });
+    });
+
+    describe("provenance + shared symbol normalization (audit findings)", () => {
+        it("normalizeMarketCapSymbol is the single writer/reader contract", () => {
+            assert.equal(normalizeMarketCapSymbol("AAPL•"), "AAPL");
+            assert.equal(normalizeMarketCapSymbol("brk/b"), "BRKB");
+            assert.equal(normalizeMarketCapSymbol("  Msft "), "MSFT");
+            assert.equal(normalizeMarketCapSymbol(undefined as never), "");
+        });
+
+        it("reports indexedSymbols and latestTimeSec for cap-tilt provenance", () => {
+            writeCsv("AAA.csv", [
+                "2024-01-02,1,10,1000",
+                "2024-01-05,1,10,1400",
+            ]);
+            writeCsv("BBB.csv", ["2024-01-03,1,10,1200"]);
+            // Header-only CSV, catalog.json, and a .bak companion are not
+            // indexed symbols.
+            writeCsv("EMPTY.csv", []);
+            writeFileSync(join(dir, "catalog.json"), "{}");
+            writeFileSync(join(dir, "AAA.csv.bak"), "junk");
+
+            const lookup = loadMarketCapLookup(dir, { symbols: ["AAA", "BBB", "EMPTY"] });
+            assert.equal(lookup.symbols, 2);
+            assert.deepEqual(lookup.indexedSymbols, ["AAA", "BBB"]);
+            assert.equal(lookup.latestTimeSec, Math.floor(Date.parse("2024-01-05T00:00:00.000Z") / 1000));
         });
     });
 });

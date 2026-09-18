@@ -37,8 +37,10 @@ import {
     handleMarketCapRequest,
     joinMarketCapRows,
     processMarketCapBatch,
+    ibkrDataVitePlugin,
     type MarketCapSymbolDeps,
 } from "../lib/ibkr-data/ibkr-data-vite-plugin";
+import { lookupSharesForDate } from "../lib/ibkr-data/shares-outstanding-fetcher";
 import { isAllowedLocalRequest } from "../lib/local-route-authorization";
 import { markIbkrSymbol } from "../lib/local-daily-datasets";
 import { providerLabelForSource } from "../lib/ibkr-data/ibkr-data-stream-types";
@@ -69,6 +71,7 @@ afterEach(() => {
     rmSync(SENTINEL_1D_CSV, { force: true });
     if (catalogBackup === null) rmSync(CATALOG_PATH, { force: true });
     else writeFileSync(CATALOG_PATH, catalogBackup);
+    rmSync(`${CATALOG_PATH}.bak`, { force: true });
 });
 
 type Event = Record<string, unknown>;
@@ -115,6 +118,12 @@ describe("processMarketCapBatch (injected worker)", () => {
         const results = done.results as Array<Record<string, unknown>>;
         assert.deepEqual(results.map((r) => r.points), [3, 3]);
         assert.equal("bars" in results[0]!, false);
+        // Audit (progress-points finding): the `symbol` wire event carries the
+        // generated MarketCap rows so the browser can show real output during
+        // long runs instead of only fetch progress.
+        const symbolEvent = events[1]!;
+        assert.equal(symbolEvent.type, "symbol");
+        assert.equal(symbolEvent.points, 3);
     });
 
     it("populates the snapshot with mode marketcap, interval 1d, source edgar", async () => {
@@ -598,6 +607,49 @@ describe("joinMarketCapRows (pure)", () => {
         const rows = joinMarketCapRows([close("2024-06-10T13:30:00.000Z", 121.79)], facts);
         assert.equal(rows[0]!.marketCap, rows[0]!.close * rows[0]!.sharesOutstanding);
     });
+
+    // Audit (linear-join finding): the join now uses a monotonic fact cursor
+    // instead of a per-date rescan. This pins CURSOR PARITY with the
+    // nearest-prior reference on a large synthetic schedule (3,000 dates
+    // × 400 facts), plus the duplicate-filed tie where the LAST duplicate
+    // must win.
+    it("matches the nearest-prior reference on a large sorted schedule", () => {
+        const startMs = Date.UTC(2020, 0, 1);
+        const dayCount = 3000;
+        const factCount = 400;
+        const dates: OHLCVData[] = [];
+        for (let i = 0; i < dayCount; i += 1) {
+            dates.push(close(`${new Date(startMs + i * 86_400_000).toISOString().slice(0, 10)}T13:30:00.000Z`, 100 + (i % 7)));
+        }
+        const schedule = Array.from({ length: factCount }, (_, k) => ({
+            filed: new Date(startMs + Math.floor((dayCount * k) / factCount) * 86_400_000).toISOString().slice(0, 10),
+            end: new Date(startMs + Math.floor((dayCount * k) / factCount) * 86_400_000).toISOString().slice(0, 10),
+            shares: 1_000_000 + k,
+        }));
+        const rows = joinMarketCapRows(dates, schedule);
+        assert.equal(rows.length, dayCount, "a fact filed on day 0 covers every trading day");
+        for (let i = 0; i < rows.length; i += 1) {
+            const expected = lookupSharesForDate(schedule, rows[i]!.time);
+            assert.equal(rows[i]!.sharesOutstanding, expected, `row ${i} (${rows[i]!.time})`);
+        }
+    });
+
+    it("duplicate filed dates keep the last duplicate, matching the reference", () => {
+        const duplicated = [
+            { filed: "2024-02-21", end: "2024-02-16", shares: 10 },
+            { filed: "2024-02-21", end: "2024-02-16", shares: 11 },
+            { filed: "2024-06-11", end: "2024-06-05", shares: 12 },
+        ];
+        const rows = joinMarketCapRows([
+            close("2024-02-21T13:30:00.000Z", 100),
+            close("2024-02-22T13:30:00.000Z", 101),
+            close("2024-06-12T13:30:00.000Z", 102),
+        ], duplicated);
+        assert.deepEqual(rows.map((r) => r.sharesOutstanding), [11, 11, 12]);
+        for (const row of rows) {
+            assert.equal(row.sharesOutstanding, lookupSharesForDate(duplicated, row.time));
+        }
+    });
 });
 
 describe("marketcap route authorization (repo-convention direct gate coverage)", () => {
@@ -612,6 +664,151 @@ describe("marketcap route authorization (repo-convention direct gate coverage)",
             socket: { remoteAddress: "127.0.0.1" },
             headers: { host: "127.0.0.1:5173", origin: "http://127.0.0.1:5173" },
         }), true);
+    });
+});
+
+describe("fail-fast Alpaca preflight (audit finding)", () => {
+    it("fails before any EDGAR work when credentials are missing", async () => {
+        const savedKey = process.env.ALPACA_API_KEY;
+        const savedSecret = process.env.ALPACA_API_SECRET;
+        delete process.env.ALPACA_API_KEY;
+        delete process.env.ALPACA_API_SECRET;
+        let tickerLoads = 0;
+        const countingTickersLoader = (() => {
+            tickerLoads += 1;
+            return async () => ({ [SENTINEL]: 999999 }) as Record<string, number>;
+        }) as never;
+        try {
+            // No custom `fetcher`: the production preflight path. The old
+            // lazy per-symbol resolution surfaced missing credentials only
+            // AFTER each symbol's EDGAR request; the run must now fail fast.
+            await assert.rejects(
+                () => processMarketCapBatch(
+                    { symbols: ["AAPL", "MSFT"] },
+                    () => {},
+                    __acquireIbkrSyncOwnerForTests(),
+                    { tickersLoader: countingTickersLoader },
+                ),
+                /Alpaca credentials are not configured/,
+            );
+        } finally {
+            if (savedKey !== undefined) process.env.ALPACA_API_KEY = savedKey;
+            if (savedSecret !== undefined) process.env.ALPACA_API_SECRET = savedSecret;
+        }
+        assert.equal(tickerLoads, 0, "the Alpaca preflight must precede the EDGAR ticker-map fetch");
+    });
+});
+
+describe("MarketCap catalog corruption recovery (audit finding)", () => {
+    function writeCatalogFile(path: string, entries: Array<Record<string, unknown>>): void {
+        writeFileSync(path, JSON.stringify({ updatedAt: "2026-01-01T00:00:00.000Z", entries }));
+    }
+
+    it("recovers entries from catalog.json.bak when the current catalog is corrupt", async () => {
+        writeCatalogFile(`${CATALOG_PATH}.bak`, [{
+            symbol: "ZZOLD",
+            markedSymbol: markIbkrSymbol("ZZOLD"),
+            firstTime: "2024-01-02",
+            lastTime: "2024-06-11",
+            points: 5,
+            lastSyncAt: "2026-01-01T00:00:00.000Z",
+            sharesSource: "dei:EntityCommonStockSharesOutstanding",
+        }]);
+        writeFileSync(CATALOG_PATH, "{corrupt json", "utf8");
+
+        const recorder = collect();
+        await processMarketCapBatch(
+            { symbols: [SENTINEL] },
+            recorder.write,
+            __acquireIbkrSyncOwnerForTests(),
+            { fetcher: fakeWorker as never, tickersLoader: stubTickersLoader() as never },
+        );
+        assert.equal(recorder.events[recorder.events.length - 1]!.ok, true);
+        const restored = JSON.parse(readFileSync(CATALOG_PATH, "utf8")) as { entries: Array<{ symbol: string }> };
+        assert.ok(restored.entries.some((e) => e.symbol === "ZZOLD"), "backup entries must survive the next run");
+        // The injected worker never upserts; the final catalog flush still
+        // rewrote the recovered entries (the crash used to drop them).
+    });
+
+    it("fails the run loudly when the catalog is corrupt and no backup exists", async () => {
+        writeFileSync(CATALOG_PATH, "{corrupt json", "utf8");
+        rmSync(`${CATALOG_PATH}.bak`, { force: true });
+        await assert.rejects(
+            () => processMarketCapBatch(
+                { symbols: [SENTINEL] },
+                () => {},
+                __acquireIbkrSyncOwnerForTests(),
+                { fetcher: fakeWorker as never, tickersLoader: stubTickersLoader() as never },
+            ),
+            /corrupt/,
+        );
+    });
+
+    it("snapshots the prior catalog to catalog.json.bak before replacement", async () => {
+        writeCatalogFile(CATALOG_PATH, []);
+        const recorder = collect();
+        await processMarketCapBatch(
+            { symbols: [SENTINEL] },
+            recorder.write,
+            __acquireIbkrSyncOwnerForTests(),
+            { fetcher: fakeWorker as never, tickersLoader: stubTickersLoader() as never },
+        );
+        assert.equal(recorder.events[recorder.events.length - 1]!.ok, true);
+        assert.ok(existsSync(`${CATALOG_PATH}.bak`), "the writer must snapshot the prior catalog");
+    });
+});
+
+describe("/api/ibkr/sync/status route authorization (audit status-endpoint finding)", () => {
+    function captureStatusRoute(): (req: any, res: any) => Promise<void> {
+        const routes = new Map<string, (req: any, res: any) => void | Promise<void>>();
+        const plugin = ibkrDataVitePlugin();
+        const configureServer = plugin.configureServer as unknown as (server: unknown) => void;
+        configureServer({
+            middlewares: { use: (path: string, handler: any) => routes.set(path, handler) },
+            httpServer: null,
+        });
+        const handler = routes.get("/api/ibkr/sync/status");
+        assert.ok(handler, "the status route must be registered");
+        return handler as (req: any, res: any) => Promise<void>;
+    }
+
+    function makeResponse(): { res: any; body(): string; status(): number } {
+        const res: any = {
+            statusCode: 0,
+            headers: {} as Record<string, string>,
+            raw: "",
+            setHeader(name: string, value: string) { this.headers[name] = value; },
+            end(body?: string) { this.raw = body ?? ""; },
+        };
+        return { res, body: () => res.raw, status: () => res.statusCode };
+    }
+
+    it("answers 401 for a remote caller instead of leaking run metadata", async () => {
+        const handler = captureStatusRoute();
+        const { res, body, status } = makeResponse();
+        await handler({
+            method: "GET",
+            headers: { host: "attacker.example", origin: "https://attacker.example" },
+            socket: { remoteAddress: "203.0.113.5" },
+        }, res);
+        assert.equal(status(), 401);
+        assert.equal(JSON.parse(body()).ok, false);
+        assert.match(JSON.parse(body()).error, /local-only/);
+    });
+
+    it("keeps serving the reattach snapshot to genuine loopback callers", async () => {
+        delete process.env.LOCAL_PROXY_TOKEN;
+        const handler = captureStatusRoute();
+        const { res, body, status } = makeResponse();
+        await handler({
+            method: "GET",
+            headers: { host: "127.0.0.1:5173", origin: "http://127.0.0.1:5173" },
+            socket: { remoteAddress: "127.0.0.1" },
+        }, res);
+        assert.equal(status(), 200);
+        const payload = JSON.parse(body());
+        assert.equal(payload.ok, true);
+        assert.equal(payload.running, false);
     });
 });
 

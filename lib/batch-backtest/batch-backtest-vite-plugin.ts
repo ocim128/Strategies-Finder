@@ -25,10 +25,10 @@
 
 import type { Plugin } from "vite";
 import { deserialize, serialize } from "node:v8";
-import { mkdtempSync, readdirSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { debugLogger } from "../debug-logger";
 import { createDisconnectSafeStream, HttpStatusError, registerLocalJsonRoute, sendJson, type ViteHttpResponse } from "../vite-http-utils";
 import { FINDER_BATCH_MAX_BODY_BYTES } from "../server-request-limits";
@@ -74,7 +74,12 @@ import { fnv1a64Hex, type MaxActiveResearchRegistrationV1 } from "./max-active-r
 import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import { runOpenScoreUsdReplay, type OpenScoreUsdTarget, type OpenScoreUsdCapTiltWeight } from "./batch-open-score-usd-replay-engine";
-import { loadMarketCapLookup } from "../ibkr-data/marketcap-series-reader";
+import {
+    formatMarketCapProvenanceLines,
+    loadMarketCapPreflight,
+    resolveDefaultMarketCapDir,
+    type MarketCapPreflight,
+} from "../ibkr-data/marketcap-preflight";
 import { CAP_TILT_WEIGHTS, isActiveCapTiltWeight } from "./cap-tilt-contract";
 import { createEmptyBacktestResult } from "../strategies/backtest/position-stats";
 import { registerSp500TopMeanRoutes, type BatchOwnerLocks } from "./sp500-top-mean-vite-routes";
@@ -2154,28 +2159,18 @@ export async function processOpenScoreUsdReplay(
     // Cap-tilt weighting (docs/open-score-cap-tilt.md): build the market-cap
     // lookup ONCE per run, inside this scope (dropped when the call returns —
     // never module-level). Required caps missing/empty -> fatal with an
-    // actionable message; never silently run baseline (fail loud). The dir is
-    // resolved at call time from the same process.cwd()-rooted convention the
-    // IBKR plugin uses for price-data. The reader only opens CSVs for symbols
-    // this replay can actually look up (artifact leg symbols + their asset
-    // fallbacks), so a 10-asset replay against a 500-file universe does not
-    // pay for the other 490 files.
+    // actionable message; never silently run baseline (fail loud). The shared
+    // preflight leaf (audit centralize-preflight + fail-closed findings)
+    // owns dir resolution, the dataset existence/validity checks (CSVs with
+    // zero valid rows now fail instead of silently indexing zero symbols),
+    // coverage accounting, and the error text the TOP_MEAN coordinator
+    // shares. The reader only opens CSVs for symbols this replay can
+    // actually look up (artifact leg symbols + their asset fallbacks), so a
+    // 10-asset replay against a 500-file universe does not pay for the other
+    // 490 files.
     let lookupMarketCap: ((symbol: string, timeSec: number) => number | null) | undefined;
+    let marketCapPreflight: MarketCapPreflight | null = null;
     if (capTiltWeight !== "off") {
-        const marketCapDir = resolve(process.cwd(), "price-data", "ibkr", "marketcap");
-        let csvFileCount = 0;
-        try {
-            csvFileCount = readdirSync(marketCapDir).filter((name) => name.toLowerCase().endsWith(".csv")).length;
-        } catch {
-            csvFileCount = 0;
-        }
-        if (csvFileCount === 0) {
-            writer({
-                type: "fatal",
-                error: `capTiltWeight="${capTiltWeight}" requires the market-cap dataset, but ${marketCapDir} is missing or empty. Download MarketCap in the IBKR Data tab first.`,
-            });
-            return;
-        }
         const requiredSymbols = new Set<string>();
         for (const meta of artifactMetas) {
             // The engine looks up `baseSymbol || baseAsset` and
@@ -2186,9 +2181,23 @@ export async function processOpenScoreUsdReplay(
             if (meta.baseAsset) requiredSymbols.add(meta.baseAsset);
             if (meta.quoteAsset) requiredSymbols.add(meta.quoteAsset);
         }
-        const marketCapLookup = loadMarketCapLookup(marketCapDir, { symbols: requiredSymbols });
-        debugLogger.info("batch.server.open_score_usd.cap_tilt", { weight: capTiltWeight, symbols: marketCapLookup.symbols });
-        lookupMarketCap = marketCapLookup.lookup;
+        try {
+            marketCapPreflight = loadMarketCapPreflight(resolveDefaultMarketCapDir(), requiredSymbols);
+        } catch (error) {
+            writer({
+                type: "fatal",
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return;
+        }
+        debugLogger.info("batch.server.open_score_usd.cap_tilt", {
+            weight: capTiltWeight,
+            requested: marketCapPreflight.requestedSymbols,
+            loaded: marketCapPreflight.loadedSymbols,
+            missing: marketCapPreflight.missingSymbols.length,
+            latest: marketCapPreflight.latestDataTimeSec,
+        });
+        lookupMarketCap = marketCapPreflight.lookup.lookup;
     }
 
     clearArtifactReleaseTimer();
@@ -2300,7 +2309,20 @@ export async function processOpenScoreUsdReplay(
             pairs: result.pairs, assets: result.assets, events: result.totalEvents,
             eligible: result.eligibleEvents, complete: result.complete,
         });
-        writer({ type: "done", ok: true, result });
+        // Additive MarketCap provenance (audit coverage/provenance finding):
+        // when cap tilt is active the report records WHICH dataset weighted
+        // the run (coverage + freshness + catalog time), so two replays over
+        // identical artifacts are distinguishable after a dataset refresh.
+        const doneResult = marketCapPreflight
+            ? {
+                ...result,
+                reportLines: [
+                    ...result.reportLines,
+                    ...formatMarketCapProvenanceLines(marketCapPreflight),
+                ],
+            }
+            : result;
+        writer({ type: "done", ok: true, result: doneResult });
         // Intentionally NO releaseLastResults — read-only on the artifact store.
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

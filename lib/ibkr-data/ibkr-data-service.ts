@@ -368,8 +368,12 @@ class IbkrDataService {
                     }
                     const delta = event.fetchedBars ?? 0;
                     const deltaLabel = delta > 0 ? ` +${delta} bar${delta === 1 ? "" : "s"}` : "";
+                    // MarketCap runs carry generated rows, not fetched bars
+                    // (audit progress-points finding): surface actual output
+                    // so partial success and coverage are visible mid-run.
+                    const pointsLabel = event.points !== undefined ? ` +${event.points} points` : "";
                     const provider = providerLabelForSource(runSource);
-                    this.setStatus(`${provider} ${seen}/${total}: ${event.symbol}${deltaLabel}`);
+                    this.setStatus(`${provider} ${seen}/${total}: ${event.symbol}${deltaLabel}${pointsLabel}`);
                 },
                 onSymbolFailed: (event: Extract<IbkrStreamEvent, { type: "symbol_failed" }>) => {
                     seen = event.index + 1;
