@@ -76,6 +76,15 @@ export interface TopMeanPerformanceDiagnostic {
         aggregateMs: number;
         targetLoadMs: number;
         targetDatasets: number;
+        /** Coordinator replay target LRU hits (annual passes re-read targets). */
+        targetCacheHits: number;
+        /** Coordinator replay target LRU misses (unique dataset loads). */
+        targetCacheMisses: number;
+        /**
+         * Peak LRU occupancy observed during the run; bounded by
+         * TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES.
+         */
+        targetCachePeakEntries: number;
     };
     worker?: TopMeanWorkerPoolPerformance;
 }
@@ -104,7 +113,7 @@ export function formatTopMeanPerformanceLines(performance: TopMeanPerformanceDia
     }
     lines.push(
         `PERFORMANCE PHASES | preflight=${fixed(p.phases.preflightMs)}ms | backtesting=${fixed(p.phases.backtestingMs)}ms | snapshot=${fixed(p.phases.snapshotMs)}ms | replay=${fixed(p.phases.replayMs)}ms | resultWrite=${fixed(p.phases.resultWriteMs)}ms`,
-        `PERFORMANCE REPLAY | scan=${fixed(p.replay.scanMs)}ms | events=${fixed(p.replay.eventsMs)}ms | targets=${fixed(p.replay.targetsMs)}ms | outcomes=${fixed(p.replay.outcomesMs)}ms | aggregate=${fixed(p.replay.aggregateMs)}ms | targetLoad=${fixed(p.replay.targetLoadMs)}ms/${p.replay.targetDatasets}`,
+        `PERFORMANCE REPLAY | scan=${fixed(p.replay.scanMs)}ms | events=${fixed(p.replay.eventsMs)}ms | targets=${fixed(p.replay.targetsMs)}ms | outcomes=${fixed(p.replay.outcomesMs)}ms | aggregate=${fixed(p.replay.aggregateMs)}ms | targetLoad=${fixed(p.replay.targetLoadMs)}ms/${p.replay.targetDatasets} | targetCache=${p.replay.targetCacheHits} hit/${p.replay.targetCacheMisses} miss/${p.replay.targetCachePeakEntries} peak`,
     );
 
     const worker = p.worker;

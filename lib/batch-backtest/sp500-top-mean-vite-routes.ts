@@ -268,12 +268,25 @@ async function handleSp500TopMeanRunRequest(
     }
 }
 
-async function handleSp500TopMeanStopRequest(runId?: unknown): Promise<{ ok: boolean; stopped: boolean; runId?: string }> {
+export async function handleSp500TopMeanStopRequest(runId?: unknown): Promise<{ ok: boolean; stopped: boolean; runId?: string }> {
     const activeEngine = getActiveTopMeanCoordinatorEngine();
     if (!activeEngine) {
         return { ok: true, stopped: false };
     }
-    if (typeof runId === "string" && runId.trim() && activeEngine.request.runId !== runId.trim()) {
+    // Audit (exact stop runId finding): a missing/blank runId used to fall
+    // through to stop(), so a stale or malformed local client could cancel an
+    // unrelated active run. The browser always sends the run id, so require
+    // it: 400 for missing/blank/invalid ids, { stopped: false } for a
+    // well-formed mismatch, and stop only on exact equality with the active
+    // engine's run id.
+    if (typeof runId !== "string" || !runId.trim()) {
+        throw new HttpStatusError(400, "Missing required string property: runId.");
+    }
+    const trimmedRunId = runId.trim();
+    if (!isValidRunId(trimmedRunId)) {
+        throw new HttpStatusError(400, "Invalid runId.");
+    }
+    if (activeEngine.request.runId !== trimmedRunId) {
         return { ok: true, stopped: false };
     }
     activeEngine.stop();

@@ -18,6 +18,8 @@ import { TOP_MEAN_WORKER_COUNT_MAX } from "../lib/batch-backtest/sp500-top-mean-
 
 const testWorkerPath = fileURLToPath(new URL("./helpers/top-mean-test-worker.cjs", import.meta.url));
 const dieOnFirstTaskWorkerPath = fileURLToPath(new URL("./helpers/top-mean-die-on-retry-worker.cjs", import.meta.url));
+const exitZeroOnFirstTaskWorkerPath = fileURLToPath(new URL("./helpers/top-mean-exit-zero-worker.cjs", import.meta.url));
+const flakyOnceWorkerPath = fileURLToPath(new URL("./helpers/top-mean-flaky-once-worker.cjs", import.meta.url));
 
 function testWorkerCountResolution(): void {
     const defaultCount = resolveTopMeanWorkerCount();
@@ -414,6 +416,135 @@ async function testAllWorkersDyingDuringQueuedRetryRejects(): Promise<void> {
     console.log("PASS: all-workers-die during queued retries rejects instead of hanging");
 }
 
+/**
+ * Audit (exit-code-0 hang finding): onExit used to reject an in-flight task
+ * only when the exit code was non-zero, so a worker calling process.exit(0)
+ * mid-shard left its promise pending forever. With 2 workers / 2 shards both
+ * workers die mid-task while the OTHER is still alive, so the all-workers-
+ * dead drain cannot help — the stuck promises are IN FLIGHT, not queued — and
+ * Promise.race(activePromises) hung forever. execute() must instead reject
+ * within a bounded time ("Worker exited while processing shard N (code 0)"),
+ * turning worker loss into the existing retry path.
+ */
+async function testWorkerExitCodeZeroFailsInFlightTask(): Promise<void> {
+    const pairs = ["FAKE_A•+FAKE_B•", "FAKE_C•+FAKE_D•"];
+    const manifest: TopMeanRunManifest = {
+        schema: "top_mean_run_manifest.v1",
+        runId: "smoke_test_exit_zero",
+        status: "running",
+        fingerprint: "smoke",
+        strategyKey: "__test_success__",
+        interval: "4h",
+        pairCount: pairs.length,
+        shardSize: 1,
+        totalShards: 2,
+        completedShards: [],
+        failedShards: [],
+        completedPairsCount: 0,
+        failedPairsCount: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+    };
+    const pool = new TopMeanWorkerPool();
+    try {
+        await Promise.race([
+            pool.execute({
+                runId: manifest.runId,
+                manifest,
+                canonicalPairs: pairs,
+                strategyKey: "__test_success__",
+                strategyParams: { lookback: 20, threshold: 0.5 },
+                backtestSettings: { direction: "long", slippage: 0, commission: 0 } as any,
+                capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 } as any,
+                interval: "4h",
+                workerCount: 2,
+                shardSize: 1,
+                useRustEnginePreference: false,
+                workerPath: exitZeroOnFirstTaskWorkerPath,
+            }),
+            new Promise<never>((_resolve, reject) => {
+                setTimeout(
+                    () => reject(new Error(
+                        "execute() hung: a worker exiting with code 0 mid-task must fail its in-flight shard, not wait forever",
+                    )),
+                    15_000,
+                );
+            }),
+        ]);
+        assert.fail("execute() must not resolve: the fixture workers never produce shard_complete");
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        assert.match(
+            message,
+            /Worker exited while processing shard|No worker available|All TOP_MEAN workers died|Operation cancelled/,
+            `execute() must reject with a worker-loss diagnostic, got: ${message}`,
+        );
+        // The shard failed in flight on BOTH attempts — the manifest must not
+        // claim it completed.
+        assert.equal(manifest.completedShards.length, 0, "a shard whose worker exited mid-task must not be acknowledged as completed");
+    } finally {
+        pool.cancel();
+    }
+    console.log("PASS: worker exit with code 0 rejects the in-flight task");
+}
+
+/**
+ * Audit (retry-success finding): a shard that errored once was recorded in
+ * failedShards; when its retry succeeded it was ALSO recorded in
+ * completedShards and never removed from failedShards, so the manifest
+ * claimed the same shard both failed and completed. Resume survives (the
+ * pending filter keeps completed shards), but diagnostics and status counts
+ * lie. The flaky-once fixture errors the first attempt and completes the
+ * retry; the final manifest must list the shard ONLY as completed.
+ */
+async function testRetrySuccessClearsFailedShard(): Promise<void> {
+    const pairs = ["FAKE_A•+FAKE_B•"];
+    const manifest: TopMeanRunManifest = {
+        schema: "top_mean_run_manifest.v1",
+        runId: "smoke_test_retry_clears_failed",
+        status: "running",
+        fingerprint: "smoke",
+        strategyKey: "__test_success__",
+        interval: "4h",
+        pairCount: pairs.length,
+        shardSize: 1,
+        totalShards: 1,
+        completedShards: [],
+        failedShards: [],
+        completedPairsCount: 0,
+        failedPairsCount: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+    };
+    const pool = new TopMeanWorkerPool();
+    try {
+        await pool.execute({
+            runId: manifest.runId,
+            manifest,
+            canonicalPairs: pairs,
+            strategyKey: "__test_success__",
+            strategyParams: { lookback: 20, threshold: 0.5 },
+            backtestSettings: { direction: "long", slippage: 0, commission: 0 } as any,
+            capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 } as any,
+            interval: "4h",
+            workerCount: 1,
+            shardSize: 1,
+            useRustEnginePreference: false,
+            workerPath: flakyOnceWorkerPath,
+        });
+    } finally {
+        pool.cancel();
+    }
+    assert.deepEqual(manifest.completedShards, [0], "the retry must complete the shard");
+    assert.deepEqual(
+        manifest.failedShards,
+        [],
+        "a shard whose retry succeeded must be removed from failedShards — it cannot be both failed and completed",
+    );
+    assert.equal(manifest.completedPairsCount, 1);
+    console.log("PASS: successful retry removes the shard from failedShards");
+}
+
 function testRunLevelNowSecThreadsIntoWorkerTasks(): void {
     const options = {
         strategyKey: "close_location_median_alignment",
@@ -455,6 +586,8 @@ async function main(): Promise<void> {
     await testRetryDrainsAcrossWorkerRelease();
     await testShardCompletesOnlyAfterDurableWrite();
     await testAllWorkersDyingDuringQueuedRetryRejects();
+    await testWorkerExitCodeZeroFailsInFlightTask();
+    await testRetrySuccessClearsFailedShard();
     console.log("PASS: sp500-top-mean-worker-pool.spec.ts");
 }
 

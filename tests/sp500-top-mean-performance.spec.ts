@@ -38,6 +38,9 @@ const diagnostic: TopMeanPerformanceDiagnostic = {
         aggregateMs: 90,
         targetLoadMs: 400,
         targetDatasets: 96,
+        targetCacheHits: 30,
+        targetCacheMisses: 66,
+        targetCachePeakEntries: 64,
     },
     worker: {
         workers: 4,
@@ -101,6 +104,11 @@ assert.equal(
     "PERFORMANCE ENGINE | requested=rust | actual=typescript | fallback=execution model is not signal_close; slippage is enabled; same-bar exits are disabled",
 );
 assert.match(lines[3]!, /targetLoad=400\.0ms\/96/);
+assert.match(
+    lines[3]!,
+    /targetCache=30 hit\/66 miss\/64 peak/,
+    "the replay target LRU counters must be observable in the performance report",
+);
 assert.match(lines[4]!, /shards=15\/15/);
 assert.match(lines[5]!, /load=300\.0ms/);
 assert.equal(

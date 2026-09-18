@@ -12,6 +12,7 @@ import { getRunDir, isValidRunId } from "./sp500-top-mean-artifact-store";
 import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import type {
     CandidateOutcomeRecord,
+    OpenScoreUsdEventDetail,
     PoolSnapshotRecord,
 } from "./batch-open-score-usd-replay-engine";
 import {
@@ -384,6 +385,27 @@ async function writeJsonlFile<T>(filename: string, rows: readonly T[]): Promise<
     }
 }
 
+/**
+ * Streaming twin of {@link writeJsonlFile} for mapped rows. Audit (archive
+ * memory finding): archive assembly used to `rows.map(...)` the ENTIRE
+ * full-window and per-year event arrays up-front, materializing a second full
+ * row-object array while the source rows are still retained by the result —
+ * an avoidable peak-memory spike during finalization. Mapping per row inside
+ * the write loop produces byte-identical JSONL without the duplicate arrays.
+ */
+async function writeMappedJsonlFile<T, U>(
+    filename: string,
+    rows: readonly T[],
+    map: (row: T) => U,
+): Promise<void> {
+    const tracked = createTrackedJsonlStream(filename);
+    try {
+        for (const row of rows) await writeStreamLine(tracked, map(row));
+    } finally {
+        await closeWriteStream(tracked);
+    }
+}
+
 async function readJsonlFile<T>(filename: string): Promise<T[]> {
     const text = await readFile(filename, "utf8");
     return text
@@ -504,21 +526,19 @@ export async function archiveCompletedTopMeanRun(
             },
             windowDesignation: resolveTopMeanWindowDesignation(request),
         };
-        const annualEventFiles = (result.annualReports ?? [])
-            .filter((annual) => (annual.eventDetails?.length ?? 0) > 0)
-            .map((annual) => ({
-                filename: `events-annual-${annual.year}.jsonl`,
-                rows: (annual.eventDetails ?? []).map((row) => ({
-                    ...row,
-                    eventId: `${request.interval}:${row.decisionTime}`,
-                    poolVersion: source.poolVersion,
-                })),
-            }));
-        const fullEventRows = (result.openScoreEventDetails ?? []).map((row) => ({
+        // Audit (archive memory finding): the mapped event rows are streamed
+        // per file (writeMappedJsonlFile) instead of being pre-materialized
+        // into fullEventRows / annualEventFiles[].rows alongside the retained
+        // source arrays. Output bytes and file order are identical to the
+        // previous map-then-write form.
+        const mapEventRow = (row: OpenScoreUsdEventDetail): OpenScoreUsdEventDetail & {
+            eventId: string;
+            poolVersion: string | null;
+        } => ({
             ...row,
             eventId: `${request.interval}:${row.decisionTime}`,
             poolVersion: source.poolVersion,
-        }));
+        });
 
         await mkdir(runDir, { recursive: true });
         // Audit (reused-run-id finding): only meta.json used to be removed
@@ -537,9 +557,11 @@ export async function archiveCompletedTopMeanRun(
         await Promise.all([
             writeFile(path.join(runDir, "report.txt"), result.reportLines.join("\n"), "utf8"),
         ]);
-        await writeJsonlFile(path.join(runDir, "events-full.jsonl"), fullEventRows);
-        for (const file of annualEventFiles) {
-            await writeJsonlFile(path.join(runDir, file.filename), file.rows);
+        await writeMappedJsonlFile(path.join(runDir, "events-full.jsonl"), result.openScoreEventDetails ?? [], mapEventRow);
+        for (const annual of result.annualReports ?? []) {
+            const annualRows = annual.eventDetails;
+            if (!annualRows || annualRows.length === 0) continue;
+            await writeMappedJsonlFile(path.join(runDir, `events-annual-${annual.year}.jsonl`), annualRows, mapEventRow);
         }
         if (options.phase0bFiles?.poolSnapshotsPath) {
             await copyFile(options.phase0bFiles.poolSnapshotsPath, path.join(runDir, "pool-snapshots.jsonl"));

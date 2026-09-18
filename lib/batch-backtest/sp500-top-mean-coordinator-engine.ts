@@ -42,6 +42,7 @@ import {
     type ReplayComparison,
 } from "./batch-open-score-usd-replay-engine";
 import { loadServerBatchDataset } from "./server-batch-data-loader";
+import { SyntheticLegCache } from "./synthetic-leg-cache";
 // Import hygiene (docs/open-score-cap-tilt.md): the ONLY import allowed from
 // lib/ibkr-data/ — the reader is a dependency-free leaf, safe for the
 // vite.config esbuild bundle. NEVER import ibkr-data-vite-plugin.ts here.
@@ -272,6 +273,34 @@ export function orderTopMeanReplayTargets<T>(
     return passIndex % 2 === 0 ? targets : targets.slice().reverse();
 }
 
+/**
+ * Replay target datasets are ~5–10 MB each, so the coordinator replay cache
+ * is an LRU bounded to this many entries (mirrors the shared data-cache cap)
+ * instead of retaining every target for the whole run — a 500-target run used
+ * to hold several GB alongside the worker caches. Paired with
+ * orderTopMeanReplayTargets' alternating traversal so annual passes re-hit
+ * the previous pass's tail.
+ */
+export const TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES = 64;
+
+const TOP_MEAN_REPLAY_PROGRESS_MIN_INTERVAL_MS = 250;
+const TOP_MEAN_REPLAY_PROGRESS_MIN_FRACTION = 0.01;
+
+/**
+ * Audit (replay-progress finding): replay phase callbacks fire far more often
+ * than the NDJSON stream should carry. Forward an event when the throttle
+ * window (250 ms) has elapsed OR progress moved by >=1% of the phase total;
+ * phase transitions are always emitted by the caller.
+ */
+export function shouldEmitTopMeanReplayProgress(
+    elapsedMsSinceLastEmit: number,
+    completedDelta: number,
+    total: number,
+): boolean {
+    if (elapsedMsSinceLastEmit >= TOP_MEAN_REPLAY_PROGRESS_MIN_INTERVAL_MS) return true;
+    return total > 0 && Math.abs(completedDelta) / total >= TOP_MEAN_REPLAY_PROGRESS_MIN_FRACTION;
+}
+
 export interface TopMeanStatusResponse {
     runId: string;
     status: "running" | "completed" | "interrupted" | "failed";
@@ -308,17 +337,38 @@ export function getActiveTopMeanCoordinatorEngine(): TopMeanCoordinatorEngine | 
 }
 
 /**
+ * Test seam only: installs/removes the process-global active engine so the
+ * Stop route handler can be exercised without a live run. Production sets
+ * activeEngineInstance exclusively inside run().
+ */
+export function setActiveTopMeanCoordinatorEngineForTests(
+    engine: TopMeanCoordinatorEngine | null,
+): void {
+    activeEngineInstance = engine;
+}
+
+/**
  * Injectable collaborators (test seam only — production constructs the engine
  * with two arguments). Lets specs inject a delayed/observed archive phase so
  * the stop-during-archive commit boundary is deterministically testable.
  */
 export interface TopMeanCoordinatorEngineDeps {
     archiveCompletedRun?: typeof archiveCompletedTopMeanRun;
+    /** Test seam: inject a failing manifest writer to prove terminal-state delivery survives persistence failures. */
+    saveManifest?: typeof saveManifest;
 }
 
 export class TopMeanCoordinatorEngine {
     private pool: TopMeanWorkerPool | null = null;
     private isStopped = false;
+    /**
+     * Audit (replay-abort finding): aborts in-flight replay target loads on
+     * Stop. loadServerBatchDataset accepts an AbortSignal; without this a slow
+     * disk/network load delayed Stop (and the owner lock) until the current
+     * dataset finished. Created at the replay phase, cleared in run()'s
+     * finally, and null-safe to abort before the replay phase starts.
+     */
+    private replayAbortController: AbortController | null = null;
     private currentPhase: "preflight" | "backtesting" | "replay" | "completed" | "interrupted" | "failed" = "preflight";
     private progressText = "Initializing preflight...";
     private manifest: TopMeanRunManifest | null = null;
@@ -531,6 +581,12 @@ export class TopMeanCoordinatorEngine {
 
     public stop(): void {
         this.isStopped = true;
+        // Audit (replay-abort finding): cancel any in-flight replay target
+        // load so Stop is responsive during replay I/O instead of waiting for
+        // the current dataset load to finish. The rejection propagates into
+        // run()'s catch, which routes it to the interrupted path via
+        // isStopped.
+        this.replayAbortController?.abort();
         if (this.pool) {
             this.pool.cancel();
         }
@@ -538,10 +594,32 @@ export class TopMeanCoordinatorEngine {
             this.manifest.status = "interrupted";
             this.updateManifestEngineTelemetry(this.manifest);
             this.manifest.updatedAt = Date.now();
-            saveManifest(this.manifest, this.baseDir);
+            this.persistManifestBestEffort("stop");
         }
         this.currentPhase = "interrupted";
         this.progressText = "Stopped by user";
+    }
+
+    /**
+     * Audit (terminal-manifest finding): the terminal paths (stop, completed,
+     * fatal, interrupted) used to call saveManifest unprotected, so a final
+     * filesystem/antivirus failure could throw past the terminal transition
+     * and prevent the done/fatal event from ever being emitted — turning a
+     * completed Stop or a fatal diagnostic into an apparently hung request.
+     * Manifest durability is still attempted; only the control flow no longer
+     * depends on it succeeding.
+     */
+    private persistManifestBestEffort(reason: string): void {
+        if (!this.manifest) return;
+        try {
+            (this.deps?.saveManifest ?? saveManifest)(this.manifest, this.baseDir);
+        } catch (error) {
+            debugLogger.warn("sp500_top_mean.manifest_persist_failed", {
+                runId: this._request.runId,
+                reason,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
     }
 
     public async run(emitNdjson: (event: unknown) => void): Promise<void> {
@@ -575,6 +653,9 @@ export class TopMeanCoordinatorEngine {
                 aggregateMs: 0,
                 targetLoadMs: 0,
                 targetDatasets: 0,
+                targetCacheHits: 0,
+                targetCacheMisses: 0,
+                targetCachePeakEntries: 0,
             },
         };
         const preflightStartedAt = performance.now();
@@ -839,6 +920,13 @@ export class TopMeanCoordinatorEngine {
             type ReplayPhase = "scan" | "events" | "targets" | "outcomes" | "aggregate";
             let activeReplayPhase: ReplayPhase | null = null;
             let activeReplayPhaseStartedAt = replayStartedAt;
+            // Audit (replay-progress finding): the replay engine emits detailed
+            // per-phase progress (phase, detail, completed, total); the
+            // coordinator used to keep only the phase and discard the rest, so
+            // long target/outcome passes looked frozen. Forward the detail
+            // through progressText + NDJSON progress events, throttled by
+            // shouldEmitTopMeanReplayProgress (phase transitions always emit).
+            let lastReplayProgressEmit: { atMs: number; completed: number } | null = null;
             const finishActiveReplayPhase = (): void => {
                 if (!activeReplayPhase) return;
                 const elapsedMs = performance.now() - activeReplayPhaseStartedAt;
@@ -865,34 +953,54 @@ export class TopMeanCoordinatorEngine {
             const requestInterval = this._request.interval;
 
             const targetPerformance = this.performanceDiagnostic;
-            // A large custom universe can exceed the shared 64-entry data LRU.
-            // Keep this cache scoped to one coordinator replay so annual
-            // windows reuse parsed OHLCV without changing process-wide cache
-            // caps or retaining datasets after the run completes.
-            const replayTargetCache = new Map<
-                string,
+            // Audit (unbounded-replay-cache finding): this used to be a plain
+            // Map, so every loaded target dataset (~5–10 MB) stayed resident
+            // for the WHOLE run — several GB at 500 targets alongside the
+            // worker caches and result details. SyntheticLegCache bounds
+            // retention to a fixed LRU working set (see
+            // TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES) while annual passes
+            // still reuse parsed OHLCV through orderTopMeanReplayTargets'
+            // alternating traversal. It also stores PROMISES, so concurrent
+            // requests for one symbol share a single load. The hit/miss/peak
+            // counters make cache effectiveness observable in the performance
+            // diagnostic.
+            const replayTargetCache = new SyntheticLegCache<
                 Awaited<ReturnType<typeof loadServerBatchDataset>>
-            >();
+            >(TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES);
+            const replayAbortController = new AbortController();
+            this.replayAbortController = replayAbortController;
             const coordinator = this;
             const targetLoader = (targets: readonly typeof replayTargets[number][]) => () => (async function* () {
                 for (let i = 0; i < targets.length; i++) {
                     const { asset, symbol } = targets[i]!;
-                    let data = replayTargetCache.get(symbol);
-                    if (data === undefined) {
+                    const cached = replayTargetCache.get(symbol);
+                    let data: Awaited<ReturnType<typeof loadServerBatchDataset>>;
+                    if (cached) {
+                        data = await cached;
+                    } else {
+                        // Audit (replay-abort finding): the abort signal makes
+                        // Stop cancel the load itself instead of only checking
+                        // isStopped between datasets.
                         const targetLoadStartedAt = performance.now();
+                        const pending = loadServerBatchDataset(symbol, requestInterval, replayAbortController.signal);
+                        replayTargetCache.set(symbol, pending);
+                        targetPerformance.replay.targetCacheMisses = replayTargetCache.missCount();
                         try {
-                            data = await loadServerBatchDataset(symbol, requestInterval);
+                            data = await pending;
                         } finally {
                             const completedAt = performance.now();
                             targetPerformance.replay.targetLoadMs += completedAt - targetLoadStartedAt;
                         }
-                        replayTargetCache.set(symbol, data);
                         const lastBar = data[data.length - 1];
                         const timeSec = lastBar ? timeToNumber(lastBar.time) : null;
                         if (timeSec !== null && (coordinator.latestTargetBarTimeSec === null || timeSec > coordinator.latestTargetBarTimeSec)) {
                             coordinator.latestTargetBarTimeSec = timeSec;
                         }
+                        if (replayTargetCache.size > targetPerformance.replay.targetCachePeakEntries) {
+                            targetPerformance.replay.targetCachePeakEntries = replayTargetCache.size;
+                        }
                     }
+                    targetPerformance.replay.targetCacheHits = replayTargetCache.hitCount();
                     targetPerformance.replay.targetDatasets += 1;
                     yield { asset, symbol, data };
                 }
@@ -971,11 +1079,30 @@ export class TopMeanCoordinatorEngine {
                         ...(this._request.capTiltWeight && replayCapTiltLookup
                             ? { capTiltWeight: this._request.capTiltWeight, lookupMarketCap: replayCapTiltLookup }
                             : {}),
-                        onPhase: (phase) => {
-                            if (phase === activeReplayPhase) return;
-                            finishActiveReplayPhase();
-                            activeReplayPhase = phase;
-                            activeReplayPhaseStartedAt = performance.now();
+                        onPhase: (phase, detail, completed, total) => {
+                            if (!detail) return;
+                            if (phase !== activeReplayPhase) {
+                                finishActiveReplayPhase();
+                                activeReplayPhase = phase;
+                                activeReplayPhaseStartedAt = performance.now();
+                                // Phase transitions always emit so the UI
+                                // never sits on a stale phase label.
+                                lastReplayProgressEmit = { atMs: performance.now(), completed };
+                                this.progressText = detail;
+                                emitNdjson({ type: "progress", phase: "replay", completed, total, text: detail });
+                                return;
+                            }
+                            const nowMs = performance.now();
+                            const elapsedMs = lastReplayProgressEmit
+                                ? nowMs - lastReplayProgressEmit.atMs
+                                : Number.POSITIVE_INFINITY;
+                            const completedDelta = lastReplayProgressEmit
+                                ? completed - lastReplayProgressEmit.completed
+                                : completed;
+                            if (!shouldEmitTopMeanReplayProgress(elapsedMs, completedDelta, total)) return;
+                            lastReplayProgressEmit = { atMs: nowMs, completed };
+                            this.progressText = detail;
+                            emitNdjson({ type: "progress", phase: "replay", completed, total, text: detail });
                         },
                         ...(sampleFromSec !== undefined ? { sampleFromSec } : {}),
                         ...(sampleToSec !== undefined ? { sampleToSec } : {}),
@@ -1023,12 +1150,40 @@ export class TopMeanCoordinatorEngine {
                 });
 
             const annualReports: TopMeanAnnualReplaySummary[] = [];
+            // Audit (annual-cutoff finding): thread the ONE run-level cutoff
+            // (the same runNowSec every worker task carries) into the annual
+            // window derivation. The default fresh Date.now() made a run that
+            // crossed a UTC day/year boundary derive annual report windows
+            // from a different temporal cutoff than the rest of the run.
             const annualWindows = buildTopMeanAnnualReplayWindows(
                 this._request.sampleFromSec,
                 this._request.sampleToSec,
+                runNowSec,
             );
+            // Audit (single-year dedupe): when the explicit From/To bounds
+            // fall within ONE calendar year, buildTopMeanAnnualReplayWindows
+            // returns exactly one window whose bounds EQUAL the explicit
+            // full-window bounds (strict equality below — a clamped or
+            // defaulted bound never matches). Re-running runReplayForWindow
+            // for that window would repeat an identical scan/merge/aggregate;
+            // build the annual report from the full-window result instead.
+            const reuseFullWindowForSingleAnnual = annualWindows.length === 1
+                && typeof this._request.sampleFromSec === "number"
+                && typeof this._request.sampleToSec === "number"
+                && annualWindows[0]!.sampleFromSec === this._request.sampleFromSec
+                && annualWindows[0]!.sampleToSec === this._request.sampleToSec;
             for (let index = 0; index < annualWindows.length; index += 1) {
                 const window = annualWindows[index]!;
+                if (reuseFullWindowForSingleAnnual) {
+                    annualReports.push({
+                        ...window,
+                        horizons: buildHorizonSummaries(replayResult),
+                        eventDetails: replayResult.eventDetails,
+                        warnings: replayResult.warnings,
+                        reportLines: replayResult.reportLines,
+                    });
+                    continue;
+                }
                 this.progressText = `Running OPEN_SCORE USD replay for ${window.year} (${index + 1}/${annualWindows.length})...`;
                 emitNdjson({ type: "progress", phase: "replay", text: this.progressText });
                 const annualResult = await runReplayForWindow(window.sampleFromSec, window.sampleToSec);
@@ -1160,7 +1315,7 @@ export class TopMeanCoordinatorEngine {
                 }
                 this.updateManifestEngineTelemetry(this.manifest);
                 this.manifest.updatedAt = Date.now();
-                saveManifest(this.manifest, this.baseDir);
+                this.persistManifestBestEffort("completed");
             }
 
             // The full-detail summary stays on this.resultSummary for the
@@ -1189,7 +1344,7 @@ export class TopMeanCoordinatorEngine {
                 this.manifest.error = message;
                 this.updateManifestEngineTelemetry(this.manifest);
                 this.manifest.updatedAt = Date.now();
-                saveManifest(this.manifest, this.baseDir);
+                this.persistManifestBestEffort("failed");
             }
             // The current snapshot (if computed before the failure) survives
             // the replay failure: it is already on disk (step 2b) and is
@@ -1202,6 +1357,7 @@ export class TopMeanCoordinatorEngine {
                 ...(this.currentSnapshotResult ? { currentSnapshot: this.currentSnapshotResult } : {}),
             });
         } finally {
+            this.replayAbortController = null;
             if (phase0bWriter) {
                 await phase0bWriter.dispose().catch(() => undefined);
             }
@@ -1222,7 +1378,7 @@ export class TopMeanCoordinatorEngine {
             this.manifest.status = "interrupted";
             this.updateManifestEngineTelemetry(this.manifest);
             this.manifest.updatedAt = Date.now();
-            saveManifest(this.manifest, this.baseDir);
+            this.persistManifestBestEffort("interrupted");
         }
         emitNdjson({
             type: "done",

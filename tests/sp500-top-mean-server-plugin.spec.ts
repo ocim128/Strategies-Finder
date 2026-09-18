@@ -7,8 +7,11 @@ import {
     buildTopMeanAnnualReplayWindows,
     capTopMeanEventDetailsForWire,
     orderTopMeanReplayTargets,
+    setActiveTopMeanCoordinatorEngineForTests,
+    shouldEmitTopMeanReplayProgress,
     toWireSafeTopMeanResultSummary,
     TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS,
+    TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES,
     TopMeanCoordinatorEngine,
     type TopMeanResultSummary,
 } from "../lib/batch-backtest/sp500-top-mean-coordinator-engine";
@@ -785,6 +788,202 @@ async function testTopMeanRouteRejectsInvalidRunIdsAndDates(): Promise<void> {
     console.log("PASS: TOP_MEAN route rejects invalid run ids and date windows with 400");
 }
 
+/** POST a body to the registered stop route and capture the raw response. */
+async function postTopMeanStopBody(
+    body: Record<string, unknown>,
+): Promise<{ statusCode: number; payload: Record<string, unknown> }> {
+    const routes = new Map<string, (req: any, res: any) => void | Promise<void>>();
+    registerSp500TopMeanRoutes({
+        use(path: string, handler: any) {
+            routes.set(path, handler);
+        },
+    }, {
+        maxBodyBytes: 1024 * 1024,
+        rememberLocalApiOriginFromRequest: () => undefined,
+        ownerLocks: {
+            isBusy: () => false,
+            acquire: () => ({ runOwner: 1, analysisOwner: 1 }),
+            releaseIfStillOwner: () => undefined,
+        },
+    });
+
+    const response: any = {
+        statusCode: 0,
+        headers: {} as Record<string, string>,
+        body: "",
+        setHeader(name: string, value: string) { this.headers[name] = value; },
+        end(body: string) { this.body = body; },
+    };
+    const request: any = Readable.from([JSON.stringify(body)]);
+    request.method = "POST";
+    request.url = "/api/batch-backtest/sp500-top-mean/stop";
+    request.headers = { host: "127.0.0.1:5173" };
+    request.socket = { remoteAddress: "127.0.0.1" };
+
+    await routes.get("/api/batch-backtest/sp500-top-mean/stop")!(request, response);
+    return {
+        statusCode: response.statusCode,
+        payload: response.body ? JSON.parse(response.body) as Record<string, unknown> : {},
+    };
+}
+
+/**
+ * Audit (exact stop runId finding): the Stop route used to stop the ACTIVE
+ * run whenever the posted runId was missing or blank — a stale or malformed
+ * local client could cancel an unrelated run. Missing/blank/invalid ids must
+ * be a 400, a well-formed mismatch must be a no-op { stopped: false }, and
+ * only the exact active run id may stop the engine.
+ */
+async function testStopRouteRequiresExactRunId(): Promise<void> {
+    const engine = new TopMeanCoordinatorEngine({
+        runId: "spec_stop_exact_run",
+        strategyKey: "close_location_median_alignment",
+        strategyParams: {},
+        backtestSettings: {},
+        capitalSettings: {},
+        interval: "4h",
+    } as any);
+    setActiveTopMeanCoordinatorEngineForTests(engine);
+    try {
+        const missing = await postTopMeanStopBody({});
+        assert.equal(missing.statusCode, 400);
+        assert.match(String(missing.payload.error), /runId/);
+
+        const blank = await postTopMeanStopBody({ runId: "   " });
+        assert.equal(blank.statusCode, 400);
+
+        const invalid = await postTopMeanStopBody({ runId: "spec_evil/../spec_stop_exact_run" });
+        assert.equal(invalid.statusCode, 400);
+        assert.equal(invalid.payload.error, "Invalid runId.");
+
+        assert.equal(engine.getStatus().status, "running", "rejections must not stop the active engine");
+
+        const stale = await postTopMeanStopBody({ runId: "spec_stop_stale_run" });
+        assert.equal(stale.statusCode, 200);
+        assert.deepEqual(stale.payload, { ok: true, stopped: false });
+        assert.equal(engine.getStatus().status, "running", "a mismatched runId must not stop the active engine");
+
+        const exact = await postTopMeanStopBody({ runId: "spec_stop_exact_run" });
+        assert.equal(exact.statusCode, 200);
+        assert.deepEqual(exact.payload, { ok: true, stopped: true, runId: "spec_stop_exact_run" });
+        assert.equal(engine.getStatus().phase, "interrupted", "only the exact active run id stops the engine");
+    } finally {
+        // Never leak the active engine into other tests in this file.
+        setActiveTopMeanCoordinatorEngineForTests(null);
+    }
+    console.log("PASS: TOP_MEAN stop route requires the exact active runId");
+}
+
+/**
+ * Audit (terminal-manifest finding): stop() used to call saveManifest
+ * unprotected, so a final filesystem failure threw past the interrupted
+ * transition — the Stop route returned an error and the run looked hung
+ * instead of terminal. The same wrapper guards the completed/fatal/interrupted
+ * paths. With an injected failing manifest writer, stop() must still deliver
+ * the terminal state.
+ */
+async function testStopSurvivesManifestPersistenceFailure(): Promise<void> {
+    const baseDir = mkdtempSync(join(tmpdir(), "sp500-top-mean-persist-"));
+    try {
+        const engine = new TopMeanCoordinatorEngine({
+            runId: "spec_persist_fail_run",
+            strategyKey: "close_location_median_alignment",
+            strategyParams: {},
+            backtestSettings: {},
+            capitalSettings: {},
+            interval: "4h",
+        } as any, baseDir, {
+            saveManifest: () => {
+                throw new Error("simulated terminal manifest write failure");
+            },
+        });
+        (engine as any).manifest = {
+            schema: "top_mean_run_manifest.v1",
+            runId: "spec_persist_fail_run",
+            status: "running",
+            fingerprint: "spec",
+            strategyKey: "close_location_median_alignment",
+            interval: "4h",
+            pairCount: 1,
+            shardSize: 1,
+            totalShards: 1,
+            completedShards: [],
+            failedShards: [],
+            completedPairsCount: 0,
+            failedPairsCount: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        };
+        assert.doesNotThrow(() => engine.stop(), "a manifest persistence failure must not break the Stop transition");
+        assert.equal(engine.getStatus().phase, "interrupted");
+        assert.equal(engine.getStatus().status, "interrupted");
+    } finally {
+        rmSync(baseDir, { recursive: true, force: true });
+    }
+    console.log("PASS: stop survives a terminal manifest persistence failure");
+}
+
+/**
+ * Audit (single-year dedupe): the coordinator rebuilds the annual report from
+ * the full-window replay INSTEAD of re-running an identical replay when the
+ * explicit From/To bounds produce exactly one annual window whose bounds
+ * EQUAL the request bounds (strict equality). These assertions lock the
+ * window-derivation preconditions that the engine's dedupe keys on.
+ */
+function testSingleYearWindowDedupePreconditions(): void {
+    const sec = (value: string): number => Math.floor(Date.parse(value) / 1000);
+    const nowSec = sec("2026-07-29T12:00:00.000Z");
+
+    // Explicit bounds inside ONE calendar year: exactly one window, bounds
+    // identical to the request bounds -> dedupe fires.
+    const from = sec("2021-03-10T00:00:00.000Z");
+    const to = sec("2021-11-05T23:59:59.000Z");
+    const windows = buildTopMeanAnnualReplayWindows(from, to, nowSec);
+    assert.equal(windows.length, 1, "explicit bounds within one year must derive exactly one annual window");
+    assert.equal(windows[0]!.sampleFromSec, from, "the single window's From must equal the explicit full-window From");
+    assert.equal(windows[0]!.sampleToSec, to, "the single window's To must equal the explicit full-window To");
+
+    // Bounds spanning a year boundary -> two windows -> no dedupe.
+    const spanning = buildTopMeanAnnualReplayWindows(
+        sec("2021-11-01T00:00:00.000Z"),
+        sec("2022-02-01T23:59:59.000Z"),
+        nowSec,
+    );
+    assert.equal(spanning.length, 2, "bounds crossing a year boundary must stay two distinct replay windows");
+
+    // A future-dated To is clipped to the run cutoff, so the window bound can
+    // never equal the request bound -> no dedupe (the replays differ).
+    const futureTo = nowSec + 365 * 24 * 3600;
+    const clipped = buildTopMeanAnnualReplayWindows(sec("2026-01-01T00:00:00.000Z"), futureTo, nowSec);
+    assert.ok(clipped.length >= 1);
+    assert.notEqual(
+        clipped[clipped.length - 1]!.sampleToSec,
+        futureTo,
+        "a To beyond the run cutoff is clipped, so the dedupe precondition must not fire",
+    );
+    console.log("PASS: single-year replay dedupe preconditions (exact-bound equality only)");
+}
+
+/**
+ * Audit (replay-progress finding): same-phase replay progress is throttled to
+ * 250 ms OR >=1% of the phase total; phase transitions always emit (the
+ * caller handles those). The LRU bound constant locks the replay target cache
+ * working set (~64 x 5–10 MB datasets).
+ */
+function testReplayProgressThrottleAndCacheBound(): void {
+    assert.equal(shouldEmitTopMeanReplayProgress(0, 0, 500), false, "no elapsed time and no progress must suppress the event");
+    assert.equal(shouldEmitTopMeanReplayProgress(100, 4, 500), false, "sub-1% progress inside the time window must suppress the event");
+    assert.equal(shouldEmitTopMeanReplayProgress(100, 5, 500), true, ">=1% progress must emit even inside the time window");
+    assert.equal(shouldEmitTopMeanReplayProgress(251, 0, 500), true, ">=250ms must emit regardless of progress");
+    assert.equal(shouldEmitTopMeanReplayProgress(0, 0, 0), false, "zero-total phases must gate on time only");
+    assert.equal(
+        TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES,
+        64,
+        "the replay target LRU bound keeps cache retention ~320–640 MB instead of multi-GB",
+    );
+    console.log("PASS: replay progress throttle and target cache bound contract");
+}
+
 /**
  * Audit (stop-during-archive finding): Stop fired while the archive
  * finalization is awaiting disk work must win — the run ends interrupted
@@ -1120,6 +1319,10 @@ async function main(): Promise<void> {
     await testTopMeanRouteRejectsNonBooleanArchiveFlag();
     await testStaleRunningManifestReconcilesToInterrupted();
     await testTopMeanRouteRejectsInvalidRunIdsAndDates();
+    await testStopRouteRequiresExactRunId();
+    await testStopSurvivesManifestPersistenceFailure();
+    testSingleYearWindowDedupePreconditions();
+    testReplayProgressThrottleAndCacheBound();
     await testStopDuringArchiveStaysInterrupted();
     await testManifestBackedStatusPreservesArchiveOutcome();
     testWireSafetyCapsEventDetailsAndStripsDiagnostics();

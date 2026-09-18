@@ -550,6 +550,15 @@ export class TopMeanWorkerPool {
                             completedSet.add(msg.shardIndex);
                             options.manifest.completedShards.push(msg.shardIndex);
                         }
+                        // Audit (retry-success finding): the first failure
+                        // recorded the shard in failedShards; a successful
+                        // retry must remove it again so the manifest never
+                        // claims the shard BOTH failed and completed. Resume
+                        // survives either way (completed wins in the pending
+                        // filter), but diagnostics and status counts lie.
+                        if (failedSet.delete(msg.shardIndex)) {
+                            options.manifest.failedShards = options.manifest.failedShards.filter((idx) => idx !== msg.shardIndex);
+                        }
                         shardsSinceFlush += 1;
                         manifestDirty = true;
                         void flushManifest(false);
@@ -607,12 +616,17 @@ export class TopMeanWorkerPool {
 
             const onExit = (code: number): void => {
                 // Unexpected exit while a task is in flight: fail the task.
-                // Expected exits happen after we terminate() the worker at the
-                // end of the run, by which point workerInFlight is empty.
+                // Audit (exit-code-0 hang finding): reject on ANY exit code —
+                // a worker calling process.exit(0) mid-shard used to leave its
+                // promise pending forever and hang Promise.race(activePromises)
+                // even while other workers stayed alive (the queued-retry drain
+                // cannot help; the stuck promise is IN FLIGHT, not queued).
+                // Expected end-of-run terminate() happens only after every
+                // shard settled, so workerInFlight is empty there.
                 const inflight = workerInFlight.get(worker);
-                if (inflight && !inflight.settled && code !== 0) {
+                if (inflight && !inflight.settled) {
                     inflight.settled = true;
-                    inflight.reject(new Error(`Worker stopped with exit code ${code}`));
+                    inflight.reject(new Error(`Worker exited while processing shard ${inflight.task.shardIndex} (code ${code})`));
                 }
                 if (code !== 0) {
                     debugLogger.warn("sp500_top_mean.worker_unexpected_exit", {
@@ -667,6 +681,20 @@ export class TopMeanWorkerPool {
                 const free = freeWorkers.pop();
                 if (free) {
                     dispatch(free);
+                } else if (this.activeWorkers.size === 0) {
+                    // Audit (queued-after-last-exit hang): the last worker's
+                    // exit drains pendingTasks synchronously, but a retry is
+                    // usually queued LATER — from the in-flight rejection's
+                    // microtask, after both exit events were processed. With
+                    // no worker alive nothing will ever drain the queue, so
+                    // the queued promise (and Promise.race) would park
+                    // forever. Reject immediately instead.
+                    inflight.settled = true;
+                    inflight.reject(new Error(
+                        this.isCancelled || dispatchHalted
+                            ? "Operation cancelled"
+                            : "No worker available for queued task",
+                    ));
                 } else {
                     pendingTasks.push(() => {
                         // Re-check cancel between queueing and dispatch.
