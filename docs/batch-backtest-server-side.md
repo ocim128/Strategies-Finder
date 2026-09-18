@@ -80,16 +80,17 @@ Clicking OPEN_SCORE USD streams the replay report back via
 `POST /api/batch-backtest/open-score-usd`.
 
 The replay is a descriptive event-level study, not an order allocator. The
-current engine includes long-side raw/adjusted/mean selectors, the
-`TOP_MEAN_RAW_UNIQUE` tied-set refinement, active-pair/retained-degree
-selectors, and the profit-gated `TOP_RAW_PROFIT` / `TOP_MEAN_PROFIT`
-variants (scores count only pairs whose pair backtest netProfit was strictly
-positive — a research-only look-ahead filter, since a pair's full-window P&L
-is not known at decision time) and their causal point-in-time counterparts
-`TOP_RAW_PROFIT_NOW` / `TOP_MEAN_PROFIT_NOW` (a pair votes only when its pnl
-realized at or before the event is strictly positive — computed from per-trade pnl
-on compact artifacts written from that field's introduction onward), plus
-pairwise comparisons. The profit gate
+current engine includes the long-side raw/mean selectors, the
+`TOP_MEAN_RAW_UNIQUE` tied-set refinement, the pnl-gated `TOP_RAW_PROFIT` /
+`TOP_MEAN_PROFIT` variants (research-only look-ahead) and their causal
+point-in-time `TOP_*_PROFIT_NOW` counterparts, plus per-asset breakdown and
+dominant-asset exclusion diagnostics. It no longer includes the adjusted,
+VS_RAW/RANK2 pairwise, MAX_ACTIVE/MAX_RETAINED, take/skip, trend, or
+submitted-degree arms (removed). The profit gate reads the artifact's
+`result.netProfit`: the standalone route loads full Batch mine artifacts
+(always carry it), while the TOP_MEAN coordinator replays compact artifacts
+that carry `netProfit` only when written by a worker from its introduction
+onward — older archives show `n=0` on the gated lines. The profit gate
 reads the artifact's `result.netProfit`: the standalone route loads full
 Batch mine artifacts (always carry it), while the TOP_MEAN coordinator
 replays compact artifacts that carry `netProfit` only when written by a

@@ -58,26 +58,6 @@ async function* fromArray<T>(items: T[]): AsyncIterable<T> {
 }
 
 describe("batch-open-score-usd-replay-engine Phase 3 MAX_ACTIVE extensions", () => {
-    it("exposes maxRetained (computed from retained artifact degree)", async () => {
-        const pairs = [
-            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)]),
-            makePair("AAA", "X2", [makeTrade("long", T0 + 1000, null)]),
-            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)]),
-            makePair("BBB", "Y2", [makeTrade("long", T0 + 1000, null)]),
-        ];
-        const targets = [
-            makeTarget("AAA", 10, () => 100),
-            makeTarget("BBB", 10, () => 50),
-        ];
-        const result = await runOpenScoreUsdReplay(
-            () => fromArray(pairs),
-            () => fromArray(targets),
-            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
-        );
-        const h = result.horizons[0]!;
-        expect(h.maxRetained).to.not.equal(undefined);
-    });
-
     it("TOP_MEAN per-asset breakdown surfaces the coverage-adjusted winner", async () => {
         // AAA has 2 long pairs open (raw=2, activePairs=2 -> mean=1.0).
         // BBB has 1 long pair open  (raw=1, activePairs=1 -> mean=1.0).
@@ -284,7 +264,7 @@ describe("batch-open-score-usd-replay-engine Phase 3 MAX_ACTIVE extensions", () 
         expect(h.tieRates.RAW.rate).to.equal(1);
     });
 
-    it("report includes the control labels (MAX_RETAINED, ACTIVE_VS_RET)", async () => {
+    it("report includes the surviving arm labels", async () => {
         const pairs = [
             makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)]),
             makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)]),
@@ -299,17 +279,21 @@ describe("batch-open-score-usd-replay-engine Phase 3 MAX_ACTIVE extensions", () 
             { horizons: [2], blockCount: 1 },
         );
         const report = result.reportLines.join("\n");
-        expect(report).to.include("MAX_RETAINED");
-        expect(report).to.include("ACTIVE_VS_RET");
-        expect(report).to.include("ACTIVE_EX_");
-        expect(report).to.include("MAX_ACTIVE selected assets =");
+        expect(report).to.include("TOP_RAW");
         expect(report).to.include("tie rates");
         // TOP_MEAN per-asset breakdown + its dominant-asset exclusion line
-        // mirror the TOP_RAW / MAX_ACTIVE patterns, and the MEAN
-        // top-contribution exclusion line rides both Copy paths verbatim.
+        // mirror the TOP_RAW pattern, and the MEAN top-contribution
+        // exclusion line rides both Copy paths verbatim.
         expect(report).to.include("MEAN_EX_");
         expect(report).to.include("TOP_MEAN selected assets =");
         expect(report).to.include("MEAN_EX_TOPCONTRIB_");
+        // Removed arms must not reappear in the report.
+        expect(report).to.not.include("MAX_ACTIVE");
+        expect(report).to.not.include("MAX_RETAINED");
+        expect(report).to.not.include("ACTIVE_VS");
+        expect(report).to.not.include("ACTIVE_EX_");
+        expect(report).to.not.include("TOP_ADJUSTED");
+        expect(report).to.not.include("TOP_MEAN_VS_RAW");
     });
 
     it("returns null CI when fewer than ten blocks exist (no one-block point CI)", async () => {
@@ -359,47 +343,6 @@ describe("batch-open-score-usd-replay-engine Phase 3 MAX_ACTIVE extensions", () 
         expect(h.topRaw.totalBlocks).to.equal(10);
     });
 
-    it("dominant-asset exclusion measures MAX_ACTIVE, not TOP_RAW", async () => {
-        // Event 1 (T1): AAA has 3 active pairs (raw=3); BBB has 1 (raw=1).
-        //   TOP_RAW -> AAA, MAX_ACTIVE -> AAA. AAA positions close at T2.
-        // Event 2 (T2): AAA's positions close (exits applied at T2 before
-        //   forming candidates). CCC has 1 active pair (raw=1); DDD has 1.
-        //   Positives are CCC and DDD only. MAX_ACTIVE picks by digest.
-        //
-        // Result: AAA is selected once by MAX_ACTIVE (at T1). The MAX_ACTIVE
-        // dominant-asset exclusion drops AAA's event, leaving T2.
-        const pairs = [
-            // AAA long positions opened at T1, closed at T2.
-            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, T0 + 2000)]),
-            makePair("AAA", "X2", [makeTrade("long", T0 + 1000, T0 + 2000)]),
-            makePair("AAA", "X3", [makeTrade("long", T0 + 1000, T0 + 2000)]),
-            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, T0 + 2000)]),
-            // CCC and DDD open at T2 (after AAA closed).
-            makePair("CCC", "Z1", [makeTrade("long", T0 + 2000, null)]),
-            makePair("DDD", "W1", [makeTrade("long", T0 + 2000, null)]),
-        ];
-        const targets = [
-            makeTarget("AAA", 10, () => 100),
-            makeTarget("BBB", 10, () => 50),
-            makeTarget("CCC", 10, () => 25),
-            makeTarget("DDD", 10, () => 10),
-        ];
-        const result = await runOpenScoreUsdReplay(
-            () => fromArray(pairs),
-            () => fromArray(targets),
-            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
-        );
-        const h = result.horizons[0]!;
-        // AAA was selected by MAX_ACTIVE only at T1 (1 event).
-        expect(h.maxActiveByAsset.find((x) => x.asset === "AAA")?.events).to.equal(1);
-        // MAX_ACTIVE dominant is AAA (1 selection). CCC and DDD each get 1.
-        // Tied at 1 — tie-break by digest decides. The dominant is whichever
-        // has the smallest digest at its event time.
-        expect(h.maxActiveDominantAsset).to.not.equal(null);
-        // MAX_ACTIVE events before exclusion = 2; after dropping the dominant
-        // asset's events, 1 event remains.
-        expect(h.maxActiveExDominant.events).to.equal(1);
-    });
 });
 
 describe("batch-open-score-usd-replay-engine Phase 3 batch-run-contract provenance", () => {

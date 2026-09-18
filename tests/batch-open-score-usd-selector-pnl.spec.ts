@@ -322,7 +322,6 @@ async function testIntegrationReportContainsPnlLines(): Promise<void> {
     // range with 0% winRate was a numerical artifact, not a usable baseline).
     assert.doesNotMatch(report, /TOP_MEAN_HEDGE_PNL/);
     assert.doesNotMatch(report, /RANDOM_HEDGE_PNL/);
-    assert.match(report, /TOP_MEAN_VS_RANK2/);
     // Lines must carry the per-trade-normalized fields. Absolute total/maxDD
     // are intentionally NOT rendered (they scale with trade count + the
     // 1-unit-notional assumption and would mislead cross-config comparison).

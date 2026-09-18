@@ -137,10 +137,7 @@ describe("batch-open-score-usd-replay-engine", () => {
         const details = result.eventDetails ?? [];
         expect(details.map((row) => row.selector)).to.include.members([
             "TOP_RAW",
-            "TOP_ADJUSTED",
             "TOP_MEAN",
-            "MAX_ACTIVE",
-            "MAX_RETAINED",
         ]);
         const topMean = details.find((row) => row.selector === "TOP_MEAN")!;
         expect(topMean.decisionTime).to.equal(decision);
@@ -871,18 +868,8 @@ describe("batch-open-score-usd-replay-engine", () => {
         );
         const horizon = result.horizons[0]!;
         expect(horizon.topRaw.topMean).to.be.closeTo(0.10, 1e-9);
-        expect(horizon.topAdjusted.topMean).to.be.closeTo(0.20, 1e-9);
         // TOP_MEAN tie (BBB=AAB=ZZZ=DDD=1.0) -> FNV-1a digest picks ZZZ.
         expect(horizon.topMean.topMean).to.be.closeTo(0.05, 1e-9);
-        expect(horizon.topMeanVsRaw.topMean).to.be.closeTo(0.05, 1e-9);
-        expect(horizon.topMeanVsRaw.randomMean).to.be.closeTo(0.10, 1e-9);
-        expect(horizon.topMeanVsRaw.delta).to.be.closeTo(-0.05, 1e-9);
-        expect(horizon.topMeanVsRaw.blockMeans[0]).to.be.closeTo(-0.05, 1e-9);
-        expect(horizon.topMeanVsRaw.positiveBlocks).to.equal(0);
-        expect(horizon.topMeanVsRaw.totalBlocks).to.equal(1);
-        expect(horizon.maxActive.topMean).to.be.closeTo(0.10, 1e-9);
-        expect(horizon.maxRetained.topMean).to.be.closeTo(0.40, 1e-9);
-        expect(horizon.rawAdjustedAgreement).to.deep.equal({ events: 1, sameSelection: 0, rate: 0 });
         expect(horizon.dominantAsset).to.equal("AAA");
         expect(horizon.topRawExDominant.events).to.equal(0);
         const aaaSummary = horizon.topRawByAsset.find((x) => x.asset === "AAA")!;
@@ -892,8 +879,6 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(aaaSummary.randomMean).to.be.closeTo(0.2375, 1e-9);
         expect(aaaSummary.delta).to.be.closeTo(-0.1375, 1e-9);
         expect(result.reportLines.join("\n")).to.include("controls | TOP_MEAN=raw/activePairs");
-        expect(result.reportLines.join("\n")).to.include("TOP_MEAN_VS_RAW");
-        expect(result.reportLines.join("\n")).to.include("TOP_MEAN_VS_RAW_WF deltaByBlock=[-5.00%]");
     });
 
     it("labels zero-event horizons as unusable even when all datasets loaded", async () => {
@@ -1002,12 +987,11 @@ describe("batch-open-score-usd-replay-engine", () => {
         // maxActivePairs across events = 1 (only one pair open per asset at
         // any decision event). The bug would have surfaced max=3.
         expect(horizon.candidateDegree.max).to.equal(1);
-        // The corrected engine should produce equal TOP_RAW and TOP_ADJUSTED
-        // means at T3 (AAA ties BBB on adjusted after the fix). Eligible
-        // events are 2 (T1 and T3); both have >= 2 positive candidates with
-        // valid target data for AAA and BBB.
+        // Eligible events are 2 (T1 and T3); both have >= 2 positive
+        // candidates with valid target data for AAA and BBB, and the
+        // corrected activePairCount keeps TOP_MEAN on both.
         expect(result.eligibleEvents).to.equal(2);
-        expect(horizon.topAdjusted.events).to.equal(2);
+        expect(horizon.topMean.events).to.equal(2);
     });
 
     it("reports active coverage from positive candidates, not a negative-score asset", async () => {
