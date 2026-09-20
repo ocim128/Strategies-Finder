@@ -206,13 +206,14 @@ export function buildTopMeanHorizonSummaries(
             events: h.topMean.events,
             topMean: h.topMean,
             topAssets,
-            latestArms: {
-                TOP_RAW: h.topRaw,
-                TOP_MEAN: h.topMean,
-                TOP_MEAN_RAW_UNIQUE: h.topMeanRawUnique,
-                TOP_RAW_PROFIT_NOW: h.topRawProfitNow,
-                TOP_MEAN_PROFIT_NOW: h.topMeanProfitNow,
-            },
+                        latestArms: {
+                            TOP_RAW: h.topRaw,
+                            TOP_MEAN: h.topMean,
+                            TOP_MEAN_RAW_UNIQUE: h.topMeanRawUnique,
+                            TOP_RAW_PROFIT_NOW: h.topRawProfitNow,
+                            TOP_MEAN_PROFIT_NOW: h.topMeanProfitNow,
+                            TOP_RAW_PROFIT_NOW_CONF: h.topRawProfitNowConf,
+                        },
         };
     });
 }

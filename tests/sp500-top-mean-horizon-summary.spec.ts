@@ -32,6 +32,7 @@ describe("buildTopMeanHorizonSummaries", () => {
                 topMeanRawUnique: comparison(3),
                 topRawProfitNow: comparison(4),
                 topMeanProfitNow: comparison(5),
+                topRawProfitNowConf: comparison(6),
                 topMeanByAsset: [
                     { asset: "BBB", events: 2, share: 0.5, topMean: 0, randomMean: 0, delta: 0 },
                     { asset: "AAA", events: 2, share: 0.5, topMean: 0, randomMean: 0, delta: 0 },
@@ -49,6 +50,7 @@ describe("buildTopMeanHorizonSummaries", () => {
         expect(summary.latestArms!.TOP_MEAN_RAW_UNIQUE!.events).to.equal(3);
         expect(summary.latestArms!.TOP_RAW_PROFIT_NOW!.events).to.equal(4);
         expect(summary.latestArms!.TOP_MEAN_PROFIT_NOW!.events).to.equal(5);
+        expect(summary.latestArms!.TOP_RAW_PROFIT_NOW_CONF!.events).to.equal(6);
         // topAssets stays sorted by events desc, then asset name.
         expect(summary.topAssets.map((asset) => asset.asset)).to.deep.equal(["AAA", "BBB"]);
     });
