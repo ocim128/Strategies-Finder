@@ -316,6 +316,58 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(h.topRaw.delta).to.be.closeTo(expectedTop - expectedRand, 1e-9);
     });
 
+    it("latest picks carry each arm's top-3 ranked candidates, capped at 3", async () => {
+        // One decision event. Each candidate asset votes only via its own
+        // pairs against dedicated sink quotes (Q01..Q12), so quote-leg votes
+        // never touch another candidate: AAA raw=4/cnt=4/mean=1, BBB 3/3/1,
+        // CCC 2/4/0.5 (one opposing short vote), DDD 1/1/1.
+        // TOP_RAW ranks raw: AAA, BBB, CCC, DDD -> cap keeps [AAA, BBB, CCC].
+        // TOP_MEAN ties on mean=1 (AAA, BBB, DDD) -> tied, detail ranked by
+        // mean then name: [AAA, BBB, DDD].
+        // TOP_MEAN_RAW_UNIQUE breaks that tie by raw -> AAA, detail mean-then-raw.
+        const pairs = [
+            makePair("AAA", "Q01", [makeTrade("long", T0 + 1000, null)]),
+            makePair("AAA", "Q02", [makeTrade("long", T0 + 1000, null)]),
+            makePair("AAA", "Q03", [makeTrade("long", T0 + 1000, null)]),
+            makePair("AAA", "Q04", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Q05", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Q06", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Q07", [makeTrade("long", T0 + 1000, null)]),
+            makePair("CCC", "Q08", [makeTrade("long", T0 + 1000, null)]),
+            makePair("CCC", "Q09", [makeTrade("long", T0 + 1000, null)]),
+            makePair("CCC", "Q10", [makeTrade("long", T0 + 1000, null)]),
+            makePair("CCC", "Q11", [makeTrade("short", T0 + 1000, null)]),
+            makePair("DDD", "Q12", [makeTrade("long", T0 + 1000, null)]),
+        ];
+        const targets = ["AAA", "BBB", "CCC", "DDD"].map((asset) => makeTarget(asset, 10, () => 100));
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [3], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        const latest = result.latestSelections!;
+        expect(latest.decisionTime).to.equal(T0 + 1000);
+        const byName = new Map(latest.selections.map((selection) => [selection.selector, selection]));
+
+        const topRaw = byName.get("TOP_RAW")!;
+        expect(topRaw.reason).to.equal("selected");
+        expect(topRaw.asset).to.equal("AAA");
+        // Capped at 3: DDD (raw 1) is ranked but must not ride along.
+        expect(topRaw.topCandidates!.map((candidate) => candidate.asset)).to.deep.equal(["AAA", "BBB", "CCC"]);
+        expect(topRaw.topCandidates![0]).to.deep.equal({ asset: "AAA", score: 4, mean: 1, activePairs: 4 });
+        expect(topRaw.topCandidates![2]).to.deep.equal({ asset: "CCC", score: 2, mean: 0.5, activePairs: 4 });
+
+        const topMean = byName.get("TOP_MEAN")!;
+        expect(topMean.reason).to.equal("tied");
+        expect(topMean.asset).to.equal(null);
+        expect(topMean.topCandidates!.map((candidate) => candidate.asset)).to.deep.equal(["AAA", "BBB", "DDD"]);
+
+        const unique = byName.get("TOP_MEAN_RAW_UNIQUE")!;
+        expect(unique.reason).to.equal("selected");
+        expect(unique.asset).to.equal("AAA");
+        expect(unique.topCandidates!.map((candidate) => candidate.asset)).to.deep.equal(["AAA", "BBB", "DDD"]);
+    });
+
     it("same-score ties break deterministically by the frozen FNV-1a digest every run", async () => {
         // Two assets with identical raw score (both +1). Per the Phase 0 freeze,
         // tie-break = the smallest FNV-1a 64 digest of

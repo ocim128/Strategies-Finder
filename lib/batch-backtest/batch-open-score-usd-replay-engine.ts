@@ -162,6 +162,13 @@ export type OpenScoreUsdLatestSelectorName =
     | "TOP_RAW_PROFIT_NOW"
     | "TOP_MEAN_PROFIT_NOW";
 
+export interface OpenScoreUsdLatestSelectionCandidate {
+    asset: string;
+    score: number;
+    mean: number;
+    activePairs: number;
+}
+
 export interface OpenScoreUsdLatestSelection {
     selector: OpenScoreUsdLatestSelectorName;
     direction: "long" | "short" | "none";
@@ -174,6 +181,12 @@ export interface OpenScoreUsdLatestSelection {
     activePairs: number | null;
     eligibleCandidates: number;
     reason: "selected" | "tied" | "insufficient_candidates";
+    /**
+     * The arm's top candidates at this event, in the arm's own ranking order
+     * (max 3). Optional: absent in results produced before this field existed
+     * (old persisted payloads and archives).
+     */
+    topCandidates?: OpenScoreUsdLatestSelectionCandidate[];
 }
 
 export interface OpenScoreUsdLatestSelections {
@@ -1943,6 +1956,30 @@ export async function runOpenScoreUsdReplay(
             primaryOrder: "max" | "min",
             secondary?: (candidate: Candidate) => number,
         ): OpenScoreUsdLatestSelection => {
+            // Ranked detail for the Latest-picks UI: the arm's top candidates
+            // in its own ranking order, capped at 3 so the wire payload stays
+            // bounded. Runs once per completed run (latest event, 5 arms).
+            const rankTopCandidates = (): OpenScoreUsdLatestSelectionCandidate[] =>
+                [...pool]
+                    .sort((a, b) => {
+                        const pa = primary(a);
+                        const pb = primary(b);
+                        if (pa !== pb) return primaryOrder === "max" ? pb - pa : pa - pb;
+                        if (secondary) {
+                            const sa = secondary(a);
+                            const sb = secondary(b);
+                            if (sa !== sb) return sb - sa;
+                        }
+                        return assetNames[a.assetIndex]!.localeCompare(assetNames[b.assetIndex]!);
+                    })
+                    .slice(0, 3)
+                    .map((candidate) => ({
+                        asset: assetNames[candidate.assetIndex]!,
+                        score: candidate.raw,
+                        mean: candidate.mean,
+                        activePairs: candidate.activePairs,
+                    }));
+            const topCandidates = rankTopCandidates();
             if (pool.length < 2) {
                 return {
                     selector,
@@ -1954,6 +1991,7 @@ export async function runOpenScoreUsdReplay(
                     activePairs: null,
                     eligibleCandidates: pool.length,
                     reason: "insufficient_candidates",
+                    topCandidates,
                 };
             }
             let bestPrimary = primary(pool[0]!);
@@ -1983,6 +2021,7 @@ export async function runOpenScoreUsdReplay(
                     activePairs: null,
                     eligibleCandidates: pool.length,
                     reason: "tied",
+                    topCandidates,
                 };
             }
             const selected = finalists[0]!;
@@ -1996,6 +2035,7 @@ export async function runOpenScoreUsdReplay(
                 activePairs: selected.activePairs,
                 eligibleCandidates: pool.length,
                 reason: "selected",
+                topCandidates,
             };
         };
 

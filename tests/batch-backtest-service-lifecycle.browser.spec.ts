@@ -523,9 +523,17 @@ describe("BatchBacktestService analysis lifecycle", () => {
     it("restores the completed TOP_MEAN Coordinator result after a tab-style reset", () => {
         // Intent: a completed coordinator result is user-visible research
         // output, not transient run state. Reloading the Batch tab must restore
-        // the rendered leaderboard and its Copy/Download actions.
+        // the rendered result and its Copy/Download actions.
         const dom = setupForAnalysis();
         const result = topMeanResultFixture();
+        result.annualReports = [{
+            year: 2025,
+            sampleFromSec: 1735689600,
+            sampleToSec: 1767225599,
+            horizons: [],
+            warnings: [],
+            reportLines: ["RESTORE_MARKER_ANNUAL_REPORT"],
+        }];
         svc().persistLatestTopMeanResult(result);
 
         svc().latestTopMeanResult = null;
@@ -537,7 +545,8 @@ describe("BatchBacktestService analysis lifecycle", () => {
         svc().loadPersistedLatestTopMeanResult(dom);
 
         expect(svc().latestTopMeanResult).to.deep.equal(result);
-        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("AAA");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("RESTORE_MARKER_ANNUAL_REPORT");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.not.include("AAA");
         expect(dom.batchBacktestSp500TopMeanCopyBtn.disabled).to.equal(false);
         expect(dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled).to.equal(false);
         expect(dom.batchBacktestSp500TopMeanDownloadBtn.disabled).to.equal(false);
@@ -669,9 +678,17 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("LONG AAA");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("one selected strategy configuration only");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("Latest OPEN_SCORE Selector Picks");
-        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TOP_RAW");
+        // The card shows the in-card dropdown's arm only; the other arms stay
+        // in Copy Result so the card cannot grow with the arm count.
+        svc().latestTopMeanResult = result;
+        dom.batchBacktestSp500TopMeanResults.dispatchEvent({
+            type: "change",
+            target: { id: "batchBacktestSp500TopMeanLatestArmSelector", value: "TOP_MEAN_PROFIT_NOW" },
+        } as unknown as Event);
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TOP_MEAN_PROFIT_NOW");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TIE / SKIP: AAA, CCC");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.not.include("<strong>TOP_RAW</strong>");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.not.include("<strong>TOP_MEAN_RAW_UNIQUE</strong>");
         const copiedLines = svc().formatLatestOpenScoreSelectionLines(result.latestSelections);
         expect(copiedLines).to.include(
             "TOP_MEAN_PROFIT_NOW NOW | direction=LONG | asset=TIE_SKIP[AAA,CCC] | mean=n/a | score=n/a | activePairs=n/a | pool=2 | reason=tied",
@@ -707,13 +724,107 @@ describe("BatchBacktestService analysis lifecycle", () => {
         const html = dom.batchBacktestSp500TopMeanResults.innerHTML;
         expect(html).to.include("Tie-break ALPHABETICAL applied");
         // Alphabetically-first tied asset wins even though CCC was listed first.
-        expect(html).to.include(">AAA</div>");
+        expect(html).to.include(">AAA</td>");
         const copiedLines = svc().formatLatestOpenScoreSelectionLines(result.latestSelections);
         expect(copiedLines).to.include(
             "TOP_MEAN_PROFIT_NOW NOW | direction=LONG | asset=AAA | mean=n/a | score=n/a | activePairs=n/a | pool=2 | reason=selected",
         );
         // The unresolved copy path must not leak the tie form.
         expect(copiedLines.join("\n")).to.not.include("TIE_SKIP");
+    });
+
+    it("Latest OPEN_SCORE arm switch re-renders the selected arm with ranked candidates", () => {
+        const dom = setupForAnalysis();
+        const result = topMeanResultFixture();
+        result.latestSelections = {
+            decisionTime: 1_700_000_000,
+            selections: [
+                {
+                    selector: "TOP_MEAN",
+                    direction: "long",
+                    asset: "AAA",
+                    tiedAssets: [],
+                    score: 9,
+                    mean: 0.75,
+                    activePairs: 12,
+                    eligibleCandidates: 5,
+                    reason: "selected",
+                    topCandidates: [
+                        { asset: "AAA", score: 9, mean: 0.75, activePairs: 12 },
+                        { asset: "BBB", score: 6, mean: 0.5, activePairs: 12 },
+                        { asset: "CCC", score: 3, mean: 0.25, activePairs: 12 },
+                        { asset: "DDD", score: 2, mean: 0.2, activePairs: 12 },
+                        { asset: "EEE", score: 1, mean: 0.1, activePairs: 12 },
+                    ],
+                },
+                {
+                    selector: "TOP_RAW",
+                    direction: "long",
+                    asset: "ZZZ",
+                    tiedAssets: [],
+                    score: 20,
+                    mean: 1.0,
+                    activePairs: 5,
+                    eligibleCandidates: 5,
+                    reason: "selected",
+                    topCandidates: [
+                        { asset: "ZZZ", score: 20, mean: 1.0, activePairs: 5 },
+                        { asset: "AAA", score: 9, mean: 0.75, activePairs: 12 },
+                        { asset: "BBB", score: 6, mean: 0.5, activePairs: 12 },
+                    ],
+                },
+            ],
+        };
+        svc().latestTopMeanResult = result;
+
+        dom.batchBacktestSp500TopMeanResults.dispatchEvent({
+            type: "change",
+            target: { id: "batchBacktestSp500TopMeanLatestArmSelector", value: "TOP_MEAN" },
+        } as unknown as Event);
+        let html = dom.batchBacktestSp500TopMeanResults.innerHTML;
+        // Ranked detail is capped at 3 candidates with the pick badged.
+        expect(html).to.include("Top 3 candidates at this event");
+        expect(html).to.include("AAA</strong><span class=\"batch-top-badge\">PICK</span>");
+        expect(html).to.include("+0.500");
+        expect(html).to.include("BBB");
+        expect(html).to.include("CCC");
+        expect(html).to.not.include("DDD");
+        expect(html).to.not.include("<strong>TOP_RAW</strong>");
+
+        dom.batchBacktestSp500TopMeanResults.dispatchEvent({
+            type: "change",
+            target: { id: "batchBacktestSp500TopMeanLatestArmSelector", value: "TOP_RAW" },
+        } as unknown as Event);
+        html = dom.batchBacktestSp500TopMeanResults.innerHTML;
+        expect(html).to.include("<strong>TOP_RAW</strong>");
+        expect(html).to.include("ZZZ</strong><span class=\"batch-top-badge\">PICK</span>");
+        expect(html).to.not.include("<strong>TOP_MEAN</strong>");
+        // The in-card dropdown re-renders with the chosen arm selected.
+        expect(html).to.include(`value="TOP_RAW" selected`);
+    });
+
+    it("Latest OPEN_SCORE card degrades gracefully when a result predates ranked candidates", () => {
+        const dom = setupForAnalysis();
+        const result = topMeanResultFixture();
+        result.latestSelections = {
+            decisionTime: 1_700_000_000,
+            selections: [{
+                selector: "TOP_MEAN",
+                direction: "long",
+                asset: "AAA",
+                tiedAssets: [],
+                score: 9,
+                mean: 0.75,
+                activePairs: 12,
+                eligibleCandidates: 2,
+                reason: "selected",
+            }],
+        };
+        svc().renderTopMeanResults(dom, result);
+        const html = dom.batchBacktestSp500TopMeanResults.innerHTML;
+        expect(html).to.include("AAA");
+        expect(html).to.include("unavailable for this result");
+        expect(html).to.not.include("batch-top-badge");
     });
 
     it("TIE BREAK random picks a stable tied asset per decision event", () => {

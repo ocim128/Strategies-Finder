@@ -41,7 +41,7 @@ export function createFakeBatchElement(): any {
         dispatchEvent: (ev: { type: string }): boolean => {
             const arr = listeners.get(ev.type);
             if (!arr || arr.length === 0) return false;
-            for (const handler of arr) handler();
+            for (const handler of arr) handler(ev);
             return true;
         },
         click(): boolean {

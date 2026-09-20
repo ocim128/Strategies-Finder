@@ -90,7 +90,9 @@ import { formatTopMeanPerformanceLines } from "./sp500-top-mean-performance";
 import type {
     OpenScoreUsdEventDetail,
     OpenScoreUsdEventDetailSelector,
+    OpenScoreUsdLatestSelection,
     OpenScoreUsdLatestSelections,
+    OpenScoreUsdLatestSelectorName,
     OpenScoreUsdOngoingEventDetail,
     OpenScoreUsdReplayResult,
 } from "./batch-open-score-usd-replay-engine";
@@ -102,6 +104,26 @@ import { debounce } from "../debounce";
 import { coalesceAnimationFrame } from "../render-scheduler";
 
 type OngoingTopMeanEventDetail = OpenScoreUsdOngoingEventDetail;
+
+/**
+ * The Latest OPEN_SCORE card's arm picker is GENERATED inside the card (it is
+ * not a structural id): the card re-renders on every run/restore, so change
+ * events are delegated to the persistent results container (see bindEvents).
+ */
+const LATEST_ARM_SELECTOR_ID = "batchBacktestSp500TopMeanLatestArmSelector";
+const LATEST_ARM_SELECTOR_NAMES: readonly OpenScoreUsdLatestSelectorName[] = [
+    "TOP_MEAN",
+    "TOP_RAW",
+    "TOP_MEAN_RAW_UNIQUE",
+    "TOP_RAW_PROFIT_NOW",
+    "TOP_MEAN_PROFIT_NOW",
+];
+
+function normalizeLatestArm(value: string | null | undefined): OpenScoreUsdLatestSelectorName {
+    return LATEST_ARM_SELECTOR_NAMES.includes(value as OpenScoreUsdLatestSelectorName)
+        ? value as OpenScoreUsdLatestSelectorName
+        : "TOP_MEAN";
+}
 
 type BatchStatusRowsPage = {
     rows?: BatchBacktestSymbolResult[];
@@ -451,6 +473,8 @@ export class BatchBacktestService {
     // Audit Finding 2: typed (was `any`) so a shape drift between the
     // coordinator engine emissions and the UI renderers is a compile failure.
     private latestTopMeanResult: TopMeanResultSummary | null = null;
+    /** Arm shown in the Latest OPEN_SCORE Selector Picks card (one at a time). */
+    private latestOpenScoreArm: OpenScoreUsdLatestSelectorName = "TOP_MEAN";
     private activeTopMeanRunId: string | null = null;
     private topMeanDiagnosticRunId: string | null = null;
     private topMeanDiagnosticEntries: TopMeanDiagnosticEntry[] = [];
@@ -587,6 +611,17 @@ export class BatchBacktestService {
                         this.latestTopMeanResult,
                         this.getTopMeanOpenScoreDetailSelector(dom),
                     );
+            }
+        });
+        // The arm picker is generated inside the Latest OPEN_SCORE card and
+        // re-created on every render, so its change events are delegated to
+        // the persistent results container.
+        dom.batchBacktestSp500TopMeanResults.addEventListener("change", (event) => {
+            const target = event?.target as { id?: string; value?: string } | null | undefined;
+            if (!target || target.id !== LATEST_ARM_SELECTOR_ID) return;
+            this.latestOpenScoreArm = normalizeLatestArm(target.value);
+            if (this.latestTopMeanResult) {
+                this.renderTopMeanResults(dom, this.latestTopMeanResult);
             }
         });
         dom.batchBacktestSp500TopMeanDownloadBtn.addEventListener("click", () => {
@@ -3040,7 +3075,9 @@ export class BatchBacktestService {
     private topMeanTieBreakNote(mode: "alpha" | "random" | "off"): string {
         return mode === "alpha"
             ? "Tie-break ALPHABETICAL applied: tied picks resolved to the alphabetically-first tied asset."
-            : "Tie-break RANDOM applied: tied picks resolved to a seeded random tied asset (stable per decision event).";
+            : mode === "random"
+                ? "Tie-break RANDOM applied: tied picks resolved to a seeded random tied asset (stable per decision event)."
+                : "Tie-break off: ties stay unresolved (TIE / SKIP).";
     }
 
     /**
@@ -3089,30 +3126,81 @@ export class BatchBacktestService {
             .toISOString()
             .slice(0, 19)
             .replace("T", " ") + " UTC";
+        // One arm at a time: every arm in one card was unusably long on large
+        // universes. The arm comes from the in-card dropdown; the full list
+        // stays available via Copy Result.
+        const selection = latest.selections.find((entry) => entry.selector === this.latestOpenScoreArm)
+            ?? latest.selections[0];
         let html = `<div class="batch-report-card">`;
         html += `<div class="batch-report-title">Latest OPEN_SCORE Selector Picks</div>`;
         html += `<div class="batch-report-note">decision event: ${escapeHtml(decisionLabel)}</div>`;
-        html += `<table class="finder-table batch-report-table"><thead><tr><th>Selector</th><th>Direction</th><th>Selection</th><th>Mean</th><th>Score</th><th>Active Pairs</th><th>Pool</th></tr></thead><tbody>`;
-        for (const selection of latest.selections) {
-            const selectedText = selection.reason === "selected"
-                ? selection.asset ?? "NO SELECTION"
-                : selection.reason === "tied"
-                    ? `TIE / SKIP: ${selection.tiedAssets.join(", ")}`
-                    : "NO SELECTION";
-            const mean = selection.mean === null
-                ? "--"
-                : `${selection.mean >= 0 ? "+" : ""}${selection.mean.toFixed(3)}`;
-            const score = selection.score === null
-                ? "--"
-                : `${selection.score >= 0 ? "+" : ""}${selection.score}`;
-            const directionClass = selection.reason === "selected"
-                ? selection.direction === "long" ? "is-positive" : "is-negative"
-                : "";
-            html += `<tr><td><strong>${escapeHtml(selection.selector)}</strong></td><td class="${directionClass}"><strong>${escapeHtml(selection.direction.toUpperCase())}</strong></td><td>${escapeHtml(selectedText)}</td><td>${escapeHtml(mean)}</td><td>${escapeHtml(score)}</td><td>${escapeHtml(selection.activePairs ?? "--")}</td><td>${escapeHtml(selection.eligibleCandidates)}</td></tr>`;
+        html += this.renderLatestArmSelector();
+        if (selection) {
+            html += `<table class="finder-table batch-report-table"><thead><tr><th>Selector</th><th>Direction</th><th>Selection</th><th>Mean</th><th>Score</th><th>Active Pairs</th><th>Pool</th></tr></thead><tbody>`;
+            html += `<tr><td><strong>${escapeHtml(selection.selector)}</strong></td><td class="${selection.reason === "selected" && selection.direction === "long" ? "is-positive" : selection.reason === "selected" && selection.direction === "short" ? "is-negative" : ""}"><strong>${escapeHtml(selection.direction.toUpperCase())}</strong></td><td>${escapeHtml(this.latestSelectionText(selection))}</td><td>${escapeHtml(this.formatLatestMean(selection.mean))}</td><td>${escapeHtml(this.formatLatestScore(selection.score))}</td><td>${escapeHtml(selection.activePairs ?? "--")}</td><td>${escapeHtml(selection.eligibleCandidates)}</td></tr>`;
+            html += `</tbody></table>`;
+            html += this.renderLatestOpenScoreTopCandidates(selection);
+        } else {
+            html += `<div class="batch-report-note">No selector arms in this result.</div>`;
         }
-        html += `</tbody></table>`;
         html += `<div class="batch-report-note batch-report-note--after">${escapeHtml(this.topMeanTieBreakNote(mode))} Research selectors only.</div>`;
         html += `</div>`;
+        return html;
+    }
+
+    /**
+     * Generated (non-structural) arm picker inside the Latest OPEN_SCORE
+     * card. Change events are delegated to the results container in
+     * bindEvents because re-rendering the card replaces this element.
+     */
+    private renderLatestArmSelector(): string {
+        const options = LATEST_ARM_SELECTOR_NAMES
+            .map((name) => `<option value="${name}"${name === this.latestOpenScoreArm ? " selected" : ""}>${name}</option>`)
+            .join("");
+        return `<div class="batch-field batch-field--inline"><label class="batch-field-label" for="${LATEST_ARM_SELECTOR_ID}">Selector arm</label><select class="param-input batch-open-score-details-selector" id="${LATEST_ARM_SELECTOR_ID}" title="Pick which selector arm this card shows, including its top 3 ranked candidates at the decision event. The full arm list stays available via Copy Result.">${options}</select></div>`;
+    }
+
+    private latestSelectionText(selection: OpenScoreUsdLatestSelection): string {
+        return selection.reason === "selected"
+            ? selection.asset ?? "NO SELECTION"
+            : selection.reason === "tied"
+                ? `TIE / SKIP: ${selection.tiedAssets.join(", ")}`
+                : "NO SELECTION";
+    }
+
+    private formatLatestMean(mean: number | null): string {
+        return mean === null ? "--" : `${mean >= 0 ? "+" : ""}${mean.toFixed(3)}`;
+    }
+
+    private formatLatestScore(score: number | null): string {
+        return score === null ? "--" : `${score >= 0 ? "+" : ""}${score}`;
+    }
+
+    /**
+     * Ranked candidate detail for the latest event, capped at 3 by the
+     * engine. The current pick (including a tie-break resolution) is badged.
+     * Results produced before topCandidates existed render the fallback note.
+     */
+    private renderLatestOpenScoreTopCandidates(selection: OpenScoreUsdLatestSelection): string {
+        // The engine caps at 3; slice again so hand-built or future payloads
+        // cannot grow the card.
+        const candidates = (Array.isArray(selection.topCandidates) ? selection.topCandidates : []).slice(0, 3);
+        if (candidates.length === 0) {
+            return `<div class="batch-report-note">Top-candidate detail is unavailable for this result (produced by an older run).</div>`;
+        }
+        let html = `<div class="batch-report-subheading">Top ${candidates.length} candidates at this event | ranked by ${escapeHtml(selection.selector)}</div>`;
+        html += `<table class="finder-table batch-report-table"><thead><tr><th>Rank</th><th>Asset</th><th>Score</th><th>Mean</th><th>Active Pairs</th></tr></thead><tbody>`;
+        candidates.forEach((candidate, index) => {
+            const isPick = selection.asset !== null && candidate.asset === selection.asset;
+            html += `<tr${isPick ? ` class="batch-report-row-top"` : ""}>`;
+            html += `<td>${index + 1}</td>`;
+            html += `<td><strong>${escapeHtml(candidate.asset)}</strong>${isPick ? `<span class="batch-top-badge">PICK</span>` : ""}</td>`;
+            html += `<td>${escapeHtml(this.formatLatestScore(candidate.score))}</td>`;
+            html += `<td>${escapeHtml(this.formatLatestMean(candidate.mean))}</td>`;
+            html += `<td>${escapeHtml(candidate.activePairs)}</td>`;
+            html += `</tr>`;
+        });
+        html += `</tbody></table>`;
         return html;
     }
 
@@ -3164,53 +3252,9 @@ export class BatchBacktestService {
             html += `</div>`;
         }
 
-        // 1. Leaderboard Banner: Executive summary of top asset per horizon
-        html += `<div class="batch-report-card">`;
-        html += `<div class="batch-report-title">TOP_MEAN Asset Leaderboard</div>`;
-        html += `<div class="batch-pick-row">`;
-
-        for (const h of summary.horizons) {
-            const top = Array.isArray(h.topAssets) && h.topAssets.length > 0 ? h.topAssets[0] : null;
-            if (top) {
-                const sharePct = (top.share * 100).toFixed(1) + "%";
-                html += `<div class="batch-pick-card">`;
-                html += `<div class="batch-pick-label">Horizon ${escapeHtml(h.horizon)} Bars</div>`;
-                html += `<div class="batch-pick-asset">${escapeHtml(top.asset)}</div>`;
-                html += `<div class="batch-pick-meta">${escapeHtml(top.events?.toLocaleString())} events (${escapeHtml(sharePct)} share)</div>`;
-                html += `<div class="batch-pick-delta ${(top.delta ?? 0) >= 0 ? "is-positive" : "is-negative"}">Delta: ${escapeHtml(formatSignedPercent(top.delta))}</div>`;
-                html += `</div>`;
-            }
-        }
-        html += `</div></div>`;
-
-        // 2. Detailed horizon tables with rank #1 badge
-        for (const h of summary.horizons) {
-            html += `<div class="batch-report-subheading">`;
-            html += `Horizon ${escapeHtml(h.horizon)} bars | ${escapeHtml(h.events?.toLocaleString())} decision events | `;
-            html += `TOP_MEAN: top=${escapeHtml(formatSignedPercent(h.topMean?.topMean))} random=${escapeHtml(formatSignedPercent(h.topMean?.randomMean))} delta=${escapeHtml(formatSignedPercent(h.topMean?.delta))}`;
-            html += `</div>`;
-
-            html += `<table class="finder-table batch-report-table">`;
-            html += `<thead><tr><th>Rank</th><th>Asset</th><th>Events</th><th>Share</th><th>Selected Mean</th><th>Control Mean</th><th>Delta</th></tr></thead><tbody>`;
-
-            let rank = 1;
-            for (const row of h.topAssets || []) {
-                const sharePct = (row.share * 100).toFixed(1) + "%";
-                const isTop = rank === 1;
-                html += `<tr${isTop ? ` class="batch-report-row-top"` : ""}>`;
-                html += `<td>${rank}</td>`;
-                html += `<td><strong>${escapeHtml(row.asset)}</strong>${isTop ? `<span class="batch-top-badge">TOP</span>` : ""}</td>`;
-                html += `<td>${escapeHtml(row.events?.toLocaleString())}</td>`;
-                html += `<td>${escapeHtml(sharePct)}</td>`;
-                html += `<td>${escapeHtml(formatSignedPercent(row.topMean))}</td>`;
-                html += `<td>${escapeHtml(formatSignedPercent(row.randomMean))}</td>`;
-                html += `<td>${escapeHtml(formatSignedPercent(row.delta))}</td>`;
-                html += `</tr>`;
-                rank++;
-            }
-            html += `</tbody></table>`;
-        }
-
+        // No per-horizon asset leaderboard section here on purpose: it rendered
+        // every asset per horizon and became unusably long on large universes.
+        // Top assets remain available via the Copy button (top 10 per horizon).
         const annualReports = Array.isArray(summary.annualReports) ? summary.annualReports : [];
         if (annualReports.length > 0) {
             html += `<div class="batch-report-subheading batch-report-subheading--accent">OPEN_SCORE USD Calendar-Year Reports</div>`;
