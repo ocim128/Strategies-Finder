@@ -22,7 +22,7 @@
     container-type: inline-size;
 
     --batch-symbol-col: minmax(140px, 1.4fr);
-    --batch-metric-col: 92px;
+    --batch-metric-col: minmax(76px, 96px);
 }
 
 .batch-header {
@@ -74,12 +74,12 @@
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    gap: var(--space-3);
+    gap: var(--space-1) var(--space-3);
     flex-wrap: wrap;
 }
 
 .batch-section-title {
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-md);
     font-weight: var(--font-weight-semibold);
     color: var(--text-primary);
     margin: 0;
@@ -105,10 +105,107 @@
     line-height: var(--line-height-normal);
 }
 
+/* Template picker grows to fill the row; helper buttons hug their label. */
 .batch-symbol-helpers {
     display: flex;
     gap: var(--space-2);
     flex-wrap: wrap;
+}
+
+.batch-symbol-helpers .param-input {
+    flex: 1 1 150px;
+    width: auto;
+    min-width: 0;
+}
+
+.batch-symbol-helpers .btn {
+    flex: 0 0 auto;
+}
+
+/* ------------------------------------------------------------------
+ * Form grid — shared field layout for the coordinator, OPEN_SCORE USD,
+ * trade-ledger, and trade-gate control clusters. Responsive auto-fit
+ * columns; inline (label-left) fields switch to stacked labels so every
+ * field in the cluster reads the same way.
+ * ------------------------------------------------------------------ */
+
+.batch-form-grid,
+.batch-balanced-generator-controls.batch-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(148px, 100%), 1fr));
+    gap: var(--space-3);
+    align-items: end;
+}
+
+.batch-form-grid .batch-field--inline {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-1);
+}
+
+/* Checkbox fields stay a single row even inside a form grid. */
+.batch-form-grid .batch-field--inline.batch-field--check {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.batch-form-grid .batch-field-input,
+.batch-form-grid .param-input {
+    width: 100%;
+    min-width: 0;
+}
+
+.batch-form-grid .batch-field--wide {
+    grid-column: span 2;
+}
+
+.batch-form-grid .batch-field--full {
+    grid-column: 1 / -1;
+}
+
+/* Checkbox fields: one clickable unit, readable label (not the uppercase
+ * micro label used for scalar inputs). */
+.batch-field--check {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-2);
+    align-self: end;
+    min-height: 36px;
+    user-select: none;
+}
+
+.batch-field--check input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    flex-shrink: 0;
+    accent-color: var(--accent-color);
+    cursor: pointer;
+}
+
+.batch-field--check input[type="checkbox"]:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
+.batch-field--check .batch-field-label {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-secondary);
+    text-transform: none;
+    letter-spacing: normal;
+    line-height: var(--line-height-normal);
+    cursor: pointer;
+}
+
+.batch-field--check:hover .batch-field-label {
+    color: var(--text-primary);
+}
+
+/* The coordinator archive toggle spans the grid: its label is long. */
+.batch-coordinator-fields .batch-field--check {
+    grid-column: 1 / -1;
 }
 
 /* ------------------------------------------------------------------
@@ -120,9 +217,9 @@
 .batch-balanced-generator {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--space-3);
     margin-top: var(--space-2);
-    padding: var(--space-2);
+    padding: var(--space-3);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-s);
     background: hsl(var(--hsl-surface-2) / 0.5);
@@ -145,6 +242,7 @@
 .batch-balanced-generator-note {
     font-size: var(--font-size-xs);
     color: var(--text-tertiary);
+    line-height: var(--line-height-normal);
 }
 
 .batch-balanced-generator-controls {
@@ -166,6 +264,24 @@
     gap: var(--space-2);
     flex-wrap: wrap;
     align-items: flex-end;
+    flex: 1 1 220px;
+}
+
+/* Stacked labels + full-width inputs keep the option pair aligned. */
+.batch-balanced-generator-options .batch-field--inline {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-1);
+    flex: 1 1 96px;
+}
+
+.batch-balanced-generator-options .batch-field-input {
+    width: 100%;
+    min-width: 0;
+}
+
+.batch-balanced-generator-options .btn {
+    flex: 0 0 auto;
 }
 
 .batch-balanced-generator-status {
@@ -173,6 +289,17 @@
     font-size: var(--font-size-xs);
     white-space: pre-wrap;
     color: var(--text-secondary);
+}
+
+/* Sweep folder + rule lists read better in the mono face. */
+#batchBacktestTradeGateFolder,
+#batchBacktestTradeGateRules {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+}
+
+#batchBacktestTradeGateRules {
+    min-height: 5.5rem;
 }
 
 /* Pair count readout beside the textarea heading */
@@ -185,9 +312,9 @@
 
 /* ------------------------------------------------------------------
  * Action groups (point 2)
- * Primary (Run/Stop) / Analysis (OPEN_SCORE USD + its config) / Export
- * (Copy *). Keep Run as the only filled primary; exports are quiet text
- * buttons. Groups separate via gap — no divider elements.
+ * Primary (Run/Stop) / Export (Copy *). Keep Run as the only filled
+ * primary; exports are quiet text buttons. Groups separate via gap —
+ * no divider elements.
  * ------------------------------------------------------------------ */
 
 .batch-actions {
@@ -220,36 +347,27 @@
 }
 
 /* Quiet text-style export buttons (still use shared .btn base) */
-.batch-action-group--exports .btn,
-.batch-action-group--analysis .btn:not(.run-btn):not(.stop-btn) {
+.batch-action-group--exports .btn {
     background: transparent;
     border-color: transparent;
     box-shadow: none;
     color: var(--text-secondary);
     padding: var(--space-1-5) var(--space-2-5);
-    min-height: 0;
+    min-height: 28px;
     font-size: var(--font-size-sm);
 }
 
-.batch-action-group--exports .btn:not(:disabled):hover,
-.batch-action-group--analysis .btn:not(:disabled):not(.run-btn):not(.stop-btn):hover {
+.batch-action-group--exports .btn:not(:disabled):hover {
     color: var(--text-primary);
     background: hsl(var(--hsl-surface-3) / 0.5);
 }
 
 /* ------------------------------------------------------------------
- * Coordinator controls
- * Fields row (Horizons/Workers/Max Pairs/From/To) sits above the actions
- * row (Run/Stop, Details + its selector, quiet exports) so the section
- * reads inputs-then-actions instead of one wrap wall.
+ * Coordinator + analysis controls
+ * Each section reads inputs-then-actions: a form grid of fields, an
+ * actions row (primary run + quiet exports), and — for the coordinator —
+ * a details row (arm / year / show) below the actions.
  * ------------------------------------------------------------------ */
-
-.batch-coordinator-fields {
-    display: flex;
-    gap: var(--space-2-5);
-    align-items: flex-end;
-    flex-wrap: wrap;
-}
 
 .batch-coordinator-actions {
     display: flex;
@@ -258,8 +376,46 @@
     flex-wrap: wrap;
 }
 
+.batch-coordinator-actions .batch-action-group--primary {
+    flex: 0 1 auto;
+}
+
 .batch-coordinator-actions .batch-action-group--exports {
     margin-left: auto;
+}
+
+.batch-analysis-actions {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.batch-analysis-actions .batch-action-group--exports {
+    margin-left: auto;
+}
+
+/* Details controls: labeled arm/year selectors + the show button. */
+.batch-details-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-2);
+    padding-top: var(--space-1);
+}
+
+.batch-details-controls .batch-field--inline {
+    flex: 1 1 150px;
+}
+
+.batch-details-controls .batch-open-score-details-selector {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+}
+
+.batch-details-controls .btn {
+    flex: 0 0 auto;
 }
 
 .batch-field {
@@ -280,7 +436,7 @@
 .batch-field-input {
     width: 80px;
     padding: var(--space-1-5) var(--space-2);
-    min-height: 32px;
+    min-height: 36px;
     border-radius: var(--radius-s);
     border: 1px solid var(--field-border);
     background: var(--field-bg);
@@ -313,15 +469,6 @@
 .batch-field-input--auto {
     width: auto;
     min-width: 8rem;
-}
-
-/* OPEN_SCORE USD config: From/To/Horizons fields grouped directly with the
- * analysis button they configure. */
-.batch-open-score-usd-config {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
 }
 
 .batch-open-score-details {
@@ -428,10 +575,33 @@
 }
 
 .batch-run-state-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1-5);
     font-size: var(--font-size-sm);
     font-weight: var(--font-weight-semibold);
     color: var(--text-secondary);
     font-family: var(--font-family-mono);
+}
+
+/* Status dot: neutral at rest, accent + gentle pulse while running. */
+.batch-run-state-label::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-tertiary);
+    flex-shrink: 0;
+}
+
+#batchbacktestTab.is-running .batch-run-state-label::before {
+    background: var(--accent-color);
+    animation: batchStatusPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes batchStatusPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
 }
 
 /* Show the progress bar only while a run is active. */
@@ -503,11 +673,23 @@
 /* Multi-line variant for diagnostic reports (e.g. the OPEN_SCORE USD replay
  * report). The base rule keeps single-line summaries on one visual line;
  * this modifier opts into pre-line wrapping so a pipe-delimited multi-line
- * report renders legibly instead of collapsing onto one line. */
+ * report renders legibly instead of collapsing onto one line. Non-empty
+ * reports sit on an inset surface so the report reads as one artifact. */
 .batch-miner-status--multiline {
     white-space: pre-line;
     max-height: 24rem;
     overflow-y: auto;
+}
+
+.batch-miner-status--multiline:not(:empty) {
+    background: hsl(var(--hsl-surface-1) / 0.45);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-s);
+    padding: var(--space-2) var(--space-2-5);
+}
+
+#batchBacktestTradeGateWarning:not(:empty) {
+    border-left: 3px solid var(--warning);
 }
 
 /* ------------------------------------------------------------------
@@ -516,12 +698,17 @@
  * stay for clipboard output only.
  * ------------------------------------------------------------------ */
 
+/* Rows carry their own separators; drop the default finder-list gap. */
+#batchbacktestTab .finder-list {
+    gap: 0;
+}
+
 .batch-results-header {
     display: flex;
     align-items: center;
-    gap: var(--space-1) var(--space-2);
+    gap: 2px var(--space-1);
     flex-wrap: wrap;
-    padding: var(--space-1) var(--space-2);
+    padding: var(--space-1-5) var(--space-2);
     border-bottom: 1px solid var(--glass-border);
     color: var(--text-tertiary);
     font-size: var(--font-size-2xs);
@@ -529,7 +716,7 @@
 }
 
 .batch-results-header-label {
-    margin-right: var(--space-1);
+    margin-right: var(--space-1-5);
     font-weight: var(--font-weight-semibold);
     text-transform: uppercase;
     letter-spacing: var(--tracking-wide);
@@ -539,23 +726,27 @@
     display: inline-flex;
 }
 
+/* Sort chips: pill targets, quiet arrows until hover/active. */
 .batch-results-sort-button,
 .batch-results-sort-reset {
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
-    padding: var(--space-1) var(--space-1-5);
+    padding: 2px var(--space-2);
     border: 1px solid transparent;
-    border-radius: var(--radius-xs);
+    border-radius: var(--radius-pill);
     background: transparent;
     color: var(--text-tertiary);
     font: inherit;
     cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
 }
 
 .batch-results-sort-button::after {
     content: "↕";
-    color: var(--text-tertiary);
+    color: inherit;
+    opacity: 0.45;
+    transition: opacity 0.12s ease;
 }
 
 .batch-results-sort-button:hover,
@@ -564,9 +755,23 @@
     background: hsl(var(--hsl-surface-3) / 0.5);
 }
 
+.batch-results-sort-button:hover::after {
+    opacity: 1;
+}
+
+.batch-results-sort-button:focus-visible,
+.batch-results-sort-reset:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
 .batch-results-sort-button.is-active {
-    border-color: hsl(var(--hsl-accent) / 0.35);
+    background: var(--accent-soft);
     color: var(--accent-color);
+}
+
+.batch-results-sort-button.is-active::after {
+    opacity: 1;
 }
 
 .batch-results-sort-button.is-ascending::after { content: "↑"; }
@@ -591,6 +796,7 @@
     border-bottom: 1px solid hsl(var(--hsl-surface-3) / 0.4);
     font-size: var(--font-size-xs);
     line-height: var(--line-height-tight);
+    transition: background 0.12s ease;
     /* Progressive rendering hint for 1,000-2,000 row Batch results. The
      * intrinsic size keeps the document height stable before a row is painted. */
     content-visibility: auto;
@@ -602,7 +808,7 @@
 }
 
 .batch-result-row:hover {
-    background: hsl(var(--hsl-surface-3) / 0.3);
+    background: hsl(var(--hsl-surface-3) / 0.35);
 }
 
 .batch-result-identity {
@@ -658,7 +864,7 @@
 .batch-result-secondary {
     grid-column: 1 / -1;
     display: flex;
-    gap: var(--space-3);
+    gap: var(--space-1) var(--space-3);
     flex-wrap: wrap;
     margin-top: var(--space-1);
     font-size: var(--font-size-2xs);
@@ -715,6 +921,7 @@
     border-radius: var(--radius-m);
     padding: var(--space-3);
     margin-bottom: var(--space-3);
+    box-shadow: var(--shadow-xs);
 }
 
 .batch-report-title {
@@ -788,6 +995,7 @@
     padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-s);
     border-left: 3px solid var(--green);
+    box-shadow: var(--shadow-xs);
 }
 
 .batch-pick-label {
@@ -821,6 +1029,7 @@
     font-size: var(--font-size-xs);
     line-height: var(--line-height-normal);
     border-left: 4px solid var(--green);
+    border-radius: var(--radius-s);
     background: hsl(var(--hsl-success) / 0.1);
 }
 
@@ -848,6 +1057,11 @@
     font-weight: var(--font-weight-semibold);
 }
 
+.batch-report-details > summary:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
 .batch-report-details .batch-report-pre {
     margin-top: var(--space-2);
 }
@@ -863,7 +1077,9 @@
 
 /* ------------------------------------------------------------------
  * Responsive (points 5, 6)
- * Collapse the metric grid to a compact card on narrow panels.
+ * Collapse the metric grid to a compact card on narrow panels; give the
+ * coordinator's action groups full rows instead of a centered button
+ * stack. The form grids handle their own collapse via auto-fit.
  * ------------------------------------------------------------------ */
 
 @container (max-width: 540px) {
@@ -876,17 +1092,33 @@
         grid-column: 1 / -1;
     }
 
-    .batch-coordinator-fields,
-    .batch-coordinator-actions {
-        flex-direction: column;
-        align-items: stretch;
+    .batch-coordinator-actions .batch-action-group--primary {
+        flex: 1 1 100%;
     }
 
-    .batch-coordinator-actions .btn {
-        width: 100%;
+    .batch-coordinator-actions .batch-action-group--primary .btn {
+        flex: 1 1 auto;
     }
 
-    .batch-coordinator-actions .batch-action-group--exports {
+    .batch-coordinator-actions .batch-action-group--exports,
+    .batch-analysis-actions .batch-action-group--exports {
         margin-left: 0;
+    }
+
+    .batch-details-controls .batch-field--inline,
+    .batch-details-controls .btn {
+        flex: 1 1 100%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #batchbacktestTab.is-running .batch-run-state-label::before {
+        animation: none;
+    }
+
+    .batch-result-row,
+    .batch-results-sort-button,
+    .batch-results-sort-reset {
+        transition: none;
     }
 }
