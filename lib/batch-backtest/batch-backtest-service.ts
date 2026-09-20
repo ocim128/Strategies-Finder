@@ -610,6 +610,20 @@ export class BatchBacktestService {
                     this.renderTopMeanOpenScoreEventDetails(
                         this.latestTopMeanResult,
                         this.getTopMeanOpenScoreDetailSelector(dom),
+                        this.getTopMeanOpenScoreDetailYear(dom),
+                    );
+            }
+        });
+        dom.batchBacktestSp500TopMeanDetailsYear.addEventListener("change", () => {
+            if (
+                this.latestTopMeanResult
+                && !dom.batchBacktestSp500TopMeanDetails.hidden
+            ) {
+                dom.batchBacktestSp500TopMeanDetails.innerHTML =
+                    this.renderTopMeanOpenScoreEventDetails(
+                        this.latestTopMeanResult,
+                        this.getTopMeanOpenScoreDetailSelector(dom),
+                        this.getTopMeanOpenScoreDetailYear(dom),
                     );
             }
         });
@@ -3338,6 +3352,8 @@ export class BatchBacktestService {
 
     private resetTopMeanOpenScoreDetails(dom: BatchBacktestDom): void {
         dom.batchBacktestSp500TopMeanDetailsSelector.disabled = true;
+        dom.batchBacktestSp500TopMeanDetailsYear.disabled = true;
+        dom.batchBacktestSp500TopMeanDetailsYear.value = "";
         dom.batchBacktestSp500TopMeanDetailsBtn.disabled = true;
         dom.batchBacktestSp500TopMeanDetailsBtn.textContent = "Show OPEN_SCORE Details";
         dom.batchBacktestSp500TopMeanDetails.hidden = true;
@@ -3355,10 +3371,11 @@ export class BatchBacktestService {
             Array.isArray(summary.openScoreEventDetails)
             && summary.openScoreEventDetails.length > 0;
         const hasOngoingTopMean = this.buildOngoingTopMeanEventDetails(summary).length > 0;
-        dom.batchBacktestSp500TopMeanDetailsBtn.disabled =
-            !annualHasDetails && !fullRangeHasDetails && !hasOngoingTopMean;
-        dom.batchBacktestSp500TopMeanDetailsSelector.disabled =
-            !annualHasDetails && !fullRangeHasDetails && !hasOngoingTopMean;
+        const hasDetails = annualHasDetails || fullRangeHasDetails || hasOngoingTopMean;
+        dom.batchBacktestSp500TopMeanDetailsBtn.disabled = !hasDetails;
+        dom.batchBacktestSp500TopMeanDetailsSelector.disabled = !hasDetails;
+        dom.batchBacktestSp500TopMeanDetailsYear.disabled = !hasDetails;
+        this.syncTopMeanDetailYearOptions(dom, summary);
         dom.batchBacktestSp500TopMeanDetailsBtn.textContent = "Show OPEN_SCORE Details";
         dom.batchBacktestSp500TopMeanDetails.hidden = true;
         dom.batchBacktestSp500TopMeanDetails.innerHTML = "";
@@ -3386,6 +3403,7 @@ export class BatchBacktestService {
                 this.renderTopMeanOpenScoreEventDetails(
                     this.latestTopMeanResult,
                     this.getTopMeanOpenScoreDetailSelector(dom),
+                    this.getTopMeanOpenScoreDetailYear(dom),
                 );
             this.recordTopMeanDiagnostic("ui.details_render.done", {
                 htmlChars: dom.batchBacktestSp500TopMeanDetails.innerHTML.length,
@@ -3398,6 +3416,39 @@ export class BatchBacktestService {
     ): OpenScoreUsdEventDetailSelector {
         return (dom.batchBacktestSp500TopMeanDetailsSelector.value || "TOP_MEAN") as
             OpenScoreUsdEventDetailSelector;
+    }
+
+    /** Selected calendar year for the details table; null = full window. */
+    private getTopMeanOpenScoreDetailYear(dom: BatchBacktestDom): number | null {
+        const value = dom.batchBacktestSp500TopMeanDetailsYear.value;
+        if (!value) return null;
+        const year = Number(value);
+        return Number.isInteger(year) && year >= 1970 && year <= 9999 ? year : null;
+    }
+
+    /**
+     * Rebuild the details year options from the rows the browser can actually
+     * show: distinct decision years of the shipped full-window rows plus the
+     * annual report windows. Selecting a year is a client-side slice of those
+     * rows — no additional server data is fetched (wire-safety keeps per-year
+     * rows off the wire), so "Full window" (blank) stays the default.
+     */
+    private syncTopMeanDetailYearOptions(dom: BatchBacktestDom, summary: TopMeanResultSummary): void {
+        const years = new Set<number>();
+        for (const row of summary.openScoreEventDetails ?? []) {
+            years.add(new Date(row.decisionTime * 1000).getUTCFullYear());
+        }
+        for (const annual of summary.annualReports ?? []) {
+            years.add(annual.year);
+        }
+        const previous = dom.batchBacktestSp500TopMeanDetailsYear.value;
+        const options = [
+            `<option value=""${!previous ? " selected" : ""}>Full window</option>`,
+            ...[...years].sort((a, b) => b - a).map((year) =>
+                `<option value="${year}"${String(year) === previous ? " selected" : ""}>${year}</option>`,
+            ),
+        ];
+        dom.batchBacktestSp500TopMeanDetailsYear.innerHTML = options.join("");
     }
 
     /**
@@ -3473,11 +3524,18 @@ export class BatchBacktestService {
     private renderTopMeanOpenScoreEventDetails(
         summary: TopMeanResultSummary,
         selector: OpenScoreUsdEventDetailSelector,
+        year: number | null = null,
     ): string {
         const annualReports = summary.annualReports ?? [];
         const ongoingTopMeanRows = selector === "TOP_MEAN"
             ? this.buildOngoingTopMeanEventDetails(summary)
             : [];
+        // Year slice: a client-side filter on decision time (UTC). It narrows
+        // the rows the browser already holds — no additional server data.
+        const yearMatches = year === null
+            ? (): boolean => true
+            : (decisionTimeSec: number): boolean =>
+                new Date(decisionTimeSec * 1000).getUTCFullYear() === year;
         // The wire payload bounds the per-row detail arrays to the most
         // recent rows of the full window and drops per-year rows entirely
         // (coordinator wire-safety; disk/archive keep all rows). The *Count
@@ -3498,23 +3556,33 @@ export class BatchBacktestService {
         const annualSections = annualReports
             .map((annual): TopMeanOpenScoreDetailSection => ({
                 label: `Calendar Year ${annual.year}`,
-                rows: (annual.eventDetails ?? []).filter((row) => row.selector === selector),
+                rows: (annual.eventDetails ?? []).filter((row) =>
+                    row.selector === selector
+                    && yearMatches(row.decisionTime)
+                    // A year selection only shows its own annual section.
+                    && (year === null || annual.year === year)
+                ),
                 ongoingRows: ongoingTopMeanRows.filter((row) => {
-                    const year = new Date(row.decisionTime * 1000).getUTCFullYear();
-                    return year === annual.year
+                    const rowYear = new Date(row.decisionTime * 1000).getUTCFullYear();
+                    return rowYear === annual.year
                         && row.decisionTime >= annual.sampleFromSec
-                        && row.decisionTime <= annual.sampleToSec;
+                        && row.decisionTime <= annual.sampleToSec
+                        && yearMatches(row.decisionTime);
                 }),
             }))
             .filter((section) => section.rows.length > 0 || section.ongoingRows.length > 0);
         const sections = hasAnnualDetailData
             ? annualSections
             : [{
-                label: "Selected Window",
+                label: year !== null
+                    ? `Selected Window — Calendar Year ${year}`
+                    : "Selected Window",
                 rows: (summary.openScoreEventDetails ?? []).filter(
-                    (row) => row.selector === selector,
+                    (row) => row.selector === selector && yearMatches(row.decisionTime),
                 ),
-                ongoingRows: ongoingTopMeanRows,
+                ongoingRows: ongoingTopMeanRows.filter(
+                    (row) => yearMatches(row.decisionTime),
+                ),
             } satisfies TopMeanOpenScoreDetailSection];
         let html = `<div class="batch-open-score-details-heading">OPEN_SCORE Event Details — ${escapeHtml(selector)}</div>`;
         html += `<div class="batch-open-score-details-note">Showing ${escapeHtml(selector)} only. Return is the selected asset's net USD return after configured slippage and commission; control is the selector-specific comparison pool (for TOP_MEAN_RAW_UNIQUE, the TOP_MEAN tied set, including the selected asset). TOP_MEAN selections with incomplete horizons are shown as ONGOING; their outcome fields are intentionally n/a. These rows are intentionally excluded from Copy OPEN_SCORE and Copy Result.</div>`;
@@ -3533,6 +3601,11 @@ export class BatchBacktestService {
             if (annualRowsNotShipped) {
                 truncationParts.push(
                     "per-year detail rows are not included in the live result — see the research archive or the server result.json",
+                );
+            }
+            if (year !== null && fullWindowTruncated) {
+                truncationParts.push(
+                    `the ${year} slice filters the shipped most-recent full-window rows, so older events of ${year} may be missing`,
                 );
             }
             html += `<div class="batch-report-warning">TRUNCATED FOR THE UI — ${escapeHtml(truncationParts.join("; "))}.</div>`;
@@ -3629,8 +3702,14 @@ export class BatchBacktestService {
         const decision = this.resolveTiedDecision(currentSnapshot.decision, tiePicked, asOfSec);
         const decisionStatus = (decision as { status?: string } | undefined)?.status;
 
-        let html = `<div class="batch-report-card">`;
-        html += `<div class="batch-report-title">TOP_MEAN ALGORITHMIC TRADE DECISION</div>`;
+        // Collapsible (default collapsed): the full banner is long on large
+        // universes, so the summary line carries the decision outcome and the
+        // user opens the card for the evidence.
+        const summaryLabel = decisionStatus === "LONG_NEXT_BAR" && decision?.asset
+            ? `TOP_MEAN ALGORITHMIC TRADE DECISION — LONG ${decision.asset}`
+            : "TOP_MEAN ALGORITHMIC TRADE DECISION — NO TRADE";
+        let html = `<details class="batch-report-card batch-report-details">`;
+        html += `<summary>${escapeHtml(summaryLabel)}</summary>`;
         html += `<div class="batch-report-note">as-of: ${asOfLabel} | artifacts ${snap?.artifacts ?? 0} | open positions ${snap?.openPositions ?? 0} | candidates ${snap?.candidates?.length ?? 0} | stale ${stats.staleEndpoints ?? 0} | missing ${stats.missingEndpoints ?? 0}</div>`;
 
         if (decisionStatus === "LONG_NEXT_BAR" && decision?.asset) {
@@ -3665,7 +3744,7 @@ export class BatchBacktestService {
                         ? "No open positions at the common endpoint."
                         : "No provable current snapshot (missing or mixed endpoints).";
             html += `<div class="batch-report-warning">${noPickMsg}</div>`;
-            html += `</div>`;
+            html += `</details>`;
             return html;
         }
 
@@ -3696,7 +3775,7 @@ export class BatchBacktestService {
             html += `<tr${isTop ? ` class="batch-report-row-top"` : ""}><td>${index + 1}</td><td><strong>${escapeHtml(candidate.asset)}</strong></td><td>${meanSign}${mean.toFixed(2)}</td><td>${escapeHtml(candidate.score)}</td><td>${escapeHtml(candidate.activePairs)}</td></tr>`;
         });
         html += `</tbody></table>`;
-        html += `</div>`;
+        html += `</details>`;
         return html;
     }
 

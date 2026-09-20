@@ -259,6 +259,63 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(copied).to.not.include("2023-11-14");
     });
 
+    it("OPEN_SCORE details year filter slices the full-window rows client-side", () => {
+        const dom = setupForAnalysis();
+        const result = topMeanResultFixture();
+        result.reportLines = ["OPEN_SCORE USD | SUMMARY ONLY"];
+        result.openScoreEventDetails = [
+            {
+                decisionTime: Date.UTC(2022, 5, 15) / 1000,
+                entryTime: Date.UTC(2022, 5, 15) / 1000 + 3_600,
+                exitTime: Date.UTC(2022, 5, 15) / 1000 + 3_600 * 48,
+                horizonBars: 48,
+                selector: "TOP_MEAN",
+                direction: "long",
+                asset: "ASSET_2022",
+                selectedReturn: 0.1,
+                controlReturn: 0.02,
+                delta: 0.08,
+                eligibleCandidates: 5,
+            },
+            {
+                decisionTime: Date.UTC(2023, 0, 10) / 1000,
+                entryTime: Date.UTC(2023, 0, 10) / 1000 + 3_600,
+                exitTime: Date.UTC(2023, 0, 10) / 1000 + 3_600 * 48,
+                horizonBars: 48,
+                selector: "TOP_MEAN",
+                direction: "long",
+                asset: "ASSET_2023",
+                selectedReturn: -0.05,
+                controlReturn: 0.01,
+                delta: -0.06,
+                eligibleCandidates: 5,
+            },
+        ];
+        svc().latestTopMeanResult = result;
+        svc().renderTopMeanResults(dom, result);
+
+        // Default (blank year select) keeps the current full-window behaviour.
+        svc().toggleSp500TopMeanOpenScoreDetails();
+        let html = dom.batchBacktestSp500TopMeanDetails.innerHTML;
+        expect(html).to.include("Selected Window");
+        expect(html).to.include("ASSET_2022");
+        expect(html).to.include("ASSET_2023");
+        expect(dom.batchBacktestSp500TopMeanDetailsYear.innerHTML).to.include(">2022</option>");
+        expect(dom.batchBacktestSp500TopMeanDetailsYear.innerHTML).to.include(">2023</option>");
+
+        dom.batchBacktestSp500TopMeanDetailsYear.value = "2022";
+        dom.batchBacktestSp500TopMeanDetailsYear.dispatchEvent({ type: "change" } as unknown as Event);
+        html = dom.batchBacktestSp500TopMeanDetails.innerHTML;
+        expect(html).to.include("Selected Window — Calendar Year 2022");
+        expect(html).to.include("ASSET_2022");
+        expect(html).to.not.include("ASSET_2023");
+
+        dom.batchBacktestSp500TopMeanDetailsYear.value = "";
+        dom.batchBacktestSp500TopMeanDetailsYear.dispatchEvent({ type: "change" } as unknown as Event);
+        html = dom.batchBacktestSp500TopMeanDetails.innerHTML;
+        expect(html).to.include("ASSET_2023");
+    });
+
     it("does not persist large OPEN_SCORE detail rows in localStorage", () => {
         setupForAnalysis();
         const result = topMeanResultFixture();
