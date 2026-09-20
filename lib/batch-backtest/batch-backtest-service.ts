@@ -95,6 +95,7 @@ import type {
     OpenScoreUsdLatestSelectorName,
     OpenScoreUsdOngoingEventDetail,
     OpenScoreUsdReplayResult,
+    ReplayComparison,
 } from "./batch-open-score-usd-replay-engine";
 import type { OpenScoreUsdReplayStreamEvent } from "./batch-open-score-usd-replay-stream-types";
 import type { StrategyParams, BacktestSettings } from "../types/strategies";
@@ -3134,7 +3135,9 @@ export class BatchBacktestService {
         };
     }
 
-    private renderLatestOpenScoreSelections(latestInput: OpenScoreUsdLatestSelections): string {
+    private renderLatestOpenScoreSelections(summary: TopMeanResultSummary): string {
+        const latestInput = summary.latestSelections;
+        if (!latestInput) return "";
         const mode = this.topMeanTieBreakMode();
         const latest = this.applyTieBreakToLatest(latestInput);
         const decisionLabel = new Date(latest.decisionTime * 1000)
@@ -3155,6 +3158,7 @@ export class BatchBacktestService {
             html += `<tr><td><strong>${escapeHtml(selection.selector)}</strong></td><td class="${selection.reason === "selected" && selection.direction === "long" ? "is-positive" : selection.reason === "selected" && selection.direction === "short" ? "is-negative" : ""}"><strong>${escapeHtml(selection.direction.toUpperCase())}</strong></td><td>${escapeHtml(this.latestSelectionText(selection))}</td><td>${escapeHtml(this.formatLatestMean(selection.mean))}</td><td>${escapeHtml(this.formatLatestScore(selection.score))}</td><td>${escapeHtml(selection.activePairs ?? "--")}</td><td>${escapeHtml(selection.eligibleCandidates)}</td></tr>`;
             html += `</tbody></table>`;
             html += this.renderLatestOpenScoreTopCandidates(selection);
+            html += this.renderLatestArmYearPerformance(summary, selection.selector);
         } else {
             html += `<div class="batch-report-note">No selector arms in this result.</div>`;
         }
@@ -3219,6 +3223,54 @@ export class BatchBacktestService {
         return html;
     }
 
+    /** One report line in the shared OPEN_SCORE comparison format. */
+    private formatReplayComparisonLine(comparison: ReplayComparison): string {
+        const pct = (value: number | null): string =>
+            value === null ? "n/a" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
+        return `n=${comparison.events}`
+            + ` top=${pct(comparison.topMean)}`
+            + ` rand=${pct(comparison.randomMean)}`
+            + ` delta=${pct(comparison.delta)}`
+            + ` CI95=[${pct(comparison.ciLower)},${pct(comparison.ciUpper)}]`
+            + ` +blocks=${comparison.positiveBlocks}/${comparison.totalBlocks}`;
+    }
+
+    /**
+     * Per-year performance lines for the selected arm, in the same
+     * comparison format as the OPEN_SCORE report. "full" comes from the
+     * full-window horizons; the year lines from the coordinator's calendar-
+     * year replays (annualReports). Results produced before latestArms
+     * existed render nothing here.
+     */
+    private renderLatestArmYearPerformance(
+        summary: TopMeanResultSummary,
+        arm: OpenScoreUsdLatestSelectorName,
+    ): string {
+        const blocks: string[] = [];
+        for (const horizon of summary.horizons ?? []) {
+            const lines: string[] = [];
+            const full = horizon.latestArms?.[arm];
+            if (full && full.events > 0) {
+                lines.push(`full: ${this.formatReplayComparisonLine(full)}`);
+            }
+            for (const annual of summary.annualReports ?? []) {
+                const comparison = annual.horizons
+                    ?.find((annualHorizon) => annualHorizon.horizon === horizon.horizon)
+                    ?.latestArms?.[arm];
+                if (comparison && comparison.events > 0) {
+                    lines.push(`${annual.year}: ${this.formatReplayComparisonLine(comparison)}`);
+                }
+            }
+            if (lines.length > 0) {
+                blocks.push(
+                    `<div class="batch-report-subheading">Performance by year — Horizon ${escapeHtml(String(horizon.horizon))} bars</div>`
+                    + `<pre class="batch-report-pre">${escapeHtml(lines.join("\n"))}</pre>`,
+                );
+            }
+        }
+        return blocks.join("");
+    }
+
     private formatLatestOpenScoreSelectionLines(latestInput: OpenScoreUsdLatestSelections): string[] {
         const latest = this.applyTieBreakToLatest(latestInput);
         const lines = [
@@ -3256,7 +3308,7 @@ export class BatchBacktestService {
             html += this.renderCurrentTopMeanBanner(summary.currentSnapshot);
         }
         if (summary.latestSelections) {
-            html += this.renderLatestOpenScoreSelections(summary.latestSelections);
+            html += this.renderLatestOpenScoreSelections(summary);
         }
 
         if (summary.performance) {

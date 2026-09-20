@@ -37,6 +37,7 @@ import {
     type CandidateOutcomeRecord,
     type PoolSnapshotRecord,
     type OpenScoreUsdLatestSelections,
+    type OpenScoreUsdLatestSelectorName,
     type AssetSelectionSummary,
     type ReplayComparison,
 } from "./batch-open-score-usd-replay-engine";
@@ -116,6 +117,15 @@ export interface TopMeanHorizonSummary {
     events: number;
     topMean: ReplayComparison;
     topAssets: AssetSelectionSummary[];
+    /**
+     * The five Latest-picks arms' full comparisons (events, top/rand/delta,
+     * block-bootstrap CI, positive blocks) for this horizon. Lets the Latest
+     * OPEN_SCORE card render per-year performance for whichever arm is
+     * selected. Optional: absent in results produced before this field
+     * existed. Bounded like the rest of the horizons summary — blockMeans is
+     * capped by the run's blockCount.
+     */
+    latestArms?: Partial<Record<OpenScoreUsdLatestSelectorName, ReplayComparison>>;
 }
 
 export interface TopMeanAnnualReplayWindow {
@@ -176,6 +186,35 @@ export interface TopMeanResultSummary {
      * Optional for backward compatibility with older payloads.
      */
     currentSnapshot?: CurrentTopMeanResult;
+}
+
+/**
+ * Maps a replay result's horizons to the wire summary shape. Module-level so
+ * the arm→comparison wiring (latestArms) is unit-testable.
+ */
+export function buildTopMeanHorizonSummaries(
+    result: OpenScoreUsdReplayResult,
+): TopMeanHorizonSummary[] {
+    return result.horizons.map((h) => {
+        const topAssets = (h.topMeanByAsset || []).sort((a, b) => {
+            if (b.events !== a.events) return b.events - a.events;
+            return a.asset.localeCompare(b.asset);
+        });
+
+        return {
+            horizon: h.bars,
+            events: h.topMean.events,
+            topMean: h.topMean,
+            topAssets,
+            latestArms: {
+                TOP_RAW: h.topRaw,
+                TOP_MEAN: h.topMean,
+                TOP_MEAN_RAW_UNIQUE: h.topMeanRawUnique,
+                TOP_RAW_PROFIT_NOW: h.topRawProfitNow,
+                TOP_MEAN_PROFIT_NOW: h.topMeanProfitNow,
+            },
+        };
+    });
 }
 
 /**
@@ -1159,21 +1198,7 @@ export class TopMeanCoordinatorEngine {
                 return;
             }
 
-            const buildHorizonSummaries = (result: OpenScoreUsdReplayResult): TopMeanHorizonSummary[] =>
-                result.horizons.map((h) => {
-                    const topAssets = (h.topMeanByAsset || []).sort((a, b) => {
-                        if (b.events !== a.events) return b.events - a.events;
-                        return a.asset.localeCompare(b.asset);
-                    });
-
-                    return {
-                        horizon: h.bars,
-                        events: h.topMean.events,
-                        topMean: h.topMean,
-                        topAssets,
-                    };
-                });
-
+            const buildHorizonSummaries = buildTopMeanHorizonSummaries;
             const annualReports: TopMeanAnnualReplaySummary[] = [];
             // Audit (annual-cutoff finding): thread the ONE run-level cutoff
             // (the same runNowSec every worker task carries) into the annual

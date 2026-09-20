@@ -834,6 +834,69 @@ describe("BatchBacktestService analysis lifecycle", () => {
         };
         svc().latestTopMeanResult = result;
 
+        // Per-year performance fixtures in the shared comparison format
+        // (full window + two calendar years) for both switchable arms.
+        const fullTopMeanComparison = {
+            events: 3493, topMean: 0.0165, randomMean: 0.0053, delta: 0.0112,
+            topMedian: 0.01, blockMeans: [], ciLower: 0.0013, ciUpper: 0.0228,
+            positiveBlocks: 7, totalBlocks: 10,
+        };
+        result.horizons[0].latestArms = {
+            TOP_MEAN: fullTopMeanComparison,
+            TOP_RAW: {
+                events: 3200, topMean: 0.02, randomMean: 0.004, delta: 0.016,
+                topMedian: 0.01, blockMeans: [], ciLower: 0.002, ciUpper: 0.03,
+                positiveBlocks: 8, totalBlocks: 10,
+            },
+        };
+        result.annualReports = [
+            {
+                year: 2021,
+                sampleFromSec: 0,
+                sampleToSec: 1,
+                horizons: [{
+                    horizon: 12,
+                    events: 505,
+                    topMean: fullTopMeanComparison,
+                    topAssets: [],
+                    latestArms: {
+                        TOP_MEAN: {
+                            events: 505, topMean: 0.0315, randomMean: 0.0114, delta: 0.02,
+                            topMedian: 0.02, blockMeans: [], ciLower: 0.0022, ciUpper: 0.0414,
+                            positiveBlocks: 7, totalBlocks: 10,
+                        },
+                        TOP_RAW: {
+                            events: 0, topMean: null, randomMean: null, delta: null,
+                            topMedian: null, blockMeans: [], ciLower: null, ciUpper: null,
+                            positiveBlocks: 0, totalBlocks: 0,
+                        },
+                    },
+                }],
+                warnings: [],
+                reportLines: [],
+            },
+            {
+                year: 2022,
+                sampleFromSec: 1,
+                sampleToSec: 2,
+                horizons: [{
+                    horizon: 12,
+                    events: 586,
+                    topMean: fullTopMeanComparison,
+                    topAssets: [],
+                    latestArms: {
+                        TOP_MEAN: {
+                            events: 586, topMean: 0.0035, randomMean: 0.0071, delta: -0.0037,
+                            topMedian: 0, blockMeans: [], ciLower: -0.0253, ciUpper: 0.0167,
+                            positiveBlocks: 5, totalBlocks: 10,
+                        },
+                    },
+                }],
+                warnings: [],
+                reportLines: [],
+            },
+        ];
+
         dom.batchBacktestSp500TopMeanResults.dispatchEvent({
             type: "change",
             target: { id: "batchBacktestSp500TopMeanLatestArmSelector", value: "TOP_MEAN" },
@@ -847,6 +910,11 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(html).to.include("CCC");
         expect(html).to.not.include("DDD");
         expect(html).to.not.include("<strong>TOP_RAW</strong>");
+        // Per-year performance lines follow the shared comparison format.
+        expect(html).to.include("Performance by year — Horizon 12 bars");
+        expect(html).to.include("full: n=3493 top=+1.65% rand=+0.53% delta=+1.12% CI95=[+0.13%,+2.28%] +blocks=7/10");
+        expect(html).to.include("2021: n=505 top=+3.15% rand=+1.14% delta=+2.00% CI95=[+0.22%,+4.14%] +blocks=7/10");
+        expect(html).to.include("2022: n=586 top=+0.35% rand=+0.71% delta=-0.37% CI95=[-2.53%,+1.67%] +blocks=5/10");
 
         dom.batchBacktestSp500TopMeanResults.dispatchEvent({
             type: "change",
@@ -858,6 +926,11 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(html).to.not.include("<strong>TOP_MEAN</strong>");
         // The in-card dropdown re-renders with the chosen arm selected.
         expect(html).to.include(`value="TOP_RAW" selected`);
+        // Performance lines follow the arm: TOP_RAW's full line replaces
+        // TOP_MEAN's, and its zero-event year is omitted rather than zero-filled.
+        expect(html).to.include("full: n=3200 top=+2.00% rand=+0.40% delta=+1.60% CI95=[+0.20%,+3.00%] +blocks=8/10");
+        expect(html).to.not.include("full: n=3493");
+        expect(html).to.not.include("2021: n=505");
     });
 
     it("Latest OPEN_SCORE card degrades gracefully when a result predates ranked candidates", () => {
