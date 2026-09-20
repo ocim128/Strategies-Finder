@@ -544,14 +544,29 @@ export class TopMeanWorkerPool {
                             options.manifest.completedPairsCount = completedPairsCount;
                             if (msg.engineUsed === "rust") engineUsage.rust += 1;
                             else if (msg.engineUsed === "typescript") engineUsage.typescript += 1;
+                            const failedPairsCount = options.manifest.failedPairsCount || 0;
+                            const processedPairs = Math.min(
+                                totalPairs,
+                                completedPairsCount + failedPairsCount,
+                            );
                             options.onProgress?.(
                                 completedPairsCount,
                                 totalPairs,
-                                `Backtesting pair ${completedPairsCount}/${totalPairs}: ${msg.symbol}`,
+                                `Backtesting pair ${processedPairs}/${totalPairs} (${completedPairsCount} completed, ${failedPairsCount} failed): ${msg.symbol}`,
                             );
                         }
                     } else if (msg.status === "failed") {
                         options.manifest.failedPairsCount = (options.manifest.failedPairsCount || 0) + 1;
+                        const failedPairsCount = options.manifest.failedPairsCount;
+                        const processedPairs = Math.min(
+                            totalPairs,
+                            completedPairsCount + failedPairsCount,
+                        );
+                        options.onProgress?.(
+                            completedPairsCount,
+                            totalPairs,
+                            `Backtesting pair ${processedPairs}/${totalPairs} (${completedPairsCount} completed, ${failedPairsCount} failed): ${msg.symbol}`,
+                        );
                     }
                     return;
                 }

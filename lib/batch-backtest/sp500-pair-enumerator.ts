@@ -3,7 +3,11 @@ import { resolve } from "node:path";
 import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { parseSyntheticPairToken } from "../synthetic-pair-token";
-import { canonicalizeLegIdentity, type CanonicalLegIdentity } from "../synthetic-leg-identity";
+import {
+    canonicalizeLegIdentity,
+    hasKnownQuoteSuffix,
+    type CanonicalLegIdentity,
+} from "../synthetic-leg-identity";
 
 export interface CoverageCounts {
     sp500AssetsCount: number;
@@ -151,6 +155,27 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
                 loaderSymbol: markIbkrSymbol(check.symbol),
             };
         };
+        const resolveCustomToken = (rawToken: string): CanonicalLegIdentity | null => {
+            const identity = canonicalizeLegIdentity(rawToken);
+            if (!identity) return null;
+
+            // Custom Nasdaq lists commonly contain bare tickers. Treat a bare
+            // token as IBKR only when the local catalog and 30m seed prove it
+            // is available there. Explicit quote-suffixed market symbols keep
+            // their existing Binance/market meaning (for example BTCUSDT).
+            const normalized = rawToken.trim().toUpperCase();
+            if (identity.provider === "market" && !hasKnownQuoteSuffix(normalized)) {
+                const check = isTickerUsable(identity.scoringAsset);
+                if (check.usable && check.symbol) {
+                    return resolveCustomLeg({
+                        ...identity,
+                        provider: "ibkr",
+                        scoringAsset: stripIbkrMarker(check.symbol),
+                    });
+                }
+            }
+            return resolveCustomLeg(identity);
+        };
         const registerTarget = (identity: CanonicalLegIdentity): boolean => {
             const existing = eligibleTargetsByAsset.get(identity.scoringAsset);
             if (existing && existing !== identity.loaderSymbol) {
@@ -164,8 +189,7 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
         for (const line of rawLines) {
             const parsed = parseSyntheticPairToken(line);
             if (!parsed) {
-                const direct = canonicalizeLegIdentity(line);
-                const resolvedDirect = direct ? resolveCustomLeg(direct) : null;
+                const resolvedDirect = resolveCustomToken(line);
                 if (!resolvedDirect || !registerTarget(resolvedDirect)) {
                     invalidPairCount++;
                     continue;
@@ -174,10 +198,9 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
                 continue;
             }
 
-            const baseIdentity = canonicalizeLegIdentity(parsed.baseSymbol);
-            const quoteIdentity = canonicalizeLegIdentity(parsed.quoteSymbol);
-            const base = baseIdentity ? resolveCustomLeg(baseIdentity) : null;
-            const quote = quoteIdentity ? resolveCustomLeg(quoteIdentity) : null;
+            const separator = line.indexOf("+");
+            const base = separator >= 0 ? resolveCustomToken(line.slice(0, separator)) : null;
+            const quote = separator >= 0 ? resolveCustomToken(line.slice(separator + 1)) : null;
             if (!base || !quote || base.scoringAsset === quote.scoringAsset) {
                 invalidPairCount++;
                 continue;

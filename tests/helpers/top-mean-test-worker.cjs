@@ -57,6 +57,27 @@ if (!isMainThread && parentPort) {
             return;
         }
 
+        if (data.strategyKey === "__test_failed_progress__") {
+            for (const pair of data.pairs) {
+                parentPort.postMessage({
+                    type: "progress",
+                    shardIndex: data.shardIndex,
+                    pairIndex: pair.pairIndex,
+                    symbol: pair.symbol,
+                    status: "failed",
+                    error: "deterministic pair failure",
+                });
+            }
+            parentPort.postMessage({
+                type: "shard_complete",
+                shardIndex: data.shardIndex,
+                artifacts: [],
+                engineUsage: { rust: 0, typescript: 0 },
+                performance: timing(data),
+            });
+            return;
+        }
+
         for (const pair of data.pairs) {
             parentPort.postMessage({
                 type: "progress",

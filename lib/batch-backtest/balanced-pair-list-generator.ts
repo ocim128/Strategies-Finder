@@ -87,7 +87,7 @@ export interface PairListProvenanceV1 {
 // ---------------------------------------------------------------------------
 
 /** Hard ceiling on nonempty input lines before alias collapse. */
-export const BALANCED_PAIR_LIST_MAX_INPUT_LINES = 500;
+export const BALANCED_PAIR_LIST_MAX_INPUT_LINES = 5_000;
 
 /** Generator-only pair ceiling; normal Batch row intake remains capped separately. */
 export const BALANCED_PAIR_LIST_MAX_PAIRS = 1_000_000;

@@ -21,7 +21,7 @@ import {
     reconcileInterruptedManifestsOnStartup,
     saveManifest,
 } from "./sp500-top-mean-artifact-store";
-import { enumerateSp500Pairs, deriveReplayTargetsFromCanonicalPairs, type CoverageCounts } from "./sp500-pair-enumerator";
+import { enumerateSp500Pairs, type CoverageCounts } from "./sp500-pair-enumerator";
 import type { TopMeanRunManifest } from "./compact-pair-artifact";
 import type { ActiveCapTiltWeight } from "./cap-tilt-contract";
 import {
@@ -373,6 +373,25 @@ export interface TopMeanStatusResponse {
     performance?: TopMeanPerformanceDiagnostic;
     error?: string;
     result?: TopMeanResultSummary;
+}
+
+async function deriveReplayTargetsFromCompletedArtifacts(
+    runId: string,
+    baseDir?: string,
+): Promise<Array<{ asset: string; symbol: string }>> {
+    const symbolByAsset = new Map<string, string>();
+    const addTarget = (asset: string, symbol: string): void => {
+        const key = asset.trim().toUpperCase();
+        if (key !== "" && !symbolByAsset.has(key)) symbolByAsset.set(key, symbol);
+    };
+
+    for await (const artifact of iterateRunRawCompactArtifacts(runId, baseDir)) {
+        addTarget(artifact.baseAsset, artifact.baseSymbol);
+        addTarget(artifact.quoteAsset, artifact.quoteSymbol);
+    }
+
+    return Array.from(symbolByAsset, ([asset, symbol]) => ({ asset, symbol }))
+        .sort((a, b) => a.asset.localeCompare(b.asset));
 }
 
 let activeEngineInstance: TopMeanCoordinatorEngine | null = null;
@@ -1014,7 +1033,7 @@ export class TopMeanCoordinatorEngine {
             // every catalog target.
             const replayTargets = phase0bWriter !== null
                 ? enumRes.eligibleTargets
-                : deriveReplayTargetsFromCanonicalPairs(enumRes.canonicalPairs);
+                : await deriveReplayTargetsFromCompletedArtifacts(this._request.runId, this.baseDir);
             const requestInterval = this._request.interval;
 
             const targetPerformance = this.performanceDiagnostic;
@@ -1035,6 +1054,8 @@ export class TopMeanCoordinatorEngine {
             const replayAbortController = new AbortController();
             this.replayAbortController = replayAbortController;
             const coordinator = this;
+            const replayTargetLoadFailures: string[] = [];
+            let replayTargetLoadFailureCount = 0;
             const targetLoader = (targets: readonly typeof replayTargets[number][]) => () => (async function* () {
                 for (let i = 0; i < targets.length; i++) {
                     const { asset, symbol } = targets[i]!;
@@ -1047,7 +1068,22 @@ export class TopMeanCoordinatorEngine {
                         // Stop cancel the load itself instead of only checking
                         // isStopped between datasets.
                         const targetLoadStartedAt = performance.now();
-                        const pending = loadServerBatchDataset(symbol, requestInterval, replayAbortController.signal);
+                        const pending = loadServerBatchDataset(symbol, requestInterval, replayAbortController.signal)
+                            .catch((error: unknown) => {
+                                if (replayAbortController.signal.aborted || coordinator.isStopped) throw error;
+                                const message = error instanceof Error ? error.message : String(error);
+                                replayTargetLoadFailureCount += 1;
+                                if (replayTargetLoadFailures.length < 25) {
+                                    replayTargetLoadFailures.push(`${symbol}: ${message}`);
+                                }
+                                debugLogger.warn("sp500_top_mean.replay_target_load_failed", {
+                                    runId: coordinator._request.runId,
+                                    asset,
+                                    symbol,
+                                    error: message,
+                                });
+                                return [];
+                            });
                         replayTargetCache.set(symbol, pending);
                         targetPerformance.replay.targetCacheMisses = replayTargetCache.missCount();
                         try {
@@ -1179,6 +1215,14 @@ export class TopMeanCoordinatorEngine {
                 this._request.sampleFromSec,
                 this._request.sampleToSec,
             );
+            if (replayTargetLoadFailureCount > 0) {
+                const omitted = replayTargetLoadFailureCount - replayTargetLoadFailures.length;
+                replayResult.warnings.push(
+                    `Replay skipped ${replayTargetLoadFailureCount} target dataset${replayTargetLoadFailureCount === 1 ? "" : "s"} that could not be loaded.`,
+                    ...replayTargetLoadFailures,
+                    ...(omitted > 0 ? [`...and ${omitted} more target-load failure${omitted === 1 ? "" : "s"}.`] : []),
+                );
+            }
             finishActiveReplayPhase();
             if (phase0bWriter && !phase0bWriterFailed) {
                 try {

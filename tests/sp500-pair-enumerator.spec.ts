@@ -72,6 +72,17 @@ function testCustomPairListText(baseDir: string): void {
     const res = enumerateSp500Pairs({ interval: "4h", baseDir, pairListText: customText });
     assert.ok(res.counts.pairCount <= 3, "Should parse custom pair list lines");
     assert.ok(res.canonicalPairs.length > 0, "Should extract canonical pairs from custom list");
+
+    const bareLocal = enumerateSp500Pairs({
+        interval: "4h",
+        baseDir,
+        pairListText: "AAPL+MSFT\nAAPL",
+    });
+    assert.deepEqual(
+        bareLocal.canonicalPairs,
+        ["AAPL•+MSFT•", "AAPL•"],
+        "Bare tickers present in the local IBKR catalog should use the IBKR loader.",
+    );
 }
 
 function testCustomCryptoMarkets(): void {

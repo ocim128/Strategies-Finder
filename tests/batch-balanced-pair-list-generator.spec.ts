@@ -70,11 +70,17 @@ describe("balanced-pair-list-generator", () => {
             if (!r.ok) assert.match(r.errors.join(";"), /at least two/i);
         });
 
-        it("rejects input exceeding the line cap", () => {
+        it("accepts 5,000 input lines and rejects input exceeding the line cap", () => {
+            assert.equal(BALANCED_PAIR_LIST_MAX_INPUT_LINES, 5_000);
+
+            const accepted = Array.from({ length: BALANCED_PAIR_LIST_MAX_INPUT_LINES }, (_, i) => `A${i}`);
+            const acceptedResult = generateBalancedPairList({ assets: accepted, maxPairs: 1 });
+            assert.equal(acceptedResult.ok, true);
+
             const many = Array.from({ length: BALANCED_PAIR_LIST_MAX_INPUT_LINES + 1 }, (_, i) => `A${i}`);
-            const r = generateBalancedPairList({ assets: many, maxPairs: 10 });
-            assert.equal(r.ok, false);
-            if (!r.ok) assert.match(r.errors.join(";"), /line limit/i);
+            const rejectedResult = generateBalancedPairList({ assets: many, maxPairs: 10 });
+            assert.equal(rejectedResult.ok, false);
+            if (!rejectedResult.ok) assert.match(rejectedResult.errors.join(";"), /line limit/i);
         });
 
         it("rejects tokens containing +", () => {

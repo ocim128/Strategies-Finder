@@ -227,6 +227,51 @@ async function testPersistentWorkerPoolEndToEnd(): Promise<void> {
     assert.equal(progressCalls.length, pairs.length, "every completed pair should emit progress");
 }
 
+async function testFailedPairsRemainVisibleInProgress(): Promise<void> {
+    const pairs = ["FAKE_A•+FAKE_B•", "FAKE_C•+FAKE_D•"];
+    const manifest: TopMeanRunManifest = {
+        schema: "top_mean_run_manifest.v1",
+        runId: "smoke_test_failed_progress",
+        status: "running",
+        fingerprint: "smoke",
+        strategyKey: "__test_failed_progress__",
+        interval: "4h",
+        pairCount: pairs.length,
+        shardSize: 2,
+        totalShards: 1,
+        completedShards: [],
+        failedShards: [],
+        completedPairsCount: 0,
+        failedPairsCount: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+    };
+    const progressText: string[] = [];
+    const pool = new TopMeanWorkerPool();
+    try {
+        await pool.execute({
+            runId: manifest.runId,
+            manifest,
+            canonicalPairs: pairs,
+            strategyKey: "__test_failed_progress__",
+            strategyParams: {},
+            backtestSettings: { direction: "long", slippage: 0, commission: 0 } as any,
+            capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 } as any,
+            interval: "4h",
+            workerCount: 1,
+            shardSize: 2,
+            useRustEnginePreference: false,
+            workerPath: testWorkerPath,
+            onProgress: (_completed, _total, text) => progressText.push(text),
+        });
+    } finally {
+        pool.cancel();
+    }
+    assert.equal(manifest.failedPairsCount, 2);
+    assert.match(progressText[0]!, /Backtesting pair 1\/2 \(0 completed, 1 failed\)/);
+    assert.match(progressText[1]!, /Backtesting pair 2\/2 \(0 completed, 2 failed\)/);
+}
+
 /**
  * Retry-path termination smoke test.
  *
@@ -606,6 +651,7 @@ async function main(): Promise<void> {
     testRunLevelNowSecThreadsIntoWorkerTasks();
     await testWorkerPathResolution();
     await testPersistentWorkerPoolEndToEnd();
+    await testFailedPairsRemainVisibleInProgress();
     await testRetryDrainsAcrossWorkerRelease();
     await testShardCompletesOnlyAfterDurableWrite();
     await testAllWorkersDyingDuringQueuedRetryRejects();
