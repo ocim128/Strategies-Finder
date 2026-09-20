@@ -165,3 +165,7 @@ tests/lib/
 !/archive/selection-rules/
 !/archive/pair-selection/
 !/archive/selection-mining-plan.md
+
+# Local agent-tool state (session plans, runtimes) — never track.
+/.kilo/
+/.zcode/

@@ -527,6 +527,15 @@ Core:
 - `npm run test`
 - `npm run test:e2e`
 
+### Dependency installs and lockfiles
+
+This directory is an npm workspace of `debug/playground/package.json` (`workspaces: ["./*"]`). There are two lockfiles serving two different environments — do not "reconcile" them from the wrong context:
+
+- `debug/playground/package-lock.json` is the workspace lock. CI installs from it (`npm ci --prefix debug/playground`) and it is what local dev uses. All feature work installs from `debug/playground/`, never from inside this directory.
+- `package-lock.json` at this repo root exists only for the standalone Vercel deployment (`DEPLOY_TO_VERCEL.md` deploys this directory as the project root, where no parent workspace exists). Its toolchain versions may legitimately differ from the workspace lock.
+
+When adding a dependency, update the workspace lock (install from `debug/playground/`); update the standalone lock only if the Vercel build needs the new dependency.
+
 `npm run test` is intentionally compact for agent use. It recursively discovers `tests/**/*.spec.ts`, excludes `tests/e2e.spec.ts`, prints one status line per spec plus a short summary, while full logs are written to `artifacts/test-logs/latest` and the structured summary to `artifacts/test-logs/latest/summary.json`.
 
 Useful test runner variants:
