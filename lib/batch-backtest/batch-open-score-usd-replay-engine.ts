@@ -160,7 +160,8 @@ export type OpenScoreUsdLatestSelectorName =
     | "TOP_MEAN"
     | "TOP_MEAN_RAW_UNIQUE"
     | "TOP_RAW_PROFIT_NOW"
-    | "TOP_MEAN_PROFIT_NOW";
+    | "TOP_MEAN_PROFIT_NOW"
+    | "TOP_RAW_PROFIT_NOW_CONF";
 
 export interface OpenScoreUsdLatestSelectionCandidate {
     asset: string;
@@ -203,6 +204,7 @@ export type OpenScoreUsdEventDetailSelector =
     | "TOP_MEAN_PROFIT"
     | "TOP_RAW_PROFIT_NOW"
     | "TOP_MEAN_PROFIT_NOW"
+    | "TOP_RAW_PROFIT_NOW_CONF"
     | "TOP_RAW_PROFIT_W_RAT"
     | "TOP_MEAN_PROFIT_W_RAT"
     | "TOP_RAW_PROFIT_W_LIN"
@@ -346,6 +348,19 @@ export interface OpenScoreUsdReplayResult {
         topMeanProfitNowExDominant: ReplayComparison;
         /** Asset excluded from {@link topMeanProfitNowExDominant}. */
         topMeanProfitNowDominantAsset: string | null;
+        /**
+         * Causal confidence-weighted variant of TOP_RAW_PROFIT_NOW. Each
+         * pair's qualifying vote is weighted by the amount and consistency of
+         * its realized P&L, with one-trade shrinkage. Weight is stamped at
+         * pair-entry time and carried unchanged until that position exits.
+         */
+        topRawProfitNowConf: ReplayComparison;
+        /** Per-asset breakdown for the causal confidence-weighted arm. */
+        topRawProfitNowConfByAsset: AssetSelectionSummary[];
+        /** Confidence-weighted arm after removing its dominant asset. */
+        topRawProfitNowConfExDominant: ReplayComparison;
+        /** Asset excluded from the confidence-weighted arm exclusion. */
+        topRawProfitNowConfDominantAsset: string | null;
         /** TOP_RAW after events selecting its most-frequent asset are removed. */
         topRawExDominant: ReplayComparison;
         dominantAsset: string | null;
@@ -528,6 +543,31 @@ function median(sorted: readonly number[]): number {
 
 function finiteOrNull(x: number): number | null {
     return Number.isFinite(x) ? x : null;
+}
+
+/**
+ * Causal confidence weight for a PROFIT_NOW pair vote.
+ *
+ * `realizedNetPnl` and `grossAbsPnl` contain only trades closed before the
+ * vote's entry. The net/gross ratio rewards consistency while `n/(n+1)`
+ * shrinks a one-trade winner to 0.5 and approaches 1 with more evidence.
+ */
+export function computeProfitNowConfidenceWeight(
+    closedTradeCount: number,
+    realizedNetPnl: number,
+    grossAbsPnl: number,
+): number {
+    if (
+        !Number.isFinite(closedTradeCount)
+        || closedTradeCount <= 0
+        || !Number.isFinite(realizedNetPnl)
+        || realizedNetPnl <= 0
+        || !Number.isFinite(grossAbsPnl)
+        || grossAbsPnl <= 0
+    ) return 0;
+    const evidenceShrinkage = closedTradeCount / (closedTradeCount + 1);
+    const consistency = realizedNetPnl / grossAbsPnl;
+    return Math.max(0, Math.min(1, evidenceShrinkage * consistency));
 }
 
 function meanOrNull(values: readonly number[]): number | null {
@@ -918,6 +958,11 @@ interface ScoreDelta {
      * overlap pattern because the flag travels with the trade.
      */
     voteApplied: boolean;
+    /**
+     * Causal confidence-weighted PROFIT_NOW vote. Zero means the pair was not
+     * profitable/known at this entry; the same weight is stamped on its exit.
+     */
+    profitNowConfidenceWeight: number;
 }
 
 interface DecisionEvent {
@@ -939,6 +984,9 @@ interface DecisionEvent {
      */
     rawScoreProfitNow: number[];
     activePairCountProfitNow: number[];
+    /** Causal confidence-weighted PROFIT_NOW score snapshot. */
+    rawScoreProfitNowConf: number[];
+    activePairCountProfitNowConf: number[];
 }
 
 // ============================================================================
@@ -1063,6 +1111,7 @@ export async function runOpenScoreUsdReplay(
         // merge's post-group rule). A trade entered while pnl-known and
         // strictly positive carries its vote until its own exit.
         const tradeVoteApplied: boolean[] = new Array(trades.length).fill(false);
+        const tradeProfitNowConfidenceWeight: number[] = new Array(trades.length).fill(0);
         let streamPnlKnown = true;
         {
             const ledger: Array<{ t: number; out: boolean; idx: number }> = [];
@@ -1077,11 +1126,23 @@ export async function runOpenScoreUsdReplay(
             });
             ledger.sort((a, b) => a.t - b.t || (a.out === b.out ? 0 : a.out ? -1 : 1));
             let realized = 0;
+            let grossAbsPnl = 0;
+            let closedTradeCount = 0;
             for (const step of ledger) {
                 const pnl = trades[step.idx]!.pnl;
                 if (!Number.isFinite(pnl)) streamPnlKnown = false;
-                if (step.out) realized += Number.isFinite(pnl) ? pnl! : 0;
-                else tradeVoteApplied[step.idx] = streamPnlKnown && realized > 0;
+                if (step.out) {
+                    if (Number.isFinite(pnl)) {
+                        realized += pnl!;
+                        grossAbsPnl += Math.abs(pnl!);
+                        closedTradeCount += 1;
+                    }
+                } else {
+                    tradeVoteApplied[step.idx] = streamPnlKnown && realized > 0;
+                    tradeProfitNowConfidenceWeight[step.idx] = streamPnlKnown
+                        ? computeProfitNowConfidenceWeight(closedTradeCount, realized, grossAbsPnl)
+                        : 0;
+                }
             }
         }
         let tradeIdx = -1;
@@ -1149,10 +1210,27 @@ export async function runOpenScoreUsdReplay(
             }
             tradeIdx += 1;
             const voteApplied = tradeVoteApplied[tradeIdx]!;
+            const profitNowConfidenceWeight = tradeProfitNowConfidenceWeight[tradeIdx]!;
             // Entry deltas (long: base+1/quote-1; short: base-1/quote+1).
-            stream.push({ timeSec: entrySec, assetIndex: bi, delta: sign * baseWeight, isEntry: 1, pnlShare: 0, voteApplied });
+            stream.push({
+                timeSec: entrySec,
+                assetIndex: bi,
+                delta: sign * baseWeight,
+                isEntry: 1,
+                pnlShare: 0,
+                voteApplied,
+                profitNowConfidenceWeight,
+            });
             if (qi !== null) {
-                stream.push({ timeSec: entrySec, assetIndex: qi, delta: -sign * quoteWeight, isEntry: 1, pnlShare: 0, voteApplied });
+                stream.push({
+                    timeSec: entrySec,
+                    assetIndex: qi,
+                    delta: -sign * quoteWeight,
+                    isEntry: 1,
+                    pnlShare: 0,
+                    voteApplied,
+                    profitNowConfidenceWeight,
+                });
             }
             // Exit deltas are the exact inverse. end_of_data / missing exit time
             // means the position is still open at the artifact end -> no exit delta.
@@ -1161,9 +1239,25 @@ export async function runOpenScoreUsdReplay(
                 // summing every leg's share reconstructs the trade pnl exactly.
                 const pnl = Number.isFinite(trade.pnl) ? trade.pnl : 0;
                 const pnlShare = pnl / (qi !== null ? 2 : 1);
-                stream.push({ timeSec: exitSec, assetIndex: bi, delta: -sign * baseWeight, isEntry: 0, pnlShare, voteApplied });
+                stream.push({
+                    timeSec: exitSec,
+                    assetIndex: bi,
+                    delta: -sign * baseWeight,
+                    isEntry: 0,
+                    pnlShare,
+                    voteApplied,
+                    profitNowConfidenceWeight,
+                });
                 if (qi !== null) {
-                    stream.push({ timeSec: exitSec, assetIndex: qi, delta: sign * quoteWeight, isEntry: 0, pnlShare, voteApplied });
+                    stream.push({
+                        timeSec: exitSec,
+                        assetIndex: qi,
+                        delta: sign * quoteWeight,
+                        isEntry: 0,
+                        pnlShare,
+                        voteApplied,
+                        profitNowConfidenceWeight,
+                    });
                 }
             }
         }
@@ -1271,13 +1365,22 @@ export async function runOpenScoreUsdReplay(
     // post-group apply below).
     const profitNowRawScore = new Array<number>(assetCount).fill(0);
     const profitNowPairCount = new Array<number>(assetCount).fill(0);
+    const profitNowConfidenceScore = new Array<number>(assetCount).fill(0);
+    const profitNowConfidencePairCount = new Array<number>(assetCount).fill(0);
     // Running realized pnl per stream (sum of exit deltas' pnlShare popped so
     // far). Exits at the event timestamp are applied before the post-group
     // mask evaluation, so their pnl is known at that event.
     const realizedPnlByStream = new Float64Array(profitableStreams.length);
     // Deltas of the current timestamp group, replayed after the group closes
     // with per-leg open-vote flags (see the post-group apply below).
-    interface GroupDelta { assetIndex: number; delta: number; streamIdx: number; isEntry: number; voteApplied: boolean; }
+    interface GroupDelta {
+        assetIndex: number;
+        delta: number;
+        streamIdx: number;
+        isEntry: number;
+        voteApplied: boolean;
+        profitNowConfidenceWeight: number;
+    }
     const groupDeltas: GroupDelta[] = [];
     // Causal PROFIT_NOW vote applicability travels ON each delta
     // (ScoreDelta.voteApplied, precomputed per trade at scan time), so the
@@ -1316,7 +1419,14 @@ export async function runOpenScoreUsdReplay(
                 profitPairCount[d.assetIndex] = nextPnl > 0 ? nextPnl : 0;
             }
             // Buffered for the causal PROFIT_NOW apply after the group closes.
-            groupDeltas.push({ assetIndex: d.assetIndex, delta: d.delta, streamIdx, isEntry: d.isEntry, voteApplied: d.voteApplied });
+            groupDeltas.push({
+                assetIndex: d.assetIndex,
+                delta: d.delta,
+                streamIdx,
+                isEntry: d.isEntry,
+                voteApplied: d.voteApplied,
+                profitNowConfidenceWeight: d.profitNowConfidenceWeight,
+            });
             if (d.isEntry === 1) hasEntry = true;
             popped += 1;
             // A single timestamp can contain many pair deltas. Check and yield
@@ -1345,6 +1455,11 @@ export async function runOpenScoreUsdReplay(
             const countDeltaNow = gd.isEntry === 1 ? 1 : -1;
             const nextNow = profitNowPairCount[gd.assetIndex]! + countDeltaNow;
             profitNowPairCount[gd.assetIndex] = nextNow > 0 ? nextNow : 0;
+            if (gd.profitNowConfidenceWeight > 0) {
+                profitNowConfidenceScore[gd.assetIndex]! += gd.delta * gd.profitNowConfidenceWeight;
+                const nextConfidence = profitNowConfidencePairCount[gd.assetIndex]! + countDeltaNow;
+                profitNowConfidencePairCount[gd.assetIndex] = nextConfidence > 0 ? nextConfidence : 0;
+            }
         }
         // Exit-only score changes do not create a decision event.
         if (hasEntry) {
@@ -1357,6 +1472,8 @@ export async function runOpenScoreUsdReplay(
                     activePairCountProfit: [...profitPairCount],
                     rawScoreProfitNow: [...profitNowRawScore],
                     activePairCountProfitNow: [...profitNowPairCount],
+                    rawScoreProfitNowConf: [...profitNowConfidenceScore],
+                    activePairCountProfitNowConf: [...profitNowConfidencePairCount],
                 });
             }
         }
@@ -1392,6 +1509,8 @@ export async function runOpenScoreUsdReplay(
          * strictly positive.
          */
         profitNowPositives: Candidate[];
+        /** Causal confidence-weighted PROFIT_NOW positives. */
+        profitNowConfidencePositives: Candidate[];
         topRaw: number;      // assetIndex
         topMean: number;     // assetIndex
         /** Unique raw maximum within the TOP_MEAN tied set, or -1 on a residual raw tie. */
@@ -1404,6 +1523,8 @@ export async function runOpenScoreUsdReplay(
         /** Causal profit picks, or -1 when the causal pool has < 2 members. */
         topRawProfitNow: number;  // assetIndex
         topMeanProfitNow: number; // assetIndex
+        /** Confidence-weighted causal pick, or -1 when its pool has < 2 members. */
+        topRawProfitNowConf: number;  // assetIndex
         /** Max active-pair count across positive candidates at this event. */
         maxActivePairs: number;
         /**
@@ -1437,6 +1558,7 @@ export async function runOpenScoreUsdReplay(
         timeSec: number;
         profitPositives: Candidate[];
         profitNowPositives: Candidate[];
+        profitNowConfidencePositives: Candidate[];
     }
     const profitOnlyEvents: ProfitOnlyEvent[] = [];
     // Rank Freshness: previous view's TOP_RAW leader (assetIndex). Updated
@@ -1452,6 +1574,7 @@ export async function runOpenScoreUsdReplay(
         const positives: Candidate[] = [];
         const profitPositives: Candidate[] = [];
         const profitNowPositives: Candidate[] = [];
+        const profitNowConfidencePositives: Candidate[] = [];
         let maxActivePairs = 0;
         for (let a = 0; a < assetCount; a += 1) {
             const raw = ev.rawScore[a]!;
@@ -1489,6 +1612,20 @@ export async function runOpenScoreUsdReplay(
                     adjusted: cntPnlNow > 0 ? rawPnlNow / Math.sqrt(cntPnlNow) : rawPnlNow,
                     mean: cntPnlNow > 0 ? rawPnlNow / cntPnlNow : rawPnlNow,
                     activePairs: cntPnlNow,
+                });
+            }
+            // Causal confidence-weighted pool: the same entry-time causal
+            // filter, but each qualifying vote carries a bounded realized-P&L
+            // consistency/evidence weight.
+            const rawPnlNowConf = ev.rawScoreProfitNowConf[a]!;
+            if (rawPnlNowConf > 0) {
+                const cntPnlNowConf = ev.activePairCountProfitNowConf[a]!;
+                profitNowConfidencePositives.push({
+                    assetIndex: a,
+                    raw: rawPnlNowConf,
+                    adjusted: cntPnlNowConf > 0 ? rawPnlNowConf / Math.sqrt(cntPnlNowConf) : rawPnlNowConf,
+                    mean: cntPnlNowConf > 0 ? rawPnlNowConf / cntPnlNowConf : rawPnlNowConf,
+                    activePairs: cntPnlNowConf,
                 });
             }
         }
@@ -1556,6 +1693,9 @@ export async function runOpenScoreUsdReplay(
             // Causal picks: identical, over the point-in-time pool.
             const topRawProfitNow = profitNowPositives.length >= 2 ? pickMax(profitNowPositives, "raw") : null;
             const topMeanProfitNow = profitNowPositives.length >= 2 ? pickMax(profitNowPositives, "mean") : null;
+            const topRawProfitNowConf = profitNowConfidencePositives.length >= 2
+                ? pickMax(profitNowConfidencePositives, "raw")
+                : null;
             // --- Conditional-split features (Phase 3) -------------------------
             const topRawIdx = topRaw.winner.assetIndex;
             // Cross-sectional HHI of positive raw scores. raw > 0 is guaranteed
@@ -1579,6 +1719,7 @@ export async function runOpenScoreUsdReplay(
                 timeSec: ev.timeSec, positives,
                 profitPositives,
                 profitNowPositives,
+                profitNowConfidencePositives,
                 topRaw: topRawIdx,
                 topMean: topMean.winner.assetIndex,
                 topMeanRawUnique,
@@ -1587,6 +1728,7 @@ export async function runOpenScoreUsdReplay(
                 topMeanProfit: topMeanProfit?.winner.assetIndex ?? -1,
                 topRawProfitNow: topRawProfitNow?.winner.assetIndex ?? -1,
                 topMeanProfitNow: topMeanProfitNow?.winner.assetIndex ?? -1,
+                topRawProfitNowConf: topRawProfitNowConf?.winner.assetIndex ?? -1,
                 maxActivePairs,
                 hhi,
                 fresh,
@@ -1597,11 +1739,20 @@ export async function runOpenScoreUsdReplay(
                 },
             });
             lastTopRawLeaderIdx = topRawIdx;
-        } else if (profitPositives.length >= 2 || profitNowPositives.length >= 2) {
+        } else if (
+            profitPositives.length >= 2
+            || profitNowPositives.length >= 2
+            || profitNowConfidencePositives.length >= 2
+        ) {
             // Profit-arm-only event: no ordinary view, but a profit arm can
             // still fire. Pools are captured verbatim; picks are resolved in
             // Phase 5 with the same tie-break rule.
-            profitOnlyEvents.push({ timeSec: ev.timeSec, profitPositives, profitNowPositives });
+            profitOnlyEvents.push({
+                timeSec: ev.timeSec,
+                profitPositives,
+                profitNowPositives,
+                profitNowConfidencePositives,
+            });
         }
         if (e % 1000 === 0) {
             onPhase("targets", `formed candidates for ${e}/${totalEvents} events`, e, totalEvents);
@@ -1690,6 +1841,11 @@ export async function runOpenScoreUsdReplay(
             if (!list) { list = []; requestsByAsset.set(c.assetIndex, list); }
             if (list[list.length - 1] !== v) list.push(v);
         }
+        for (const c of views[v]!.profitNowConfidencePositives) {
+            let list = requestsByAsset.get(c.assetIndex);
+            if (!list) { list = []; requestsByAsset.set(c.assetIndex, list); }
+            if (list[list.length - 1] !== v) list.push(v);
+        }
     }
     // Profit-only events share the request/outcome indexes, offset after the
     // real views so every existing view index stays stable.
@@ -1705,6 +1861,7 @@ export async function runOpenScoreUsdReplay(
         const idx = views.length + pi;
         for (const c of profitOnlyEvents[pi]!.profitPositives) pushEventRequest(c.assetIndex, idx);
         for (const c of profitOnlyEvents[pi]!.profitNowPositives) pushEventRequest(c.assetIndex, idx);
+        for (const c of profitOnlyEvents[pi]!.profitNowConfidencePositives) pushEventRequest(c.assetIndex, idx);
     }
 
     // --- Phase 4: evaluate USD outcomes per target (load -> consume -> free) -
@@ -2047,6 +2204,7 @@ export async function runOpenScoreUsdReplay(
                 pick("TOP_MEAN_RAW_UNIQUE", "long", latestView.positives, (candidate) => candidate.mean, "max", (candidate) => candidate.raw),
                 pick("TOP_RAW_PROFIT_NOW", "long", latestView.profitNowPositives, (candidate) => candidate.raw, "max"),
                 pick("TOP_MEAN_PROFIT_NOW", "long", latestView.profitNowPositives, (candidate) => candidate.mean, "max"),
+                pick("TOP_RAW_PROFIT_NOW_CONF", "long", latestView.profitNowConfidencePositives, (candidate) => candidate.raw, "max"),
             ],
         };
     })();
@@ -2097,6 +2255,7 @@ export async function runOpenScoreUsdReplay(
         const topMeanProfit = createSeries();
         const topRawProfitNow = createSeries();
         const topMeanProfitNow = createSeries();
+        const topRawProfitNowConf = createSeries();
         const topMeanPortfolioOpportunities: TopMeanPortfolioOpportunity[] = [];
         // Conditional-split sub-series: TOP_RAW's pick routed into one of two
         // accumulators per feature. Reuse the same `appendSelection` closure
@@ -2134,6 +2293,8 @@ export async function runOpenScoreUsdReplay(
         const topRawProfitNowSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
         const topMeanProfitNowSelectedByAsset = new Map<string, number>();
         const topMeanProfitNowSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const topRawProfitNowConfSelectedByAsset = new Map<string, number>();
+        const topRawProfitNowConfSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
             // Scalar event-detail emitter, hoisted to horizon scope so both the
         // ordinary views and the profit-only events can push rows.
         const pushEventDetail = (
@@ -2241,6 +2402,51 @@ export async function runOpenScoreUsdReplay(
             appendProfitSelection(rawSeries, rawSelector, rawPick, rawSelectedByAsset, rawSamplesByAsset);
             appendProfitSelection(meanSeries, meanSelector, meanPick, meanSelectedByAsset, meanSamplesByAsset);
         };
+        const appendConfidenceProfitArm = (
+            timeSec: number,
+            perAssetOutcomes: ViewReturns,
+            pool: readonly Candidate[],
+            selectedIdx: number,
+        ): void => {
+            if (pool.length < 2 || selectedIdx < 0) return;
+            const poolRetByAsset = new Map<number, number>();
+            let poolValid = true;
+            for (const c of pool) {
+                const r = perAssetOutcomes.get(c.assetIndex)?.long[hIdx];
+                if (r === undefined || !Number.isFinite(r)) { poolValid = false; break; }
+                poolRetByAsset.set(c.assetIndex, r);
+            }
+            if (!poolValid) return;
+            const selectedReturn = poolRetByAsset.get(selectedIdx);
+            if (selectedReturn === undefined) return;
+            let poolTotal = 0;
+            for (const r of poolRetByAsset.values()) poolTotal += r;
+            const randomReturn = (poolTotal - selectedReturn) / (poolRetByAsset.size - 1);
+            const delta = selectedReturn - randomReturn;
+            topRawProfitNowConf.returns.push(selectedReturn);
+            topRawProfitNowConf.deltas.push(delta);
+            topRawProfitNowConf.times.push(timeSec);
+            topRawProfitNowConf.assets.push(assetNames[selectedIdx]!);
+            pushEventDetail(
+                perAssetOutcomes,
+                timeSec,
+                "TOP_RAW_PROFIT_NOW_CONF",
+                "long",
+                pool.find((candidate) => candidate.assetIndex === selectedIdx)!,
+                selectedReturn,
+                randomReturn,
+                poolRetByAsset.size,
+            );
+            const asset = assetNames[selectedIdx]!;
+            topRawProfitNowConfSelectedByAsset.set(asset, (topRawProfitNowConfSelectedByAsset.get(asset) ?? 0) + 1);
+            let samples = topRawProfitNowConfSamplesByAsset.get(asset);
+            if (!samples) {
+                samples = { returns: [], deltas: [] };
+                topRawProfitNowConfSamplesByAsset.set(asset, samples);
+            }
+            samples.returns.push(selectedReturn);
+            samples.deltas.push(delta);
+        };
 
         for (let v = 0; v < views.length; v += 1) {
             const view = views[v]!;
@@ -2293,6 +2499,12 @@ export async function runOpenScoreUsdReplay(
                 topRawProfitNowSamplesByAsset,
                 topMeanProfitNowSelectedByAsset,
                 topMeanProfitNowSamplesByAsset,
+            );
+            appendConfidenceProfitArm(
+                view.timeSec,
+                perAsset,
+                view.profitNowConfidencePositives,
+                view.topRawProfitNowConf,
             );
 
             // Collect returns for all positives this horizon.
@@ -2508,6 +2720,12 @@ export async function runOpenScoreUsdReplay(
                 topMeanProfitNowSelectedByAsset,
                 topMeanProfitNowSamplesByAsset,
             );
+            appendConfidenceProfitArm(
+                pe.timeSec,
+                perAssetProfitOnly,
+                pe.profitNowConfidencePositives,
+                pickFromPool(pe.profitNowConfidencePositives, "raw", pe.timeSec),
+            );
         }
 
         const n = topRaw.deltas.length;
@@ -2616,6 +2834,16 @@ export async function runOpenScoreUsdReplay(
             topMeanProfitNowDominantAsset,
             buildComparison,
         );
+        const topRawProfitNowConfByAsset = buildAssetSelectionBreakdown(
+            topRawProfitNowConfSelectedByAsset,
+            topRawProfitNowConfSamplesByAsset,
+        ).byAsset;
+        const topRawProfitNowConfDominantAsset = topRawProfitNowConfByAsset[0]?.asset ?? null;
+        const topRawProfitNowConfExDominant = buildExDominantComparison(
+            topRawProfitNowConf,
+            topRawProfitNowConfDominantAsset,
+            buildComparison,
+        );
         // TOP_MEAN top-contribution exclusion: drop events selecting the asset
         // with the largest Σ per-event delta (events × mean delta), NOT the most
         // frequent. A low-frequency / high-per-pick asset (e.g. SNDK in the
@@ -2667,6 +2895,14 @@ export async function runOpenScoreUsdReplay(
             topMeanProfitNowByAsset,
             topMeanProfitNowExDominant,
             topMeanProfitNowDominantAsset,
+            topRawProfitNowConf: buildComparison(
+                topRawProfitNowConf.deltas,
+                topRawProfitNowConf.returns,
+                topRawProfitNowConf.times,
+            ),
+            topRawProfitNowConfByAsset,
+            topRawProfitNowConfExDominant,
+            topRawProfitNowConfDominantAsset,
             topRawExDominant,
             topMeanExDominant,
             topMeanDominantAsset,
@@ -2900,7 +3136,7 @@ function buildReportLines(args: {
         }
     }
     lines.push(`retained pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
-    lines.push("controls | TOP_MEAN=raw/activePairs TOP_RAW_PROFIT=raw score counted only from pairs whose pair backtest netted >0 (look-ahead) TOP_MEAN_PROFIT=that raw / open profitable-pair count TOP_RAW_PROFIT_NOW=same filter using only pnl realized at or before each event (causal) TOP_MEAN_PROFIT_NOW=that raw / open realized-profitable-pair count");
+    lines.push("controls | TOP_MEAN=raw/activePairs TOP_RAW_PROFIT=raw score counted only from pairs whose pair backtest netted >0 (look-ahead) TOP_MEAN_PROFIT=that raw / open profitable-pair count TOP_RAW_PROFIT_NOW=same filter using only pnl realized at or before each event (causal) TOP_MEAN_PROFIT_NOW=that raw / open realized-profitable-pair count TOP_RAW_PROFIT_NOW_CONF=causal PROFIT_NOW score weighted by realized net/gross P&L consistency with one-trade shrinkage");
     lines.push("TOP_MEAN_RAW_UNIQUE rule | TOP_MEAN tied set -> unique raw-score maximum; residual raw ties skipped; control=mean return of the TOP_MEAN tied set");
     lines.push("pnl model | OVERLAP=long selector vs same-pool random positive, every eligible event; *_1K=$1000/trade, exact selector ties skipped, one open trade per asset");
     for (const h of args.horizons) {
@@ -2915,6 +3151,8 @@ function buildReportLines(args: {
         lines.push(comparisonLine(`RAW_PROFIT_NOW_EX_${h.topRawProfitNowDominantAsset ?? "NONE"}`, h.topRawProfitNowExDominant));
         lines.push(comparisonLine("TOP_MEAN_PROFIT_NOW", h.topMeanProfitNow));
         lines.push(comparisonLine(`MEAN_PROFIT_NOW_EX_${h.topMeanProfitNowDominantAsset ?? "NONE"}`, h.topMeanProfitNowExDominant));
+        lines.push(comparisonLine("TOP_RAW_PROFIT_NOW_CONF", h.topRawProfitNowConf));
+        lines.push(comparisonLine(`RAW_PROFIT_NOW_CONF_EX_${h.topRawProfitNowConfDominantAsset ?? "NONE"}`, h.topRawProfitNowConfExDominant));
         lines.push(comparisonLine("TOP_RAW", h.topRaw));
         lines.push(comparisonLine("TOP_MEAN", h.topMean));
         lines.push(comparisonLine("TOP_MEAN_RAW_UNIQUE", h.topMeanRawUnique));
@@ -2975,6 +3213,10 @@ function buildReportLines(args: {
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");
         lines.push(`TOP_MEAN_PROFIT_NOW selected assets = ${topMeanProfitNowBreakdown || "n/a"}${h.topMeanProfitNowByAsset.length > 5 ? ` | other=${h.topMeanProfitNowByAsset.length - 5} assets` : ""}`);
+        const topRawProfitNowConfBreakdown = h.topRawProfitNowConfByAsset.slice(0, 5).map((x) =>
+            `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
+        ).join(" | ");
+        lines.push(`TOP_RAW_PROFIT_NOW_CONF selected assets = ${topRawProfitNowConfBreakdown || "n/a"}${h.topRawProfitNowConfByAsset.length > 5 ? ` | other=${h.topRawProfitNowConfByAsset.length - 5} assets` : ""}`);
         lines.push(`active pair count at events min/median/max = ${h.candidateDegree.min}/${fmtNum(h.candidateDegree.median)}/${h.candidateDegree.max} topAssetShare=${h.candidateDegree.topAssetShare === null ? "n/a" : (h.candidateDegree.topAssetShare * 100).toFixed(1) + "%"}`);
         lines.push(`selected TOP_RAW retained degree min/median/max = ${h.selectedDegree.min}/${fmtNum(h.selectedDegree.median)}/${h.selectedDegree.max}`);
     }
