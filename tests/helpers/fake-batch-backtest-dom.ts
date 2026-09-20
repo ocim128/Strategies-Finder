@@ -10,7 +10,7 @@ import {
 } from "../../lib/batch-backtest/batch-backtest-dom";
 
 export function createFakeBatchElement(): any {
-    const listeners = new Map<string, Array<() => void>>();
+    const listeners = new Map<string, Array<(ev?: { type: string }) => void>>();
     const classes = new Set<string>();
     const el: any = {
         style: { display: "", width: "" },
@@ -32,7 +32,7 @@ export function createFakeBatchElement(): any {
         replaceChildren: () => { el.children = []; },
         appendChild: (child: any) => { el.children = el.children ?? []; el.children.push(child); return child; },
         querySelectorAll: () => [],
-        addEventListener: (type: string, handler: () => void) => {
+        addEventListener: (type: string, handler: (ev?: { type: string }) => void) => {
             const arr = listeners.get(type) ?? [];
             arr.push(handler);
             listeners.set(type, arr);

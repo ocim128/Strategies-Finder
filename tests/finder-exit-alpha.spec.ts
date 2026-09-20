@@ -538,7 +538,10 @@ describe("Finder Exit Alpha", () => {
                 { time: data[0]!.time, type: "buy", price: data[0]!.close },
             ],
         };
-        const registeredExitKey = "cumulative_return_zscore_reversion";
+        // The stub executor proves the runner resolves the exit lib from the
+        // registry by key; cumulative_return_zscore_reversion was removed in
+        // 7471bc46, so the surviving sibling key carries the registered path.
+        const registeredExitKey = "cumulative_return_percentile_reversion";
         const output = await runFinderUniverseExecution({
             interval: "5m",
             options: {
@@ -567,12 +570,12 @@ describe("Finder Exit Alpha", () => {
             selectedStrategy: { key: "universe_entry", name: entryStrategy.name, strategy: entryStrategy },
             exitStrategyCandidates: [{
                 key: registeredExitKey,
-                name: "Cumulative Return Z-Score Reversion",
+                name: "Cumulative Return Percentile Reversion",
                 strategy: {
-                    name: "Cumulative Return Z-Score Reversion",
+                    name: "Cumulative Return Percentile Reversion",
                     description: "test",
-                    defaultParams: { lookback: 2, zThreshold: 0 },
-                    paramLabels: { lookback: "lookback", zThreshold: "zThreshold" },
+                    defaultParams: { lookback: 2, pctlExtreme: 0.9 },
+                    paramLabels: { lookback: "lookback", pctlExtreme: "pctlExtreme" },
                     execute: () => [],
                 },
             }],
