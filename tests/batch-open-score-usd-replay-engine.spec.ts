@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
+    computeProfitNowConfidenceWeight,
     runOpenScoreUsdReplay,
     type OpenScoreUsdTarget,
     type PoolSnapshotRecord,
@@ -74,6 +75,63 @@ async function* fromArray<T>(items: T[]): AsyncIterable<T> {
 }
 
 describe("batch-open-score-usd-replay-engine", () => {
+    it("shrinks causal profit confidence for sparse or inconsistent realized pnl", () => {
+        expect(computeProfitNowConfidenceWeight(1, 10, 10)).to.equal(0.5);
+        expect(computeProfitNowConfidenceWeight(4, 40, 40)).to.equal(0.8);
+        expect(computeProfitNowConfidenceWeight(2, 50, 150)).to.be.closeTo((2 / 3) * (1 / 3), 1e-12);
+        expect(computeProfitNowConfidenceWeight(0, 10, 10)).to.equal(0);
+        expect(computeProfitNowConfidenceWeight(2, -10, 10)).to.equal(0);
+    });
+
+    it("TOP_RAW_PROFIT_NOW_CONF selects the stronger causal winner", async () => {
+        const decision = T0 + 1000;
+        const markets = [
+            makeDirectMarket("AAA", [
+                makeTrade("long", T0 + 100, T0 + 200, 10),
+                makeTrade("long", decision, null),
+            ]),
+            makeDirectMarket("BBB", [
+                makeTrade("long", T0 + 100, T0 + 200, 10),
+                makeTrade("long", T0 + 300, T0 + 400, 10),
+                makeTrade("long", T0 + 500, T0 + 600, 10),
+                makeTrade("long", T0 + 700, T0 + 800, 10),
+                makeTrade("long", decision, null),
+            ]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, () => 100),
+            makeTarget("BBB", 10, () => 100),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            {
+                horizons: [2],
+                slippageRate: 0,
+                commissionRate: 0,
+                blockCount: 1,
+                includeEventDetails: true,
+            },
+        );
+
+        const horizon = result.horizons[0]!;
+        expect(horizon.topRawProfitNowConf.events).to.equal(1);
+        expect(horizon.topRawProfitNowConfByAsset).to.have.length(1);
+        expect(horizon.topRawProfitNowConfByAsset[0]!.asset).to.equal("BBB");
+        expect(horizon.topRawProfitNowConfByAsset[0]!.events).to.equal(1);
+        const detail = result.eventDetails?.find(
+            (row) => row.selector === "TOP_RAW_PROFIT_NOW_CONF" && row.decisionTime === decision,
+        );
+        expect(detail?.asset).to.equal("BBB");
+        expect(detail?.eligibleCandidates).to.equal(2);
+        expect(result.latestSelections?.selections.find(
+            (selection) => selection.selector === "TOP_RAW_PROFIT_NOW_CONF",
+        )?.asset).to.equal("BBB");
+        const report = result.reportLines.join("\n");
+        expect(report).to.include("TOP_RAW_PROFIT_NOW_CONF selected assets = BBB:n=1");
+        expect(report).to.include("RAW_PROFIT_NOW_CONF_EX_");
+    });
+
     it("returns a no-horizon message when horizons are empty", async () => {
         const result = await runOpenScoreUsdReplay(
             () => fromArray([]),

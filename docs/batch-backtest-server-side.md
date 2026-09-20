@@ -84,7 +84,11 @@ current engine includes the long-side raw/mean selectors, the
 `TOP_MEAN_RAW_UNIQUE` tied-set refinement, the pnl-gated `TOP_RAW_PROFIT` /
 `TOP_MEAN_PROFIT` variants (research-only look-ahead) and their causal
 point-in-time `TOP_*_PROFIT_NOW` counterparts, plus per-asset breakdown and
-dominant-asset exclusion diagnostics. It no longer includes the adjusted,
+dominant-asset exclusion diagnostics. `TOP_RAW_PROFIT_NOW_CONF` is an
+additional causal arm: each qualifying pair vote is weighted at entry by
+`n/(n+1) * realizedNetPnl/grossAbsPnl`, where `n` and both P&L totals use only
+closed trades available before that entry. The weight is carried unchanged
+until the position exits. It no longer includes the adjusted,
 VS_RAW/RANK2 pairwise, MAX_ACTIVE/MAX_RETAINED, take/skip, trend, or
 submitted-degree arms (removed). The profit gate reads the artifact's
 `result.netProfit`: the standalone route loads full Batch mine artifacts
