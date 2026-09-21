@@ -199,8 +199,6 @@ See `README.md` under `Architecture Map` for the canonical subsystem and file ma
 - Check UI load/save path in `lib/settings-manager.ts`
 - If persisted JSON shape changes, add a migration in the relevant `readPersistedJson(...)` callsite instead of silently breaking old payloads
 - Check any resolver/sanitizer path that mirrors those settings
-- If you change the Polymarket bridge `external_signal` payload or `polymarketEntryOffset` contract, keep `scripts/export-latest-entry-signal.ts` and the bridge export code in `lib/polymarket-panel-service.ts` aligned
-- If you change `polymarketExitMode`, keep `docs/polymarket.md`, endpoint fences, and Finder apply-result behavior aligned
 
 ### Any worker-facing change
 - Check `lib/alert-service.ts`
@@ -355,7 +353,6 @@ Twelve findings landed across the TOP_MEAN coordinator, worker pool, archive, ro
 
 ### Server-Owned Finder Symbol Universe
 - Finder **Symbol Universe** is a server-owned job: the Vite dev server via `lib/finder/server/finder-vite-plugin.ts` owns all selected strategies, IS evaluation, survivor merge, OOS validation, diagnostics combination, and the authoritative terminal candidate slice. Current-chart Finder remains in-tab. See `docs/finder-server-side.md`.
-- **One request per run**: the browser submits all selected entry strategy keys + a browser-generated `runId` in a single `POST /api/finder/universe-run`. `FinderManager.runUniverseFinder` no longer sequences per-strategy requests. Polymarket scoring remains unsupported in Universe mode.
 - **The streamed `candidate` must NEVER contain array fields** (`data`, `signals`, `trades`, `equityCurve`). `FinderUniverseCandidate` is already scalar by design; `toScalarCandidate(...)` + `assertCandidateIsScalar(...)` (`lib/finder/server/finder-stream-types.ts`) enforce this at the source. The forbidden-field contract is locked by `tests/finder-server-plugin.spec.ts`.
 - **Loader parity**: `lib/finder/server/server-finder-data-loader.ts` reuses `createBatchDatasetLoaderCore` from `lib/batch-backtest/batch-dataset-loader-core.ts` (the SAME core the Batch server loader uses), so the synthetic-pair pipeline, `SyntheticLegCache` caps, and offline-first gap-fill are identical by construction. Do NOT fork a second synthetic-pair pipeline. Locked by `tests/finder-server-loader-parity.spec.ts`.
 - **OOS runs server-side**: the server runs the OOS pass via the leaf `runUniverseOosPass(...)` (`lib/finder/finder-universe-oos.ts`), a faithful lift of the prior `FinderManager.applyUniverseOosValidationIfNeeded`. The browser loads NO Universe OHLCV for IS or OOS. Diagnostics are combined server-side by the leaf `buildCombinedUniverseDiagnostics(...)` (`lib/finder/finder-universe-diagnostics-combine.ts`). Do NOT re-introduce a browser-side Universe OOS path or `loadUniverseDataset` — those were removed.
@@ -421,7 +418,6 @@ Nine findings landed across the MarketCap producer and the two server-side cap-t
 - Preserve `Signal.exitOnly` through signal preparation and every TS engine signal loop; exit-only signals close opposite positions but never open new positions
 - Register new settings ids in `BACKTEST_SETTINGS_DOM_CONTRACTS` in `lib/backtest-settings-dom-contract.ts`. `BACKTEST_DOM_SETTING_IDS` is derived from that contract and used by `backtestService.getBacktestSettings()`; `tests/feature-dom-contracts.spec.ts` verifies the matching HTML id exists.
 - `applyDerivedBacktestSettingGuards` in `lib/backtest-settings-resolver.ts` must preserve `disableSignalExits` when `exitStrategyOverrideEnabled` is on, even before a strategy key is picked. Without this guard exemption, the resolver strips `disableSignalExits` before the user can finish configuring the override (chicken-and-egg)
-- Finder currently has browser-owned current-chart, Strategy Quality, genetic, and Polymarket paths plus server-owned Symbol Universe and Asset Opportunity paths. Keep any unsupported cross-symbol or Worker/Scanner surface explicitly guarded; do not infer support from shared Finder result types alone.
 - In Symbol Universe, each entry param set samples one exit strategy lib + param set, and the survivor row exposes `exitStrategyKey`/`exitStrategyName`/`exitStrategyParams` so the chosen lib is visible; Apply writes the override settings (`exitStrategyKey`, `exitStrategyParams`, `disableSignalExits`, `exitStrategyOverrideEnabled`)
 - Finder exit params use the `_exit__` prefix internally and must split before entry-strategy normalization, result display, and Apply
 - Apply must write both `exitStrategyKey` and `exitStrategyParams`, and force `disableSignalExits` plus `exitStrategyOverrideEnabled`
@@ -432,41 +428,6 @@ Nine findings landed across the MarketCap producer and the two server-side cap-t
   - `..\\..\\..\\node_modules\\.bin\\esno tests\\exit-strategy-param-prefix.spec.ts`
   - `..\\..\\..\\node_modules\\.bin\\esno tests\\finder-cache-decision.spec.ts`
   - `..\\..\\..\\node_modules\\.bin\\esno tests\\feature-dom-contracts.spec.ts`
-
-### Modify Polymarket scoring
-- Keep the five Polymarket contracts separate:
-  - direct charting
-  - outcome scoring
-  - diagnostics
-  - bridge export
-  - Execution Lab live trade
-- `polymarketExitMode` defaults to `resolve_hold`
-- `signal_exit_same_event` is only effective on `1m` + `next_open` and supported `1s` BTCUSDT/XRPUSDT CLOB `signal_close`, `next_open`, or `next_close` runs; use `resolveEffectivePolymarketExitMode(...)` instead of open-coded checks
-- Signal-exit pricing depends on local `polymarket_price_points`; if you change ingestion or storage, update together:
-  - `lib/polymarket-price-points-ingest.ts`
-  - `lib/local-sqlite-polymarket-api.ts`
-  - `vite.config.ts`
-  - `docs/polymarket.md`
-- Finder signal-exit mode must not fan out by `polymarketEntryOffset`; applying results should preserve `polymarketExitMode` and only write offset data in `resolve_hold`
-- endpoint Preview / Copy / HTTP execution intentionally stay on `resolve_hold`; do not silently broaden those callers
-- Execution Lab live trade is not bridge export: browser code sends non-secret order intent to a local executor, private keys stay in `.env`, and live entry/exit semantics live in `lib/execution-lab/live-trade-request.ts`, `lib/execution-lab/live-executor-adapter.ts`, and the side-repo one-shot executor docs
-- Validation habit after Polymarket changes:
-  - `npm run typecheck`
-  - `..\..\..\node_modules\.bin\esno tests\polymarket-signal-exit.spec.ts`
-  - `..\..\..\node_modules\.bin\esno tests\finder-polymarket.spec.ts`
-  - `..\..\..\node_modules\.bin\esno tests\quick-view-polymarket.spec.ts`
-
-### Modify Execution Lab live trade
-- Treat Paper Trade and Live Trade as separate modes; Paper Trade must remain the startup default
-- Do not send wallet secrets to the browser, localStorage, JSONL logs, or request payloads
-- Keep live entry as a buy of the paper-selected YES/NO token; keep live exit as a sell of tracked filled shares for that same token
-- Do not buy the opposite outcome as an exit unless a separate hedge feature is explicitly requested
-- Preserve idempotency: request ids, ledger behavior, and executor locks must prevent duplicate live submissions
-- If exit retry semantics change, keep `docs/execution-lab-live-trading.md`, `docs/polymarket.md`, and the side-repo Strategy Finder live-trade doc aligned
-- Validation habit after Execution Lab live-trade changes:
-  - `npm run typecheck`
-  - `npm run test -- execution-lab`
-  - `..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts`
 
 ### Modify Walk Forward
 - Be careful with UI state versus backtest state handoff
@@ -555,8 +516,6 @@ Useful extras:
 - Added params in `defaultParams` but forgot matching `paramLabels` or `metadata.walkForwardParams`
 - Added a new setting but forgot Rust sanitization or finder parity
 - Added a backtest setting id to only one of `BACKTEST_DOM_SETTING_IDS` or `BACKTEST_SETTINGS_DOM_CONTRACTS` (the reader silently drops it; symptom: "DOM checked, settings false")
-- Changed `polymarketExitMode` semantics without keeping the endpoint fences explicit
-- Added signal-exit price logic in one Polymarket surface but not the shared evaluator, causing manual backtest / Finder / Quick View drift
 - Changed price-point loading to raw timestamp ranges and missed same-event exit quotes that occur after the latest trade entry timestamp
 - Used raw `document.getElementById(...)` for structural UI instead of a typed contract
 - Broke time handling by coercing `BusinessDay` like a number
@@ -576,8 +535,6 @@ Useful extras:
 If you change behavior substantially, update the docs that actually carry that contract:
 - `README.md` for repo-level usage and architecture
 - `docs/backtest-endpoint.md` for local HTTP backtest request/response behavior, fixed endpoint sizing, and Preview/Copy Endpoint parity rules
-- `docs/polymarket.md` for Polymarket scoring, signal-exit, diagnostics, bridge, and Execution Lab live-trade behavior
-- `docs/execution-lab-live-trading.md` for Execution Lab live-trade request/response, executor boundary, and retry safety
 - `AGENTS.md` for safe-change guidance
 - `workers/README.md` for worker API and cron behavior
 

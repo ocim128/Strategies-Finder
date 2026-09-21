@@ -60,8 +60,6 @@ normalization, and mode-specific generation all affect the actual count.
 ### Ranking
 
 Current Chart uses `Sort By` and `Then By`. Advanced sorting lets the user
-enable and order additional metrics. Polymarket scoring replaces the ordinary
-sort priority while it is enabled.
 
 Symbol Universe has its own `Universe Ranking` controls. The available metrics
 include:
@@ -208,9 +206,6 @@ bar after its `To` date. The OOS gate is based on non-negative OOS net profit
 and OOS profit factor at least `1.0`; a result with fewer OOS trades than the
 minimum trade floor is `inconclusive`, not automatically rejected.
 
-Polymarket scoring is not supported in Symbol Universe mode. Do not send or
-interpret Polymarket ranking fields in a Universe request unless the server and
-tests explicitly add that capability.
 
 ### Asset Opportunity
 
@@ -244,7 +239,7 @@ output is informational and does not filter a library. The normal trade-count
 filter and parameter-search controls that do not apply to this scope must stay
 disabled or ignored.
 
-## Risk, exit, and Polymarket settings
+## Risk and exit settings
 
 ### Risk Management
 
@@ -267,18 +262,6 @@ Any change to exit parameter generation must preserve normalized parameters and
 the TypeScript/Rust execution contract. Validate long, short, combined, signal
 close, and next-open/next-close behavior when the change affects fills or exit
 timing.
-
-### Polymarket Scoring
-
-Polymarket controls include rank mode, minimum scored predictions, optional
-offset locking for random 1m evaluation, and `After TP Only`. The latter scores
-only entries whose previous closed trade exited by take profit. Enabling
-Polymarket scoring replaces the ordinary Finder sort priority and freezes risk
-management in the options builder.
-
-Keep Polymarket-specific settings out of unsupported scopes and keep bridge
-exports aligned if the payload or exit-mode contract changes. See
-[polymarket.md](polymarket.md) for the broader Polymarket surface.
 
 ## Server-owned execution contract
 

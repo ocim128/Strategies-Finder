@@ -39,7 +39,6 @@ const commonRequest = {
     preResolvedCapital: capitalSettings,
     context: {
         blockRange: null,
-        annotatePolymarket: false,
         engineMode: "typescript" as const,
         nowSec: 1_800_000_000,
     },

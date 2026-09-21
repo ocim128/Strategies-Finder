@@ -25,7 +25,6 @@ If a strategy silently clamps, rounds, or flips a parameter inside `execute(...)
    - `lib/strategies/lib/ema_confirmation.ts` for a small direct `execute(...)` pattern
    - `lib/strategies/lib/mcginley_dynamic_confirmation.ts` for normalized thresholds and Finder precompute
    - `lib/strategies/lib/cross-symbol-helpers.ts` for cross-symbol alignment helpers
-   - `lib/strategies/lib/polymarket-1s-helpers.ts` for supported 1s Polymarket context
 3. Write the raw signal idea first with `ensureCleanData(...)` and `createSignalLoop(...)`.
 4. Add a named parameter normalizer before wiring `metadata.walkForwardParams`.
 5. Run `npm run strategies:sync-manifest`; do not manually edit the generated manifest files.
@@ -140,8 +139,6 @@ Add `normalizeParams(...)` when execution rounds, clamps, coerces sign, snaps to
   Candle geometry helpers plus microstructure-oriented primitives such as close acceptance and initiative pressure.
 - `lib/strategies/lib/price-action-statistics-core.ts`
   Rolling entropy, efficiency ratio, rolling medians, standard and robust z-scores, percentile ranks, and streak counters.
-- `lib/strategies/lib/polymarket-1s-helpers.ts`
-  For supported 1s Polymarket strategies only. Declare `polymarket1sConfig: { required: true }`, use causal runtime context, and fail closed when helper frames are unavailable. Executable-edge strategies should prefer ask-side edge plus actionability/persistence over mid-price-only pressure.
 
 ## Type Rules That Matter
 
@@ -182,21 +179,6 @@ There is no current built-in cross-symbol strategy example in the manifest.
 Use `tests/strategies-lib/prepared-execution-parity.spec.ts` with
 `lib/strategies/lib/cross-symbol-helpers.ts` when validating a new one. See
 [cross-symbol.md](cross-symbol.md) for the full runtime support matrix.
-
-## 1s Polymarket Strategies
-
-Use this path only when the strategy requires supported 1s Binance chart data plus local Polymarket CLOB context.
-
-Rules:
-
-- declare `polymarket1sConfig: { required: true }`
-- accept `StrategyExecutionContext` in `execute(...)`
-- return `[]` when the required context or helper frame is unavailable
-- call Polymarket helper builders once before the signal loop
-- prefer executable ask-side edge, actionability, and persistence checks when the target is paper/live deployability
-- treat Gamma helpers as agreement filters, not primary signal sources
-
-Do not build spread-only alpha or call Polymarket helper builders inside the per-bar callback.
 
 ## Synthetic Pair Strategies
 

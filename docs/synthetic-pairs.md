@@ -83,20 +83,6 @@ Once synthetic data is loaded as the active chart, these features work normally:
 | Walk Forward | Works | Operates on active chart data |
 | Monte Carlo | Works | Uses backtest results |
 | Data Mining export | Works | Export CSV/JSON from loaded synthetic data |
-| Polymarket annotation | Works | Set `Polymarket Outcome Symbol` to a real leg (e.g. `BTCUSDT`) |
-
-## Polymarket Integration
-
-Synthetic pairs produce strategy signals from the synthetic chart, but Polymarket outcomes are evaluated against real markets. To use Polymarket with a synthetic pair:
-
-1. Generate and load the synthetic pair (e.g. `BTCXRP` from `BTCUSDT` + `XRPUSDT`).
-2. In Polymarket Settings, set **Polymarket Outcome Symbol** to the real leg you want to score against (e.g. `BTCUSDT`).
-3. Enable **Polymarket Annotation**.
-4. Run the backtest as usual.
-
-The backtest signals come from the synthetic pair chart data, but win/loss is scored against the real Polymarket events for the outcome symbol you specified.
-
-This works because the `isSecondMarketPolymarketSupported` gate checks the outcome symbol (when set) instead of the chart symbol. If you leave the outcome symbol empty, it falls back to the chart symbol, which won't match any Polymarket market for synthetic pairs.
 
 ## Unsupported Surfaces
 
@@ -104,7 +90,6 @@ This works because the `isSecondMarketPolymarketSupported` gate checks the outco
 |---|---|---|
 | Worker alerts | Not applicable | Synthetic symbols don't map to real markets |
 | Scanner | Skips | Scanner uses provider-backed symbols |
-| Polymarket bridge | Not applicable | No CLOB orderbook for synthetic pairs |
 | Live streaming | Not applicable | No exchange to stream from |
 
 ## Saved Configurations

@@ -1,15 +1,3 @@
-/* ============================================================================
-   Analysis styles — Polymarket diagnostics table.
-   (Portfolio Lab, Strategy Ensemble, Signal Committee, Asset Leadership,
-   and Trade Pattern Mining were removed; only the Polymarket diagnostics
-   table surface remains.)
-   ============================================================================ */
-
-.analysis-finder-table-wrap {
-    overflow-x: auto;
-    border: 1px solid var(--border-light, rgba(128, 128, 128, 0.12));
-    border-radius: 6px;
-}
 
 .analysis-finder-table {
     width: 100%;

@@ -138,7 +138,6 @@ function buildSinglePayload(
         context: {
             nowSec: lastTime + 600,
             blockRange: null,
-            annotatePolymarket: false,
             engineMode: "typescript",
         },
     };
@@ -298,7 +297,6 @@ describe("backtest endpoint plugin", () => {
                 context: {
                     nowSec: Number(candles[candles.length - 1]?.time ?? 0) + 600,
                     blockRange: null,
-                    annotatePolymarket: false,
                     engineMode: "typescript",
                 },
             }
@@ -362,7 +360,6 @@ describe("backtest endpoint plugin", () => {
                 context: {
                     nowSec: Number(candles[candles.length - 1]?.time ?? 0) + 600,
                     blockRange: null,
-                    annotatePolymarket: false,
                     engineMode: "typescript",
                 },
             }
@@ -398,7 +395,6 @@ describe("backtest endpoint plugin", () => {
                 context: {
                     nowSec: Number(candles[candles.length - 1]?.time ?? 0) + 600,
                     blockRange: null,
-                    annotatePolymarket: false,
                     engineMode: "typescript",
                 },
                 compact: true,
@@ -556,7 +552,6 @@ describe("backtest endpoint plugin", () => {
                 context: {
                     nowSec: Number(candles[candles.length - 1]?.time ?? 0) + 600,
                     blockRange: null,
-                    annotatePolymarket: false,
                     engineMode: "typescript",
                 },
                 compact: true,

@@ -447,21 +447,10 @@
     border-radius: var(--radius-pill);
     background: transparent;
 }
-
-.strategy-list-item[data-strategy-kind="polymarket-1s"]::before {
-    background: var(--warning);
-    box-shadow: 0 0 10px hsl(var(--hsl-warning) / 0.34);
-}
-
 .strategy-list-item[data-strategy-kind="cross-symbol"]::before {
     background: var(--green);
     box-shadow: 0 0 10px hsl(var(--hsl-success) / 0.34);
 }
-
-.strategy-list-item[data-strategy-kind="polymarket-1s"] label {
-    color: var(--yellow-light);
-}
-
 .strategy-list-item[data-strategy-kind="cross-symbol"] label {
     color: var(--green-light);
 }
@@ -491,18 +480,6 @@
     user-select: none;
 
 }
-
-#finderPolymarketSettings.is-disabled,
-#finderTradeFilters.is-disabled {
-
-    opacity: 0.55;
-
-    pointer-events: none;
-
-    user-select: none;
-
-}
-
 
 
 .finder-results {

@@ -9,7 +9,7 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 ## Core Guides
 
-- [strategy-authoring.md](strategy-authoring.md) - built-in strategy contract, examples, helper surface, prepared execution, cross-symbol and 1s Polymarket strategy rules.
+- [strategy-authoring.md](strategy-authoring.md) - built-in strategy contract, examples, helper surface, and prepared execution.
 - [backtest-endpoint.md](backtest-endpoint.md) - local HTTP endpoint request/response contract.
 - [backtest-engines-typescript-rust.md](backtest-engines-typescript-rust.md) - TypeScript/Rust engine split, engine-selection fences, capability handshake, and wire contracts.
 - [batch-backtest-server-side.md](batch-backtest-server-side.md) - Batch server runtime, analysis artifacts, OPEN_SCORE USD Replay endpoint, S&P 500 TOP_MEAN coordinator, and memory budget.
@@ -21,8 +21,6 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 - [synthetic-pairs.md](synthetic-pairs.md) - synthetic pair generation and supported surfaces.
 - [rank-pairs.md](rank-pairs.md) - Rank Pairs regime classification: anchored sampling, metrics, labels, thresholds, and copy contract.
 - [path-dependent-exits.md](path-dependent-exits.md) - Risk Management path-exit modes and TypeScript/Rust compatibility.
-- [polymarket.md](polymarket.md) - Polymarket charting, scoring, diagnostics, bridge export, and Execution Lab boundaries.
-- [execution-lab-live-trading.md](execution-lab-live-trading.md) - live-trade executor boundary, env vars, order lifecycle, and safety rules.
 
 ## Research Surfaces and Records
 

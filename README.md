@@ -17,11 +17,9 @@ It combines:
 - Search parameter spaces with Finder, including random and genetic modes, and rank current-chart grid/random runs by Entry Score or Exit Score
 - Run Batch Backtest across symbol-pair lists and compare survivor candidates across symbols, intervals, and execution settings
 - Validate robustness with walk-forward analysis and latest-OOS checks
-- Stress trade-path robustness with Monte Carlo sequence randomization, bootstrap resampling, and Polymarket bankroll survivability on annotated runs
-- Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics, including native `15m` / `1h` session summaries, same-event signal-exit metrics on supported `1m` runs, and exact-second CLOB metrics on supported `1s` runs
-- Paper trade selected `1s` candidates in Execution Lab with live Binance candles, live Polymarket CLOB quotes, chart overlays, and JSONL logs; optionally live-trade through a local secret-bearing Polymarket executor after dry-run preflight
 - Run Batch Backtest post-analysis with OPEN_SCORE USD Replay (a research-only diagnostic; see [`docs/mine-timing-validation-findings.md`](docs/mine-timing-validation-findings.md) for the validation status of removed surfaces)
 - Build live or scheduled alert subscriptions through the Worker API
+- Use Quick View to inspect backtest stats, trades, and per-trade diagnostics
 
 Trade timing quality scores are descriptive diagnostics. Exit Score is measured on each strategy's own trades; it is not an isolated exit-rule benchmark.
 
@@ -45,7 +43,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 2. Select a strategy from the dropdown.
 3. Click `Run Backtest`.
 4. Open `Trades`, `Results`, `Finder`, and `Walk Forward` to verify the feature panels loaded.
-5. Open `Monte Carlo` after a backtest to inspect drawdown tails and ruin probability under reshuffled paths, or run Polymarket Monte Carlo on annotated runs to estimate ending bankroll survivability.
+5. Open `Monte Carlo` after a backtest to inspect drawdown tails and ruin probability under reshuffled paths.
 
 ## Architecture Map
 
@@ -87,11 +85,9 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Finder: `lib/finder-manager.ts`, `lib/finder/*` (server-side Symbol Universe in `lib/finder/server/*`; see [docs/finder-server-side.md](docs/finder-server-side.md))
 - Walk Forward: `lib/walk-forward-service.ts`
 - Monte Carlo: `lib/monte-carlo-service.ts`, `lib/strategies/monte-carlo/*`
-- Execution Lab: `lib/execution-lab/*`
 - Scanner: `lib/scanner/*`
 - Data Mining: `lib/data-mining-manager.ts`, `lib/data-mining-dom.ts`
 - Batch Backtest: `lib/batch-backtest/batch-backtest-service.ts` (browser orchestration), `lib/batch-backtest/batch-backtest-vite-plugin.ts` (server execution; see [docs/batch-backtest-server-side.md](docs/batch-backtest-server-side.md))
-- Polymarket research / scoring: `lib/polymarket-outcome-evaluator.ts`, `lib/polymarket-signal-exit-evaluator.ts`, `lib/polymarket-price-points-ingest.ts`, `scripts/polymarket-sync-outcomes.ts`
 
 ### Alerts / Worker
 - Worker: `workers/entry-signal-worker.ts`
@@ -226,8 +222,7 @@ Use:
 
 Endpoint note:
 - the HTTP backtest endpoint intentionally uses one fixed sizing profile only: `$1000` per trade with `0.1%` commission
-- single-run endpoint responses are slim and expose compact `polymarketPerformance` only when Polymarket annotation is enabled and outcome data exists
-- the UI `Preview Endpoint` and `Copy Endpoint` actions are the preferred parity path because they reuse the exact latest UI backtest snapshot, upload the matching dataset, include the resolved secondary dataset for cross-symbol runs, and auto-enable Polymarket annotation for supported runs
+- the UI `Preview Endpoint` and `Copy Endpoint` actions are the preferred parity path because they reuse the exact latest UI backtest snapshot, upload the matching dataset, include the resolved secondary dataset for cross-symbol runs,
 
 The short version:
 1. Create `lib/strategies/lib/<strategy-key>.ts`.
@@ -243,68 +238,6 @@ Dev note:
 - Set `WATCH_STRATEGIES=1` before starting Vite if you want live reload for `lib/strategies/**` again.
 
 For strategy-idea generation via [`archive/prompt.txt`](archive/prompt.txt), keep the allowed helper surface aligned with real exported strategy-layer utilities. Favor low-complexity price, bar-geometry, crossover, pivot, and timeframe-alignment helpers before heavier transforms, and keep prompt-specific quality filters inside the prompt file rather than expanding the repo-level README.
-
-### Evaluate Polymarket Outcomes
-Automate the inspection of executed chart trades against historical Polymarket crypto event resolution and locally cached CLOB quotes.
-Implementation notes live in [`docs/polymarket.md`](docs/polymarket.md).
-1. Sync closed Polymarket matching events to your local SQLite database using `npm run poly:sync-outcomes:all` for every supported 5m symbol, or `npm run poly:sync-outcomes` / the direct `esno` command for a single symbol (requires the Vite server running via `npm run dev`).
-2. Use the normal backtest or Finder surfaces for full Polymarket parity. The older headless helper `evaluatePolymarketOutcomes` in `lib/polymarket-outcome-evaluator.ts` still represents the resolve-hold outcome-only path.
-3. Choose `Polymarket Exit Mode` in Polymarket Settings:
-   - `Resolve Hold` keeps the original final-outcome scoring path.
-   - `Signal Exit Same Event` is available on `1m` + `next_open` runs and on supported `1s` BTCUSDT/XRPUSDT CLOB runs with `signal_close`, `next_open`, or `next_close`.
-4. For `1s` BTCUSDT/XRPUSDT runs, keep `scripts/run-1s-miner.bat` running first. The chart and Finder load Binance candles from `price-data/1second-chart/second-market-data.sqlite`, and Polymarket scoring uses exact-second CLOB bid/ask rows from the same DB. The standalone miner launchers use AdGuard DNS-over-HTTPS for Binance host lookup by default; pass `--binance-dns system` to use the OS resolver instead. The Execution Lab UI miner button defaults to system DNS; set `SECOND_MARKET_BINANCE_DNS=adguard-doh` before `npm run dev` to force AdGuard for UI-launched miners.
-5. For chart-exact parity, pass the same backtest and capital settings you use in the UI. The helper scores executed trades, not raw signals.
-6. The supported Polymarket 5m outcome target series are `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, and `XRPUSDT`. The chart symbol can differ if you set `Polymarket Outcome Symbol` to one of those targets.
-7. Use `npm run poly:sync-outcomes:all` to backfill every supported 5m outcome series, or `..\..\..\node_modules\.bin\esno scripts\polymarket-sync-outcomes.ts --symbol <BTCUSDT|ETHUSDT|SOLUSDT|XRPUSDT>` for a single series.
-8. `1m` signal-exit runs ensure local Polymarket price points on demand through the SQLite/Vite path; outcome rows still need the normal sync step above.
-9. Use the `Polymarket` strategy-panel tab to inspect scored-run diagnostics. The same panel also has the separate bridge export workflow for `external_signal`.
-10. Endpoint Preview / Copy stays on `resolve_hold`; the new signal-exit mode is a backtest, Finder, Quick View, Trades, and Polymarket diagnostics feature.
-11. The symbol search accepts custom Polymarket event URLs or slugs. Append `:yes` or `:no`, or use the URL `outcome` / `side` query param, to choose the side.
-12. The `PM` control in the timeframe bar prompts for a Polymarket slug or URL when needed, then opens the market at the supported `1m` chart resolution.
-
-### Run Execution Lab Paper Or Live Trade
-Execution Lab is the only browser surface that can dispatch live Polymarket orders. Paper Trade remains the default.
-
-Operational contract:
-- run it on supported `1s` BTCUSDT/XRPUSDT charts with `signal_close`, `next_open`, or `next_close` Polymarket CLOB timing
-- browser code sends only order intent; wallet secrets stay in the local executor process environment
-- configure Strategy Finder `.env` with `EXECUTION_LAB_LIVE_EXECUTOR_PATH`, optional `EXECUTION_LAB_LIVE_EXECUTOR_URL`, `EXECUTION_LAB_LIVE_ENABLED`, fallback order settings, optional broad cancel scope, and local stake caps; if the HTTP executor URL is unreachable and the CLI path/cwd are valid, Strategy Finder falls back to the one-shot CLI executor; non-secret order mode, taker type, sizing, slippage, limit offset, fixed limit cap, and cancel-on-exit can be controlled in the Execution Lab UI
-- if the executor binary is not under the side repo's `target/debug` or `target/release`, also set `EXECUTION_LAB_LIVE_EXECUTOR_CWD` to the side repo root so its `.env` is loaded
-- configure the side executor repo with `POLYMARKET_PRIVATE_KEY`, `MAX_ORDER_SIZE_USDC`, `ARBITRAGE_ORDER_TYPE=FAK`, `FOK`, or `GTC`, `DRY_RUN=false`, and `LIVE_TRADE_ONCE_LIVE_ENABLED=1` only after dry-run preflight is correct
-- live entry buys the same YES/NO token accepted by the paper decision path; limit mode submits a resting entry and does not become a tracked live position unless the executor reports filled shares
-- live exit sells the tracked filled token shares when the matching paper trade emits `paper_exit`; it does not buy the opposite outcome as a hedge
-- limit cancel-on-exit targets known posted Strategy Finder order ids by default; broad account cancellation requires explicit scope configuration and is shown in UI status and logs
-- rejected or failed exits can retry with fresh request ids while the event remains tradeable; ambiguous accepted states such as `delayed` or `posted_live` stop blind retries until reconciled
-
-Use [`docs/execution-lab-live-trading.md`](docs/execution-lab-live-trading.md) for the Strategy Finder side and `STRATEGY_FINDER_LIVE_TRADE.md` in the Polymarket bot repo for the executor side.
-
-### Export Latest Entry Signal
-Use the CLI exporter to produce a small local JSON contract for downstream consumers such as the Polymarket bot `external_signal` mode.
-
-Example:
-```bash
-npm run signal:export -- --strategy classic_nr7_breakout_surge --symbol BTCUSDT --interval 5m --bars 500 --out signals/latest-entry-signal.json
-```
-
-Useful flags:
-- `--params <json>` or `--params-file <path>`
-- `--backtest-settings <json>` or `--backtest-settings-file <path>`
-- `--capital-settings <json>` or `--capital-settings-file <path>`
-- `--freshness-bars <n>`
-
-The exporter uses Binance candles plus the same latest-entry evaluation logic used by the Worker/alert path, then writes a single JSON file containing the newest valid backtest entry signal if one exists.
-
-For the Polymarket bot bridge, use the `Polymarket` tab with a saved configuration selected. The bridge export downloads a ready-to-run PowerShell setup script that writes:
-- `signals/bridge/<config>.params.json`
-- `signals/bridge/<config>.backtest.json`
-- `signals/bridge/<config>.capital.json`
-- `signals/bridge/<config>.latest-entry-signal.json`
-- `signals/bridge/<config>.refresh.ps1`
-- `signals/bridge/<config>.bot.env`
-
-The exported `latest-entry-signal.json` preserves the selected `polymarketEntryOffset` when the bridge config carries a 1m Polymarket offset, so downstream `external_signal` consumers can read the minute alignment directly from the payload.
-
-The generated `<config>.refresh.ps1` is intended for unattended refresh. Point the bot's `EXTERNAL_SIGNAL_REFRESH_SCRIPT` at that file and it can regenerate the latest signal automatically on each new 5-minute bucket.
 
 ### Check local data
 One CLI research tool operates on the synced IBKR `30m` CSV tree (`price-data/ibkr/csv/30m/`):
@@ -376,8 +309,6 @@ These are intentionally narrower than the repo itself:
 - `AGENTS.md`: safe-change handbook for coding agents
 - `docs/backtest-endpoint.md`: local backtest endpoint usage and request contract
 - `docs/backtest-engines-typescript-rust.md`: TypeScript/Rust engine split, engine-selection rules, and wire contracts
-- `docs/polymarket.md`: Polymarket scoring, signal-exit, diagnostics, bridge, and Execution Lab live-trade contracts
-- `docs/execution-lab-live-trading.md`: Execution Lab live-trade executor boundary, request/response schema, and safety rules
 - `docs/batch-backtest-server-side.md`: server-side Batch Backtest, artifact retention, OPEN_SCORE USD Replay, S&P 500 TOP_MEAN, and memory budget
 - `docs/finder-server-side.md`: server-owned Finder Symbol Universe (one server job owns all strategies + OOS), heap budget, scalar-only wire contract, Stop scoped by run id, and tab-reload reattach via `/api/finder/status`
 - `docs/trade-ledger.md`: Batch trade-ledger export (v3), replay checker, and anti-leakage contract

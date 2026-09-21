@@ -219,12 +219,6 @@ describe("finder date-range data window", () => {
             minTrades: 0,
             maxTrades: Number.POSITIVE_INFINITY,
             freezeRiskManagement: false,
-            polymarketScoringEnabled: false,
-            polymarketRankMode: "balanced" as const,
-            polymarketMinScoredPredictions: 0,
-            polymarketLockOffset: false,
-            polymarketAfterTakeProfitOnly: false,
-            polymarketExitMode: "resolve_hold" as const,
         };
         const withRange = buildFinderOptions({
             ...base,

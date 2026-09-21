@@ -257,24 +257,6 @@ describe("Rust generic backtest output options", () => {
         expect(result).to.deep.include({ ok: false, reason: "cancelled" });
     });
 
-    it("rejects behavior-bearing Polymarket exit reasons before any Rust request or packing", async () => {
-        let transportCalls = 0;
-        const client = createClient(() => { transportCalls += 1; });
-        for (const reason of ["polymarket_take_profit", "polymarket_stop_loss"] as const) {
-            const signal: Signal = { time: 1 as Time, type: "sell", price: 100, reason };
-            const result = await client.runBacktestWithStatus(
-                data,
-                [signal],
-                10_000,
-                100,
-                0.1,
-                settings,
-            );
-            expect(result).to.deep.include({ ok: false, reason: "unsupported_signal_shape" });
-        }
-        expect(transportCalls).to.equal(0);
-    });
-
     it("rejects behavior-bearing reasons at every generic batch endpoint boundary", async () => {
         let transportCalls = 0;
         const client = createClient(() => { transportCalls += 1; });
@@ -282,7 +264,7 @@ describe("Rust generic backtest output options", () => {
             time: 1 as Time,
             type: "sell",
             price: 100,
-            reason: "polymarket_stop_loss",
+            reason: "legacy_reason" as Signal["reason"],
         };
         const items = [{ id: "behavior", signals: [signal] }];
         const results = await Promise.all([
@@ -310,7 +292,7 @@ describe("Rust generic backtest output options", () => {
                     time: 1 as Time,
                     type: "sell",
                     price: 100,
-                    reason: "polymarket_stop_loss",
+                    reason: "legacy_reason" as Signal["reason"],
                 }],
             }],
             10_000,

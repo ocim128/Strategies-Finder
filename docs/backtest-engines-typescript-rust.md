@@ -91,7 +91,7 @@ without improving the measured end-to-end workload.
 
 - [`lib/backtest-executor.ts`](../lib/backtest-executor.ts) is the orchestration
   boundary. It resolves settings and capital, chooses the data window, handles
-  cross-symbol and Polymarket context, generates signals, invokes an engine,
+  cross-symbol context, generates signals, invokes an engine,
   validates Rust output, and performs shared result finalization.
 - [`lib/strategies/backtest/backtest-engine.ts`](../lib/strategies/backtest/backtest-engine.ts)
   contains `runBacktest()` for the standard full result and
@@ -125,7 +125,6 @@ Rust contract:
 - strategy execution and confirmation strategies;
 - exit-strategy override signal generation;
 - cross-symbol data resolution and alignment;
-- optional Polymarket annotation;
 - final market context, Sharpe, performance analytics, and trade timing
   attachment.
 
@@ -277,7 +276,6 @@ semantics Rust does not represent, including:
 - enabled entry cooldown without `backtest.risk_cooldown.v1`;
 - behavior-bearing optional signal fields;
 - adaptive percentage take profit;
-- same-event Polymarket exits and Polymarket protection;
 - disabled signal exits;
 - active path exits.
 

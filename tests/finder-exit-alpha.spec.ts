@@ -614,7 +614,7 @@ describe("Finder Exit Alpha", () => {
         expect("exitAlpha" in legacy.results[0]!).to.equal(false);
     });
 
-    it("rejects Exit Alpha for genetic, Polymarket, and unsupported scopes before evaluation", async () => {
+    it("rejects Exit Alpha for genetic and unsupported scopes before evaluation", async () => {
         const statuses: string[] = [];
         const baseInput = {
             ohlcvData: makeData([100, 101]),

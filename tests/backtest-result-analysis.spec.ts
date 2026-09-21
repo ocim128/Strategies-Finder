@@ -9,18 +9,13 @@ function makeTrade(
     id: number,
     type: Trade["type"],
     pnl: number,
-    marketEntryPrice?: number | null,
     options?: {
         entryTime?: number;
         priceRangePos?: number;
         volumeRatio?: number;
         rangeAtrMultiple?: number;
-        polymarketIsWin?: boolean;
     }
 ): Trade {
-    const isWin = pnl > 0;
-    const polymarketIsWin = options?.polymarketIsWin ?? isWin;
-    const prediction = type === "long" ? "yes" : "no";
     return {
         id,
         type,
@@ -62,20 +57,6 @@ function makeTrade(
                 tf120Perf: null,
                 tf480Perf: null,
                 tfConfluencePerf: null,
-            },
-        polymarketOutcome: marketEntryPrice === undefined
-            ? undefined
-            : {
-                eventStartTs: 1_700_000_000 + id * 300,
-                eventEndTs: 1_700_000_300 + id * 300,
-                eventSlug: `event-${id}`,
-                marketSlug: `market-${id}`,
-                prediction,
-                actualOutcomeUp: prediction === "yes"
-                    ? (polymarketIsWin ? 1 : 0)
-                    : (polymarketIsWin ? 0 : 1),
-                isWin: polymarketIsWin,
-                marketEntryPrice,
             },
     } as unknown as Trade;
 }
@@ -135,10 +116,10 @@ describe("backtest result expectancy breakdown", () => {
     it("buckets 1m trades by minute inside the 5m session", () => {
         const baseFiveMinuteTs = 1_700_000_000 - (1_700_000_000 % 300);
         const breakdown = buildExpectancyBreakdown(makeResult([
-            makeTrade(1, "long", 12, undefined, { entryTime: baseFiveMinuteTs + 0 * 60 }),
-            makeTrade(2, "short", 8, undefined, { entryTime: baseFiveMinuteTs + 1 * 60 }),
-            makeTrade(3, "long", 10, undefined, { entryTime: baseFiveMinuteTs + 1 * 60 + 300 }),
-            makeTrade(4, "long", -40, undefined, { entryTime: baseFiveMinuteTs + 4 * 60 }),
+            makeTrade(1, "long", 12, { entryTime: baseFiveMinuteTs + 0 * 60 }),
+            makeTrade(2, "short", 8, { entryTime: baseFiveMinuteTs + 1 * 60 }),
+            makeTrade(3, "long", 10, { entryTime: baseFiveMinuteTs + 1 * 60 + 300 }),
+            makeTrade(4, "long", -40, { entryTime: baseFiveMinuteTs + 4 * 60 }),
         ]));
 
         const bucketSection = breakdown?.sections.find((section) => section.id === "session_minute");
@@ -157,10 +138,10 @@ describe("backtest result expectancy breakdown", () => {
 
     it("buckets trades by recent range position so late-chase behavior is visible", () => {
         const breakdown = buildExpectancyBreakdown(makeResult([
-            makeTrade(1, "long", 12, undefined, { priceRangePos: 0.15 }),
-            makeTrade(2, "short", 8, undefined, { priceRangePos: 0.35 }),
-            makeTrade(3, "long", 10, undefined, { priceRangePos: 0.82 }),
-            makeTrade(4, "long", -40, undefined, { priceRangePos: 0.91 }),
+            makeTrade(1, "long", 12, { priceRangePos: 0.15 }),
+            makeTrade(2, "short", 8, { priceRangePos: 0.35 }),
+            makeTrade(3, "long", 10, { priceRangePos: 0.82 }),
+            makeTrade(4, "long", -40, { priceRangePos: 0.91 }),
         ]));
 
         const rangeSection = breakdown?.sections.find((section) => section.id === "price_range_position");

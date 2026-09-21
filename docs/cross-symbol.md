@@ -111,9 +111,7 @@ Do not assume the first resolved pair from `cross-symbol-runtime.ts` is the fina
 | Finder single/random | Supported | `lib/finder/finder-runner-single.ts` resolves once per strategy key |
 | Finder Symbol Universe | Supported | `lib/finder/finder-runner-universe.ts` passes the universe data loader into the shared executor |
 | Finder genetic | Supported | `lib/finder/finder-runner-genetic.ts` resolves once per selected strategy |
-| Finder Polymarket mode | Supported | `lib/finder/finder-runner-polymarket.ts` resolves once per base strategy plan |
 | Walk Forward | Supported | `lib/walk-forward-service.ts` resolves once per run and threads the context through WFA helpers |
-| Polymarket outcome evaluation | Supported | `lib/polymarket-outcome-evaluator.ts` accepts `executionContext` from the caller |
 
 ## Unsupported Or Guarded Surfaces
 
@@ -121,7 +119,6 @@ Do not assume the first resolved pair from `cross-symbol-runtime.ts` is the fina
 |---|---|---|
 | Worker alerts / subscriptions | Not supported | `lib/alert-subscription-utils.ts` excludes cross-symbol strategies from worker support |
 | Scanner | Skips cross-symbol strategies | `lib/scanner/scanner-engine.ts` |
-| Polymarket bridge export | Not supported | `lib/polymarket-panel-service.ts` |
 
 If you add support to one of these surfaces, do not bypass the guard first. Add full runtime resolution and context threading, then remove or narrow the guard.
 

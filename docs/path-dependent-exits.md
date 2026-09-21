@@ -84,4 +84,3 @@ Recommended comparison workflow for evaluating path exit modes:
 - Learning modes (`conditional_hazard`, `triple_barrier_meta`) may be inert on short datasets with few trades
 - Path exits are not supported by the Rust engine
 - Volume-dependent modes (`capitulation_exhaustion`, `squeeze_pressure`) degrade on datasets with zero or unreliable volume
-- Path exits do not participate in Polymarket `signal_exit_same_event`

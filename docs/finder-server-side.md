@@ -303,7 +303,7 @@ single file.
 ## Browser-owned Finder modes
 
 Current-chart Finder and Strategy Quality remain in the browser. Genetic and
-Polymarket Finder use their dedicated in-tab runners. This document covers
+scoring modes use their dedicated in-tab runners. This document covers
 only the server-owned Symbol Universe and Asset Opportunity routes; do not
 infer server ownership for another Finder mode from the shared result types.
 
@@ -318,7 +318,6 @@ infer server ownership for another Finder mode from the shared result types.
   The browser no longer sequences per-strategy requests or loads OHLCV for
   the OOS pass. Asset Opportunity batch mode uses the analogous
   `POST /api/finder/asset-opportunity-batch-run` route (see above).
-- Polymarket scoring remains unsupported in Symbol Universe scope.
 - **Stop is scoped by `runId`** — `POST /api/finder/stop` carries the active
   run id so a stale tab cannot cancel a newer run. Stop aborts in-flight
   data loads, makes every strategy + OOS loop observe lost ownership, marks
