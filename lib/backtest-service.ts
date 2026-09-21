@@ -2,7 +2,6 @@
 import { dataManager } from "./data-manager";
 
 import {
-    runBacktest,
     StrategyParams,
     BacktestSettings,
     BacktestResult,
@@ -19,7 +18,6 @@ import {
     calculateSharpeRatioFromReturns,
 } from "./strategies/performance-metrics";
 import { requiresTypescriptEngine as requiresTsEngine } from "./rust-settings-sanitizer";
-import { sliceOhlcvByBlock } from "./block-selector";
 import {
     selectExecutionAwareClosedCandles,
 } from "./alert-evaluation-window";

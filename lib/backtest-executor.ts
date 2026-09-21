@@ -15,7 +15,6 @@ import type {
     Strategy,
     StrategyExecutionContext,
     StrategyParams,
-    Polymarket1sRuntimeContext,
 } from "./types/strategies";
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "./types/backtest";
 import { selectExecutionAwareClosedCandles } from "./alert-evaluation-window";
@@ -66,7 +65,6 @@ import {
     calculateSharpeRatioFromEquityCurve,
     calculateSharpeRatioFromReturns,
 } from "./strategies/performance-metrics";
-import { parseTimeToUnixSeconds } from "./time-normalization";
 import { filterSignalsByBlockRange } from "./signal-block-filter";
 import {
     applyConfirmationStrategiesToSignals,
@@ -80,7 +78,6 @@ import {
 } from "./strategies/backtest/backtest-utils";
 import {
     registerBacktestEdgeAnalysisInput,
-    transferBacktestEdgeAnalysisInput,
 } from "./backtest-edge-analysis";
 import { attachTradeTimingQuality } from "./trade-timing-quality";
 import { resolveBinanceMarketType } from "./binance-market";
@@ -105,8 +102,6 @@ export interface BacktestExecutorRequest {
     context: BacktestExecutionContext;
     /** Optional caller-supplied runtime context for strategy helpers. */
     strategyExecutionContext?: StrategyExecutionContext;
-    /** Use "provided" when a caller must not augment Polymarket 1s helpers from local historical quote storage. */
-    polymarket1sContextMode?: "auto" | "provided";
     /** Optional low-level run controls for bulk research callers that do not need full chart artifacts. */
     backtestRunOptions?: {
         includeAdvancedAnalytics?: boolean;
@@ -229,7 +224,6 @@ function mergeStrategyExecutionContext(
         ...base,
         ...override,
         crossSymbol: override.crossSymbol ?? base.crossSymbol,
-        polymarket1s: override.polymarket1s ?? base.polymarket1s,
     };
 }
 
@@ -280,7 +274,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     }
     const nowSec = req.context.nowSec ?? Math.floor(Date.now() / 1000);
     const blockRange = req.context.blockRange ?? null;
-    const annotatePolymarket = req.context.annotatePolymarket ?? false;
     const strategy = req.strategy ?? await ensureBuiltInStrategyLoaded(strategyKey);
     if (!strategy) {
         throw new Error(`Strategy not found: "${strategyKey}"`);
@@ -342,7 +335,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         ?? selectClosedCandleData(effectiveData, interval, resolvedSettings, nowSec, blockRange);
 
     // Asset Opportunity's next-bar fresh-entry pass only needs the generated
-    // signals. Avoid the remaining context-alignment/Polymarket/exit
+// signals. Avoid the remaining context-alignment/exit
     // resolution setup when none of those execution features can affect that
     // signal-only result.
     // Keep this deliberately narrow; the regular path remains authoritative
@@ -352,7 +345,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         && !req.dataFetcher
         && !req.crossSymbolInput
         && !strategy.crossSymbolConfig
-        && !strategy.polymarket1sConfig
         && !req.strategyExecutionContext
         && !(resolvedSettings.confirmationStrategies?.length)
         && resolvedSettings.exitStrategyOverrideEnabled !== true
@@ -420,15 +412,8 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         };
     }
 
-    const executionContext = await resolvePolymarket1sExecutionContext({
-        strategy,
-        primarySymbol,
-        interval,
-        data: backtestData,
-        settings: resolvedSettings,
-        baseContext: alignedCrossSymbolContext,
-        contextMode: req.polymarket1sContextMode ?? "auto",
-    });
+
+const executionContext = alignedCrossSymbolContext;
 
     const signalGenerationStartedAt = executorTimings ? performance.now() : 0;
     const signals = req.preGeneratedSignals
@@ -547,12 +532,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         if (!shouldSkipResultPostProcessing(req)) {
             finalizeResult(result, backtestData, interval, settingsWithMeta);
         }
-        if (annotatePolymarket) {
-            const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
-            annotatedResult.exitControlDiagnostics = exitControlDiagnostics;
-            transferBacktestEdgeAnalysisInput(result, annotatedResult);
-            result = annotatedResult;
-        }
         registerBacktestEdgeAnalysisInput(result, backtestData);
         return finish(result, "typescript", signals, {
             rustAttempted: false,
@@ -652,11 +631,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             if (!shouldSkipResultPostProcessing(req)) {
                 finalizeResult(result, backtestData, interval, settingsWithMeta);
             }
-            if (annotatePolymarket) {
-                const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
-                transferBacktestEdgeAnalysisInput(result, annotatedResult);
-                result = annotatedResult;
-            }
             registerBacktestEdgeAnalysisInput(result, backtestData);
             return finish(result, "rust", primarySignals, { rustAttempted: true }, endpointSelection);
         }
@@ -707,12 +681,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         finalizeResult(result, backtestData, interval, settingsWithMeta);
     }
     result.exitControlDiagnostics = exitControlDiagnostics;
-    if (annotatePolymarket) {
-        const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
-        annotatedResult.exitControlDiagnostics = exitControlDiagnostics;
-        transferBacktestEdgeAnalysisInput(result, annotatedResult);
-        result = annotatedResult;
-    }
     registerBacktestEdgeAnalysisInput(result, backtestData);
     const typescriptReason = rustAttempted
         ? rustFailureReason ?? "Rust backend was unavailable or rejected the result"
@@ -760,7 +728,6 @@ export async function executeBacktestFromSignals(
     }
     const nowSec = context.nowSec ?? Math.floor(Date.now() / 1000);
     const blockRange = context.blockRange ?? null;
-    const annotatePolymarket = context.annotatePolymarket ?? false;
     const resolvedSettings = resolveExecutorBacktestSettings(settings, interval);
 
     const resolvedCapital = resolveCapitalSettingsFromRaw(
@@ -809,11 +776,6 @@ export async function executeBacktestFromSignals(
         if (rustResult.result && isResultConsistent(rustResult.result)) {
             let result = rustResult.result;
             finalizeResult(result, backtestData, interval, settings);
-            if (annotatePolymarket) {
-                const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
-                transferBacktestEdgeAnalysisInput(result, annotatedResult);
-                result = annotatedResult;
-            }
             registerBacktestEdgeAnalysisInput(result, backtestData);
             return { result, engineUsed: "rust", signals: filteredSignals };
         }
@@ -838,11 +800,6 @@ export async function executeBacktestFromSignals(
     let result = runTypescriptBacktest();
     throwIfBacktestCancelled(context.signal);
     finalizeResult(result, backtestData, interval, settings);
-    if (annotatePolymarket) {
-        const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
-        transferBacktestEdgeAnalysisInput(result, annotatedResult);
-        result = annotatedResult;
-    }
     registerBacktestEdgeAnalysisInput(result, backtestData);
     return { result, engineUsed: "typescript", signals: filteredSignals };
 }
@@ -852,8 +809,7 @@ export async function executeBacktestFromSignals(
 // ============================================================================
 
 function shouldSkipResultPostProcessing(req: BacktestExecutorRequest): boolean {
-    return req.backtestRunOptions?.skipResultPostProcessing === true
-        && req.context.annotatePolymarket !== true;
+return req.backtestRunOptions?.skipResultPostProcessing === true;
 }
 
 function shouldUseCompactBacktest(req: BacktestExecutorRequest): boolean {
@@ -987,8 +943,7 @@ export async function resolveExitStrategyOverrideSignals(args: {
         && !args.executionContext
         && args.settings.strategyTimeframeEnabled !== true
         && !(args.settings.confirmationStrategies?.length)
-        && !exitStrategy.crossSymbolConfig
-        && !exitStrategy.polymarket1sConfig,
+&& !exitStrategy.crossSymbolConfig,
     );
     const cacheKey = canReuseSignals
         ? buildExitSignalCacheKey({
@@ -1119,131 +1074,6 @@ function selectClosedCandleData(
     return sliceOhlcvByBlock(base, blockRange);
 }
 
-function getDataTimeRange(data: readonly OHLCVData[]): { startTs: number; endTs: number } | null {
-    let startTs = Number.POSITIVE_INFINITY;
-    let endTs = Number.NEGATIVE_INFINITY;
-    for (const bar of data) {
-        const ts = parseTimeToUnixSeconds(bar.time);
-        if (ts === null) continue;
-        if (ts < startTs) startTs = ts;
-        if (ts > endTs) endTs = ts;
-    }
-    if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) return null;
-    return {
-        startTs,
-        endTs,
-    };
-}
-
-function polymarket1sQuoteKey(quote: Polymarket1sRuntimeContext["quotes"][number]): string {
-    return [
-        quote.series_id,
-        quote.symbol,
-        quote.event_start_ts,
-        quote.sample_ts,
-    ].join("|");
-}
-
-function mergePolymarket1sRuntimeContext(
-    loaded: Polymarket1sRuntimeContext,
-    caller: Polymarket1sRuntimeContext | undefined
-): Polymarket1sRuntimeContext {
-    if (!caller) return loaded;
-
-    const quoteByKey = new Map<string, Polymarket1sRuntimeContext["quotes"][number]>();
-    for (const quote of loaded.quotes) quoteByKey.set(polymarket1sQuoteKey(quote), quote);
-    for (const quote of caller.quotes) quoteByKey.set(polymarket1sQuoteKey(quote), quote);
-
-    return {
-        ...loaded,
-        quotes: Array.from(quoteByKey.values()).sort((left, right) => left.sample_ts - right.sample_ts),
-        gammaSnapshots: [
-            ...(loaded.gammaSnapshots ?? []),
-            ...(caller.gammaSnapshots ?? []),
-        ],
-    };
-}
-
-async function resolvePolymarket1sExecutionContext(args: {
-    strategy: Strategy;
-    primarySymbol: string;
-    interval: string;
-    data: OHLCVData[];
-    settings: BacktestSettings;
-    baseContext?: StrategyExecutionContext;
-    contextMode: "auto" | "provided";
-}): Promise<StrategyExecutionContext | undefined> {
-    const config = args.strategy.polymarket1sConfig;
-    if (!config) return args.baseContext;
-    const callerPolymarketContext = args.baseContext?.polymarket1s;
-
-    if (args.settings.strategyTimeframeEnabled) {
-        throw new Error(
-            `"${args.strategy.name}" uses 1s Polymarket context and cannot be run with Strategy Timeframe enabled.`
-        );
-    }
-
-    if (args.contextMode === "provided") {
-        return args.baseContext;
-    }
-
-    const { isSecondMarketPolymarketSupported, loadSecondMarketEvaluationContext } = await import("./second-market/evaluation");
-    const symbolForPolymarketCheck = args.settings.polymarketOutcomeSymbol?.trim() || args.primarySymbol;
-    if (!isSecondMarketPolymarketSupported(symbolForPolymarketCheck, args.interval)) {
-        if (config.required) {
-            throw new Error(`"${args.strategy.name}" requires a supported 1s Polymarket chart context.`);
-        }
-        return args.baseContext;
-    }
-
-    const range = getDataTimeRange(args.data);
-    if (!range) return args.baseContext;
-
-    let context: Awaited<ReturnType<typeof loadSecondMarketEvaluationContext>>;
-    try {
-        context = await loadSecondMarketEvaluationContext({
-            symbol: args.primarySymbol,
-            outcomeSymbol: args.settings.polymarketOutcomeSymbol,
-            outcomeInterval: args.settings.polymarketOutcomeInterval,
-            startTs: range.startTs - 300,
-            endTs: range.endTs + 300,
-        });
-    } catch (error) {
-        if (callerPolymarketContext && callerPolymarketContext.quotes.length > 0) {
-            return args.baseContext;
-        }
-        if (config.required) {
-            const detail = error instanceof Error ? error.message : String(error);
-            throw new Error(`"${args.strategy.name}" could not load 1s Polymarket context. ${detail}`);
-        }
-        return args.baseContext;
-    }
-
-    if (!context) {
-        if (callerPolymarketContext && callerPolymarketContext.quotes.length > 0) {
-            return args.baseContext;
-        }
-        if (config.required) {
-            throw new Error(`"${args.strategy.name}" could not load 1s Polymarket context.`);
-        }
-        return args.baseContext;
-    }
-
-    const polymarket1s = mergePolymarket1sRuntimeContext({
-        symbol: context.symbol,
-        outcomeSymbol: context.outcomeSymbol,
-        seriesId: context.seriesId,
-        outcomeInterval: context.outcomeInterval,
-        quotes: context.quotes,
-        gammaSnapshots: context.gammaSnapshots,
-    }, callerPolymarketContext);
-
-    return {
-        ...(args.baseContext ?? {}),
-        polymarket1s,
-    };
-}
-
 async function tryRustBacktest(
     data: OHLCVData[],
     signals: Signal[],
@@ -1302,39 +1132,6 @@ function finalizeResult(
         result.performanceAnalytics = recomputePerformanceAnalytics(result);
     }
     attachTradeTimingQuality(result, backtestData);
-}
-
-async function annotatePolymarketResult(
-    result: BacktestResult,
-    chartData: OHLCVData[],
-    settings: BacktestSettings
-): Promise<BacktestResult> {
-    const symbol = result.marketContext?.symbol;
-    const interval = result.marketContext?.interval;
-    if (!symbol || !interval) {
-        return result;
-    }
-
-    try {
-        const { annotateBacktestResultWithPolymarketOutcomes } = await import("./polymarket-trade-annotations");
-        return await annotateBacktestResultWithPolymarketOutcomes(result, {
-            symbol,
-            interval,
-            executionModel: settings.executionModel,
-            chartData,
-            outcomeSymbol: settings.polymarketOutcomeSymbol,
-            // The shared executor does not load same-event price points, so
-            // endpoint/executor annotation stays on resolve_hold.
-            polymarketExitMode: "resolve_hold",
-        }, {
-            selectedOffset: settings.polymarketEntryOffset,
-            entrySelectionMode: settings.polymarketEntrySelectionMode,
-            entryPriceFilterCents: settings.polymarketEntryPriceFilterCents,
-            backtestSlippageCents: settings.polymarketBacktestSlippageCents,
-        });
-    } catch {
-        return result;
-    }
 }
 
 function recomputeSharpeRatio(result: BacktestResult): number {

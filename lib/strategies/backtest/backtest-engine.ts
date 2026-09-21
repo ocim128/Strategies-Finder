@@ -313,12 +313,6 @@ function hasOppositePositionForSignal(positions: PositionState[], signal: Signal
     return positions.some((position) => position.direction === oppositeDir);
 }
 
-function getForcedPolymarketSignalExitReason(signal: Signal): Extract<NonNullable<Trade["exitReason"]>, "polymarket_take_profit" | "polymarket_stop_loss"> | null {
-    return signal.reason === "polymarket_take_profit" || signal.reason === "polymarket_stop_loss"
-        ? signal.reason
-        : null;
-}
-
 function canImmediatelyReenterAfterSignalExit(args: {
     fullyClosed: boolean;
     wasPartial: boolean;
@@ -932,19 +926,18 @@ function runSinglePositionFinderFastPath(args: {
     };
 
     const handleSignal = (signal: Signal, barIndex: number, candle: OHLCVData): PositionState | null => {
-        const forcedExitReason = getForcedPolymarketSignalExitReason(signal);
         const isExitOnly = signal.exitOnly === true;
         const signalDir = signalToPositionDirection(signal.type);
         const oppositeDir = getOppositeDirection(signalDir);
         const exitTarget = position
             && position.direction === oppositeDir
             && (config.allowSameBarExit || compareTime(signal.time, position.entryTime) !== 0)
-            && (!config.disableSignalExits || forcedExitReason !== null || isExitOnly)
+            && (!config.disableSignalExits || isExitOnly)
             ? position
             : null;
 
         if (!exitTarget && !position) {
-            if (forcedExitReason !== null || isExitOnly || signal.confirmationExitOnly === true) return null;
+            if (isExitOnly || signal.confirmationExitOnly === true) return null;
             if (
                 (
                     config.executionModel === "next_open"
@@ -965,10 +958,9 @@ function runSinglePositionFinderFastPath(args: {
 
         diagnostics && diagnostics.counts.signalExitOrders++;
         const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
-        const { fullyClosed } = recordExit(exitTarget, candle, exitPrice, exitOrder.exitSize, forcedExitReason ?? "signal");
+        const { fullyClosed } = recordExit(exitTarget, candle, exitPrice, exitOrder.exitSize, 'signal');
         if (
-            forcedExitReason === null
-            && !isExitOnly
+            !isExitOnly
             && signal.confirmationExitOnly !== true
             && tradeDirection === "both"
             && fullyClosed
@@ -2034,12 +2026,10 @@ export function runBacktestCompact(
     const evaluateGateEntry = (
         signal: Signal,
         barIndex: number,
-        forcedExitReason: NonNullable<Trade['exitReason']> | null,
         isExitOnly: boolean,
     ) => {
         const applicable = Boolean(
             options?.tradeGate
-            && forcedExitReason === null
             && !isExitOnly
             && allowsSignalAsEntry(signal.type, tradeDirection),
         );
@@ -2122,15 +2112,14 @@ export function runBacktestCompact(
                     continue;
                 }
 
-                const forcedExitReason = getForcedPolymarketSignalExitReason(signal);
                 const isExitOnly = signal.exitOnly === true;
-                const gateDecision = evaluateGateEntry(signal, i, forcedExitReason, isExitOnly);
-                const exitTargets = config.disableSignalExits && forcedExitReason === null && !isExitOnly
+                const gateDecision = evaluateGateEntry(signal, i, isExitOnly);
+                const exitTargets = config.disableSignalExits && !isExitOnly
                     ? undefined
                     : findSignalExitTargets(positions, signal, config.allowSameBarExit, isUnlimitedOverlap(config));
 
                 if ((!exitTargets || exitTargets.length === 0) && positions.length < maxOpenTrades) {
-                    if (forcedExitReason !== null || isExitOnly || signal.confirmationExitOnly === true) {
+                    if (isExitOnly || signal.confirmationExitOnly === true) {
                         continue;
                     }
                     if (!gateDecision.admitted) {
@@ -2161,14 +2150,14 @@ export function runBacktestCompact(
 
                         diagnostics && diagnostics.counts.signalExitOrders++;
                         const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
-                        const { fullyClosed } = recordExit(exitTarget, exitPrice, exitOrder.exitSize, forcedExitReason ?? 'signal');
+                        const { fullyClosed } = recordExit(exitTarget, exitPrice, exitOrder.exitSize, 'signal');
                         allTargetsFullyClosed = allTargetsFullyClosed && fullyClosed;
                         allExitOrdersFull = allExitOrdersFull && !exitOrder.wasPartial;
                         if (fullyClosed) {
-                            finalizeClosedPosition(exitTarget, candle, exitPrice, forcedExitReason ?? 'signal');
+                            finalizeClosedPosition(exitTarget, candle, exitPrice, 'signal');
                         }
                     }
-                    if (gateDecision.admitted && forcedExitReason === null && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
+                    if (gateDecision.admitted && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
                         fullyClosed: true,
                         wasPartial: !allExitOrdersFull,
                         tradeDirection,
@@ -2235,16 +2224,15 @@ export function runBacktestCompact(
                 const signal = preparedSignals[signalIdx++];
                 if (signalBarIndex === i) {
                     // Check for signal exit: does this signal close an existing opposite-direction position?
-                    const forcedExitReason = getForcedPolymarketSignalExitReason(signal);
                     const isExitOnly = signal.exitOnly === true;
-                    const gateDecision = evaluateGateEntry(signal, i, forcedExitReason, isExitOnly);
-                    const exitTargets = config.disableSignalExits && forcedExitReason === null && !isExitOnly
+                    const gateDecision = evaluateGateEntry(signal, i, isExitOnly);
+                    const exitTargets = config.disableSignalExits && !isExitOnly
                         ? undefined
                         : findSignalExitTargets(positions, signal, config.allowSameBarExit, isUnlimitedOverlap(config));
 
                     if ((!exitTargets || exitTargets.length === 0) && positions.length < maxOpenTrades) {
                         // New entry (no opposite position to close, and we have room)
-                        if (forcedExitReason !== null || isExitOnly || signal.confirmationExitOnly === true) {
+                        if (isExitOnly || signal.confirmationExitOnly === true) {
                             continue;
                         }
                         if (!gateDecision.admitted) {
@@ -2280,14 +2268,14 @@ export function runBacktestCompact(
 
                             diagnostics && diagnostics.counts.signalExitOrders++;
                             const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
-                            const { fullyClosed } = recordExit(exitTarget, exitPrice, exitOrder.exitSize, forcedExitReason ?? 'signal');
+                            const { fullyClosed } = recordExit(exitTarget, exitPrice, exitOrder.exitSize, 'signal');
                             allTargetsFullyClosed = allTargetsFullyClosed && fullyClosed;
                             allExitOrdersFull = allExitOrdersFull && !exitOrder.wasPartial;
                             if (fullyClosed) {
-                                finalizeClosedPosition(exitTarget, candle, exitPrice, forcedExitReason ?? 'signal');
+                                finalizeClosedPosition(exitTarget, candle, exitPrice, 'signal');
                             }
                         }
-                        if (gateDecision.admitted && forcedExitReason === null && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
+                        if (gateDecision.admitted && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
                             fullyClosed: true,
                             wasPartial: !allExitOrdersFull,
                             tradeDirection,
@@ -2707,12 +2695,10 @@ export function runBacktest(
     const evaluateGateEntry = (
         signal: Signal,
         barIndex: number,
-        forcedExitReason: NonNullable<Trade['exitReason']> | null,
         isExitOnly: boolean,
     ) => {
         const applicable = Boolean(
             options?.tradeGate
-            && forcedExitReason === null
             && !isExitOnly
             && allowsSignalAsEntry(signal.type, tradeDirection),
         );
@@ -2789,16 +2775,15 @@ export function runBacktest(
                     continue;
                 }
 
-                const forcedExitReason = getForcedPolymarketSignalExitReason(signal);
                 const isExitOnly = signal.exitOnly === true;
-                const gateDecision = evaluateGateEntry(signal, i, forcedExitReason, isExitOnly);
-                const exitTargets = config.disableSignalExits && forcedExitReason === null && !isExitOnly
+                const gateDecision = evaluateGateEntry(signal, i, isExitOnly);
+                const exitTargets = config.disableSignalExits && !isExitOnly
                     ? undefined
                     : findSignalExitTargets(positions, signal, config.allowSameBarExit, isUnlimitedOverlap(config));
 
                 if ((!exitTargets || exitTargets.length === 0) && positions.length < maxOpenTrades) {
                     // New entry
-                    if (forcedExitReason !== null || isExitOnly || signal.confirmationExitOnly === true) {
+                    if (isExitOnly || signal.confirmationExitOnly === true) {
                         continue;
                     }
                     if (!gateDecision.admitted) {
@@ -2830,14 +2815,14 @@ export function runBacktest(
 
                         diagnostics && diagnostics.counts.signalExitOrders++;
                         const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
-                        const { fullyClosed } = recordExitFull(exitTarget, candle, exitPrice, exitOrder.exitSize, forcedExitReason ?? 'signal');
+                        const { fullyClosed } = recordExitFull(exitTarget, candle, exitPrice, exitOrder.exitSize, 'signal');
                         allTargetsFullyClosed = allTargetsFullyClosed && fullyClosed;
                         allExitOrdersFull = allExitOrdersFull && !exitOrder.wasPartial;
                         if (fullyClosed) {
-                            finalizeClosedPositionFull(exitTarget, candle, exitPrice, forcedExitReason ?? 'signal');
+                            finalizeClosedPositionFull(exitTarget, candle, exitPrice, 'signal');
                         }
                     }
-                    if (gateDecision.admitted && forcedExitReason === null && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
+                    if (gateDecision.admitted && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
                         fullyClosed: true,
                         wasPartial: !allExitOrdersFull,
                         tradeDirection,
@@ -2903,16 +2888,15 @@ export function runBacktest(
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
                 const signal = preparedSignals[signalIdx++];
                 if (signalBarIndex === i) {
-                    const forcedExitReason = getForcedPolymarketSignalExitReason(signal);
                     const isExitOnly = signal.exitOnly === true;
-                    const gateDecision = evaluateGateEntry(signal, i, forcedExitReason, isExitOnly);
-                    const exitTargets = config.disableSignalExits && forcedExitReason === null && !isExitOnly
+                    const gateDecision = evaluateGateEntry(signal, i, isExitOnly);
+                    const exitTargets = config.disableSignalExits && !isExitOnly
                         ? undefined
                         : findSignalExitTargets(positions, signal, config.allowSameBarExit, isUnlimitedOverlap(config));
 
                     if ((!exitTargets || exitTargets.length === 0) && positions.length < maxOpenTrades) {
                         // New entry
-                        if (forcedExitReason !== null || isExitOnly || signal.confirmationExitOnly === true) {
+                        if (isExitOnly || signal.confirmationExitOnly === true) {
                             continue;
                         }
                         if (!gateDecision.admitted) {
@@ -2948,14 +2932,14 @@ export function runBacktest(
 
                             diagnostics && diagnostics.counts.signalExitOrders++;
                             const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
-                            const { fullyClosed } = recordExitFull(exitTarget, candle, exitPrice, exitOrder.exitSize, forcedExitReason ?? 'signal');
+                            const { fullyClosed } = recordExitFull(exitTarget, candle, exitPrice, exitOrder.exitSize, 'signal');
                             allTargetsFullyClosed = allTargetsFullyClosed && fullyClosed;
                             allExitOrdersFull = allExitOrdersFull && !exitOrder.wasPartial;
                             if (fullyClosed) {
-                                finalizeClosedPositionFull(exitTarget, candle, exitPrice, forcedExitReason ?? 'signal');
+                                finalizeClosedPositionFull(exitTarget, candle, exitPrice, 'signal');
                             }
                         }
-                        if (gateDecision.admitted && forcedExitReason === null && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
+                        if (gateDecision.admitted && !isExitOnly && allTargetsFullyClosed && canImmediatelyReenterAfterSignalExit({
                             fullyClosed: true,
                             wasPartial: !allExitOrdersFull,
                             tradeDirection,

@@ -1,8 +1,4 @@
 import type { Time } from "lightweight-charts";
-import type { BacktestPolymarketTradeSummary, TradePolymarketOutcome } from "./polymarket-outcomes";
-import type { PolymarketExitMode } from "../polymarket-exit-mode";
-import type { PolymarketEntrySelectionMode } from "../polymarket-entry-selection-mode";
-import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type { BinanceMarketType } from "../binance-market";
 import type { TradeGateStats } from "../batch-backtest/trade-gate";
 export type { Time };
@@ -33,13 +29,11 @@ export interface Trade {
     size: number;
     fees?: number;
     /** Exit reason: how the trade was closed */
-    exitReason?: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'partial' | 'probation_fail' | 'end_of_data' | 'polymarket_take_profit' | 'polymarket_stop_loss' | 'path_exit';
+exitReason?: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'partial' | 'probation_fail' | 'end_of_data' | 'path_exit';
     /** Stop-loss price level for the active position targets when available */
     stopLossPrice?: number | null;
     /** Take-profit price level for the active position targets when available */
     takeProfitPrice?: number | null;
-    /** Polymarket outcome scored against this trade's entry timestamp when available */
-    polymarketOutcome?: TradePolymarketOutcome | null;
 }
 
 export interface BacktestResultMarketContext {
@@ -173,7 +167,6 @@ export interface BacktestResult {
     postEntryPath?: PostEntryPathStats;
     tradeTimingQuality?: TradeTimingQuality;
     edgeStatistics?: import('../strategies/backtest/edge-statistics').EdgeStatistics;
-    polymarketTradeSummary?: BacktestPolymarketTradeSummary;
     marketContext?: BacktestResultMarketContext;
     diagnostics?: BacktestDiagnostics;
     exitControlDiagnostics?: BacktestExitControlDiagnostics;
@@ -417,55 +410,6 @@ export interface BacktestSettings {
     strategyTimeframeEnabled?: boolean;
     /** Higher timeframe in minutes for global strategy execution */
     strategyTimeframeMinutes?: number;
-    /** Enable Polymarket outcome annotation for supported symbols. */
-    polymarketAnnotationEnabled?: boolean;
-    /** Optional Polymarket outcome series override. Blank means use the chart symbol. */
-    polymarketOutcomeSymbol?: string;
-    /** Native Polymarket outcome session. */
-    polymarketOutcomeInterval?: PolymarketOutcomeInterval;
-    /** Entry selection mode for 1m -> 5m Polymarket bridge scoring. */
-    polymarketEntrySelectionMode?: PolymarketEntrySelectionMode;
-    /** Entry offset minute (0..4) for fixed-offset 1m -> 5m Polymarket bridge scoring */
-    polymarketEntryOffset?: number;
-    /** Delay Polymarket 1s CLOB entry pricing by N chart bars after the chart entry. */
-    polymarketEntryDelayBars?: number;
-    /** Skip Polymarket entries priced at or below N cents, or at or above 100-N cents. 0 disables. */
-    polymarketEntryPriceFilterCents?: number;
-    /** Backtest-only Polymarket adverse slippage in cents. Entries pay more and modeled exits receive less. */
-    polymarketBacktestSlippageCents?: number;
-    /** Enable skipping Polymarket entries near event close. */
-    polymarketEntryCutoffEnabled?: boolean;
-    /** Skip Polymarket entries inside the final N seconds of the event when cutoff is enabled. */
-    polymarketEntryCutoffSeconds?: number;
-    /** Polymarket exit evaluation mode. Same-event modes exit from cached Polymarket quotes before native resolution. */
-    polymarketExitMode?: PolymarketExitMode;
-    /** In same-event Polymarket exit modes, score every eligible chart trade in the event instead of one trade per Polymarket event. */
-    polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
-    /** Enable post-chart-entry Polymarket limit-entry fill simulation for supported annotated runs. */
-    polymarketPostSignalLimitEntryEnabled?: boolean;
-    /** Limit-entry pricing mode: fixed cents, first quote minus offset, or stale signal-time quote. */
-    polymarketPostSignalLimitEntryMode?: "fixed_price" | "signal_offset" | "stale_signal_price";
-    /** Limit-entry side price in cents, clamped to 1..99. */
-    polymarketPostSignalLimitEntryPriceCents?: number;
-    /** Limit-entry discount from the first side quote, in cents. */
-    polymarketPostSignalLimitEntryOffsetCents?: number;
-    /** Enable optional Polymarket target exit after a limit entry fills. */
-    polymarketPostSignalLimitExitEnabled?: boolean;
-    /** Target-exit pricing mode: fixed cents or filled entry plus offset. */
-    polymarketPostSignalLimitExitMode?: "fixed_price" | "entry_offset";
-    /** Fixed target-exit side price in cents, clamped to 1..99. */
-    polymarketPostSignalLimitExitPriceCents?: number;
-    /** Target-exit offset above the filled entry price, in cents. */
-    polymarketPostSignalLimitExitOffsetCents?: number;
-    /** Backtest/live Polymarket side-price take-profit trigger. */
-    polymarketProtectionTakeProfitEnabled?: boolean;
-    /** Side-price cents above Polymarket entry used for the take-profit trigger. */
-    polymarketProtectionTakeProfitCents?: number;
-    /** Backtest/live Polymarket side-price stop-loss trigger. */
-    polymarketProtectionStopLossEnabled?: boolean;
-    /** Side-price cents below Polymarket entry used for the stop-loss trigger. */
-    polymarketProtectionStopLossCents?: number;
-    /** Resolved secondary symbol for cross-symbol strategies. */
     crossSymbolSecondary?: string;
 }
 
@@ -605,47 +549,9 @@ export interface CrossSymbolRuntimeContext {
     trimmedLeadingBars: number;
 }
 
-export interface Polymarket1sQuoteContextRow {
-    series_id: string;
-    symbol: string;
-    outcome_interval: string;
-    event_start_ts: number;
-    event_end_ts: number;
-    sample_ts: number;
-    yes_ask?: number | null;
-    yes_mid: number | null;
-    no_ask?: number | null;
-    no_mid: number | null;
-}
-
-export interface Polymarket1sGammaContextRow {
-    series_id: string;
-    symbol: string;
-    outcome_interval: string;
-    event_start_ts: number;
-    event_end_ts: number;
-    snapshot_ts: number;
-    gamma_yes_price: number | null;
-    gamma_no_price: number | null;
-}
-
-export interface Polymarket1sRuntimeContext {
-    symbol: string;
-    outcomeSymbol: string;
-    seriesId: string;
-    outcomeInterval: PolymarketOutcomeInterval;
-    quotes: readonly Polymarket1sQuoteContextRow[];
-    gammaSnapshots?: readonly Polymarket1sGammaContextRow[];
-}
-
-export interface Polymarket1sConfig {
-    required?: boolean;
-}
-
 /** Execution context bag passed as an optional argument to strategy methods. */
 export interface StrategyExecutionContext {
     crossSymbol?: CrossSymbolRuntimeContext;
-    polymarket1s?: Polymarket1sRuntimeContext;
 }
 
 export interface Strategy {
@@ -659,8 +565,6 @@ export interface Strategy {
     normalizeParams?: (params: StrategyParams) => StrategyParams;
     /** Optional cross-symbol configuration. When present, the runtime will provide secondary data via execution context. */
     crossSymbolConfig?: CrossSymbolConfig;
-    /** Optional 1s Polymarket context requirement for strategies using CLOB/Gamma signal-quality helpers. */
-    polymarket1sConfig?: Polymarket1sConfig;
     execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => Signal[];
     /**
      * Optional Finder/optimizer precompute seam for reusing dataset-derived state

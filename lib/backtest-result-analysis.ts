@@ -203,10 +203,6 @@ function summarizeTrades(trades: Trade[]): TradeSummary {
             lossCount++;
             totalLoss += trade.pnl;
         }
-        const marketEntryPrice = trade.polymarketOutcome?.marketEntryPrice;
-        if (typeof marketEntryPrice === "number" && Number.isFinite(marketEntryPrice)) {
-            entryPrices.push(marketEntryPrice);
-        }
     }
 
     return {

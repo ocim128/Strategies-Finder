@@ -7,7 +7,7 @@
  *
  * The merge is a stable sort by signal time: entry signals keep precedence
  * over exit signals on the same bar so the engine evaluates entries first
- * (matches the existing combo-merge and polymarket-protection precedents).
+ * (matches the existing combo-merge precedent).
  */
 import type { Signal } from "./types/strategies";
 import { compareTime } from "./strategies/backtest/backtest-utils";
