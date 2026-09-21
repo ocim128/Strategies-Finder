@@ -33,6 +33,8 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 ## Historical Decision Records
 
+- [polymarket-removal-plan.md](polymarket-removal-plan.md) - the executed removal plan for the Polymarket subsystems on `chore/remove-polymarket`. Kept as the decision record for why these surfaces no longer exist; fold into the surviving guides when it stops earning its keep.
+
 - [rust-engine-complexity-audit.md](rust-engine-complexity-audit.md) - audit whose deletions landed: the Rust engine is a generic server-first kernel; explains why the specialized Asset Opportunity Rust paths were removed.
 - [complexity-audit-finder-batch-ibkr-crypto-2026-08-27.md](complexity-audit-finder-batch-ibkr-crypto-2026-08-27.md) - point-in-time complexity audit driving the `chore/complexity-reduction` branch; some findings are already addressed.
 
