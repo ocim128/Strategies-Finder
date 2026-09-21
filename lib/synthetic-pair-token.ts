@@ -11,7 +11,7 @@
  * not pull browser-bound Finder state into the Vite config bundle.
  */
 
-import { isMarkedLocalStockSymbol } from "./local-daily-datasets";
+import { isIbkrSymbol, isMarkedLocalStockSymbol, markIbkrSymbol } from "./local-daily-datasets";
 
 // Quote suffix list used by the batch/Finder synthetic-pair contract.
 // (`lib/synthetic-pair-parser.ts` has its own
@@ -31,6 +31,33 @@ function resolveToBinanceSymbol(token: string): string {
         return upper;
     }
     return `${upper}USDT`;
+}
+
+/**
+ * Preserve the provider namespace of a mixed local synthetic pair. A pair
+ * such as `AAL•+AMAT` uses the IBKR marker on one leg and intentionally leaves
+ * the shared bare stock ticker on the other; without this normalization the
+ * parser turns the bare leg into `AMATUSDT` and sends it to Binance.
+ * Explicit quote-suffixed market symbols remain unchanged.
+ */
+export function normalizeSyntheticPairProviderMarkers(symbol: string): string {
+    const normalized = symbol.trim().toUpperCase();
+    const plusIdx = normalized.indexOf("+");
+    if (plusIdx < 1 || plusIdx === normalized.length - 1 || normalized.indexOf("+", plusIdx + 1) !== -1) {
+        return normalized;
+    }
+
+    const base = normalized.slice(0, plusIdx).trim();
+    const quote = normalized.slice(plusIdx + 1).trim();
+    if (!isIbkrSymbol(base) && !isIbkrSymbol(quote)) return normalized;
+
+    const normalizeLeg = (leg: string): string => {
+        if (isMarkedLocalStockSymbol(leg)) return leg;
+        if (QUOTE_SUFFIXES.some((suffix) => leg.endsWith(suffix) && leg.length > suffix.length)) return leg;
+        return markIbkrSymbol(leg);
+    };
+
+    return `${normalizeLeg(base)}+${normalizeLeg(quote)}`;
 }
 
 /**

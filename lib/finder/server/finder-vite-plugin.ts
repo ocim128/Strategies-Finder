@@ -704,10 +704,10 @@ export async function processFinderUniverseRun(
     const strategyCount = selectedStrategies.length;
     const candidatePlansEstimate = estimateCandidateCount(input);
     const sortPriority = resolveUniverseSortPriority(input.options);
-    // Every selected strategy evaluates the same universe. Cache only
-    // successful sliced datasets for this server job so the loader performs
+    // Every selected strategy evaluates the same universe. Cache successful
+    // and empty sliced datasets for this server job so the loader performs
     // one real read/build per symbol+interval instead of one per strategy.
-    // Failures and empty results are removed so a later strategy may retry.
+    // Thrown errors are still evicted so transient failures may retry.
     const jobDatasetCache = new Map<string, Promise<OHLCVData[]>>();
     const jobReadyDatasetCache = new Map<string, OHLCVData[]>();
     const jobDatasetCacheStats = {
@@ -758,7 +758,7 @@ export async function processFinderUniverseRun(
             .then(() => input.loadDataset(symbol, interval, signal))
             .then((data) => {
                 if (signal?.aborted || data.length === 0) {
-                    if (jobDatasetCache.get(key) === promise) jobDatasetCache.delete(key);
+                    if (!signal?.aborted) jobReadyDatasetCache.set(key, data);
                     if (!signal?.aborted) jobDatasetCacheStats.failedLoads += 1;
                     return data;
                 }

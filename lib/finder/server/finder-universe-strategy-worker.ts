@@ -126,10 +126,11 @@ export type FinderUniverseWorkerStrategySelection = {
 
 /**
  * Worker-lifetime dataset cache with the plugin job cache's semantics:
- * successful loads are retained (and served synchronously via `get`), failed
- * or empty loads are evicted so a later strategy can retry, and in-flight
- * loads are deduplicated. Stat/slow-load consumers read per-strategy deltas
- * via `consume*` so the job diagnostics aggregate cleanly across workers.
+ * successful loads are retained (and served synchronously via `get`), empty
+ * results are retained as terminal misses for the run, thrown errors are
+ * evicted so a later strategy can retry, and in-flight loads are deduplicated.
+ * Stat/slow-load consumers read per-strategy deltas via `consume*` so the job
+ * diagnostics aggregate cleanly across workers.
  */
 export interface FinderUniverseWorkerDatasetCache {
     get(symbol: string, interval: string): OHLCVData[] | undefined;
@@ -167,6 +168,11 @@ export function createUniverseWorkerDatasetCache(args: {
         load(symbol, interval, signal) {
             stats.requests += 1;
             const key = keyOf(symbol, interval);
+            const cachedReady = ready.get(key);
+            if (cachedReady !== undefined) {
+                stats.hits += 1;
+                return Promise.resolve(cachedReady);
+            }
             const cached = inFlight.get(key);
             if (cached) {
                 stats.hits += 1;
@@ -179,6 +185,7 @@ export function createUniverseWorkerDatasetCache(args: {
                 .then((data) => {
                     if (!Array.isArray(data) || data.length === 0) {
                         inFlight.delete(key);
+                        ready.set(key, data);
                         stats.failedLoads += 1;
                         return data;
                     }

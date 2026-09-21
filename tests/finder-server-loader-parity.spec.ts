@@ -2,6 +2,10 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import {
+    clearServerFinderDatasetCaches,
+    loadServerFinderDataset,
+} from "../lib/finder/server/server-finder-data-loader";
 
 const APP_ROOT = process.cwd();
 const SERVER_FINDER_LOADER = path.join(APP_ROOT, "lib", "finder", "server", "server-finder-data-loader.ts");
@@ -26,6 +30,15 @@ function readSource(filePath: string): string {
  * first gap-fill are identical by construction (AGENTS.md §"Loader parity").
  */
 describe("finder server loader parity", () => {
+    it("routes a mixed IBKR synthetic pair locally before Binance normalization", async () => {
+        clearServerFinderDatasetCaches();
+        const marked = await loadServerFinderDataset("AAL\u2022+AMAT\u2022", "30m");
+        const mixed = await loadServerFinderDataset("AAL\u2022+AMAT", "30m");
+
+        expect(marked.length).to.be.greaterThan(0);
+        expect(mixed.length).to.equal(marked.length);
+    });
+
     it("both server loaders (finder + batch) wrap the shared core", () => {
         expect(existsSync(SERVER_FINDER_LOADER)).to.equal(true);
         expect(existsSync(SERVER_BATCH_LOADER)).to.equal(true);

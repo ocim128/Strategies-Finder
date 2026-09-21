@@ -39,6 +39,7 @@ import { isIbkrSymbol } from "../../local-daily-datasets";
 import { resolveServerBatchCacheBudget } from "../../batch-backtest/server-batch-cache-budget";
 import { clearParsedIbkrCsvCache, loadFreshIbkrCandlesFromDisk } from "../../batch-backtest/server-ibkr-csv-loader";
 import { clearParsedCryptoCsvCache, getCryptoCsvMtimeMs, loadFreshCryptoCandlesFromDisk } from "../../batch-backtest/server-crypto-csv-loader";
+import { normalizeSyntheticPairProviderMarkers } from "../../synthetic-pair-token";
 import { resolveAssetOpportunityDatasetCacheCapacity } from "./finder-asset-opportunity-capacity";
 
 // Reuse a single long-lived DataFetcher for the whole server loader (Finding 8).
@@ -155,7 +156,8 @@ export async function loadServerFinderDataset(
     signal?: AbortSignal,
     context?: BatchDatasetLoadContext,
 ): Promise<OHLCVData[]> {
-    return loader.load(symbol, interval, signal, context);
+    const resolvedSymbol = normalizeSyntheticPairProviderMarkers(symbol);
+    return loader.load(resolvedSymbol, interval, signal, context);
 }
 
 /**

@@ -19,8 +19,9 @@
  *    when a worker count > 1 is requested).
  *  - WORKER COUNT POLICY: env override + strategy/cores/memory clamps + the
  *    Rust cap.
- *  - WORKER DATASET CACHE: successful loads are retained, failed/empty loads
- *    are evicted and retryable, and per-strategy delta stats are readable.
+ *  - WORKER DATASET CACHE: successful and empty loads are retained for the
+ *    run, thrown failures remain retryable, and per-strategy delta stats are
+ *    readable.
  *
  * The runners are in-process fakes (not real worker_threads) so the spec is
  * hermetic: no dev server, no real dataset loads. The real Worker bootstrap
@@ -488,7 +489,7 @@ describe("finder universe parallel strategy sweep", () => {
         expect(resolveUniverseStrategyWorkerCount(45, 10, { [FINDER_UNIVERSE_WORKERS_ENV]: "16" }, 16 * GIB, { rustEngine: true })).to.equal(16);
     });
 
-    it("worker dataset cache retains successful loads, evicts failed ones, and reports delta stats", async () => {
+    it("worker dataset cache retains successful and empty loads, retries thrown failures, and reports delta stats", async () => {
         let loadCalls = 0;
         const cache = createUniverseWorkerDatasetCache({
             dataSlice: "all",
@@ -505,28 +506,29 @@ describe("finder universe parallel strategy sweep", () => {
             () => { throw new Error("expected rejection"); },
             () => undefined,
         );
-        // Failed/empty loads are evicted so a later strategy can retry.
+        // Empty data is a deterministic terminal miss for this run; thrown
+        // failures remain retryable for transient filesystem/provider errors.
         expect(await cache.load("BAD", "5m")).to.have.lengthOf(0);
         await cache.load("THROW", "5m").then(
             () => { throw new Error("expected rejection"); },
             () => undefined,
         );
-        expect(loadCalls).to.equal(5);
+        expect(loadCalls).to.equal(4);
         // Successful loads are served from the retained set without a re-load.
         expect(cache.get("GOOD", "5m")).to.have.lengthOf(3);
-        expect(loadCalls).to.equal(5);
+        expect(loadCalls).to.equal(4);
 
         const delta = cache.consumeDeltaStats();
         expect(delta.requests).to.equal(6);
-        expect(delta.misses).to.equal(5);
+        expect(delta.misses).to.equal(4);
         expect(delta.successfulLoads).to.equal(1);
-        expect(delta.failedLoads).to.equal(4);
+        expect(delta.failedLoads).to.equal(3);
         expect(delta.uniqueBarsLoaded).to.equal(3);
-        expect(delta.cacheEntries).to.equal(1);
+        expect(delta.cacheEntries).to.equal(2);
         // Deltas are consumed: the next window starts empty.
         const emptyDelta = cache.consumeDeltaStats();
         expect(emptyDelta.requests).to.equal(0);
-        expect(emptyDelta.cacheEntries).to.equal(1);
+        expect(emptyDelta.cacheEntries).to.equal(2);
     });
 
     it("a date-range window without `To` reaches the latest data and skips the OOS pass", async () => {

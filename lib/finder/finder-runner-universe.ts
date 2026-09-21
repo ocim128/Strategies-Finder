@@ -144,8 +144,9 @@ export interface FinderUniverseRunInput {
     /**
      * Optional server-side reuse hook. Later strategies in one Universe job
      * evaluate the same symbols and interval, so an already-resolved dataset
-     * can bypass the loading/progress/yield path entirely. Undefined means the
-     * dataset is not ready (or failed) and must use loadDataset normally.
+     * can bypass the loading/progress/yield path entirely. A defined empty
+     * array is a cached terminal miss for this run; undefined means the
+     * dataset is not ready and must use loadDataset normally.
      */
     getCachedDataset?: (symbol: string, interval: string) => OHLCVData[] | undefined;
     getProvider?: (symbol: string) => string;
@@ -614,7 +615,7 @@ export async function runFinderUniverseExecution(
     const getOrLoadDataset = (symbol: string, interval = input.interval): Promise<OHLCVData[]> => {
         const key = `${symbol}|${interval}`;
         const cachedDataset = input.getCachedDataset?.(symbol, interval);
-        if (cachedDataset && cachedDataset.length > 0) {
+        if (cachedDataset !== undefined) {
             return Promise.resolve(cachedDataset);
         }
         const cached = loadCache.get(key);
@@ -665,7 +666,7 @@ export async function runFinderUniverseExecution(
             }
 
             const cachedDataset = input.getCachedDataset?.(symbol, input.interval);
-            const reusedDataset = cachedDataset !== undefined && cachedDataset.length > 0;
+            const reusedDataset = cachedDataset !== undefined;
             if (!reusedDataset) {
                 callbacks.setProgress((completedLoads / Math.max(1, normalizedSymbols.length)) * 15, `Loading ${symbol} (${index + 1}/${normalizedSymbols.length})...`);
                 callbacks.setStatus(`Loading ${symbol} ${input.interval}...`);
