@@ -3,7 +3,7 @@
  *
  * This leaf replaces the browser `runFinderExecution` in the server path so the
  * server runs a lean IS loop without the browser's strategy-plan/UI-callback
- * machinery (polymarket interception, confirmation filters, quick funnel, live
+ * machinery (confirmation filters, quick funnel, live
  * UI updates). It is NOT a bundle-safety workaround: the browser runner is
  * already safe for the Vite config bundle — its `finder-runner` import is
  * type-only and the backtest-engine modules do not reach `lightweight-charts` —
@@ -185,7 +185,6 @@ function canReuseFullSignalsForWindow(
         && input.settings.strategyTimeframeEnabled !== true
         && !input.dataFetcher
         && !input.selectedStrategy.strategy.crossSymbolConfig
-        && !input.selectedStrategy.strategy.polymarket1sConfig
         && !(input.settings.confirmationStrategies?.length)
         && input.settings.exitStrategyOverrideEnabled !== true,
     );
@@ -197,7 +196,6 @@ function canUseSignalTradeCountPrefilter(input: ServerAssetIsSearchInput): boole
         && Math.max(0, input.options.minTrades) > 0
         && !input.dataFetcher
         && !input.selectedStrategy.strategy.crossSymbolConfig
-        && !input.selectedStrategy.strategy.polymarket1sConfig
         && input.settings.strategyTimeframeEnabled !== true
         && !(input.settings.confirmationStrategies?.length)
         // Entry-evaluation strategies can produce trades without primary

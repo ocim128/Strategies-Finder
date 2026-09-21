@@ -31,7 +31,6 @@ function compactBacktestResult(result: BacktestResult): BacktestResult {
         sharpeRatio: result.sharpeRatio,
         equityCurve: [],
         ...(result.tradeTimingQuality ? { tradeTimingQuality: result.tradeTimingQuality } : {}),
-        ...(result.polymarketTradeSummary ? { polymarketTradeSummary: result.polymarketTradeSummary } : {}),
     };
 }
 
@@ -49,7 +48,6 @@ function compactFinderResult(result: FinderResult): FinderResult {
         ...(Number.isFinite(result.oosExitAlpha) ? { oosExitAlpha: result.oosExitAlpha } : {}),
         endpointAdjusted: result.endpointAdjusted,
         endpointRemovedTrades: result.endpointRemovedTrades,
-        ...(result.polymarketEval ? { polymarketEval: result.polymarketEval } : {}),
         ...(result.oosResult ? { oosResult: compactBacktestResult(result.oosResult) } : {}),
         ...(result.oosVerdict ? { oosVerdict: result.oosVerdict } : {}),
     };

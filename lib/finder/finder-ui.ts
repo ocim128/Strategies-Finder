@@ -1,13 +1,11 @@
 import { getRequiredElement, setVisible } from "../dom-utils";
 import { escapeHtml } from "../html-escape";
 import {
-    formatPolymarketCents,
     formatProfitFactor,
     formatNullablePercentPoints,
     formatNullableSignedPercentPoints,
     formatScore as formatUiScore,
     formatNullableCurrency,
-    formatSignedCompactDollar,
 } from "../ui-formatters";
 import type { FinderAssetOpportunityResult, FinderMode, FinderOosVerdict, FinderRandomBenchmark, FinderResult, FinderStrategyQualityResult, FinderUniverseCandidate, FinderUniverseOosAggregate, FinderUniverseSymbolMetrics } from "../types/finder";
 import type { FinderAssetOosNextExitMetrics } from "./finder-asset-opportunity-oos";
@@ -115,40 +113,6 @@ export class FinderUI {
             metrics.className = "finder-metrics";
             const result = getFinderDisplayResult(item);
 
-            // Polymarket mode: show classification metrics instead of PnL
-            if (item.polymarketEval) {
-                const poly = item.polymarketEval;
-                metrics.appendChild(this.createMetricChip(`Poly Win ${(poly.winRate * 100).toFixed(1)}%`));
-                if (typeof poly.expectancy === "number" && Number.isFinite(poly.expectancy)) {
-                    metrics.appendChild(this.createMetricChip(`Poly Exp ${formatPolymarketCents(poly.expectancy)}`));
-                }
-                metrics.appendChild(this.createMetricChip(`Poly PF ${formatProfitFactor(poly.profitFactor)}`));
-                if (typeof poly.sizedNetProfit === "number") {
-                    metrics.appendChild(this.createMetricChip(`Sized Net ${formatSignedCompactDollar(poly.sizedNetProfit)}`));
-                }
-                metrics.appendChild(this.createMetricChip(`Coverage ${(poly.coverage * 100).toFixed(1)}%`));
-                metrics.appendChild(this.createMetricChip(`Wins ${poly.wins}`));
-                metrics.appendChild(this.createMetricChip(`Scored ${poly.scoredPredictions}`));
-                if (poly.limitEntryEnabled) {
-                    metrics.appendChild(this.createMetricChip(`Filled ${poly.limitEntryFilledTrades ?? 0}/${poly.limitEntryAttempts ?? 0}`));
-                    metrics.appendChild(this.createMetricChip(`Missed ${poly.limitEntryMissedTrades ?? 0}`));
-                    if (typeof poly.limitEntryFillRate === "number") {
-                        metrics.appendChild(this.createMetricChip(`Fill ${(poly.limitEntryFillRate * 100).toFixed(1)}%`));
-                    }
-                    if (poly.limitExitEnabled) {
-                        metrics.appendChild(this.createMetricChip(`Exit ${poly.limitExitFilledTrades ?? 0}`));
-                    }
-                }
-                if (poly.predictionsTaken !== poly.scoredPredictions) {
-                    metrics.appendChild(this.createMetricChip(`Taken ${poly.predictionsTaken}`));
-                }
-                if (poly.missingOutcomeRows > 0) {
-                    metrics.appendChild(this.createMetricChip(`Miss ${poly.missingOutcomeRows}`));
-                }
-                if (poly.alwaysYesBaselineWinRate !== undefined) {
-                    metrics.appendChild(this.createMetricChip(`BaseY ${(poly.alwaysYesBaselineWinRate * 100).toFixed(1)}%`));
-                }
-            } else {
                 metrics.appendChild(this.createMetricChip(`Net ${formatNullableCurrency(result.netProfit)}`));
                 metrics.appendChild(this.createMetricChip(`PF ${formatProfitFactor(result.profitFactor)}`));
                 metrics.appendChild(this.createMetricChip(`Sharpe ${result.sharpeRatio.toFixed(2)}`));
@@ -177,8 +141,6 @@ export class FinderUI {
                     metrics.appendChild(this.createMetricChip(this.formatSelectionSummary(result)));
                     metrics.appendChild(this.createMetricChip(`Endpoint bias removed (${item.endpointRemovedTrades})`));
                 }
-            }
-
             fragment.appendChild(this.createResultRow({
                 index,
                 title,

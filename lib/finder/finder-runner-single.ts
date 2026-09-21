@@ -83,7 +83,7 @@ async function getDataManager() {
 }
 
 type FinderCandidateForEnrichment = Pick<FinderResult, "key" | "name" | "params" | "result">
-    & Partial<Pick<FinderResult, "compositeEdgeRatio" | "exitStrategyKey" | "polymarketEval" | "exitAlpha">>;
+& Partial<Pick<FinderResult, "compositeEdgeRatio" | "exitStrategyKey" | "exitAlpha">>;
 
 function enrichFinderCandidate(args: {
     candidate: FinderCandidateForEnrichment;

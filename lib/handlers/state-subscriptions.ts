@@ -17,10 +17,7 @@ import {
     logBacktestResultUiFailure,
     runBacktestResultUiSteps,
 } from "./backtest-result-ui-steps";
-import {
-    createStateSubscriptionsDom,
-    type StateSubscriptionsDom,
-} from "./state-subscriptions-dom";
+import { createStateSubscriptionsDom } from "./state-subscriptions-dom";
 import type { Time } from "lightweight-charts";
 import { getMockBarsInput, getVisibleCandlesInput } from "./ui-event-handlers-dom";
 import { coalesceAnimationFrame } from "../render-scheduler";

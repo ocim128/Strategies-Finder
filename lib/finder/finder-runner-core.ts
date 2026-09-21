@@ -818,9 +818,6 @@ export function getPreparedFinderData(
     if (executionContext?.crossSymbol) {
         cacheParts.push(`cross:${executionContext.crossSymbol.secondarySymbol}`);
     }
-    if (executionContext?.polymarket1s) {
-        cacheParts.push(`poly1s:${executionContext.polymarket1s.outcomeSymbol}:${executionContext.polymarket1s.seriesId}`);
-    }
     const cacheKey = cacheParts.join("::");
     if (!byStrategy.has(cacheKey)) {
         byStrategy.set(cacheKey, strategy.prepareFinderData?.(data, settings, executionContext));

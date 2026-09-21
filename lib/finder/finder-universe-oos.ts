@@ -275,7 +275,6 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
                     dataFetcher: crossSymbolDataFetcher,
                     context: {
                         blockRange: null,
-                        annotatePolymarket: false,
                         engineMode: requiresExitAlpha ? "typescript" : "auto",
                         nowSec: runNowSec,
                         useRustEnginePreference: deps.useRustEnginePreference,
@@ -314,7 +313,6 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
                             preGeneratedSignals: output.signals,
                             context: {
                                 blockRange: null,
-                                annotatePolymarket: false,
                                 engineMode: "typescript",
                                 nowSec: runNowSec,
                                 useRustEnginePreference: deps.useRustEnginePreference,

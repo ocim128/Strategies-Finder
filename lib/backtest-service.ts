@@ -12,14 +12,8 @@ import { loadBuiltInStrategyByKey, strategyRegistry } from "../strategyRegistry"
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
 
-import {
-    calculateAdvancedPerformanceAnalyticsFromEquityCurve,
-    calculateSharpeRatioFromEquityCurve,
-    calculateSharpeRatioFromReturns,
-} from "./strategies/performance-metrics";
 import { requiresTypescriptEngine as requiresTsEngine } from "./rust-settings-sanitizer";
 import {
-    selectExecutionAwareClosedCandles,
 } from "./alert-evaluation-window";
 import {
     EFFECTIVE_BACKTEST_DEFAULTS,
@@ -51,12 +45,6 @@ import {
 } from "./backtest-endpoint-facade";
 import { addStrategyIndicators as renderStrategyIndicators } from "./backtest-chart-renderer";
 import { markAppTiming, getMark } from "./app-timing";
-import {
-    registerBacktestEdgeAnalysisInput,
-    transferBacktestEdgeAnalysisInput,
-} from "./backtest-edge-analysis";
-import { attachTradeTimingQuality } from "./trade-timing-quality";
-import { parseTimeToUnixSeconds } from "./time-normalization";
 
 type CurrentBacktestExecution = {
     result: BacktestResult;
@@ -123,7 +111,7 @@ export class BacktestService {
             const sourceInterval = state.currentInterval;
             await updateDomBacktestRunProgress(runUi, '40%', 'Generating signals...', 100);
 
-            let { result, engineUsed, signals, requestContext } = await this.executeBacktest(
+let { result, engineUsed, requestContext } = await this.executeBacktest(
                 runUi,
                 strategy,
                 params,
@@ -362,51 +350,6 @@ export class BacktestService {
         );
     }
 
-    private finalizeBacktestResult(
-        result: BacktestResult,
-        initialCapital: number,
-        backtestData: OHLCVData[]
-    ): void {
-        result.marketContext = {
-            symbol: state.currentSymbol,
-            interval: state.currentInterval,
-            binanceMarketType: state.binanceMarketType,
-            candleCount: backtestData.length,
-            firstCandleTime: backtestData[0]?.time ?? null,
-            lastCandleTime: backtestData[backtestData.length - 1]?.time ?? null,
-        };
-        if (!result.entryStats) {
-            result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
-            result.performanceAnalytics = this.recomputePerformanceAnalytics(result);
-        }
-        attachTradeTimingQuality(result, backtestData);
-        registerBacktestEdgeAnalysisInput(result, backtestData);
-    }
-
-    private resolveSubscriptionCapitalSettings(backtestSettings: BacktestSettings): CapitalSettings {
-        return resolveSubCapitalSettings(backtestSettings);
-    }
-
-    private recomputeSharpeRatio(result: BacktestResult, _initialCapital: number): number {
-        if (Array.isArray(result.equityCurve) && result.equityCurve.length > 1) {
-            return calculateSharpeRatioFromEquityCurve(result.equityCurve);
-        }
-
-        if (Array.isArray(result.trades) && result.trades.length > 0) {
-            return calculateSharpeRatioFromReturns(result.trades.map(trade => trade.pnlPercent));
-        }
-
-        return Number.isFinite(result.sharpeRatio) ? result.sharpeRatio : 0;
-    }
-
-    private recomputePerformanceAnalytics(result: BacktestResult) {
-        if (Array.isArray(result.equityCurve) && result.equityCurve.length > 1) {
-            return calculateAdvancedPerformanceAnalyticsFromEquityCurve(result.equityCurve);
-        }
-
-        return undefined;
-    }
-
     public requiresTypescriptEngine(settings: BacktestSettings): boolean {
         // Use shared helper for single-source-of-truth Rust eligibility
         return requiresTsEngine(settings);
@@ -428,6 +371,14 @@ export class BacktestService {
         return buildEndpointBundle(baseUrl);
     }
 
+    public getCapitalSettings(): CapitalSettings {
+        return readCapitalSettings();
+    }
+
+    public getBacktestSettings(): BacktestSettings {
+        return readBacktestSettings();
+    }
+
     public async evaluateStrategyOnData(
         ohlcvData: OHLCVData[],
         interval: string,
@@ -447,6 +398,10 @@ export class BacktestService {
             capitalSettings,
             false
         );
+    }
+
+    private resolveSubscriptionCapitalSettings(backtestSettings: BacktestSettings): CapitalSettings {
+        return resolveSubCapitalSettings(backtestSettings);
     }
 
     public async evaluateSignalsOnData(

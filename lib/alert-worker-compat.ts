@@ -8,8 +8,6 @@ function labelForProvider(provider: AssetProvider): string {
             return "Binance Futures";
         case "bybit-tradfi":
             return "Bybit TradFi";
-        case "polymarket":
-            return "Polymarket";
         case "local-daily":
             return "Local Daily";
         case "ibkr-local":

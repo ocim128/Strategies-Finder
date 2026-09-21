@@ -14,7 +14,6 @@ import { getSyntheticPairMetadata, setSyntheticPairMetadata } from "./synthetic-
 
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { parseIntervalSeconds } from "./interval-utils";
-import { formatPolymarketDisplayName, parsePolymarketEventInput } from "./dataProviders/polymarket";
 import { queryDataMiningDom, type DataMiningDom } from "./data-mining-dom";
 import { buildSyntheticPairFromLegs, deriveSyntheticSymbol, isSyntheticSymbol, pickSourceInterval, resolveSyntheticAvailableIntervals, resolveSyntheticSourceBars } from "../scripts/lib/synthetic-pair";
 
@@ -241,8 +240,8 @@ export class DataMiningManager {
 
         const { symbol, interval, bars } = request;
         const provider = dataManager.getProvider(symbol);
-        if (provider !== 'binance' && provider !== 'binance-futures' && provider !== 'bybit-tradfi' && provider !== 'polymarket') {
-            uiManager.showToast('Historical bulk download is supported for Binance / Bybit TradFi / Polymarket symbols only.', 'error');
+if (provider !== 'binance' && provider !== 'binance-futures' && provider !== 'bybit-tradfi') {
+uiManager.showToast('Historical bulk download is supported for Binance / Bybit TradFi symbols only.', 'error');
             this.setStatus('Historical download not supported for this provider.', 'error');
             return;
         }
@@ -319,8 +318,8 @@ export class DataMiningManager {
 
         const { symbol, interval, bars } = request;
         const provider = dataManager.getProvider(symbol);
-        if (provider !== 'binance' && provider !== 'binance-futures' && provider !== 'bybit-tradfi' && provider !== 'polymarket') {
-            uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit TradFi / Polymarket symbols only.', 'error');
+if (provider !== 'binance' && provider !== 'binance-futures' && provider !== 'bybit-tradfi') {
+uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit TradFi symbols only.', 'error');
             this.setStatus('SQLite sync not supported for this provider.', 'error');
             return;
         }
@@ -560,8 +559,6 @@ export class DataMiningManager {
     }
 
     private formatSymbolDisplay(symbol: string): string {
-        const polymarketLabel = formatPolymarketDisplayName(symbol);
-        if (polymarketLabel) return polymarketLabel;
 
         const mapped = SYMBOL_MAP[symbol];
         if (mapped) return mapped;
@@ -590,7 +587,6 @@ export class DataMiningManager {
         if (provider === 'binance') return 'Binance Spot';
         if (provider === 'binance-futures') return 'Binance Futures';
         if (provider === 'bybit-tradfi') return 'Bybit TradFi';
-        if (provider === 'polymarket') return 'Polymarket';
         if (provider === 'ibkr-local') return 'IBKR Local';
         if (provider === 'local-daily') return 'Local Daily';
         if (provider === 'mock') return 'Mock';
@@ -599,8 +595,7 @@ export class DataMiningManager {
 
     private getHistoricalRequest(): { symbol: string; interval: string; bars: number } | null {
         const rawSymbol = this.dom?.symbolInput?.value?.trim() || state.currentSymbol;
-        const parsedPolymarket = parsePolymarketEventInput(rawSymbol);
-        const symbol = parsedPolymarket?.canonicalSymbol ?? rawSymbol;
+        const symbol = rawSymbol;
         const interval = this.dom?.intervalInput?.value?.trim() || state.currentInterval;
         const barsRaw = this.dom?.barsInput?.value?.trim() ?? '';
         const bars = Math.floor(Number(barsRaw));

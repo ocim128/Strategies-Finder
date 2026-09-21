@@ -13,14 +13,10 @@ import {
     searchLocalDailyAssets,
     type LocalDailyAsset,
 } from './local-daily-datasets';
-import {
-    formatPolymarketDisplayName,
-    parsePolymarketEventInput,
-} from './dataProviders/polymarket';
 import { debugLogger } from './debug-logger';
 
 export type AssetType = 'crypto' | 'stock' | 'forex' | 'commodity';
-export type AssetProvider = 'binance' | 'binance-futures' | 'bybit-tradfi' | 'polymarket' | 'local-daily' | 'ibkr-local' | 'mock';
+export type AssetProvider = 'binance' | 'binance-futures' | 'bybit-tradfi' | 'local-daily' | 'ibkr-local' | 'mock';
 
 export interface Asset {
     symbol: string;          // e.g., "AAPL", "ETHUSDT", "EURUSD"
@@ -41,17 +37,6 @@ class AssetSearchService {
             displayName: `${asset.name} (${asset.datasetLabel})`,
             type: 'stock',
             provider: asset.provider,
-        };
-    }
-
-    private mapPolymarketAsset(query: string): Asset | null {
-        const parsed = parsePolymarketEventInput(query);
-        if (!parsed) return null;
-        return {
-            symbol: parsed.canonicalSymbol,
-            displayName: formatPolymarketDisplayName(parsed.canonicalSymbol) ?? `Polymarket ${parsed.slug}`,
-            type: 'crypto',
-            provider: 'polymarket',
         };
     }
 
@@ -101,10 +86,6 @@ class AssetSearchService {
 
         const results: Asset[] = [];
         const searchTerm = query.toUpperCase();
-        const polymarketAsset = this.mapPolymarketAsset(query);
-        if (polymarketAsset) {
-            results.push(polymarketAsset);
-        }
 
         // Search Bybit TradFi pairs
         try {
@@ -172,7 +153,6 @@ class AssetSearchService {
             if (asset.type === 'stock') score += 5;
             if (asset.provider === 'bybit-tradfi') score += 8;
             if (asset.provider === 'local-daily' || asset.provider === 'ibkr-local') score += 8;
-            if (asset.provider === 'polymarket') score += 20;
             if (asset.type === 'crypto' && asset.quoteAsset === 'USDT') score += 3;
 
             return { asset, score };
@@ -218,9 +198,6 @@ class AssetSearchService {
      */
     async isValidAsset(symbol: string, options?: { binanceMarketType?: BinanceMarketType }): Promise<boolean> {
         const binanceMarketType = options?.binanceMarketType ?? 'spot';
-        if (parsePolymarketEventInput(symbol)) {
-            return true;
-        }
         if (tradfiSearchService.isTradFiSymbol(symbol)) {
             return true;
         }
@@ -256,9 +233,6 @@ class AssetSearchService {
      */
     async getAssetInfo(symbol: string, options?: { binanceMarketType?: BinanceMarketType }): Promise<Asset | null> {
         const binanceMarketType = options?.binanceMarketType ?? 'spot';
-        const polymarket = this.mapPolymarketAsset(symbol);
-        if (polymarket) return polymarket;
-
         const tradfiAsset = tradfiSearchService.getSymbolInfo(symbol);
         if (tradfiAsset) {
             return this.mapTradFiAsset(tradfiAsset);
@@ -302,7 +276,6 @@ class AssetSearchService {
      * Determine asset type from symbol
      */
     getAssetType(symbol: string): AssetType {
-        if (parsePolymarketEventInput(symbol)) return 'crypto';
 
         const tradfiAsset = tradfiSearchService.getSymbolInfo(symbol);
         if (tradfiAsset) return tradfiAsset.type;
@@ -323,9 +296,6 @@ class AssetSearchService {
      */
     getProvider(symbol: string, options?: { binanceMarketType?: BinanceMarketType }): AssetProvider {
         const binanceMarketType = options?.binanceMarketType ?? 'spot';
-        if (parsePolymarketEventInput(symbol)) {
-            return 'polymarket';
-        }
         if (tradfiSearchService.isTradFiSymbol(symbol)) {
             return 'bybit-tradfi';
         }

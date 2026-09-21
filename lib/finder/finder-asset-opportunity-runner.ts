@@ -963,7 +963,6 @@ async function searchOneAsset(args: {
         && sameSignalBoundary
         && !input.dataFetcher
         && !selectedStrategy.strategy.crossSymbolConfig
-        && !selectedStrategy.strategy.polymarket1sConfig
         && input.settings.strategyTimeframeEnabled !== true
         && !(input.settings.confirmationStrategies?.length);
     const canReuseFreshSignals = (input.options.dataSlice ?? "all") === "all"
@@ -983,7 +982,6 @@ async function searchOneAsset(args: {
         && (input.options.dataSlice ?? "all") === "all"
         && !input.dataFetcher
         && !selectedStrategy.strategy.crossSymbolConfig
-        && !selectedStrategy.strategy.polymarket1sConfig
         && input.settings.strategyTimeframeEnabled !== true
         && !(input.settings.confirmationStrategies?.length);
     const freshEntryPrecheck: AssetOpportunityFreshEntryPrecheck | undefined = canPrecheckFreshEntry
@@ -1432,7 +1430,6 @@ async function searchOneAsset(args: {
                 : null;
             const boundedNextExitOosReplayData = !input.dataFetcher
                 && !selectedStrategy.strategy.crossSymbolConfig
-                && !selectedStrategy.strategy.polymarket1sConfig
                 && input.settings.strategyTimeframeEnabled !== true
                 && !(input.settings.confirmationStrategies?.length)
                 ? resolveBoundedNextExitOosReplayData({

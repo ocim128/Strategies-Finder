@@ -244,7 +244,6 @@ export async function runAssetCandidateBacktest(args: {
         preResolvedCapital,
         context: {
             blockRange: null,
-            annotatePolymarket: false,
             engineMode: "auto",
             nowSec: Math.floor(Date.now() / 1000),
             useRustEnginePreference: args.useRustEnginePreference,

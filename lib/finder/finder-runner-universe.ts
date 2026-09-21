@@ -524,12 +524,6 @@ function assertUniverseRunSupported(input: FinderUniverseRunInput): FinderUniver
     if (input.options.mode !== "random") {
         throw new Error("Symbol Universe mode supports Random Search only in v1.");
     }
-    if (input.options.polymarketScoringEnabled) {
-        throw new Error("Symbol Universe mode does not support Polymarket scoring in v1.");
-    }
-    if (input.selectedStrategy.strategy.polymarket1sConfig) {
-        throw new Error("Symbol Universe mode does not support 1s Polymarket context strategies in v1.");
-    }
     if (input.settings.strategyTimeframeEnabled) {
         throw new Error("Symbol Universe mode does not support strategy timeframe resampling in v1.");
     }
@@ -971,7 +965,6 @@ export async function runFinderUniverseExecution(
                         preResolvedCapital,
                         context: {
                             blockRange: null,
-                            annotatePolymarket: false,
                             engineMode: "typescript",
                             useRustEnginePreference: input.useRustEnginePreference,
                             rustCapabilities: input.rustCapabilities,
@@ -1149,7 +1142,6 @@ export async function runFinderUniverseExecution(
                         dataFetcher: crossSymbolDataFetcher,
                         context: {
                             blockRange: null,
-                            annotatePolymarket: false,
                             engineMode: requiresExitAlpha ? "typescript" : "auto",
                             // Thread the server-side Rust preference through. In the
                             // browser this is undefined (shouldAttemptRust reads the
@@ -1235,7 +1227,6 @@ export async function runFinderUniverseExecution(
                             preGeneratedSignals: output.signals,
                             context: {
                                 blockRange: null,
-                                annotatePolymarket: false,
                                 engineMode: "typescript",
                                 useRustEnginePreference: input.useRustEnginePreference,
                                 rustCapabilities: input.rustCapabilities,

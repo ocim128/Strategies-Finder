@@ -13,10 +13,6 @@ import { getLocalDailyAssets } from "./local-daily-datasets";
 import { cloneJsonCompatible, parseJsonPreservingNonFinite } from "./json-utils";
 import { debounce } from "./debounce";
 import { coalesceAnimationFrame } from "./render-scheduler";
-import {
-	getPolymarketExitModeSelect,
-	getPolymarketOutcomeIntervalSelect,
-} from "./handlers/state-subscriptions-dom";
 
 import {
 	FINDER_SORT_OPTIONS,
@@ -122,7 +118,6 @@ import type {
 	FinderDataSlice,
 	FinderOptions,
 	FinderScope,
-	PolymarketFinderRankMode,
 	FinderResult,
 	FinderAssetOpportunityResult,
 	FinderStrategyQualityDiagnostics,
@@ -205,17 +200,7 @@ interface ServerAssetOpportunityRunOutcome {
 	failedAssets: number;
 }
 
-import { isSameEventPolymarketExitMode, resolveEffectivePolymarketExitMode } from "./polymarket-exit-mode";
-import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
-import {
-	clampPolymarketPostSignalLimitEntryPriceCents,
-	clampPolymarketPostSignalLimitExitPriceCents,
-	clampPolymarketPostSignalLimitOffsetCents,
-	resolvePolymarketPostSignalLimitEntryMode,
-	resolvePolymarketPostSignalLimitExitMode,
-} from "./polymarket-post-signal-limit-entry";
 import { finderSortRequiresTradeTimingQuality } from "./trade-timing-quality";
-import { isSecondMarketPolymarketSupported } from "./second-market/evaluation";
 import { consumeNdjsonStream } from "./ndjson-stream";
 import { shouldUseRustEngine } from "./engine-preferences";
 import type {
@@ -249,11 +234,6 @@ type FinderPersistedUiState = {
 	tradeFilterEnabled: boolean;
 	minTrades: number;
 	maxTradesText: string;
-	polymarketScoringEnabled: boolean;
-	polymarketRankMode: PolymarketFinderRankMode;
-	polymarketMinScoredPredictions: number;
-	polymarketLockOffset: boolean;
-	polymarketAfterTakeProfitOnly: boolean;
 	/** IS/OOS gate toggle (only effective with a half data window). */
 	oosValidationEnabled: boolean;
 	universeSymbolsText: string;
@@ -338,11 +318,6 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	tradeFilterEnabled: true,
 	minTrades: 40,
 	maxTradesText: "",
-	polymarketScoringEnabled: false,
-	polymarketRankMode: "balanced",
-	polymarketMinScoredPredictions: 100,
-	polymarketLockOffset: false,
-	polymarketAfterTakeProfitOnly: false,
 	oosValidationEnabled: false,
 	universeSymbolsText: "",
 	universeMinActiveSymbols: 2,
@@ -429,19 +404,6 @@ function normalizeFinderMetric(value: unknown, fallback: FinderMetric): FinderMe
 
 function normalizeFinderMode(value: unknown): FinderMode {
 	return value === "grid" || value === "genetic" ? value : "random";
-}
-
-function normalizePolymarketRankMode(value: unknown): PolymarketFinderRankMode {
-	return value === "accuracy"
-		|| value === "accuracyTrades"
-		|| value === "expectancy"
-		|| value === "expectancyTrades"
-		|| value === "profitFactor"
-		|| value === "profitFactorTrades"
-		|| value === "sizedNet"
-		|| value === "volume"
-		? value
-		: "balanced";
 }
 
 function normalizeNumber(value: unknown, fallback: number, min: number): number {
@@ -555,11 +517,6 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		tradeFilterEnabled: source.tradeFilterEnabled !== false,
 		minTrades: Math.round(normalizeNumber(source.minTrades, DEFAULT_FINDER_UI_STATE.minTrades, 0)),
 		maxTradesText: normalizeOptionalNumberText(source.maxTradesText),
-		polymarketScoringEnabled: source.polymarketScoringEnabled === true,
-		polymarketRankMode: normalizePolymarketRankMode(source.polymarketRankMode),
-		polymarketMinScoredPredictions: Math.round(normalizeNumber(source.polymarketMinScoredPredictions, DEFAULT_FINDER_UI_STATE.polymarketMinScoredPredictions, 0)),
-		polymarketLockOffset: source.polymarketLockOffset === true,
-		polymarketAfterTakeProfitOnly: source.polymarketAfterTakeProfitOnly === true,
 		oosValidationEnabled: source.oosValidationEnabled === true,
 		universeSymbolsText: typeof source.universeSymbolsText === "string" ? source.universeSymbolsText : "",
 		universeMinActiveSymbols: minActiveSymbols,
@@ -993,11 +950,6 @@ export class FinderManager {
 		dom.finderTradesToggle.checked = this.uiState.tradeFilterEnabled;
 		dom.finderTradesMin.value = String(this.uiState.minTrades);
 		dom.finderTradesMax.value = this.uiState.maxTradesText;
-		dom.finderPolymarketToggle.checked = this.uiState.polymarketScoringEnabled;
-		dom.finderPolymarketRankMode.value = this.uiState.polymarketRankMode;
-		dom.finderPolymarketMinScored.value = String(this.uiState.polymarketMinScoredPredictions);
-		dom.finderPolymarketLockOffset.checked = this.uiState.polymarketLockOffset;
-		dom.finderPolymarketAfterTakeProfitOnly.checked = this.uiState.polymarketAfterTakeProfitOnly;
 		dom.finderOosValidationToggle.checked = this.uiState.oosValidationEnabled;
 		dom.finderUniverseSymbols.value = this.uiState.universeSymbolsText;
 		dom.finderUniverseMinActiveSymbols.value = String(this.uiState.universeMinActiveSymbols);
@@ -1102,7 +1054,6 @@ export class FinderManager {
 		this.applyPersistedUiStateToDom();
 		this.initUniverseUI();
 		this.initTradeFilterUI();
-		this.initPolymarketUI();
 		this.initFinderSettingsPersistenceUI();
 		this.initOosValidationUI();
 		this.getDom().finderResort.addEventListener("change", () => this.applyResort());
@@ -1123,7 +1074,6 @@ export class FinderManager {
 			this.syncDataRangeControlState();
 		};
 		dom.finderDataSlice.addEventListener('change', refresh);
-		dom.finderPolymarketToggle.addEventListener('change', refresh);
 		refresh();
 	}
 
@@ -1403,7 +1353,6 @@ export class FinderManager {
 		dom.finderUniverseFilters.style.display = universeScope ? "" : "none";
 		dom.finderAssetOpportunitySettings.style.display = assetOpportunityScope ? "" : "none";
 		dom.finderQualitySettings.style.display = qualityScope ? "" : "none";
-		dom.finderPolymarketSection.style.display = multiAssetScope ? "none" : "";
 		dom.finderTradeFilterSection.style.display = universeScope ? "none" : "";
 		dom.finderModeRow.classList.toggle("is-disabled", multiAssetScope);
 		dom.finderStepsRow.style.display = multiAssetScope ? "none" : "";
@@ -1429,7 +1378,7 @@ export class FinderManager {
 	 * Keeps the OOS Validation toggle visually + functionally in step with the
 	 * conditions it depends on. OOS applies to half data windows and to the
 	 * date-range window (its complement is every bar after the range end), and
-	 * is inert under Polymarket scoring, so the toggle is disabled otherwise to
+	 * is not applicable, so the toggle is disabled otherwise to
 	 * make the silent-ignore obvious (the prior behavior silently dropped the
 	 * flag, which made it impossible to tell whether OOS was active).
 	 */
@@ -1439,8 +1388,7 @@ export class FinderManager {
 		const oosCapableWindow = dataSlice === 'half_oldest'
 			|| dataSlice === 'half_newest'
 			|| dataSlice === 'date_range';
-		const polymarketOn = dom.finderPolymarketToggle.checked;
-		const applicable = oosCapableWindow && !polymarketOn;
+const applicable = oosCapableWindow;
 		dom.finderOosValidationToggle.disabled = !applicable;
 		dom.finderOosValidationRow.classList.toggle('is-disabled', !applicable);
 	}
@@ -1465,18 +1413,6 @@ export class FinderManager {
 		dom.finderTradesMax.disabled = !enabled;
 	}
 
-	private initPolymarketUI(): void {
-		const { finderPolymarketToggle: toggle } = this.getDom();
-		const refreshControls = () => {
-			this.setPolymarketControlsEnabled(toggle.checked);
-		};
-
-		refreshControls();
-		toggle.addEventListener('change', refreshControls);
-		getPolymarketOutcomeIntervalSelect()?.addEventListener('change', refreshControls);
-		getPolymarketExitModeSelect()?.addEventListener('change', refreshControls);
-	}
-
 	private initFinderSettingsPersistenceUI(): void {
 		const dom = this.getDom();
 		const persist = () => {
@@ -1499,11 +1435,6 @@ export class FinderManager {
 			dom.finderTradesToggle,
 			dom.finderTradesMin,
 			dom.finderTradesMax,
-			dom.finderPolymarketToggle,
-			dom.finderPolymarketRankMode,
-			dom.finderPolymarketMinScored,
-			dom.finderPolymarketLockOffset,
-			dom.finderPolymarketAfterTakeProfitOnly,
 			dom.finderOosValidationToggle,
 			dom.finderAssetCandidatePoolSize,
 			dom.finderAssetMinFreshSupport,
@@ -1549,15 +1480,6 @@ export class FinderManager {
 		this.uiState.tradeFilterEnabled = dom.finderTradesToggle.checked;
 		this.uiState.minTrades = Math.round(this.readFinderNumberInput(dom.finderTradesMin, DEFAULT_FINDER_UI_STATE.minTrades, 0));
 		this.uiState.maxTradesText = dom.finderTradesMax.value.trim();
-		this.uiState.polymarketScoringEnabled = dom.finderPolymarketToggle.checked;
-		this.uiState.polymarketRankMode = normalizePolymarketRankMode(dom.finderPolymarketRankMode.value);
-		this.uiState.polymarketMinScoredPredictions = Math.round(this.readFinderNumberInput(
-			dom.finderPolymarketMinScored,
-			DEFAULT_FINDER_UI_STATE.polymarketMinScoredPredictions,
-			0
-		));
-		this.uiState.polymarketLockOffset = dom.finderPolymarketLockOffset.checked;
-		this.uiState.polymarketAfterTakeProfitOnly = dom.finderPolymarketAfterTakeProfitOnly.checked;
 		this.uiState.oosValidationEnabled = dom.finderOosValidationToggle.checked;
 		this.uiState.assetOpportunityCandidatePoolSize = Math.max(1, Math.min(50, Math.round(this.readFinderNumberInput(
 			dom.finderAssetCandidatePoolSize,
@@ -1639,35 +1561,18 @@ export class FinderManager {
 		this.syncStrategyToggleInputsFromState();
 		this.syncStrategySelectionUi();
 		this.setTradeFilterControlsEnabled(this.isTradeFilterControlsEnabled());
-		this.setPolymarketControlsEnabled(this.uiState.polymarketScoringEnabled);
 		this.applyScopeUi();
 		this.saveUiState();
 		this.setStatus("Finder settings reset.");
-	}
-
-	private setPolymarketControlsEnabled(enabled: boolean): void {
-		const dom = this.getDom();
-		const polymarketSettings = resolvePolymarketDomSettings();
-		const lockOffsetRelevant = !isSameEventPolymarketExitMode(polymarketSettings.exitMode)
-			&& polymarketSettings.outcomeInterval === '5m';
-
-		dom.finderPolymarketSettings.classList.toggle('is-disabled', !enabled);
-		dom.finderPolymarketRankMode.disabled = !enabled;
-		dom.finderPolymarketMinScored.disabled = !enabled;
-		dom.finderPolymarketLockOffset.disabled = !enabled || !lockOffsetRelevant;
-		dom.finderPolymarketAfterTakeProfitOnly.disabled = !enabled;
-		this.updateTimingSortControlState();
 	}
 
 	private updateTimingSortControlState(): void {
 		const dom = this.getDom();
 		const timingSortDisabled = this.isUniverseScope()
 			|| this.isStrategyQualityScope()
-			|| dom.finderPolymarketToggle.checked
 			|| dom.finderMode.value === "genetic";
 		const optionalSortDisabled = this.isUniverseScope()
 			|| this.isStrategyQualityScope()
-			|| dom.finderPolymarketToggle.checked
 			|| dom.finderMode.value === "genetic";
 
 		for (const select of [dom.finderSort, dom.finderSortSecondary]) {
@@ -2063,7 +1968,6 @@ export class FinderManager {
 						symbol: state.currentSymbol,
 						interval: state.currentInterval,
 						mode: options.mode,
-						polymarketScoringEnabled: options.polymarketScoringEnabled,
 						error: message,
 					});
 					this.setStatus(`Finder failed. ${message}`);
@@ -2220,7 +2124,7 @@ export class FinderManager {
 	 * each survivor is re-backtested on the complementary half of the data window. Any
 	 * candidate that degrades (netProfit < 0 or profitFactor < 1.0) is filtered out;
 	 * inconclusive OOS runs (too few trades) are kept and flagged. Returns null when the
-	 * gate is not applicable (toggle off, non-half window, polymarket mode, cancelled).
+gate is not applicable (toggle off, non-half window, cancelled).
 	 *
 	 * Delegates to the extracted `runCandidateOosPass` leaf so the Asset Opportunity
 	 * server job reuses the identical OOS semantics.
@@ -3516,7 +3420,7 @@ export class FinderManager {
 		return diagnostics;
 	}
 
-	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'polymarketExitMode' | 'polymarketSignalExitAllowMultipleTradesPerEvent' | 'executionModel' | 'polymarketEntryDelayBars' | 'polymarketEntryPriceFilterCents' | 'polymarketBacktestSlippageCents' | 'polymarketPostSignalLimitEntryEnabled' | 'polymarketPostSignalLimitEntryMode' | 'polymarketPostSignalLimitEntryPriceCents' | 'polymarketPostSignalLimitEntryOffsetCents' | 'polymarketPostSignalLimitExitEnabled' | 'polymarketPostSignalLimitExitMode' | 'polymarketPostSignalLimitExitPriceCents' | 'polymarketPostSignalLimitExitOffsetCents' | 'disableSignalExits' | 'exitStrategyOverrideEnabled'>): FinderOptions {
+private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'executionModel' | 'disableSignalExits' | 'exitStrategyOverrideEnabled'>): FinderOptions {
 		const dom = this.getDom();
 		const scope = this.getScope();
 		const useAdvancedSort = dom.finderAdvancedToggle.checked;
@@ -3550,21 +3454,6 @@ export class FinderManager {
 		const exitStrategyOverrideEnabled = finderExitStrategyToggleOn
 			&& backtestSettings.disableSignalExits === true
 			&& backtestSettings.exitStrategyOverrideEnabled === true;
-		const polymarketScoringEnabled = scope === 'current_chart' && dom.finderPolymarketToggle.checked;
-		const polymarketRankMode = (dom.finderPolymarketRankMode.value as PolymarketFinderRankMode) || 'balanced';
-		const polymarketMinScoredPredictions = polymarketScoringEnabled
-			? Math.round(this.readFinderNumberInput(dom.finderPolymarketMinScored, 0, 0))
-			: 0;
-		const polymarketLockOffset = polymarketScoringEnabled && dom.finderPolymarketLockOffset.checked;
-		const polymarketAfterTakeProfitOnly = polymarketScoringEnabled && dom.finderPolymarketAfterTakeProfitOnly.checked;
-
-		const effectiveExitMode = resolveEffectivePolymarketExitMode({
-			requestedMode: backtestSettings.polymarketExitMode,
-			interval: state.currentInterval,
-			executionModel: backtestSettings.executionModel,
-			polymarketAnnotationEnabled: polymarketScoringEnabled,
-		});
-
 		const options = buildFinderOptions({
 			mode,
 			dataSlice,
@@ -3583,24 +3472,6 @@ export class FinderManager {
 			maxTrades,
 			freezeRiskManagement,
 			randomizePathExitParams,
-			polymarketScoringEnabled,
-			polymarketRankMode,
-			polymarketMinScoredPredictions,
-			polymarketLockOffset,
-			polymarketAfterTakeProfitOnly,
-			polymarketEntryDelayBars: backtestSettings.polymarketEntryDelayBars,
-			polymarketEntryPriceFilterCents: backtestSettings.polymarketEntryPriceFilterCents,
-			polymarketBacktestSlippageCents: backtestSettings.polymarketBacktestSlippageCents,
-			polymarketExitMode: effectiveExitMode,
-			polymarketSignalExitAllowMultipleTradesPerEvent: backtestSettings.polymarketSignalExitAllowMultipleTradesPerEvent,
-			polymarketPostSignalLimitEntryEnabled: backtestSettings.polymarketPostSignalLimitEntryEnabled,
-			polymarketPostSignalLimitEntryMode: backtestSettings.polymarketPostSignalLimitEntryMode,
-			polymarketPostSignalLimitEntryPriceCents: backtestSettings.polymarketPostSignalLimitEntryPriceCents,
-			polymarketPostSignalLimitEntryOffsetCents: backtestSettings.polymarketPostSignalLimitEntryOffsetCents,
-			polymarketPostSignalLimitExitEnabled: backtestSettings.polymarketPostSignalLimitExitEnabled,
-			polymarketPostSignalLimitExitMode: backtestSettings.polymarketPostSignalLimitExitMode,
-			polymarketPostSignalLimitExitPriceCents: backtestSettings.polymarketPostSignalLimitExitPriceCents,
-			polymarketPostSignalLimitExitOffsetCents: backtestSettings.polymarketPostSignalLimitExitOffsetCents,
 			exitStrategyOverrideEnabled,
 		});
 
@@ -3651,12 +3522,12 @@ export class FinderManager {
 			};
 		}
 
-		// OOS gate: half-window and date-range windows, not under polymarket
-		// scoring. Applies to both current_chart and symbol_universe scopes.
+// OOS gate: half-window and date-range windows.
+// Applies to both current_chart and symbol_universe scopes.
 		const oosWindowActive = dataSlice === 'half_oldest'
 			|| dataSlice === 'half_newest'
 			|| dataSlice === 'date_range';
-		if (oosWindowActive && !polymarketScoringEnabled) {
+if (oosWindowActive) {
 			options.oosValidationEnabled = dom.finderOosValidationToggle.checked;
 		}
 
@@ -3764,11 +3635,9 @@ export class FinderManager {
 	 * Resolve the engine-mode label used by the diagnostics builders.
 	 */
 	private resolveDiagnosticsEngineMode(options: FinderOptions): string {
-		return options.polymarketScoringEnabled
-			? (isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval) ? 'second_market_polymarket' : 'polymarket')
-			: options.mode === 'genetic'
-				? 'genetic'
-				: 'typescript';
+		return options.mode === 'genetic'
+			? 'genetic'
+			: 'typescript';
 	}
 
 	/**
@@ -3851,7 +3720,7 @@ export class FinderManager {
 		elapsedMs: number;
 		requiresTsEngine: boolean;
 	}): FinderDiagnostics {
-		const engineMode = (args.options.polymarketScoringEnabled || args.options.mode === 'genetic')
+		const engineMode = (args.options.mode === 'genetic')
 			? this.resolveDiagnosticsEngineMode(args.options)
 			: args.requiresTsEngine
 				? 'typescript'
@@ -3889,7 +3758,6 @@ export class FinderManager {
 				preparedData: 0,
 				signalGeneration: 0,
 				backtest: 0,
-				polymarketEvaluation: 0,
 				rustRequest: 0,
 				resultEnrichment: 0,
 				resultRanking: 0,
@@ -3906,7 +3774,6 @@ export class FinderManager {
 				preparedData: 0,
 				signalGeneration: 0,
 				backtest: 0,
-				polymarketEvaluation: 0,
 				rustRequest: 0,
 				resultEnrichment: 0,
 				resultRanking: 0,
@@ -4202,7 +4069,6 @@ export class FinderManager {
 				key: result.exitStrategyKey,
 				params: result.exitStrategyParams ?? {},
 			} : null,
-			polymarketEval: result.polymarketEval ?? null,
 			...(Number.isFinite(result.exitAlpha) ? { exitAlpha: result.exitAlpha } : {}),
 			...(Number.isFinite(result.oosExitAlpha) ? { oosExitAlpha: result.oosExitAlpha } : {}),
 		};
@@ -4470,7 +4336,6 @@ export class FinderManager {
 	}
 
 	private async applyCurrentChartResult(result: FinderResult): Promise<void> {
-		const isPolymarketResult = Boolean(result.polymarketEval);
 
 		// Load the strategy BEFORE mutating currentStrategyKey / dropdown so a
 		// missing strategy leaves the prior selection unchanged (audit finding
@@ -4491,7 +4356,7 @@ export class FinderManager {
 		paramManager.render(strategy);
 		paramManager.setValues(strategy, result.params);
 
-		this.applyFinderBacktestSettings(result.params, result.polymarketEval, result.exitStrategyKey, result.exitStrategyParams);
+this.applyFinderBacktestSettings(result.params, result.exitStrategyKey, result.exitStrategyParams);
 		strategyPanelController.switchTab('trades');
 
 		if (result.endpointAdjusted) {
@@ -4508,12 +4373,6 @@ export class FinderManager {
 			await backtestService.runCurrentBacktest(snapshot
 				? { dataOverride: snapshot, reason: 'finder_apply_snapshot' }
 				: undefined);
-			if (isPolymarketResult && result.polymarketEval) {
-				uiManager.showToast(
-					`Applied Polymarket params: ${(result.polymarketEval.winRate * 100).toFixed(1)}% Finder win rate, ${result.polymarketEval.scoredPredictions} scored predictions. Backtest trades refreshed below.`,
-					'success'
-				);
-			}
 		} catch (error) {
 			debugLogger.error('finder.apply_result_backtest_failed', {
 				strategyKey: result.key,
@@ -4541,7 +4400,7 @@ export class FinderManager {
 
 		paramManager.render(strategy);
 		paramManager.setValues(strategy, candidate.params);
-		this.applyFinderBacktestSettings(candidate.params, undefined, candidate.exitStrategyKey, candidate.exitStrategyParams);
+this.applyFinderBacktestSettings(candidate.params, candidate.exitStrategyKey, candidate.exitStrategyParams);
 		strategyPanelController.switchTab('trades');
 
 		try {
@@ -4593,7 +4452,7 @@ export class FinderManager {
 		uiManager.updateStrategyDropdown(result.strategyKey);
 		paramManager.render(strategy);
 		paramManager.setValues(strategy, result.params);
-		this.applyFinderBacktestSettings(result.params, undefined, result.exitStrategyKey, result.exitStrategyParams);
+this.applyFinderBacktestSettings(result.params, result.exitStrategyKey, result.exitStrategyParams);
 		strategyPanelController.switchTab('trades');
 		try {
 			await backtestService.runCurrentBacktest();
@@ -4622,7 +4481,6 @@ export class FinderManager {
 
 	private applyFinderBacktestSettings(
 		params: StrategyParams,
-		polymarketEval?: FinderResult['polymarketEval'],
 		exitStrategyKey?: string,
 		exitStrategyParams?: StrategyParams
 	): void {
@@ -4637,48 +4495,6 @@ export class FinderManager {
 			mergedSettings.exitStrategyOverrideEnabled = true;
 			mergedSettings.exitStrategyKey = exitStrategyKey;
 			mergedSettings.exitStrategyParams = { ...(exitStrategyParams ?? {}) };
-		}
-		const effectiveMode = this.lastFinderOptions?.polymarketExitMode ?? 'resolve_hold';
-		const applyPolymarketLimitEntrySettings = (): boolean => {
-			if (!polymarketEval?.limitEntryEnabled) {
-				return false;
-			}
-			mergedSettings.polymarketPostSignalLimitEntryEnabled = true;
-			mergedSettings.polymarketPostSignalLimitEntryMode = resolvePolymarketPostSignalLimitEntryMode(
-				polymarketEval.limitEntryMode
-			);
-			mergedSettings.polymarketPostSignalLimitEntryPriceCents = clampPolymarketPostSignalLimitEntryPriceCents(
-				polymarketEval.limitEntryPriceCents ?? mergedSettings.polymarketPostSignalLimitEntryPriceCents
-			);
-			mergedSettings.polymarketPostSignalLimitEntryOffsetCents = clampPolymarketPostSignalLimitOffsetCents(
-				polymarketEval.limitEntryOffsetCents ?? mergedSettings.polymarketPostSignalLimitEntryOffsetCents
-			);
-			mergedSettings.polymarketPostSignalLimitExitEnabled = polymarketEval.limitExitEnabled === true;
-			mergedSettings.polymarketPostSignalLimitExitMode = resolvePolymarketPostSignalLimitExitMode(
-				polymarketEval.limitExitMode
-			);
-			mergedSettings.polymarketPostSignalLimitExitPriceCents = clampPolymarketPostSignalLimitExitPriceCents(
-				polymarketEval.limitExitPriceCents ?? mergedSettings.polymarketPostSignalLimitExitPriceCents
-			);
-			mergedSettings.polymarketPostSignalLimitExitOffsetCents = clampPolymarketPostSignalLimitOffsetCents(
-				polymarketEval.limitExitOffsetCents ?? mergedSettings.polymarketPostSignalLimitExitOffsetCents
-			);
-			return true;
-		};
-		if (isSameEventPolymarketExitMode(effectiveMode)) {
-			mergedSettings.polymarketAnnotationEnabled = true;
-			mergedSettings.polymarketExitMode = effectiveMode;
-			mergedSettings.polymarketSignalExitAllowMultipleTradesPerEvent = this.lastFinderOptions?.polymarketSignalExitAllowMultipleTradesPerEvent === true;
-			applyPolymarketLimitEntrySettings();
-		} else if (polymarketEval && isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval)) {
-			mergedSettings.polymarketAnnotationEnabled = true;
-		} else if (applyPolymarketLimitEntrySettings()) {
-			mergedSettings.polymarketAnnotationEnabled = true;
-		} else if (Number.isFinite(params.polymarketEntryOffset)) {
-			mergedSettings.polymarketEntryOffset = Math.max(0, Math.min(4, Math.round(Number(params.polymarketEntryOffset))));
-			if (polymarketEval) {
-				mergedSettings.polymarketAnnotationEnabled = true;
-			}
 		}
 		settingsManager.applyBacktestSettings(mergedSettings);
 	}

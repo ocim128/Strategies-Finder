@@ -231,7 +231,6 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                 preResolvedCapital,
                 context: {
                     blockRange: null,
-                    annotatePolymarket: false,
                     engineMode: "auto",
                     useRustEnginePreference: data.useRustEnginePreference,
                     nowSec,

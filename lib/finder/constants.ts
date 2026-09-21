@@ -2,7 +2,6 @@ import type {
     FinderMetric,
     FinderStrategyQualityMetric,
     FinderUniverseMetric,
-    PolymarketFinderRankMode,
 } from '../types/index';
 
 export const DEFAULT_SORT_PRIORITY: FinderMetric[] = [
@@ -55,18 +54,7 @@ export const METRIC_LABELS: Record<FinderMetric, string> = {
 	averageGain: 'Avg Gain',
 	payoffRatio: 'Payoff',
 	totalTrades: 'Trades',
-	polyScore: 'Poly Score',
-	polyWins: 'Poly Wins',
-	polyWinRate: 'Poly Win %',
-	polyCoverage: 'Poly Cov %',
-	polyPredictions: 'Poly Scored',
-	polyExpectancy: 'Poly Exp',
-	polyExpectancyBalance: 'Poly Exp+Trades',
-	polyProfitFactor: 'Poly PF',
-	polyProfitFactorBalance: 'Poly PF+Trades',
-	polySizedNet: 'Poly Sized Net',
 };
-
 export const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
 	netProfit: 'Net Profit',
 	profitFactor: 'Profit Factor',
@@ -82,28 +70,6 @@ export const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
 	averageGain: 'Average Gain',
 	payoffRatio: 'Payoff Ratio (Avg Win / Avg Loss)',
 	totalTrades: 'Total Trades',
-	polyScore: 'Polymarket Balanced Score',
-	polyWins: 'Polymarket Wins',
-	polyWinRate: 'Poly Win Rate',
-	polyCoverage: 'Poly Coverage',
-	polyPredictions: 'Polymarket Scored Predictions',
-	polyExpectancy: 'Polymarket Expectancy',
-	polyExpectancyBalance: 'Polymarket Expectancy + Trades Balance',
-	polyProfitFactor: 'Polymarket Profit Factor',
-	polyProfitFactorBalance: 'Polymarket Profit Factor + Trades Balance',
-	polySizedNet: 'Polymarket Sized Net',
-};
-
-export const POLYMARKET_RANK_MODE_LABELS: Record<PolymarketFinderRankMode, string> = {
-	balanced: 'Balanced',
-	accuracy: 'Accuracy',
-	accuracyTrades: 'Accuracy + Trades',
-	volume: 'Volume',
-	expectancy: 'Expectancy',
-	expectancyTrades: 'Expectancy + Trades',
-	profitFactor: 'Profit Factor',
-	profitFactorTrades: 'Profit Factor + Trades',
-	sizedNet: 'Sized Net',
 };
 
 export const UNIVERSE_METRIC_FULL_LABELS: Record<FinderUniverseMetric, string> = {
@@ -158,29 +124,3 @@ export const STRATEGY_QUALITY_METRIC_FULL_LABELS: Record<FinderStrategyQualityMe
     noTradeSymbols: 'No-Trade Symbols',
     worstMaxDrawdownPercent: 'Worst Max Drawdown',
 };
-
-export function getPolymarketSortPriority(mode: PolymarketFinderRankMode = 'balanced'): FinderMetric[] {
-	switch (mode) {
-		case 'sizedNet':
-			return ['polySizedNet', 'polyPredictions', 'polyWinRate'];
-		case 'profitFactorTrades':
-			return ['polyProfitFactorBalance', 'polyProfitFactor', 'totalTrades', 'polyPredictions', 'polyWinRate'];
-		case 'profitFactor':
-			return ['polyProfitFactor', 'polyPredictions', 'polyWinRate'];
-		case 'expectancyTrades':
-			return ['polyExpectancyBalance', 'polyExpectancy', 'totalTrades', 'polyPredictions', 'polyWinRate'];
-		case 'expectancy':
-			return ['polyExpectancy', 'polyWinRate', 'polyPredictions'];
-		case 'accuracyTrades':
-			return ['polyWinRate', 'totalTrades', 'polyPredictions', 'polyCoverage'];
-		case 'accuracy':
-			return ['polyWinRate', 'polyPredictions', 'polyCoverage'];
-		case 'volume':
-			return ['polyWins', 'polyPredictions', 'polyWinRate'];
-		case 'balanced':
-		default:
-			return ['polyScore', 'polyWinRate', 'polyPredictions'];
-	}
-}
-
-

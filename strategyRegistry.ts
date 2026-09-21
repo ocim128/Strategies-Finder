@@ -49,7 +49,7 @@ export interface StrategyRegistryEvent {
 }
 
 export type StrategyRegistryListener = (event: StrategyRegistryEvent) => void;
-export type StrategyKind = "polymarket-1s" | "cross-symbol" | "standard";
+export type StrategyKind = "cross-symbol" | "standard";
 
 export interface StrategyRegistry {
     /** Register a new strategy */
@@ -460,10 +460,6 @@ export function getBuiltInMeta(key: string): BuiltInStrategyMeta | undefined {
 export function getStrategyKind(key: string, strategy?: Strategy): StrategyKind {
     const meta = getBuiltInStrategyMeta(key);
 
-    if (strategy?.polymarket1sConfig || meta?.polymarket1sConfig) {
-        return "polymarket-1s";
-    }
-
     if (strategy?.crossSymbolConfig || meta?.crossSymbolConfig) {
         return "cross-symbol";
     }
@@ -472,9 +468,6 @@ export function getStrategyKind(key: string, strategy?: Strategy): StrategyKind 
 }
 
 export function getStrategyKindTitle(kind: StrategyKind): string {
-    if (kind === "polymarket-1s") {
-        return "Uses 1s Polymarket price helpers";
-    }
     if (kind === "cross-symbol") {
         return "Uses cross-symbol price helpers";
     }

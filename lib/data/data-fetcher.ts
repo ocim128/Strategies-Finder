@@ -18,10 +18,6 @@ import {
     fetchBybitTradFiDataWithLimit,
 } from "../dataProviders/bybit";
 import {
-    fetchPolymarketData,
-    fetchPolymarketDataWithLimit,
-} from "../dataProviders/polymarket";
-import {
     generateMockData,
     isMockSymbol
 } from "../dataProviders/mock";
@@ -36,11 +32,6 @@ import {
 import {
     loadSqliteCandles,
 } from "../local-sqlite-api";
-import {
-    isSecondMarketChartContext,
-    loadSecondMarketCandles,
-    normalizeSecondMarketChartSymbol,
-} from "../second-market/api";
 import type { ResampleOptions } from "../strategies/resample-utils";
 import {
     DATA_CACHE_SYNC_MIN_MS,
@@ -81,8 +72,6 @@ type BinanceHybridOptions = HistoricalFetchOptions & {
     clampToChartLimit?: boolean;
     requireMinBars?: boolean;
 };
-type SecondMarketMarketType = "spot" | "futures";
-
 export class DataFetcher {
     private static readonly PRICE_JUMP_GUARD_RATIO = 8;
     private readonly inFlightLoads = new Map<string, Promise<OHLCVData[]>>();
@@ -115,10 +104,6 @@ export class DataFetcher {
         return !options?.signal && typeof options?.onProgress !== "function";
     }
 
-    private getSecondMarketMarketType(symbol: string): SecondMarketMarketType {
-        return this.providerRouter.getProvider(symbol) === "binance-futures" ? "futures" : "spot";
-    }
-
     async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
         return this.fetchDataWithOptions(symbol, interval, { signal });
     }
@@ -130,29 +115,6 @@ export class DataFetcher {
     ): Promise<OHLCVData[]> {
         const signal = options?.signal;
         const offline = options?.offline === true;
-        const secondMarketSymbol = normalizeSecondMarketChartSymbol(symbol);
-        if (secondMarketSymbol && isSecondMarketChartContext(symbol, interval)) {
-            if (signal?.aborted) return [];
-            const marketType = this.getSecondMarketMarketType(symbol);
-            const limit = this.getChartLookbackBars() ?? DATA_CHART_TOTAL_LIMIT;
-            const load = async () => {
-                const data = await loadSecondMarketCandles({
-                    symbol: secondMarketSymbol,
-                    marketType,
-                    limit,
-                });
-                this.reporter.updateSymbolDataSource?.(
-                    "1s miner DB",
-                    "seed",
-                    "Chart data is loaded from price-data/1second-chart/second-market-data.sqlite."
-                );
-                return data;
-            };
-            return signal
-                ? load()
-                : this.runDedupedLoad(`second-market:${secondMarketSymbol}:${marketType}:${limit}`, load);
-        }
-
         const provider = this.providerRouter.getProvider(symbol);
         const storageInterval = resolveStorageInterval(interval);
         const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
@@ -207,20 +169,6 @@ export class DataFetcher {
         signal?: AbortSignal,
         lookbackBars?: number
     ): Promise<{ data: OHLCVData[]; source: 'mock' | 'local' | 'network' }> {
-        const secondMarketSymbol = normalizeSecondMarketChartSymbol(symbol);
-        if (secondMarketSymbol && isSecondMarketChartContext(symbol, interval)) {
-            if (signal?.aborted) return { data: [], source: 'local' };
-            const maxBars = Number.isFinite(lookbackBars)
-                ? Math.max(200, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(lookbackBars!)))
-                : DATA_CHART_TOTAL_LIMIT;
-            const data = await loadSecondMarketCandles({
-                symbol: secondMarketSymbol,
-                marketType: this.getSecondMarketMarketType(symbol),
-                limit: maxBars,
-            });
-            return { data, source: 'local' };
-        }
-
         if (isMockSymbol(symbol)) {
             if (signal?.aborted) return { data: [], source: 'mock' };
             const mockData = generateMockData(symbol, interval);
@@ -264,7 +212,7 @@ export class DataFetcher {
             return result;
         }
 
-        if (provider === 'bybit-tradfi' || provider === 'polymarket') {
+        if (provider === 'bybit-tradfi') {
             const data = await this.fetchLimitedNonBinanceNetworkData(
                 provider,
                 symbol,
@@ -286,20 +234,6 @@ export class DataFetcher {
         limit: number,
         options?: HistoricalFetchOptions
     ): Promise<OHLCVData[]> {
-        const secondMarketSymbol = normalizeSecondMarketChartSymbol(symbol);
-        if (secondMarketSymbol && isSecondMarketChartContext(symbol, interval)) {
-            if (options?.signal?.aborted) return [];
-            const marketType = this.getSecondMarketMarketType(symbol);
-            const load = () => loadSecondMarketCandles({
-                symbol: secondMarketSymbol,
-                marketType,
-                limit,
-            });
-            return this.canDedupeHistoricalOptions(options)
-                ? this.runDedupedLoad(`second-market-limit:${secondMarketSymbol}:${marketType}:${limit}`, load)
-                : load();
-        }
-
         if (isMockSymbol(symbol)) {
             const data = generateMockData(symbol, interval);
             return trimToLastCandles(data, limit);
@@ -390,7 +324,7 @@ export class DataFetcher {
             });
         }
 
-        if (provider === 'bybit-tradfi' || provider === 'polymarket') {
+        if (provider === 'bybit-tradfi') {
             if (localNonBinance && localNonBinance.candles.length >= limit) {
                 return trimToLastCandles(localNonBinance.candles, limit);
             }
@@ -708,10 +642,6 @@ export class DataFetcher {
             return this.fetchLocalDailyChartData(chain, symbol, interval);
         }
 
-        if (chain.provider === 'polymarket') {
-            return this.fetchPolymarketChartData(chain, symbol, interval, signal);
-        }
-
         const fallback = await this.fetchNonBinanceData(symbol, interval, signal);
         return sliceCandlesToLookback(fallback, chain.lookbackBars);
     }
@@ -865,55 +795,18 @@ export class DataFetcher {
         return [];
     }
 
-    private async fetchPolymarketChartData(
-        chain: ProviderFallbackChain,
-        symbol: string,
-        interval: string,
-        signal?: AbortSignal
-    ): Promise<OHLCVData[]> {
-        const { lookbackBars, localNonBinance } = chain;
-
-        if (localNonBinance) {
-            const localSourceMeta = this.describeLocalSource(localNonBinance.source);
-            this.reporter.updateSymbolDataSource?.(localSourceMeta.label, 'seed', localSourceMeta.title);
-            return sliceCandlesToLookback(localNonBinance.candles, lookbackBars);
-        }
-
-        const data = typeof lookbackBars === 'number'
-            ? await fetchPolymarketDataWithLimit(symbol, interval, lookbackBars, { signal })
-            : await fetchPolymarketData(symbol, interval, signal);
-        if (data.length > 0) {
-            void this.persistNonBinanceData(symbol, interval, 'polymarket', data, 'network');
-            this.reporter.updateSymbolDataSource?.(
-                'Live: Polymarket',
-                'live',
-                'Chart data is loaded from Polymarket.'
-            );
-            return data;
-        }
-        this.reporter.showToast?.('Polymarket returned no data for this market.', 'error');
-        this.reporter.updateSymbolDataSource?.(
-            'Polymarket unavailable',
-            'warning',
-            'Polymarket did not return chart data for this market.'
-        );
-        return [];
-    }
-
     private async fetchLimitedNonBinanceNetworkData(
-        provider: 'bybit-tradfi' | 'polymarket',
+        provider: 'bybit-tradfi',
         symbol: string,
         interval: string,
         limit: number,
         signal?: AbortSignal,
         resampleOptions?: ResampleOptions
     ): Promise<OHLCVData[]> {
-        const data = provider === 'bybit-tradfi'
-            ? await fetchBybitTradFiDataWithLimit(symbol, interval, limit, {
-                signal,
-                ...(resampleOptions ?? {}),
-            })
-            : await fetchPolymarketDataWithLimit(symbol, interval, limit, { signal });
+        const data = await fetchBybitTradFiDataWithLimit(symbol, interval, limit, {
+            signal,
+            ...(resampleOptions ?? {}),
+        });
 
         if (data.length > 0) {
             void this.persistNonBinanceData(symbol, interval, provider, data, 'network');

@@ -24,7 +24,6 @@ import { finderSortRequiresTradeTimingQuality } from "../trade-timing-quality";
 import { finderSortRequiresExitAlpha } from "./finder-exit-alpha";
 import type { CapitalSettings } from "../types/backtest";
 import type { FinderDiagnostics, FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
-import { isSecondMarketPolymarketSupported } from "../second-market/evaluation";
 import {
     ensureConfirmationStrategiesLoaded,
     readConfirmationStrategyKeys,
@@ -79,39 +78,13 @@ export interface FinderRunOutput {
 export async function runFinderExecution(input: FinderRunInput, callbacks: FinderRunCallbacks): Promise<FinderRunOutput> {
     const { options, settings, selectedStrategies, capitalSettings } = input;
     const rustSettings = sanitizeBacktestSettingsForRust(settings);
-    const hasPolymarket1sStrategy = selectedStrategies.some((selection) => selection.strategy.polymarket1sConfig);
 
-    if (finderSortRequiresExitAlpha(options.sortPriority) && options.polymarketScoringEnabled) {
-        callbacks.setStatus("Exit Alpha sorting is not supported with Polymarket scoring.");
-        callbacks.setProgress(100, "Unsupported Exit Alpha sort");
-        return { results: [] };
-    }
     if (finderSortRequiresExitAlpha(options.sortPriority)
         && options.scope !== undefined
         && options.scope !== "current_chart"
         && options.scope !== "symbol_universe") {
         callbacks.setStatus("Exit Alpha sorting is supported in Current Chart and Symbol Universe scopes only.");
         callbacks.setProgress(100, "Unsupported Exit Alpha scope");
-        return { results: [] };
-    }
-
-    // Polymarket classification mode intercepts before any backtest logic
-    if (options.polymarketScoringEnabled) {
-        const symbolForPolymarketCheck = settings.polymarketOutcomeSymbol?.trim() || input.symbol;
-        if (isSecondMarketPolymarketSupported(symbolForPolymarketCheck, input.interval)) {
-            const { runSecondMarketFinder } = await import("../second-market/finder-runner");
-            return runSecondMarketFinder(input, callbacks);
-        }
-        if (hasPolymarket1sStrategy) {
-            callbacks.setStatus("1s Polymarket context strategies require the 1s CLOB Polymarket Finder.");
-            return { results: [] };
-        }
-        const { runPolymarketFinder } = await import("./finder-runner-polymarket");
-        return runPolymarketFinder(input, callbacks);
-    }
-
-    if (hasPolymarket1sStrategy) {
-        callbacks.setStatus("1s Polymarket context strategies require Polymarket scoring on a supported 1s chart.");
         return { results: [] };
     }
 

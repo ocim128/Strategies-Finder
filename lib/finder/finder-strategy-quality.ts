@@ -516,7 +516,6 @@ export async function runStrategyQualityAudit(
                         capitalSettings: input.capitalSettings,
                         context: {
                             blockRange: null,
-                            annotatePolymarket: false,
                             engineMode: "auto",
                             nowSec: runNowSec,
                         },
@@ -555,7 +554,6 @@ export async function runStrategyQualityAudit(
                                 capitalSettings: input.capitalSettings,
                                 context: {
                                     blockRange: null,
-                                    annotatePolymarket: false,
                                     engineMode: "auto",
                                     nowSec: runNowSec,
                                 },

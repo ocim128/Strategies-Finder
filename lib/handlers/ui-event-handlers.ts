@@ -8,7 +8,6 @@ import { uiManager } from "../ui-manager";
 import { chartManager } from "../chart-manager";
 import { dataManager } from "../data-manager";
 import { strategyPanelController } from "../strategy-panel-controller";
-import { parsePolymarketEventInput } from "../dataProviders/polymarket";
 import { copyToClipboard } from "../browser-transfer";
 import {
     setCurrentInterval,
@@ -30,34 +29,6 @@ export function setupEventHandlers() {
         tab.addEventListener('click', async (e) => {
             const currentTarget = e.currentTarget as HTMLElement;
             const interval = currentTarget.dataset.interval;
-            const action = currentTarget.dataset.action;
-            if (action === "polymarket") {
-                if (dataManager.getProvider(state.currentSymbol) === "polymarket") {
-                    debugLogger.event("ui.polymarket_picker.open", {
-                        symbol: state.currentSymbol,
-                        interval: state.currentInterval,
-                    });
-                    setCurrentInterval("1m");
-                    return;
-                }
-
-                const rawInput = window.prompt("Enter a Polymarket event URL or slug to open the market.");
-                if (rawInput === null) {
-                    return;
-                }
-
-                const parsed = parsePolymarketEventInput(rawInput);
-                if (!parsed) {
-                    uiManager.showToast("Enter a valid Polymarket slug or event URL.", "error");
-                    return;
-                }
-
-                debugLogger.event("ui.polymarket_picker.open", {
-                    symbol: parsed.canonicalSymbol,
-                });
-                setCurrentInterval("1m");
-                return;
-            }
 
             if (!interval) return;
             debugLogger.event('ui.interval.select', { interval });

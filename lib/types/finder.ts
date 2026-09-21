@@ -1,10 +1,7 @@
 import type { BacktestDiagnosticsCounts, BacktestDiagnosticsTimings, BacktestResult, StrategyParams, Time } from "../types/strategies";
-import type { PolymarketEvalResult } from "../types/polymarket-outcomes";
-import type { PolymarketExitMode } from "../polymarket-exit-mode";
 import type { BatchDatasetLoadDiagnostics } from "../batch-backtest/batch-dataset-loader-core";
 
 export type FinderMode = 'default' | 'grid' | 'random' | 'genetic';
-export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'accuracyTrades' | 'volume' | 'expectancy' | 'expectancyTrades' | 'profitFactor' | 'profitFactorTrades' | 'sizedNet';
 /**
  * Finder execution scope.
  * - `current_chart`: search candidates for the current chart;
@@ -47,16 +44,6 @@ export type FinderMetric =
     | 'averageGain'
     | 'payoffRatio'
     | 'totalTrades'
-    | 'polyScore'
-    | 'polyWins'
-    | 'polyWinRate'
-    | 'polyCoverage'
-    | 'polyPredictions'
-    | 'polyExpectancy'
-    | 'polyExpectancyBalance'
-    | 'polyProfitFactor'
-    | 'polyProfitFactorBalance'
-    | 'polySizedNet';
 export type FinderUniverseMetric =
     | 'robustUniverseScore'
     | 'windowStabilityScore'
@@ -132,28 +119,6 @@ export interface FinderOptions {
     maxTrades: number;
     freezeRiskManagement?: boolean;
     randomizePathExitParams?: boolean;
-    polymarketScoringEnabled?: boolean;
-    polymarketRankMode?: PolymarketFinderRankMode;
-    polymarketMinScoredPredictions?: number;
-    polymarketLockOffset?: boolean;
-    polymarketAfterTakeProfitOnly?: boolean;
-    polymarketEntryDelayBars?: number;
-    polymarketEntryPriceFilterCents?: number;
-    polymarketBacktestSlippageCents?: number;
-    polymarketExitMode?: PolymarketExitMode;
-    polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
-    polymarketPostSignalLimitEntryEnabled?: boolean;
-    polymarketPostSignalLimitEntryMode?: "fixed_price" | "signal_offset" | "stale_signal_price";
-    polymarketPostSignalLimitEntryPriceCents?: number;
-    polymarketPostSignalLimitEntryOffsetCents?: number;
-    polymarketPostSignalLimitExitEnabled?: boolean;
-    polymarketPostSignalLimitExitMode?: "fixed_price" | "entry_offset";
-    polymarketPostSignalLimitExitPriceCents?: number;
-    polymarketPostSignalLimitExitOffsetCents?: number;
-    /**
-     * When true and disableSignalExits is on, Finder varies the exit-strategy's params
-     * alongside the entry strategy's params and uses its signals as close-only exits.
-     */
     exitStrategyOverrideEnabled?: boolean;
     /** Registry key of the strategy whose signals act as close-only exits. */
     exitStrategyKey?: string;
@@ -166,8 +131,7 @@ export interface FinderOptions {
      * When true, after IS ranking the complementary half of the data window is
      * backtested for each top-N survivor and any that degrade are filtered out.
      * Honored for both current_chart and symbol_universe scopes; only effective
-     * when dataSlice is half_oldest or half_newest, and inert under Polymarket
-     * scoring (readOptions never sets it otherwise).
+ * when dataSlice is half_oldest or half_newest.
      */
     oosValidationEnabled?: boolean;
     universe?: FinderUniverseOptions;
@@ -197,7 +161,6 @@ export interface FinderResult {
     compositeEdgeRatio?: number;
     endpointAdjusted: boolean;
     endpointRemovedTrades: number;
-    polymarketEval?: PolymarketEvalResult;
     /**
      * Out-of-sample backtest on the complementary data window. Present only when
      * OOS validation ran for this candidate. Used for the IS/OOS gate and the
@@ -742,7 +705,6 @@ export interface FinderDiagnostics {
         preparedData: number;
         signalGeneration: number;
         backtest: number;
-        polymarketEvaluation: number;
         rustRequest: number;
         resultEnrichment: number;
         resultRanking: number;
@@ -759,7 +721,6 @@ export interface FinderDiagnostics {
         preparedData: number;
         signalGeneration: number;
         backtest: number;
-        polymarketEvaluation: number;
         rustRequest: number;
         resultEnrichment: number;
         resultRanking: number;

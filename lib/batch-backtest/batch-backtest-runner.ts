@@ -384,7 +384,6 @@ export async function runBatchBacktest(
                 preResolvedCapital,
                 context: {
                     blockRange: null,
-                    annotatePolymarket: false,
                     engineMode: "auto",
                     useRustEnginePreference: input.useRustEnginePreference,
                     nowSec,

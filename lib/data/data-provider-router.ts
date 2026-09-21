@@ -6,7 +6,6 @@ import {
     type BinanceDataProvider,
 } from "../binance-market";
 import { state } from "../state";
-import { isPolymarketEventSymbol } from "../dataProviders/polymarket";
 import { tradfiSearchService } from "../tradfi-search-service";
 import { isIbkrSymbol, isStockMarketSymbol } from "../local-daily-datasets";
 
@@ -28,10 +27,6 @@ export class DataProviderRouter {
         const normalizedSymbol = symbol.trim().toUpperCase();
         if (this.providerOverrideBySymbol.has(normalizedSymbol)) {
             return this.providerOverrideBySymbol.get(normalizedSymbol)!;
-        }
-        if (isPolymarketEventSymbol(symbol)) {
-            this.providerOverrideBySymbol.set(normalizedSymbol, 'polymarket');
-            return 'polymarket';
         }
         // Diamond-marked symbols are always offline stock_market_data lookups.
         // Self-resolves so typed-in or pasted marked symbols don't accidentally
@@ -67,7 +62,6 @@ export class DataProviderRouter {
     getProviderStorageLabel(provider: DataProvider): string {
         if (provider === 'binance-futures') return 'Binance Futures';
         if (provider === 'bybit-tradfi') return 'Bybit TradFi';
-        if (provider === 'polymarket') return 'Polymarket';
         if (provider === 'ibkr-local') return 'IBKR Local';
         if (provider === 'local-daily') return 'Local Daily';
         return 'Binance Spot';

@@ -45,7 +45,6 @@ import { DataCache } from "./data/data-cache";
 import { DataPersistence } from "./data/data-persistence";
 import { DataFetcher } from "./data/data-fetcher";
 import { LatestLoadGuard, type LatestLoadTicket } from "./data/latest-load-guard";
-import { isSecondMarketChartContext } from "./second-market/api";
 
 export type { DataLoadReporter } from "./data/data-fetcher";
 
@@ -283,10 +282,6 @@ export class DataManager {
     }
 
     public startStreaming(symbol: string = state.currentSymbol, interval: string = state.currentInterval): void {
-        if (isSecondMarketChartContext(symbol, interval)) {
-            debugLogger.info('data.stream.skip_second_market_1s', { symbol, interval });
-            return;
-        }
         if (this.isMockSymbol(symbol)) {
             debugLogger.info('data.stream.skip_mock', { symbol });
             return;
@@ -294,10 +289,6 @@ export class DataManager {
         const provider = this.getProvider(symbol);
         if (!isBinanceDataProvider(provider)) {
             this.setProviderOverride(symbol, provider);
-        }
-        if (provider === 'polymarket') {
-            debugLogger.info('data.stream.skip_polymarket', { symbol, interval });
-            return;
         }
         if (provider === 'local-daily' || provider === 'ibkr-local') {
             debugLogger.info('data.stream.skip_local_daily', { symbol, interval });
@@ -618,7 +609,7 @@ export class DataManager {
 
             if (abort.signal.aborted) return;
 
-            if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi' || provider === 'polymarket')) {
+if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi')) {
                 if (provider === 'bybit-tradfi') {
                     uiManager.updateSymbolDataSource(
                         'Live: Bybit',

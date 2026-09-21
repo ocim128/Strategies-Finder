@@ -1,4 +1,4 @@
-import { DEFAULT_SORT_PRIORITY, getPolymarketSortPriority } from "./constants";
+import { DEFAULT_SORT_PRIORITY } from "./constants";
 import type {
     FinderMetric,
     FinderMode,
@@ -8,12 +8,7 @@ import type {
     FinderOosVerdict,
     FinderUniverseMetric,
     FinderUniverseOptions,
-    PolymarketFinderRankMode,
 } from "../types/finder";
-import { isSameEventPolymarketExitMode, type PolymarketExitMode } from "../polymarket-exit-mode";
-import { clampPolymarketEntryDelayBars } from "../polymarket-entry-delay";
-import { clampPolymarketEntryPriceFilterCents } from "../polymarket-entry-price-filter";
-import { clampPolymarketBacktestSlippageCents } from "../polymarket-backtest-slippage";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 
 export interface FinderOptionsInput {
@@ -34,24 +29,6 @@ export interface FinderOptionsInput {
     maxTrades: number;
     freezeRiskManagement: boolean;
     randomizePathExitParams?: boolean;
-    polymarketScoringEnabled: boolean;
-    polymarketRankMode: PolymarketFinderRankMode;
-    polymarketMinScoredPredictions: number;
-    polymarketLockOffset: boolean;
-    polymarketAfterTakeProfitOnly: boolean;
-    polymarketEntryDelayBars?: number;
-    polymarketEntryPriceFilterCents?: number;
-    polymarketBacktestSlippageCents?: number;
-    polymarketExitMode: PolymarketExitMode;
-    polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
-    polymarketPostSignalLimitEntryEnabled?: boolean;
-    polymarketPostSignalLimitEntryMode?: "fixed_price" | "signal_offset" | "stale_signal_price";
-    polymarketPostSignalLimitEntryPriceCents?: number;
-    polymarketPostSignalLimitEntryOffsetCents?: number;
-    polymarketPostSignalLimitExitEnabled?: boolean;
-    polymarketPostSignalLimitExitMode?: "fixed_price" | "entry_offset";
-    polymarketPostSignalLimitExitPriceCents?: number;
-    polymarketPostSignalLimitExitOffsetCents?: number;
     exitStrategyOverrideEnabled?: boolean;
     exitStrategyKey?: string;
     exitStrategyBaseParams?: import("../types/strategies").StrategyParams;
@@ -217,13 +194,7 @@ export function resolveFinderSortPriority(input: {
     advancedSortValues: readonly (FinderMetric | undefined)[];
     primarySort: FinderMetric;
     secondarySort: FinderMetric;
-    polymarketScoringEnabled: boolean;
-    polymarketRankMode: PolymarketFinderRankMode;
 }): FinderMetric[] {
-    if (input.polymarketScoringEnabled) {
-        return [...getPolymarketSortPriority(input.polymarketRankMode)];
-    }
-
     if (input.useAdvancedSort) {
         const advancedPriority = input.advancedSortValues.filter((value): value is FinderMetric => Boolean(value));
         return advancedPriority.length > 0 ? advancedPriority : [...DEFAULT_SORT_PRIORITY];
@@ -288,35 +259,8 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
         tradeFilterEnabled: input.tradeFilterEnabled,
         minTrades,
         maxTrades,
-        freezeRiskManagement: input.freezeRiskManagement || input.polymarketScoringEnabled,
-        randomizePathExitParams: !input.polymarketScoringEnabled
-            && input.randomizePathExitParams === true,
-        polymarketScoringEnabled: input.polymarketScoringEnabled,
-        polymarketRankMode: input.polymarketRankMode,
-        polymarketMinScoredPredictions: Math.max(0, input.polymarketMinScoredPredictions),
-        polymarketLockOffset: input.polymarketScoringEnabled && input.polymarketLockOffset,
-        polymarketAfterTakeProfitOnly: input.polymarketScoringEnabled && input.polymarketAfterTakeProfitOnly,
-        polymarketEntryDelayBars: input.polymarketScoringEnabled
-            ? clampPolymarketEntryDelayBars(input.polymarketEntryDelayBars)
-            : 0,
-        polymarketEntryPriceFilterCents: input.polymarketScoringEnabled
-            ? clampPolymarketEntryPriceFilterCents(input.polymarketEntryPriceFilterCents)
-            : 0,
-        polymarketBacktestSlippageCents: input.polymarketScoringEnabled
-            ? clampPolymarketBacktestSlippageCents(input.polymarketBacktestSlippageCents)
-            : 0,
-        polymarketExitMode: input.polymarketExitMode,
-        polymarketSignalExitAllowMultipleTradesPerEvent: input.polymarketScoringEnabled
-            && isSameEventPolymarketExitMode(input.polymarketExitMode)
-            && input.polymarketSignalExitAllowMultipleTradesPerEvent === true,
-        polymarketPostSignalLimitEntryEnabled: input.polymarketScoringEnabled && input.polymarketPostSignalLimitEntryEnabled === true,
-        polymarketPostSignalLimitEntryMode: input.polymarketPostSignalLimitEntryMode,
-        polymarketPostSignalLimitEntryPriceCents: input.polymarketPostSignalLimitEntryPriceCents,
-        polymarketPostSignalLimitEntryOffsetCents: input.polymarketPostSignalLimitEntryOffsetCents,
-        polymarketPostSignalLimitExitEnabled: input.polymarketScoringEnabled && input.polymarketPostSignalLimitExitEnabled === true,
-        polymarketPostSignalLimitExitMode: input.polymarketPostSignalLimitExitMode,
-        polymarketPostSignalLimitExitPriceCents: input.polymarketPostSignalLimitExitPriceCents,
-        polymarketPostSignalLimitExitOffsetCents: input.polymarketPostSignalLimitExitOffsetCents,
+        freezeRiskManagement: input.freezeRiskManagement,
+        randomizePathExitParams: input.randomizePathExitParams === true,
         exitStrategyOverrideEnabled: input.exitStrategyOverrideEnabled === true,
         exitStrategyKey: input.exitStrategyOverrideEnabled === true ? input.exitStrategyKey : undefined,
         exitStrategyBaseParams: input.exitStrategyOverrideEnabled === true ? input.exitStrategyBaseParams : undefined,
