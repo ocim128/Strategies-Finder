@@ -32,12 +32,6 @@ type IndicatorTooltipPoint = {
     value?: number | null;
 };
 
-export type ExecutionLabPolymarketPricePoint = {
-    time: Time;
-    yes: number | null;
-    no: number | null;
-};
-
 // ============================================================================
 // Chart Manager - Enhanced Trade Charting
 // ============================================================================
@@ -69,8 +63,6 @@ export class ChartManager {
     private spreadSeries: ISeriesApi<"Line"> | null = null;
     private correlationUpperSeries: ISeriesApi<"Line"> | null = null;
     private correlationLowerSeries: ISeriesApi<"Line"> | null = null;
-    private executionLabYesSeries: ISeriesApi<"Line"> | null = null;
-    private executionLabNoSeries: ISeriesApi<"Line"> | null = null;
     private executionLabMarkersPlugin: ISeriesMarkersPluginApi<Time> | null = null;
     private paperStreamFirstTimeSec: number | null = null;
     private paperStreamLastTimeSec: number | null = null;
@@ -770,70 +762,6 @@ export class ChartManager {
         this.paperStreamLastTimeSec = last ? parseTimeToUnixSeconds(last.time) : null;
         this.paperStreamDataLength = data.length;
         state.chart.timeScale().scrollToRealTime();
-    }
-
-    public displayExecutionLabPolymarketPrices(points: ExecutionLabPolymarketPricePoint[]): void {
-        if (points.length === 0) {
-            this.clearExecutionLabPolymarketPrices();
-            return;
-        }
-
-        if (!this.executionLabYesSeries) {
-            this.executionLabYesSeries = state.chart.addSeries(LineSeries, {
-                color: ENHANCED_CANDLE_COLORS.up,
-                lineWidth: 2,
-                priceLineVisible: true,
-                lastValueVisible: true,
-                crosshairMarkerVisible: true,
-                priceScaleId: "execution-lab-polymarket",
-                title: "YES",
-                priceFormat: {
-                    type: "price",
-                    precision: 3,
-                    minMove: 0.001,
-                },
-            });
-        }
-
-        if (!this.executionLabNoSeries) {
-            this.executionLabNoSeries = state.chart.addSeries(LineSeries, {
-                color: ENHANCED_CANDLE_COLORS.down,
-                lineWidth: 2,
-                priceLineVisible: true,
-                lastValueVisible: true,
-                crosshairMarkerVisible: true,
-                priceScaleId: "execution-lab-polymarket",
-                title: "NO",
-                priceFormat: {
-                    type: "price",
-                    precision: 3,
-                    minMove: 0.001,
-                },
-            });
-        }
-
-        state.chart.priceScale("execution-lab-polymarket").applyOptions({
-            scaleMargins: { top: 0.72, bottom: 0.08 },
-            visible: false,
-        });
-
-        this.executionLabYesSeries.setData(points
-            .filter((point) => point.yes !== null)
-            .map((point) => ({ time: point.time, value: point.yes as number })));
-        this.executionLabNoSeries.setData(points
-            .filter((point) => point.no !== null)
-            .map((point) => ({ time: point.time, value: point.no as number })));
-    }
-
-    public clearExecutionLabPolymarketPrices(): void {
-        if (this.executionLabYesSeries) {
-            state.chart.removeSeries(this.executionLabYesSeries);
-            this.executionLabYesSeries = null;
-        }
-        if (this.executionLabNoSeries) {
-            state.chart.removeSeries(this.executionLabNoSeries);
-            this.executionLabNoSeries = null;
-        }
     }
 
     public restoreStateChartData(): void {

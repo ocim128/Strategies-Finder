@@ -12,9 +12,7 @@ export interface MonteCarloDomElements {
     bootstrapToggle: HTMLInputElement;
     ruinThresholdInput: HTMLInputElement;
     initialCapitalInput: HTMLInputElement;
-    polymarketStakePerTradeInput: HTMLInputElement;
     runBtn: HTMLButtonElement;
-    runPolymarketBtn: HTMLButtonElement;
     cancelBtn: HTMLButtonElement;
     statusSpan: HTMLSpanElement;
     spinner: HTMLElement;
@@ -28,8 +26,6 @@ export interface MonteCarloDomElements {
     medianSharpeEl: HTMLElement;
     medianDdEl: HTMLElement;
     execTimeEl: HTMLElement;
-    polymarketSummaryHeader: HTMLElement;
-    polymarketSummary: HTMLElement;
     pmScoredTradesEl: HTMLElement;
     pmOverallCoverageEl: HTMLElement;
     pmDataCoverageEl: HTMLElement;
@@ -75,9 +71,7 @@ const MONTE_CARLO_DOM_IDS = {
     bootstrapToggle: "mc-bootstrap-toggle",
     ruinThresholdInput: "mc-ruin-threshold",
     initialCapitalInput: "mc-initial-capital",
-    polymarketStakePerTradeInput: "mc-polymarket-stake-per-trade",
     runBtn: "mc-run-btn",
-    runPolymarketBtn: "mc-run-polymarket-btn",
     cancelBtn: "mc-cancel-btn",
     statusSpan: "mc-status",
     spinner: "mc-spinner",
@@ -91,8 +85,6 @@ const MONTE_CARLO_DOM_IDS = {
     medianSharpeEl: "mc-median-sharpe",
     medianDdEl: "mc-median-dd",
     execTimeEl: "mc-exec-time",
-    polymarketSummaryHeader: "mc-polymarket-summary-header",
-    polymarketSummary: "mc-polymarket-summary",
     pmScoredTradesEl: "mc-pm-scored-trades",
     pmOverallCoverageEl: "mc-pm-overall-coverage",
     pmDataCoverageEl: "mc-pm-data-coverage",
@@ -165,8 +157,6 @@ const ELEMENT_FALLBACKS = {
     bootstrapToggle: "simulationsInput",
     ruinThresholdInput: "simulationsInput",
     initialCapitalInput: "simulationsInput",
-    polymarketStakePerTradeInput: "simulationsInput",
-    runPolymarketBtn: "runBtn",
     cancelBtn: "runBtn",
     statusSpan: "runBtn",
     spinner: "runBtn",
@@ -178,8 +168,6 @@ const ELEMENT_FALLBACKS = {
     medianSharpeEl: "resultsContainer",
     medianDdEl: "resultsContainer",
     execTimeEl: "resultsContainer",
-    polymarketSummaryHeader: "resultsContainer",
-    polymarketSummary: "resultsContainer",
     pmScoredTradesEl: "resultsContainer",
     pmOverallCoverageEl: "resultsContainer",
     pmDataCoverageEl: "resultsContainer",

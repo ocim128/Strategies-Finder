@@ -233,7 +233,7 @@ export class UIManager {
         workspace.strategyMetaName.dataset.strategyKind = kind;
         workspace.strategyMetaName.title = strategyKey;
         // The technical key pill is hidden by default. Show it only for
-        // meaningful special-state kinds (Polymarket / cross-symbol); for
+        // meaningful special-state kinds (cross-symbol); for
         // standard strategies the key is exposed via the title tooltip.
         const isSpecialKind = kind !== 'standard';
         workspace.strategyMetaKey.textContent = strategyKey.replace(/_/g, ' ');

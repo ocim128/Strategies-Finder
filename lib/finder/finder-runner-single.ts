@@ -299,8 +299,8 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
         throw error;
     }
 
-    // Do not compact away behavior-bearing Polymarket reasons before the
-    // shared Rust client can reject them. Their exit semantics exist only in
+    // The compact path must not silently drop behavior-bearing reasons before
+    // the shared Rust client can reject them. Their exit semantics exist only in
     // the TypeScript engine, so the whole batch must stay on that path.
     if (batchRuns.some((run) => hasUnsupportedRustSignalShape(run.signals))) {
         for (const run of batchRuns) runFallback(run);

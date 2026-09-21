@@ -1,8 +1,8 @@
 /**
  * Cross-symbol runtime resolver.
  *
- * Single shared helper that every supported runtime (backtest, Finder, WFA,
- * Polymarket evaluator) should call to resolve cross-symbol execution inputs.
+ * Single shared helper that every supported runtime (backtest, Finder, WFA)
+ * should call to resolve cross-symbol execution inputs.
  *
  * This module is the only place that fetches secondary data, aligns it to the
  * primary, and trims leading bars. Strategies never fetch data themselves.

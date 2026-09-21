@@ -111,9 +111,9 @@ export type FinderSignalTiming = {
 };
 
 /**
- * Backtest runner used by the polymarket-class finder runners. Forces
+ * Backtest runner used by specialized finder runners. Forces
  * `includeAdvancedAnalytics: false` (finder candidates don't need heavy
- * analytics) and forwards the optional fast-path flags. Both polymarket and
+ * analytics) and forwards the optional fast-path flags. Both classification and
  * second-market runners duplicated this wrapper with identical behavior.
  */
 export const runFinderCandidateBacktest: typeof runBacktest = (

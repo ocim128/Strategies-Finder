@@ -200,12 +200,7 @@ export function hasUnsupportedRustSignalShape(signals: readonly Signal[]): boole
         || signal.sizeFraction !== undefined
         || signal.exitOnly === true
         || signal.confirmationExitOnly === true
-        || isBehaviorBearingRustSignalReason(signal.reason));
-}
-
-/** Reasons whose meaning is not represented by the Rust signal contract. */
-export function isBehaviorBearingRustSignalReason(reason: unknown): boolean {
-    return reason === "polymarket_take_profit" || reason === "polymarket_stop_loss";
+        || signal.reason !== undefined);
 }
 
 function parseRustCapabilities(value: unknown, protocolVersion: unknown): Set<string> {

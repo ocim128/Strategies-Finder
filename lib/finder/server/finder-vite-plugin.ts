@@ -22,8 +22,7 @@
  *     code. The server holds datasets only for the run duration (plus OOS),
  *     then releases them.
  *   - It does NOT touch the current-chart Finder path.
- *   - It does NOT broaden Universe to Polymarket scoring (Universe rejects
- *     it in `assertUniverseRunSupported`).
+ *   - It does NOT support Polymarket scoring (rejected in `assertUniverseRunSupported`).
  *
  * The core `runFinderUniverseExecution` is reused UNCHANGED — server-side
  * dispatch only swaps the `loadDataset` callback for the Node-side loader.

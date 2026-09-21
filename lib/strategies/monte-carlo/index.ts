@@ -8,9 +8,8 @@
  * - Path dependency / ruin probability analysis
  */
 
-export { runMonteCarloSimulation, runPolymarketMonteCarloSimulation } from "./monte-carlo-engine";
+export { runMonteCarloSimulation } from "./monte-carlo-engine";
 export type { MonteCarloProgress, RunMonteCarloOptions } from "./monte-carlo-engine";
-export { buildPolymarketMonteCarloInput, derivePolymarketSharePnl } from "./polymarket-monte-carlo-input";
 export * from "./types";
 export { randomizeTradeSequence, generateRandomizedSequences } from "./trade-sequence-randomizer";
 export { bootstrapResample, generateBootstrapSamples, blockBootstrapResample } from "./bootstrap-resampler";
