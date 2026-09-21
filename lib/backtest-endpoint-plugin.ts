@@ -449,7 +449,6 @@ async function handleSingleBacktest(
     const ctx = req.context ?? {};
     const nowSec = ctx.nowSec ?? Math.floor(Date.now() / 1000);
     const blockRange = ctx.blockRange ?? null;
-    const annotatePolymarket = ctx.annotatePolymarket ?? false;
     const engineMode = ctx.engineMode ?? "auto";
 
     let actualStrategyParams = req.strategyParams;
@@ -511,7 +510,6 @@ async function handleSingleBacktest(
             engineMode,
             nowSec,
             blockRange,
-            annotatePolymarket,
             crossSymbolInput ?? undefined,
         ));
 
@@ -571,7 +569,6 @@ async function handleBatchBacktest(
     const ctx = req.context ?? {} as NonNullable<typeof req.context>;
     const nowSec = ctx?.nowSec ?? Math.floor(Date.now() / 1000);
     const blockRange = ctx?.blockRange ?? null;
-    const annotatePolymarket = ctx?.annotatePolymarket ?? false;
     const engineMode = ctx?.engineMode ?? "auto";
     const compact = req.compact ?? false;
 
@@ -601,7 +598,6 @@ async function handleBatchBacktest(
                 itemCtx.engineMode as EngineMode ?? engineMode,
                 itemCtx.nowSec ?? nowSec,
                 itemCtx.blockRange ?? blockRange,
-                itemCtx.annotatePolymarket ?? annotatePolymarket,
                 crossSymbolInput ?? undefined,
             ));
 
@@ -712,7 +708,6 @@ async function handleRandomSearch(
     const nowSec = ctx?.nowSec ?? Math.floor(Date.now() / 1000);
     const engineMode = ctx?.engineMode ?? "auto";
     const blockRange = ctx?.blockRange ?? null;
-    const annotatePolymarket = ctx?.annotatePolymarket ?? false;
 
     const settingsRaw = { ...req.backtestSettings } as Record<string, unknown>;
     settingsRaw.symbol = req.symbol;
@@ -760,7 +755,6 @@ async function handleRandomSearch(
                 engineMode,
                 nowSec,
                 blockRange,
-                annotatePolymarket,
                 crossSymbolInput ?? undefined,
             ));
 

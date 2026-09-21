@@ -11,21 +11,6 @@ export const ENDPOINT_IGNORED_BACKTEST_SETTING_KEYS = [
     "riskWinStreakStopLossAfterWins",
     "riskWinStreakStopLossPercent",
     "marketMode",
-    "polymarketOutcomeInterval",
-    "polymarketEntryDelayBars",
-    "polymarketSignalExitAllowMultipleTradesPerEvent",
-    "polymarketPostSignalLimitEntryEnabled",
-    "polymarketPostSignalLimitEntryMode",
-    "polymarketPostSignalLimitEntryPriceCents",
-    "polymarketPostSignalLimitEntryOffsetCents",
-    "polymarketPostSignalLimitExitEnabled",
-    "polymarketPostSignalLimitExitMode",
-    "polymarketPostSignalLimitExitPriceCents",
-    "polymarketPostSignalLimitExitOffsetCents",
-    "polymarketProtectionTakeProfitEnabled",
-    "polymarketProtectionTakeProfitCents",
-    "polymarketProtectionStopLossEnabled",
-    "polymarketProtectionStopLossCents",
 ] as const;
 
 const ENDPOINT_IGNORED_BACKTEST_SETTING_KEY_SET = new Set<string>(ENDPOINT_IGNORED_BACKTEST_SETTING_KEYS);

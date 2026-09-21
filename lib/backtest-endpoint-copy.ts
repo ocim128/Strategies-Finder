@@ -7,7 +7,6 @@ import type {
 import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS } from "./backtest-endpoint-contract";
 import type { BacktestRunEngine } from "./backtest-run-presenter";
 import { stripEndpointIgnoredBacktestSettings } from "./backtest-endpoint-settings";
-import { isSupportedPolymarketMultiIntervalRun } from "./polymarket-btc5m";
 import type { CapitalSettings } from "./types/backtest";
 import type { BacktestSettings, OHLCVData, StrategyParams } from "./types/strategies";
 
@@ -20,7 +19,6 @@ export interface UiBacktestEndpointSnapshot {
     capitalSettings: CapitalSettings;
     nowSec: number;
     blockRange: { from: number; to: number } | null;
-    annotatePolymarket: boolean;
     engineUsed: BacktestRunEngine;
     datasetFingerprint: string;
 }
@@ -88,7 +86,6 @@ function cloneSnapshot(snapshot: UiBacktestEndpointSnapshot): UiBacktestEndpoint
         capitalSettings: cloneCapitalSettings(snapshot.capitalSettings),
         nowSec: snapshot.nowSec,
         blockRange: cloneBlockRange(snapshot.blockRange),
-        annotatePolymarket: snapshot.annotatePolymarket,
         engineUsed: snapshot.engineUsed,
         datasetFingerprint: snapshot.datasetFingerprint,
     };
@@ -210,16 +207,8 @@ export function resolveEndpointCopyEngineMode(engineUsed: BacktestRunEngine): En
     return engineUsed === "rust" ? "rust_preferred" : "typescript";
 }
 
-export function resolveEndpointPolymarketAnnotation(snapshot: Pick<UiBacktestEndpointSnapshot, "symbol" | "interval" | "annotatePolymarket">): boolean {
-    return snapshot.annotatePolymarket || isSupportedPolymarketMultiIntervalRun(snapshot.symbol, snapshot.interval);
-}
-
 function buildEndpointBacktestSettings(snapshot: UiBacktestEndpointSnapshot): Record<string, unknown> {
-    const { polymarketExitMode, ...rest } = stripEndpointIgnoredBacktestSettings(snapshot.backtestSettings);
-    return {
-        ...rest,
-        polymarketAnnotationEnabled: resolveEndpointPolymarketAnnotation(snapshot),
-    };
+    return stripEndpointIgnoredBacktestSettings(snapshot.backtestSettings);
 }
 
 export function computeBacktestEndpointDatasetFingerprint(candles: OHLCVData[]): string {
@@ -258,7 +247,6 @@ export function buildBacktestEndpointRequestFromSnapshot(
     candles: OHLCVData[],
     crossSymbolDataset?: { secondarySymbol: string; candles: OHLCVData[] }
 ): BacktestSingleRequest {
-    const annotatePolymarket = resolveEndpointPolymarketAnnotation(snapshot);
     return {
         symbol: snapshot.symbol,
         interval: snapshot.interval,
@@ -278,7 +266,6 @@ export function buildBacktestEndpointRequestFromSnapshot(
         context: {
             nowSec: snapshot.nowSec,
             blockRange: cloneBlockRange(snapshot.blockRange),
-            annotatePolymarket,
             engineMode: resolveEndpointCopyEngineMode(snapshot.engineUsed),
         },
     };
@@ -290,7 +277,6 @@ export function buildBacktestEndpointCopyBundleFromSnapshot(
     datasetRef: string = BACKTEST_ENDPOINT_DATASET_REF_PLACEHOLDER,
     crossSymbolDataset?: { secondarySymbol: string; datasetRef: string }
 ): BacktestEndpointCopyBundle {
-    const annotatePolymarket = resolveEndpointPolymarketAnnotation(snapshot);
     return {
         url: buildBacktestEndpointUrl(snapshot, baseUrl),
         method: "POST",
@@ -315,7 +301,6 @@ export function buildBacktestEndpointCopyBundleFromSnapshot(
             context: {
                 nowSec: snapshot.nowSec,
                 blockRange: cloneBlockRange(snapshot.blockRange),
-                annotatePolymarket,
                 engineMode: resolveEndpointCopyEngineMode(snapshot.engineUsed),
             },
         },

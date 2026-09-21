@@ -6,18 +6,10 @@ import {
 import {
     cloneBlockRange,
     resolveEndpointCopyEngineMode,
-    resolveEndpointPolymarketAnnotation,
     type UiBacktestEndpointSnapshot,
 } from "./backtest-endpoint-copy";
 import { stripEndpointIgnoredBacktestSettings } from "./backtest-endpoint-settings";
 import type { OHLCVData, StrategyParams } from "./types/strategies";
-
-function stripSignalExitMode(
-    settings: Record<string, unknown>
-): Record<string, unknown> {
-    const { polymarketExitMode, ...rest } = settings;
-    return rest;
-}
 
 export function buildBacktestEndpointExecutorRequest(
     strategyKey: string,
@@ -28,7 +20,6 @@ export function buildBacktestEndpointExecutorRequest(
     engineMode: EngineMode,
     nowSec: number,
     blockRange: { from: number; to: number } | null,
-    annotatePolymarket: boolean,
     crossSymbolInput?: {
         secondarySymbol: string;
         secondaryData: OHLCVData[];
@@ -40,7 +31,7 @@ export function buildBacktestEndpointExecutorRequest(
         primarySymbol: String(backtestSettings.symbol ?? ""),
         strategyKey,
         strategyParams,
-        backtestSettings: stripSignalExitMode(stripEndpointIgnoredBacktestSettings(backtestSettings)),
+backtestSettings: stripEndpointIgnoredBacktestSettings(backtestSettings),
         capitalSettings: { ...BACKTEST_ENDPOINT_CAPITAL_SETTINGS },
         crossSymbolInput: crossSymbolInput
             ? {
@@ -51,7 +42,6 @@ export function buildBacktestEndpointExecutorRequest(
         context: {
             nowSec,
             blockRange: cloneBlockRange(blockRange),
-            annotatePolymarket,
             engineMode,
         },
     };
@@ -65,7 +55,6 @@ export function buildBacktestEndpointExecutorRequestFromSnapshot(
         secondaryData: OHLCVData[];
     }
 ): BacktestExecutorRequest {
-    const annotatePolymarket = resolveEndpointPolymarketAnnotation(snapshot);
     return buildBacktestEndpointExecutorRequest(
         snapshot.strategyKey,
         candles,
@@ -73,14 +62,12 @@ export function buildBacktestEndpointExecutorRequestFromSnapshot(
         snapshot.strategyParams,
         {
             ...snapshot.backtestSettings,
-            polymarketAnnotationEnabled: annotatePolymarket,
             symbol: snapshot.symbol,
             interval: snapshot.interval,
         },
         resolveEndpointCopyEngineMode(snapshot.engineUsed),
         snapshot.nowSec,
         snapshot.blockRange,
-        annotatePolymarket,
         crossSymbolInput
     );
 }

@@ -14,7 +14,6 @@ import type {
 } from "./types/strategies";
 import type { CapitalSettings } from "./types/backtest";
 import type { RustCapabilities, RustDiagnosticPhase } from "./rust-engine-client";
-import { buildBacktestPolymarketPerformanceSummary, type BacktestPolymarketPerformanceSummary } from "./polymarket-diagnostics-utils";
 import type { TradeGate } from "./batch-backtest/trade-gate";
 
 // ============================================================================
@@ -59,11 +58,6 @@ export interface BacktestExecutionContext {
      */
     blockRange: { from: number; to: number } | null;
 
-    /**
-     * When true, annotate the result with Polymarket outcome data if the
-     * symbol supports it. Keep this opt-in so bulk search stays fast.
-     */
-    annotatePolymarket: boolean;
 
     /**
      * Engine selection preference. "typescript" forces the TS path for
@@ -362,16 +356,12 @@ export interface CompactBacktestMetrics {
 
 export interface SlimBacktestSingleResult extends CompactBacktestMetrics {
     marketContext?: BacktestResult["marketContext"];
-    polymarketTradeSummary?: BacktestResult["polymarketTradeSummary"];
-    polymarketPerformance?: BacktestPolymarketPerformanceSummary;
 }
 
 export function toSlimSingleResult(result: BacktestResult): SlimBacktestSingleResult {
     return {
         ...toCompactMetrics(result),
         marketContext: result.marketContext,
-        polymarketTradeSummary: result.polymarketTradeSummary,
-        polymarketPerformance: buildBacktestPolymarketPerformanceSummary(result),
     };
 }
 
