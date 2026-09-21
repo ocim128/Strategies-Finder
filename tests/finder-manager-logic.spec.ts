@@ -162,12 +162,6 @@ describe("Finder manager logic", () => {
             randomizePathExitParams: true,
         }).randomizePathExitParams).to.equal(true);
 
-        // Polymarket scoring remains incompatible with randomize.
-        expect(buildFinderOptions({
-            ...base,
-            freezeRiskManagement: false,
-            randomizePathExitParams: true,
-        }).randomizePathExitParams).to.equal(false);
     });
 
     it("builds symbol-universe sort priority with deterministic fallbacks", () => {

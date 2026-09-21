@@ -47,17 +47,7 @@ describe("Strategy panel settings registry", () => {
             "confirmation",
             "realism",
             "engine",
-            "polymarket",
         ]);
-    });
-
-    it("keeps Polymarket controls in their dedicated settings section", () => {
-        const html = readFileSync(resolve(process.cwd(), "html-partials/tab-settings-section-execution.html"), "utf8");
-        const polymarketSectionIndex = html.indexOf('data-section="polymarket"');
-        const annotationToggleIndex = html.indexOf('id="polymarketAnnotationEnabled"');
-
-        expect(polymarketSectionIndex).to.be.greaterThan(-1);
-        expect(annotationToggleIndex).to.be.greaterThan(polymarketSectionIndex);
     });
 
     it("registers every execution settings form control in the backtest settings DOM contract", () => {

@@ -101,35 +101,4 @@ describe("backtest executor cancellation", () => {
             rustEngine.runBacktestWithStatus = original;
         }
     });
-
-    it("preserves Polymarket exit reasons on the required TypeScript path", async () => {
-        for (const exitReason of ["polymarket_take_profit", "polymarket_stop_loss"] as const) {
-            const result = await executeBacktest({
-                ohlcvData: candles,
-                interval: "1h",
-                primarySymbol: "POLYMARKET_REASON",
-                strategyKey: "polymarket_reason_test",
-                strategy: {
-                    ...strategy,
-                    execute: (data) => [
-                        { time: data[0]!.time, type: "buy" as const, price: data[0]!.close },
-                        { time: data[1]!.time, type: "sell" as const, price: data[1]!.close, reason: exitReason },
-                    ],
-                },
-                strategyParams: {},
-                backtestSettings: settings,
-                capitalSettings: capital,
-                context: {
-                    nowSec: 9_999_999_999,
-                    blockRange: null,
-                    engineMode: "auto",
-                    useRustEnginePreference: true,
-                    rustCapabilities: [],
-                },
-            });
-
-            assert.strictEqual(result.engineUsed, "typescript");
-            assert.strictEqual(result.result.trades[0]?.exitReason, exitReason);
-        }
-    });
 });

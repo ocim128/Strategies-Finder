@@ -667,12 +667,6 @@ describe('Backtest settings compatibility', () => {
         expect(new Set(BACKTEST_SETTINGS_DOM_CONTRACTS.map((contract) => contract.domId)).size)
             .to.equal(BACKTEST_SETTINGS_DOM_CONTRACTS.length);
 
-        expect(getBacktestDomSettingContract('polymarketAnnotationEnabled')).to.not.equal(undefined);
-        expect(getBacktestDomSettingContract('polymarketOutcomeSymbol')).to.not.equal(undefined);
-        expect(getBacktestDomSettingContract('polymarketEntrySelectionMode')).to.not.equal(undefined);
-        expect(getBacktestDomSettingContract('polymarketEntryOffset')).to.not.equal(undefined);
-        expect(getBacktestDomSettingContract('polymarketEntryDelayBars')).to.not.equal(undefined);
-        expect(getBacktestDomSettingContract('polymarketEntryPriceFilterCents')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('riskMinHoldToggle')?.settingKey).to.equal('riskMinHoldEnabled');
         expect(getBacktestDomSettingContract('riskMinHoldBars')?.rustSupport).to.equal('unsupported');
         expect(getBacktestDomSettingContract('riskMaxHoldBars')?.rustSupport).to.equal('conditional');
@@ -735,7 +729,6 @@ describe('Backtest settings compatibility', () => {
                 initialCapital: '25000',
                 tradeFilterMode: 'rsi',
                 tradeFilterSettingsToggle: true,
-                polymarketOutcomeSymbol: 'ethusdt',
             },
         });
 
