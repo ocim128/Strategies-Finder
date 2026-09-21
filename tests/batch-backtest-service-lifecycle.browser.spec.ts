@@ -200,6 +200,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
     it("shows per-event OPEN_SCORE details without adding them to copied reports", () => {
         const dom = setupForAnalysis();
         const result = topMeanResultFixture();
+        result.complete = false;
         result.reportLines = ["OPEN_SCORE USD | SUMMARY ONLY"];
         result.openScoreEventDetails = [
             {

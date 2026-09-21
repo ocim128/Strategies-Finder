@@ -383,6 +383,38 @@ describe('buildSyntheticPairFromLegs', () => {
         }
     });
 
+    it('fuses normalized ratio construction with aggregation without changing OHLCV semantics', async () => {
+        const base = [
+            bar(0, { open: 100, high: 120, low: 90, close: 110, volume: 10 }),
+            bar(1800, { open: 110, high: 132, low: 99, close: 121, volume: 30 }),
+        ];
+        const quote = [
+            bar(0, { open: 50, high: 60, low: 45, close: 55, volume: 20 }),
+            bar(1800, { open: 55, high: 60, low: 49.5, close: 60.5, volume: 40 }),
+        ];
+
+        const result = await buildSyntheticPairFromLegs({
+            baseSymbol: 'AAPL\u2022',
+            quoteSymbol: 'MSFT\u2022',
+            interval: '1h',
+            targetBars: 2,
+            assumeNormalizedLegs: true,
+            fetchLeg: async (symbol) => symbol === 'AAPL\u2022' ? base : quote,
+        });
+
+        assert.equal(result.bars.length, 1);
+        assert.deepEqual(result.bars[0], {
+            time: 0,
+            open: 2,
+            high: 2.2,
+            low: 2,
+            close: 2,
+            volume: 40,
+        });
+        assert.equal(result.meta.alignedBars, 2);
+        assert.equal(result.meta.droppedBars, 0);
+    });
+
     it('runs the full pipeline (fetch -> align -> aggregate) and returns legs + meta', async () => {
         // Two 1m legs that align on timestamps 0 and 60; target interval 2m
         // forces pickSourceInterval to use 1m and aggregate two sub-bars each.

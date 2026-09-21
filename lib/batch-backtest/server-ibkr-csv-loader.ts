@@ -36,6 +36,7 @@ const IBKR_HEADER = "time,open,high,low,close,volume";
  * full re-parse.
  */
 const PARSED_CSV_CACHE_MAX_ENTRIES = 512;
+const PARSED_4H_TARGET_CACHE_MAX_ENTRIES = 4_096;
 
 interface ParsedSeedColumns {
     time: Float64Array;
@@ -84,7 +85,12 @@ function candlesFromColumns(columns: ParsedSeedColumns): OHLCVData[] {
     return candles;
 }
 
-const parsedCsvCache = new Map<string, { mtimeMs: number; columns: ParsedSeedColumns }>();
+type ParsedCsvCache = Map<string, { mtimeMs: number; columns: ParsedSeedColumns }>;
+const parsedCsvCache: ParsedCsvCache = new Map();
+// The coordinator replays thousands of standalone 4h targets across annual
+// passes. Keep that main-thread target working set separate from the normal
+// cache so it cannot evict the 30m seed cache used by other server work.
+const parsed4hTargetCache: ParsedCsvCache = new Map();
 
 interface CacheCheck {
     filePath: string;
@@ -92,8 +98,8 @@ interface CacheCheck {
     columns: ParsedSeedColumns;
 }
 
-async function checkParsedCsvCache(filePath: string): Promise<CacheCheck | null> {
-    const cached = parsedCsvCache.get(filePath);
+async function checkParsedCsvCache(filePath: string, cache: ParsedCsvCache): Promise<CacheCheck | null> {
+    const cached = cache.get(filePath);
     if (!cached) return null;
     try {
         const mtimeMs = isMainThread
@@ -101,29 +107,36 @@ async function checkParsedCsvCache(filePath: string): Promise<CacheCheck | null>
             : statSync(filePath).mtimeMs;
         if (mtimeMs === cached.mtimeMs) {
             // Move-to-end for LRU recency.
-            parsedCsvCache.delete(filePath);
-            parsedCsvCache.set(filePath, cached);
+            cache.delete(filePath);
+            cache.set(filePath, cached);
             return { filePath, mtimeMs, columns: cached.columns };
         }
-        parsedCsvCache.delete(filePath);
+        cache.delete(filePath);
     } catch {
-        parsedCsvCache.delete(filePath);
+        cache.delete(filePath);
     }
     return null;
 }
 
-function storeParsedCsvCache(filePath: string, mtimeMs: number, candles: OHLCVData[]): void {
-    if (parsedCsvCache.has(filePath)) {
-        parsedCsvCache.delete(filePath);
-    } else if (parsedCsvCache.size >= PARSED_CSV_CACHE_MAX_ENTRIES) {
-        const oldest = parsedCsvCache.keys().next().value;
-        if (oldest !== undefined) parsedCsvCache.delete(oldest);
+function storeParsedCsvCache(
+    filePath: string,
+    mtimeMs: number,
+    candles: OHLCVData[],
+    cache: ParsedCsvCache,
+    maxEntries: number,
+): void {
+    if (cache.has(filePath)) {
+        cache.delete(filePath);
+    } else if (cache.size >= maxEntries) {
+        const oldest = cache.keys().next().value;
+        if (oldest !== undefined) cache.delete(oldest);
     }
-    parsedCsvCache.set(filePath, { mtimeMs, columns: columnsFromCandles(candles) });
+    cache.set(filePath, { mtimeMs, columns: columnsFromCandles(candles) });
 }
 
 export function clearParsedIbkrCsvCache(): void {
     parsedCsvCache.clear();
+    parsed4hTargetCache.clear();
 }
 
 function buildIbkrFileCandidates(symbol: string): string[] {
@@ -212,6 +225,12 @@ export async function loadFreshIbkrCandlesFromDisk(
     if (!isIbkrSymbol(symbol) || signal?.aborted) return null;
     const baseInterval = interval.trim().toLowerCase().split("@")[0]!;
     if (!/^[a-z0-9]+$/.test(baseInterval)) return null;
+    const parsedCache = isMainThread && baseInterval === "4h"
+        ? parsed4hTargetCache
+        : parsedCsvCache;
+    const parsedCacheMaxEntries = parsedCache === parsed4hTargetCache
+        ? PARSED_4H_TARGET_CACHE_MAX_ENTRIES
+        : PARSED_CSV_CACHE_MAX_ENTRIES;
 
     const roots = [
         resolve(baseDir, "price-data", "ibkr", "csv", baseInterval),
@@ -230,7 +249,7 @@ export async function loadFreshIbkrCandlesFromDisk(
                 // seed invalidates automatically. Cached entries are columnar
                 // (GC-invisible); candle objects are materialized per hit at
                 // ~1–2 ms against ~137 ms for a full re-parse.
-                const cached = await checkParsedCsvCache(filePath);
+                const cached = await checkParsedCsvCache(filePath, parsedCache);
                 if (cached) {
                     if (signal?.aborted) return null;
                     return candlesFromColumns(cached.columns);
@@ -249,7 +268,7 @@ export async function loadFreshIbkrCandlesFromDisk(
                     const mtimeMs = isMainThread
                         ? (await stat(filePath)).mtimeMs
                         : statSync(filePath).mtimeMs;
-                    storeParsedCsvCache(filePath, mtimeMs, candles);
+                    storeParsedCsvCache(filePath, mtimeMs, candles, parsedCache, parsedCacheMaxEntries);
                     return candles;
                 }
             } catch (error) {

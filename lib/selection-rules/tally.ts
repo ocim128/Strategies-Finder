@@ -26,6 +26,7 @@ const OUTCOME_STATUSES = new Set([
     "ok",
     "missing_target",
     "missing_entry",
+    "data_gap",
     "right_censored",
     "invalid_price",
 ]);

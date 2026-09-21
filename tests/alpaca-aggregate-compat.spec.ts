@@ -12,7 +12,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { aggregateSyntheticBars } from "../scripts/lib/synthetic-pair";
-import { describeLargeCandleGap } from "../lib/ibkr-data/candle-gap";
+import {
+    describeLargeCandleGap,
+    findCandleGapOverlapping,
+} from "../lib/ibkr-data/candle-gap";
 import type { OHLCVData } from "../lib/types/strategies";
 
 // 30m bar interval in seconds.
@@ -56,6 +59,17 @@ describe("alpaca 30m -> 4h aggregation compatibility", () => {
         const warning = describeLargeCandleGap(candles);
         assert.match(warning ?? "", /gap/);
         assert.match(warning ?? "", /missing bars were not reconstructed/);
+    });
+
+    it("only reports a large gap when it overlaps the selected replay window", () => {
+        const from = Math.floor(Date.UTC(2023, 7, 14, 19, 30) / 1000);
+        const to = Math.floor(Date.UTC(2023, 10, 7, 15) / 1000);
+        const candles: OHLCVData[] = [
+            { time: from as OHLCVData["time"], open: 1, high: 1, low: 1, close: 1, volume: 1 },
+            { time: to as OHLCVData["time"], open: 1, high: 1, low: 1, close: 1, volume: 1 },
+        ];
+        assert.ok(findCandleGapOverlapping(candles, from + 1, to - 1));
+        assert.equal(findCandleGapOverlapping(candles, to, to + 1), null);
     });
 
     it("buckets 8 contiguous 30m bars into one 4h bar with summed volume + correct OHLC", () => {

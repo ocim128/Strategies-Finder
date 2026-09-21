@@ -511,6 +511,90 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(result.ongoingEventDetails![0]!.eligibleCandidates).to.equal(2);
     });
 
+    it("skips assets whose large data gap overlaps the selected window without labeling them ongoing", async () => {
+        const day = 24 * 60 * 60;
+        const decision = T0 + day;
+        const gapFrom = T0 + 2 * day;
+        const gapTo = gapFrom + 31 * day;
+        const makeGappedTarget = (asset: string): OpenScoreUsdTarget => ({
+            asset,
+            symbol: `${asset}USDT`,
+            data: [gapFrom, gapTo, gapTo + day].map((time, index) => ({
+                time: time as Time,
+                open: 100 + index,
+                high: 100 + index,
+                low: 100 + index,
+                close: 100 + index,
+                volume: 1,
+            })),
+        });
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray([
+                makePair("AAA", "CCC", [makeTrade("long", decision, null)]),
+                makePair("BBB", "DDD", [makeTrade("long", decision, null)]),
+            ]),
+            () => fromArray([makeGappedTarget("AAA"), makeGappedTarget("BBB")]),
+            {
+                horizons: [2],
+                sampleFromSec: T0,
+                sampleToSec: gapTo + day,
+                includeEventDetails: true,
+                blockCount: 1,
+            },
+        );
+        expect(result.eligibleEvents).to.equal(0);
+        expect(result.ongoingEventDetails ?? []).to.have.length(0);
+        expect(result.warnings.join(" ")).to.match(/data gap.*selected replay window/i);
+    });
+
+    it("removes gapped assets from the pool without invalidating the event", async () => {
+        const day = 24 * 60 * 60;
+        const decision = T0 + day;
+        const gapFrom = T0 + 2 * day;
+        const gapTo = gapFrom + 31 * day;
+        const makeGappedTarget = (asset: string): OpenScoreUsdTarget => ({
+            asset,
+            symbol: `${asset}USDT`,
+            data: [gapFrom, gapTo, gapTo + day].map((time, index) => ({
+                time: time as Time,
+                open: 100 + index,
+                high: 100 + index,
+                low: 100 + index,
+                close: 100 + index,
+                volume: 1,
+            })),
+        });
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray([
+                makeDirectMarket("AAA", [makeTrade("long", decision, null)]),
+                makeDirectMarket("NEG", [makeTrade("short", decision, null)]),
+                makeDirectMarket("BBB", [makeTrade("long", decision, null)]),
+                makeDirectMarket("CCC", [makeTrade("long", decision, null)]),
+            ]),
+            () => fromArray([
+                makeGappedTarget("AAA"),
+                makeGappedTarget("NEG"),
+                makeTarget("BBB", 100, () => 100),
+                makeTarget("CCC", 100, () => 100),
+            ]),
+            {
+                horizons: [2],
+                sampleFromSec: T0,
+                sampleToSec: gapTo + day,
+                includeEventDetails: true,
+                blockCount: 1,
+            },
+        );
+        // BBB and CCC remain a valid positive pool; gapped AAA and negative
+        // NEG are excluded without invalidating the whole event.
+        expect(result.eligibleEvents).to.equal(1);
+        expect(result.omittedAssets).to.equal(1);
+        const topMean = result.latestSelections?.selections.find((selection) => selection.selector === "TOP_MEAN");
+        expect(topMean?.asset).to.not.equal("AAA");
+        expect(topMean?.asset).to.not.equal("NEG");
+        expect(result.eventDetails?.some((row) => row.selector === "TOP_MEAN")).to.equal(true);
+    });
+
     it("surfaces missing target datasets as incomplete, never as zero returns", async () => {
         const pairs = [
             makePair("AAA", "CCC", [makeTrade("long", T0 + 1000, null)]),

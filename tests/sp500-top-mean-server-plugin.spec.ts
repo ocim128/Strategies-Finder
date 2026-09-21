@@ -12,6 +12,7 @@ import {
     toWireSafeTopMeanResultSummary,
     TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS,
     TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES,
+    TOP_MEAN_REPLAY_TARGET_PREFETCH_CONCURRENCY,
     TopMeanCoordinatorEngine,
     type TopMeanResultSummary,
 } from "../lib/batch-backtest/sp500-top-mean-coordinator-engine";
@@ -979,7 +980,12 @@ function testReplayProgressThrottleAndCacheBound(): void {
     assert.equal(
         TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES,
         512,
-        "the replay target LRU must cover the run's whole target working set while staying bounded (~560 MB at ~1.1 MB per 4h-aggregated target)",
+        "the replay target LRU must stay bounded (~560 MB at ~1.1 MB per 4h-aggregated target)",
+    );
+    assert.equal(
+        TOP_MEAN_REPLAY_TARGET_PREFETCH_CONCURRENCY,
+        16,
+        "replay target I/O must be bounded while overlapping loads ahead of deterministic consumption",
     );
     console.log("PASS: replay progress throttle and target cache bound contract");
 }

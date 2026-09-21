@@ -77,7 +77,7 @@ async function main(): Promise<void> {
     try {
         const eventId = "1h:1700000000";
         const statuses: CandidateOutcomeRecord["status"][] = [
-            "ok", "missing_target", "missing_entry", "right_censored", "invalid_price",
+            "ok", "missing_target", "missing_entry", "data_gap", "right_censored", "invalid_price",
         ];
         const outcomes: CandidateOutcomeRecord[] = [];
         for (const horizonBars of [12, 24]) {

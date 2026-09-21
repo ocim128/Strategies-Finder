@@ -320,13 +320,18 @@ export function orderTopMeanReplayTargets<T>(
 /**
  * Replay target datasets (~1.1 MB per aggregated 4h series on the S&P
  * universe) are cached on the coordinator across the full-window AND every
- * annual replay pass, bounded to this LRU. The capacity must cover the
- * run's whole target working set (480–1000): a 64-entry cap was measured
- * reloading ~3.5k target datasets per run (+60s of target load) because
- * every pass re-reads all targets. 512 keeps retention bounded (~560 MB at
- * ~1.1 MB per target) while covering real universes.
+ * annual replay pass, bounded to this LRU. 512 keeps retention bounded
+ * (~560 MB at ~1.1 MB per target); the bounded prefetch window below handles
+ * larger universes without retaining their whole working set.
  */
 export const TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES = 512;
+
+/**
+ * Number of replay target loads allowed to be in flight. The replay engine
+ * still consumes targets in deterministic order; this only overlaps the
+ * I/O for the next targets while the current target is being processed.
+ */
+export const TOP_MEAN_REPLAY_TARGET_PREFETCH_CONCURRENCY = 16;
 
 const TOP_MEAN_REPLAY_PROGRESS_MIN_INTERVAL_MS = 250;
 const TOP_MEAN_REPLAY_PROGRESS_MIN_FRACTION = 0.01;
@@ -1057,53 +1062,98 @@ export class TopMeanCoordinatorEngine {
             const replayTargetLoadFailures: string[] = [];
             let replayTargetLoadFailureCount = 0;
             const targetLoader = (targets: readonly typeof replayTargets[number][]) => () => (async function* () {
-                for (let i = 0; i < targets.length; i++) {
-                    const { asset, symbol } = targets[i]!;
+                type TargetData = Awaited<ReturnType<typeof loadServerBatchDataset>>;
+                type LoadedTarget = {
+                    asset: typeof targets[number]["asset"];
+                    symbol: string;
+                    data: TargetData;
+                };
+
+                const inFlight = new Map<number, Promise<LoadedTarget>>();
+                let nextToStart = 0;
+
+                const startTargetLoad = (index: number): Promise<LoadedTarget> => {
+                    const { asset, symbol } = targets[index]!;
                     const cached = replayTargetCache.get(symbol);
-                    let data: Awaited<ReturnType<typeof loadServerBatchDataset>>;
                     if (cached) {
-                        data = await cached;
-                    } else {
-                        // Audit (replay-abort finding): the abort signal makes
-                        // Stop cancel the load itself instead of only checking
-                        // isStopped between datasets.
-                        const targetLoadStartedAt = performance.now();
-                        const pending = loadServerBatchDataset(symbol, requestInterval, replayAbortController.signal)
-                            .catch((error: unknown) => {
-                                if (replayAbortController.signal.aborted || coordinator.isStopped) throw error;
-                                const message = error instanceof Error ? error.message : String(error);
-                                replayTargetLoadFailureCount += 1;
-                                if (replayTargetLoadFailures.length < 25) {
-                                    replayTargetLoadFailures.push(`${symbol}: ${message}`);
-                                }
-                                debugLogger.warn("sp500_top_mean.replay_target_load_failed", {
-                                    runId: coordinator._request.runId,
-                                    asset,
-                                    symbol,
-                                    error: message,
-                                });
-                                return [];
+                        return cached.then((data) => ({ asset, symbol, data }));
+                    }
+
+                    // Audit (replay-abort finding): the abort signal makes
+                    // Stop cancel the load itself instead of only checking
+                    // isStopped between datasets.
+                    const targetLoadStartedAt = performance.now();
+                    const pending = loadServerBatchDataset(symbol, requestInterval, replayAbortController.signal)
+                        .catch((error: unknown) => {
+                            if (replayAbortController.signal.aborted || coordinator.isStopped) throw error;
+                            const message = error instanceof Error ? error.message : String(error);
+                            replayTargetLoadFailureCount += 1;
+                            if (replayTargetLoadFailures.length < 25) {
+                                replayTargetLoadFailures.push(`${symbol}: ${message}`);
+                            }
+                            debugLogger.warn("sp500_top_mean.replay_target_load_failed", {
+                                runId: coordinator._request.runId,
+                                asset,
+                                symbol,
+                                error: message,
                             });
-                        replayTargetCache.set(symbol, pending);
-                        targetPerformance.replay.targetCacheMisses = replayTargetCache.missCount();
-                        try {
-                            data = await pending;
-                        } finally {
-                            const completedAt = performance.now();
-                            targetPerformance.replay.targetLoadMs += completedAt - targetLoadStartedAt;
-                        }
+                            return [];
+                        });
+                    replayTargetCache.set(symbol, pending);
+                    targetPerformance.replay.targetCacheMisses = replayTargetCache.missCount();
+                    if (replayTargetCache.size > targetPerformance.replay.targetCachePeakEntries) {
+                        targetPerformance.replay.targetCachePeakEntries = replayTargetCache.size;
+                    }
+
+                    const recordLoadTime = (): void => {
+                        targetPerformance.replay.targetLoadMs += performance.now() - targetLoadStartedAt;
+                    };
+                    return pending.then(
+                        (data) => {
+                            recordLoadTime();
+                            return { asset, symbol, data };
+                        },
+                        (error: unknown) => {
+                            recordLoadTime();
+                            throw error;
+                        },
+                    );
+                };
+
+                const fillPrefetchWindow = (): void => {
+                    while (
+                        nextToStart < targets.length
+                        && inFlight.size < TOP_MEAN_REPLAY_TARGET_PREFETCH_CONCURRENCY
+                    ) {
+                        const index = nextToStart;
+                        nextToStart += 1;
+                        inFlight.set(index, startTargetLoad(index));
+                    }
+                };
+
+                try {
+                    fillPrefetchWindow();
+                    for (let i = 0; i < targets.length; i++) {
+                        const pending = inFlight.get(i);
+                        if (!pending) throw new Error(`Replay target ${i} was not prefetched`);
+                        const { asset, symbol, data } = await pending;
+                        inFlight.delete(i);
+                        fillPrefetchWindow();
+
                         const lastBar = data[data.length - 1];
                         const timeSec = lastBar ? timeToNumber(lastBar.time) : null;
                         if (timeSec !== null && (coordinator.latestTargetBarTimeSec === null || timeSec > coordinator.latestTargetBarTimeSec)) {
                             coordinator.latestTargetBarTimeSec = timeSec;
                         }
-                        if (replayTargetCache.size > targetPerformance.replay.targetCachePeakEntries) {
-                            targetPerformance.replay.targetCachePeakEntries = replayTargetCache.size;
-                        }
+                        targetPerformance.replay.targetCacheHits = replayTargetCache.hitCount();
+                        targetPerformance.replay.targetDatasets += 1;
+                        yield { asset, symbol, data };
                     }
-                    targetPerformance.replay.targetCacheHits = replayTargetCache.hitCount();
-                    targetPerformance.replay.targetDatasets += 1;
-                    yield { asset, symbol, data };
+                } finally {
+                    // If Stop aborts the currently-consumed target, consume
+                    // every prefetched rejection before the generator exits so
+                    // parallel aborts cannot become unhandled promise errors.
+                    await Promise.allSettled(inFlight.values());
                 }
             })();
 

@@ -462,14 +462,23 @@ export async function buildSyntheticPairFromLegs(args: {
 
     const effectiveInterval = subdivided ? sourceInterval : interval;
     const dataset = args.assumeNormalizedLegs
-        ? buildSyntheticPairDatasetFromNormalizedCandles({ base, quote, minBars })
+        ? (subdivided
+            ? buildAndAggregateSyntheticPairDatasetFromNormalizedCandles({
+                base,
+                quote,
+                targetInterval: interval,
+                minBars,
+            })
+            : buildSyntheticPairDatasetFromNormalizedCandles({ base, quote, minBars }))
         : buildSyntheticPairDataset({ base, quote, interval: effectiveInterval, minBars });
-    const bars = subdivided
-        ? aggregateSortedSyntheticBars(dataset.bars, interval)
+    const bars = subdivided && !args.assumeNormalizedLegs
+        ? aggregateSyntheticBars(dataset.bars, interval)
         : dataset.bars;
 
     return {
-        bars: args.tailSliceBars ? bars.slice(-Math.max(1, args.tailSliceBars)) : bars,
+        bars: args.tailSliceBars
+            ? bars.slice(-Math.max(1, args.tailSliceBars))
+            : bars,
         meta: dataset.meta,
         sourceInterval: effectiveInterval,
         base,
@@ -477,42 +486,138 @@ export async function buildSyntheticPairFromLegs(args: {
     };
 }
 
-function aggregateSortedSyntheticBars(
-    bars: readonly OHLCVData[],
-    targetInterval: string,
-): OHLCVData[] {
-    const targetSecs = parseIntervalSeconds(targetInterval);
-    if (!targetSecs || targetSecs <= 0 || bars.length <= 1) return [...bars];
+/**
+ * Ratio-build and aggregation fused for the normalized IBKR batch path.
+ *
+ * The ratio is still computed at the seed interval before its OHLC values are
+ * placed into the target bucket. This avoids materializing the intermediate
+ * seed-interval ratio series and then scanning it a second time.
+ */
+function buildAndAggregateSyntheticPairDatasetFromNormalizedCandles(options: {
+    base: readonly OHLCVData[];
+    quote: readonly OHLCVData[];
+    targetInterval: string;
+    minBars?: number;
+}): SyntheticPairDataset {
+    const { base: baseBars, quote: quoteBars, targetInterval, minBars = 1 } = options;
+    if (quoteBars.length === 0) {
+        throw new SyntheticQuoteError('Quote bars must contain at least one aligned candle.');
+    }
+    if (baseBars.length === 0) {
+        throw new SyntheticAlignmentError('Base bars must contain at least one aligned bar.');
+    }
 
-    const result: OHLCVData[] = [];
+    const targetSecs = parseIntervalSeconds(targetInterval);
+    if (!targetSecs || targetSecs <= 0) {
+        return buildSyntheticPairDatasetFromNormalizedCandles({ base: baseBars, quote: quoteBars, minBars });
+    }
+
+    const syntheticBars: OHLCVData[] = [];
+    let baseIndex = 0;
+    let quoteIndex = 0;
+    let matchedBars = 0;
+    let alignedBars = 0;
     let currentBucket: number | null = null;
     let current: OHLCVData | null = null;
-    for (const bar of bars) {
-        const epoch = Number(bar.time);
-        if (!Number.isFinite(epoch)) continue;
-        const bucketStart = Math.floor(epoch / targetSecs) * targetSecs;
-        if (currentBucket !== bucketStart) {
-            if (current) result.push(current);
-            currentBucket = bucketStart;
-            current = {
-                time: bucketStart as Time,
-                open: bar.open,
-                high: bar.high,
-                low: bar.low,
-                close: bar.close,
-                volume: Number.isFinite(bar.volume) ? bar.volume : 0,
-            };
+    let singleAlignedTime: OHLCVData["time"] | null = null;
+
+    while (baseIndex < baseBars.length && quoteIndex < quoteBars.length) {
+        const baseBar = baseBars[baseIndex]!;
+        const quoteBar = quoteBars[quoteIndex]!;
+        const baseTime = Number(baseBar.time);
+        const quoteTime = Number(quoteBar.time);
+
+        if (!Number.isFinite(baseTime)) {
+            baseIndex += 1;
+            continue;
+        }
+        if (!Number.isFinite(quoteTime)) {
+            quoteIndex += 1;
+            continue;
+        }
+        if (baseTime < quoteTime) {
+            baseIndex += 1;
+            continue;
+        }
+        if (baseTime > quoteTime) {
+            quoteIndex += 1;
             continue;
         }
 
-        if (!current) continue;
-        if (bar.high > current.high) current.high = bar.high;
-        if (bar.low < current.low) current.low = bar.low;
-        current.close = bar.close;
-        if (Number.isFinite(bar.volume)) current.volume += bar.volume;
+        matchedBars += 1;
+        const open = safeDiv(baseBar.open, quoteBar.open);
+        const close = safeDiv(baseBar.close, quoteBar.close);
+        if (!Number.isFinite(open) || !Number.isFinite(close)) {
+            baseIndex += 1;
+            quoteIndex += 1;
+            continue;
+        }
+
+        const rHigh = safeDiv(baseBar.high, quoteBar.high);
+        const rLow = safeDiv(baseBar.low, quoteBar.low);
+        let high = Math.max(open, close);
+        let low = Math.min(open, close);
+        if (Number.isFinite(rHigh)) {
+            high = Math.max(high, rHigh);
+            low = Math.min(low, rHigh);
+        }
+        if (Number.isFinite(rLow)) {
+            high = Math.max(high, rLow);
+            low = Math.min(low, rLow);
+        }
+
+        const volume = Math.max(0, Math.min(
+            Number.isFinite(baseBar.volume) ? baseBar.volume : 0,
+            Number.isFinite(quoteBar.volume) ? quoteBar.volume : 0,
+        ));
+        const bucketStart = Math.floor(baseTime / targetSecs) * targetSecs;
+        alignedBars += 1;
+        if (alignedBars === 1) singleAlignedTime = baseBar.time;
+
+        if (currentBucket !== bucketStart) {
+            if (current) syntheticBars.push(current);
+            currentBucket = bucketStart;
+            current = {
+                time: bucketStart as Time,
+                open,
+                high,
+                low,
+                close,
+                volume,
+            };
+        } else if (current) {
+            if (high > current.high) current.high = high;
+            if (low < current.low) current.low = low;
+            current.close = close;
+            current.volume += volume;
+        }
+
+        baseIndex += 1;
+        quoteIndex += 1;
     }
-    if (current) result.push(current);
-    return result;
+    if (current) syntheticBars.push(current);
+    if (alignedBars === 1 && syntheticBars[0] && singleAlignedTime !== null) {
+        syntheticBars[0].time = singleAlignedTime;
+    }
+
+    if (alignedBars < Math.max(1, minBars)) {
+        if (matchedBars === 0) {
+            throw new SyntheticAlignmentError('No overlapping bars between base and quote symbol data.');
+        }
+        throw new SyntheticAlignmentError(
+            `Only ${alignedBars} aligned bars available, but at least ${Math.max(1, minBars)} are required.`,
+        );
+    }
+
+    return {
+        bars: syntheticBars,
+        meta: {
+            baseBars: baseBars.length,
+            quoteBars: quoteBars.length,
+            alignedBars,
+            droppedBars: baseBars.length - alignedBars,
+        },
+    };
 }
 
 export function aggregateSyntheticBars(

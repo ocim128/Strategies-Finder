@@ -64,6 +64,10 @@ async function fetchServerDetachedData(
     interval: string,
     options?: { signal?: AbortSignal; offline?: boolean },
 ): Promise<OHLCVData[]> {
+    if (isIbkrSymbol(symbol)) {
+        const ibkrCandles = await loadFreshIbkrCandlesFromDisk(symbol, interval, options?.signal);
+        if (ibkrCandles) return ibkrCandles;
+    }
     if (options?.offline === true) {
         const cryptoCandles = await loadFreshCryptoCandlesFromDisk(symbol, interval, options.signal);
         if (cryptoCandles) return cryptoCandles;

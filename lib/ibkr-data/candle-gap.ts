@@ -6,7 +6,40 @@ export type CandleGap = {
     seconds: number;
 };
 
-const DEFAULT_WARNING_THRESHOLD_DAYS = 30;
+export const DEFAULT_CANDLE_GAP_THRESHOLD_DAYS = 30;
+
+export function findCandleGaps(
+    candles: readonly OHLCVData[],
+    thresholdDays = DEFAULT_CANDLE_GAP_THRESHOLD_DAYS,
+): CandleGap[] {
+    const thresholdSeconds = thresholdDays * 24 * 60 * 60;
+    const gaps: CandleGap[] = [];
+    let previous: number | null = null;
+    for (const candle of candles) {
+        const time = Number(candle.time);
+        if (!Number.isFinite(time)) continue;
+        if (previous !== null && time > previous) {
+            const seconds = time - previous;
+            if (seconds > thresholdSeconds) {
+                gaps.push({ from: previous, to: time, seconds });
+            }
+        }
+        previous = time;
+    }
+    return gaps;
+}
+
+export function findCandleGapOverlapping(
+    candles: readonly OHLCVData[],
+    fromSec = Number.NEGATIVE_INFINITY,
+    toSec = Number.POSITIVE_INFINITY,
+    thresholdDays = DEFAULT_CANDLE_GAP_THRESHOLD_DAYS,
+): CandleGap | null {
+    for (const gap of findCandleGaps(candles, thresholdDays)) {
+        if (gap.to > fromSec && gap.from < toSec) return gap;
+    }
+    return null;
+}
 
 export function findLargestCandleGap(candles: readonly OHLCVData[]): CandleGap | null {
     let previous: number | null = null;
@@ -27,7 +60,7 @@ export function findLargestCandleGap(candles: readonly OHLCVData[]): CandleGap |
 
 export function describeLargeCandleGap(
     candles: readonly OHLCVData[],
-    thresholdDays = DEFAULT_WARNING_THRESHOLD_DAYS,
+    thresholdDays = DEFAULT_CANDLE_GAP_THRESHOLD_DAYS,
 ): string | null {
     const gap = findLargestCandleGap(candles);
     if (!gap || gap.seconds <= thresholdDays * 24 * 60 * 60) return null;

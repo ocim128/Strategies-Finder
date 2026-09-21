@@ -52,6 +52,7 @@
  */
 import type { OHLCVData } from "../types/strategies";
 import { applySlippage, timeToNumber } from "../strategies/backtest/backtest-utils";
+import { findCandleGapOverlapping, type CandleGap } from "../ibkr-data/candle-gap";
 import type { BatchSyntheticPairArtifact } from "./batch-synthetic-artifact";
 import {
     tieBreakDigest,
@@ -243,6 +244,7 @@ export type CandidateOutcomeStatus =
     | "ok"
     | "missing_target"
     | "missing_entry"
+    | "data_gap"
     | "right_censored"
     | "invalid_price";
 
@@ -1871,8 +1873,11 @@ export async function runOpenScoreUsdReplay(
         long: number[];
         entryTimes: number[];
         exitTimes: number[];
+        statuses: CandidateOutcomeStatus[];
     }> | null> = new Array(totalEventCount).fill(null);
     const missingAssets = new Set<number>();
+    const dataGapAssets = new Map<number, CandleGap>();
+    const dataGapEvents = new Set<number>();
     const censoredEvents = new Set<number>();
     const noDataEvents = new Set<number>();
     const latestView = views[views.length - 1] ?? null;
@@ -1887,10 +1892,63 @@ export async function runOpenScoreUsdReplay(
         const aIdx = assetIndexByName.get(targetAsset);
         const diagnosticIdx = diagnosticAssetIndexByName?.get(targetAsset);
         const requests = aIdx === undefined ? undefined : requestsByAsset.get(aIdx);
-        if ((!requests || requests.length === 0) && diagnosticIdx === undefined) continue;
+        const dataGap = findCandleGapOverlapping(
+            target.data,
+            options.sampleFromSec,
+            options.sampleToSec,
+        );
+        if ((!requests || requests.length === 0) && diagnosticIdx === undefined) {
+            if (dataGap && aIdx !== undefined) dataGapAssets.set(aIdx, dataGap);
+            continue;
+        }
         targetsSeen += 1;
         if (diagnosticIdx !== undefined) diagnosticTargetsSeen?.add(diagnosticIdx);
         const times = target.data.map((b) => timeToNumber(b.time));
+        if (dataGap) {
+            if (aIdx !== undefined) dataGapAssets.set(aIdx, dataGap);
+            if (candidateOutcomes && diagnosticIdx !== undefined) {
+                for (const event of events) {
+                    const rawScore = aIdx === undefined ? 0 : event.rawScore[aIdx] ?? 0;
+                    for (const horizonBars of horizons) {
+                        const eventId = phase0bEventId(options.interval, event.timeSec);
+                        await emitCandidateOutcome({
+                            eventId,
+                            decisionTimeSec: event.timeSec,
+                            horizonBars,
+                            direction: "long",
+                            asset: diagnosticAssetNames[diagnosticIdx]!,
+                            inPool: true,
+                            eligible: rawScore > 0,
+                            return: null,
+                            entryTimeSec: null,
+                            exitTimeSec: null,
+                            status: "data_gap",
+                        });
+                        await emitCandidateOutcome({
+                            eventId,
+                            decisionTimeSec: event.timeSec,
+                            horizonBars,
+                            direction: "short",
+                            asset: diagnosticAssetNames[diagnosticIdx]!,
+                            inPool: true,
+                            eligible: rawScore < 0,
+                            return: null,
+                            entryTimeSec: null,
+                            exitTimeSec: null,
+                            status: "data_gap",
+                        });
+                    }
+                }
+            }
+            onPhase(
+                "outcomes",
+                `skipped ${target.asset} (data gap ${new Date(dataGap.from * 1000).toISOString()}..${new Date(dataGap.to * 1000).toISOString()})`,
+                targetsSeen,
+                totalTargets,
+            );
+            await yieldLoop();
+            continue;
+        }
         if (diagnosticIdx !== undefined) {
             const ema200 = buildEma200(target.data);
             let entryBar = 0;
@@ -1982,6 +2040,7 @@ export async function runOpenScoreUsdReplay(
             const longReturns: number[] = [];
             const entryTimes: number[] = [];
             const exitTimes: number[] = [];
+            const statuses: CandidateOutcomeStatus[] = [];
             for (const h of horizons) {
                 const exitBar = entryBar + h - 1; // h bars forward, close of that bar
                 const entryTime = times[entryBar] ?? Number.NaN;
@@ -1989,6 +2048,7 @@ export async function runOpenScoreUsdReplay(
                     longReturns.push(Number.NaN);
                     entryTimes.push(entryTime);
                     exitTimes.push(Number.NaN);
+                    statuses.push("right_censored");
                     continue;
                 }
                 const rawOpen = target.data[entryBar]!.open;
@@ -1997,6 +2057,7 @@ export async function runOpenScoreUsdReplay(
                     longReturns.push(Number.NaN);
                     entryTimes.push(entryTime);
                     exitTimes.push(Number.NaN);
+                    statuses.push("invalid_price");
                     continue;
                 }
                 entryTimes.push(entryTime);
@@ -2012,11 +2073,13 @@ export async function runOpenScoreUsdReplay(
                 const fees = (entryPrice + exitPrice) * commissionRate;
                 const netReturn = (exitPrice - entryPrice - fees) / entryPrice;
                 longReturns.push(Number.isFinite(netReturn) ? netReturn : Number.NaN);
+                statuses.push(Number.isFinite(netReturn) ? "ok" : "invalid_price");
             }
             perAsset.set(aIdx, {
                 long: longReturns,
                 entryTimes,
                 exitTimes,
+                statuses,
             });
             if (longReturns.some((r) => !Number.isFinite(r))) censoredEvents.add(viewIdx);
         }
@@ -2102,6 +2165,128 @@ export async function runOpenScoreUsdReplay(
         }
     }
 
+    const usableCandidates = (pool: readonly Candidate[]): Candidate[] =>
+        pool.filter((candidate) => !dataGapAssets.has(candidate.assetIndex));
+
+    const pickUsableMax = (
+        pool: readonly Candidate[],
+        key: "raw" | "mean" | "activePairs",
+        timeSec: number,
+    ): { winner: Candidate; tiedCount: number } | null => {
+        if (pool.length === 0) return null;
+        let maxValue = pool[0]![key]!;
+        for (let i = 1; i < pool.length; i += 1) {
+            const value = pool[i]![key]!;
+            if (value > maxValue) maxValue = value;
+        }
+        const tied = pool.filter((candidate) => candidate[key] === maxValue);
+        let winner = tied[0]!;
+        if (tied.length > 1) {
+            let winnerDigest = tieBreakDigest(timeSec, assetNames[winner.assetIndex]!);
+            for (let i = 1; i < tied.length; i += 1) {
+                const candidate = tied[i]!;
+                const digest = tieBreakDigest(timeSec, assetNames[candidate.assetIndex]!);
+                if (digest < winnerDigest || (digest === winnerDigest
+                    && assetNames[candidate.assetIndex]! < assetNames[winner.assetIndex]!)) {
+                    winner = candidate;
+                    winnerDigest = digest;
+                }
+            }
+        }
+        return { winner, tiedCount: tied.length };
+    };
+
+    // Target gaps are discovered after the pair-event sweep. Rebuild the
+    // candidate views once their target datasets have been inspected so a
+    // gapped asset is removed from the selector pool instead of invalidating
+    // an otherwise usable event.
+    const gapFilteredViews: Array<EventView | null> = [];
+    let gapFilteredLastTopRawLeader = -1;
+    let gapFilteredStreak = 0;
+    for (let viewIndex = 0; viewIndex < views.length; viewIndex += 1) {
+        const source = views[viewIndex]!;
+        const positives = usableCandidates(source.positives);
+        if (positives.length < 2) {
+            if (source.positives.some((candidate) => dataGapAssets.has(candidate.assetIndex))) {
+                dataGapEvents.add(viewIndex);
+            }
+            gapFilteredViews.push(null);
+            continue;
+        }
+        const profitPositives = usableCandidates(source.profitPositives);
+        const profitNowPositives = usableCandidates(source.profitNowPositives);
+        const profitNowConfidencePositives = usableCandidates(source.profitNowConfidencePositives);
+        const topRaw = pickUsableMax(positives, "raw", source.timeSec)!;
+        const topMean = pickUsableMax(positives, "mean", source.timeSec)!;
+        const topMeanRawUniquePool = positives.filter((candidate) => candidate.mean === topMean.winner.mean);
+        let topMeanRawUnique = -1;
+        let maxRawInTopMeanTie = -Infinity;
+        for (const candidate of topMeanRawUniquePool) {
+            if (candidate.raw > maxRawInTopMeanTie) maxRawInTopMeanTie = candidate.raw;
+        }
+        const topMeanRawMaxRows = topMeanRawUniquePool.filter((candidate) => candidate.raw === maxRawInTopMeanTie);
+        if (topMeanRawMaxRows.length === 1) topMeanRawUnique = topMeanRawMaxRows[0]!.assetIndex;
+        const topRawProfit = profitPositives.length >= 2
+            ? pickUsableMax(profitPositives, "raw", source.timeSec)
+            : null;
+        const topMeanProfit = profitPositives.length >= 2
+            ? pickUsableMax(profitPositives, "mean", source.timeSec)
+            : null;
+        const topRawProfitNow = profitNowPositives.length >= 2
+            ? pickUsableMax(profitNowPositives, "raw", source.timeSec)
+            : null;
+        const topMeanProfitNow = profitNowPositives.length >= 2
+            ? pickUsableMax(profitNowPositives, "mean", source.timeSec)
+            : null;
+        const topRawProfitNowConf = profitNowConfidencePositives.length >= 2
+            ? pickUsableMax(profitNowConfidencePositives, "raw", source.timeSec)
+            : null;
+        let maxActivePairs = 0;
+        let rawSum = 0;
+        for (const candidate of positives) {
+            if (candidate.activePairs > maxActivePairs) maxActivePairs = candidate.activePairs;
+            rawSum += candidate.raw;
+        }
+        let hhi = 0;
+        for (const candidate of positives) {
+            const share = candidate.raw / rawSum;
+            hhi += share * share;
+        }
+        const fresh = topRaw.winner.assetIndex !== gapFilteredLastTopRawLeader;
+        gapFilteredStreak = fresh ? 1 : gapFilteredStreak + 1;
+        gapFilteredViews.push({
+            ...source,
+            positives,
+            profitPositives,
+            profitNowPositives,
+            profitNowConfidencePositives,
+            topRaw: topRaw.winner.assetIndex,
+            topMean: topMean.winner.assetIndex,
+            topMeanRawUnique,
+            topMeanRawUniquePool,
+            topRawProfit: topRawProfit?.winner.assetIndex ?? -1,
+            topMeanProfit: topMeanProfit?.winner.assetIndex ?? -1,
+            topRawProfitNow: topRawProfitNow?.winner.assetIndex ?? -1,
+            topMeanProfitNow: topMeanProfitNow?.winner.assetIndex ?? -1,
+            topRawProfitNowConf: topRawProfitNowConf?.winner.assetIndex ?? -1,
+            maxActivePairs,
+            hhi,
+            fresh,
+            streak: gapFilteredStreak,
+            ties: {
+                RAW: topRaw.tiedCount >= 2 ? 1 : 0,
+                MEAN: topMean.tiedCount >= 2 ? 1 : 0,
+            },
+        });
+        gapFilteredLastTopRawLeader = topRaw.winner.assetIndex;
+    }
+    const gapFilteredProfitOnlyEvents: ProfitOnlyEvent[] = profitOnlyEvents.map((source) => ({
+        ...source,
+        profitPositives: usableCandidates(source.profitPositives),
+        profitNowPositives: usableCandidates(source.profitNowPositives),
+        profitNowConfidencePositives: usableCandidates(source.profitNowConfidencePositives),
+    }));
+
     const latestSelections: OpenScoreUsdLatestSelections | null = (() => {
         if (!latestView) return null;
 
@@ -2113,11 +2298,12 @@ export async function runOpenScoreUsdReplay(
             primaryOrder: "max" | "min",
             secondary?: (candidate: Candidate) => number,
         ): OpenScoreUsdLatestSelection => {
+            const usablePool = usableCandidates(pool);
             // Ranked detail for the Latest-picks UI: the arm's top candidates
             // in its own ranking order, capped at 3 so the wire payload stays
             // bounded. Runs once per completed run (latest event, 5 arms).
             const rankTopCandidates = (): OpenScoreUsdLatestSelectionCandidate[] =>
-                [...pool]
+                [...usablePool]
                     .sort((a, b) => {
                         const pa = primary(a);
                         const pb = primary(b);
@@ -2137,7 +2323,7 @@ export async function runOpenScoreUsdReplay(
                         activePairs: candidate.activePairs,
                     }));
             const topCandidates = rankTopCandidates();
-            if (pool.length < 2) {
+            if (usablePool.length < 2) {
                 return {
                     selector,
                     direction,
@@ -2146,19 +2332,19 @@ export async function runOpenScoreUsdReplay(
                     score: null,
                     mean: null,
                     activePairs: null,
-                    eligibleCandidates: pool.length,
+                    eligibleCandidates: usablePool.length,
                     reason: "insufficient_candidates",
                     topCandidates,
                 };
             }
-            let bestPrimary = primary(pool[0]!);
-            for (let i = 1; i < pool.length; i += 1) {
-                const value = primary(pool[i]!);
+            let bestPrimary = primary(usablePool[0]!);
+            for (let i = 1; i < usablePool.length; i += 1) {
+                const value = primary(usablePool[i]!);
                 if (primaryOrder === "max" ? value > bestPrimary : value < bestPrimary) {
                     bestPrimary = value;
                 }
             }
-            let finalists = pool.filter((candidate) => primary(candidate) === bestPrimary);
+            let finalists = usablePool.filter((candidate) => primary(candidate) === bestPrimary);
             if (secondary && finalists.length > 1) {
                 let bestSecondary = secondary(finalists[0]!);
                 for (let i = 1; i < finalists.length; i += 1) {
@@ -2176,7 +2362,7 @@ export async function runOpenScoreUsdReplay(
                     score: null,
                     mean: null,
                     activePairs: null,
-                    eligibleCandidates: pool.length,
+                    eligibleCandidates: usablePool.length,
                     reason: "tied",
                     topCandidates,
                 };
@@ -2190,7 +2376,7 @@ export async function runOpenScoreUsdReplay(
                 score: selected.raw,
                 mean: selected.mean,
                 activePairs: selected.activePairs,
-                eligibleCandidates: pool.length,
+                eligibleCandidates: usablePool.length,
                 reason: "selected",
                 topCandidates,
             };
@@ -2228,7 +2414,9 @@ export async function runOpenScoreUsdReplay(
         if (!options.includeEventDetails || view.positives.length < 2) return;
         const selected = view.positives.find((candidate) => candidate.assetIndex === view.topMean);
         if (!selected) return;
-        const entryTime = perAsset?.get(selected.assetIndex)?.entryTimes[hIdx];
+        const selectedOutcome = perAsset?.get(selected.assetIndex);
+        if (selectedOutcome?.statuses[hIdx] !== "right_censored") return;
+        const entryTime = selectedOutcome.entryTimes[hIdx];
         ongoingEventDetails.push({
             decisionTime: view.timeSec,
             entryTime: Number.isFinite(entryTime) ? entryTime! : null,
@@ -2354,6 +2542,7 @@ export async function runOpenScoreUsdReplay(
             meanSamplesByAsset: Map<string, { returns: number[]; deltas: number[] }>,
         ): void => {
             if (pool.length < 2 || rawPick < 0 || meanPick < 0) return;
+            if (pool.some((candidate) => dataGapAssets.has(candidate.assetIndex))) return;
             const poolRetByAsset = new Map<number, number>();
             let poolValid = true;
             for (const c of pool) {
@@ -2409,6 +2598,7 @@ export async function runOpenScoreUsdReplay(
             selectedIdx: number,
         ): void => {
             if (pool.length < 2 || selectedIdx < 0) return;
+            if (pool.some((candidate) => dataGapAssets.has(candidate.assetIndex))) return;
             const poolRetByAsset = new Map<number, number>();
             let poolValid = true;
             for (const c of pool) {
@@ -2449,13 +2639,11 @@ export async function runOpenScoreUsdReplay(
         };
 
         for (let v = 0; v < views.length; v += 1) {
-            const view = views[v]!;
+            const view = gapFilteredViews[v];
+            if (!view) continue;
             const perAsset = returnsByView[v];
             if (!perAsset) {
                 noDataEvents.add(v);
-                for (let pendingHIdx = 0; pendingHIdx < horizons.length; pendingHIdx += 1) {
-                    appendOngoingTopMeanEventDetail(view, perAsset, pendingHIdx);
-                }
                 continue;
             }
             const appendEventDetail = (
@@ -2686,16 +2874,16 @@ export async function runOpenScoreUsdReplay(
             }
             return winner.assetIndex;
         };
-        for (let pi = 0; pi < profitOnlyEvents.length; pi += 1) {
-            const pe = profitOnlyEvents[pi]!;
+        for (let pi = 0; pi < gapFilteredProfitOnlyEvents.length; pi += 1) {
+            const pe = gapFilteredProfitOnlyEvents[pi];
             const perAssetProfitOnly = returnsByView[views.length + pi];
             if (!perAssetProfitOnly) continue;
             appendProfitArms(
                 pe.timeSec,
                 perAssetProfitOnly,
                 pe.profitPositives,
-                pickFromPool(pe.profitPositives, "raw", pe.timeSec),
-                pickFromPool(pe.profitPositives, "mean", pe.timeSec),
+                pickUsableMax(pe.profitPositives, "raw", pe.timeSec)?.winner.assetIndex ?? -1,
+                pickUsableMax(pe.profitPositives, "mean", pe.timeSec)?.winner.assetIndex ?? -1,
                 "TOP_RAW_PROFIT",
                 "TOP_MEAN_PROFIT",
                 topRawProfit,
@@ -2709,8 +2897,8 @@ export async function runOpenScoreUsdReplay(
                 pe.timeSec,
                 perAssetProfitOnly,
                 pe.profitNowPositives,
-                pickFromPool(pe.profitNowPositives, "raw", pe.timeSec),
-                pickFromPool(pe.profitNowPositives, "mean", pe.timeSec),
+                pickUsableMax(pe.profitNowPositives, "raw", pe.timeSec)?.winner.assetIndex ?? -1,
+                pickUsableMax(pe.profitNowPositives, "mean", pe.timeSec)?.winner.assetIndex ?? -1,
                 "TOP_RAW_PROFIT_NOW",
                 "TOP_MEAN_PROFIT_NOW",
                 topRawProfitNow,
@@ -2953,11 +3141,18 @@ export async function runOpenScoreUsdReplay(
         }
     }
     for (const aIdx of positiveRequestedAssets) {
-        if (!assetsWithData.has(aIdx)) missingAssets.add(aIdx);
+        if (!assetsWithData.has(aIdx) && !dataGapAssets.has(aIdx)) missingAssets.add(aIdx);
     }
-    const omittedAssets = missingAssets.size;
+    const omittedDataGapAssets = [...dataGapAssets.keys()]
+        .filter((aIdx) => positiveRequestedAssets.has(aIdx));
+    const omittedAssets = missingAssets.size + omittedDataGapAssets.length;
     if (omittedAssets > 0) {
-        warnings.push(`${omittedAssets} candidate asset(s) had no usable target dataset; their events were omitted, not zero-filled: ${[...missingAssets].map((i) => assetNames[i]).join(", ")}.`);
+        if (missingAssets.size > 0) {
+            warnings.push(`${missingAssets.size} candidate asset(s) had no usable target dataset; their events were omitted, not zero-filled: ${[...missingAssets].map((i) => assetNames[i]).join(", ")}.`);
+        }
+        if (omittedDataGapAssets.length > 0) {
+            warnings.push(`${omittedDataGapAssets.length} candidate asset(s) were skipped because a data gap overlapped the selected replay window; they were excluded from selector pools: ${omittedDataGapAssets.map((i) => assetNames[i]).join(", ")}.`);
+        }
     }
     if (noDataEvents.size > 0) {
         // noDataEvents were tracked but never surfaced — add the warning so a
@@ -2967,6 +3162,9 @@ export async function runOpenScoreUsdReplay(
     }
     if (censoredEvents.size > 0) {
         warnings.push(`${censoredEvents.size} event(s) were right-censored near a target dataset end for at least one horizon and excluded from that horizon.`);
+    }
+    if (dataGapEvents.size > 0) {
+        warnings.push(`${dataGapEvents.size} event(s) were omitted because fewer than two usable positive candidates remained after data-gap filtering.`);
     }
     warnings.push("Stock/marked-leg datasets may carry split/corporate-action discontinuities; verify adjustment before treating this as a tradeable verdict.");
     warnings.push("P&L experiments use equal 1-unit event notional; overlapping entries are summed without compounding and are not live account returns.");

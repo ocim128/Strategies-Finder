@@ -30,7 +30,8 @@ import {
  * - events-full.jsonl and annual event rows retain `controlReturn` as the
  *   leave-one-out mean of the other eligible assets, never a random draw.
  * - Candidate outcome status is `ok`, `missing_target`, `missing_entry`,
- *   `right_censored`, or `invalid_price`; null returns are never zero-filled.
+ *   `data_gap`, `right_censored`, or `invalid_price`; null returns are never
+ *   zero-filled.
  * - Offline matched comparisons must apply the same event filter to both the
  *   proposed-pool and full-catalog controls; the files preserve the rows needed
  *   to enforce that rule at analysis time.
