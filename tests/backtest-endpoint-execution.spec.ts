@@ -31,16 +31,6 @@ function buildSnapshot(): UiBacktestEndpointSnapshot {
             allowSameBarExit: true,
             slippageBps: 0,
             marketMode: "all",
-            polymarketEntryDelayBars: 3,
-            polymarketSignalExitAllowMultipleTradesPerEvent: true,
-            polymarketPostSignalLimitEntryEnabled: true,
-            polymarketPostSignalLimitEntryMode: "signal_offset",
-            polymarketPostSignalLimitEntryPriceCents: 45,
-            polymarketPostSignalLimitEntryOffsetCents: 20,
-            polymarketPostSignalLimitExitEnabled: true,
-            polymarketPostSignalLimitExitMode: "entry_offset",
-            polymarketPostSignalLimitExitPriceCents: 80,
-            polymarketPostSignalLimitExitOffsetCents: 20,
         },
         capitalSettings: {
             ...BACKTEST_ENDPOINT_CAPITAL_SETTINGS,
@@ -48,7 +38,6 @@ function buildSnapshot(): UiBacktestEndpointSnapshot {
         },
         nowSec: 1775400000,
         blockRange: { from: 1775390000, to: 1775400000 },
-        annotatePolymarket: false,
         engineUsed: "rust",
         datasetFingerprint: computeBacktestEndpointDatasetFingerprint(candles),
     };
@@ -68,45 +57,14 @@ describe("backtest endpoint execution helpers", () => {
         assert.strictEqual(request.context.engineMode, "rust_preferred");
         assert.deepStrictEqual(request.context.blockRange, snapshot.blockRange);
         assert.strictEqual(request.context.nowSec, snapshot.nowSec);
-        assert.strictEqual(request.context.annotatePolymarket, true);
         const requestSettings = request.backtestSettings as Record<string, unknown>;
         assert.strictEqual(requestSettings.symbol, snapshot.symbol);
         assert.strictEqual(requestSettings.interval, snapshot.interval);
-        assert.strictEqual(request.backtestSettings.polymarketAnnotationEnabled, true);
         assert.ok(!("allowSameBarExit" in request.backtestSettings));
         assert.ok(!("marketMode" in request.backtestSettings));
         assert.ok(!("snapshotRsiMin" in request.backtestSettings));
         assert.ok(!("snapshotRsiMax" in request.backtestSettings));
-        assert.ok(!("polymarketExitMode" in request.backtestSettings));
-        assert.ok(!("polymarketEntryDelayBars" in request.backtestSettings));
-        assert.ok(!("polymarketSignalExitAllowMultipleTradesPerEvent" in request.backtestSettings));
-        assert.ok(!("polymarketPostSignalLimitEntryEnabled" in request.backtestSettings));
-        assert.ok(!("polymarketPostSignalLimitEntryMode" in request.backtestSettings));
-        assert.ok(!("polymarketPostSignalLimitEntryPriceCents" in request.backtestSettings));
-        assert.ok(!("polymarketPostSignalLimitEntryOffsetCents" in request.backtestSettings));
-        assert.ok(!("polymarketPostSignalLimitExitEnabled" in request.backtestSettings));
-        assert.ok(!("polymarketPostSignalLimitExitMode" in request.backtestSettings));
-        assert.ok(!("polymarketPostSignalLimitExitPriceCents" in request.backtestSettings));
-        assert.ok(!("polymarketPostSignalLimitExitOffsetCents" in request.backtestSettings));
         assert.strictEqual(request.primarySymbol, snapshot.symbol);
-    });
-
-    it("strips signal-exit mode from endpoint executor settings", () => {
-        const candles = buildCandles();
-        const snapshot = {
-            ...buildSnapshot(),
-            interval: "1m",
-            backtestSettings: {
-                ...buildSnapshot().backtestSettings,
-                polymarketExitMode: "signal_exit_same_event" as const,
-                polymarketSignalExitAllowMultipleTradesPerEvent: true,
-            },
-        } satisfies UiBacktestEndpointSnapshot;
-
-        const request = buildBacktestEndpointExecutorRequestFromSnapshot(snapshot, candles);
-
-        assert.ok(!("polymarketExitMode" in request.backtestSettings));
-        assert.ok(!("polymarketSignalExitAllowMultipleTradesPerEvent" in request.backtestSettings));
     });
 
     it("forwards explicit cross-symbol snapshot input into the executor request", () => {

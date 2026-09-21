@@ -11,7 +11,7 @@ describe('Worker strategy support', () => {
     it('supports every manifest strategy that does not need runtime-only context', () => {
         const unsupportedContextKeys = new Set(
             Object.entries(strategies)
-                .filter(([, s]) => s.crossSymbolConfig != null || s.polymarket1sConfig != null)
+                .filter(([, s]) => s.crossSymbolConfig != null)
                 .map(([key]) => key)
         );
         const expectedWorkerKeys = strategyManifest

@@ -9,8 +9,6 @@ import { SETTINGS_WORKSPACE_REQUIRED_IDS, UI_MANAGER_REQUIRED_IDS } from "../lib
 import { RESULTS_RENDERER_REQUIRED_IDS } from "../lib/renderers/results-renderer-dom";
 import { TRADES_RENDERER_REQUIRED_IDS } from "../lib/renderers/trades-renderer-dom";
 import { SETTINGS_MANAGER_REQUIRED_IDS } from "../lib/settings-manager-dom";
-import { POLYMARKET_PANEL_REQUIRED_IDS } from "../lib/polymarket-panel-dom";
-import { EXECUTION_LAB_REQUIRED_IDS } from "../lib/execution-lab/execution-lab-dom";
 import { LIVE_POSITIONS_REQUIRED_IDS } from "../lib/live-positions-dom";
 import { FINDER_MANAGER_REQUIRED_IDS } from "../lib/finder/finder-manager-dom";
 import { BATCH_BACKTEST_REQUIRED_IDS } from "../lib/batch-backtest/batch-backtest-dom";
@@ -84,8 +82,6 @@ describe("Feature DOM contracts", () => {
         settingsWorkspace: [...SETTINGS_WORKSPACE_REQUIRED_IDS],
 
         livePositions: [...LIVE_POSITIONS_REQUIRED_IDS],
-        polymarketPanel: [...POLYMARKET_PANEL_REQUIRED_IDS],
-        executionLab: [...EXECUTION_LAB_REQUIRED_IDS],
         finderManager: [...FINDER_MANAGER_REQUIRED_IDS],
         batchBacktest: [...BATCH_BACKTEST_REQUIRED_IDS],
         rankPairs: [...RANK_PAIRS_REQUIRED_IDS],

@@ -68,7 +68,6 @@ function createExecutorRequest(
         context: {
             nowSec: Math.floor(Date.now() / 1000) + 600,
             blockRange: null,
-            annotatePolymarket: false,
             engineMode: "typescript" as const,
         },
     };
@@ -134,7 +133,6 @@ describe("backtest batch execution (multi-run parity)", () => {
             context: {
                 nowSec: 9999999999,
                 blockRange: null,
-                annotatePolymarket: false,
                 engineMode: "typescript",
             },
         });
@@ -144,7 +142,6 @@ describe("backtest batch execution (multi-run parity)", () => {
             context: {
                 nowSec: 9999999999,
                 blockRange: narrowRange,
-                annotatePolymarket: false,
                 engineMode: "typescript",
             },
         });
@@ -204,7 +201,6 @@ describe("backtest batch execution (multi-run parity)", () => {
             context: {
                 nowSec: 9999999999,
                 blockRange: { from: 20, to: 30 },
-                annotatePolymarket: false,
                 engineMode: "typescript",
             },
             crossSymbolInput: {
@@ -264,7 +260,6 @@ describe("backtest batch execution (multi-run parity)", () => {
             context: {
                 nowSec: 9999999999,
                 blockRange: null,
-                annotatePolymarket: false,
                 engineMode: "typescript",
             },
         });
@@ -283,7 +278,6 @@ describe("backtest batch execution (multi-run parity)", () => {
             {
                 nowSec: 9999999999,
                 blockRange: null,
-                annotatePolymarket: false,
                 engineMode: "typescript",
             }
         );
@@ -335,7 +329,6 @@ describe("backtest batch execution (multi-run parity)", () => {
             context: {
                 nowSec: 9999999999,
                 blockRange: null,
-                annotatePolymarket: false,
                 engineMode: "typescript",
             },
         });
@@ -355,7 +348,6 @@ describe("backtest batch execution (multi-run parity)", () => {
             context: {
                 nowSec: 9999999999,
                 blockRange: null,
-                annotatePolymarket: false,
                 engineMode: "typescript",
             },
         });

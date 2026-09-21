@@ -25,32 +25,7 @@ function buildExecutionContext(strategy: Strategy, bars: OHLCVData[]): StrategyE
         };
     }
 
-    if (strategy.polymarket1sConfig) {
-        context.polymarket1s = {
-            symbol: "BTCUSDT",
-            outcomeSymbol: "BTCUSDT",
-            seriesId: "test-series",
-            outcomeInterval: "5m",
-            quotes: bars.map((bar) => {
-                const sampleTs = Number(bar.time);
-                const eventStartTs = Math.floor((sampleTs - 1) / 300) * 300 + 1;
-                return {
-                    series_id: "test-series",
-                    symbol: "BTCUSDT",
-                    outcome_interval: "5m",
-                    event_start_ts: eventStartTs,
-                    event_end_ts: eventStartTs + 300,
-                    sample_ts: sampleTs,
-                    yes_mid: 0.48 + Math.sin(sampleTs / 17) * 0.06,
-                    no_mid: 0.52 - Math.sin(sampleTs / 17) * 0.06,
-                    yes_ask: 0.52 + Math.sin(sampleTs / 19) * 0.04,
-                    no_ask: 0.52 - Math.sin(sampleTs / 19) * 0.04,
-                };
-            }),
-        };
-    }
-
-    return context.crossSymbol || context.polymarket1s ? context : undefined;
+    return context.crossSymbol ? context : undefined;
 }
 
 function assertPreparedParity(strategy: Strategy, bars: OHLCVData[], params: Record<string, number>): void {

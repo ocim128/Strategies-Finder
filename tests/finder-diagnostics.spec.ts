@@ -175,7 +175,6 @@ function makeDiagnostics(): FinderDiagnostics {
             preparedData: 80,
             signalGeneration: 260,
             backtest: 400,
-            polymarketEvaluation: 0,
             rustRequest: 0,
             resultEnrichment: 45,
             resultRanking: 35,
@@ -192,7 +191,6 @@ function makeDiagnostics(): FinderDiagnostics {
             preparedData: 8,
             signalGeneration: 26,
             backtest: 40,
-            polymarketEvaluation: 0,
             rustRequest: 0,
             resultEnrichment: 4.5,
             resultRanking: 3.5,
@@ -427,7 +425,6 @@ describe("Finder compact diagnostics", () => {
             preparedData: 300,          // 30% — should surface
             signalGeneration: 0,
             backtest: 0,
-            polymarketEvaluation: 0,
             rustRequest: 0,
             resultEnrichment: 0,
             resultRanking: 0,
@@ -459,7 +456,6 @@ describe("Finder compact diagnostics", () => {
             preparedData: 0,
             signalGeneration: 0,
             backtest: 0,
-            polymarketEvaluation: 0,
             rustRequest: 0,
             resultEnrichment: 250,  // 50%
             resultRanking: 0,

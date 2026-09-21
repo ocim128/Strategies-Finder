@@ -55,7 +55,6 @@ describe("backtest executor cancellation", () => {
                 context: {
                     nowSec: 9_999_999_999,
                     blockRange: null,
-                    annotatePolymarket: false,
                     engineMode: "rust_preferred",
                 },
             });
@@ -91,7 +90,6 @@ describe("backtest executor cancellation", () => {
                 context: {
                     nowSec: 9_999_999_999,
                     blockRange: null,
-                    annotatePolymarket: false,
                     engineMode: "typescript",
                     useRustEnginePreference: true,
                 },
@@ -124,7 +122,6 @@ describe("backtest executor cancellation", () => {
                 context: {
                     nowSec: 9_999_999_999,
                     blockRange: null,
-                    annotatePolymarket: false,
                     engineMode: "auto",
                     useRustEnginePreference: true,
                     rustCapabilities: [],

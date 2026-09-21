@@ -57,7 +57,6 @@ async function runBacktestWithTrades(): Promise<BacktestResult> {
         context: {
             nowSec: 1700000000 + sampleCandles.length * 300 + 300,
             blockRange: null,
-            annotatePolymarket: false,
             engineMode: "typescript",
         },
     });

@@ -32,10 +32,8 @@ import {
     coerceBacktestDomSettingValue,
     getBacktestDomSettingContract,
 } from '../lib/backtest-settings-dom-contract';
-import { builtInStrategyKeys } from '../lib/strategies/manifest-keys';
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from '../lib/strategy-defaults';
-import { resolvePolymarketEntrySelectionModeForDisplay } from '../lib/polymarket-entry-selection-mode';
-import { hasActivePolymarketProtection } from '../lib/polymarket-protection-settings';
+import { builtInStrategyKeys } from '../lib/strategies/manifest-keys';
 
 describe('Backtest settings compatibility', () => {
     it('ignores removed tradeFilterMode when provided', () => {
@@ -61,120 +59,13 @@ describe('Backtest settings compatibility', () => {
         expect('entryConfirmation' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
     });
 
-    it('keeps polymarketExitMode in canonical lowercase form when read from DOM contracts', () => {
-        const contract = getBacktestDomSettingContract('polymarketExitMode');
-        expect(contract).to.not.equal(undefined);
-        expect(coerceBacktestDomSettingValue(contract!, 'signal_exit_same_event')).to.equal('signal_exit_same_event');
-        expect(coerceBacktestDomSettingValue(contract!, 'SIGNAL_EXIT_SAME_EVENT')).to.equal('signal_exit_same_event');
-        expect(coerceBacktestDomSettingValue(contract!, 'CHART_EXIT_SAME_EVENT')).to.equal('chart_exit_same_event');
-        expect(coerceBacktestDomSettingValue(contract!, 'resolve_hold')).to.equal('resolve_hold');
-    });
 
-    it('keeps polymarketEntrySelectionMode in canonical lowercase form when read from DOM contracts', () => {
-        const contract = getBacktestDomSettingContract('polymarketEntrySelectionMode');
-        expect(contract).to.not.equal(undefined);
-        expect(coerceBacktestDomSettingValue(contract!, 'actual_entry_minute')).to.equal('actual_entry_minute');
-        expect(coerceBacktestDomSettingValue(contract!, 'ACTUAL_ENTRY_MINUTE')).to.equal('actual_entry_minute');
-        expect(coerceBacktestDomSettingValue(contract!, 'fixed_offset')).to.equal('fixed_offset');
-        expect(coerceBacktestDomSettingValue(contract!, 'anything-else')).to.equal('fixed_offset');
-    });
 
-    it('keeps polymarketOutcomeInterval in canonical lowercase form when read from DOM contracts', () => {
-        const contract = getBacktestDomSettingContract('polymarketOutcomeInterval');
-        expect(contract).to.not.equal(undefined);
-        expect(coerceBacktestDomSettingValue(contract!, '15m')).to.equal('15m');
-        expect(coerceBacktestDomSettingValue(contract!, '1H')).to.equal('1h');
-        expect(coerceBacktestDomSettingValue(contract!, 'anything-else')).to.equal('5m');
-    });
 
-    it('includes polymarketEntrySelectionMode in the shared DOM setting ids used by manual backtests', () => {
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketEntrySelectionMode')).to.equal(true);
-    });
 
-    it('normalizes the Polymarket entry price filter as a symmetric cents boundary', () => {
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryPriceFilterCents).to.equal(0);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketEntryPriceFilterCents')).to.equal(true);
 
-        const contract = getBacktestDomSettingContract('polymarketEntryPriceFilterCents');
-        expect(contract).to.not.equal(undefined);
-        expect(coerceBacktestDomSettingValue(contract!, 20)).to.equal(20);
-        expect(coerceBacktestDomSettingValue(contract!, 80)).to.equal(49);
-        expect(coerceBacktestDomSettingValue(contract!, -5)).to.equal(0);
-        expect(coerceBacktestDomSettingValue(contract!, 'bad')).to.equal(0);
 
-        const resolved = resolveBacktestSettingsFromRaw({
-            polymarketEntryPriceFilterCents: 80,
-        } as unknown as BacktestSettings);
-        expect(resolved.polymarketEntryPriceFilterCents).to.equal(49);
-        expect('polymarketEntryPriceFilterCents' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
-    });
 
-    it('normalizes the 1s Polymarket entry delay as a backtest-only setting', () => {
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryDelayBars).to.equal(0);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketEntryDelayBars')).to.equal(true);
-
-        const contract = getBacktestDomSettingContract('polymarketEntryDelayBars');
-        expect(contract).to.not.equal(undefined);
-        expect(coerceBacktestDomSettingValue(contract!, 3)).to.equal(3);
-        expect(coerceBacktestDomSettingValue(contract!, 3.6)).to.equal(4);
-        expect(coerceBacktestDomSettingValue(contract!, -5)).to.equal(0);
-        expect(coerceBacktestDomSettingValue(contract!, 999)).to.equal(300);
-
-        const resolved = resolveBacktestSettingsFromRaw({
-            polymarketEntryDelayBars: 999,
-        } as unknown as BacktestSettings);
-        expect(resolved.polymarketEntryDelayBars).to.equal(300);
-        expect('polymarketEntryDelayBars' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
-    });
-
-    it('normalizes Polymarket backtest slippage as a cents-only backtest setting', () => {
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketBacktestSlippageCents).to.equal(5);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketBacktestSlippageCents')).to.equal(true);
-
-        const contract = getBacktestDomSettingContract('polymarketBacktestSlippageCents');
-        expect(contract).to.not.equal(undefined);
-        expect(coerceBacktestDomSettingValue(contract!, 7.26)).to.equal(7.3);
-        expect(coerceBacktestDomSettingValue(contract!, -5)).to.equal(0);
-        expect(coerceBacktestDomSettingValue(contract!, 120)).to.equal(99);
-        expect(coerceBacktestDomSettingValue(contract!, 'bad')).to.equal(5);
-
-        const resolved = resolveBacktestSettingsFromRaw({
-            polymarketBacktestSlippageCents: 7.26,
-        } as unknown as BacktestSettings);
-        expect(resolved.polymarketBacktestSlippageCents).to.equal(7.3);
-        expect('polymarketBacktestSlippageCents' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
-    });
-
-    it('normalizes Polymarket protective TP/SL settings and strips them from Rust', () => {
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketProtectionTakeProfitEnabled).to.equal(false);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketProtectionStopLossEnabled).to.equal(false);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketProtectionTakeProfitEnabled')).to.equal(true);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketProtectionTakeProfitCents')).to.equal(true);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketProtectionStopLossEnabled')).to.equal(true);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketProtectionStopLossCents')).to.equal(true);
-
-        const centsContract = getBacktestDomSettingContract('polymarketProtectionTakeProfitCents');
-        expect(centsContract).to.not.equal(undefined);
-        expect(coerceBacktestDomSettingValue(centsContract!, 7.26)).to.equal(7.3);
-        expect(coerceBacktestDomSettingValue(centsContract!, -5)).to.equal(0);
-        expect(coerceBacktestDomSettingValue(centsContract!, 120)).to.equal(99);
-
-        const resolved = resolveBacktestSettingsFromRaw({
-            polymarketProtectionTakeProfitEnabled: true,
-            polymarketProtectionTakeProfitCents: 120,
-            polymarketProtectionStopLossEnabled: true,
-            polymarketProtectionStopLossCents: -2,
-        } as unknown as BacktestSettings);
-        expect(resolved.polymarketProtectionTakeProfitEnabled).to.equal(true);
-        expect(resolved.polymarketProtectionTakeProfitCents).to.equal(99);
-        expect(resolved.polymarketProtectionStopLossEnabled).to.equal(true);
-        expect(resolved.polymarketProtectionStopLossCents).to.equal(0);
-        expect(requiresTypescriptEngine(resolved)).to.equal(true);
-        const sanitized = sanitizeBacktestSettingsForRust(resolved);
-        expect('polymarketProtectionTakeProfitEnabled' in sanitized).to.equal(false);
-        expect('polymarketProtectionStopLossCents' in sanitized).to.equal(false);
-        expect(hasActivePolymarketProtection({ polymarketProtectionTakeProfitEnabled: true })).to.equal(true);
-    });
 
     it('only enables disableSignalExits when chart risk or exit override is active', () => {
         const inactive = resolveBacktestSettingsFromRaw({
@@ -230,34 +121,7 @@ describe('Backtest settings compatibility', () => {
         expect(configuring.exitStrategyOverrideEnabled).to.equal(true);
     });
 
-    it('normalizes the Polymarket event entry cutoff setting', () => {
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffEnabled).to.equal(false);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffSeconds).to.equal(15);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketEntryCutoffToggle')).to.equal(true);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketEntryCutoffSeconds')).to.equal(true);
 
-        const toggleContract = getBacktestDomSettingContract('polymarketEntryCutoffToggle');
-        expect(toggleContract).to.not.equal(undefined);
-        expect(coerceBacktestDomSettingValue(toggleContract!, true)).to.equal(true);
-
-        const contract = getBacktestDomSettingContract('polymarketEntryCutoffSeconds');
-        expect(contract).to.not.equal(undefined);
-        expect(coerceBacktestDomSettingValue(contract!, 20)).to.equal(20);
-
-        const resolved = resolveBacktestSettingsFromRaw({
-            polymarketEntryCutoffToggle: true,
-            polymarketEntryCutoffSeconds: -5,
-        } as unknown as BacktestSettings);
-        expect(resolved.polymarketEntryCutoffEnabled).to.equal(true);
-        expect(resolved.polymarketEntryCutoffSeconds).to.equal(0);
-        expect('polymarketEntryCutoffEnabled' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
-        expect('polymarketEntryCutoffSeconds' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
-    });
-
-    it('includes polymarketOutcomeInterval in shared defaults and manual-backtest DOM ids', () => {
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketOutcomeInterval).to.equal('5m');
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketOutcomeInterval')).to.equal(true);
-    });
 
     it('normalizes Exit Strategy Override settings without breaking old payloads', () => {
         expect(DEFAULT_BACKTEST_SETTINGS.exitStrategyOverrideEnabled).to.equal(false);
@@ -384,97 +248,11 @@ describe('Backtest settings compatibility', () => {
         expect(EFFECTIVE_BACKTEST_DEFAULTS.confirmationSignalExitsEnabled).to.equal(true);
     });
 
-    it('normalizes post-signal Polymarket limit-entry settings', () => {
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitEntryEnabled).to.equal(false);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitEntryMode).to.equal('fixed_price');
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitEntryPriceCents).to.equal(50);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitEntryOffsetCents).to.equal(20);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitExitEnabled).to.equal(false);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitExitMode).to.equal('entry_offset');
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitExitPriceCents).to.equal(80);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitExitOffsetCents).to.equal(20);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketSignalExitAllowMultipleTradesPerEvent).to.equal(false);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketSignalExitAllowMultipleTradesPerEvent')).to.equal(true);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketPostSignalLimitEntryEnabled')).to.equal(true);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketPostSignalLimitEntryMode')).to.equal(true);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketPostSignalLimitEntryPriceCents')).to.equal(true);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketPostSignalLimitEntryOffsetCents')).to.equal(true);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketPostSignalLimitExitEnabled')).to.equal(true);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketPostSignalLimitExitMode')).to.equal(true);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketPostSignalLimitExitPriceCents')).to.equal(true);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketPostSignalLimitExitOffsetCents')).to.equal(true);
-
-        const priceContract = getBacktestDomSettingContract('polymarketPostSignalLimitEntryPriceCents');
-        const exitPriceContract = getBacktestDomSettingContract('polymarketPostSignalLimitExitPriceCents');
-        expect(priceContract).to.not.equal(undefined);
-        expect(exitPriceContract).to.not.equal(undefined);
-        expect(coerceBacktestDomSettingValue(priceContract!, 0)).to.equal(1);
-        expect(coerceBacktestDomSettingValue(priceContract!, 120)).to.equal(99);
-        expect(coerceBacktestDomSettingValue(exitPriceContract!, 'bad')).to.equal(80);
-        const entryModeContract = getBacktestDomSettingContract('polymarketPostSignalLimitEntryMode');
-        const exitModeContract = getBacktestDomSettingContract('polymarketPostSignalLimitExitMode');
-        const offsetContract = getBacktestDomSettingContract('polymarketPostSignalLimitEntryOffsetCents');
-        expect(coerceBacktestDomSettingValue(entryModeContract!, 'signal_offset')).to.equal('signal_offset');
-        expect(coerceBacktestDomSettingValue(entryModeContract!, 'stale_signal_price')).to.equal('stale_signal_price');
-        expect(coerceBacktestDomSettingValue(entryModeContract!, 'bad')).to.equal('fixed_price');
-        expect(coerceBacktestDomSettingValue(exitModeContract!, 'fixed_price')).to.equal('fixed_price');
-        expect(coerceBacktestDomSettingValue(exitModeContract!, 'bad')).to.equal('entry_offset');
-        expect(coerceBacktestDomSettingValue(offsetContract!, 120)).to.equal(99);
-
-        const resolved = resolveBacktestSettingsFromRaw({
-            polymarketPostSignalLimitEntryEnabled: true,
-            polymarketSignalExitAllowMultipleTradesPerEvent: true,
-            polymarketPostSignalLimitEntryMode: 'signal_offset',
-            polymarketPostSignalLimitEntryPriceCents: 120,
-            polymarketPostSignalLimitEntryOffsetCents: -2,
-            polymarketPostSignalLimitExitEnabled: true,
-            polymarketPostSignalLimitExitMode: 'fixed_price',
-            polymarketPostSignalLimitExitPriceCents: 0,
-            polymarketPostSignalLimitExitOffsetCents: 120,
-        } as BacktestSettings);
-        expect(resolved.polymarketPostSignalLimitEntryEnabled).to.equal(true);
-        expect(resolved.polymarketSignalExitAllowMultipleTradesPerEvent).to.equal(true);
-        expect(resolved.polymarketPostSignalLimitEntryMode).to.equal('signal_offset');
-        expect(resolved.polymarketPostSignalLimitEntryPriceCents).to.equal(99);
-        expect(resolved.polymarketPostSignalLimitEntryOffsetCents).to.equal(0);
-        expect(resolved.polymarketPostSignalLimitExitEnabled).to.equal(true);
-        expect(resolved.polymarketPostSignalLimitExitMode).to.equal('fixed_price');
-        expect(resolved.polymarketPostSignalLimitExitPriceCents).to.equal(1);
-        expect(resolved.polymarketPostSignalLimitExitOffsetCents).to.equal(99);
-
-        const invalidExitPrice = resolveBacktestSettingsFromRaw({
-            polymarketPostSignalLimitExitPriceCents: 'bad',
-        } as unknown as BacktestSettings);
-        expect(invalidExitPrice.polymarketPostSignalLimitExitPriceCents).to.equal(80);
-    });
-
-    it('prefers actual entry minute for display when fixed-offset annotations are stale and rows are filtered', () => {
-        const resolved = resolvePolymarketEntrySelectionModeForDisplay(
-            'fixed_offset',
-            'actual_entry_minute',
-            [{ polymarketOutcome: { marketExitSource: 'filtered' } } as any]
-        );
-
-        expect(resolved).to.equal('actual_entry_minute');
-    });
-
     it('sanitizes Rust payloads and strips removed trade-filter fields', () => {
         const settings = {
             atrPeriod: 14,
             tradeFilterMode: 'volume',
             executionModel: 'next_open',
-            polymarketOutcomeInterval: '15m',
-            polymarketEntryDelayBars: 3,
-            polymarketBacktestSlippageCents: 5,
-            polymarketSignalExitAllowMultipleTradesPerEvent: true,
-            polymarketPostSignalLimitEntryEnabled: true,
-            polymarketPostSignalLimitEntryMode: 'signal_offset',
-            polymarketPostSignalLimitEntryPriceCents: 45,
-            polymarketPostSignalLimitEntryOffsetCents: 20,
-            polymarketPostSignalLimitExitEnabled: true,
-            polymarketPostSignalLimitExitMode: 'entry_offset',
-            polymarketPostSignalLimitExitPriceCents: 80,
-            polymarketPostSignalLimitExitOffsetCents: 20,
             minTradesBeforeFirstFlip: 10,
         } as unknown as BacktestSettings;
 
@@ -483,18 +261,6 @@ describe('Backtest settings compatibility', () => {
         expect(sanitized.atrPeriod).to.equal(14);
         expect('tradeFilterMode' in sanitized).to.equal(false);
         expect('executionModel' in sanitized).to.equal(false);
-        expect('polymarketOutcomeInterval' in sanitized).to.equal(false);
-        expect('polymarketEntryDelayBars' in sanitized).to.equal(false);
-        expect('polymarketBacktestSlippageCents' in sanitized).to.equal(false);
-        expect('polymarketSignalExitAllowMultipleTradesPerEvent' in sanitized).to.equal(false);
-        expect('polymarketPostSignalLimitEntryEnabled' in sanitized).to.equal(false);
-        expect('polymarketPostSignalLimitEntryMode' in sanitized).to.equal(false);
-        expect('polymarketPostSignalLimitEntryPriceCents' in sanitized).to.equal(false);
-        expect('polymarketPostSignalLimitEntryOffsetCents' in sanitized).to.equal(false);
-        expect('polymarketPostSignalLimitExitEnabled' in sanitized).to.equal(false);
-        expect('polymarketPostSignalLimitExitMode' in sanitized).to.equal(false);
-        expect('polymarketPostSignalLimitExitPriceCents' in sanitized).to.equal(false);
-        expect('polymarketPostSignalLimitExitOffsetCents' in sanitized).to.equal(false);
         expect('minTradesBeforeFirstFlip' in sanitized).to.equal(false);
     });
 
@@ -981,7 +747,6 @@ describe('Backtest settings compatibility', () => {
         expect(normalized?.backtestSettings.initialCapital).to.equal(25000);
         expect('tradeFilterMode' in (normalized?.backtestSettings as unknown as Record<string, unknown>)).to.equal(false);
         expect('tradeFilterSettingsToggle' in (normalized?.backtestSettings as unknown as Record<string, unknown>)).to.equal(false);
-        expect(normalized?.backtestSettings.polymarketOutcomeSymbol).to.equal('ETHUSDT');
         expect(normalizeStoredStrategyConfig({ strategyKey: 'missing-name' })).to.equal(null);
     });
 

@@ -64,7 +64,6 @@ describe("PH+LIN TypeScript batch regression", () => {
             },
             context: {
                 blockRange: null,
-                annotatePolymarket: false,
                 engineMode: "typescript",
                 useRustEnginePreference: false,
                 nowSec: Math.floor(Date.now() / 1000),

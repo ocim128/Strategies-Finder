@@ -10,7 +10,6 @@ import {
     resolveOosDataSlice,
     sliceFinderDataWindow,
 } from "../lib/finder/finder-manager-logic";
-import { resolveEffectivePolymarketExitMode } from "../lib/polymarket-exit-mode";
 
 describe("Finder manager logic", () => {
     it("matches Asset Opportunity trade counts inclusively and treats a missing max as unbounded", () => {
@@ -86,8 +85,6 @@ describe("Finder manager logic", () => {
             advancedSortValues: [],
             primarySort: "expectancy",
             secondarySort: "profitFactor",
-            polymarketScoringEnabled: false,
-            polymarketRankMode: "balanced",
         });
 
         expect(sortPriority).to.deep.equal(["expectancy", "profitFactor", "netProfit"]);
@@ -99,8 +96,6 @@ describe("Finder manager logic", () => {
             advancedSortValues: [],
             primarySort: "entryScore",
             secondarySort: "exitScore",
-            polymarketScoringEnabled: false,
-            polymarketRankMode: "balanced",
         });
 
         expect(sortPriority).to.deep.equal(["entryScore", "exitScore", "netProfit"]);
@@ -112,8 +107,6 @@ describe("Finder manager logic", () => {
             advancedSortValues: [],
             primarySort: "entryScore",
             secondarySort: "exitScore",
-            polymarketScoringEnabled: false,
-            polymarketRankMode: "balanced",
         })).to.deep.equal([
             "expectancy",
             "compositeEdgeRatio",
@@ -132,47 +125,10 @@ describe("Finder manager logic", () => {
             advancedSortValues: ["entryScore", "exitScore", "expectancy"],
             primarySort: "profitFactor",
             secondarySort: "totalTrades",
-            polymarketScoringEnabled: false,
-            polymarketRankMode: "balanced",
         })).to.deep.equal(["entryScore", "exitScore", "expectancy"]);
     });
 
-    it("forces polymarket sort priority and freezes risk settings for scored runs", () => {
-        const options = buildFinderOptions({
-            useAdvancedSort: true,
-            advancedSortValues: ["winRate", "netProfitPercent"],
-            primarySort: "expectancy",
-            secondarySort: "profitFactor",
-            mode: "random",
-            dataSlice: "5",
-            topN: 12,
-            steps: 4,
-            rangePercent: 40,
-            maxRuns: 250,
-            tradeFilterEnabled: true,
-            minTrades: 30,
-            maxTrades: 10,
-            freezeRiskManagement: false,
-            randomizePathExitParams: true,
-            polymarketScoringEnabled: true,
-            polymarketRankMode: "balanced",
-            polymarketMinScoredPredictions: -5,
-            polymarketLockOffset: true,
-            polymarketAfterTakeProfitOnly: true,
-            polymarketExitMode: "resolve_hold",
-        });
-
-        expect(options.sortPriority).to.deep.equal(["polyScore", "polyWinRate", "polyPredictions"]);
-        expect(options.dataSlice).to.equal("5");
-        expect(options.maxTrades).to.equal(30);
-        expect(options.freezeRiskManagement).to.equal(true);
-        expect(options.randomizePathExitParams).to.equal(false);
-        expect(options.polymarketMinScoredPredictions).to.equal(0);
-        expect(options.polymarketLockOffset).to.equal(true);
-        expect(options.polymarketAfterTakeProfitOnly).to.equal(true);
-    });
-
-    it("keeps path-exit randomization unless Polymarket scoring is on (freeze no longer disables it)", () => {
+    it("keeps path-exit randomization even when risk settings are frozen", () => {
         const base = {
             useAdvancedSort: false,
             advancedSortValues: [],
@@ -187,22 +143,16 @@ describe("Finder manager logic", () => {
             tradeFilterEnabled: false,
             minTrades: 0,
             maxTrades: Number.POSITIVE_INFINITY,
-            polymarketScoringEnabled: false,
-            polymarketRankMode: "balanced" as const,
-            polymarketMinScoredPredictions: 0,
-            polymarketLockOffset: false,
-            polymarketAfterTakeProfitOnly: false,
-            polymarketExitMode: "resolve_hold" as const,
         };
 
-        // No freeze, no Polymarket → randomize honored.
+        // No freeze → randomize honored.
         expect(buildFinderOptions({
             ...base,
             freezeRiskManagement: false,
             randomizePathExitParams: true,
         }).randomizePathExitParams).to.equal(true);
 
-        // Freeze alone no longer forces randomize off: users can freeze the
+        // Freeze does not force randomize off: users can freeze the
         // ATR/SL/TP/maxHold risk controls and still let Finder vary path-exit
         // controls. The runner-core functions gate the path-exit pathway
         // themselves; the options flag must pass through.
@@ -215,102 +165,9 @@ describe("Finder manager logic", () => {
         // Polymarket scoring remains incompatible with randomize.
         expect(buildFinderOptions({
             ...base,
-            polymarketScoringEnabled: true,
             freezeRiskManagement: false,
             randomizePathExitParams: true,
         }).randomizePathExitParams).to.equal(false);
-    });
-
-    it("switches polymarket sort priority by selected rank mode", () => {
-        expect(resolveFinderSortPriority({
-            useAdvancedSort: false,
-            advancedSortValues: [],
-            primarySort: "expectancy",
-            secondarySort: "profitFactor",
-            polymarketScoringEnabled: true,
-            polymarketRankMode: "accuracy",
-        })).to.deep.equal(["polyWinRate", "polyPredictions", "polyCoverage"]);
-
-        expect(resolveFinderSortPriority({
-            useAdvancedSort: false,
-            advancedSortValues: [],
-            primarySort: "expectancy",
-            secondarySort: "profitFactor",
-            polymarketScoringEnabled: true,
-            polymarketRankMode: "accuracyTrades",
-        })).to.deep.equal(["polyWinRate", "totalTrades", "polyPredictions", "polyCoverage"]);
-
-        expect(resolveFinderSortPriority({
-            useAdvancedSort: false,
-            advancedSortValues: [],
-            primarySort: "expectancy",
-            secondarySort: "profitFactor",
-            polymarketScoringEnabled: true,
-            polymarketRankMode: "volume",
-        })).to.deep.equal(["polyWins", "polyPredictions", "polyWinRate"]);
-
-        expect(resolveFinderSortPriority({
-            useAdvancedSort: false,
-            advancedSortValues: [],
-            primarySort: "expectancy",
-            secondarySort: "profitFactor",
-            polymarketScoringEnabled: true,
-            polymarketRankMode: "expectancy",
-        })).to.deep.equal(["polyExpectancy", "polyWinRate", "polyPredictions"]);
-
-        expect(resolveFinderSortPriority({
-            useAdvancedSort: false,
-            advancedSortValues: [],
-            primarySort: "expectancy",
-            secondarySort: "profitFactor",
-            polymarketScoringEnabled: true,
-            polymarketRankMode: "expectancyTrades",
-        })).to.deep.equal(["polyExpectancyBalance", "polyExpectancy", "totalTrades", "polyPredictions", "polyWinRate"]);
-
-        expect(resolveFinderSortPriority({
-            useAdvancedSort: false,
-            advancedSortValues: [],
-            primarySort: "expectancy",
-            secondarySort: "profitFactor",
-            polymarketScoringEnabled: true,
-            polymarketRankMode: "profitFactor",
-        })).to.deep.equal(["polyProfitFactor", "polyPredictions", "polyWinRate"]);
-
-        expect(resolveFinderSortPriority({
-            useAdvancedSort: false,
-            advancedSortValues: [],
-            primarySort: "expectancy",
-            secondarySort: "profitFactor",
-            polymarketScoringEnabled: true,
-            polymarketRankMode: "profitFactorTrades",
-        })).to.deep.equal(["polyProfitFactorBalance", "polyProfitFactor", "totalTrades", "polyPredictions", "polyWinRate"]);
-
-        expect(resolveFinderSortPriority({
-            useAdvancedSort: false,
-            advancedSortValues: [],
-            primarySort: "expectancy",
-            secondarySort: "profitFactor",
-            polymarketScoringEnabled: true,
-            polymarketRankMode: "sizedNet",
-        })).to.deep.equal(["polySizedNet", "polyPredictions", "polyWinRate"]);
-    });
-
-    it("keeps finder polymarket exit mode on signal_exit_same_event when the current run snapshot supports it", () => {
-        expect(resolveEffectivePolymarketExitMode({
-            requestedMode: "signal_exit_same_event",
-            interval: "1m",
-            executionModel: "next_open",
-            polymarketAnnotationEnabled: true,
-        })).to.equal("signal_exit_same_event");
-    });
-
-    it("keeps finder polymarket exit mode on resolve_hold for supported 1s CLOB runs", () => {
-        expect(resolveEffectivePolymarketExitMode({
-            requestedMode: "resolve_hold",
-            interval: "1s",
-            executionModel: "next_open",
-            polymarketAnnotationEnabled: true,
-        })).to.equal("resolve_hold");
     });
 
     it("builds symbol-universe sort priority with deterministic fallbacks", () => {

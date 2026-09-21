@@ -10,7 +10,6 @@ import {
     matchesEndpointCapitalProfile,
     prepareBacktestEndpointCopyBundleFromSnapshot,
     resolveEndpointCopyEngineMode,
-    resolveEndpointPolymarketAnnotation,
     setCurrentUiBacktestEndpointCandles,
     uploadBacktestEndpointDataset,
     type UiBacktestEndpointSnapshot,
@@ -47,7 +46,6 @@ function buildSnapshot(engineUsed: "rust" | "typescript"): UiBacktestEndpointSna
         },
         nowSec: 1775400000,
         blockRange: { from: 1775390000, to: 1775400000 },
-        annotatePolymarket: false,
         engineUsed,
         datasetFingerprint: computeBacktestEndpointDatasetFingerprint(buildCandles()),
     };
@@ -77,11 +75,9 @@ describe("backtest endpoint copy helpers", () => {
         assert.ok(!("marketMode" in request.backtestSettings));
         assert.ok(!("snapshotRsiMin" in request.backtestSettings));
         assert.ok(!("snapshotRsiMax" in request.backtestSettings));
-        assert.strictEqual(request.backtestSettings.polymarketAnnotationEnabled, true);
         assert.deepStrictEqual(request.context, {
             nowSec: snapshot.nowSec,
             blockRange: snapshot.blockRange,
-            annotatePolymarket: true,
             engineMode: "typescript",
         });
         assert.ok("candles" in request.dataset);
@@ -128,8 +124,6 @@ describe("backtest endpoint copy helpers", () => {
         assert.deepStrictEqual(bundle.payload.strategyParams, snapshot.strategyParams);
         assert.ok(!("snapshotRsiMin" in bundle.payload.backtestSettings));
         assert.ok(!("snapshotRsiMax" in bundle.payload.backtestSettings));
-        assert.strictEqual(bundle.payload.backtestSettings.polymarketAnnotationEnabled, true);
-        assert.strictEqual(bundle.payload.context.annotatePolymarket, true);
     });
 
     it("supports building a compact copy bundle with a resolved dataset ref", () => {
@@ -301,16 +295,5 @@ describe("backtest endpoint copy helpers", () => {
             ...BACKTEST_ENDPOINT_CAPITAL_SETTINGS,
             fixedTradeAmount: 500,
         }), false);
-    });
-
-    it("auto-enables polymarket annotation for supported endpoint copy runs", () => {
-        const supportedSnapshot = buildSnapshot("typescript");
-        const unsupportedSnapshot = {
-            ...supportedSnapshot,
-            symbol: "ADAUSDT",
-        } satisfies UiBacktestEndpointSnapshot;
-
-        assert.strictEqual(resolveEndpointPolymarketAnnotation(supportedSnapshot), true);
-        assert.strictEqual(resolveEndpointPolymarketAnnotation(unsupportedSnapshot), false);
     });
 });

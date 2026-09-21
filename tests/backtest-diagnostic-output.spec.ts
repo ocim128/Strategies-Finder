@@ -58,9 +58,6 @@ function makeSnapshot(overrides: Partial<UiBacktestEndpointSnapshot> = {}): UiBa
         strategyParams: {},
         backtestSettings: {
             executionModel: "next_open",
-            polymarketAnnotationEnabled: true,
-            polymarketExitMode: "signal_exit_same_event",
-            polymarketOutcomeInterval: "5m",
         },
         capitalSettings: {
             initialCapital: 10_000,
@@ -71,7 +68,6 @@ function makeSnapshot(overrides: Partial<UiBacktestEndpointSnapshot> = {}): UiBa
         },
         nowSec: 1_700_006_000,
         blockRange: null,
-        annotatePolymarket: true,
         engineUsed: "typescript",
         datasetFingerprint: "test",
         ...overrides,
@@ -79,435 +75,97 @@ function makeSnapshot(overrides: Partial<UiBacktestEndpointSnapshot> = {}): UiBa
 }
 
 describe("Backtest diagnostic output", () => {
-    it("explains signal-exit trades that settled because chart exits were non-signal", () => {
-        const trades = [
-            makeTrade(1, {
-                exitReason: "time_stop",
-                polymarketOutcome: {
-                    eventStartTs: 1_700_000_000,
-                    eventEndTs: 1_700_000_300,
-                    eventSlug: "event-1",
-                    marketSlug: "market-1",
-                    prediction: "yes",
-                    actualOutcomeUp: 1,
-                    isWin: true,
-                    evaluationMode: "signal_exit_same_event",
-                    marketEntryPrice: 0.66,
-                    marketExitPrice: 1,
-                    marketExitSource: "resolution",
-                    marketExitTs: 1_700_000_300,
-                    marketPnl: 0.34,
-                    isProfitable: true,
-                },
-            }),
-            makeTrade(2, {
-                exitReason: "time_stop",
-                polymarketOutcome: {
-                    eventStartTs: 1_700_000_000,
-                    eventEndTs: 1_700_000_300,
-                    eventSlug: "event-1",
-                    marketSlug: "market-1",
-                    prediction: "yes",
-                    actualOutcomeUp: 1,
-                    isWin: true,
-                    evaluationMode: "signal_exit_same_event",
-                    marketEntryPrice: 0.78,
-                    marketExitPrice: 1,
-                    marketExitSource: "resolution",
-                    marketExitTs: 1_700_000_300,
-                    marketPnl: 0.22,
-                    isProfitable: true,
-                },
-            }),
-        ];
+    it("summarizes run metadata, chart exits, and exit control for a plain run", () => {
         const result = makeResult({
-            trades,
-            totalTrades: trades.length,
-            polymarketTradeSummary: {
-                seriesId: "btc-5m",
-                outcomeInterval: "5m",
-                outcomeRowsLoaded: 1,
-                scoredTrades: 2,
-                missingOutcomeTrades: 0,
-                unscoredTrades: 0,
-                evaluationMode: "signal_exit_same_event",
-                signalExitedTrades: 0,
-                resolvedTrades: 2,
-                missingPriceTrades: 0,
-                profitableTrades: 2,
-                losingTrades: 0,
-                neutralTrades: 0,
-                netPnl: 0.56,
-                grossProfit: 0.56,
-                grossLoss: 0,
-                profitFactor: Infinity,
-                expectancy: 0.28,
-                avgEntryPrice: 0.72,
-                avgExitPrice: 1,
-            },
+            trades: [
+                makeTrade(1, { exitReason: "signal" }),
+                makeTrade(2, { exitReason: "take_profit" }),
+                makeTrade(3, { exitReason: "stop_loss" }),
+            ],
+            totalTrades: 3,
+            winRate: 33.3,
+            netProfit: 1,
         });
 
         const output = buildBacktestDiagnosticOutput({
             result,
             snapshot: makeSnapshot(),
-            generatedAtIso: "2026-05-24T00:00:00.000Z",
+            resultSource: "backtest",
         });
 
-        expect(output.polymarket?.effectiveExitMode).to.equal("signal_exit_same_event");
-        expect(output.polymarket?.exitSourceCounts.resolution).to.equal(2);
-        expect(output.polymarket?.chartExitReasonsForResolvedSignalExit.time_stop).to.equal(2);
-        expect(output.polymarket?.examples).to.have.length(2);
-        expect(output.warnings.map((warning) => warning.code)).to.include("same_event_exit_settled_at_resolution");
-        expect(output.warnings.map((warning) => warning.code)).to.include("no_polymarket_same_event_exits");
-        expect(output.warnings.map((warning) => warning.code)).to.include("no_chart_signal_exits");
-        expect(output.warnings.find((warning) => warning.code === "no_chart_signal_exits")?.message)
-            .to.include("chart_exit_same_event");
-        expect(output.recommendations[0]).to.include("chart_exit_same_event");
+        expect(output.schema).to.equal("backtest.diagnostics.v1");
+        expect(output.run.symbol).to.equal("BTCUSDT");
+        expect(output.run.interval).to.equal("1m");
+        expect(output.run.strategyKey).to.equal("test_strategy");
+        expect(output.run.totalTrades).to.equal(3);
+        expect(output.run.executionModel).to.equal("next_open");
+        expect(output.run.firstCandleTimeSec).to.equal(1_700_000_000);
+        expect(output.run.lastCandleTimeSec).to.equal(1_700_006_000);
+
+        expect(output.chartExits.counts.signal).to.equal(1);
+        expect(output.chartExits.counts.take_profit).to.equal(1);
+        expect(output.chartExits.counts.stop_loss).to.equal(1);
+        expect(output.chartExits.signalTrades).to.equal(1);
+        expect(output.chartExits.nonSignalTrades).to.equal(2);
+
+        expect(output.exitControl.requestedDisableSignalExits).to.equal(false);
+        expect(output.exitControl.requestedExitStrategyOverrideEnabled).to.equal(false);
+        expect(output.exitControl.requestedExitStrategyKey).to.equal("");
+
+        expect(output.warnings).to.deep.equal([]);
+        expect(output.recommendations).to.deep.equal([]);
     });
 
-    it("warns when requested signal-exit resolves to hold mode", () => {
+    it("reflects exit-override settings and engine counts when present", () => {
+        const result = makeResult({
+            trades: [makeTrade(1)],
+            exitControlDiagnostics: {
+                requestedDisableSignalExits: true,
+                exitStrategyLoaded: true,
+                primarySignals: 5,
+                exitOverrideSignals: 2,
+                mergedSignals: 7,
+            } as BacktestResult["exitControlDiagnostics"],
+            diagnostics: {
+                counts: {
+                    inputSignals: 5,
+                    preparedSignals: 7,
+                    signalExitOrders: 2,
+                },
+            } as BacktestResult["diagnostics"],
+        });
+
         const output = buildBacktestDiagnosticOutput({
-            result: makeResult({ trades: [makeTrade(1)] }),
+            result,
             snapshot: makeSnapshot({
                 backtestSettings: {
                     executionModel: "signal_close",
-                    polymarketAnnotationEnabled: true,
-                    polymarketExitMode: "signal_exit_same_event",
+                    disableSignalExits: true,
+                    exitStrategyOverrideEnabled: true,
+                    exitStrategyKey: "ema_exit",
+                    exitStrategyParams: { period: 8 },
                 },
             }),
-            generatedAtIso: "2026-05-24T00:00:00.000Z",
         });
 
-        expect(output.polymarket?.requestedExitMode).to.equal("signal_exit_same_event");
-        expect(output.polymarket?.effectiveExitMode).to.equal("resolve_hold");
-        expect(output.warnings.map((warning) => warning.code)).to.include("same_event_exit_not_effective");
+        expect(output.exitControl.requestedDisableSignalExits).to.equal(true);
+        expect(output.exitControl.requestedExitStrategyOverrideEnabled).to.equal(true);
+        expect(output.exitControl.requestedExitStrategyKey).to.equal("ema_exit");
+        expect(output.exitControl.requestedExitStrategyParamKeys).to.deep.equal(["period"]);
+        expect(output.exitControl.executor).to.not.be.null;
+        expect(output.exitControl.engineInputSignals).to.equal(5);
+        expect(output.exitControl.enginePreparedSignals).to.equal(7);
+        expect(output.exitControl.engineSignalExitOrders).to.equal(2);
     });
 
-    it("supports chart-exit diagnostics without requiring chart signal exits", () => {
-        const trades = [
-            makeTrade(1, {
-                exitReason: "time_stop",
-                polymarketOutcome: {
-                    eventStartTs: 1_700_000_000,
-                    eventEndTs: 1_700_000_300,
-                    eventSlug: "event-1",
-                    marketSlug: "market-1",
-                    prediction: "yes",
-                    actualOutcomeUp: 0,
-                    isWin: null,
-                    evaluationMode: "chart_exit_same_event",
-                    marketEntryPrice: 0.50,
-                    marketExitPrice: 0.62,
-                    marketExitSource: "signal",
-                    marketExitTs: 1_700_000_090,
-                    marketPnl: 0.12,
-                    isProfitable: true,
-                },
-            }),
-        ];
+    it("works without a snapshot by falling back to result market context", () => {
         const output = buildBacktestDiagnosticOutput({
-            result: makeResult({
-                trades,
-                totalTrades: trades.length,
-                polymarketTradeSummary: {
-                    seriesId: "btc-5m",
-                    outcomeInterval: "5m",
-                    outcomeRowsLoaded: 1,
-                    scoredTrades: 1,
-                    missingOutcomeTrades: 0,
-                    unscoredTrades: 0,
-                    evaluationMode: "chart_exit_same_event",
-                    signalExitedTrades: 1,
-                    resolvedTrades: 0,
-                    missingPriceTrades: 0,
-                    profitableTrades: 1,
-                    losingTrades: 0,
-                    neutralTrades: 0,
-                    netPnl: 0.12,
-                    grossProfit: 0.12,
-                    grossLoss: 0,
-                    profitFactor: Infinity,
-                    expectancy: 0.12,
-                    avgEntryPrice: 0.50,
-                    avgExitPrice: 0.62,
-                },
-            }),
-            snapshot: makeSnapshot({
-                backtestSettings: {
-                    executionModel: "next_open",
-                    polymarketAnnotationEnabled: true,
-                    polymarketExitMode: "chart_exit_same_event",
-                    polymarketOutcomeInterval: "5m",
-                },
-            }),
-            generatedAtIso: "2026-05-24T00:00:00.000Z",
+            result: makeResult({ trades: [makeTrade(1)] }),
         });
 
-        expect(output.polymarket?.effectiveExitMode).to.equal("chart_exit_same_event");
-        expect(output.polymarket?.exitSourceCounts.chart_exit).to.equal(1);
-        expect(output.polymarket?.sameEventExitedTrades).to.equal(1);
-        expect(output.polymarket?.chartExitedTrades).to.equal(1);
-        expect(output.polymarket?.signalExitedTrades).to.equal(0);
-        expect(output.polymarket?.resolvedTrades).to.equal(0);
-        expect(output.warnings.map((warning) => warning.code)).to.not.include("no_chart_signal_exits");
-    });
-
-    it("does not warn when chart-exit mode only resolves forced end-of-data trades", () => {
-        const trades = [
-            makeTrade(1, {
-                exitReason: "end_of_data",
-                polymarketOutcome: {
-                    eventStartTs: 1_700_000_000,
-                    eventEndTs: 1_700_000_300,
-                    eventSlug: "event-1",
-                    marketSlug: "market-1",
-                    prediction: "yes",
-                    actualOutcomeUp: 1,
-                    isWin: true,
-                    evaluationMode: "chart_exit_same_event",
-                    marketEntryPrice: 0.36,
-                    marketExitPrice: 1,
-                    marketExitSource: "resolution",
-                    marketExitTs: 1_700_000_300,
-                    marketPnl: 0.64,
-                    isProfitable: true,
-                },
-            }),
-        ];
-        const output = buildBacktestDiagnosticOutput({
-            result: makeResult({
-                trades,
-                totalTrades: trades.length,
-                polymarketTradeSummary: {
-                    seriesId: "btc-5m",
-                    outcomeInterval: "5m",
-                    outcomeRowsLoaded: 1,
-                    scoredTrades: 1,
-                    missingOutcomeTrades: 0,
-                    unscoredTrades: 0,
-                    evaluationMode: "chart_exit_same_event",
-                    signalExitedTrades: 0,
-                    resolvedTrades: 1,
-                    missingPriceTrades: 0,
-                    profitableTrades: 1,
-                    losingTrades: 0,
-                    neutralTrades: 0,
-                    netPnl: 0.64,
-                    grossProfit: 0.64,
-                    grossLoss: 0,
-                    profitFactor: Infinity,
-                    expectancy: 0.64,
-                    avgEntryPrice: 0.36,
-                    avgExitPrice: 1,
-                },
-            }),
-            snapshot: makeSnapshot({
-                backtestSettings: {
-                    executionModel: "next_open",
-                    polymarketAnnotationEnabled: true,
-                    polymarketExitMode: "chart_exit_same_event",
-                    polymarketOutcomeInterval: "5m",
-                },
-            }),
-            generatedAtIso: "2026-05-24T00:00:00.000Z",
-        });
-
-        expect(output.polymarket?.resolvedTrades).to.equal(1);
-        expect(output.polymarket?.chartExitReasonsForResolvedSameEventExit.end_of_data).to.equal(1);
-        expect(output.warnings.map((warning) => warning.code)).to.not.include("same_event_exit_settled_at_resolution");
-        expect(output.warnings.map((warning) => warning.code)).to.not.include("no_polymarket_same_event_exits");
-    });
-
-    it("includes filter settings and examples for unscored Polymarket buckets", () => {
-        const baseOutcome = {
-            eventStartTs: 1_700_000_000,
-            eventEndTs: 1_700_000_300,
-            eventSlug: "event-1",
-            marketSlug: "market-1",
-            prediction: "yes" as const,
-            actualOutcomeUp: 1 as const,
-            isWin: null,
-            evaluationMode: "chart_exit_same_event" as const,
-            marketExitPrice: null,
-            marketExitTs: null,
-            marketPnl: null,
-            isProfitable: null,
-        };
-        const trades = [
-            makeTrade(1, {
-                polymarketOutcome: {
-                    ...baseOutcome,
-                    marketEntryPrice: 0.20,
-                    marketExitSource: "entry_price_filtered",
-                },
-            }),
-            makeTrade(2, {
-                polymarketOutcome: {
-                    ...baseOutcome,
-                    marketEntryPrice: 0.85,
-                    marketExitSource: "entry_price_filtered",
-                },
-            }),
-            makeTrade(3, {
-                polymarketOutcome: {
-                    ...baseOutcome,
-                    marketEntryPrice: null,
-                    marketExitSource: "missing",
-                },
-            }),
-            makeTrade(4, {
-                polymarketOutcome: {
-                    ...baseOutcome,
-                    marketEntryPrice: null,
-                    marketExitSource: "entry_time_filtered",
-                },
-            }),
-            makeTrade(5, {
-                polymarketOutcome: {
-                    ...baseOutcome,
-                    marketEntryPrice: null,
-                    marketExitSource: "open_position",
-                },
-            }),
-        ];
-        const output = buildBacktestDiagnosticOutput({
-            result: makeResult({
-                trades,
-                totalTrades: trades.length,
-                polymarketTradeSummary: {
-                    seriesId: "btc-5m",
-                    outcomeInterval: "5m",
-                    outcomeRowsLoaded: 1,
-                    scoredTrades: 0,
-                    missingOutcomeTrades: 0,
-                    unscoredTrades: 5,
-                    evaluationMode: "chart_exit_same_event",
-                    signalExitedTrades: 0,
-                    resolvedTrades: 0,
-                    missingPriceTrades: 1,
-                    entryPriceFilteredTrades: 2,
-                    entryTimeFilteredTrades: 1,
-                    profitableTrades: 0,
-                    losingTrades: 0,
-                    neutralTrades: 0,
-                    netPnl: 0,
-                    grossProfit: 0,
-                    grossLoss: 0,
-                    profitFactor: 0,
-                    expectancy: 0,
-                    avgEntryPrice: 0,
-                    avgExitPrice: 0,
-                },
-            }),
-            snapshot: makeSnapshot({
-                backtestSettings: {
-                    executionModel: "next_open",
-                    polymarketAnnotationEnabled: true,
-                    polymarketExitMode: "chart_exit_same_event",
-                    polymarketOutcomeInterval: "5m",
-                    polymarketEntryPriceFilterCents: 20,
-                    polymarketBacktestSlippageCents: 5,
-                    polymarketEntryCutoffEnabled: true,
-                    polymarketEntryCutoffSeconds: 15,
-                    polymarketSignalExitAllowMultipleTradesPerEvent: true,
-                },
-            }),
-            generatedAtIso: "2026-05-24T00:00:00.000Z",
-        });
-
-        expect(output.polymarket?.scoredPct).to.equal(0);
-        expect(output.polymarket?.unscoredPct).to.equal(100);
-        expect(output.polymarket?.filters.entryPriceFilterCents).to.equal(20);
-        expect(output.polymarket?.filters.entryPriceAllowedRange).to.deep.equal({
-            minExclusive: 0.2,
-            maxExclusive: 0.8,
-        });
-        expect(output.polymarket?.filters.entryCutoffEnabled).to.equal(true);
-        expect(output.polymarket?.filters.entryCutoffSeconds).to.equal(15);
-        expect(output.polymarket?.entryPriceFilterBreakdown).to.deep.equal({
-            low: 1,
-            high: 1,
-            unknown: 0,
-            minEntryPrice: 0.2,
-            maxEntryPrice: 0.85,
-            avgEntryPrice: 0.525,
-        });
-        expect(output.polymarket?.unscoredExamplesBySource.entry_price_filtered).to.have.length(2);
-        expect(output.polymarket?.unscoredExamplesBySource.missing).to.have.length(1);
-        expect(output.polymarket?.unscoredExamplesBySource.entry_time_filtered).to.have.length(1);
-        expect(output.polymarket?.unscoredExamplesBySource.open_position).to.have.length(1);
-        expect(output.polymarket?.openPositionBlockedTrades).to.equal(1);
-        expect(output.recommendations).to.deep.equal([
-            "Review the 20c entry price filter: it excluded 2 trades, mixed high/low entries (1 high, 1 low). For coverage testing, reduce or disable this filter before comparing strategy quality.",
-            "Entry cutoff skipped 1 trades inside the final 15s of the event; lower it only if late-event fills are acceptable.",
-            "Open-position skips (1) mean resolve-hold scoring rejected chart trades while an earlier Polymarket leg was still open; compare against Execution Lab entries, not raw chart trades.",
-            "Missing-price trades remain (1); inspect unscoredExamplesBySource.missing and refresh/re-mine local CLOB quotes around those event windows before tuning thresholds.",
-        ]);
-    });
-
-    it("does not overstate slight entry-price filter skews", () => {
-        const prices = [0.81, 0.82, 0.83, 0.19, 0.18];
-        const trades = prices.map((price, index) => makeTrade(index + 1, {
-            polymarketOutcome: {
-                eventStartTs: 1_700_000_000,
-                eventEndTs: 1_700_000_300,
-                eventSlug: "event-1",
-                marketSlug: "market-1",
-                prediction: "yes",
-                actualOutcomeUp: 1,
-                isWin: null,
-                evaluationMode: "chart_exit_same_event",
-                marketEntryPrice: price,
-                marketExitPrice: null,
-                marketExitTs: null,
-                marketExitSource: "entry_price_filtered",
-                marketPnl: null,
-                isProfitable: null,
-            },
-        }));
-        const output = buildBacktestDiagnosticOutput({
-            result: makeResult({
-                trades,
-                totalTrades: trades.length,
-                polymarketTradeSummary: {
-                    seriesId: "btc-5m",
-                    outcomeInterval: "5m",
-                    outcomeRowsLoaded: 1,
-                    scoredTrades: 0,
-                    missingOutcomeTrades: 0,
-                    unscoredTrades: trades.length,
-                    evaluationMode: "chart_exit_same_event",
-                    signalExitedTrades: 0,
-                    resolvedTrades: 0,
-                    missingPriceTrades: 0,
-                    entryPriceFilteredTrades: trades.length,
-                    profitableTrades: 0,
-                    losingTrades: 0,
-                    neutralTrades: 0,
-                    netPnl: 0,
-                    grossProfit: 0,
-                    grossLoss: 0,
-                    profitFactor: 0,
-                    expectancy: 0,
-                    avgEntryPrice: 0,
-                    avgExitPrice: 0,
-                },
-            }),
-            snapshot: makeSnapshot({
-                backtestSettings: {
-                    executionModel: "next_open",
-                    polymarketAnnotationEnabled: true,
-                    polymarketExitMode: "chart_exit_same_event",
-                    polymarketOutcomeInterval: "5m",
-                    polymarketEntryPriceFilterCents: 20,
-                },
-            }),
-            generatedAtIso: "2026-05-24T00:00:00.000Z",
-        });
-
-        expect(output.polymarket?.entryPriceFilterBreakdown.high).to.equal(3);
-        expect(output.polymarket?.entryPriceFilterBreakdown.low).to.equal(2);
-        expect(output.recommendations[0]).to.include("mixed high/low entries, slight high skew (3 high vs 2 low)");
-        expect(output.recommendations[0]).to.not.include("mostly high-priced");
+        expect(output.run.source).to.be.undefined;
+        expect(output.run.symbol).to.equal("BTCUSDT");
+        expect(output.run.executionModel).to.be.undefined;
+        expect(output.exitControl.requestedDisableSignalExits).to.equal(null);
     });
 });
