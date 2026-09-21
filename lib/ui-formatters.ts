@@ -159,11 +159,6 @@ export function formatProfitFactor(
     return value.toFixed(2);
 }
 
-export function formatPolymarketCents(value: number): string {
-    const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
-    return `${prefix}${(Math.abs(value) * 100).toFixed(1)}c`;
-}
-
 export function formatProbabilityCents(value: number): string {
     return `${(Math.abs(value) * 100).toFixed(1)}c`;
 }

@@ -189,7 +189,6 @@ export interface StrategyMetaEntry {
     paramLabels: string;
     metadata: string;
     crossSymbolConfig: boolean;
-    polymarket1sConfig: boolean;
 }
 
 function extractStringProperty(source: string, propName: string): string | null {
@@ -303,7 +302,6 @@ function extractStrategyMeta(source: string, key: string, fileName: string): Str
         paramLabels,
         metadata,
         crossSymbolConfig: /\bcrossSymbolConfig\s*:/.test(source),
-        polymarket1sConfig: /\bpolymarket1sConfig\s*:/.test(source),
     };
 }
 
@@ -333,7 +331,6 @@ export function generateStrategySummarySource(
             `        description: ${entry.description},`,
             `        metadata: ${entry.metadata === "undefined" ? "undefined" : entry.metadata},`,
             `        crossSymbolConfig: ${entry.crossSymbolConfig},`,
-            `        polymarket1sConfig: ${entry.polymarket1sConfig},`,
             "    },",
         ].join("\n")
     );
@@ -352,7 +349,6 @@ export function generateStrategySummarySource(
         "        walkForwardParams?: string[];",
         "    };",
         "    crossSymbolConfig?: boolean;",
-        "    polymarket1sConfig?: boolean;",
         "}",
         "",
         "export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [",
