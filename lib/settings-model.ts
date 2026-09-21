@@ -10,15 +10,6 @@ import { readBoolean as readBooleanValue, readNumber as readNumberValue } from "
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 import { ADVANCED_SIZING_DEFAULTS, coerceAdvancedSizingFieldValue } from "./advanced-sizing-settings";
 import { coerceAdaptiveTakeProfitFieldValue, resolveTakeProfitMode } from "./take-profit-settings";
-import { clampPolymarketBacktestSlippageCents } from "./polymarket-backtest-slippage";
-import type { PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
-import type { PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
-import type { PolymarketExitMode } from "./polymarket-exit-mode";
-import {
-    resolvePolymarketPostSignalLimitSettingFields,
-    type PolymarketLimitEntryPriceMode,
-    type PolymarketLimitExitPriceMode,
-} from "./polymarket-post-signal-limit-entry";
 
 import type { BacktestSettings, ConfirmationMode, ExecutionModel, MarketMode, PercentageTakeProfitMode, StrategyParams, TradeDirection, PathExitMode, EntryTimeFilter } from "./types/strategies";
 import { isTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from "./types/backtest";
@@ -141,30 +132,6 @@ export interface BacktestSettingsData {
     maxOpenTrades: number;
     strategyTimeframeEnabled: boolean;
     strategyTimeframeMinutes: number;
-    polymarketAnnotationEnabled: boolean;
-    polymarketOutcomeSymbol: string;
-    polymarketOutcomeInterval: PolymarketOutcomeInterval;
-    polymarketEntrySelectionMode: PolymarketEntrySelectionMode;
-    polymarketEntryOffset: number;
-    polymarketEntryDelayBars: number;
-    polymarketEntryPriceFilterCents: number;
-    polymarketBacktestSlippageCents: number;
-    polymarketEntryCutoffEnabled: boolean;
-    polymarketEntryCutoffSeconds: number;
-    polymarketExitMode: PolymarketExitMode;
-    polymarketSignalExitAllowMultipleTradesPerEvent: boolean;
-    polymarketPostSignalLimitEntryEnabled: boolean;
-    polymarketPostSignalLimitEntryMode: PolymarketLimitEntryPriceMode;
-    polymarketPostSignalLimitEntryPriceCents: number;
-    polymarketPostSignalLimitEntryOffsetCents: number;
-    polymarketPostSignalLimitExitEnabled: boolean;
-    polymarketPostSignalLimitExitMode: PolymarketLimitExitPriceMode;
-    polymarketPostSignalLimitExitPriceCents: number;
-    polymarketPostSignalLimitExitOffsetCents: number;
-    polymarketProtectionTakeProfitEnabled: boolean;
-    polymarketProtectionTakeProfitCents: number;
-    polymarketProtectionStopLossEnabled: boolean;
-    polymarketProtectionStopLossCents: number;
     /** Resolved secondary symbol for cross-symbol strategies. Empty string means use strategy default. */
     crossSymbolSecondary: string;
 
@@ -401,17 +368,10 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
     normalized.takeProfitAdaptiveIcScale = coerceAdaptiveTakeProfitFieldValue("takeProfitAdaptiveIcScale", source.takeProfitAdaptiveIcScale);
     normalized.useRustEngine = readBoolean(source.useRustEngine, DEFAULT_BACKTEST_SETTINGS.useRustEngine);
     normalized.riskSettingsToggle = readBoolean(source.riskSettingsToggle, DEFAULT_BACKTEST_SETTINGS.riskSettingsToggle);
-    normalized.polymarketBacktestSlippageCents = clampPolymarketBacktestSlippageCents(
-        source.polymarketBacktestSlippageCents
-    );
     normalized.confirmationStrategiesToggle = readBoolean(
         source.confirmationStrategiesToggle,
         Array.isArray(normalized.confirmationStrategies) && normalized.confirmationStrategies.length > 0
     );
-    Object.assign(normalized, resolvePolymarketPostSignalLimitSettingFields(
-        source,
-        (key, fallback) => readBoolean(source[key], fallback)
-    ));
 
     // Cross-symbol
     normalized.crossSymbolSecondary = typeof source.crossSymbolSecondary === 'string'

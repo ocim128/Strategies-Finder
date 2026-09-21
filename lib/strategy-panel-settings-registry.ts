@@ -43,11 +43,6 @@ export const STRATEGY_PANEL_SETTINGS_SECTIONS: readonly StrategyPanelSettingsSec
         preset: "standard",
         accordionBodyId: "engineBody",
     },
-    {
-        id: "polymarket",
-        preset: "standard",
-        accordionBodyId: "polymarketSettingsBody",
-    },
 ] as const;
 
 const PRESET_RANK: Record<SettingsPresetMode, number> = {

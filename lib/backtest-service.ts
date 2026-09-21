@@ -38,12 +38,9 @@ import {
     type BacktestRunHandle,
 } from "./backtest-run-presenter";
 import { commitBacktestResult } from "./state-actions";
-import { resolveEffectivePolymarketExitMode } from "./polymarket-exit-mode";
-import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import { executeBacktest, executeBacktestFromSignals } from "./backtest-executor";
 import {
     getCapitalSettings as readCapitalSettings,
-    getAlternativeSizingEnabled as readAlternativeSizingEnabled,
     getBacktestSettings as readBacktestSettings,
     resolveSubscriptionCapitalSettings as resolveSubCapitalSettings,
 } from "./backtest-settings-reader";
@@ -62,10 +59,6 @@ import {
 } from "./backtest-edge-analysis";
 import { attachTradeTimingQuality } from "./trade-timing-quality";
 import { parseTimeToUnixSeconds } from "./time-normalization";
-import {
-    hasActivePolymarketProtection,
-    resolveEffectivePolymarketProtectionSettings,
-} from "./polymarket-protection-settings";
 
 type CurrentBacktestExecution = {
     result: BacktestResult;
@@ -126,7 +119,6 @@ export class BacktestService {
 
             const params = paramManager.getValues(strategy);
             const capitalSettings = this.getCapitalSettings();
-            const alternativeSizingEnabled = this.getAlternativeSizingEnabled();
             const settings = this.getBacktestSettings();
             const sourceData = options.dataOverride ?? state.ohlcvData;
             const sourceSymbol = state.currentSymbol;
@@ -146,44 +138,6 @@ export class BacktestService {
                 sourceStrategyKey
             );
 
-            // Only annotate Polymarket outcomes when explicitly enabled
-            const annotatePolymarket = settings.polymarketAnnotationEnabled ?? false;
-            if (annotatePolymarket) {
-                const annotatedResult = await this.annotatePolymarketResult(result, settings, sourceData, sourceSymbol, sourceInterval);
-                const protectionReplay = await this.replayBacktestWithPolymarketProtectionExits(
-                    annotatedResult,
-                    signals,
-                    sourceData,
-                    settings,
-                    capitalSettings,
-                    requestContext,
-                    sourceSymbol,
-                    sourceInterval
-                );
-                if (protectionReplay) {
-                    result = protectionReplay;
-                    engineUsed = 'typescript';
-                } else {
-                    result = annotatedResult;
-                }
-                const { applyPolymarketAlternativeSizing } = await import("./polymarket-alternative-sizing");
-                const sizedResult = applyPolymarketAlternativeSizing({
-                    result,
-                    chartData: this.selectClosedCandleData(
-                        sourceData,
-                        sourceInterval,
-                        settings,
-                        requestContext.nowSec,
-                        requestContext.blockRange
-                    ),
-                    backtestSettings: settings,
-                    capitalSettings,
-                    alternativeSizingEnabled,
-                });
-                transferBacktestEdgeAnalysisInput(result, sizedResult);
-                result = sizedResult;
-            }
-
             if (!this.isLatestInteractiveRun(runId)) {
                 debugLogger.event('backtest.stale_ignored', {
                     strategy: sourceStrategyKey,
@@ -202,7 +156,6 @@ export class BacktestService {
                     engineUsed,
                     requestContext.nowSec,
                     requestContext.blockRange,
-                    annotatePolymarket,
                     sourceData
                 ),
                 endpointCopyCandles: sourceData,
@@ -355,7 +308,6 @@ export class BacktestService {
             context: {
                 nowSec,
                 blockRange,
-                annotatePolymarket: false,
                 // The shared executor performs the capability-aware Rust
                 // preflight. Keep this context automatic so next_open and
                 // max-hold can use Rust when the health handshake supports them.
@@ -407,7 +359,6 @@ export class BacktestService {
             {
                 nowSec: Math.floor(Date.now() / 1000),
                 blockRange: state.blockRange,
-                annotatePolymarket: false,
                 engineMode: forceTypescript ? 'typescript' : 'auto',
             }
         );
@@ -432,260 +383,6 @@ export class BacktestService {
         }
         attachTradeTimingQuality(result, backtestData);
         registerBacktestEdgeAnalysisInput(result, backtestData);
-    }
-
-    private async annotatePolymarketResult(
-        result: BacktestResult,
-        settings: BacktestSettings,
-        chartData: OHLCVData[],
-        symbol: string = state.currentSymbol,
-        interval: string = state.currentInterval
-    ): Promise<BacktestResult> {
-        try {
-            const effectiveExitMode = resolveEffectivePolymarketExitMode({
-                requestedMode: settings.polymarketExitMode,
-                interval,
-                executionModel: settings.executionModel,
-                polymarketAnnotationEnabled: settings.polymarketAnnotationEnabled,
-            });
-            const outcomeInterval = resolvePolymarketOutcomeInterval(settings.polymarketOutcomeInterval);
-            const secondMarketEvaluation = await import("./second-market/evaluation");
-            const symbolForPolymarketCheck = settings.polymarketOutcomeSymbol?.trim() || symbol;
-            if (secondMarketEvaluation.isSecondMarketPolymarketSupported(symbolForPolymarketCheck, interval)) {
-                return await secondMarketEvaluation.annotateBacktestResultWithSecondMarketClob({
-                    result,
-                    symbol,
-                    interval,
-                    outcomeSymbol: settings.polymarketOutcomeSymbol,
-                    outcomeInterval,
-                    executionModel: settings.executionModel,
-                    polymarketExitMode: effectiveExitMode,
-                    polymarketSignalExitAllowMultipleTradesPerEvent: settings.polymarketSignalExitAllowMultipleTradesPerEvent,
-                    entryDelayBars: settings.polymarketEntryDelayBars,
-                    entryPriceFilterCents: settings.polymarketEntryPriceFilterCents,
-                    backtestSlippageCents: settings.polymarketBacktestSlippageCents,
-                    entryCutoffEnabled: settings.polymarketEntryCutoffEnabled,
-                    entryCutoffSeconds: settings.polymarketEntryCutoffSeconds,
-                    limitEntry: {
-                        enabled: settings.polymarketPostSignalLimitEntryEnabled === true,
-                        priceMode: settings.polymarketPostSignalLimitEntryMode,
-                        priceCents: settings.polymarketPostSignalLimitEntryPriceCents ?? 50,
-                        offsetCents: settings.polymarketPostSignalLimitEntryOffsetCents,
-                        exitEnabled: settings.polymarketPostSignalLimitExitEnabled === true,
-                        exitMode: settings.polymarketPostSignalLimitExitMode,
-                        exitPriceCents: settings.polymarketPostSignalLimitExitPriceCents,
-                        exitOffsetCents: settings.polymarketPostSignalLimitExitOffsetCents,
-                    },
-                    protection: {
-                        polymarketProtectionTakeProfitEnabled: settings.polymarketProtectionTakeProfitEnabled,
-                        polymarketProtectionTakeProfitCents: settings.polymarketProtectionTakeProfitCents,
-                        polymarketProtectionStopLossEnabled: settings.polymarketProtectionStopLossEnabled,
-                        polymarketProtectionStopLossCents: settings.polymarketProtectionStopLossCents,
-                    },
-                });
-            }
-
-            const { annotateBacktestResultWithPolymarketOutcomes } = await import("./polymarket-trade-annotations");
-            return await annotateBacktestResultWithPolymarketOutcomes(result, {
-                symbol,
-                interval,
-                executionModel: settings.executionModel,
-                chartData,
-                outcomeSymbol: settings.polymarketOutcomeSymbol,
-                outcomeInterval,
-                polymarketExitMode: effectiveExitMode,
-                polymarketSignalExitAllowMultipleTradesPerEvent: settings.polymarketSignalExitAllowMultipleTradesPerEvent,
-                polymarketEntryCutoffEnabled: settings.polymarketEntryCutoffEnabled,
-                polymarketEntryCutoffSeconds: settings.polymarketEntryCutoffSeconds,
-            }, {
-                selectedOffset: settings.polymarketEntryOffset,
-                entrySelectionMode: settings.polymarketEntrySelectionMode,
-                entryPriceFilterCents: settings.polymarketEntryPriceFilterCents,
-                backtestSlippageCents: settings.polymarketBacktestSlippageCents,
-                limitEntry: {
-                    enabled: settings.polymarketPostSignalLimitEntryEnabled === true,
-                    priceMode: settings.polymarketPostSignalLimitEntryMode,
-                    priceCents: settings.polymarketPostSignalLimitEntryPriceCents ?? 50,
-                    offsetCents: settings.polymarketPostSignalLimitEntryOffsetCents,
-                    exitEnabled: settings.polymarketPostSignalLimitExitEnabled === true,
-                    exitMode: settings.polymarketPostSignalLimitExitMode,
-                    exitPriceCents: settings.polymarketPostSignalLimitExitPriceCents,
-                    exitOffsetCents: settings.polymarketPostSignalLimitExitOffsetCents,
-                },
-            });
-        } catch (error) {
-            debugLogger.error("backtest.polymarket_annotation_failed", {
-                symbol,
-                interval,
-                error: error instanceof Error ? error.message : String(error),
-            });
-            return result;
-        }
-    }
-
-    private async replayBacktestWithPolymarketProtectionExits(
-        annotatedResult: BacktestResult,
-        baseSignals: Signal[],
-        sourceData: OHLCVData[],
-        settings: BacktestSettings,
-        capitalSettings: CapitalSettings,
-        requestContext: CurrentBacktestExecution["requestContext"],
-        symbol: string = state.currentSymbol,
-        interval: string = state.currentInterval
-    ): Promise<BacktestResult | null> {
-        if (interval !== "1s") {
-            return null;
-        }
-        const effectiveExitMode = resolveEffectivePolymarketExitMode({
-            requestedMode: settings.polymarketExitMode,
-            interval,
-            executionModel: settings.executionModel,
-            polymarketAnnotationEnabled: settings.polymarketAnnotationEnabled,
-        });
-        const protectionSettings = resolveEffectivePolymarketProtectionSettings(effectiveExitMode, settings);
-        if (!hasActivePolymarketProtection(protectionSettings ?? {})) {
-            return null;
-        }
-
-        const backtestData = this.selectClosedCandleData(
-            sourceData,
-            interval,
-            settings,
-            requestContext.nowSec,
-            requestContext.blockRange
-        );
-        let latestAnnotated = annotatedResult;
-        let latestReplay: BacktestResult | null = null;
-        let lastForcedKey = "";
-        let lastForcedCount = 0;
-        let stabilized = false;
-        const maxReplayPasses = Math.min(Math.max(baseSignals.length, 1), 100);
-
-        for (let pass = 0; pass < maxReplayPasses; pass++) {
-            const forcedSignals = this.buildPolymarketProtectionExitSignals(latestAnnotated, backtestData, settings);
-            lastForcedCount = forcedSignals.length;
-            const forcedKey = forcedSignals
-                .map((signal) => `${signal.reason}:${String(signal.time)}:${signal.type}`)
-                .sort()
-                .join("|");
-            if (!forcedSignals.length || forcedKey === lastForcedKey) {
-                stabilized = true;
-                break;
-            }
-            lastForcedKey = forcedKey;
-
-            const replay = runBacktest(
-                backtestData,
-                [...baseSignals, ...forcedSignals],
-                capitalSettings.initialCapital,
-                capitalSettings.positionSize,
-                capitalSettings.commission,
-                settings,
-                {
-                    mode: capitalSettings.sizingMode,
-                    fixedTradeAmount: capitalSettings.fixedTradeAmount,
-                    advancedSizing: capitalSettings.advancedSizing,
-                }
-            );
-            this.finalizeBacktestResult(replay, capitalSettings.initialCapital, backtestData);
-            latestAnnotated = await this.annotatePolymarketResult(replay, settings, sourceData, symbol, interval);
-            latestReplay = latestAnnotated;
-        }
-        if (!stabilized && latestReplay) {
-            debugLogger.warn("backtest.polymarket_protection_replay_not_stabilized", {
-                maxReplayPasses,
-                forcedExitSignals: lastForcedCount,
-            });
-        }
-
-        return latestReplay;
-    }
-
-    private buildPolymarketProtectionExitSignals(
-        result: BacktestResult,
-        backtestData: OHLCVData[],
-        settings: BacktestSettings
-    ): Signal[] {
-        const dataIndexByTs = new Map<number, number>();
-        backtestData.forEach((candle, index) => {
-            const ts = parseTimeToUnixSeconds(candle.time);
-            if (ts !== null && !dataIndexByTs.has(ts)) {
-                dataIndexByTs.set(ts, index);
-            }
-        });
-        const executionShift = settings.executionModel === "signal_close" ? 0 : 1;
-        const forcedByKey = new Map<string, Signal>();
-
-        for (const trade of result.trades) {
-            const source = trade.polymarketOutcome?.marketExitSource;
-            if (source !== "protection_take_profit" && source !== "protection_stop_loss") {
-                continue;
-            }
-            const marketExitTs = trade.polymarketOutcome?.marketExitTs;
-            if (typeof marketExitTs !== "number" || !Number.isFinite(marketExitTs)) {
-                continue;
-            }
-            const chartExitTs = parseTimeToUnixSeconds(trade.exitTime);
-            if (chartExitTs !== null && marketExitTs > chartExitTs) {
-                continue;
-            }
-
-            const exitBarIndex = dataIndexByTs.get(marketExitTs);
-            if (exitBarIndex === undefined) {
-                continue;
-            }
-            const signalBarIndex = exitBarIndex - executionShift;
-            if (signalBarIndex < 0) {
-                continue;
-            }
-            const reason = source === "protection_take_profit" ? "polymarket_take_profit" : "polymarket_stop_loss";
-            const signal: Signal = {
-                time: backtestData[signalBarIndex]!.time,
-                type: trade.type === "long" ? "sell" : "buy",
-                price: backtestData[exitBarIndex]!.close,
-                triggerPrice: backtestData[exitBarIndex]!.close,
-                reason,
-                barIndex: signalBarIndex,
-            };
-            forcedByKey.set(`${reason}:${marketExitTs}:${trade.type}:${trade.entryTime}`, signal);
-        }
-
-        return [...forcedByKey.values()];
-    }
-
-    private selectClosedCandleData(
-        ohlcvData: OHLCVData[],
-        interval: string,
-        settings: BacktestSettings,
-        nowSec = Math.floor(Date.now() / 1000),
-        blockRange = state.blockRange
-    ): OHLCVData[] {
-        const executionAware = selectExecutionAwareClosedCandles(
-            ohlcvData,
-            interval,
-            settings,
-            {
-                nowSec,
-                minClosedCandles: 1,
-                fallbackToTrimmedClosed: true,
-            }
-        );
-        if (executionAware) {
-            return sliceOhlcvByBlock(executionAware, blockRange);
-        }
-        return sliceOhlcvByBlock(ohlcvData, blockRange);
-    }
-
-    public getCapitalSettings(): CapitalSettings {
-        return readCapitalSettings();
-    }
-
-    private getAlternativeSizingEnabled(): boolean {
-        return readAlternativeSizingEnabled();
-    }
-
-    public getBacktestSettings(): BacktestSettings {
-        return readBacktestSettings();
     }
 
     private resolveSubscriptionCapitalSettings(backtestSettings: BacktestSettings): CapitalSettings {
@@ -754,76 +451,6 @@ export class BacktestService {
         );
     }
 
-    public async evaluateStrategyOnDataWithPolymarket(
-        ohlcvData: OHLCVData[],
-        symbol: string,
-        interval: string,
-        strategyKey: string,
-        strategy: Strategy,
-        params: StrategyParams,
-        settings: BacktestSettings = this.getBacktestSettings(),
-        capitalSettings: CapitalSettings = this.getCapitalSettings()
-    ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript'; signals: Signal[] }> {
-        const effectiveSettings = resolveBacktestSettingsFromRaw(
-            {
-                ...settings,
-                polymarketAnnotationEnabled: true,
-            } as BacktestSettings,
-            { coerceWithoutUiToggles: false }
-        );
-        effectiveSettings.tradeDirection = effectiveSettings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
-        effectiveSettings.executionModel = effectiveSettings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
-
-        const run = await this.runBacktestForData(
-            ohlcvData,
-            symbol,
-            interval,
-            strategyKey,
-            strategy,
-            params,
-            effectiveSettings,
-            capitalSettings,
-            false
-        );
-
-        let result = await this.annotatePolymarketResult(run.result, effectiveSettings, ohlcvData, symbol, interval);
-        const protectionReplay = await this.replayBacktestWithPolymarketProtectionExits(
-            result,
-            run.signals,
-            ohlcvData,
-            effectiveSettings,
-            capitalSettings,
-            run.requestContext,
-            symbol,
-            interval
-        );
-        if (protectionReplay) {
-            result = protectionReplay;
-        }
-
-        const { applyPolymarketAlternativeSizing } = await import("./polymarket-alternative-sizing");
-        const sizedResult = applyPolymarketAlternativeSizing({
-            result,
-            chartData: this.selectClosedCandleData(
-                ohlcvData,
-                interval,
-                effectiveSettings,
-                run.requestContext.nowSec,
-                run.requestContext.blockRange
-            ),
-            backtestSettings: effectiveSettings,
-            capitalSettings,
-            alternativeSizingEnabled: this.getAlternativeSizingEnabled(),
-        });
-        transferBacktestEdgeAnalysisInput(result, sizedResult);
-
-        return {
-            result: sizedResult,
-            engineUsed: protectionReplay ? 'typescript' : run.engineUsed,
-            signals: run.signals,
-        };
-    }
-
     public async evaluateSignalsOnData(
         ohlcvData: OHLCVData[],
         interval: string,
@@ -887,10 +514,9 @@ export class BacktestService {
         engineUsed: 'rust' | 'typescript',
         nowSec: number,
         blockRange: { from: number; to: number } | null,
-        annotatePolymarket: boolean,
         datasetForFingerprint?: OHLCVData[]
     ) {
-        return createEndpointCopySnapshot(strategyParams, backtestSettings, capitalSettings, engineUsed, nowSec, blockRange, annotatePolymarket, datasetForFingerprint);
+return createEndpointCopySnapshot(strategyParams, backtestSettings, capitalSettings, engineUsed, nowSec, blockRange, datasetForFingerprint);
     }
 }
 

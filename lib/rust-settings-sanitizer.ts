@@ -1,6 +1,5 @@
 import type { BacktestSettings } from "./types/strategies";
 import type { RustCapabilities } from "./rust-engine-client";
-import { isSameEventPolymarketExitMode } from "./polymarket-exit-mode";
 
 export const RUST_NEXT_OPEN_CAPABILITY = "backtest.next_open.v1";
 export const RUST_RISK_MAX_HOLD_CAPABILITY = "backtest.risk_max_hold.v1";
@@ -74,12 +73,7 @@ export function getTypescriptEngineRequirementReasons(
 
     const usesMultiPosition = (settings.maxOpenTrades ?? 1) > 1;
 
-    const usesSignalExitMode = isSameEventPolymarketExitMode(settings.polymarketExitMode);
     const usesDisableSignalExits = settings.disableSignalExits === true;
-    const usesPolymarketProtection =
-        (settings.polymarketProtectionTakeProfitEnabled === true && (settings.polymarketProtectionTakeProfitCents ?? 0) > 0)
-        || (settings.polymarketProtectionStopLossEnabled === true && (settings.polymarketProtectionStopLossCents ?? 0) > 0);
-
     const usesPathExit =
         settings.pathExitEnabled === true
         && settings.pathExitMode !== undefined
@@ -112,9 +106,7 @@ export function getTypescriptEngineRequirementReasons(
     }
     if (usesAdaptivePercentageTakeProfit) reasons.push('adaptive take profit is enabled');
     if (usesMultiPosition) reasons.push('multiple open positions are enabled');
-    if (usesSignalExitMode) reasons.push('same-event Polymarket exits are enabled');
     if (usesDisableSignalExits) reasons.push('signal exits are disabled');
-    if (usesPolymarketProtection) reasons.push('Polymarket protection is enabled');
     if (usesPathExit) reasons.push('path exits are enabled');
     if (usesSlippage) reasons.push('slippage is enabled');
     return reasons;
@@ -203,30 +195,6 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "optimalFBootstrapSamples",
     "secureFConfidence",
     "secureFMethod",
-    "polymarketAnnotationEnabled",
-    "polymarketOutcomeSymbol",
-    "polymarketOutcomeInterval",
-    "polymarketEntrySelectionMode",
-    "polymarketEntryOffset",
-    "polymarketEntryDelayBars",
-    "polymarketEntryPriceFilterCents",
-    "polymarketBacktestSlippageCents",
-    "polymarketEntryCutoffEnabled",
-    "polymarketEntryCutoffSeconds",
-    "polymarketExitMode",
-    "polymarketSignalExitAllowMultipleTradesPerEvent",
-    "polymarketPostSignalLimitEntryEnabled",
-    "polymarketPostSignalLimitEntryMode",
-    "polymarketPostSignalLimitEntryPriceCents",
-    "polymarketPostSignalLimitEntryOffsetCents",
-    "polymarketPostSignalLimitExitEnabled",
-    "polymarketPostSignalLimitExitMode",
-    "polymarketPostSignalLimitExitPriceCents",
-    "polymarketPostSignalLimitExitOffsetCents",
-    "polymarketProtectionTakeProfitEnabled",
-    "polymarketProtectionTakeProfitCents",
-    "polymarketProtectionStopLossEnabled",
-    "polymarketProtectionStopLossCents",
     "crossSymbolSecondary",
 ] as const;
 

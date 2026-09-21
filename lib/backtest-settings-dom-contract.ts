@@ -19,20 +19,6 @@ import {
     resolveTradeSizingModeValue,
     type BacktestSettingsData,
 } from "./settings-model";
-import { resolvePolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
-import { clampPolymarketEntryDelayBars } from "./polymarket-entry-delay";
-import { clampPolymarketEntryPriceFilterCents } from "./polymarket-entry-price-filter";
-import { clampPolymarketBacktestSlippageCents } from "./polymarket-backtest-slippage";
-import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
-import { resolvePolymarketExitMode } from "./polymarket-exit-mode";
-import {
-    clampPolymarketPostSignalLimitEntryPriceCents,
-    clampPolymarketPostSignalLimitExitPriceCents,
-    clampPolymarketPostSignalLimitOffsetCents,
-    resolvePolymarketPostSignalLimitEntryMode,
-    resolvePolymarketPostSignalLimitExitMode,
-} from "./polymarket-post-signal-limit-entry";
-import { clampPolymarketProtectionCents } from "./polymarket-protection-settings";
 import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "./rust-settings-sanitizer";
 import { resolveTakeProfitMode } from "./take-profit-settings";
 import { resolveEntryTimeFilter } from "./entry-time-filter";
@@ -48,18 +34,6 @@ export type BacktestDomSettingParser =
     | "stringArray"
     | "confirmationMode"
     | "confirmationStrategyParams"
-    | "polymarketOutcomeInterval"
-    | "polymarketEntrySelectionMode"
-    | "polymarketEntryDelayBars"
-    | "polymarketEntryPriceFilterCents"
-    | "polymarketBacktestSlippageCents"
-    | "polymarketExitMode"
-    | "polymarketLimitEntryPriceCents"
-    | "polymarketLimitExitPriceCents"
-    | "polymarketLimitOffsetCents"
-    | "polymarketLimitEntryMode"
-    | "polymarketLimitExitMode"
-    | "polymarketProtectionCents"
     | "riskMode"
     | "takeProfitMode"
     | "tradeDirection"
@@ -370,35 +344,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         rustSupport: "unsupported",
     }),
     createField("strategyTimeframeMinutes", { rustSupport: "unsupported" }),
-    createField("polymarketAnnotationEnabled", { rustSupport: "unsupported" }),
-    createField("polymarketOutcomeSymbol", { rustSupport: "unsupported", parser: "string" }),
-    createField("polymarketOutcomeInterval", { rustSupport: "unsupported", parser: "polymarketOutcomeInterval" }),
-    createField("polymarketEntrySelectionMode", { rustSupport: "unsupported", parser: "polymarketEntrySelectionMode" }),
-    createField("polymarketEntryOffset", { rustSupport: "unsupported" }),
-    createField("polymarketEntryDelayBars", { rustSupport: "unsupported", parser: "polymarketEntryDelayBars" }),
-    createField("polymarketEntryPriceFilterCents", { rustSupport: "unsupported", parser: "polymarketEntryPriceFilterCents" }),
-    createField("polymarketBacktestSlippageCents", { rustSupport: "unsupported", parser: "polymarketBacktestSlippageCents" }),
-    createField("polymarketEntryCutoffToggle", {
-        settingKey: "polymarketEntryCutoffEnabled",
-        parser: "boolean",
-        legacyAliases: ["polymarketEntryCutoffEnabled"],
-        rustSupport: "unsupported",
-    }),
-    createField("polymarketEntryCutoffSeconds", { rustSupport: "unsupported" }),
-    createField("polymarketExitMode", { rustSupport: "unsupported", parser: "polymarketExitMode" }),
-    createField("polymarketSignalExitAllowMultipleTradesPerEvent", { rustSupport: "unsupported" }),
-    createField("polymarketPostSignalLimitEntryEnabled", { rustSupport: "unsupported" }),
-    createField("polymarketPostSignalLimitEntryMode", { rustSupport: "unsupported", parser: "polymarketLimitEntryMode" }),
-    createField("polymarketPostSignalLimitEntryPriceCents", { rustSupport: "unsupported", parser: "polymarketLimitEntryPriceCents" }),
-    createField("polymarketPostSignalLimitEntryOffsetCents", { rustSupport: "unsupported", parser: "polymarketLimitOffsetCents" }),
-    createField("polymarketPostSignalLimitExitEnabled", { rustSupport: "unsupported" }),
-    createField("polymarketPostSignalLimitExitMode", { rustSupport: "unsupported", parser: "polymarketLimitExitMode" }),
-    createField("polymarketPostSignalLimitExitPriceCents", { rustSupport: "unsupported", parser: "polymarketLimitExitPriceCents" }),
-    createField("polymarketPostSignalLimitExitOffsetCents", { rustSupport: "unsupported", parser: "polymarketLimitOffsetCents" }),
-    createField("polymarketProtectionTakeProfitEnabled", { rustSupport: "unsupported" }),
-    createField("polymarketProtectionTakeProfitCents", { rustSupport: "unsupported", parser: "polymarketProtectionCents" }),
-    createField("polymarketProtectionStopLossEnabled", { rustSupport: "unsupported" }),
-    createField("polymarketProtectionStopLossCents", { rustSupport: "unsupported", parser: "polymarketProtectionCents" }),
     createField("crossSymbolSecondary", {
         parser: "string",
         rustSupport: "unsupported",
@@ -546,30 +491,6 @@ export function coerceBacktestDomSettingValue(
             return resolveExecutionModelValue(value, DEFAULT_BACKTEST_SETTINGS);
         case "entryTimeFilter":
             return resolveEntryTimeFilter(value, DEFAULT_BACKTEST_SETTINGS.entryTimeFilter);
-        case "polymarketOutcomeInterval":
-            return resolvePolymarketOutcomeInterval(value);
-        case "polymarketEntrySelectionMode":
-            return resolvePolymarketEntrySelectionMode(value);
-        case "polymarketEntryDelayBars":
-            return clampPolymarketEntryDelayBars(value);
-        case "polymarketEntryPriceFilterCents":
-            return clampPolymarketEntryPriceFilterCents(value);
-        case "polymarketBacktestSlippageCents":
-            return clampPolymarketBacktestSlippageCents(value);
-        case "polymarketExitMode":
-            return resolvePolymarketExitMode(value);
-        case "polymarketLimitEntryPriceCents":
-            return clampPolymarketPostSignalLimitEntryPriceCents(value);
-        case "polymarketLimitExitPriceCents":
-            return clampPolymarketPostSignalLimitExitPriceCents(value);
-        case "polymarketLimitOffsetCents":
-            return clampPolymarketPostSignalLimitOffsetCents(value);
-        case "polymarketLimitEntryMode":
-            return resolvePolymarketPostSignalLimitEntryMode(value);
-        case "polymarketLimitExitMode":
-            return resolvePolymarketPostSignalLimitExitMode(value);
-        case "polymarketProtectionCents":
-            return clampPolymarketProtectionCents(value);
         case "kellyFraction":
             return resolveKellyFraction(value);
         case "volScalingMethod":

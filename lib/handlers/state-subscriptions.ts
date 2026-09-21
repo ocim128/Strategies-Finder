@@ -10,15 +10,8 @@ import { paramManager } from "../param-manager";
 import { getRequiredElement } from "../dom-utils";
 import { SYMBOL_MAP } from "../constants";
 import { clearAll } from "../app-actions";
-import { formatPolymarketDisplayName } from "../dataProviders/polymarket";
 import { livePositionsService } from "../live-positions-service";
 import { isBinanceDataProvider } from "../binance-market";
-import {
-    SAME_EVENT_SUPPORTED_RANK_MODES,
-    isPolymarketOneSecondSignalExitExecutionModel,
-    isSameEventPolymarketExitMode,
-} from "../polymarket-exit-mode";
-import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
 import { activateLazyFeature } from "../lazy-feature-init";
 import {
     logBacktestResultUiFailure,
@@ -26,140 +19,14 @@ import {
 } from "./backtest-result-ui-steps";
 import {
     createStateSubscriptionsDom,
-    getFinderPolymarketRankModeSelect,
     type StateSubscriptionsDom,
 } from "./state-subscriptions-dom";
 import type { Time } from "lightweight-charts";
 import { getMockBarsInput, getVisibleCandlesInput } from "./ui-event-handlers-dom";
 import { coalesceAnimationFrame } from "../render-scheduler";
 
-function updatePolymarketEntryOffsetVisibility(dom: StateSubscriptionsDom, interval: string = state.currentInterval): void {
-    const rows = dom.polymarketSettingsRows;
-    const annotationToggle = dom.polymarketAnnotationToggle;
-    const annotationEnabled = annotationToggle?.checked ?? false;
-    const polymarketSettings = resolvePolymarketDomSettings();
-    const supportsNativeBridgeEntry = polymarketSettings.outcomeInterval === '5m';
-    const supportsPostSignalLimitEntry = polymarketSettings.outcomeInterval === '5m'
-        || polymarketSettings.outcomeInterval === '15m';
-    const isOneSecondInterval = interval === '1s';
-    const supportsLimitEntry = annotationEnabled && supportsPostSignalLimitEntry;
-    const limitEntryEnabled = supportsLimitEntry && polymarketSettings.postSignalLimitEntryEnabled;
-    const usesFixedLimitEntry = polymarketSettings.postSignalLimitEntryMode === 'fixed_price';
-    const usesSignalOffsetEntry = polymarketSettings.postSignalLimitEntryMode === 'signal_offset';
-    const limitExitEnabled = limitEntryEnabled && polymarketSettings.postSignalLimitExitEnabled;
-    const usesFixedLimitExit = polymarketSettings.postSignalLimitExitMode === 'fixed_price';
-    const supportsSignalExit = interval === '1m'
-        ? polymarketSettings.executionModel === 'next_open'
-        : isOneSecondInterval && isPolymarketOneSecondSignalExitExecutionModel(polymarketSettings.executionModel);
-    const isSameEventExit = supportsSignalExit
-        && isSameEventPolymarketExitMode(polymarketSettings.exitMode);
-    const usesActualEntryMinute = polymarketSettings.entrySelectionMode === 'actual_entry_minute';
-    const showsEntryBridgeControls = interval === '1m' && supportsNativeBridgeEntry && annotationEnabled && !isSameEventExit;
-
-    const visibilityRules: Array<[HTMLElement | null, boolean]> = [
-        [rows.outcomeIntervalRow, annotationEnabled],
-        [rows.entrySelectionModeRow, showsEntryBridgeControls],
-        [rows.offsetRow, showsEntryBridgeControls && !usesActualEntryMinute],
-        [rows.entryDelayBarsRow, annotationEnabled && isOneSecondInterval && supportsSignalExit],
-        [rows.entryPriceFilterCentsRow, annotationEnabled],
-        [rows.backtestSlippageCentsRow, annotationEnabled],
-        [rows.protectionTakeProfitRow, annotationEnabled && isOneSecondInterval],
-        [rows.protectionStopLossRow, annotationEnabled && isOneSecondInterval],
-        [rows.exitModeRow, annotationEnabled],
-        [rows.signalExitAllowMultipleTradesPerEventRow, annotationEnabled && isSameEventExit],
-        [rows.postSignalLimitEntryEnabledRow, supportsLimitEntry],
-        [rows.postSignalLimitEntryModeRow, limitEntryEnabled],
-        [rows.postSignalLimitEntryPriceCentsRow, limitEntryEnabled && usesFixedLimitEntry],
-        [rows.postSignalLimitEntryOffsetCentsRow, limitEntryEnabled && usesSignalOffsetEntry],
-        [rows.postSignalLimitExitEnabledRow, limitEntryEnabled],
-        [rows.postSignalLimitExitModeRow, limitExitEnabled],
-        [rows.postSignalLimitExitPriceCentsRow, limitExitEnabled && usesFixedLimitExit],
-        [rows.postSignalLimitExitOffsetCentsRow, limitExitEnabled && !usesFixedLimitExit],
-        [rows.outcomeSymbolRow, annotationEnabled],
-    ];
-    for (const [row, visible] of visibilityRules) {
-        if (row) row.style.display = visible ? 'block' : 'none';
-    }
-
-    const exitModeSelect = dom.polymarketExitModeSelect;
-    const resolveHoldOption = exitModeSelect
-        ? Array.from(exitModeSelect.options).find((option) => option.value === 'resolve_hold')
-        : undefined;
-    const signalExitOption = exitModeSelect
-        ? Array.from(exitModeSelect.options).find((option) => option.value === 'signal_exit_same_event')
-        : undefined;
-    const chartExitOption = exitModeSelect
-        ? Array.from(exitModeSelect.options).find((option) => option.value === 'chart_exit_same_event')
-        : undefined;
-    if (resolveHoldOption) {
-        resolveHoldOption.disabled = false;
-        resolveHoldOption.hidden = false;
-    }
-    if (signalExitOption) {
-        signalExitOption.disabled = !supportsSignalExit;
-    }
-    if (chartExitOption) {
-        chartExitOption.disabled = !supportsSignalExit;
-    }
-    if (exitModeSelect) {
-        if (isSameEventPolymarketExitMode(exitModeSelect.value as any) && !supportsSignalExit) {
-            exitModeSelect.value = 'resolve_hold';
-        }
-    }
-    updateFinderRankModeOptions(dom);
-}
-
-function updateFinderRankModeOptions(dom: StateSubscriptionsDom): void {
-    const isSameEventExit = isSameEventPolymarketExitMode(resolvePolymarketDomSettings().exitMode);
-    const isOneSecondChart = state.currentInterval === "1s";
-
-    const select = dom.finderPolymarketRankModeSelect;
-    if (!select) {
-        return;
-    }
-
-    for (const option of Array.from(select.options)) {
-        if (!isSameEventExit || isOneSecondChart) {
-            option.disabled = false;
-            continue;
-        }
-        option.disabled = !SAME_EVENT_SUPPORTED_RANK_MODES.has(option.value as any);
-    }
-    if (isSameEventExit && select.selectedOptions[0]?.disabled) {
-        const firstValid = Array.from(select.options).find(o => !o.disabled);
-        if (firstValid) select.value = firstValid.value;
-    }
-}
-
 export function setupStateSubscriptions() {
     const dom = createStateSubscriptionsDom();
-    updatePolymarketEntryOffsetVisibility(dom);
-    [
-        { element: dom.polymarketAnnotationToggle, refreshRankModes: false },
-        { element: dom.polymarketExitModeSelect, refreshRankModes: true },
-        { element: dom.polymarketSignalExitAllowMultipleTradesToggle, refreshRankModes: false },
-        { element: dom.polymarketEntrySelectionModeSelect, refreshRankModes: false },
-        { element: dom.polymarketOutcomeIntervalSelect, refreshRankModes: true },
-        { element: dom.polymarketPostSignalLimitEntryToggle, refreshRankModes: false },
-        { element: dom.polymarketPostSignalLimitEntryModeSelect, refreshRankModes: false },
-        { element: dom.polymarketPostSignalLimitExitToggle, refreshRankModes: false },
-        { element: dom.polymarketPostSignalLimitExitModeSelect, refreshRankModes: false },
-        { element: dom.executionModelSelect, refreshRankModes: true },
-    ].forEach(({ element, refreshRankModes }) => {
-        element?.addEventListener('change', () => {
-            updatePolymarketEntryOffsetVisibility(dom);
-            if (refreshRankModes) updateFinderRankModeOptions(dom);
-        });
-    });
-    window.addEventListener("strategy-panel:tab-markup-loaded", ((event: CustomEvent<{ tabId?: string }>) => {
-        if (event.detail?.tabId === 'finder') {
-            dom.finderPolymarketRankModeSelect = getFinderPolymarketRankModeSelect();
-            updateFinderRankModeOptions(dom);
-        }
-    }) as EventListener);
-
-    updateFinderRankModeOptions(dom);
-
     const setPriceLoading = () => {
         const priceEl = getRequiredElement('symbolPrice');
         const changeEl = getRequiredElement('symbolChange');
@@ -353,21 +220,6 @@ export function setupStateSubscriptions() {
         }
         void renderTradesForCurrentState();
     }) as EventListener);
-    livePositionsService.subscribe(() => {
-        if (!state.currentBacktestResult || !isPanelVisible('trades')) {
-            return;
-        }
-
-        if (
-            state.currentBacktestResultSource !== 'backtest'
-            || !isSameEventPolymarketExitMode(state.currentBacktestResult.polymarketTradeSummary?.evaluationMode)
-        ) {
-            return;
-        }
-
-        void renderTradesForCurrentState();
-    });
-
     // Theme changes
     state.subscribe('isDarkTheme', (isDark) => {
         document.body.classList.toggle('light-theme', !isDark);
@@ -382,10 +234,6 @@ export function setupStateSubscriptions() {
 
         // Get display name from map, or generate one for Binance pairs
         let displayName = SYMBOL_MAP[symbol];
-        const polymarketLabel = formatPolymarketDisplayName(symbol);
-        if (polymarketLabel) {
-            displayName = polymarketLabel;
-        }
         if (!displayName) {
             // For Binance pairs like BTCUSDT, format as BTC/USDT
             if (symbol.endsWith('USDT')) {
@@ -417,8 +265,6 @@ export function setupStateSubscriptions() {
     state.subscribe('currentInterval', (interval) => {
         debugLogger.event('state.currentInterval', { interval });
         uiManager.updateTimeframeUI(interval);
-        updatePolymarketEntryOffsetVisibility(dom, interval);
-        updateFinderRankModeOptions(dom);
         scheduleDataReload();
     });
 

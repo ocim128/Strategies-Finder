@@ -15,38 +15,6 @@ import {
     toBooleanLike,
     toFiniteNumber,
 } from "./settings-parse-utils";
-import { resolvePolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
-import { DEFAULT_POLYMARKET_ENTRY_CUTOFF_SECONDS, clampPolymarketEntryCutoffSeconds } from "./polymarket-entry-cutoff";
-import {
-    DEFAULT_POLYMARKET_BACKTEST_SLIPPAGE_CENTS,
-    clampPolymarketBacktestSlippageCents,
-} from "./polymarket-backtest-slippage";
-import {
-    DEFAULT_POLYMARKET_ENTRY_DELAY_BARS,
-    clampPolymarketEntryDelayBars,
-} from "./polymarket-entry-delay";
-import { clampPolymarketEntryPriceFilterCents } from "./polymarket-entry-price-filter";
-import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
-import { resolvePolymarketExitMode } from "./polymarket-exit-mode";
-import {
-    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_ENABLED,
-    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_MODE,
-    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_PRICE_CENTS,
-    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_OFFSET_CENTS,
-    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_ENABLED,
-    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_MODE,
-    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_PRICE_CENTS,
-    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_OFFSET_CENTS,
-    resolvePolymarketPostSignalLimitSettingFields,
-} from "./polymarket-post-signal-limit-entry";
-import {
-    DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_CENTS,
-    DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_ENABLED,
-    DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_CENTS,
-    DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_ENABLED,
-    clampPolymarketProtectionCents,
-    resolvePolymarketProtectionSettingFields,
-} from "./polymarket-protection-settings";
 import { ADAPTIVE_TAKE_PROFIT_DEFAULTS, resolveTakeProfitMode } from "./take-profit-settings";
 import { DEFAULT_ENTRY_TIME_FILTER, resolveEntryTimeFilter } from "./entry-time-filter";
 
@@ -109,30 +77,6 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     maxOpenTrades: 1,
     strategyTimeframeEnabled: false,
     strategyTimeframeMinutes: 120,
-    polymarketAnnotationEnabled: false,
-    polymarketOutcomeSymbol: "",
-    polymarketOutcomeInterval: "5m" as const,
-    polymarketEntrySelectionMode: "fixed_offset" as const,
-    polymarketEntryOffset: 0,
-    polymarketEntryDelayBars: DEFAULT_POLYMARKET_ENTRY_DELAY_BARS,
-    polymarketEntryPriceFilterCents: 0,
-    polymarketBacktestSlippageCents: DEFAULT_POLYMARKET_BACKTEST_SLIPPAGE_CENTS,
-    polymarketEntryCutoffEnabled: false,
-    polymarketEntryCutoffSeconds: DEFAULT_POLYMARKET_ENTRY_CUTOFF_SECONDS,
-    polymarketExitMode: "resolve_hold" as const,
-    polymarketSignalExitAllowMultipleTradesPerEvent: false,
-    polymarketPostSignalLimitEntryEnabled: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_ENABLED,
-    polymarketPostSignalLimitEntryMode: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_MODE,
-    polymarketPostSignalLimitEntryPriceCents: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_PRICE_CENTS,
-    polymarketPostSignalLimitEntryOffsetCents: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_OFFSET_CENTS,
-    polymarketPostSignalLimitExitEnabled: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_ENABLED,
-    polymarketPostSignalLimitExitMode: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_MODE,
-    polymarketPostSignalLimitExitPriceCents: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_PRICE_CENTS,
-    polymarketPostSignalLimitExitOffsetCents: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_OFFSET_CENTS,
-    polymarketProtectionTakeProfitEnabled: DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_ENABLED,
-    polymarketProtectionTakeProfitCents: DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_CENTS,
-    polymarketProtectionStopLossEnabled: DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_ENABLED,
-    polymarketProtectionStopLossCents: DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_CENTS,
     pathExitEnabled: false,
     pathExitMode: "off" as PathExitMode,
     pathExitMinBars: 10,
@@ -187,11 +131,6 @@ type NumericResolverKey =
     | "slippageBps"
     | "maxOpenTrades"
     | "strategyTimeframeMinutes"
-    | "polymarketEntryDelayBars"
-    | "polymarketBacktestSlippageCents"
-    | "polymarketEntryCutoffSeconds"
-    | "polymarketProtectionTakeProfitCents"
-    | "polymarketProtectionStopLossCents"
     | "pathExitMinBars"
     | "pathExitMinMfePercent"
     | "pathExitGivebackPercent"
@@ -212,11 +151,8 @@ type BooleanResolverKey =
     | "invertSignals"
     | "allowSameBarExit"
     | "strategyTimeframeEnabled"
-    | "polymarketEntryCutoffEnabled"
     | "disableSignalExits"
     | "confirmationSignalExitsEnabled"
-    | "polymarketProtectionTakeProfitEnabled"
-    | "polymarketProtectionStopLossEnabled"
     | "pathExitEnabled";
 
 type NumericResolverRule = {
@@ -337,32 +273,6 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
         },
     },
     { key: "strategyTimeframeMinutes" },
-    {
-        key: "polymarketEntryDelayBars",
-        resolve: (raw) => clampPolymarketEntryDelayBars(raw["polymarketEntryDelayBars"]),
-    },
-    {
-        key: "polymarketBacktestSlippageCents",
-        resolve: (raw) => clampPolymarketBacktestSlippageCents(raw["polymarketBacktestSlippageCents"]),
-    },
-    {
-        key: "polymarketEntryCutoffSeconds",
-        resolve: (raw) => clampPolymarketEntryCutoffSeconds(raw["polymarketEntryCutoffSeconds"]),
-    },
-    {
-        key: "polymarketProtectionTakeProfitCents",
-        resolve: (raw) => clampPolymarketProtectionCents(
-            raw["polymarketProtectionTakeProfitCents"],
-            EFFECTIVE_BACKTEST_DEFAULTS.polymarketProtectionTakeProfitCents
-        ),
-    },
-    {
-        key: "polymarketProtectionStopLossCents",
-        resolve: (raw) => clampPolymarketProtectionCents(
-            raw["polymarketProtectionStopLossCents"],
-            EFFECTIVE_BACKTEST_DEFAULTS.polymarketProtectionStopLossCents
-        ),
-    },
     { key: "pathExitMinBars", guard: "useRiskManagement", disabledValue: 10 },
     { key: "pathExitMinMfePercent", guard: "useRiskManagement", disabledValue: 2.0 },
     { key: "pathExitGivebackPercent", guard: "useRiskManagement", disabledValue: 25 },
@@ -399,11 +309,8 @@ const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
     { key: "invertSignals", keys: ["invertSignals", "invertSignalsToggle"] },
     { key: "allowSameBarExit", keys: ["allowSameBarExit", "allowSameBarExitToggle"] },
     { key: "strategyTimeframeEnabled", keys: ["strategyTimeframeEnabled", "strategyTimeframeToggle"] },
-    { key: "polymarketEntryCutoffEnabled", keys: ["polymarketEntryCutoffEnabled", "polymarketEntryCutoffToggle"] },
     { key: "disableSignalExits", keys: ["disableSignalExits"] },
     { key: "confirmationSignalExitsEnabled", keys: ["confirmationSignalExitsEnabled", "confirmationSignalExitsToggle"] },
-    { key: "polymarketProtectionTakeProfitEnabled", keys: ["polymarketProtectionTakeProfitEnabled"] },
-    { key: "polymarketProtectionStopLossEnabled", keys: ["polymarketProtectionStopLossEnabled"] },
     { key: "pathExitEnabled", keys: ["pathExitEnabled", "pathExitToggle"], guard: "useRiskManagement", disabledValue: false },
 ] as const;
 
@@ -718,15 +625,6 @@ export function resolveBacktestSettingsFromRaw(
         };
         delete coerced.warmUpEntryEnabled;
         delete coerced.warmUpEntryToggle;
-        if (typeof coerced.polymarketOutcomeSymbol === "string") {
-            coerced.polymarketOutcomeSymbol = coerced.polymarketOutcomeSymbol.trim().toUpperCase();
-        }
-        coerced.polymarketOutcomeInterval = resolvePolymarketOutcomeInterval(coerced.polymarketOutcomeInterval);
-        coerced.polymarketEntryDelayBars = clampPolymarketEntryDelayBars(coerced.polymarketEntryDelayBars);
-        coerced.polymarketEntryPriceFilterCents = clampPolymarketEntryPriceFilterCents(coerced.polymarketEntryPriceFilterCents);
-        coerced.polymarketBacktestSlippageCents = clampPolymarketBacktestSlippageCents(coerced.polymarketBacktestSlippageCents);
-        coerced.polymarketEntryCutoffEnabled = readBooleanAny(raw, ["polymarketEntryCutoffEnabled", "polymarketEntryCutoffToggle"], EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffEnabled);
-        coerced.polymarketEntryCutoffSeconds = clampPolymarketEntryCutoffSeconds(raw["polymarketEntryCutoffSeconds"]);
         coerced.disableSignalExits = readBoolean(raw, "disableSignalExits", EFFECTIVE_BACKTEST_DEFAULTS.disableSignalExits);
         coerced.confirmationSignalExitsEnabled = readBooleanAny(
             raw,
@@ -741,14 +639,6 @@ export function resolveBacktestSettingsFromRaw(
         coerced.exitStrategyParams = readStrategyParams(raw["exitStrategyParams"]);
         coerced.pathExitEnabled = readBoolean(raw, "pathExitEnabled", EFFECTIVE_BACKTEST_DEFAULTS.pathExitEnabled);
         coerced.pathExitMode = resolvePathExitMode(raw["pathExitMode"]);
-        Object.assign(coerced, resolvePolymarketPostSignalLimitSettingFields(
-            raw,
-            (key, fallback) => readBoolean(raw, key, fallback)
-        ));
-        Object.assign(coerced, resolvePolymarketProtectionSettingFields(
-            raw,
-            (key, fallback) => readBoolean(raw, key, fallback)
-        ));
         if ("confirmationStrategies" in raw || "confirmationStrategiesToggle" in raw) {
             const rawConfirmationStrategies = readStringArray(raw["confirmationStrategies"]);
             const confirmationStrategiesEnabled = readBoolean(
@@ -852,33 +742,6 @@ export function resolveBacktestSettingsFromRaw(
         pathExitMode: riskEnabled
             ? resolvePathExitMode(raw["pathExitMode"])
             : "off",
-        polymarketAnnotationEnabled: readBoolean(raw, "polymarketAnnotationEnabled", EFFECTIVE_BACKTEST_DEFAULTS.polymarketAnnotationEnabled),
-        polymarketOutcomeSymbol: readString(raw, "polymarketOutcomeSymbol", EFFECTIVE_BACKTEST_DEFAULTS.polymarketOutcomeSymbol),
-        polymarketOutcomeInterval: resolvePolymarketOutcomeInterval(raw["polymarketOutcomeInterval"]),
-        polymarketEntrySelectionMode: resolvePolymarketEntrySelectionMode(raw["polymarketEntrySelectionMode"]),
-        polymarketEntryOffset: readNumber(raw, "polymarketEntryOffset", EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryOffset),
-        polymarketEntryDelayBars: numericSettings.polymarketEntryDelayBars,
-        polymarketEntryPriceFilterCents: clampPolymarketEntryPriceFilterCents(raw["polymarketEntryPriceFilterCents"]),
-        polymarketBacktestSlippageCents: numericSettings.polymarketBacktestSlippageCents,
-        polymarketEntryCutoffEnabled: booleanSettings.polymarketEntryCutoffEnabled,
-        polymarketEntryCutoffSeconds: numericSettings.polymarketEntryCutoffSeconds,
-        polymarketExitMode: resolvePolymarketExitMode(
-            raw["polymarketExitMode"],
-            EFFECTIVE_BACKTEST_DEFAULTS.polymarketExitMode
-        ),
-        polymarketSignalExitAllowMultipleTradesPerEvent: readBoolean(
-            raw,
-            "polymarketSignalExitAllowMultipleTradesPerEvent",
-            EFFECTIVE_BACKTEST_DEFAULTS.polymarketSignalExitAllowMultipleTradesPerEvent
-        ),
-        ...resolvePolymarketPostSignalLimitSettingFields(
-            raw,
-            (key, fallback) => readBoolean(raw, key, fallback)
-        ),
-        ...resolvePolymarketProtectionSettingFields(
-            raw,
-            (key, fallback) => readBoolean(raw, key, fallback)
-        ),
         crossSymbolSecondary: readString(raw, "crossSymbolSecondary", EFFECTIVE_BACKTEST_DEFAULTS.crossSymbolSecondary),
     };
 
