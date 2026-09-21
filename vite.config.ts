@@ -3,11 +3,9 @@ import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import { backtestEndpointPlugin } from './lib/backtest-endpoint-plugin';
 import { strategyLibraryAdminPlugin } from './lib/strategy-library-admin-plugin';
-import { executionLabVitePlugin } from './lib/execution-lab/execution-lab-vite-plugin';
 import { ibkrDataVitePlugin } from './lib/ibkr-data/ibkr-data-vite-plugin';
 import { cryptoDataVitePlugin } from './lib/crypto-data/crypto-data-vite-plugin';
 import { localSqlitePlugin } from './lib/local-sqlite-vite-plugin';
-import { secondMarketApiPlugin } from './lib/second-market-vite-plugin';
 import { batchBacktestVitePlugin } from './lib/batch-backtest/batch-backtest-vite-plugin';
 import { tradeLedgerSweepVitePlugin } from './lib/batch-backtest/trade-ledger-sweep-vite-plugin';
 import { selectionRulesVitePlugin } from './lib/selection-rules/server-vite-plugin';
@@ -15,14 +13,10 @@ import { finderVitePlugin } from './lib/finder/server/finder-vite-plugin';
 import { rankPairsVitePlugin } from './lib/rank-pairs/server/rank-pairs-vite-plugin';
 import { sendCaughtErrorJson, sendJson, proxyUpstreamJson } from './lib/vite-http-utils';
 import { debugLogger } from './lib/debug-logger';
-import { configurePolymarketNodeDns } from './lib/polymarket-node-dns';
 import { STOCK_MARKET_SYMBOL_SUFFIX } from './lib/local-daily-datasets';
 
 const BYBIT_TRADFI_KLINE_URL = 'https://www.bybit.com/x-api/fapi/copymt5/kline';
-const POLYMARKET_GAMMA_EVENT_SLUG_URL = 'https://gamma-api.polymarket.com/events/slug';
-const POLYMARKET_CLOB_HISTORY_URL = 'https://clob.polymarket.com/prices-history';
 const BYBIT_TRADFI_PROXY_TIMEOUT_MS = 8000;
-const POLYMARKET_PROXY_TIMEOUT_MS = 8000;
 const APP_ROOT = process.cwd();
 const LIGHTWEIGHT_CHARTS_ROOT = resolve(APP_ROOT, '..', '..', '..');
 const LIGHTWEIGHT_CHARTS_DIST_DIR = resolve(LIGHTWEIGHT_CHARTS_ROOT, 'dist');
@@ -50,7 +44,6 @@ const WATCH_IGNORED_GLOBS = [
     ...(WATCH_STRATEGIES ? [] : ['**/lib/strategies/**']),
 ];
 
-configurePolymarketNodeDns('adguard-doh');
 
 type LocalPriceDataCatalogAsset = { symbol: string; name: string };
 
@@ -197,94 +190,6 @@ function tradFiKlineProxyPlugin(): Plugin {
     };
 }
 
-function polymarketProxyPlugin(): Plugin {
-    const register = (middlewares: any) => {
-        middlewares.use('/api/polymarket-event', async (req: any, res: any) => {
-            if (req.method !== 'GET') {
-                sendJson(res, 405, { ok: false, error: 'Method not allowed' });
-                return;
-            }
-
-            const requestUrl = new URL(req.url || '/', 'http://localhost');
-            const slug = (requestUrl.searchParams.get('slug') || '').trim().toLowerCase();
-            if (!slug) {
-                sendJson(res, 400, { ok: false, error: 'slug is required' });
-                return;
-            }
-
-            await proxyUpstreamJson(
-                res,
-                `${POLYMARKET_GAMMA_EVENT_SLUG_URL}/${encodeURIComponent(slug)}`,
-                POLYMARKET_PROXY_TIMEOUT_MS,
-                'polymarket-event',
-                {
-                    onTimeout: () => sendJson(res, 504, {
-                        ok: false,
-                        error: 'Polymarket event proxy request timed out',
-                    }),
-                    onError: () => sendJson(res, 500, {
-                        ok: false,
-                        error: 'Polymarket event proxy request failed',
-                    }),
-                },
-                debugLogger
-            );
-        });
-
-        middlewares.use('/api/polymarket-history', async (req: any, res: any) => {
-            if (req.method !== 'GET') {
-                sendJson(res, 405, { ok: false, error: 'Method not allowed' });
-                return;
-            }
-
-            const requestUrl = new URL(req.url || '/', 'http://localhost');
-            const market = (requestUrl.searchParams.get('market') || '').trim();
-            const interval = (requestUrl.searchParams.get('interval') || '').trim();
-            const startTs = (requestUrl.searchParams.get('startTs') || '').trim();
-            const endTs = (requestUrl.searchParams.get('endTs') || '').trim();
-            const fidelity = (requestUrl.searchParams.get('fidelity') || '').trim();
-
-            if (!market) {
-                sendJson(res, 400, { ok: false, error: 'market is required' });
-                return;
-            }
-
-            const upstreamParams = new URLSearchParams({ market });
-            if (interval) upstreamParams.set('interval', interval);
-            if (startTs) upstreamParams.set('startTs', startTs);
-            if (endTs) upstreamParams.set('endTs', endTs);
-            if (fidelity) upstreamParams.set('fidelity', fidelity);
-
-            await proxyUpstreamJson(
-                res,
-                `${POLYMARKET_CLOB_HISTORY_URL}?${upstreamParams.toString()}`,
-                POLYMARKET_PROXY_TIMEOUT_MS,
-                'polymarket-history',
-                {
-                    onTimeout: () => sendJson(res, 504, {
-                        ok: false,
-                        error: 'Polymarket history proxy request timed out',
-                    }),
-                    onError: () => sendJson(res, 500, {
-                        ok: false,
-                        error: 'Polymarket history proxy request failed',
-                    }),
-                },
-                debugLogger
-            );
-        });
-    };
-
-    return {
-        name: 'polymarket-proxy',
-        configureServer(server) {
-            register(server.middlewares);
-        },
-        configurePreviewServer(server) {
-            register(server.middlewares);
-        },
-    };
-}
 
 function localPriceDataCatalogPlugin(): Plugin {
     const register = (middlewares: any) => {
@@ -361,12 +266,9 @@ export default defineConfig({
     },
     plugins: [
         tradFiKlineProxyPlugin(),
-        polymarketProxyPlugin(),
         ibkrDataVitePlugin(),
         cryptoDataVitePlugin(),
         localPriceDataCatalogPlugin(),
-        secondMarketApiPlugin(),
-        executionLabVitePlugin(),
         localSqlitePlugin(),
         strategyLibraryAdminPlugin(),
         backtestEndpointPlugin(),

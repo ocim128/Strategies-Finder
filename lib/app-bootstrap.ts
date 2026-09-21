@@ -69,9 +69,9 @@ async function restoreSavedSettings(context: AppBootstrapContext): Promise<void>
             // path for symbols that cannot be in any local-daily dataset.
             // Stock-market symbols are always diamond-marked at runtime; the
             // unmarked S&P 500 / Indonesian datasets only hold short bare
-            // all-letter tickers. Crypto/forex/commodity/polymarket symbols
-            // therefore can never match and would otherwise force six network
-            // catalog fetches + parses just to conclude "no match".
+            // all-letter tickers. Crypto/forex/commodity symbols therefore
+            // can never match and would otherwise force six network catalog
+            // fetches + parses just to conclude "no match".
             const candidate = savedSettings.currentSymbol.trim().toUpperCase();
             const mightBeLocalDaily = isStockMarketSymbol(candidate)
                 || isIbkrSymbol(candidate)
@@ -318,8 +318,6 @@ function registerLazyFeatures(): void {
     registerLazyFeature("ibkr-data", async () => (await import("./ibkr-data/ibkr-data-service")).ibkrDataService.init());
     registerLazyFeature("crypto-data", async () => (await import("./crypto-data/crypto-data-service")).cryptoDataService.init());
     registerLazyFeature("walk-forward", async () => (await import("./walk-forward-service")).walkForwardService.initUI());
-    registerLazyFeature("polymarket-panel", async () => (await import("./polymarket-panel-service")).polymarketPanelService.init());
-    registerLazyFeature("execution-lab", async () => (await import("./execution-lab/execution-lab-service")).executionLabService.init());
     registerLazyFeature("monte-carlo", async () => (await import("./monte-carlo-service")).initMonteCarloService());
     registerLazyFeature("strategy-library-admin", async () => (await import("./strategy-library-admin-service")).strategyLibraryAdminService.init());
 }

@@ -247,7 +247,7 @@ export type ProxyUpstreamJsonHandlers = {
 
 /**
  * Proxies a GET request to an upstream URL, mirroring its status, content-type,
- * and body back to the client. Used by the tradfi/polymarket Vite proxy plugins
+ * and body back to the client. Used by the tradfi Vite proxy plugin
  * to avoid duplicating the fetch + timeout + mirror-success pattern.
  *
  * On a timeout (AbortError) or failure, the caller-supplied `onTimeout`/`onError`

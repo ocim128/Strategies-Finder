@@ -52,11 +52,9 @@ const CRYPTO_CSV_DIR = resolve(CRYPTO_DATA_DIR, "csv");
 // `fetch` tries them before falling back, producing bare "fetch failed" errors
 // with no IPv6 routing in place. `ipv4first` makes the resolver return A
 // records ahead of AAAA, so `fetch` connects over IPv4 immediately. This is
-// benign for every other dev-server request (IPv4 works universally here) and
-// composes with the Polymarket AdGuard-DoH dispatcher (`vite.config.ts`) — that
-// dispatcher is host-scoped to polymarket.com and replaces the *lookup* fn, so
-// the global default-result-order only affects hosts the dispatcher falls
-// through to system DNS for (i.e. Binance).
+// benign for every other dev-server request (IPv4 works universally here): the
+// global default-result-order only affects hosts that fall through to system
+// DNS (i.e. Binance).
 dns.setDefaultResultOrder("ipv4first");
 
 /**

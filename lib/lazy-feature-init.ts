@@ -24,8 +24,6 @@ const TAB_TO_FEATURE: Record<string, string> = {
     selectionrules: "selection-rules",
     walkforward: "walk-forward",
     montecarlo: "monte-carlo",
-    polymarket: "polymarket-panel",
-    executionlab: "execution-lab",
     datamining: "data-mining",
     ibkrdata: "ibkr-data",
     cryptodata: "crypto-data",
