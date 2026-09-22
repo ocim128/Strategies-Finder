@@ -36,6 +36,8 @@ import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { parseIntervalSeconds } from "../../interval-utils";
+import type { FinderDataSlice } from "../../types/finder";
 import {
     ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL,
     resolveAssetOpportunityMemoryBudgetBytes,
@@ -63,6 +65,50 @@ export const FINDER_UNIVERSE_WORKERS_ENV = "FINDER_UNIVERSE_WORKERS";
 export const UNIVERSE_STRATEGY_WORKER_COUNT_MAX = 32;
 
 /**
+ * Per-dataset bar cap the default `ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL`
+ * estimate is derived from (9 MB / 100k bars ≈ 94 B/bar).
+ */
+export const UNIVERSE_DATASET_BAR_CAP = 100_000;
+
+const UNIVERSE_BYTES_PER_BAR = ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL / UNIVERSE_DATASET_BAR_CAP;
+
+/**
+ * Upper bound on the bars any single dataset can hold for one universe run,
+ * or `null` when the run's slice/interval does not bound it (the 100k-bar cap
+ * applies instead). Only a bounded slice tightens the estimate:
+ * - `date_range` with parseable inclusive From AND To bounds → window days.
+ * - The `1`..`5` year slices → N × 366 days (leap-year safe upper bound).
+ * - Everything else (`all`, half splits, unbounded ranges) → `null`.
+ * Bars/day uses the 24/7 clock upper bound (floor(86400 / intervalSeconds)),
+ * so equities sessions never exceed it.
+ */
+export function resolveUniverseMaxBarsPerSymbol(args: {
+    interval: string;
+    dataSlice?: FinderDataSlice;
+    dataRangeFrom?: string;
+    dataRangeTo?: string;
+}): number | null {
+    const intervalSeconds = parseIntervalSeconds(args.interval);
+    if (intervalSeconds === null || intervalSeconds <= 0) return null;
+
+    let windowDays: number | null = null;
+    if (args.dataSlice === "date_range") {
+        const from = Date.parse(`${args.dataRangeFrom ?? ""}T00:00:00Z`);
+        const to = Date.parse(`${args.dataRangeTo ?? ""}T00:00:00Z`);
+        if (Number.isFinite(from) && Number.isFinite(to) && to >= from) {
+            windowDays = Math.floor((to - from) / 86_400_000) + 1;
+        }
+    } else if (args.dataSlice === "1" || args.dataSlice === "2" || args.dataSlice === "3"
+        || args.dataSlice === "4" || args.dataSlice === "5") {
+        windowDays = Number(args.dataSlice) * 366;
+    }
+    if (windowDays === null) return null;
+
+    const barsPerDay = Math.max(1, Math.floor(86_400 / intervalSeconds));
+    return Math.min(windowDays * barsPerDay, UNIVERSE_DATASET_BAR_CAP);
+}
+
+/**
  * Resolve the worker count for one universe strategy sweep.
  *
  * - `FINDER_UNIVERSE_WORKERS` env: integer >= 1 wins outright (1 = caller
@@ -72,19 +118,28 @@ export const UNIVERSE_STRATEGY_WORKER_COUNT_MAX = 32;
  *   capped at {@link UNIVERSE_STRATEGY_WORKER_COUNT_MAX}.
  * - Auto: min(strategy count, logical cores - 2, memory ceiling). The memory
  *   ceiling budgets 75% of ACTUAL system RAM (`os.totalmem()`, injectable for
- *   tests) for one full dataset copy per worker (~9 MB/symbol), so a 16 GB
- *   host auto-selects ~3x fewer workers than a 64 GB host. Always >= 1.
+ *   tests) for one full dataset copy per worker. The per-symbol byte estimate
+ *   is `options.maxBarsPerSymbol × UNIVERSE_BYTES_PER_BAR` when the run's
+ *   slice/interval bounds the bars (see {@link resolveUniverseMaxBarsPerSymbol};
+ *   e.g. a 6-year 4h window is ~13k bars/symbol, not the 100k-bar cap), and
+ *   the full 100k-bar-cap `ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL`
+ *   (~9 MB/symbol) otherwise. The default keeps the historical worst-case
+ *   ceiling; the bounded estimate prevents wide-interval/window universes
+ *   from collapsing the pool to 1 worker on hosts that could safely host
+ *   many. Always >= 1.
  * - `options.rustEngine`: clamps the AUTO value (never the env override) to
- *   {@link ASSET_OPPORTUNITY_BATCH_RUST_CHUNK_WORKER_CAP} — the Rust HTTP
- *   server serializes, so extra workers mostly add TS signal-generation
- *   overlap, which tops out quickly.
+ *   {@link ASSET_OPPORTUNITY_BATCH_RUST_CHUNK_WORKER_CAP} — ONLY pass true
+ *   when the Rust engine can actually execute runs. When the settings force
+ *   the TypeScript engine (e.g. exit-strategy override / slippage — see
+ *   `hasCapabilityIndependentTypescriptRequirement`), the external Rust HTTP
+ *   server serializes nothing and the clamp must not apply.
  */
 export function resolveUniverseStrategyWorkerCount(
     strategyCount: number,
     symbolCount: number,
     env: NodeJS.ProcessEnv = process.env,
     systemMemoryBytes: number = totalmem(),
-    options?: { rustEngine?: boolean },
+    options?: { rustEngine?: boolean; maxBarsPerSymbol?: number | null },
 ): number {
     const raw = env[FINDER_UNIVERSE_WORKERS_ENV];
     if (raw !== undefined && raw !== "") {
@@ -101,9 +156,12 @@ export function resolveUniverseStrategyWorkerCount(
     }
     const memoryBudgetBytes = resolveAssetOpportunityMemoryBudgetBytes(systemMemoryBytes);
     const symbolsPerWorker = Math.max(1, Math.floor(symbolCount));
+    const bytesPerSymbol = typeof options?.maxBarsPerSymbol === "number" && options.maxBarsPerSymbol > 0
+        ? Math.min(options.maxBarsPerSymbol, UNIVERSE_DATASET_BAR_CAP) * UNIVERSE_BYTES_PER_BAR
+        : ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL;
     const memoryCeiling = Math.max(
         1,
-        Math.floor(memoryBudgetBytes / (symbolsPerWorker * ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL)),
+        Math.floor(memoryBudgetBytes / (symbolsPerWorker * bytesPerSymbol)),
     );
     const auto = Math.max(
         1,

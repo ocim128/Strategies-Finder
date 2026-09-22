@@ -177,10 +177,12 @@ import {
 } from "./finder-asset-opportunity-batch-worker-pool";
 import {
     createRealWorkerUniverseStrategyRunner,
+    resolveUniverseMaxBarsPerSymbol,
     resolveUniverseStrategyWorkerCount,
     runFinderUniverseStrategySweep,
     type FinderUniverseStrategyRunnerFactory,
 } from "./finder-universe-strategy-pool";
+import { hasCapabilityIndependentTypescriptRequirement } from "../../rust-settings-sanitizer";
 import type {
     FinderUniverseStrategyWorkerResult,
     FinderUniverseStrategyWorkerTask,
@@ -1149,7 +1151,20 @@ export async function processFinderUniverseRun(
             totalSymbols,
             process.env,
             totalmem(),
-            { rustEngine: input.useRustEnginePreference === true },
+            {
+                // The Rust cap exists because the external Rust HTTP server
+                // serializes execution. When the settings force the TS engine
+                // for every run (e.g. exit-strategy override or slippage),
+                // Rust serializes nothing and the cap must not shrink the pool.
+                rustEngine: input.useRustEnginePreference === true
+                    && !hasCapabilityIndependentTypescriptRequirement(input.settings),
+                maxBarsPerSymbol: resolveUniverseMaxBarsPerSymbol({
+                    interval: input.interval,
+                    dataSlice: input.options.dataSlice,
+                    dataRangeFrom: input.options.dataRangeFrom,
+                    dataRangeTo: input.options.dataRangeTo,
+                }),
+            },
         );
 
     try {

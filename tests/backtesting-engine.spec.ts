@@ -11,6 +11,7 @@ import { resolveScannerBacktestSettings } from '../lib/scanner/scanner-engine';
 import { resolveBacktestSettingsFromRaw } from '../lib/backtest-settings-resolver';
 import { resolveEntryRiskTargets } from '../lib/entry-risk-targets';
 import { buildSelectionResult } from '../lib/finder/endpoint';
+import { ADVANCED_SIZING_DEFAULTS } from '../lib/advanced-sizing-settings';
 describe('Backtesting Engine', () => {
     it('should execute trades and calculate profit correctly', () => {
         const data: OHLCVData[] = [
@@ -292,6 +293,67 @@ describe('Backtesting Engine', () => {
         expect(fast.maxDrawdown).to.equal(baseline.maxDrawdown);
         expect(fast.diagnostics?.counts.fastPathRuns).to.equal(1);
         expect(fast.diagnostics?.fastPath?.used).to.equal(true);
+    });
+
+    it('sizes kelly_criterion runs on the single-position fast path identically to the slow loop', () => {
+        // 12 round trips: buy at each odd bar's close, exit at the next bar's
+        // close. Exit closes repeat W W W L (+1% / -0.5%), so kelly becomes
+        // valid after 5 samples (winRate 0.8 -> capped 0.7, payoff 2, PF 8)
+        // and sizes trades 6-12 at 25% of capital. The fast path must produce
+        // the exact same sizing trajectory as the multi-position loop: both
+        // size through buildPositionFromSignal and observe each full close's
+        // realized PnL — Finder runs hundreds of thousands of these, so a
+        // silent fast/slow divergence here would skew every ranked candidate.
+        const exitCloses = [101, 101, 101, 99.5];
+        const closeOf = (bar: number): number => bar % 2 === 1 ? 100 : exitCloses[((bar >> 1) - 1) % 4]!;
+        const data: OHLCVData[] = Array.from({ length: 24 }, (_, index) => {
+            const bar = index + 1;
+            const close = closeOf(bar);
+            return { time: bar as Time, open: close, high: close + 1, low: close - 1, close, volume: 1000 };
+        });
+        const signals: Signal[] = Array.from({ length: 24 }, (_, index) => {
+            const bar = index + 1;
+            return {
+                time: bar as Time,
+                type: bar % 2 === 1 ? 'buy' : 'sell',
+                price: closeOf(bar),
+            };
+        });
+        const settings = {
+            tradeDirection: 'long' as const,
+            executionModel: 'signal_close' as const,
+            riskMode: 'percentage' as const,
+        };
+        const sizing = { mode: 'kelly_criterion' as const, advancedSizing: { ...ADVANCED_SIZING_DEFAULTS } };
+
+        const slow = runBacktestCompact(data, signals, 10000, 100, 0, settings, sizing, undefined, {
+            includeSharpeRatio: false,
+            requireTradeHistory: true,
+        });
+        const fast = runBacktestCompact(data, signals, 10000, 100, 0, settings, sizing, undefined, {
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+            requireTradeHistory: true,
+            collectDiagnostics: true,
+        });
+        const percent = runBacktestCompact(data, signals, 10000, 100, 0, settings, { mode: 'percent' }, undefined, {
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+        });
+
+        expect(fast.diagnostics?.fastPath?.used).to.equal(true);
+        expect(fast.diagnostics?.fastPath?.blockers).to.deep.equal([]);
+        expect(fast.diagnostics?.counts.fastPathRuns).to.equal(1);
+        expect(slow.totalTrades).to.equal(12);
+        expect(fast.totalTrades).to.equal(slow.totalTrades);
+        expect(fast.trades.map((trade) => [trade.size, trade.pnl])).to.deep.equal(
+            slow.trades.map((trade) => [trade.size, trade.pnl])
+        );
+        expect(fast.netProfit).to.equal(slow.netProfit);
+        // Kelly must actually engage: from trade 6 the allocation is 25% of
+        // capital, so the equity trajectory must differ from the full-size
+        // percent baseline (it would NOT if the fast path dropped the state).
+        expect(fast.netProfit).to.not.equal(percent.netProfit);
     });
 
     it('computes endpoint selection metrics without retaining compact trade objects', () => {

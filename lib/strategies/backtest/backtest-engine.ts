@@ -493,7 +493,10 @@ function getSinglePositionFinderFastPathBlockers(
     if (options?.omitEquityCurve !== true) blockers.push("equity_curve_required");
     if (config.maxOpenTrades !== 1) blockers.push("max_open_trades");
     if (tradeDirection !== "long" && tradeDirection !== "short" && tradeDirection !== "both") blockers.push(`trade_direction_${tradeDirection}`);
-    if (sizingMode !== "percent" && sizingMode !== "fixed") blockers.push(`sizing_${sizingMode}`);
+    // Kelly sizing is fast-path eligible: the state is threaded into the
+    // shared position builder and updated on every full close below, matching
+    // the multi-position loop's updateSmartSizingState semantics exactly.
+    if (sizingMode !== "percent" && sizingMode !== "fixed" && sizingMode !== "kelly_criterion") blockers.push(`sizing_${sizingMode}`);
     if (hasActivePercentageTakeProfit(config) && config.takeProfitMode !== "fixed") blockers.push(`take_profit_mode_${config.takeProfitMode}`);
     if (config.trailingAtr !== 0) blockers.push("trailing_atr");
     if (config.partialTakeProfitAtR !== 0) blockers.push("partial_take_profit");
@@ -776,6 +779,7 @@ function runSinglePositionFinderFastPath(args: {
         price: 0,
     };
     const executionShift = getExecutionShift(config);
+    const smartSizingState = createSmartSizingState(initialCapital);
 
     const getPreparedSignal = (index: number, barIndex: number): Signal => {
         if (!indexedSignals) return preparedSignals[index];
@@ -857,6 +861,11 @@ function runSinglePositionFinderFastPath(args: {
         pos.size -= d.size;
         const fullyClosed = pos.size <= 0;
         if (fullyClosed) {
+            // Mirrors finalizeClosedPosition in the multi-position loop: the
+            // sizing state observes the full realized PnL once, on full close.
+            // The velocity score is null because only kelly sizing is fast-path
+            // eligible and calculateKelly never reads recentVelocityScores.
+            updateSmartSizingState(smartSizingState, null, pos.realizedPnl, sizingMode, advancedSizing);
             if (isEntryCooldownEnabled(config)) {
                 signalExitReentryCooldownUntilBarIndex = armSignalExitReentryCooldown(currentBarIndex, config.riskCooldownBars);
             }
@@ -896,6 +905,7 @@ function runSinglePositionFinderFastPath(args: {
             sizingMode,
             fixedTradeAmount,
             advancedSizing,
+            smartSizingState,
         });
         if (!opened) return null;
         position = opened.nextPosition;

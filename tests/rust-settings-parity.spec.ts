@@ -1,7 +1,10 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { BACKTEST_SETTINGS_DOM_CONTRACTS } from "../lib/backtest-settings-dom-contract";
-import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "../lib/rust-settings-sanitizer";
+import {
+    hasCapabilityIndependentTypescriptRequirement,
+    RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS,
+} from "../lib/rust-settings-sanitizer";
 
 // The Rust sanitizer (rust-settings-sanitizer.ts) and the DOM contract
 // (backtest-settings-dom-contract.ts) are two independent declarations of the
@@ -51,5 +54,25 @@ describe("Rust/TS settings parity", () => {
             unsanitized,
             `contract marks unsupported but sanitizer does not list — would leak to Rust: ${unsanitized.join("; ")}`
         ).to.deep.equal([]);
+    });
+
+    it("detects capability-independent TypeScript requirements for pre-probe pool decisions", () => {
+        // No requirement at all.
+        expect(hasCapabilityIndependentTypescriptRequirement({})).to.equal(false);
+        // next_open and risk-max-hold are capability-gated: without a probe
+        // they are INCONCLUSIVE, not TypeScript-forced, so they must not trip
+        // the detector (a false positive would drop the Rust worker cap).
+        expect(hasCapabilityIndependentTypescriptRequirement({ executionModel: "next_open" })).to.equal(false);
+        expect(hasCapabilityIndependentTypescriptRequirement({
+            executionModel: "next_open",
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 10,
+        })).to.equal(false);
+        // Settings Rust can never honor, probe or no probe.
+        expect(hasCapabilityIndependentTypescriptRequirement({ disableSignalExits: true })).to.equal(true);
+        expect(hasCapabilityIndependentTypescriptRequirement({ slippageBps: 2 })).to.equal(true);
+        expect(hasCapabilityIndependentTypescriptRequirement({ maxOpenTrades: 3 })).to.equal(true);
+        expect(hasCapabilityIndependentTypescriptRequirement({ tradeDirection: "both" })).to.equal(true);
+        expect(hasCapabilityIndependentTypescriptRequirement({ executionModel: "next_close" })).to.equal(true);
     });
 });

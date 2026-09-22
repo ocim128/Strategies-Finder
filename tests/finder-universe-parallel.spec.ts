@@ -33,6 +33,7 @@ import { describe, it, before, after, afterEach } from "node:test";
 import { strategyRegistry } from "../strategyRegistry";
 import { processFinderUniverseRun, __testInternals } from "../lib/finder/server/finder-vite-plugin";
 import {
+    resolveUniverseMaxBarsPerSymbol,
     resolveUniverseStrategyWorkerCount,
     FINDER_UNIVERSE_WORKERS_ENV,
     type FinderUniverseStrategyProgress,
@@ -487,6 +488,52 @@ describe("finder universe parallel strategy sweep", () => {
         const rustCapped = resolveUniverseStrategyWorkerCount(45, 10, {}, 64 * GIB, { rustEngine: true });
         expect(rustCapped).to.be.at.most(4);
         expect(resolveUniverseStrategyWorkerCount(45, 10, { [FINDER_UNIVERSE_WORKERS_ENV]: "16" }, 16 * GIB, { rustEngine: true })).to.equal(16);
+        // A bounded bars-per-symbol estimate right-sizes the ceiling for wide
+        // interval/window universes. The diagnostic run's exact shape (3092
+        // symbols, 4h bars over a 6-year window = ~13k bars, 64 GB host) used
+        // to collapse to 1 worker via the 100k-bar-cap estimate; bounded, the
+        // same shape fits ~12 dataset copies in budget.
+        const worstCase = resolveUniverseStrategyWorkerCount(45, 3092, {}, 64 * GIB);
+        expect(worstCase).to.equal(1);
+        const bounded = resolveUniverseStrategyWorkerCount(45, 3092, {}, 64 * GIB, { maxBarsPerSymbol: 13152 });
+        expect(bounded).to.be.at.least(2);
+        expect(bounded).to.be.at.most(13);
+        // A hint at the full bar cap must not move the ceiling: 45 strategies,
+        // 1000 symbols on 64 GB stays at the worst-case answer of 5.
+        expect(resolveUniverseStrategyWorkerCount(45, 1000, {}, 64 * GIB, { maxBarsPerSymbol: 100_000 })).to.equal(5);
+        // The env override still wins over any hint (and over the Rust cap).
+        expect(resolveUniverseStrategyWorkerCount(45, 3092, { [FINDER_UNIVERSE_WORKERS_ENV]: "3" }, 16 * GIB, { rustEngine: true, maxBarsPerSymbol: 13152 })).to.equal(3);
+    });
+
+    it("bounds bars per symbol only for slices and intervals that actually bound them", () => {
+        // date_range with both bounds: 2018-01-01..2024-01-01 inclusive is
+        // 2192 days; 4h bars on a 24/7 clock upper bound = 6/day.
+        expect(resolveUniverseMaxBarsPerSymbol({
+            interval: "4h",
+            dataSlice: "date_range",
+            dataRangeFrom: "2018-01-01",
+            dataRangeTo: "2024-01-01",
+        })).to.equal(13152);
+        // Year slices: 3 × 366 days of daily bars (leap-safe upper bound).
+        expect(resolveUniverseMaxBarsPerSymbol({ interval: "1d", dataSlice: "3" })).to.equal(1098);
+        // Sub-day intervals clamp to at least one bar per day; the result is
+        // capped by the 100k dataset bar cap.
+        expect(resolveUniverseMaxBarsPerSymbol({ interval: "1m", dataSlice: "5" })).to.equal(100_000);
+        // Unbounded shapes fall back to null (worst-case estimate applies).
+        expect(resolveUniverseMaxBarsPerSymbol({ interval: "4h", dataSlice: "all" })).to.equal(null);
+        expect(resolveUniverseMaxBarsPerSymbol({ interval: "4h", dataSlice: "half_oldest" })).to.equal(null);
+        expect(resolveUniverseMaxBarsPerSymbol({
+            interval: "4h",
+            dataSlice: "date_range",
+            dataRangeFrom: "2018-01-01",
+        })).to.equal(null);
+        expect(resolveUniverseMaxBarsPerSymbol({
+            interval: "4h",
+            dataSlice: "date_range",
+            dataRangeFrom: "2024-01-01",
+            dataRangeTo: "2018-01-01",
+        })).to.equal(null);
+        expect(resolveUniverseMaxBarsPerSymbol({ interval: "nonsense", dataSlice: "3" })).to.equal(null);
     });
 
     it("worker dataset cache retains successful and empty loads, retries thrown failures, and reports delta stats", async () => {

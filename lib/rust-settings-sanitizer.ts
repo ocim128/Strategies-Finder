@@ -116,6 +116,18 @@ export function requiresTypescriptEngine(settings: BacktestSettings, capabilitie
     return getTypescriptEngineRequirementReasons(settings, capabilities).length > 0;
 }
 
+/**
+ * True when the settings alone — independent of any probed Rust capabilities —
+ * force the TypeScript engine. Server-side callers use this to decide worker
+ * pooling BEFORE a Rust health probe exists: when one of these reasons holds,
+ * Rust can never execute a single run, so Rust-serialization worker caps must
+ * not shrink the pool.
+ */
+export function hasCapabilityIndependentTypescriptRequirement(settings: BacktestSettings): boolean {
+    return getTypescriptEngineRequirementReasons(settings, undefined)
+        .some((reason) => reason !== "rust_capability_missing");
+}
+
 export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "pathExitEnabled",
     "pathExitMode",

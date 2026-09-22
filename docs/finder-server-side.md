@@ -267,9 +267,19 @@ semantics are byte-identical to the sequential loop. Load-bearing contracts:
 - **Worker count policy** (`resolveUniverseStrategyWorkerCount`):
   `FINDER_UNIVERSE_WORKERS` env override (1 = sequential in-process loop,
   the rollback lever; capped at 32, bypasses the memory ceiling), otherwise
-  min(strategy count, logical cores − 2, 75%-of-RAM ÷ (~9 MB/symbol)).
-  With the Rust engine preferred, the AUTO value is capped at 4 — the
-  external Rust HTTP server serializes execution.
+  min(strategy count, logical cores − 2, memory ceiling). The ceiling budgets
+  75%-of-RAM for one dataset copy per worker, estimated at
+  `bars-per-symbol × ~94 B` when the run's slice/interval bounds the bars
+  (`resolveUniverseMaxBarsPerSymbol`: `date_range` with both bounds, or the
+  `1`..`5` year slices), and at the 100k-bar-cap worst case (~9 MB/symbol)
+  otherwise. A 6-year 4h window is ~13k bars/symbol, so bounded runs no
+  longer collapse to 1 worker on hosts that could safely host many.
+  With the Rust engine preferred AND the settings able to execute Rust runs,
+  the AUTO value is capped at 4 — the external Rust HTTP server serializes
+  execution. When the settings force the TypeScript engine for every run
+  (e.g. exit-strategy override / slippage —
+  `hasCapabilityIndependentTypescriptRequirement`), Rust serializes nothing
+  and the cap does not apply.
 - **Cancellation** combines ownership loss and the run abort signal (the
   same two conditions the asset paths check); Stop terminates in-flight
   workers immediately so no CPU/RAM-heavy orphan work survives.
