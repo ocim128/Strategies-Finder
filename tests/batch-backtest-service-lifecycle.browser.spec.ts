@@ -913,9 +913,9 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(html).to.not.include("<strong>TOP_RAW</strong>");
         // Per-year performance lines follow the shared comparison format.
         expect(html).to.include("Performance by year — Horizon 12 bars");
-        expect(html).to.include("full: n=3493 top=+1.65% rand=+0.53% delta=+1.12% CI95=[+0.13%,+2.28%] +blocks=7/10");
-        expect(html).to.include("2021: n=505 top=+3.15% rand=+1.14% delta=+2.00% CI95=[+0.22%,+4.14%] +blocks=7/10");
-        expect(html).to.include("2022: n=586 top=+0.35% rand=+0.71% delta=-0.37% CI95=[-2.53%,+1.67%] +blocks=5/10");
+        expect(html).to.include("full: n=3493 top=+1.65% rand=+0.53% deltaMed=+1.12% CI95=[+0.13%,+2.28%] +blocks=7/10");
+        expect(html).to.include("2021: n=505 top=+3.15% rand=+1.14% deltaMed=+2.00% CI95=[+0.22%,+4.14%] +blocks=7/10");
+        expect(html).to.include("2022: n=586 top=+0.35% rand=+0.71% deltaMed=-0.37% CI95=[-2.53%,+1.67%] +blocks=5/10");
 
         dom.batchBacktestSp500TopMeanResults.dispatchEvent({
             type: "change",
@@ -929,7 +929,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(html).to.include(`value="TOP_RAW" selected`);
         // Performance lines follow the arm: TOP_RAW's full line replaces
         // TOP_MEAN's, and its zero-event year is omitted rather than zero-filled.
-        expect(html).to.include("full: n=3200 top=+2.00% rand=+0.40% delta=+1.60% CI95=[+0.20%,+3.00%] +blocks=8/10");
+        expect(html).to.include("full: n=3200 top=+2.00% rand=+0.40% deltaMed=+1.60% CI95=[+0.20%,+3.00%] +blocks=8/10");
         expect(html).to.not.include("full: n=3493");
         expect(html).to.not.include("2021: n=505");
     });

@@ -10,6 +10,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+    bootstrapBlockMedian,
     bootstrapBlockMeans,
     loadPoolRuleArchive,
     splitChronologicalBlocks,
@@ -180,7 +181,8 @@ export interface ArchiveMetric {
     n: number;
     topMean: number | null;
     controlMean: number | null;
-    deltaMean: number | null;
+    /** Median of the per-event paired deltas — mirrors the engine's reported `delta`. */
+    deltaMedian: number | null;
     ciLower: number | null;
     ciUpper: number | null;
     blockMeans: readonly number[];
@@ -929,12 +931,13 @@ function archiveMetricFromRows(rows: readonly ComparableRow[]): ArchiveMetric {
     const points: PoolRuleValuePoint[] = rows.map((row) => ({ eventId: row.eventId, decisionTimeSec: row.decisionTime, value: row.delta }));
     const blocks = splitChronologicalBlocks(points);
     const blockMeans = blocks.map((block) => block.reduce((sum, value) => sum + value, 0) / block.length);
-    const ci = bootstrapBlockMeans(blockMeans);
+    const ci = bootstrapBlockMedian(blocks);
+    const sortedDeltas = rows.map((row) => row.delta).sort((left, right) => left - right);
     return {
         n: rows.length,
         topMean: rows.length > 0 ? rows.reduce((sum, row) => sum + row.selectedReturn, 0) / rows.length : null,
         controlMean: rows.length > 0 ? rows.reduce((sum, row) => sum + row.controlReturn, 0) / rows.length : null,
-        deltaMean: rows.length > 0 ? rows.reduce((sum, row) => sum + row.delta, 0) / rows.length : null,
+        deltaMedian: rows.length > 0 ? medianSorted(sortedDeltas) : null,
         ciLower: ci.lower,
         ciUpper: ci.upper,
         blockMeans,
@@ -1016,6 +1019,12 @@ function compareExactOrTolerance(expected: ComparableRow, actual: ComparableRow,
     }
 }
 
+/** Median of an already-sorted series — same even/odd rule as the engine. */
+function medianSorted(sorted: readonly number[]): number {
+    const mid = sorted.length >> 1;
+    return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
 function signedPercent(value: number | null): string {
     if (value === null) return "n/a";
     const percent = value * 100;
@@ -1028,7 +1037,7 @@ function fixedNumber(value: number | null): string {
 
 function parseMetricLine(line: string, label: string): { n: number; top: string; rand: string; delta: string; lower: string; upper: string; positiveBlocks: number; totalBlocks: number } | null {
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const match = line.match(new RegExp(`^${escaped}\\s+n=(\\d+)\\s+top=([+-]\\d+\\.\\d+)%\\s+rand=([+-]\\d+\\.\\d+)%\\s+delta=([+-]\\d+\\.\\d+)%\\s+CI95=(?:\\[([+-]\\d+\\.\\d+)%[,]([+-]\\d+\\.\\d+)%\\]|(n/a))\\s+\\+blocks=(\\d+)\\/(\\d+)$`));
+    const match = line.match(new RegExp(`^${escaped}\\s+n=(\\d+)\\s+top=([+-]\\d+\\.\\d+)%\\s+rand=([+-]\\d+\\.\\d+)%\\s+deltaMed=([+-]\\d+\\.\\d+)%\\s+CI95=(?:\\[([+-]\\d+\\.\\d+)%[,]([+-]\\d+\\.\\d+)%\\]|(n/a))\\s+\\+blocks=(\\d+)\\/(\\d+)$`));
     if (!match) return null;
     return { n: Number(match[1]), top: `${match[2]}%`, rand: `${match[3]}%`, delta: `${match[4]}%`, lower: match[7] === "n/a" ? "n/a" : `${match[5]}%`, upper: match[7] === "n/a" ? "n/a" : `${match[6]}%`, positiveBlocks: Number(match[8]), totalBlocks: Number(match[9]) };
 }
@@ -1059,7 +1068,7 @@ function assertMetricMatches(expected: ArchiveMetric, actualLine: string | undef
     const actual = actualLine ? parseMetricLine(actualLine, label) : null;
     requireCheck(actual !== null, `report.${label}`, "displayed metric line", actualLine ?? "missing");
     requireCheck(actual.n === expected.n, `report.${label}.n`, String(expected.n), String(actual.n));
-    const expectedTokens = [signedPercent(expected.topMean), signedPercent(expected.controlMean), signedPercent(expected.deltaMean), signedPercent(expected.ciLower), signedPercent(expected.ciUpper)];
+    const expectedTokens = [signedPercent(expected.topMean), signedPercent(expected.controlMean), signedPercent(expected.deltaMedian), signedPercent(expected.ciLower), signedPercent(expected.ciUpper)];
     const actualTokens = [actual.top, actual.rand, actual.delta, actual.lower, actual.upper];
     requireCheck(expectedTokens.every((token, index) => token === actualTokens[index]), `report.${label}.percentages`, expectedTokens.join(","), actualTokens.join(","));
     requireCheck(actual.positiveBlocks === expected.positiveBlocks && actual.totalBlocks === expected.totalBlocks, `report.${label}.blocks`, `${expected.positiveBlocks}/${expected.totalBlocks}`, `${actual.positiveBlocks}/${actual.totalBlocks}`);
@@ -1675,7 +1684,7 @@ export function renderTopMeanRuleReport(args: {
 
 function renderSelfCheckPass(result: SelfCheckResult): string {
     const metric = result.metric;
-    return `SELF_CHECK PASS | events=${result.eventCount} dominant=${result.dominantAsset ?? "NONE"} | TOP_MEAN n=${metric.n} top=${signedPercent(metric.topMean)} rand=${signedPercent(metric.controlMean)} delta=${signedPercent(metric.deltaMean)} CI95=${metric.ciLower === null || metric.ciUpper === null ? "n/a" : `[${signedPercent(metric.ciLower)},${signedPercent(metric.ciUpper)}]`} +blocks=${metric.positiveBlocks}/${metric.totalBlocks}\n`;
+    return `SELF_CHECK PASS | events=${result.eventCount} dominant=${result.dominantAsset ?? "NONE"} | TOP_MEAN n=${metric.n} top=${signedPercent(metric.topMean)} rand=${signedPercent(metric.controlMean)} deltaMed=${signedPercent(metric.deltaMedian)} CI95=${metric.ciLower === null || metric.ciUpper === null ? "n/a" : `[${signedPercent(metric.ciLower)},${signedPercent(metric.ciUpper)}]`} +blocks=${metric.positiveBlocks}/${metric.totalBlocks}\n`;
 }
 
 function percentileLine(label: string, summary: PercentileSummary): string {

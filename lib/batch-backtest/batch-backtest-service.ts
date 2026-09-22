@@ -3230,7 +3230,7 @@ export class BatchBacktestService {
         return `n=${comparison.events}`
             + ` top=${pct(comparison.topMean)}`
             + ` rand=${pct(comparison.randomMean)}`
-            + ` delta=${pct(comparison.delta)}`
+            + ` deltaMed=${pct(comparison.delta)}`
             + ` CI95=[${pct(comparison.ciLower)},${pct(comparison.ciUpper)}]`
             + ` +blocks=${comparison.positiveBlocks}/${comparison.totalBlocks}`;
     }
@@ -3919,7 +3919,7 @@ export class BatchBacktestService {
         if (Array.isArray(res.horizons)) {
             for (const h of res.horizons) {
                 lines.push(`--- HISTORICAL TOP_MEAN | Horizon ${h.horizon} Bars (${h.events?.toLocaleString()} decision events) ---`);
-                lines.push(`HISTORICAL TOP_MEAN | horizon=${h.horizon} | top=${formatSignedPercent(h.topMean?.topMean)} rand=${formatSignedPercent(h.topMean?.randomMean)} delta=${formatSignedPercent(h.topMean?.delta)}`);
+                lines.push(`HISTORICAL TOP_MEAN | horizon=${h.horizon} | top=${formatSignedPercent(h.topMean?.topMean)} rand=${formatSignedPercent(h.topMean?.randomMean)} deltaMed=${formatSignedPercent(h.topMean?.delta)}`);
                 lines.push("");
                 lines.push("Top Asset Rankings:");
                 const topAssets = Array.isArray(h.topAssets) ? h.topAssets : [];

@@ -374,6 +374,45 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(h.topRaw.delta).to.be.closeTo(expectedTop - expectedRand, 1e-9);
     });
 
+    it("reports the median per-event delta so one fat-tailed event cannot flip the window", async () => {
+        // Three decision events (bars 1, 3, 5), each with a unique TOP_RAW
+        // winner and a flat pool control, so the per-event deltas are exactly
+        // +0.10, +0.20, +1.00. The mean delta would be 0.4333...; the
+        // reported delta must be the median 0.20 so a single outlier mover
+        // (the +100% EEE event) cannot dominate the headline.
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, T0 + 2000)]),
+            makePair("AAA", "X2", [makeTrade("long", T0 + 1000, T0 + 2000)]),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, T0 + 2000)]),
+            makePair("CCC", "Z1", [makeTrade("long", T0 + 3000, T0 + 4000)]),
+            makePair("CCC", "Z2", [makeTrade("long", T0 + 3000, T0 + 4000)]),
+            makePair("DDD", "W1", [makeTrade("long", T0 + 3000, null)]),
+            makePair("EEE", "V1", [makeTrade("long", T0 + 5000, null)]),
+            makePair("EEE", "V2", [makeTrade("long", T0 + 5000, null)]),
+            makePair("FFF", "U1", [makeTrade("long", T0 + 5000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, (i) => i === 3 ? 110 : 100),
+            makeTarget("BBB", 10, () => 100),
+            makeTarget("CCC", 10, (i) => i === 5 ? 120 : 100),
+            makeTarget("DDD", 10, () => 100),
+            makeTarget("EEE", 10, (i) => i >= 7 ? 200 : 100),
+            makeTarget("FFF", 10, () => 100),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        const horizon = result.horizons[0]!;
+        expect(horizon.topRaw.events).to.equal(3);
+        // Median of (+0.10, +0.20, +1.00) — NOT the mean 0.4333....
+        expect(horizon.topRaw.delta).to.be.closeTo(0.20, 1e-9);
+        // `top`/`rand` stay plain means of the selected/control returns.
+        expect(horizon.topRaw.topMean).to.be.closeTo((0.10 + 0.20 + 1.00) / 3, 1e-9);
+        expect(horizon.topRaw.randomMean).to.be.closeTo(0, 1e-9);
+    });
+
     it("latest picks carry each arm's top-3 ranked candidates, capped at 3", async () => {
         // One decision event. Each candidate asset votes only via its own
         // pairs against dedicated sink quotes (Q01..Q12), so quote-leg votes

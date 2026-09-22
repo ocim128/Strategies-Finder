@@ -525,6 +525,59 @@ export function bootstrapBlockMeans(blockMeans: readonly number[], samples = MAX
     return { lower: quantile(means, PAIRLIST_POOL_RULE_CI_LOW_QUANTILE), upper: quantile(means, PAIRLIST_POOL_RULE_CI_HIGH_QUANTILE) };
 }
 
+/**
+ * Block bootstrap for the MEDIAN per-event delta, mirroring the replay
+ * engine's reported delta: same fixed-seed LCG resamples chronological
+ * blocks with replacement, each resample pools the RAW block values and
+ * takes their median, so the interval brackets the median rather than the
+ * mean. Requires {@link MAX_ACTIVE_BLOCK_COUNT} nonempty blocks; fewer
+ * return null CI (`INSUFFICIENT_DATA`).
+ *
+ * Each block is sorted once; every resample k-way-merges the chosen sorted
+ * blocks only up to the middle position — the same pooled order statistics
+ * a full pooled sort would produce, without the per-resample sort cost.
+ */
+export function bootstrapBlockMedian(blocks: readonly (readonly number[])[], samples = MAX_ACTIVE_BOOTSTRAP_SAMPLES): { lower: number | null; upper: number | null } {
+    if (blocks.length < MAX_ACTIVE_BLOCK_COUNT) return { lower: null, upper: null };
+    const sortedBlocks = blocks.map((block) => [...block].sort((left, right) => left - right));
+    const next = createLcg(MAX_ACTIVE_BOOTSTRAP_SEED);
+    const b = sortedBlocks.length;
+    const chosen: number[][] = new Array(b);
+    const heads: number[] = new Array<number>(b).fill(0);
+    const medians: number[] = [];
+    for (let sample = 0; sample < samples; sample += 1) {
+        let total = 0;
+        for (let block = 0; block < b; block += 1) {
+            const blk = sortedBlocks[Math.floor(next() * b)]!;
+            chosen[block] = blk;
+            total += blk.length;
+        }
+        const midLo = (total - 1) >> 1;
+        const midHi = total >> 1;
+        for (let block = 0; block < b; block += 1) heads[block] = 0;
+        let prev = 0;
+        let last = 0;
+        for (let emitted = 0; emitted <= midHi; emitted += 1) {
+            let minBlock = -1;
+            let minValue = 0;
+            for (let block = 0; block < b; block += 1) {
+                const blk = chosen[block]!;
+                const pos = heads[block]!;
+                if (pos < blk.length) {
+                    const value = blk[pos]!;
+                    if (minBlock === -1 || value < minValue) { minBlock = block; minValue = value; }
+                }
+            }
+            heads[minBlock] = heads[minBlock]! + 1;
+            prev = last;
+            last = minValue;
+        }
+        medians.push(midLo === midHi ? last : (prev + last) / 2);
+    }
+    medians.sort((left, right) => left - right);
+    return { lower: quantile(medians, PAIRLIST_POOL_RULE_CI_LOW_QUANTILE), upper: quantile(medians, PAIRLIST_POOL_RULE_CI_HIGH_QUANTILE) };
+}
+
 function summarize(points: readonly ValuePoint[]): MetricSummary {
     const blocks = splitChronologicalBlocks(points);
     const blockMeans = blocks.map((block) => mean(block) as number);

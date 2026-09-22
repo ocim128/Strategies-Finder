@@ -73,7 +73,13 @@ export interface ReplayComparison {
     topMean: number | null;
     /** Mean net USD return of this arm's comparison control. */
     randomMean: number | null;
-    /** topMean - randomMean. */
+    /**
+     * Median of the per-event paired deltas (selected return minus the
+     * leave-one-out pool mean). Robust to fat-tailed single events, so one
+     * outlier mover cannot flip a window; `ciLower`/`ciUpper` bracket THIS
+     * statistic, and `topMean - randomMean` (the mean delta) is intentionally
+     * a different number.
+     */
     delta: number | null;
     /** Median net USD return of the selected asset. */
     topMedian: number | null;
@@ -894,32 +900,66 @@ export function simulateTopMeanPortfolio(
 }
 
 /**
- * Deterministic block bootstrap over chronological block means. Resamples
- * blocks with replacement using a fixed-seed LCG (init from the versioned
- * `MAX_ACTIVE_BOOTSTRAP_SEED`) so the CI is reproducible run-to-run.
+ * Deterministic block bootstrap for the MEDIAN per-event delta. Same
+ * fixed-seed LCG and chronological blocks as a mean CI would use, but each
+ * resample pools the RAW deltas of the sampled blocks and takes their median,
+ * so the interval brackets the reported median delta rather than the mean.
+ *
+ * Each block is sorted ONCE; a resample then k-way-merges the chosen sorted
+ * blocks only up to the middle position instead of sorting the full pooled
+ * multiset every time (sorting ~3k events x 2000 resamples x ~30 comparisons
+ * dominated the replay phase). The merge emits the same pooled order
+ * statistics a full sort would, so results are bit-identical.
  *
  * Phase 0 freeze: a formal CI requires EXACTLY {@link MAX_ACTIVE_BLOCK_COUNT}
  * nonempty chronological blocks. Fewer blocks (incl. one) return null CI —
  * `INSUFFICIENT_DATA`, never a misleading point CI from a single block.
  */
-function blockBootstrapCi(blockMeans: readonly number[], resamples: number): { lower: number | null; upper: number | null } {
-    const b = blockMeans.length;
+function blockBootstrapMedianCi(blocks: readonly (readonly number[])[], resamples: number): { lower: number | null; upper: number | null } {
+    const b = blocks.length;
     if (b < MAX_ACTIVE_BLOCK_COUNT) return { lower: null, upper: null };
+    const sortedBlocks = blocks.map((blk) => [...blk].sort((x, y) => x - y));
     let seed = (Math.floor(MAX_ACTIVE_BOOTSTRAP_SEED) >>> 0) || 0x9e3779b9;
     const next = (): number => {
         // LCG (Numerical Recipes constants), returns [0,1).
         seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
         return seed / 0x100000000;
     };
-    const means: number[] = [];
+    const medians: number[] = [];
+    const chosen: number[][] = new Array(b);
+    const heads: number[] = new Array<number>(b).fill(0);
     for (let r = 0; r < resamples; r += 1) {
-        let s = 0;
-        for (let k = 0; k < b; k += 1) s += blockMeans[Math.floor(next() * b)]!;
-        means.push(s / b);
+        let total = 0;
+        for (let k = 0; k < b; k += 1) {
+            const blk = sortedBlocks[Math.floor(next() * b)]!;
+            chosen[k] = blk;
+            total += blk.length;
+        }
+        const midLo = (total - 1) >> 1;
+        const midHi = total >> 1;
+        for (let k = 0; k < b; k += 1) heads[k] = 0;
+        let prev = 0;
+        let last = 0;
+        for (let emitted = 0; emitted <= midHi; emitted += 1) {
+            let minBlock = -1;
+            let minValue = 0;
+            for (let k = 0; k < b; k += 1) {
+                const blk = chosen[k]!;
+                const pos = heads[k]!;
+                if (pos < blk.length) {
+                    const value = blk[pos]!;
+                    if (minBlock === -1 || value < minValue) { minBlock = k; minValue = value; }
+                }
+            }
+            heads[minBlock] = heads[minBlock]! + 1;
+            prev = last;
+            last = minValue;
+        }
+        medians.push(midLo === midHi ? last : (prev + last) / 2);
     }
-    means.sort((x, y) => x - y);
-    const lo = means[Math.max(0, Math.floor(0.025 * resamples))]!;
-    const hi = means[Math.min(resamples - 1, Math.floor(0.975 * resamples))]!;
+    medians.sort((x, y) => x - y);
+    const lo = medians[Math.max(0, Math.floor(0.025 * resamples))]!;
+    const hi = medians[Math.min(resamples - 1, Math.floor(0.975 * resamples))]!;
     return { lower: finiteOrNull(lo), upper: finiteOrNull(hi) };
 }
 
@@ -2927,18 +2967,21 @@ export async function runOpenScoreUsdReplay(
                 };
             }
             const topMean = meanOrNull(topReturns);
+            // The mean delta survives only as the derivation of `randomMean`;
+            // the reported delta is the robust median of the paired deltas.
             const deltaMean = meanOrNull(deltasArr);
             const randomMean = topMean !== null && deltaMean !== null ? finiteOrNull(topMean - deltaMean) : null;
             const sortedTop = [...topReturns].sort((a, b) => a - b);
+            const sortedDeltas = [...deltasArr].sort((a, b) => a - b);
             // Chronological blocks by event time.
             const blocks = splitIntoBlocks(deltasArr, times, blockCount);
             const blockMeans = blocks.map((blk) => blk.reduce((s, x) => s + x, 0) / blk.length);
-            const { lower, upper } = blockBootstrapCi(blockMeans, bootstrapSamples);
+            const { lower, upper } = blockBootstrapMedianCi(blocks, bootstrapSamples);
             return {
                 events: sampleCount,
                 topMean,
                 randomMean,
-                delta: deltaMean,
+                delta: finiteOrNull(median(sortedDeltas)),
                 topMedian: finiteOrNull(median(sortedTop)),
                 blockMeans,
                 ciLower: lower,
@@ -3291,7 +3334,7 @@ function buildReportLines(args: {
     const status = args.complete ? "DATA_COMPLETE" : "DATA_INCOMPLETE";
     const comparisonLine = (label: string, comparison: ReplayComparison): string =>
         `${label.padEnd(14)} n=${comparison.events} top=${fmtPct(comparison.topMean)} rand=${fmtPct(comparison.randomMean)} ` +
-        `delta=${fmtPct(comparison.delta)} CI95=[${fmtPct(comparison.ciLower)},${fmtPct(comparison.ciUpper)}] ` +
+        `deltaMed=${fmtPct(comparison.delta)} CI95=[${fmtPct(comparison.ciLower)},${fmtPct(comparison.ciUpper)}] ` +
         `+blocks=${comparison.positiveBlocks}/${comparison.totalBlocks}`;
     const pnlLine = (label: string, summary: SelectorPnlSummary): string => {
         const average = summary.trades > 0 && summary.totalReturn !== null
@@ -3336,7 +3379,7 @@ function buildReportLines(args: {
     lines.push(`retained pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
     lines.push("controls | TOP_MEAN=raw/activePairs TOP_RAW_PROFIT=raw score counted only from pairs whose pair backtest netted >0 (look-ahead) TOP_MEAN_PROFIT=that raw / open profitable-pair count TOP_RAW_PROFIT_NOW=same filter using only pnl realized at or before each event (causal) TOP_MEAN_PROFIT_NOW=that raw / open realized-profitable-pair count TOP_RAW_PROFIT_NOW_CONF=causal PROFIT_NOW score weighted by realized net/gross P&L consistency with one-trade shrinkage");
     lines.push("TOP_MEAN_RAW_UNIQUE rule | TOP_MEAN tied set -> unique raw-score maximum; residual raw ties skipped; control=mean return of the TOP_MEAN tied set");
-    lines.push("pnl model | OVERLAP=long selector vs same-pool random positive, every eligible event; *_1K=$1000/trade, exact selector ties skipped, one open trade per asset");
+    lines.push("pnl model | OVERLAP=long selector vs same-pool random positive, every eligible event; *_1K=$1000/trade, exact selector ties skipped, one open trade per asset; deltaMed=median of per-event (selected - pool mean) deltas so one outlier mover cannot flip a window; CI95 block-bootstraps that median; selected-assets breakdown lines still report per-asset MEAN deltas");
     for (const h of args.horizons) {
         const coverageRate = args.candidateEvents > 0 ? h.topRaw.events / args.candidateEvents : 0;
         const coverageStatus = h.topRaw.events === 0

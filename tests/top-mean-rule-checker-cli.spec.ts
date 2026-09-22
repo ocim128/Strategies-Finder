@@ -12,7 +12,7 @@ import {
     MAX_ACTIVE_TIE_VERSION,
     PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC,
 } from "../lib/batch-backtest/max-active-research-contract";
-import { bootstrapBlockMeans, splitChronologicalBlocks, type PoolRuleArchive } from "../scripts/analyze-pool-rules";
+import { bootstrapBlockMedian, splitChronologicalBlocks, type PoolRuleArchive } from "../scripts/analyze-pool-rules";
 import type { CandidateOutcomeRecord, PoolSnapshotRecord } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
 
 const ASSETS = ["AAA", "BBB", "CCC"] as const;
@@ -130,11 +130,17 @@ function percent(value: number | null): string {
 
 function metricLine(label: string, rows: readonly Record<string, unknown>[]): string {
     const points = rows.map((row) => ({ eventId: String(row.eventId), decisionTimeSec: Number(row.decisionTime), value: Number(row.delta) }));
-    const blocks = splitChronologicalBlocks(points).map((block) => block.reduce((sum, value) => sum + value, 0) / block.length);
-    const ci = bootstrapBlockMeans(blocks);
+    const blocks = splitChronologicalBlocks(points);
+    const blockMeans = blocks.map((block) => block.reduce((sum, value) => sum + value, 0) / block.length);
+    const ci = bootstrapBlockMedian(blocks);
     const mean = (field: string): number => rows.reduce((sum, row) => sum + Number(row[field]), 0) / rows.length;
+    // Mirrors the engine's reported delta: median of the per-event deltas,
+    // not the mean, so the self-check verifies the robust statistic.
+    const sortedDeltas = rows.map((row) => Number(row.delta)).sort((left, right) => left - right);
+    const mid = sortedDeltas.length >> 1;
+    const medianDelta = sortedDeltas.length % 2 === 1 ? sortedDeltas[mid]! : (sortedDeltas[mid - 1]! + sortedDeltas[mid]!) / 2;
     const ciText = ci.lower === null || ci.upper === null ? "n/a" : `[${percent(ci.lower)},${percent(ci.upper)}]`;
-    return `${label} n=${rows.length} top=${percent(mean("selectedReturn"))} rand=${percent(mean("controlReturn"))} delta=${percent(mean("delta"))} CI95=${ciText} +blocks=${blocks.filter((value) => value > 0).length}/${blocks.length}`;
+    return `${label} n=${rows.length} top=${percent(mean("selectedReturn"))} rand=${percent(mean("controlReturn"))} deltaMed=${percent(medianDelta)} CI95=${ciText} +blocks=${blockMeans.filter((value) => value > 0).length}/${blocks.length}`;
 }
 
 function summaryLine(rows: readonly Record<string, unknown>[]): string {
