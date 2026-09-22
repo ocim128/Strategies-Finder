@@ -53,7 +53,7 @@ import {
 } from "./finder-universe-metrics";
 import { resolveFinderRiskOverrides } from "./finder-runner-core";
 import { withExitStrategyBaseParams, splitExitStrategyParams } from "./exit-strategy-param-prefix";
-import { executeBacktest, resolveExecutorBacktestSettings } from "../backtest-executor";
+import { executeBacktest, prepareClosedCandleData, resolveExecutorBacktestSettings } from "../backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import { resolveOosDataSlice, sliceFinderDataWindow } from "./finder-manager-logic";
@@ -190,6 +190,22 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
     );
     const runNowSec = Math.floor((Date.now()) / 1000);
 
+    // Closed-candle-trimmed data per symbol, computed once and passed as
+    // `closedCandleDataOverride` (mirrors the universe IS path). Without
+    // it, every candidate re-copies the OOS slice inside executeBacktest,
+    // and the copy's fresh array identity defeats the identity-keyed
+    // indicator/prepared-data caches. Cross-symbol runs keep the raw slice
+    // (alignment needs untrimmed primary data), matching the IS path.
+    const closedDataBySymbol = new Map<string, OHLCVData[]>();
+    const closedDataOverrideFor = (symbol: string, data: OHLCVData[]): OHLCVData[] => {
+        let closed = closedDataBySymbol.get(symbol);
+        if (!closed) {
+            closed = prepareClosedCandleData(data, deps.interval, deps.settings, runNowSec);
+            closedDataBySymbol.set(symbol, closed);
+        }
+        return closed;
+    };
+
     deps.onProgress(0, "Validating universe survivors out-of-sample...");
 
     let cancelled = false;
@@ -263,6 +279,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
             try {
                 const output = await executeBacktest({
                     ohlcvData: oosData,
+                    closedCandleDataOverride: crossSymbolDataFetcher ? undefined : closedDataOverrideFor(symbolResult.symbol, oosData),
                     interval: deps.interval,
                     primarySymbol: symbolResult.symbol,
                     strategyKey: candidate.strategyKey,
@@ -300,6 +317,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
                     try {
                         const controlOutput = await executeBacktest({
                             ohlcvData: oosData,
+                            closedCandleDataOverride: crossSymbolDataFetcher ? undefined : closedDataOverrideFor(symbolResult.symbol, oosData),
                             interval: deps.interval,
                             primarySymbol: symbolResult.symbol,
                             strategyKey: candidate.strategyKey,

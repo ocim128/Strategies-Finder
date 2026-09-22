@@ -186,17 +186,32 @@ export function generateSignalsForJob(
     const confirmationSettings = signalSettings.strategyTimeframeEnabled
         ? { ...signalSettings, strategyTimeframeEnabled: false }
         : signalSettings;
+    // Confirmation params/settings are run-constant, so identical
+    // (strategy, params, invertSignals) re-derive identical signals for
+    // every candidate. Memoize per job invocation context — the executor
+    // also folds strategyTimeframeEnabled:false and time-gap isolation in,
+    // so it cannot share the default cache in confirmation-signal-filter
+    // (that one does not isolate time gaps). Keyed like
+    // cacheKeyForConfirmation: key + params + invertSignals.
+    const confirmationSignalCache = new Map<string, Signal[]>();
     const signals = applyConfirmationStrategiesToSignals({
         data,
         baseSignals: canUsePreparedData ? applySignalPolarity(rawSignals, signalSettings) : rawSignals,
         settings: signalSettings,
-        executeStrategy: (_key, confirmationStrategy, confirmationParams) => executeBacktestStrategySignals({
-            data,
-            interval,
-            strategy: confirmationStrategy,
-            params: confirmationParams,
-            settings: confirmationSettings,
-        }),
+        executeStrategy: (key, confirmationStrategy, confirmationParams) => {
+            const cacheKey = JSON.stringify([key, confirmationParams, signalSettings.invertSignals === true]);
+            const cached = confirmationSignalCache.get(cacheKey);
+            if (cached) return cached;
+            const generated = executeBacktestStrategySignals({
+                data,
+                interval,
+                strategy: confirmationStrategy,
+                params: confirmationParams,
+                settings: confirmationSettings,
+            });
+            confirmationSignalCache.set(cacheKey, generated);
+            return generated;
+        },
     });
     confirmationMs = performance.now() - confirmationStartedAt;
     onTiming?.({

@@ -1038,18 +1038,32 @@ function applyConfirmationStrategies(
         ...settings,
         strategyTimeframeEnabled: false,
     };
+    // Confirmation settings are run-constant, so identical (strategy,
+    // params, invertSignals) re-derive identical signals on every
+    // candidate/backtest call. Memoize per invocation — this executor adds
+    // strategyTimeframeEnabled:false + time-gap isolation on top of the
+    // strategy's raw execute, so it cannot reuse the default cache in
+    // confirmation-signal-filter (which calls strategy.execute directly).
+    const confirmationSignalCache = new Map<string, Signal[]>();
     return applyConfirmationStrategiesToSignals({
         data,
         baseSignals,
         settings,
-        executeStrategy: (_key, confirmationStrategy, confirmationParams) => executeStrategySignals(
-            data,
-            confirmationStrategy,
-            confirmationParams,
-            confirmationSettings,
-            interval,
-            hasGlobalStrategyTimeframeWrapper(confirmationStrategy)
-        ),
+        executeStrategy: (key, confirmationStrategy, confirmationParams) => {
+            const cacheKey = JSON.stringify([key, confirmationParams, settings.invertSignals === true]);
+            const cached = confirmationSignalCache.get(cacheKey);
+            if (cached) return cached;
+            const generated = executeStrategySignals(
+                data,
+                confirmationStrategy,
+                confirmationParams,
+                confirmationSettings,
+                interval,
+                hasGlobalStrategyTimeframeWrapper(confirmationStrategy)
+            );
+            confirmationSignalCache.set(cacheKey, generated);
+            return generated;
+        },
     });
 }
 
