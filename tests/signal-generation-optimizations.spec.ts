@@ -2,10 +2,6 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import type { OHLCVData, Signal, Time } from "../lib/types/strategies";
 import { mapSignalsFromHigherTimeframe } from "../lib/strategy-timeframe";
-import {
-    executeStrategyAcrossTimeGapSegments,
-    type ContiguousTimeSegment,
-} from "../lib/strategy-time-gap-isolation";
 import { calculateWilliamsR } from "../lib/strategies/indicators";
 import {
     buildRollingCorrelation,
@@ -78,22 +74,6 @@ describe("signal generation optimizations", () => {
         expect(mapped.map((signal) => signal.price)).to.deep.equal([13, 13]);
     });
 
-    it("resolves time-gap signals by bar index first and timestamps only as fallback", () => {
-        const segment: ContiguousTimeSegment = {
-            data: [bar(10, 10), bar(11, 11)],
-            offset: 4,
-        };
-        const signals = executeStrategyAcrossTimeGapSegments({
-            segments: [segment],
-            executeSegment: () => [
-                { time: 999 as Time, type: "buy", price: 10, barIndex: 1 },
-                { time: 11 as Time, type: "sell", price: 11 },
-            ],
-        });
-
-        expect(signals.map((signal) => signal.barIndex)).to.deep.equal([5, 5]);
-        expect(signals.map((signal) => signal.time)).to.deep.equal([11, 11]);
-    });
 
     it("keeps rolling correlation equivalent to the windowed formula and recovers after non-finite data leaves", () => {
         const series1 = [1e9, 1e9 + 0.25, Number.NaN, 1e9 + 0.75, 1e9 + 1, 1e9 + 1.25];
@@ -136,4 +116,5 @@ describe("signal generation optimizations", () => {
             -100 * (13 - 12) / (13 - 3),
         ]);
     });
+
 });

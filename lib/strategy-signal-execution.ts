@@ -9,7 +9,6 @@ import type {
 import { applySignalPolarity } from "./strategies/index";
 import { resampleOHLCV, type ResampleOptions } from "./strategies/resample-utils";
 import { toNumericTimeData, mapSignalsFromHigherTimeframe } from "./strategy-timeframe";
-import { executeStrategyWithTimeGapIsolation } from "./strategy-time-gap-isolation";
 
 type StrategyTimeframeConfig = {
     enabled: boolean;
@@ -30,17 +29,11 @@ function readStrategyTimeframeConfig(settings: BacktestSettings): StrategyTimefr
 
 function executeDirectStrategySignals(
     data: OHLCVData[],
-    interval: string,
     strategy: Strategy,
     params: StrategyParams,
     context?: StrategyExecutionContext
 ): Signal[] {
-    return executeStrategyWithTimeGapIsolation({
-        data,
-        interval,
-        executionContext: context,
-        execute: (segmentData, segmentContext) => strategy.execute(segmentData, params, segmentContext),
-    });
+    return strategy.execute(data, params, context);
 }
 
 export function executeBacktestStrategySignals(args: {
@@ -54,7 +47,6 @@ export function executeBacktestStrategySignals(args: {
 }): Signal[] {
     const {
         data,
-        interval,
         strategy,
         params,
         settings,
@@ -63,19 +55,19 @@ export function executeBacktestStrategySignals(args: {
     } = args;
 
     if (strategyAlreadyWrapped) {
-        const signals = executeDirectStrategySignals(data, interval, strategy, params, executionContext);
+        const signals = executeDirectStrategySignals(data, strategy, params, executionContext);
         return applySignalPolarity(signals, settings);
     }
 
     const tfConfig = readStrategyTimeframeConfig(settings);
     if (!tfConfig.enabled || data.length === 0) {
-        const signals = executeDirectStrategySignals(data, interval, strategy, params, executionContext);
+        const signals = executeDirectStrategySignals(data, strategy, params, executionContext);
         return applySignalPolarity(signals, settings);
     }
 
     const numericData = toNumericTimeData(data);
     if (!numericData) {
-        const signals = executeDirectStrategySignals(data, interval, strategy, params, executionContext);
+        const signals = executeDirectStrategySignals(data, strategy, params, executionContext);
         return applySignalPolarity(signals, settings);
     }
 
