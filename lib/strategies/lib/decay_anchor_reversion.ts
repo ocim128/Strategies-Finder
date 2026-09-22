@@ -22,6 +22,35 @@ function normalizeParams(params: StrategyParams): StrategyParams {
     };
 }
 
+type DecayAnchorPrepared = {
+    data: OHLCVData[];
+    closes: number[];
+    center: number[];
+    atr: (number | null)[];
+};
+
+function prepareData(data: OHLCVData[]): DecayAnchorPrepared {
+    const cleanData = ensureCleanData(data);
+    const closes = getCloses(cleanData);
+    const decayCloses = buildCumulativeDecaySum(closes, FIXED_DECAY);
+    // The ones-series normalization makes the weighted center unbiased from bar zero.
+    const ones = new Array<number>(cleanData.length).fill(1);
+    const decayOnes = buildCumulativeDecaySum(ones, FIXED_DECAY);
+    const center = new Array<number>(cleanData.length).fill(0);
+    for (let i = 0; i < cleanData.length; i++) {
+        center[i] = decayOnes[i] > 0 ? decayCloses[i] / decayOnes[i] : 0;
+    }
+    const atr = calculateATR(getHighs(cleanData), getLows(cleanData), closes, ATR_PERIOD);
+    return { data: cleanData, closes, center, atr };
+}
+
+function getPreparedData(preparedData: unknown, data: OHLCVData[]): DecayAnchorPrepared {
+    if (preparedData && typeof preparedData === "object" && "center" in preparedData) {
+        return preparedData as DecayAnchorPrepared;
+    }
+    return prepareData(data);
+}
+
 export const decay_anchor_reversion: Strategy = {
     name: "Decay Anchor Reversion",
     description: "Fades closes stretched at least 2 ATR from a cumulative fair center.",
@@ -33,22 +62,15 @@ export const decay_anchor_reversion: Strategy = {
     },
     finderFixedParams: ["decay"],
     normalizeParams,
-    execute: (data: OHLCVData[], _params: StrategyParams) => {
-        const cleanData = ensureCleanData(data);
-        const decay = FIXED_DECAY;
+    prepareFinderData: (data) => prepareData(data),
+    executePrepared: (preparedData: unknown, _params: StrategyParams, data: OHLCVData[]) => {
+        const prepared = getPreparedData(preparedData, data);
+        const cleanData = prepared.data;
         if (cleanData.length < ATR_PERIOD) return [];
 
-        const closes = getCloses(cleanData);
-        const decayCloses = buildCumulativeDecaySum(closes, decay);
-        // The ones-series normalization makes the weighted center unbiased from bar zero.
-        const ones = new Array<number>(cleanData.length).fill(1);
-        const decayOnes = buildCumulativeDecaySum(ones, decay);
-        const center = new Array<number>(cleanData.length).fill(0);
-        for (let i = 0; i < cleanData.length; i++) {
-            center[i] = decayOnes[i] > 0 ? decayCloses[i] / decayOnes[i] : 0;
-        }
-
-        const atr = calculateATR(getHighs(cleanData), getLows(cleanData), closes, ATR_PERIOD);
+        const closes = prepared.closes;
+        const center = prepared.center;
+        const atr = prepared.atr;
 
         return createSignalLoop(cleanData, [atr], (i) => {
             const atrNow = atr[i];
@@ -65,6 +87,8 @@ export const decay_anchor_reversion: Strategy = {
             return null;
         });
     },
+    execute: (data: OHLCVData[], params: StrategyParams) =>
+        decay_anchor_reversion.executePrepared?.(prepareData(data), params, data) ?? [],
     metadata: {
         role: "entry",
         direction: "both",
