@@ -213,6 +213,7 @@ export function buildTopMeanHorizonSummaries(
                             TOP_RAW_PROFIT_NOW: h.topRawProfitNow,
                             TOP_MEAN_PROFIT_NOW: h.topMeanProfitNow,
                             TOP_RAW_PROFIT_NOW_CONF: h.topRawProfitNowConf,
+                            TOP_Z: h.topZ,
                         },
         };
     });

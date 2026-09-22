@@ -132,6 +132,57 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(report).to.include("RAW_PROFIT_NOW_CONF_EX_");
     });
 
+    it("TOP_Z ranks by per-asset score surprise, not the absolute vote count", async () => {
+        // Event 1 (T0+1000): AAA and BBB each have one profit-now vote (z is
+        // each asset's first sighting, so z = raw). BBB exits before event 2.
+        // Event 2 (T0+5000): CCC enters with one vote while AAA still has one.
+        // AAA's own history is [1] -> z = (1-1)/max(0,1) = 0 (no surprise);
+        // CCC's history is [0] -> z = (1-0)/1 = 1. Same raw scores, but TOP_Z
+        // must pick CCC while TOP_RAW_PROFIT_NOW resolves the tie by digest.
+        const decision1 = T0 + 1000;
+        const decision2 = T0 + 5000;
+        const markets = [
+            makeDirectMarket("AAA", [
+                makeTrade("long", T0 + 100, T0 + 200, 10),
+                makeTrade("long", decision1, null),
+            ]),
+            makeDirectMarket("BBB", [
+                makeTrade("long", T0 + 100, T0 + 200, 10),
+                makeTrade("long", decision1, T0 + 2000, 5),
+            ]),
+            makeDirectMarket("CCC", [
+                makeTrade("long", T0 + 300, T0 + 400, 10),
+                makeTrade("long", decision2, null),
+            ]),
+        ];
+        const targets = ["AAA", "BBB", "CCC"].map((asset) => makeTarget(asset, 12, () => 100));
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            {
+                horizons: [2],
+                slippageRate: 0,
+                commissionRate: 0,
+                blockCount: 1,
+                includeEventDetails: true,
+            },
+        );
+
+        const horizon = result.horizons[0]!;
+        const zDetailAtDecision2 = result.eventDetails?.find(
+            (row) => row.selector === "TOP_Z" && row.decisionTime === decision2,
+        );
+        expect(zDetailAtDecision2?.asset).to.equal("CCC");
+        expect(zDetailAtDecision2?.eligibleCandidates).to.equal(2);
+        expect(horizon.topZByAsset.some((row) => row.asset === "CCC" && row.events === 1)).to.equal(true);
+        expect(result.latestSelections?.selections.find(
+            (selection) => selection.selector === "TOP_Z",
+        )?.asset).to.equal("CCC");
+        const report = result.reportLines.join("\n");
+        expect(report).to.include("TOP_Z selected assets = ");
+        expect(report).to.include("TOP_Z_EX_");
+    });
+
     it("returns a no-horizon message when horizons are empty", async () => {
         const result = await runOpenScoreUsdReplay(
             () => fromArray([]),
