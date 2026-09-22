@@ -176,6 +176,8 @@ export async function runCandidateOosPass(deps: CandidateOosDeps): Promise<Candi
                 backtestFn: runBacktest,
                 precomputed,
                 ...(exitStrategy ? { exitStrategy } : {}),
+                exitStrategyKey: candidate.exitStrategyKey,
+                preparedDataCache,
                 exitAlphaEnabled: requiresExitAlpha,
                 onExitAlpha: (value) => {
                     oosExitAlpha = value;

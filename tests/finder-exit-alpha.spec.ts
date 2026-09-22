@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import { runFinderExecution } from "../lib/finder/finder-runner";
 import { runStrategyBacktest } from "../lib/finder/finder-runner-shared";
+import type { FinderPreparedDataCache } from "../lib/finder/finder-runner-core";
 import { runCandidateOosPass } from "../lib/finder/finder-candidate-oos";
 import { runUniverseOosPass } from "../lib/finder/finder-universe-oos";
 import { runFinderUniverseExecution } from "../lib/finder/finder-runner-universe";
@@ -266,6 +267,54 @@ describe("Finder Exit Alpha", () => {
         });
         expect(normal.trades[0]?.exitReason).to.equal("signal");
         expect(control.trades[0]?.exitReason).to.equal("end_of_data");
+    });
+
+    it("reuses prepared exit-strategy data across Finder candidates", () => {
+        const data = makeData([100, 102, 104, 106]);
+        const preparedDataCache: FinderPreparedDataCache = new WeakMap();
+        let prepareCalls = 0;
+        let executePreparedCalls = 0;
+        const exitStrategy: Strategy = {
+            name: "Prepared Exit",
+            description: "test",
+            defaultParams: {},
+            paramLabels: {},
+            execute: () => [],
+            prepareFinderData: () => {
+                prepareCalls += 1;
+                return { prepared: true };
+            },
+            executePrepared: (prepared) => {
+                expect(prepared).to.deep.equal({ prepared: true });
+                executePreparedCalls += 1;
+                return [];
+            },
+        };
+        const entryStrategy: Strategy = {
+            name: "Entry",
+            description: "test",
+            defaultParams: {},
+            paramLabels: {},
+            execute: () => [],
+        };
+
+        for (let i = 0; i < 2; i += 1) {
+            runStrategyBacktest({
+                strategy: entryStrategy,
+                data,
+                signals: [],
+                params: { _exit__variant: i },
+                capitalSettings,
+                backtestSettings: baseSettings,
+                backtestFn: runBacktest,
+                exitStrategy,
+                exitStrategyKey: "prepared_exit",
+                preparedDataCache,
+            });
+        }
+
+        expect(prepareCalls).to.equal(1);
+        expect(executePreparedCalls).to.equal(2);
     });
 
     it("sorts finite alpha ahead of missing values and preserves secondary priorities", () => {

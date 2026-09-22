@@ -6,6 +6,15 @@ import { PositionExitTrigger } from './exit-handlers';
 export interface PathExitLearningState {
     hazardSamples: Map<string, { count: number; sum: number }>;
     barrierSamples: Map<string, { count: number; sum: number }>;
+    /** First barrier hits reused by every closed trade in this backtest. */
+    tripleBarrierHits?: Map<string, TripleBarrierFirstHitIndices>;
+}
+
+export interface TripleBarrierFirstHitIndices {
+    favorable: Int32Array;
+    adverse: Int32Array;
+    /** Set only for the lazy cache used by the backtest learner. */
+    computed?: Uint8Array;
 }
 
 export interface PathExitEvaluationContext {
@@ -37,6 +46,98 @@ function getMfeBucket(pct: number): number {
     return 2;
 }
 
+function normalizeBarrierHeightPercent(threshold: number): number {
+    return threshold <= 0 ? 1.0 : (threshold > 100 ? 100 : threshold);
+}
+
+/**
+ * Precompute the first favorable and adverse barrier hit for every possible
+ * start bar. The original learner performed the same forward scan once per
+ * held bar of every closed trade; this keeps the exact first-hit semantics but
+ * shares each start-bar scan across all trades in one backtest.
+ */
+export function buildTripleBarrierFirstHitIndices(
+    data: OHLCVData[],
+    directionFactor: number,
+    barrierHeightPercent: number,
+    horizon: number,
+): TripleBarrierFirstHitIndices {
+    const favorable = new Int32Array(data.length);
+    const adverse = new Int32Array(data.length);
+    favorable.fill(-1);
+    adverse.fill(-1);
+
+    const isShortPosition = directionFactor < 0;
+    for (let i = 0; i < data.length; i++) {
+        const hits = computeTripleBarrierFirstHitAt(
+            data,
+            i,
+            directionFactor,
+            barrierHeightPercent,
+            horizon,
+            isShortPosition,
+        );
+        favorable[i] = hits.favorable;
+        adverse[i] = hits.adverse;
+    }
+    return { favorable, adverse };
+}
+
+function computeTripleBarrierFirstHitAt(
+    data: OHLCVData[],
+    startIndex: number,
+    directionFactor: number,
+    barrierHeightPercent: number,
+    horizon: number,
+    isShortPosition = directionFactor < 0,
+): { favorable: number; adverse: number } {
+    const candle = data[startIndex];
+    if (!candle) return { favorable: -1, adverse: -1 };
+    const targetProfitPrice = candle.close * (1 + directionFactor * (barrierHeightPercent / 100));
+    const stopLossPrice = candle.close * (1 - directionFactor * (barrierHeightPercent / 100));
+    const maxForwardIdx = Math.min(data.length - 1, startIndex + horizon);
+    let favorable = -1;
+    let adverse = -1;
+    for (let j = startIndex + 1; j <= maxForwardIdx; j++) {
+        const fCandle = data[j];
+        if (!fCandle) continue;
+
+        const hitFavorable = isShortPosition
+            ? fCandle.low <= targetProfitPrice
+            : fCandle.high >= targetProfitPrice;
+        const hitAdverse = isShortPosition
+            ? fCandle.high >= stopLossPrice
+            : fCandle.low <= stopLossPrice;
+        if (hitFavorable && favorable === -1) favorable = j;
+        if (hitAdverse && adverse === -1) adverse = j;
+        if (favorable !== -1 && adverse !== -1) break;
+    }
+    return { favorable, adverse };
+}
+
+function getTripleBarrierFirstHitIndices(
+    data: OHLCVData[],
+    learningState: PathExitLearningState,
+    directionFactor: number,
+    threshold: number,
+    horizon: number,
+): TripleBarrierFirstHitIndices {
+    const barrierHeightPercent = normalizeBarrierHeightPercent(threshold);
+    const cache = learningState.tripleBarrierHits ??= new Map();
+    const key = `${directionFactor}|${barrierHeightPercent}|${horizon}`;
+    const cached = cache.get(key);
+    if (cached) return cached;
+    const hits: TripleBarrierFirstHitIndices = {
+        favorable: new Int32Array(data.length),
+        adverse: new Int32Array(data.length),
+        computed: new Uint8Array(data.length),
+    };
+    hits.favorable.fill(-1);
+    hits.adverse.fill(-1);
+    cache.set(key, hits);
+    return hits;
+}
+
 export function getPathStateKey(barsInTrade: number, currentPnLPercent: number, mfePercent: number): string {
     return `${getBarsHeldBucket(barsInTrade)}_${getPercentBucket(currentPnLPercent)}_${getMfeBucket(mfePercent)}`;
 }
@@ -52,6 +153,18 @@ export function learnFromClosedTrade(
 ): void {
     const directionFactor = directionFactorFor(pos.direction);
     const isShortPosition = pos.direction === 'short';
+
+    if (entryBarIndex >= exitBarIndex) return;
+
+    const horizon = config.pathExitHorizonBars;
+    const barrierHeightPercent = normalizeBarrierHeightPercent(config.pathExitThreshold);
+    const tripleBarrierHits = getTripleBarrierFirstHitIndices(
+        data,
+        learningState,
+        directionFactor,
+        barrierHeightPercent,
+        horizon,
+    );
 
     let extremePrice = pos.entryPrice;
 
@@ -78,46 +191,32 @@ export function learnFromClosedTrade(
         learningState.hazardSamples.set(stateKey, hazardEntry);
 
         // b. triple_barrier_meta
-        const threshold = config.pathExitThreshold;
-        const barrierHeightPercent = threshold <= 0 ? 1.0 : (threshold > 100 ? 100 : threshold);
-        const targetProfitPrice = candle.close * (1 + directionFactor * (barrierHeightPercent / 100));
-        const stopLossPrice = candle.close * (1 - directionFactor * (barrierHeightPercent / 100));
-        const horizon = config.pathExitHorizonBars;
-
         let label = 0;
         const maxForwardIdx = Math.min(exitBarIndex, i + horizon);
-
-        for (let j = i + 1; j <= maxForwardIdx; j++) {
-            const fCandle = data[j];
-            if (!fCandle) continue;
-
-            if (isShortPosition) {
-                const hitFavorable = fCandle.low <= targetProfitPrice;
-                const hitAdverse = fCandle.high >= stopLossPrice;
-                if (hitFavorable && hitAdverse) {
-                    label = 0;
-                    break;
-                } else if (hitFavorable) {
-                    label = 1;
-                    break;
-                } else if (hitAdverse) {
-                    label = -1;
-                    break;
-                }
-            } else {
-                const hitFavorable = fCandle.high >= targetProfitPrice;
-                const hitAdverse = fCandle.low <= stopLossPrice;
-                if (hitFavorable && hitAdverse) {
-                    label = 0;
-                    break;
-                } else if (hitFavorable) {
-                    label = 1;
-                    break;
-                } else if (hitAdverse) {
-                    label = -1;
-                    break;
-                }
-            }
+        const computed = tripleBarrierHits.computed!;
+        if (computed[i] === 0) {
+            const hits = computeTripleBarrierFirstHitAt(
+                data,
+                i,
+                directionFactor,
+                barrierHeightPercent,
+                horizon,
+                isShortPosition,
+            );
+            tripleBarrierHits.favorable[i] = hits.favorable;
+            tripleBarrierHits.adverse[i] = hits.adverse;
+            computed[i] = 1;
+        }
+        const favorableHit = tripleBarrierHits.favorable[i] ?? -1;
+        const adverseHit = tripleBarrierHits.adverse[i] ?? -1;
+        const favorableWithinTrade = favorableHit >= 0 && favorableHit <= maxForwardIdx;
+        const adverseWithinTrade = adverseHit >= 0 && adverseHit <= maxForwardIdx;
+        if (favorableWithinTrade && adverseWithinTrade) {
+            label = favorableHit < adverseHit ? 1 : favorableHit > adverseHit ? -1 : 0;
+        } else if (favorableWithinTrade) {
+            label = 1;
+        } else if (adverseWithinTrade) {
+            label = -1;
         }
 
         const barrierEntry = learningState.barrierSamples.get(stateKey) ?? { count: 0, sum: 0 };

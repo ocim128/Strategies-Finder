@@ -222,6 +222,10 @@ export function runStrategyBacktest(args: {
     backtestOptions?: Parameters<typeof runBacktest>[8];
     /** Pre-loaded exit strategy. When present, its params (under `_exit__` prefix in args.params) are split out, its signals generated and tagged exitOnly, and merged into args.signals. */
     exitStrategy?: Strategy;
+    /** Registry key used to share prepared exit-strategy data across candidates. */
+    exitStrategyKey?: string;
+    /** Reuse Finder-prepared data for the exit strategy when available. */
+    preparedDataCache?: FinderPreparedDataCache;
     executionContext?: StrategyExecutionContext;
     /** Calculate the raw normal-vs-control Exit Alpha pair when enabled. */
     exitAlphaEnabled?: boolean;
@@ -237,6 +241,8 @@ export function runStrategyBacktest(args: {
         backtestFn,
         precomputed,
         exitStrategy,
+        exitStrategyKey,
+        preparedDataCache,
         executionContext,
     } = args;
     const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount, advancedSizing } = capitalSettings;
@@ -247,7 +253,15 @@ export function runStrategyBacktest(args: {
 
     // Exit Strategy Override: split prefixed exit params, generate close-only exit signals, merge.
     const effectiveSignals = exitStrategy
-        ? mergeExitStrategySignals(signals, generateExitStrategySignals(exitStrategy, params, data, backtestSettings, executionContext))
+        ? mergeExitStrategySignals(signals, generateExitStrategySignals(
+            exitStrategy,
+            params,
+            data,
+            backtestSettings,
+            executionContext,
+            preparedDataCache,
+            exitStrategyKey,
+        ))
         : signals;
 
     if (strategy.metadata?.role === "entry" && entryStats) {
@@ -314,15 +328,29 @@ function generateExitStrategySignals(
     combinedParams: StrategyParams,
     data: OHLCVData[],
     backtestSettings: BacktestSettings,
-    executionContext?: StrategyExecutionContext
+    executionContext?: StrategyExecutionContext,
+    preparedDataCache?: FinderPreparedDataCache,
+    exitStrategyKey?: string,
 ): Signal[] {
     const { exitParams } = splitExitStrategyParams(combinedParams);
     const normalizedExitParams = exitStrategy.normalizeParams
         ? exitStrategy.normalizeParams(exitParams)
         : exitParams;
+    const canUsePreparedData = preparedDataCache !== undefined
+        && Boolean(exitStrategy.executePrepared && exitStrategy.prepareFinderData);
+    const preparedFinderData = canUsePreparedData && preparedDataCache
+        ? getPreparedFinderData(
+            preparedDataCache,
+            `exit:${exitStrategyKey ?? exitStrategy.name}`,
+            exitStrategy,
+            data,
+            backtestSettings,
+            executionContext,
+        )
+        : exitStrategy.prepareFinderData?.(data, backtestSettings, executionContext);
     const rawSignals = exitStrategy.executePrepared
         ? exitStrategy.executePrepared(
-            exitStrategy.prepareFinderData?.(data, backtestSettings, executionContext),
+            preparedFinderData,
             normalizedExitParams,
             data,
             executionContext
@@ -388,6 +416,8 @@ export function runBacktestAndInsert(
     onResult?: (result: BacktestResult) => void,
     onFailure?: (error: unknown) => void,
     exitAlphaEnabled = false,
+    preparedDataCache?: FinderPreparedDataCache,
+    executionContext?: StrategyExecutionContext,
 ): boolean {
     try {
         let exitAlpha: number | undefined;
@@ -402,6 +432,9 @@ export function runBacktestAndInsert(
             precomputed,
             backtestOptions: { collectDiagnostics: true },
             exitStrategy: job.exitStrategy,
+            exitStrategyKey: job.exitStrategyKey,
+            preparedDataCache,
+            executionContext,
             exitAlphaEnabled,
             onExitAlpha: (value) => {
                 exitAlpha = value;

@@ -179,6 +179,8 @@ type BacktestFallbackRunnerOptions = {
     onBacktestResult?: (job: ParamJob, result: BacktestResult) => void;
     onFailure?: (job: ParamJob, error?: unknown) => void;
     exitAlphaEnabled?: boolean;
+    preparedDataCache: FinderPreparedDataCache;
+    getJobCtx: (job: ParamJob) => StrategyExecutionContext | undefined;
 };
 
 function createBacktestFallbackRunner(options: BacktestFallbackRunnerOptions): (run: PreparedRun) => void {
@@ -197,6 +199,8 @@ function createBacktestFallbackRunner(options: BacktestFallbackRunnerOptions): (
             (result) => options.onBacktestResult?.(run.job, result),
             (error) => options.onFailure?.(run.job, error),
             options.exitAlphaEnabled,
+            options.preparedDataCache,
+            options.getJobCtx(run.job),
         );
         options.timing.backtest += performance.now() - tTsStart;
     };
@@ -882,6 +886,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     precomputed: getJobPrecomputed(job, shortPrecomputed),
                     backtestOptions: { collectDiagnostics: true },
                     exitStrategy: job.exitStrategy,
+                    exitStrategyKey: job.exitStrategyKey,
+                    preparedDataCache,
+                    executionContext: getJobCtx(job),
                 });
                 recordBacktestResult(job, quickRawResult);
                 const quickBacktestMs = performance.now() - tQuickStart;
@@ -939,6 +946,8 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 onBacktestResult: recordBacktestResult,
                 onFailure: recordFailure,
                 exitAlphaEnabled: requiresExitAlphaSort,
+                preparedDataCache,
+                getJobCtx,
             });
 
             for (let i = 0; i < shortlisted.length; i++) {
@@ -1013,6 +1022,8 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             onBacktestResult: recordBacktestResult,
             onFailure: recordFailure,
             exitAlphaEnabled: requiresExitAlphaSort,
+            preparedDataCache,
+            getJobCtx,
         });
 
         for (let batchIndex = 0; batchIndex < totalFunnelBatches; batchIndex++) {
@@ -1090,6 +1101,8 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         onBacktestResult: recordBacktestResult,
         onFailure: recordFailure,
         exitAlphaEnabled: requiresExitAlphaSort,
+        preparedDataCache,
+        getJobCtx,
     });
     const rustRunBacktestFallback = createBacktestFallbackRunner({
         closedData,
@@ -1103,6 +1116,8 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         onBacktestResult: recordBacktestResult,
         onFailure: recordFailure,
         exitAlphaEnabled: requiresExitAlphaSort,
+        preparedDataCache,
+        getJobCtx,
     });
 
     while (processedCount < totalRuns) {
@@ -1328,6 +1343,8 @@ async function reconcileSingleTimeframeTopResults(
                 backtestFn: runBacktest,
                 precomputed: jobPrecomputed,
                 exitStrategy,
+                exitStrategyKey: candidate.exitStrategyKey,
+                preparedDataCache,
                 executionContext: jobCtx,
                 exitAlphaEnabled: requiresExitAlphaSort,
                 onExitAlpha: (value) => {
