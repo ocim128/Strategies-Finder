@@ -3424,8 +3424,8 @@ export class BatchBacktestService {
         const fullRangeHasDetails =
             Array.isArray(summary.openScoreEventDetails)
             && summary.openScoreEventDetails.length > 0;
-        const hasOngoingTopMean = this.buildOngoingTopMeanEventDetails(summary).length > 0;
-        const hasDetails = annualHasDetails || fullRangeHasDetails || hasOngoingTopMean;
+        const hasOngoingRows = this.buildOngoingEventDetails(summary).length > 0;
+        const hasDetails = annualHasDetails || fullRangeHasDetails || hasOngoingRows;
         dom.batchBacktestSp500TopMeanDetailsBtn.disabled = !hasDetails;
         dom.batchBacktestSp500TopMeanDetailsSelector.disabled = !hasDetails;
         dom.batchBacktestSp500TopMeanDetailsYear.disabled = !hasDetails;
@@ -3508,14 +3508,16 @@ export class BatchBacktestService {
     /**
      * The historical replay intentionally omits right-censored horizons, but
      * an unresolved selector pick is still useful before its holding period has
-     * completed. Keep these rows UI-only so incomplete returns never enter the
-     * research aggregates or either copy path.
+     * completed. Every asset-picking arm reports these rows; keep them UI-only
+     * so incomplete returns never enter the research aggregates or either copy
+     * path. Legacy persisted results predate per-arm rows — synthesize the
+     * TOP_MEAN row from the latest selection snapshot for those.
      */
-    private buildOngoingTopMeanEventDetails(
+    private buildOngoingEventDetails(
         summary: TopMeanResultSummary,
     ): OngoingTopMeanEventDetail[] {
         if (Array.isArray(summary.ongoingEventDetails)) {
-            return summary.ongoingEventDetails.filter((row) => row.selector === "TOP_MEAN");
+            return summary.ongoingEventDetails;
         }
 
         const latest = summary.latestSelections;
@@ -3581,9 +3583,7 @@ export class BatchBacktestService {
         year: number | null = null,
     ): string {
         const annualReports = summary.annualReports ?? [];
-        const ongoingTopMeanRows = selector === "TOP_MEAN"
-            ? this.buildOngoingTopMeanEventDetails(summary)
-            : [];
+        const ongoingRows = this.buildOngoingEventDetails(summary);
         // Year slice: a client-side filter on decision time (UTC). It narrows
         // the rows the browser already holds — no additional server data.
         const yearMatches = year === null
@@ -3616,9 +3616,10 @@ export class BatchBacktestService {
                     // A year selection only shows its own annual section.
                     && (year === null || annual.year === year)
                 ),
-                ongoingRows: ongoingTopMeanRows.filter((row) => {
+                ongoingRows: ongoingRows.filter((row) => {
                     const rowYear = new Date(row.decisionTime * 1000).getUTCFullYear();
-                    return rowYear === annual.year
+                    return row.selector === selector
+                        && rowYear === annual.year
                         && row.decisionTime >= annual.sampleFromSec
                         && row.decisionTime <= annual.sampleToSec
                         && yearMatches(row.decisionTime);
@@ -3634,12 +3635,12 @@ export class BatchBacktestService {
                 rows: (summary.openScoreEventDetails ?? []).filter(
                     (row) => row.selector === selector && yearMatches(row.decisionTime),
                 ),
-                ongoingRows: ongoingTopMeanRows.filter(
-                    (row) => yearMatches(row.decisionTime),
+                ongoingRows: ongoingRows.filter(
+                    (row) => row.selector === selector && yearMatches(row.decisionTime),
                 ),
             } satisfies TopMeanOpenScoreDetailSection];
         let html = `<div class="batch-open-score-details-heading">OPEN_SCORE Event Details — ${escapeHtml(selector)}</div>`;
-        html += `<div class="batch-open-score-details-note">Showing ${escapeHtml(selector)} only. Return is the selected asset's net USD return after configured slippage and commission; control is the selector-specific comparison pool (for TOP_MEAN_RAW_UNIQUE, the TOP_MEAN tied set, including the selected asset). TOP_MEAN selections with incomplete horizons are shown as ONGOING; their outcome fields are intentionally n/a. These rows are intentionally excluded from Copy OPEN_SCORE and Copy Result.</div>`;
+        html += `<div class="batch-open-score-details-note">Showing ${escapeHtml(selector)} only. Return is the selected asset's net USD return after configured slippage and commission; control is the selector-specific comparison pool (for TOP_MEAN_RAW_UNIQUE, the TOP_MEAN tied set, including the selected asset). Selections whose horizon is incomplete are shown as ONGOING for every arm; their Return column is the unrealized mark-to-market return at data end and Control/Delta are intentionally n/a. These rows are intentionally excluded from Copy OPEN_SCORE and Copy Result.</div>`;
         if (fullWindowTruncated || truncatedAnnual.length > 0 || annualRowsNotShipped) {
             const truncationParts: string[] = [];
             if (fullWindowTruncated) {
@@ -3721,6 +3722,16 @@ export class BatchBacktestService {
         const entryLabel = row.entryTime !== null && Number.isFinite(row.entryTime)
             ? formatTime(row.entryTime)
             : "NEXT BAR";
+        // Return column shows the unrealized mark-to-market return at the
+        // target dataset end when the engine computed one; n/a otherwise.
+        // Control/Delta have no realized comparison and stay n/a.
+        const unrealized = row.unrealizedReturn;
+        const unrealizedLabel = unrealized !== null && unrealized !== undefined && Number.isFinite(unrealized)
+            ? `${unrealized >= 0 ? "+" : ""}${(unrealized * 100).toFixed(2)}%`
+            : "n/a";
+        const unrealizedClass = unrealized !== null && unrealized !== undefined && unrealized >= 0
+            ? "is-positive"
+            : "is-negative";
         return `<tr class="batch-open-score-details-row-ongoing">` +
             `<td>${escapeHtml(formatTime(row.decisionTime))}</td>` +
             `<td>${escapeHtml(entryLabel)}</td>` +
@@ -3729,7 +3740,7 @@ export class BatchBacktestService {
             `<td><strong>${escapeHtml(row.selector)}</strong> <span class="batch-top-badge">ONGOING</span></td>` +
             `<td class="is-positive">${escapeHtml(row.direction.toUpperCase())}</td>` +
             `<td><strong>${escapeHtml(row.asset)}</strong></td>` +
-            `<td>${escapeHtml("n/a")}</td>` +
+            `<td class="${unrealizedClass}">${escapeHtml(unrealizedLabel)}</td>` +
             `<td>${escapeHtml("n/a")}</td>` +
             `<td>${escapeHtml("n/a")}</td>` +
             `<td>${escapeHtml(row.eligibleCandidates)}</td>` +

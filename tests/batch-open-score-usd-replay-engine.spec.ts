@@ -593,12 +593,21 @@ describe("batch-open-score-usd-replay-engine", () => {
         // No eligible events (all censored) and a warning is emitted — never a fake 0 return.
         expect(result.eligibleEvents).to.equal(0);
         expect(result.warnings.join(" ")).to.match(/right-censored/i);
-        expect(result.ongoingEventDetails).to.have.length(1);
-        expect(result.ongoingEventDetails![0]!.decisionTime).to.equal(T0 + 1000);
-        expect(result.ongoingEventDetails![0]!.entryTime).to.equal(T0 + 2000);
-        expect(result.ongoingEventDetails![0]!.horizonBars).to.equal(5);
-        expect(["AAA", "BBB"]).to.include(result.ongoingEventDetails![0]!.asset);
-        expect(result.ongoingEventDetails![0]!.eligibleCandidates).to.equal(2);
+        // EVERY arm reports its pick as ONGOING with the unrealized
+        // mark-to-market return, not just TOP_MEAN.
+        const ongoing = result.ongoingEventDetails ?? [];
+        expect(ongoing).to.have.length(2);
+        expect(ongoing.map((row) => row.selector).sort()).to.deep.equal(["TOP_MEAN", "TOP_RAW"]);
+        for (const row of ongoing) {
+            expect(row.decisionTime).to.equal(T0 + 1000);
+            expect(row.entryTime).to.equal(T0 + 2000);
+            expect(row.horizonBars).to.equal(5);
+            expect(["AAA", "BBB"]).to.include(row.asset);
+            expect(row.eligibleCandidates).to.equal(2);
+            // Flat 100/50 prices with zero default costs: the unrealized MTM
+            // is exactly 0 (entry open to last close, no move).
+            expect(row.unrealizedReturn).to.equal(0);
+        }
     });
 
     it("skips assets whose large data gap overlaps the selected window without labeling them ongoing", async () => {

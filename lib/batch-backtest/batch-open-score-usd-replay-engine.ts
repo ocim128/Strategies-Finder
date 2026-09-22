@@ -237,15 +237,23 @@ export interface OpenScoreUsdEventDetail {
     eligibleCandidates: number;
 }
 
-/** Scalar TOP_MEAN selections whose requested horizon is not complete yet. */
+/**
+ * Scalar arm selections whose requested horizon is not complete yet. Emitted
+ * for EVERY asset-picking arm (not just TOP_MEAN). `unrealizedReturn` is the
+ * selected asset's mark-to-market net return at its target dataset end (same
+ * slippage/commission model as a completed row); null when either price is
+ * unusable. Control/Delta have no realized comparison and are intentionally
+ * absent.
+ */
 export interface OpenScoreUsdOngoingEventDetail {
     decisionTime: number;
     entryTime: number | null;
     horizonBars: number;
-    selector: "TOP_MEAN";
+    selector: OpenScoreUsdEventDetailSelector;
     direction: "long";
     asset: string;
     eligibleCandidates: number;
+    unrealizedReturn?: number | null;
 }
 
 export type CandidateOutcomeStatus =
@@ -1971,6 +1979,7 @@ export async function runOpenScoreUsdReplay(
     // Stored sparsely: only eligible-candidate assets are queried.
     const returnsByView: Array<Map<number, {
         long: number[];
+        mtmLong: (number | null)[];
         entryTimes: number[];
         exitTimes: number[];
         statuses: CandidateOutcomeStatus[];
@@ -2138,6 +2147,7 @@ export async function runOpenScoreUsdReplay(
             let perAsset = returnsByView[viewIdx];
             if (!perAsset) { perAsset = new Map(); returnsByView[viewIdx] = perAsset; }
             const longReturns: number[] = [];
+            const mtmLong: (number | null)[] = [];
             const entryTimes: number[] = [];
             const exitTimes: number[] = [];
             const statuses: CandidateOutcomeStatus[] = [];
@@ -2149,12 +2159,31 @@ export async function runOpenScoreUsdReplay(
                     entryTimes.push(entryTime);
                     exitTimes.push(Number.NaN);
                     statuses.push("right_censored");
+                    // Unrealized mark-to-market for the ONGOING detail rows:
+                    // entry open (slippage-adjusted) to the last available bar
+                    // close, same cost model as the completed path. Null when
+                    // either price is unusable.
+                    const rawOpen = target.data[entryBar]!.open;
+                    const lastClose = target.data[target.data.length - 1]!.close;
+                    if (
+                        Number.isFinite(rawOpen) && rawOpen > 0
+                        && Number.isFinite(lastClose) && lastClose > 0
+                    ) {
+                        const mtmEntry = applySlippage(rawOpen, "buy", slippageRate);
+                        const mtmExit = applySlippage(lastClose, "sell", slippageRate);
+                        const mtmFees = (mtmEntry + mtmExit) * commissionRate;
+                        const mtm = (mtmExit - mtmEntry - mtmFees) / mtmEntry;
+                        mtmLong.push(Number.isFinite(mtm) ? mtm : null);
+                    } else {
+                        mtmLong.push(null);
+                    }
                     continue;
                 }
                 const rawOpen = target.data[entryBar]!.open;
                 const exitClose = target.data[exitBar]!.close;
                 if (!Number.isFinite(rawOpen) || rawOpen <= 0 || !Number.isFinite(exitClose) || exitClose <= 0) {
                     longReturns.push(Number.NaN);
+                    mtmLong.push(null);
                     entryTimes.push(entryTime);
                     exitTimes.push(Number.NaN);
                     statuses.push("invalid_price");
@@ -2162,6 +2191,7 @@ export async function runOpenScoreUsdReplay(
                 }
                 entryTimes.push(entryTime);
                 exitTimes.push(times[exitBar] ?? Number.NaN);
+                mtmLong.push(null);
             // Long USD trade: buy at next bar open (slippage up), sell at
             // horizon close (slippage down), round-trip commission. Commission
             // is applied canonically (matches position-stats.ts): entryValue*rate
@@ -2177,6 +2207,7 @@ export async function runOpenScoreUsdReplay(
             }
             perAsset.set(aIdx, {
                 long: longReturns,
+                mtmLong,
                 entryTimes,
                 exitTimes,
                 statuses,
@@ -2514,25 +2545,32 @@ export async function runOpenScoreUsdReplay(
     const eventDetails: OpenScoreUsdEventDetail[] = [];
     const ongoingEventDetails: OpenScoreUsdOngoingEventDetail[] = [];
     type ViewReturns = NonNullable<(typeof returnsByView)[number]>;
-    const appendOngoingTopMeanEventDetail = (
-        view: EventView,
+    // Right-censored arm selections: EVERY asset-picking arm reports its pick
+    // as ONGOING with the unrealized mark-to-market return, not just TOP_MEAN.
+    // A censored pick is exactly one whose realized outcome cannot exist yet,
+    // so Control/Delta stay unset by design and the rows stay out of the
+    // research aggregates and both copy paths.
+    const appendOngoingEventDetail = (
+        timeSec: number,
         perAsset: ViewReturns | null | undefined,
         hIdx: number,
+        selector: OpenScoreUsdEventDetailSelector,
+        selectedAssetIndex: number,
+        eligibleCandidates: number,
     ): void => {
-        if (!options.includeEventDetails || view.positives.length < 2) return;
-        const selected = view.positives.find((candidate) => candidate.assetIndex === view.topMean);
-        if (!selected) return;
-        const selectedOutcome = perAsset?.get(selected.assetIndex);
-        if (selectedOutcome?.statuses[hIdx] !== "right_censored") return;
-        const entryTime = selectedOutcome.entryTimes[hIdx];
+        if (!options.includeEventDetails || selectedAssetIndex < 0) return;
+        const outcome = perAsset?.get(selectedAssetIndex);
+        if (outcome?.statuses[hIdx] !== "right_censored") return;
+        const entryTime = outcome.entryTimes[hIdx];
         ongoingEventDetails.push({
-            decisionTime: view.timeSec,
+            decisionTime: timeSec,
             entryTime: Number.isFinite(entryTime) ? entryTime! : null,
             horizonBars: horizons[hIdx]!,
-            selector: "TOP_MEAN",
+            selector,
             direction: "long",
-            asset: assetNames[selected.assetIndex]!,
-            eligibleCandidates: view.positives.length,
+            asset: assetNames[selectedAssetIndex]!,
+            eligibleCandidates,
+            unrealizedReturn: outcome.mtmLong[hIdx] ?? null,
         });
     };
     let eligibleEventsMax = 0;
@@ -2652,6 +2690,11 @@ export async function runOpenScoreUsdReplay(
             meanSelectedByAsset: Map<string, number>,
             meanSamplesByAsset: Map<string, { returns: number[]; deltas: number[] }>,
         ): void => {
+            // Report each pick as ONGOING before the pool gates: a pick whose
+            // own horizon is incomplete is an open position even when another
+            // pool member's censoring omits the event from the series.
+            if (rawPick >= 0) appendOngoingEventDetail(timeSec, perAssetOutcomes, hIdx, rawSelector, rawPick, pool.length);
+            if (meanPick >= 0) appendOngoingEventDetail(timeSec, perAssetOutcomes, hIdx, meanSelector, meanPick, pool.length);
             if (pool.length < 2 || rawPick < 0 || meanPick < 0) return;
             if (pool.some((candidate) => dataGapAssets.has(candidate.assetIndex))) return;
             const poolRetByAsset = new Map<number, number>();
@@ -2719,6 +2762,10 @@ export async function runOpenScoreUsdReplay(
             selectedByAsset: Map<string, number>,
             samplesByAsset: Map<string, { returns: number[]; deltas: number[] }>,
         ): void => {
+            // Same ONGOING pick report as the paired profit arms: emit before
+            // the pool gates so a censored pick stays visible when another
+            // pool member's censoring omits the event from the series.
+            if (selectedIdx >= 0) appendOngoingEventDetail(timeSec, perAssetOutcomes, hIdx, selector, selectedIdx, pool.length);
             if (pool.length < 2 || selectedIdx < 0) return;
             if (pool.some((candidate) => dataGapAssets.has(candidate.assetIndex))) return;
             const poolRetByAsset = new Map<number, number>();
@@ -2859,7 +2906,12 @@ export async function runOpenScoreUsdReplay(
             // comparison ineligible.
             const incumbentOutcome = perAsset.get(view.topMean);
             if (!allValid) {
-                appendOngoingTopMeanEventDetail(view, perAsset, hIdx);
+                // The arms still made picks; report each one as ONGOING when
+                // that pick's own horizon is incomplete. Another positive's
+                // censoring omits the event from the series but not the pick.
+                appendOngoingEventDetail(view.timeSec, perAsset, hIdx, "TOP_RAW", view.topRaw, view.positives.length);
+                appendOngoingEventDetail(view.timeSec, perAsset, hIdx, "TOP_MEAN", view.topMean, view.positives.length);
+                appendOngoingEventDetail(view.timeSec, perAsset, hIdx, "TOP_MEAN_RAW_UNIQUE", view.topMeanRawUnique, view.topMeanRawUniquePool.length);
                 continue; // censored or missing -> omit from both arms
             }
 
