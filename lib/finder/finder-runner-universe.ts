@@ -930,6 +930,18 @@ export async function runFinderUniverseExecution(
         && candidateExecutions.length > 1
         && loadedSymbols.every((symbol) => !isSyntheticPairFinderSymbol(symbol.symbol));
     if (canPrepareUniverseRustBatches && await rustEngine.checkHealth()) {
+        // Cache each symbol's closed data on the Rust server once, then replay
+        // every candidate chunk against the cache id instead of re-serializing
+        // the full OHLCV array per 64-candidate chunk. Fall back to the
+        // uncached batch endpoint for symbols whose upload fails.
+        const cacheIdBySymbol = new Map<string, string>();
+        for (const symbol of loadedSymbols) {
+            if (callbacks.isCancelled()) break;
+            const closedData = closedDataBySymbol.get(symbol.symbol);
+            if (!closedData) continue;
+            const cacheId = await rustEngine.cacheData(closedData);
+            if (cacheId) cacheIdBySymbol.set(symbol.symbol, cacheId);
+        }
         for (const symbol of loadedSymbols) {
             if (callbacks.isCancelled()) break;
             const closedData = closedDataBySymbol.get(symbol.symbol);
@@ -1013,7 +1025,27 @@ export async function runFinderUniverseExecution(
                 }));
                 let batchResponse: { results: Array<{ id: string; result: BacktestResult }> } | null = null;
                 try {
-                    const response = await rustEngine.runBatchBacktestWithStatus(
+                    const cacheId = cacheIdBySymbol.get(symbol.symbol);
+                    const response = cacheId !== undefined
+                        ? await rustEngine.runCachedBatchBacktestWithStatus(
+                            cacheId,
+                            batchItems,
+                            preResolvedCapital.initialCapital,
+                            preResolvedCapital.positionSize,
+                            preResolvedCapital.commission,
+                            rustSettings,
+                            {
+                                mode: preResolvedCapital.sizingMode,
+                                fixedTradeAmount: preResolvedCapital.fixedTradeAmount,
+                                advancedSizing: preResolvedCapital.advancedSizing,
+                            },
+                            true,
+                            {
+                                skipDrawdown: !requiresDrawdown,
+                                skipSharpeRatio: !requiresSharpeRatio,
+                            },
+                        )
+                        : await rustEngine.runBatchBacktestWithStatus(
                         closedData,
                         batchItems,
                         preResolvedCapital.initialCapital,

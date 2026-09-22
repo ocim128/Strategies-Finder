@@ -2373,6 +2373,51 @@ describe('Backtesting Engine', () => {
         expect(full.sharpeRatio).to.be.closeTo(compact.sharpeRatio, 1e-9);
     });
 
+    it('should merge combined equity curves by bar index when both sides align with data', () => {
+        // Fast path contract: when longCurve.length === shortCurve.length === data.length,
+        // buildCombinedEquityCurve must produce the same values as the map-based merge
+        // (value = longCurve[i].value + shortCurve[i].value at every bar).
+        const data: OHLCVData[] = [];
+        const startTime = 1_700_000_000;
+        for (let i = 0; i < 120; i++) {
+            const close = 100 + i * 0.3 + Math.sin(i / 5) * 2;
+            data.push({
+                time: (startTime + i * 86_400) as unknown as Time,
+                open: close - 0.5,
+                high: close + 1,
+                low: close - 1,
+                close,
+                volume: 1000,
+            });
+        }
+        const signals: Signal[] = [];
+        for (let i = 10; i < 100; i += 15) {
+            signals.push({ time: data[i].time, type: 'buy', price: data[i].close });
+            signals.push({ time: data[i + 5].time, type: 'sell', price: data[i + 5].close });
+        }
+        const settings = { tradeDirection: 'combined' as const, allowSameBarExit: true };
+        const result = runBacktest(data, signals, 10000, 100, 0, settings);
+
+        expect(result.equityCurve.length).to.equal(data.length);
+        // Every combined equity point must be the sum of the two side equities at the
+        // same bar, derived independently by re-running each side alone.
+        const longOnly = runBacktest(data, signals, 5000, 100, 0, {
+            ...settings,
+            tradeDirection: 'long',
+        });
+        const shortOnly = runBacktest(data, signals, 5000, 100, 0, {
+            ...settings,
+            tradeDirection: 'short',
+        });
+        for (let i = 0; i < data.length; i++) {
+            const expected = longOnly.equityCurve[i].value + shortOnly.equityCurve[i].value;
+            expect(result.equityCurve[i].value, `bar ${i}`).to.be.closeTo(expected, 1e-9);
+            expect(result.equityCurve[i].time).to.deep.equal(data[i].time);
+        }
+        // maxDrawdown must be computed from the combined curve, not per-side curves.
+        expect(result.maxDrawdown).to.be.greaterThanOrEqual(0);
+    });
+
     it('should honor disabled Sharpe calculation in compact combined backtests', () => {
         const data: OHLCVData[] = [
             { time: 1 as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 },

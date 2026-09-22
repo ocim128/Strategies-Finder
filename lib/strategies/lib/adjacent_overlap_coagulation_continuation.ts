@@ -15,6 +15,28 @@ function normalizeParams(params: StrategyParams): StrategyParams {
     };
 }
 
+type OverlapCoagulationPrepared = {
+    data: OHLCVData[];
+    closes: number[];
+    overlap: (number | null)[];
+};
+
+function prepareData(data: OHLCVData[]): OverlapCoagulationPrepared {
+    const cleanData = ensureCleanData(data);
+    return {
+        data: cleanData,
+        closes: getCloses(cleanData),
+        overlap: buildAdjacentRangeOverlapSeries(cleanData),
+    };
+}
+
+function getPreparedData(preparedData: unknown, data: OHLCVData[]): OverlapCoagulationPrepared {
+    if (preparedData && typeof preparedData === "object" && "overlap" in preparedData) {
+        return preparedData as OverlapCoagulationPrepared;
+    }
+    return prepareData(data);
+}
+
 export const adjacent_overlap_coagulation_continuation: Strategy = {
     name: "Adjacent Overlap Coagulation Continuation",
     description: "Enters trend continuation when adjacent range overlap increases monotonically across 3 bars reaching at least min_final_overlap.",
@@ -25,13 +47,15 @@ export const adjacent_overlap_coagulation_continuation: Strategy = {
         min_final_overlap: "Minimum Final Overlap",
     },
     normalizeParams,
-    execute(data: OHLCVData[], rawParams: StrategyParams = {}) {
-        const cleanData = ensureCleanData(data);
+    prepareFinderData: (data) => prepareData(data),
+    executePrepared(preparedData: unknown, rawParams: StrategyParams = {}, data: OHLCVData[] = []) {
+        const prepared = getPreparedData(preparedData, data);
+        const cleanData = prepared.data;
         const params = normalizeParams(rawParams);
         const minFinal = Number(params.min_final_overlap);
-        const closes = getCloses(cleanData);
+        const closes = prepared.closes;
 
-        const overlap = buildAdjacentRangeOverlapSeries(cleanData);
+        const overlap = prepared.overlap;
 
         return createSignalLoop(cleanData, [overlap], (i) => {
             if (i < 2) return null;
@@ -51,6 +75,9 @@ export const adjacent_overlap_coagulation_continuation: Strategy = {
 
             return null;
         });
+    },
+    execute(data: OHLCVData[], rawParams: StrategyParams = {}) {
+        return adjacent_overlap_coagulation_continuation.executePrepared?.(prepareData(data), rawParams, data) ?? [];
     },
     metadata: {
         role: "entry",

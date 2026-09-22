@@ -11,6 +11,30 @@ function normalizeModernArbitrageSpeedReversionParams(params: StrategyParams): S
     };
 }
 
+type ModernArbitragePrepared = {
+    data: OHLCVData[];
+    closes: number[];
+    zscoreByLookback: Map<number, (number | null)[]>;
+    efficiencyByLookback: Map<number, (number | null)[]>;
+};
+
+function prepareData(data: OHLCVData[]): ModernArbitragePrepared {
+    const cleanData = ensureCleanData(data);
+    return {
+        data: cleanData,
+        closes: getCloses(cleanData),
+        zscoreByLookback: new Map<number, (number | null)[]>(),
+        efficiencyByLookback: new Map<number, (number | null)[]>(),
+    };
+}
+
+function getPreparedData(preparedData: unknown, data: OHLCVData[]): ModernArbitragePrepared {
+    if (preparedData && typeof preparedData === "object" && "zscoreByLookback" in preparedData) {
+        return preparedData as ModernArbitragePrepared;
+    }
+    return prepareData(data);
+}
+
 export const modern_arbitrage_speed_reversion: Strategy = {
     name: "Modern Arbitrage Speed Reversion",
     description: "Fast mean reversion enabled by modern arbitrage infrastructure.",
@@ -25,17 +49,27 @@ export const modern_arbitrage_speed_reversion: Strategy = {
         efficiencyMax: "Efficiency Max",
     },
     normalizeParams: normalizeModernArbitrageSpeedReversionParams,
-    execute: (data: OHLCVData[], params: StrategyParams) => {
-        const cleanData = ensureCleanData(data);
+    prepareFinderData: (data) => prepareData(data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
+        const prepared = getPreparedData(preparedData, data);
+        const cleanData = prepared.data;
         const p = normalizeModernArbitrageSpeedReversionParams(params);
         const lookback = p.lookback as number;
         const zThreshold = p.zThreshold as number;
         const efficiencyMax = p.efficiencyMax as number;
         if (cleanData.length < lookback + 1) return [];
 
-        const closes = getCloses(cleanData);
-        const zscore = buildRollingZScore(closes, lookback);
-        const efficiencyRatio = buildEfficiencyRatio(cleanData, lookback);
+        const closes = prepared.closes;
+        let zscore = prepared.zscoreByLookback.get(lookback);
+        if (!zscore) {
+            zscore = buildRollingZScore(closes, lookback);
+            prepared.zscoreByLookback.set(lookback, zscore);
+        }
+        let efficiencyRatio = prepared.efficiencyByLookback.get(lookback);
+        if (!efficiencyRatio) {
+            efficiencyRatio = buildEfficiencyRatio(cleanData, lookback);
+            prepared.efficiencyByLookback.set(lookback, efficiencyRatio);
+        }
 
         return createSignalLoop(cleanData, [zscore, efficiencyRatio], (i) => {
             const z = zscore[i];
@@ -59,6 +93,8 @@ export const modern_arbitrage_speed_reversion: Strategy = {
             return null;
         });
     },
+    execute: (data: OHLCVData[], params: StrategyParams) =>
+        modern_arbitrage_speed_reversion.executePrepared?.(prepareData(data), params, data) ?? [],
     metadata: {
         role: "entry",
         direction: "both",

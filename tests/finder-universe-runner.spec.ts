@@ -68,8 +68,12 @@ describe("Finder universe runner", () => {
     it("batches Rust-eligible candidates per symbol while preserving scalar results", async () => {
         const originalCheckHealth = rustEngine.checkHealth;
         const originalBatch = rustEngine.runBatchBacktestWithStatus;
+        const originalCacheData = rustEngine.cacheData;
         let batchCalls = 0;
         rustEngine.checkHealth = async () => true;
+        // Simulate cache upload unavailable (null) so this test exercises the
+        // uncached fallback path it stubs below.
+        rustEngine.cacheData = async () => null;
         rustEngine.runBatchBacktestWithStatus = async (...args) => {
             batchCalls += 1;
             const [data, items, initialCapital, positionSize, commission, baseSettings, sizing] = args;
@@ -144,6 +148,112 @@ describe("Finder universe runner", () => {
         } finally {
             rustEngine.checkHealth = originalCheckHealth;
             rustEngine.runBatchBacktestWithStatus = originalBatch;
+            rustEngine.cacheData = originalCacheData;
+        }
+    });
+
+    it("caches each symbol's closed data once and replays batches against the cache id", async () => {
+        const originalCheckHealth = rustEngine.checkHealth;
+        const originalCacheData = rustEngine.cacheData;
+        const originalBatch = rustEngine.runBatchBacktestWithStatus;
+        const originalCachedBatch = rustEngine.runCachedBatchBacktestWithStatus;
+        const dataBySymbol = new Map<string, ReturnType<typeof makePositiveCandles>>();
+        let cacheCalls = 0;
+        let uncachedBatchCalls = 0;
+        let cachedBatchCalls = 0;
+        const cachedIds = new Set<string>();
+
+        rustEngine.checkHealth = async () => true;
+        rustEngine.cacheData = async (data) => {
+            cacheCalls += 1;
+            const id = `cache-${cacheCalls}`;
+            cachedIds.add(id);
+            dataBySymbol.set(id, data as ReturnType<typeof makePositiveCandles>);
+            return id;
+        };
+        rustEngine.runBatchBacktestWithStatus = async () => {
+            uncachedBatchCalls += 1;
+            return { ok: false, reason: "network_error" };
+        };
+        rustEngine.runCachedBatchBacktestWithStatus = async (cacheId, items, initialCapital, positionSize, commission, baseSettings, sizing) => {
+            cachedBatchCalls += 1;
+            const data = dataBySymbol.get(cacheId);
+            if (!data) return { ok: false, reason: "network_error" };
+            return {
+                ok: true,
+                response: {
+                    results: items.map((item) => ({
+                        id: item.id,
+                        result: runBacktestCompact(
+                            data,
+                            item.signals,
+                            initialCapital,
+                            positionSize,
+                            commission,
+                            item.settings ?? baseSettings,
+                            sizing,
+                            undefined,
+                            { skipDrawdown: true, includeSharpeRatio: false },
+                        ),
+                    })),
+                },
+                requestBytes: 0,
+                elapsedMs: 0,
+            };
+        };
+
+        try {
+            const options: FinderOptions = {
+                scope: "symbol_universe",
+                mode: "random",
+                sortPriority: ["netProfit"],
+                useAdvancedSort: false,
+                topN: 3,
+                steps: 1,
+                rangePercent: 0,
+                maxRuns: 3,
+                tradeFilterEnabled: false,
+                minTrades: 0,
+                maxTrades: Number.POSITIVE_INFINITY,
+                universe: {
+                    symbols: ["UP", "UP2"],
+                    minActiveSymbols: 1,
+                    minTotalTrades: 1,
+                    minProfitableActiveRatio: 0,
+                    sortPriority: ["medianExpectancy"],
+                },
+            };
+            const output = await runFinderUniverseExecution(
+                {
+                    interval: "5m",
+                    options,
+                    settings,
+                    capitalSettings,
+                    selectedStrategy: { key: "rust_universe_cached", name: testStrategy.name, strategy: testStrategy },
+                    loadDataset: async () => makePositiveCandles([100, 105, 110, 115, 120]),
+                    generateParamSets: () => [{ threshold: 1 }, { threshold: 2 }, { threshold: 3 }],
+                    useRustEnginePreference: true,
+                },
+                {
+                    setProgress: () => {},
+                    setStatus: () => {},
+                    yieldControl: async () => {},
+                    isCancelled: () => false,
+                },
+            );
+
+            // One cache upload per symbol (2 symbols), and every batch replays
+            // against the cached id instead of re-sending the OHLCV array.
+            expect(cacheCalls).to.equal(2);
+            expect(uncachedBatchCalls).to.equal(0);
+            expect(cachedBatchCalls).to.equal(2);
+            expect(output.diagnostics?.counts.rustCompletedRuns).to.equal(6);
+            expect(output.results).to.have.length(3);
+        } finally {
+            rustEngine.checkHealth = originalCheckHealth;
+            rustEngine.cacheData = originalCacheData;
+            rustEngine.runBatchBacktestWithStatus = originalBatch;
+            rustEngine.runCachedBatchBacktestWithStatus = originalCachedBatch;
         }
     });
 

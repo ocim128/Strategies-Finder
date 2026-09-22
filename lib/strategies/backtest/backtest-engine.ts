@@ -374,7 +374,24 @@ function buildCombinedEquityCurve(
 ): { time: Time; value: number }[] {
     if (data.length === 0) return [];
 
-    // Build time-indexed lookups for safety against index misalignment
+    // Fast path: both side curves were produced by runBacktest over the same
+    // `data` array in bar order, so index i aligns across all three arrays.
+    // Verify cheaply at the boundaries before trusting index alignment.
+    const aligned = longCurve.length === data.length
+        && shortCurve.length === data.length
+        && timeKey(longCurve[0].time) === timeKey(data[0].time)
+        && timeKey(shortCurve[0].time) === timeKey(data[0].time)
+        && timeKey(longCurve[data.length - 1].time) === timeKey(data[data.length - 1].time)
+        && timeKey(shortCurve[data.length - 1].time) === timeKey(data[data.length - 1].time);
+    if (aligned) {
+        const curve: { time: Time; value: number }[] = new Array(data.length);
+        for (let i = 0; i < data.length; i++) {
+            curve[i] = { time: data[i].time, value: longCurve[i].value + shortCurve[i].value };
+        }
+        return curve;
+    }
+
+    // Fallback: time-indexed lookups for safety against index misalignment.
     const longMap = new Map<string, number>();
     for (const point of longCurve) longMap.set(timeKey(point.time), point.value);
     const shortMap = new Map<string, number>();
