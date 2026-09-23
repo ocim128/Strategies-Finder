@@ -22,7 +22,11 @@ import {
 import { debugLogger } from "../debug-logger";
 
 export type NonBinanceLocalSource = 'imported' | 'sqlite' | 'cache' | 'seed';
-export type NonBinanceLocalCandidate = { candles: OHLCVData[]; source: NonBinanceLocalSource };
+export type NonBinanceLocalCandidate = {
+    candles: OHLCVData[];
+    source: NonBinanceLocalSource;
+    trusted?: boolean;
+};
 
 const NON_BINANCE_LOCAL_SOURCE_PRIORITY: Record<NonBinanceLocalSource, number> = {
     imported: 4,
@@ -69,12 +73,17 @@ export class DataPersistence {
     private lastStreamPersistedTimeByKey: Map<string, number> = new Map();
     private readonly STREAM_PERSIST_DELAY_MS = 1200;
 
-    normalizeExternalCandles(candles: OHLCVData[]): OHLCVData[] {
-        return mergeCandles([], candles);
+    normalizeExternalCandles(candles: OHLCVData[], trusted = false): OHLCVData[] {
+        return mergeCandles([], candles, trusted);
     }
 
-    private normalizeProviderCandles(candles: OHLCVData[], interval: string, provider: DataProvider): OHLCVData[] {
-        const normalized = this.normalizeExternalCandles(candles);
+    private normalizeProviderCandles(
+        candles: OHLCVData[],
+        interval: string,
+        provider: DataProvider,
+        trusted = false
+    ): OHLCVData[] {
+        const normalized = this.normalizeExternalCandles(candles, trusted);
         return provider === 'bybit-tradfi' || provider === 'local-daily' || provider === 'ibkr-local'
             ? normalizeTradFiDailyCandles(normalized, interval)
             : normalized;
@@ -110,7 +119,7 @@ export class DataPersistence {
 
         if (importedCandles && importedCandles.length > 0) {
             candidates.push({
-                candles: trimToLastCandles(this.normalizeProviderCandles(importedCandles, interval, provider), normalizedLimit),
+                candles: importedCandles,
                 source: 'imported',
             });
         }
@@ -123,21 +132,23 @@ export class DataPersistence {
 
         if (sqliteResult.status === 'fulfilled' && sqliteResult.value && sqliteResult.value.candles.length > 0) {
             candidates.push({
-                candles: trimToLastCandles(this.normalizeProviderCandles(sqliteResult.value.candles, interval, provider), normalizedLimit),
+                candles: sqliteResult.value.candles,
                 source: 'sqlite',
+                trusted: sqliteResult.value.trusted,
             });
         }
 
         if (cachedResult.status === 'fulfilled' && cachedResult.value && cachedResult.value.candles.length > 0) {
             candidates.push({
-                candles: trimToLastCandles(this.normalizeProviderCandles(cachedResult.value.candles, interval, provider), normalizedLimit),
+                candles: cachedResult.value.candles,
                 source: 'cache',
+                trusted: cachedResult.value.trusted,
             });
         }
 
         if (seedResult.status === 'fulfilled' && seedResult.value && seedResult.value.length > 0) {
             candidates.push({
-                candles: trimToLastCandles(this.normalizeProviderCandles(seedResult.value, interval, provider), normalizedLimit),
+                candles: seedResult.value,
                 source: 'seed',
             });
         }
@@ -147,10 +158,17 @@ export class DataPersistence {
         }
 
         const best = selectBestNonBinanceLocalCandidate(candidates, provider);
-        if (best) {
-            ctx.setCachedCandles(cacheKey, best.candles, best.source);
-        }
-        return best;
+        if (!best) return null;
+
+        const normalizedBest = {
+            ...best,
+            candles: trimToLastCandles(
+                this.normalizeProviderCandles(best.candles, interval, provider, best.trusted === true),
+                normalizedLimit
+            ),
+        };
+        ctx.setCachedCandles(cacheKey, normalizedBest.candles, normalizedBest.source);
+        return normalizedBest;
     }
 
     async persistNonBinanceData(deps: {
@@ -177,7 +195,7 @@ export class DataPersistence {
         } = deps;
 
         if (candles.length === 0) return;
-        const normalized = this.normalizeProviderCandles(candles, storageInterval, provider);
+        const normalized = this.normalizeProviderCandles(candles, storageInterval, provider, true);
         await this.persistLocalCandles({
             symbol: storageSymbol,
             storageInterval,
@@ -186,6 +204,7 @@ export class DataPersistence {
             providerLabel,
             sourceTrait: source,
             cacheKey,
+            trusted: true,
             ctx,
         });
     }
@@ -195,6 +214,7 @@ export class DataPersistence {
         storageInterval: string;
         cacheCandles?: OHLCVData[];
         sqliteCandles?: OHLCVData[];
+        trusted?: boolean;
         providerLabel: string;
         sourceTrait: string;
         cacheKey?: string;
@@ -206,6 +226,7 @@ export class DataPersistence {
             storageInterval,
             cacheCandles,
             sqliteCandles,
+            trusted = false,
             providerLabel,
             sourceTrait,
             cacheKey,
@@ -214,7 +235,7 @@ export class DataPersistence {
         } = args;
 
         if (cacheCandles && cacheCandles.length > 0) {
-            await saveCachedCandles(symbol, storageInterval, cacheCandles, sourceTrait);
+            await saveCachedCandles(symbol, storageInterval, cacheCandles, sourceTrait, trusted);
         }
 
         if (sqliteCandles && sqliteCandles.length > 0) {
@@ -304,6 +325,7 @@ export class DataPersistence {
                         symbol: pending.symbol,
                         storageInterval: pending.storageInterval,
                         cacheCandles: shouldPersistSnapshot ? snapshot : undefined,
+                        trusted: true,
                         providerLabel,
                         sourceTrait: 'stream',
                         cacheKey,

@@ -920,6 +920,7 @@ export class DataFetcher {
             providerLabel: this.providerRouter.getProviderStorageLabel(provider),
             sourceTrait: source,
             cacheKey,
+            trusted: true,
             updateSyncTime: true,
         });
     }
@@ -929,6 +930,7 @@ export class DataFetcher {
         storageInterval: string;
         cacheCandles?: OHLCVData[];
         sqliteCandles?: OHLCVData[];
+        trusted?: boolean;
         providerLabel: string;
         sourceTrait: string;
         cacheKey?: string;
@@ -1081,6 +1083,7 @@ export class DataFetcher {
                     sqliteCandles: sanitizedSeedCandles,
                     providerLabel,
                     sourceTrait: 'seed-file',
+                    trusted: true,
                 });
                 debugLogger.event('data.cache.seed_loaded', {
                     symbol,
@@ -1108,6 +1111,7 @@ export class DataFetcher {
                     sqliteCandles: cached!.candles,
                     providerLabel,
                     sourceTrait: 'sanitized',
+                    trusted: true,
                 });
             }
             return {
@@ -1202,6 +1206,7 @@ export class DataFetcher {
                     sqliteCandles: fresh,
                     providerLabel,
                     sourceTrait: 'binance-full',
+                    trusted: true,
                     cacheKey,
                     updateSyncTime: true,
                 });
@@ -1239,6 +1244,7 @@ export class DataFetcher {
                 sqliteCandles: hasSqliteBase ? remoteData : merged,
                 providerLabel,
                 sourceTrait: 'binance-gap',
+                trusted: true,
                 cacheKey,
                 updateSyncTime: true,
             });
