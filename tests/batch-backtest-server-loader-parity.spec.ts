@@ -281,12 +281,14 @@ describe("batch-backtest server loader parity", () => {
         expect(server.includes('from "../data/data-fetcher"')).to.equal(false);
     });
 
-    it("clears server data and parsed CSV caches so a new run observes freshly synced candles", () => {
+    it("clears the shared server data cache while parsed CSV caches self-invalidate by mtime", () => {
         const server = readSource(SERVER_LOADER);
         expect(server).to.include("clearServerBatchDatasetCaches");
         // The shared data cache is cleared through the factory helper.
         expect(server).to.include("clearServerDataCache()");
-        expect(server).to.include("clearLocalDailyCsvCachesForSymbols()");
+        expect(server).to.not.include("clearLocalDailyCsvCachesForSymbols()");
+        expect(server).to.not.include("clearParsedIbkrCsvCache()");
+        expect(server).to.not.include("clearParsedCryptoCsvCache()");
         expect(server).to.include("loadFreshIbkrCandlesFromDisk");
         expect(readSource(SERVER_IBKR_LOADER)).to.include('from "node:fs/promises"');
         expect(readSource(SERVER_CACHE_BUDGET)).to.include("HIGH_MEMORY_THRESHOLD_BYTES");

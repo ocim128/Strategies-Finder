@@ -1480,8 +1480,10 @@ function combineCompactResults(
     const trades = options?.requireTradeHistory === true
         ? [...longResult.trades, ...shortResult.trades]
             .sort((a, b) => compareTime(a.exitTime, b.exitTime) || compareTime(a.entryTime, b.entryTime))
-            .map((trade, index) => ({ ...trade, id: index + 1 }))
         : [];
+    for (let i = 0; i < trades.length; i += 1) {
+        trades[i]!.id = i + 1;
+    }
 
     const combinedTradeGateStats = combineTradeGateStats(options, longResult, shortResult);
     return {

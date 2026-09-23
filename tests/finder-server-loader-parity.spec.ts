@@ -64,7 +64,6 @@ describe("finder server loader parity", () => {
             "fetchServerDetachedData",
             "fetchServerHistoricalData",
             "acceptOfflineThinData",
-            "clearParsedCryptoCsvCache()",
         ]) {
             expect(finderLoader, `finder loader must include ${symbol}`).to.include(symbol);
             expect(batchLoader, `batch loader must include ${symbol}`).to.include(symbol);
@@ -168,24 +167,29 @@ describe("finder server loader parity", () => {
         expect(plugin).to.include("useRustEnginePreference: input.useRustEnginePreference");
     });
 
-    it("finder invalidation clears the same cache layers as batch (audit F1)", () => {
-        // Crypto/IBKR sync can update SQLite between runs. If Finder only clears
-        // its leg/pair LRUs + fingerprint memo (and skips the shared DataCache +
-        // parsed CSV cache), a stale underlying candle silently rebuilds a pair.
-        // Batch already clears all four; Finder must mirror it. Each missing
-        // call is a stale-candle correctness regression.
+    it("finder and batch invalidation clear the cache layers each loader owns (audit F1)", () => {
+        // Crypto/IBKR sync can update SQLite between runs. Both loaders must
+        // clear their leg/pair LRUs, fingerprint memo, and shared DataCache.
+        // Finder also owns the browser/local-daily cache hooks; Batch reads
+        // server CSVs through mtime-aware caches, so it intentionally retains
+        // those parsed entries across runs.
         const finderLoader = readSource(SERVER_FINDER_LOADER);
         const batchLoader = readSource(SERVER_BATCH_LOADER);
         for (const symbol of [
             "loader.clearCaches()",
             "fingerprintMemo.clear()",
             "clearServerDataCache()",
+        ]) {
+            expect(finderLoader, `finder invalidation must call ${symbol}`).to.include(symbol);
+            expect(batchLoader, `batch invalidation must call ${symbol}`).to.include(symbol);
+        }
+        for (const symbol of [
             "clearLocalDailyCsvCachesForSymbols()",
             "clearParsedIbkrCsvCache()",
             "clearParsedCryptoCsvCache()",
         ]) {
             expect(finderLoader, `finder invalidation must call ${symbol}`).to.include(symbol);
-            expect(batchLoader, `batch invalidation must call ${symbol}`).to.include(symbol);
+            expect(batchLoader, `batch invalidation must retain ${symbol}`).to.not.include(symbol);
         }
     });
 

@@ -2225,12 +2225,29 @@ describe('Backtesting Engine', () => {
         const settings = { tradeDirection: 'combined' as const };
         const full = runBacktest(data, signals, 1000, 100, 0, settings);
         const compact = runBacktestCompact(data, signals, 1000, 100, 0, settings);
+        const compactWithHistory = runBacktestCompact(
+            data,
+            signals,
+            1000,
+            100,
+            0,
+            settings,
+            undefined,
+            undefined,
+            {
+                requireTradeHistory: true,
+                includeSharpeRatio: false,
+                omitEquityCurve: true,
+                skipDrawdown: true,
+            }
+        );
 
         expect(full.trades.some(trade => trade.entryTime === ('2023-01-02' as Time))).to.equal(false);
         expect(full.totalTrades).to.equal(3);
         expect(full.netProfit).to.be.closeTo(128.787878, 1e-6);
         expect(compact.totalTrades).to.equal(full.totalTrades);
         expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-8);
+        expect(compactWithHistory.trades).to.deep.equal(full.trades);
     });
 
     it('should not let exitOnly conflicts suppress a combined entry', () => {
@@ -2371,6 +2388,40 @@ describe('Backtesting Engine', () => {
         expect(universeStyle.maxDrawdownPercent).to.equal(0);
         expect(full.totalTrades).to.equal(compact.totalTrades);
         expect(full.sharpeRatio).to.be.closeTo(compact.sharpeRatio, 1e-9);
+    });
+
+    it('should preserve full/compact parity across directions and execution models', () => {
+        const data: OHLCVData[] = Array.from({ length: 10 }, (_, index) => {
+            const close = [100, 104, 105, 101, 99, 101, 107, 108, 106, 109][index]!;
+            return {
+                time: (index + 1) as Time,
+                open: index === 0 ? 100 : [100, 100, 104, 105, 101, 99, 101, 107, 108, 106][index]!,
+                high: close + 2,
+                low: close - 2,
+                close,
+                volume: 1000,
+            };
+        });
+        const signals: Signal[] = [
+            { time: 2 as Time, type: 'buy', price: 104 },
+            { time: 4 as Time, type: 'sell', price: 101 },
+            { time: 6 as Time, type: 'buy', price: 101 },
+            { time: 8 as Time, type: 'sell', price: 108 },
+        ];
+        const directions = ['long', 'short', 'combined'] as const;
+        const executionModels = ['signal_close', 'next_open', 'next_close'] as const;
+
+        for (const tradeDirection of directions) {
+            for (const executionModel of executionModels) {
+                const settings = { tradeDirection, executionModel };
+                const full = runBacktest(data, signals, 10000, 100, 0.1, settings);
+                const compact = runBacktestCompact(data, signals, 10000, 100, 0.1, settings);
+
+                expect(compact.totalTrades, `${tradeDirection}/${executionModel}`).to.equal(full.totalTrades);
+                expect(compact.netProfit, `${tradeDirection}/${executionModel}`).to.be.closeTo(full.netProfit, 1e-8);
+                expect(compact.maxDrawdown, `${tradeDirection}/${executionModel}`).to.be.closeTo(full.maxDrawdown, 1e-8);
+            }
+        }
     });
 
     it('should merge combined equity curves by bar index when both sides align with data', () => {

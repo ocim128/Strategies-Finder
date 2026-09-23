@@ -6,7 +6,6 @@
  * imported by the Vite plugin is bundled into the dev-server config path.
  */
 
-import { clearLocalDailyCsvCachesForSymbols } from "../candle-cache";
 import { isIbkrSymbol } from "../local-daily-datasets";
 import type { OHLCVData } from "../types/strategies";
 import {
@@ -22,8 +21,8 @@ import {
 } from "./synthetic-pair-disk-cache";
 import { clearServerDataCache, createServerDataFetcher } from "../data/server-data-fetcher-factory";
 import { resolveServerBatchCacheBudget } from "./server-batch-cache-budget";
-import { clearParsedIbkrCsvCache, loadFreshIbkrCandlesFromDisk } from "./server-ibkr-csv-loader";
-import { clearParsedCryptoCsvCache, getCryptoCsvMtimeMs, loadFreshCryptoCandlesFromDisk } from "./server-crypto-csv-loader";
+import { loadFreshIbkrCandlesFromDisk } from "./server-ibkr-csv-loader";
+import { getCryptoCsvMtimeMs, loadFreshCryptoCandlesFromDisk } from "./server-crypto-csv-loader";
 
 // Reuse a single long-lived DataFetcher for the whole server loader (Finding 8).
 const serverDataFetcher = createServerDataFetcher();
@@ -116,13 +115,6 @@ export function clearServerBatchDatasetCaches(): void {
     // after the synthetic leg/pair LRUs are cleared, which makes Stability
     // report DATA_STALE against freshly stored candles.
     clearServerDataCache();
-    // IBKR sync writes CSVs in the Vite server process, while the browser-side
-    // sync completion hook can only invalidate the browser module cache. Clear
-    // the Node-side parsed CSV caches before another Batch run so a fresh file
-    // mtime cannot be paired with stale in-memory candles in the disk cache.
-    clearLocalDailyCsvCachesForSymbols();
-    clearParsedIbkrCsvCache();
-    clearParsedCryptoCsvCache();
 }
 
 export function getServerBatchDatasetCacheStats(): BatchDatasetCacheStats {
