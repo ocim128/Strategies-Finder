@@ -287,35 +287,79 @@ export interface AssetOpportunityArchiveAppendResult {
     bytes: number;
 }
 
+export type AssetOpportunityArchiveBlockInput = Omit<
+    AppendAssetOpportunityArchiveBlockArgs,
+    "root" | "append"
+>;
+
+export interface AppendAssetOpportunityArchiveBlocksArgs {
+    /** Vite-configured project root; all blocks must target one holdout file. */
+    root: string;
+    blocks: readonly AssetOpportunityArchiveBlockInput[];
+    /** Optional injected append leaf for tests. */
+    append?: AssetOpportunityArchiveAppend;
+}
+
+/** Append all sort blocks for one holdout with one filesystem write. */
+export async function appendAssetOpportunityArchiveBlocks(
+    args: AppendAssetOpportunityArchiveBlocksArgs,
+): Promise<AssetOpportunityArchiveAppendResult[]> {
+    if (args.blocks.length === 0) return [];
+    const filenames = args.blocks.map((block) => buildAssetOpportunityArchiveFilename(block.holdoutBars));
+    const filename = filenames[0]!;
+    if (filenames.some((candidate) => candidate !== filename)) {
+        throw new Error("Asset Opportunity archive blocks must share one holdout file.");
+    }
+    const dir = resolveAssetOpportunityArchiveDir(args.root);
+    const built = args.blocks.map((block) => {
+        const timestamp = block.timestamp ?? new Date().toISOString();
+        const content = buildAssetOpportunityArchiveBlockText({
+            timestamp,
+            batchRunId: block.batchRunId,
+            holdoutBars: block.holdoutBars,
+            sortMetric: block.sortMetric ?? null,
+            topResults: block.topResults,
+            baseline: block.baseline,
+            measurementMode: block.measurementMode,
+            nextExitBaseline: block.nextExitBaseline,
+        });
+        return { block, timestamp, content };
+    });
+    const append = args.append ?? defaultAppend;
+    await append(dir, filename, built.map((entry) => entry.content).join(""));
+    for (const entry of built) {
+        rememberCachedArchiveBlock({
+            root: args.root,
+            timestamp: entry.timestamp,
+            batchRunId: entry.block.batchRunId,
+            holdoutBars: entry.block.holdoutBars,
+            topResults: entry.block.topResults,
+        });
+    }
+    return built.map((entry) => ({
+        path: path.join(dir, filename),
+        bytes: Buffer.byteLength(entry.content, "utf8"),
+    }));
+}
+
 export async function appendAssetOpportunityArchiveBlock(
     args: AppendAssetOpportunityArchiveBlockArgs,
 ): Promise<AssetOpportunityArchiveAppendResult> {
-    const filename = buildAssetOpportunityArchiveFilename(args.holdoutBars);
-    const dir = resolveAssetOpportunityArchiveDir(args.root);
-    const timestamp = args.timestamp ?? new Date().toISOString();
-    const content = buildAssetOpportunityArchiveBlockText({
-        timestamp,
-        batchRunId: args.batchRunId,
-        holdoutBars: args.holdoutBars,
-        sortMetric: args.sortMetric ?? null,
-        topResults: args.topResults,
-        baseline: args.baseline,
-        measurementMode: args.measurementMode,
-        nextExitBaseline: args.nextExitBaseline,
-    });
-    const append = args.append ?? defaultAppend;
-    await append(dir, filename, content);
-    rememberCachedArchiveBlock({
+    const [result] = await appendAssetOpportunityArchiveBlocks({
         root: args.root,
-        timestamp,
-        batchRunId: args.batchRunId,
-        holdoutBars: args.holdoutBars,
-        topResults: args.topResults,
+        blocks: [{
+            batchRunId: args.batchRunId,
+            holdoutBars: args.holdoutBars,
+            sortMetric: args.sortMetric,
+            topResults: args.topResults,
+            baseline: args.baseline,
+            measurementMode: args.measurementMode,
+            nextExitBaseline: args.nextExitBaseline,
+            timestamp: args.timestamp,
+        }],
+        ...(args.append ? { append: args.append } : {}),
     });
-    return {
-        path: path.join(dir, filename),
-        bytes: Buffer.byteLength(content, "utf8"),
-    };
+    return result!;
 }
 
 export const ASSET_OPPORTUNITY_ARCHIVE_CONFIG_FILENAME = "config.txt";

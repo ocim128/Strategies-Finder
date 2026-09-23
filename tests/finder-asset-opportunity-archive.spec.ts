@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
     appendAssetOpportunityArchiveBlock,
+    appendAssetOpportunityArchiveBlocks,
     appendAssetOpportunityArchiveRunConfig,
     buildAssetOpportunityArchiveBlockText,
     buildAssetOpportunityArchiveFilename,
@@ -114,6 +115,40 @@ describe("Asset Opportunity archive writer", () => {
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
+    });
+
+    it("writes multiple sort blocks for one holdout through one append", async () => {
+        const calls: Array<{ filename: string; content: string }> = [];
+        const root = "/virtual/root";
+        const results = await appendAssetOpportunityArchiveBlocks({
+            root,
+            blocks: [
+                {
+                    batchRunId: "batch-1",
+                    holdoutBars: 10,
+                    sortMetric: "expectancy",
+                    topResults: [{ rank: 1 }],
+                    timestamp: "2026-01-01T00:00:00.000Z",
+                },
+                {
+                    batchRunId: "batch-1",
+                    holdoutBars: 10,
+                    sortMetric: "netProfit",
+                    topResults: [{ rank: 2 }],
+                    timestamp: "2026-01-01T00:00:01.000Z",
+                },
+            ],
+            append: async (_dir, filename, content) => {
+                calls.push({ filename, content });
+            },
+        });
+
+        expect(calls).to.have.length(1);
+        expect(calls[0]!.filename).to.equal("oos-holdout-10-bars.txt");
+        expect(calls[0]!.content).to.contain("Archive sort: expectancy");
+        expect(calls[0]!.content).to.contain("Archive sort: netProfit");
+        expect(results).to.have.length(2);
+        expect(results[0]!.bytes + results[1]!.bytes).to.equal(Buffer.byteLength(calls[0]!.content, "utf8"));
     });
 
     it("reuses parsed snapshots and incorporates later successful appends", async () => {

@@ -462,8 +462,9 @@ export async function runServerAssetIsSearch(
             if (canReuseFullSignals && !cachedFullSignals && signalCacheKey) {
                 // Warm the full-series signal cache before the compact window
                 // pass so the first cold holdout also skips indicator work.
-                // Keep the full result local until ranking proves this
-                // candidate belongs in the running top-K.
+                // The signal set is independent of ranking, so retain it even
+                // when this candidate falls outside the current top-K; a later
+                // holdout can still reuse the same candidate's signals.
                 try {
                     // Prepared Finder strategies read this value while
                     // generating signals. Resolve it before the warm pass so
@@ -598,16 +599,17 @@ export async function runServerAssetIsSearch(
                 endpointAdjusted: selection.adjusted,
                 endpointRemovedTrades: selection.removedTrades,
             };
+            if (fullSignalsForCache && signalCacheKey) {
+                input.signalCache!.set(signalCacheKey, fullSignalsForCache);
+            }
             if (!matchesFinderTradeCountFilter(candidate.selectionResult.totalTrades, options)) {
                 continue;
             }
-            // Attach signals only when the candidate is actually retained:
-            // a rejected candidate's signals would otherwise linger in the
-            // map until the end of the asset pass. Evictions delete below.
+
+            // Attach per-result signals only when the candidate is actually
+            // retained: a rejected candidate's signals would otherwise linger
+            // in the result-identity map until the end of the asset pass.
             const retained = topKRanker.offer(candidate);
-            if (retained && fullSignalsForCache && signalCacheKey) {
-                input.signalCache!.set(signalCacheKey, fullSignalsForCache);
-            }
             if (input.retainSignals === true && retained) {
                 signalsByResult.set(candidate, output.signals);
             }
