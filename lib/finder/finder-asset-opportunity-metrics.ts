@@ -407,19 +407,16 @@ export function getAssetOpportunityResortMetrics(): readonly FinderAssetOpportun
 export function calculateMedianBarsToTp(
     result: Pick<BacktestResult, "trades" | "totalTrades">,
     candles: readonly OHLCVData[],
+    indexByTime?: ReadonlyMap<string, number>,
 ): number | null {
     if (!Number.isFinite(result.totalTrades) || result.totalTrades < MEDIAN_BARS_TO_TP_MIN_HITS) return null;
-
-    const indexByTime = new Map<string, number>();
-    for (let index = 0; index < candles.length; index += 1) {
-        indexByTime.set(timeKey(candles[index]!.time), index);
-    }
+    const resolvedIndexByTime = indexByTime ?? candleIndexByTime(candles);
 
     const barsToTakeProfit: number[] = [];
     for (const trade of result.trades) {
         if (trade.exitReason !== "take_profit") continue;
-        const entryIndex = indexByTime.get(timeKey(trade.entryTime));
-        const exitIndex = indexByTime.get(timeKey(trade.exitTime));
+        const entryIndex = resolvedIndexByTime.get(timeKey(trade.entryTime));
+        const exitIndex = resolvedIndexByTime.get(timeKey(trade.exitTime));
         if (entryIndex === undefined || exitIndex === undefined) return null;
         const bars = exitIndex - entryIndex;
         if (!Number.isFinite(bars) || bars < 0) return null;
@@ -460,9 +457,8 @@ function candleIndexByTime(candles: readonly OHLCVData[]): Map<string, number> {
 
 function completedTradeBarPairs(
     result: Pick<BacktestResult, "trades">,
-    candles: readonly OHLCVData[],
+    indexByTime: ReadonlyMap<string, number>,
 ): Array<{ entryIndex: number; exitIndex: number; pnl: number }> | null {
-    const indexByTime = candleIndexByTime(candles);
     const pairs: Array<{ entryIndex: number; exitIndex: number; pnl: number }> = [];
     for (const trade of completedTrades(result)) {
         const entryIndex = indexByTime.get(timeKey(trade.entryTime));
@@ -512,8 +508,11 @@ export function calculateEntryHourConcentration(result: Pick<BacktestResult, "tr
 export function calculateTradeGapUniformity(
     result: Pick<BacktestResult, "trades">,
     candles: readonly OHLCVData[],
+    pairs: Array<{ entryIndex: number; exitIndex: number; pnl: number }> | null = completedTradeBarPairs(
+        result,
+        candleIndexByTime(candles),
+    ),
 ): number | null {
-    const pairs = completedTradeBarPairs(result, candles);
     if (!pairs || pairs.length - 1 < TRADE_GAP_UNIFORMITY_MIN_GAPS) return null;
     const entryIndexes = pairs.map((pair) => pair.entryIndex).sort((left, right) => left - right);
     const gaps = entryIndexes.slice(1).map((entryIndex, index) => entryIndex - entryIndexes[index]!);
@@ -539,8 +538,11 @@ export function calculateTopDecileProfitShare(result: Pick<BacktestResult, "trad
 export function calculateWinnerLoserHoldGapBars(
     result: Pick<BacktestResult, "trades">,
     candles: readonly OHLCVData[],
+    pairs: Array<{ entryIndex: number; exitIndex: number; pnl: number }> | null = completedTradeBarPairs(
+        result,
+        candleIndexByTime(candles),
+    ),
 ): number | null {
-    const pairs = completedTradeBarPairs(result, candles);
     if (!pairs) return null;
     const winners = pairs.filter((pair) => pair.pnl > 0).map((pair) => pair.exitIndex - pair.entryIndex);
     const losers = pairs.filter((pair) => pair.pnl <= 0).map((pair) => pair.exitIndex - pair.entryIndex);
@@ -595,13 +597,15 @@ export function calculateAssetOpportunityDerivedMetrics(args: {
     candles: readonly OHLCVData[];
     freshEntryPrice: number | null;
 }): AssetOpportunityMetricFields {
+    const indexByTime = candleIndexByTime(args.candles);
+    const completedPairs = completedTradeBarPairs(args.result, indexByTime);
     return {
-        medianBarsToTp: calculateMedianBarsToTp(args.result, args.candles),
+        medianBarsToTp: calculateMedianBarsToTp(args.result, args.candles, indexByTime),
         barrierExitShare: calculateBarrierExitShare(args.result),
         entryHourConcentration: calculateEntryHourConcentration(args.result),
-        tradeGapUniformity: calculateTradeGapUniformity(args.result, args.candles),
+        tradeGapUniformity: calculateTradeGapUniformity(args.result, args.candles, completedPairs),
         topDecileProfitShare: calculateTopDecileProfitShare(args.result),
-        winnerLoserHoldGapBars: calculateWinnerLoserHoldGapBars(args.result, args.candles),
+        winnerLoserHoldGapBars: calculateWinnerLoserHoldGapBars(args.result, args.candles, completedPairs),
         entryPriceRegimeMembership: calculateEntryPriceRegimeMembership(args.result, args.freshEntryPrice),
         equityPathLinearity: calculateEquityPathLinearity(args.result),
     };

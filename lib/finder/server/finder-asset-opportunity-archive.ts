@@ -66,6 +66,80 @@ export interface AssetOpportunityArchiveTupleSnapshot {
     tupleKeys: Set<string>;
 }
 
+// The Vite server is the sole writer for this archive during a process. Keep
+// the parsed recurrence history across batch runs; a fresh process repopulates
+// it from disk, so the cache never changes the persisted archive contract.
+const archiveTupleSnapshotCache = new Map<string, AssetOpportunityArchiveTupleSnapshot[]>();
+
+function archiveTupleSnapshotCacheKey(root: string): string {
+    return path.resolve(resolveAssetOpportunityArchiveDir(root));
+}
+
+function cloneArchiveTupleSnapshot(
+    snapshot: AssetOpportunityArchiveTupleSnapshot,
+): AssetOpportunityArchiveTupleSnapshot {
+    return {
+        ...snapshot,
+        tupleKeys: new Set(snapshot.tupleKeys),
+    };
+}
+
+function sortArchiveTupleSnapshots(
+    snapshots: AssetOpportunityArchiveTupleSnapshot[],
+): AssetOpportunityArchiveTupleSnapshot[] {
+    return snapshots.sort((left, right) =>
+        left.holdoutBars - right.holdoutBars
+        || left.timestamp.localeCompare(right.timestamp)
+        || left.batchRunId.localeCompare(right.batchRunId));
+}
+
+function addArchiveTupleRows(
+    snapshot: AssetOpportunityArchiveTupleSnapshot,
+    rows: unknown,
+): void {
+    if (!Array.isArray(rows)) return;
+    for (const row of rows) {
+        if (!row || typeof row !== "object") continue;
+        const value = row as Record<string, unknown>;
+        if (typeof value.symbol !== "string"
+            || typeof value.strategyId !== "string"
+            || typeof value.candidateFingerprint !== "string") continue;
+        snapshot.tupleKeys.add(assetOpportunityTupleKey({
+            symbol: value.symbol,
+            strategyId: value.strategyId,
+            candidateFingerprint: value.candidateFingerprint,
+        }));
+    }
+}
+
+function rememberCachedArchiveBlock(args: {
+    root: string;
+    timestamp: string;
+    batchRunId: string;
+    holdoutBars: number;
+    topResults: unknown;
+}): void {
+    const cacheKey = archiveTupleSnapshotCacheKey(args.root);
+    const cached = archiveTupleSnapshotCache.get(cacheKey);
+    if (!cached) return;
+    const snapshotKey = `${args.batchRunId}|${args.holdoutBars}`;
+    const snapshot = cached.find((candidate) =>
+        `${candidate.batchRunId}|${candidate.holdoutBars}` === snapshotKey);
+    if (snapshot) {
+        addArchiveTupleRows(snapshot, args.topResults);
+    } else {
+        const nextSnapshot: AssetOpportunityArchiveTupleSnapshot = {
+            timestamp: args.timestamp,
+            batchRunId: args.batchRunId,
+            holdoutBars: args.holdoutBars,
+            tupleKeys: new Set<string>(),
+        };
+        addArchiveTupleRows(nextSnapshot, args.topResults);
+        cached.push(nextSnapshot);
+        sortArchiveTupleSnapshots(cached);
+    }
+}
+
 function assetOpportunityTupleKey(args: {
     symbol: string;
     strategyId: string;
@@ -90,11 +164,16 @@ export function buildAssetOpportunityTupleKey(result: FinderAssetOpportunityResu
 export async function readAssetOpportunityArchiveTupleSnapshots(
     root: string,
 ): Promise<AssetOpportunityArchiveTupleSnapshot[]> {
+    const cacheKey = archiveTupleSnapshotCacheKey(root);
+    const cached = archiveTupleSnapshotCache.get(cacheKey);
+    if (cached) return cached.map(cloneArchiveTupleSnapshot);
+
     const dir = resolveAssetOpportunityArchiveDir(root);
     let filenames: string[];
     try {
         filenames = (await readdir(dir)).filter((filename) => /^oos-holdout-\d+-bars\.txt$/.test(filename));
     } catch {
+        archiveTupleSnapshotCache.set(cacheKey, []);
         return [];
     }
     const snapshots = new Map<string, AssetOpportunityArchiveTupleSnapshot>();
@@ -131,25 +210,13 @@ export async function readAssetOpportunityArchiveTupleSnapshots(
                 holdoutBars,
                 tupleKeys: new Set<string>(),
             };
-            for (const row of rows) {
-                if (!row || typeof row !== "object") continue;
-                const value = row as Record<string, unknown>;
-                if (typeof value.symbol !== "string"
-                    || typeof value.strategyId !== "string"
-                    || typeof value.candidateFingerprint !== "string") continue;
-                snapshot.tupleKeys.add(assetOpportunityTupleKey({
-                    symbol: value.symbol,
-                    strategyId: value.strategyId,
-                    candidateFingerprint: value.candidateFingerprint,
-                }));
-            }
+            addArchiveTupleRows(snapshot, rows);
             snapshots.set(snapshotKey, snapshot);
         }
     }
-    return [...snapshots.values()].sort((left, right) =>
-        left.holdoutBars - right.holdoutBars
-        || left.timestamp.localeCompare(right.timestamp)
-        || left.batchRunId.localeCompare(right.batchRunId));
+    const parsed = sortArchiveTupleSnapshots([...snapshots.values()]);
+    archiveTupleSnapshotCache.set(cacheKey, parsed);
+    return parsed.map(cloneArchiveTupleSnapshot);
 }
 
 export function countPriorAssetOpportunityTupleRecurrence(args: {
@@ -225,8 +292,9 @@ export async function appendAssetOpportunityArchiveBlock(
 ): Promise<AssetOpportunityArchiveAppendResult> {
     const filename = buildAssetOpportunityArchiveFilename(args.holdoutBars);
     const dir = resolveAssetOpportunityArchiveDir(args.root);
+    const timestamp = args.timestamp ?? new Date().toISOString();
     const content = buildAssetOpportunityArchiveBlockText({
-        timestamp: args.timestamp ?? new Date().toISOString(),
+        timestamp,
         batchRunId: args.batchRunId,
         holdoutBars: args.holdoutBars,
         sortMetric: args.sortMetric ?? null,
@@ -237,6 +305,13 @@ export async function appendAssetOpportunityArchiveBlock(
     });
     const append = args.append ?? defaultAppend;
     await append(dir, filename, content);
+    rememberCachedArchiveBlock({
+        root: args.root,
+        timestamp,
+        batchRunId: args.batchRunId,
+        holdoutBars: args.holdoutBars,
+        topResults: args.topResults,
+    });
     return {
         path: path.join(dir, filename),
         bytes: Buffer.byteLength(content, "utf8"),

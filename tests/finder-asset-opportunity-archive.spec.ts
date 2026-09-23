@@ -116,6 +116,37 @@ describe("Asset Opportunity archive writer", () => {
         }
     });
 
+    it("reuses parsed snapshots and incorporates later successful appends", async () => {
+        const root = mkdtempSync(path.join(tmpdir(), "finder-archive-"));
+        try {
+            await appendAssetOpportunityArchiveBlock({
+                root,
+                batchRunId: "batch-1",
+                holdoutBars: 10,
+                topResults: [{ symbol: "AAA", strategyId: "strategy", candidateFingerprint: "fp-1" }],
+                timestamp: "2026-01-01T00:00:00.000Z",
+            });
+            await readAssetOpportunityArchiveTupleSnapshots(root);
+
+            // The injected append represents a successful writer. The second
+            // read must use the process-local parsed cache rather than re-read
+            // the file, which intentionally contains only batch-1 here.
+            await appendAssetOpportunityArchiveBlock({
+                root,
+                batchRunId: "batch-2",
+                holdoutBars: 10,
+                topResults: [{ symbol: "BBB", strategyId: "strategy", candidateFingerprint: "fp-2" }],
+                timestamp: "2026-01-02T00:00:00.000Z",
+                append: async () => {},
+            });
+            const snapshots = await readAssetOpportunityArchiveTupleSnapshots(root);
+            expect(snapshots).to.have.length(2);
+            expect([...snapshots[1]!.tupleKeys]).to.deep.equal(["BBB|strategy|fp-2"]);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("injects the append leaf so tests never touch the real archive", async () => {
         const calls: Array<{ dir: string; filename: string; content: string }> = [];
         const root = "/virtual/root";

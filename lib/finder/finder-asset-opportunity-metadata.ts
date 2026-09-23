@@ -219,6 +219,11 @@ export interface AssetOpportunityNextExitOosBaseline {
     unavailableReasonCounts: Record<string, number>;
 }
 
+const assetOpportunityCandidateFingerprintCache = new WeakMap<
+    FinderAssetOpportunityResult,
+    string
+>();
+
 /**
  * Stable identity for one sampled candidate. This is a reproducibility key,
  * not a security hash; it lets archive analysis distinguish parameter changes
@@ -227,12 +232,17 @@ export interface AssetOpportunityNextExitOosBaseline {
 export function buildAssetOpportunityCandidateFingerprint(
     result: FinderAssetOpportunityResult,
 ): string {
-    return fnv1a64Hex(stableStringify({
+    const cached = assetOpportunityCandidateFingerprintCache.get(result);
+    if (cached !== undefined) return cached;
+
+    const fingerprint = fnv1a64Hex(stableStringify({
         strategyId: result.strategyKey,
         params: result.params,
         exitStrategyKey: result.exitStrategyKey ?? null,
         exitStrategyParams: result.exitStrategyParams ?? null,
     }));
+    assetOpportunityCandidateFingerprintCache.set(result, fingerprint);
+    return fingerprint;
 }
 
 function selectAssetOpportunityPerformanceMetrics(
