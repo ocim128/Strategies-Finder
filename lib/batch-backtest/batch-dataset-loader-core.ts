@@ -604,21 +604,62 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
     };
 }
 
-function alignLegCloses(
+export function alignLegCloses(
     pairBars: readonly OHLCVData[],
     legBars: readonly OHLCVData[],
     interval: string,
 ): (number | null)[] {
-    const alignedLegBars = resampleOHLCV([...legBars], interval);
-    const closeByTime = new Map<number, number>();
-    for (const bar of alignedLegBars) {
-        const sec = typeof bar.time === "number" ? bar.time : null;
-        if (sec !== null && Number.isFinite(sec)) closeByTime.set(sec, bar.close);
+    const alignedLegBars = resampleOHLCV(legBars, interval);
+    const result: (number | null)[] = new Array(pairBars.length);
+    let legIndex = 0;
+    let matchedTime: number | null = null;
+    let matchedClose: number | null = null;
+
+    for (let pairIndex = 0; pairIndex < pairBars.length; pairIndex += 1) {
+        const pairTime = pairBars[pairIndex]!.time;
+        const targetSec = typeof pairTime === "number" && Number.isFinite(pairTime)
+            ? pairTime
+            : null;
+        if (targetSec === null) {
+            result[pairIndex] = null;
+            continue;
+        }
+        if (targetSec === matchedTime) {
+            result[pairIndex] = matchedClose;
+            continue;
+        }
+
+        while (legIndex < alignedLegBars.length) {
+            const legTime = alignedLegBars[legIndex]!.time;
+            if (typeof legTime !== "number" || !Number.isFinite(legTime) || legTime < targetSec) {
+                legIndex += 1;
+                continue;
+            }
+            break;
+        }
+
+        if (legIndex >= alignedLegBars.length || alignedLegBars[legIndex]!.time !== targetSec) {
+            matchedTime = null;
+            matchedClose = null;
+            result[pairIndex] = null;
+            continue;
+        }
+
+        let lastMatchIndex = legIndex;
+        let close = alignedLegBars[legIndex]!.close;
+        while (lastMatchIndex + 1 < alignedLegBars.length) {
+            const nextBar = alignedLegBars[lastMatchIndex + 1]!;
+            if (nextBar.time !== targetSec) break;
+            close = nextBar.close;
+            lastMatchIndex += 1;
+        }
+        legIndex = lastMatchIndex + 1;
+        matchedTime = targetSec;
+        matchedClose = close;
+        result[pairIndex] = close;
     }
-    return pairBars.map((bar) => {
-        const sec = typeof bar.time === "number" ? bar.time : null;
-        return sec !== null && Number.isFinite(sec) ? closeByTime.get(sec) ?? null : null;
-    });
+
+    return result;
 }
 
 
