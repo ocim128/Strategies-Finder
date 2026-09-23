@@ -178,6 +178,7 @@ export async function runCandidateOosPass(deps: CandidateOosDeps): Promise<Candi
                 ...(exitStrategy ? { exitStrategy } : {}),
                 exitStrategyKey: candidate.exitStrategyKey,
                 preparedDataCache,
+                backtestOptions: { omitEquityCurve: true },
                 exitAlphaEnabled: requiresExitAlpha,
                 onExitAlpha: (value) => {
                     oosExitAlpha = value;
