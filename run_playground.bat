@@ -167,12 +167,18 @@ if errorlevel 1 (
 )
 :: Invoke the workspace-installed Vite shim directly. `npx vite` asks npm to
 :: remap every workspace first and aborts when sibling Git worktrees contain
-:: another package with the same name.
+:: another package with the same name. Some npm workspace installs leave the
+:: package present without creating its .bin shim, so keep a direct package
+:: entrypoint as the reliable fallback.
 set "VITE_CMD=%~dp0..\node_modules\.bin\vite.cmd"
+set "VITE_JS=%~dp0..\node_modules\vite\bin\vite.js"
 if exist "!VITE_CMD!" (
     call "!VITE_CMD!"
+) else if exist "!VITE_JS!" (
+    echo [vite] Workspace shim missing; starting installed Vite package directly.
+    node "!VITE_JS!"
 ) else (
-    echo [vite] Workspace Vite shim not found at !VITE_CMD! - falling back to npx.
+    echo [vite] Workspace Vite package not found at !VITE_JS! - falling back to npx.
     call npx --no-install vite
 )
 pause
