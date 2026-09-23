@@ -134,7 +134,7 @@ export interface TopMeanPhase0bArchiveFiles {
 export interface TopMeanPhase0bArchiveWriter {
     readonly files: TopMeanPhase0bArchiveFiles;
     onPoolSnapshot(row: PoolSnapshotRecord): Promise<void>;
-    onCandidateOutcome(row: CandidateOutcomeRecord): Promise<void>;
+    onCandidateOutcome(row: CandidateOutcomeRecord): void | Promise<void>;
     close(): Promise<void>;
     dispose(): Promise<void>;
 }
@@ -164,13 +164,12 @@ function createTrackedJsonlStream(filePath: string): TrackedJsonlStream {
     return tracked;
 }
 
-async function writeStreamLine(tracked: TrackedJsonlStream, row: unknown): Promise<void> {
+function writeStreamChunk(tracked: TrackedJsonlStream, chunk: string): void | Promise<void> {
     // A previous asynchronous failure must fail every later write too — a
     // destroyed stream can still accept buffered writes that go nowhere.
     if (tracked.error) throw tracked.error;
-    const line = `${JSON.stringify(row)}\n`;
-    if (tracked.stream.write(line)) return;
-    await new Promise<void>((resolve, reject) => {
+    if (tracked.stream.write(chunk)) return;
+    return new Promise<void>((resolve, reject) => {
         const onDrain = (): void => {
             cleanup();
             resolve();
@@ -186,6 +185,35 @@ async function writeStreamLine(tracked: TrackedJsonlStream, row: unknown): Promi
         tracked.stream.once("drain", onDrain);
         tracked.stream.once("error", onError);
     });
+}
+
+async function writeStreamLine(tracked: TrackedJsonlStream, row: unknown): Promise<void> {
+    const pending = writeStreamChunk(tracked, `${JSON.stringify(row)}\n`);
+    if (pending) await pending;
+}
+
+function createBufferedJsonlWriter(
+    tracked: TrackedJsonlStream,
+    maxRows = 256,
+): {
+    write: (row: unknown) => void | Promise<void>;
+    flush: () => void | Promise<void>;
+} {
+    let lines: string[] = [];
+    const flush = (): void | Promise<void> => {
+        if (lines.length === 0) return;
+        const pendingLines = lines;
+        lines = [];
+        return writeStreamChunk(tracked, `${pendingLines.join("\n")}\n`);
+    };
+    return {
+        write: (row) => {
+            if (tracked.error) throw tracked.error;
+            lines.push(JSON.stringify(row));
+            if (lines.length >= maxRows) return flush();
+        },
+        flush,
+    };
 }
 
 function closeWriteStream(tracked: TrackedJsonlStream): Promise<void> {
@@ -217,18 +245,32 @@ export async function createTopMeanPhase0bArchiveWriter(
     const candidateOutcomesPath = path.join(stagingDir, "candidate-outcomes.jsonl");
     const poolStream = createTrackedJsonlStream(poolSnapshotsPath);
     const candidateStream = createTrackedJsonlStream(candidateOutcomesPath);
+    const candidateWriter = createBufferedJsonlWriter(candidateStream);
     let closePromise: Promise<void> | null = null;
     const closeStreams = (): Promise<void> => {
-        closePromise ??= Promise.all([
-            closeWriteStream(poolStream),
-            closeWriteStream(candidateStream),
-        ]).then(() => undefined);
+        closePromise ??= (async () => {
+            let flushError: unknown = null;
+            try {
+                const pending = candidateWriter.flush();
+                if (pending) await pending;
+            } catch (error) {
+                flushError = error;
+            }
+            const closeResults = await Promise.allSettled([
+                closeWriteStream(poolStream),
+                closeWriteStream(candidateStream),
+            ]);
+            if (flushError) throw flushError;
+            for (const result of closeResults) {
+                if (result.status === "rejected") throw result.reason;
+            }
+        })();
         return closePromise;
     };
     return {
         files: { poolSnapshotsPath, candidateOutcomesPath },
         onPoolSnapshot: (row) => writeStreamLine(poolStream, row),
-        onCandidateOutcome: (row) => writeStreamLine(candidateStream, row),
+        onCandidateOutcome: (row) => candidateWriter.write(row),
         close: async () => {
             await closeStreams();
         },

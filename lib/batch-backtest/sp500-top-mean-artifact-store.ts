@@ -1,11 +1,22 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
 import type { CompactPairArtifact, TopMeanRunManifest, BatchSyntheticPairArtifactAdapter } from "./compact-pair-artifact";
 import { toBatchSyntheticPairAdapter } from "./compact-pair-artifact";
 
 const DEFAULT_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
+const PARSED_SHARD_CACHE_MAX_ENTRIES = 32;
+
+interface ParsedShardCacheEntry {
+    mtimeMs: number;
+    artifacts: CompactPairArtifact[];
+}
+
+// Annual TOP_MEAN replay passes revisit the same completed shards. Keep the
+// parsed working set bounded while using the file mtime to self-invalidate
+// after a resumed run replaces a shard.
+const parsedShardCache = new Map<string, ParsedShardCacheEntry>();
 
 /**
  * Allow-list for run ids. Browser-generated ids are `batch-<ts36>-<rand>` and
@@ -245,8 +256,23 @@ export async function readShardArtifactsAsync(
 ): Promise<CompactPairArtifact[] | null> {
     const shardPath = getShardPath(runId, shardIndex, baseDir);
     try {
+        const mtimeMs = (await stat(shardPath)).mtimeMs;
+        const cached = parsedShardCache.get(shardPath);
+        if (cached && cached.mtimeMs === mtimeMs) {
+            parsedShardCache.delete(shardPath);
+            parsedShardCache.set(shardPath, cached);
+            return cached.artifacts;
+        }
         const content = await readFile(shardPath, "utf8");
-        return JSON.parse(content) as CompactPairArtifact[];
+        const artifacts = JSON.parse(content) as CompactPairArtifact[];
+        parsedShardCache.delete(shardPath);
+        parsedShardCache.set(shardPath, { mtimeMs, artifacts });
+        while (parsedShardCache.size > PARSED_SHARD_CACHE_MAX_ENTRIES) {
+            const oldestKey = parsedShardCache.keys().next().value;
+            if (oldestKey === undefined) break;
+            parsedShardCache.delete(oldestKey);
+        }
+        return artifacts;
     } catch {
         return null;
     }

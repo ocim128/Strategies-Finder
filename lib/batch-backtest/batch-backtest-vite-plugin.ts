@@ -211,6 +211,7 @@ const PARSED_ARTIFACT_CACHE_MAX = 32;
  */
 const OPEN_SCORE_HORIZONS_MAX_LENGTH = 8;
 const OPEN_SCORE_HORIZONS_MAX_VALUE = 1000;
+const OPEN_SCORE_TARGET_PREFETCH_CONCURRENCY = 4;
 
 /**
  * Minimal counting semaphore capping concurrent async artifact writes across
@@ -2251,20 +2252,63 @@ export async function processOpenScoreUsdReplay(
     const assets = Array.from(assetSet).sort();
 
     async function* targetLoader(): AsyncIterable<OpenScoreUsdTarget> {
-        for (const asset of assets) {
-            if (lostOwnership()) return;
+        type LoadedTarget = {
+            asset: string;
+            symbol: string;
+            data: OHLCVData[] | null;
+        };
+        const inFlight = new Map<number, Promise<LoadedTarget>>();
+        let nextIndex = 0;
+        const startLoad = (index: number): Promise<LoadedTarget> => {
+            const asset = assets[index]!;
             const symbol = markedSymbolByAsset.get(asset) ?? `${asset.trim().toUpperCase()}USDT`;
-            try {
-                const data = (await loadTargetDataset(symbol, runInterval, analysisAbortController?.signal)) as OHLCVData[] | null;
-                if (Array.isArray(data) && data.length > 0) {
-                    yield { asset, symbol, data };
-                }
-            } catch (error) {
-                if (analysisAbortController?.signal?.aborted || lostOwnership()) return;
-                debugLogger.warn("batch.server.open_score_usd.target_load_failed", {
-                    asset, symbol, error: error instanceof Error ? error.message : String(error),
+            const pending = Promise.resolve()
+                .then(() => loadTargetDataset(symbol, runInterval, analysisAbortController?.signal))
+                .then((rawData) => ({
+                    asset,
+                    symbol,
+                    data: Array.isArray(rawData) && rawData.length > 0
+                        ? rawData as OHLCVData[]
+                        : null,
+                }))
+                .catch((error): LoadedTarget => {
+                    if (analysisAbortController?.signal?.aborted || lostOwnership()) {
+                        return { asset, symbol, data: null };
+                    }
+                    debugLogger.warn("batch.server.open_score_usd.target_load_failed", {
+                        asset, symbol, error: error instanceof Error ? error.message : String(error),
+                    });
+                    return { asset, symbol, data: null };
                 });
+            inFlight.set(index, pending);
+            return pending;
+        };
+        const fillPrefetchWindow = (): void => {
+            while (
+                nextIndex < assets.length
+                && inFlight.size < OPEN_SCORE_TARGET_PREFETCH_CONCURRENCY
+                && !lostOwnership()
+            ) {
+                startLoad(nextIndex);
+                nextIndex += 1;
             }
+        };
+
+        if (lostOwnership()) return;
+        fillPrefetchWindow();
+        try {
+            for (let index = 0; index < assets.length; index += 1) {
+                if (lostOwnership()) return;
+                const pending = inFlight.get(index);
+                if (!pending) return;
+                inFlight.delete(index);
+                const loaded = await pending;
+                if (lostOwnership()) return;
+                fillPrefetchWindow();
+                if (loaded.data) yield { asset: loaded.asset, symbol: loaded.symbol, data: loaded.data };
+            }
+        } finally {
+            await Promise.allSettled(inFlight.values());
         }
     }
 

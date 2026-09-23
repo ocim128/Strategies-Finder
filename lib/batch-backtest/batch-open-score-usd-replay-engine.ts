@@ -1883,9 +1883,9 @@ export async function runOpenScoreUsdReplay(
         if (options.onPoolSnapshot) await options.onPoolSnapshot(row);
         else poolSnapshots?.push(row);
     };
-    const emitCandidateOutcome = async (row: CandidateOutcomeRecord): Promise<void> => {
-        if (options.onCandidateOutcome) await options.onCandidateOutcome(row);
-        else candidateOutcomes?.push(row);
+    const emitCandidateOutcome = (row: CandidateOutcomeRecord): void | Promise<void> => {
+        if (options.onCandidateOutcome) return options.onCandidateOutcome(row);
+        candidateOutcomes?.push(row);
     };
     // EMA side state is compactly retained until all catalog targets have been
     // consumed so breadth can be emitted consistently for every asset at an
@@ -1991,7 +1991,7 @@ export async function runOpenScoreUsdReplay(
                     const rawScore = aIdx === undefined ? 0 : event.rawScore[aIdx] ?? 0;
                     for (const horizonBars of horizons) {
                         const eventId = phase0bEventId(options.interval, event.timeSec);
-                        await emitCandidateOutcome({
+                        const pendingLongWrite = emitCandidateOutcome({
                             eventId,
                             decisionTimeSec: event.timeSec,
                             horizonBars,
@@ -2004,7 +2004,8 @@ export async function runOpenScoreUsdReplay(
                             exitTimeSec: null,
                             status: "data_gap",
                         });
-                        await emitCandidateOutcome({
+                        if (pendingLongWrite) await pendingLongWrite;
+                        const pendingShortWrite = emitCandidateOutcome({
                             eventId,
                             decisionTimeSec: event.timeSec,
                             horizonBars,
@@ -2017,6 +2018,7 @@ export async function runOpenScoreUsdReplay(
                             exitTimeSec: null,
                             status: "data_gap",
                         });
+                        if (pendingShortWrite) await pendingShortWrite;
                     }
                 }
             }
@@ -2077,7 +2079,7 @@ export async function runOpenScoreUsdReplay(
                         commissionRate,
                     );
                     const eventId = phase0bEventId(options.interval, event.timeSec);
-                    await emitCandidateOutcome({
+                    const pendingLongWrite = emitCandidateOutcome({
                         eventId,
                         decisionTimeSec: event.timeSec,
                         horizonBars,
@@ -2090,7 +2092,8 @@ export async function runOpenScoreUsdReplay(
                         exitTimeSec: longOutcome.exitTimeSec,
                         status: longOutcome.status,
                     });
-                    await emitCandidateOutcome({
+                    if (pendingLongWrite) await pendingLongWrite;
+                    const pendingShortWrite = emitCandidateOutcome({
                         eventId,
                         decisionTimeSec: event.timeSec,
                         horizonBars,
@@ -2103,6 +2106,7 @@ export async function runOpenScoreUsdReplay(
                         exitTimeSec: shortOutcome.exitTimeSec,
                         status: shortOutcome.status,
                     });
+                    if (pendingShortWrite) await pendingShortWrite;
                 }
             }
         }
@@ -2199,7 +2203,7 @@ export async function runOpenScoreUsdReplay(
                 const rawScore = aIdx === undefined ? 0 : event.rawScore[aIdx] ?? 0;
                 for (const horizonBars of horizons) {
                     const eventId = phase0bEventId(options.interval, event.timeSec);
-                    await emitCandidateOutcome({
+                    const pendingLongWrite = emitCandidateOutcome({
                         eventId,
                         decisionTimeSec: event.timeSec,
                         horizonBars,
@@ -2212,7 +2216,8 @@ export async function runOpenScoreUsdReplay(
                         exitTimeSec: null,
                         status: "missing_target",
                     });
-                    await emitCandidateOutcome({
+                    if (pendingLongWrite) await pendingLongWrite;
+                    const pendingShortWrite = emitCandidateOutcome({
                         eventId,
                         decisionTimeSec: event.timeSec,
                         horizonBars,
@@ -2225,6 +2230,7 @@ export async function runOpenScoreUsdReplay(
                         exitTimeSec: null,
                         status: "missing_target",
                     });
+                    if (pendingShortWrite) await pendingShortWrite;
                 }
             }
         }
