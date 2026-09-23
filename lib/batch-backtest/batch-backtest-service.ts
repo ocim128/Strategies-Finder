@@ -120,6 +120,12 @@ const LATEST_ARM_SELECTOR_NAMES: readonly OpenScoreUsdLatestSelectorName[] = [
     "TOP_MEAN_PROFIT_NOW",
     "TOP_RAW_PROFIT_NOW_CONF",
     "TOP_Z",
+    "BOT_RAW",
+    "BOT_MEAN",
+    "BOT_MEAN_RAW_UNIQUE",
+    "BOT_RAW_PROFIT_NOW",
+    "BOT_MEAN_PROFIT_NOW",
+    "BOT_Z",
 ];
 
 function normalizeLatestArm(value: string | null | undefined): OpenScoreUsdLatestSelectorName {

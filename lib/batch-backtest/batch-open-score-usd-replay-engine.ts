@@ -169,7 +169,13 @@ export type OpenScoreUsdLatestSelectorName =
     | "TOP_RAW_PROFIT_NOW"
     | "TOP_MEAN_PROFIT_NOW"
     | "TOP_RAW_PROFIT_NOW_CONF"
-    | "TOP_Z";
+    | "TOP_Z"
+    | "BOT_RAW"
+    | "BOT_MEAN"
+    | "BOT_MEAN_RAW_UNIQUE"
+    | "BOT_RAW_PROFIT_NOW"
+    | "BOT_MEAN_PROFIT_NOW"
+    | "BOT_Z";
 
 export interface OpenScoreUsdLatestSelectionCandidate {
     asset: string;
@@ -221,7 +227,13 @@ export type OpenScoreUsdEventDetailSelector =
     | "TOP_RAW_PROFIT_W_TAN"
     | "TOP_MEAN_PROFIT_W_TAN"
     | "TOP_RAW_PROFIT_W_LOG"
-    | "TOP_MEAN_PROFIT_W_LOG";
+    | "TOP_MEAN_PROFIT_W_LOG"
+    | "BOT_RAW"
+    | "BOT_MEAN"
+    | "BOT_MEAN_RAW_UNIQUE"
+    | "BOT_RAW_PROFIT_NOW"
+    | "BOT_MEAN_PROFIT_NOW"
+    | "BOT_Z";
 
 export interface OpenScoreUsdEventDetail {
     decisionTime: number;
@@ -434,43 +446,64 @@ export interface OpenScoreUsdReplayResult {
             topMeanPortfolio: TopMeanPortfolioSummary;
         };
         /**
-         * Conditional-split arms: TOP_RAW's pick routed into one of two
-         * sub-series based on a per-event feature computed in Phase 3. Each
-         * split uses the same selection and `randomMeanOf` baseline as TOP_RAW;
-         * only the *accumulator* the selected return is appended to varies.
-         * Comparison-only (no per-asset breakdown / EX_dominant) — these are
-         * event filters, not asset pickers.
+         * Inverted (negative-control) arms: the same pool, eligibility gate,
+         * and FNV tie-break as their TOP_* twin, but the LOWEST rank value is
+         * selected instead of the highest (still long vs USD, still leave-one-
+         * out pool control). If a BOT_* arm matches its twin's edge, the edge
+         * comes from positive-pool membership, not from the ranking.
          */
+        botRaw: ReplayComparison;
+        /** Per-asset breakdown for the inverted TOP_RAW arm. */
+        botRawByAsset: AssetSelectionSummary[];
+        /** Inverted TOP_RAW after removing its most-frequently-selected asset. */
+        botRawExDominant: ReplayComparison;
+        /** Asset excluded from {@link botRawExDominant}. */
+        botRawDominantAsset: string | null;
+        /** Inverted TOP_MEAN: lowest mean signed vote in the positive pool. */
+        botMean: ReplayComparison;
+        /** Per-asset breakdown for the inverted TOP_MEAN arm. */
+        botMeanByAsset: AssetSelectionSummary[];
+        /** Inverted TOP_MEAN after removing its most-frequently-selected asset. */
+        botMeanExDominant: ReplayComparison;
+        /** Asset excluded from {@link botMeanExDominant}. */
+        botMeanDominantAsset: string | null;
         /**
-         * Rank freshness split: TOP_RAW's pick is FRESH when it differs from
-         * the previous view's TOP_RAW leader, STALE when it is the same.
+         * BOT_MEAN_RAW_UNIQUE: form the BOTTOM_MEAN tied set, then select its
+         * unique raw-score minimum. Residual raw ties are skipped. The control
+         * is the mean return of that bottom-mean tied set, including the
+         * selected asset.
          */
-        topRawFresh: ReplayComparison;
-        topRawStale: ReplayComparison;
-        /**
-         * Streak-length refinement of STALE. A view's streak is the count of
-         * consecutive views (ending at this one) in which the same asset led
-         * TOP_RAW; STALE events are streak ≥ 2. STALE_SHORT and STALE_LONG
-         * partition STALE events at the median streak length across all STALE
-         * views — SHORT = `[2, median]`, LONG = `> median`. Tests whether the
-         * STALE edge grows with streak (continuation) or fades (crowding).
-         */
-        topRawStaleShort: ReplayComparison;
-        topRawStaleLong: ReplayComparison;
-        /**
-         * Concentration split: events where the cross-sectional HHI of
-         * positive scores is above the median (DOMINANT — one signal leads) vs
-         * at/below (SPREAD — scores dispersed).
-         */
-        topRawDominant: ReplayComparison;
-        topRawSpread: ReplayComparison;
-        /**
-         * Active-pair regime split: events where maxActivePairs across
-         * positive candidates is above (HI_PAIRS) or at/below (LO_PAIRS) the
-         * median across all views.
-         */
-        topRawHiPairs: ReplayComparison;
-        topRawLoPairs: ReplayComparison;
+        botMeanRawUnique: ReplayComparison;
+        /** Per-asset breakdown for the inverted TOP_MEAN_RAW_UNIQUE arm. */
+        botMeanRawUniqueByAsset: AssetSelectionSummary[];
+        /** BOT_MEAN_RAW_UNIQUE after removing its dominant asset. */
+        botMeanRawUniqueExDominant: ReplayComparison;
+        /** Asset excluded from {@link botMeanRawUniqueExDominant}. */
+        botMeanRawUniqueDominantAsset: string | null;
+        /** Inverted causal TOP_RAW: lowest raw score in the PROFIT_NOW pool. */
+        botRawProfitNow: ReplayComparison;
+        /** Per-asset breakdown for the inverted causal TOP_RAW arm. */
+        botRawProfitNowByAsset: AssetSelectionSummary[];
+        /** Inverted causal TOP_RAW after removing its dominant asset. */
+        botRawProfitNowExDominant: ReplayComparison;
+        /** Asset excluded from {@link botRawProfitNowExDominant}. */
+        botRawProfitNowDominantAsset: string | null;
+        /** Inverted causal TOP_MEAN: lowest mean in the PROFIT_NOW pool. */
+        botMeanProfitNow: ReplayComparison;
+        /** Per-asset breakdown for the inverted causal TOP_MEAN arm. */
+        botMeanProfitNowByAsset: AssetSelectionSummary[];
+        /** Inverted causal TOP_MEAN after removing its dominant asset. */
+        botMeanProfitNowExDominant: ReplayComparison;
+        /** Asset excluded from {@link botMeanProfitNowExDominant}. */
+        botMeanProfitNowDominantAsset: string | null;
+        /** Inverted TOP_Z: lowest per-asset z-surprise in the PROFIT_NOW pool. */
+        botZ: ReplayComparison;
+        /** Per-asset breakdown for the inverted z-surprise arm. */
+        botZByAsset: AssetSelectionSummary[];
+        /** Inverted z-surprise arm after removing its dominant asset. */
+        botZExDominant: ReplayComparison;
+        /** Asset excluded from {@link botZExDominant}. */
+        botZDominantAsset: string | null;
         /** Active pair count at decision events (coverage at the event). */
         candidateDegree: DegreeSummary;
         /** Static pair degree of the selected TOP_RAW asset across events. */
@@ -1601,23 +1634,6 @@ export async function runOpenScoreUsdReplay(
         topZ: number;  // assetIndex
         /** Max active-pair count across positive candidates at this event. */
         maxActivePairs: number;
-        /**
-         * Cross-sectional concentration of positive raw scores, measured as the
-         * Herfindahl–Hirschman index of each positive's share of total raw
-         * (Σ (raw_i / Σraw)²). High HHI = one dominant signal; low = spread.
-         */
-        hhi: number;
-        /**
-         * Freshness: true when TOP_RAW's leader differs from the previous
-         * view's TOP_RAW leader. The first view is always fresh.
-         */
-        fresh: boolean;
-        /**
-         * TOP_RAW leader streak length at this view: count of consecutive
-         * views (ending here) with the same leader. Always 1 for FRESH views;
-         * ≥ 2 for STALE views. Used by the STALE_SHORT / STALE_LONG split.
-         */
-        streak: number;
         /** Per-selector tie counts at this event (Phase 3 MAX_ACTIVE). */
         ties: Record<SelectorName, number>;
     }
@@ -1658,14 +1674,6 @@ export async function runOpenScoreUsdReplay(
         zWelfordMean[a] = nextMean;
         zWelfordCount[a] = n + 1;
     };
-    // Rank Freshness: previous view's TOP_RAW leader (assetIndex). Updated
-    // only when a view is actually pushed, so it tracks the previous *view's*
-    // leader, not the previous *event's* (events without ≥2 positives do not
-    // form a view and do not affect freshness).
-    let lastTopRawLeaderIdx = -1;
-    // Length of the current TOP_RAW leader streak (consecutive views with the
-    // same leader). Reset to 1 on a fresh leader; incremented on a repeat.
-    let currentStreakLength = 0;
     for (let e = 0; e < events.length; e += 1) {
         const ev = events[e]!;
         const positives: Candidate[] = [];
@@ -1805,31 +1813,12 @@ export async function runOpenScoreUsdReplay(
             const topZ = profitNowPositives.length >= 2
                 ? pickMax(profitNowPositives, "z")
                 : null;
-            // --- Conditional-split features (Phase 3) -------------------------
-            const topRawIdx = topRaw.winner.assetIndex;
-            // Cross-sectional HHI of positive raw scores. raw > 0 is guaranteed
-            // for every positive, so rawSum > 0 and shares are well-defined.
-            let rawSum = 0;
-            for (const c of positives) rawSum += c.raw;
-            let hhi = 0;
-            for (const c of positives) {
-                const share = c.raw / rawSum;
-                hhi += share * share;
-            }
-            // Rank freshness: leader differs from previous view's leader. The
-            // first view (lastTopRawLeaderIdx === -1) is always fresh.
-            const fresh = topRawIdx !== lastTopRawLeaderIdx;
-            // Streak length: 1 on a fresh leader (including the first view),
-            // otherwise previous streak + 1. Computed BEFORE updating
-            // lastTopRawLeaderIdx below so the streak recorded on this view
-            // includes itself.
-            currentStreakLength = fresh ? 1 : currentStreakLength + 1;
             views.push({
                 timeSec: ev.timeSec, positives,
                 profitPositives,
                 profitNowPositives,
                 profitNowConfidencePositives,
-                topRaw: topRawIdx,
+                topRaw: topRaw.winner.assetIndex,
                 topMean: topMean.winner.assetIndex,
                 topMeanRawUnique,
                 topMeanRawUniquePool,
@@ -1840,15 +1829,11 @@ export async function runOpenScoreUsdReplay(
                 topRawProfitNowConf: topRawProfitNowConf?.winner.assetIndex ?? -1,
                 topZ: topZ?.winner.assetIndex ?? -1,
                 maxActivePairs,
-                hhi,
-                fresh,
-                streak: currentStreakLength,
                 ties: {
                     RAW: topRaw.tiedCount >= 2 ? 1 : 0,
                     MEAN: topMean.tiedCount >= 2 ? 1 : 0,
                 },
             });
-            lastTopRawLeaderIdx = topRawIdx;
         } else if (
             profitPositives.length >= 2
             || profitNowPositives.length >= 2
@@ -1911,20 +1896,6 @@ export async function runOpenScoreUsdReplay(
     const emaObservedByEvent = diagnosticsEnabled ? new Uint16Array(events.length) : null;
     const emaAboveByEvent = diagnosticsEnabled ? new Uint16Array(events.length) : null;
 
-    // Conditional-split thresholds: medians of the per-view features. Computed
-    // once across ALL views (horizon-independent) so every horizon splits at
-    // the same cut. median() requires a sorted input; the source arrays are
-    // untouched, so a sorted copy is made for each. With < 2 views the median
-    // is NaN and every `> NaN` check is false — all events fall into the
-    // SPREAD/LO_PAIRS branch, which is the documented behaviour. The streak
-    // median is computed over STALE views only (streak >= 2); with < 2 STALE
-    // views every STALE event falls into STALE_SHORT.
-    const splitThresholds = (() => {
-        const hhis = views.map((v) => v.hhi).sort((a, b) => a - b);
-        const pairs = views.map((v) => v.maxActivePairs).sort((a, b) => a - b);
-        const streaks = views.filter((v) => v.streak >= 2).map((v) => v.streak).sort((a, b) => a - b);
-        return { hhi: median(hhis), pairs: median(pairs), streak: median(streaks) };
-    })();
     // Group requested event indexes by asset so each target dataset is loaded
     // once, consumed, and released.
     const requestsByAsset = new Map<number, number[]>();
@@ -2330,13 +2301,47 @@ export async function runOpenScoreUsdReplay(
         return { winner, tiedCount: tied.length };
     };
 
+    /**
+     * Inverted-rank counterpart of {@link pickUsableMax}: same pool, same
+     * eligibility, same digest tie-break, but the LOWEST rank value is
+     * selected. A missing z ranks as +Infinity so a z-less candidate can
+     * never win a min ranking (mirror of pickUsableMax's -Infinity guard).
+     */
+    const usableRankValueMin = (candidate: Candidate, key: UsableRankKey): number =>
+        key === "z" ? candidate.z ?? Number.POSITIVE_INFINITY : candidate[key];
+    const pickUsableMin = (
+        pool: readonly Candidate[],
+        key: UsableRankKey,
+        timeSec: number,
+    ): { winner: Candidate; tiedCount: number } | null => {
+        if (pool.length === 0) return null;
+        let minValue = usableRankValueMin(pool[0]!, key);
+        for (let i = 1; i < pool.length; i += 1) {
+            const value = usableRankValueMin(pool[i]!, key);
+            if (value < minValue) minValue = value;
+        }
+        const tied = pool.filter((candidate) => usableRankValueMin(candidate, key) === minValue);
+        let winner = tied[0]!;
+        if (tied.length > 1) {
+            let winnerDigest = tieBreakDigest(timeSec, assetNames[winner.assetIndex]!);
+            for (let i = 1; i < tied.length; i += 1) {
+                const candidate = tied[i]!;
+                const digest = tieBreakDigest(timeSec, assetNames[candidate.assetIndex]!);
+                if (digest < winnerDigest || (digest === winnerDigest
+                    && assetNames[candidate.assetIndex]! < assetNames[winner.assetIndex]!)) {
+                    winner = candidate;
+                    winnerDigest = digest;
+                }
+            }
+        }
+        return { winner, tiedCount: tied.length };
+    };
+
     // Target gaps are discovered after the pair-event sweep. Rebuild the
     // candidate views once their target datasets have been inspected so a
     // gapped asset is removed from the selector pool instead of invalidating
     // an otherwise usable event.
     const gapFilteredViews: Array<EventView | null> = [];
-    let gapFilteredLastTopRawLeader = -1;
-    let gapFilteredStreak = 0;
     for (let viewIndex = 0; viewIndex < views.length; viewIndex += 1) {
         const source = views[viewIndex]!;
         const positives = usableCandidates(source.positives);
@@ -2379,18 +2384,9 @@ export async function runOpenScoreUsdReplay(
             ? pickUsableMax(profitNowPositives, "z", source.timeSec)
             : null;
         let maxActivePairs = 0;
-        let rawSum = 0;
         for (const candidate of positives) {
             if (candidate.activePairs > maxActivePairs) maxActivePairs = candidate.activePairs;
-            rawSum += candidate.raw;
         }
-        let hhi = 0;
-        for (const candidate of positives) {
-            const share = candidate.raw / rawSum;
-            hhi += share * share;
-        }
-        const fresh = topRaw.winner.assetIndex !== gapFilteredLastTopRawLeader;
-        gapFilteredStreak = fresh ? 1 : gapFilteredStreak + 1;
         gapFilteredViews.push({
             ...source,
             positives,
@@ -2408,15 +2404,11 @@ export async function runOpenScoreUsdReplay(
             topRawProfitNowConf: topRawProfitNowConf?.winner.assetIndex ?? -1,
             topZ: topZ?.winner.assetIndex ?? -1,
             maxActivePairs,
-            hhi,
-            fresh,
-            streak: gapFilteredStreak,
             ties: {
                 RAW: topRaw.tiedCount >= 2 ? 1 : 0,
                 MEAN: topMean.tiedCount >= 2 ? 1 : 0,
             },
         });
-        gapFilteredLastTopRawLeader = topRaw.winner.assetIndex;
     }
     const gapFilteredProfitOnlyEvents: ProfitOnlyEvent[] = profitOnlyEvents.map((source) => ({
         ...source,
@@ -2424,6 +2416,53 @@ export async function runOpenScoreUsdReplay(
         profitNowPositives: usableCandidates(source.profitNowPositives),
         profitNowConfidencePositives: usableCandidates(source.profitNowConfidencePositives),
     }));
+
+    /**
+     * Inverted (negative-control) picks per gap-filtered view: the same pools
+     * and >= 2 gates as the TOP_* arms, but the LOWEST rank value is selected
+     * (see {@link pickUsableMin}). BOT_MEAN_RAW_UNIQUE mirrors
+     * TOP_MEAN_RAW_UNIQUE on the bottom of the ranking: bottom-mean tied set,
+     * then its unique raw MINIMUM (-1 on a residual raw tie). Resolved once
+     * per view, before the per-horizon aggregation, exactly like the TOP picks.
+     */
+    interface BotViewPicks {
+        raw: number;
+        mean: number;
+        meanRawUnique: number;
+        meanRawUniquePoolSize: number;
+        rawProfitNow: number;
+        meanProfitNow: number;
+        z: number;
+    }
+    const resolveBotViewPicks = (view: EventView): BotViewPicks => {
+        const botMean = pickUsableMin(view.positives, "mean", view.timeSec)!;
+        const bottomMeanTied = view.positives.filter((candidate) => candidate.mean === botMean.winner.mean);
+        let meanRawUnique = -1;
+        let minRawInBotMeanTie = Number.POSITIVE_INFINITY;
+        for (const candidate of bottomMeanTied) {
+            if (candidate.raw < minRawInBotMeanTie) minRawInBotMeanTie = candidate.raw;
+        }
+        const botMeanRawMinRows = bottomMeanTied.filter((candidate) => candidate.raw === minRawInBotMeanTie);
+        if (botMeanRawMinRows.length === 1) meanRawUnique = botMeanRawMinRows[0]!.assetIndex;
+        const profitNowPicked = view.profitNowPositives.length >= 2;
+        return {
+            raw: pickUsableMin(view.positives, "raw", view.timeSec)!.winner.assetIndex,
+            mean: botMean.winner.assetIndex,
+            meanRawUnique,
+            meanRawUniquePoolSize: bottomMeanTied.length,
+            rawProfitNow: profitNowPicked
+                ? pickUsableMin(view.profitNowPositives, "raw", view.timeSec)?.winner.assetIndex ?? -1
+                : -1,
+            meanProfitNow: profitNowPicked
+                ? pickUsableMin(view.profitNowPositives, "mean", view.timeSec)?.winner.assetIndex ?? -1
+                : -1,
+            z: profitNowPicked
+                ? pickUsableMin(view.profitNowPositives, "z", view.timeSec)?.winner.assetIndex ?? -1
+                : -1,
+        };
+    };
+    const botPicksByView: Array<BotViewPicks | null> = gapFilteredViews.map((view) =>
+        view ? resolveBotViewPicks(view) : null);
 
     const latestSelections: OpenScoreUsdLatestSelections | null = (() => {
         if (!latestView) return null;
@@ -2435,11 +2474,12 @@ export async function runOpenScoreUsdReplay(
             primary: (candidate: Candidate) => number,
             primaryOrder: "max" | "min",
             secondary?: (candidate: Candidate) => number,
+            secondaryOrder: "max" | "min" = "max",
         ): OpenScoreUsdLatestSelection => {
             const usablePool = usableCandidates(pool);
             // Ranked detail for the Latest-picks UI: the arm's top candidates
             // in its own ranking order, capped at 3 so the wire payload stays
-            // bounded. Runs once per completed run (latest event, 5 arms).
+            // bounded. Runs once per completed run (latest event, per arm).
             const rankTopCandidates = (): OpenScoreUsdLatestSelectionCandidate[] =>
                 [...usablePool]
                     .sort((a, b) => {
@@ -2449,7 +2489,7 @@ export async function runOpenScoreUsdReplay(
                         if (secondary) {
                             const sa = secondary(a);
                             const sb = secondary(b);
-                            if (sa !== sb) return sb - sa;
+                            if (sa !== sb) return secondaryOrder === "max" ? sb - sa : sa - sb;
                         }
                         return assetNames[a.assetIndex]!.localeCompare(assetNames[b.assetIndex]!);
                     })
@@ -2487,7 +2527,9 @@ export async function runOpenScoreUsdReplay(
                 let bestSecondary = secondary(finalists[0]!);
                 for (let i = 1; i < finalists.length; i += 1) {
                     const value = secondary(finalists[i]!);
-                    if (value > bestSecondary) bestSecondary = value;
+                    if (secondaryOrder === "max" ? value > bestSecondary : value < bestSecondary) {
+                        bestSecondary = value;
+                    }
                 }
                 finalists = finalists.filter((candidate) => secondary(candidate) === bestSecondary);
             }
@@ -2530,6 +2572,12 @@ export async function runOpenScoreUsdReplay(
                 pick("TOP_MEAN_PROFIT_NOW", "long", latestView.profitNowPositives, (candidate) => candidate.mean, "max"),
                 pick("TOP_RAW_PROFIT_NOW_CONF", "long", latestView.profitNowConfidencePositives, (candidate) => candidate.raw, "max"),
                 pick("TOP_Z", "long", latestView.profitNowPositives, (candidate) => candidate.z ?? Number.NEGATIVE_INFINITY, "max"),
+                pick("BOT_RAW", "long", latestView.positives, (candidate) => candidate.raw, "min"),
+                pick("BOT_MEAN", "long", latestView.positives, (candidate) => candidate.mean, "min"),
+                pick("BOT_MEAN_RAW_UNIQUE", "long", latestView.positives, (candidate) => candidate.mean, "min", (candidate) => candidate.raw, "min"),
+                pick("BOT_RAW_PROFIT_NOW", "long", latestView.profitNowPositives, (candidate) => candidate.raw, "min"),
+                pick("BOT_MEAN_PROFIT_NOW", "long", latestView.profitNowPositives, (candidate) => candidate.mean, "min"),
+                pick("BOT_Z", "long", latestView.profitNowPositives, (candidate) => candidate.z ?? Number.POSITIVE_INFINITY, "min"),
             ],
         };
     })();
@@ -2592,21 +2640,6 @@ export async function runOpenScoreUsdReplay(
         const topRawProfitNowConf = createSeries();
         const topZ = createSeries();
         const topMeanPortfolioOpportunities: TopMeanPortfolioOpportunity[] = [];
-        // Conditional-split sub-series: TOP_RAW's pick routed into one of two
-        // accumulators per feature. Reuse the same `appendSelection` closure
-        // (defined per view below) so the selection / randomMean baseline is
-        // identical to TOP_RAW's — only the destination series varies.
-        const topRawFresh = createSeries();
-        const topRawStale = createSeries();
-        // Streak-length refinement of STALE: SHORT (streak ∈ [2, median]) vs
-        // LONG (streak > median). Only STALE events are routed here, so the
-        // two counts sum to topRawStale.events.
-        const topRawStaleShort = createSeries();
-        const topRawStaleLong = createSeries();
-        const topRawDominant = createSeries();
-        const topRawSpread = createSeries();
-        const topRawHiPairs = createSeries();
-        const topRawLoPairs = createSeries();
         // Phase 3 MAX_ACTIVE tie counters per selector.
         const tieCounts: Record<SelectorName, number> = { RAW: 0, MEAN: 0 };
         const selectedDegree: number[] = [];
@@ -2632,6 +2665,26 @@ export async function runOpenScoreUsdReplay(
         const topRawProfitNowConfSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
         const topZSelectedByAsset = new Map<string, number>();
         const topZSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        // Inverted (negative-control) arms: series + per-asset breakdown
+        // state, mirroring the TOP_* twins above.
+        const botRaw = createSeries();
+        const botMean = createSeries();
+        const botMeanRawUnique = createSeries();
+        const botRawProfitNow = createSeries();
+        const botMeanProfitNow = createSeries();
+        const botZ = createSeries();
+        const botRawSelectedByAsset = new Map<string, number>();
+        const botRawSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const botMeanSelectedByAsset = new Map<string, number>();
+        const botMeanSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const botMeanRawUniqueSelectedByAsset = new Map<string, number>();
+        const botMeanRawUniqueSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const botRawProfitNowSelectedByAsset = new Map<string, number>();
+        const botRawProfitNowSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const botMeanProfitNowSelectedByAsset = new Map<string, number>();
+        const botMeanProfitNowSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        const botZSelectedByAsset = new Map<string, number>();
+        const botZSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
             // Scalar event-detail emitter, hoisted to horizon scope so both the
         // ordinary views and the profit-only events can push rows.
         const pushEventDetail = (
@@ -2825,6 +2878,7 @@ export async function runOpenScoreUsdReplay(
         for (let v = 0; v < views.length; v += 1) {
             const view = gapFilteredViews[v];
             if (!view) continue;
+            const botPicks = botPicksByView[v]!;
             const perAsset = returnsByView[v];
             if (!perAsset) {
                 noDataEvents.add(v);
@@ -2888,6 +2942,32 @@ export async function runOpenScoreUsdReplay(
                 topZSelectedByAsset,
                 topZSamplesByAsset,
             );
+            // Inverted causal arms: same pools and gates, LOWEST rank wins.
+            appendProfitArms(
+                view.timeSec,
+                perAsset,
+                view.profitNowPositives,
+                botPicks.rawProfitNow,
+                botPicks.meanProfitNow,
+                "BOT_RAW_PROFIT_NOW",
+                "BOT_MEAN_PROFIT_NOW",
+                botRawProfitNow,
+                botMeanProfitNow,
+                botRawProfitNowSelectedByAsset,
+                botRawProfitNowSamplesByAsset,
+                botMeanProfitNowSelectedByAsset,
+                botMeanProfitNowSamplesByAsset,
+            );
+            appendSingleCausalArm(
+                view.timeSec,
+                perAsset,
+                view.profitNowPositives,
+                botPicks.z,
+                botZ,
+                "BOT_Z",
+                botZSelectedByAsset,
+                botZSamplesByAsset,
+            );
 
             // Collect returns for all positives this horizon.
             const retByAsset = new Map<number, number>();
@@ -2912,6 +2992,9 @@ export async function runOpenScoreUsdReplay(
                 appendOngoingEventDetail(view.timeSec, perAsset, hIdx, "TOP_RAW", view.topRaw, view.positives.length);
                 appendOngoingEventDetail(view.timeSec, perAsset, hIdx, "TOP_MEAN", view.topMean, view.positives.length);
                 appendOngoingEventDetail(view.timeSec, perAsset, hIdx, "TOP_MEAN_RAW_UNIQUE", view.topMeanRawUnique, view.topMeanRawUniquePool.length);
+                appendOngoingEventDetail(view.timeSec, perAsset, hIdx, "BOT_RAW", botPicks.raw, view.positives.length);
+                appendOngoingEventDetail(view.timeSec, perAsset, hIdx, "BOT_MEAN", botPicks.mean, view.positives.length);
+                appendOngoingEventDetail(view.timeSec, perAsset, hIdx, "BOT_MEAN_RAW_UNIQUE", botPicks.meanRawUnique, botPicks.meanRawUniquePoolSize);
                 continue; // censored or missing -> omit from both arms
             }
 
@@ -2984,25 +3067,80 @@ export async function runOpenScoreUsdReplay(
                 randomMeanOf(view.topMean),
                 retByAsset.size,
             );
-            // Conditional-split routing: TOP_RAW's selected return into one of
-            // two sub-series per feature. The split threshold comes from the
-            // horizon-independent `splitThresholds` computed after Phase 3.
-            // `> threshold` (strict) on DOMINANT/HI_PAIRS so equal-to-median
-            // events fall into the SPREAD/LO_PAIRS branch, matching the field
-            // docstrings.
-            if (view.fresh) appendSelection(topRawFresh, view.topRaw);
-            else {
-                appendSelection(topRawStale, view.topRaw);
-                // Streak-length refinement of STALE. `>` (strict) on LONG so
-                // streak-equal-to-median events fall into SHORT, matching the
-                // field docstring (`[2, median]` vs `> median`).
-                if (view.streak > splitThresholds.streak) appendSelection(topRawStaleLong, view.topRaw);
-                else appendSelection(topRawStaleShort, view.topRaw);
+            // Inverted ordinary arms: same retByAsset pool and leave-one-out
+            // control as TOP_RAW/TOP_MEAN; the LOWEST raw/mean is selected.
+            appendSelection(botRaw, botPicks.raw);
+            appendSelection(botMean, botPicks.mean);
+            appendEventDetail(
+                "BOT_RAW",
+                "long",
+                view.positives.find((candidate) => candidate.assetIndex === botPicks.raw)!,
+                retByAsset.get(botPicks.raw)!,
+                randomMeanOf(botPicks.raw),
+                retByAsset.size,
+            );
+            appendEventDetail(
+                "BOT_MEAN",
+                "long",
+                view.positives.find((candidate) => candidate.assetIndex === botPicks.mean)!,
+                retByAsset.get(botPicks.mean)!,
+                randomMeanOf(botPicks.mean),
+                retByAsset.size,
+            );
+            const botRawName = assetNames[botPicks.raw]!;
+            botRawSelectedByAsset.set(botRawName, (botRawSelectedByAsset.get(botRawName) ?? 0) + 1);
+            let botRawSamples = botRawSamplesByAsset.get(botRawName);
+            if (!botRawSamples) {
+                botRawSamples = { returns: [], deltas: [] };
+                botRawSamplesByAsset.set(botRawName, botRawSamples);
             }
-            if (view.hhi > splitThresholds.hhi) appendSelection(topRawDominant, view.topRaw);
-            else appendSelection(topRawSpread, view.topRaw);
-            if (view.maxActivePairs > splitThresholds.pairs) appendSelection(topRawHiPairs, view.topRaw);
-            else appendSelection(topRawLoPairs, view.topRaw);
+            botRawSamples.returns.push(botRaw.returns[botRaw.returns.length - 1]!);
+            botRawSamples.deltas.push(botRaw.deltas[botRaw.deltas.length - 1]!);
+            const botMeanName = assetNames[botPicks.mean]!;
+            botMeanSelectedByAsset.set(botMeanName, (botMeanSelectedByAsset.get(botMeanName) ?? 0) + 1);
+            let botMeanSamples = botMeanSamplesByAsset.get(botMeanName);
+            if (!botMeanSamples) {
+                botMeanSamples = { returns: [], deltas: [] };
+                botMeanSamplesByAsset.set(botMeanName, botMeanSamples);
+            }
+            botMeanSamples.returns.push(botMean.returns[botMean.returns.length - 1]!);
+            botMeanSamples.deltas.push(botMean.deltas[botMean.deltas.length - 1]!);
+            // BOT_MEAN_RAW_UNIQUE: bottom-mean tied set -> unique raw minimum;
+            // residual raw ties skipped; control = mean return of that tied
+            // set (mirror of appendTopMeanRawUniqueV1Selection).
+            if (botPicks.meanRawUnique >= 0) {
+                const botMeanWinner = view.positives.find((candidate) => candidate.assetIndex === botPicks.mean)!;
+                const botTiedPool = view.positives.filter((candidate) => candidate.mean === botMeanWinner.mean);
+                const botTiedReturns = botTiedPool
+                    .map((candidate) => retByAsset.get(candidate.assetIndex))
+                    .filter((value): value is number => value !== undefined && Number.isFinite(value));
+                const botUniqueReturn = retByAsset.get(botPicks.meanRawUnique);
+                if (botTiedPool.length > 0 && botTiedReturns.length === botTiedPool.length && botUniqueReturn !== undefined) {
+                    const botControlReturn = botTiedReturns.reduce((sum, value) => sum + value, 0) / botTiedReturns.length;
+                    const botUniqueDelta = botUniqueReturn - botControlReturn;
+                    botMeanRawUnique.returns.push(botUniqueReturn);
+                    botMeanRawUnique.deltas.push(botUniqueDelta);
+                    botMeanRawUnique.times.push(view.timeSec);
+                    botMeanRawUnique.assets.push(assetNames[botPicks.meanRawUnique]!);
+                    appendEventDetail(
+                        "BOT_MEAN_RAW_UNIQUE",
+                        "long",
+                        botTiedPool.find((candidate) => candidate.assetIndex === botPicks.meanRawUnique)!,
+                        botUniqueReturn,
+                        botControlReturn,
+                        botTiedPool.length,
+                    );
+                    const botUniqueName = assetNames[botPicks.meanRawUnique]!;
+                    botMeanRawUniqueSelectedByAsset.set(botUniqueName, (botMeanRawUniqueSelectedByAsset.get(botUniqueName) ?? 0) + 1);
+                    let botUniqueSamples = botMeanRawUniqueSamplesByAsset.get(botUniqueName);
+                    if (!botUniqueSamples) {
+                        botUniqueSamples = { returns: [], deltas: [] };
+                        botMeanRawUniqueSamplesByAsset.set(botUniqueName, botUniqueSamples);
+                    }
+                    botUniqueSamples.returns.push(botUniqueReturn);
+                    botUniqueSamples.deltas.push(botUniqueDelta);
+                }
+            }
             topMeanPortfolioOpportunities.push({
                 asset: assetNames[view.topMean]!,
                 decisionTime: view.timeSec,
@@ -3122,6 +3260,33 @@ export async function runOpenScoreUsdReplay(
                 "TOP_Z",
                 topZSelectedByAsset,
                 topZSamplesByAsset,
+            );
+            // Inverted causal arms on profit-only events: same re-resolution
+            // pattern as the TOP_* calls above, min instead of max.
+            appendProfitArms(
+                pe.timeSec,
+                perAssetProfitOnly,
+                pe.profitNowPositives,
+                pickUsableMin(pe.profitNowPositives, "raw", pe.timeSec)?.winner.assetIndex ?? -1,
+                pickUsableMin(pe.profitNowPositives, "mean", pe.timeSec)?.winner.assetIndex ?? -1,
+                "BOT_RAW_PROFIT_NOW",
+                "BOT_MEAN_PROFIT_NOW",
+                botRawProfitNow,
+                botMeanProfitNow,
+                botRawProfitNowSelectedByAsset,
+                botRawProfitNowSamplesByAsset,
+                botMeanProfitNowSelectedByAsset,
+                botMeanProfitNowSamplesByAsset,
+            );
+            appendSingleCausalArm(
+                pe.timeSec,
+                perAssetProfitOnly,
+                pe.profitNowPositives,
+                pickUsableMin(pe.profitNowPositives, "z", pe.timeSec)?.winner.assetIndex ?? -1,
+                botZ,
+                "BOT_Z",
+                botZSelectedByAsset,
+                botZSamplesByAsset,
             );
         }
 
@@ -3254,6 +3419,66 @@ export async function runOpenScoreUsdReplay(
             topZDominantAsset,
             buildComparison,
         );
+        const botRawByAsset = buildAssetSelectionBreakdown(
+            botRawSelectedByAsset,
+            botRawSamplesByAsset,
+        ).byAsset;
+        const botRawDominantAsset = botRawByAsset[0]?.asset ?? null;
+        const botRawExDominant = buildExDominantComparison(
+            botRaw,
+            botRawDominantAsset,
+            buildComparison,
+        );
+        const botMeanByAsset = buildAssetSelectionBreakdown(
+            botMeanSelectedByAsset,
+            botMeanSamplesByAsset,
+        ).byAsset;
+        const botMeanDominantAsset = botMeanByAsset[0]?.asset ?? null;
+        const botMeanExDominant = buildExDominantComparison(
+            botMean,
+            botMeanDominantAsset,
+            buildComparison,
+        );
+        const botMeanRawUniqueByAsset = buildAssetSelectionBreakdown(
+            botMeanRawUniqueSelectedByAsset,
+            botMeanRawUniqueSamplesByAsset,
+        ).byAsset;
+        const botMeanRawUniqueDominantAsset = botMeanRawUniqueByAsset[0]?.asset ?? null;
+        const botMeanRawUniqueExDominant = buildExDominantComparison(
+            botMeanRawUnique,
+            botMeanRawUniqueDominantAsset,
+            buildComparison,
+        );
+        const botRawProfitNowByAsset = buildAssetSelectionBreakdown(
+            botRawProfitNowSelectedByAsset,
+            botRawProfitNowSamplesByAsset,
+        ).byAsset;
+        const botRawProfitNowDominantAsset = botRawProfitNowByAsset[0]?.asset ?? null;
+        const botRawProfitNowExDominant = buildExDominantComparison(
+            botRawProfitNow,
+            botRawProfitNowDominantAsset,
+            buildComparison,
+        );
+        const botMeanProfitNowByAsset = buildAssetSelectionBreakdown(
+            botMeanProfitNowSelectedByAsset,
+            botMeanProfitNowSamplesByAsset,
+        ).byAsset;
+        const botMeanProfitNowDominantAsset = botMeanProfitNowByAsset[0]?.asset ?? null;
+        const botMeanProfitNowExDominant = buildExDominantComparison(
+            botMeanProfitNow,
+            botMeanProfitNowDominantAsset,
+            buildComparison,
+        );
+        const botZByAsset = buildAssetSelectionBreakdown(
+            botZSelectedByAsset,
+            botZSamplesByAsset,
+        ).byAsset;
+        const botZDominantAsset = botZByAsset[0]?.asset ?? null;
+        const botZExDominant = buildExDominantComparison(
+            botZ,
+            botZDominantAsset,
+            buildComparison,
+        );
         // TOP_MEAN top-contribution exclusion: drop events selecting the asset
         // with the largest Σ per-event delta (events × mean delta), NOT the most
         // frequent. A low-frequency / high-per-pick asset (e.g. SNDK in the
@@ -3317,6 +3542,30 @@ export async function runOpenScoreUsdReplay(
             topZByAsset,
             topZExDominant,
             topZDominantAsset,
+            botRaw: buildComparison(botRaw.deltas, botRaw.returns, botRaw.times),
+            botRawByAsset,
+            botRawExDominant,
+            botRawDominantAsset,
+            botMean: buildComparison(botMean.deltas, botMean.returns, botMean.times),
+            botMeanByAsset,
+            botMeanExDominant,
+            botMeanDominantAsset,
+            botMeanRawUnique: buildComparison(botMeanRawUnique.deltas, botMeanRawUnique.returns, botMeanRawUnique.times),
+            botMeanRawUniqueByAsset,
+            botMeanRawUniqueExDominant,
+            botMeanRawUniqueDominantAsset,
+            botRawProfitNow: buildComparison(botRawProfitNow.deltas, botRawProfitNow.returns, botRawProfitNow.times),
+            botRawProfitNowByAsset,
+            botRawProfitNowExDominant,
+            botRawProfitNowDominantAsset,
+            botMeanProfitNow: buildComparison(botMeanProfitNow.deltas, botMeanProfitNow.returns, botMeanProfitNow.times),
+            botMeanProfitNowByAsset,
+            botMeanProfitNowExDominant,
+            botMeanProfitNowDominantAsset,
+            botZ: buildComparison(botZ.deltas, botZ.returns, botZ.times),
+            botZByAsset,
+            botZExDominant,
+            botZDominantAsset,
             topRawExDominant,
             topMeanExDominant,
             topMeanDominantAsset,
@@ -3330,16 +3579,6 @@ export async function runOpenScoreUsdReplay(
                 random: randomPnl,
                 topMeanPortfolio,
             },
-            // Conditional-split comparisons: TOP_RAW's pick on each subset of
-            // events defined by the per-view feature split.
-            topRawFresh: buildComparison(topRawFresh.deltas, topRawFresh.returns, topRawFresh.times),
-            topRawStale: buildComparison(topRawStale.deltas, topRawStale.returns, topRawStale.times),
-            topRawStaleShort: buildComparison(topRawStaleShort.deltas, topRawStaleShort.returns, topRawStaleShort.times),
-            topRawStaleLong: buildComparison(topRawStaleLong.deltas, topRawStaleLong.returns, topRawStaleLong.times),
-            topRawDominant: buildComparison(topRawDominant.deltas, topRawDominant.returns, topRawDominant.times),
-            topRawSpread: buildComparison(topRawSpread.deltas, topRawSpread.returns, topRawSpread.times),
-            topRawHiPairs: buildComparison(topRawHiPairs.deltas, topRawHiPairs.returns, topRawHiPairs.times),
-            topRawLoPairs: buildComparison(topRawLoPairs.deltas, topRawLoPairs.returns, topRawLoPairs.times),
             candidateDegree: degreeSummary(activeCountsAtEvents, totalSelected > 0 ? maxSelected / totalSelected : null),
             selectedDegree: degreeSummary(selectedDegree, totalSelected > 0 ? maxSelected / totalSelected : null),
             tieRates: {
@@ -3533,6 +3772,12 @@ function buildReportLines(args: {
         `realizedMaxDD=${fmtUsd(summary.maxRealizedDrawdown)} peakPos=${summary.peakConcurrentPositions} ` +
         `peakCapital=${fmtUsd(summary.peakCapital)} return/peak=${fmtPct(summary.returnOnPeakCapital)} ` +
         `skippedTie=${summary.skippedTies} skippedActive=${summary.skippedActiveAsset}`;
+    const selectedAssetsLine = (label: string, byAsset: AssetSelectionSummary[]): string => {
+        const breakdown = byAsset.slice(0, 5).map((x) =>
+            `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
+        ).join(" | ");
+        return `${label} selected assets = ${breakdown || "n/a"}${byAsset.length > 5 ? ` | other=${byAsset.length - 5} assets` : ""}`;
+    };
     lines.push(`OPEN_SCORE USD | ${status} | pairs=${args.pairs} assets=${args.assets} events=${args.totalEvents} comparable=${args.candidateEvents} eligible=${args.eligibleEvents}`);
     lines.push(`config | interval=${args.interval ?? "n/a"} window=${args.sampleFromSec === null ? "start" : new Date(args.sampleFromSec * 1000).toISOString().slice(0, 10)}..${args.sampleToSec === null ? "end" : new Date(args.sampleToSec * 1000).toISOString().slice(0, 10)} horizons=[${args.horizonsList.join(",")}] slippageRate=${args.slippageRate} commissionRate=${args.commissionRate} capTilt=${args.capTilt}`);
     if (args.capTilt === "smallBase2x") {
@@ -3562,6 +3807,7 @@ function buildReportLines(args: {
     lines.push(`retained pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
     lines.push("controls | TOP_MEAN=raw/activePairs TOP_RAW_PROFIT=raw score counted only from pairs whose pair backtest netted >0 (look-ahead) TOP_MEAN_PROFIT=that raw / open profitable-pair count TOP_RAW_PROFIT_NOW=same filter using only pnl realized at or before each event (causal) TOP_MEAN_PROFIT_NOW=that raw / open realized-profitable-pair count TOP_RAW_PROFIT_NOW_CONF=causal PROFIT_NOW score weighted by realized net/gross P&L consistency with one-trade shrinkage TOP_Z=causal PROFIT_NOW pool ranked by per-asset standardized score surprise vs the asset's own prior events");
     lines.push("TOP_MEAN_RAW_UNIQUE rule | TOP_MEAN tied set -> unique raw-score maximum; residual raw ties skipped; control=mean return of the TOP_MEAN tied set");
+    lines.push("BOT_* rule | inverted negative-control arms: same pool, eligibility, and tie-break as the TOP_* twin, but the LOWEST rank value is selected (long side; leave-one-out pool control unchanged). BOT_MEAN_RAW_UNIQUE = bottom-mean tied set -> unique raw-score minimum; residual raw ties skipped; control=mean return of that tied set");
     lines.push("pnl model | OVERLAP=long selector vs same-pool random positive, every eligible event; *_1K=$1000/trade, exact selector ties skipped, one open trade per asset; deltaMed=median of per-event (selected - pool mean) deltas so one outlier mover cannot flip a window; CI95 block-bootstraps that median; selected-assets breakdown lines still report per-asset MEAN deltas");
     for (const h of args.horizons) {
         const coverageRate = args.candidateEvents > 0 ? h.topRaw.events / args.candidateEvents : 0;
@@ -3587,19 +3833,23 @@ function buildReportLines(args: {
         lines.push(comparisonLine(`RAW_PROFIT_EX_${h.topRawProfitDominantAsset ?? "NONE"}`, h.topRawProfitExDominant));
         lines.push(comparisonLine("TOP_MEAN_PROFIT", h.topMeanProfit));
         lines.push(comparisonLine(`MEAN_PROFIT_EX_${h.topMeanProfitDominantAsset ?? "NONE"}`, h.topMeanProfitExDominant));
+        // Inverted (negative-control) arms: lowest rank value from the same
+        // pools as their TOP_* twins.
+        lines.push(comparisonLine("BOT_RAW_PROFIT_NOW", h.botRawProfitNow));
+        lines.push(comparisonLine(`BOT_RAW_PROFIT_NOW_EX_${h.botRawProfitNowDominantAsset ?? "NONE"}`, h.botRawProfitNowExDominant));
+        lines.push(comparisonLine("BOT_MEAN_PROFIT_NOW", h.botMeanProfitNow));
+        lines.push(comparisonLine(`BOT_MEAN_PROFIT_NOW_EX_${h.botMeanProfitNowDominantAsset ?? "NONE"}`, h.botMeanProfitNowExDominant));
+        lines.push(comparisonLine("BOT_Z", h.botZ));
+        lines.push(comparisonLine(`BOT_Z_EX_${h.botZDominantAsset ?? "NONE"}`, h.botZExDominant));
+        lines.push(comparisonLine("BOT_RAW", h.botRaw));
+        lines.push(comparisonLine(`BOT_RAW_EX_${h.botRawDominantAsset ?? "NONE"}`, h.botRawExDominant));
+        lines.push(comparisonLine("BOT_MEAN", h.botMean));
+        lines.push(comparisonLine(`BOT_MEAN_EX_${h.botMeanDominantAsset ?? "NONE"}`, h.botMeanExDominant));
+        lines.push(comparisonLine("BOT_MEAN_RAW_UNIQUE", h.botMeanRawUnique));
+        lines.push(comparisonLine(`BOT_MEAN_RAW_UNIQUE_EX_${h.botMeanRawUniqueDominantAsset ?? "NONE"}`, h.botMeanRawUniqueExDominant));
         lines.push(pnlLine("TOP_MEAN_PNL", h.pnl.topMean));
         lines.push(pnlLine("RANDOM_PNL", h.pnl.random));
         lines.push(portfolioLine("TOP_MEAN", h.pnl.topMeanPortfolio));
-        // Conditional-split arms (event filters on TOP_RAW's pick).
-        // Each split is TOP_RAW's pick restricted to a per-event-feature subset.
-        lines.push(comparisonLine("RAW_FRESH", h.topRawFresh));
-        lines.push(comparisonLine("RAW_STALE", h.topRawStale));
-        lines.push(comparisonLine("RAW_STALE_SHORT", h.topRawStaleShort));
-        lines.push(comparisonLine("RAW_STALE_LONG", h.topRawStaleLong));
-        lines.push(comparisonLine("RAW_DOMINANT", h.topRawDominant));
-        lines.push(comparisonLine("RAW_SPREAD", h.topRawSpread));
-        lines.push(comparisonLine("RAW_HI_PAIRS", h.topRawHiPairs));
-        lines.push(comparisonLine("RAW_LO_PAIRS", h.topRawLoPairs));
         lines.push(comparisonLine(`RAW_EX_${h.dominantAsset ?? "NONE"}`, h.topRawExDominant));
         lines.push(comparisonLine(`MEAN_EX_${h.topMeanDominantAsset ?? "NONE"}`, h.topMeanExDominant));
         lines.push(comparisonLine(`MEAN_EX_TOPCONTRIB_${h.topMeanTopContribAsset ?? "NONE"}`, h.topMeanExTopContrib));
@@ -3647,6 +3897,12 @@ function buildReportLines(args: {
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");
         lines.push(`TOP_Z selected assets = ${topZBreakdown || "n/a"}${h.topZByAsset.length > 5 ? ` | other=${h.topZByAsset.length - 5} assets` : ""}`);
+        lines.push(selectedAssetsLine("BOT_RAW", h.botRawByAsset));
+        lines.push(selectedAssetsLine("BOT_MEAN", h.botMeanByAsset));
+        lines.push(selectedAssetsLine("BOT_MEAN_RAW_UNIQUE", h.botMeanRawUniqueByAsset));
+        lines.push(selectedAssetsLine("BOT_RAW_PROFIT_NOW", h.botRawProfitNowByAsset));
+        lines.push(selectedAssetsLine("BOT_MEAN_PROFIT_NOW", h.botMeanProfitNowByAsset));
+        lines.push(selectedAssetsLine("BOT_Z", h.botZByAsset));
         lines.push(`active pair count at events min/median/max = ${h.candidateDegree.min}/${fmtNum(h.candidateDegree.median)}/${h.candidateDegree.max} topAssetShare=${h.candidateDegree.topAssetShare === null ? "n/a" : (h.candidateDegree.topAssetShare * 100).toFixed(1) + "%"}`);
         lines.push(`selected TOP_RAW retained degree min/median/max = ${h.selectedDegree.min}/${fmtNum(h.selectedDegree.median)}/${h.selectedDegree.max}`);
     }

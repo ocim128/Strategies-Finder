@@ -594,10 +594,14 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(result.eligibleEvents).to.equal(0);
         expect(result.warnings.join(" ")).to.match(/right-censored/i);
         // EVERY arm reports its pick as ONGOING with the unrealized
-        // mark-to-market return, not just TOP_MEAN.
+        // mark-to-market return, not just TOP_MEAN — including the inverted
+        // ordinary arms. (Both *_RAW_UNIQUE arms skip: the tied-set raw
+        // pick is a residual tie here, so they made no pick to report.)
         const ongoing = result.ongoingEventDetails ?? [];
-        expect(ongoing).to.have.length(2);
-        expect(ongoing.map((row) => row.selector).sort()).to.deep.equal(["TOP_MEAN", "TOP_RAW"]);
+        expect(ongoing).to.have.length(4);
+        expect(ongoing.map((row) => row.selector).sort()).to.deep.equal([
+            "BOT_MEAN", "BOT_RAW", "TOP_MEAN", "TOP_RAW",
+        ]);
         for (const row of ongoing) {
             expect(row.decisionTime).to.equal(T0 + 1000);
             expect(row.entryTime).to.equal(T0 + 2000);
@@ -1766,5 +1770,186 @@ describe("batch-open-score-usd-replay-engine cap-tilt weighting", () => {
             { horizons: [2] },
         );
         expect(coverageLine(noTilt)).to.equal("");
+    });
+});
+
+describe("batch-open-score-usd-replay-engine inverted (BOT_*) arms", () => {
+    const decision = T0 + 1000;
+
+    // Direct markets whose open votes give each asset a distinct raw score and
+    // mean: AAA raw=1/mean=1, BBB raw=2/mean=2/22 (12 longs + 10 shorts),
+    // CCC raw=3/mean=1. Min raw and min mean therefore pick different assets.
+    const unequalScoresFixture = () => ({
+        markets: [
+            makeDirectMarket("AAA", [makeTrade("long", decision, null)]),
+            makeDirectMarket("BBB", [
+                ...Array.from({ length: 12 }, () => makeTrade("long", decision, null)),
+                ...Array.from({ length: 10 }, () => makeTrade("short", decision, null)),
+            ]),
+            makeDirectMarket("CCC", [
+                makeTrade("long", decision, null),
+                makeTrade("long", decision, null),
+                makeTrade("long", decision, null),
+            ]),
+        ],
+        targets: ["AAA", "BBB", "CCC"].map((asset) => makeTarget(asset, 10, () => 100)),
+    });
+
+    it("BOT_RAW / BOT_MEAN select the lowest raw / mean from the same pool", async () => {
+        const { markets, targets } = unequalScoresFixture();
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        const h = result.horizons[0]!;
+        // Inverted picks hit the bottom of the ranking; TOP_RAW hits the top.
+        expect(h.botRaw.events).to.equal(1);
+        expect(h.botRawByAsset).to.have.length(1);
+        expect(h.botRawByAsset[0]!.asset).to.equal("AAA");
+        expect(h.botMeanByAsset[0]!.asset).to.equal("BBB");
+        // Only one eligible event per arm and its dominant asset is the only
+        // one selected, so the exclusion comparison has nothing left.
+        expect(h.botRawDominantAsset).to.equal("AAA");
+        expect(h.botRawExDominant.events).to.equal(0);
+        expect(h.botMeanExDominant.events).to.equal(0);
+        const detail = result.eventDetails?.find(
+            (row) => row.selector === "BOT_RAW" && row.decisionTime === decision,
+        );
+        expect(detail?.asset).to.equal("AAA");
+        expect(detail?.eligibleCandidates).to.equal(3);
+        // Latest picks: the same pools, min order.
+        const latestBySelector = new Map(
+            (result.latestSelections?.selections ?? []).map((selection) => [selection.selector, selection]),
+        );
+        expect(latestBySelector.get("BOT_RAW")?.asset).to.equal("AAA");
+        expect(latestBySelector.get("BOT_MEAN")?.asset).to.equal("BBB");
+        const report = result.reportLines.join("\n");
+        expect(report).to.include("BOT_RAW selected assets = AAA:n=1");
+        expect(report).to.include("BOT_MEAN selected assets = BBB:n=1");
+        expect(report).to.include("BOT_RAW_EX_");
+        expect(report).to.include("BOT_MEAN_EX_");
+        // The removed conditional-split arms must be gone completely.
+        for (const removed of ["RAW_FRESH", "RAW_STALE", "RAW_STALE_SHORT", "RAW_STALE_LONG", "RAW_DOMINANT", "RAW_SPREAD", "RAW_HI_PAIRS", "RAW_LO_PAIRS"]) {
+            expect(report).to.not.include(removed);
+        }
+    });
+
+    it("BOT_MEAN_RAW_UNIQUE selects the unique raw minimum of the bottom-mean tied set", async () => {
+        // Bottom-mean tied set {AAA, BBB} at mean=1/3 (2L1S -> raw1, 4L2S ->
+        // raw2); unique raw minimum is AAA. CCC (3L) sits at mean=1.
+        const markets = [
+            makeDirectMarket("AAA", [
+                makeTrade("long", decision, null),
+                makeTrade("long", decision, null),
+                makeTrade("short", decision, null),
+            ]),
+            makeDirectMarket("BBB", [
+                ...Array.from({ length: 4 }, () => makeTrade("long", decision, null)),
+                ...Array.from({ length: 2 }, () => makeTrade("short", decision, null)),
+            ]),
+            makeDirectMarket("CCC", [
+                makeTrade("long", decision, null),
+                makeTrade("long", decision, null),
+                makeTrade("long", decision, null),
+            ]),
+        ];
+        const targets = ["AAA", "BBB", "CCC"].map((asset) => makeTarget(asset, 10, () => 100));
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        const h = result.horizons[0]!;
+        expect(h.botMeanRawUnique.events).to.equal(1);
+        expect(h.botMeanRawUniqueByAsset[0]!.asset).to.equal("AAA");
+        // Control pool is the bottom-mean tied set (2 members), not all 3.
+        const detail = result.eventDetails?.find((row) => row.selector === "BOT_MEAN_RAW_UNIQUE");
+        expect(detail?.asset).to.equal("AAA");
+        expect(detail?.eligibleCandidates).to.equal(2);
+        expect(result.latestSelections?.selections.find(
+            (selection) => selection.selector === "BOT_MEAN_RAW_UNIQUE",
+        )?.asset).to.equal("AAA");
+        const report = result.reportLines.join("\n");
+        expect(report).to.include("BOT_MEAN_RAW_UNIQUE selected assets = AAA:n=1");
+        expect(report).to.include("BOT_MEAN_RAW_UNIQUE_EX_");
+    });
+
+    it("BOT_MEAN_RAW_UNIQUE skips a residual raw tie inside the bottom-mean tied set", async () => {
+        // All means equal 1 (open longs only); raw minimum 1 is shared by AAA
+        // and BBB, so the inverted unique arm records no selection.
+        const markets = [
+            makeDirectMarket("AAA", [makeTrade("long", decision, null)]),
+            makeDirectMarket("BBB", [makeTrade("long", decision, null)]),
+            makeDirectMarket("CCC", [
+                makeTrade("long", decision, null),
+                makeTrade("long", decision, null),
+            ]),
+        ];
+        const targets = ["AAA", "BBB", "CCC"].map((asset) => makeTarget(asset, 10, () => 100));
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        expect(result.horizons[0]!.botMeanRawUnique.events).to.equal(0);
+        expect(result.eventDetails?.some((row) => row.selector === "BOT_MEAN_RAW_UNIQUE")).to.equal(false);
+    });
+
+    it("BOT causal profit-now arms pick the lowest raw / mean / z of the PROFIT_NOW pool", async () => {
+        // Mirror of the TOP_Z fixture: AAA and CCC are profitable-now at the
+        // second decision, BBB is not (its vote closed before it).
+        const decision1 = T0 + 1000;
+        const decision2 = T0 + 5000;
+        const markets = [
+            makeDirectMarket("AAA", [
+                makeTrade("long", T0 + 100, T0 + 200, 10),
+                makeTrade("long", decision1, null),
+            ]),
+            makeDirectMarket("BBB", [
+                makeTrade("long", T0 + 100, T0 + 200, 10),
+                makeTrade("long", decision1, T0 + 2000, 5),
+            ]),
+            makeDirectMarket("CCC", [
+                makeTrade("long", T0 + 300, T0 + 400, 10),
+                makeTrade("long", decision2, null),
+                makeTrade("long", decision2, null),
+                makeTrade("long", decision2, null),
+                makeTrade("short", decision2, null),
+            ]),
+        ];
+        const targets = ["AAA", "BBB", "CCC"].map((asset) => makeTarget(asset, 12, () => 100));
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        // At decision2 the causal pool is AAA (raw=1, mean=1, z=0) and
+        // CCC (raw=2, mean=0.5, z=2): min raw and min z -> AAA, min mean -> CCC.
+        const detail2 = (selector: string) =>
+            result.eventDetails?.find((row) => row.selector === selector && row.decisionTime === decision2);
+        expect(detail2("BOT_RAW_PROFIT_NOW")?.asset).to.equal("AAA");
+        expect(detail2("BOT_MEAN_PROFIT_NOW")?.asset).to.equal("CCC");
+        expect(detail2("BOT_Z")?.asset).to.equal("AAA");
+        expect(detail2("TOP_Z")?.asset).to.equal("CCC");
+        const h = result.horizons[0]!;
+        // Both decision events carry a >= 2 causal pool (AAA+BBB at decision1,
+        // AAA+CCC at decision2), so each inverted causal arm fires twice; the
+        // decision1 picks are raw/mean/z ties resolved by digest and are only
+        // asserted through the deterministic decision2 details above.
+        expect(h.botRawProfitNow.events).to.equal(2);
+        expect(h.botMeanProfitNow.events).to.equal(2);
+        // CCC is never the min-z pick (z=2 vs AAA's 0); AAA always is at decision2.
+        expect(h.botZByAsset.some((row) => row.asset === "AAA")).to.equal(true);
+        expect(h.botZByAsset.some((row) => row.asset === "CCC")).to.equal(false);
+        expect(result.latestSelections?.selections.find(
+            (selection) => selection.selector === "BOT_Z",
+        )?.asset).to.equal("AAA");
+        const report = result.reportLines.join("\n");
+        expect(report).to.include("BOT_RAW_PROFIT_NOW selected assets = ");
+        expect(report).to.include("BOT_MEAN_PROFIT_NOW selected assets = ");
+        expect(report).to.include("BOT_RAW_PROFIT_NOW_EX_");
+        expect(report).to.include("BOT_MEAN_PROFIT_NOW_EX_");
+        expect(report).to.include("BOT_Z_EX_");
     });
 });
