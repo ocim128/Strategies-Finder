@@ -89,12 +89,10 @@ export interface FinderAssetOpportunityOptions {
     oosMeasurementMode?: "fixed_horizon" | "next_exit";
     /** Number of historical bars reserved for fixed-horizon OOS measurement. */
     oosIgnoreLastBars?: number;
-    /**
-     * Cap the in-sample evaluation window to the last N bars (after the
-     * oosIgnoreLastBars gap is trimmed). 0/undefined evaluates all available
-     * bars before the gap.
-     */
+    /** Configured IS cap after trimming the OOS holdout; 0/undefined means all bars. */
     evalLastBars?: number;
+    /** Range Bar adds the OOS holdout length to a non-zero evalLastBars cap. */
+    evalWindowMode?: "fixed" | "range_bar";
     /** Exactly three fixed forward-PnL horizons; defaults to 1, 3, 5. */
     oosHorizons?: number[];
 }

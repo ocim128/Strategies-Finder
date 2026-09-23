@@ -578,6 +578,30 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(extractIterations(events).map((event) => event.holdoutBars)).to.deep.equal([2, 3]);
     });
 
+    it("adds each holdout to the eval cap in Range Bar batch iterations", async () => {
+        const runLogEvents: Array<[string, Record<string, unknown>]> = [];
+        await runAssetBatch({
+            owner: 8111,
+            start: 12,
+            end: 13,
+            runId: "batch-range-bar-eval-window",
+            optionsOverrides: {
+                assetOpportunity: {
+                    symbols: ["UP", "DOWN"],
+                    candidatePoolSize: 2,
+                    minFreshSupport: 1,
+                    evalLastBars: 100,
+                    evalWindowMode: "range_bar",
+                },
+            },
+            runLog: (event, payload) => { runLogEvents.push([event, payload]); },
+        });
+
+        const starts = runLogEvents.filter(([event]) => event === "iteration_start");
+        expect(starts.map(([, payload]) => payload.evalLastBars)).to.deep.equal([112, 113]);
+        expect(starts.map(([, payload]) => payload.evalWindowMode)).to.deep.equal(["range_bar", "range_bar"]);
+    });
+
     it("emits and archives strictly ascending even when workers complete out of order", async () => {
         // Reverse-completion delays: the LAST holdout finishes first.
         const { events, appended } = await runAssetBatch({

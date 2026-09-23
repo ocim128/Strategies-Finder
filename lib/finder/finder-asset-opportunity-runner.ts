@@ -103,7 +103,7 @@ import {
     calculateFinderAssetOosNextExitMetrics,
     calculateFinderAssetOosSignalMetrics,
     type FinderAssetOosNextExitUnavailableReason,
-    normalizeFinderAssetEvalLastBars,
+    resolveFinderAssetEvalWindowBars,
     normalizeFinderAssetOosMeasurementMode,
     normalizeFinderAssetOosHorizons,
     normalizeFinderAssetOosIgnoreLastBars,
@@ -898,7 +898,11 @@ async function searchOneAsset(args: {
     );
     const needsExecutableFreshRecheck = oosMeasurementMode === "next_exit";
     const oosHorizons = normalizeFinderAssetOosHorizons(input.options.assetOpportunity?.oosHorizons);
-    const evalLastBars = normalizeFinderAssetEvalLastBars(input.options.assetOpportunity?.evalLastBars);
+    const evalLastBars = resolveFinderAssetEvalWindowBars(
+        input.options.assetOpportunity?.evalLastBars,
+        oosIgnoreLastBars,
+        input.options.assetOpportunity?.evalWindowMode,
+    );
     if (oosIgnoreLastBars > 0 && fullClosed.length - oosIgnoreLastBars < 2) {
         return finish({
             kind: "failed",
@@ -964,10 +968,9 @@ async function searchOneAsset(args: {
     };
 
     const fractionSlicedHistorical = sliceHistoricalWindow(inSampleHistorical, assetOptions);
-    // Cap the evaluation window to the last N bars AFTER the holdout trim and
-    // fraction slice, so `evalLastBars` composes with `oosIgnoreLastBars`:
-    // N=1000 + holdout=1000 evaluates bars [-2000, -1001]. Shorter datasets
-    // keep all their bars before the gap (slice(-N) semantics).
+    // Cap after the holdout trim and fraction slice. Fixed mode keeps the
+    // configured IS cap; Range Bar has already added the holdout length to it.
+    // Shorter datasets keep all bars available before the gap (slice(-N)).
     const slicedHistorical = evalLastBars > 0
         ? fractionSlicedHistorical.slice(-evalLastBars)
         : fractionSlicedHistorical;

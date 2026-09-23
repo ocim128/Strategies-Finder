@@ -1704,6 +1704,27 @@ describe("Asset Opportunity evaluation window (evalLastBars)", () => {
         expect(captures[0]!.lastTime).to.equal(data[99]!.time);
     });
 
+    it("adds each OOS holdout to the eval cap only in Range Bar mode", async () => {
+        const data = makeCandles(Array.from({ length: 180 }, (_, i) => 100 + i));
+        const runAndCapture = async (holdoutBars: number, evalWindowMode?: "fixed" | "range_bar") => {
+            const captures: SearchWindowCapture[] = [];
+            await runAssetOpportunitySearch(makeInput({
+                options: makeWindowOptions({
+                    oosIgnoreLastBars: holdoutBars,
+                    evalLastBars: 100,
+                    ...(evalWindowMode ? { evalWindowMode } : {}),
+                }),
+                assets: [{ symbol: "UP", data }],
+                runIsSearch: makeWindowCapturingIsSearch(captures),
+            }), makeCallbacks());
+            return captures[0]!.length;
+        };
+
+        expect(await runAndCapture(12)).to.equal(100, "legacy/default fixed cap stays unchanged");
+        expect(await runAndCapture(12, "range_bar")).to.equal(112);
+        expect(await runAndCapture(13, "range_bar")).to.equal(113);
+    });
+
     it("keeps the application candle out of the capped window even when signal reuse would otherwise include it", async () => {
         const data = makeCandles(Array.from({ length: 120 }, (_, i) => 100 + i));
         const nextOpenSettings = { ...settings, executionModel: "next_open" as const };

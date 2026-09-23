@@ -28,6 +28,7 @@ export type FinderAssetOosNextExitUnavailableReason =
     | "missing_exit_reason"
     | "replay_error";
 export type FinderAssetOosMeasurementMode = "fixed_horizon" | "next_exit";
+export type FinderAssetEvalWindowMode = "fixed" | "range_bar";
 
 export interface FinderAssetOosNextExitMetrics {
     /** Number of hidden candles available as the maximum observation window. */
@@ -50,6 +51,10 @@ export interface FinderAssetOosAverageHorizonMetric {
 
 export function normalizeFinderAssetOosMeasurementMode(value: unknown): FinderAssetOosMeasurementMode {
     return value === "next_exit" ? "next_exit" : "fixed_horizon";
+}
+
+export function normalizeFinderAssetEvalWindowMode(value: unknown): FinderAssetEvalWindowMode {
+    return value === "range_bar" ? "range_bar" : "fixed";
 }
 
 /**
@@ -121,6 +126,21 @@ export function normalizeFinderAssetEvalLastBars(value: unknown): number {
         : Number.NaN;
     if (!Number.isFinite(numeric)) return 0;
     return Math.min(MAX_FINDER_ASSET_OOS_VALUE, Math.max(0, Math.round(numeric)));
+}
+
+/** Resolve the effective IS cap for one holdout iteration. */
+export function resolveFinderAssetEvalWindowBars(
+    evalLastBarsValue: unknown,
+    holdoutBarsValue: unknown,
+    modeValue: unknown,
+): number {
+    const evalLastBars = normalizeFinderAssetEvalLastBars(evalLastBarsValue);
+    if (evalLastBars === 0 || normalizeFinderAssetEvalWindowMode(modeValue) === "fixed") {
+        return evalLastBars;
+    }
+    return normalizeFinderAssetEvalLastBars(
+        evalLastBars + normalizeFinderAssetOosIgnoreLastBars(holdoutBarsValue),
+    );
 }
 
 /**

@@ -118,6 +118,7 @@ import {
 } from "../finder-asset-opportunity-runner";
 import {
     normalizeFinderAssetEvalLastBars,
+    normalizeFinderAssetEvalWindowMode,
     normalizeFinderAssetOosBatchHoldoutRange,
     normalizeFinderAssetOosMeasurementMode,
     normalizeFinderAssetOosHorizons,
@@ -1967,6 +1968,7 @@ export async function processFinderAssetOpportunityBatchRun(
             oosHorizons: input.options.assetOpportunity?.oosHorizons,
             oosIgnoreLastBars: holdoutBars,
             evalLastBars: input.options.assetOpportunity?.evalLastBars,
+            evalWindowMode: input.options.assetOpportunity?.evalWindowMode,
         },
     });
 
@@ -2568,6 +2570,9 @@ async function prepareAssetOpportunityRunPayload(
                     ),
                     evalLastBars: normalizeFinderAssetEvalLastBars(
                         parsedOptions.assetOpportunity.evalLastBars,
+                    ),
+                    evalWindowMode: normalizeFinderAssetEvalWindowMode(
+                        parsedOptions.assetOpportunity.evalWindowMode,
                     ),
                     oosHorizons: normalizeFinderAssetOosHorizons(
                         parsedOptions.assetOpportunity.oosHorizons,

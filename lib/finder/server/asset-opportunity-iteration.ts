@@ -16,6 +16,7 @@
 import { debugLogger } from "../../debug-logger";
 import type { FinderSelectedStrategy } from "../finder-runner";
 import { FinderParamSpace } from "../finder-param-space";
+import { resolveFinderAssetEvalWindowBars } from "../finder-asset-opportunity-oos";
 import type { CapitalSettings } from "../../types/backtest";
 import type {
     FinderAssetOpportunityDiagnostics,
@@ -244,7 +245,12 @@ export async function runAssetOpportunityIteration(
         symbols: totalAssets,
         strategyKeys: selectedStrategies.map((strategy) => strategy.key),
         holdoutBars: input.options.assetOpportunity?.oosIgnoreLastBars ?? 0,
-        evalLastBars: input.options.assetOpportunity?.evalLastBars ?? 0,
+        evalLastBars: resolveFinderAssetEvalWindowBars(
+            input.options.assetOpportunity?.evalLastBars,
+            input.options.assetOpportunity?.oosIgnoreLastBars,
+            input.options.assetOpportunity?.evalWindowMode,
+        ),
+        evalWindowMode: input.options.assetOpportunity?.evalWindowMode ?? "fixed",
         maxRuns: input.options.maxRuns,
         candidatePoolSize: input.candidatePoolSize,
     });
