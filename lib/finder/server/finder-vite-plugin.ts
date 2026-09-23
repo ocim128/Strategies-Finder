@@ -209,7 +209,7 @@ const HEAP_MB = 1024 * 1024;
 const MAX_RUN_ID_LENGTH = 128;
 
 /** Asset Opportunity keeps symbol-count and heap guards; candidate work is not preflight-capped. */
-const ASSET_OPPORTUNITY_MAX_SYMBOLS = 1_000;
+const ASSET_OPPORTUNITY_MAX_SYMBOLS = 5_000;
 
 /** Keep a small batch fully occupied when holdoutCount would underfill it. */
 const ASSET_OPPORTUNITY_BATCH_PARALLEL_TASK_TARGET = 8;
