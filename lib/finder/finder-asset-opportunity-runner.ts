@@ -1330,12 +1330,34 @@ async function searchOneAsset(args: {
     const selectionTrades = Array.isArray(result.selectionResult.trades)
         ? result.selectionResult.trades
         : [];
+    const canReuseFreshReplayTradesForAnalytics = executionModel === "signal_close"
+        && !needsExecutableFreshRecheck
+        && evalLastBars === 0
+        && (input.options.dataSlice ?? "all") === "all"
+        && (
+            recheckData.length === slicedHistorical.length
+            || recheckData.length === slicedHistorical.length + 1
+        );
+    const freshReplayAnalyticsResult = canReuseFreshReplayTradesForAnalytics
+        && winnerFresh?.result
+        ? restrictFreshReplayToAnalyticsWindow(
+            winnerFresh.result,
+            slicedHistorical,
+            result.selectionResult.totalTrades,
+        )
+        : null;
     let derivedMetrics = calculateAssetOpportunityDerivedMetrics({
         result: result.selectionResult,
         candles: slicedHistorical,
         freshEntryPrice: winnerFresh?.freshEntryPrice ?? null,
     });
-    if (
+    if (freshReplayAnalyticsResult) {
+        derivedMetrics = calculateAssetOpportunityDerivedMetrics({
+            result: freshReplayAnalyticsResult,
+            candles: slicedHistorical,
+            freshEntryPrice: winnerFresh?.freshEntryPrice ?? null,
+        });
+    } else if (
         selectionTrades.length === 0
         && result.selectionResult.totalTrades >= MEDIAN_BARS_TO_TP_MIN_HITS
         && winnerCandidate
@@ -1655,6 +1677,8 @@ function resolveAssetOpportunityFreshnessBars(settings: BacktestSettings): numbe
  * run's retained signals (`detectFreshFromRetainedSignals`).
  */
 type AssetFreshEvaluation = {
+    /** Trade-bearing replay result when freshness was re-executed. */
+    result?: BacktestResult;
     freshStatus: "fresh" | "active" | "flat";
     direction: FinderAssetDirection | null;
     latestSignalTime: Time | null;
@@ -1786,6 +1810,28 @@ function buildFreshEntryEvaluation(args: {
     };
 }
 
+function restrictFreshReplayToAnalyticsWindow(
+    replayResult: BacktestResult,
+    analyticsCandles: readonly OHLCVData[],
+    analyticsTotalTrades: number,
+): BacktestResult | null {
+    const cutoff = analyticsCandles.length > 0
+        ? parseTimeToUnixSeconds(analyticsCandles[analyticsCandles.length - 1]!.time)
+        : null;
+    if (cutoff === null) return null;
+    const trades = replayResult.trades.filter((trade) => {
+        const exitSeconds = parseTimeToUnixSeconds(trade.exitTime);
+        return exitSeconds !== null && exitSeconds <= cutoff;
+    });
+    return {
+        ...replayResult,
+        trades,
+        // Keep the endpoint-adjusted IS count for the median-threshold gate;
+        // the trade list itself is restricted to the same candle boundary.
+        totalTrades: analyticsTotalTrades,
+    };
+}
+
 /**
  * Re-run one candidate's strategy on the boundary data and detect the
  * fresh-entry status. Fixed-horizon non-signal-close paths may generate
@@ -1897,6 +1943,7 @@ async function regenerateSignalsAndDetectFresh(args: {
             freshnessBars: resolveAssetOpportunityFreshnessBars(args.settings),
         });
         return {
+            result,
             freshStatus: detected.freshStatus,
             direction: detected.direction,
             latestSignalTime: detected.latestSignalTime,

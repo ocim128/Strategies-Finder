@@ -1401,9 +1401,27 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
                 args.owner,
                 "/virtual/archive-root",
                 async (dir, filename, content) => {
-                    appended.push(filename);
-                    contents.push(content);
-                    if (args.append) await args.append(dir, filename, content);
+                    try {
+                        if (args.append) await args.append(dir, filename, content);
+                    } catch (error) {
+                        appended.push(filename);
+                        contents.push(content);
+                        throw error;
+                    }
+                    if (filename.startsWith("oos-holdout-")) {
+                        const separator = "=".repeat(80);
+                        const blocks = content.match(new RegExp(
+                            `${separator}\\r?\\n[\\s\\S]*?\\r?\\n${separator}\\r?\\n[\\s\\S]*?(?=${separator}\\r?\\n|$)`,
+                            "g",
+                        )) ?? [content];
+                        for (const block of blocks) {
+                            appended.push(filename);
+                            contents.push(block);
+                        }
+                    } else {
+                        appended.push(filename);
+                        contents.push(content);
+                    }
                 },
             );
         })();

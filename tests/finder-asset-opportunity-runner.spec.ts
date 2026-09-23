@@ -476,6 +476,62 @@ describe("Asset Opportunity runner", () => {
         expect(output.outcomes[0]!.diagnostics?.winnerAnalyticsRecomputations).to.equal(1);
     });
 
+    it("reuses signal-close fresh replay trades when the analytics window aligns", async () => {
+        let executeCalls = 0;
+        const strategy: Strategy = {
+            name: "Signal Close Fresh Replay",
+            description: "enters on the replay boundary",
+            defaultParams: {},
+            paramLabels: {},
+            execute(candles) {
+                executeCalls += 1;
+                const latest = candles[candles.length - 1];
+                return latest
+                    ? [{ time: latest.time, type: "buy" as const, price: latest.close }]
+                    : [];
+            },
+        };
+        const compactSelection = {
+            trades: [],
+            netProfit: 1,
+            netProfitPercent: 1,
+            winRate: 100,
+            expectancy: 1,
+            avgTrade: 1,
+            profitFactor: Number.POSITIVE_INFINITY,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 10,
+            winningTrades: 10,
+            losingTrades: 0,
+            avgWin: 1,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+        } as BacktestResult;
+        const output = await runAssetOpportunitySearch(makeInput({
+            selectedStrategy: { key: "signal_close_replay", name: strategy.name, strategy },
+            candidatePoolSize: 1,
+            assets: [{ symbol: "SIGNAL_CLOSE_REPLAY", data: makeCandles(Array.from({ length: 20 }, (_, i) => 100 + i)) }],
+            runIsSearch: async () => ({
+                results: [{
+                    key: "signal_close_replay",
+                    name: strategy.name,
+                    params: {},
+                    result: compactSelection,
+                    selectionResult: compactSelection,
+                    endpointAdjusted: false,
+                    endpointRemovedTrades: 0,
+                }],
+                totalCandidatesEvaluated: 1,
+            }),
+        }), makeCallbacks());
+
+        expect(output.results).to.have.length(1);
+        expect(output.outcomes[0]!.diagnostics?.winnerAnalyticsRecomputations).to.equal(0);
+        expect(executeCalls, "fresh replay trades replace the winner analytics rerun").to.equal(1);
+    });
+
     it("splitApplicationCandle reserves the latest closed candle", () => {
         const data = makeCandles([100, 101, 102, 103]);
         const { historical, applicationCandle, fullClosed } = splitApplicationCandle(data);

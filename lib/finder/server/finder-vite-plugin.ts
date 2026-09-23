@@ -129,7 +129,7 @@ import {
     buildAssetOpportunityPerformancePayload,
 } from "../finder-asset-opportunity-metadata";
 import {
-    appendAssetOpportunityArchiveBlock,
+    appendAssetOpportunityArchiveBlocks,
     appendAssetOpportunityArchiveRunConfig,
     buildAssetOpportunityTupleKey,
     countPriorAssetOpportunityTupleRecurrence,
@@ -215,6 +215,8 @@ const ASSET_OPPORTUNITY_MAX_SYMBOLS = 1_000;
 const ASSET_OPPORTUNITY_BATCH_PARALLEL_TASK_TARGET = 8;
 /** Avoid chunk overhead for tiny test/research universes. */
 const ASSET_OPPORTUNITY_BATCH_MIN_CHUNKED_ASSETS = 32;
+/** Dispatch small universes when their candidate workload is still large. */
+const ASSET_OPPORTUNITY_SINGLE_RUN_WORK_THRESHOLD = 64;
 /** Chunked workers retain only their partition; the resolver still clamps to cores/memory. */
 const ASSET_OPPORTUNITY_BATCH_CHUNK_WORKER_TARGET = ASSET_OPPORTUNITY_BATCH_WORKER_COUNT_MAX;
 
@@ -2030,7 +2032,8 @@ export async function processFinderAssetOpportunityBatchRun(
             ? buildAssetOpportunityNextExitOosBaseline(iteration.results)
             : null;
         try {
-            for (const sortMetric of resolveAssetOpportunityArchiveSorts()) {
+            const archiveSorts = resolveAssetOpportunityArchiveSorts();
+            const archiveBlocks = archiveSorts.map((sortMetric) => {
                 const archiveResults = sortAssetOpportunityResultsByMetric(iteration.results, sortMetric);
                 const topResults = archiveResults
                     .slice(0, Math.max(1, input.options.topN))
@@ -2038,8 +2041,7 @@ export async function processFinderAssetOpportunityBatchRun(
                         result,
                         rank: index + 1,
                     }));
-                const appended = await appendAssetOpportunityArchiveBlock({
-                    root: archiveRoot,
+                return {
                     batchRunId: input.runId,
                     holdoutBars,
                     sortMetric,
@@ -2047,8 +2049,16 @@ export async function processFinderAssetOpportunityBatchRun(
                     baseline,
                     measurementMode,
                     nextExitBaseline,
-                    ...(archiveAppend ? { append: archiveAppend } : {}),
-                });
+                };
+            });
+            const appendedBlocks = await appendAssetOpportunityArchiveBlocks({
+                root: archiveRoot,
+                blocks: archiveBlocks,
+                ...(archiveAppend ? { append: archiveAppend } : {}),
+            });
+            for (let index = 0; index < archiveSorts.length; index += 1) {
+                const sortMetric = archiveSorts[index]!;
+                const appended = appendedBlocks[index]!;
                 archiveFilename = path.basename(appended.path);
                 debugLogger.event("finder.asset_opportunity_batch.iteration.complete", {
                     runId: input.runId,
@@ -2730,7 +2740,18 @@ async function handleAssetOpportunityRunRequest(
     const rustCanRunInWorkers = prepared.useRustEnginePreference === true
         && !requiresTypescriptEngine(prepared.settings, rustCapabilities)
         && isRustSupportedTradeSizingMode(resolvedCapitalSettings.sizingMode);
-    const singleRunWorkerCount = prepared.symbols.length >= ASSET_OPPORTUNITY_BATCH_MIN_CHUNKED_ASSETS
+    const maxRunsForWorkerDecision = Number.isFinite(Number(prepared.options.maxRuns))
+        ? Math.max(1, Math.floor(Number(prepared.options.maxRuns)))
+        : 1;
+    const estimatedSingleRunWork = prepared.symbols.length
+        * prepared.selectedStrategies.length
+        * maxRunsForWorkerDecision;
+    const shouldChunkSingleRun = prepared.symbols.length >= ASSET_OPPORTUNITY_BATCH_MIN_CHUNKED_ASSETS
+        || (
+            prepared.symbols.length > 1
+            && estimatedSingleRunWork >= ASSET_OPPORTUNITY_SINGLE_RUN_WORK_THRESHOLD
+        );
+    const singleRunWorkerCount = shouldChunkSingleRun
         ? resolveAssetOpportunityChunkWorkerCount(
             1,
             prepared.symbols.length,

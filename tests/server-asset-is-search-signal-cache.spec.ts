@@ -367,7 +367,7 @@ describe("server Asset Opportunity signal cache", () => {
         expect(executeCalls).to.equal(2);
     });
 
-    it("caches only candidates that enter the running top-K", async () => {
+    it("caches every candidate whose full signals were generated", async () => {
         let executeCalls = 0;
         const strategy: Strategy = {
             name: "Retained Candidate Cache Strategy",
@@ -409,9 +409,9 @@ describe("server Asset Opportunity signal cache", () => {
 
         expect(first.results[0]!.params.marker).to.equal(2);
         expect(first.signalCacheMisses).to.equal(2);
-        expect(second.signalCacheHits).to.equal(1);
-        expect(second.signalCacheMisses).to.equal(1);
-        expect(executeCalls, "the rejected candidate is warmed again; only the retained candidate is cached")
-            .to.equal(3);
+        expect(second.signalCacheHits).to.equal(2);
+        expect(second.signalCacheMisses).to.equal(0);
+        expect(executeCalls, "both generated signal sets are reused on the next holdout")
+            .to.equal(2);
     });
 });
