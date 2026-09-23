@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
+    alignLegCloses,
     createBatchDatasetLoadDiagnostics,
     createBatchDatasetLoaderCore,
 } from "../lib/batch-backtest/batch-dataset-loader-core";
@@ -27,6 +28,25 @@ function readSource(filePath: string): string {
 }
 
 describe("batch-backtest server loader parity", () => {
+    it("aligns sorted leg closes without changing missing or duplicate-time semantics", () => {
+        const pairBars: OHLCVData[] = [0, 30, 60, 120, 180].map((time) => ({
+            time: time as Time,
+            open: 1,
+            high: 1,
+            low: 1,
+            close: 1,
+            volume: 1,
+        }));
+        const legBars: OHLCVData[] = [
+            { time: 0 as Time, open: 1, high: 1, low: 1, close: 10, volume: 1 },
+            { time: 0 as Time, open: 1, high: 1, low: 1, close: 11, volume: 1 },
+            { time: 60 as Time, open: 1, high: 1, low: 1, close: 20, volume: 1 },
+            { time: 120 as Time, open: 1, high: 1, low: 1, close: 30, volume: 1 },
+        ];
+
+        expect(alignLegCloses(pairBars, legBars, "1m")).to.deep.equal([11, null, 20, 30, null]);
+    });
+
     it("derives standalone 1h/2h IBKR miner targets from 30m candles", async () => {
         const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
             time: time as Time,

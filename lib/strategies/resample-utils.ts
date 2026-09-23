@@ -29,7 +29,7 @@ export function getResampleBucketStart(
  * The output times are aligned to the start of the period.
  */
 export function resampleOHLCV(
-    data: OHLCVData[],
+    data: readonly OHLCVData[],
     targetInterval: string,
     options?: ResampleOptions
 ): OHLCVData[] {
