@@ -1740,6 +1740,12 @@ function detectFreshFromRetainedSignals(args: {
         signals: args.signals,
         freshnessBars: resolveAssetOpportunityFreshnessBars(args.settings),
     });
+    const signalPrice = resolveLatestSignalPrice({
+        signals: args.signals,
+        candle: args.candles[args.candles.length - 1]!,
+        direction: detected.direction,
+        signalTime: detected.latestSignalTime,
+    });
     return {
         freshStatus: detected.freshStatus,
         direction: detected.direction,
@@ -1750,25 +1756,13 @@ function detectFreshFromRetainedSignals(args: {
         latestTradeEntryTime: detected.latestTrade
             ? parseTimeToUnixSeconds(detected.latestTrade.entryTime)
             : null,
-        latestSignalPrice: resolveLatestSignalPrice({
-            signals: args.signals,
-            candle: args.candles[args.candles.length - 1]!,
-            direction: detected.direction,
-            signalTime: detected.latestSignalTime,
-            fallback: detected.latestTrade?.entryPrice ?? null,
-        }),
+        latestSignalPrice: signalPrice ?? detected.latestTrade?.entryPrice ?? null,
         freshEntryPrice: resolveFreshEntryPrice({
             latestTrade: detected.latestTrade,
             candles: args.candles,
             settings: args.settings,
             signalTime: detected.latestSignalTime,
-            signalPrice: resolveLatestSignalPrice({
-                signals: args.signals,
-                candle: args.candles[args.candles.length - 1]!,
-                direction: detected.direction,
-                signalTime: detected.latestSignalTime,
-                fallback: null,
-            }),
+            signalPrice,
         }),
         engineUsed: "typescript",
         rustAttempted: false,
@@ -1792,6 +1786,12 @@ function buildFreshEntryEvaluation(args: {
         signals: args.signals,
         freshnessBars: resolveAssetOpportunityFreshnessBars(args.settings),
     });
+    const signalPrice = resolveLatestSignalPrice({
+        signals: args.signals,
+        candle: args.candles[args.candles.length - 1]!,
+        direction: detected.direction,
+        signalTime: detected.latestSignalTime,
+    });
     return {
         freshStatus: detected.freshStatus,
         direction: detected.direction,
@@ -1802,25 +1802,13 @@ function buildFreshEntryEvaluation(args: {
         latestTradeEntryTime: detected.latestTrade
             ? parseTimeToUnixSeconds(detected.latestTrade.entryTime)
             : null,
-        latestSignalPrice: resolveLatestSignalPrice({
-            signals: args.signals,
-            candle: args.candles[args.candles.length - 1]!,
-            direction: detected.direction,
-            signalTime: detected.latestSignalTime,
-            fallback: detected.latestTrade?.entryPrice ?? null,
-        }),
+        latestSignalPrice: signalPrice ?? detected.latestTrade?.entryPrice ?? null,
         freshEntryPrice: resolveFreshEntryPrice({
             latestTrade: detected.latestTrade,
             candles: args.candles,
             settings: args.settings,
             signalTime: detected.latestSignalTime,
-            signalPrice: resolveLatestSignalPrice({
-                signals: args.signals,
-                candle: args.candles[args.candles.length - 1]!,
-                direction: detected.direction,
-                signalTime: detected.latestSignalTime,
-                fallback: null,
-            }),
+            signalPrice,
         }),
         engineUsed: args.engineUsed,
         rustAttempted: args.rustAttempted,
@@ -1963,6 +1951,12 @@ async function regenerateSignalsAndDetectFresh(args: {
             signals: boundarySignals,
             freshnessBars: resolveAssetOpportunityFreshnessBars(args.settings),
         });
+        const signalPrice = resolveLatestSignalPrice({
+            signals: boundarySignals,
+            candle: args.fullClosed[args.fullClosed.length - 1]!,
+            direction: detected.direction,
+            signalTime: detected.latestSignalTime,
+        });
         return {
             result,
             freshStatus: detected.freshStatus,
@@ -1974,25 +1968,13 @@ async function regenerateSignalsAndDetectFresh(args: {
             latestTradeEntryTime: detected.latestTrade
                 ? parseTimeToUnixSeconds(detected.latestTrade.entryTime)
                 : null,
-            latestSignalPrice: resolveLatestSignalPrice({
-                signals: boundarySignals,
-                candle: args.fullClosed[args.fullClosed.length - 1]!,
-                direction: detected.direction,
-                signalTime: detected.latestSignalTime,
-                fallback: detected.latestTrade?.entryPrice ?? null,
-            }),
+            latestSignalPrice: signalPrice ?? detected.latestTrade?.entryPrice ?? null,
             freshEntryPrice: resolveFreshEntryPrice({
                 latestTrade: detected.latestTrade,
                 candles: args.fullClosed,
                 settings: args.settings,
                 signalTime: detected.latestSignalTime,
-                signalPrice: resolveLatestSignalPrice({
-                    signals: boundarySignals,
-                    candle: args.fullClosed[args.fullClosed.length - 1]!,
-                    direction: detected.direction,
-                    signalTime: detected.latestSignalTime,
-                    fallback: null,
-                }),
+                signalPrice,
             }),
             engineUsed,
             rustAttempted: engineDiagnostics?.rustAttempted === true,
@@ -2008,7 +1990,6 @@ function resolveLatestSignalPrice(args: {
     candle: OHLCVData;
     direction: FinderAssetDirection | null;
     signalTime?: Time | null;
-    fallback: number | null;
 }): number | null {
     const candleTimeSec = parseTimeToUnixSeconds(args.signalTime ?? args.candle.time);
     if (args.direction) {
@@ -2020,7 +2001,7 @@ function resolveLatestSignalPrice(args: {
             if (args.direction === "short" && signal.type === "sell") return signal.price;
         }
     }
-    return args.fallback;
+    return null;
 }
 
 function resolveFreshEntryPrice(args: {

@@ -63,7 +63,7 @@ import {
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 import type { RustCapabilities } from "../../rust-engine-client";
-import { timeKey } from "../../strategies/backtest/backtest-utils";
+import { parseTimeToUnixSeconds } from "../../time-normalization";
 
 const ASSET_IS_SEARCH_YIELD_EVERY_RUNS = 256;
 const ASSET_IS_SEARCH_YIELD_MIN_MS = 1000;
@@ -126,33 +126,55 @@ type SignalWindow = {
     endIndex: number;
 };
 
-/** Find the exact contiguous location of a capped search window in full data. */
+/** Find the contiguous slice using logarithmic boundary lookup on sorted candle times. */
 function resolveSignalWindow(
     fullData: readonly OHLCVData[],
     windowData: readonly OHLCVData[],
 ): SignalWindow | null {
     if (windowData.length === 0 || windowData.length > fullData.length) return null;
-    const firstTime = timeKey(windowData[0]!.time);
-    const lastTime = timeKey(windowData[windowData.length - 1]!.time);
-    let startIndex = fullData.findIndex((candle) => timeKey(candle.time) === firstTime);
-    while (startIndex >= 0) {
+    // The caller constructs windowData by slicing fullData; equal lengths mean
+    // it is the complete series, so no time lookup is needed.
+    if (windowData.length === fullData.length) {
+        return { startIndex: 0, endIndex: fullData.length };
+    }
+
+    const firstTime = parseTimeToUnixSeconds(windowData[0]!.time);
+    const lastTime = parseTimeToUnixSeconds(windowData[windowData.length - 1]!.time);
+    if (firstTime === null || lastTime === null) return null;
+
+    let low = 0;
+    let high = fullData.length;
+    while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        const middleTime = parseTimeToUnixSeconds(fullData[middle]!.time);
+        if (middleTime === null) return null;
+        if (middleTime < firstTime) low = middle + 1;
+        else high = middle;
+    }
+
+    const firstMatch = low;
+    const hasDuplicateStartTime = firstMatch + 1 < fullData.length
+        && parseTimeToUnixSeconds(fullData[firstMatch + 1]!.time) === firstTime;
+    for (let startIndex = firstMatch;
+        startIndex < fullData.length
+        && parseTimeToUnixSeconds(fullData[startIndex]!.time) === firstTime;
+        startIndex += 1) {
         const endIndex = startIndex + windowData.length;
-        if (
-            endIndex <= fullData.length
-            && timeKey(fullData[endIndex - 1]!.time) === lastTime
-        ) {
-            let matches = true;
-            for (let offset = 1; offset < windowData.length - 1; offset += 1) {
-                if (timeKey(fullData[startIndex + offset]!.time) !== timeKey(windowData[offset]!.time)) {
-                    matches = false;
-                    break;
-                }
+        if (endIndex > fullData.length
+            || parseTimeToUnixSeconds(fullData[endIndex - 1]!.time) !== lastTime) continue;
+        if (!hasDuplicateStartTime) return { startIndex, endIndex };
+
+        // Duplicate boundary times are rare; retain the exact-match check to
+        // disambiguate their possible slice starts without penalizing normal data.
+        let matches = true;
+        for (let offset = 1; offset < windowData.length; offset += 1) {
+            if (parseTimeToUnixSeconds(fullData[startIndex + offset]!.time)
+                !== parseTimeToUnixSeconds(windowData[offset]!.time)) {
+                matches = false;
+                break;
             }
-            if (matches) return { startIndex, endIndex };
         }
-        startIndex = fullData.findIndex(
-            (candle, index) => index > startIndex && timeKey(candle.time) === firstTime,
-        );
+        if (matches) return { startIndex, endIndex };
     }
     return null;
 }
