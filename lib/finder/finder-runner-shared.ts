@@ -110,6 +110,24 @@ export type FinderSignalTiming = {
     usedPreparedData: boolean;
 };
 
+const CONFIRMATION_SIGNAL_CACHE_KEY = "__finder_confirmation_signal_cache__";
+
+function getConfirmationSignalCache(
+    preparedDataCache: FinderPreparedDataCache,
+    data: OHLCVData[],
+): Map<string, Signal[]> {
+    let byKey = preparedDataCache.get(data);
+    if (!byKey) {
+        byKey = new Map<string, unknown>();
+        preparedDataCache.set(data, byKey);
+    }
+    const cached = byKey.get(CONFIRMATION_SIGNAL_CACHE_KEY);
+    if (cached instanceof Map) return cached as Map<string, Signal[]>;
+    const confirmationCache = new Map<string, Signal[]>();
+    byKey.set(CONFIRMATION_SIGNAL_CACHE_KEY, confirmationCache);
+    return confirmationCache;
+}
+
 /**
  * Backtest runner used by specialized finder runners. Forces
  * `includeAdvancedAnalytics: false` (finder candidates don't need heavy
@@ -188,12 +206,14 @@ export function generateSignalsForJob(
         : signalSettings;
     // Confirmation params/settings are run-constant, so identical
     // (strategy, params, invertSignals) re-derive identical signals for
-    // every candidate. Memoize per job invocation context — the executor
+    // every candidate. Memoize per run/data context; the executor
     // also folds strategyTimeframeEnabled:false and time-gap isolation in,
     // so it cannot share the default cache in confirmation-signal-filter
     // (that one does not isolate time gaps). Keyed like
     // cacheKeyForConfirmation: key + params + invertSignals.
-    const confirmationSignalCache = new Map<string, Signal[]>();
+    const confirmationSignalCache = preparedDataCache
+        ? getConfirmationSignalCache(preparedDataCache, data)
+        : new Map<string, Signal[]>();
     const signals = applyConfirmationStrategiesToSignals({
         data,
         baseSignals: canUsePreparedData ? applySignalPolarity(rawSignals, signalSettings) : rawSignals,
@@ -234,13 +254,13 @@ export function runStrategyBacktest(args: {
     backtestSettings: BacktestSettings;
     backtestFn: FinderBacktestFn;
     precomputed?: ReturnType<typeof precomputeIndicators>;
-    backtestOptions?: Parameters<typeof runBacktest>[8];
     /** Pre-loaded exit strategy. When present, its params (under `_exit__` prefix in args.params) are split out, its signals generated and tagged exitOnly, and merged into args.signals. */
     exitStrategy?: Strategy;
     /** Registry key used to share prepared exit-strategy data across candidates. */
     exitStrategyKey?: string;
     /** Reuse Finder-prepared data for the exit strategy when available. */
     preparedDataCache?: FinderPreparedDataCache;
+    backtestOptions?: Parameters<typeof runBacktest>[8];
     executionContext?: StrategyExecutionContext;
     /** Calculate the raw normal-vs-control Exit Alpha pair when enabled. */
     exitAlphaEnabled?: boolean;
@@ -433,6 +453,7 @@ export function runBacktestAndInsert(
     exitAlphaEnabled = false,
     preparedDataCache?: FinderPreparedDataCache,
     executionContext?: StrategyExecutionContext,
+    backtestOptions?: Parameters<typeof runBacktest>[8],
 ): boolean {
     try {
         let exitAlpha: number | undefined;
@@ -445,7 +466,10 @@ export function runBacktestAndInsert(
             backtestSettings,
             backtestFn,
             precomputed,
-            backtestOptions: { collectDiagnostics: true },
+            backtestOptions: {
+                ...(backtestOptions ?? {}),
+                collectDiagnostics: true,
+            },
             exitStrategy: job.exitStrategy,
             exitStrategyKey: job.exitStrategyKey,
             preparedDataCache,

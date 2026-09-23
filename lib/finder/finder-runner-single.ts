@@ -179,6 +179,7 @@ type BacktestFallbackRunnerOptions = {
     onBacktestResult?: (job: ParamJob, result: BacktestResult) => void;
     onFailure?: (job: ParamJob, error?: unknown) => void;
     exitAlphaEnabled?: boolean;
+    backtestOptions: Parameters<typeof runBacktest>[8];
     preparedDataCache: FinderPreparedDataCache;
     getJobCtx: (job: ParamJob) => StrategyExecutionContext | undefined;
 };
@@ -201,6 +202,7 @@ function createBacktestFallbackRunner(options: BacktestFallbackRunnerOptions): (
             options.exitAlphaEnabled,
             options.preparedDataCache,
             options.getJobCtx(run.job),
+            options.backtestOptions,
         );
         options.timing.backtest += performance.now() - tTsStart;
     };
@@ -884,7 +886,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     backtestSettings: job.backtestSettings,
                     backtestFn: quickBacktestFn,
                     precomputed: getJobPrecomputed(job, shortPrecomputed),
-                    backtestOptions: { collectDiagnostics: true },
+                    backtestOptions: { collectDiagnostics: true, omitEquityCurve: true },
                     exitStrategy: job.exitStrategy,
                     exitStrategyKey: job.exitStrategyKey,
                     preparedDataCache,
@@ -946,6 +948,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 onBacktestResult: recordBacktestResult,
                 onFailure: recordFailure,
                 exitAlphaEnabled: requiresExitAlphaSort,
+                backtestOptions: { omitEquityCurve: true },
                 preparedDataCache,
                 getJobCtx,
             });
@@ -1022,6 +1025,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             onBacktestResult: recordBacktestResult,
             onFailure: recordFailure,
             exitAlphaEnabled: requiresExitAlphaSort,
+            backtestOptions: { omitEquityCurve: true },
             preparedDataCache,
             getJobCtx,
         });
@@ -1101,6 +1105,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         onBacktestResult: recordBacktestResult,
         onFailure: recordFailure,
         exitAlphaEnabled: requiresExitAlphaSort,
+        backtestOptions: { omitEquityCurve: true },
         preparedDataCache,
         getJobCtx,
     });
@@ -1116,6 +1121,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         onBacktestResult: recordBacktestResult,
         onFailure: recordFailure,
         exitAlphaEnabled: requiresExitAlphaSort,
+        backtestOptions: { omitEquityCurve: true },
         preparedDataCache,
         getJobCtx,
     });
@@ -1346,6 +1352,7 @@ async function reconcileSingleTimeframeTopResults(
                 exitStrategyKey: candidate.exitStrategyKey,
                 preparedDataCache,
                 executionContext: jobCtx,
+                backtestOptions: { omitEquityCurve: true },
                 exitAlphaEnabled: requiresExitAlphaSort,
                 onExitAlpha: (value) => {
                     exitAlpha = value;

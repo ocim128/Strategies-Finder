@@ -449,12 +449,11 @@ export function buildThresholdCrossingCount(
 			crossingEvents[i] = crossedUp || crossedDown ? 1 : 0;
 		}
 
-		for (let i = lookback - 1; i < values.length; i++) {
-			let count = 0;
-			for (let j = i - lookback + 1; j <= i; j++) {
-				count += crossingEvents[j];
-			}
-			result[i] = count;
+		let runningCount = 0;
+		for (let i = 0; i < values.length; i++) {
+			runningCount += crossingEvents[i];
+			if (i >= lookback) runningCount -= crossingEvents[i - lookback];
+			if (i >= lookback - 1) result[i] = runningCount;
 		}
 
 		return result;

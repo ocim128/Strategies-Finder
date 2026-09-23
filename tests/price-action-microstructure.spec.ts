@@ -9,6 +9,7 @@ import {
 import {
     buildEfficiencyRatio,
     buildPercentileRank,
+    buildThresholdCrossingCount,
     buildRollingEntropy,
     buildRollingRobustZScore,
 } from '../lib/strategies/lib/price-action-statistics-core';
@@ -77,6 +78,12 @@ describe('Price Action Microstructure Helpers', () => {
         expect(er[2]).to.equal(null);
         expect(er[3]).to.be.closeTo(1 / 5, 1e-9);
         expect(er[4]).to.be.closeTo(2 / 6, 1e-9);
+    });
+
+    it('should count threshold crossings with the exact trailing window', () => {
+        const counts = buildThresholdCrossingCount([0, 2, 0, -2, 0, 2], 3, 1);
+
+        expect(counts).to.deep.equal([null, null, 1, 2, 1, 2]);
     });
 
     it('should calculate rolling entropy with dynamic window bins', () => {

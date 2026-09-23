@@ -19,6 +19,7 @@ import {
 } from '../lib/finder/finder-runner-core';
 import { buildFinderResult, generateSignalsForJob } from '../lib/finder/finder-runner-shared';
 import { withExitStrategyBaseParams } from '../lib/finder/exit-strategy-param-prefix';
+import { registerLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from '../lib/strategies/built-in-catalog';
 
 describe('Finder adaptive cache mode decision', () => {
     it('normalizes a single Finder candidate without changing its result', () => {
@@ -833,5 +834,71 @@ describe('Finder execution-aware data', () => {
 
         expect(signals).to.have.length(2);
         expect(signals.map((signal) => signal.barIndex)).to.deep.equal([3, 7]);
+    });
+
+    it('reuses confirmation signals across candidates within one prepared-data run cache', () => {
+        const confirmationKey = 'finder_confirmation_cache_test';
+        let confirmationExecutions = 0;
+        const confirmationStrategy: Strategy = {
+            name: 'Finder confirmation cache test',
+            description: 'Test-only confirmation strategy',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => {
+                confirmationExecutions += 1;
+                return [{
+                    time: data[0].time,
+                    type: 'buy',
+                    price: data[0].close,
+                    barIndex: 0,
+                }];
+            },
+        };
+        const mainStrategy: Strategy = {
+            name: 'Finder main cache test',
+            description: 'Test-only main strategy',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => [{
+                time: data[0].time,
+                type: 'buy',
+                price: data[0].close,
+                barIndex: 0,
+            }],
+        };
+        const data: OHLCVData[] = Array.from({ length: 3 }, (_, index) => ({
+            time: (1_700_000_000 + index * 60) as Time,
+            open: 100,
+            high: 101,
+            low: 99,
+            close: 100,
+            volume: 1000,
+        }));
+        const settings: BacktestSettings = {
+            confirmationStrategies: [confirmationKey],
+            confirmationMode: 'agree',
+        };
+        const preparedDataCache = new WeakMap<OHLCVData[], Map<string, unknown>>();
+        const makeJob = (id: number): Parameters<typeof generateSignalsForJob>[0] => ({
+            id,
+            key: 'finder_main_cache_test',
+            name: mainStrategy.name,
+            params: { candidate: id },
+            backtestSettings: settings,
+            rustBacktestSettings: settings,
+            strategy: mainStrategy,
+        });
+
+        registerLoadedBuiltInStrategy(confirmationKey, confirmationStrategy);
+        try {
+            const first = generateSignalsForJob(makeJob(1), data, '1m', preparedDataCache);
+            const second = generateSignalsForJob(makeJob(2), data, '1m', preparedDataCache);
+
+            expect(first).to.have.length(1);
+            expect(second).to.have.length(1);
+            expect(confirmationExecutions).to.equal(1);
+        } finally {
+            unregisterLoadedBuiltInStrategy(confirmationKey);
+        }
     });
 });
