@@ -972,7 +972,7 @@ export function simulateTopMeanPortfolio(
  * nonempty chronological blocks. Fewer blocks (incl. one) return null CI —
  * `INSUFFICIENT_DATA`, never a misleading point CI from a single block.
  */
-function blockBootstrapMedianCi(blocks: readonly (readonly number[])[], resamples: number): { lower: number | null; upper: number | null } {
+export function blockBootstrapMedianCi(blocks: readonly (readonly number[])[], resamples: number): { lower: number | null; upper: number | null } {
     const b = blocks.length;
     if (b < MAX_ACTIVE_BLOCK_COUNT) return { lower: null, upper: null };
     const sortedBlocks = blocks.map((blk) => [...blk].sort((x, y) => x - y));
@@ -985,6 +985,57 @@ function blockBootstrapMedianCi(blocks: readonly (readonly number[])[], resample
     const medians: number[] = [];
     const chosen: number[][] = new Array(b);
     const heads: number[] = new Array<number>(b).fill(0);
+    // Keep the current head of each block in a min-heap: each emitted order
+    // statistic is O(log b), while the block-index tie-break preserves the
+    // deterministic order of the former left-to-right scan.
+    const heapBlocks = new Int32Array(b);
+    let heapSize = 0;
+    const heapValue = (slot: number): number => {
+        const blockIndex = heapBlocks[slot]!;
+        return chosen[blockIndex]![heads[blockIndex]!]!;
+    };
+    const heapLess = (left: number, right: number): boolean => {
+        const leftValue = heapValue(left);
+        const rightValue = heapValue(right);
+        return leftValue < rightValue
+            || (leftValue === rightValue && heapBlocks[left]! < heapBlocks[right]!);
+    };
+    const heapSwap = (left: number, right: number): void => {
+        const blockIndex = heapBlocks[left]!;
+        heapBlocks[left] = heapBlocks[right]!;
+        heapBlocks[right] = blockIndex;
+    };
+    const heapPush = (blockIndex: number): void => {
+        let slot = heapSize;
+        heapBlocks[heapSize] = blockIndex;
+        heapSize += 1;
+        while (slot > 0) {
+            const parent = (slot - 1) >> 1;
+            if (!heapLess(slot, parent)) break;
+            heapSwap(slot, parent);
+            slot = parent;
+        }
+    };
+    const heapPop = (): void => {
+        const minBlock = heapBlocks[0]!;
+        heads[minBlock] += 1;
+        heapSize -= 1;
+        if (heapSize > 0) {
+            heapBlocks[0] = heapBlocks[heapSize]!;
+            let slot = 0;
+            while (true) {
+                const left = slot * 2 + 1;
+                if (left >= heapSize) break;
+                const right = left + 1;
+                let child = left;
+                if (right < heapSize && heapLess(right, left)) child = right;
+                if (!heapLess(child, slot)) break;
+                heapSwap(slot, child);
+                slot = child;
+            }
+        }
+        if (heads[minBlock]! < chosen[minBlock]!.length) heapPush(minBlock);
+    };
     for (let r = 0; r < resamples; r += 1) {
         let total = 0;
         for (let k = 0; k < b; k += 1) {
@@ -995,20 +1046,15 @@ function blockBootstrapMedianCi(blocks: readonly (readonly number[])[], resample
         const midLo = (total - 1) >> 1;
         const midHi = total >> 1;
         for (let k = 0; k < b; k += 1) heads[k] = 0;
+        heapSize = 0;
+        for (let k = 0; k < b; k += 1) {
+            if (chosen[k]!.length > 0) heapPush(k);
+        }
         let prev = 0;
         let last = 0;
         for (let emitted = 0; emitted <= midHi; emitted += 1) {
-            let minBlock = -1;
-            let minValue = 0;
-            for (let k = 0; k < b; k += 1) {
-                const blk = chosen[k]!;
-                const pos = heads[k]!;
-                if (pos < blk.length) {
-                    const value = blk[pos]!;
-                    if (minBlock === -1 || value < minValue) { minBlock = k; minValue = value; }
-                }
-            }
-            heads[minBlock] = heads[minBlock]! + 1;
+            const minValue = heapValue(0);
+            heapPop();
             prev = last;
             last = minValue;
         }

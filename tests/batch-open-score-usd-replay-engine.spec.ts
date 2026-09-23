@@ -1,15 +1,30 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
+    blockBootstrapMedianCi,
     computeProfitNowConfidenceWeight,
     runOpenScoreUsdReplay,
     type OpenScoreUsdTarget,
     type PoolSnapshotRecord,
 } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
+import { MAX_ACTIVE_BLOCK_COUNT } from "../lib/batch-backtest/max-active-research-contract";
 import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-artifact";
 import type { BacktestResult, OHLCVData, Time, Trade } from "../lib/types/strategies";
 
 const T0 = 1_700_000_000;
+
+describe("block bootstrap median", () => {
+    it("preserves the exact sorted-block median while using the formal block count", () => {
+        const blocks = Array.from({ length: MAX_ACTIVE_BLOCK_COUNT }, (_, blockIndex) => [
+            blockIndex - 5,
+            blockIndex * 0.25,
+            20 - blockIndex,
+        ]);
+        const result = blockBootstrapMedianCi(blocks, 32);
+
+        expect(result).to.deep.equal({ lower: 0.75, upper: 2.25 });
+    });
+});
 
 function emptyResult(): BacktestResult {
     return {
