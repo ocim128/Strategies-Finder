@@ -1501,9 +1501,11 @@ async function runFinderAssetOpportunityWorkerSweep(
             options,
             settings: input.settings,
             capitalSettings: input.capitalSettings,
+            preResolvedCapital: input.preResolvedCapital,
             strategyKeys: input.selectedStrategies.map((strategy) => strategy.key),
             exitStrategyKeys: (input.exitStrategyCandidates ?? []).map((strategy) => strategy.key),
             useRustEnginePreference: input.useRustEnginePreference === true,
+            ...(input.parallelStrategies === true ? { parallelStrategies: true } : {}),
             ...(input.rustCapabilities ? { rustCapabilities: input.rustCapabilities } : {}),
             providerBySymbol,
             candidatePoolSize: input.candidatePoolSize,
@@ -1641,6 +1643,9 @@ export async function processFinderAssetOpportunityRun(
     owner: number,
 ): Promise<void> {
     const { symbols, selectedStrategies } = input;
+    const preResolvedCapital = input.preResolvedCapital ?? resolveCapitalSettingsFromRaw(
+        input.capitalSettings as unknown as Record<string, unknown>,
+    );
     const totalAssets = symbols.length;
     assertAssetOpportunityStrategySelection(selectedStrategies);
 
@@ -1740,12 +1745,12 @@ export async function processFinderAssetOpportunityRun(
     const workerCount = input.assetWorkerCount ?? 1;
     const iteration = workerFactory && workerCount > 1
         ? await runFinderAssetOpportunityWorkerSweep(
-            { ...input, batchTaskRunnerFactory: workerFactory, assetWorkerCount: workerCount },
+            { ...input, preResolvedCapital, batchTaskRunnerFactory: workerFactory, assetWorkerCount: workerCount },
             callbacks,
             () => runOwner !== owner || input.abortSignal.aborted,
         )
         : await runAssetOpportunityIteration(
-            input,
+            { ...input, preResolvedCapital },
             callbacks,
             () => runOwner !== owner || input.abortSignal.aborted,
         );
@@ -2143,7 +2148,7 @@ export async function processFinderAssetOpportunityBatchRun(
     // settings force every candidate through TypeScript. Only apply the Rust
     // worker cap when a Rust execution is actually possible; otherwise the
     // smaller chunks can evict the holdout signal cache before reuse.
-    const resolvedCapitalSettings = resolveCapitalSettingsFromRaw(
+    const resolvedCapitalSettings = input.preResolvedCapital ?? resolveCapitalSettingsFromRaw(
         input.capitalSettings as unknown as Record<string, unknown>,
     );
     const rustCanRun = input.useRustEnginePreference === true
@@ -2193,6 +2198,9 @@ export async function processFinderAssetOpportunityBatchRun(
                 },
             )
         : 1;
+    const holdoutAffinityCount = !canChunkAssets && workerCount > 1
+        ? Math.min(workerCount, totalIterations)
+        : 1;
 
     if (input.batchTaskRunnerFactory && workerCount > 1) {
         debugLogger.event("finder.asset_opportunity_batch.parallel_start", {
@@ -2221,15 +2229,23 @@ export async function processFinderAssetOpportunityBatchRun(
                     ...(assetChunkCount > 1
                         ? { assetChunkIndex, assetChunkCount, includeFullStrategyBreakdown: true }
                         : {}),
+                    ...(holdoutAffinityCount > 1
+                        ? {
+                            cacheAffinityIndex: Math.floor(iterationIndex * holdoutAffinityCount / totalIterations),
+                            cacheAffinityCount: holdoutAffinityCount,
+                        }
+                        : {}),
                     runId: input.runId,
                     interval: input.interval,
                     symbols: symbols.slice(start, end),
                     options: buildIterationOptions(holdoutBars),
                     settings: input.settings,
                     capitalSettings: input.capitalSettings,
+                    preResolvedCapital: resolvedCapitalSettings,
                     strategyKeys: selectedStrategies.map((strategy) => strategy.key),
                     exitStrategyKeys: (input.exitStrategyCandidates ?? []).map((strategy) => strategy.key),
                     useRustEnginePreference: input.useRustEnginePreference === true,
+                    ...(input.parallelStrategies === true ? { parallelStrategies: true } : {}),
                     ...(input.rustCapabilities ? { rustCapabilities: input.rustCapabilities } : {}),
                     providerBySymbol: providerRecord,
                     candidatePoolSize: input.candidatePoolSize,
@@ -2330,6 +2346,7 @@ export async function processFinderAssetOpportunityBatchRun(
         // symbol loads once for the whole sequential sweep.
         const assetLoadContext = createServerFinderAssetOpportunityLoadContext(totalAssets);
         const paramSetCache = new Map<string, StrategyParams[]>();
+        const exitSignalCacheBySymbol: NonNullable<FinderAssetOpportunityRunInput["exitSignalCacheBySymbol"]> = new Map();
         const throttleProgressWrite = createProgressEventThrottle();
 
         for (let iterationIndex = 0; iterationIndex < totalIterations; iterationIndex += 1) {
@@ -2363,8 +2380,10 @@ export async function processFinderAssetOpportunityBatchRun(
                     {
                         ...input,
                         options: buildIterationOptions(holdoutBars),
+                        preResolvedCapital: resolvedCapitalSettings,
                         assetLoadContext,
                         paramSetCache,
+                        exitSignalCacheBySymbol,
                     },
                     {
                         onProgress: (progress) => {
@@ -2781,6 +2800,7 @@ async function handleAssetOpportunityRunRequest(
                 settings: prepared.settings,
                 capitalSettings: prepared.capitalSettings,
                 selectedStrategies: prepared.selectedStrategies,
+                parallelStrategies: true,
                 exitStrategyCandidates: prepared.exitStrategyCandidates,
                 useRustEnginePreference: prepared.useRustEnginePreference,
                 rustCapabilities,

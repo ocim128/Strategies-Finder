@@ -13,6 +13,7 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
     calculateMedianBarsToTp,
+    calculateAssetOpportunityDerivedMetrics,
     computeAssetSupportCounts,
     decideAssetGrade,
     compareAssetOpportunityResults,
@@ -82,6 +83,32 @@ describe("Asset Opportunity support counts", () => {
             ],
         });
         expect(counts.freshSameDirection).to.equal(0);
+    });
+});
+
+describe("Asset Opportunity derived metrics", () => {
+    it("short-circuits below the minimum trade count before indexing candles", () => {
+        const candles = [{
+            get time(): never {
+                throw new Error("derived metrics should not index candles");
+            },
+        }] as unknown as OHLCVData[];
+        const metrics = calculateAssetOpportunityDerivedMetrics({
+            result: { totalTrades: 2, trades: [] },
+            candles,
+            freshEntryPrice: null,
+        });
+
+        expect(metrics).to.deep.equal({
+            medianBarsToTp: null,
+            barrierExitShare: null,
+            entryHourConcentration: null,
+            tradeGapUniformity: null,
+            topDecileProfitShare: null,
+            winnerLoserHoldGapBars: null,
+            entryPriceRegimeMembership: null,
+            equityPathLinearity: null,
+        });
     });
 });
 

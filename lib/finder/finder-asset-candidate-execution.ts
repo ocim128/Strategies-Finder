@@ -92,6 +92,9 @@ export interface AssetCandidateExitOverride {
 
 export type AssetCandidateExitSignalCache = BacktestExitSignalCache;
 
+/** Worker-scoped exit caches are separated by symbol before entering the executor. */
+export type AssetCandidateExitSignalCacheBySymbol = Map<string, AssetCandidateExitSignalCache>;
+
 export interface AssetCandidateBacktestOutput {
     result: BacktestResult;
     signals: Signal[];
@@ -201,6 +204,8 @@ export async function runAssetCandidateBacktest(args: {
     rustCapabilities?: RustCapabilities;
     rustDiagnosticPhase?: RustDiagnosticPhase;
     signal?: AbortSignal;
+    /** Reuse the run-level capital normalization across candidate executions. */
+    preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
     typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
     /**
      * Closed-candle view the executor should use. Omitted for cross-symbol
@@ -226,7 +231,7 @@ export async function runAssetCandidateBacktest(args: {
         { ...(backtestSettings as Record<string, unknown>), interval: args.interval } as BacktestSettings,
         args.interval,
     );
-    const preResolvedCapital = resolveCapitalSettingsFromRaw(
+    const preResolvedCapital = args.preResolvedCapital ?? resolveCapitalSettingsFromRaw(
         args.capitalSettings as unknown as Record<string, unknown>,
     );
     const backtestRunOptions = resolveAssetCandidateBacktestRunOptions(

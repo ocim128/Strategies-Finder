@@ -75,6 +75,8 @@ export interface ServerAssetIsSearchInput {
     options: FinderOptions;
     settings: BacktestSettings;
     capitalSettings: CapitalSettings;
+    /** Run-level normalized capital settings reused by every candidate. */
+    preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
     selectedStrategy: FinderSelectedStrategy;
     exitStrategyCandidates?: FinderSelectedStrategy[];
     generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[];
@@ -283,7 +285,7 @@ export async function runServerAssetIsSearch(
             `Cross-symbol strategy "${selectedStrategy.name}" requires secondary asset data for Asset Opportunity.`,
         );
     }
-    const preResolvedCapital = resolveCapitalSettingsFromRaw(
+    const preResolvedCapital = input.preResolvedCapital ?? resolveCapitalSettingsFromRaw(
         capitalSettings as unknown as Record<string, unknown>,
     );
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
@@ -485,6 +487,7 @@ export async function runServerAssetIsSearch(
                         riskOverrideParams: combinedParams,
                         settings,
                         capitalSettings,
+                        preResolvedCapital,
                         options,
                         useRustEnginePreference: input.useRustEnginePreference,
                         rustCapabilities: input.rustCapabilities,
@@ -528,6 +531,7 @@ export async function runServerAssetIsSearch(
                 riskOverrideParams: combinedParams,
                 settings,
                 capitalSettings,
+                preResolvedCapital,
                 options,
                 ...(exitStrategy
                     ? { exitOverride: { key: exitStrategy.key, params: exitParams ?? {} } }

@@ -419,6 +419,55 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(new Set(started.map(({ runnerIndex }) => runnerIndex)).size).to.equal(chunkCount);
     });
 
+    it("pins whole-holdout tasks to one persistent worker affinity", async () => {
+        const datasets = longUpDownDatasets();
+        const symbols = [...datasets.keys()];
+        const tasks: AssetOpportunityBatchWorkerTask[] = [2, 3, 4, 5].map((holdoutBars, taskIndex) => ({
+            taskIndex,
+            holdoutBars,
+            cacheAffinityIndex: Math.floor(taskIndex / 2),
+            cacheAffinityCount: 2,
+            runId: "whole-holdout-affinity",
+            interval: "5m",
+            symbols,
+            options: makeBatchOptions(symbols),
+            settings,
+            capitalSettings,
+            strategyKeys: [STRATEGY_KEY],
+            exitStrategyKeys: [],
+            useRustEnginePreference: false,
+            providerBySymbol: null,
+            candidatePoolSize: 2,
+            minFreshSupport: 1,
+        }));
+        const started: Array<{ affinity: number; runnerIndex: number }> = [];
+        const result = await runAssetOpportunityBatchSweep({
+            tasks,
+            runnerCount: 2,
+            createRunner: createInProcessRunnerFactory({
+                datasets,
+                onTaskStart: (task, runnerIndex) => started.push({
+                    affinity: task.cacheAffinityIndex!,
+                    runnerIndex,
+                }),
+            }),
+            onIterationResult: async () => undefined,
+            onProgress: () => undefined,
+            onRunLog: () => undefined,
+            isCancelled: () => false,
+        });
+
+        expect(result.fatal).to.equal(null);
+        expect(started).to.have.length(4);
+        const runnerByAffinity = new Map<number, number>();
+        for (const entry of started) {
+            const previous = runnerByAffinity.get(entry.affinity);
+            if (previous === undefined) runnerByAffinity.set(entry.affinity, entry.runnerIndex);
+            else expect(entry.runnerIndex).to.equal(previous);
+        }
+        expect(runnerByAffinity.size).to.equal(2);
+    });
+
     it("clamps the auto worker count for Rust-engine runs; the env override still wins", () => {
         const auto = resolveAssetOpportunityBatchWorkerCount(41, 10, {}, 64 * GIB);
         // rustEngine caps the AUTO value at 2 (the Rust HTTP server serializes;

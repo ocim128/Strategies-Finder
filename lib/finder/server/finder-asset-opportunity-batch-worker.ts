@@ -46,6 +46,7 @@ import {
     createAssetOpportunitySignalCache,
     type AssetOpportunitySignalCache,
 } from "../finder-asset-opportunity-search-cache";
+import type { AssetCandidateExitSignalCacheBySymbol } from "../finder-asset-candidate-execution";
 
 /**
  * One holdout iteration's full input, structured-clone-safe. `options` is the
@@ -58,6 +59,9 @@ export interface AssetOpportunityBatchWorkerTask {
     /** Contiguous asset partition within one holdout; omitted for whole sweeps. */
     assetChunkIndex?: number;
     assetChunkCount?: number;
+    /** Persistent-worker affinity for whole-holdout cache reuse. */
+    cacheAffinityIndex?: number;
+    cacheAffinityCount?: number;
     includeFullStrategyBreakdown?: boolean;
     runId: string;
     interval: string;
@@ -65,9 +69,12 @@ export interface AssetOpportunityBatchWorkerTask {
     options: FinderOptions;
     settings: BacktestSettings;
     capitalSettings: CapitalSettings;
+    preResolvedCapital?: CapitalSettings;
     strategyKeys: string[];
     exitStrategyKeys: string[];
     useRustEnginePreference: boolean;
+    /** Enable bounded in-process strategy parallelism for single-run tasks. */
+    parallelStrategies?: boolean;
     rustCapabilities?: RustCapabilities;
     /** Symbol (trim+upper) -> provider label; null when no provider map was supplied. */
     providerBySymbol: Record<string, string> | null;
@@ -138,6 +145,8 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
     assetLoadContext?: BatchDatasetLoadContext;
     /** Persistent full-signal cache reused across this worker's holdout tasks. */
     signalCache?: AssetOpportunitySignalCache;
+    /** Persistent symbol-separated exit-signal caches reused across this worker's tasks. */
+    exitSignalCacheBySymbol?: AssetCandidateExitSignalCacheBySymbol;
     /** Worker-local strategy objects reused across persistent holdout tasks. */
     strategySelection?: AssetOpportunityWorkerStrategySelection;
     /** Worker-local normalized candidate parameter sets reused across tasks. */
@@ -176,6 +185,7 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
             options: task.options,
             settings: task.settings,
             capitalSettings: task.capitalSettings,
+            ...(task.preResolvedCapital ? { preResolvedCapital: task.preResolvedCapital } : {}),
             selectedStrategies,
             ...(exitStrategyCandidates ? { exitStrategyCandidates } : {}),
             ...(task.useRustEnginePreference === true ? { useRustEnginePreference: true } : {}),
@@ -185,6 +195,8 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
             ...(args.assetLoadContext ? { assetLoadContext: args.assetLoadContext } : {}),
             ...(args.paramSetCache ? { paramSetCache: args.paramSetCache } : {}),
             ...(args.signalCache ? { signalCache: args.signalCache } : {}),
+            ...(args.exitSignalCacheBySymbol ? { exitSignalCacheBySymbol: args.exitSignalCacheBySymbol } : {}),
+            ...(task.parallelStrategies === true ? { parallelStrategies: true } : {}),
             ...(task.includeFullStrategyBreakdown === true ? { includeFullStrategyBreakdown: true } : {}),
             ...(getProvider ? { getProvider } : {}),
             candidatePoolSize: task.candidatePoolSize,
@@ -248,6 +260,7 @@ if (!isMainThread && parentPort) {
     // every holdout this worker processes.
     let assetLoadContext: BatchDatasetLoadContext | null = null;
     let signalCache: AssetOpportunitySignalCache | null = null;
+    let exitSignalCacheBySymbol: AssetCandidateExitSignalCacheBySymbol | null = null;
     const paramSetCache = new Map<string, StrategyParams[]>();
     let strategySelectionKey = "";
     let strategySelection: AssetOpportunityWorkerStrategySelection | null = null;
@@ -288,6 +301,7 @@ if (!isMainThread && parentPort) {
         // worker loads each symbol once across ALL holdout tasks it processes.
         assetLoadContext ??= createServerFinderAssetOpportunityLoadContext(task.symbols.length);
         signalCache ??= createAssetOpportunitySignalCache();
+        exitSignalCacheBySymbol ??= new Map();
         runAssetOpportunityBatchWorkerTask({
             task,
             loadDataset: task.inlineDatasets
@@ -296,6 +310,7 @@ if (!isMainThread && parentPort) {
             assetLoadContext,
             paramSetCache,
             signalCache,
+            exitSignalCacheBySymbol,
             strategySelection: strategySelection!,
             abortSignal: activeAbort.signal,
             isCancelled: () => activeAbort?.signal.aborted === true,

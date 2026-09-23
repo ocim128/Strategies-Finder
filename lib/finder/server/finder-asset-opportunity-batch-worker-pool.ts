@@ -472,9 +472,17 @@ export async function runAssetOpportunityBatchSweep<TResult extends { cancelled:
             && Number.isInteger((task as unknown as AssetOpportunityBatchWorkerTask).assetChunkCount)
             && (task as unknown as AssetOpportunityBatchWorkerTask).assetChunkCount! > 1,
     );
+    const cacheAffinityMode = !chunkAffinityMode && tasks.length > 0 && tasks.every(
+        (task) => Number.isInteger((task as unknown as AssetOpportunityBatchWorkerTask).cacheAffinityIndex)
+            && Number.isInteger((task as unknown as AssetOpportunityBatchWorkerTask).cacheAffinityCount)
+            && (task as unknown as AssetOpportunityBatchWorkerTask).cacheAffinityCount! > 1,
+    );
     const pendingChunkTasks = chunkAffinityMode ? [...tasks] : [];
     const chunkRunnerByIndex = new Map<number, AssetOpportunityBatchTaskRunner<TTask>>();
     const freeChunkRunners = new Map<number, AssetOpportunityBatchTaskRunner<TTask>>();
+    const pendingCacheAffinityTasks = cacheAffinityMode ? [...tasks] : [];
+    const cacheAffinityRunnerByIndex = new Map<number, AssetOpportunityBatchTaskRunner<TTask>>();
+    const freeCacheAffinityRunners = new Map<number, AssetOpportunityBatchTaskRunner<TTask>>();
     const runnerTasks = new Map<AssetOpportunityBatchTaskRunner<TTask>, TTask>();
     let cancelFlushed = false;
     let assignedTaskCount = 0;
@@ -537,8 +545,8 @@ export async function runAssetOpportunityBatchSweep<TResult extends { cancelled:
                 if (sweepError) break;
 
                 // 3. Assignment: only while healthy and tasks remain. Chunked
-                // tasks stay on the same runner by assetChunkIndex so the
-                // persistent worker cache survives the holdout sweep.
+                // tasks stay on the same runner by assetChunkIndex; whole
+                // holdout tasks use cacheAffinityIndex for the same reason.
                 while (fatal === null && !cancelledFlag && !args.isCancelled()) {
                     let runner: AssetOpportunityBatchTaskRunner<TTask> | undefined;
                     let task: TTask | undefined;
@@ -563,6 +571,35 @@ export async function runAssetOpportunityBatchSweep<TResult extends { cancelled:
                                 runner = freeRunners.pop();
                                 task = pendingChunkTasks.splice(pendingIndex, 1)[0];
                                 chunkRunnerByIndex.set((task as unknown as AssetOpportunityBatchWorkerTask).assetChunkIndex!, runner!);
+                            }
+                        }
+                    } else if (cacheAffinityMode) {
+                        for (const [affinityIndex, readyRunner] of freeCacheAffinityRunners) {
+                            const pendingIndex = pendingCacheAffinityTasks.findIndex(
+                                (candidate) => (candidate as unknown as AssetOpportunityBatchWorkerTask).cacheAffinityIndex
+                                    === affinityIndex,
+                            );
+                            if (pendingIndex >= 0) {
+                                runner = readyRunner;
+                                freeCacheAffinityRunners.delete(affinityIndex);
+                                task = pendingCacheAffinityTasks.splice(pendingIndex, 1)[0];
+                                break;
+                            }
+                            freeCacheAffinityRunners.delete(affinityIndex);
+                        }
+                        if (!task && freeRunners.length > 0) {
+                            const pendingIndex = pendingCacheAffinityTasks.findIndex(
+                                (candidate) => !cacheAffinityRunnerByIndex.has(
+                                    (candidate as unknown as AssetOpportunityBatchWorkerTask).cacheAffinityIndex!,
+                                ),
+                            );
+                            if (pendingIndex >= 0) {
+                                runner = freeRunners.pop();
+                                task = pendingCacheAffinityTasks.splice(pendingIndex, 1)[0];
+                                cacheAffinityRunnerByIndex.set(
+                                    (task as unknown as AssetOpportunityBatchWorkerTask).cacheAffinityIndex!,
+                                    runner!,
+                                );
                             }
                         }
                     } else if (nextTaskIndex < totalTasks && freeRunners.length > 0) {
@@ -660,6 +697,11 @@ export async function runAssetOpportunityBatchSweep<TResult extends { cancelled:
                     runnerTasks.delete(self);
                     if (chunkAffinityMode) {
                         freeChunkRunners.set((task as unknown as AssetOpportunityBatchWorkerTask).assetChunkIndex!, self);
+                    } else if (cacheAffinityMode) {
+                        freeCacheAffinityRunners.set(
+                            (task as unknown as AssetOpportunityBatchWorkerTask).cacheAffinityIndex!,
+                            self,
+                        );
                     } else {
                         freeRunners.push(self);
                     }
@@ -678,6 +720,11 @@ export async function runAssetOpportunityBatchSweep<TResult extends { cancelled:
                     runnerTasks.delete(self);
                     if (chunkAffinityMode) {
                         freeChunkRunners.set((task as unknown as AssetOpportunityBatchWorkerTask).assetChunkIndex!, self);
+                    } else if (cacheAffinityMode) {
+                        freeCacheAffinityRunners.set(
+                            (task as unknown as AssetOpportunityBatchWorkerTask).cacheAffinityIndex!,
+                            self,
+                        );
                     } else {
                         freeRunners.push(self);
                     }

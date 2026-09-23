@@ -439,6 +439,8 @@ export interface AssetOpportunityRunInput {
     settings: BacktestSettings;
     /** Capital settings shared by every candidate. */
     capitalSettings: CapitalSettings;
+    /** Run-level normalized capital settings reused by every candidate. */
+    preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
     /** One selected strategy library for this independent per-strategy pass. */
     selectedStrategy: FinderSelectedStrategy;
     /** Optional pre-loaded exit strategies for Exit Strategy Override. */
@@ -463,6 +465,8 @@ export interface AssetOpportunityRunInput {
     signalCache?: AssetOpportunitySignalCache;
     /** Per-asset cache for deterministic Exit Strategy Override signals. */
     exitSignalCache?: AssetCandidateExitSignalCache;
+    /** Allow bounded in-process strategy parallelism for single-run mode. */
+    parallelStrategies?: boolean;
     /** Enable the bounded single-candidate freshness probe on server runs. */
     precheckFreshEntry?: boolean;
     /** Recompute full scalar analytics once for the selected winner. */
@@ -735,17 +739,25 @@ export async function runAssetOpportunitySearch(
     callbacks: AssetOpportunityRunCallbacks,
 ): Promise<AssetOpportunityRunOutput> {
     throwIfAborted(input.signal);
+    const searchInput = input.preResolvedCapital
+        ? input
+        : {
+            ...input,
+            preResolvedCapital: resolveCapitalSettingsFromRaw(
+                input.capitalSettings as unknown as Record<string, unknown>,
+            ),
+        };
     const outcomes: AssetOpportunityAssetResult[] = [];
     const results: FinderAssetOpportunityResult[] = [];
-    const totalAssets = input.assets.length;
-    const selectedStrategy = input.selectedStrategy;
+    const totalAssets = searchInput.assets.length;
+    const selectedStrategy = searchInput.selectedStrategy;
 
     callbacks.setProgress(0, `Asset Opportunity: 0/${totalAssets} assets`);
 
     for (let assetIndex = 0; assetIndex < totalAssets; assetIndex++) {
-        throwIfAborted(input.signal);
+        throwIfAborted(searchInput.signal);
         if (callbacks.isCancelled()) break;
-        const asset = input.assets[assetIndex]!;
+        const asset = searchInput.assets[assetIndex]!;
         const symbol = asset.symbol;
 
         callbacks.setProgress(
@@ -757,7 +769,7 @@ export async function runAssetOpportunitySearch(
         try {
             const outcome = await searchOneAsset({
                 asset,
-                input,
+                input: searchInput,
                 selectedStrategy,
                 callbacks,
             });
@@ -769,7 +781,7 @@ export async function runAssetOpportunitySearch(
                 callbacks.onAssetComplete?.(outcome);
             }
         } catch (error) {
-            if (input.signal?.aborted || isAbortError(error)) {
+            if (searchInput.signal?.aborted || isAbortError(error)) {
                 throw error;
             }
             if (callbacks.isCancelled()) {
@@ -802,6 +814,9 @@ async function searchOneAsset(args: {
 }): Promise<AssetOpportunityAssetResult> {
     const { asset, input, selectedStrategy, callbacks } = args;
     const symbol = asset.symbol;
+    const preResolvedCapital = input.preResolvedCapital ?? resolveCapitalSettingsFromRaw(
+        input.capitalSettings as unknown as Record<string, unknown>,
+    );
     const exitSignalCache = input.exitSignalCache ?? new Map();
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
     const preparedStrategy = createPreparedFinderStrategy(
@@ -1061,6 +1076,7 @@ async function searchOneAsset(args: {
                 interval: input.interval,
                 settings: input.settings,
                 capitalSettings: input.capitalSettings,
+                preResolvedCapital,
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 exitSignalCache,
@@ -1234,6 +1250,7 @@ async function searchOneAsset(args: {
                     interval: input.interval,
                     settings: input.settings,
                     capitalSettings: input.capitalSettings,
+                    preResolvedCapital,
                     options: assetOptions,
                     exitStrategyCandidates: input.exitStrategyCandidates,
                     exitSignalCache,
@@ -1372,6 +1389,7 @@ async function searchOneAsset(args: {
                 interval: input.interval,
                 settings: input.settings,
                 capitalSettings: input.capitalSettings,
+                preResolvedCapital,
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 dataFetcher: input.dataFetcher,
@@ -1381,9 +1399,6 @@ async function searchOneAsset(args: {
                 typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
                 signal: input.signal,
             });
-            const preResolvedCapital = resolveCapitalSettingsFromRaw(
-                input.capitalSettings as unknown as Record<string, unknown>,
-            );
             const selection = buildSelectionResult(
                 winnerSelection.result,
                 slicedHistorical[slicedHistorical.length - 1]?.time ?? null,
@@ -1501,6 +1516,7 @@ async function searchOneAsset(args: {
                 interval: input.interval,
                 settings: input.settings,
                 capitalSettings: input.capitalSettings,
+                preResolvedCapital,
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 exitSignalCache,
@@ -1540,6 +1556,7 @@ async function searchOneAsset(args: {
                 interval: input.interval,
                 settings: input.settings,
                 capitalSettings: input.capitalSettings,
+                preResolvedCapital,
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 exitSignalCache,
@@ -1602,6 +1619,7 @@ async function searchOneAsset(args: {
                 interval: input.interval,
                 settings: input.settings,
                 capitalSettings: input.capitalSettings,
+                preResolvedCapital,
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 dataFetcher: input.dataFetcher,
@@ -1611,9 +1629,6 @@ async function searchOneAsset(args: {
                 signal: input.signal,
                 fullAnalytics: true,
             });
-            const preResolvedCapital = resolveCapitalSettingsFromRaw(
-                input.capitalSettings as unknown as Record<string, unknown>,
-            );
             const selection = buildSelectionResult(
                 winnerEvaluation.result,
                 winnerAnalyticsData[winnerAnalyticsData.length - 1]?.time ?? null,
@@ -1852,6 +1867,7 @@ async function regenerateSignalsAndDetectFresh(args: {
     interval: string;
     settings: BacktestSettings;
     capitalSettings: CapitalSettings;
+    preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
     options: FinderOptions;
     exitStrategyCandidates?: FinderSelectedStrategy[];
     exitSignalCache?: AssetCandidateExitSignalCache;
@@ -1877,6 +1893,7 @@ async function regenerateSignalsAndDetectFresh(args: {
             interval: args.interval,
             settings: args.settings,
             capitalSettings: args.capitalSettings,
+            ...(args.preResolvedCapital ? { preResolvedCapital: args.preResolvedCapital } : {}),
             options: args.options,
             exitStrategyCandidates: args.exitStrategyCandidates,
             exitSignalCache: args.exitSignalCache,
@@ -1921,6 +1938,7 @@ async function regenerateSignalsAndDetectFresh(args: {
         interval: args.interval,
         settings: args.settings,
         capitalSettings: args.capitalSettings,
+        ...(args.preResolvedCapital ? { preResolvedCapital: args.preResolvedCapital } : {}),
         options: args.options,
         exitStrategyCandidates: args.exitStrategyCandidates,
         exitSignalCache: args.exitSignalCache,
@@ -2044,6 +2062,7 @@ async function executeAssetCandidate(args: {
     settings: BacktestSettings;
     capitalSettings: CapitalSettings;
     options: FinderOptions;
+    preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
     exitStrategyCandidates?: FinderSelectedStrategy[];
     exitSignalCache?: AssetCandidateExitSignalCache;
     dataFetcher?: CrossSymbolDataFetcher;
@@ -2111,6 +2130,7 @@ async function executeAssetCandidate(args: {
         rustDiagnosticPhase: args.rustDiagnosticPhase,
         rustCapabilities: args.rustCapabilities,
         typescriptSimulationConcurrency: args.typescriptSimulationConcurrency,
+        ...(args.preResolvedCapital ? { preResolvedCapital: args.preResolvedCapital } : {}),
         ...(args.strategy.crossSymbolConfig ? {} : { closedCandleDataOverride: args.data }),
         ...(args.preGeneratedSignals ? { preGeneratedSignals: args.preGeneratedSignals } : {}),
         needs: {
@@ -2148,6 +2168,7 @@ async function runCandidateNextExitOnAsset(args: {
     interval: string;
     settings: BacktestSettings;
     capitalSettings: CapitalSettings;
+    preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
     options: FinderOptions;
     exitStrategyCandidates?: FinderSelectedStrategy[];
     exitSignalCache?: AssetCandidateExitSignalCache;
@@ -2172,6 +2193,7 @@ async function runCandidateNextExitOnAsset(args: {
             interval: args.interval,
             settings: args.settings,
             capitalSettings: args.capitalSettings,
+            ...(args.preResolvedCapital ? { preResolvedCapital: args.preResolvedCapital } : {}),
             options: args.options,
             exitStrategyCandidates: args.exitStrategyCandidates,
             exitSignalCache: args.exitSignalCache,
@@ -2229,6 +2251,7 @@ async function runCandidateOosOnAsset(args: {
     interval: string;
     settings: BacktestSettings;
     capitalSettings: CapitalSettings;
+    preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
     options: FinderOptions;
     exitStrategyCandidates?: FinderSelectedStrategy[];
     exitSignalCache?: AssetCandidateExitSignalCache;
@@ -2248,6 +2271,7 @@ async function runCandidateOosOnAsset(args: {
             interval: args.interval,
             settings: args.settings,
             capitalSettings: args.capitalSettings,
+            ...(args.preResolvedCapital ? { preResolvedCapital: args.preResolvedCapital } : {}),
             options: args.options,
             exitStrategyCandidates: args.exitStrategyCandidates,
             exitSignalCache: args.exitSignalCache,

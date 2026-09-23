@@ -447,11 +447,16 @@ function completedTrades(result: Pick<BacktestResult, "trades">) {
     return result.trades.filter((trade) => trade.exitReason !== "end_of_data");
 }
 
+const candleIndexCache = new WeakMap<readonly OHLCVData[], Map<string, number>>();
+
 function candleIndexByTime(candles: readonly OHLCVData[]): Map<string, number> {
+    const cached = candleIndexCache.get(candles);
+    if (cached) return cached;
     const indexByTime = new Map<string, number>();
     for (let index = 0; index < candles.length; index += 1) {
         indexByTime.set(timeKey(candles[index]!.time), index);
     }
+    candleIndexCache.set(candles, indexByTime);
     return indexByTime;
 }
 
@@ -597,6 +602,18 @@ export function calculateAssetOpportunityDerivedMetrics(args: {
     candles: readonly OHLCVData[];
     freshEntryPrice: number | null;
 }): AssetOpportunityMetricFields {
+    if (!Number.isFinite(args.result.totalTrades) || args.result.totalTrades < MEDIAN_BARS_TO_TP_MIN_HITS) {
+        return {
+            medianBarsToTp: null,
+            barrierExitShare: null,
+            entryHourConcentration: null,
+            tradeGapUniformity: null,
+            topDecileProfitShare: null,
+            winnerLoserHoldGapBars: null,
+            entryPriceRegimeMembership: null,
+            equityPathLinearity: null,
+        };
+    }
     const indexByTime = candleIndexByTime(args.candles);
     const completedPairs = completedTradeBarPairs(args.result, indexByTime);
     return {

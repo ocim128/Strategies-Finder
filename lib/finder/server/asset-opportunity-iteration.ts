@@ -53,7 +53,10 @@ import { createServerFinderAssetOpportunityLoadContext } from "./server-finder-d
 import { parseSyntheticPairToken } from "../../synthetic-pair-token";
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
-import type { AssetCandidateExitSignalCache } from "../finder-asset-candidate-execution";
+import type {
+    AssetCandidateExitSignalCacheBySymbol,
+} from "../finder-asset-candidate-execution";
+import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
 
 const ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY = 12;
 
@@ -116,6 +119,8 @@ export interface FinderAssetOpportunityRunInput {
     options: FinderOptions;
     settings: BacktestSettings;
     capitalSettings: CapitalSettings;
+    /** Run-level normalized capital settings reused by every candidate. */
+    preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
     selectedStrategies: FinderSelectedStrategy[];
     exitStrategyCandidates?: FinderSelectedStrategy[];
     useRustEnginePreference?: boolean;
@@ -125,6 +130,10 @@ export interface FinderAssetOpportunityRunInput {
     typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
     /** Worker-local full-signal cache shared by the batch holdout tasks. */
     signalCache?: AssetOpportunitySignalCache;
+    /** Worker/run-local exit-signal caches separated by symbol. */
+    exitSignalCacheBySymbol?: AssetCandidateExitSignalCacheBySymbol;
+    /** Enable bounded in-process strategy parallelism for single-run mode. */
+    parallelStrategies?: boolean;
     abortSignal: AbortSignal;
     loadDataset: (
         symbol: string,
@@ -219,6 +228,9 @@ export async function runAssetOpportunityIteration(
     isCancelled: () => boolean,
 ): Promise<AssetOpportunityIterationResult> {
     const { symbols, selectedStrategies } = input;
+    const preResolvedCapital = input.preResolvedCapital ?? resolveCapitalSettingsFromRaw(
+        input.capitalSettings as unknown as Record<string, unknown>,
+    );
     const totalAssets = symbols.length;
     const iterationStartedAt = Date.now();
     assertAssetOpportunityStrategySelection(selectedStrategies);
@@ -397,6 +409,7 @@ export async function runAssetOpportunityIteration(
             options: args.options,
             settings: args.settings,
             capitalSettings: args.capitalSettings,
+            preResolvedCapital,
             selectedStrategy: args.selectedStrategies[0]!,
             exitStrategyCandidates: args.exitStrategyCandidates,
             generateParamSets: args.generateParamSets,
@@ -539,7 +552,12 @@ export async function runAssetOpportunityIteration(
             // building it once per asset avoids N re-walks of the dataset to
             // find the latest closed bar (selectExecutionAwareClosedCandles).
             const fullClosed = prepareClosedCandleData(data, input.interval, input.settings);
-            const exitSignalCache: AssetCandidateExitSignalCache = new Map();
+            const cacheSymbol = symbol.trim().toUpperCase();
+            let exitSignalCache = input.exitSignalCacheBySymbol?.get(cacheSymbol);
+            if (!exitSignalCache) {
+                exitSignalCache = new Map();
+                input.exitSignalCacheBySymbol?.set(cacheSymbol, exitSignalCache);
+            }
             const processStrategyOutcome = (
                 selectedStrategy: FinderSelectedStrategy,
                 outcome: AssetOpportunityAssetResult,
@@ -664,6 +682,7 @@ export async function runAssetOpportunityIteration(
                         options: input.options,
                         settings: input.settings,
                         capitalSettings: input.capitalSettings,
+                        preResolvedCapital,
                         selectedStrategy,
                         exitStrategyCandidates: input.exitStrategyCandidates,
                         generateParamSets: input.generateParamSets
@@ -720,7 +739,10 @@ export async function runAssetOpportunityIteration(
                 );
                 return completedOutcome ?? runOutput.outcomes[0];
             };
-            const strategyConcurrency = 1;
+            const strategyConcurrency = input.parallelStrategies === true
+                && input.useRustEnginePreference !== true
+                ? Math.min(4, selectedStrategies.length)
+                : 1;
             for (let strategyStart = 0; strategyStart < selectedStrategies.length; strategyStart += strategyConcurrency) {
                 const strategyEnd = Math.min(selectedStrategies.length, strategyStart + strategyConcurrency);
                 const outcomes = await Promise.all(
