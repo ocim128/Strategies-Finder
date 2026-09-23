@@ -393,7 +393,7 @@ To keep the server's worst-case CPU, response size, and memory predictable, the 
 | `randomization.count` | `5_000` | Documented normal workload is 1,000 runs. |
 | `randomization.rangePercent` | `1_000` | Must be a finite non-negative number. |
 | `randomization.seed` | — | Must be finite when provided. |
-| `ranking.topN` | `1_000` | Must be a finite positive number. |
+| `ranking.topN` | `1_000` | Must be a finite positive integer (1–1000). |
 | `ranking.minTrades` / `ranking.maxTrades` | — | Finite non-negative when provided. |
 | `items` (batch) | `10_000` | Must be non-empty. |
 

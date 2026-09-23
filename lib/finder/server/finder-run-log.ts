@@ -10,9 +10,10 @@
  * post-mortem can read exactly which assets failed, why, and how long each
  * phase took.
  *
- * Logging is opt-out-by-default: the directory resolves to
+ * Logging is always on: the directory resolves to
  * `<project root>/archive/finder-runs` unless `FINDER_RUN_LOG_DIR` is set
- * (absolute or relative path). `FINDER_RUN_LOG_DIR=""` disables the log.
+ * (absolute or relative path). An empty value behaves like unset — there is
+ * no disable switch.
  *
  * Node-only (imports `node:fs/promises` + `node:path`): must never be imported
  * from browser-bound modules. The append leaf is injectable so tests can

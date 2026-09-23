@@ -122,7 +122,6 @@ flowchart LR
     F --> O[Walk Forward]
     M --> J
     O --> J
-    P --> J
 ```
 
 ## How It Boots
@@ -182,7 +181,7 @@ Reattach after a tab reload is automatic (2s poll). The last completed Batch out
 ### Strategy registration is split
 - UI and runtime loading use `strategyRegistry`
 - Built-in source of truth is `lib/strategies/lib/*`, with generated metadata, loader, key, and eager manifest files under `lib/strategies/manifest*.ts`
-- Browser UI listing uses `manifest-summary.ts`; browser strategy execution loads code through `manifest-loaders.ts`
+- Browser UI listing uses `lib/strategies/manifest-summary.ts`; browser strategy execution loads code through `lib/strategies/manifest-loaders.ts`
 - `lib/strategies/library.ts` uses the eager manifest and is what worker-side evaluation imports
 
 If you add or rename a built-in strategy, run `npm run strategies:sync-manifest` or the strategy will not load consistently.

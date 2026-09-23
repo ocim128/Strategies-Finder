@@ -1,6 +1,9 @@
 # Market Cap download for IBKR Data — technical plan
 
-**Status: planning document. Not yet implemented.**
+**Status: implemented. Kept as the design reference for the shipped
+MarketCap download** — route, service wiring, fetcher, and reader all
+landed; see [`alpaca-ibkr-sync.md`](alpaca-ibkr-sync.md) for the operational
+workflow.
 **Revision 2** — folds in corrections from a skeptical audit (2026-09-12):
 split-factor convention is now defined explicitly with a numeric invariant,
 EDGAR facts are anchored point-in-time at the filing date, the
@@ -48,10 +51,10 @@ The IBKR Data feature is one vertical slice in `lib/ibkr-data/`:
   invalidates local caches in `finally`. Also reattach-polls
   `GET /api/ibkr/sync/status` after reload. Provider labels are derived from
   `source` in several places (reattach completion ~line 91,
-  `renderRunSnapshot` ~line 152, the `runAction` status lines).
+  `renderRunSnapshot` ~line 159, the `runAction` status lines).
 - `lib/ibkr-data/ibkr-data-vite-plugin.ts` — Vite server plugin. Route
   registration in `ibkrDataVitePlugin()` (`register` closure, every mutation
-  route gated by `isAllowedLocalRequest`). `handleSyncRequest` (~line 2196)
+  route gated by `isAllowedLocalRequest`). `handleSyncRequest`
   acquires the module-level owner-generation lock (`syncOwner` /
   `syncOwnerGen`, `SYNC_OWNER_NONE`) and runs `processSyncBatch(body,
   syncOnly, writer, owner, {signal})`: one per-symbol worker
@@ -72,7 +75,7 @@ The IBKR Data feature is one vertical slice in `lib/ibkr-data/`:
   `.source` is `"ibkr" | "alpaca"`; the `start` NDJSON event's `mode` is
   already plain `string` but its `source` is the narrow union; the `done`
   event has no `mode` field.
-- CSV writes go through `writeCsv` (~line 956; atomic temp+rename + `.bak`
+- CSV writes go through `writeCsv` (~line 971; atomic temp+rename + `.bak`
   backup + Windows-lock fallback via the exported `replaceFileWithRetry`);
   paths from `getCsvPath(symbol, interval)` →
   `price-data/ibkr/csv/<interval>/<SYM>.csv`. Catalog is

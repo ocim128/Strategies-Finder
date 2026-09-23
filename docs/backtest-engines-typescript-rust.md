@@ -345,7 +345,8 @@ The basic batch contract is conceptually:
 ```
 
 Each item can override `settings`; otherwise `baseSettings` applies. The
-response contains `results` keyed by item ID and `processingTimeMs`.
+response contains `results` — an array of `{ id, result }` items, each
+correlating to its request item's id — plus `processingTimeMs`.
 
 ### Cached dataset request
 

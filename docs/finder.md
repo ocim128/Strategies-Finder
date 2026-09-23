@@ -60,6 +60,7 @@ normalization, and mode-specific generation all affect the actual count.
 ### Ranking
 
 Current Chart uses `Sort By` and `Then By`. Advanced sorting lets the user
+chain additional metrics into a priority list.
 
 Symbol Universe has its own `Universe Ranking` controls. The available metrics
 include:

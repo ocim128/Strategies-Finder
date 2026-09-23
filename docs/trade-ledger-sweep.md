@@ -1461,7 +1461,8 @@ Measured gates:
 The measured bottleneck is control replay, not parsing or ranking. F2 controls
 were 99.775% of aggregate replay-plus-controls time and 99.494% of total wall;
 F3 controls were 99.699% and 94.858%, respectively. The pinned optimization
-target is `lib/batch-backtest/trade-ledger-replay-core.ts:466-502`; preserve
+target is `calibratedRandomRule` and the control-replay helpers in
+`lib/batch-backtest/trade-ledger-replay-core.ts` (~lines 404-468); preserve
 the two-pass calibration, seeds, and exact replay math while optimizing it.
 The per-phase and per-rule diagnostics retain the load/parse/ranks/prepare/
 replay/controls evidence needed before any future estimator change.

@@ -32,15 +32,15 @@ proper parallel-counter arms.
 
 - **Engine** — `lib/batch-backtest/batch-open-score-usd-replay-engine.ts`
   (pure leaf, no `lightweight-charts`, no disk I/O):
-  - `RunOpenScoreUsdReplayOptions` (line 555) already takes plain scalars and
+  - `RunOpenScoreUsdReplayOptions` (line 548) already takes plain scalars and
     injected callbacks (`onPhase`, `shouldStop`, `onPoolSnapshot`), so an
     injected cap lookup is an established shape.
-  - Phase 1 reconstruction loop (line 1090): iterates artifacts
+  - Phase 1 reconstruction loop (line 1103): iterates artifacts
     (`artifact.baseAsset/quoteAsset` asset names, `artifact.baseSymbol/
     quoteSymbol` symbols — `BatchSyntheticPairArtifact`,
     `lib/batch-backtest/batch-synthetic-artifact.ts:31-32`), and per trade
-    emits `ScoreDelta { timeSec, assetIndex, delta, isEntry }` (line 979):
-    entry `sign` / `-sign` for base/quote (line 1117-1131), exit deltas are
+    emits `ScoreDelta { timeSec, assetIndex, delta, isEntry }` (line 1039):
+    entry `sign` / `-sign` for base/quote, exit deltas are
     the exact inverse, skipped when `exitReason === "end_of_data"`.
   - Everything downstream (`rawScore`, `recentRawScore`, `entryFlow`,
     HHI, acceleration) accumulates `delta` magnitudes; `activePairCount`
@@ -49,12 +49,12 @@ proper parallel-counter arms.
     experiment — each run's report names its weighting, see report echo).
 - **Server route** — `handleOpenScoreUsdRequest` /
   `processOpenScoreUsdReplay` in
-  `lib/batch-backtest/batch-backtest-vite-plugin.ts` (~2109, ~2274). The
+  `lib/batch-backtest/batch-backtest-vite-plugin.ts` (~2383, ~2118). The
   handler validates `horizons` (length + value caps, `OPEN_SCORE_HORIZONS_MAX_LENGTH`)
   and `sampleFrom`/`sampleTo` (malformed date → 400), then calls
   `processOpenScoreUsdReplay(fingerprint, interval, writer, owner, horizons,
   sampleFromSec, sampleToSec, loadTargetDataset?)`, which builds the engine
-  options object (line 2225) and calls `runOpenScoreUsdReplay` (line 2222).
+  options object and calls `runOpenScoreUsdReplay`.
   Artifacts are loaded one at a time via `loadStoredMineArtifact`; the
   plugin already extracts per-asset marked symbols into
   `markedSymbolByAsset` (line 2186).
@@ -67,7 +67,7 @@ proper parallel-counter arms.
   `encodeURIComponent(stripIbkrMarker(symbol).replace(/\//g, ""))`. Real
   data exists (S&P 500 backfilled).
 - **Browser service** — `runOpenScoreUsdReplay()` in
-  `lib/batch-backtest/batch-backtest-service.ts` (line 1928) reads
+  `lib/batch-backtest/batch-backtest-service.ts` (line 2026) reads
   `batchBacktestOpenScoreUsdHorizons` / `...From` / `...To` from the DOM and
   POSTs `{fingerprint, interval, horizons, sampleFrom?, sampleTo?}` to
   `/api/batch-backtest/open-score-usd` via `postBatchNdjson`.
@@ -77,7 +77,7 @@ proper parallel-counter arms.
   TOP_MEAN Coordinator section). `tests/feature-dom-contracts.spec.ts`
   verifies every registered id exists in the partials.
 - **Report echo** — the engine's `config | interval=... horizons=[...]
-  slippageRate=... commissionRate=...` line (engine ~line 3369) is where run
+  slippageRate=... commissionRate=...` line (engine ~line 3788) is where run
   configuration is already surfaced; `reportLines` render verbatim in the
   summary div and through both Copy paths.
 - **TOP_MEAN Coordinator path** — "Run TOP_MEAN"
@@ -352,7 +352,7 @@ are unchanged.
 - **Tasks**:
   - `html-partials/tab-batch-backtest.html`: add a select
     `batchBacktestOpenScoreUsdCapTilt` in the OPEN_SCORE USD fields row
-    (options: Off / Small-base ×2 / Large-base ×2; tooltip with the one-line
+    (options: Off / Small-base ×2 / Large-base ×2 / Similar-cap ×2; tooltip with the one-line
     semantics), styled like the neighboring inputs.
   - `lib/batch-backtest/batch-backtest-dom.ts`: add the id to the required
     ids const + `createBatchBacktestDom()`.
@@ -396,16 +396,16 @@ are unchanged.
   weighted full-range and calendar-year reports without re-running pair
   backtests separately.
 - **Verified context** (base the implementation on this):
-  - `TopMeanCoordinatorRunRequest` (`sp500-top-mean-coordinator-engine.ts:70`)
+  - `TopMeanCoordinatorRunRequest` (`sp500-top-mean-coordinator-engine.ts:84`)
     is the request contract; the browser builds it in
     `batch-backtest-service.ts` `runSp500TopMeanCoordinatorInner()` (~line
-    2696, payload ~2745) from `batchBacktestSp500TopMean*` DOM ids.
+    2785, payload ~2860) from `batchBacktestSp500TopMean*` DOM ids.
   - `sp500-top-mean-vite-routes.ts` (~line 180) validates the request inline
     and via the shared leaf `validateTopMeanRequestLimits`
     (`sp500-top-mean-request-limits.ts`, own spec).
-  - The replay closure `runReplayForWindow` (~line 752) builds engine options
-    and is invoked for the FULL range (~line 815) and per calendar year
-    (~line 863) — a single change there covers every pass.
+  - The replay closure `runReplayForWindow` (~line 1177) builds engine options
+    and is invoked for the FULL range (~line 1265) and per calendar year
+    (~line 1335) — a single change there covers every pass.
   - The replay runs in-process; `TopMeanWorkerPool`/worker files need NO
     changes.
   - `runOpenScoreUsdReplay` already accepts `capTiltWeight` +

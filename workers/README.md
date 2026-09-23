@@ -28,6 +28,12 @@ It deduplicates signals in D1, so the same entry is only produced once.
 - `GET /health`
   - Returns worker metadata plus `supportedStrategyKeys`, `supportedStrategyCount`, and `strategyManifestFingerprint`
 
+### Committee Alert Rules
+
+- `GET /api/committee-alert/rules`
+- `POST /api/committee-alert/rules`
+  - Committee alert rule list / upsert (internal tooling route)
+
 ## Request Example
 
 ```json

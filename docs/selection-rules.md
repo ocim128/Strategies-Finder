@@ -114,8 +114,8 @@ short = 1 - exit/entry. Reported deltas are percentage points (x100).
 From the repository root:
 
 ```text
-NODE_OPTIONS=--max-old-space-size=24576 esno scripts/pair-pick-checker.ts <folderPath> <ruleKey> [--from YYYY-MM-DD] [--to YYYY-MM-DD]
-NODE_OPTIONS=--max-old-space-size=8192 esno scripts/pair-pick-scales.ts <folderPath>
+NODE_OPTIONS=--max-old-space-size=24576 ../../../node_modules/.bin/esno scripts/pair-pick-checker.ts <folderPath> <ruleKey> [--from YYYY-MM-DD] [--to YYYY-MM-DD]
+NODE_OPTIONS=--max-old-space-size=8192 ../../../node_modules/.bin/esno scripts/pair-pick-scales.ts <folderPath>
 ```
 
 Or use the Selection Rules menu (same engine, one load for all rules).

@@ -18,6 +18,7 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 - [finder-asset-opportunity-resort-guide.md](finder-asset-opportunity-resort-guide.md) - how to add an Asset Opportunity Re-Sort metric end to end (browser control, archive contract, tests).
 - [alpaca-ibkr-sync.md](alpaca-ibkr-sync.md) - Alpaca-backed IBKR Data downloads, source guards, credentials, 30m-to-4h aggregation, and the EDGAR market-cap download.
 - [cross-symbol.md](cross-symbol.md) - secondary-symbol strategy runtime contract and support matrix.
+- [pairlist-pools.md](pairlist-pools.md) - committed, hash-locked pair-list pools for S&P-500 TOP_MEAN campaigns: registry schema, generation scripts, archive stamping, and the integrity test.
 - [synthetic-pairs.md](synthetic-pairs.md) - synthetic pair generation and supported surfaces.
 - [rank-pairs.md](rank-pairs.md) - Rank Pairs regime classification: anchored sampling, metrics, labels, thresholds, and copy contract.
 - [path-dependent-exits.md](path-dependent-exits.md) - Risk Management path-exit modes and TypeScript/Rust compatibility.
@@ -31,12 +32,13 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 - [mine-timing-validation-findings.md](mine-timing-validation-findings.md) - historical research findings (mostly negative) on removed Mine/signal-event diagnostics, spread-quality metrics, and OPEN_SCORE USD selection. Read this before re-introducing any removed diagnostic surface.
 - [pairlist-selection-research.md](pairlist-selection-research.md) - completed preregistered pool-selection research record; the registered candidate failed its adoption rule and the walk-forward machinery was retired.
 
-## Historical Decision Records
+## Records and Audits
+
+- [complexity-audit-finder-batch-ibkr-crypto-2026-08-27.md](complexity-audit-finder-batch-ibkr-crypto-2026-08-27.md) - point-in-time complexity audit driving the `chore/complexity-reduction` branch; some findings are already addressed.
 
 - [polymarket-removal-plan.md](polymarket-removal-plan.md) - the executed removal plan for the Polymarket subsystems on `chore/remove-polymarket`. Kept as the decision record for why these surfaces no longer exist; fold into the surviving guides when it stops earning its keep.
 
 - [rust-engine-complexity-audit.md](rust-engine-complexity-audit.md) - audit whose deletions landed: the Rust engine is a generic server-first kernel; explains why the specialized Asset Opportunity Rust paths were removed.
-- [complexity-audit-finder-batch-ibkr-crypto-2026-08-27.md](complexity-audit-finder-batch-ibkr-crypto-2026-08-27.md) - point-in-time complexity audit driving the `chore/complexity-reduction` branch; some findings are already addressed.
 
 ## Adjacent Docs
 
@@ -49,5 +51,6 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 - Do not add implementation plans to `docs/`. Once work has shipped, fold current behavior into the relevant guide and delete the plan.
 - Delete or archive speculative docs when their decisions are implemented, rejected, or superseded. Keep a historical doc only when it carries a decision or negative result that must not be re-litigated, and mark it with a status banner.
 - Every technical claim should point to a real file, command, setting, route, or test.
+- Prefer citing symbols (exported names) over line numbers; line pins rot on every edit. When a number is load-bearing, name the constant instead.
 - Prefer updating one durable guide over adding another shallow Markdown file.
 - When a feature is removed, prune every doc that still describes it as live. Stale "this feature exists" docs are worse than no doc.

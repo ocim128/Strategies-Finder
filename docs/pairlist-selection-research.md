@@ -1,6 +1,9 @@
 # Pairlist Selection Research Plan (ex-ante pool selection)
 
-Status: plan approved from external thinker/auditor review on 2026-08-24; doc-plan audit
+Status: HISTORICAL DECISION RECORD — the preregistered plan was executed and
+closed; the registered candidate failed its adoption rule and the
+walk-forward machinery was retired. Original banner: plan approved from
+external thinker/auditor review on 2026-08-24; doc-plan audit
 (2026-08-24) returned PASS WITH AMENDMENTS and all nine amendments plus locking rulings
 have been applied. This document is the single implementation plan; phases are gated and
 pre-registered. Do not run Phase 2+ experiments or retune any rule after seeing

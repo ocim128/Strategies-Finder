@@ -173,7 +173,8 @@ synthetic leg/pair caches are reused. Large holdout ranges still use one
 whole-holdout task per worker. When Rust is actually eligible, the external
 Rust server becomes the serialization point and
 posts full OHLCV payloads per request — the AUTO worker count is therefore
-clamped at 2 (`ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP`); a Rust preference
+clamped at 2 (`ASSET_OPPORTUNITY_BATCH_RUST_WORKER_CAP`; 4 for chunked
+asset-partition tasks, `ASSET_OPPORTUNITY_BATCH_RUST_CHUNK_WORKER_CAP`); a Rust preference
 alone does not apply that cap when the settings force TypeScript. Set
 `FINDER_ASSET_BATCH_WORKERS` explicitly only when you have measured a
 better value.
@@ -300,8 +301,8 @@ Single and batch Asset Opportunity runs append one JSON line per event
 `iteration_complete`, plus per-iteration `datasetCacheHits` /
 `datasetCacheMisses`) to
 `<server.config.root>/archive/finder-runs/<runId>.jsonl`.
-Set `FINDER_RUN_LOG_DIR` to override the directory, or set it to an empty
-string to disable logging. This file is the durable post-mortem trace when
+Set `FINDER_RUN_LOG_DIR` to override the directory (an empty value behaves
+like unset — there is no disable switch). This file is the durable post-mortem trace when
 the Vite process dies mid-run — the in-memory debug ring buffer does not
 survive. The production sink is `createBufferedFinderRunLogSink`
 (`lib/finder/server/finder-run-log.ts`), which batches appends (256 lines /
@@ -444,10 +445,9 @@ datasets across later Universe runs.
 
 Server-side modules imported by `vite.config.ts` must not import browser-bound
 managers or anything that transitively imports `lightweight-charts`. The
-server plugin reaches only leaf modules: `finder-runner-universe`,
-`finder-universe-metrics`, `finder-universe-diagnostics-combine`,
-`finder-universe-oos`, `finder-param-space`, `finder-manager-logic`,
-`server-finder-data-loader`, and the synthetic-pair disk cache.
+server plugin itself reaches only leaf and server-side modules — engine
+runners, worker pools, loaders, stream types, the run-log sink — never a
+browser-bound manager (check the plugin's import block for the current set).
 
 ## Stop-before-ownership race
 
