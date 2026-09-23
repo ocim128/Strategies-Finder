@@ -1630,7 +1630,7 @@ async function runFinderAssetOpportunityWorkerSweep(
 
 export async function processFinderAssetOpportunityRun(
     input: FinderAssetOpportunityRunInput & {
-        /** Optional Rust-only asset chunking for the single-run route. */
+        /** Optional bounded asset chunking for the single-run route. */
         batchTaskRunnerFactory?: AssetOpportunityBatchRunnerFactory;
         assetWorkerCount?: number;
         providerBySymbol?: Record<string, string>;
@@ -2730,16 +2730,13 @@ async function handleAssetOpportunityRunRequest(
     const rustCanRunInWorkers = prepared.useRustEnginePreference === true
         && !requiresTypescriptEngine(prepared.settings, rustCapabilities)
         && isRustSupportedTradeSizingMode(resolvedCapitalSettings.sizingMode);
-    const singleRunWorkerCount = rustCanRunInWorkers && prepared.symbols.length >= 32
-        ? Math.min(
-            2,
-            resolveAssetOpportunityChunkWorkerCount(
-                1,
-                prepared.symbols.length,
-                process.env,
-                totalmem(),
-                true,
-            ),
+    const singleRunWorkerCount = prepared.symbols.length >= ASSET_OPPORTUNITY_BATCH_MIN_CHUNKED_ASSETS
+        ? resolveAssetOpportunityChunkWorkerCount(
+            1,
+            prepared.symbols.length,
+            process.env,
+            totalmem(),
+            rustCanRunInWorkers,
         )
         : 1;
 
@@ -3547,6 +3544,7 @@ function registerFinderRoutes(middlewares: any, serverRoot?: string): void {
 export const __testInternals = {
     handleStopRequest,
     handleStatusRequest,
+    resolveAssetOpportunityChunkWorkerCount,
     clearServerFinderDatasetCaches,
     registerFinderRoutesForTests: registerFinderRoutes,
     assertUniverseOptions,

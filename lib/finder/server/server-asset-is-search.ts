@@ -57,6 +57,7 @@ import { buildSelectionResult } from "../endpoint";
 import { matchesFinderTradeCountFilter } from "../finder-manager-logic";
 import {
     runAssetCandidateBacktest,
+    resolveAssetCandidateBacktestSettings,
     type AssetCandidateExitSignalCache,
 } from "../finder-asset-candidate-execution";
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
@@ -456,55 +457,23 @@ export async function runServerAssetIsSearch(
         const candidateStartedAt = performance.now();
         try {
             candidateEvaluationsAttempted += 1;
-            // Shared candidate execution (risk overrides, exit override
-            // injection, executor settings, and the compact endpoint-selection
-            // / trade-history option matrix) lives in
-            // `finder-asset-candidate-execution.ts`, kept in parity with the
-            // browser runner's `executeAssetCandidate`.
-            const output = await runAssetCandidateBacktest({
-                data: input.ohlcvData,
-                symbol: input.symbol,
-                interval: input.interval,
-                strategy: preparedStrategy,
-                strategyKey: selectedStrategy.key,
-                strategyParams: entryParams,
-                riskOverrideParams: combinedParams,
-                settings,
-                capitalSettings,
-                options,
-                ...(exitStrategy
-                    ? { exitOverride: { key: exitStrategy.key, params: exitParams ?? {} } }
-                    : {}),
-                ...(input.dataFetcher ? { dataFetcher: input.dataFetcher } : {}),
-                useRustEnginePreference: input.useRustEnginePreference,
-                rustCapabilities: input.rustCapabilities,
-                typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
-                signal: input.abortSignal,
-                // The caller has already supplied the historical closed
-                // window. Keep its array identity stable so prepared Finder
-                // data and executor-side caches can be reused per asset.
-                closedCandleDataOverride: input.ohlcvData,
-                ...(preGeneratedSignals ? { preGeneratedSignals } : {}),
-                ...(input.exitSignalCache ? { exitSignalCache: input.exitSignalCache } : {}),
-                ...(canPrefilterTradeCount
-                    ? { minimumPotentialEntrySignals: minimumTrades }
-                    : {}),
-                needs: {
-                    compact: true,
-                    trades: false,
-                    fullAnalytics: requiresFullAnalytics,
-                    // Compact endpoint-adjusted selection scalars unless the
-                    // resolved trade direction is "combined" (which retains
-                    // trades instead) — the prior explicit branch, now
-                    // centralized in the shared helper.
-                    endpointSelection: "auto",
-                },
-            });
+            let fullSignalsForCache: Signal[] | undefined;
+            let candidateSignals = preGeneratedSignals;
             if (canReuseFullSignals && !cachedFullSignals && signalCacheKey) {
-                // The first holdout pays one signal-only full-series pass. Its
-                // result is reused by every later holdout in this worker;
-                // failures simply leave the existing exact path in place.
+                // Warm the full-series signal cache before the compact window
+                // pass so the first cold holdout also skips indicator work.
+                // Keep the full result local until ranking proves this
+                // candidate belongs in the running top-K.
                 try {
+                    // Prepared Finder strategies read this value while
+                    // generating signals. Resolve it before the warm pass so
+                    // risk parameters cannot inherit the previous candidate.
+                    currentBacktestSettings = resolveAssetCandidateBacktestSettings({
+                        settings,
+                        riskOverrideParams: combinedParams,
+                        options,
+                        rustCapabilities: input.rustCapabilities,
+                    });
                     const fullSignalOutput = await runAssetCandidateBacktest({
                         data: input.fullSignalData!,
                         symbol: input.symbol,
@@ -534,14 +503,59 @@ export async function runServerAssetIsSearch(
                         signalWindow,
                     );
                     if (cachedSignals !== null) {
-                        input.signalCache!.set(signalCacheKey, fullSignalOutput.signals);
+                        candidateSignals = cachedSignals;
+                        fullSignalsForCache = fullSignalOutput.signals;
                     }
                 } catch (error) {
                     if (input.abortSignal?.aborted || isAbortError(error)) throw error;
-                    // Signal reuse is an optimization only; keep the current
-                    // candidate result authoritative if the warm pass fails.
+                    // Signal reuse is an optimization only; keep the exact
+                    // direct candidate path when the warm pass fails.
                 }
             }
+            // Shared candidate execution (risk overrides, exit override
+            // injection, executor settings, and the compact endpoint-selection
+            // / trade-history option matrix) lives in
+            // `finder-asset-candidate-execution.ts`, kept in parity with the
+            // browser runner's `executeAssetCandidate`.
+            const output = await runAssetCandidateBacktest({
+                data: input.ohlcvData,
+                symbol: input.symbol,
+                interval: input.interval,
+                strategy: preparedStrategy,
+                strategyKey: selectedStrategy.key,
+                strategyParams: entryParams,
+                riskOverrideParams: combinedParams,
+                settings,
+                capitalSettings,
+                options,
+                ...(exitStrategy
+                    ? { exitOverride: { key: exitStrategy.key, params: exitParams ?? {} } }
+                    : {}),
+                ...(input.dataFetcher ? { dataFetcher: input.dataFetcher } : {}),
+                useRustEnginePreference: input.useRustEnginePreference,
+                rustCapabilities: input.rustCapabilities,
+                typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
+                signal: input.abortSignal,
+                // The caller has already supplied the historical closed
+                // window. Keep its array identity stable so prepared Finder
+                // data and executor-side caches can be reused per asset.
+                closedCandleDataOverride: input.ohlcvData,
+                ...(candidateSignals ? { preGeneratedSignals: candidateSignals } : {}),
+                ...(input.exitSignalCache ? { exitSignalCache: input.exitSignalCache } : {}),
+                ...(canPrefilterTradeCount
+                    ? { minimumPotentialEntrySignals: minimumTrades }
+                    : {}),
+                needs: {
+                    compact: true,
+                    trades: false,
+                    fullAnalytics: requiresFullAnalytics,
+                    // Compact endpoint-adjusted selection scalars unless the
+                    // resolved trade direction is "combined" (which retains
+                    // trades instead) — the prior explicit branch, now
+                    // centralized in the shared helper.
+                    endpointSelection: "auto",
+                },
+            });
             // Keep the prepared-strategy settings provider aligned with the
             // settings the run actually used (risk overrides + exit override).
             currentBacktestSettings = output.backtestSettings;
@@ -591,6 +605,9 @@ export async function runServerAssetIsSearch(
             // a rejected candidate's signals would otherwise linger in the
             // map until the end of the asset pass. Evictions delete below.
             const retained = topKRanker.offer(candidate);
+            if (retained && fullSignalsForCache && signalCacheKey) {
+                input.signalCache!.set(signalCacheKey, fullSignalsForCache);
+            }
             if (input.retainSignals === true && retained) {
                 signalsByResult.set(candidate, output.signals);
             }

@@ -239,12 +239,39 @@ function resolveFreshSignalWindow(args: {
 /**
  * Strategy signal barIndex values are local to the shortened signal window.
  * Rust and the fresh detector consume the full boundary timeline, so align
- * them by timestamp before the signals leave the TypeScript process.
+ * them to the full boundary. The normal bounded-window path is an exact
+ * suffix, so it can rebase indexes in O(signal count); the timestamp map is
+ * retained only for unusual signal producers that omit or misreport indexes.
  */
-function alignSignalsToBoundary(
+export function alignSignalsToBoundary(
     signals: readonly Signal[],
     boundaryData: readonly OHLCVData[],
+    signalData: readonly OHLCVData[],
 ): Signal[] {
+    if (signals.length === 0) return [];
+    const offset = boundaryData.length - signalData.length;
+    const suffixMatches = signalData.length === 0
+        ? boundaryData.length === 0
+        : offset >= 0
+            // `resolveFreshSignalWindow` returns `boundaryData.slice(...)`,
+            // so object identity proves the exact suffix without scanning it.
+            && signalData[0] === boundaryData[offset]
+            && signalData[signalData.length - 1]
+                === boundaryData[boundaryData.length - 1];
+    if (suffixMatches && signals.every((signal) => {
+        const barIndex = signal.barIndex;
+        return typeof barIndex === "number"
+            && Number.isInteger(barIndex)
+            && barIndex >= 0
+            && barIndex < signalData.length
+            && timeKey(signalData[barIndex]!.time) === timeKey(signal.time);
+    })) {
+        return signals.map((signal) => ({
+            ...signal,
+            barIndex: signal.barIndex! + offset,
+        }));
+    }
+
     const indexByTime = new Map<string, number>();
     for (let index = 0; index < boundaryData.length; index += 1) {
         indexByTime.set(timeKey(boundaryData[index]!.time), index);
@@ -1815,7 +1842,7 @@ async function regenerateSignalsAndDetectFresh(args: {
             signalOnly: true,
             ignoreExitOverride: true,
         });
-        const primarySignals = alignSignalsToBoundary(primary.signals, args.fullClosed);
+        const primarySignals = alignSignalsToBoundary(primary.signals, args.fullClosed, signalData);
         const possibleFreshEntry = detectFreshEntry({
             result: createEmptyBacktestResult(),
             candles: args.fullClosed,
@@ -1860,7 +1887,7 @@ async function regenerateSignalsAndDetectFresh(args: {
         signalOnly: args.settings.executionModel !== "signal_close" && !needsExecutableFreshRecheck,
     }).then(({ result, signals, engineUsed, engineDiagnostics }) => {
         const boundarySignals = args.signalData
-            ? alignSignalsToBoundary(signals, args.fullClosed)
+            ? alignSignalsToBoundary(signals, args.fullClosed, signalData)
             : signals;
         const detected = detectFreshEntry({
             result,

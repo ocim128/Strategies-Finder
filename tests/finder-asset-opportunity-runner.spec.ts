@@ -17,6 +17,7 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
     runAssetOpportunitySearch,
+    alignSignalsToBoundary,
     splitApplicationCandle,
     deriveAssetSeed,
     assertAssetOpportunityStrategySelection,
@@ -77,6 +78,20 @@ const capitalSettings: CapitalSettings = {
     sizingMode: "percent",
     fixedTradeAmount: 1000,
 };
+
+describe("Asset Opportunity signal-window alignment", () => {
+    it("rebases indexed suffix signals without scanning the full boundary", () => {
+        const boundary = makeCandles([100, 101, 102, 103, 104]);
+        const signalWindow = boundary.slice(2);
+        const signals: Signal[] = [
+            { time: signalWindow[1]!.time, type: "buy", price: signalWindow[1]!.close, barIndex: 1 },
+        ];
+
+        expect(alignSignalsToBoundary(signals, boundary, signalWindow)).to.deep.equal([
+            { ...signals[0], barIndex: 3 },
+        ]);
+    });
+});
 
 function makeOptions(overrides: Partial<FinderOptions> = {}): FinderOptions {
     return {

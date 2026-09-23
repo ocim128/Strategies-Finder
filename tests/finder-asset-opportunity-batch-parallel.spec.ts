@@ -50,7 +50,12 @@ import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions } from "../lib/types/finder";
 import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
 
-const { setRunOwnerForTests, resetRunStateForTests, getRunStateForTests } = __testInternals;
+const {
+    setRunOwnerForTests,
+    resetRunStateForTests,
+    getRunStateForTests,
+    resolveAssetOpportunityChunkWorkerCount,
+} = __testInternals;
 
 const GIB = 1024 * 1024 * 1024;
 
@@ -343,6 +348,16 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(resolveAssetOpportunityBatchWorkerCount(2, 10, {}, 16 * GIB)).to.be.at.most(2);
         // Chunked batches size the same policy from the expanded task count.
         expect(resolveAssetOpportunityBatchWorkerCount(2, 1000, {}, 64 * GIB, { taskCount: 8 })).to.equal(5);
+    });
+
+    it("uses the same bounded asset chunks for a TypeScript single run", () => {
+        expect(resolveAssetOpportunityChunkWorkerCount(
+            1,
+            32,
+            { [FINDER_ASSET_BATCH_WORKERS_ENV]: "4" },
+            64 * GIB,
+            false,
+        )).to.equal(4);
     });
 
     it("fills the worker pool with contiguous asset chunks for a small holdout range", async () => {

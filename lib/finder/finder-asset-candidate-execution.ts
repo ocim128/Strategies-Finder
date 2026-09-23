@@ -115,6 +115,32 @@ export interface AssetCandidateBacktestOutput {
     endpointSelection?: BacktestEndpointSelection;
 }
 
+/** Resolve the settings that candidate signal generation must observe. */
+export function resolveAssetCandidateBacktestSettings(args: {
+    settings: BacktestSettings;
+    riskOverrideParams: StrategyParams;
+    options: FinderOptions;
+    rustCapabilities?: RustCapabilities;
+    exitOverride?: AssetCandidateExitOverride;
+}): BacktestSettings {
+    const rustSettings = sanitizeBacktestSettingsForRust(args.settings, args.rustCapabilities);
+    const { backtestSettings: riskAdjustedSettings } = resolveFinderRiskOverrides(
+        args.settings,
+        rustSettings,
+        args.riskOverrideParams,
+        args.options,
+    );
+    return args.exitOverride
+        ? {
+            ...riskAdjustedSettings,
+            disableSignalExits: true,
+            exitStrategyOverrideEnabled: true,
+            exitStrategyKey: args.exitOverride.key,
+            exitStrategyParams: { ...(args.exitOverride.params ?? {}) },
+        }
+        : riskAdjustedSettings;
+}
+
 /**
  * Resolve the `backtestRunOptions` for a candidate run. Pure (given the
  * resolved trade direction, which only `"auto"` endpoint selection consumes)
@@ -189,22 +215,13 @@ export async function runAssetCandidateBacktest(args: {
     exitSignalCache?: AssetCandidateExitSignalCache;
     needs: AssetCandidateBacktestNeeds;
 }): Promise<AssetCandidateBacktestOutput> {
-    const rustSettings = sanitizeBacktestSettingsForRust(args.settings, args.rustCapabilities);
-    const { backtestSettings: riskAdjustedSettings } = resolveFinderRiskOverrides(
-        args.settings,
-        rustSettings,
-        args.riskOverrideParams,
-        args.options,
-    );
-    const backtestSettings: BacktestSettings = args.exitOverride
-        ? {
-            ...riskAdjustedSettings,
-            disableSignalExits: true,
-            exitStrategyOverrideEnabled: true,
-            exitStrategyKey: args.exitOverride.key,
-            exitStrategyParams: { ...(args.exitOverride.params ?? {}) },
-        }
-        : riskAdjustedSettings;
+    const backtestSettings = resolveAssetCandidateBacktestSettings({
+        settings: args.settings,
+        riskOverrideParams: args.riskOverrideParams,
+        options: args.options,
+        rustCapabilities: args.rustCapabilities,
+        ...(args.exitOverride ? { exitOverride: args.exitOverride } : {}),
+    });
     const preResolvedSettings = resolveExecutorBacktestSettings(
         { ...(backtestSettings as Record<string, unknown>), interval: args.interval } as BacktestSettings,
         args.interval,

@@ -304,8 +304,8 @@ describe("server Asset Opportunity signal cache", () => {
         expect(cached.signalCacheHits).to.equal(1);
         expect(cached.signalCacheMisses).to.equal(0);
         expect(cached.results).to.deep.equal(direct.results);
-        expect(callsAfterWarm).to.equal(2);
-        expect(executeCalls).to.equal(3);
+        expect(callsAfterWarm).to.equal(1);
+        expect(executeCalls).to.equal(2);
     });
 
     it("reuses full-series signals for trailing capped windows with local bar indexes", async () => {
@@ -363,7 +363,55 @@ describe("server Asset Opportunity signal cache", () => {
         expect(cached.signalCacheHits).to.equal(1);
         expect(cached.signalCacheMisses).to.equal(0);
         expect(cached.results).to.deep.equal(direct.results);
-        expect(callsAfterWarm).to.equal(2);
-        expect(executeCalls).to.equal(3);
+        expect(callsAfterWarm).to.equal(1);
+        expect(executeCalls).to.equal(2);
+    });
+
+    it("caches only candidates that enter the running top-K", async () => {
+        let executeCalls = 0;
+        const strategy: Strategy = {
+            name: "Retained Candidate Cache Strategy",
+            description: "Makes one candidate the only top-K survivor.",
+            defaultParams: { marker: 1 },
+            paramLabels: { marker: "Marker" },
+            execute(data, params) {
+                executeCalls += 1;
+                const exitIndex = Number(params.marker) === 2 ? 10 : 2;
+                return [
+                    { time: data[1]!.time, type: "buy" as const, price: data[1]!.close, barIndex: 1 },
+                    { time: data[exitIndex]!.time, type: "sell" as const, price: data[exitIndex]!.close, barIndex: exitIndex },
+                ];
+            },
+        };
+        const data = makeCandles(40);
+        const cache = createAssetOpportunitySignalCache();
+        const base = {
+            ohlcvData: data,
+            fullSignalData: data,
+            symbol: "CACHE_TOP_K",
+            interval: "5m",
+            options: makeOptions(),
+            settings,
+            capitalSettings,
+            selectedStrategy: { key: "retained_candidate_cache_strategy", name: strategy.name, strategy },
+            // Put the stronger candidate first so the weaker candidate is
+            // rejected by the already-full top-K ranker.
+            generateParamSets: () => [{ marker: 2 }, { marker: 1 }],
+            useRustEnginePreference: false,
+            confirmationStrategiesLoaded: true,
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+            signalCache: cache,
+        } as const;
+
+        const first = await runServerAssetIsSearch(base);
+        const second = await runServerAssetIsSearch(base);
+
+        expect(first.results[0]!.params.marker).to.equal(2);
+        expect(first.signalCacheMisses).to.equal(2);
+        expect(second.signalCacheHits).to.equal(1);
+        expect(second.signalCacheMisses).to.equal(1);
+        expect(executeCalls, "the rejected candidate is warmed again; only the retained candidate is cached")
+            .to.equal(3);
     });
 });
