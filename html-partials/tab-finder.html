@@ -185,6 +185,13 @@
                     <label class="param-label" for="finderAssetOosHorizons">OOS Horizons</label>
                     <input type="text" class="param-input" id="finderAssetOosHorizons" value="1,3,5" placeholder="1,3,5">
                 </div>
+                <div class="param-group">
+                    <label class="param-label" for="finderAssetOosHorizonBasis">Forward Horizon Basis</label>
+                    <select class="param-input" id="finderAssetOosHorizonBasis">
+                        <option value="pair">Synthetic pair (current)</option>
+                        <option value="base_only">BASE long only (ignore QUOTE)</option>
+                    </select>
+                </div>
             </div>
             <div class="param-row">
                 <div class="param-group">
@@ -218,7 +225,7 @@
                 </div>
                 <div class="param-hint">Runs one Asset Opportunity search per holdout value (inclusive, ascending, max 100 values) and appends each top-N payload to archive/asset opportunity/oos-holdout-&lt;N&gt;-bars.txt. The single OOS Holdout Bars input above is ignored while batch mode is on.</div>
             </div>
-            <div class="param-hint">Searches each asset independently for every selected strategy; support counts only each sampled candidate pool. Reserve the last N historical bars for forward OOS PnL at the three listed horizons. Fixed caps the search at Eval Window Bars before the holdout. Range Bar adds the holdout bars to that cap for each run (100 + 12 = 112). 0 evaluates all available bars.</div>
+            <div class="param-hint">Searches each asset independently for every selected strategy; support counts only each sampled candidate pool. Reserve the last N historical bars for forward OOS PnL at the three listed horizons. BASE long only ignores the QUOTE leg for synthetic-pair horizons. Fixed caps the search at Eval Window Bars before the holdout. Range Bar adds the holdout bars to that cap for each run (100 + 12 = 112). 0 evaluates all available bars.</div>
         </div>
         <div id="finderQualitySettings" style="display:none;">
             <div class="param-hint">Runs each selected strategy library once per symbol using its normalized default parameters. Results are for baseline quality review, not parameter discovery; OOS is informational and never filters a library.</div>

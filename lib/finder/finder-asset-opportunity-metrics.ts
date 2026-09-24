@@ -259,6 +259,8 @@ export const FRESH_SIGNAL_LIBRARIES_METRIC = "freshSignalLibraries" as const;
  * totalTrades tiebreak is that winner's, not the symbol's max.
  */
 export const FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC = "freshSignalLibrariesByTrades" as const;
+/** Rank fresh candidates by their unnormalized same-direction support count. */
+export const TOP_RAW_SUPPORT_METRIC = "topRawSupport" as const;
 /**
  * Percentile-saturated trade count: rank by
  * `min(totalTrades, P90 of this result set's trade counts)` descending. The
@@ -275,17 +277,6 @@ export const FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC = "freshSignalLibrariesByTr
 export const TOTAL_TRADES_CAPPED_METRIC = "totalTradesCapped" as const;
 /** Saturation percentile (0-1) for {@link TOTAL_TRADES_CAPPED_METRIC}. */
 export const TOTAL_TRADES_SATURATION_PERCENTILE = 0.9;
-/**
- * Statistical significance of the per-trade edge: expectancy * sqrt(trades) / sd,
- * with sd approximated from the binary win/loss mixture (winRate, avgWin, avgLoss).
- * Ranks by SIGNIFICANCE, not size — the search optimizes size metrics, so
- * size-sorted tops are overfit extremes by construction; t-stat instead rewards a
- * modest edge proven over many trades. Sample-size guarding is owned by the RUN's
- * minimum-trade filter, not by this sort. An all-win candidate (zero observed
- * variance) with positive expectancy maps to +Infinity and ranks first — the same
- * convention payoffRatio uses for all-win candidates.
- */
-export const T_STAT_EDGE_METRIC = "tstatEdge" as const;
 /**
  * Median candle distance from entry to an in-sample take-profit exit. A
  * minimum of three qualifying trades is fixed by the research idea.
@@ -336,16 +327,14 @@ export type FinderAssetOpportunityResortMetric =
     | FinderMetric
     | typeof FRESH_SIGNAL_LIBRARIES_METRIC
     | typeof FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
+    | typeof TOP_RAW_SUPPORT_METRIC
     | typeof TOTAL_TRADES_CAPPED_METRIC
-    | typeof T_STAT_EDGE_METRIC
     | typeof MEDIAN_BARS_TO_TP_METRIC
     | typeof PRIOR_TUPLE_RECURRENCE_METRIC
     | typeof BARRIER_EXIT_SHARE_METRIC
-    | typeof ENTRY_HOUR_CONCENTRATION_METRIC
     | typeof TRADE_GAP_UNIFORMITY_METRIC
     | typeof TOP_DECILE_PROFIT_SHARE_METRIC
     | typeof WINNER_LOSER_HOLD_GAP_BARS_METRIC
-    | typeof ENTRY_PRICE_REGIME_MEMBERSHIP_METRIC
     | typeof EQUITY_PATH_LINEARITY_METRIC
     | typeof STRATEGY_COVERAGE_GATE_METRIC
     | typeof INVERTED_NET_PROFIT_METRIC
@@ -374,17 +363,15 @@ const ASSET_RESORT_METRICS: readonly FinderAssetOpportunityResortMetric[] = [
     "totalTrades",
     FRESH_SIGNAL_LIBRARIES_METRIC,
     FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC,
+    TOP_RAW_SUPPORT_METRIC,
     TOTAL_TRADES_CAPPED_METRIC,
-    T_STAT_EDGE_METRIC,
     MEDIAN_BARS_TO_TP_METRIC,
     PRIOR_TUPLE_RECURRENCE_METRIC,
     STRATEGY_COVERAGE_GATE_METRIC,
     BARRIER_EXIT_SHARE_METRIC,
-    ENTRY_HOUR_CONCENTRATION_METRIC,
     TRADE_GAP_UNIFORMITY_METRIC,
     TOP_DECILE_PROFIT_SHARE_METRIC,
     WINNER_LOSER_HOLD_GAP_BARS_METRIC,
-    ENTRY_PRICE_REGIME_MEMBERSHIP_METRIC,
     EQUITY_PATH_LINEARITY_METRIC,
     INVERTED_NET_PROFIT_METRIC,
     INVERTED_EXPECTANCY_METRIC,
@@ -693,27 +680,6 @@ function getAssetOpportunityMetricValue(
     }
 }
 
-/**
- * t-stat of the per-trade edge from the binary win/loss mixture. Returns 0 for
- * missing fields or fewer than 2 trades; a positive-expectancy all-win candidate
- * (zero observed variance) maps to +Infinity (payoffRatio precedent).
- */
-function getTStatEdgeValue(result: FinderAssetOpportunityResult): number {
-    const sel = result.selectionResult;
-    const mean = sel.expectancy;
-    const trades = sel.totalTrades ?? 0;
-    const winRate = sel.winRate;
-    const avgWin = sel.avgWin;
-    const avgLoss = sel.avgLoss;
-    if (!Number.isFinite(mean) || !Number.isFinite(winRate) || !Number.isFinite(avgWin) || !Number.isFinite(avgLoss) || trades < 2) {
-        return 0;
-    }
-    const winProbability = Math.min(1, Math.max(0, winRate / 100));
-    const variance = winProbability * (avgWin - mean) ** 2 + (1 - winProbability) * (avgLoss + mean) ** 2;
-    if (variance <= 0) return mean > 0 ? Number.POSITIVE_INFINITY : 0;
-    return (mean * Math.sqrt(trades)) / Math.sqrt(variance);
-}
-
 function compareAssetOpportunityCandidateTuple(
     a: FinderAssetOpportunityResult,
     b: FinderAssetOpportunityResult,
@@ -773,6 +739,7 @@ export function sortAssetOpportunityResultsByMetric(
     if (metric === null) {
         return sortAssetOpportunityResults([...results]);
     }
+    const SECONDARY_TIEBREAK_METRICS: readonly FinderMetric[] = ["expectancy", "netProfitPercent", "totalTrades"];
     if (metric === FRESH_SIGNAL_LIBRARIES_METRIC || metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC) {
         const counts = getFreshSignalLibraryCounts(results);
         const representatives = new Map<string, FinderAssetOpportunityResult>();
@@ -805,6 +772,19 @@ export function sortAssetOpportunityResultsByMetric(
                 }
                 return a.symbol.localeCompare(b.symbol);
             });
+    }
+    if (metric === TOP_RAW_SUPPORT_METRIC) {
+        return [...results].sort((a, b) => {
+            const rawA = a.support.freshSameDirection;
+            const rawB = b.support.freshSameDirection;
+            if (rawA !== rawB) return rawB - rawA;
+            for (const secondary of SECONDARY_TIEBREAK_METRICS) {
+                const valueA = getAssetOpportunityMetricValue(a, secondary);
+                const valueB = getAssetOpportunityMetricValue(b, secondary);
+                if (valueA !== valueB) return valueB - valueA;
+            }
+            return compareAssetOpportunityCandidateTuple(a, b);
+        });
     }
     if (metric === STRATEGY_COVERAGE_GATE_METRIC) {
         const strategiesBySymbol = new Map<string, Set<string>>();
@@ -890,15 +870,6 @@ export function sortAssetOpportunityResultsByMetric(
                 || compareAssetOpportunityCandidateTuple(a, b),
         );
     }
-    if (metric === ENTRY_HOUR_CONCENTRATION_METRIC) {
-        return sortOptionalAssetMetric(
-            results,
-            (result) => result.entryHourConcentration,
-            true,
-            (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
-                || compareAssetOpportunityCandidateTuple(a, b),
-        );
-    }
     if (metric === TRADE_GAP_UNIFORMITY_METRIC) {
         return sortOptionalAssetMetric(
             results,
@@ -926,15 +897,6 @@ export function sortAssetOpportunityResultsByMetric(
                 || compareAssetOpportunityCandidateTuple(a, b),
         );
     }
-    if (metric === ENTRY_PRICE_REGIME_MEMBERSHIP_METRIC) {
-        return sortOptionalAssetMetric(
-            results,
-            (result) => result.entryPriceRegimeMembership,
-            true,
-            (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
-                || compareAssetOpportunityCandidateTuple(a, b),
-        );
-    }
     if (metric === EQUITY_PATH_LINEARITY_METRIC) {
         return sortOptionalAssetMetric(
             results,
@@ -943,24 +905,6 @@ export function sortAssetOpportunityResultsByMetric(
             (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
                 || compareAssetOpportunityCandidateTuple(a, b),
         );
-    }
-    const SECONDARY_TIEBREAK_METRICS: readonly FinderMetric[] = ["expectancy", "netProfitPercent", "totalTrades"];
-    if (metric === T_STAT_EDGE_METRIC) {
-        // Descending by t-stat; ties fall back to the same realized-performance
-        // scalars as the generic metric path before the deterministic symbol order.
-        return [...results].sort((a, b) => {
-            const valA = getTStatEdgeValue(a);
-            const valB = getTStatEdgeValue(b);
-            if (valA !== valB) return valB - valA;
-            for (const secondary of SECONDARY_TIEBREAK_METRICS) {
-                const sA = getAssetOpportunityMetricValue(a, secondary);
-                const sB = getAssetOpportunityMetricValue(b, secondary);
-                if (sA !== sB) return sB - sA;
-            }
-            if (a.symbol < b.symbol) return -1;
-            if (a.symbol > b.symbol) return 1;
-            return 0;
-        });
     }
     const INVERTED_METRIC_BASE: Partial<Record<FinderAssetOpportunityResortMetric, FinderMetric>> = {
         [INVERTED_NET_PROFIT_METRIC]: "netProfit",

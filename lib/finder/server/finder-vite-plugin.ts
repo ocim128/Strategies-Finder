@@ -120,6 +120,7 @@ import {
     normalizeFinderAssetEvalLastBars,
     normalizeFinderAssetEvalWindowMode,
     normalizeFinderAssetOosBatchHoldoutRange,
+    normalizeFinderAssetOosHorizonBasis,
     normalizeFinderAssetOosMeasurementMode,
     normalizeFinderAssetOosHorizons,
     normalizeFinderAssetOosIgnoreLastBars,
@@ -1970,6 +1971,7 @@ export async function processFinderAssetOpportunityBatchRun(
             candidatePoolSize: input.candidatePoolSize,
             minFreshSupport: input.minFreshSupport,
             oosMeasurementMode: input.options.assetOpportunity?.oosMeasurementMode,
+            oosHorizonBasis: input.options.assetOpportunity?.oosHorizonBasis,
             oosHorizons: input.options.assetOpportunity?.oosHorizons,
             oosIgnoreLastBars: holdoutBars,
             evalLastBars: input.options.assetOpportunity?.evalLastBars,
@@ -2571,6 +2573,9 @@ async function prepareAssetOpportunityRunPayload(
                     ...parsedOptions.assetOpportunity,
                     oosMeasurementMode: normalizeFinderAssetOosMeasurementMode(
                         parsedOptions.assetOpportunity.oosMeasurementMode,
+                    ),
+                    oosHorizonBasis: normalizeFinderAssetOosHorizonBasis(
+                        parsedOptions.assetOpportunity.oosHorizonBasis,
                     ),
                     oosIgnoreLastBars: normalizeFinderAssetOosIgnoreLastBars(
                         parsedOptions.assetOpportunity.oosIgnoreLastBars,

@@ -56,18 +56,16 @@ import {
 	getAssetOpportunityResortMetrics,
 	FRESH_SIGNAL_LIBRARIES_METRIC,
 	FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC,
+	TOP_RAW_SUPPORT_METRIC,
 	TOTAL_TRADES_CAPPED_METRIC,
 	TOTAL_TRADES_SATURATION_PERCENTILE,
-	T_STAT_EDGE_METRIC,
 	MEDIAN_BARS_TO_TP_METRIC,
 	PRIOR_TUPLE_RECURRENCE_METRIC,
 	STRATEGY_COVERAGE_GATE_METRIC,
 	BARRIER_EXIT_SHARE_METRIC,
-	ENTRY_HOUR_CONCENTRATION_METRIC,
 	TRADE_GAP_UNIFORMITY_METRIC,
 	TOP_DECILE_PROFIT_SHARE_METRIC,
 	WINNER_LOSER_HOLD_GAP_BARS_METRIC,
-	ENTRY_PRICE_REGIME_MEMBERSHIP_METRIC,
 	EQUITY_PATH_LINEARITY_METRIC,
 	INVERTED_NET_PROFIT_METRIC,
 	INVERTED_EXPECTANCY_METRIC,
@@ -105,6 +103,7 @@ import {
 	DEFAULT_FINDER_ASSET_OOS_HORIZONS,
 	normalizeFinderAssetEvalLastBars,
 	normalizeFinderAssetEvalWindowMode,
+	normalizeFinderAssetOosHorizonBasis,
 	normalizeFinderAssetOosBatchHoldoutRange,
 	normalizeFinderAssetOosMeasurementMode,
 	normalizeFinderAssetOosHorizons,
@@ -246,6 +245,7 @@ type FinderPersistedUiState = {
 	assetOpportunityCandidatePoolSize: number;
 	assetOpportunityMinFreshSupport: number;
 	assetOpportunityOosMeasurementMode: "fixed_horizon" | "next_exit";
+	assetOpportunityOosHorizonBasis: "pair" | "base_only";
 	assetOpportunityOosIgnoreLastBars: number;
 	assetOpportunityOosHorizons: string;
 	assetOpportunityEvalWindowMode: "fixed" | "range_bar";
@@ -330,6 +330,7 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	assetOpportunityCandidatePoolSize: 10,
 	assetOpportunityMinFreshSupport: 2,
 	assetOpportunityOosMeasurementMode: "fixed_horizon",
+	assetOpportunityOosHorizonBasis: "pair",
 	assetOpportunityOosIgnoreLastBars: 0,
 	assetOpportunityOosHorizons: DEFAULT_FINDER_ASSET_OOS_HORIZONS.join(","),
 	assetOpportunityEvalWindowMode: "fixed",
@@ -473,6 +474,9 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 	const assetOpportunityOosMeasurementMode = normalizeFinderAssetOosMeasurementMode(
 		source.assetOpportunityOosMeasurementMode,
 	);
+	const assetOpportunityOosHorizonBasis = normalizeFinderAssetOosHorizonBasis(
+		source.assetOpportunityOosHorizonBasis,
+	);
 	const assetOpportunityOosIgnoreLastBars = normalizeFinderAssetOosIgnoreLastBars(
 		source.assetOpportunityOosIgnoreLastBars,
 	);
@@ -533,6 +537,7 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		assetOpportunityCandidatePoolSize,
 		assetOpportunityMinFreshSupport,
 		assetOpportunityOosMeasurementMode,
+		assetOpportunityOosHorizonBasis,
 		assetOpportunityOosIgnoreLastBars,
 		assetOpportunityOosHorizons,
 		assetOpportunityEvalWindowMode,
@@ -965,6 +970,7 @@ export class FinderManager {
 		dom.finderAssetCandidatePoolSize.value = String(this.uiState.assetOpportunityCandidatePoolSize);
 		dom.finderAssetMinFreshSupport.value = String(this.uiState.assetOpportunityMinFreshSupport);
 		dom.finderAssetOosMeasurementMode.value = this.uiState.assetOpportunityOosMeasurementMode;
+		dom.finderAssetOosHorizonBasis.value = this.uiState.assetOpportunityOosHorizonBasis;
 		dom.finderAssetOosIgnoreLastBars.value = String(this.uiState.assetOpportunityOosIgnoreLastBars);
 		dom.finderAssetOosHorizons.value = this.uiState.assetOpportunityOosHorizons;
 		dom.finderAssetEvalWindowMode.value = this.uiState.assetOpportunityEvalWindowMode;
@@ -1447,6 +1453,7 @@ const applicable = oosCapableWindow;
 			dom.finderAssetCandidatePoolSize,
 			dom.finderAssetMinFreshSupport,
 			dom.finderAssetOosMeasurementMode,
+			dom.finderAssetOosHorizonBasis,
 			dom.finderAssetOosIgnoreLastBars,
 			dom.finderAssetOosHorizons,
 			dom.finderAssetEvalWindowMode,
@@ -1503,6 +1510,9 @@ const applicable = oosCapableWindow;
 		this.uiState.assetOpportunityOosMeasurementMode = normalizeFinderAssetOosMeasurementMode(
 			dom.finderAssetOosMeasurementMode.value,
 		);
+		this.uiState.assetOpportunityOosHorizonBasis = normalizeFinderAssetOosHorizonBasis(
+			dom.finderAssetOosHorizonBasis.value,
+		);
 		this.uiState.assetOpportunityOosIgnoreLastBars = normalizeFinderAssetOosIgnoreLastBars(
 			this.readFinderNumberInput(
 				dom.finderAssetOosIgnoreLastBars,
@@ -1554,6 +1564,8 @@ const applicable = oosCapableWindow;
 		dom.finderAssetOosIgnoreLastBars.closest(".param-group")?.classList.toggle("is-disabled", batchEnabled);
 		dom.finderAssetOosHorizons.disabled = nextExitEnabled;
 		dom.finderAssetOosHorizons.closest(".param-group")?.classList.toggle("is-disabled", nextExitEnabled);
+		dom.finderAssetOosHorizonBasis.disabled = nextExitEnabled;
+		dom.finderAssetOosHorizonBasis.closest(".param-group")?.classList.toggle("is-disabled", nextExitEnabled);
 		const holdoutLabel = dom.finderAssetOosIgnoreLastBars.closest(".param-group")?.querySelector("label");
 		if (holdoutLabel) holdoutLabel.textContent = nextExitEnabled ? "OOS Max Wait Bars" : "OOS Holdout Bars";
 	}
@@ -3520,6 +3532,9 @@ private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.get
 				oosMeasurementMode: normalizeFinderAssetOosMeasurementMode(
 					dom.finderAssetOosMeasurementMode.value,
 				),
+				oosHorizonBasis: normalizeFinderAssetOosHorizonBasis(
+					dom.finderAssetOosHorizonBasis.value,
+				),
 				oosIgnoreLastBars: normalizeFinderAssetOosIgnoreLastBars(this.readFinderNumberInput(
 					dom.finderAssetOosIgnoreLastBars,
 					DEFAULT_FINDER_UI_STATE.assetOpportunityOosIgnoreLastBars,
@@ -3856,10 +3871,10 @@ if (oosWindowActive) {
 								? "Fresh Signals (Libraries)"
 								: metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
 									? "Fresh Signals (Libraries, by Trades)"
+									: metric === TOP_RAW_SUPPORT_METRIC
+										? "Fresh Support (TOP_RAW)"
 									: metric === TOTAL_TRADES_CAPPED_METRIC
 										? `Total Trades (P${Math.round(TOTAL_TRADES_SATURATION_PERCENTILE * 100)} saturation)`
-									: metric === T_STAT_EDGE_METRIC
-										? "T-Stat of Edge (significance)"
 										: metric === MEDIAN_BARS_TO_TP_METRIC
 											? "Median Bars To Take Profit (lower first)"
 										: metric === PRIOR_TUPLE_RECURRENCE_METRIC
@@ -3868,16 +3883,12 @@ if (oosWindowActive) {
 											? "Strategy Coverage Gate (PF first)"
 										: metric === BARRIER_EXIT_SHARE_METRIC
 											? "Barrier Exit Dominance Share"
-										: metric === ENTRY_HOUR_CONCENTRATION_METRIC
-											? "Entry-Hour Schedule Concentration"
 										: metric === TRADE_GAP_UNIFORMITY_METRIC
 											? "Trade Gap Uniformity Score"
 										: metric === TOP_DECILE_PROFIT_SHARE_METRIC
 											? "Top Decile Profit Concentration (lower first)"
 										: metric === WINNER_LOSER_HOLD_GAP_BARS_METRIC
 											? "Winner Vs Loser Holding Gap (lower first)"
-										: metric === ENTRY_PRICE_REGIME_MEMBERSHIP_METRIC
-											? "Fresh Entry Price Regime Membership"
 										: metric === EQUITY_PATH_LINEARITY_METRIC
 											? "Equity Path Linearity"
 										// Safe cast: the inverted labels map above covers every

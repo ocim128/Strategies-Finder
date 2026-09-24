@@ -19,6 +19,8 @@ export interface FinderAssetOosHorizonMetric {
 export interface FinderAssetOosMetrics {
     /** Number of historical bars excluded from IS candidate search. */
     ignoreLastBars: number;
+    /** Price series used for fixed-horizon measurement; missing on older pair/asset-based archives. */
+    basis?: FinderAssetOosHorizonBasis;
     horizons: FinderAssetOosHorizonMetric[];
 }
 
@@ -29,6 +31,7 @@ export type FinderAssetOosNextExitUnavailableReason =
     | "replay_error";
 export type FinderAssetOosMeasurementMode = "fixed_horizon" | "next_exit";
 export type FinderAssetEvalWindowMode = "fixed" | "range_bar";
+export type FinderAssetOosHorizonBasis = "pair" | "base_only";
 
 export interface FinderAssetOosNextExitMetrics {
     /** Number of hidden candles available as the maximum observation window. */
@@ -55,6 +58,10 @@ export function normalizeFinderAssetOosMeasurementMode(value: unknown): FinderAs
 
 export function normalizeFinderAssetEvalWindowMode(value: unknown): FinderAssetEvalWindowMode {
     return value === "range_bar" ? "range_bar" : "fixed";
+}
+
+export function normalizeFinderAssetOosHorizonBasis(value: unknown): FinderAssetOosHorizonBasis {
+    return value === "base_only" ? "base_only" : "pair";
 }
 
 /**
@@ -88,6 +95,7 @@ export function calculateFinderAssetOosAverageHorizonMetrics(
 
 function buildHorizonMetrics(args: {
     candles: readonly OHLCVData[];
+    baseCandlesByTime?: ReadonlyMap<number, OHLCVData>;
     signalIndex: number;
     entryPrice: number;
     direction: "long" | "short";
@@ -95,11 +103,16 @@ function buildHorizonMetrics(args: {
 }): FinderAssetOosHorizonMetric[] {
     const normalizedHorizons = normalizeFinderAssetOosHorizons(args.horizons);
     return normalizedHorizons.map((bars) => {
-        const targetClose = args.candles[args.signalIndex + bars]?.close;
+        const targetCandle = args.candles[args.signalIndex + bars];
+        const targetTime = targetCandle ? parseTimeToUnixSeconds(targetCandle.time) : null;
+        const targetClose = args.baseCandlesByTime
+            ? (targetTime === null ? undefined : args.baseCandlesByTime.get(targetTime)?.close)
+            : targetCandle?.close;
         const directionFactor = args.direction === "short" ? -1 : 1;
-        const pnlPercent = Number.isFinite(args.entryPrice)
-            && args.entryPrice > 0
+        const pnlPercent = typeof targetClose === "number"
             && Number.isFinite(targetClose)
+            && Number.isFinite(args.entryPrice)
+            && args.entryPrice > 0
             ? directionFactor * ((targetClose - args.entryPrice) / args.entryPrice) * 100
             : Number.NaN;
         return {
@@ -237,14 +250,17 @@ export function normalizeFinderAssetOosHorizons(value: unknown): number[] {
  */
 export function calculateFinderAssetOosSignalMetrics(args: {
     candles: readonly OHLCVData[];
+    baseCandlesByTime?: ReadonlyMap<number, OHLCVData>;
     signalIndex: number;
     entryPrice: number;
     direction: "long" | "short";
     ignoreLastBars: number;
     horizons: readonly number[];
+    basis?: FinderAssetOosHorizonBasis;
 }): FinderAssetOosMetrics {
     return {
         ignoreLastBars: normalizeFinderAssetOosIgnoreLastBars(args.ignoreLastBars),
+        basis: normalizeFinderAssetOosHorizonBasis(args.basis),
         horizons: buildHorizonMetrics(args),
     };
 }

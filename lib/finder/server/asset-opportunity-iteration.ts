@@ -16,7 +16,13 @@
 import { debugLogger } from "../../debug-logger";
 import type { FinderSelectedStrategy } from "../finder-runner";
 import { FinderParamSpace } from "../finder-param-space";
-import { resolveFinderAssetEvalWindowBars } from "../finder-asset-opportunity-oos";
+import {
+    normalizeFinderAssetOosHorizonBasis,
+    normalizeFinderAssetOosHorizons,
+    normalizeFinderAssetOosIgnoreLastBars,
+    normalizeFinderAssetOosMeasurementMode,
+    resolveFinderAssetEvalWindowBars,
+} from "../finder-asset-opportunity-oos";
 import type { CapitalSettings } from "../../types/backtest";
 import type {
     FinderAssetOpportunityDiagnostics,
@@ -58,6 +64,7 @@ import type {
     AssetCandidateExitSignalCacheBySymbol,
 } from "../finder-asset-candidate-execution";
 import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
+import { parseTimeToUnixSeconds } from "../../time-normalization";
 
 const ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY = 12;
 
@@ -78,6 +85,22 @@ function mergeTimingIntervals(intervals: Array<readonly [number, number]>): numb
         end = next[1];
     }
     return total + Math.max(0, end - start);
+}
+
+function findCandleByUnixTime(candles: readonly OHLCVData[], targetTime: number): OHLCVData | undefined {
+    let low = 0;
+    let high = candles.length;
+    while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        const middleTime = parseTimeToUnixSeconds(candles[middle]!.time);
+        if (middleTime === null) return undefined;
+        if (middleTime < targetTime) low = middle + 1;
+        else high = middle;
+    }
+    return low < candles.length
+        && parseTimeToUnixSeconds(candles[low]!.time) === targetTime
+        ? candles[low]
+        : undefined;
 }
 
 function roundDiagnosticMs(value: number): number {
@@ -528,6 +551,7 @@ export async function runAssetOpportunityIteration(
         const symbol = symbols[assetIndex]!;
         const assetStartedAt = performance.now();
         const currentAssetLoadMs = loadedAsset.durationMs;
+        let currentBaseDataLoadingMs = 0;
         const loadingText = `Loading ${symbol} (${assetIndex + 1}/${totalAssets})...`;
         reportProgress({
             percent: 0,
@@ -589,6 +613,71 @@ export async function runAssetOpportunityIteration(
                         asOfTimeSec,
                         executionModel,
                     }));
+                }
+            }
+            let oosBaseCandlesByTime: Map<number, OHLCVData> | undefined;
+            const syntheticPair = parseSyntheticPairToken(symbol);
+            const usesBaseOnlyOos = normalizeFinderAssetOosHorizonBasis(
+                input.options.assetOpportunity?.oosHorizonBasis,
+            ) === "base_only"
+                && normalizeFinderAssetOosMeasurementMode(
+                    input.options.assetOpportunity?.oosMeasurementMode,
+                ) === "fixed_horizon"
+                && normalizeFinderAssetOosIgnoreLastBars(
+                    input.options.assetOpportunity?.oosIgnoreLastBars,
+                ) > 0;
+            if (usesBaseOnlyOos && syntheticPair) {
+                const baseCacheKey = `${syntheticPair.baseSymbol}|${input.interval}`;
+                const cachedBaseData = datasetCache?.get(baseCacheKey);
+                const baseLoadStartedAt = performance.now();
+                const baseData = cachedBaseData
+                    ? await cachedBaseData
+                    : await input.loadDataset(
+                        syntheticPair.baseSymbol,
+                        input.interval,
+                        input.abortSignal,
+                        assetLoadContext,
+                    ).then((loaded) => {
+                        if (!Array.isArray(loaded) || loaded.length === 0) {
+                            throw new Error(`no BASE data for ${syntheticPair.baseSymbol}`);
+                        }
+                        return loaded;
+                    });
+                const baseDataLoadingMs = performance.now() - baseLoadStartedAt;
+                currentBaseDataLoadingMs = baseDataLoadingMs;
+                completedAssetLoadIntervals.push([baseLoadStartedAt, performance.now()]);
+                if (!Array.isArray(baseData) || baseData.length === 0) {
+                    throw new Error(`no BASE data for ${syntheticPair.baseSymbol}`);
+                }
+                oosBaseCandlesByTime = new Map<number, OHLCVData>();
+                const oosSignalIndex = fullClosed.length - normalizeFinderAssetOosIgnoreLastBars(
+                    input.options.assetOpportunity?.oosIgnoreLastBars,
+                ) - 1;
+                const neededBaseTimes = new Set<number>();
+                for (const index of [oosSignalIndex - 1, oosSignalIndex, oosSignalIndex + 1]) {
+                    const time = index >= 0 && index < fullClosed.length
+                        ? parseTimeToUnixSeconds(fullClosed[index]!.time)
+                        : null;
+                    if (time !== null) neededBaseTimes.add(time);
+                }
+                for (const horizon of normalizeFinderAssetOosHorizons(
+                    input.options.assetOpportunity?.oosHorizons,
+                )) {
+                    const targetIndex = oosSignalIndex + horizon;
+                    const time = targetIndex >= 0 && targetIndex < fullClosed.length
+                        ? parseTimeToUnixSeconds(fullClosed[targetIndex]!.time)
+                        : null;
+                    if (time !== null) neededBaseTimes.add(time);
+                }
+                for (const time of neededBaseTimes) {
+                    const candle = findCandleByUnixTime(baseData, time);
+                    if (candle) oosBaseCandlesByTime.set(time, candle);
+                }
+                const boundaryTime = oosSignalIndex >= 0 && oosSignalIndex < fullClosed.length
+                    ? parseTimeToUnixSeconds(fullClosed[oosSignalIndex]!.time)
+                    : null;
+                if (boundaryTime === null || !oosBaseCandlesByTime.has(boundaryTime)) {
+                    throw new Error(`no timestamped BASE candles for ${syntheticPair.baseSymbol}`);
                 }
             }
             let exitSignalCache = input.exitSignalCacheBySymbol?.get(cacheSymbol);
@@ -668,7 +757,7 @@ export async function runAssetOpportunityIteration(
                         slicedHistoricalBars: searchDiagnostics.slicedHistoricalBars,
                         freshSignalWindowBars: searchDiagnostics.freshSignalWindowBars,
                         oosBars: searchDiagnostics.oosBars,
-                        dataLoadingMs: currentAssetLoadMs,
+                        dataLoadingMs: currentAssetLoadMs + currentBaseDataLoadingMs,
                         candidatesEvaluated: searchDiagnostics.candidatesEvaluated,
                         freshEntryRechecks: searchDiagnostics.freshEntryRechecks,
                         freshEntryExecutions: searchDiagnostics.freshEntryExecutions,
@@ -741,7 +830,12 @@ export async function runAssetOpportunityIteration(
                         // builds the endpoint-adjusted selection result for
                         // every candidate, so a full winner rerun is redundant.
                         recomputeWinnerAnalytics: false,
-                        assets: [{ symbol, data, precomputedFullClosed: fullClosed }],
+                        assets: [{
+                            symbol,
+                            data,
+                            precomputedFullClosed: fullClosed,
+                            ...(oosBaseCandlesByTime ? { oosBaseCandlesByTime } : {}),
+                        }],
                         runIsSearch: isSearch,
                     },
                     {

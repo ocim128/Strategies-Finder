@@ -104,6 +104,7 @@ import {
     calculateFinderAssetOosSignalMetrics,
     type FinderAssetOosNextExitUnavailableReason,
     resolveFinderAssetEvalWindowBars,
+    normalizeFinderAssetOosHorizonBasis,
     normalizeFinderAssetOosMeasurementMode,
     normalizeFinderAssetOosHorizons,
     normalizeFinderAssetOosIgnoreLastBars,
@@ -175,6 +176,51 @@ function prefixThroughLastBar(
     }
     if (low === 0 || parseTimeToUnixSeconds(fullData[low - 1]!.time) !== lastTime) return undefined;
     return fullData.slice(0, low);
+}
+
+function findCandleIndexByTime(candles: readonly OHLCVData[], time: Time | null): number {
+    const targetTime = time === null ? null : parseTimeToUnixSeconds(time);
+    if (targetTime === null) return -1;
+    let low = 0;
+    let high = candles.length;
+    while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        const middleTime = parseTimeToUnixSeconds(candles[middle]!.time);
+        if (middleTime === null) return -1;
+        if (middleTime < targetTime) low = middle + 1;
+        else high = middle;
+    }
+    return low < candles.length
+        && parseTimeToUnixSeconds(candles[low]!.time) === targetTime
+        ? low
+        : -1;
+}
+
+function resolveBaseOnlyOosEntryPrice(args: {
+    fullClosed: readonly OHLCVData[];
+    baseCandlesByTime: ReadonlyMap<number, OHLCVData>;
+    latestSignalTime: Time | null;
+    fillTiming: "signal_close" | "next_open" | "next_close";
+    firstHiddenTime: Time | null;
+}): number {
+    const resolvePrice = (time: Time | null): number => {
+        const seconds = time === null ? null : parseTimeToUnixSeconds(time);
+        if (seconds === null) return Number.NaN;
+        const candle = args.baseCandlesByTime.get(seconds);
+        const price = args.fillTiming === "next_open" ? candle?.open : candle?.close;
+        return typeof price === "number" && Number.isFinite(price) && price > 0
+            ? price
+            : Number.NaN;
+    };
+    const signalIndex = findCandleIndexByTime(args.fullClosed, args.latestSignalTime);
+    if (signalIndex >= 0) {
+        const fillIndex = signalIndex + (args.fillTiming === "signal_close" ? 0 : 1);
+        const fillPrice = resolvePrice(args.fullClosed[fillIndex]?.time ?? null);
+        if (Number.isFinite(fillPrice)) return fillPrice;
+    }
+    return args.fillTiming === "signal_close"
+        ? Number.NaN
+        : resolvePrice(args.firstHiddenTime);
 }
 
 /**
@@ -440,6 +486,8 @@ export interface AssetOpportunityAssetInput {
      * builds it from `data` when absent.
      */
     precomputedFullClosed?: OHLCVData[];
+    /** BASE candles keyed by normalized timestamp for synthetic-pair long-only OOS metrics. */
+    oosBaseCandlesByTime?: ReadonlyMap<number, OHLCVData>;
 }
 
 export interface AssetOpportunityFreshEntryPrecheckResult {
@@ -924,6 +972,9 @@ async function searchOneAsset(args: {
     );
     const oosMeasurementMode = normalizeFinderAssetOosMeasurementMode(
         input.options.assetOpportunity?.oosMeasurementMode,
+    );
+    const oosHorizonBasis = normalizeFinderAssetOosHorizonBasis(
+        input.options.assetOpportunity?.oosHorizonBasis,
     );
     const needsExecutableFreshRecheck = oosMeasurementMode === "next_exit";
     const oosHorizons = normalizeFinderAssetOosHorizons(input.options.assetOpportunity?.oosHorizons);
@@ -1485,23 +1536,36 @@ async function searchOneAsset(args: {
         const winnerFresh = freshEvaluations[winnerIndex];
         const firstHiddenBar = fixedOosBars[0];
         const freshEntryPrice = winnerFresh?.freshEntryPrice ?? Number.NaN;
-        const entryPrice = input.settings.executionModel === "signal_close"
-            ? winnerFresh?.latestSignalPrice ?? Number.NaN
-            : Number.isFinite(freshEntryPrice)
-                ? freshEntryPrice
-                : input.settings.executionModel === "next_open"
-                    ? firstHiddenBar?.open ?? Number.NaN
-                    : firstHiddenBar?.close ?? Number.NaN;
+        const baseOnlyCandlesByTime = oosHorizonBasis === "base_only"
+            ? asset.oosBaseCandlesByTime
+            : undefined;
+        const entryPrice = baseOnlyCandlesByTime && winnerFresh
+            ? resolveBaseOnlyOosEntryPrice({
+                fullClosed,
+                baseCandlesByTime: baseOnlyCandlesByTime,
+                latestSignalTime: winnerFresh.latestSignalTime,
+                fillTiming: winnerFresh.fillTiming,
+                firstHiddenTime: firstHiddenBar?.time ?? null,
+            })
+            : input.settings.executionModel === "signal_close"
+                ? winnerFresh?.latestSignalPrice ?? Number.NaN
+                : Number.isFinite(freshEntryPrice)
+                    ? freshEntryPrice
+                    : input.settings.executionModel === "next_open"
+                        ? firstHiddenBar?.open ?? Number.NaN
+                        : firstHiddenBar?.close ?? Number.NaN;
         if (winnerCandidate && winnerFresh?.direction && Number.isFinite(entryPrice)) {
             diagnostics.oosEvaluations += 1;
             diagnostics.fixedHorizonEvaluations += 1;
             const oosHorizonMetrics = calculateFinderAssetOosSignalMetrics({
                 candles: fullClosed,
+                ...(baseOnlyCandlesByTime ? { baseCandlesByTime: baseOnlyCandlesByTime } : {}),
                 signalIndex: fixedOosSignalIndex,
                 entryPrice,
-                direction: winnerFresh.direction,
+                direction: baseOnlyCandlesByTime ? "long" : winnerFresh.direction,
                 ignoreLastBars: oosIgnoreLastBars,
                 horizons: oosHorizons,
+                basis: baseOnlyCandlesByTime ? "base_only" : "pair",
             });
             finalResult = {
                 ...finalResult,

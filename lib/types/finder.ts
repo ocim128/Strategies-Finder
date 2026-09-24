@@ -87,6 +87,8 @@ export interface FinderAssetOpportunityOptions {
     minFreshSupport: number;
     /** Forward OOS measurement; omitted/invalid values use fixed horizons. */
     oosMeasurementMode?: "fixed_horizon" | "next_exit";
+    /** Fixed-horizon price basis; base_only measures the synthetic pair's BASE as a long-only asset. */
+    oosHorizonBasis?: "pair" | "base_only";
     /** Number of historical bars reserved for fixed-horizon OOS measurement. */
     oosIgnoreLastBars?: number;
     /** Configured IS cap after trimming the OOS holdout; 0/undefined means all bars. */

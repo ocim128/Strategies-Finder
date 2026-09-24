@@ -335,7 +335,10 @@ export class FinderUI {
 
             const title = document.createElement("span");
             title.className = "finder-asset-validation-title";
-            title.textContent = "Average Forward validation";
+            const hasBaseOnlyMetrics = results.some((result) => result.oosHorizonMetrics?.basis === "base_only");
+            title.textContent = hasBaseOnlyMetrics
+                ? "Average Forward validation · BASE-only synthetic pairs"
+                : "Average Forward validation";
             heading.appendChild(title);
 
             const source = document.createElement("span");
@@ -741,7 +744,9 @@ export class FinderUI {
 
         const summary = document.createElement("span");
         summary.className = "finder-asset-validation-summary";
-        summary.textContent = `${metrics.ignoreLastBars} hidden bars`;
+        summary.textContent = metrics.basis === "base_only"
+            ? `${metrics.ignoreLastBars} hidden bars · BASE long only`
+            : `${metrics.ignoreLastBars} hidden bars`;
         heading.appendChild(summary);
         panel.appendChild(heading);
 

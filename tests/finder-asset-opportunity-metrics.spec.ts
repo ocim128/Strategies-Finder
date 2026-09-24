@@ -604,7 +604,10 @@ describe("Asset Opportunity post-run re-sort", () => {
         expect(metrics).to.include("totalTrades");
         expect(metrics).to.include("payoffRatio");
         expect(metrics).to.include("freshSignalLibraries");
-        expect(metrics).to.include("tstatEdge");
+        expect(metrics).to.include("topRawSupport");
+        expect(metrics).to.not.include("tstatEdge");
+        expect(metrics).to.not.include("entryHourConcentration");
+        expect(metrics).to.not.include("entryPriceRegimeMembership");
         expect(metrics).to.include("invertedNetProfit");
         expect(metrics).to.include("invertedExpectancy");
         expect(metrics).to.include("invertedAverageGain");
@@ -612,34 +615,6 @@ describe("Asset Opportunity post-run re-sort", () => {
         expect(metrics).to.include("invertedSharpeRatio");
         expect(metrics).to.include("invertedProfitFactor");
         expect(metrics).to.include("invertedMaxDrawdownPercent");
-    });
-
-    it("sorts by tstatEdge so a proven modest edge outranks a bigger unproven edge", () => {
-        // Why: the search optimizes size metrics, so size-sorted tops are overfit
-        // extremes; significance (edge * sqrt(trades) / sd) must reward evidence.
-        // A: expectancy 0.5 over 100 trades => t ~ 0.63.
-        const proven = makeResortResult({ symbol: "A", expectancy: 0.5, winRate: 55, avgWin: 10, avgLoss: 5, totalTrades: 100 });
-        // B: expectancy 2 over 5 trades => t ~ 0.44.
-        const unproven = makeResortResult({ symbol: "B", expectancy: 2, winRate: 20, avgWin: 20, avgLoss: 5, totalTrades: 5 });
-        const sorted = sortAssetOpportunityResultsByMetric([unproven, proven], "tstatEdge");
-        expect(sorted.map((r) => r.symbol)).to.deep.equal(["A", "B"]);
-    });
-
-    it("tstatEdge treats an all-win zero-variance positive candidate as most significant", () => {
-        const degenerate = makeResortResult({ symbol: "A", expectancy: 5, winRate: 100, avgWin: 5, avgLoss: 0, totalTrades: 10 });
-        const varied = makeResortResult({ symbol: "B", expectancy: 3, winRate: 60, avgWin: 12, avgLoss: 6, totalTrades: 40 });
-        const sorted = sortAssetOpportunityResultsByMetric([varied, degenerate], "tstatEdge");
-        expect(sorted.map((r) => r.symbol)).to.deep.equal(["A", "B"]);
-    });
-
-    it("tstatEdge maps an all-win candidate to +Infinity regardless of sample size (run-level minTrades owns guarding)", () => {
-        // Why (operator decision 2026-08-18): the run's minimum-trade filter is the
-        // single owner of sample-size guarding; the sort stays a pure t-stat. The
-        // all-win degenerate follows the payoffRatio precedent (+Infinity).
-        const tinyAllWin = makeResortResult({ symbol: "A", expectancy: 16.94, winRate: 100, avgWin: 16.94, avgLoss: 0, totalTrades: 2 });
-        const proven = makeResortResult({ symbol: "B", expectancy: 0.5, winRate: 55, avgWin: 10, avgLoss: 5, totalTrades: 100 });
-        const sorted = sortAssetOpportunityResultsByMetric([proven, tinyAllWin], "tstatEdge");
-        expect(sorted.map((r) => r.symbol)).to.deep.equal(["A", "B"]);
     });
 
     it("invertedNetProfit ranks worst-first (most negative netProfit at the top)", () => {

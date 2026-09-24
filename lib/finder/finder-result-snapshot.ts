@@ -149,6 +149,9 @@ function compactAssetOpportunityResult(result: FinderAssetOpportunityResult): Fi
             ? {
                 oosHorizonMetrics: {
                     ignoreLastBars: result.oosHorizonMetrics.ignoreLastBars,
+                    ...(result.oosHorizonMetrics.basis
+                        ? { basis: result.oosHorizonMetrics.basis }
+                        : {}),
                     horizons: result.oosHorizonMetrics.horizons.map((horizon) => ({ ...horizon })),
                 },
             }
