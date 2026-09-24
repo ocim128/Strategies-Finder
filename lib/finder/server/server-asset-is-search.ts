@@ -437,6 +437,11 @@ export async function runServerAssetIsSearch(
     const signalWindow = input.fullSignalData
         ? resolveSignalWindow(input.fullSignalData, input.ohlcvData)
         : null;
+    const confirmationData = input.fullSignalData
+        && signalWindow
+        && (settings.confirmationStrategies?.length ?? 0) > 0
+        ? input.fullSignalData.slice(0, signalWindow.endIndex)
+        : undefined;
     const canReuseFullSignals = canReuseFullSignalsForWindow(input, signalWindow);
     const canPrefilterTradeCount = canUseSignalTradeCountPrefilter(input);
     const minimumTrades = canPrefilterTradeCount
@@ -567,6 +572,7 @@ export async function runServerAssetIsSearch(
                 // window. Keep its array identity stable so prepared Finder
                 // data and executor-side caches can be reused per asset.
                 closedCandleDataOverride: input.ohlcvData,
+                ...(confirmationData ? { confirmationDataOverride: confirmationData } : {}),
                 ...(candidateSignals ? { preGeneratedSignals: candidateSignals } : {}),
                 ...(input.exitSignalCache ? { exitSignalCache: input.exitSignalCache } : {}),
                 ...(canPrefilterTradeCount

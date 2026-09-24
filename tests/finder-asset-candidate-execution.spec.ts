@@ -1,9 +1,11 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
+import { ensureConfirmationStrategiesLoaded } from "../lib/confirmation-signal-filter";
 import {
     resolveAssetCandidateBacktestRunOptions,
     runAssetCandidateBacktest,
 } from "../lib/finder/finder-asset-candidate-execution";
+import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
 import { rustEngine } from "../lib/rust-engine-client";
 import { runBacktest } from "../lib/strategies";
 import {
@@ -36,6 +38,118 @@ const data: OHLCVData[] = [
  * the new flag must land here too.
  */
 describe("Asset Opportunity candidate execution run options", () => {
+    it("warms EMA confirmation from history outside the capped evaluation window", async () => {
+        const history: OHLCVData[] = Array.from({ length: 202 }, (_, index) => {
+            const close = 100 + index;
+            return {
+                time: (1_700_000_000 + index * 60) as Time,
+                open: close,
+                high: close + 1,
+                low: close - 1,
+                close,
+                volume: 100,
+            };
+        });
+        const evalData = history.slice(-2);
+        const strategy: Strategy = {
+            name: "Always Long Test",
+            description: "Emits one buy signal per evaluation candle.",
+            defaultParams: {},
+            paramLabels: {},
+            execute(candles) {
+                return candles.map((bar, barIndex) => ({
+                    time: bar.time,
+                    type: "buy" as const,
+                    price: bar.close,
+                    barIndex,
+                }));
+            },
+        };
+        const backtestSettings: BacktestSettings = {
+            executionModel: "signal_close",
+            tradeDirection: "long",
+            allowSameBarExit: true,
+            slippageBps: 0,
+            marketMode: "all",
+            confirmationStrategies: ["ema_confirmation"],
+            confirmationMode: "agree",
+            confirmationStrategyParams: { ema_confirmation: { emaPeriod: 200 } },
+        };
+        await ensureConfirmationStrategiesLoaded(backtestSettings);
+        const capitalSettings: CapitalSettings = {
+            initialCapital: 10_000,
+            positionSize: 100,
+            commission: 0,
+            sizingMode: "percent",
+            fixedTradeAmount: 1_000,
+        };
+        const options = {
+            scope: "asset_opportunity",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 1,
+            steps: 1,
+            rangePercent: 0,
+            maxRuns: 1,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+        } satisfies FinderOptions;
+
+        const withoutWarmup = await runAssetCandidateBacktest({
+            data: evalData,
+            symbol: "TEST",
+            interval: "1m",
+            strategy,
+            strategyKey: "always_long_test",
+            strategyParams: {},
+            riskOverrideParams: {},
+            settings: backtestSettings,
+            capitalSettings,
+            options,
+            needs: { compact: false, trades: false, fullAnalytics: false, signalsOnly: true, endpointSelection: false },
+        });
+        expect(withoutWarmup.signals).to.have.length(0);
+
+        const withWarmup = await runAssetCandidateBacktest({
+            data: evalData,
+            closedCandleDataOverride: evalData,
+            confirmationDataOverride: history,
+            symbol: "TEST",
+            interval: "1m",
+            strategy,
+            strategyKey: "always_long_test",
+            strategyParams: {},
+            riskOverrideParams: {},
+            settings: backtestSettings,
+            capitalSettings,
+            options,
+            needs: { compact: false, trades: false, fullAnalytics: false, signalsOnly: true, endpointSelection: false },
+        });
+        expect(withWarmup.signals).to.have.length(2);
+        expect(withWarmup.signals.map(({ time }) => time)).to.deep.equal(evalData.map(({ time }) => time));
+
+        const search = await runServerAssetIsSearch({
+            ohlcvData: evalData,
+            fullSignalData: history,
+            symbol: "TEST",
+            interval: "1m",
+            options,
+            settings: backtestSettings,
+            capitalSettings,
+            selectedStrategy: { key: "always_long_test", name: strategy.name, strategy },
+            generateParamSets: () => [{}],
+            useRustEnginePreference: false,
+            isCancelled: () => false,
+            yieldControl: async () => {},
+            retainSignals: true,
+        });
+        expect(search.signalsByCandidate?.[0]).to.have.length(2);
+        expect(search.signalsByCandidate?.[0]?.map(({ time }) => time))
+            .to.deep.equal(evalData.map(({ time }) => time));
+    });
+
     it("uses Rust for endpoint-selection candidates and preserves final-bar removal", async () => {
         const strategy: Strategy = {
             name: "Endpoint Selection Test",

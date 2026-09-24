@@ -9,7 +9,8 @@ import type { BacktestSettings, ConfirmationMode, OHLCVData, Signal, Strategy, S
 type ConfirmationSignalExecutor = (
     key: string,
     strategy: Strategy,
-    params: StrategyParams
+    params: StrategyParams,
+    data: OHLCVData[],
 ) => Signal[];
 
 type ConfirmationSignalIndex = {
@@ -74,11 +75,22 @@ function resolveSignalBarIndex(signal: Signal, dataIndexByTime: Map<number, numb
     return seconds === null ? null : dataIndexByTime.get(seconds) ?? null;
 }
 
-function buildSignalIndex(signals: Signal[], dataIndexByTime: Map<number, number>): ConfirmationSignalIndex {
+function resolveSignalBarIndexByTime(signal: Signal, dataIndexByTime: Map<number, number>): number | null {
+    const seconds = parseTimeToUnixSeconds(signal.time);
+    return seconds === null ? null : dataIndexByTime.get(seconds) ?? null;
+}
+
+function buildSignalIndex(
+    signals: Signal[],
+    dataIndexByTime: Map<number, number>,
+    resolveByTime: boolean,
+): ConfirmationSignalIndex {
     const byBarIndex = new Map<number, Signal[]>();
     const index = new Map<number, Signal[]>();
     for (const signal of signals) {
-        const barIndex = resolveSignalBarIndex(signal, dataIndexByTime);
+        const barIndex = resolveByTime
+            ? resolveSignalBarIndexByTime(signal, dataIndexByTime)
+            : resolveSignalBarIndex(signal, dataIndexByTime);
         if (barIndex !== null) {
             addSignalToIndex(byBarIndex, barIndex, signal);
         }
@@ -151,6 +163,7 @@ function hasConfirmationMatch(
 
 function mergeConfirmationSignals(
     data: OHLCVData[],
+    confirmationData: OHLCVData[],
     baseSignals: Signal[],
     confirmationSignals: Signal[],
     settings: BacktestSettings
@@ -162,7 +175,11 @@ function mergeConfirmationSignals(
         ? 0
         : resolveConfirmationWindowBars(settings);
     const dataIndexByTime = buildDataIndexByTime(data);
-    const confirmationIndex = buildSignalIndex(confirmationSignals, dataIndexByTime);
+    const confirmationIndex = buildSignalIndex(
+        confirmationSignals,
+        dataIndexByTime,
+        confirmationData !== data,
+    );
 
     const matchedSignals = baseSignals.filter((signal) => hasConfirmationMatch(
         signal,
@@ -233,6 +250,8 @@ function executeDefaultConfirmationStrategy(
 
 export function applyConfirmationStrategiesToSignals(args: {
     data: OHLCVData[];
+    /** Optional longer history for indicator warmup; matching still uses `data`. */
+    confirmationData?: OHLCVData[];
     baseSignals: Signal[];
     settings: BacktestSettings;
     resolveStrategy?: (key: string) => Strategy | undefined;
@@ -243,6 +262,7 @@ export function applyConfirmationStrategiesToSignals(args: {
 
     const paramsByStrategy = args.settings.confirmationStrategyParams ?? {};
     let mergedSignals = args.baseSignals;
+    const confirmationData = args.confirmationData ?? args.data;
 
     for (const key of keys) {
         const strategy = args.resolveStrategy?.(key) ?? getLoadedBuiltInStrategy(key);
@@ -255,10 +275,16 @@ if (strategy.crossSymbolConfig) return [];
         };
         const params = strategy.normalizeParams ? strategy.normalizeParams(rawParams) : rawParams;
         const confirmationSignals = args.executeStrategy
-            ? args.executeStrategy(key, strategy, params)
-            : executeDefaultConfirmationStrategy(args.data, args.settings, key, strategy, params);
+            ? args.executeStrategy(key, strategy, params, confirmationData)
+            : executeDefaultConfirmationStrategy(confirmationData, args.settings, key, strategy, params);
 
-        mergedSignals = mergeConfirmationSignals(args.data, mergedSignals, confirmationSignals, args.settings);
+        mergedSignals = mergeConfirmationSignals(
+            args.data,
+            confirmationData,
+            mergedSignals,
+            confirmationSignals,
+            args.settings,
+        );
         if (mergedSignals.length === 0) break;
     }
 

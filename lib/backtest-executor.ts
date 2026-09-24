@@ -135,6 +135,8 @@ export interface BacktestExecutorRequest {
     };
     /** Pre-computed closed candle data. When provided, skips selectClosedCandleData internally. */
     closedCandleDataOverride?: OHLCVData[];
+    /** Longer causal history used only to warm up configured confirmation strategies. */
+    confirmationDataOverride?: OHLCVData[];
     /** Pre-resolved backtest settings. When provided, skips resolveExecutorBacktestSettings. */
     preResolvedSettings?: BacktestSettings;
     /** Pre-resolved capital settings. When provided, skips resolveCapitalSettingsFromRaw. */
@@ -353,6 +355,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             ? filterSignalsByBlockRange(req.preGeneratedSignals, blockRange)
             : resolveBacktestSignalsForData({
                 data: backtestData,
+                confirmationData: req.confirmationDataOverride,
                 interval,
                 strategy,
                 params: normalizedParams,
@@ -420,6 +423,7 @@ const executionContext = alignedCrossSymbolContext;
         ? filterSignalsByBlockRange(req.preGeneratedSignals, blockRange)
         : resolveBacktestSignalsForData({
             data: backtestData,
+            confirmationData: req.confirmationDataOverride,
             interval,
             strategy,
             params: normalizedParams,
@@ -868,6 +872,7 @@ export function resolveExecutorBacktestSettings(
 
 function resolveBacktestSignalsForData(args: {
     data: OHLCVData[];
+    confirmationData?: OHLCVData[];
     interval: string;
     strategy: Strategy;
     params: StrategyParams;
@@ -884,7 +889,13 @@ function resolveBacktestSignalsForData(args: {
         hasGlobalStrategyTimeframeWrapper(args.strategy),
         args.executionContext
     );
-    const confirmedSignals = applyConfirmationStrategies(args.data, args.interval, signals, args.settings);
+    const confirmedSignals = applyConfirmationStrategies(
+        args.data,
+        args.interval,
+        signals,
+        args.settings,
+        args.confirmationData,
+    );
     return filterSignalsByBlockRange(confirmedSignals, args.blockRange);
 }
 
@@ -1028,33 +1039,42 @@ function buildExitControlDiagnostics(args: {
     };
 }
 
+const confirmationSignalCacheByData = new WeakMap<OHLCVData[], Map<string, Signal[]>>();
+
 function applyConfirmationStrategies(
     data: OHLCVData[],
     interval: string,
     baseSignals: Signal[],
-    settings: BacktestSettings
+    settings: BacktestSettings,
+    confirmationDataOverride?: OHLCVData[],
 ): Signal[] {
+    const confirmationData = confirmationDataOverride ?? data;
     const confirmationSettings: BacktestSettings = {
         ...settings,
         strategyTimeframeEnabled: false,
     };
-    // Confirmation settings are run-constant, so identical (strategy,
-    // params, invertSignals) re-derive identical signals on every
-    // candidate/backtest call. Memoize per invocation — this executor adds
-    // strategyTimeframeEnabled:false + time-gap isolation on top of the
-    // strategy's raw execute, so it cannot reuse the default cache in
-    // confirmation-signal-filter (which calls strategy.execute directly).
-    const confirmationSignalCache = new Map<string, Signal[]>();
+    let confirmationSignalCache = confirmationSignalCacheByData.get(confirmationData);
+    if (!confirmationSignalCache) {
+        confirmationSignalCache = new Map<string, Signal[]>();
+        confirmationSignalCacheByData.set(confirmationData, confirmationSignalCache);
+    }
     return applyConfirmationStrategiesToSignals({
         data,
+        confirmationData,
         baseSignals,
         settings,
-        executeStrategy: (key, confirmationStrategy, confirmationParams) => {
-            const cacheKey = JSON.stringify([key, confirmationParams, settings.invertSignals === true]);
+        executeStrategy: (key, confirmationStrategy, confirmationParams, signalData) => {
+            const cacheKey = JSON.stringify([
+                interval,
+                key,
+                confirmationParams,
+                settings.invertSignals === true,
+                hasGlobalStrategyTimeframeWrapper(confirmationStrategy),
+            ]);
             const cached = confirmationSignalCache.get(cacheKey);
             if (cached) return cached;
             const generated = executeStrategySignals(
-                data,
+                signalData,
                 confirmationStrategy,
                 confirmationParams,
                 confirmationSettings,

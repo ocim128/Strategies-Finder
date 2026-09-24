@@ -138,6 +138,14 @@ function resolveFreshSignalWarmupBars(
         }
     };
     inspect(settings as unknown as Record<string, unknown>);
+    const confirmationParams = settings.confirmationStrategyParams;
+    if (confirmationParams && typeof confirmationParams === "object") {
+        for (const params of Object.values(confirmationParams)) {
+            if (params && typeof params === "object") {
+                inspect(params as Record<string, unknown>);
+            }
+        }
+    }
     for (const candidate of candidates) {
         inspect(candidate.params);
         if (candidate.exitStrategyParams) inspect(candidate.exitStrategyParams);
@@ -146,6 +154,27 @@ function resolveFreshSignalWarmupBars(
         FRESH_SIGNAL_WARMUP_MAX_BARS,
         Math.max(FRESH_SIGNAL_WARMUP_MIN_BARS, Math.ceil(largestPeriod * 3)),
     );
+}
+
+function prefixThroughLastBar(
+    fullData: OHLCVData[],
+    windowData: OHLCVData[],
+): OHLCVData[] | undefined {
+    if (fullData.length === 0 || windowData.length === 0) return undefined;
+    const lastTime = parseTimeToUnixSeconds(windowData[windowData.length - 1]!.time);
+    if (lastTime === null) return undefined;
+
+    let low = 0;
+    let high = fullData.length;
+    while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        const middleTime = parseTimeToUnixSeconds(fullData[middle]!.time);
+        if (middleTime === null) return undefined;
+        if (middleTime <= lastTime) low = middle + 1;
+        else high = middle;
+    }
+    if (low === 0 || parseTimeToUnixSeconds(fullData[low - 1]!.time) !== lastTime) return undefined;
+    return fullData.slice(0, low);
 }
 
 /**
@@ -974,6 +1003,9 @@ async function searchOneAsset(args: {
     const slicedHistorical = evalLastBars > 0
         ? fractionSlicedHistorical.slice(-evalLastBars)
         : fractionSlicedHistorical;
+    const historicalConfirmationData = (input.settings.confirmationStrategies?.length ?? 0) > 0
+        ? prefixThroughLastBar(fullClosed, slicedHistorical)
+        : undefined;
     diagnostics.slicedHistoricalBars = slicedHistorical.length;
     diagnostics.timingsMs.preparation = performance.now() - preparationStartedAt;
     if (slicedHistorical.length === 0) {
@@ -1388,6 +1420,9 @@ async function searchOneAsset(args: {
                 candidate: winnerCandidate,
                 strategy: preparedStrategy,
                 data: slicedHistorical,
+                ...(historicalConfirmationData
+                    ? { confirmationDataOverride: historicalConfirmationData }
+                    : {}),
                 symbol,
                 interval: input.interval,
                 settings: input.settings,
@@ -1551,11 +1586,15 @@ async function searchOneAsset(args: {
             // counted above; both modes can be active for the same asset.
             diagnostics.oosEvaluations += 1;
             diagnostics.complementaryOosEvaluations += 1;
+            const oosConfirmationData = (input.settings.confirmationStrategies?.length ?? 0) > 0
+                ? prefixThroughLastBar(fullClosed, oosWindowData)
+                : undefined;
             const winnerOos = await runCandidateOosOnAsset({
                 candidate: winnerCandidate,
                 strategy: preparedStrategy,
                 symbol,
                 oosData: oosWindowData,
+                ...(oosConfirmationData ? { confirmationDataOverride: oosConfirmationData } : {}),
                 interval: input.interval,
                 settings: input.settings,
                 capitalSettings: input.capitalSettings,
@@ -1613,11 +1652,17 @@ async function searchOneAsset(args: {
             // excludes the reserved application candle) even when the search
             // window included it.
             const winnerAnalyticsData = includeApplicationCandleInSearch ? historical : slicedHistorical;
+            const winnerConfirmationData = (input.settings.confirmationStrategies?.length ?? 0) > 0
+                ? prefixThroughLastBar(fullClosed, winnerAnalyticsData)
+                : undefined;
             const winnerStartedAt = performance.now();
             const winnerEvaluation = await executeAssetCandidate({
                 candidate: winner,
                 strategy: preparedStrategy,
                 data: winnerAnalyticsData,
+                ...(winnerConfirmationData
+                    ? { confirmationDataOverride: winnerConfirmationData }
+                    : {}),
                 symbol,
                 interval: input.interval,
                 settings: input.settings,
@@ -2041,6 +2086,7 @@ async function executeAssetCandidate(args: {
     candidate: FinderResult;
     strategy: Strategy;
     data: OHLCVData[];
+    confirmationDataOverride?: OHLCVData[];
     symbol: string;
     interval: string;
     settings: BacktestSettings;
@@ -2116,6 +2162,9 @@ async function executeAssetCandidate(args: {
         typescriptSimulationConcurrency: args.typescriptSimulationConcurrency,
         ...(args.preResolvedCapital ? { preResolvedCapital: args.preResolvedCapital } : {}),
         ...(args.strategy.crossSymbolConfig ? {} : { closedCandleDataOverride: args.data }),
+        ...(args.confirmationDataOverride
+            ? { confirmationDataOverride: args.confirmationDataOverride }
+            : {}),
         ...(args.preGeneratedSignals ? { preGeneratedSignals: args.preGeneratedSignals } : {}),
         needs: {
             // Asset Opportunity retains scalar winner metrics plus trades for
@@ -2232,6 +2281,7 @@ async function runCandidateOosOnAsset(args: {
     strategy: Strategy;
     symbol: string;
     oosData: OHLCVData[];
+    confirmationDataOverride?: OHLCVData[];
     interval: string;
     settings: BacktestSettings;
     capitalSettings: CapitalSettings;
@@ -2251,6 +2301,9 @@ async function runCandidateOosOnAsset(args: {
             candidate: args.candidate,
             strategy: args.strategy,
             data: args.oosData,
+            ...(args.confirmationDataOverride
+                ? { confirmationDataOverride: args.confirmationDataOverride }
+                : {}),
             symbol: args.symbol,
             interval: args.interval,
             settings: args.settings,

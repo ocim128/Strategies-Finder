@@ -212,6 +212,8 @@ export async function runAssetCandidateBacktest(args: {
      * strategies (the cross-symbol runtime owns its closed view).
      */
     closedCandleDataOverride?: OHLCVData[];
+    /** Longer causal history used only to warm up configured confirmation strategies. */
+    confirmationDataOverride?: OHLCVData[];
     /** Fully prepared primary signals; skips strategy signal generation. */
     preGeneratedSignals?: Signal[];
     /** Skip trade simulation when primary signals cannot reach this count. */
@@ -276,6 +278,7 @@ export async function runAssetCandidateBacktest(args: {
         },
         ...(args.dataFetcher ? { dataFetcher: args.dataFetcher } : {}),
         ...(args.closedCandleDataOverride ? { closedCandleDataOverride: args.closedCandleDataOverride } : {}),
+        ...(args.confirmationDataOverride ? { confirmationDataOverride: args.confirmationDataOverride } : {}),
         ...(args.preGeneratedSignals ? { preGeneratedSignals: args.preGeneratedSignals } : {}),
         ...(args.exitSignalCache ? { exitSignalCache: args.exitSignalCache } : {}),
         backtestRunOptions,
