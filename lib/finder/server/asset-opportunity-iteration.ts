@@ -122,6 +122,8 @@ export interface FinderAssetOpportunityRunInput {
     capitalSettings: CapitalSettings;
     /** Run-level normalized capital settings reused by every candidate. */
     preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
+    /** Stable closed-candle cutoff shared by every holdout in one batch run. */
+    asOfTimeSec?: number;
     selectedStrategies: FinderSelectedStrategy[];
     exitStrategyCandidates?: FinderSelectedStrategy[];
     useRustEnginePreference?: boolean;
@@ -232,6 +234,7 @@ export async function runAssetOpportunityIteration(
     const preResolvedCapital = input.preResolvedCapital ?? resolveCapitalSettingsFromRaw(
         input.capitalSettings as unknown as Record<string, unknown>,
     );
+    const asOfTimeSec = input.asOfTimeSec ?? Math.floor(Date.now() / 1000);
     const totalAssets = symbols.length;
     const iterationStartedAt = Date.now();
     assertAssetOpportunityStrategySelection(selectedStrategies);
@@ -280,6 +283,9 @@ export async function runAssetOpportunityIteration(
     const typescriptReasonCounts = new Map<string, number>();
     let dataLoadingMs = 0;
     let dataPreparationMs = 0;
+    let closedCandlePreparationMs = 0;
+    let closedCandleCacheHits = 0;
+    let closedCandleCacheMisses = 0;
     let inSampleSearchMs = 0;
     let parameterGenerationMs = 0;
     let candidateBacktestMs = 0;
@@ -552,13 +558,39 @@ export async function runAssetOpportunityIteration(
             loadedBarsSum += data.length;
             loadedBarsCount += 1;
             loadedSymbols += 1;
-            // Hoist the execution-aware closed-candle build out of the
-            // per-strategy loop. The closed-candle view depends only on
-            // (data, interval, settings), not on the selected strategy, so
-            // building it once per asset avoids N re-walks of the dataset to
-            // find the latest closed bar (selectExecutionAwareClosedCandles).
-            const fullClosed = prepareClosedCandleData(data, input.interval, input.settings);
             const cacheSymbol = symbol.trim().toUpperCase();
+            const executionModel = input.settings.executionModel ?? "signal_close";
+            const closedCandleCache = assetLoadContext.closedCandleCache;
+            const closedCandleCacheKey = `${cacheSymbol}|${input.interval}`;
+            const cachedClosedCandlePromise = closedCandleCache?.get(closedCandleCacheKey);
+            let fullClosed: OHLCVData[] | undefined;
+            if (cachedClosedCandlePromise) {
+                const cachedClosedCandle = await cachedClosedCandlePromise;
+                if (
+                    cachedClosedCandle.sourceDataRef.deref() === data
+                    && cachedClosedCandle.asOfTimeSec === asOfTimeSec
+                    && cachedClosedCandle.executionModel === executionModel
+                ) {
+                    fullClosed = cachedClosedCandle.preparedData;
+                    closedCandleCacheHits += 1;
+                }
+            }
+            if (!fullClosed) {
+                const closedPreparationStartedAt = performance.now();
+                fullClosed = prepareClosedCandleData(data, input.interval, input.settings, asOfTimeSec);
+                const closedPreparationMs = performance.now() - closedPreparationStartedAt;
+                closedCandlePreparationMs += closedPreparationMs;
+                dataPreparationMs += closedPreparationMs;
+                if (closedCandleCache) {
+                    closedCandleCacheMisses += 1;
+                    closedCandleCache.set(closedCandleCacheKey, Promise.resolve({
+                        sourceDataRef: new WeakRef(data),
+                        preparedData: fullClosed,
+                        asOfTimeSec,
+                        executionModel,
+                    }));
+                }
+            }
             let exitSignalCache = input.exitSignalCacheBySymbol?.get(cacheSymbol);
             if (!exitSignalCache) {
                 exitSignalCache = new Map();
@@ -904,6 +936,8 @@ export async function runAssetOpportunityIteration(
             signalCacheMisses,
             freshEntryRechecks,
             freshEntryExecutions,
+            closedCandleCacheHits,
+            closedCandleCacheMisses,
             oosEvaluations,
             fixedHorizonEvaluations,
             nextExitEvaluations,
@@ -915,6 +949,7 @@ export async function runAssetOpportunityIteration(
             total: roundDiagnosticMs(totalDurationMs),
             dataLoading: roundDiagnosticMs(dataLoadingMs),
             dataPreparation: roundDiagnosticMs(dataPreparationMs),
+            closedCandlePreparation: roundDiagnosticMs(closedCandlePreparationMs),
             inSampleSearch: roundDiagnosticMs(inSampleSearchMs),
             parameterGeneration: roundDiagnosticMs(parameterGenerationMs),
             candidateBacktests: roundDiagnosticMs(candidateBacktestMs),

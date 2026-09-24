@@ -56,6 +56,8 @@ import type { AssetCandidateExitSignalCacheBySymbol } from "../finder-asset-cand
 export interface AssetOpportunityBatchWorkerTask {
     taskIndex: number;
     holdoutBars: number;
+    /** Stable cutoff shared by every iteration in one batch run. */
+    asOfTimeSec?: number;
     /** Contiguous asset partition within one holdout; omitted for whole sweeps. */
     assetChunkIndex?: number;
     assetChunkCount?: number;
@@ -185,6 +187,7 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
             options: task.options,
             settings: task.settings,
             capitalSettings: task.capitalSettings,
+            ...(task.asOfTimeSec !== undefined ? { asOfTimeSec: task.asOfTimeSec } : {}),
             ...(task.preResolvedCapital ? { preResolvedCapital: task.preResolvedCapital } : {}),
             selectedStrategies,
             ...(exitStrategyCandidates ? { exitStrategyCandidates } : {}),

@@ -776,6 +776,8 @@ export interface FinderAssetOpportunityDiagnostics {
         fixedHorizonEvaluations?: number;
         nextExitEvaluations?: number;
         complementaryOosEvaluations?: number;
+        closedCandleCacheHits?: number;
+        closedCandleCacheMisses?: number;
         winnerAnalyticsRecomputations: number;
         loadedBars: {
             min: number;
@@ -792,6 +794,8 @@ export interface FinderAssetOpportunityDiagnostics {
         total: number;
         dataLoading: number;
         dataPreparation: number;
+        /** Subset of dataPreparation, isolating the closed-candle build. */
+        closedCandlePreparation?: number;
         inSampleSearch: number;
         parameterGeneration: number;
         candidateBacktests: number;

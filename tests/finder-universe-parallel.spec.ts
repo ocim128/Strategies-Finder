@@ -478,10 +478,11 @@ describe("finder universe parallel strategy sweep", () => {
         expect(auto).to.be.at.least(1);
         expect(resolveUniverseStrategyWorkerCount(3, 10, { [FINDER_UNIVERSE_WORKERS_ENV]: "0" }, 64 * GIB)).to.equal(auto);
         // The memory ceiling budgets 75% of ACTUAL system RAM for one dataset
-        // copy per worker (~9MB/symbol): 1000 symbols on a 64 GB host -> 5
+        // plus prepared closed view per worker (~10MB/symbol): 1000
+        // symbols on a 64 GB host -> 4
         // workers, but only 1 on a 16 GB host (the documented heap-guidance
         // host must not auto-OOM).
-        expect(resolveUniverseStrategyWorkerCount(45, 1000, {}, 64 * GIB)).to.equal(5);
+        expect(resolveUniverseStrategyWorkerCount(45, 1000, {}, 64 * GIB)).to.equal(4);
         expect(resolveUniverseStrategyWorkerCount(45, 1000, {}, 16 * GIB)).to.equal(1);
         // The Rust HTTP server serializes: the AUTO pool is capped (never the
         // env override).
@@ -499,8 +500,8 @@ describe("finder universe parallel strategy sweep", () => {
         expect(bounded).to.be.at.least(2);
         expect(bounded).to.be.at.most(13);
         // A hint at the full bar cap must not move the ceiling: 45 strategies,
-        // 1000 symbols on 64 GB stays at the worst-case answer of 5.
-        expect(resolveUniverseStrategyWorkerCount(45, 1000, {}, 64 * GIB, { maxBarsPerSymbol: 100_000 })).to.equal(5);
+        // 1000 symbols on 64 GB stays at the worst-case answer of 4.
+        expect(resolveUniverseStrategyWorkerCount(45, 1000, {}, 64 * GIB, { maxBarsPerSymbol: 100_000 })).to.equal(4);
         // The env override still wins over any hint (and over the Rust cap).
         expect(resolveUniverseStrategyWorkerCount(45, 3092, { [FINDER_UNIVERSE_WORKERS_ENV]: "3" }, 16 * GIB, { rustEngine: true, maxBarsPerSymbol: 13152 })).to.equal(3);
     });

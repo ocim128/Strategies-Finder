@@ -22,8 +22,9 @@
  * Worker count policy: `FINDER_ASSET_BATCH_WORKERS` env override (1 = the
  * caller keeps the sequential in-process loop); otherwise
  * min(effective task count, cores - 2, memoryCeiling) where memoryCeiling
- * estimates one full dataset copy per worker (~9 MB/symbol) against a 48 GB
- * budget. Chunked tasks carry only their assigned asset partition and are
+ * estimates one full dataset plus its prepared closed-candle view per worker
+ * (~10 MB/symbol) against the 75%-of-RAM budget. Chunked tasks carry only
+ * their assigned asset partition and are
  * affinity-scheduled to the same persistent worker across holdouts, preserving
  * that worker's leg/pair cache.
  *
@@ -98,8 +99,9 @@ export const ASSET_OPPORTUNITY_BATCH_RUST_CHUNK_WORKER_CAP = 4;
  *   {@link ASSET_OPPORTUNITY_BATCH_WORKER_COUNT_MAX}.
  * - Auto: min(effective task count, logical cores - 2, memory ceiling). The memory
  *   ceiling budgets 75% of ACTUAL system RAM (`os.totalmem()`, injectable for
- *   tests) for one full dataset copy per worker (~9 MB/symbol), so a 16 GB
- *   host auto-selects ~3x fewer workers than a 64 GB host. Always >= 1.
+ *   tests) for one dataset plus its prepared closed-candle view per worker
+ *   (~10 MB/symbol), so a 16 GB
+ *   host auto-selects about 4x fewer workers than a 64 GB host. Always >= 1.
  *   `options.taskCount` replaces the holdout count when a caller decomposes
  *   each holdout into independent asset chunks.
  *   `options.taskSymbolCount` replaces `symbolCount` for the memory estimate

@@ -310,12 +310,13 @@ function mergeAssetOpportunityChunkResults(
         }
         : { min: 0, max: 0, avg: 0 };
     const timingMax = (key: keyof NonNullable<FinderAssetOpportunityDiagnostics["timingsMs"]>): number =>
-        max(timings.map((value) => value[key]));
+        max(timings.map((value) => value[key] ?? 0));
     const timingSum = (key: keyof NonNullable<FinderAssetOpportunityDiagnostics["timingsMs"]>): number =>
-        sum(timings.map((value) => value[key]));
+        sum(timings.map((value) => value[key] ?? 0));
     const totalDuration = timingMax("total");
     const dataLoading = timingMax("dataLoading");
     const dataPreparation = timingMax("dataPreparation");
+    const closedCandlePreparation = timingMax("closedCandlePreparation");
     const inSampleSearch = timingMax("inSampleSearch");
     const freshEntryRechecks = timingMax("freshEntryRechecks");
     const oosValidation = timingMax("oosValidation");
@@ -421,6 +422,8 @@ function mergeAssetOpportunityChunkResults(
             fixedHorizonEvaluations: sum(work.map((value) => value.fixedHorizonEvaluations ?? 0)),
             nextExitEvaluations: sum(work.map((value) => value.nextExitEvaluations ?? 0)),
             complementaryOosEvaluations: sum(work.map((value) => value.complementaryOosEvaluations ?? 0)),
+            closedCandleCacheHits: sum(work.map((value) => value.closedCandleCacheHits ?? 0)),
+            closedCandleCacheMisses: sum(work.map((value) => value.closedCandleCacheMisses ?? 0)),
             winnerAnalyticsRecomputations: sum(work.map((value) => value.winnerAnalyticsRecomputations)),
             loadedBars,
         },
@@ -428,6 +431,7 @@ function mergeAssetOpportunityChunkResults(
             total: totalDuration,
             dataLoading,
             dataPreparation,
+            closedCandlePreparation,
             inSampleSearch,
             parameterGeneration: timingSum("parameterGeneration"),
             candidateBacktests: timingSum("candidateBacktests"),
@@ -1834,6 +1838,7 @@ export async function processFinderAssetOpportunityBatchRun(
     archiveRoot: string,
     archiveAppend?: AssetOpportunityArchiveAppend,
 ): Promise<void> {
+    const asOfTimeSec = Math.floor(Date.now() / 1000);
     const { symbols, selectedStrategies, batch } = input;
     const totalAssets = symbols.length;
     const holdoutValues = buildAssetOpportunityBatchHoldoutValues(
@@ -2228,6 +2233,7 @@ export async function processFinderAssetOpportunityBatchRun(
                 return {
                     taskIndex: iterationIndex * assetChunkCount + assetChunkIndex,
                     holdoutBars,
+                    asOfTimeSec,
                     ...(assetChunkCount > 1
                         ? { assetChunkIndex, assetChunkCount, includeFullStrategyBreakdown: true }
                         : {}),
@@ -2382,6 +2388,7 @@ export async function processFinderAssetOpportunityBatchRun(
                     {
                         ...input,
                         options: buildIterationOptions(holdoutBars),
+                        asOfTimeSec,
                         preResolvedCapital: resolvedCapitalSettings,
                         assetLoadContext,
                         paramSetCache,

@@ -166,27 +166,29 @@ export async function loadServerFinderDataset(
  * can safely retain the full unique IBKR leg set on high-memory machines.
  *
  * When `symbolCount` is provided (batch holdout sweeps, whose load context is
- * reused across iterations), a plain-dataset LRU is attached so each symbol's
- * series is loaded once per worker/run instead of once per iteration. It is
- * sized by the SAME 75%-RAM/9MB-per-symbol budget the worker-count policy
- * uses. Omitted for single runs — they load each symbol exactly once, so a
- * cache would only add run-length retention.
+ * reused across iterations), run-scoped dataset and prepared-candle LRUs are
+ * attached so each symbol is loaded and prepared once per worker/run instead
+ * of once per iteration. They share the SAME 75%-RAM/10MB-per-symbol budget
+ * as the worker-count policy.
+ * Single runs omit these caches because they load each symbol only once.
  */
 export function createServerFinderAssetOpportunityLoadContext(symbolCount?: number): BatchDatasetLoadContext {
     const pairCacheMaxEntries = symbolCount === undefined
         ? ASSET_OPPORTUNITY_RUN_PAIR_CACHE_MAX_ENTRIES
         : resolveAssetOpportunityPairCacheCapacity(symbolCount);
+    const datasetCacheMaxEntries = symbolCount === undefined
+        ? null
+        : resolveAssetOpportunityDatasetCacheCapacity(symbolCount);
     return {
         legCache: new SyntheticLegCache(ASSET_OPPORTUNITY_RUN_LEG_CACHE_MAX_ENTRIES),
         pairCache: new SyntheticLegCache(pairCacheMaxEntries),
         pairMetadataCache: new SyntheticLegCache(pairCacheMaxEntries),
         preferInMemorySyntheticPairs: true,
         diagnostics: createBatchDatasetLoadDiagnostics(),
-        ...(symbolCount !== undefined
+        ...(datasetCacheMaxEntries !== null
             ? {
-                datasetCache: new SyntheticLegCache<OHLCVData[]>(
-                    resolveAssetOpportunityDatasetCacheCapacity(symbolCount),
-                ),
+                datasetCache: new SyntheticLegCache<OHLCVData[]>(datasetCacheMaxEntries),
+                closedCandleCache: new SyntheticLegCache(datasetCacheMaxEntries),
             }
             : {}),
     };

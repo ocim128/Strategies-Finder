@@ -13,10 +13,11 @@
  * Worker count policy: `FINDER_UNIVERSE_WORKERS` env override (1 = the caller
  * keeps the sequential in-process loop; that is also the rollback lever).
  * Auto: min(strategy count, logical cores - 2, memory ceiling). The memory
- * ceiling budgets 75% of ACTUAL system RAM for one full dataset copy per
- * worker (~9 MB/symbol, the same conservative per-symbol constant the Asset
- * Opportunity pool uses at the 100k-bar cap), because workers are separate
- * isolates and `--max-old-space-size` cannot bound the SUM of their
+ * ceiling budgets 75% of ACTUAL system RAM for each dataset and its prepared
+ * closed-candle view per worker (~10 MB/symbol, the same conservative
+ * per-symbol constant the Asset Opportunity pool uses at the 100k-bar cap),
+ * because each worker is a separate isolate and `--max-old-space-size` cannot
+ * bound the SUM of their
  * footprints. When the Rust engine is preferred the auto value is clamped to
  * the chunked Asset Opportunity Rust cap: the external Rust HTTP server
  * serializes execution, so extra workers only multiply queued requests while
@@ -66,7 +67,7 @@ export const UNIVERSE_STRATEGY_WORKER_COUNT_MAX = 32;
 
 /**
  * Per-dataset bar cap the default `ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL`
- * estimate is derived from (9 MB / 100k bars ≈ 94 B/bar).
+ * estimate is derived from (10 MB / 100k bars ≈ 105 B/bar).
  */
 export const UNIVERSE_DATASET_BAR_CAP = 100_000;
 
@@ -118,12 +119,13 @@ export function resolveUniverseMaxBarsPerSymbol(args: {
  *   capped at {@link UNIVERSE_STRATEGY_WORKER_COUNT_MAX}.
  * - Auto: min(strategy count, logical cores - 2, memory ceiling). The memory
  *   ceiling budgets 75% of ACTUAL system RAM (`os.totalmem()`, injectable for
- *   tests) for one full dataset copy per worker. The per-symbol byte estimate
- *   is `options.maxBarsPerSymbol × UNIVERSE_BYTES_PER_BAR` when the run's
+ *   tests) for each dataset and its prepared closed-candle view per worker.
+ *   The per-symbol byte estimate is
+ *   `options.maxBarsPerSymbol × UNIVERSE_BYTES_PER_BAR` when the run's
  *   slice/interval bounds the bars (see {@link resolveUniverseMaxBarsPerSymbol};
  *   e.g. a 6-year 4h window is ~13k bars/symbol, not the 100k-bar cap), and
  *   the full 100k-bar-cap `ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL`
- *   (~9 MB/symbol) otherwise. The default keeps the historical worst-case
+ *   (~10 MB/symbol) otherwise. The default keeps the historical worst-case
  *   ceiling; the bounded estimate prevents wide-interval/window universes
  *   from collapsing the pool to 1 worker on hosts that could safely host
  *   many. Always >= 1.

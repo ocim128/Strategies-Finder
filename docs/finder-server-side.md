@@ -157,14 +157,15 @@ objects never cross the worker boundary — and iteration payloads are the
 already-scalar rows enforced by `toScalarAssetResult`.
 
 Worker count: `min(task count, logical cores − 2, memory ceiling)` where
-the ceiling estimates one full dataset copy per worker (~9 MB/symbol) against
+the ceiling estimates one dataset plus its prepared closed-candle view per
+worker (~10 MB/symbol) against
 75% of **actual system RAM** (`os.totalmem()` — 48 GB on a 64 GB
 host, 12 GB on a 16 GB host, so small hosts auto-select proportionally fewer
 workers). `FINDER_ASSET_BATCH_WORKERS=<N>` overrides outright — `1`
 forces the sequential in-process loop (the rollback lever); the override
 intentionally bypasses the memory ceiling (operator judgment) but is capped
-at 32. Each worker holds its own copy of every symbol dataset, so large
-symbol lists reduce the worker count automatically. For chunked tasks the
+at 32. Each worker holds each assigned dataset and its prepared closed-candle
+view, so large symbol lists reduce the worker count automatically. For chunked tasks the
 memory estimate uses the partition size, allowing the pool to use more CPU
 without budgeting a full-universe copy per worker. Chunked tasks carry only
 their symbol partition and stay affinity-pinned to one worker across holdouts,
@@ -179,16 +180,17 @@ alone does not apply that cap when the settings force TypeScript. Set
 `FINDER_ASSET_BATCH_WORKERS` explicitly only when you have measured a
 better value.
 
-Dataset reuse: the batch load context carries a run-scoped plain-dataset LRU
-(`BatchDatasetLoadContext.datasetCache`) sized by
-`resolveAssetOpportunityDatasetCacheCapacity` with the same 75%-RAM/9MB
-budget, so every plain symbol loads ONCE per worker (or once for a whole
-sequential sweep) instead of once per holdout iteration. Synthetic pairs are
-excluded (their `pairCache` already retains them), and failed or empty loads
-are never cached — they stay retryable. Iteration `iteration_complete`
-run-log lines carry `datasetCacheHits`/`datasetCacheMisses`, and the
-`timingsMs.dataLoading` diagnostic shows the corresponding drop after the
-first iteration.
+Dataset reuse: the batch load context carries run-scoped plain-dataset and
+prepared closed-candle LRUs (`BatchDatasetLoadContext.datasetCache` and
+`closedCandleCache`) sized by
+`resolveAssetOpportunityDatasetCacheCapacity` with the same 75%-RAM/10MB
+budget, so each symbol loads and prepares its closed-candle view ONCE per
+worker (or once for a whole sequential sweep) instead of once per holdout
+iteration. Synthetic pairs are excluded from the plain-dataset LRU (their
+`pairCache` already retains them), and failed or empty loads are never cached
+— they stay retryable. Iteration diagnostics report prepared-candle cache
+hits/misses and isolate `closedCandlePreparation` time inside
+`dataPreparation`.
 
 The same worker also keeps a bounded full-series signal cache for repeated
 holdout prefixes. It is used only when the search uses the complete data slice,
@@ -269,10 +271,10 @@ semantics are byte-identical to the sequential loop. Load-bearing contracts:
   `FINDER_UNIVERSE_WORKERS` env override (1 = sequential in-process loop,
   the rollback lever; capped at 32, bypasses the memory ceiling), otherwise
   min(strategy count, logical cores − 2, memory ceiling). The ceiling budgets
-  75%-of-RAM for one dataset copy per worker, estimated at
-  `bars-per-symbol × ~94 B` when the run's slice/interval bounds the bars
+  75%-of-RAM for each dataset and its prepared closed-candle view, estimated at
+  `bars-per-symbol × ~105 B` when the run's slice/interval bounds the bars
   (`resolveUniverseMaxBarsPerSymbol`: `date_range` with both bounds, or the
-  `1`..`5` year slices), and at the 100k-bar-cap worst case (~9 MB/symbol)
+  `1`..`5` year slices), and at the 100k-bar-cap worst case (~10 MB/symbol)
   otherwise. A 6-year 4h window is ~13k bars/symbol, so bounded runs no
   longer collapse to 1 worker on hosts that could safely host many.
   With the Rust engine preferred AND the settings able to execute Rust runs,

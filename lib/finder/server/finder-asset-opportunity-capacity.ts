@@ -1,9 +1,11 @@
 import { totalmem } from "node:os";
 
 const MEMORY_BUDGET_FRACTION = 0.75;
-export const ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL = 9 * 1024 * 1024;
+// Includes the raw OHLCV dataset plus one prepared closed-candle reference
+// array (up to ~0.8 MB at 100k bars) retained by batch holdout workers.
+export const ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL = 10 * 1024 * 1024;
 
-/** 75% of system RAM reserved for Asset Opportunity dataset copies. */
+/** 75% of system RAM reserved for Finder datasets and prepared candle views. */
 export function resolveAssetOpportunityMemoryBudgetBytes(systemMemoryBytes: number): number {
     return Math.max(
         1,

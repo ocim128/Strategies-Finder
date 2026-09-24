@@ -103,6 +103,16 @@ export interface BatchDatasetLoadContext {
      * not set this field.
      */
     datasetCache?: SyntheticLegCache<OHLCVData[]>;
+    /**
+     * Prepared execution-aware candle arrays retained alongside batch
+     * datasets across Asset Opportunity holdout iterations.
+     */
+    closedCandleCache?: SyntheticLegCache<{
+        sourceDataRef: WeakRef<OHLCVData[]>;
+        preparedData: OHLCVData[];
+        asOfTimeSec: number;
+        executionModel: string;
+    }>;
     /** Build synthetic pairs from the shared leg cache instead of disk I/O. */
     preferInMemorySyntheticPairs?: boolean;
     diagnostics?: BatchDatasetLoadDiagnostics;

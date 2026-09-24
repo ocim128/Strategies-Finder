@@ -267,7 +267,7 @@ async function runAssetBatch(
         },
         (event) => events.push(event),
         args.owner,
-        "/virtual/archive-root",
+        `/virtual/archive-root-${args.owner}`,
         async (_dir, filename, content) => {
             appended.push(filename);
             contents.push(content);
@@ -339,15 +339,16 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(auto).to.be.at.least(1);
         expect(resolveAssetOpportunityBatchWorkerCount(3, 10, { [FINDER_ASSET_BATCH_WORKERS_ENV]: "0" }, 64 * GIB)).to.equal(auto);
         // The memory ceiling budgets 75% of ACTUAL system RAM for one dataset
-        // copy per worker (~9MB/symbol): 1000 symbols on a 64 GB host -> 5
+        // plus prepared closed view per worker (~10MB/symbol): 1000
+        // symbols on a 64 GB host -> 4
         // workers, but only 1 on a 16 GB host (the documented heap-guidance
         // host must not auto-OOM).
-        expect(resolveAssetOpportunityBatchWorkerCount(41, 1000, {}, 64 * GIB)).to.equal(5);
+        expect(resolveAssetOpportunityBatchWorkerCount(41, 1000, {}, 64 * GIB)).to.equal(4);
         expect(resolveAssetOpportunityBatchWorkerCount(41, 1000, {}, 16 * GIB)).to.equal(1);
         // Few symbols: the memory ceiling stops binding; cores/holdouts clamp.
         expect(resolveAssetOpportunityBatchWorkerCount(2, 10, {}, 16 * GIB)).to.be.at.most(2);
         // Chunked batches size the same policy from the expanded task count.
-        expect(resolveAssetOpportunityBatchWorkerCount(2, 1000, {}, 64 * GIB, { taskCount: 8 })).to.equal(5);
+        expect(resolveAssetOpportunityBatchWorkerCount(2, 1000, {}, 64 * GIB, { taskCount: 8 })).to.equal(4);
     });
 
     it("uses the same bounded asset chunks for a TypeScript single run", () => {
@@ -499,12 +500,16 @@ describe("finder Asset Opportunity batch parallel execution", () => {
 
     it("produces identical ordered results, archives, and totals as the sequential loop", async () => {
         const sequential = await runAssetBatch({ owner: 8101, start: 2, end: 4, runId: "parallel-parity" });
+        const parallelTasks: AssetOpportunityBatchWorkerTask[] = [];
         const parallel = await runAssetBatch({
             owner: 8102,
             start: 2,
             end: 4,
             runId: "parallel-parity",
-            factory: createInProcessRunnerFactory({ datasets: longUpDownDatasets() }),
+            factory: createInProcessRunnerFactory({
+                datasets: longUpDownDatasets(),
+                onTaskStart: (task) => parallelTasks.push(task),
+            }),
         });
 
         const seqIterations = extractIterations(sequential.events);
@@ -512,6 +517,8 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(seqIterations.length).to.equal(3);
         expect(parIterations.map((event) => event.holdoutBars)).to.deep.equal([2, 3, 4]);
         expect(parIterations.map((event) => event.iterationIndex)).to.deep.equal([0, 1, 2]);
+        expect(parallelTasks.length).to.equal(3);
+        expect(new Set(parallelTasks.map((task) => task.asOfTimeSec)).size).to.equal(1);
 
         // Identical scalar rows + totals per iteration (the parallel path
         // executes the same worker task core with the same seeded options).
@@ -790,6 +797,12 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(iterations.length).to.equal(3);
         expect(loadCounts.get("UP")).to.equal(1);
         expect(loadCounts.get("DOWN")).to.equal(1);
+        expect(iterations[0]!.assetDiagnostics!.work!.closedCandleCacheMisses).to.equal(2);
+        expect(iterations[0]!.assetDiagnostics!.work!.closedCandleCacheHits).to.equal(0);
+        expect(iterations[1]!.assetDiagnostics!.work!.closedCandleCacheHits).to.equal(2);
+        expect(iterations[2]!.assetDiagnostics!.work!.closedCandleCacheHits).to.equal(2);
+        expect(iterations[1]!.assetDiagnostics!.timingsMs!.closedCandlePreparation).to.equal(0);
+        expect(iterations[2]!.assetDiagnostics!.timingsMs!.closedCandlePreparation).to.equal(0);
         // Iterations still produce their own (holdout-specific) result rows.
         for (const iteration of iterations) {
             expect(iteration.assets.length).to.be.greaterThan(0);
@@ -834,9 +847,9 @@ describe("finder Asset Opportunity batch parallel execution", () => {
 
     it("sizes the dataset LRU by the same memory budget as the worker pool", () => {
         // Never more entries than symbols; memory-bounded at
-        // floor(75% RAM / 9MB per symbol), mirroring the worker-count ceiling.
+        // floor(75% RAM / 10MB per symbol), mirroring the worker-count ceiling.
         expect(resolveAssetOpportunityDatasetCacheCapacity(10, 8 * GIB)).to.equal(10);
-        expect(resolveAssetOpportunityDatasetCacheCapacity(1000, 8 * GIB)).to.equal(682);
+        expect(resolveAssetOpportunityDatasetCacheCapacity(1000, 8 * GIB)).to.equal(614);
         expect(resolveAssetOpportunityDatasetCacheCapacity(1000, 64 * GIB)).to.equal(1000);
         expect(resolveAssetOpportunityDatasetCacheCapacity(0, 8 * GIB)).to.equal(1);
     });
