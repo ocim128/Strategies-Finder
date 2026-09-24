@@ -323,61 +323,36 @@ export class FinderUI {
         if (copyButton) copyButton.disabled = false;
 
         const fragment = document.createDocumentFragment();
+        const freshResults = results.filter((result) => result.freshStatus === "fresh");
         const averageForwardValidation = calculateFinderAssetOosAverageHorizonMetrics(
-            results.map((result) => result.oosHorizonMetrics),
+            freshResults.map((result) => result.oosHorizonMetrics),
         );
         if (averageForwardValidation.length > 0) {
-            const summary = document.createElement("div");
-            summary.className = "finder-asset-validation finder-asset-validation-overview";
+            const hasBaseOnlyMetrics = freshResults.some((result) => result.oosHorizonMetrics?.basis === "base_only");
+            fragment.appendChild(this.createAssetOosOverview(
+                hasBaseOnlyMetrics
+                    ? "Average Forward validation · fresh entries · BASE-only synthetic pairs"
+                    : "Average Forward validation · fresh entries",
+                averageForwardValidation,
+                results.length,
+            ));
+        }
 
-            const heading = document.createElement("div");
-            heading.className = "finder-asset-validation-heading";
-
-            const title = document.createElement("span");
-            title.className = "finder-asset-validation-title";
-            const hasBaseOnlyMetrics = results.some((result) => result.oosHorizonMetrics?.basis === "base_only");
-            title.textContent = hasBaseOnlyMetrics
-                ? "Average Forward validation · BASE-only synthetic pairs"
-                : "Average Forward validation";
-            heading.appendChild(title);
-
-            const source = document.createElement("span");
-            source.className = "finder-asset-validation-summary";
-            source.textContent = `Across ${results.length} displayed results`;
-            heading.appendChild(source);
-            summary.appendChild(heading);
-
-            const horizons = document.createElement("div");
-            horizons.className = "finder-asset-horizons";
-            for (const horizon of averageForwardValidation) {
-                const status = horizon.averagePnlPercent === null
-                    ? "unavailable"
-                    : horizon.averagePnlPercent > 0
-                        ? "positive"
-                        : horizon.averagePnlPercent < 0
-                            ? "negative"
-                            : "neutral";
-                const cell = document.createElement("div");
-                cell.className = `finder-asset-horizon finder-asset-horizon-${status}`;
-
-                const label = document.createElement("span");
-                label.className = "finder-asset-horizon-label";
-                label.textContent = `${horizon.bars} bar${horizon.bars === 1 ? "" : "s"}`;
-                cell.appendChild(label);
-
-                const value = document.createElement("strong");
-                value.className = "finder-asset-horizon-value";
-                value.textContent = formatNullableSignedPercentPoints(horizon.averagePnlPercent);
-                cell.appendChild(value);
-
-                const sample = document.createElement("span");
-                sample.className = "finder-asset-horizon-sample";
-                sample.textContent = `n=${horizon.sampleSize}`;
-                cell.appendChild(sample);
-                horizons.appendChild(cell);
-            }
-            summary.appendChild(horizons);
-            fragment.appendChild(summary);
+        const activePositionResults = results.filter((result) => result.freshStatus === "active");
+        const averageActiveContinuation = calculateFinderAssetOosAverageHorizonMetrics(
+            activePositionResults.map((result) => result.activePositionContinuationMetrics),
+        );
+        if (averageActiveContinuation.length > 0) {
+            const hasBaseOnlyMetrics = activePositionResults.some(
+                (result) => result.activePositionContinuationMetrics?.basis === "base_only",
+            );
+            fragment.appendChild(this.createAssetOosOverview(
+                hasBaseOnlyMetrics
+                    ? "Average open-position continuation · BASE-only synthetic pairs"
+                    : "Average open-position continuation",
+                averageActiveContinuation,
+                results.length,
+            ));
         }
 
         const nextExitMetrics = results
@@ -448,7 +423,7 @@ export class FinderUI {
             title.appendChild(symbol);
             const grade = document.createElement("span");
             grade.className = `finder-title-badge finder-title-badge-${item.grade}`;
-            grade.textContent = item.grade.toUpperCase();
+            grade.textContent = item.freshStatus === "active" ? "OPEN · EOD" : item.grade.toUpperCase();
             title.appendChild(grade);
 
             const metrics = document.createElement("div");
@@ -466,6 +441,9 @@ export class FinderUI {
             metrics.appendChild(this.createMetricChip(`DD ${selection.maxDrawdownPercent.toFixed(2)}%`));
             metrics.appendChild(this.createMetricChip(`Sharpe ${selection.sharpeRatio.toFixed(2)}`));
             metrics.appendChild(this.createMetricChip(`Trades ${selection.totalTrades}`));
+            if (item.eodOpenTradePnl !== undefined) {
+                metrics.appendChild(this.createMetricChip(`Open EOD ${formatNullableCurrency(item.eodOpenTradePnl)}`));
+            }
             const medianBarsToTp = item.medianBarsToTp;
             metrics.appendChild(this.createMetricChip(
                 typeof medianBarsToTp === "number"
@@ -533,7 +511,9 @@ export class FinderUI {
             }
 
             let details: HTMLElement | undefined;
-            if (item.oosHorizonMetrics && item.oosNextExitMetrics) {
+            if (item.activePositionContinuationMetrics) {
+                details = this.createAssetOosPanel(item.activePositionContinuationMetrics, true, item.direction);
+            } else if (item.oosHorizonMetrics && item.oosNextExitMetrics) {
                 details = document.createElement("div");
                 details.appendChild(this.createAssetOosPanel(item.oosHorizonMetrics));
                 details.appendChild(this.createAssetNextExitPanel(item.oosNextExitMetrics));
@@ -730,7 +710,66 @@ export class FinderUI {
         return span;
     }
 
-    private createAssetOosPanel(metrics: NonNullable<FinderAssetOpportunityResult["oosHorizonMetrics"]>): HTMLDivElement {
+    private createAssetOosOverview(
+        titleText: string,
+        horizonMetrics: ReturnType<typeof calculateFinderAssetOosAverageHorizonMetrics>,
+        totalResults: number,
+    ): HTMLDivElement {
+        const summary = document.createElement("div");
+        summary.className = "finder-asset-validation finder-asset-validation-overview";
+
+        const heading = document.createElement("div");
+        heading.className = "finder-asset-validation-heading";
+
+        const title = document.createElement("span");
+        title.className = "finder-asset-validation-title";
+        title.textContent = titleText;
+        heading.appendChild(title);
+
+        const source = document.createElement("span");
+        source.className = "finder-asset-validation-summary";
+        source.textContent = `${totalResults} displayed results`;
+        heading.appendChild(source);
+        summary.appendChild(heading);
+
+        const horizons = document.createElement("div");
+        horizons.className = "finder-asset-horizons";
+        for (const horizon of horizonMetrics) {
+            const status = horizon.averagePnlPercent === null
+                ? "unavailable"
+                : horizon.averagePnlPercent > 0
+                    ? "positive"
+                    : horizon.averagePnlPercent < 0
+                        ? "negative"
+                        : "neutral";
+            const cell = document.createElement("div");
+            cell.className = `finder-asset-horizon finder-asset-horizon-${status}`;
+
+            const label = document.createElement("span");
+            label.className = "finder-asset-horizon-label";
+            label.textContent = `${horizon.bars} bar${horizon.bars === 1 ? "" : "s"}`;
+            cell.appendChild(label);
+
+            const value = document.createElement("strong");
+            value.className = "finder-asset-horizon-value";
+            value.textContent = formatNullableSignedPercentPoints(horizon.averagePnlPercent);
+            cell.appendChild(value);
+
+            const sample = document.createElement("span");
+            sample.className = "finder-asset-horizon-sample";
+            sample.textContent = `n=${horizon.sampleSize}/${totalResults}`;
+            cell.appendChild(sample);
+            horizons.appendChild(cell);
+        }
+        summary.appendChild(horizons);
+        return summary;
+    }
+
+    private createAssetOosPanel(
+        metrics: NonNullable<FinderAssetOpportunityResult["oosHorizonMetrics"]>,
+        isActivePositionContinuation = false,
+        direction?: FinderAssetOpportunityResult["direction"],
+    ): HTMLDivElement {
         const panel = document.createElement("div");
         panel.className = "finder-asset-validation";
 
@@ -739,14 +778,21 @@ export class FinderUI {
 
         const title = document.createElement("span");
         title.className = "finder-asset-validation-title";
-        title.textContent = "Forward validation";
+        title.textContent = isActivePositionContinuation
+            ? "Open-position continuation"
+            : "Forward validation";
         heading.appendChild(title);
 
         const summary = document.createElement("span");
         summary.className = "finder-asset-validation-summary";
-        summary.textContent = metrics.basis === "base_only"
-            ? `${metrics.ignoreLastBars} hidden bars · BASE long only`
-            : `${metrics.ignoreLastBars} hidden bars`;
+        const summaryParts = [`${metrics.ignoreLastBars} hidden bars`];
+        if (isActivePositionContinuation) summaryParts.push("from boundary close");
+        if (metrics.basis === "base_only") {
+            summaryParts.push("BASE long only");
+        } else if (isActivePositionContinuation && direction) {
+            summaryParts.push(`PAIR ${direction}`);
+        }
+        summary.textContent = summaryParts.join(" · ");
         heading.appendChild(summary);
         panel.appendChild(heading);
 
@@ -776,7 +822,7 @@ export class FinderUI {
             const sample = document.createElement("span");
             sample.className = "finder-asset-horizon-sample";
             sample.textContent = horizon.sampleSize > 0
-                ? `${formatNullablePercentPoints(horizon.winRatePercent, 1)} win · n=${horizon.sampleSize}`
+                ? `${formatNullablePercentPoints(horizon.winRatePercent, 1)} ${isActivePositionContinuation ? "positive" : "win"} · n=${horizon.sampleSize}`
                 : "No data";
             cell.appendChild(sample);
             horizons.appendChild(cell);

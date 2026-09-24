@@ -150,10 +150,10 @@ export type FinderStreamEvent =
  * dispatch maps `asset_start`/`asset_progress`/`asset_complete`/`asset_done`
  * onto camelCase handler keys without colliding with the universe handlers.
  *
- * The `asset_complete` event carries one scalar asset result (fresh entry
- * only). Assets with no fresh entry or a failure are carried in the terminal
- * `asset_done` payload's `diagnostics.failedAssets` / counts, not as
- * individual events (they are not display rows).
+ * The `asset_complete` event carries one scalar fresh-entry result, or an
+ * explicitly enabled current open-position result. Other assets and failures
+ * are carried in the terminal `asset_done` payload's diagnostics, not as
+ * individual result events.
  */
 export type FinderAssetOpportunityStreamEvent =
     | {

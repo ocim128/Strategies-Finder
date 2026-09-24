@@ -85,6 +85,8 @@ export interface FinderAssetOpportunityOptions {
     symbols: string[];
     candidatePoolSize: number;
     minFreshSupport: number;
+    /** Recheck candidates with trade simulation and allow current open positions to be shown at EOD. */
+    includeOpenPositions?: boolean;
     /** Forward OOS measurement; omitted/invalid values use fixed horizons. */
     oosMeasurementMode?: "fixed_horizon" | "next_exit";
     /** Fixed-horizon price basis; base_only measures the synthetic pair's BASE as a long-only asset. */
@@ -374,9 +376,10 @@ export type FinderAssetDecisionGrade = 'select' | 'watch' | 'reject';
 
 /**
  * One asset opportunity result. Built independently per asset — no value is
- * averaged across assets. Every displayed row has a fresh entry; assets with
- * no fresh latest-boundary transition are excluded from results and counted only
- * in diagnostics.
+ * averaged across assets. By default every displayed row has a fresh entry;
+ * assets with no fresh latest-boundary transition are excluded. Asset
+ * Opportunity can optionally include a candidate with a still-open position
+ * at the boundary.
  *
  * The current signal is never used to choose the historical candidate rank; it
  * is only evaluated after historical ranking.
@@ -406,14 +409,18 @@ export interface FinderAssetOpportunityResult {
     /** Signal age in bars relative to the latest closed candle; next-bar fills may be fresh at age 1. */
     signalAgeBars: number;
     fillTiming: FinderAssetFillTiming;
-    /** Historical selection metrics (endpoint-adjusted). */
+    /** Selection metrics; opt-in EOD mode uses visible data through the current boundary close. */
     selectionResult: BacktestResult;
+    /** Combined mark-to-market PnL of open trades counted as EOD exits, when enabled. */
+    eodOpenTradePnl?: number;
     /** OOS metrics on the complementary window, when OOS validation is enabled. */
     oosResult?: BacktestResult;
     /** OOS gate verdict. Present iff oosResult is present. */
     oosVerdict?: FinderOosVerdict;
-    /** Fixed-horizon forward PnL measured inside the reserved OOS holdout. */
+    /** Fixed-horizon forward PnL measured from a fresh entry inside the reserved OOS holdout. */
     oosHorizonMetrics?: import('../finder/finder-asset-opportunity-oos').FinderAssetOosMetrics;
+    /** Forward price continuation from the OOS boundary for an already-open position; separate from fresh-entry validation. */
+    activePositionContinuationMetrics?: import('../finder/finder-asset-opportunity-oos').FinderAssetOosMetrics;
     /** First configured exit after the fresh boundary entry, when selected. */
     oosNextExitMetrics?: import('../finder/finder-asset-opportunity-oos').FinderAssetOosNextExitMetrics;
     /** Distinct selected strategy libraries with a fresh entry for this symbol. */

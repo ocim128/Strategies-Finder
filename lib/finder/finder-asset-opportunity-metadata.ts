@@ -41,6 +41,7 @@ export interface AssetOpportunityMetadataPayload {
     historicalRank: number;
     totalCandidatesEvaluated: number;
     selectionMetrics: FinderAssetOpportunityResult["selectionResult"];
+    eodOpenTradePnl?: FinderAssetOpportunityResult["eodOpenTradePnl"];
     /** Optional because older persisted snapshots predate these metrics. */
     medianBarsToTp?: FinderAssetOpportunityResult["medianBarsToTp"];
     priorTupleRecurrenceCount?: FinderAssetOpportunityResult["priorTupleRecurrenceCount"];
@@ -59,6 +60,7 @@ export interface AssetOpportunityMetadataPayload {
         verdict: NonNullable<FinderAssetOpportunityResult["oosVerdict"]>;
     } | null;
     oosHorizonMetrics: FinderAssetOpportunityResult["oosHorizonMetrics"] | null;
+    activePositionContinuationMetrics: FinderAssetOpportunityResult["activePositionContinuationMetrics"] | null;
     oosNextExitMetrics: FinderAssetOpportunityResult["oosNextExitMetrics"] | null;
     exitStrategy: {
         key: string;
@@ -91,6 +93,7 @@ export function buildAssetOpportunityMetadataPayload(args: {
         historicalRank: result.historicalRank,
         totalCandidatesEvaluated: result.totalCandidatesEvaluated,
         selectionMetrics: result.selectionResult,
+        ...(result.eodOpenTradePnl !== undefined ? { eodOpenTradePnl: result.eodOpenTradePnl } : {}),
         ...(result.medianBarsToTp !== undefined ? { medianBarsToTp: result.medianBarsToTp } : {}),
         ...(result.priorTupleRecurrenceCount !== undefined ? { priorTupleRecurrenceCount: result.priorTupleRecurrenceCount } : {}),
         ...(result.strategyCoverageCount !== undefined ? { strategyCoverageCount: result.strategyCoverageCount } : {}),
@@ -107,6 +110,7 @@ export function buildAssetOpportunityMetadataPayload(args: {
             ? { metrics: result.oosResult, verdict: result.oosVerdict }
             : null,
         oosHorizonMetrics: result.oosHorizonMetrics ?? null,
+        activePositionContinuationMetrics: result.activePositionContinuationMetrics ?? null,
         oosNextExitMetrics: result.oosNextExitMetrics ?? null,
         exitStrategy: result.exitStrategyKey
             ? {
@@ -170,6 +174,7 @@ export interface AssetOpportunityPerformancePayload {
         verdict: NonNullable<FinderAssetOpportunityResult["oosVerdict"]>;
         metrics: AssetOpportunityPerformanceMetrics;
     } | null;
+    /** OPEN EOD rows store boundary-close continuation here so archive ranking uses one forward outcome field. */
     forwardOosPerformance: FinderAssetOpportunityResult["oosHorizonMetrics"] | null;
     nextExitOosPerformance: FinderAssetOpportunityResult["oosNextExitMetrics"] | null;
 }
@@ -315,7 +320,9 @@ export function buildAssetOpportunityPerformancePayload(args: {
                 metrics: selectAssetOpportunityPerformanceMetrics(result.oosResult),
             }
             : null,
-        forwardOosPerformance: result.oosHorizonMetrics ?? null,
+        forwardOosPerformance: result.oosHorizonMetrics
+            ?? result.activePositionContinuationMetrics
+            ?? null,
         nextExitOosPerformance: result.oosNextExitMetrics ?? null,
     };
 }
@@ -332,7 +339,7 @@ export function buildAssetOpportunityForwardOosBaseline(
         totalSamples: number;
     }>();
     for (const result of results) {
-        for (const horizon of result.oosHorizonMetrics?.horizons ?? []) {
+        for (const horizon of (result.oosHorizonMetrics ?? result.activePositionContinuationMetrics)?.horizons ?? []) {
             const averagePnlPercent = horizon.averagePnlPercent;
             if (averagePnlPercent === null || !Number.isFinite(averagePnlPercent) || horizon.sampleSize < 1) continue;
             const aggregate = aggregates.get(horizon.bars) ?? {

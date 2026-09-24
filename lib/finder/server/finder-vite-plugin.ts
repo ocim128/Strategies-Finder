@@ -465,12 +465,15 @@ function mergeAssetOpportunityChunkResults(
         failedAssets: failedAssets.length,
         engineUsage,
     };
+    const openPositionCount = results.filter((result) => result.freshStatus === "active").length;
     return {
         results,
         cancelled: entries.some(({ iteration }) => iteration.cancelled),
         assetDiagnostics,
         totals: mergedTotals,
-        summary: `Asset Opportunity complete: ${results.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`,
+        summary: openPositionCount > 0
+            ? `Asset Opportunity complete: ${results.filter((result) => result.freshStatus === "fresh").length}/${totalAssets} fresh opportunities, ${openPositionCount} open positions shown (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`
+            : `Asset Opportunity complete: ${results.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`,
     };
 }
 
@@ -1970,6 +1973,7 @@ export async function processFinderAssetOpportunityBatchRun(
             symbols: input.options.assetOpportunity?.symbols ?? [],
             candidatePoolSize: input.candidatePoolSize,
             minFreshSupport: input.minFreshSupport,
+            includeOpenPositions: input.options.assetOpportunity?.includeOpenPositions === true,
             oosMeasurementMode: input.options.assetOpportunity?.oosMeasurementMode,
             oosHorizonBasis: input.options.assetOpportunity?.oosHorizonBasis,
             oosHorizons: input.options.assetOpportunity?.oosHorizons,
@@ -2571,6 +2575,7 @@ async function prepareAssetOpportunityRunPayload(
             ? {
                 assetOpportunity: {
                     ...parsedOptions.assetOpportunity,
+                    includeOpenPositions: parsedOptions.assetOpportunity.includeOpenPositions === true,
                     oosMeasurementMode: normalizeFinderAssetOosMeasurementMode(
                         parsedOptions.assetOpportunity.oosMeasurementMode,
                     ),

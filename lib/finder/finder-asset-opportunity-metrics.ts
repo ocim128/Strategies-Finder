@@ -130,9 +130,11 @@ export function computeAssetSupportCounts(args: {
 export interface AssetDecisionInputs {
     /** True iff the winner has a fresh entry on the latest closed candle. */
     hasFreshEntry: boolean;
+    /** True iff the winner has a position still open at the evaluation boundary. */
+    hasOpenPosition?: boolean;
     /** True iff the winner's historical selectionResult expectancy is positive. */
     hasPositiveExpectancy: boolean;
-    /** Winner's historical completed trade count (endpoint-adjusted). */
+    /** Winner's selected trade count used for the grade. */
     historicalTrades: number;
     /** Same-direction top-K support count (freshSameDirection). */
     sameDirectionSupport: number;
@@ -150,9 +152,8 @@ export interface AssetDecisionInputs {
  *
  * Rules (in evaluation order):
  *
- * 1. No fresh entry → not a candidate (caller excludes from rows). Returns
- *    `reject` defensively; the caller should not display rows where the grade
- *    was computed without a fresh entry.
+ * 1. No fresh entry → `watch` only for an explicitly included open position;
+ *    otherwise `reject`.
  * 2. Negative expectancy or fewer than `minHistoricalTrades` → `reject`.
  * 3. OOS enabled and verdict is `fail` → `reject`.
  * 4. Same-direction support < `minFreshSupport` → `watch`.
@@ -160,7 +161,7 @@ export interface AssetDecisionInputs {
  * 6. Otherwise → `select`.
  */
 export function decideAssetGrade(input: AssetDecisionInputs): FinderAssetDecisionGrade {
-    if (!input.hasFreshEntry) return "reject";
+    if (!input.hasFreshEntry) return input.hasOpenPosition === true ? "watch" : "reject";
     if (!input.hasPositiveExpectancy) return "reject";
     if (input.historicalTrades < input.minHistoricalTrades) return "reject";
     if (input.oosVerdict === "fail") return "reject";

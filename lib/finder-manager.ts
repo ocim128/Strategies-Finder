@@ -244,6 +244,7 @@ type FinderPersistedUiState = {
 	universeSortSecondary: FinderUniverseMetric;
 	assetOpportunityCandidatePoolSize: number;
 	assetOpportunityMinFreshSupport: number;
+	assetOpportunityIncludeOpenPositions: boolean;
 	assetOpportunityOosMeasurementMode: "fixed_horizon" | "next_exit";
 	assetOpportunityOosHorizonBasis: "pair" | "base_only";
 	assetOpportunityOosIgnoreLastBars: number;
@@ -329,6 +330,7 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	universeSortSecondary: "windowStabilityScore",
 	assetOpportunityCandidatePoolSize: 10,
 	assetOpportunityMinFreshSupport: 2,
+	assetOpportunityIncludeOpenPositions: false,
 	assetOpportunityOosMeasurementMode: "fixed_horizon",
 	assetOpportunityOosHorizonBasis: "pair",
 	assetOpportunityOosIgnoreLastBars: 0,
@@ -536,6 +538,7 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		universeSortSecondary: normalizeFinderUniverseMetric(source.universeSortSecondary, DEFAULT_FINDER_UI_STATE.universeSortSecondary),
 		assetOpportunityCandidatePoolSize,
 		assetOpportunityMinFreshSupport,
+		assetOpportunityIncludeOpenPositions: source.assetOpportunityIncludeOpenPositions === true,
 		assetOpportunityOosMeasurementMode,
 		assetOpportunityOosHorizonBasis,
 		assetOpportunityOosIgnoreLastBars,
@@ -969,6 +972,7 @@ export class FinderManager {
 		dom.finderUniverseMinProfitableActiveRatio.value = String(this.uiState.universeMinProfitableActiveRatio);
 		dom.finderAssetCandidatePoolSize.value = String(this.uiState.assetOpportunityCandidatePoolSize);
 		dom.finderAssetMinFreshSupport.value = String(this.uiState.assetOpportunityMinFreshSupport);
+		dom.finderAssetIncludeOpenPositions.checked = this.uiState.assetOpportunityIncludeOpenPositions;
 		dom.finderAssetOosMeasurementMode.value = this.uiState.assetOpportunityOosMeasurementMode;
 		dom.finderAssetOosHorizonBasis.value = this.uiState.assetOpportunityOosHorizonBasis;
 		dom.finderAssetOosIgnoreLastBars.value = String(this.uiState.assetOpportunityOosIgnoreLastBars);
@@ -1452,6 +1456,7 @@ const applicable = oosCapableWindow;
 			dom.finderOosValidationToggle,
 			dom.finderAssetCandidatePoolSize,
 			dom.finderAssetMinFreshSupport,
+			dom.finderAssetIncludeOpenPositions,
 			dom.finderAssetOosMeasurementMode,
 			dom.finderAssetOosHorizonBasis,
 			dom.finderAssetOosIgnoreLastBars,
@@ -1507,6 +1512,7 @@ const applicable = oosCapableWindow;
 			DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport,
 			1,
 		))));
+		this.uiState.assetOpportunityIncludeOpenPositions = dom.finderAssetIncludeOpenPositions.checked;
 		this.uiState.assetOpportunityOosMeasurementMode = normalizeFinderAssetOosMeasurementMode(
 			dom.finderAssetOosMeasurementMode.value,
 		);
@@ -3529,6 +3535,7 @@ private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.get
 					DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport,
 					1,
 				)))),
+				includeOpenPositions: dom.finderAssetIncludeOpenPositions.checked,
 				oosMeasurementMode: normalizeFinderAssetOosMeasurementMode(
 					dom.finderAssetOosMeasurementMode.value,
 				),

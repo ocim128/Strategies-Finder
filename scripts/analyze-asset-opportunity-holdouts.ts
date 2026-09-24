@@ -21,7 +21,7 @@ import type { FinderAssetOosNextExitUnavailableReason } from "../lib/finder/find
 
 const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 const BLOCK_SEPARATOR = "=".repeat(80);
-const REPORT_SCHEMA_VERSION = 4;
+const REPORT_SCHEMA_VERSION = 9;
 const DEFAULT_TOP_K = 10;
 const DEFAULT_REPORT_CANDIDATES = 15;
 const THESIS_SORT_FIELDS: Readonly<Record<string, string>> = {
@@ -91,6 +91,11 @@ interface ArchiveHorizon {
     sampleSize: number;
 }
 
+interface ArchiveHorizonPerformance {
+    ignoreLastBars?: number;
+    horizons?: ArchiveHorizon[];
+}
+
 export interface AssetOpportunityArchiveRow {
     scope?: string;
     rank?: number;
@@ -107,10 +112,7 @@ export interface AssetOpportunityArchiveRow {
     /** Exact capped trade-count thesis value in newer archives. */
     totalTradesCappedValue?: number | null;
     strategyCoverageCount?: number | null;
-    forwardOosPerformance?: {
-        ignoreLastBars?: number;
-        horizons?: ArchiveHorizon[];
-    } | null;
+    forwardOosPerformance?: ArchiveHorizonPerformance | null;
     nextExitOosPerformance?: {
         ignoreLastBars?: number;
         status?: "exited" | "censored" | "unavailable";
@@ -544,6 +546,29 @@ function parseArchiveScalarRecord(value: unknown): Record<string, number | null>
     return parsed;
 }
 
+function parseArchiveHorizonPerformance(value: unknown): ArchiveHorizonPerformance | null {
+    if (!isRecord(value)) return null;
+    const horizonsValue = value.horizons;
+    const horizons = Array.isArray(horizonsValue)
+        ? horizonsValue.flatMap((horizon) => {
+            if (!isRecord(horizon)) return [];
+            const bars = asPositiveInteger(horizon.bars);
+            const sampleSize = asPositiveInteger(horizon.sampleSize) ?? 0;
+            const averagePnlPercent = horizon.averagePnlPercent === null
+                ? null
+                : asFiniteNumber(horizon.averagePnlPercent);
+            if (bars === null || (averagePnlPercent === null && horizon.averagePnlPercent !== null)) {
+                return [];
+            }
+            return [{ bars, averagePnlPercent, sampleSize }];
+        })
+        : [];
+    return {
+        ignoreLastBars: asPositiveInteger(value.ignoreLastBars) ?? undefined,
+        horizons,
+    };
+}
+
 function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityArchiveRow[] {
     if (!Array.isArray(value)) {
         throw new Error(`Expected a JSON array in ${sourceFile}`);
@@ -552,29 +577,8 @@ function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityA
         if (!isRecord(row)) {
             throw new Error(`Expected an object at row ${index + 1} in ${sourceFile}`);
         }
-        const forward = row.forwardOosPerformance;
-        let forwardOosPerformance: AssetOpportunityArchiveRow["forwardOosPerformance"] = null;
-        if (isRecord(forward)) {
-            const horizonsValue = forward.horizons;
-            const horizons = Array.isArray(horizonsValue)
-                ? horizonsValue.flatMap((horizon) => {
-                    if (!isRecord(horizon)) return [];
-                    const bars = asPositiveInteger(horizon.bars);
-                    const sampleSize = asPositiveInteger(horizon.sampleSize) ?? 0;
-                    const averagePnlPercent = horizon.averagePnlPercent === null
-                        ? null
-                        : asFiniteNumber(horizon.averagePnlPercent);
-                    if (bars === null || sampleSize < 0 || (averagePnlPercent === null && horizon.averagePnlPercent !== null)) {
-                        return [];
-                    }
-                    return [{ bars, averagePnlPercent, sampleSize }];
-                })
-                : [];
-            forwardOosPerformance = {
-                ignoreLastBars: asPositiveInteger(forward.ignoreLastBars) ?? undefined,
-                horizons,
-            };
-        }
+        const forwardOosPerformance = parseArchiveHorizonPerformance(row.forwardOosPerformance)
+            ?? parseArchiveHorizonPerformance(row.activePositionContinuationPerformance);
         const nextExit = row.nextExitOosPerformance;
         let nextExitOosPerformance: AssetOpportunityArchiveRow["nextExitOosPerformance"] = null;
         if (isRecord(nextExit)) {
@@ -1224,11 +1228,42 @@ function buildNextExitBaselineAnalysis(
     };
 }
 
+function buildSortHorizonAnalyses(
+    records: AssetOpportunityArchiveRecord[],
+    topK: number,
+    horizonBars: number[],
+    matchBaseline: boolean,
+): HoldoutHorizonAnalysis[] {
+    return horizonBars.map((horizonBarsValue) => {
+        const values: Array<{ pnlPercent: number; sampleSize: number }> = [];
+        const contributingHoldouts = new Set<number>();
+        for (const record of records) {
+            const selected = record.topResults.slice(0, topK);
+            for (const row of selected) {
+                const horizon = row.forwardOosPerformance?.horizons?.find((candidate) => candidate.bars === horizonBarsValue);
+                if (!horizon || horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
+                values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize });
+                contributingHoldouts.add(record.holdoutBars);
+            }
+        }
+        const result = calculateHorizonAnalysis(values, horizonBarsValue);
+        if (matchBaseline) {
+            const matchedBaseline = buildBaselineHorizonAnalysis(
+                records.filter((record) => contributingHoldouts.has(record.holdoutBars)),
+                horizonBarsValue,
+            );
+            result.baselineAveragePnlPercent = matchedBaseline?.averagePnlPercent ?? null;
+            result.baselinePositiveRatePercent = matchedBaseline?.positiveRatePercent ?? null;
+            result.baselineEligibleCandidateCount = matchedBaseline?.averageEligibleCandidateCount ?? null;
+        }
+        return result;
+    });
+}
+
 function buildSortAnalysis(
     records: AssetOpportunityArchiveRecord[],
     topK: number,
     expectedHoldoutCount: number,
-    baselineByHorizon: Map<number, BaselineHorizonAnalysis>,
 ): SortHoldoutAnalysis {
     const sortMetric = records[0]!.sortMetric;
     const holdoutBars = [...new Set(records.map((record) => record.holdoutBars))].sort((left, right) => left - right);
@@ -1238,6 +1273,7 @@ function buildSortAnalysis(
 
     for (const record of records) {
         const rows = record.topResults.slice(0, topK);
+        for (const horizon of record.baseline?.horizons ?? []) horizonSet.add(horizon.bars);
         const rowsByCandidate = new Map<string, AssetOpportunityArchiveRow>();
         for (const row of rows) {
             if (!row.symbol || !row.strategyId) continue;
@@ -1283,24 +1319,13 @@ function buildSortAnalysis(
             horizonBars,
         );
     });
-    const horizonAnalyses = horizonBars.map((horizonBarsValue) => {
-        const values: Array<{ pnlPercent: number; sampleSize: number }> = [];
-        for (const record of records) {
-            for (const row of record.topResults.slice(0, topK)) {
-                const horizon = row.forwardOosPerformance?.horizons?.find((candidate) => candidate.bars === horizonBarsValue);
-                if (!horizon || horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
-                values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize });
-            }
-        }
-        const result = calculateHorizonAnalysis(values, horizonBarsValue);
-        const baseline = baselineByHorizon.get(horizonBarsValue);
-        if (baseline) {
-            result.baselineAveragePnlPercent = baseline.averagePnlPercent;
-            result.baselinePositiveRatePercent = baseline.positiveRatePercent;
-            result.baselineEligibleCandidateCount = baseline.averageEligibleCandidateCount;
-        }
-        return result;
-    });
+    const horizonAnalysisBars = [...horizonSet].sort((left, right) => left - right);
+    const horizonAnalyses = buildSortHorizonAnalyses(
+        records,
+        topK,
+        horizonAnalysisBars,
+        true,
+    );
     candidateAnalyses.sort((left, right) => compareCandidates(left, right, horizonBars[0] ?? 0));
     return {
         sortMetric,
@@ -1769,12 +1794,11 @@ export function analyzeAssetOpportunityArchive(
     const baseline = baselineHorizonBars
         .map((horizonBarsValue) => buildBaselineHorizonAnalysis(selected.records, horizonBarsValue))
         .filter((value): value is BaselineHorizonAnalysis => value !== null);
-    const baselineByHorizon = new Map(baseline.map((value) => [value.horizonBars, value]));
     const parameterFingerprintAvailable = selected.records.some((record) => record.topResults.some((row) => Boolean(row.candidateFingerprint)));
     const sorts: SortHoldoutAnalysis[] = measurementMode === "fixed_horizon"
         ? [...recordsBySort.values()]
             .sort((left, right) => left[0]!.sortMetric.localeCompare(right[0]!.sortMetric))
-            .map((sortRecords) => buildSortAnalysis(sortRecords, topK, holdoutBars.length, baselineByHorizon))
+            .map((sortRecords) => buildSortAnalysis(sortRecords, topK, holdoutBars.length))
         : [];
     const nextExitSorts: NextExitSortAnalysis[] = measurementMode === "next_exit"
         ? [...recordsBySort.values()]
@@ -1852,6 +1876,14 @@ export function analyzeAssetOpportunityArchive(
                 : baseline.length > 0
                     ? "The all-candidate baseline uses every result row before the top-N archive slice; it is not a random-trade simulation."
                     : "The all-candidate baseline is unavailable because older archive blocks contain only top-N rows.",
+            ...(measurementMode === "fixed_horizon"
+                ? [
+                    "Per-sort all-candidate averages and deltas use holdouts with at least one valid selected-row forward sample.",
+                    "Samples count valid selected-row forward observations. Fresh entries use their forward metric; an OPEN EOD row uses continuation from the holdout boundary close in the existing position direction.",
+                    "OPEN EOD continuation is an evaluation measurement from the boundary close, not a claim that a new signal or order occurred. Coverage shows valid observations over selected top-K rows.",
+                    "Older archives without forward metrics for OPEN EOD rows cannot contribute those rows; rerun Finder to archive the unified measurement.",
+                ]
+                : []),
             ...(excludedRedundantSortMetrics.length > 0
                 ? ["netProfit was omitted from the detailed analysis because it duplicates netProfitPercent in the selected archive."]
                 : []),
@@ -2168,10 +2200,12 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
         "",
         "QUESTIONS ANSWERED BY THIS REPORT",
         ...report.questionsAnswered.map((question, index) => `${index + 1}. ${question}`),
+    ];
+    lines.push(
         "",
         "FORWARD OOS SUMMARY — BEST TO WORST BY PRIMARY HORIZON AVG PNL",
-        "Sort | Horizon | Positive rows | Average PnL | Median PnL | P10 PnL | Worst PnL | All-candidate avg | Delta | Samples",
-    ];
+        "Sort | Horizon | Positive rows | Average PnL | Median PnL | P10 PnL | Worst PnL | Matched all-candidate avg | Delta | Samples",
+    );
     const primarySummaryHorizon = report.sorts.some((sort) => sort.horizons.some((horizon) => horizon.horizonBars === 12))
         ? 12
         : report.sorts.flatMap((sort) => sort.horizons.map((horizon) => horizon.horizonBars)).sort((left, right) => left - right)[0] ?? 0;

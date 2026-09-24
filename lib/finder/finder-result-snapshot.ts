@@ -143,6 +143,7 @@ function compactAssetOpportunityResult(result: FinderAssetOpportunityResult): Fi
         signalAgeBars: result.signalAgeBars,
         fillTiming: result.fillTiming,
         selectionResult: compactBacktestResult(result.selectionResult),
+        ...(result.eodOpenTradePnl !== undefined ? { eodOpenTradePnl: result.eodOpenTradePnl } : {}),
         ...(result.oosResult ? { oosResult: compactBacktestResult(result.oosResult) } : {}),
         ...(result.oosVerdict ? { oosVerdict: result.oosVerdict } : {}),
         ...(result.oosHorizonMetrics
@@ -153,6 +154,17 @@ function compactAssetOpportunityResult(result: FinderAssetOpportunityResult): Fi
                         ? { basis: result.oosHorizonMetrics.basis }
                         : {}),
                     horizons: result.oosHorizonMetrics.horizons.map((horizon) => ({ ...horizon })),
+                },
+            }
+            : {}),
+        ...(result.activePositionContinuationMetrics
+            ? {
+                activePositionContinuationMetrics: {
+                    ignoreLastBars: result.activePositionContinuationMetrics.ignoreLastBars,
+                    ...(result.activePositionContinuationMetrics.basis
+                        ? { basis: result.activePositionContinuationMetrics.basis }
+                        : {}),
+                    horizons: result.activePositionContinuationMetrics.horizons.map((horizon) => ({ ...horizon })),
                 },
             }
             : {}),

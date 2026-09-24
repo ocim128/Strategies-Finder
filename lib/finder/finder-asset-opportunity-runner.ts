@@ -569,9 +569,10 @@ export interface AssetOpportunityRunCallbacks {
 }
 
 /**
- * One asset's terminal outcome. `result` is null when the asset had no fresh
- * entry, or when it failed to load/evaluate. The caller counts these into
- * diagnostics but does NOT display them as opportunity rows.
+ * One asset's terminal outcome. `result` is null when the asset had neither a
+ * fresh entry nor an enabled open-position result, or when it failed to load
+ * or evaluate. The caller counts these into diagnostics but does NOT display
+ * them as rows.
  */
 export type AssetOpportunityAssetResult =
     | {
@@ -597,7 +598,7 @@ export type AssetOpportunityAssetResult =
     };
 
 export interface AssetOpportunityRunOutput {
-    /** Final, ranked asset rows (fresh-entry opportunities only). */
+    /** Final, ranked fresh-entry opportunities and any explicitly included open-position rows. */
     results: FinderAssetOpportunityResult[];
     /** Per-asset outcomes (including failures and no-fresh), in input order. */
     outcomes: AssetOpportunityAssetResult[];
@@ -693,8 +694,9 @@ export interface AssetOpportunityOosEvaluation {
  *
  * The current signal is never used to choose the historical candidate rank;
  * it is only evaluated after historical ranking. So the winner is the
- * highest-ranked candidate that has a `fresh` status; if none, the asset has
- * no opportunity.
+ * highest-ranked candidate that has a `fresh` status. When EOD open-position
+ * results are enabled and no fresh candidate exists, the highest-ranked
+ * currently open candidate may be returned instead.
  *
  * Returns the asset result + the per-candidate support inputs.
  */
@@ -706,6 +708,7 @@ export function reduceAssetTopKToResult(args: {
     minFreshSupport: number;
     topK: FinderResult[];
     totalCandidatesEvaluated: number;
+    includeOpenPositions?: boolean;
     freshByCandidate: Array<{
         freshStatus: "fresh" | "active" | "flat";
         direction: FinderAssetDirection | null;
@@ -734,12 +737,22 @@ export function reduceAssetTopKToResult(args: {
         };
     });
 
-    // Pick the highest-ranked fresh candidate as the winner.
+    // Fresh entries always outrank stale open positions. Only use an open
+    // position when no candidate has a fresh entry.
     let winnerIndex = -1;
     for (let i = 0; i < freshByCandidate.length; i++) {
         if (freshByCandidate[i]!.freshStatus === "fresh") {
             winnerIndex = i;
             break;
+        }
+    }
+    if (winnerIndex < 0 && args.includeOpenPositions === true) {
+        for (let i = 0; i < freshByCandidate.length; i++) {
+            const candidateFresh = freshByCandidate[i]!;
+            if (candidateFresh.freshStatus === "active" && candidateFresh.isOpen) {
+                winnerIndex = i;
+                break;
+            }
         }
     }
     if (winnerIndex < 0) {
@@ -762,7 +775,8 @@ export function reduceAssetTopKToResult(args: {
     const oosEvaluation = args.oosByCandidate?.[winnerIndex];
 
     const grade = decideAssetGrade({
-        hasFreshEntry: true,
+        hasFreshEntry: winnerFresh.freshStatus === "fresh",
+        hasOpenPosition: winnerFresh.isOpen,
         hasPositiveExpectancy,
         historicalTrades: selectionResult.totalTrades,
         sameDirectionSupport: support.freshSameDirection,
@@ -808,8 +822,8 @@ export function reduceAssetTopKToResult(args: {
  * searched independently; no value is averaged across assets.
  *
  * Returns one scalar asset result per asset that produced a fresh-entry
- * opportunity, plus a per-asset outcome list (including no-fresh and failed
- * entries) for diagnostics.
+ * opportunity, or an included current open position, plus a per-asset outcome
+ * list (including no-fresh and failed entries) for diagnostics.
  */
 export async function runAssetOpportunitySearch(
     input: AssetOpportunityRunInput,
@@ -874,7 +888,14 @@ export async function runAssetOpportunitySearch(
         await callbacks.yieldControl();
     }
 
-    callbacks.setProgress(100, `Asset Opportunity complete: ${results.length}/${totalAssets} fresh opportunities`);
+    const freshOpportunityCount = results.filter((result) => result.freshStatus === "fresh").length;
+    const openPositionCount = results.filter((result) => result.freshStatus === "active").length;
+    callbacks.setProgress(
+        100,
+        openPositionCount > 0
+            ? `Asset Opportunity complete: ${freshOpportunityCount}/${totalAssets} fresh opportunities, ${openPositionCount} open positions shown`
+            : `Asset Opportunity complete: ${results.length}/${totalAssets} fresh opportunities`,
+    );
 
     return { results, outcomes };
 }
@@ -976,6 +997,7 @@ async function searchOneAsset(args: {
     const oosHorizonBasis = normalizeFinderAssetOosHorizonBasis(
         input.options.assetOpportunity?.oosHorizonBasis,
     );
+    const includeOpenPositions = input.options.assetOpportunity?.includeOpenPositions === true;
     const needsExecutableFreshRecheck = oosMeasurementMode === "next_exit";
     const oosHorizons = normalizeFinderAssetOosHorizons(input.options.assetOpportunity?.oosHorizons);
     const evalLastBars = resolveFinderAssetEvalWindowBars(
@@ -1093,9 +1115,12 @@ async function searchOneAsset(args: {
         && !selectedStrategy.strategy.crossSymbolConfig
         && input.settings.strategyTimeframeEnabled !== true
         && !(input.settings.confirmationStrategies?.length);
-    const canReuseFreshSignals = (input.options.dataSlice ?? "all") === "all"
+    const canReuseFreshSignals = !includeOpenPositions
+        && (input.options.dataSlice ?? "all") === "all"
         && (recheckData.length === slicedHistorical.length || canReuseCappedNextBarSignals);
-    const canReuseIsSignalsForFresh = canReuseIsSignalsForFreshModel && canReuseFreshSignals;
+    const canReuseIsSignalsForFresh = !includeOpenPositions
+        && canReuseIsSignalsForFreshModel
+        && canReuseFreshSignals;
 
     // A random search with one candidate has no ranking decision to preserve.
     // Probe that candidate on the same bounded freshness window used by the
@@ -1103,7 +1128,8 @@ async function searchOneAsset(args: {
     // cannot produce an Asset Opportunity result. Keep this server-only and
     // execution-aware so the browser path and multi-candidate ranking remain
     // unchanged.
-    const canPrecheckFreshEntry = input.precheckFreshEntry === true
+    const canPrecheckFreshEntry = !includeOpenPositions
+        && input.precheckFreshEntry === true
         && input.options.mode === "random"
         && Number(input.options.maxRuns) <= 1
         && executionModel !== "signal_close"
@@ -1258,7 +1284,7 @@ async function searchOneAsset(args: {
     const boundedNextExitReplayBars = needsExecutableFreshRecheck
         ? resolveBoundedNextExitReplayBars(input.settings, topK)
         : null;
-    const freshSignalData = resolveFreshSignalWindow({
+    const freshSignalData = includeOpenPositions ? recheckData : resolveFreshSignalWindow({
         boundaryData: recheckData,
         slicedHistorical,
         // signal_close and next_exit replay need the full boundary timeline
@@ -1409,6 +1435,7 @@ async function searchOneAsset(args: {
         minFreshSupport: input.minFreshSupport,
         topK,
         totalCandidatesEvaluated,
+        includeOpenPositions,
         freshByCandidate,
     });
     diagnostics.timingsMs.resultReduction = performance.now() - reductionStartedAt;
@@ -1449,19 +1476,94 @@ async function searchOneAsset(args: {
             result.selectionResult.totalTrades,
         )
         : null;
+    const includeEodOpenPerformance = includeOpenPositions === true
+        && winnerFresh?.isOpen === true
+        && winnerCandidate !== undefined;
+    let eodSelectionResult: BacktestResult | undefined;
+    let eodOpenTradePnl: number | undefined;
     let derivedMetrics = calculateAssetOpportunityDerivedMetrics({
         result: result.selectionResult,
         candles: slicedHistorical,
         freshEntryPrice: winnerFresh?.freshEntryPrice ?? null,
     });
-    if (freshReplayAnalyticsResult) {
+    if (includeEodOpenPerformance) {
+        try {
+            // Replay the full visible boundary so an open position entered
+            // before the configured ranking window is still present and marked
+            // at the current boundary close. Hidden OOS candles stay excluded.
+            const eodAnalyticsData = recheckData;
+            const eodConfirmationData = (input.settings.confirmationStrategies?.length ?? 0) > 0
+                ? prefixThroughLastBar(fullClosed, eodAnalyticsData)
+                : undefined;
+            const winnerStartedAt = performance.now();
+            const winnerSelection = await executeAssetCandidate({
+                candidate: winnerCandidate,
+                strategy: preparedStrategy,
+                data: eodAnalyticsData,
+                ...(eodConfirmationData ? { confirmationDataOverride: eodConfirmationData } : {}),
+                symbol,
+                interval: input.interval,
+                settings: input.settings,
+                capitalSettings: input.capitalSettings,
+                preResolvedCapital,
+                options: assetOptions,
+                exitStrategyCandidates: input.exitStrategyCandidates,
+                dataFetcher: input.dataFetcher,
+                useRustEnginePreference: input.useRustEnginePreference,
+                rustDiagnosticPhase: "winner_analytics",
+                rustCapabilities: input.rustCapabilities,
+                typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,
+                signal: input.signal,
+                fullAnalytics: true,
+            });
+            eodSelectionResult = winnerSelection.result;
+            const eodTrades = winnerSelection.result.trades.filter((trade) => trade.exitReason === "end_of_data");
+            if (eodTrades.length > 0) {
+                eodOpenTradePnl = eodTrades.reduce((sum, trade) => sum + trade.pnl, 0);
+            }
+            const eodTradesCountedAsClosed: BacktestResult = {
+                ...winnerSelection.result,
+                trades: winnerSelection.result.trades.map((trade) => trade.exitReason === "end_of_data"
+                    ? { ...trade, exitReason: "signal" }
+                    : trade),
+            };
+            derivedMetrics = calculateAssetOpportunityDerivedMetrics({
+                result: eodTradesCountedAsClosed,
+                candles: eodAnalyticsData,
+                freshEntryPrice: winnerFresh?.freshEntryPrice ?? null,
+            });
+            diagnostics.winnerAnalyticsRecomputations += 1;
+            diagnostics.timingsMs.winnerAnalytics += performance.now() - winnerStartedAt;
+            mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
+                rustAttemptedRuns: winnerSelection.engineDiagnostics?.rustAttempted ? 1 : 0,
+                rustCompletedRuns: winnerSelection.engineUsed === "rust" ? 1 : 0,
+                rustFallbackRuns: winnerSelection.engineUsed === "typescript"
+                    && winnerSelection.engineDiagnostics?.rustAttempted === true
+                    ? 1
+                    : 0,
+                typescriptCompletedRuns: winnerSelection.engineUsed === "typescript" ? 1 : 0,
+                typescriptReasons: winnerSelection.engineUsed === "typescript"
+                    && winnerSelection.engineDiagnostics?.typescriptReason
+                    ? [{ reason: winnerSelection.engineDiagnostics.typescriptReason, runs: 1 }]
+                    : [],
+            });
+        } catch (error) {
+            if (input.signal?.aborted || isAbortError(error)) throw error;
+            debugLogger.warn("finder.asset_opportunity.eod_open_metrics_failed", {
+                symbol,
+                strategyKey: winnerCandidate.key,
+                reason: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+    if (!eodSelectionResult && freshReplayAnalyticsResult) {
         derivedMetrics = calculateAssetOpportunityDerivedMetrics({
             result: freshReplayAnalyticsResult,
             candles: slicedHistorical,
             freshEntryPrice: winnerFresh?.freshEntryPrice ?? null,
         });
     } else if (
-        selectionTrades.length === 0
+        !eodSelectionResult && selectionTrades.length === 0
         && result.selectionResult.totalTrades >= MEDIAN_BARS_TO_TP_MIN_HITS
         && winnerCandidate
     ) {
@@ -1530,6 +1632,23 @@ async function searchOneAsset(args: {
     let finalResult = {
         ...result,
         ...derivedMetrics,
+        ...(eodSelectionResult ? { selectionResult: eodSelectionResult } : {}),
+        ...(eodOpenTradePnl !== undefined ? { eodOpenTradePnl } : {}),
+        ...(eodSelectionResult
+            ? {
+                grade: decideAssetGrade({
+                    hasFreshEntry: result.freshStatus === "fresh",
+                    hasOpenPosition: winnerFresh?.isOpen === true,
+                    hasPositiveExpectancy: Number.isFinite(eodSelectionResult.expectancy)
+                        ? eodSelectionResult.expectancy > 0
+                        : false,
+                    historicalTrades: eodSelectionResult.totalTrades,
+                    sameDirectionSupport: result.support.freshSameDirection,
+                    minHistoricalTrades: assetOptions.tradeFilterEnabled ? assetOptions.minTrades : 0,
+                    minFreshSupport: input.minFreshSupport,
+                }),
+            }
+            : {}),
         priorTupleRecurrenceCount: 0,
     };
     if (fixedOosBars.length > 0 && oosMeasurementMode === "fixed_horizon") {
@@ -1554,7 +1673,10 @@ async function searchOneAsset(args: {
                     : input.settings.executionModel === "next_open"
                         ? firstHiddenBar?.open ?? Number.NaN
                         : firstHiddenBar?.close ?? Number.NaN;
-        if (winnerCandidate && winnerFresh?.direction && Number.isFinite(entryPrice)) {
+        if (winnerFresh?.freshStatus === "fresh"
+            && winnerCandidate
+            && winnerFresh.direction
+            && Number.isFinite(entryPrice)) {
             diagnostics.oosEvaluations += 1;
             diagnostics.fixedHorizonEvaluations += 1;
             const oosHorizonMetrics = calculateFinderAssetOosSignalMetrics({
@@ -1573,9 +1695,45 @@ async function searchOneAsset(args: {
             };
         }
     }
+    if (fixedOosBars.length > 0) {
+        const winnerFresh = freshEvaluations[winnerIndex];
+        const boundaryCandle = visibleValidationData[visibleValidationData.length - 1];
+        const baseOnlyCandlesByTime = oosHorizonBasis === "base_only"
+            ? asset.oosBaseCandlesByTime
+            : undefined;
+        const boundaryTimeSec = boundaryCandle
+            ? parseTimeToUnixSeconds(boundaryCandle.time)
+            : null;
+        const baseBoundaryCandle = baseOnlyCandlesByTime && boundaryTimeSec !== null
+            ? baseOnlyCandlesByTime.get(boundaryTimeSec)
+            : undefined;
+        const entryPrice = baseOnlyCandlesByTime
+            ? baseBoundaryCandle?.close ?? Number.NaN
+            : boundaryCandle?.close ?? Number.NaN;
+        if (winnerFresh?.freshStatus === "active"
+            && winnerFresh.isOpen
+            && winnerFresh.direction
+            && Number.isFinite(entryPrice)) {
+            diagnostics.oosEvaluations += 1;
+            diagnostics.fixedHorizonEvaluations += 1;
+            finalResult = {
+                ...finalResult,
+                activePositionContinuationMetrics: calculateFinderAssetOosSignalMetrics({
+                    candles: fullClosed,
+                    ...(baseOnlyCandlesByTime ? { baseCandlesByTime: baseOnlyCandlesByTime } : {}),
+                    signalIndex: fixedOosSignalIndex,
+                    entryPrice,
+                    direction: baseOnlyCandlesByTime ? "long" : winnerFresh.direction,
+                    ignoreLastBars: oosIgnoreLastBars,
+                    horizons: oosHorizons,
+                    basis: baseOnlyCandlesByTime ? "base_only" : "pair",
+                }),
+            };
+        }
+    }
     if (fixedOosBars.length > 0 && oosMeasurementMode === "next_exit") {
         const winnerFresh = freshEvaluations[winnerIndex];
-        if (winnerCandidate && winnerFresh?.direction) {
+        if (winnerFresh?.freshStatus === "fresh" && winnerCandidate && winnerFresh.direction) {
             diagnostics.oosEvaluations += 1;
             diagnostics.nextExitEvaluations += 1;
             // The fresh-entry detector accepts a one-bar-old signal for
@@ -1644,7 +1802,7 @@ async function searchOneAsset(args: {
             };
         }
     }
-    if (oosWindowData.length > 0) {
+    if (oosWindowData.length > 0 && result.freshStatus === "fresh") {
         if (winnerCandidate) {
             // Additive: a fixed-holdout evaluation may already have been
             // counted above; both modes can be active for the same asset.
@@ -1686,11 +1844,12 @@ async function searchOneAsset(args: {
             // grade inputs are unchanged from the no-OOS reduction above.
             const minHistoricalTrades = assetOptions.tradeFilterEnabled ? assetOptions.minTrades : 0;
             const regraded = decideAssetGrade({
-                hasFreshEntry: true,
-                hasPositiveExpectancy: Number.isFinite(result.selectionResult.expectancy)
-                    ? result.selectionResult.expectancy > 0
+                hasFreshEntry: result.freshStatus === "fresh",
+                hasOpenPosition: winnerFresh?.isOpen === true,
+                hasPositiveExpectancy: Number.isFinite(finalResult.selectionResult.expectancy)
+                    ? finalResult.selectionResult.expectancy > 0
                     : false,
-                historicalTrades: result.selectionResult.totalTrades,
+                historicalTrades: finalResult.selectionResult.totalTrades,
                 sameDirectionSupport: result.support.freshSameDirection,
                 minHistoricalTrades,
                 minFreshSupport: input.minFreshSupport,
@@ -1707,7 +1866,8 @@ async function searchOneAsset(args: {
     diagnostics.timingsMs.oosValidation = performance.now() - oosStartedAt;
 
     if (
-        input.recomputeWinnerAnalytics === true
+        !eodSelectionResult
+        && input.recomputeWinnerAnalytics === true
         && !finderAssetSearchRequiresFullAnalytics(input.options.sortPriority)
     ) {
         const winner = topK[result.historicalRank - 1];
@@ -1979,10 +2139,13 @@ async function regenerateSignalsAndDetectFresh(args: {
     /** Generate primary signals first so exit override work can be skipped. */
     primarySignalPrefilter?: boolean;
 }): Promise<AssetFreshEvaluation> {
+    const includeOpenPositions = args.options.assetOpportunity?.includeOpenPositions === true;
     const needsExecutableFreshRecheck = args.options.assetOpportunity?.oosMeasurementMode === "next_exit";
     const signalData = args.signalData ?? args.fullClosed;
     const replayData = args.replayData ?? signalData;
-    const primarySignalPrefilter = args.primarySignalPrefilter === true && args.signalData !== undefined;
+    const primarySignalPrefilter = args.primarySignalPrefilter === true
+        && args.signalData !== undefined
+        && !includeOpenPositions;
     let preGeneratedSignals: Signal[] | undefined;
     if (primarySignalPrefilter) {
         const primary = await executeAssetCandidate({
@@ -2048,7 +2211,9 @@ async function regenerateSignalsAndDetectFresh(args: {
         rustCapabilities: args.rustCapabilities,
         signal: args.signal,
         ...(preGeneratedSignals ? { preGeneratedSignals } : {}),
-        signalOnly: args.settings.executionModel !== "signal_close" && !needsExecutableFreshRecheck,
+        signalOnly: args.settings.executionModel !== "signal_close"
+            && !needsExecutableFreshRecheck
+            && !includeOpenPositions,
     }).then(({ result, signals, engineUsed, engineDiagnostics }) => {
         const boundarySignals = args.signalData
             ? alignSignalsToBoundary(signals, args.fullClosed, signalData)

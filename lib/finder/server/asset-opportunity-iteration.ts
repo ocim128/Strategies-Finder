@@ -769,7 +769,8 @@ export async function runAssetOpportunityIteration(
                     });
                 }
                 if (outcome.kind === "opportunity") {
-                    assetHadFreshEntry = true;
+                    if (outcome.result.freshStatus === "fresh") assetHadFreshEntry = true;
+                    else assetHadNoFreshEntry = true;
                     assetGrades.add(outcome.result.grade);
                     const scalar = toScalarAssetResult(outcome.result);
                     assertAssetResultIsScalar(scalar);
@@ -1080,7 +1081,11 @@ export async function runAssetOpportunityIteration(
         })),
         engineUsage: totals.engineUsage,
     };
-    const summary = `Asset Opportunity complete: ${sortedAssetResults.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`;
+    const freshOpportunityCount = sortedAssetResults.filter((result) => result.freshStatus === "fresh").length;
+    const openPositionCount = sortedAssetResults.filter((result) => result.freshStatus === "active").length;
+    const summary = openPositionCount > 0
+        ? `Asset Opportunity complete: ${freshOpportunityCount}/${totalAssets} fresh opportunities, ${openPositionCount} open positions shown (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`
+        : `Asset Opportunity complete: ${sortedAssetResults.length}/${totalAssets} fresh opportunities (${selectGradeAssets} select, ${watchGradeAssets} watch, ${rejectGradeAssets} reject, ${assetsWithNoFreshEntry} no fresh, ${failedAssets.length} failed).`;
 
     // Cross-iteration dataset reuse is invisible to `timingsMs.dataLoading`
     // (cache hits contribute ~0 duration), so surface the hit/miss counters
