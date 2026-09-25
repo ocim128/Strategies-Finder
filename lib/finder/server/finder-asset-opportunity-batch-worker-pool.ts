@@ -23,10 +23,10 @@
  * caller keeps the sequential in-process loop); otherwise
  * min(effective task count, cores - 2, memoryCeiling) where memoryCeiling
  * estimates one full dataset plus its prepared closed-candle view per worker
- * (~10 MB/symbol) against the 75%-of-RAM budget. Chunked tasks carry only
- * their assigned asset partition and are
- * affinity-scheduled to the same persistent worker across holdouts, preserving
- * that worker's leg/pair cache.
+ * (~10 MB/symbol) plus the worker-local signal-cache budget against the
+ * 75%-of-RAM budget. Chunked tasks carry only their assigned asset partition
+ * and are affinity-scheduled to the same persistent worker across holdouts,
+ * preserving that worker's leg/pair cache.
  *
  * Import hygiene (the documented vite.config bundle trap): leaf modules and
  * node:worker_threads only. This module is imported by finder-vite-plugin.ts
@@ -43,6 +43,7 @@ import {
     ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL,
     resolveAssetOpportunityMemoryBudgetBytes,
 } from "./finder-asset-opportunity-capacity";
+import { ASSET_OPPORTUNITY_SIGNAL_CACHE_MAX_ESTIMATED_BYTES } from "../finder-asset-opportunity-search-cache";
 
 // Keep the existing worker-pool export stable for callers while the pure
 // capacity policy remains independent of worker orchestration.
@@ -70,9 +71,10 @@ export const FINDER_ASSET_BATCH_WORKERS_ENV = "FINDER_ASSET_BATCH_WORKERS";
 export const ASSET_OPPORTUNITY_BATCH_WORKER_COUNT_MAX = 32;
 
 /**
- * Fraction of TOTAL system memory the worker pool may budget for dataset
- * copies. The main dev-server process and the OS keep the rest. Workers are
- * separate isolates, so `--max-old-space-size` (per-isolate) cannot bound the
+ * Fraction of TOTAL system memory the worker pool may budget for datasets,
+ * prepared candle views, and worker-local signal caches. The main dev-server
+ * process and the OS keep the rest. Workers are separate isolates, so
+ * `--max-old-space-size` (per-isolate) cannot bound the
  * SUM of their footprints — only this budget does.
  */
 /**
@@ -100,7 +102,7 @@ export const ASSET_OPPORTUNITY_BATCH_RUST_CHUNK_WORKER_CAP = 4;
  * - Auto: min(effective task count, logical cores - 2, memory ceiling). The memory
  *   ceiling budgets 75% of ACTUAL system RAM (`os.totalmem()`, injectable for
  *   tests) for one dataset plus its prepared closed-candle view per worker
- *   (~10 MB/symbol), so a 16 GB
+ *   (~10 MB/symbol) and an estimated 64 MB signal cache, so a 16 GB
  *   host auto-selects about 4x fewer workers than a 64 GB host. Always >= 1.
  *   `options.taskCount` replaces the holdout count when a caller decomposes
  *   each holdout into independent asset chunks.
@@ -142,7 +144,11 @@ export function resolveAssetOpportunityBatchWorkerCount(
     const memoryCeiling = Math.max(
         1,
         Math.floor(
-            memoryBudgetBytes / (memorySymbolCount * ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL),
+            memoryBudgetBytes
+            / (
+                memorySymbolCount * ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL
+                + ASSET_OPPORTUNITY_SIGNAL_CACHE_MAX_ESTIMATED_BYTES
+            ),
         ),
     );
     const auto = Math.max(

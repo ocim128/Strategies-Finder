@@ -59,6 +59,72 @@ function makeOptions(evalLastBars = 0): FinderOptions {
 }
 
 describe("server Asset Opportunity signal cache", () => {
+    it("extracts ordered signal windows with binary-search bounds and rebased indexes", () => {
+        const signals = [
+            { time: 1 as Time, type: "buy" as const, price: 10, barIndex: 1, reason: "before" },
+            { time: 2 as Time, type: "sell" as const, price: 12, barIndex: 3, reason: "first" },
+            { time: 3 as Time, type: "buy" as const, price: 13, barIndex: 3, reason: "same bar" },
+            { time: 4 as Time, type: "sell" as const, price: 16, barIndex: 6, reason: "end" },
+        ];
+        const cache = createAssetOpportunitySignalCache();
+        cache.set("ordered", signals);
+
+        expect(cache.getWindow("ordered", 3, 6)).to.deep.equal([
+            { ...signals[1]!, barIndex: 0 },
+            { ...signals[2]!, barIndex: 0 },
+        ]);
+    });
+
+    it("preserves original signal order for unordered cached signals", () => {
+        const signals = [
+            { time: 1 as Time, type: "buy" as const, price: 14, barIndex: 4 },
+            { time: 2 as Time, type: "sell" as const, price: 13, barIndex: 3 },
+            { time: 3 as Time, type: "buy" as const, price: 16, barIndex: 6 },
+        ];
+        const cache = createAssetOpportunitySignalCache();
+        cache.set("unordered", signals);
+
+        expect(cache.getWindow("unordered", 3, 6)).to.deep.equal([
+            { ...signals[0]!, barIndex: 1 },
+            { ...signals[1]!, barIndex: 0 },
+        ]);
+    });
+
+    it("evicts least-recently-used entries when the estimated signal-byte budget is reached", () => {
+        const cache = createAssetOpportunitySignalCache(10, 520);
+        const oneSignal = [{ time: 1 as Time, type: "buy" as const, price: 10, barIndex: 0 }];
+        const oversizedSignals = [
+            ...oneSignal,
+            { time: 2 as Time, type: "sell" as const, price: 12, barIndex: 1 },
+            { time: 3 as Time, type: "buy" as const, price: 13, barIndex: 2 },
+        ];
+
+        cache.set("oversized", oversizedSignals);
+        expect(cache.getWindow("oversized", 0, 3)).to.equal(undefined);
+
+        cache.set("oldest", oneSignal);
+        cache.set("recent", oneSignal);
+        expect(cache.getWindow("oldest", 0, 2)).to.deep.equal(oneSignal);
+        cache.set("new", oneSignal);
+
+        expect(cache.getWindow("oldest", 0, 2)).to.deep.equal(oneSignal);
+        expect(cache.getWindow("recent", 0, 2)).to.equal(undefined);
+        expect(cache.getWindow("new", 0, 2)).to.deep.equal(oneSignal);
+    });
+
+    it("retains the entry-count cap", () => {
+        const cache = createAssetOpportunitySignalCache(2, 10_000);
+        const signal = [{ time: 1 as Time, type: "buy" as const, price: 10, barIndex: 0 }];
+        cache.set("oldest", signal);
+        cache.set("recent", signal);
+        expect(cache.getWindow("oldest", 0, 2)).to.deep.equal(signal);
+        cache.set("new", signal);
+
+        expect(cache.getWindow("oldest", 0, 2)).to.deep.equal(signal);
+        expect(cache.getWindow("recent", 0, 2)).to.equal(undefined);
+        expect(cache.getWindow("new", 0, 2)).to.deep.equal(signal);
+    });
+
     it("does not yield after the final slow candidate", async () => {
         let yields = 0;
         const strategy: Strategy = {
@@ -297,6 +363,22 @@ describe("server Asset Opportunity signal cache", () => {
             ...base,
             ohlcvData: prefixData,
         });
+        for (const executionModel of ["next_open", "next_close"] as const) {
+            const timedBase = { ...base, settings: { ...settings, executionModel } };
+            const timedCached = await runServerAssetIsSearch({
+                ...timedBase,
+                ohlcvData: prefixData,
+                fullSignalData: fullData,
+                signalCache: cache,
+            });
+            const timedDirect = await runServerAssetIsSearch({
+                ...timedBase,
+                ohlcvData: prefixData,
+            });
+
+            expect(timedCached.signalCacheHits).to.equal(1);
+            expect(timedCached.results).to.deep.equal(timedDirect.results);
+        }
 
         expect(first.results).to.have.length(1);
         expect(first.signalCacheHits).to.equal(0);
@@ -305,7 +387,7 @@ describe("server Asset Opportunity signal cache", () => {
         expect(cached.signalCacheMisses).to.equal(0);
         expect(cached.results).to.deep.equal(direct.results);
         expect(callsAfterWarm).to.equal(1);
-        expect(executeCalls).to.equal(2);
+        expect(executeCalls).to.equal(4);
     });
 
     it("reuses full-series signals for trailing capped windows with local bar indexes", async () => {

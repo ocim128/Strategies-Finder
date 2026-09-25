@@ -26,6 +26,7 @@
 
 import { expect } from "chai";
 import { describe, it, before, after, afterEach } from "node:test";
+import { availableParallelism } from "node:os";
 import { strategyRegistry } from "../strategyRegistry";
 import {
     processFinderAssetOpportunityBatchRun,
@@ -41,6 +42,11 @@ import {
     type AssetOpportunityBatchRunnerFactory,
     type AssetOpportunityBatchTaskRunner,
 } from "../lib/finder/server/finder-asset-opportunity-batch-worker-pool";
+import {
+    ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL,
+    resolveAssetOpportunityMemoryBudgetBytes,
+} from "../lib/finder/server/finder-asset-opportunity-capacity";
+import { ASSET_OPPORTUNITY_SIGNAL_CACHE_MAX_ESTIMATED_BYTES } from "../lib/finder/finder-asset-opportunity-search-cache";
 import {
     runAssetOpportunityBatchWorkerTask,
     type AssetOpportunityBatchWorkerTask,
@@ -339,7 +345,8 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(auto).to.be.at.least(1);
         expect(resolveAssetOpportunityBatchWorkerCount(3, 10, { [FINDER_ASSET_BATCH_WORKERS_ENV]: "0" }, 64 * GIB)).to.equal(auto);
         // The memory ceiling budgets 75% of ACTUAL system RAM for one dataset
-        // plus prepared closed view per worker (~10MB/symbol): 1000
+        // plus prepared closed view per worker (~10MB/symbol) and its bounded
+        // signal cache: 1000
         // symbols on a 64 GB host -> 4
         // workers, but only 1 on a 16 GB host (the documented heap-guidance
         // host must not auto-OOM).
@@ -349,6 +356,31 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(resolveAssetOpportunityBatchWorkerCount(2, 10, {}, 16 * GIB)).to.be.at.most(2);
         // Chunked batches size the same policy from the expanded task count.
         expect(resolveAssetOpportunityBatchWorkerCount(2, 1000, {}, 64 * GIB, { taskCount: 8 })).to.equal(4);
+    });
+
+    it("reserves each worker's signal-cache budget in the automatic memory ceiling", () => {
+        const taskCount = 32;
+        const taskSymbolCount = 405;
+        const systemMemoryBytes = 64 * GIB;
+        const memoryCeiling = Math.floor(
+            resolveAssetOpportunityMemoryBudgetBytes(systemMemoryBytes)
+            / (
+                taskSymbolCount * ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL
+                + ASSET_OPPORTUNITY_SIGNAL_CACHE_MAX_ESTIMATED_BYTES
+            ),
+        );
+        const expected = Math.max(
+            1,
+            Math.min(taskCount, Math.max(1, availableParallelism() - 2), memoryCeiling),
+        );
+
+        expect(resolveAssetOpportunityBatchWorkerCount(
+            taskCount,
+            taskSymbolCount,
+            {},
+            systemMemoryBytes,
+            { taskCount, taskSymbolCount },
+        )).to.equal(expected);
     });
 
     it("uses the same bounded asset chunks for a TypeScript single run", () => {
@@ -846,10 +878,10 @@ describe("finder Asset Opportunity batch parallel execution", () => {
     });
 
     it("sizes the dataset LRU by the same memory budget as the worker pool", () => {
-        // Never more entries than symbols; memory-bounded at
-        // floor(75% RAM / 10MB per symbol), mirroring the worker-count ceiling.
+        // Never more entries than symbols; leave the signal-cache reserve out
+        // of the 75%-RAM dataset budget used by the worker-count ceiling.
         expect(resolveAssetOpportunityDatasetCacheCapacity(10, 8 * GIB)).to.equal(10);
-        expect(resolveAssetOpportunityDatasetCacheCapacity(1000, 8 * GIB)).to.equal(614);
+        expect(resolveAssetOpportunityDatasetCacheCapacity(1000, 8 * GIB)).to.equal(608);
         expect(resolveAssetOpportunityDatasetCacheCapacity(1000, 64 * GIB)).to.equal(1000);
         expect(resolveAssetOpportunityDatasetCacheCapacity(0, 8 * GIB)).to.equal(1);
     });

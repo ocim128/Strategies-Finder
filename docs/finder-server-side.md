@@ -162,7 +162,8 @@ already-scalar rows enforced by `toScalarAssetResult`.
 
 Worker count: `min(task count, logical cores − 2, memory ceiling)` where
 the ceiling estimates one dataset plus its prepared closed-candle view per
-worker (~10 MB/symbol) against
+worker (~10 MB/symbol) and reserves an estimated 64 MB for that worker's
+signal cache against
 75% of **actual system RAM** (`os.totalmem()` — 48 GB on a 64 GB
 host, 12 GB on a 16 GB host, so small hosts auto-select proportionally fewer
 workers). `FINDER_ASSET_BATCH_WORKERS=<N>` overrides outright — `1`
@@ -187,10 +188,12 @@ better value.
 Dataset reuse: the batch load context carries run-scoped plain-dataset and
 prepared closed-candle LRUs (`BatchDatasetLoadContext.datasetCache` and
 `closedCandleCache`) sized by
-`resolveAssetOpportunityDatasetCacheCapacity` with the same 75%-RAM/10MB
-budget, so each symbol loads and prepares its closed-candle view ONCE per
-worker (or once for a whole sequential sweep) instead of once per holdout
-iteration. Synthetic pairs are excluded from the plain-dataset LRU (their
+`resolveAssetOpportunityDatasetCacheCapacity`, which leaves the signal-cache
+reserve out of the 75%-RAM budget before dividing by 10 MB per symbol. This
+keeps the dataset LRU and signal cache within the worker estimate, so each
+symbol loads and prepares its closed-candle view ONCE per worker (or once for
+a whole sequential sweep) instead of once per holdout iteration. Synthetic
+pairs are excluded from the plain-dataset LRU (their
 `pairCache` already retains them), and failed or empty loads are never cached
 — they stay retryable. Iteration diagnostics report prepared-candle cache
 hits/misses and isolate `closedCandlePreparation` time inside
@@ -202,8 +205,10 @@ has no `evalLastBars` or exit-strategy override, and has strategy timeframes
 disabled; these are the conditions under which indexed signals can be filtered
 to a shorter prefix without changing their meaning. The first eligible
 candidate pays a signal-only warm pass, while later holdouts reuse the cached
-signals and still run their normal trade simulation. The cache is worker-local
-and bounded to 8,192 strategy/parameter entries. Asset diagnostics expose
+signals and still run their normal trade simulation. Ordered signal arrays are
+validated on insertion and window hits binary-search the requested range;
+unordered arrays retain stable scan behavior. The cache is worker-local and
+bounded to 8,192 entries and an estimated 64 MB. Asset diagnostics expose
 `work.signalCacheHits` and `work.signalCacheMisses` so a run can verify the
 reuse rate; a zero hit count is expected for unsupported strategy signal shapes
 or ineligible option combinations.

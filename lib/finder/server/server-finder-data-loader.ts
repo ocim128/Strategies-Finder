@@ -168,8 +168,8 @@ export async function loadServerFinderDataset(
  * When `symbolCount` is provided (batch holdout sweeps, whose load context is
  * reused across iterations), run-scoped dataset and prepared-candle LRUs are
  * attached so each symbol is loaded and prepared once per worker/run instead
- * of once per iteration. They share the SAME 75%-RAM/10MB-per-symbol budget
- * as the worker-count policy.
+ * of once per iteration. Their capacity leaves the worker-local signal-cache
+ * reserve out of the 75%-RAM/10MB-per-symbol budget used by worker sizing.
  * Single runs omit these caches because they load each symbol only once.
  */
 export function createServerFinderAssetOpportunityLoadContext(symbolCount?: number): BatchDatasetLoadContext {
