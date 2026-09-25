@@ -4,7 +4,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { UI_EVENT_HANDLER_REQUIRED_IDS } from "../lib/handlers/ui-event-handlers-dom";
 import { STATE_SUBSCRIPTIONS_REQUIRED_IDS } from "../lib/handlers/state-subscriptions-dom";
-import { EDITOR_MANAGER_REQUIRED_IDS } from "../lib/editor-manager-dom";
 import { SETTINGS_WORKSPACE_REQUIRED_IDS, UI_MANAGER_REQUIRED_IDS } from "../lib/ui-manager-dom";
 import { RESULTS_RENDERER_REQUIRED_IDS } from "../lib/renderers/results-renderer-dom";
 import { TRADES_RENDERER_REQUIRED_IDS } from "../lib/renderers/trades-renderer-dom";
@@ -74,7 +73,6 @@ describe("Feature DOM contracts", () => {
     const contractGroups = {
         uiEventHandlers: [...UI_EVENT_HANDLER_REQUIRED_IDS],
         stateSubscriptions: [...STATE_SUBSCRIPTIONS_REQUIRED_IDS],
-        editorManager: [...EDITOR_MANAGER_REQUIRED_IDS],
         uiManager: [...UI_MANAGER_REQUIRED_IDS],
         resultsRenderer: [...RESULTS_RENDERER_REQUIRED_IDS],
         tradesRenderer: [...TRADES_RENDERER_REQUIRED_IDS],

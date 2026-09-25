@@ -127,36 +127,28 @@
     --gradient-warm: linear-gradient(135deg, hsl(var(--hsl-warning)), hsl(var(--hsl-danger)));
     --gradient-cool: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-success)));
 
-    --header-bg: hsl(var(--hsl-surface-2) / 0.7);
+    --header-bg: hsl(var(--hsl-surface-2));
     --header-border: hsl(var(--hsl-border) / 0.9);
     --header-ink: var(--text-primary);
     --header-ink-muted: var(--text-secondary);
-    --header-control-bg: hsl(var(--hsl-surface-3) / 0.8);
-    --header-control-hover-bg: hsl(var(--hsl-surface-4) / 0.9);
-    --header-control-border: hsl(var(--hsl-border) / 0.9);
+    --header-control-bg: hsl(var(--hsl-surface-3));
+    --header-control-hover-bg: hsl(var(--hsl-surface-4));
+    --header-control-border: hsl(var(--hsl-border));
     --header-control-active-bg: hsl(var(--hsl-accent) / 0.18);
 
-    --chrome-bg: linear-gradient(180deg,
-            hsl(var(--hsl-surface-3) / 0.6),
-            var(--glass-surface-floating));
+    --chrome-bg: hsl(var(--hsl-surface-2));
     --chrome-border: var(--glass-border);
-    --card-bg: hsl(var(--hsl-surface-2) / 0.76);
-    --card-bg-muted: hsl(var(--hsl-surface-3) / 0.56);
+    --card-bg: hsl(var(--hsl-surface-2));
+    --card-bg-muted: hsl(var(--hsl-surface-3));
     --card-border: hsl(var(--hsl-border) / 0.68);
-    --field-bg: hsl(var(--hsl-surface-3) / 0.92);
-    --field-bg-hover: hsl(var(--hsl-surface-4) / 0.96);
-    --field-bg-focus: hsl(var(--hsl-surface-2) / 0.96);
+    --field-bg: hsl(var(--hsl-surface-3));
+    --field-bg-hover: hsl(var(--hsl-surface-4));
+    --field-bg-focus: hsl(var(--hsl-surface-2));
     --field-border: hsl(var(--hsl-border) / 0.9);
-    --panel-shell-bg: linear-gradient(160deg,
-            hsl(var(--hsl-surface-3) / 0.72),
-            var(--glass-surface-floating));
-    --panel-header-bg: linear-gradient(180deg,
-            hsl(var(--hsl-surface-3) / 0.4) 0%,
-            transparent 100%);
+    --panel-shell-bg: hsl(var(--hsl-surface-2));
+    --panel-header-bg: transparent;
     --panel-header-ink: var(--text-primary);
-    --panel-content-bg: linear-gradient(180deg,
-            hsl(var(--hsl-surface-1) / 0.38),
-            hsl(var(--hsl-surface-1) / 0.5));
+    --panel-content-bg: hsl(var(--hsl-surface-1));
     --tab-strip-bg: var(--bg-tertiary);
     --tab-hover-bg: hsl(var(--hsl-surface-4) / 0.25);
     --tab-active-bg: hsl(var(--hsl-accent) / 0.14);
@@ -177,8 +169,8 @@
     --space-8: 40px;
 
     /* Floating layout spacing */
-    --float-gap: 10px;
-    --float-radius: 12px;
+    --float-gap: 8px;
+    --float-radius: 10px;
 
     /* Radius tokens */
     --radius-xs: 4px;
@@ -306,20 +298,16 @@
     --gradient-warm: linear-gradient(135deg, hsl(var(--hsl-warning)), hsl(var(--hsl-danger)));
     --gradient-cool: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-success)));
 
-    --header-bg: linear-gradient(135deg,
-            hsl(223 39% 18% / 0.96),
-            hsl(219 40% 14% / 0.96));
-    --header-border: hsl(220 34% 28% / 0.8);
-    --header-ink: hsl(0 0% 100%);
-    --header-ink-muted: hsl(218 20% 76%);
-    --header-control-bg: hsl(223 24% 21% / 0.92);
-    --header-control-hover-bg: hsl(222 23% 27% / 0.96);
-    --header-control-border: hsl(220 25% 33% / 0.86);
+    --header-bg: hsl(0 0% 100%);
+    --header-border: hsl(220 22% 84%);
+    --header-ink: var(--text-primary);
+    --header-ink-muted: var(--text-secondary);
+    --header-control-bg: hsl(220 26% 93%);
+    --header-control-hover-bg: hsl(220 24% 89%);
+    --header-control-border: hsl(220 22% 84%);
     --header-control-active-bg: hsl(var(--hsl-accent) / 0.22);
 
-    --chrome-bg: linear-gradient(180deg,
-            hsl(0 0% 100% / 0.88),
-            hsl(220 35% 97% / 0.94));
+    --chrome-bg: hsl(0 0% 100%);
     --chrome-border: hsl(220 28% 82% / 0.95);
     --card-bg: hsl(0 0% 100% / 0.95);
     --card-bg-muted: hsl(220 32% 97%);
@@ -328,23 +316,17 @@
     --field-bg-hover: hsl(220 30% 98%);
     --field-bg-focus: hsl(0 0% 100%);
     --field-border: hsl(220 22% 82%);
-    --panel-shell-bg: linear-gradient(180deg,
-            hsl(0 0% 100% / 0.98),
-            hsl(220 35% 97% / 0.98));
-    --panel-header-bg: linear-gradient(135deg,
-            hsl(223 39% 18%) 0%,
-            hsl(219 40% 14%) 100%);
-    --panel-header-ink: hsl(0 0% 100%);
-    --panel-content-bg: linear-gradient(180deg,
-            hsl(220 40% 99%) 0%,
-            hsl(220 29% 97%) 100%);
+    --panel-shell-bg: hsl(0 0% 100%);
+    --panel-header-bg: transparent;
+    --panel-header-ink: var(--text-primary);
+    --panel-content-bg: hsl(220 40% 99%);
     --tab-strip-bg: hsl(220 30% 98%);
     --tab-hover-bg: hsl(219 63% 95%);
     --tab-active-bg: hsl(221 82% 95%);
     --tab-active-border: hsl(var(--hsl-accent));
 
-    --float-gap: 10px;
-    --float-radius: 12px;
+    --float-gap: 8px;
+    --float-radius: 10px;
     --radius-s: 6px;
     --radius-m: 8px;
     --radius-l: 10px;

@@ -15,7 +15,6 @@ import tabTradesHtml from '../html-partials/tab-trades.html?raw';
 import statusBarHtml from '../html-partials/status-bar.html?raw';
 import debugPanelHtml from '../html-partials/debug-panel.html?raw';
 import { debugLogger } from './debug-logger';
-import codeEditorHtml from '../html-partials/code-editor.html?raw';
 import { appendLazyStrategyPanelTabPlaceholders } from './strategy-panel-tab-markup';
 import { clearDomElementCache } from './dom-utils';
 
@@ -39,7 +38,6 @@ const EAGER_STRATEGY_PANEL_TAB_PARTIALS = [
 
 const ROOT_OVERLAY_PARTIALS = [
     debugPanelHtml,
-    codeEditorHtml,
 ] as const;
 
 function appendMarkup(target: Element, partials: readonly string[]): void {
@@ -114,7 +112,7 @@ export function injectLayout() {
     // Append App Container to Root
     root.appendChild(appContainer);
 
-    // 5. Debug Panel and Code Editor (Siblings to app-container)
+    // 5. Debug Panel (Sibling to app-container)
     // We append them to root as well, assuming root acts like the body context
     appendMarkup(root, ROOT_OVERLAY_PARTIALS);
 

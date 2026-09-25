@@ -22,7 +22,6 @@ import {
     resampleOHLCV,
     type ResampleOptions,
 } from "./lib/strategies/resample-utils";
-import { readPersistedJson, writePersistedJson } from "./lib/persisted-json";
 import {
     getAllBuiltInMeta,
     getBuiltInStrategyKeys,
@@ -302,111 +301,6 @@ if (import.meta.hot) {
     import.meta.hot.accept();
 }
 
-// ============================================================================
-// Custom Strategy Builder (for runtime strategy creation)
-// ============================================================================
-
-export interface CustomStrategyConfig {
-    key: string;
-    name: string;
-    description: string;
-    defaultParams: StrategyParams;
-    paramLabels: Record<string, string>;
-    executeCode: string; // JavaScript code as string
-}
-
-/**
- * Create and register a custom strategy from configuration
- * This allows creating strategies at runtime (e.g., from user input)
- */
-export function createCustomStrategy(config: CustomStrategyConfig): boolean {
-    try {
-        // Create the execute function from code string
-        // eslint-disable-next-line no-new-func
-        const executeFunction = new Function(
-            'data',
-            'params',
-            'indicators',
-            config.executeCode
-        ) as (data: OHLCVData[], params: StrategyParams, indicators: typeof indicatorHelpers) => Signal[];
-
-        const strategy: Strategy = {
-            name: config.name,
-            description: config.description,
-            defaultParams: config.defaultParams,
-            paramLabels: config.paramLabels,
-            execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
-                return executeFunction(data, params, indicatorHelpers);
-            }
-        };
-
-        strategyRegistry.register(config.key, strategy);
-        return true;
-    } catch (error) {
-        console.error('[StrategyRegistry] Failed to create custom strategy:', error);
-        return false;
-    }
-}
-
-// ============================================================================
-// Indicator Helpers (exposed to custom strategies)
-// ============================================================================
-
-import * as indicators from "./lib/strategies/indicators";
-
-export const indicatorHelpers = indicators;
-
-
-// ============================================================================
-// Local Storage Persistence
-// ============================================================================
-
-const CUSTOM_STRATEGIES_KEY = 'playground_custom_strategies';
-const CUSTOM_STRATEGIES_STORAGE = {
-    key: CUSTOM_STRATEGIES_KEY,
-    schema: "strategy-registry.custom-strategies",
-    version: 1,
-} as const;
-
-export function saveCustomStrategiesToStorage(configs: CustomStrategyConfig[]): void {
-    const saved = writePersistedJson({
-        ...CUSTOM_STRATEGIES_STORAGE,
-        data: configs,
-        onError: (error) => {
-            console.error('[StrategyRegistry] Failed to save custom strategies:', error);
-        },
-    });
-    if (saved) {
-        logRegistryInfo(`[StrategyRegistry] Saved ${configs.length} custom strategies to localStorage`);
-    }
-}
-
-export function loadCustomStrategiesFromStorage(): CustomStrategyConfig[] {
-    const configs = readPersistedJson<CustomStrategyConfig[]>({
-        ...CUSTOM_STRATEGIES_STORAGE,
-        fallback: [],
-        migrate: ({ data }) => Array.isArray(data) ? data as CustomStrategyConfig[] : [],
-        onError: (error) => {
-            console.error('[StrategyRegistry] Failed to load custom strategies:', error);
-        },
-    });
-    if (configs.length > 0) {
-        logRegistryInfo(`[StrategyRegistry] Loaded ${configs.length} custom strategies from localStorage`);
-    }
-    return configs;
-}
-
-/**
- * Load custom strategies from localStorage and register them
- */
-export function restoreCustomStrategies(): void {
-    const configs = loadCustomStrategiesFromStorage();
-    configs.forEach(config => {
-        createCustomStrategy(config);
-    });
-}
-
-// ============================================================================
 // Utility Functions
 // ============================================================================
 
@@ -477,6 +371,4 @@ export function getStrategyKindTitle(kind: StrategyKind): string {
 // Export for debugging in browser console
 if (typeof window !== 'undefined') {
     (window as any).__strategyRegistry = strategyRegistry;
-    (window as any).__indicatorHelpers = indicatorHelpers;
-    (window as any).__createCustomStrategy = createCustomStrategy;
 }

@@ -2,7 +2,6 @@ import {
     strategyRegistry,
     loadBuiltInStrategies,
     loadBuiltInStrategyByKey,
-    restoreCustomStrategies,
     type StrategyRegistryEvent,
 } from "../strategyRegistry";
 import { state } from "./state";
@@ -10,7 +9,6 @@ import { chartManager } from "./chart-manager";
 import { dataManager } from "./data-manager";
 import { uiManager } from "./ui-manager";
 import { backtestService } from "./backtest-service";
-import { editorManager } from "./editor-manager";
 import { debugLogger } from "./debug-logger";
 import { settingsManager } from "./settings-manager";
 import { injectLayout } from "./layout-manager";
@@ -188,7 +186,6 @@ export async function bootstrapApp(): Promise<void> {
         markAppTiming("manifestLoadStart");
         await loadBuiltInStrategies([DEFAULT_BUILT_IN_STRATEGY_KEY]);
         markAppTiming("manifestLoadEnd");
-        restoreCustomStrategies();
     });
     await runBootstrapStep("strategy-registry-subscription", "pre_restore", () => {
         strategyRegistry.subscribe((event: StrategyRegistryEvent) => {
@@ -235,11 +232,6 @@ export async function bootstrapApp(): Promise<void> {
             setCurrentSymbol(event.detail.symbol);
             void hideScannerPanel().catch(logScannerLoadError);
         }) as EventListener);
-    });
-    await runBootstrapStep("editor", "pre_restore", () => {
-        editorManager.init(() => {
-            uiManager.updateStrategyDropdown(state.currentStrategyKey);
-        });
     });
     await runBootstrapStep("initial-ui-sync", "pre_restore", () => {
         uiManager.updateStrategyDropdown(state.currentStrategyKey);

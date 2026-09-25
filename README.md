@@ -127,7 +127,7 @@ flowchart LR
 ## How It Boots
 1. `index.ts` delegates startup to `lib/app-bootstrap.ts`.
 2. The bootstrap registry injects the runtime HTML layout from `html-partials/*`.
-3. Strategy metadata and saved custom strategies are loaded, with built-in strategy code loaded on demand; then the chart layer and feature managers are initialized in dependency order.
+3. Strategy metadata is loaded, with built-in strategy code loaded on demand; then the chart layer and feature managers are initialized in dependency order.
 4. Saved settings are restored and applied back into UI state and feature state.
 5. Initial market data is loaded, after which reactive state updates drive chart, backtest, and renderer refreshes.
 

@@ -12,12 +12,14 @@ interface StrategyPanelLayoutState {
     activeTabId: string | null;
     collapsed: boolean;
     widthPx: number | null;
+    chartHidden: boolean;
 }
 
 const DEFAULT_LAYOUT_STATE: StrategyPanelLayoutState = {
     activeTabId: null,
     collapsed: false,
     widthPx: null,
+    chartHidden: true,
 };
 
 const STRATEGY_PANEL_LAYOUT_STORAGE = {
@@ -49,6 +51,7 @@ class StrategyPanelController {
     private tabClickListeners = new Map<string, () => void>();
     private tabKeydownListeners = new Map<string, (event: KeyboardEvent) => void>();
     private togglePanelClickListener: (() => void) | null = null;
+    private toggleChartClickListener: (() => void) | null = null;
     private panelResizeHandlePointerDownListener: ((event: PointerEvent) => void) | null = null;
     private readonly chartSyncFrame = coalesceAnimationFrame(() => this.resizeCharts());
     private moreMenuOpen = false;
@@ -90,6 +93,10 @@ class StrategyPanelController {
                 dom.togglePanel.removeEventListener("click", this.togglePanelClickListener);
             }
 
+            if (this.toggleChartClickListener) {
+                dom.toggleChart.removeEventListener("click", this.toggleChartClickListener);
+            }
+
             if (this.panelResizeHandlePointerDownListener) {
                 dom.panelResizeHandle.removeEventListener("pointerdown", this.panelResizeHandlePointerDownListener as EventListener);
             }
@@ -117,6 +124,7 @@ class StrategyPanelController {
         this.tabClickListeners.clear();
         this.tabKeydownListeners.clear();
         this.togglePanelClickListener = null;
+        this.toggleChartClickListener = null;
         this.panelResizeHandlePointerDownListener = null;
         this.moreTriggerClickListener = null;
         this.moreMenuItemClickListener.clear();
@@ -313,6 +321,27 @@ class StrategyPanelController {
         this.setCollapsed(!dom.strategyPanel.classList.contains("collapsed"));
     }
 
+    public setChartHidden(chartHidden: boolean, persist = true): void {
+        const dom = this.dom;
+        if (!dom) return;
+
+        document.body.classList.toggle("chart-hidden", chartHidden);
+        dom.toggleChart.setAttribute("aria-pressed", String(!chartHidden));
+
+        if (persist) {
+            this.saveLayoutState();
+        }
+
+        this.syncCharts(true);
+    }
+
+    public toggleChartHidden(): void {
+        const dom = this.dom;
+        if (!dom) return;
+
+        this.setChartHidden(!document.body.classList.contains("chart-hidden"));
+    }
+
     private toggleMoreMenu(): void {
         if (this.moreMenuOpen) {
             this.closeMoreMenu();
@@ -460,6 +489,11 @@ class StrategyPanelController {
         };
         dom.togglePanel.addEventListener("click", this.togglePanelClickListener);
 
+        this.toggleChartClickListener = () => {
+            this.toggleChartHidden();
+        };
+        dom.toggleChart.addEventListener("click", this.toggleChartClickListener);
+
         this.panelResizeHandlePointerDownListener = (event: PointerEvent) => {
             if (this.isMobileLayout()) {
                 return;
@@ -570,6 +604,8 @@ class StrategyPanelController {
 
         this.setCollapsed(savedState.collapsed, false);
 
+        this.setChartHidden(savedState.chartHidden, false);
+
         const savedTabKnown =
             typeof savedState.activeTabId === "string"
             && (this.tabButtons.has(savedState.activeTabId) || this.moreItems.has(savedState.activeTabId))
@@ -645,6 +681,8 @@ class StrategyPanelController {
                     activeTabId: typeof parsed.activeTabId === "string" ? parsed.activeTabId : null,
                     collapsed: parsed.collapsed === true,
                     widthPx: typeof parsed.widthPx === "number" ? parsed.widthPx : null,
+                    // Old payloads predate chartHidden; absent means the new default (hidden).
+                    chartHidden: parsed.chartHidden !== false,
                 };
             },
         });
@@ -661,6 +699,7 @@ class StrategyPanelController {
             activeTabId: this.activeTabId,
             collapsed: dom.strategyPanel.classList.contains("collapsed"),
             widthPx: Number.isFinite(widthPx) ? widthPx : null,
+            chartHidden: document.body.classList.contains("chart-hidden"),
         };
 
         writePersistedJson({

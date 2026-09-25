@@ -1,6 +1,7 @@
 import { getRequiredElement } from "./dom-utils";
 
 export const STRATEGY_PANEL_REQUIRED_IDS = [
+    "toggleChart",
     "togglePanel",
     "strategyPanel",
     "strategyTabs",
@@ -12,6 +13,7 @@ export const STRATEGY_PANEL_REQUIRED_IDS = [
 
 export function createStrategyPanelDom() {
     return {
+        toggleChart: getRequiredElement("toggleChart"),
         togglePanel: getRequiredElement("togglePanel"),
         strategyPanel: getRequiredElement("strategyPanel"),
         strategyTabs: getRequiredElement("strategyTabs"),

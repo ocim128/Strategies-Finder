@@ -129,7 +129,6 @@ const verifyLayout = async (page: Page): Promise<string[]> => {
 
         // 2. Check for unexpected element sizes (Aesthetic breakage)
         const sizeChecks = [
-            { selector: '#openCodeEditor', maxHeight: 50, label: 'Create Custom Strategy button' }
         ];
 
         for (const check of sizeChecks) {
