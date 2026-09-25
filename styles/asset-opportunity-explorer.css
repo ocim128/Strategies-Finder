@@ -1,0 +1,207 @@
+/* Opportunity Explorer — descriptive heatmap over archived Asset Opportunity
+ * holdout shortlists. All colors come from styles/variables.css tokens; no
+ * hardcoded theme colors. Same [hidden] restore as selection-rules.css: the
+ * shared .btn / .empty-state rules set `display`, which beats the UA
+ * stylesheet's [hidden] rule. */
+#opportunityexplorerTab [hidden] {
+    display: none !important;
+}
+
+#opportunityexplorerTab .explorer-header {
+    margin-bottom: 0;
+}
+
+#opportunityexplorerTab .explorer-title {
+    margin: 0;
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-bold);
+    line-height: var(--line-height-tight);
+}
+
+#opportunityexplorerTab .explorer-subtitle {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-relaxed);
+    color: var(--text-secondary);
+}
+
+#opportunityexplorerTab .explorer-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-3);
+}
+
+#opportunityexplorerTab .explorer-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+#opportunityexplorerTab .explorer-field--narrow {
+    max-width: 140px;
+}
+
+#opportunityexplorerTab .explorer-field .param-input {
+    width: 100%;
+}
+
+#opportunityexplorerTab .explorer-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-left: auto;
+}
+
+#opportunityexplorerTab .explorer-status {
+    min-height: 1.6em;
+}
+
+#opportunityexplorerTab .explorer-meta {
+    margin-top: var(--space-2);
+}
+
+#opportunityexplorerTab .explorer-run-notice {
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-color);
+    border-left: 3px solid var(--warning);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+#opportunityexplorerTab .explorer-empty {
+    margin-top: var(--space-3);
+}
+
+#opportunityexplorerTab .explorer-heatmap-section {
+    margin-top: var(--space-3);
+    min-width: 0;
+}
+
+#opportunityexplorerTab .explorer-heatmap-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-2);
+}
+
+#opportunityexplorerTab .explorer-heatmap-legend {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+#opportunityexplorerTab .explorer-legend-bar {
+    width: 160px;
+    height: 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-subtle);
+}
+
+#opportunityexplorerTab .explorer-range-fields {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+#opportunityexplorerTab .explorer-range-fields .param-input {
+    width: 96px;
+}
+
+#opportunityexplorerTab .explorer-range-label {
+    white-space: nowrap;
+    margin: 0;
+}
+
+#opportunityexplorerTab .explorer-heatmap-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--chart-bg);
+    padding: var(--space-2);
+}
+
+#opportunityexplorerTab .explorer-heatmap-wrap:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 1px;
+}
+
+#opportunityexplorerTab .explorer-heatmap-canvas {
+    display: block;
+}
+
+#opportunityexplorerTab .explorer-heatmap-readout {
+    min-height: 1.6em;
+    margin-top: var(--space-2);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+#opportunityexplorerTab .explorer-detail {
+    margin-top: var(--space-3);
+    border-top: 1px solid var(--border-subtle);
+    padding-top: var(--space-3);
+}
+
+#opportunityexplorerTab .explorer-detail-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+}
+
+#opportunityexplorerTab .explorer-detail-title {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+}
+
+#opportunityexplorerTab .explorer-detail-summary {
+    margin-top: var(--space-2);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    line-height: var(--line-height-relaxed);
+}
+
+#opportunityexplorerTab .explorer-histogram {
+    margin-top: var(--space-2);
+}
+
+#opportunityexplorerTab .explorer-histogram svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+#opportunityexplorerTab .explorer-detail-scroll {
+    max-height: 420px;
+    overflow: auto;
+    margin-top: var(--space-2);
+}
+
+#opportunityexplorerTab .explorer-detail-actions {
+    margin-top: var(--space-2);
+}
+
+#opportunityexplorerTab .explorer-detail-status {
+    min-height: 1.6em;
+    margin-top: var(--space-2);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+#opportunityexplorerTab .explorer-cell-pos {
+    color: hsl(var(--hsl-success-light));
+}
+
+#opportunityexplorerTab .explorer-cell-neg {
+    color: hsl(var(--hsl-danger-light));
+}

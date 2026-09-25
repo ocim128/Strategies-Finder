@@ -29,6 +29,7 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 - [trade-ledger-sweep.md](trade-ledger-sweep.md) - server-owned Ledger Rule Sweep tab: routes, load-once vs isolated-per-rule memory, archive contracts, and UI ids.
 - [trade-gate.md](trade-gate.md) - Trade Gate Batch certification workflow, feature parity, counters, and certification records.
 - [selection-rules.md](selection-rules.md) - pair-selection rule contract, diagnostics, measured scales, and the detailed selection view.
+- [asset-opportunity-explorer.md](asset-opportunity-explorer.md) - descriptive heatmap over the Asset Opportunity holdout archive: routes, cell semantics, coverage reporting, and limits.
 - [mine-timing-validation-findings.md](mine-timing-validation-findings.md) - historical research findings (mostly negative) on removed Mine/signal-event diagnostics, spread-quality metrics, and OPEN_SCORE USD selection. Read this before re-introducing any removed diagnostic surface.
 - [pairlist-selection-research.md](pairlist-selection-research.md) - completed preregistered pool-selection research record; the registered candidate failed its adoption rule and the walk-forward machinery was retired.
 

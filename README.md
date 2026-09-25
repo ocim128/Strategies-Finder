@@ -6,7 +6,7 @@ It combines:
 - a browser UI assembled from HTML partials at runtime
 - a TypeScript backtest engine with optional Rust acceleration
 - a multi-source data pipeline with local caching
-- research tools such as Finder, Exit Strategy Override, Walk Forward, Monte Carlo, Scanner, Data Mining, Rank Pairs, and Batch Backtest
+- research tools such as Finder, Exit Strategy Override, Walk Forward, Monte Carlo, Scanner, Data Mining, Rank Pairs, Selection Rules, the Opportunity Explorer, and Batch Backtest
 - optional Cloudflare Worker alerting and subscription execution
 
 ## What You Can Do Here
@@ -315,6 +315,7 @@ These are intentionally narrower than the repo itself:
 - `docs/trade-ledger-sweep.md`: server-owned Ledger Rule Sweep contracts
 - `docs/trade-gate.md`: Trade Gate Batch certification workflow and records
 - `docs/selection-rules.md`: pair-selection rule contract, diagnostics, and detailed selection view
+- `docs/asset-opportunity-explorer.md`: descriptive heatmap over the Asset Opportunity holdout archive (routes, cell semantics, limits)
 - `docs/rank-pairs.md`: Rank Pairs regime classification contract
 - `docs/alpaca-ibkr-sync.md`: Alpaca-backed IBKR Data workflow, source guards, and aggregation
 - `docs/cross-symbol.md`: cross-symbol strategy runtime and support matrix

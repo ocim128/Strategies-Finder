@@ -1,0 +1,101 @@
+<div id="opportunityexplorerTab" class="research-tab research-tab--explorer">
+    <header class="explorer-header research-tab-header">
+        <h2 class="explorer-title research-tab-title">Opportunity Explorer</h2>
+        <p class="explorer-subtitle research-tab-subtitle">Descriptive heatmap of archived Asset Opportunity holdout shortlists. Archive export timestamps are not market decision dates; holdout windows overlap and are not independent samples.</p>
+    </header>
+    <section class="batch-section explorer" aria-label="Opportunity Explorer">
+        <div class="explorer-controls">
+            <div class="explorer-field">
+                <label class="batch-field-label" for="explorerRunSelect">Batch run</label>
+                <select class="param-input" id="explorerRunSelect"></select>
+            </div>
+            <div class="explorer-field">
+                <label class="batch-field-label" for="explorerHorizonSelect">Forward horizon (bars)</label>
+                <select class="param-input" id="explorerHorizonSelect"></select>
+            </div>
+            <div class="explorer-field explorer-field--narrow">
+                <label class="batch-field-label" for="explorerTopKInput">Top K (ranks 1&ndash;K)</label>
+                <input class="param-input" id="explorerTopKInput" type="number" min="1" step="1" value="10" inputmode="numeric" />
+            </div>
+            <div class="explorer-field">
+                <label class="batch-field-label" for="explorerMetricSelect">Cell metric</label>
+                <select class="param-input" id="explorerMetricSelect">
+                    <option value="actual">Actual return (%)</option>
+                    <option value="delta">Difference from baseline (pp)</option>
+                </select>
+            </div>
+            <div class="explorer-field">
+                <label class="batch-field-label" for="explorerSpacingSelect">Columns</label>
+                <select class="param-input" id="explorerSpacingSelect">
+                    <option value="all">All holdouts</option>
+                    <option value="horizon">Horizon-spaced</option>
+                </select>
+            </div>
+            <div class="explorer-actions">
+                <button class="btn btn-quiet btn-compact" id="explorerRefreshBtn" type="button">Refresh</button>
+                <div class="batch-miner-status explorer-status" id="explorerStatus" role="status" aria-live="polite">Idle</div>
+            </div>
+        </div>
+        <div class="batch-miner-status batch-miner-status--multiline explorer-meta" id="explorerMeta"></div>
+        <div class="explorer-run-notice" id="explorerRunNotice" hidden></div>
+        <div class="empty-state empty-state-compact explorer-empty" id="explorerEmpty">
+            <div class="empty-state-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M3 3h2v2H3V3zm4 0h14v2H7V3zM3 8h2v2H3V8zm4 0h14v2H7V8zM3 13h2v2H3v-2zm4 0h14v2H7v-2zM3 18h2v2H3v-2zm4 0h14v2H7v-2z" />
+                </svg>
+            </div>
+            <h3 class="empty-state-title">No archived batch runs found</h3>
+            <p class="empty-state-description">The local <code>archive/asset opportunity</code> folder has no <code>oos-holdout-&lt;N&gt;-bars.txt</code> files yet. Run an Asset Opportunity batch first. This view reads the local folder, so it needs the local dev or preview server.</p>
+        </div>
+        <div class="explorer-heatmap-section" id="explorerHeatmapSection">
+            <div class="explorer-heatmap-head">
+                <div class="explorer-heatmap-legend" id="explorerHeatmapLegend" aria-hidden="true"></div>
+                <div class="explorer-range-fields">
+                    <label class="batch-field-label explorer-range-label" for="explorerRangeStart">Selected row range start</label>
+                    <input class="param-input" id="explorerRangeStart" type="number" min="1" step="1" inputmode="numeric" />
+                    <label class="batch-field-label explorer-range-label" for="explorerRangeEnd">End</label>
+                    <input class="param-input" id="explorerRangeEnd" type="number" min="1" step="1" inputmode="numeric" />
+                    <button class="btn btn-secondary btn-compact" id="explorerRangeApplyBtn" type="button">Apply range</button>
+                </div>
+            </div>
+            <div class="explorer-heatmap-wrap" id="explorerHeatmapWrap" tabindex="0" role="application"
+                aria-label="Holdout heatmap. Use arrow keys to move between cells, press Enter to select the whole row.">
+                <canvas id="explorerHeatmapCanvas"></canvas>
+            </div>
+            <div class="explorer-heatmap-readout" id="explorerHeatmapReadout" role="status" aria-live="polite"></div>
+        </div>
+        <div class="explorer-detail" id="explorerDetail" hidden>
+            <div class="explorer-detail-head">
+                <h3 class="explorer-detail-title" id="explorerDetailTitle">Range detail</h3>
+                <button class="btn btn-quiet btn-compact" id="explorerDetailCloseBtn" type="button">Hide</button>
+            </div>
+            <div class="explorer-detail-summary" id="explorerDetailSummary"></div>
+            <div class="explorer-histogram" id="explorerHistogram" role="img" aria-label="Histogram of finite cell values in the selected range"></div>
+            <details class="research-disclosure explorer-detail-disclosure" open>
+                <summary>Candidate evidence</summary>
+                <div class="explorer-detail-scroll">
+                    <table class="finder-table explorer-detail-table" id="explorerDetailTable" aria-label="Candidate evidence rows">
+                        <thead>
+                            <tr>
+                                <th>Holdout</th>
+                                <th>Rank</th>
+                                <th>Symbol</th>
+                                <th>Strategy</th>
+                                <th>Archived return</th>
+                                <th>Baseline</th>
+                                <th>Samples</th>
+                                <th>Fingerprint</th>
+                                <th>Source</th>
+                            </tr>
+                        </thead>
+                        <tbody id="explorerDetailRows"></tbody>
+                    </table>
+                </div>
+                <div class="explorer-detail-actions">
+                    <button class="btn btn-secondary btn-compact" id="explorerDetailLoadOlderBtn" type="button" hidden>Load older rows</button>
+                </div>
+            </details>
+            <div class="explorer-detail-status" id="explorerDetailStatus" role="status" aria-live="polite"></div>
+        </div>
+    </section>
+</div>

@@ -10,6 +10,7 @@ const LAZY_STRATEGY_PANEL_TAB_LOADERS = {
     batchbacktest: () => import('../html-partials/tab-batch-backtest.html?raw'),
     ledgersweep: () => import('../html-partials/tab-ledger-sweep.html?raw'),
     selectionrules: () => import('../html-partials/tab-selection-rules.html?raw'),
+    opportunityexplorer: () => import('../html-partials/tab-asset-opportunity-explorer.html?raw'),
     walkforward: () => import('../html-partials/tab-walkforward.html?raw'),
     montecarlo: () => import('../html-partials/tab-monte-carlo.html?raw'),
     rankpairs: () => import('../html-partials/tab-rank-pairs.html?raw'),
