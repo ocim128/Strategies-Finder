@@ -166,8 +166,9 @@ NODE_OPTIONS=--max-old-space-size=16384 npm run dev
 The same heap guidance applies to server-owned Finder runs. Finder Asset
 Opportunity **Batch OOS Holdout** sweeps additionally run holdout iterations
 in parallel across a bounded worker-thread pool sized from your cores and
-RAM (~10 MB per symbol per worker against 75% of system RAM, including the
-prepared closed-candle view reused across holdouts).
+RAM (~10 MB per symbol plus an estimated 64 MB signal-cache budget per worker
+against 75% of system RAM, including the prepared closed-candle view reused
+across holdouts).
 `FINDER_ASSET_BATCH_WORKERS=1` forces the original sequential loop (rollback
 lever); Rust-engine runs prefer at most 2 workers. Server-owned **Symbol
 Universe** multi-strategy jobs parallelize the same way across selected

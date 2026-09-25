@@ -473,14 +473,16 @@ export async function runServerAssetIsSearch(
         const signalCacheKey = canReuseFullSignals
             ? buildSignalCacheKey(input, entryParams)
             : null;
-        const cachedFullSignals = signalCacheKey
-            ? input.signalCache!.get(signalCacheKey)
+        const cachedWindowSignals = signalCacheKey && signalWindow
+            ? input.signalCache!.getWindow(
+                signalCacheKey,
+                signalWindow.startIndex,
+                signalWindow.endIndex,
+            )
             : undefined;
-        const preGeneratedSignals = cachedFullSignals
-            ? resolveCachedSignalsForWindow(cachedFullSignals, signalWindow)
-            : null;
+        const preGeneratedSignals = cachedWindowSignals ?? null;
         if (signalCacheKey) {
-            if (preGeneratedSignals !== null) signalCacheHits += 1;
+            if (cachedWindowSignals !== undefined) signalCacheHits += 1;
             else signalCacheMisses += 1;
         }
         const candidateStartedAt = performance.now();
@@ -488,7 +490,7 @@ export async function runServerAssetIsSearch(
             candidateEvaluationsAttempted += 1;
             let fullSignalsForCache: Signal[] | undefined;
             let candidateSignals = preGeneratedSignals;
-            if (canReuseFullSignals && !cachedFullSignals && signalCacheKey) {
+            if (canReuseFullSignals && cachedWindowSignals === undefined && signalCacheKey) {
                 // Warm the full-series signal cache before the compact window
                 // pass so the first cold holdout also skips indicator work.
                 // The signal set is independent of ranking, so retain it even
