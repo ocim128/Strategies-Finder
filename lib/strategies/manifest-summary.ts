@@ -37,7 +37,7 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
     {
         key: "probability_boundary_eigen_shift",
         name: "Probability Boundary Eigen-Shift",
-        description: "When the typical price (representing the session's Eigenvalue) breaches a 3-sigma boundary of its own rolling state, the local probability density function has failed, forcing violent mean reversion.",
+        description: "When the typical price (representing the session's Eigenvalue) breaches a 2-sigma boundary of its own rolling state, the local probability density function has failed, forcing violent mean reversion.",
         metadata: { role: "entry", direction: "both", walkForwardParams: ["stateLookback", "eigenLimit"] },
         crossSymbolConfig: false,
     },

@@ -9,8 +9,8 @@ type ProbabilityBoundaryEigenShiftPrepared = {
 
 function normalizeParams(params: StrategyParams): StrategyParams {
 	return {
-		stateLookback: Math.max(2, Math.round(params.stateLookback ?? 50)),
-		eigenLimit: Number(params.eigenLimit ?? 3.0)
+		stateLookback: Math.max(2, Math.round(params.stateLookback ?? 23)),
+		eigenLimit: Number(params.eigenLimit ?? -2)
 	};
 }
 
@@ -31,8 +31,8 @@ function getPreparedData(preparedData: unknown, data: OHLCVData[]): ProbabilityB
 
 export const probability_boundary_eigen_shift: Strategy = {
 	name: "Probability Boundary Eigen-Shift",
-	description: "When the typical price (representing the session's Eigenvalue) breaches a 3-sigma boundary of its own rolling state, the local probability density function has failed, forcing violent mean reversion.",
-	defaultParams: { stateLookback: 50, eigenLimit: 3.0 },
+	description: "When the typical price (representing the session's Eigenvalue) breaches a 2-sigma boundary of its own rolling state, the local probability density function has failed, forcing violent mean reversion.",
+	defaultParams: { stateLookback: 23, eigenLimit: -2 },
 	paramLabels: { stateLookback: "State Lookback", eigenLimit: "Eigen Limit (Z-Score)" },
 	normalizeParams,
 	metadata: { role: "entry", direction: "both", walkForwardParams: ["stateLookback", "eigenLimit"] },
@@ -53,10 +53,10 @@ export const probability_boundary_eigen_shift: Strategy = {
 			const z = zscore[i - 1];
 
 			if (z !== null) {
-				if (z < -p.eigenLimit) {
+				if (z < p.eigenLimit) {
 					return createBuySignal(prepared.data, i, "Eigen Boundary Snapback Long");
 				}
-				if (z > p.eigenLimit) {
+				if (z > -p.eigenLimit) {
 					return createSellSignal(prepared.data, i, "Eigen Boundary Snapback Short");
 				}
 			}
