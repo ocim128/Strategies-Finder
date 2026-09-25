@@ -23,8 +23,10 @@ import {
     sortAssetOpportunityResultsByMetric,
 } from "../lib/finder/finder-asset-opportunity-metrics";
 import {
+    buildAssetOpportunityRecurrenceIndex,
     buildAssetOpportunityTupleKey,
     countPriorAssetOpportunityTupleRecurrence,
+    countPriorAssetOpportunityTupleRecurrenceIndexed,
 } from "../lib/finder/server/finder-asset-opportunity-archive";
 import type { FinderAssetOpportunityResult } from "../lib/types/finder";
 import type { OHLCVData, Trade } from "../lib/types/strategies";
@@ -214,5 +216,38 @@ describe("Asset Opportunity prior tuple recurrence", () => {
             [makeAsset("A", "k", { priorTupleRecurrenceCount: 2 }), makeAsset("B", "k", { priorTupleRecurrenceCount: 0 })],
             PRIOR_TUPLE_RECURRENCE_METRIC,
         ).map((item) => item.symbol)).to.deep.equal(["A", "B"]);
+    });
+
+    it("indexed counts match the snapshot filter exactly, including duplicate holdout blocks", () => {
+        const result = makeAsset("AAA", "strategy");
+        const tupleKey = buildAssetOpportunityTupleKey(result);
+        const otherTuple = buildAssetOpportunityTupleKey(makeAsset("BBB", "strategy"));
+        const snapshots = [
+            { timestamp: "t1", batchRunId: "old", holdoutBars: 20, tupleKeys: new Set([tupleKey]) },
+            // Separate sort block for the same run/holdout (the archive reader
+            // merges these into one snapshot; raw duplicates must still count
+            // identically in both implementations).
+            { timestamp: "t1b", batchRunId: "old", holdoutBars: 20, tupleKeys: new Set([tupleKey]) },
+            { timestamp: "t2", batchRunId: "old", holdoutBars: 15, tupleKeys: new Set([tupleKey]) },
+            { timestamp: "t3", batchRunId: "old", holdoutBars: 10, tupleKeys: new Set([tupleKey, otherTuple]) },
+            { timestamp: "t4", batchRunId: "old", holdoutBars: 5, tupleKeys: new Set([otherTuple]) },
+        ];
+        const index = buildAssetOpportunityRecurrenceIndex(snapshots);
+        for (const currentHoldoutBars of [5, 10, 15, 20, 25]) {
+            expect(countPriorAssetOpportunityTupleRecurrenceIndexed({ result, currentHoldoutBars, index })).to.equal(
+                countPriorAssetOpportunityTupleRecurrence({ result, currentHoldoutBars, snapshots }),
+            );
+        }
+        // Result tuple values: [10, 15, 20, 20] — both duplicate 20-blocks
+        // count, exactly as the snapshot filter counts them.
+        expect(countPriorAssetOpportunityTupleRecurrenceIndexed({ result, currentHoldoutBars: 5, index })).to.equal(4);
+        expect(countPriorAssetOpportunityTupleRecurrenceIndexed({ result, currentHoldoutBars: 10, index })).to.equal(3);
+        expect(countPriorAssetOpportunityTupleRecurrenceIndexed({ result, currentHoldoutBars: 20, index })).to.equal(0);
+        // A tuple absent from the index reports zero without touching snapshots.
+        expect(countPriorAssetOpportunityTupleRecurrenceIndexed({
+            result: makeAsset("ZZZ", "strategy"),
+            currentHoldoutBars: 5,
+            index,
+        })).to.equal(0);
     });
 });

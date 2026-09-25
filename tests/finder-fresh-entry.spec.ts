@@ -13,7 +13,7 @@
  */
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { detectFreshEntry } from "../lib/finder/finder-fresh-entry";
+import { detectFreshEntry, findLatestEntrySignal } from "../lib/finder/finder-fresh-entry";
 import type { BacktestResult, OHLCVData, Signal, Time, Trade } from "../lib/types/strategies";
 import type { BacktestSettings } from "../lib/types/strategies";
 
@@ -79,6 +79,76 @@ function resultWith(trades: Trade[]): BacktestResult {
 
 const SIGNAL_CLOSE_SETTINGS: BacktestSettings = { executionModel: "signal_close" };
 const NEXT_OPEN_SETTINGS: BacktestSettings = { executionModel: "next_open" };
+
+describe("findLatestEntrySignal recent-window scan", () => {
+    it("matches direction, tie-breaks to the last same-candle signal, and falls back on unsorted input", () => {
+        const data = candles(6);
+        const buy = (index: number): Signal => ({ time: data[index]!.time, type: "buy", price: data[index]!.close });
+        const sell = (index: number): Signal => ({ time: data[index]!.time, type: "sell", price: data[index]!.close });
+        const signals = [buy(0), sell(1), buy(3), sell(4), buy(5), sell(5)];
+
+        const latestBuy = findLatestEntrySignal({ signals, candles: data, settings: SIGNAL_CLOSE_SETTINGS, maxAgeBars: 0 });
+        expect(latestBuy?.direction).to.equal("long");
+        expect(latestBuy?.signal.time).to.equal(data[5]!.time);
+        expect(latestBuy?.signalAgeBars).to.equal(0);
+
+        // Same-candle tie-break: the LAST allowed signal wins (the forward
+        // scan keeps overwriting `latest`; a window that stopped at the first
+        // match would return 111 instead of 222).
+        const tieBreak = findLatestEntrySignal({
+            signals: [
+                { time: data[5]!.time, type: "buy", price: 111 },
+                { time: data[5]!.time, type: "buy", price: 222 },
+            ],
+            candles: data,
+            settings: SIGNAL_CLOSE_SETTINGS,
+            maxAgeBars: 0,
+        });
+        expect(tieBreak?.direction).to.equal("long");
+        expect(tieBreak?.signal.price).to.equal(222);
+
+        // Stale-but-in-window: a signal maxAgeBars back still matches.
+        const stale = findLatestEntrySignal({
+            signals: [buy(3)],
+            candles: data,
+            settings: SIGNAL_CLOSE_SETTINGS,
+            maxAgeBars: 2,
+        });
+        expect(stale?.signalAgeBars).to.equal(2);
+
+        // Unordered input falls back to the full scan and still matches.
+        const unordered = findLatestEntrySignal({
+            signals: [buy(5), buy(0)],
+            candles: data,
+            settings: SIGNAL_CLOSE_SETTINGS,
+            maxAgeBars: 5,
+        });
+        expect(unordered?.signal.time).to.equal(data[5]!.time);
+
+        // Older than the freshness window: no match.
+        expect(findLatestEntrySignal({
+            signals: [buy(0)],
+            candles: data,
+            settings: SIGNAL_CLOSE_SETTINGS,
+            maxAgeBars: 2,
+        })).to.equal(null);
+    });
+
+    it("keeps next_open fresh-entry semantics when the signal is one bar old", () => {
+        const data = candles(5);
+        const detected = detectFreshEntry({
+            result: resultWith([]),
+            candles: data,
+            settings: NEXT_OPEN_SETTINGS,
+            signals: [{ time: data[data.length - 2]!.time, type: "buy", price: data[data.length - 2]!.close }],
+            freshnessBars: 1,
+        });
+        expect(detected.freshStatus).to.equal("fresh");
+        expect(detected.direction).to.equal("long");
+        expect(detected.fillTiming).to.equal("next_open");
+        expect(detected.signalAgeBars).to.equal(1);
+    });
+});
 
 describe("Finder fresh-entry detector", () => {
     it("returns flat for a result with no trades", () => {

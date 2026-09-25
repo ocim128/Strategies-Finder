@@ -14,6 +14,7 @@ import {
     runAssetOpportunityIteration,
     type AssetOpportunityIterationResult,
 } from "../lib/finder/server/asset-opportunity-iteration";
+import { createServerFinderAssetOpportunityLoadContext } from "../lib/finder/server/server-finder-data-loader";
 import type {
     AssetOpportunityBatchRunnerFactory,
     AssetOpportunityBatchRunnerEvents,
@@ -2139,5 +2140,73 @@ describe("finder server plugin deferred dataset-cache invalidation (audit Findin
         resetRunStateForTests();
         expect(getPendingDatasetCacheInvalidation()).to.equal(false);
         expect(acquireRunOwnershipForTests()).to.be.greaterThan(0);
+    });
+});
+
+describe("Asset Opportunity base-only OOS base caching", () => {
+    it("loads a shared base once per dataset cache across pairs and holdout iterations", async () => {
+        const loadCounts = new Map<string, number>();
+        const loadDataset = async (symbol: string): Promise<OHLCVData[]> => {
+            loadCounts.set(symbol, (loadCounts.get(symbol) ?? 0) + 1);
+            return makeCandles(Array.from({ length: 40 }, (_, i) => 100 + i));
+        };
+        const assetLoadContext = createServerFinderAssetOpportunityLoadContext(3);
+        const symbols = ["AAA+ZZZ", "AAA+QQQ"];
+        const buildInput = (ignoreLastBars: number, iterationIndex: number) => ({
+            runId: `base-cache-${iterationIndex}`,
+            interval: "5m",
+            symbols,
+            options: {
+                mode: "random",
+                randomSeed: 7,
+                scope: "asset_opportunity" as const,
+                sortPriority: ["netProfit"],
+                useAdvancedSort: false,
+                topN: 2,
+                steps: 3,
+                rangePercent: 35,
+                maxRuns: 2,
+                dataSlice: "all" as const,
+                tradeFilterEnabled: false,
+                minTrades: 0,
+                maxTrades: Number.POSITIVE_INFINITY,
+                assetOpportunity: {
+                    symbols,
+                    candidatePoolSize: 1,
+                    minFreshSupport: 1,
+                    oosMeasurementMode: "fixed_horizon" as const,
+                    oosHorizonBasis: "base_only" as const,
+                    oosIgnoreLastBars: ignoreLastBars,
+                    oosHorizons: [1, 2, 3],
+                },
+            },
+            settings,
+            capitalSettings,
+            selectedStrategies: [{
+                key: "asset_opportunity_test_a",
+                name: "Asset Opportunity A",
+                strategy: assetOpportunityStrategy,
+            }],
+            useRustEnginePreference: false,
+            abortSignal: new AbortController().signal,
+            loadDataset,
+            candidatePoolSize: 1,
+            minFreshSupport: 1,
+            assetLoadContext,
+        });
+        for (let iterationIndex = 0; iterationIndex < 2; iterationIndex += 1) {
+            await runAssetOpportunityIteration(
+                buildInput(2 + iterationIndex, iterationIndex),
+                { onProgress: () => undefined, onAssetResult: () => undefined },
+                () => false,
+            );
+        }
+        // Both pairs share base AAAUSDT: cached after the first load, so the
+        // second pair and second holdout iteration never reload it. Synthetic
+        // pair loads stay uncached by the plain dataset LRU (pair cache owns
+        // those), so each pair reloads once per iteration.
+        expect(loadCounts.get("AAAUSDT")).to.equal(1);
+        expect(loadCounts.get("AAA+ZZZ")).to.equal(2);
+        expect(loadCounts.get("AAA+QQQ")).to.equal(2);
     });
 });

@@ -234,6 +234,60 @@ export function countPriorAssetOpportunityTupleRecurrence(args: {
         && snapshot.tupleKeys.has(tuple)).length;
 }
 
+/**
+ * Run-scoped recurrence index: for each candidate tuple, the ascending list of
+ * historical holdout values whose snapshots contain it. Built once per batch
+ * run from the frozen-at-start snapshot list so per-result lookups binary-
+ * search instead of filtering every snapshot (results x holdouts x snapshots).
+ * Snapshot tupleKeys are Sets, so one snapshot contributes at most one value.
+ */
+export interface AssetOpportunityRecurrenceIndex {
+    readonly holdoutValuesByTuple: ReadonlyMap<string, readonly number[]>;
+}
+
+export function buildAssetOpportunityRecurrenceIndex(
+    snapshots: readonly AssetOpportunityArchiveTupleSnapshot[],
+): AssetOpportunityRecurrenceIndex {
+    const valuesByTuple = new Map<string, number[]>();
+    for (const snapshot of snapshots) {
+        for (const tuple of snapshot.tupleKeys) {
+            let values = valuesByTuple.get(tuple);
+            if (!values) {
+                values = [];
+                valuesByTuple.set(tuple, values);
+            }
+            values.push(snapshot.holdoutBars);
+        }
+    }
+    for (const values of valuesByTuple.values()) values.sort((left, right) => left - right);
+    return { holdoutValuesByTuple: valuesByTuple };
+}
+
+/**
+ * Indexed twin of `countPriorAssetOpportunityTupleRecurrence`; counts must
+ * match exactly (one occurrence per snapshot, strictly larger holdouts only).
+ */
+export function countPriorAssetOpportunityTupleRecurrenceIndexed(args: {
+    result: FinderAssetOpportunityResult;
+    currentHoldoutBars: number;
+    index: AssetOpportunityRecurrenceIndex;
+}): number {
+    const values = args.index.holdoutValuesByTuple.get(assetOpportunityTupleKey({
+        symbol: args.result.symbol,
+        strategyId: args.result.strategyKey,
+        candidateFingerprint: buildAssetOpportunityCandidateFingerprint(args.result),
+    }));
+    if (!values || values.length === 0) return 0;
+    let low = 0;
+    let high = values.length;
+    while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        if (values[middle]! <= args.currentHoldoutBars) low = middle + 1;
+        else high = middle;
+    }
+    return values.length - low;
+}
+
 export function buildAssetOpportunityArchiveBlockText(block: AssetOpportunityArchiveBlock): string {
     const separator = "=".repeat(80);
     return [

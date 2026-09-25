@@ -128,7 +128,47 @@ function executionShiftFromSettings(settings: BacktestSettings | undefined): num
     return settings?.executionModel === "signal_close" ? 0 : 1;
 }
 
-function findLatestEntrySignal(args: {
+/**
+ * True when the signal array supports binary search: every time parses and the
+ * sequence is non-decreasing. Checked once per call so unordered or
+ * unparseable inputs fall back to the unchanged full scan.
+ */
+function isSignalTimeSortedAndParsable(signals: readonly Signal[]): boolean {
+    let previous: number | null = null;
+    for (const signal of signals) {
+        const time = parseTimeToUnixSeconds(signal.time);
+        if (time === null) return false;
+        if (previous !== null && time < previous) return false;
+        previous = time;
+    }
+    return true;
+}
+
+/** First index with signal time >= target (sorted input pre-verified). */
+function signalLowerBound(signals: readonly Signal[], targetTimeSec: number): number {
+    let low = 0;
+    let high = signals.length;
+    while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        if (parseTimeToUnixSeconds(signals[middle]!.time)! < targetTimeSec) low = middle + 1;
+        else high = middle;
+    }
+    return low;
+}
+
+/** First index with signal time > target (sorted input pre-verified). */
+function signalUpperBound(signals: readonly Signal[], targetTimeSec: number): number {
+    let low = 0;
+    let high = signals.length;
+    while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        if (parseTimeToUnixSeconds(signals[middle]!.time)! <= targetTimeSec) low = middle + 1;
+        else high = middle;
+    }
+    return low;
+}
+
+export function findLatestEntrySignal(args: {
     signals: Signal[] | undefined;
     candles: OHLCVData[];
     settings?: BacktestSettings;
@@ -137,15 +177,25 @@ function findLatestEntrySignal(args: {
     if (!args.signals || args.signals.length === 0) return null;
     const tradeDirection = normalizeTradeDirection(args.settings);
     const latestCandleIndex = args.candles.length - 1;
+    // Signals arrive time-sorted, so binary-search the equal-time window
+    // instead of rescanning the full history per freshness-window candle.
+    // Unsorted or unparseable input falls back to the full scan so results
+    // stay identical; the sortedness check runs once, not per candle.
+    const sortedUsable = isSignalTimeSortedAndParsable(args.signals);
     for (let signalAgeBars = 0; signalAgeBars <= args.maxAgeBars; signalAgeBars += 1) {
         const candle = args.candles[latestCandleIndex - signalAgeBars];
         if (!candle) continue;
         const candleTimeSec = parseTimeToUnixSeconds(candle.time);
         if (candleTimeSec === null) continue;
+        const start = sortedUsable ? signalLowerBound(args.signals, candleTimeSec) : 0;
+        const endExclusive = sortedUsable ? signalUpperBound(args.signals, candleTimeSec) : args.signals.length;
         let latest: { signal: Signal; direction: FinderAssetDirection; signalAgeBars: number } | null = null;
-        for (const signal of args.signals) {
+        for (let index = start; index < endExclusive; index += 1) {
+            const signal = args.signals[index]!;
+            if (!sortedUsable && parseTimeToUnixSeconds(signal.time) !== candleTimeSec) continue;
             if (!allowsSignalAsEntry(signal.type, tradeDirection)) continue;
-            if (parseTimeToUnixSeconds(signal.time) !== candleTimeSec) continue;
+            // Forward scan keeps the LAST same-candle match (unchanged
+            // tie-break); scanning the whole equal-time run preserves it.
             latest = {
                 signal,
                 direction: signal.type === "sell" ? "short" : "long",

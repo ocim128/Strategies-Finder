@@ -133,8 +133,9 @@ import {
 import {
     appendAssetOpportunityArchiveBlocks,
     appendAssetOpportunityArchiveRunConfig,
+    buildAssetOpportunityRecurrenceIndex,
     buildAssetOpportunityTupleKey,
-    countPriorAssetOpportunityTupleRecurrence,
+    countPriorAssetOpportunityTupleRecurrenceIndexed,
     readAssetOpportunityArchiveTupleSnapshots,
     type AssetOpportunityArchiveTupleSnapshot,
     type AssetOpportunityArchiveAppend,
@@ -1964,6 +1965,7 @@ export async function processFinderAssetOpportunityBatchRun(
             error: error instanceof Error ? error.message : String(error),
         });
     }
+    const recurrenceIndex = buildAssetOpportunityRecurrenceIndex(archiveTupleSnapshots);
 
     const isCancelled = () => runOwner !== owner || input.abortSignal.aborted;
     const lastIteration: {
@@ -2032,10 +2034,10 @@ export async function processFinderAssetOpportunityBatchRun(
             ...iteration,
             results: iteration.results.map((result) => ({
                 ...result,
-                priorTupleRecurrenceCount: countPriorAssetOpportunityTupleRecurrence({
+                priorTupleRecurrenceCount: countPriorAssetOpportunityTupleRecurrenceIndexed({
                     result,
                     currentHoldoutBars: holdoutBars,
-                    snapshots: archiveTupleSnapshots,
+                    index: recurrenceIndex,
                 }),
             })),
         };

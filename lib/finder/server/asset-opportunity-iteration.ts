@@ -643,6 +643,11 @@ export async function runAssetOpportunityIteration(
                         if (!Array.isArray(loaded) || loaded.length === 0) {
                             throw new Error(`no BASE data for ${syntheticPair.baseSymbol}`);
                         }
+                        // Memoize the successful base load in the run-scoped
+                        // cache so pairs sharing one base load it once per
+                        // worker; rejected/empty promises are never stored,
+                        // so failed loads stay retryable.
+                        datasetCache?.set(baseCacheKey, Promise.resolve(loaded));
                         return loaded;
                     });
                 const baseDataLoadingMs = performance.now() - baseLoadStartedAt;
