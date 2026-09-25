@@ -8,6 +8,9 @@
  * Usage:
  *   npm exec -- esno scripts/analyze-asset-opportunity-holdouts.ts
  *   npm exec -- esno scripts/analyze-asset-opportunity-holdouts.ts --archive-dir <dir>
+ *
+ * The CLI combines all batch runs by default. Pass --batch-run-id <id> to
+ * analyze one run; repeated holdout/sort blocks keep only the latest archive.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -21,7 +24,7 @@ import type { FinderAssetOosNextExitUnavailableReason } from "../lib/finder/find
 
 const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 const BLOCK_SEPARATOR = "=".repeat(80);
-const REPORT_SCHEMA_VERSION = 9;
+const REPORT_SCHEMA_VERSION = 10;
 const DEFAULT_TOP_K = 10;
 const DEFAULT_REPORT_CANDIDATES = 15;
 const THESIS_SORT_FIELDS: Readonly<Record<string, string>> = {
@@ -371,7 +374,8 @@ export interface AssetOpportunityHoldoutAnalysisReport {
     schemaVersion: number;
     generatedAt: string;
     archiveDirectory: string;
-    selectedBatchRunId: string;
+    selectedBatchRunId: string | null;
+    selectedBatchRunIds: string[];
     selectedBatchRunLatestTimestamp: string;
     excludedBatchRunIds: string[];
     holdoutBars: number[];
@@ -421,8 +425,18 @@ interface BatchRunGroup {
 interface AnalyzeOptions {
     archiveDirectory?: string;
     batchRunId?: string;
+    includeAllBatchRuns?: boolean;
     topK?: number;
     generatedAt?: string;
+}
+
+interface BatchRunSelection {
+    batchRunId: string | null;
+    batchRunIds: string[];
+    records: AssetOpportunityArchiveRecord[];
+    holdoutBars: Set<number>;
+    latestTimestamp: string;
+    excludedBatchRunIds: string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -729,12 +743,27 @@ function buildBatchRunGroups(records: AssetOpportunityArchiveRecord[]): BatchRun
     return [...groups.values()];
 }
 
-function selectBatchRun(records: AssetOpportunityArchiveRecord[], requestedBatchRunId?: string): {
-    selected: BatchRunGroup;
-    excludedBatchRunIds: string[];
-} {
+function selectBatchRun(
+    records: AssetOpportunityArchiveRecord[],
+    requestedBatchRunId?: string,
+    includeAllBatchRuns = false,
+): BatchRunSelection {
     const groups = buildBatchRunGroups(records);
     if (groups.length === 0) throw new Error("The archive contains no batch runs");
+    if (includeAllBatchRuns && !requestedBatchRunId) {
+        const batchRunIds = groups.map((group) => group.batchRunId).sort();
+        const selectedRecords = deduplicateRecords(groups.flatMap((group) => group.records));
+        return {
+            batchRunId: batchRunIds.length === 1 ? batchRunIds[0]! : null,
+            batchRunIds,
+            records: selectedRecords,
+            holdoutBars: new Set(selectedRecords.map((record) => record.holdoutBars)),
+            latestTimestamp: groups.reduce((latest, group) => (
+                group.latestTimestamp.localeCompare(latest) > 0 ? group.latestTimestamp : latest
+            ), groups[0]!.latestTimestamp),
+            excludedBatchRunIds: [],
+        };
+    }
     const selected = requestedBatchRunId
         ? groups.find((group) => group.batchRunId === requestedBatchRunId)
         : [...groups].sort((left, right) => {
@@ -744,11 +773,13 @@ function selectBatchRun(records: AssetOpportunityArchiveRecord[], requestedBatch
     if (!selected) {
         throw new Error(`Batch run not found: ${requestedBatchRunId}`);
     }
+    const selectedRecords = deduplicateRecords(selected.records);
     return {
-        selected: {
-            ...selected,
-            records: deduplicateRecords(selected.records),
-        },
+        batchRunId: selected.batchRunId,
+        batchRunIds: [selected.batchRunId],
+        records: selectedRecords,
+        holdoutBars: new Set(selectedRecords.map((record) => record.holdoutBars)),
+        latestTimestamp: selected.latestTimestamp,
         excludedBatchRunIds: groups
             .filter((group) => group.batchRunId !== selected.batchRunId)
             .map((group) => group.batchRunId)
@@ -1766,10 +1797,10 @@ export function analyzeAssetOpportunityArchive(
     options: AnalyzeOptions = {},
 ): AssetOpportunityHoldoutAnalysisReport {
     if (records.length === 0) throw new Error("The archive contains no records");
-    const { selected, excludedBatchRunIds } = selectBatchRun(records, options.batchRunId);
+    const selected = selectBatchRun(records, options.batchRunId, options.includeAllBatchRuns);
     const measurementModes = new Set(selected.records.map((record) => record.measurementMode === "next_exit" ? "next_exit" : "fixed_horizon"));
     if (measurementModes.size > 1) {
-        throw new Error(`Selected batch run contains mixed forward measurement modes: ${[...measurementModes].sort().join(", ")}`);
+        throw new Error(`Selected batch runs contain mixed forward measurement modes: ${[...measurementModes].sort().join(", ")}`);
     }
     const measurementMode = measurementModes.has("next_exit") ? "next_exit" : "fixed_horizon";
     const availableSortMetrics = new Set(selected.records.map((record) => record.sortMetric));
@@ -1839,8 +1870,9 @@ export function analyzeAssetOpportunityArchive(
         generatedAt: options.generatedAt ?? new Date().toISOString(),
         archiveDirectory: options.archiveDirectory ?? "",
         selectedBatchRunId: selected.batchRunId,
+        selectedBatchRunIds: selected.batchRunIds,
         selectedBatchRunLatestTimestamp: selected.latestTimestamp,
-        excludedBatchRunIds,
+        excludedBatchRunIds: selected.excludedBatchRunIds,
         holdoutBars,
         sourceBlockCount: records.length,
         selectedBlockCount: selected.records.length,
@@ -1868,6 +1900,9 @@ export function analyzeAssetOpportunityArchive(
         notes: [
             "Forward OOS metrics are descriptive evidence, not a trading rule or probability.",
             "Holdout values are overlapping/nested windows and must not be treated as independent experiments.",
+            ...(selected.batchRunIds.length > 1
+                ? ["Archive blocks from all batch runs were combined; when the same holdout and sort appears more than once, only its latest block is analyzed."]
+                : []),
             parameterFingerprintAvailable
                 ? "Candidate fingerprints include entry and optional exit parameters; they are reproducibility keys, not security hashes."
                 : "No parameter fingerprints are present in the selected archive; candidate persistence is symbol+strategyId only.",
@@ -2180,7 +2215,9 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
         "Asset Opportunity Holdout Evidence Report",
         "===========================================",
         `Generated: ${report.generatedAt}`,
-        `Selected batch run: ${report.selectedBatchRunId}`,
+        report.selectedBatchRunId
+            ? `Selected batch run: ${report.selectedBatchRunId}`
+            : `Selected batch runs: ${report.selectedBatchRunIds.join(", ")}`,
         `Holdout windows: ${formatHoldoutWindows(report.holdoutBars)}`,
         `Archive blocks analyzed: ${report.analyzedBlockCount} of ${report.selectedBlockCount} selected (${report.sourceBlockCount} source)`,
         `Forward measurement: ${report.measurementMode}`,
@@ -2416,6 +2453,7 @@ function main(): void {
         const report = analyzeAssetOpportunityArchive(records, {
             archiveDirectory,
             batchRunId: requestedBatchRunId,
+            includeAllBatchRuns: requestedBatchRunId === undefined,
             topK,
         });
         const renderedReport = renderAssetOpportunityHoldoutReport(report);

@@ -107,10 +107,14 @@ The archive can be analyzed with
 `archive/asset opportunity/analyze-asset-opportunity-holdouts.bat` (or
 `scripts/analyze-asset-opportunity-holdouts.ts`). The analyzer reads only
 matching files directly inside the selected archive directory, never nested
-subfolders. It reports strategy-library contribution, a descriptive
-worst-strategy removal counterfactual across forward horizons, and best/worst
-signal-candle hours. The removal section excludes archived rows; it does not
-rerun Finder or simulate capital, position sizing, or trade overlap.
+subfolders. It combines archive blocks from all batch runs by default, so
+separate Finder batches covering different holdout ranges appear in one report.
+If the same holdout and sort was archived more than once, the latest block is
+used. Pass `--batch-run-id <id>` to analyze one run instead. The report includes
+strategy-library contribution, a descriptive worst-strategy removal
+counterfactual across forward horizons, and best/worst signal-candle hours.
+The removal section excludes archived rows; it does not rerun Finder or
+simulate capital, position sizing, or trade overlap.
 
 Only the current iteration's full scalar rows are retained (for re-sort and
 the terminal view); prior iterations' rows are never held in memory or sent
