@@ -337,7 +337,15 @@ function mergeAssetOpportunityChunkResults(
             existing.candidateEvaluationsCompleted += entry.candidateEvaluationsCompleted;
             existing.candidateEvaluationFailures += entry.candidateEvaluationFailures;
             existing.freshEntryRechecks += entry.freshEntryRechecks;
+            existing.freshEntryExecutions = (existing.freshEntryExecutions ?? 0)
+                + (entry.freshEntryExecutions ?? 0);
             existing.oosEvaluations += entry.oosEvaluations;
+            existing.fixedHorizonEvaluations = (existing.fixedHorizonEvaluations ?? 0)
+                + (entry.fixedHorizonEvaluations ?? 0);
+            existing.nextExitEvaluations = (existing.nextExitEvaluations ?? 0)
+                + (entry.nextExitEvaluations ?? 0);
+            existing.complementaryOosEvaluations = (existing.complementaryOosEvaluations ?? 0)
+                + (entry.complementaryOosEvaluations ?? 0);
             existing.durationMs += entry.durationMs;
         }
     }

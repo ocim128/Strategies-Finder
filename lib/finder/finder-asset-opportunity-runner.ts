@@ -224,10 +224,11 @@ function resolveBaseOnlyOosEntryPrice(args: {
 }
 
 /**
- * A finite max-hold makes a recent next-exit replay exact: no position from
+ * A finite max-hold makes a recent execution replay exact: no position from
  * before this window can still be open at the freshness boundary. Include
  * cooldown time as well because a recently closed position can still block a
- * later entry. Return null when the execution state is not safely bounded.
+ * later entry. Minimum-hold, timeframe, confirmation, and win-streak rules
+ * keep earlier state relevant, so return null when any is enabled.
  */
 function resolveBoundedNextExitReplayBars(
     settings: BacktestSettings,
@@ -235,6 +236,7 @@ function resolveBoundedNextExitReplayBars(
 ): number | null {
     if (
         settings.riskMaxHoldEnabled !== true
+        || settings.riskMinHoldEnabled === true
         || settings.strategyTimeframeEnabled === true
         || (settings.confirmationStrategies?.length ?? 0) > 0
         || settings.riskWinStreakStopLossEnabled === true
@@ -254,6 +256,23 @@ function resolveBoundedNextExitReplayBars(
             : 1
         : 0;
     return Math.max(4, Math.ceil(maxHoldBars) + cooldownBars + 3);
+}
+
+function resolveBoundedOpenPositionReplayBlockReason(args: {
+    enabled: boolean;
+    hasExternalDataFetcher: boolean;
+    isCrossSymbolStrategy: boolean;
+    settings: BacktestSettings;
+}): string | null {
+    if (!args.enabled) return null;
+    if (args.hasExternalDataFetcher) return "external_data_fetcher";
+    if (args.isCrossSymbolStrategy) return "cross_symbol_strategy";
+    if (args.settings.riskMaxHoldEnabled !== true) return "max_hold_not_enabled";
+    if (args.settings.riskMinHoldEnabled === true) return "min_hold_enabled";
+    if (args.settings.strategyTimeframeEnabled === true) return "strategy_timeframe_enabled";
+    if ((args.settings.confirmationStrategies?.length ?? 0) > 0) return "confirmation_strategies_enabled";
+    if (args.settings.riskWinStreakStopLossEnabled === true) return "win_streak_stop_loss_enabled";
+    return null;
 }
 
 /**
@@ -381,11 +400,8 @@ export type AssetIsSearch = (args: {
     isCancelled: () => boolean;
     yieldControl: () => Promise<void>;
     /**
-     * When true, the search should retain each returned candidate's generated
-     * signals and surface them via `signalsByCandidate`, so the caller can
-     * detect fresh entries without re-executing every top-K candidate. Only
-     * requested when the caller has proven the fresh-entry recheck window is
-     * bar-for-bar identical to the in-sample window.
+     * When true, retain each returned candidate's generated signals for a
+     * boundary freshness check or a bounded open-position screen.
      */
     retainSignals?: boolean;
     /** Full closed data used only by the batch signal-reuse optimization. */
@@ -434,6 +450,8 @@ export interface AssetOpportunitySearchDiagnostics {
     historicalBars: number;
     slicedHistoricalBars: number;
     freshSignalWindowBars: number;
+    freshReplayMode: "standard" | "full_history" | "bounded_replay" | "bounded_screen";
+    freshReplayFallbackReason: string | null;
     oosBars: number;
     candidatesEvaluated: number;
     candidateEvaluationsAttempted: number;
@@ -930,6 +948,8 @@ async function searchOneAsset(args: {
         historicalBars: 0,
         slicedHistoricalBars: 0,
         freshSignalWindowBars: 0,
+        freshReplayMode: "standard",
+        freshReplayFallbackReason: null,
         oosBars: 0,
         candidatesEvaluated: 0,
         candidateEvaluationsAttempted: 0,
@@ -1098,10 +1118,12 @@ async function searchOneAsset(args: {
     // execution-aware recheck path because signal-only reuse cannot see
     // position-capacity or cooldown gates.
     const recheckData = oosIgnoreLastBars > 0 ? visibleValidationData : fullClosed;
-    const sameSignalBoundary = slicedHistorical.length > 0
-        && recheckData.length > slicedHistorical.length
+    const searchWindowEndsAtBoundary = slicedHistorical.length > 0
+        && recheckData.length >= slicedHistorical.length
         && timeKey(slicedHistorical[slicedHistorical.length - 1]!.time)
             === timeKey(recheckData[recheckData.length - 1]!.time);
+    const sameSignalBoundary = searchWindowEndsAtBoundary
+        && recheckData.length > slicedHistorical.length;
     // Exit overrides affect trade exits, while the retained signals exposed by
     // the IS search are primary entry signals. They therefore do not prevent
     // this signal-only freshness reuse.
@@ -1121,6 +1143,12 @@ async function searchOneAsset(args: {
     const canReuseIsSignalsForFresh = !includeOpenPositions
         && canReuseIsSignalsForFreshModel
         && canReuseFreshSignals;
+    const canUseBoundedOpenPositionReplay = includeOpenPositions
+        && !input.dataFetcher
+        && !selectedStrategy.strategy.crossSymbolConfig
+        && resolveBoundedNextExitReplayBars(input.settings, []) !== null;
+    const canRetainBoundedOpenPositionSignals = canUseBoundedOpenPositionReplay
+        && searchWindowEndsAtBoundary;
 
     // A random search with one candidate has no ranking decision to preserve.
     // Probe that candidate on the same bounded freshness window used by the
@@ -1224,7 +1252,7 @@ async function searchOneAsset(args: {
         generateParamSets: input.generateParamSets,
         isCancelled: callbacks.isCancelled,
         yieldControl: callbacks.yieldControl,
-        retainSignals: canReuseFreshSignals,
+        retainSignals: canReuseFreshSignals || canRetainBoundedOpenPositionSignals,
         fullSignalData: fullClosed,
         ...(input.signalCache ? { signalCache: input.signalCache } : {}),
         exitSignalCache,
@@ -1284,7 +1312,26 @@ async function searchOneAsset(args: {
     const boundedNextExitReplayBars = needsExecutableFreshRecheck
         ? resolveBoundedNextExitReplayBars(input.settings, topK)
         : null;
-    const freshSignalData = includeOpenPositions ? recheckData : resolveFreshSignalWindow({
+    let boundedOpenPositionFallbackReason = resolveBoundedOpenPositionReplayBlockReason({
+        enabled: includeOpenPositions,
+        hasExternalDataFetcher: Boolean(input.dataFetcher),
+        isCrossSymbolStrategy: Boolean(selectedStrategy.strategy.crossSymbolConfig),
+        settings: input.settings,
+    });
+    const boundedOpenPositionReplayBars = canUseBoundedOpenPositionReplay
+        ? resolveBoundedNextExitReplayBars(input.settings, topK)
+        : null;
+    const boundedOpenPositionWarmupBars = boundedOpenPositionReplayBars !== null
+        ? resolveFreshSignalWarmupBars(topK, input.settings)
+        : 0;
+    const boundedOpenPositionTotalBars = boundedOpenPositionReplayBars !== null
+        ? boundedOpenPositionReplayBars + boundedOpenPositionWarmupBars
+        : 0;
+    const boundedOpenPositionReplayData = boundedOpenPositionReplayBars !== null
+        && boundedOpenPositionTotalBars < recheckData.length
+        ? recheckData.slice(-boundedOpenPositionTotalBars)
+        : recheckData;
+    const freshSignalData = includeOpenPositions ? boundedOpenPositionReplayData : resolveFreshSignalWindow({
         boundaryData: recheckData,
         slicedHistorical,
         // signal_close and next_exit replay need the full boundary timeline
@@ -1315,6 +1362,42 @@ async function searchOneAsset(args: {
     });
     diagnostics.freshSignalWindowBars = freshSignalData?.length ?? 0;
 
+    const retainedCandidateSignals = (canReuseFreshSignals || canRetainBoundedOpenPositionSignals)
+        && finderOutput.signalsByCandidate
+        ? eligibleCandidateIndexes.map((index) => finderOutput.signalsByCandidate![index] ?? [])
+        : undefined;
+    // With finite max-hold, a candidate without an entry signal in the
+    // bounded execution window cannot have an open position at this boundary.
+    // Reuse its retained signals to skip the trade replay; replay only rows
+    // that could still be fresh or active.
+    const canScreenBoundedOpenPositions = canRetainBoundedOpenPositionSignals
+        && boundedOpenPositionReplayBars !== null
+        && slicedHistorical.length >= boundedOpenPositionTotalBars
+        && searchWindowEndsAtBoundary
+        && retainedCandidateSignals !== undefined;
+    if (includeOpenPositions) {
+        if (boundedOpenPositionReplayBars === null && boundedOpenPositionFallbackReason === null) {
+            boundedOpenPositionFallbackReason = "max_hold_limit_unavailable";
+        }
+        if (boundedOpenPositionReplayData === recheckData) {
+            diagnostics.freshReplayMode = "full_history";
+            diagnostics.freshReplayFallbackReason = boundedOpenPositionFallbackReason
+                ?? "bounded_window_not_shorter_than_history";
+        } else if (canScreenBoundedOpenPositions) {
+            diagnostics.freshReplayMode = "bounded_screen";
+            diagnostics.freshReplayFallbackReason = null;
+        } else {
+            diagnostics.freshReplayMode = "bounded_replay";
+            diagnostics.freshReplayFallbackReason = null;
+        }
+    }
+    const activeSignalWindowStartIndex = canScreenBoundedOpenPositions
+        ? Math.max(0, recheckData.length - boundedOpenPositionReplayBars! - 1)
+        : 0;
+    const activeSignalWindowStartSeconds = canScreenBoundedOpenPositions
+        ? parseTimeToUnixSeconds(recheckData[activeSignalWindowStartIndex]!.time)
+        : null;
+
     // 7. Re-generate signals for each top-K candidate on the visible boundary
     // data. In validation mode this ends before the hidden OOS window; with no
     // holdout it retains the normal full-closed application-candle behavior.
@@ -1322,58 +1405,106 @@ async function searchOneAsset(args: {
     // `canReuseIsSignalsForFresh`), the in-sample run's retained signals are
     // reused instead of re-executing every candidate on the same bars.
     const freshStartedAt = performance.now();
-    const retainedFreshSignals = canReuseFreshSignals && finderOutput.signalsByCandidate
-        ? eligibleCandidateIndexes.map((index) => finderOutput.signalsByCandidate![index] ?? [])
-        : undefined;
-    const retainedSignals = canReuseIsSignalsForFresh ? retainedFreshSignals : undefined;
+    const retainedSignals = canReuseIsSignalsForFresh ? retainedCandidateSignals : undefined;
     const freshRecheckConcurrency = input.useRustEnginePreference === true
         ? 1
         : ASSET_FRESH_RECHECK_CONCURRENCY;
-    const freshEvaluations: AssetFreshEvaluation[] = retainedSignals
-        ? topK.map((_candidate, candidateIndex) => detectFreshFromRetainedSignals({
+    const recheckCandidate = (candidate: FinderResult): Promise<AssetFreshEvaluation> => {
+        if (input.signal?.aborted) throwAbortError();
+        if (callbacks.isCancelled()) {
+            throw new Error("Finder stopped.");
+        }
+        return regenerateSignalsAndDetectFresh({
+            candidate,
+            strategy: preparedStrategy,
+            fullClosed: recheckData,
+            ...(freshSignalData ? { signalData: freshSignalData } : {}),
+            ...(includeOpenPositions
+                ? { replayData: boundedOpenPositionReplayData }
+                : needsExecutableFreshRecheck && freshSignalData
+                    ? { replayData: freshSignalData }
+                    : {}),
+            symbol,
+            interval: input.interval,
+            settings: input.settings,
+            capitalSettings: input.capitalSettings,
+            preResolvedCapital,
+            options: assetOptions,
+            exitStrategyCandidates: input.exitStrategyCandidates,
+            exitSignalCache,
+            dataFetcher: input.dataFetcher,
+            useRustEnginePreference: input.useRustEnginePreference,
+            rustDiagnosticPhase: "fresh_entry",
+            rustCapabilities: input.rustCapabilities,
+            signal: input.signal,
+        });
+    };
+    let freshEvaluations: AssetFreshEvaluation[];
+    if (retainedSignals) {
+        freshEvaluations = topK.map((_candidate, candidateIndex) => detectFreshFromRetainedSignals({
             signals: retainedSignals[candidateIndex] ?? [],
             candles: recheckData,
             settings: input.settings,
-        }))
-        // Bounded concurrency: up to 6 simultaneous regenerations instead of
-        // one per pool candidate (50). Indexed result storage keeps the
-        // output order identical to the old Promise.all path. Cancellation is
-        // checked between tasks so Stop does not drain the whole pool.
-        : await mapWithConcurrencyLimit(
+        }));
+    } else if (
+        canScreenBoundedOpenPositions
+        && retainedCandidateSignals
+        && activeSignalWindowStartSeconds !== null
+    ) {
+        const candidateIndexesToReplay: number[] = [];
+        const needsReplay = new Uint8Array(topK.length);
+        for (let index = 0; index < retainedCandidateSignals.length; index++) {
+            const signals = retainedCandidateSignals[index];
+            if (!signals || signals.length === 0) continue;
+            let hasActiveSignal = false;
+            for (let i = signals.length - 1; i >= 0; i--) {
+                const signalTimeSeconds = parseTimeToUnixSeconds(signals[i]!.time);
+                if (signalTimeSeconds === null || signalTimeSeconds >= activeSignalWindowStartSeconds) {
+                    hasActiveSignal = true;
+                    break;
+                }
+                if (signalTimeSeconds < activeSignalWindowStartSeconds) {
+                    break;
+                }
+            }
+            if (hasActiveSignal) {
+                needsReplay[index] = 1;
+                candidateIndexesToReplay.push(index);
+            }
+        }
+
+        freshEvaluations = new Array(topK.length);
+        for (let index = 0; index < topK.length; index++) {
+            if (needsReplay[index] === 0) {
+                freshEvaluations[index] = detectFreshFromRetainedSignals({
+                    signals: retainedCandidateSignals[index] ?? [],
+                    candles: recheckData,
+                    settings: input.settings,
+                });
+            }
+        }
+
+        if (candidateIndexesToReplay.length > 0) {
+            const replayedCandidates = await mapWithConcurrencyLimit(
+                candidateIndexesToReplay,
+                needsExecutableFreshRecheck ? 1 : freshRecheckConcurrency,
+                async (index) => ({
+                    index,
+                    evaluation: await recheckCandidate(topK[index]!),
+                }),
+            );
+            for (const replayed of replayedCandidates) {
+                freshEvaluations[replayed.index] = replayed.evaluation;
+            }
+        }
+    } else {
+        freshEvaluations = await mapWithConcurrencyLimit(
             topK,
             // next_exit always uses the generic execution-aware replay.
-            needsExecutableFreshRecheck
-                ? 1
-                : freshRecheckConcurrency,
-            (candidate) => {
-                if (input.signal?.aborted) throwAbortError();
-                if (callbacks.isCancelled()) {
-                    throw new Error("Finder stopped.");
-                }
-                return regenerateSignalsAndDetectFresh({
-                    candidate,
-                    strategy: preparedStrategy,
-                    fullClosed: recheckData,
-                    ...(freshSignalData ? { signalData: freshSignalData } : {}),
-                    ...(needsExecutableFreshRecheck && freshSignalData
-                        ? { replayData: freshSignalData }
-                        : {}),
-                    symbol,
-                    interval: input.interval,
-                    settings: input.settings,
-                    capitalSettings: input.capitalSettings,
-                    preResolvedCapital,
-                    options: assetOptions,
-                    exitStrategyCandidates: input.exitStrategyCandidates,
-                    exitSignalCache,
-                    dataFetcher: input.dataFetcher,
-                    useRustEnginePreference: input.useRustEnginePreference,
-                    rustDiagnosticPhase: "fresh_entry",
-                    rustCapabilities: input.rustCapabilities,
-                    signal: input.signal,
-                });
-            },
+            needsExecutableFreshRecheck ? 1 : freshRecheckConcurrency,
+            recheckCandidate,
         );
+    }
     diagnostics.timingsMs.freshEntryRechecks = performance.now() - freshStartedAt;
     diagnostics.freshEntryRechecks = freshEvaluations.length;
     const freshByCandidate = freshEvaluations.map((evaluation) => {

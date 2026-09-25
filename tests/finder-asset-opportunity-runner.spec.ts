@@ -784,6 +784,7 @@ describe("Asset Opportunity runner", () => {
         expect(output.results[0]!.latestSignalTime).to.equal(candles[4]!.time);
         expect(output.results[0]!.oosHorizonMetrics).to.deep.equal({
             ignoreLastBars: 4,
+            basis: "pair",
             horizons: [
                 { bars: 1, pnlPercent: 10, averagePnlPercent: 10, winRatePercent: 100, sampleSize: 1 },
                 { bars: 3, pnlPercent: -5, averagePnlPercent: -5, winRatePercent: 0, sampleSize: 1 },
@@ -1630,6 +1631,132 @@ describe("Asset Opportunity runner", () => {
         expect(output.results).to.have.length(1);
         expect(output.results[0]!.freshStatus).to.equal("fresh");
         expect(output.results[0]!.latestSignalTime).to.equal(candles[candles.length - 1]!.time);
+    });
+
+    it("reports full_history replay mode and fallback reason when max-hold is disabled with includeOpenPositions", async () => {
+        const candles = makeCandles(Array.from({ length: 150 }, (_, i) => 100 + i));
+        const strategy: Strategy = {
+            name: "MaxHoldDisabledReplay",
+            description: "enters on the first bar",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                const first = data[0];
+                return first ? [{ time: first.time, type: "buy" as const, price: first.close }] : [];
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({
+                assetOpportunity: {
+                    symbols: ["MAX_HOLD_DISABLED"],
+                    includeOpenPositions: true,
+                    candidatePoolSize: 2,
+                    minFreshSupport: 1,
+                },
+            }),
+            settings: { ...settings, riskMaxHoldEnabled: false },
+            selectedStrategy: { key: "max_hold_disabled", name: strategy.name, strategy },
+            generateParamSets: () => [{}, {}],
+            assets: [{ symbol: "MAX_HOLD_DISABLED", data: candles }],
+            candidatePoolSize: 2,
+            runIsSearch: makeRetainingStubIsSearch(),
+        }), makeCallbacks());
+
+        const diagnostics = output.outcomes[0]!.diagnostics;
+        expect(diagnostics).to.exist;
+        expect(diagnostics!.freshReplayMode).to.equal("full_history");
+        expect(diagnostics!.freshReplayFallbackReason).to.equal("max_hold_not_enabled");
+        expect(diagnostics!.freshEntryRechecks).to.equal(2);
+        expect(diagnostics!.freshEntryExecutions).to.equal(2);
+    });
+
+    it("screens candidates and reports bounded_screen with null fallback when max-hold is enabled with includeOpenPositions", async () => {
+        const candles = makeCandles(Array.from({ length: 150 }, (_, i) => 100 + i));
+        // Candidate 0: early signal far before the bounded execution window
+        // Candidate 1: latest bar signal (fresh)
+        const strategy: Strategy = {
+            name: "BoundedScreenReplay",
+            description: "places signal conditionally",
+            defaultParams: { barIndex: 0 },
+            paramLabels: { barIndex: "Bar Index" },
+            execute(data, params) {
+                const targetIndex = Number(params.barIndex);
+                const candle = data[targetIndex];
+                return candle ? [{ time: candle.time, type: "buy" as const, price: candle.close }] : [];
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({
+                assetOpportunity: {
+                    symbols: ["BOUNDED_SCREEN"],
+                    includeOpenPositions: true,
+                    candidatePoolSize: 2,
+                    minFreshSupport: 1,
+                },
+            }),
+            settings: {
+                ...settings,
+                executionModel: "next_open",
+                riskMaxHoldEnabled: true,
+                riskMaxHoldBars: 10,
+            },
+            selectedStrategy: { key: "bounded_screen_replay", name: strategy.name, strategy },
+            generateParamSets: () => [{ barIndex: 0 }, { barIndex: 148 }],
+            assets: [{ symbol: "BOUNDED_SCREEN", data: candles }],
+            candidatePoolSize: 2,
+            runIsSearch: makeRetainingStubIsSearch(),
+        }), makeCallbacks());
+
+        const diagnostics = output.outcomes[0]!.diagnostics;
+        expect(diagnostics).to.exist;
+        expect(diagnostics!.freshReplayMode).to.equal("bounded_screen");
+        expect(diagnostics!.freshReplayFallbackReason).to.equal(null);
+        expect(diagnostics!.freshEntryRechecks).to.equal(2);
+        // Candidate 0 had no signal in the recent window and was screened out;
+        // candidate 1 had an active signal in the window and was replayed.
+        expect(diagnostics!.freshEntryExecutions).to.equal(1);
+    });
+
+    it("reports bounded_replay with null fallback when max-hold is enabled but search window does not end at boundary", async () => {
+        const candles = makeCandles(Array.from({ length: 150 }, (_, i) => 100 + i));
+        const strategy: Strategy = {
+            name: "BoundedReplayWithoutScreen",
+            description: "places signal conditionally",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                const candle = data[data.length - 1];
+                return candle ? [{ time: candle.time, type: "buy" as const, price: candle.close }] : [];
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({
+                assetOpportunity: {
+                    symbols: ["BOUNDED_REPLAY"],
+                    includeOpenPositions: true,
+                    candidatePoolSize: 2,
+                    minFreshSupport: 1,
+                },
+            }),
+            settings: {
+                ...settings,
+                executionModel: "signal_close",
+                riskMaxHoldEnabled: true,
+                riskMaxHoldBars: 10,
+            },
+            selectedStrategy: { key: "bounded_replay_no_screen", name: strategy.name, strategy },
+            generateParamSets: () => [{}, {}],
+            assets: [{ symbol: "BOUNDED_REPLAY", data: candles }],
+            candidatePoolSize: 2,
+            runIsSearch: makeRetainingStubIsSearch(),
+        }), makeCallbacks());
+
+        const diagnostics = output.outcomes[0]!.diagnostics;
+        expect(diagnostics).to.exist;
+        expect(diagnostics!.freshReplayMode).to.equal("bounded_replay");
+        expect(diagnostics!.freshReplayFallbackReason).to.equal(null);
+        expect(diagnostics!.freshEntryRechecks).to.equal(2);
+        expect(diagnostics!.freshEntryExecutions).to.equal(2);
     });
 });
 

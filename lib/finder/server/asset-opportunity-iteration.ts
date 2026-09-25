@@ -355,6 +355,8 @@ export async function runAssetOpportunityIteration(
         historicalBars: number;
         slicedHistoricalBars: number;
         freshSignalWindowBars: number;
+        freshReplayMode: AssetOpportunitySearchDiagnostics["freshReplayMode"];
+        freshReplayFallbackReason: string | null;
         oosBars: number;
         dataLoadingMs: number;
         candidatesEvaluated: number;
@@ -756,6 +758,8 @@ export async function runAssetOpportunityIteration(
                         historicalBars: searchDiagnostics.historicalBars,
                         slicedHistoricalBars: searchDiagnostics.slicedHistoricalBars,
                         freshSignalWindowBars: searchDiagnostics.freshSignalWindowBars,
+                        freshReplayMode: searchDiagnostics.freshReplayMode,
+                        freshReplayFallbackReason: searchDiagnostics.freshReplayFallbackReason,
                         oosBars: searchDiagnostics.oosBars,
                         dataLoadingMs: currentAssetLoadMs + currentBaseDataLoadingMs,
                         candidatesEvaluated: searchDiagnostics.candidatesEvaluated,

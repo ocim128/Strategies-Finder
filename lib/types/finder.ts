@@ -848,6 +848,8 @@ export interface FinderAssetOpportunityDiagnostics {
         historicalBars: number;
         slicedHistoricalBars: number;
         freshSignalWindowBars: number;
+        freshReplayMode: "standard" | "full_history" | "bounded_replay" | "bounded_screen";
+        freshReplayFallbackReason: string | null;
         oosBars: number;
         dataLoadingMs: number;
         candidatesEvaluated: number;
