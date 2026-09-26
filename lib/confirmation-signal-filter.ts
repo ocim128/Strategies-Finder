@@ -267,7 +267,6 @@ export function applyConfirmationStrategiesToSignals(args: {
     for (const key of keys) {
         const strategy = args.resolveStrategy?.(key) ?? getLoadedBuiltInStrategy(key);
         if (!strategy) return [];
-if (strategy.crossSymbolConfig) return [];
 
         const rawParams = {
             ...strategy.defaultParams,

@@ -74,8 +74,6 @@ export interface FinderUniverseStrategyWorkerTask {
     exitStrategyKeys: string[];
     useRustEnginePreference: boolean;
     rustCapabilities?: RustCapabilities;
-    /** Symbol (trim+upper) -> provider label; null means the binance default. */
-    providerBySymbol: Record<string, string> | null;
 }
 
 /** Per-strategy DELTA of the worker dataset cache stats (see module header). */
@@ -263,13 +261,6 @@ export async function runFinderUniverseStrategyWorkerTask(args: {
             : {}),
     };
 
-    // Mirrors the plugin's resolveServerProvider: normalized symbol lookup
-    // with a binance default. Keys arrive pre-normalized from the main thread.
-    const getProvider = task.providerBySymbol
-        ? (symbol: string): string =>
-            task.providerBySymbol![symbol.trim().toUpperCase()] ?? "binance"
-        : undefined;
-
     let phase: "loading" | "evaluating" = "loading";
     let lastPercent = 0;
     const output = await runFinderUniverseExecution(
@@ -281,7 +272,6 @@ export async function runFinderUniverseStrategyWorkerTask(args: {
             selectedStrategy: selection.entry,
             loadDataset: (symbol, interval, signal) => datasetCache.load(symbol, interval, signal),
             getCachedDataset: (symbol, interval) => datasetCache.get(symbol, interval),
-            ...(getProvider ? { getProvider } : {}),
             generateParamSets: (defaultParams: StrategyParams, finderOptions: FinderOptions) =>
                 paramSpace.generateParamSets(defaultParams, finderOptions),
             ...(selection.exitStrategyCandidates

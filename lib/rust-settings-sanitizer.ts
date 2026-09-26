@@ -207,7 +207,6 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "optimalFBootstrapSamples",
     "secureFConfidence",
     "secureFMethod",
-    "crossSymbolSecondary",
 ] as const;
 
 const UNSUPPORTED_KEYS = new Set<string>(RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS);

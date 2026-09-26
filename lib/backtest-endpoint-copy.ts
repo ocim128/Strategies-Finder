@@ -49,8 +49,6 @@ export interface PreparedBacktestEndpointCopyBundle {
     candleCount: number;
     datasetUploaded: boolean;
     datasetUploadError: string | null;
-    secondaryDatasetRef?: string | null;
-    secondaryCandleCount?: number | null;
 }
 
 export class BacktestEndpointUnavailableError extends Error {
@@ -245,7 +243,6 @@ export function computeBacktestEndpointDatasetFingerprint(candles: OHLCVData[]):
 export function buildBacktestEndpointRequestFromSnapshot(
     snapshot: UiBacktestEndpointSnapshot,
     candles: OHLCVData[],
-    crossSymbolDataset?: { secondarySymbol: string; candles: OHLCVData[] }
 ): BacktestSingleRequest {
     return {
         symbol: snapshot.symbol,
@@ -255,14 +252,6 @@ export function buildBacktestEndpointRequestFromSnapshot(
         },
         strategyParams: { ...snapshot.strategyParams },
         backtestSettings: buildEndpointBacktestSettings(snapshot),
-        crossSymbol: crossSymbolDataset
-            ? {
-                secondarySymbol: crossSymbolDataset.secondarySymbol,
-                dataset: {
-                    candles: cloneCandles(crossSymbolDataset.candles),
-                },
-            }
-            : undefined,
         context: {
             nowSec: snapshot.nowSec,
             blockRange: cloneBlockRange(snapshot.blockRange),
@@ -275,7 +264,6 @@ export function buildBacktestEndpointCopyBundleFromSnapshot(
     snapshot: UiBacktestEndpointSnapshot,
     baseUrl: string,
     datasetRef: string = BACKTEST_ENDPOINT_DATASET_REF_PLACEHOLDER,
-    crossSymbolDataset?: { secondarySymbol: string; datasetRef: string }
 ): BacktestEndpointCopyBundle {
     return {
         url: buildBacktestEndpointUrl(snapshot, baseUrl),
@@ -290,14 +278,6 @@ export function buildBacktestEndpointCopyBundleFromSnapshot(
             },
             strategyParams: { ...snapshot.strategyParams },
             backtestSettings: buildEndpointBacktestSettings(snapshot),
-            crossSymbol: crossSymbolDataset
-                ? {
-                    secondarySymbol: crossSymbolDataset.secondarySymbol,
-                    dataset: {
-                        ref: crossSymbolDataset.datasetRef,
-                    },
-                }
-                : undefined,
             context: {
                 nowSec: snapshot.nowSec,
                 blockRange: cloneBlockRange(snapshot.blockRange),
@@ -316,34 +296,21 @@ export async function prepareBacktestEndpointCopyBundleFromSnapshot(
     snapshot: UiBacktestEndpointSnapshot,
     baseUrl: string,
     candles: OHLCVData[],
-    crossSymbolDataset?: { secondarySymbol: string; candles: OHLCVData[] }
 ): Promise<PreparedBacktestEndpointCopyBundle> {
     let primaryUpload: BacktestEndpointDatasetUploadResult | null = null;
-    let secondaryUpload: BacktestEndpointDatasetUploadResult | null = null;
 
     try {
         primaryUpload = await uploadBacktestEndpointDataset(baseUrl, candles);
-        if (crossSymbolDataset) {
-            secondaryUpload = await uploadBacktestEndpointDataset(baseUrl, crossSymbolDataset.candles);
-        }
         return {
             bundle: buildBacktestEndpointCopyBundleFromSnapshot(
                 snapshot,
                 baseUrl,
-                primaryUpload.datasetRef,
-                secondaryUpload && crossSymbolDataset
-                    ? {
-                        secondarySymbol: crossSymbolDataset.secondarySymbol,
-                        datasetRef: secondaryUpload.datasetRef,
-                    }
-                    : undefined
+                primaryUpload.datasetRef
             ),
             datasetRef: primaryUpload.datasetRef,
             candleCount: primaryUpload.candleCount,
-            datasetUploaded: !crossSymbolDataset || secondaryUpload !== null,
+            datasetUploaded: true,
             datasetUploadError: null,
-            secondaryDatasetRef: secondaryUpload?.datasetRef ?? null,
-            secondaryCandleCount: secondaryUpload?.candleCount ?? crossSymbolDataset?.candles.length ?? null,
         };
     } catch (error) {
         if (!isBacktestEndpointUnavailableError(error)) {
@@ -354,22 +321,12 @@ export async function prepareBacktestEndpointCopyBundleFromSnapshot(
             bundle: buildBacktestEndpointCopyBundleFromSnapshot(
                 snapshot,
                 baseUrl,
-                primaryUpload?.datasetRef ?? BACKTEST_ENDPOINT_DATASET_REF_PLACEHOLDER,
-                crossSymbolDataset
-                    ? {
-                        secondarySymbol: crossSymbolDataset.secondarySymbol,
-                        datasetRef: secondaryUpload?.datasetRef ?? BACKTEST_ENDPOINT_DATASET_REF_PLACEHOLDER,
-                    }
-                    : undefined
+                primaryUpload?.datasetRef ?? BACKTEST_ENDPOINT_DATASET_REF_PLACEHOLDER
             ),
             datasetRef: primaryUpload?.datasetRef ?? BACKTEST_ENDPOINT_DATASET_REF_PLACEHOLDER,
             candleCount: primaryUpload?.candleCount ?? candles.length,
             datasetUploaded: false,
             datasetUploadError: error.message,
-            secondaryDatasetRef: crossSymbolDataset
-                ? (secondaryUpload?.datasetRef ?? BACKTEST_ENDPOINT_DATASET_REF_PLACEHOLDER)
-                : null,
-            secondaryCandleCount: crossSymbolDataset?.candles.length ?? null,
         };
     }
 }

@@ -109,7 +109,7 @@ export interface GeneticOptimizerInput {
     backtestSettings: BacktestSettings;
     config: GeneticOptimizerConfig;
     onGeneration?: (stats: GeneticGenerationStats) => void;
-    /** Optional cross-symbol execution context, resolved once by the caller. */
+    /** Optional strategy execution context, resolved once by the caller. */
     executionContext?: StrategyExecutionContext;
 }
 

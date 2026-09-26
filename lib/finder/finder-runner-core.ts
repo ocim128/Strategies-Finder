@@ -814,11 +814,7 @@ export function getPreparedFinderData(
         byStrategy = new Map<string, unknown>();
         cache.set(data, byStrategy);
     }
-    const cacheParts = [strategyKey];
-    if (executionContext?.crossSymbol) {
-        cacheParts.push(`cross:${executionContext.crossSymbol.secondarySymbol}`);
-    }
-    const cacheKey = cacheParts.join("::");
+    const cacheKey = strategyKey;
     if (!byStrategy.has(cacheKey)) {
         byStrategy.set(cacheKey, strategy.prepareFinderData?.(data, settings, executionContext));
     }

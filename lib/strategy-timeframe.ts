@@ -7,7 +7,7 @@ import { parseTimeToUnixSeconds } from "./time-normalization";
  * is executed on a resampled higher-timeframe series and its signals are
  * mapped back onto base-bar indices/times.
  *
- * Per-site orchestration (config source, cross-symbol guards, polarity,
+ * Per-site orchestration (config source, polarity,
  * fallback paths) is intentionally NOT shared — callers keep their own
  * thin orchestration around these primitives.
  */

@@ -677,15 +677,6 @@ export interface FinderUniverseServerRunInput {
      * generator). Production wires the FinderManager param-space generator.
      */
     generateParamSets?: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[];
-    /** Provider lookup for cross-symbol strategies. */
-    getProvider?: (symbol: string) => string;
-    /**
-     * Symbol (trim+upper) -> provider label for the PARALLEL strategy sweep.
-     * Functions cannot cross the worker boundary, so worker-side provider
-     * lookups are rebuilt from this map (binance default, mirroring
-     * `resolveServerProvider`). The sequential path keeps using `getProvider`.
-     */
-    providerBySymbol?: Record<string, string>;
     /**
      * Parallel strategy sweep worker count. 1 (or an auto resolution of 1)
      * keeps the sequential in-process loop — the rollback lever, also forced
@@ -939,7 +930,6 @@ export async function processFinderUniverseRun(
                 exitStrategyKeys: (input.exitStrategyCandidates ?? []).map((strategy) => strategy.key),
                 useRustEnginePreference: input.useRustEnginePreference === true,
                 ...(input.rustCapabilities ? { rustCapabilities: input.rustCapabilities } : {}),
-                providerBySymbol: input.providerBySymbol ?? null,
             }),
         );
         const percentByStrategy = new Map<number, number>();
@@ -1088,7 +1078,6 @@ export async function processFinderUniverseRun(
                         }
                         return cached;
                     },
-                    getProvider: input.getProvider,
                     generateParamSets: input.generateParamSets ?? (() => []),
                     exitStrategyCandidates: input.exitStrategyCandidates,
                     useRustEnginePreference: input.useRustEnginePreference,
@@ -1245,7 +1234,6 @@ export async function processFinderUniverseRun(
                     capitalSettings: input.capitalSettings,
                     interval: input.interval,
                     loadOosData: loadOosSliced,
-                    getProvider: input.getProvider,
                     useRustEnginePreference: input.useRustEnginePreference,
                     rustCapabilities: input.rustCapabilities,
                     retainAllResults: true,
@@ -1420,7 +1408,6 @@ interface FinderAssetOpportunityRequestBody {
     runId?: unknown;
     exitStrategyKeys?: unknown;
     useRustEnginePreference?: unknown;
-    providerBySymbol?: unknown;
     /** Legacy field accepted for compatibility; batch archives always use All Sorts. */
     archiveSort?: unknown;
 }
@@ -1488,7 +1475,6 @@ async function runFinderAssetOpportunityWorkerSweep(
     input: FinderAssetOpportunityRunInput & {
         batchTaskRunnerFactory: AssetOpportunityBatchRunnerFactory;
         assetWorkerCount: number;
-        providerBySymbol?: Record<string, string>;
     },
     callbacks: AssetOpportunityIterationCallbacks,
     isCancelled: () => boolean,
@@ -1496,7 +1482,6 @@ async function runFinderAssetOpportunityWorkerSweep(
     const totalAssets = input.symbols.length;
     const chunkCount = Math.max(1, Math.min(input.assetWorkerCount, totalAssets));
     const chunkSize = Math.ceil(totalAssets / chunkCount);
-    const providerBySymbol = input.providerBySymbol ?? {};
     const tasks: AssetOpportunityBatchWorkerTask[] = Array.from({ length: chunkCount }, (_, assetChunkIndex) => {
         const symbols = input.symbols.slice(assetChunkIndex * chunkSize, (assetChunkIndex + 1) * chunkSize);
         const options = input.options.assetOpportunity
@@ -1525,7 +1510,6 @@ async function runFinderAssetOpportunityWorkerSweep(
             useRustEnginePreference: input.useRustEnginePreference === true,
             ...(input.parallelStrategies === true ? { parallelStrategies: true } : {}),
             ...(input.rustCapabilities ? { rustCapabilities: input.rustCapabilities } : {}),
-            providerBySymbol,
             candidatePoolSize: input.candidatePoolSize,
             minFreshSupport: input.minFreshSupport,
         };
@@ -1655,7 +1639,6 @@ export async function processFinderAssetOpportunityRun(
         /** Optional bounded asset chunking for the single-run route. */
         batchTaskRunnerFactory?: AssetOpportunityBatchRunnerFactory;
         assetWorkerCount?: number;
-        providerBySymbol?: Record<string, string>;
     },
     writer: (event: FinderAssetOpportunityStreamEvent) => void,
     owner: number,
@@ -1840,11 +1823,6 @@ export async function processFinderAssetOpportunityBatchRun(
          * and the FINDER_ASSET_BATCH_WORKERS rollback lever).
          */
         batchTaskRunnerFactory?: AssetOpportunityBatchRunnerFactory;
-        /**
-         * Normalized symbol -> provider map for worker task payloads
-         * (parallel path only; functions cannot cross the worker boundary).
-         */
-        providerBySymbol?: Record<string, string>;
     },
     writer: (event: FinderAssetOpportunityBatchStreamEvent) => void,
     owner: number,
@@ -2237,14 +2215,6 @@ export async function processFinderAssetOpportunityBatchRun(
             totalAssets,
             assetChunkCount,
         });
-        // Worker task payloads carry a plain provider map (functions cannot
-        // cross the worker boundary); keys normalized like resolveServerProvider.
-        const providerRecord: Record<string, string> | null = input.providerBySymbol
-            ? Object.fromEntries(
-                Object.entries(input.providerBySymbol)
-                    .map(([symbol, provider]) => [symbol.trim().toUpperCase(), provider]),
-            )
-            : null;
         const tasks: AssetOpportunityBatchWorkerTask[] = holdoutValues.flatMap((holdoutBars, iterationIndex) => {
             const chunkSize = Math.ceil(totalAssets / assetChunkCount);
             return Array.from({ length: assetChunkCount }, (_, assetChunkIndex) => {
@@ -2275,7 +2245,6 @@ export async function processFinderAssetOpportunityBatchRun(
                     useRustEnginePreference: input.useRustEnginePreference === true,
                     ...(input.parallelStrategies === true ? { parallelStrategies: true } : {}),
                     ...(input.rustCapabilities ? { rustCapabilities: input.rustCapabilities } : {}),
-                    providerBySymbol: providerRecord,
                     candidatePoolSize: input.candidatePoolSize,
                     minFreshSupport: input.minFreshSupport,
                 };
@@ -2544,7 +2513,6 @@ async function prepareAssetOpportunityRunPayload(
     selectedStrategies: FinderSelectedStrategy[];
     exitStrategyCandidates?: FinderSelectedStrategy[];
     useRustEnginePreference: boolean;
-    providerBySymbol: Map<string, string>;
     candidatePoolSize: number;
     minFreshSupport: number;
     /** Present only for the batch route: validated holdout range. */
@@ -2645,7 +2613,6 @@ async function prepareAssetOpportunityRunPayload(
     const minFreshSupport = clampMinFreshSupport(options.assetOpportunity?.minFreshSupport);
 
     const exitStrategyCandidates = await resolveExitStrategyCandidates(body.exitStrategyKeys);
-    const providerBySymbol = parseProviderBySymbol(body.providerBySymbol);
 
     if (consumePendingStopForRun(runId)) {
         throw new HttpStatusError(409, "Finder run was stopped before it started.");
@@ -2661,7 +2628,6 @@ async function prepareAssetOpportunityRunPayload(
         selectedStrategies,
         exitStrategyCandidates,
         useRustEnginePreference,
-        providerBySymbol,
         candidatePoolSize,
         minFreshSupport,
         ...(batch ? { batchRange, archiveSort } : {}),
@@ -2842,19 +2808,12 @@ async function handleAssetOpportunityRunRequest(
                 rustCapabilities,
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
-                loadSecondaryDataset: (sym, intv, signal, context) =>
-                    loadServerFinderDataset(sym, intv, signal, context),
-                getProvider: (symbol) => resolveServerProvider(symbol, prepared.providerBySymbol),
                 candidatePoolSize: prepared.candidatePoolSize,
                 minFreshSupport: prepared.minFreshSupport,
                 ...(singleRunWorkerCount > 1
                     ? {
                         batchTaskRunnerFactory: createRealWorkerAssetOpportunityBatchRunner,
                         assetWorkerCount: singleRunWorkerCount,
-                        providerBySymbol: Object.fromEntries(
-                            [...prepared.providerBySymbol.entries()]
-                                .map(([symbol, provider]) => [symbol.trim().toUpperCase(), provider]),
-                        ),
                     }
                     : {}),
                 runLog: buildFinderRunLogSink(runLogRoot, prepared.runId),
@@ -2935,9 +2894,6 @@ async function handleAssetOpportunityBatchRunRequest(
                 rustCapabilities,
                 abortSignal: runAbortController.signal,
                 loadDataset: loadDatasetFullClosed,
-                loadSecondaryDataset: (sym, intv, signal, context) =>
-                    loadServerFinderDataset(sym, intv, signal, context),
-                getProvider: (symbol) => resolveServerProvider(symbol, prepared.providerBySymbol),
                 candidatePoolSize: prepared.candidatePoolSize,
                 minFreshSupport: prepared.minFreshSupport,
                 archiveSort,
@@ -2945,16 +2901,8 @@ async function handleAssetOpportunityBatchRunRequest(
                 batch: { startHoldoutBars: batchRange.start, endHoldoutBars: batchRange.end },
                 // Parallel holdout sweep: real workers when the resolved count
                 // exceeds 1 (see resolveAssetOpportunityBatchWorkerCount and
-                // the FINDER_ASSET_BATCH_WORKERS override). The plain provider
-                // map feeds worker task payloads; functions cannot cross the
-                // worker boundary. ALWAYS present (even empty) so the
-                // worker-side getProvider mirrors resolveServerProvider's
-                // binance default instead of disabling cross-symbol fetch.
+                // the FINDER_ASSET_BATCH_WORKERS override).
                 batchTaskRunnerFactory: createRealWorkerAssetOpportunityBatchRunner,
-                providerBySymbol: Object.fromEntries(
-                    [...prepared.providerBySymbol.entries()]
-                        .map(([symbol, provider]) => [symbol.trim().toUpperCase(), provider]),
-                ),
             },
             safeWrite,
             owner,
@@ -3050,11 +2998,6 @@ interface FinderUniverseRequestBody {
     runId?: unknown;
     exitStrategyKeys?: unknown;
     useRustEnginePreference?: unknown;
-    /**
-     * Browser-supplied provider map (symbol -> provider label) for the
-     * cross-symbol mismatch guard.
-     */
-    providerBySymbol?: unknown;
 }
 
 async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseRequestBody): Promise<void> {
@@ -3093,7 +3036,6 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
     const useRustEnginePreference = body.useRustEnginePreference === true;
 
     const exitStrategyCandidates = await resolveExitStrategyCandidates(body.exitStrategyKeys);
-    const providerBySymbol = parseProviderBySymbol(body.providerBySymbol);
 
     // Setup above includes asynchronous strategy loading. A Stop can arrive
     // after the first pending-stop check but before ownership is acquired, so
@@ -3147,14 +3089,6 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
                 // (resolveUniverseOosSlice + sliceFinderDataWindow). Reuse the
                 // same server loader so IS/OOS share the bounded disk cache.
                 loadOosDataset: (sym, intv, signal) => loadServerFinderDataset(sym, intv, signal),
-                getProvider: (symbol) => resolveServerProvider(symbol, providerBySymbol),
-                // Parallel strategy sweep inputs: the provider map (functions
-                // cannot cross the worker boundary; workers rebuild lookups
-                // with the binance default) and the real worker runner.
-                providerBySymbol: Object.fromEntries(
-                    [...providerBySymbol.entries()]
-                        .map(([symbol, provider]) => [symbol.trim().toUpperCase(), provider]),
-                ),
                 strategyRunnerFactory: createRealWorkerUniverseStrategyRunner,
                 generateParamSets: (defaultParams, finderOptions) =>
                     paramSpace.generateParamSets(defaultParams, finderOptions),
@@ -3430,40 +3364,6 @@ async function resolveExitStrategyCandidates(
         }
     }
     return candidates.length > 0 ? candidates : undefined;
-}
-
-/**
- * Parse the browser-supplied provider map (symbol -> provider label). Returns
- * a normalized map keyed by uppercased symbol. Rejects (400) a non-object or
- * a map with non-string values so a malformed payload can't silently turn the
- * mismatch guard into an allow-all.
- */
-function parseProviderBySymbol(raw: unknown): Map<string, string> {
-    const out = new Map<string, string>();
-    if (raw === undefined || raw === null) return out;
-    if (typeof raw !== "object" || Array.isArray(raw)) {
-        throw new HttpStatusError(400, "providerBySymbol must be an object mapping symbol -> provider.");
-    }
-    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-        if (typeof value !== "string") {
-            throw new HttpStatusError(400, `providerBySymbol["${key}"] must be a string provider label.`);
-        }
-        const normalized = key.trim().toUpperCase();
-        if (normalized) out.set(normalized, value);
-    }
-    return out;
-}
-
-/**
- * Provider label for cross-symbol strategies' provider-mismatch guard.
- * The browser sends a `providerBySymbol` map with the request so the server
- * applies the SAME mismatch guard the browser does. A symbol present in the
- * map resolves to its real provider; a symbol absent falls back to the
- * default (`binance`).
- */
-function resolveServerProvider(symbol: string, providerBySymbol: Map<string, string>): string {
-    const normalized = symbol.trim().toUpperCase();
-    return providerBySymbol.get(normalized) ?? "binance";
 }
 
 /**

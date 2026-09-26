@@ -1156,36 +1156,6 @@ describe("Asset Opportunity runner", () => {
         expect(output.results[0]!.oosResult).to.exist;
     });
 
-    it("uses the secondary execution context during fresh replay", async () => {
-        const strategy: Strategy = {
-            name: "CrossReplay",
-            description: "requires aligned secondary data",
-            defaultParams: { threshold: 1 },
-            paramLabels: { threshold: "Threshold" },
-            crossSymbolConfig: { defaultSymbol: "SECONDARY", minBars: 3 },
-            execute(data, _params, context) {
-                if (!context?.crossSymbol || context.crossSymbol.secondaryData.length !== data.length) return [];
-                const latest = data[data.length - 1];
-                return latest ? [{ time: latest.time, type: "buy", price: latest.close }] : [];
-            },
-        };
-        const primary = makeCandles([100, 101, 102, 103, 104]);
-        const input = makeInput({
-            settings: { ...settings, crossSymbolSecondary: "SECONDARY" },
-            selectedStrategy: { key: "cross_replay", name: "CrossReplay", strategy },
-            generateParamSets: () => [{ threshold: 1 }],
-            assets: [{ symbol: "PRIMARY", data: primary }],
-            dataFetcher: {
-                getProvider: () => "test",
-                fetchDataDetached: async () => makeCandles([50, 51, 52, 53, 54]),
-            },
-        });
-
-        const output = await runAssetOpportunitySearch(input, makeCallbacks());
-        expect(output.results).to.have.length(1);
-        expect(output.results[0]!.freshStatus).to.equal("fresh");
-    });
-
     it("reports all historical candidates even when only the top-K pool is retained", async () => {
         const strategy: Strategy = {
             name: "FreshPoolCount",

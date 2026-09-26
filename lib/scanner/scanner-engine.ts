@@ -259,12 +259,12 @@ export class ScannerEngine {
                     signal, 
                     lookbackBars
                 );
-                
+
                 // Track if any network fetch occurred
                 if (source === 'network') {
                     hadNetworkFetch = true;
                 }
-                
+
                 if (data && data.length >= MIN_DATA_BARS) {
                     pairDataMap.set(pair.symbol, {
                         symbol: pair.symbol,
@@ -309,13 +309,6 @@ export class ScannerEngine {
             const strategy = strategyRegistry.get(stratConfig.strategyKey);
             if (!strategy) {
                 debugLogger.warn('scanner.strategy_not_found', {
-                    strategyKey: stratConfig.strategyKey,
-                });
-                continue;
-            }
-
-            if (strategy.crossSymbolConfig) {
-                debugLogger.warn('scanner.cross_symbol_unsupported', {
                     strategyKey: stratConfig.strategyKey,
                 });
                 continue;

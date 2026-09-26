@@ -36,6 +36,16 @@ import { DEFAULT_BUILT_IN_STRATEGY_KEY } from '../lib/strategy-defaults';
 import { builtInStrategyKeys } from '../lib/strategies/manifest-keys';
 
 describe('Backtest settings compatibility', () => {
+    it('ignores retired secondary-symbol settings in saved configurations', () => {
+        const legacy = { crossSymbolSecondary: 'ETHUSDT', slippageBps: 12 };
+        const stored = normalizeStoredBacktestSettings(legacy);
+        const resolved = resolveBacktestSettingsFromRaw(legacy);
+        expect(stored).not.to.have.property('crossSymbolSecondary');
+        expect(resolved).not.to.have.property('crossSymbolSecondary');
+        expect(stored.slippageBps).to.equal(12);
+        expect(resolved.slippageBps).to.equal(12);
+        expect(getBacktestDomSettingContract('crossSymbolSecondary')).to.equal(undefined);
+    });
     it('ignores removed tradeFilterMode when provided', () => {
         const normalized = normalizeBacktestSettings({
             tradeFilterMode: 'rsi',
@@ -777,47 +787,6 @@ describe('Backtest settings compatibility', () => {
 
     it('keeps the shared default strategy key aligned with the built-in manifest', () => {
         expect(builtInStrategyKeys.includes(DEFAULT_BUILT_IN_STRATEGY_KEY)).to.equal(true);
-    });
-
-    it('persists and normalizes crossSymbolSecondary through stored settings', () => {
-        const normalized = normalizeStoredBacktestSettings({
-            crossSymbolSecondary: '  ethusdt  ',
-        });
-        expect(normalized.crossSymbolSecondary).to.equal('ETHUSDT');
-
-        const empty = normalizeStoredBacktestSettings({});
-        expect(empty.crossSymbolSecondary).to.equal('');
-
-        const whitespace = normalizeStoredBacktestSettings({
-            crossSymbolSecondary: '   ',
-        });
-        expect(whitespace.crossSymbolSecondary).to.equal('');
-
-        const nonString = normalizeStoredBacktestSettings({
-            crossSymbolSecondary: 42,
-        });
-        expect(nonString.crossSymbolSecondary).to.equal('');
-    });
-
-    it('strips crossSymbolSecondary from Rust payloads', () => {
-        const settings: BacktestSettings = {
-            crossSymbolSecondary: 'ETHUSDT',
-        } as BacktestSettings;
-        const sanitized = sanitizeBacktestSettingsForRust(settings);
-        expect('crossSymbolSecondary' in (sanitized as unknown as Record<string, unknown>)).to.equal(false);
-    });
-
-    it('resolves crossSymbolSecondary from raw backtest settings', () => {
-        const resolved = resolveBacktestSettingsFromRaw({
-            crossSymbolSecondary: 'solusdt',
-        } as unknown as BacktestSettings);
-        expect(resolved.crossSymbolSecondary).to.equal('solusdt');
-    });
-
-    it('includes crossSymbolSecondary in DOM contracts as Rust-unsupported', () => {
-        const contract = getBacktestDomSettingContract('crossSymbolSecondary');
-        expect(contract).to.not.equal(undefined);
-        expect(contract?.rustSupport).to.equal('unsupported');
     });
 });
 

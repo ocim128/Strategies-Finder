@@ -48,7 +48,7 @@ export interface StrategyRegistryEvent {
 }
 
 export type StrategyRegistryListener = (event: StrategyRegistryEvent) => void;
-export type StrategyKind = "cross-symbol" | "standard";
+export type StrategyKind = "standard";
 
 export interface StrategyRegistry {
     /** Register a new strategy */
@@ -121,13 +121,6 @@ class StrategyRegistryImpl implements StrategyRegistry {
                 const { enabled, minutes } = this.readGlobalStrategyTfSettings();
                 if (!enabled || data.length === 0) {
                     return originalExecute(data, params, context);
-                }
-
-                if (context?.crossSymbol) {
-                    throw new Error(
-                        'Cross-symbol strategies cannot be used with strategy timeframe resampling. ' +
-                        'Disable "Strategy Timeframe" before running this strategy.'
-                    );
                 }
 
                 const numericData = toNumericTimeData(data);
@@ -351,20 +344,13 @@ export function getBuiltInMeta(key: string): BuiltInStrategyMeta | undefined {
     return getBuiltInStrategyMeta(key);
 }
 
-export function getStrategyKind(key: string, strategy?: Strategy): StrategyKind {
-    const meta = getBuiltInStrategyMeta(key);
+export function getStrategyKind(_key: string, _strategy?: Strategy): StrategyKind {
 
-    if (strategy?.crossSymbolConfig || meta?.crossSymbolConfig) {
-        return "cross-symbol";
-    }
 
     return "standard";
 }
 
-export function getStrategyKindTitle(kind: StrategyKind): string {
-    if (kind === "cross-symbol") {
-        return "Uses cross-symbol price helpers";
-    }
+export function getStrategyKindTitle(_kind: StrategyKind): string {
     return "Standard strategy";
 }
 

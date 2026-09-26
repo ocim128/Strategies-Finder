@@ -3,7 +3,6 @@ import type { BacktestExecutorResult } from "../backtest-executor";
 import { shouldUseRustEngine } from "../engine-preferences";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { mapWithConcurrencyLimit } from "../async-pool";
-import type { CrossSymbolDataFetcher } from "../cross-symbol-runtime";
 import { debugLogger } from "../debug-logger";
 import {
     getTypescriptEngineRequirementReasons,
@@ -149,7 +148,6 @@ export interface FinderUniverseRunInput {
      * dataset is not ready and must use loadDataset normally.
      */
     getCachedDataset?: (symbol: string, interval: string) => OHLCVData[] | undefined;
-    getProvider?: (symbol: string) => string;
     generateParamSets: (defaultParams: Record<string, number>, options: FinderOptions) => Record<string, number>[];
     /** Candidate exit strategies Finder may sample for Exit Strategy Override. */
     exitStrategyCandidates?: FinderSelectedStrategy[];
@@ -635,17 +633,6 @@ export async function runFinderUniverseExecution(
         loadCache.set(key, promise);
         return promise;
     };
-    let crossSymbolDataFetcher: CrossSymbolDataFetcher | undefined;
-    if (input.selectedStrategy.strategy.crossSymbolConfig) {
-        if (!input.getProvider) {
-            throw new Error("Symbol Universe cross-symbol runs require a provider lookup.");
-        }
-        crossSymbolDataFetcher = {
-            getProvider: input.getProvider,
-            fetchDataDetached: (symbol, interval) => getOrLoadDataset(symbol, interval),
-        };
-    }
-
     callbacks.setProgress(0, "Preparing symbol universe...");
     callbacks.setStatus("Loading universe symbols...");
 
@@ -766,9 +753,9 @@ export async function runFinderUniverseExecution(
 
     const closedDataPrecomputeStart = performance.now();
     const runNowSec = Math.floor(Date.now() / 1000);
-    const hasCrossSymbol = Boolean(input.selectedStrategy.strategy.crossSymbolConfig);
+
     const closedDataBySymbol = new Map<string, OHLCVData[]>();
-    if (!hasCrossSymbol) {
+    {
         for (const sym of loadedSymbols) {
             closedDataBySymbol.set(
                 sym.symbol,
@@ -802,10 +789,8 @@ export async function runFinderUniverseExecution(
         || metric === "medianReturnDrawdownRatio"
     );
     // Composite Edge Ratio needs per-trade OHLCV lookups; only compute when the
-    // active sort requests it, and only for non-cross-symbol runs where we have
-    // a clean closed-candle series matching what the backtest ran on.
-    const requiresCompositeEdgeRatio = !hasCrossSymbol
-        && universe.sortPriority.includes("medianCompositeEdgeRatio");
+    // active sort requests it, using the closed-candle series the backtest ran on.
+    const requiresCompositeEdgeRatio = universe.sortPriority.includes("medianCompositeEdgeRatio");
     const maxStoredSurvivors = Math.max(input.options.topN, 50);
     // Bounded top-K survivor store (see FinderUniverseSurvivorRanker). Replaces
     // the push-then-full-sort-and-trim buffer: every passing candidate used to
@@ -915,7 +900,7 @@ export async function runFinderUniverseExecution(
      * than by candidate. The Rust batch API shares one OHLCV array across all
      * items, so this removes one request/data serialization boundary per
      * candidate chunk while keeping the existing TypeScript path untouched
-     * for cross-symbol, synthetic-pair, exit-override, and capability-gated
+     * for synthetic-pair, exit-override, and capability-gated
      * runs.
      */
     const universeBatchOutputs = new Map<number, Map<string, BatchedUniverseOutput>>();
@@ -923,7 +908,6 @@ export async function runFinderUniverseExecution(
     const rustPreferenceEnabled = input.useRustEnginePreference === true
         || (typeof document !== "undefined" && shouldUseRustEngine());
     const canPrepareUniverseRustBatches = rustPreferenceEnabled
-        && !hasCrossSymbol
         && !requiresExitAlpha
         && !input.options.exitStrategyOverrideEnabled
         && !input.selectedStrategy.strategy.metadata?.role
@@ -1161,7 +1145,7 @@ export async function runFinderUniverseExecution(
                     }
                     : await executeBacktest({
                         ohlcvData: symbol.data,
-                        closedCandleDataOverride: hasCrossSymbol ? undefined : closedDataBySymbol.get(symbol.symbol),
+                        closedCandleDataOverride: closedDataBySymbol.get(symbol.symbol),
                         interval: input.interval,
                         primarySymbol: symbol.symbol,
                         strategyKey: input.selectedStrategy.key,
@@ -1171,7 +1155,6 @@ export async function runFinderUniverseExecution(
                         capitalSettings: input.capitalSettings,
                         preResolvedSettings,
                         preResolvedCapital,
-                        dataFetcher: crossSymbolDataFetcher,
                         context: {
                             blockRange: null,
                             engineMode: requiresExitAlpha ? "typescript" : "auto",
@@ -1245,7 +1228,7 @@ export async function runFinderUniverseExecution(
                     try {
                         const controlOutput = await executeBacktest({
                             ohlcvData: symbol.data,
-                            closedCandleDataOverride: hasCrossSymbol ? undefined : closedDataBySymbol.get(symbol.symbol),
+                            closedCandleDataOverride: closedDataBySymbol.get(symbol.symbol),
                             interval: input.interval,
                             primarySymbol: symbol.symbol,
                             strategyKey: input.selectedStrategy.key,
@@ -1255,7 +1238,6 @@ export async function runFinderUniverseExecution(
                             capitalSettings: input.capitalSettings,
                             preResolvedSettings,
                             preResolvedCapital,
-                            dataFetcher: crossSymbolDataFetcher,
                             preGeneratedSignals: output.signals,
                             context: {
                                 blockRange: null,
@@ -1292,7 +1274,7 @@ export async function runFinderUniverseExecution(
                     // Pair-neutral Sharpe is calculated from completed-trade
                     // returns. Below the metric's minimum sample count, zero is
                     // a sentinel rather than an observed Sharpe and must not
-                    // pull the cross-symbol median toward a false 0.00.
+                    // pull the universe median toward a false 0.00.
                     sharpeRatioAvailable: requiresSharpeRatio
                         && (!pairNeutralMetrics || pairNeutralMetrics.totalTrades >= SHARPE_MIN_SAMPLES),
                     drawdownAvailable: requiresDrawdown,

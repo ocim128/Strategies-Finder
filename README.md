@@ -64,6 +64,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - State write surface: `lib/state-actions.ts`
 
 ### Strategy and backtest engine
+- Strategies execute on one supplied OHLCV series. The retired secondary-symbol strategy runtime and helpers have been removed; synthetic-pair datasets still supply a single ratio series. Legacy `crossSymbolSecondary` settings are ignored.
 - Strategy registry and loading: `strategyRegistry.ts`
 - Built-in source of truth: `lib/strategies/lib/*`, with generated metadata/loaders/eager manifests under `lib/strategies/manifest*.ts`
 - Browser built-in loading: summary metadata and per-key loaders from `lib/strategies/manifest-summary.ts` and `lib/strategies/manifest-loaders.ts`

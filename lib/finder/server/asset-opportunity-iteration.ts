@@ -167,14 +167,6 @@ export interface FinderAssetOpportunityRunInput {
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
     ) => Promise<OHLCVData[]>;
-    /** Secondary cross-symbol data stays unsliced; the executor aligns it to the primary window. */
-    loadSecondaryDataset?: (
-        symbol: string,
-        interval: string,
-        signal?: AbortSignal,
-        context?: BatchDatasetLoadContext,
-    ) => Promise<OHLCVData[]>;
-    getProvider?: (symbol: string) => string;
     candidatePoolSize: number;
     minFreshSupport: number;
     /** Reusable caches for a multi-iteration Asset Opportunity batch. */
@@ -409,32 +401,7 @@ export async function runAssetOpportunityIteration(
         lastProgressPercent = percent;
         callbacks.onProgress({ ...progress, percent });
     };
-    const secondaryDataCache = new Map<string, Promise<OHLCVData[]>>();
     const rustCapabilities = input.rustCapabilities;
-    const assetDataFetcher = selectedStrategies.some((strategy) => strategy.strategy.crossSymbolConfig) && input.getProvider
-        ? {
-            getProvider: input.getProvider,
-            fetchDataDetached: (symbol: string, interval: string): Promise<OHLCVData[]> => {
-                const cacheKey = `${symbol}|${interval}`;
-                const cached = secondaryDataCache.get(cacheKey);
-                if (cached) return cached;
-                const promise = (input.loadSecondaryDataset ?? input.loadDataset)(
-                    symbol,
-                    interval,
-                    input.abortSignal,
-                    assetLoadContext,
-                ).then((data) => {
-                    if (!Array.isArray(data) || data.length === 0) secondaryDataCache.delete(cacheKey);
-                    return data;
-                }, (error) => {
-                    secondaryDataCache.delete(cacheKey);
-                    throw error;
-                });
-                secondaryDataCache.set(cacheKey, promise);
-                return promise;
-            },
-        }
-        : undefined;
 
     // Server-safe IS search. The browser path uses `runFinderExecution` which
     // pulls `lightweight-charts` transitively; the server path uses the
@@ -469,7 +436,6 @@ export async function runAssetOpportunityIteration(
             ...(!input.generateParamSets
                 ? { generateParamSetsIsDeterministic: input.generateParamSetsIsDeterministic }
                 : {}),
-            ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
             ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
             isCancelled: args.isCancelled,
             yieldControl: args.yieldControl,
@@ -832,7 +798,6 @@ export async function runAssetOpportunityIteration(
                         runSeed: Number.isFinite(input.options.randomSeed) ? Number(input.options.randomSeed) : 1,
                         candidatePoolSize: input.candidatePoolSize,
                         minFreshSupport: input.minFreshSupport,
-                        ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
                         useRustEnginePreference: input.useRustEnginePreference,
                         rustCapabilities,
                         typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,

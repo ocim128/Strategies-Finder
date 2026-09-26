@@ -316,7 +316,6 @@ describe("finder Asset Opportunity batch parallel execution", () => {
             strategyKeys: [],
             exitStrategyKeys: [],
             useRustEnginePreference: false,
-            providerBySymbol: null,
             candidatePoolSize: 2,
             minFreshSupport: 1,
         };
@@ -469,7 +468,6 @@ describe("finder Asset Opportunity batch parallel execution", () => {
             strategyKeys: [STRATEGY_KEY],
             exitStrategyKeys: [],
             useRustEnginePreference: false,
-            providerBySymbol: null,
             candidatePoolSize: 2,
             minFreshSupport: 1,
         }));
@@ -715,7 +713,6 @@ describe("finder Asset Opportunity batch parallel execution", () => {
             strategyKeys: [STRATEGY_KEY],
             exitStrategyKeys: [],
             useRustEnginePreference: false,
-            providerBySymbol: null,
             candidatePoolSize: 2,
             minFreshSupport: 1,
         }));
@@ -760,7 +757,6 @@ describe("finder Asset Opportunity batch parallel execution", () => {
             strategyKeys: [STRATEGY_KEY],
             exitStrategyKeys: [],
             useRustEnginePreference: false,
-            providerBySymbol: null,
             candidatePoolSize: 2,
             minFreshSupport: 1,
         }));

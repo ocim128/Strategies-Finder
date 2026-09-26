@@ -15,7 +15,7 @@
  * step):
  *   - early-exit when OOS is disabled, no OOS slice resolves, or no survivors
  *   - per-candidate: resolve entry+exit strategies, risk overrides, executor
- *     settings (with interval forced in), and the cross-symbol data fetcher
+ *     settings (with interval forced in)
  *   - per-symbol: skip load_failed/run_failed rows, load the OOS slice, run
  *     `executeBacktest` with the lightweight result options
  *     (omitEquityCurve / skipDrawdown / skipResultPostProcessing, no advanced
@@ -129,12 +129,6 @@ export interface UniverseOosDeps {
      * closure which cached `[]` on error).
      */
     loadOosData: (symbol: string, interval: string) => Promise<OHLCVData[]>;
-    /**
-     * Provider label resolver for cross-symbol strategies. Mirrors the
-     * browser `dataManager.getProvider` (server callers pass the
-     * `providerBySymbol`-backed resolver).
-     */
-    getProvider?: (symbol: string) => string;
     /** Rust preference threaded into `executeBacktest` context. */
     useRustEnginePreference?: boolean;
     /** Capabilities from the server run's single Rust health handshake. */
@@ -194,8 +188,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
     // `closedCandleDataOverride` (mirrors the universe IS path). Without
     // it, every candidate re-copies the OOS slice inside executeBacktest,
     // and the copy's fresh array identity defeats the identity-keyed
-    // indicator/prepared-data caches. Cross-symbol runs keep the raw slice
-    // (alignment needs untrimmed primary data), matching the IS path.
+    // indicator/prepared-data caches.
     const closedDataBySymbol = new Map<string, OHLCVData[]>();
     const closedDataOverrideFor = (symbol: string, data: OHLCVData[]): OHLCVData[] => {
         let closed = closedDataBySymbol.get(symbol);
@@ -257,13 +250,6 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
             { ...(oosBacktestSettings as Record<string, unknown>), interval: deps.interval } as BacktestSettings,
             deps.interval,
         );
-        const crossSymbolDataFetcher = strategy.crossSymbolConfig
-            ? {
-                getProvider: deps.getProvider ?? (() => "binance"),
-                fetchDataDetached: deps.loadOosData,
-            }
-            : undefined;
-
         for (const symbolResult of candidate.symbols) {
             if (deps.isCancelled()) {
                 cancelled = true;
@@ -279,7 +265,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
             try {
                 const output = await executeBacktest({
                     ohlcvData: oosData,
-                    closedCandleDataOverride: crossSymbolDataFetcher ? undefined : closedDataOverrideFor(symbolResult.symbol, oosData),
+                    closedCandleDataOverride: closedDataOverrideFor(symbolResult.symbol, oosData),
                     interval: deps.interval,
                     primarySymbol: symbolResult.symbol,
                     strategyKey: candidate.strategyKey,
@@ -289,7 +275,6 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
                     capitalSettings: deps.capitalSettings,
                     preResolvedSettings,
                     preResolvedCapital,
-                    dataFetcher: crossSymbolDataFetcher,
                     context: {
                         blockRange: null,
                         engineMode: requiresExitAlpha ? "typescript" : "auto",
@@ -317,7 +302,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
                     try {
                         const controlOutput = await executeBacktest({
                             ohlcvData: oosData,
-                            closedCandleDataOverride: crossSymbolDataFetcher ? undefined : closedDataOverrideFor(symbolResult.symbol, oosData),
+                            closedCandleDataOverride: closedDataOverrideFor(symbolResult.symbol, oosData),
                             interval: deps.interval,
                             primarySymbol: symbolResult.symbol,
                             strategyKey: candidate.strategyKey,
@@ -327,7 +312,6 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
                             capitalSettings: deps.capitalSettings,
                             preResolvedSettings,
                             preResolvedCapital,
-                            dataFetcher: crossSymbolDataFetcher,
                             preGeneratedSignals: output.signals,
                             context: {
                                 blockRange: null,

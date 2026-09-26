@@ -24,11 +24,9 @@ If a strategy silently clamps, rounds, or flips a parameter inside `execute(...)
 2. Start from a nearby example:
    - `lib/strategies/lib/ema_confirmation.ts` for a small direct `execute(...)` pattern
    - `lib/strategies/lib/mcginley_dynamic_confirmation.ts` for normalized thresholds and Finder precompute
-   - `lib/strategies/lib/cross-symbol-helpers.ts` for cross-symbol alignment helpers
 3. Write the raw signal idea first with `ensureCleanData(...)` and `createSignalLoop(...)`.
 4. Add a named parameter normalizer before wiring `metadata.walkForwardParams`.
 5. Run `npm run strategies:sync-manifest`; do not manually edit the generated manifest files.
-6. Add `prepareFinderData(...)` when dataset-derived precomputation materially reduces repeated Finder work. This is useful for expensive rolling, VWAP, percentile, entropy, skewness, or cross-symbol state, but is unnecessary for cheap one-pass logic.
 
 ## Minimal Template
 
@@ -163,26 +161,9 @@ Add `normalizeParams(...)` when execution rounds, clamps, coerces sign, snaps to
 - Keep the prepared payload small and cache reusable arrays by the real param dimension, usually lookback.
 - Do not add Finder precompute to cheap strategies just for symmetry.
 
-## Cross-Symbol Strategies
-
-Cross-symbol strategies declare `crossSymbolConfig` and receive the resolved secondary data through the optional third `StrategyExecutionContext` argument. Strategies must not fetch or align secondary data themselves.
-
-Rules:
-
-- declare `crossSymbolConfig.defaultSymbol`
-- read `context?.crossSymbol.secondaryData`
-- return `[]` or fail closed when required context is missing
-- pass the same context through `prepareFinderData(...)` and `executePrepared(...)`
-- do not combine cross-symbol execution with strategy-timeframe resampling
-
-There is no current built-in cross-symbol strategy example in the manifest.
-Use `tests/strategies-lib/prepared-execution-parity.spec.ts` with
-`lib/strategies/lib/cross-symbol-helpers.ts` when validating a new one. See
-[cross-symbol.md](cross-symbol.md) for the full runtime support matrix.
-
 ## Synthetic Pair Strategies
 
-Synthetic pairs are already merged into one OHLCV ratio series before a strategy runs. Do not declare `crossSymbolConfig` for a synthetic-pair strategy.
+Synthetic pairs are already merged into one OHLCV ratio series before a strategy runs.
 
 Rules:
 
@@ -214,6 +195,5 @@ See [synthetic-pairs.md](synthetic-pairs.md) for generation and support details.
 - exposing a WFA/Finder param that execution later ignores or renames
 - adding expensive per-bar allocations in Finder hot paths when a reusable precompute would do
 - adding `prepareFinderData(...)` without keeping `executePrepared(...)` aligned with `execute(...)`
-- adding a heavy rolling/VWAP/cross-symbol strategy without checking `npm run strategies:audit-prepared`
 - handing `OHLCVData[]` to helpers that expect `number[]`
 - indexing compound helper results incorrectly, such as reading `atrMinMax[i]!.min` instead of `atrMinMax.min[i]!`

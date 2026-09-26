@@ -25,12 +25,6 @@ import {
     resolveBacktestSettingsFromRaw,
 } from "./backtest-settings-resolver";
 import { sliceOhlcvByBlock } from "./block-selector";
-import {
-    resolveCrossSymbolExecution,
-    resolveCrossSymbolExecutionSync,
-    resolveCrossSymbolSecondaryForStrategy,
-    type CrossSymbolDataFetcher,
-} from "./cross-symbol-runtime";
 import { shouldUseRustEngine } from "./engine-preferences";
 import {
     hasUnsupportedRustSignalShape,
@@ -90,7 +84,7 @@ import { buildSelectionResult } from "./finder/endpoint";
 export interface BacktestExecutorRequest {
     ohlcvData: OHLCVData[];
     interval: string;
-    /** Primary symbol name. Used for cross-symbol resolution. */
+    /** Primary symbol name used by callers to identify the dataset. */
     primarySymbol?: string;
     strategyKey: string;
     strategy?: Strategy;
@@ -127,11 +121,6 @@ export interface BacktestExecutorRequest {
         tradeGate?: import("./batch-backtest/trade-gate").TradeGate;
         /** Pair key used to select the gate's causal feature context. */
         tradeGatePair?: string;
-    };
-    dataFetcher?: CrossSymbolDataFetcher;
-    crossSymbolInput?: {
-        secondarySymbol: string;
-        secondaryData: OHLCVData[];
     };
     /** Pre-computed closed candle data. When provided, skips selectClosedCandleData internally. */
     closedCandleDataOverride?: OHLCVData[];
@@ -216,19 +205,6 @@ function buildExitSignalDataCacheKey(data: OHLCVData[]): string {
     ]);
 }
 
-function mergeStrategyExecutionContext(
-    base: StrategyExecutionContext | undefined,
-    override: StrategyExecutionContext | undefined
-): StrategyExecutionContext | undefined {
-    if (!base) return override;
-    if (!override) return base;
-    return {
-        ...base,
-        ...override,
-        crossSymbol: override.crossSymbol ?? base.crossSymbol,
-    };
-}
-
 // ============================================================================
 // Pure executor
 // ============================================================================
@@ -294,44 +270,8 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         await ensureConfirmationStrategiesLoaded(resolvedSettings);
     }
 
-    // --- Cross-symbol resolution ---
-    const primarySymbol = req.primarySymbol ?? (settingsWithMeta as Record<string, unknown>).symbol as string ?? "";
-    const configuredSecondarySymbol = resolveCrossSymbolSecondaryForStrategy(strategy, resolvedSettings);
-    if (strategy.crossSymbolConfig && !req.dataFetcher && !req.crossSymbolInput) {
-        throw new Error(
-            `Cross-symbol strategy "${strategy.name}" requires either a dataFetcher or explicit secondary dataset input. ` +
-            'This surface does not support cross-symbol strategies.'
-        );
-    }
-    const crossSymbolResolved = req.crossSymbolInput
-        ? (() => {
-            const normalizedProvidedSymbol = req.crossSymbolInput!.secondarySymbol.trim().toUpperCase();
-            if (!configuredSecondarySymbol || normalizedProvidedSymbol !== configuredSecondarySymbol) {
-                throw new Error(
-                    `Cross-symbol secondary mismatch: request provided "${normalizedProvidedSymbol}" but strategy execution resolved "${configuredSecondarySymbol ?? ""}".`
-                );
-            }
-            return resolveCrossSymbolExecutionSync({
-                strategy,
-                primarySymbol,
-                primaryData: ohlcvData,
-                secondarySymbol: normalizedProvidedSymbol,
-                secondaryData: req.crossSymbolInput!.secondaryData,
-                settings: resolvedSettings,
-            });
-        })()
-        : req.dataFetcher
-            ? await resolveCrossSymbolExecution({
-                strategy,
-                primarySymbol,
-                interval,
-                primaryData: ohlcvData,
-                settings: resolvedSettings,
-                dataFetcher: req.dataFetcher,
-            })
-            : { primaryData: ohlcvData, context: req.strategyExecutionContext } as const;
-    const effectiveData = crossSymbolResolved.primaryData;
-    const crossSymbolContext = mergeStrategyExecutionContext(req.strategyExecutionContext, crossSymbolResolved.context);
+    const effectiveData = ohlcvData;
+    const executionContext = req.strategyExecutionContext;
 
     const backtestData = req.closedCandleDataOverride
         ?? selectClosedCandleData(effectiveData, interval, resolvedSettings, nowSec, blockRange);
@@ -344,9 +284,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     // for confirmation, custom execution context, and all exit-aware runs.
     if (
         req.backtestRunOptions?.signalsOnly === true
-        && !req.dataFetcher
-        && !req.crossSymbolInput
-        && !strategy.crossSymbolConfig
         && !req.strategyExecutionContext
         && !(resolvedSettings.confirmationStrategies?.length)
         && resolvedSettings.exitStrategyOverrideEnabled !== true
@@ -379,44 +316,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             typescriptReason: "signal-only execution",
         });
     }
-
-    let alignedCrossSymbolContext = crossSymbolContext;
-    if (alignedCrossSymbolContext?.crossSymbol && backtestData.length > 0) {
-        const firstTime = backtestData[0].time;
-        const lastTime = backtestData[backtestData.length - 1].time;
-        const primaryData = effectiveData;
-        const secondaryData = alignedCrossSymbolContext.crossSymbol.secondaryData;
-
-        const firstKey = timeKey(firstTime);
-        const lastKey = timeKey(lastTime);
-
-        let startIndex = primaryData.findIndex(d => timeKey(d.time) === firstKey);
-        if (startIndex === -1) startIndex = 0;
-
-        let endIndex = primaryData.findIndex(d => timeKey(d.time) === lastKey);
-        endIndex = endIndex === -1 ? secondaryData.length : endIndex + 1;
-
-        alignedCrossSymbolContext = {
-            ...alignedCrossSymbolContext,
-            crossSymbol: {
-                ...alignedCrossSymbolContext.crossSymbol,
-                secondaryData: secondaryData.slice(startIndex, endIndex),
-                alignedLength: backtestData.length
-            }
-        };
-    } else if (alignedCrossSymbolContext?.crossSymbol) {
-        alignedCrossSymbolContext = {
-            ...alignedCrossSymbolContext,
-            crossSymbol: {
-                ...alignedCrossSymbolContext.crossSymbol,
-                secondaryData: [],
-                alignedLength: 0
-            }
-        };
-    }
-
-
-const executionContext = alignedCrossSymbolContext;
 
     const signalGenerationStartedAt = executorTimings ? performance.now() : 0;
     const signals = req.preGeneratedSignals
@@ -954,7 +853,6 @@ export async function resolveExitStrategyOverrideSignals(args: {
         && !args.executionContext
         && args.settings.strategyTimeframeEnabled !== true
         && !(args.settings.confirmationStrategies?.length)
-&& !exitStrategy.crossSymbolConfig,
     );
     const cacheKey = canReuseSignals
         ? buildExitSignalCacheKey({
@@ -1212,7 +1110,7 @@ function executeStrategySignals(
     settings: BacktestSettings,
     interval: string,
     strategyAlreadyWrapped: boolean,
-    crossSymbolContext?: StrategyExecutionContext
+    executionContext?: StrategyExecutionContext
 ): Signal[] {
     return executeBacktestStrategySignals({
         data,
@@ -1221,7 +1119,7 @@ function executeStrategySignals(
         params,
         settings,
         strategyAlreadyWrapped,
-        executionContext: crossSymbolContext,
+        executionContext: executionContext,
     });
 }
 

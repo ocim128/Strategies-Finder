@@ -283,7 +283,6 @@ describe("finder date-range data window", () => {
                 strategyKey: STRATEGY_KEY,
                 exitStrategyKeys: [],
                 useRustEnginePreference: false,
-                providerBySymbol: null,
             },
             loadDataset: async () => bars,
             abortSignal: new AbortController().signal,

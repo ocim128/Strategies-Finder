@@ -17,7 +17,6 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 - [finder-server-side.md](finder-server-side.md) - server-owned Finder Symbol Universe and Asset Opportunity jobs, parallel batch worker pool, JSONL run log, heap budget, scalar-only wire contract, Stop scoped by run id, and tab-reload reattach via `/api/finder/status`.
 - [finder-asset-opportunity-resort-guide.md](finder-asset-opportunity-resort-guide.md) - how to add an Asset Opportunity Re-Sort metric end to end (browser control, archive contract, tests).
 - [alpaca-ibkr-sync.md](alpaca-ibkr-sync.md) - Alpaca-backed IBKR Data downloads, source guards, credentials, 30m-to-4h aggregation, and the EDGAR market-cap download.
-- [cross-symbol.md](cross-symbol.md) - secondary-symbol strategy runtime contract and support matrix.
 - [pairlist-pools.md](pairlist-pools.md) - committed, hash-locked pair-list pools for S&P-500 TOP_MEAN campaigns: registry schema, generation scripts, archive stamping, and the integrity test.
 - [synthetic-pairs.md](synthetic-pairs.md) - synthetic pair generation and supported surfaces.
 - [rank-pairs.md](rank-pairs.md) - Rank Pairs regime classification: anchored sampling, metrics, labels, thresholds, and copy contract.

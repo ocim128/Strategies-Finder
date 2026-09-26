@@ -24,7 +24,6 @@ import { blockSelectorManager } from "./block-selector-manager";
 import { bindFormAccessibility } from "./form-accessibility";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { getOptionalElement } from "./dom-utils";
-import { initCrossSymbolUI } from "./cross-symbol-ui";
 import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
 import { getLocalDailyAsset, isIbkrSymbol, isStockMarketSymbol } from "./local-daily-datasets";
 import { coalesceAnimationFrame } from "./render-scheduler";
@@ -216,7 +215,6 @@ export async function bootstrapApp(): Promise<void> {
     await runBootstrapStep("state-subscriptions", "pre_restore", () => setupStateSubscriptions());
     await runBootstrapStep("ui-events", "pre_restore", () => setupEventHandlers());
     await runBootstrapStep("block-selector", "pre_restore", () => blockSelectorManager.init());
-    await runBootstrapStep("cross-symbol", "pre_restore", () => initCrossSymbolUI());
     await runBootstrapStep("live-positions-handlers", "pre_restore", () => initLivePositionsHandlers());
     await runBootstrapStep("engine-status", "pre_restore", () => initEngineStatusIndicator());
     await runBootstrapStep("scanner-shortcut", "pre_restore", () => {

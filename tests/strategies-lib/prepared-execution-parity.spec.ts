@@ -1,35 +1,10 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import type { OHLCVData, Strategy, StrategyExecutionContext, Time } from '../../lib/strategies/index';
+import type { OHLCVData, Strategy, Time } from '../../lib/strategies/index';
 import { strategyManifest } from '../../lib/strategies/manifest-eager';
 
-function buildExecutionContext(strategy: Strategy, bars: OHLCVData[]): StrategyExecutionContext | undefined {
-    const context: StrategyExecutionContext = {};
-
-    if (strategy.crossSymbolConfig) {
-        const secondaryData = bars.map((bar, index) => ({
-            ...bar,
-            open: bar.open * 0.985 + index * 0.03,
-            high: bar.high * 0.992 + index * 0.03,
-            low: bar.low * 0.978 + index * 0.03,
-            close: bar.close * 0.989 + Math.sin(index / 9) * 0.6,
-            volume: bar.volume * 1.08 + (index % 7) * 3,
-        }));
-
-        context.crossSymbol = {
-            primarySymbol: "BTCUSDT",
-            secondarySymbol: strategy.crossSymbolConfig.defaultSymbol,
-            secondaryData,
-            alignedLength: bars.length,
-            trimmedLeadingBars: 0,
-        };
-    }
-
-    return context.crossSymbol ? context : undefined;
-}
-
 function assertPreparedParity(strategy: Strategy, bars: OHLCVData[], params: Record<string, number>): void {
-    const executionContext = buildExecutionContext(strategy, bars);
+    const executionContext = undefined;
     const normalizedParams = strategy.normalizeParams
         ? strategy.normalizeParams({ ...strategy.defaultParams, ...params })
         : { ...strategy.defaultParams, ...params };

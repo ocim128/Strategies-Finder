@@ -23,8 +23,7 @@ const HEAVY_FAMILY_PATTERNS: ReadonlyArray<{ family: string; pattern: RegExp }> 
     { family: "rolling-entropy", pattern: /\bbuildRollingEntropy\b/ },
     { family: "rolling-skewness", pattern: /\bbuildRollingSkewness\b/ },
     { family: "rolling-zscore-median-percentile", pattern: /\b(?:buildRollingZScore|buildRollingMedian|buildPercentileRank)\b/ },
-    { family: "correlation-autocorrelation", pattern: /\b(?:buildRollingCorrelation|buildRollingPairCorrelation|buildRollingAutoCorrelation)\b/ },
-    { family: "cross-symbol-relative", pattern: /\b(?:buildRelativeStrength|crossSymbolConfig)\b/ },
+    { family: "correlation-autocorrelation", pattern: /\b(?:buildRollingCorrelation|buildRollingAutoCorrelation)\b/ },
     { family: "efficiency-ratio", pattern: /\bbuildEfficiencyRatio\b/ },
     { family: "vwap", pattern: /\b(?:rolling_vwap|Rolling VWAP|session VWAP)\b/i },
 ];

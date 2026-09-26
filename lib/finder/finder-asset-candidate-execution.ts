@@ -47,7 +47,6 @@ import type {
     StrategyParams,
 } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
-import type { CrossSymbolDataFetcher } from "../cross-symbol-runtime";
 import type { FinderOptions } from "../types/finder";
 import {
     executeBacktest,
@@ -199,7 +198,6 @@ export async function runAssetCandidateBacktest(args: {
     capitalSettings: CapitalSettings;
     options: FinderOptions;
     exitOverride?: AssetCandidateExitOverride;
-    dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
     rustCapabilities?: RustCapabilities;
     rustDiagnosticPhase?: RustDiagnosticPhase;
@@ -208,8 +206,7 @@ export async function runAssetCandidateBacktest(args: {
     preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
     typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
     /**
-     * Closed-candle view the executor should use. Omitted for cross-symbol
-     * strategies (the cross-symbol runtime owns its closed view).
+     * Closed-candle view the executor should use.
      */
     closedCandleDataOverride?: OHLCVData[];
     /** Longer causal history used only to warm up configured confirmation strategies. */
@@ -276,7 +273,6 @@ export async function runAssetCandidateBacktest(args: {
             signal: args.signal,
             typescriptSimulationConcurrency: args.typescriptSimulationConcurrency,
         },
-        ...(args.dataFetcher ? { dataFetcher: args.dataFetcher } : {}),
         ...(args.closedCandleDataOverride ? { closedCandleDataOverride: args.closedCandleDataOverride } : {}),
         ...(args.confirmationDataOverride ? { confirmationDataOverride: args.confirmationDataOverride } : {}),
         ...(args.preGeneratedSignals ? { preGeneratedSignals: args.preGeneratedSignals } : {}),

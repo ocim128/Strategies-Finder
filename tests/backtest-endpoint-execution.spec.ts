@@ -6,8 +6,8 @@ import { buildBacktestEndpointExecutorRequestFromSnapshot } from "../lib/backtes
 import type { OHLCVData, Time } from "../lib/types/strategies";
 import { strategyManifest } from "../lib/strategies/manifest-eager";
 
-const defaultStrategyEntry = strategyManifest.find((entry) => !entry.strategy.crossSymbolConfig);
-assert.ok(defaultStrategyEntry, "Expected at least one non-cross-symbol strategy in manifest");
+const defaultStrategyEntry = strategyManifest[0];
+assert.ok(defaultStrategyEntry, "Expected at least one strategy in manifest");
 const defaultStrategyKey = defaultStrategyEntry!.key;
 const defaultStrategyParams = { ...defaultStrategyEntry!.strategy.defaultParams };
 
@@ -65,25 +65,5 @@ describe("backtest endpoint execution helpers", () => {
         assert.ok(!("snapshotRsiMin" in request.backtestSettings));
         assert.ok(!("snapshotRsiMax" in request.backtestSettings));
         assert.strictEqual(request.primarySymbol, snapshot.symbol);
-    });
-
-    it("forwards explicit cross-symbol snapshot input into the executor request", () => {
-        const candles = buildCandles();
-        const snapshot = {
-            ...buildSnapshot(),
-            strategyKey: "relative_strength_mean_reversion",
-            backtestSettings: {
-                ...buildSnapshot().backtestSettings,
-                crossSymbolSecondary: "DOGEUSDT",
-            },
-        } satisfies UiBacktestEndpointSnapshot;
-
-        const request = buildBacktestEndpointExecutorRequestFromSnapshot(snapshot, candles, {
-            secondarySymbol: "DOGEUSDT",
-            secondaryData: buildCandles(),
-        });
-
-        assert.deepStrictEqual(request.crossSymbolInput?.secondarySymbol, "DOGEUSDT");
-        assert.strictEqual(request.crossSymbolInput?.secondaryData.length, 2);
     });
 });

@@ -10,7 +10,6 @@ export interface BuiltInStrategySummary {
         direction?: string;
         walkForwardParams?: string[];
     };
-    crossSymbolConfig?: boolean;
 }
 
 export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
@@ -22,7 +21,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         role: "entry",
         direction: "both",
         walkForwardParams: ["slowWindow"] },
-        crossSymbolConfig: false,
     },
     {
         key: "wick_responsive_boundary_retest",
@@ -32,14 +30,12 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["boundary_lookback", "test_threshold", "retest_tolerance"] },
-        crossSymbolConfig: false,
     },
     {
         key: "probability_boundary_eigen_shift",
         name: "Probability Boundary Eigen-Shift",
         description: "When the typical price (representing the session's Eigenvalue) breaches a 3-sigma boundary of its own rolling state, the local probability density function has failed, forcing violent mean reversion.",
         metadata: { role: "entry", direction: "both", walkForwardParams: ["stateLookback", "eigenLimit"] },
-        crossSymbolConfig: false,
     },
     {
         key: "pivot_midpoint_anchor_fade",
@@ -49,7 +45,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["pivotLeftBars", "deviationMultiplier"] },
-        crossSymbolConfig: false,
     },
     {
         key: "true_range_skewness_initiation",
@@ -60,7 +55,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
 		direction: "both",
 		walkForwardParams: ["skew_window", "zscore_trigger"],
 	},
-        crossSymbolConfig: false,
     },
     {
         key: "true_range_skew_acceptance",
@@ -71,7 +65,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "efficiency_keltner_router",
@@ -82,7 +75,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
 		direction: "both",
 		walkForwardParams: ["er_lookback", "keltner_lookback", "er_threshold"],
 	},
-        crossSymbolConfig: false,
     },
     {
         key: "cumulative_return_percentile_reversion",
@@ -93,7 +85,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback", "pctlExtreme"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "body_proportion_percentile_fade",
@@ -104,7 +95,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback", "pctlExtreme"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "return_sign_streak_fade",
@@ -115,7 +105,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback", "streakMin"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "close_location_gradient_acceleration",
@@ -126,7 +115,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback", "gradientPercentileMin"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "modern_arbitrage_speed_reversion",
@@ -137,7 +125,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback", "zThreshold", "efficiencyMax"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "ema_confirmation",
@@ -148,7 +135,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["emaPeriod"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "typical_close_skewness_acceptance",
@@ -159,7 +145,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback", "minSkew"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "kelly_streak_exhaustion_reversion",
@@ -170,7 +155,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
 		direction: "both",
 		walkForwardParams: ["lookback", "minKellyFraction"],
 	},
-        crossSymbolConfig: false,
     },
     {
         key: "dmi_direction_confirmation",
@@ -181,7 +165,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["dmiPeriod"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "parabolic_sar_confirmation",
@@ -192,7 +175,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["accelerationStep"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "dema_confirmation",
@@ -203,7 +185,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "donchian_midpoint_confirmation",
@@ -214,7 +195,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "mcginley_dynamic_confirmation",
@@ -225,7 +205,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "n_bar_momentum_confirmation",
@@ -236,7 +215,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "rolling_median_confirmation",
@@ -247,7 +225,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "typical_price_ema_confirmation",
@@ -258,7 +235,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "volume_weighted_median_confirmation",
@@ -269,7 +245,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "wilder_ma_confirmation",
@@ -280,7 +255,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "zero_lag_ema_confirmation",
@@ -291,7 +265,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "body_direction_placement_coherence",
@@ -302,7 +275,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["coherenceThreshold"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "median_deviation_fade_chop",
@@ -313,7 +285,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "short_return_streak_fade_chop",
@@ -324,7 +295,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: [],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "short_term_overextension_fade",
@@ -335,7 +305,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "decay_anchor_reversion",
@@ -346,7 +315,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: [],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "lagged_value_anchor_reversion",
@@ -357,7 +325,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "vwap_deviation_reversion",
@@ -368,7 +335,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["period"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "whipsaw_crossing_burst_reversal",
@@ -379,7 +345,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["period"]
     },
-        crossSymbolConfig: false,
     },
     {
         key: "body_impulse_zscore_exhaustion",
@@ -390,7 +355,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"]
     },
-        crossSymbolConfig: false,
     },
     {
         key: "return_autocorrelation_alternation",
@@ -401,7 +365,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "adjacent_range_gap_open_intrabar_reclaim",
@@ -412,7 +375,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["gap_threshold"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "extreme_age_consolidation_decay_fade",
@@ -423,7 +385,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["min_age"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "window_giveback_directional_asymmetry",
@@ -434,7 +395,6 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["down_giveback_threshold"],
     },
-        crossSymbolConfig: false,
     },
     {
         key: "adjacent_overlap_coagulation_continuation",
@@ -445,6 +405,5 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         direction: "both",
         walkForwardParams: ["min_final_overlap"],
     },
-        crossSymbolConfig: false,
     },
 ];

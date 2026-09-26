@@ -5,7 +5,6 @@ import {
 } from "../backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { ensureConfirmationStrategiesLoaded } from "../confirmation-signal-filter";
-import type { CrossSymbolDataFetcher } from "../cross-symbol-runtime";
 import { median } from "../statistics-utils";
 import type { CapitalSettings } from "../types/backtest";
 import type {
@@ -373,10 +372,6 @@ export async function runStrategyQualityAudit(
     const oosSlice = input.oosValidationEnabled ? resolveOosDataSlice(input.dataSlice) : null;
     const oosEnabled = oosSlice !== null;
     const dateRange = normalizeFinderDateRange(input.dataRangeFrom, input.dataRangeTo);
-    const dataFetcher: CrossSymbolDataFetcher = {
-        getProvider: input.getProvider,
-        fetchDataDetached: (symbol, interval) => input.loadDataset(symbol, interval),
-    };
     let loadedSymbols = 0;
     let failedSymbols = 0;
     const failedSymbolDetails: Array<{ symbol: string; error: string }> = [];
@@ -519,7 +514,6 @@ export async function runStrategyQualityAudit(
                             engineMode: "auto",
                             nowSec: runNowSec,
                         },
-                        dataFetcher,
                         preResolvedSettings: resolvedSettings,
                         preResolvedCapital: resolvedCapital,
                         backtestRunOptions: {
@@ -557,7 +551,6 @@ export async function runStrategyQualityAudit(
                                     engineMode: "auto",
                                     nowSec: runNowSec,
                                 },
-                                dataFetcher,
                                 preResolvedSettings: resolvedSettings,
                                 preResolvedCapital: resolvedCapital,
                                 backtestRunOptions: {

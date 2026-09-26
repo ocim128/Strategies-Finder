@@ -188,7 +188,6 @@ export interface StrategyMetaEntry {
     defaultParams: string;
     paramLabels: string;
     metadata: string;
-    crossSymbolConfig: boolean;
 }
 
 function extractStringProperty(source: string, propName: string): string | null {
@@ -301,7 +300,6 @@ function extractStrategyMeta(source: string, key: string, fileName: string): Str
         defaultParams,
         paramLabels,
         metadata,
-        crossSymbolConfig: /\bcrossSymbolConfig\s*:/.test(source),
     };
 }
 
@@ -330,7 +328,6 @@ export function generateStrategySummarySource(
             `        name: ${entry.name},`,
             `        description: ${entry.description},`,
             `        metadata: ${entry.metadata === "undefined" ? "undefined" : entry.metadata},`,
-            `        crossSymbolConfig: ${entry.crossSymbolConfig},`,
             "    },",
         ].join("\n")
     );
@@ -348,7 +345,6 @@ export function generateStrategySummarySource(
         "        direction?: string;",
         "        walkForwardParams?: string[];",
         "    };",
-        "    crossSymbolConfig?: boolean;",
         "}",
         "",
         "export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [",

@@ -76,7 +76,6 @@ import {
 } from "./finder-runner-core";
 import { withExitStrategyBaseParams, splitExitStrategyParams } from "./exit-strategy-param-prefix";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
-import type { CrossSymbolDataFetcher } from "../cross-symbol-runtime";
 import {
     runAssetCandidateBacktest,
     type AssetCandidateExitSignalCache,
@@ -261,13 +260,9 @@ function resolveBoundedNextExitReplayBars(
 
 function resolveBoundedOpenPositionReplayBlockReason(args: {
     enabled: boolean;
-    hasExternalDataFetcher: boolean;
-    isCrossSymbolStrategy: boolean;
     settings: BacktestSettings;
 }): string | null {
     if (!args.enabled) return null;
-    if (args.hasExternalDataFetcher) return "external_data_fetcher";
-    if (args.isCrossSymbolStrategy) return "cross_symbol_strategy";
     if (args.settings.riskMaxHoldEnabled !== true) return "max_hold_not_enabled";
     if (args.settings.riskMinHoldEnabled === true) return "min_hold_enabled";
     if (args.settings.strategyTimeframeEnabled === true) return "strategy_timeframe_enabled";
@@ -313,13 +308,11 @@ function resolveFreshSignalWindow(args: {
     dataSlice: FinderOptions["dataSlice"];
     candidates: readonly FinderResult[];
     settings: BacktestSettings;
-    crossSymbol: boolean;
     canUseBoundedSignalWindow: boolean;
 }): OHLCVData[] | undefined {
     if (
         args.signalLookbackBars <= 0
         || args.dataSlice !== "all"
-        || args.crossSymbol
         || args.boundaryData.length <= args.slicedHistorical.length
         || !args.canUseBoundedSignalWindow
     ) {
@@ -549,8 +542,6 @@ export interface AssetOpportunityRunInput {
     candidatePoolSize: number;
     /** Minimum same-direction fresh support for a `select` grade. Default: 2. */
     minFreshSupport: number;
-    /** Shared secondary-data resolver for cross-symbol replay parity. */
-    dataFetcher?: CrossSymbolDataFetcher;
     /** Matches the server's explicit Rust preference for replay execution. */
     useRustEnginePreference?: boolean;
     rustCapabilities?: RustCapabilities;
@@ -1162,8 +1153,6 @@ async function searchOneAsset(args: {
         && evalLastBars > 0
         && (input.options.dataSlice ?? "all") === "all"
         && sameSignalBoundary
-        && !input.dataFetcher
-        && !selectedStrategy.strategy.crossSymbolConfig
         && input.settings.strategyTimeframeEnabled !== true
         && !(input.settings.confirmationStrategies?.length);
     const canReuseFreshSignals = !includeOpenPositions
@@ -1173,8 +1162,6 @@ async function searchOneAsset(args: {
         && canReuseIsSignalsForFreshModel
         && canReuseFreshSignals;
     const canUseBoundedOpenPositionReplay = includeOpenPositions
-        && !input.dataFetcher
-        && !selectedStrategy.strategy.crossSymbolConfig
         && resolveBoundedNextExitReplayBars(input.settings, []) !== null;
     const canRetainBoundedOpenPositionSignals = canUseBoundedOpenPositionReplay
         && searchWindowEndsAtBoundary;
@@ -1191,8 +1178,6 @@ async function searchOneAsset(args: {
         && Number(input.options.maxRuns) <= 1
         && executionModel !== "signal_close"
         && (input.options.dataSlice ?? "all") === "all"
-        && !input.dataFetcher
-        && !selectedStrategy.strategy.crossSymbolConfig
         && input.settings.strategyTimeframeEnabled !== true
         && !(input.settings.confirmationStrategies?.length);
     const freshEntryPrecheck: AssetOpportunityFreshEntryPrecheck | undefined = canPrecheckFreshEntry
@@ -1221,7 +1206,6 @@ async function searchOneAsset(args: {
                 dataSlice: input.options.dataSlice ?? "all",
                 candidates: [candidate],
                 settings: input.settings,
-                crossSymbol: false,
                 canUseBoundedSignalWindow: (
                     !needsExecutableFreshRecheck
                     || boundedNextExitReplayBars !== null
@@ -1336,15 +1320,12 @@ async function searchOneAsset(args: {
     // window is intentionally shorter than the visible boundary. Generate
     // fresh signals on that recent window plus conservative indicator warmup,
     // then replay them on either the full boundary or a safely bounded recent
-    // window. Cross-symbol strategies stay on the exact full-data path because
-    // their secondary alignment has no equivalent bounded-window contract.
+    // window.
     const boundedNextExitReplayBars = needsExecutableFreshRecheck
         ? resolveBoundedNextExitReplayBars(input.settings, topK)
         : null;
     let boundedOpenPositionFallbackReason = resolveBoundedOpenPositionReplayBlockReason({
         enabled: includeOpenPositions,
-        hasExternalDataFetcher: Boolean(input.dataFetcher),
-        isCrossSymbolStrategy: Boolean(selectedStrategy.strategy.crossSymbolConfig),
         settings: input.settings,
     });
     const boundedOpenPositionReplayBars = canUseBoundedOpenPositionReplay
@@ -1375,7 +1356,6 @@ async function searchOneAsset(args: {
         dataSlice: input.options.dataSlice ?? "all",
         candidates: topK,
         settings: input.settings,
-        crossSymbol: Boolean(input.dataFetcher || selectedStrategy.strategy.crossSymbolConfig),
         // signal_close and next_exit consume replayed trades. Fixed-horizon
         // next_open/next_close only consume generated signals, so their
         // signal-only recheck can safely use the same bounded recent window.
@@ -1461,7 +1441,6 @@ async function searchOneAsset(args: {
             options: assetOptions,
             exitStrategyCandidates: input.exitStrategyCandidates,
             exitSignalCache,
-            dataFetcher: input.dataFetcher,
             useRustEnginePreference: input.useRustEnginePreference,
             rustDiagnosticPhase: "fresh_entry",
             rustCapabilities: input.rustCapabilities,
@@ -1668,7 +1647,6 @@ async function searchOneAsset(args: {
                 preResolvedCapital,
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
-                dataFetcher: input.dataFetcher,
                 useRustEnginePreference: input.useRustEnginePreference,
                 rustDiagnosticPhase: "winner_analytics",
                 rustCapabilities: input.rustCapabilities,
@@ -1743,7 +1721,6 @@ async function searchOneAsset(args: {
                 preResolvedCapital,
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
-                dataFetcher: input.dataFetcher,
                 useRustEnginePreference: input.useRustEnginePreference,
                 rustDiagnosticPhase: "winner_analytics",
                 rustCapabilities: input.rustCapabilities,
@@ -1912,9 +1889,7 @@ async function searchOneAsset(args: {
             const boundaryEntryTime = fillIndex >= 0
                 ? fullClosed[fillIndex]?.time ?? null
                 : null;
-            const boundedNextExitOosReplayData = !input.dataFetcher
-                && !selectedStrategy.strategy.crossSymbolConfig
-                && input.settings.strategyTimeframeEnabled !== true
+            const boundedNextExitOosReplayData = input.settings.strategyTimeframeEnabled !== true
                 && !(input.settings.confirmationStrategies?.length)
                 ? resolveBoundedNextExitOosReplayData({
                     fullClosed,
@@ -1940,7 +1915,6 @@ async function searchOneAsset(args: {
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 exitSignalCache,
-                dataFetcher: input.dataFetcher,
                 useRustEnginePreference: input.useRustEnginePreference,
                 rustDiagnosticPhase: "next_exit",
                 rustCapabilities: input.rustCapabilities,
@@ -1984,7 +1958,6 @@ async function searchOneAsset(args: {
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 exitSignalCache,
-                dataFetcher: input.dataFetcher,
                 useRustEnginePreference: input.useRustEnginePreference,
                 rustDiagnosticPhase: "complementary_oos",
                 rustCapabilities: input.rustCapabilities,
@@ -2054,7 +2027,6 @@ async function searchOneAsset(args: {
                 preResolvedCapital,
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
-                dataFetcher: input.dataFetcher,
                 useRustEnginePreference: input.useRustEnginePreference,
                 rustDiagnosticPhase: "winner_analytics",
                 rustCapabilities: input.rustCapabilities,
@@ -2291,7 +2263,6 @@ async function regenerateSignalsAndDetectFresh(args: {
     options: FinderOptions;
     exitStrategyCandidates?: FinderSelectedStrategy[];
     exitSignalCache?: AssetCandidateExitSignalCache;
-    dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
     rustDiagnosticPhase?: RustDiagnosticPhase;
     rustCapabilities?: RustCapabilities;
@@ -2320,7 +2291,6 @@ async function regenerateSignalsAndDetectFresh(args: {
             options: args.options,
             exitStrategyCandidates: args.exitStrategyCandidates,
             exitSignalCache: args.exitSignalCache,
-            dataFetcher: args.dataFetcher,
             useRustEnginePreference: args.useRustEnginePreference,
             rustDiagnosticPhase: args.rustDiagnosticPhase,
             rustCapabilities: args.rustCapabilities,
@@ -2365,7 +2335,6 @@ async function regenerateSignalsAndDetectFresh(args: {
         options: args.options,
         exitStrategyCandidates: args.exitStrategyCandidates,
         exitSignalCache: args.exitSignalCache,
-        dataFetcher: args.dataFetcher,
         useRustEnginePreference: args.useRustEnginePreference,
         rustDiagnosticPhase: args.rustDiagnosticPhase,
         rustCapabilities: args.rustCapabilities,
@@ -2484,7 +2453,6 @@ async function executeAssetCandidate(args: {
     preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
     exitStrategyCandidates?: FinderSelectedStrategy[];
     exitSignalCache?: AssetCandidateExitSignalCache;
-    dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
     rustDiagnosticPhase?: RustDiagnosticPhase;
     rustCapabilities?: RustCapabilities;
@@ -2542,7 +2510,6 @@ async function executeAssetCandidate(args: {
                 },
             }
             : {}),
-        ...(args.dataFetcher ? { dataFetcher: args.dataFetcher } : {}),
         ...(args.exitSignalCache ? { exitSignalCache: args.exitSignalCache } : {}),
         signal: args.signal,
         useRustEnginePreference: args.useRustEnginePreference,
@@ -2550,7 +2517,7 @@ async function executeAssetCandidate(args: {
         rustCapabilities: args.rustCapabilities,
         typescriptSimulationConcurrency: args.typescriptSimulationConcurrency,
         ...(args.preResolvedCapital ? { preResolvedCapital: args.preResolvedCapital } : {}),
-        ...(args.strategy.crossSymbolConfig ? {} : { closedCandleDataOverride: args.data }),
+        closedCandleDataOverride: args.data,
         ...(args.confirmationDataOverride
             ? { confirmationDataOverride: args.confirmationDataOverride }
             : {}),
@@ -2594,7 +2561,6 @@ async function runCandidateNextExitOnAsset(args: {
     options: FinderOptions;
     exitStrategyCandidates?: FinderSelectedStrategy[];
     exitSignalCache?: AssetCandidateExitSignalCache;
-    dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
     rustDiagnosticPhase?: RustDiagnosticPhase;
     rustCapabilities?: RustCapabilities;
@@ -2619,7 +2585,6 @@ async function runCandidateNextExitOnAsset(args: {
             options: args.options,
             exitStrategyCandidates: args.exitStrategyCandidates,
             exitSignalCache: args.exitSignalCache,
-            dataFetcher: args.dataFetcher,
             useRustEnginePreference: args.useRustEnginePreference,
             rustDiagnosticPhase: args.rustDiagnosticPhase,
             rustCapabilities: args.rustCapabilities,
@@ -2678,7 +2643,6 @@ async function runCandidateOosOnAsset(args: {
     options: FinderOptions;
     exitStrategyCandidates?: FinderSelectedStrategy[];
     exitSignalCache?: AssetCandidateExitSignalCache;
-    dataFetcher?: CrossSymbolDataFetcher;
     useRustEnginePreference?: boolean;
     rustDiagnosticPhase?: RustDiagnosticPhase;
     rustCapabilities?: RustCapabilities;
@@ -2701,7 +2665,6 @@ async function runCandidateOosOnAsset(args: {
             options: args.options,
             exitStrategyCandidates: args.exitStrategyCandidates,
             exitSignalCache: args.exitSignalCache,
-            dataFetcher: args.dataFetcher,
             useRustEnginePreference: args.useRustEnginePreference,
             rustDiagnosticPhase: args.rustDiagnosticPhase,
             rustCapabilities: args.rustCapabilities,

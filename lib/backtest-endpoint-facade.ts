@@ -1,6 +1,4 @@
 import { state } from "./state";
-import { dataManager } from "./data-manager";
-import { strategyRegistry } from "../strategyRegistry";
 import type { OHLCVData } from "./strategies/index";
 import type { BacktestResult, StrategyParams, BacktestSettings } from "./strategies/index";
 import type { CapitalSettings } from "./types/backtest";
@@ -19,7 +17,6 @@ import { buildBacktestEndpointExecutorRequestFromSnapshot } from "./backtest-end
 import { toCompactMetrics } from "./backtest-endpoint-contract";
 import { executeBacktest } from "./backtest-executor";
 import { commitBacktestResult } from "./state-actions";
-import { resolveCrossSymbolSecondaryForStrategy } from "./cross-symbol-runtime";
 
 export function createEndpointCopySnapshot(
     strategyParams: StrategyParams,
@@ -72,30 +69,6 @@ function compactMetricResultsMatch(left: BacktestResult, right: BacktestResult):
     });
 }
 
-async function resolveEndpointCrossSymbolDataset(
-    snapshot: UiBacktestEndpointSnapshot
-): Promise<{ secondarySymbol: string; candles: OHLCVData[] } | undefined> {
-    const strategy = strategyRegistry.get(snapshot.strategyKey);
-    if (!strategy?.crossSymbolConfig) {
-        return undefined;
-    }
-
-    const secondarySymbol = resolveCrossSymbolSecondaryForStrategy(strategy, snapshot.backtestSettings);
-    if (!secondarySymbol) {
-        throw new Error(`Unable to resolve secondary symbol for cross-symbol strategy "${snapshot.strategyKey}".`);
-    }
-
-    const candles = await dataManager.fetchDataDetached(secondarySymbol, snapshot.interval);
-    if (!Array.isArray(candles) || candles.length === 0) {
-        throw new Error(`No data available for secondary symbol "${secondarySymbol}" on interval "${snapshot.interval}".`);
-    }
-
-    return {
-        secondarySymbol,
-        candles,
-    };
-}
-
 export function canCopyLatestUiBacktestEndpointRequest(): boolean {
     const snapshot = getCurrentUiBacktestEndpointSnapshot();
     if (!hasCurrentUiBacktestEndpointSnapshot() || !snapshot || !state.currentBacktestResult) {
@@ -123,14 +96,8 @@ export async function runLatestUiBacktestEndpointPreview(): Promise<{
     if (!snapshot || !candles || !currentResult || !canUseCurrentChartForEndpointCopy(snapshot)) {
         return null;
     }
-
-    const crossSymbolDataset = await resolveEndpointCrossSymbolDataset(snapshot);
     const endpointRun = await executeBacktest({
-        ...buildBacktestEndpointExecutorRequestFromSnapshot(snapshot, candles, crossSymbolDataset ? {
-            secondarySymbol: crossSymbolDataset.secondarySymbol,
-            secondaryData: crossSymbolDataset.candles,
-        } : undefined),
-        dataFetcher: dataManager,
+        ...buildBacktestEndpointExecutorRequestFromSnapshot(snapshot, candles),
     });
     const matchesCurrentUiResult = compactMetricResultsMatch(currentResult, endpointRun.result);
 
@@ -164,9 +131,7 @@ export async function buildLatestUiBacktestEndpointCopyBundle(baseUrl: string): 
     if (!snapshot || !candles || !state.currentBacktestResult || !canUseCurrentChartForEndpointCopy(snapshot)) {
         return null;
     }
-
-    const crossSymbolDataset = await resolveEndpointCrossSymbolDataset(snapshot);
-    const preparedCopy = await prepareBacktestEndpointCopyBundleFromSnapshot(snapshot, baseUrl, candles, crossSymbolDataset);
+    const preparedCopy = await prepareBacktestEndpointCopyBundleFromSnapshot(snapshot, baseUrl, candles);
 
     return {
         strategyKey: snapshot.strategyKey,

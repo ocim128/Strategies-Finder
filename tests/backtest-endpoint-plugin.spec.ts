@@ -3,36 +3,18 @@ import { describe, it } from "node:test";
 import { Readable } from "node:stream";
 import type { OHLCVData, Time } from "../lib/types/strategies";
 import { backtestEndpointPlugin } from "../lib/backtest-endpoint-plugin";
-import { strategies as builtInStrategies } from "../lib/strategies/library";
 import { strategyManifest } from "../lib/strategies/manifest-eager";
 
-const defaultStrategyEntry = strategyManifest.find((entry) => !entry.strategy.crossSymbolConfig);
-assert.ok(defaultStrategyEntry, "Expected at least one non-cross-symbol strategy in manifest");
+const defaultStrategyEntry = strategyManifest[0];
+assert.ok(defaultStrategyEntry, "Expected at least one strategy in manifest");
 const defaultStrategyKey = defaultStrategyEntry!.key;
 const defaultStrategyParams = { ...defaultStrategyEntry!.strategy.defaultParams };
 const randomizableStrategyEntry = strategyManifest.find((entry) =>
-    !entry.strategy.crossSymbolConfig
-    && Object.values(entry.strategy.defaultParams ?? {}).some((value) => typeof value === "number" && value !== 0)
+    Object.values(entry.strategy.defaultParams ?? {}).some((value) => typeof value === "number" && value !== 0)
 );
-assert.ok(randomizableStrategyEntry, "Expected at least one non-cross-symbol strategy with numeric defaults");
+assert.ok(randomizableStrategyEntry, "Expected at least one strategy with numeric defaults");
 const randomizableStrategyKey = randomizableStrategyEntry!.key;
 const randomizableStrategyParams = { ...randomizableStrategyEntry!.strategy.defaultParams };
-const crossSymbolStrategyKey = "__test_cross_symbol_endpoint";
-const crossSymbolStrategyParams = {};
-builtInStrategies[crossSymbolStrategyKey] = {
-    name: "Test Cross-Symbol Endpoint",
-    description: "Verifies explicit secondary-dataset endpoint wiring.",
-    defaultParams: {},
-    paramLabels: {},
-    crossSymbolConfig: {
-        defaultSymbol: "DOGEUSDT",
-        minBars: 2,
-    },
-    execute: (_data, _params, context) => {
-        assert.ok(context?.crossSymbol, "Expected cross-symbol execution context");
-        return [];
-    },
-};
 
 type MockRequest = NodeJS.ReadableStream & {
     method?: string;
@@ -264,50 +246,6 @@ describe("backtest endpoint plugin", () => {
         assert.strictEqual(withIgnoredCapital.json.result.netProfit, baseline.json.result.netProfit);
     });
 
-    it("runs a cross-symbol endpoint request when the secondary dataset is provided", async () => {
-        const handler = createHandler();
-        const candles = buildCandles();
-        const secondaryCandles: OHLCVData[] = candles.map((candle, index) => ({
-            ...candle,
-            close: candle.close * (1 + Math.sin(index * 0.18) * 0.08),
-            open: candle.open * (1 + Math.sin(index * 0.18) * 0.08),
-            high: candle.high * (1 + Math.sin(index * 0.18) * 0.08),
-            low: candle.low * (1 + Math.sin(index * 0.18) * 0.08),
-        }));
-
-        const response = await invoke(
-            handler,
-            `/${crossSymbolStrategyKey}`,
-            "POST",
-            {
-                symbol: "XRPUSDT",
-                interval: "5m",
-                dataset: { candles },
-                strategyParams: crossSymbolStrategyParams,
-                backtestSettings: {
-                    executionModel: "next_open",
-                    tradeDirection: "both",
-                    marketMode: "all",
-                    crossSymbolSecondary: "DOGEUSDT",
-                },
-                crossSymbol: {
-                    secondarySymbol: "DOGEUSDT",
-                    dataset: { candles: secondaryCandles },
-                },
-                context: {
-                    nowSec: Number(candles[candles.length - 1]?.time ?? 0) + 600,
-                    blockRange: null,
-                    engineMode: "typescript",
-                },
-            }
-        );
-
-        assert.strictEqual(response.statusCode, 200);
-        assert.strictEqual(response.json.ok, true);
-        assert.strictEqual(response.json.strategyKey, crossSymbolStrategyKey);
-        assert.ok(response.json.result.totalTrades >= 0);
-    });
-
     it("hashes full uploaded datasets instead of sampled candles only", async () => {
         const handler = createHandler();
         const candles = buildCandles(2048);
@@ -336,38 +274,6 @@ describe("backtest endpoint plugin", () => {
         assert.strictEqual(second.statusCode, 409);
         assert.strictEqual(second.json.ok, false);
         assert.strictEqual(second.json.code, "DATASET_REF_CONFLICT");
-    });
-
-    it("rejects cross-symbol endpoint requests that omit the secondary dataset", async () => {
-        const handler = createHandler();
-        const candles = buildCandles();
-
-        const response = await invoke(
-            handler,
-            `/${crossSymbolStrategyKey}`,
-            "POST",
-            {
-                symbol: "XRPUSDT",
-                interval: "5m",
-                dataset: { candles },
-                strategyParams: crossSymbolStrategyParams,
-                backtestSettings: {
-                    executionModel: "next_open",
-                    tradeDirection: "both",
-                    marketMode: "all",
-                    crossSymbolSecondary: "DOGEUSDT",
-                },
-                context: {
-                    nowSec: Number(candles[candles.length - 1]?.time ?? 0) + 600,
-                    blockRange: null,
-                    engineMode: "typescript",
-                },
-            }
-        );
-
-        assert.strictEqual(response.statusCode, 400);
-        assert.strictEqual(response.json.ok, false);
-        assert.match(String(response.json.error ?? ""), /crossSymbol/i);
     });
 
     it("reports random-search execution failures instead of silently hiding them", async () => {

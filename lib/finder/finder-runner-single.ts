@@ -7,11 +7,10 @@ import {
     runBacktest,
     runBacktestCompact,
 } from "../strategies/index";
-import type { BacktestResult, StrategyExecutionContext } from "../types/strategies";
+import type { BacktestResult } from "../types/strategies";
 import { hasUnsupportedRustSignalShape, rustEngine } from "../rust-engine-client";
 import { shouldUseRustEngine } from "../engine-preferences";
 import { debugLogger } from "../debug-logger";
-import { isCrossSymbolStrategy, resolveCrossSymbolExecution } from "../cross-symbol-runtime";
 
 import { compareFinderResults } from "./finder-engine";
 import { FinderResultRanker } from "./finder-result-ranker";
@@ -74,13 +73,6 @@ import type { FinderRunCallbacks, FinderRunInput, FinderRunOutput } from "./find
 
 export { buildFinderEvaluationData } from "./finder-runner-shared";
 export { shouldUseRustCachedMode } from "./finder-runner-core";
-
-let dataManagerModulePromise: Promise<typeof import("../data-manager")> | null = null;
-
-async function getDataManager() {
-    dataManagerModulePromise ??= import("../data-manager");
-    return (await dataManagerModulePromise).dataManager;
-}
 
 type FinderCandidateForEnrichment = Pick<FinderResult, "key" | "name" | "params" | "result">
 & Partial<Pick<FinderResult, "compositeEdgeRatio" | "exitStrategyKey" | "exitAlpha">>;
@@ -171,8 +163,6 @@ type BacktestFallbackRunnerOptions = {
     closedData: OHLCVData[];
     backtestFn: FinderBacktestFn;
     capitalSettings: CapitalSettings;
-    getJobData: (job: ParamJob, defaultData: OHLCVData[]) => OHLCVData[];
-    getJobPrecomputed: (job: ParamJob, defaultPrecomputed: ReturnType<typeof precomputeIndicators>) => ReturnType<typeof precomputeIndicators>;
     defaultPrecomputed: ReturnType<typeof precomputeIndicators>;
     insertResult: (candidate: CandidateResult) => void;
     timing: FinderDiagnosticsTimings;
@@ -181,13 +171,12 @@ type BacktestFallbackRunnerOptions = {
     exitAlphaEnabled?: boolean;
     backtestOptions: Parameters<typeof runBacktest>[8];
     preparedDataCache: FinderPreparedDataCache;
-    getJobCtx: (job: ParamJob) => StrategyExecutionContext | undefined;
 };
 
 function createBacktestFallbackRunner(options: BacktestFallbackRunnerOptions): (run: PreparedRun) => void {
     return (run: PreparedRun): void => {
         const tTsStart = performance.now();
-        const jobData = options.getJobData(run.job, options.closedData);
+        const jobData = options.closedData;
         runBacktestAndInsert(
             jobData,
             run.signals,
@@ -195,13 +184,13 @@ function createBacktestFallbackRunner(options: BacktestFallbackRunnerOptions): (
             options.backtestFn,
             options.capitalSettings,
             run.job.backtestSettings,
-            options.getJobPrecomputed(run.job, options.defaultPrecomputed),
+            options.defaultPrecomputed,
             options.insertResult,
             (result) => options.onBacktestResult?.(run.job, result),
             (error) => options.onFailure?.(run.job, error),
             options.exitAlphaEnabled,
             options.preparedDataCache,
-            options.getJobCtx(run.job),
+            undefined,
             options.backtestOptions,
         );
         options.timing.backtest += performance.now() - tTsStart;
@@ -213,9 +202,6 @@ type RustRunPreparationOptions = {
     preparedDataCache: FinderPreparedDataCache;
     preparedSettings: BacktestSettings;
     input: FinderRunInput;
-    getJobData: (job: ParamJob, defaultData: OHLCVData[]) => OHLCVData[];
-    getJobCtx: (job: ParamJob) => StrategyExecutionContext | undefined;
-    isCrossSymbolJobSkipped: (job: ParamJob) => boolean;
     insertResult: (candidate: CandidateResult) => void;
     timing: FinderDiagnosticsTimings;
     idForJob: (job: ParamJob) => string;
@@ -229,16 +215,15 @@ function prepareRustBatchRuns(options: RustRunPreparationOptions): PreparedRun[]
     const tSignalStart = performance.now();
 
     for (const job of options.jobs) {
-        if (options.isCrossSymbolJobSkipped(job)) continue;
         try {
-            const jobData = options.getJobData(job, options.closedData);
+            const jobData = options.closedData;
             let signals = generateSignalsForJob(
                 job,
                 jobData,
                 options.input.interval,
                 options.preparedDataCache,
                 options.preparedSettings,
-                options.getJobCtx(job),
+                undefined,
                 (timing) => options.onSignalTiming?.(job, timing)
             );
             const evaluation = job.strategy.evaluate?.(jobData, job.params, signals);
@@ -534,48 +519,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
     timing.indicatorPrecompute += performance.now() - indicatorStartedAt;
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
 
-    // --- Cross-symbol resolution: resolve once per unique strategy key ---
-    const crossSymbolFailedKeys = new Set<string>();
-    const crossSymbolContextMap = new Map<string, {
-        data: OHLCVData[];
-        ctx: StrategyExecutionContext | undefined;
-        precomputed: ReturnType<typeof precomputeIndicators>;
-    }>();
-    for (const selection of input.selectedStrategies) {
-        if (!isCrossSymbolStrategy(selection.strategy) || crossSymbolContextMap.has(selection.key)) continue;
-        try {
-            const dataManager = await getDataManager();
-            const resolved = await resolveCrossSymbolExecution({
-                strategy: selection.strategy,
-                primarySymbol: input.symbol,
-                interval: input.interval,
-                primaryData: closedData,
-                settings: effectiveBacktestSettings,
-                dataFetcher: dataManager,
-            });
-            crossSymbolContextMap.set(selection.key, {
-                data: resolved.primaryData,
-                ctx: resolved.context,
-                precomputed: precomputeIndicators(resolved.primaryData, effectiveBacktestSettings),
-            });
-        } catch (error) {
-            debugLogger.warn(`[Finder] Cross-symbol resolution failed for ${selection.key}`, error);
-            crossSymbolFailedKeys.add(selection.key);
-        }
-    }
-    const getJobData = (job: ParamJob, defaultData: OHLCVData[]): OHLCVData[] => {
-        return crossSymbolContextMap.get(job.key)?.data ?? defaultData;
-    };
-    const getJobCtx = (job: ParamJob): StrategyExecutionContext | undefined => {
-        return crossSymbolContextMap.get(job.key)?.ctx;
-    };
-    const getJobPrecomputed = (job: ParamJob, defaultPrecomputed: ReturnType<typeof precomputeIndicators>): ReturnType<typeof precomputeIndicators> => {
-        return crossSymbolContextMap.get(job.key)?.precomputed ?? defaultPrecomputed;
-    };
-    const isCrossSymbolJobSkipped = (job: ParamJob): boolean => {
-        return crossSymbolFailedKeys.has(job.key);
-    };
-
     callbacks.setProgress(10, `Running ${totalRuns} backtests (batch mode)...`);
 
     const ranker = new FinderResultRanker(Math.max(input.options.topN, 50), input.options.sortPriority);
@@ -665,7 +608,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             }
         }
 
-        const candidateData = crossSymbolContextMap.get(candidate.key)?.data ?? closedData;
+        const candidateData = closedData;
         const enrichmentStartedAt = performance.now();
         const enriched = enrichFinderCandidate({
             candidate,
@@ -719,7 +662,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 measuredYield,
                 singleTfPrecomputed,
                 preparedDataCache,
-                crossSymbolContextMap
             );
             timing.reconciliation += performance.now() - reconciliationStartedAt;
         }
@@ -856,10 +798,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
 
         for (let i = 0; i < allJobs.length; i++) {
             const job = allJobs[i];
-            if (isCrossSymbolJobSkipped(job)) continue;
             const runStartedAt = performance.now();
             try {
-                const jobData = getJobData(job, shortData);
+                const jobData = shortData;
                 const tSignalStart = performance.now();
                 let signals = generateSignalsForJob(
                     job,
@@ -867,7 +808,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     input.interval,
                     preparedDataCache,
                     effectiveBacktestSettings,
-                    getJobCtx(job),
+                    undefined,
                     (signalTiming) => recordSignalTiming(job, signalTiming)
                 );
                 timing.signalGeneration += performance.now() - tSignalStart;
@@ -885,12 +826,12 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     capitalSettings: effectiveCapitalSettings,
                     backtestSettings: job.backtestSettings,
                     backtestFn: quickBacktestFn,
-                    precomputed: getJobPrecomputed(job, shortPrecomputed),
+                    precomputed: shortPrecomputed,
                     backtestOptions: { collectDiagnostics: true, omitEquityCurve: true },
                     exitStrategy: job.exitStrategy,
                     exitStrategyKey: job.exitStrategyKey,
                     preparedDataCache,
-                    executionContext: getJobCtx(job),
+                    executionContext: undefined,
                 });
                 recordBacktestResult(job, quickRawResult);
                 const quickBacktestMs = performance.now() - tQuickStart;
@@ -940,8 +881,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 closedData,
                 backtestFn,
                 capitalSettings: effectiveCapitalSettings,
-                getJobData,
-                getJobPrecomputed,
                 defaultPrecomputed: singleTfPrecomputed,
                 insertResult,
                 timing,
@@ -950,15 +889,13 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 exitAlphaEnabled: requiresExitAlphaSort,
                 backtestOptions: { omitEquityCurve: true },
                 preparedDataCache,
-                getJobCtx,
             });
 
             for (let i = 0; i < shortlisted.length; i++) {
                 const { job } = shortlisted[i];
-                if (isCrossSymbolJobSkipped(job)) continue;
                 const runStartedAt = performance.now();
                 try {
-                    const jobData = getJobData(job, closedData);
+                    const jobData = closedData;
                     const tSignalStart = performance.now();
                     let signals = generateSignalsForJob(
                         job,
@@ -966,7 +903,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                         input.interval,
                         preparedDataCache,
                         effectiveBacktestSettings,
-                        getJobCtx(job),
+                        undefined,
                         (signalTiming) => recordSignalTiming(job, signalTiming)
                     );
                     timing.signalGeneration += performance.now() - tSignalStart;
@@ -1017,8 +954,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             closedData,
             backtestFn,
             capitalSettings: effectiveCapitalSettings,
-            getJobData,
-            getJobPrecomputed,
             defaultPrecomputed: singleTfPrecomputed,
             insertResult,
             timing,
@@ -1027,7 +962,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             exitAlphaEnabled: requiresExitAlphaSort,
             backtestOptions: { omitEquityCurve: true },
             preparedDataCache,
-            getJobCtx,
         });
 
         for (let batchIndex = 0; batchIndex < totalFunnelBatches; batchIndex++) {
@@ -1038,9 +972,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 preparedDataCache,
                 preparedSettings: effectiveBacktestSettings,
                 input,
-                getJobData,
-                getJobCtx,
-                isCrossSymbolJobSkipped,
                 insertResult,
                 timing,
                 idForJob: (job) => `${job.key}-funnel-${job.id}`,
@@ -1097,8 +1028,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         closedData,
         backtestFn,
         capitalSettings: effectiveCapitalSettings,
-        getJobData,
-        getJobPrecomputed,
         defaultPrecomputed: singleTfPrecomputed,
         insertResult,
         timing,
@@ -1107,14 +1036,11 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         exitAlphaEnabled: requiresExitAlphaSort,
         backtestOptions: { omitEquityCurve: true },
         preparedDataCache,
-        getJobCtx,
     });
     const rustRunBacktestFallback = createBacktestFallbackRunner({
         closedData,
         backtestFn,
         capitalSettings,
-        getJobData,
-        getJobPrecomputed,
         defaultPrecomputed: singleTfPrecomputed,
         insertResult,
         timing,
@@ -1123,7 +1049,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         exitAlphaEnabled: requiresExitAlphaSort,
         backtestOptions: { omitEquityCurve: true },
         preparedDataCache,
-        getJobCtx,
     });
 
     while (processedCount < totalRuns) {
@@ -1140,10 +1065,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
 
         if (!useRustForFinder) {
             for (const job of batchJobs) {
-                if (isCrossSymbolJobSkipped(job)) continue;
                 const runStartedAt = performance.now();
                 try {
-                    const jobData = getJobData(job, closedData);
+                    const jobData = closedData;
                     const tSignalStart = performance.now();
                     const signals = generateSignalsForJob(
                         job,
@@ -1151,7 +1075,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                         input.interval,
                         preparedDataCache,
                         effectiveBacktestSettings,
-                        getJobCtx(job),
+                        undefined,
                         (signalTiming) => recordSignalTiming(job, signalTiming)
                     );
                     timing.signalGeneration += performance.now() - tSignalStart;
@@ -1200,9 +1124,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             preparedDataCache,
             preparedSettings: effectiveBacktestSettings,
             input,
-            getJobData,
-            getJobCtx,
-            isCrossSymbolJobSkipped,
             insertResult,
             timing,
             idForJob: (job) => `${job.key}-${job.id}`,
@@ -1285,11 +1206,6 @@ async function reconcileSingleTimeframeTopResults(
     maybeYieldByBudget: (force?: boolean) => Promise<void>,
     existingPrecomputed?: ReturnType<typeof precomputeIndicators>,
     existingPreparedDataCache?: FinderPreparedDataCache,
-    crossSymbolContextMap?: Map<string, {
-        data: OHLCVData[];
-        ctx: StrategyExecutionContext | undefined;
-        precomputed: ReturnType<typeof precomputeIndicators>;
-    }>
 ): Promise<FinderResult[]> {
     const { initialCapital } = capitalSettings;
     const strategyByKey = new Map(input.selectedStrategies.map((item) => [item.key, item.strategy]));
@@ -1310,10 +1226,10 @@ async function reconcileSingleTimeframeTopResults(
         }
 
         try {
-            const csEntry = crossSymbolContextMap?.get(candidate.key);
-            const jobData = csEntry?.data ?? closedData;
-            const jobCtx = csEntry?.ctx;
-            const jobPrecomputed = csEntry?.precomputed ?? precomputed;
+
+            const jobData = closedData;
+            const jobCtx = undefined;
+            const jobPrecomputed = precomputed;
             const combinedParams = withExitStrategyBaseParams(candidate.params, candidate.exitStrategyParams ?? {});
             const exitStrategyByKey = new Map((input.exitStrategyCandidates ?? []).map((item) => [item.key, item.strategy]));
             const exitStrategy = candidate.exitStrategyKey

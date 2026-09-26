@@ -86,7 +86,6 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     pathExitThreshold: 0,
     pathExitMinSamples: 30,
     pathExitHorizonBars: 50,
-    crossSymbolSecondary: "",
 });
 
 type ResolverGuardName =
@@ -419,14 +418,6 @@ function readBoolean(raw: Record<string, unknown>, key: string, fallback: boolea
     return readBooleanValue(raw[key], fallback);
 }
 
-function readString(raw: Record<string, unknown>, key: string, fallback: string): string {
-    const value = raw[key];
-    if (typeof value !== "string") {
-        return fallback;
-    }
-    return value.trim().toUpperCase();
-}
-
 function readBooleanAny(raw: Record<string, unknown>, keys: string[], fallback: boolean): boolean {
     for (const key of keys) {
         if (!(key in raw)) continue;
@@ -589,6 +580,7 @@ function applyRemovedBacktestSettingDefaults(settings: Record<string, unknown>):
     settings.marketMode = EFFECTIVE_BACKTEST_DEFAULTS.marketMode;
     settings.allowSameBarExit = EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit;
     delete settings.tradeFilterMode;
+    delete settings.crossSymbolSecondary;
     delete settings.tradeFilterSettingsToggle;
     delete settings.entrySettingsToggle;
     delete settings.entryConfirmation;
@@ -742,7 +734,6 @@ export function resolveBacktestSettingsFromRaw(
         pathExitMode: riskEnabled
             ? resolvePathExitMode(raw["pathExitMode"])
             : "off",
-        crossSymbolSecondary: readString(raw, "crossSymbolSecondary", EFFECTIVE_BACKTEST_DEFAULTS.crossSymbolSecondary),
     };
 
     return applyDerivedBacktestSettingGuards(

@@ -5,8 +5,8 @@ import type { OHLCVData, BacktestSettings, Signal, Strategy, Time } from "../lib
 import type { CapitalSettings } from "../lib/types/backtest";
 import { strategyManifest } from "../lib/strategies/manifest-eager";
 
-const defaultStrategyEntry = strategyManifest.find((entry) => !entry.strategy.crossSymbolConfig);
-assert.ok(defaultStrategyEntry, "Expected at least one non-cross-symbol strategy in manifest");
+const defaultStrategyEntry = strategyManifest[0];
+assert.ok(defaultStrategyEntry, "Expected at least one strategy in manifest");
 const defaultStrategyKey = defaultStrategyEntry!.key;
 const defaultStrategyParams = { ...defaultStrategyEntry!.strategy.defaultParams };
 

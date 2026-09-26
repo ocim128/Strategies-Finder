@@ -62,7 +62,6 @@ type WalkForwardRunContext = {
     data: OHLCVData[];
     strategyKey: string;
     strategy: Strategy;
-    crossSymbolCtx?: import("./types/strategies").StrategyExecutionContext;
 };
 
 type WalkForwardNumberInputId =
@@ -144,30 +143,8 @@ class WalkForwardService {
                 debugLogger.error(`Strategy not found: ${strategyKey}`);
                 return null;
             }
-            let effectiveData = data;
-            let crossSymbolCtx: import("./types/strategies").StrategyExecutionContext | undefined;
-            if (strategy.crossSymbolConfig) {
-                try {
-                    const settings = backtestService.getBacktestSettings();
-                    const { resolveCrossSymbolExecution } = await import("./cross-symbol-runtime");
-                    const resolved = await resolveCrossSymbolExecution({
-                        strategy,
-                        primarySymbol: state.currentSymbol,
-                        interval: state.currentInterval,
-                        primaryData: data,
-                        settings,
-                        dataFetcher: (await import("./data-manager")).dataManager,
-                    });
-                    effectiveData = resolved.primaryData;
-                    crossSymbolCtx = resolved.context;
-                } catch (error) {
-                    const msg = error instanceof Error ? error.message : String(error);
-                    this.updateStatus(`Cross-symbol resolution failed: ${msg}`);
-                    return null;
-                }
-            }
 
-            return await fn({ signal, data: effectiveData, strategyKey, strategy, crossSymbolCtx });
+            return await fn({ signal, data, strategyKey, strategy, });
         } finally {
             this.isRunning = false;
             this.abortController = null;
@@ -422,7 +399,7 @@ class WalkForwardService {
      * Run walk-forward analysis with current strategy and data
      */
     async runAnalysis(): Promise<WalkForwardResult | null> {
-        return this.withRunGuard("analysis", "No data loaded for walk-forward analysis", async ({ signal, data, strategyKey, strategy, crossSymbolCtx }) => {
+        return this.withRunGuard("analysis", "No data loaded for walk-forward analysis", async ({ signal, data, strategyKey, strategy, }) => {
             const capitalSettings = backtestService.getCapitalSettings();
             const backtestSettings = backtestService.getBacktestSettings();
             await ensureConfirmationStrategiesLoaded(backtestSettings);
@@ -495,7 +472,6 @@ class WalkForwardService {
                     capitalSettings.commission,
                     backtestSettings,
                     sizing,
-                    crossSymbolCtx
                 );
             } else if (!result) {
                 // Use regular walk-forward with parameter optimization
@@ -518,7 +494,6 @@ class WalkForwardService {
                     capitalSettings.commission,
                     backtestSettings,
                     sizing,
-                    crossSymbolCtx
                 );
             }
 
@@ -551,7 +526,7 @@ class WalkForwardService {
      * Quick analysis with auto-detected settings
      */
     async runQuickAnalysis(): Promise<WalkForwardResult | null> {
-        return this.withRunGuard("quick", "No data loaded for walk-forward analysis", async ({ signal, data, strategyKey, strategy, crossSymbolCtx }) => {
+        return this.withRunGuard("quick", "No data loaded for walk-forward analysis", async ({ signal, data, strategyKey, strategy, }) => {
             const capitalSettings = backtestService.getCapitalSettings();
             const backtestSettings = backtestService.getBacktestSettings();
             const sizing = {
@@ -606,7 +581,6 @@ class WalkForwardService {
                     capitalSettings.commission,
                     backtestSettings,
                     sizing,
-                    crossSymbolCtx
                 );
             } else {
                 // Use regular quick walk-forward with parameter optimization
@@ -622,7 +596,6 @@ class WalkForwardService {
                     sizing,
                     progressReporter,
                     signal,
-                    crossSymbolCtx
                 );
             }
 

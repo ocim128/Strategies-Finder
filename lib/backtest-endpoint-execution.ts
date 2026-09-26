@@ -20,10 +20,6 @@ export function buildBacktestEndpointExecutorRequest(
     engineMode: EngineMode,
     nowSec: number,
     blockRange: { from: number; to: number } | null,
-    crossSymbolInput?: {
-        secondarySymbol: string;
-        secondaryData: OHLCVData[];
-    },
 ): BacktestExecutorRequest {
     return {
         ohlcvData: candles,
@@ -33,12 +29,6 @@ export function buildBacktestEndpointExecutorRequest(
         strategyParams,
 backtestSettings: stripEndpointIgnoredBacktestSettings(backtestSettings),
         capitalSettings: { ...BACKTEST_ENDPOINT_CAPITAL_SETTINGS },
-        crossSymbolInput: crossSymbolInput
-            ? {
-                secondarySymbol: crossSymbolInput.secondarySymbol,
-                secondaryData: crossSymbolInput.secondaryData.map((candle) => ({ ...candle })),
-            }
-            : undefined,
         context: {
             nowSec,
             blockRange: cloneBlockRange(blockRange),
@@ -50,10 +40,6 @@ backtestSettings: stripEndpointIgnoredBacktestSettings(backtestSettings),
 export function buildBacktestEndpointExecutorRequestFromSnapshot(
     snapshot: UiBacktestEndpointSnapshot,
     candles: OHLCVData[],
-    crossSymbolInput?: {
-        secondarySymbol: string;
-        secondaryData: OHLCVData[];
-    }
 ): BacktestExecutorRequest {
     return buildBacktestEndpointExecutorRequest(
         snapshot.strategyKey,
@@ -68,6 +54,5 @@ export function buildBacktestEndpointExecutorRequestFromSnapshot(
         resolveEndpointCopyEngineMode(snapshot.engineUsed),
         snapshot.nowSec,
         snapshot.blockRange,
-        crossSymbolInput
     );
 }

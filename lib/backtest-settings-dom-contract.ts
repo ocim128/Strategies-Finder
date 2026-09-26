@@ -344,11 +344,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         rustSupport: "unsupported",
     }),
     createField("strategyTimeframeMinutes", { rustSupport: "unsupported" }),
-    createField("crossSymbolSecondary", {
-        parser: "string",
-        rustSupport: "unsupported",
-        workerSupport: "unsupported",
-    }),
 ];
 
 export const BACKTEST_SETTINGS_DOM_CONTRACTS: readonly BacktestDomSettingContract[] = Object.freeze([

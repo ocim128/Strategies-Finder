@@ -78,8 +78,6 @@ export interface AssetOpportunityBatchWorkerTask {
     /** Enable bounded in-process strategy parallelism for single-run tasks. */
     parallelStrategies?: boolean;
     rustCapabilities?: RustCapabilities;
-    /** Symbol (trim+upper) -> provider label; null when no provider map was supplied. */
-    providerBySymbol: Record<string, string> | null;
     candidatePoolSize: number;
     minFreshSupport: number;
     /** Benchmark-only structured-clone data source; production workers load from the server loader. */
@@ -172,12 +170,6 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
     const exitStrategyCandidates = args.strategySelection
         ? args.strategySelection.exitStrategyCandidates
         : await resolveExitStrategiesLenient(task.exitStrategyKeys);
-    // Mirrors the plugin's resolveServerProvider: normalized symbol lookup
-    // with a binance default. Keys arrive pre-normalized from the main thread.
-    const getProvider = task.providerBySymbol
-        ? (symbol: string): string =>
-            task.providerBySymbol![symbol.trim().toUpperCase()] ?? "binance"
-        : undefined;
 
     return runAssetOpportunityIteration(
         {
@@ -201,7 +193,6 @@ export async function runAssetOpportunityBatchWorkerTask(args: {
             ...(args.exitSignalCacheBySymbol ? { exitSignalCacheBySymbol: args.exitSignalCacheBySymbol } : {}),
             ...(task.parallelStrategies === true ? { parallelStrategies: true } : {}),
             ...(task.includeFullStrategyBreakdown === true ? { includeFullStrategyBreakdown: true } : {}),
-            ...(getProvider ? { getProvider } : {}),
             candidatePoolSize: task.candidatePoolSize,
             minFreshSupport: task.minFreshSupport,
             ...(args.runLog ? { runLog: args.runLog } : {}),

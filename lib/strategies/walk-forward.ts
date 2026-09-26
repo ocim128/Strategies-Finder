@@ -1,5 +1,5 @@
 import { OHLCVData, BacktestResult, StrategyParams, BacktestSettings, Strategy, Time, Signal } from '../types/strategies';
-import type { StrategyExecutionContext } from '../types/strategies';
+import type { } from '../types/strategies';
 import { runBacktest, runBacktestCompact, calculateBacktestStats, calculateMaxDrawdown, compareTime, timeToNumber, applySignalPolarity } from './backtest';
 import type { AdvancedSizingSettings } from '../types/backtest';
 import { ensureCleanData } from './strategy-helpers';
@@ -313,7 +313,6 @@ type WindowBacktestContext = {
     windowEndTime: Time;
     windowStartNumericTime: number | null;
     windowEndNumericTime: number | null;
-    bufferedSecondaryData?: OHLCVData[];
 };
 
 type PreparedStrategyDataCache = WeakMap<OHLCVData[], unknown>;
@@ -326,7 +325,6 @@ function createWindowBacktestContext(
     startIndex: number,
     endIndex: number,
     lookback: number = 250,
-    secondaryData?: OHLCVData[]
 ): WindowBacktestContext {
     if (startIndex < 0 || endIndex > data.length || startIndex >= endIndex) {
         throw new Error(`Invalid window bounds [${startIndex}, ${endIndex}) for data length ${data.length}`);
@@ -339,9 +337,6 @@ function createWindowBacktestContext(
     const windowStartNumericTime = timeToNumber(windowStartTime);
     const windowEndNumericTime = timeToNumber(windowEndTime);
 
-    const bufferedSecondaryData = secondaryData
-        ? secondaryData.slice(bufferedStart, endIndex)
-        : undefined;
 
     return {
         bufferedStart,
@@ -352,7 +347,6 @@ function createWindowBacktestContext(
         windowEndTime,
         windowStartNumericTime,
         windowEndNumericTime,
-        bufferedSecondaryData,
     };
 }
 
@@ -398,7 +392,6 @@ function getPreparedStrategyData(
     bufferedData: OHLCVData[],
     backtestSettings: BacktestSettings,
     cache?: PreparedStrategyDataCache,
-    crossSymbolCtx?: StrategyExecutionContext
 ): unknown {
     if (!strategy.executePrepared || !strategy.prepareFinderData) {
         return null;
@@ -407,7 +400,7 @@ function getPreparedStrategyData(
         return cache.get(bufferedData) ?? null;
     }
 
-    const prepared = strategy.prepareFinderData(bufferedData, backtestSettings, crossSymbolCtx) ?? null;
+    const prepared = strategy.prepareFinderData(bufferedData, backtestSettings,) ?? null;
     cache?.set(bufferedData, prepared);
     return prepared;
 }
@@ -423,15 +416,11 @@ function prepareWindowBacktest(
     params: StrategyParams,
     backtestSettings: BacktestSettings,
     preparedDataCache?: PreparedStrategyDataCache,
-    crossSymbolCtx?: StrategyExecutionContext
 ): { windowSignals: Signal[] } {
-    const windowCtx: StrategyExecutionContext | undefined = context.bufferedSecondaryData
-        ? { crossSymbol: { primarySymbol: crossSymbolCtx?.crossSymbol?.primarySymbol ?? "", secondarySymbol: crossSymbolCtx?.crossSymbol?.secondarySymbol ?? "", secondaryData: context.bufferedSecondaryData, alignedLength: context.bufferedSecondaryData.length, trimmedLeadingBars: 0 } }
-        : undefined;
-    const preparedData = getPreparedStrategyData(strategy, context.bufferedData, backtestSettings, preparedDataCache, windowCtx);
+    const preparedData = getPreparedStrategyData(strategy, context.bufferedData, backtestSettings, preparedDataCache,);
     const rawSignals = strategy.executePrepared
-        ? strategy.executePrepared(preparedData, params, context.bufferedData, windowCtx)
-        : strategy.execute(context.bufferedData, params, windowCtx);
+        ? strategy.executePrepared(preparedData, params, context.bufferedData,)
+        : strategy.execute(context.bufferedData, params,);
     const allSignals = applyConfirmationStrategiesToSignals({
         data: context.bufferedData,
         baseSignals: applySignalPolarity(rawSignals, backtestSettings),
@@ -452,11 +441,9 @@ function runBacktestFast(
     backtestSettings: BacktestSettings, sizing?: TradeSizing, lookback: number = 250,
     context?: WindowBacktestContext,
     preparedDataCache?: PreparedStrategyDataCache,
-    crossSymbolCtx?: StrategyExecutionContext
 ): BacktestResult {
-    const secondaryData = crossSymbolCtx?.crossSymbol?.secondaryData;
-    const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback, secondaryData);
-    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings, preparedDataCache, crossSymbolCtx);
+    const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback);
+    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings, preparedDataCache,);
 
     const fullResult = runBacktest(
         windowContext.bufferedData,
@@ -483,11 +470,9 @@ function runBacktestFastCompact(
     backtestSettings: BacktestSettings, sizing?: TradeSizing, lookback: number = 250,
     context?: WindowBacktestContext,
     preparedDataCache?: PreparedStrategyDataCache,
-    crossSymbolCtx?: StrategyExecutionContext
 ): BacktestResult {
-    const secondaryData = crossSymbolCtx?.crossSymbol?.secondaryData;
-    const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback, secondaryData);
-    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings, preparedDataCache, crossSymbolCtx);
+    const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback);
+    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings, preparedDataCache,);
     return runBacktestCompact(
         windowContext.bufferedData,
         windowSignals,
@@ -547,14 +532,13 @@ async function optimizeWindow(
     topN: number,
     onProgress?: (processed: number, total: number) => void,
     signal?: AbortSignal,
-    crossSymbolCtx?: StrategyExecutionContext
 ): Promise<OptimizationResult[]> {
     const topResults: OptimizationResult[] = [];
     const BATCH_SIZE = 64;
     const YIELD_BUDGET_MS = 32;
     const YIELD_CHECK_INTERVAL = 16;
     const topCapacity = Math.max(topN, topN * 2);
-    const windowContext = createWindowBacktestContext(data, startIndex, endIndex, 250, crossSymbolCtx?.crossSymbol?.secondaryData);
+    const windowContext = createWindowBacktestContext(data, startIndex, endIndex, 250);
     const preparedDataCache: PreparedStrategyDataCache = new WeakMap();
 
     const tryAddTopResult = (candidate: OptimizationResult) => {
@@ -603,7 +587,6 @@ async function optimizeWindow(
                     250,
                     windowContext,
                     preparedDataCache,
-                    crossSymbolCtx
                 );
 
                 const score = calculateOptimizationScore(result, minTrades);
@@ -780,7 +763,6 @@ export async function runWalkForwardAnalysis(
     commissionPercent: number,
     backtestSettings: BacktestSettings = {},
     sizing?: TradeSizing,
-    crossSymbolCtx?: StrategyExecutionContext
 ): Promise<WalkForwardResult> {
     const startTime = performance.now();
     let lastYieldTime = startTime;
@@ -876,7 +858,6 @@ export async function runWalkForwardAnalysis(
                 comboTotal: total
             }),
             signal,
-            crossSymbolCtx
         );
 
         const optimizedParams = averageParameters(topResults, parameterRanges, strategy.defaultParams);
@@ -896,7 +877,6 @@ export async function runWalkForwardAnalysis(
             250,
             undefined,
             undefined,
-            crossSymbolCtx
         );
 
         onProgress?.({
@@ -919,7 +899,6 @@ export async function runWalkForwardAnalysis(
             250,
             undefined,
             undefined,
-            crossSymbolCtx
         );
 
         if (outOfSampleDetailed.equityCurve.length > 0) {
@@ -1026,7 +1005,6 @@ export async function quickWalkForward(
     sizing?: TradeSizing,
     onProgress?: (progress: WalkForwardProgress) => void,
     signal?: AbortSignal,
-    crossSymbolCtx?: StrategyExecutionContext
 ): Promise<WalkForwardResult> {
     // Clean data at the entry point
     data = ensureCleanData(data);
@@ -1118,7 +1096,6 @@ export async function quickWalkForward(
         commissionPercent,
         backtestSettings,
         sizing,
-        crossSymbolCtx
     );
 }
 
@@ -1169,7 +1146,6 @@ export async function runFixedParamWalkForward(
     commissionPercent: number,
     backtestSettings: BacktestSettings = {},
     sizing?: TradeSizing,
-    crossSymbolCtx?: StrategyExecutionContext
 ): Promise<WalkForwardResult> {
     const startTime = performance.now();
     let lastYieldTime = startTime;
@@ -1230,7 +1206,6 @@ export async function runFixedParamWalkForward(
             250,
             undefined,
             undefined,
-            crossSymbolCtx
         );
 
         // Second half = "Out-of-Sample" (the forward test)
@@ -1248,7 +1223,6 @@ export async function runFixedParamWalkForward(
             250,
             undefined,
             undefined,
-            crossSymbolCtx
         );
 
         // Update running capital for next window

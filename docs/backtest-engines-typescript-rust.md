@@ -48,7 +48,7 @@ claim and removes the measured-slower specialized path.
 ```text
 UI / endpoint / Finder caller
   -> lib/backtest-executor.ts: executeBacktest()
-     -> resolve settings, closed candles, cross-symbol context
+     -> resolve settings, closed candles
      -> generate or accept TypeScript signals
      -> merge exit-strategy signals and build diagnostics
      -> engine-selection fence
@@ -90,8 +90,7 @@ without improving the measured end-to-end workload.
 ### Core modules
 
 - [`lib/backtest-executor.ts`](../lib/backtest-executor.ts) is the orchestration
-  boundary. It resolves settings and capital, chooses the data window, handles
-  cross-symbol context, generates signals, invokes an engine,
+  boundary. It resolves settings and capital, chooses the data window, generates signals, invokes an engine,
   validates Rust output, and performs shared result finalization.
 - [`lib/strategies/backtest/backtest-engine.ts`](../lib/strategies/backtest/backtest-engine.ts)
   contains `runBacktest()` for the standard full result and
@@ -124,7 +123,6 @@ Rust contract:
 - closed-candle selection and block-range filtering;
 - strategy execution and confirmation strategies;
 - exit-strategy override signal generation;
-- cross-symbol data resolution and alignment;
 - final market context, Sharpe, performance analytics, and trade timing
   attachment.
 
@@ -430,7 +428,7 @@ on its own.
 - Rust does not execute arbitrary TypeScript strategy code; signal generation
   remains TypeScript.
 - Rust does not cover all execution models, risk controls, smart sizing modes,
-  cross-symbol strategies, or exit overrides.
+  or exit overrides.
 - Crossing a process boundary can make Rust slower for small or low-density
   workloads even when the Rust simulation loop is faster.
 - Asset Opportunity signal generation, ranking, OOS policy, and result

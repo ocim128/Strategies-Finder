@@ -40,7 +40,6 @@ import type {
     AssetOpportunityFreshEntryPrecheck,
     AssetOpportunityFreshEntryPrecheckResult,
 } from "../finder-asset-opportunity-runner";
-import type { CrossSymbolDataFetcher } from "../../cross-symbol-runtime";
 import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
 import { serializeParams } from "../finder-param-math";
 import {
@@ -84,7 +83,6 @@ export interface ServerAssetIsSearchInput {
     rustCapabilities?: RustCapabilities;
     typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
     signal?: AbortSignal;
-    dataFetcher?: CrossSymbolDataFetcher;
     /** Caller already preloaded the configured confirmation libraries for this task. */
     confirmationStrategiesLoaded?: boolean;
     /** Full closed series for batch-only signal reuse across holdout prefixes. */
@@ -214,8 +212,6 @@ function canReuseFullSignalsForWindow(
         && !input.exitStrategyCandidates?.length
         && (input.options.dataSlice ?? "all") === "all"
         && input.settings.strategyTimeframeEnabled !== true
-        && !input.dataFetcher
-        && !input.selectedStrategy.strategy.crossSymbolConfig
         && !(input.settings.confirmationStrategies?.length)
         && input.settings.exitStrategyOverrideEnabled !== true,
     );
@@ -225,8 +221,6 @@ function canUseSignalTradeCountPrefilter(input: ServerAssetIsSearchInput): boole
     return input.options.tradeFilterEnabled === true
         && Number.isFinite(input.options.minTrades)
         && Math.max(0, input.options.minTrades) > 0
-        && !input.dataFetcher
-        && !input.selectedStrategy.strategy.crossSymbolConfig
         && input.settings.strategyTimeframeEnabled !== true
         && !(input.settings.confirmationStrategies?.length)
         // Entry-evaluation strategies can produce trades without primary
@@ -319,11 +313,6 @@ export async function runServerAssetIsSearch(
     }
     const totalStartedAt = performance.now();
     const requiresFullAnalytics = finderAssetSearchRequiresFullAnalytics(options.sortPriority);
-    if (selectedStrategy.strategy.crossSymbolConfig && !input.dataFetcher) {
-        throw new Error(
-            `Cross-symbol strategy "${selectedStrategy.name}" requires secondary asset data for Asset Opportunity.`,
-        );
-    }
     const preResolvedCapital = input.preResolvedCapital ?? resolveCapitalSettingsFromRaw(
         capitalSettings as unknown as Record<string, unknown>,
     );
@@ -582,7 +571,6 @@ export async function runServerAssetIsSearch(
                 ...(exitStrategy
                     ? { exitOverride: { key: exitStrategy.key, params: exitParams ?? {} } }
                     : {}),
-                ...(input.dataFetcher ? { dataFetcher: input.dataFetcher } : {}),
                 useRustEnginePreference: input.useRustEnginePreference,
                 rustCapabilities: input.rustCapabilities,
                 typescriptSimulationConcurrency: input.typescriptSimulationConcurrency,

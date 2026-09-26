@@ -410,7 +410,6 @@ export interface BacktestSettings {
     strategyTimeframeEnabled?: boolean;
     /** Higher timeframe in minutes for global strategy execution */
     strategyTimeframeMinutes?: number;
-    crossSymbolSecondary?: string;
 }
 
 export interface Signal {
@@ -526,32 +525,8 @@ export interface StrategyIndicator {
     color?: string;
 }
 
-// ============================================================================
-// Cross-Symbol Strategy Types
-// ============================================================================
-
-/** Static configuration declaring that a strategy requires a secondary symbol. */
-export interface CrossSymbolConfig {
-    /** Default secondary symbol when no override is provided. */
-    defaultSymbol: string;
-    /** Whether the user may override the secondary symbol in the UI. */
-    userSelectable?: boolean;
-    /** Minimum aligned bars required after trimming. Defaults to 50. */
-    minBars?: number;
-}
-
-/** Runtime-resolved cross-symbol data passed to strategy execution methods. */
-export interface CrossSymbolRuntimeContext {
-    primarySymbol: string;
-    secondarySymbol: string;
-    secondaryData: OHLCVData[];
-    alignedLength: number;
-    trimmedLeadingBars: number;
-}
-
 /** Execution context bag passed as an optional argument to strategy methods. */
 export interface StrategyExecutionContext {
-    crossSymbol?: CrossSymbolRuntimeContext;
 }
 
 export interface Strategy {
@@ -563,8 +538,6 @@ export interface Strategy {
     finderFixedParams?: readonly string[];
     /** Optional parameter sanitizer used before execution/optimization. */
     normalizeParams?: (params: StrategyParams) => StrategyParams;
-    /** Optional cross-symbol configuration. When present, the runtime will provide secondary data via execution context. */
-    crossSymbolConfig?: CrossSymbolConfig;
     execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => Signal[];
     /**
      * Optional Finder/optimizer precompute seam for reusing dataset-derived state

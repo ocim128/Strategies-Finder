@@ -1,5 +1,4 @@
 ﻿import { state } from "./state";
-import { dataManager } from "./data-manager";
 
 import {
     StrategyParams,
@@ -302,7 +301,6 @@ let { result, engineUsed, requestContext } = await this.executeBacktest(
             backtestRunOptions: {
                 collectDiagnostics: true,
             },
-            dataFetcher: dataManager,
         });
 
         if (captureTiming) {

@@ -94,7 +94,6 @@ import { sliceOhlcvByBlock } from "./block-selector";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { setCurrentInterval, setCurrentStrategyKey } from "./state-actions";
 import { createTaskYielder } from "./task-yield";
-import { resolveCrossSymbolSecondaryForStrategy } from "./cross-symbol-runtime";
 import {
 	createFinderManagerDom,
 	type FinderManagerDom,
@@ -2597,17 +2596,6 @@ gate is not applicable (toggle off, non-half window, cancelled).
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
 		const symbols = options.assetOpportunity?.symbols ?? [];
-		const providerBySymbol: Record<string, string> = {};
-		for (const symbol of symbols) {
-			providerBySymbol[symbol] = dataManager.getProvider(symbol);
-		}
-		const allStrategies = [...selectedStrategies, ...(exitStrategyCandidates ?? [])];
-		for (const selected of allStrategies) {
-			const secondarySymbol = resolveCrossSymbolSecondaryForStrategy(selected.strategy, settings);
-			if (secondarySymbol) {
-				providerBySymbol[secondarySymbol] = dataManager.getProvider(secondarySymbol);
-			}
-		}
 
 		const response = await fetch('/api/finder/asset-opportunity-run', {
 			method: 'POST',
@@ -2622,7 +2610,6 @@ gate is not applicable (toggle off, non-half window, cancelled).
 				strategyKeys: selectedStrategies.map((candidate) => candidate.key),
 				exitStrategyKeys: exitStrategyCandidates?.map((candidate) => candidate.key),
 				useRustEnginePreference: shouldUseRustEngine(),
-				providerBySymbol,
 			}),
 		});
 		if (response.status === 404 || response.status === 405) {
@@ -2871,17 +2858,6 @@ gate is not applicable (toggle off, non-half window, cancelled).
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
 		const symbols = options.assetOpportunity?.symbols ?? [];
-		const providerBySymbol: Record<string, string> = {};
-		for (const symbol of symbols) {
-			providerBySymbol[symbol] = dataManager.getProvider(symbol);
-		}
-		const allStrategies = [...selectedStrategies, ...(exitStrategyCandidates ?? [])];
-		for (const selected of allStrategies) {
-			const secondarySymbol = resolveCrossSymbolSecondaryForStrategy(selected.strategy, settings);
-			if (secondarySymbol) {
-				providerBySymbol[secondarySymbol] = dataManager.getProvider(secondarySymbol);
-			}
-		}
 
 		const response = await fetch('/api/finder/asset-opportunity-batch-run', {
 			method: 'POST',
@@ -2896,7 +2872,6 @@ gate is not applicable (toggle off, non-half window, cancelled).
 				strategyKeys: selectedStrategies.map((candidate) => candidate.key),
 				exitStrategyKeys: exitStrategyCandidates?.map((candidate) => candidate.key),
 				useRustEnginePreference: shouldUseRustEngine(),
-				providerBySymbol,
 				archiveSort,
 				batch: {
 					startHoldoutBars: range.start,
@@ -3130,21 +3105,7 @@ gate is not applicable (toggle off, non-half window, cancelled).
 	): Promise<ServerUniverseRunOutcome> {
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
-		// Send a symbol -> provider map so the server's cross-symbol mismatch
-		// guard matches the browser's `dataManager.getProvider` classification.
 		const universeSymbols = options.universe?.symbols ?? [];
-		const providerBySymbol: Record<string, string> = {};
-		for (const symbol of universeSymbols) {
-			providerBySymbol[symbol] = dataManager.getProvider(symbol);
-		}
-		// Include cross-symbol secondaries for every entry and sampled exit
-		// strategy so provider-mismatch checks stay identical server-side.
-		for (const selected of [...selectedStrategies, ...(exitStrategyCandidates ?? [])]) {
-			const secondarySymbol = resolveCrossSymbolSecondaryForStrategy(selected.strategy, settings);
-			if (secondarySymbol) {
-				providerBySymbol[secondarySymbol] = dataManager.getProvider(secondarySymbol);
-			}
-		}
 		const response = await fetch('/api/finder/universe-run', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -3158,7 +3119,6 @@ gate is not applicable (toggle off, non-half window, cancelled).
 				strategyKeys: selectedStrategies.map((s) => s.key),
 				exitStrategyKeys: exitStrategyCandidates?.map((c) => c.key),
 				useRustEnginePreference: shouldUseRustEngine(),
-				providerBySymbol,
 			}),
 		});
 

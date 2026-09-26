@@ -30,7 +30,6 @@ export interface WorkerStrategySupportSnapshot {
 
 export function getWorkerSupportedStrategyKeys(): string[] {
     return builtInStrategySummary
-.filter((strategy) => !strategy.crossSymbolConfig)
         .map((strategy) => strategy.key)
         .sort((a, b) => a.localeCompare(b));
 }
@@ -52,8 +51,7 @@ export function isWorkerSupportedStrategyKey(strategyKey: string): boolean {
     const key = strategyKey.trim();
     if (key.length === 0) return false;
     const strategy = builtInStrategySummary.find((entry) => entry.key === key);
-    if (!strategy) return false;
-return !strategy.crossSymbolConfig;
+    return strategy !== undefined;
 }
 
 /**

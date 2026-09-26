@@ -132,8 +132,6 @@ export interface BacktestSettingsData {
     maxOpenTrades: number;
     strategyTimeframeEnabled: boolean;
     strategyTimeframeMinutes: number;
-    /** Resolved secondary symbol for cross-symbol strategies. Empty string means use strategy default. */
-    crossSymbolSecondary: string;
 
 }
 
@@ -203,9 +201,6 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     pathExitThreshold: 0,
     pathExitMinSamples: 30,
     pathExitHorizonBars: 50,
-
-    // Cross-symbol
-    crossSymbolSecondary: "",
 
     // Signal confirmation
     confirmationStrategiesToggle: false,
@@ -373,10 +368,6 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
         Array.isArray(normalized.confirmationStrategies) && normalized.confirmationStrategies.length > 0
     );
 
-    // Cross-symbol
-    normalized.crossSymbolSecondary = typeof source.crossSymbolSecondary === 'string'
-        ? source.crossSymbolSecondary.trim().toUpperCase()
-        : '';
 
     // Exit strategy override
     normalized.exitStrategyOverrideEnabled = readBoolean(
