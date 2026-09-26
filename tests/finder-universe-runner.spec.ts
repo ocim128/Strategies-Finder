@@ -4,6 +4,40 @@ import { performance } from "node:perf_hooks";
 import { runFinderUniverseExecution } from "../lib/finder/finder-runner-universe";
 import { buildFinderUniverseCandidate, FinderUniverseSurvivorRanker, sortFinderUniverseCandidates } from "../lib/finder/finder-universe-metrics";
 import { rustEngine } from "../lib/rust-engine-client";
+import { debugLogger } from "../lib/debug-logger";
+
+/**
+ * Collects the `finder.universe.symbol_block_released` debug events emitted
+ * by `run`. The debug logger hands each listener the whole 200-entry ring
+ * buffer on every append, so only events first seen while this subscription
+ * is live are captured - stale entries from earlier tests in the same
+ * process are ignored.
+ */
+async function collectBlockReleaseEvents<T>(
+    run: () => Promise<T>,
+): Promise<{ events: Array<{ blockStartIndex: number; released: string[]; retained: number }>; result: T }> {
+    const events: Array<{ blockStartIndex: number; released: string[]; retained: number }> = [];
+    // The listener receives the full ring buffer on every append, including
+    // entries logged by earlier tests; only ids above this baseline are new.
+    const baselineId = debugLogger.getEntries().at(-1)?.id ?? 0;
+    const unsubscribe = debugLogger.subscribe((entries) => {
+        for (const entry of entries) {
+            if (entry.id <= baselineId) continue;
+            if (entry.message === "finder.universe.symbol_block_released" && entry.data) {
+                const event = entry.data as { blockStartIndex: number; released: string[]; retained: number };
+                if (!events.some((existing) => existing.blockStartIndex === event.blockStartIndex)) {
+                    events.push(event);
+                }
+            }
+        }
+    });
+    try {
+        const result = await run();
+        return { events, result };
+    } finally {
+        unsubscribe();
+    }
+}
 import { runBacktestCompact } from "../lib/strategies";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions, FinderUniverseCandidate, FinderUniverseMetric } from "../lib/types/finder";
@@ -1336,6 +1370,203 @@ describe("Finder universe runner", () => {
         // The old every-8 policy yielded at least 16 times during loading.
         // Batches of 64 preserve periodic control without taxing cache hits.
         expect(yields).to.be.within(2, 6);
+    });
+
+    it("releases each symbol block's datasets at the block boundary while later blocks stay retained", async () => {
+        const symbols = Array.from({ length: 8 }, (_, i) => `SYM${i}`);
+        const datasets = new Map<string, OHLCVData[]>();
+        symbols.forEach((sym, i) => {
+            datasets.set(sym, makeCandles([100 + i * 10, 105 + i * 10, 110 + i * 10, 115 + i * 10]));
+        });
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 3,
+            rangePercent: 35,
+            maxRuns: 20,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols,
+                minActiveSymbols: 1,
+                minTotalTrades: 1,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["profitableActiveRatio", "medianExpectancy", "worstNetProfit"],
+            },
+        };
+
+        const { events, result: output } = await collectBlockReleaseEvents(async () => {
+            return await runFinderUniverseExecution(
+                {
+                    interval: "5m",
+                    options,
+                    settings,
+                    capitalSettings,
+                    selectedStrategy: {
+                        key: "universe_test",
+                        name: testStrategy.name,
+                        strategy: testStrategy,
+                    },
+                    loadDataset: async (symbol) => {
+                        const dataset = datasets.get(symbol);
+                        if (!dataset) throw new Error(`Missing ${symbol}`);
+                        return dataset;
+                    },
+                    generateParamSets: () => [{ threshold: 1 }, { threshold: 2 }],
+                },
+                {
+                    setProgress: () => {},
+                    setStatus: () => {},
+                    yieldControl: async () => {},
+                    isCancelled: () => false,
+                },
+            );
+        });
+
+        // 8 symbols in blocks of 25 = one block → exactly one release event.
+        expect(events).to.have.length(1);
+        expect(events[0]!.blockStartIndex).to.equal(0);
+        expect(events[0]!.released).to.deep.equal(symbols);
+        // Nothing is retained after the final block.
+        expect(events[0]!.retained).to.equal(0);
+        // Results stay intact after the release (nothing reads released data).
+        expect(output.results.length).to.be.greaterThan(0);
+    });
+
+    it("keeps early-stop accounting and the survivor set across block boundaries (30 symbols, 2 blocks)", async () => {
+        const symbols = Array.from({ length: 30 }, (_, i) => `SYM${i}`);
+        const datasets = new Map<string, OHLCVData[]>(
+            symbols.map((sym, i) => [sym, makeCandles([100 + i * 10, 105 + i * 10, 110 + i * 10, 115 + i * 10, 120 + i * 10])]),
+        );
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 3,
+            rangePercent: 35,
+            maxRuns: 20,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols,
+                minActiveSymbols: 0,
+                minTotalTrades: 0,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["profitableActiveRatio", "medianExpectancy", "worstNetProfit"],
+            },
+        };
+
+        const output = await runFinderUniverseExecution(
+            {
+                interval: "5m",
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategy: {
+                    key: "universe_test",
+                    name: testStrategy.name,
+                    strategy: testStrategy,
+                },
+                loadDataset: async (symbol) => {
+                    const dataset = datasets.get(symbol);
+                    if (!dataset) throw new Error(`Missing ${symbol}`);
+                    return dataset;
+                },
+                generateParamSets: () => [{ threshold: 1 }, { threshold: 10 }],
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                yieldControl: async () => {},
+                isCancelled: () => false,
+            },
+        );
+
+        // threshold=1 evaluates all 30 symbols; threshold=10 bails on its 5th
+        // consecutive zero-signal symbol (global index 4) → 30 - 4 - 1 = 25
+        // skipped. The bail fires in block 1, and the counters must match the
+        // candidate-outer order (global symbol indices, not per-block ones).
+        expect(output.diagnostics?.counts.processedRuns).to.equal(30 + 5);
+        expect(output.diagnostics?.counts.skippedRuns).to.equal(25);
+        // Only the fully-evaluated candidate survives; the bailed one is
+        // excluded even under permissive filters.
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.params.threshold).to.equal(1);
+        expect(output.results[0]!.activeSymbols).to.equal(30);
+    });
+
+    it("visits symbols in ascending blocks and completes every candidate on a large synthetic universe", async () => {
+        const symbolCount = 60;
+        const symbols = Array.from({ length: symbolCount }, (_, i) => `SYM${i}`);
+        const datasets = new Map<string, OHLCVData[]>(
+            symbols.map((sym, i) => [sym, makeCandles([100 + (i % 7) * 10, 105 + (i % 7) * 10, 110 + (i % 7) * 10, 115 + (i % 7) * 10, 120 + (i % 7) * 10])]),
+        );
+        const candidateCount = 3;
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 3,
+            steps: 3,
+            rangePercent: 0,
+            maxRuns: 20,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols,
+                minActiveSymbols: 1,
+                minTotalTrades: 1,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["profitableActiveRatio", "medianExpectancy", "worstNetProfit"],
+            },
+        };
+
+        const { events, result: output } = await collectBlockReleaseEvents(async () => {
+            return await runFinderUniverseExecution(
+                {
+                    interval: "5m",
+                    options,
+                    settings,
+                    capitalSettings,
+                    selectedStrategy: {
+                        key: "universe_test",
+                        name: testStrategy.name,
+                        strategy: testStrategy,
+                    },
+                    loadDataset: async (symbol) => {
+                        const dataset = datasets.get(symbol);
+                        if (!dataset) throw new Error(`Missing ${symbol}`);
+                        return dataset;
+                    },
+                    generateParamSets: () => [{ threshold: 1 }, { threshold: 2 }, { threshold: 3 }],
+                },
+                {
+                    setProgress: () => {},
+                    setStatus: () => {},
+                    yieldControl: async () => {},
+                    isCancelled: () => false,
+                },
+            );
+        });
+
+        // 60 symbols / block size 25 → ascending block starts [0, 25, 50].
+        expect(events.map((event) => event.blockStartIndex)).to.deep.equal([0, 25, 50]);
+        // Ascending release order covering exactly the universe, nothing retained.
+        expect(events.flatMap((event) => event.released)).to.deep.equal(symbols);
+        expect(events[events.length - 1]!.retained).to.equal(0);
+        // Every candidate completed on every symbol and was ranked.
+        expect(output.results).to.have.length(candidateCount);
+        expect(output.diagnostics?.universe?.candidatePlans).to.equal(candidateCount);
+        expect(output.diagnostics?.universe?.symbolEvaluations?.completed).to.equal(candidateCount * symbolCount);
     });
 });
 

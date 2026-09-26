@@ -98,6 +98,29 @@ const UNIVERSE_ZERO_SIGNAL_BAIL_THRESHOLD = 5;
 const DIRECTIONAL_LOOKBACK_BARS = 96;
 const UNIVERSE_RUST_BATCH_SIZE = 64;
 
+/**
+ * Symbols are processed in blocks of this size: the candidate loop runs INSIDE
+ * each symbol block (symbol-outer / candidate-inner). After a block completes,
+ * its OHLCV arrays are released (sym.data = [], closed/prepared maps evicted),
+ * bounding resident memory to ~UNIVERSE_SYMBOL_BLOCK_SIZE datasets instead of
+ * the whole universe. The previous candidate-outer order kept every dataset
+ * resident for the whole run (~5-10 GB for 1000 synthetic pairs at the
+ * 100k-bar cap).
+ *
+ * Documented order deltas (results are NOT affected):
+ * - Live `onResultsUpdate` streaming now fires when a candidate completes at a
+ *   block boundary instead of strictly per candidate; the terminal
+ *   allSurvivors ranking is unchanged.
+ * - A candidate whose early-stop fires mid-block still evaluates the remaining
+ *   symbols of the CURRENT block, then stops being evaluated in later blocks.
+ *   The decision itself (stopped flag, reason, skipped-run accounting at the
+ *   global symbol index) matches the candidate-inner order exactly.
+ * - Survivors are offered when a candidate COMPLETES; candidates completing in
+ *   the same block are offered in candidateIndex order, so insertion-order
+ *   tie-breaking matches the old path.
+ */
+const UNIVERSE_SYMBOL_BLOCK_SIZE = 25;
+
 const CACHED_NONEMPTY_SIGNAL = {} as Signal;
 
 type UniverseCandidateExecution = {
@@ -1082,151 +1105,94 @@ export async function runFinderUniverseExecution(
         }
     }
 
-    for (let candidateIndex = 0; candidateIndex < candidatePlans.length; candidateIndex += 1) {
-        if (callbacks.isCancelled()) {
-            break;
-        }
-
-        const execution = candidateExecutions[candidateIndex]!;
-        const { plan, entryParams, backtestSettings, preResolvedSettings, typescriptRequirementReasons } = execution;
-        currentBacktestSettings = backtestSettings;
-
-        const symbolResults = new Map<string, FinderUniverseSymbolResult>();
-        let evaluationStoppedEarly = false;
-        let stoppedReason: FinderUniverseEarlyStopReason | undefined;
-        const partialCounts: FinderUniversePartialCounts = {
+    // Per-candidate accumulators, hoisted OUT of the symbol loop so they
+    // survive across symbol blocks in the symbol-outer loop below. Every
+    // field mirrors the previous candidate-outer scope exactly; early-stop
+    // decisions use these running values at each symbol boundary, so the
+    // decision outcome per candidate is identical to the old order.
+    const candidateStates = candidatePlans.map((plan) => ({
+        plan,
+        // Mirrors buildCandidateExecution: split the _exit__ half back out
+        // so the survivor row carries clean entry params (Exit Strategy
+        // Override).
+        entryParams: plan.exitStrategyKey
+            ? splitExitStrategyParams(plan.params).entryParams
+            : plan.params,
+        symbolResults: new Map<string, FinderUniverseSymbolResult>(),
+        evaluationStoppedEarly: false,
+        stoppedReason: undefined as FinderUniverseEarlyStopReason | undefined,
+        completed: false,
+        partialCounts: {
             activeSymbols: 0,
             profitableSymbols: 0,
             totalTrades: 0,
-        };
-        let remainingSymbols = loadedSymbols.length;
-        let remainingMaxTrades = totalPossibleTrades;
-        let consecutiveZeroSignalSymbols = 0;
+        } as FinderUniversePartialCounts,
+        remainingSymbols: loadedSymbols.length,
+        remainingMaxTrades: totalPossibleTrades,
+        consecutiveZeroSignalSymbols: 0,
+    }));
 
-        for (let symbolIndex = 0; symbolIndex < loadedSymbols.length; symbolIndex += 1) {
+    // SYMBOL-OUTER blocks with the CANDIDATE loop inner (memory release per
+    // block, see UNIVERSE_SYMBOL_BLOCK_SIZE). Results, diagnostics, early-stop
+    // decisions, and survivor sets are order-invariant; only wasted evaluations
+    // within one block may differ from the previous candidate-outer order.
+    for (let blockStartIndex = 0; blockStartIndex < loadedSymbols.length; blockStartIndex += UNIVERSE_SYMBOL_BLOCK_SIZE) {
+        if (callbacks.isCancelled()) {
+            break;
+        }
+        const blockEndIndex = Math.min(blockStartIndex + UNIVERSE_SYMBOL_BLOCK_SIZE, loadedSymbols.length);
+
+        for (let symbolIndex = blockStartIndex; symbolIndex < blockEndIndex; symbolIndex += 1) {
             if (callbacks.isCancelled()) {
                 break;
             }
 
-            const symbol = loadedSymbols[symbolIndex];
+            const symbol = loadedSymbols[symbolIndex]!;
             const isSyntheticPair = isSyntheticPairFinderSymbol(symbol.symbol);
-            const progressBase = candidateIndex / Math.max(1, candidatePlans.length);
-            const progressWithin = symbolIndex / Math.max(1, loadedSymbols.length);
-            const progress = 15 + ((progressBase + (progressWithin / Math.max(1, candidatePlans.length))) * 85);
 
-            updateEvaluationProgress(
-                progress,
-                `Testing ${input.selectedStrategy.name} on ${symbol.symbol} (${candidateIndex + 1}/${candidatePlans.length})...`,
-                `Evaluating candidate ${candidateIndex + 1}/${candidatePlans.length} on ${symbol.symbol}...`,
-                candidateIndex === 0 && symbolIndex === 0,
-            );
+            for (let candidateIndex = 0; candidateIndex < candidatePlans.length; candidateIndex += 1) {
+                const candidateState = candidateStates[candidateIndex]!;
+                if (candidateState.evaluationStoppedEarly) {
+                    continue;
+                }
+                const execution = candidateExecutions[candidateIndex]!;
+                const { entryParams, backtestSettings, preResolvedSettings, typescriptRequirementReasons } = execution;
+                currentBacktestSettings = backtestSettings;
 
-            let zeroSignals = false;
-            const runStartedAt = performance.now();
-            try {
-                const collectBacktestDiagnostics = backtestRunsUntilDiagnosticSample === 0;
-                const cachedOutput = universeBatchOutputs.get(candidateIndex)?.get(symbol.symbol);
-                if (cachedOutput) {
-                    signalTimingByRun.preparedDataMs = cachedOutput.signalTiming.preparedDataMs;
-                    signalTimingByRun.signalMs = cachedOutput.signalTiming.signalMs;
-                    signalTimingByRun.totalMs = cachedOutput.signalTiming.totalMs;
-                    signalTimingByRun.observed = cachedOutput.signalTiming.observed;
-                } else {
-                    signalTimingByRun.preparedDataMs = 0;
-                    signalTimingByRun.signalMs = 0;
-                    signalTimingByRun.totalMs = 0;
-                    signalTimingByRun.observed = false;
-                }
-                const output: BacktestExecutorResult = cachedOutput
-                    ? {
-                        result: cachedOutput.result,
-                        signals: cachedOutput.signalCount > 0 ? [CACHED_NONEMPTY_SIGNAL] : [],
-                        engineUsed: cachedOutput.engineUsed,
+                const progressBase = candidateIndex / Math.max(1, candidatePlans.length);
+                const progressWithin = symbolIndex / Math.max(1, loadedSymbols.length);
+                const progress = 15 + ((progressBase + (progressWithin / Math.max(1, candidatePlans.length))) * 85);
+
+                updateEvaluationProgress(
+                    progress,
+                    `Testing ${input.selectedStrategy.name} on ${symbol.symbol} (${candidateIndex + 1}/${candidatePlans.length})...`,
+                    `Evaluating candidate ${candidateIndex + 1}/${candidatePlans.length} on ${symbol.symbol}...`,
+                    candidateIndex === 0 && symbolIndex === 0,
+                );
+
+                let zeroSignals = false;
+                const runStartedAt = performance.now();
+                try {
+                    const collectBacktestDiagnostics = backtestRunsUntilDiagnosticSample === 0;
+                    const cachedOutput = universeBatchOutputs.get(candidateIndex)?.get(symbol.symbol);
+                    if (cachedOutput) {
+                        signalTimingByRun.preparedDataMs = cachedOutput.signalTiming.preparedDataMs;
+                        signalTimingByRun.signalMs = cachedOutput.signalTiming.signalMs;
+                        signalTimingByRun.totalMs = cachedOutput.signalTiming.totalMs;
+                        signalTimingByRun.observed = cachedOutput.signalTiming.observed;
+                    } else {
+                        signalTimingByRun.preparedDataMs = 0;
+                        signalTimingByRun.signalMs = 0;
+                        signalTimingByRun.totalMs = 0;
+                        signalTimingByRun.observed = false;
                     }
-                    : await executeBacktest({
-                        ohlcvData: symbol.data,
-                        closedCandleDataOverride: closedDataBySymbol.get(symbol.symbol),
-                        interval: input.interval,
-                        primarySymbol: symbol.symbol,
-                        strategyKey: input.selectedStrategy.key,
-                        strategy: preparedStrategy,
-                        strategyParams: entryParams,
-                        backtestSettings,
-                        capitalSettings: input.capitalSettings,
-                        preResolvedSettings,
-                        preResolvedCapital,
-                        context: {
-                            blockRange: null,
-                            engineMode: requiresExitAlpha ? "typescript" : "auto",
-                            // Thread the server-side Rust preference through. In the
-                            // browser this is undefined (shouldAttemptRust reads the
-                            // DOM); in Node it's the only signal that opts in to
-                            // Rust (the documented Rust-engine trap fix).
-                            useRustEnginePreference: input.useRustEnginePreference,
-                            rustCapabilities: input.rustCapabilities,
-                            nowSec: runNowSec,
-                        },
-                        backtestRunOptions: {
-                            includeAdvancedAnalytics: false,
-                            includeSharpeRatio: requiresSharpeRatio,
-                            // Universe ranking only consumes the scalar Sharpe value.
-                            // The compact engine can calculate it from an internal
-                            // typed buffer without returning an equity-curve artifact.
-                            omitEquityCurve: true,
-                            skipDrawdown: !requiresDrawdown,
-                            skipResultPostProcessing: true,
-                            collectDiagnostics: collectBacktestDiagnostics,
-                            ...(isSyntheticPair ? { useCompactBacktest: false } : {}),
-                        },
-                    });
-                if (output.result.diagnostics) {
-                    recordFinderBacktestDiagnostics(strategyStats.backtest, output.result.diagnostics);
-                    recordFinderBacktestDiagnostics(backtestStats, output.result.diagnostics);
-                    backtestRunsUntilDiagnosticSample = UNIVERSE_BACKTEST_DIAGNOSTIC_SAMPLE_INTERVAL - 1;
-                } else if (output.signals.length > 0) {
-                    recordFinderBacktestRunWithoutDiagnostics(strategyStats.backtest);
-                    recordFinderBacktestRunWithoutDiagnostics(backtestStats);
-                    if (backtestRunsUntilDiagnosticSample > 0) {
-                        backtestRunsUntilDiagnosticSample -= 1;
-                    }
-                }
-                if (output.engineUsed === "rust") {
-                    rustCompletedRuns += 1;
-                } else {
-                    typescriptCompletedRuns += 1;
-                    const reasons = typescriptRequirementReasons.length > 0
-                        ? typescriptRequirementReasons
-                        : output.signals.length === 0
-                            ? ["no signals required trade simulation"]
-                            : input.useRustEnginePreference === true
-                                ? ["Rust backend was unavailable or rejected the result"]
-                                : ["Rust was not requested"];
-                    for (const reason of reasons) {
-                        typescriptReasonCounts.set(reason, (typescriptReasonCounts.get(reason) ?? 0) + 1);
-                    }
-                }
-                zeroSignals = output.signals.length === 0;
-                const runMs = performance.now() - runStartedAt;
-                processedRuns += 1;
-                strategyStats.runs += 1;
-                strategyStats.totalMs += runMs;
-                strategyStats.backtestMs += Math.max(0, runMs - signalTimingByRun.totalMs);
-                timings.preparedData += signalTimingByRun.preparedDataMs;
-                timings.signalGeneration += signalTimingByRun.signalMs;
-                timings.backtest += Math.max(0, runMs - signalTimingByRun.totalMs);
-                if (zeroSignals && !signalTimingByRun.observed) {
-                    recordFinderStrategyNoSignals(strategyStats);
-                }
-                const symbolEdgeRatio = requiresCompositeEdgeRatio
-                    ? computeFinderCompositeEdgeRatio(output.result, closedDataBySymbol.get(symbol.symbol) ?? symbol.data)
-                    : undefined;
-                const pairNeutralMetrics = isSyntheticPair
-                    ? buildFinderPairNeutralMetrics(output.result, preResolvedCapital)
-                    : null;
-                let exitAlpha: number | undefined;
-                if (requiresExitAlpha) {
-                    try {
-                        const controlOutput = await executeBacktest({
+                    const output: BacktestExecutorResult = cachedOutput
+                        ? {
+                            result: cachedOutput.result,
+                            signals: cachedOutput.signalCount > 0 ? [CACHED_NONEMPTY_SIGNAL] : [],
+                            engineUsed: cachedOutput.engineUsed,
+                        }
+                        : await executeBacktest({
                             ohlcvData: symbol.data,
                             closedCandleDataOverride: closedDataBySymbol.get(symbol.symbol),
                             interval: input.interval,
@@ -1238,10 +1204,13 @@ export async function runFinderUniverseExecution(
                             capitalSettings: input.capitalSettings,
                             preResolvedSettings,
                             preResolvedCapital,
-                            preGeneratedSignals: output.signals,
                             context: {
                                 blockRange: null,
-                                engineMode: "typescript",
+                                engineMode: requiresExitAlpha ? "typescript" : "auto",
+                                // Thread the server-side Rust preference through. In the
+                                // browser this is undefined (shouldAttemptRust reads the
+                                // DOM); in Node it's the only signal that opts in to
+                                // Rust (the documented Rust-engine trap fix).
                                 useRustEnginePreference: input.useRustEnginePreference,
                                 rustCapabilities: input.rustCapabilities,
                                 nowSec: runNowSec,
@@ -1249,149 +1218,286 @@ export async function runFinderUniverseExecution(
                             backtestRunOptions: {
                                 includeAdvancedAnalytics: false,
                                 includeSharpeRatio: requiresSharpeRatio,
+                                // Universe ranking only consumes the scalar Sharpe value.
+                                // The compact engine can calculate it from an internal
+                                // typed buffer without returning an equity-curve artifact.
                                 omitEquityCurve: true,
                                 skipDrawdown: !requiresDrawdown,
                                 skipResultPostProcessing: true,
-                                forceDisableSignalExits: true,
+                                collectDiagnostics: collectBacktestDiagnostics,
                                 ...(isSyntheticPair ? { useCompactBacktest: false } : {}),
                             },
                         });
-                        const controlPairNeutralMetrics = isSyntheticPair
-                            ? buildFinderPairNeutralMetrics(controlOutput.result, preResolvedCapital)
-                            : null;
-                        exitAlpha = isSyntheticPair
-                            ? pairNeutralMetrics && controlPairNeutralMetrics
-                                ? computeExitAlpha(pairNeutralMetrics, controlPairNeutralMetrics)
-                                : undefined
-                            : computeExitAlpha(output.result, controlOutput.result);
-                    } catch {
-                        // A failed counterfactual is missing, not zero.
+                    if (output.result.diagnostics) {
+                        recordFinderBacktestDiagnostics(strategyStats.backtest, output.result.diagnostics);
+                        recordFinderBacktestDiagnostics(backtestStats, output.result.diagnostics);
+                        backtestRunsUntilDiagnosticSample = UNIVERSE_BACKTEST_DIAGNOSTIC_SAMPLE_INTERVAL - 1;
+                    } else if (output.signals.length > 0) {
+                        recordFinderBacktestRunWithoutDiagnostics(strategyStats.backtest);
+                        recordFinderBacktestRunWithoutDiagnostics(backtestStats);
+                        if (backtestRunsUntilDiagnosticSample > 0) {
+                            backtestRunsUntilDiagnosticSample -= 1;
+                        }
                     }
+                    if (output.engineUsed === "rust") {
+                        rustCompletedRuns += 1;
+                    } else {
+                        typescriptCompletedRuns += 1;
+                        const reasons = typescriptRequirementReasons.length > 0
+                            ? typescriptRequirementReasons
+                            : output.signals.length === 0
+                                ? ["no signals required trade simulation"]
+                                : input.useRustEnginePreference === true
+                                    ? ["Rust backend was unavailable or rejected the result"]
+                                    : ["Rust was not requested"];
+                        for (const reason of reasons) {
+                            typescriptReasonCounts.set(reason, (typescriptReasonCounts.get(reason) ?? 0) + 1);
+                        }
+                    }
+                    zeroSignals = output.signals.length === 0;
+                    const runMs = performance.now() - runStartedAt;
+                    processedRuns += 1;
+                    strategyStats.runs += 1;
+                    strategyStats.totalMs += runMs;
+                    strategyStats.backtestMs += Math.max(0, runMs - signalTimingByRun.totalMs);
+                    timings.preparedData += signalTimingByRun.preparedDataMs;
+                    timings.signalGeneration += signalTimingByRun.signalMs;
+                    timings.backtest += Math.max(0, runMs - signalTimingByRun.totalMs);
+                    if (zeroSignals && !signalTimingByRun.observed) {
+                        recordFinderStrategyNoSignals(strategyStats);
+                    }
+                    const symbolEdgeRatio = requiresCompositeEdgeRatio
+                        ? computeFinderCompositeEdgeRatio(output.result, closedDataBySymbol.get(symbol.symbol) ?? symbol.data)
+                        : undefined;
+                    const pairNeutralMetrics = isSyntheticPair
+                        ? buildFinderPairNeutralMetrics(output.result, preResolvedCapital)
+                        : null;
+                    let exitAlpha: number | undefined;
+                    if (requiresExitAlpha) {
+                        try {
+                            const controlOutput = await executeBacktest({
+                                ohlcvData: symbol.data,
+                                closedCandleDataOverride: closedDataBySymbol.get(symbol.symbol),
+                                interval: input.interval,
+                                primarySymbol: symbol.symbol,
+                                strategyKey: input.selectedStrategy.key,
+                                strategy: preparedStrategy,
+                                strategyParams: entryParams,
+                                backtestSettings,
+                                capitalSettings: input.capitalSettings,
+                                preResolvedSettings,
+                                preResolvedCapital,
+                                preGeneratedSignals: output.signals,
+                                context: {
+                                    blockRange: null,
+                                    engineMode: "typescript",
+                                    useRustEnginePreference: input.useRustEnginePreference,
+                                    rustCapabilities: input.rustCapabilities,
+                                    nowSec: runNowSec,
+                                },
+                                backtestRunOptions: {
+                                    includeAdvancedAnalytics: false,
+                                    includeSharpeRatio: requiresSharpeRatio,
+                                    omitEquityCurve: true,
+                                    skipDrawdown: !requiresDrawdown,
+                                    skipResultPostProcessing: true,
+                                    forceDisableSignalExits: true,
+                                    ...(isSyntheticPair ? { useCompactBacktest: false } : {}),
+                                },
+                            });
+                            const controlPairNeutralMetrics = isSyntheticPair
+                                ? buildFinderPairNeutralMetrics(controlOutput.result, preResolvedCapital)
+                                : null;
+                            exitAlpha = isSyntheticPair
+                                ? pairNeutralMetrics && controlPairNeutralMetrics
+                                    ? computeExitAlpha(pairNeutralMetrics, controlPairNeutralMetrics)
+                                    : undefined
+                                : computeExitAlpha(output.result, controlOutput.result);
+                        } catch {
+                            // A failed counterfactual is missing, not zero.
+                        }
+                    }
+                    const symbolResult = buildSymbolResult(symbol, output.result, {
+                        compositeEdgeRatio: symbolEdgeRatio,
+                        exitAlpha,
+                        // Pair-neutral Sharpe is calculated from completed-trade
+                        // returns. Below the metric's minimum sample count, zero is
+                        // a sentinel rather than an observed Sharpe and must not
+                        // pull the universe median toward a false 0.00.
+                        sharpeRatioAvailable: requiresSharpeRatio
+                            && (!pairNeutralMetrics || pairNeutralMetrics.totalTrades >= SHARPE_MIN_SAMPLES),
+                        drawdownAvailable: requiresDrawdown,
+                        pairNeutralMetrics: pairNeutralMetrics ?? undefined,
+                        metricBasis: pairNeutralMetrics ? FINDER_PAIR_NEUTRAL_METRIC_BASIS : undefined,
+                    });
+                    candidateState.symbolResults.set(symbol.symbol, symbolResult);
+                    accumulatePartialCounts(candidateState.partialCounts, symbolResult);
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    const runMs = performance.now() - runStartedAt;
+                    processedRuns += 1;
+                    failedRuns += 1;
+                    strategyStats.runs += 1;
+                    strategyStats.failedRuns += 1;
+                    strategyStats.totalMs += runMs;
+                    strategyStats.backtestMs += Math.max(0, runMs - signalTimingByRun.totalMs);
+                    timings.preparedData += signalTimingByRun.preparedDataMs;
+                    timings.signalGeneration += signalTimingByRun.signalMs;
+                    timings.backtest += Math.max(0, runMs - signalTimingByRun.totalMs);
+                    recordFinderStrategyFailure(strategyStats, error);
+                    candidateState.symbolResults.set(symbol.symbol, buildRunFailedResult(symbol, message));
                 }
-                const symbolResult = buildSymbolResult(symbol, output.result, {
-                    compositeEdgeRatio: symbolEdgeRatio,
-                    exitAlpha,
-                    // Pair-neutral Sharpe is calculated from completed-trade
-                    // returns. Below the metric's minimum sample count, zero is
-                    // a sentinel rather than an observed Sharpe and must not
-                    // pull the universe median toward a false 0.00.
-                    sharpeRatioAvailable: requiresSharpeRatio
-                        && (!pairNeutralMetrics || pairNeutralMetrics.totalTrades >= SHARPE_MIN_SAMPLES),
-                    drawdownAvailable: requiresDrawdown,
-                    pairNeutralMetrics: pairNeutralMetrics ?? undefined,
-                    metricBasis: pairNeutralMetrics ? FINDER_PAIR_NEUTRAL_METRIC_BASIS : undefined,
-                });
-                symbolResults.set(symbol.symbol, symbolResult);
-                accumulatePartialCounts(partialCounts, symbolResult);
-            } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                const runMs = performance.now() - runStartedAt;
-                processedRuns += 1;
-                failedRuns += 1;
-                strategyStats.runs += 1;
-                strategyStats.failedRuns += 1;
-                strategyStats.totalMs += runMs;
-                strategyStats.backtestMs += Math.max(0, runMs - signalTimingByRun.totalMs);
-                timings.preparedData += signalTimingByRun.preparedDataMs;
-                timings.signalGeneration += signalTimingByRun.signalMs;
-                timings.backtest += Math.max(0, runMs - signalTimingByRun.totalMs);
-                recordFinderStrategyFailure(strategyStats, error);
-                symbolResults.set(symbol.symbol, buildRunFailedResult(symbol, message));
-            }
 
-            if (zeroSignals) {
-                consecutiveZeroSignalSymbols += 1;
-                if (consecutiveZeroSignalSymbols >= UNIVERSE_ZERO_SIGNAL_BAIL_THRESHOLD) {
-                    // The bailout is an early stop like the unreachable-filter
-                    // reasons: the candidate was only partially evaluated, so it
-                    // must NOT continue through candidate construction and
-                    // survivor ranking (permissive universe thresholds would
-                    // otherwise rank it from the symbols seen before the bail).
-                    evaluationStoppedEarly = true;
+                if (zeroSignals) {
+                    candidateState.consecutiveZeroSignalSymbols += 1;
+                    if (candidateState.consecutiveZeroSignalSymbols >= UNIVERSE_ZERO_SIGNAL_BAIL_THRESHOLD) {
+                        // The bailout is an early stop like the unreachable-filter
+                        // reasons: the candidate was only partially evaluated, so it
+                        // must NOT continue through candidate construction and
+                        // survivor ranking (permissive universe thresholds would
+                        // otherwise rank it from the symbols seen before the bail).
+                        candidateState.evaluationStoppedEarly = true;
+                        // Global symbol index so skipped-run accounting matches the
+                        // candidate-outer order regardless of block boundaries.
+                        const remainingSkipped = loadedSymbols.length - symbolIndex - 1;
+                        skippedRuns += remainingSkipped;
+                        recordFinderStrategySkipped(strategyStats, remainingSkipped);
+                        continue;
+                    }
+                } else {
+                    candidateState.consecutiveZeroSignalSymbols = 0;
+                }
+
+                candidateState.remainingSymbols -= 1;
+                candidateState.remainingMaxTrades -= symbol.maxPossibleTrades;
+
+                const earlyStopReason = resolveEarlyStopReason({
+                    counts: candidateState.partialCounts,
+                    remainingSymbols: candidateState.remainingSymbols,
+                    remainingMaxTrades: candidateState.remainingMaxTrades,
+                    universe,
+                });
+                if (earlyStopReason) {
+                    candidateState.evaluationStoppedEarly = true;
+                    candidateState.stoppedReason = earlyStopReason;
                     const remainingSkipped = loadedSymbols.length - symbolIndex - 1;
-                    skippedRuns += remainingSkipped;
-                    recordFinderStrategySkipped(strategyStats, remainingSkipped);
+                    const current = earlyStopCounts.get(earlyStopReason) ?? { candidates: 0, avoidedEvaluations: 0 };
+                    current.candidates += 1;
+                    current.avoidedEvaluations += remainingSkipped;
+                    earlyStopCounts.set(earlyStopReason, current);
+                    continue;
+                }
+
+                await maybeYieldDuringEvaluation();
+            }
+        }
+
+        // ---- Block boundary: candidate completion, then per-block release ----
+        // Completion runs only at the FINAL block boundary: every candidate
+        // still alive here has evaluated all loaded symbols, so
+        // mergedSymbols is built from complete per-candidate symbolResults
+        // exactly like the candidate-inner order. Candidates still alive at
+        // an earlier boundary keep evaluating; if the run is cancelled they
+        // are discarded like the old path's unstarted candidates.
+        if (blockEndIndex >= loadedSymbols.length) {
+            for (let candidateIndex = 0; candidateIndex < candidatePlans.length; candidateIndex += 1) {
+                const candidateState = candidateStates[candidateIndex]!;
+                if (candidateState.evaluationStoppedEarly || candidateState.completed) {
+                    continue;
+                }
+                candidateState.completed = true;
+
+                if (callbacks.isCancelled()) {
                     break;
                 }
-            } else {
-                consecutiveZeroSignalSymbols = 0;
-            }
 
-            remainingSymbols -= 1;
-            remainingMaxTrades -= symbol.maxPossibleTrades;
-
-            const earlyStopReason = resolveEarlyStopReason({
-                counts: partialCounts,
-                remainingSymbols,
-                remainingMaxTrades,
-                universe,
-            });
-            if (earlyStopReason) {
-                evaluationStoppedEarly = true;
-                stoppedReason = earlyStopReason;
-                const remainingSkipped = loadedSymbols.length - symbolIndex - 1;
-                const current = earlyStopCounts.get(earlyStopReason) ?? { candidates: 0, avoidedEvaluations: 0 };
-                current.candidates += 1;
-                current.avoidedEvaluations += remainingSkipped;
-                earlyStopCounts.set(earlyStopReason, current);
-                break;
-            }
-
-            await maybeYieldDuringEvaluation();
-        }
-
-        if (callbacks.isCancelled()) {
-            break;
-        }
-
-        if (evaluationStoppedEarly) {
-            await maybeYieldDuringEvaluation();
-            continue;
-        }
-
-        if (!passesUniverseFiltersFromCounts(partialCounts, universe)) {
-            await maybeYieldDuringEvaluation();
-            continue;
-        }
-
-        const mergedSymbols: FinderUniverseSymbolResult[] = normalizedSymbols
-            .map((symbol) => symbolResults.get(symbol) ?? loadFailures.get(symbol))
-            .filter((entry): entry is FinderUniverseSymbolResult => Boolean(entry));
-
-        const candidate = buildFinderUniverseCandidate({
-            strategyKey: input.selectedStrategy.key,
-            strategyName: input.selectedStrategy.name,
-            params: entryParams,
-            symbols: mergedSymbols,
-            evaluationStoppedEarly,
-            stoppedReason,
-            exitStrategyKey: plan.exitStrategyKey,
-            exitStrategyName: plan.exitStrategyName,
-            exitStrategyParams: plan.exitStrategyParams,
-        });
-
-        if (passesFinderUniverseFilters(candidate, universe)) {
-            const rankingStartedAt = performance.now();
-            offerSurvivor(candidate);
-            addElapsed(timings, "resultRanking", rankingStartedAt);
-            // Throttle the (re-sort + render) callback to a time budget instead
-            // of firing once per surviving candidate. The final
-            // The live view is intentionally bounded; terminal ranking uses
-            // allSurvivors so post-run re-sort can inspect the complete run.
-            if (callbacks.onResultsUpdate) {
-                const now = performance.now();
-                if (now - lastResultsUpdateAt >= UNIVERSE_RESULTS_UPDATE_MIN_MS) {
-                    lastResultsUpdateAt = now;
-                    const uiStartedAt = performance.now();
-                    callbacks.onResultsUpdate(getSortedSurvivors(input.options.topN));
-                    addElapsed(timings, "uiUpdates", uiStartedAt);
+                if (!passesUniverseFiltersFromCounts(candidateState.partialCounts, universe)) {
+                    continue;
                 }
+
+                // With the symbol-outer loop, candidate construction happens when a
+                // candidate COMPLETES (end of its last block) instead of immediately
+                // after its candidate-inner symbol loop. Inputs are identical: every
+                // loaded symbol has an entry in this candidate's symbolResults at
+                // completion (symbols are evaluated in ascending order within and
+                // across blocks), and loadFailures is unchanged, so
+                // buildFinderUniverseCandidate receives the same mergedSymbols.
+                const mergedSymbols: FinderUniverseSymbolResult[] = normalizedSymbols
+                    .map((symbol) => candidateState.symbolResults.get(symbol) ?? loadFailures.get(symbol))
+                    .filter((entry): entry is FinderUniverseSymbolResult => Boolean(entry));
+
+                const candidate = buildFinderUniverseCandidate({
+                    strategyKey: input.selectedStrategy.key,
+                    strategyName: input.selectedStrategy.name,
+                    params: candidateState.entryParams,
+                    symbols: mergedSymbols,
+                    evaluationStoppedEarly: candidateState.evaluationStoppedEarly,
+                    stoppedReason: candidateState.stoppedReason,
+                    exitStrategyKey: candidateState.plan.exitStrategyKey,
+                    exitStrategyName: candidateState.plan.exitStrategyName,
+                    exitStrategyParams: candidateState.plan.exitStrategyParams,
+                });
+
+                if (passesFinderUniverseFilters(candidate, universe)) {
+                    const rankingStartedAt = performance.now();
+                    offerSurvivor(candidate);
+                    addElapsed(timings, "resultRanking", rankingStartedAt);
+                    // Throttle the (re-sort + render) callback to a time budget instead
+                    // of firing once per surviving candidate. The final
+                    // The live view is intentionally bounded; terminal ranking uses
+                    // allSurvivors so post-run re-sort can inspect the complete run.
+                    // NOTE: with symbol-outer blocks this fires when a candidate
+                    // completes at a block boundary, so live streaming granularity is
+                    // per block; the terminal ranking is unchanged.
+                    if (callbacks.onResultsUpdate) {
+                        const now = performance.now();
+                        if (now - lastResultsUpdateAt >= UNIVERSE_RESULTS_UPDATE_MIN_MS) {
+                            lastResultsUpdateAt = now;
+                            const uiStartedAt = performance.now();
+                            callbacks.onResultsUpdate(getSortedSurvivors(input.options.topN));
+                            addElapsed(timings, "uiUpdates", uiStartedAt);
+                        }
+                    }
+                }
+
+                await maybeYieldDuringEvaluation();
             }
+
         }
 
-        await maybeYieldDuringEvaluation();
+        // ---- Per-block release ----
+        // universeBatchOutputs entries are only read by the candidate whose
+        // index they are keyed under, and that candidate has consumed every
+        // symbol of this block above, so the per-symbol entries can go now.
+        universeBatchOutputs.forEach((outputs) => {
+            for (let symbolIndex = blockStartIndex; symbolIndex < blockEndIndex; symbolIndex += 1) {
+                outputs.delete(loadedSymbols[symbolIndex]!.symbol);
+            }
+        });
+        const releasedSymbols: string[] = [];
+        for (let symbolIndex = blockStartIndex; symbolIndex < blockEndIndex; symbolIndex += 1) {
+            const sym = loadedSymbols[symbolIndex]!;
+            releasedSymbols.push(sym.symbol);
+            sym.data = [] as OHLCVData[];
+            closedDataBySymbol.delete(sym.symbol);
+            // The per-run load cache retains resolved dataset promises, so a
+            // released symbol's raw arrays would otherwise stay resident for
+            // the rest of the run behind the cache.
+            // Drop this run's load-phase dedup entry: after loading
+            // completes nothing reads loadCache again, so the entry only
+            // pins the resolved dataset. Delete WITHOUT truncating - the
+            // arrays are caller-owned (loadDataset returns the job-level
+            // cached arrays).
+            loadCache.delete(`${sym.symbol}|${input.interval}`);
+        }
+        // Observation seam for tests (and ops): proves the block boundary
+        // emptied exactly this block's datasets while later blocks are retained.
+        debugLogger.event("finder.universe.symbol_block_released", {
+            blockStartIndex,
+            released: releasedSymbols,
+            retained: loadedSymbols.reduce((count, item) => count + (item.data.length > 0 ? 1 : 0), 0),
+        });
     }
-
     // All candidate plans have finished consuming per-symbol OHLCV data.
     universeBatchOutputs.clear();
     // Release the loaded datasets and the prepared closed-candle map so the
