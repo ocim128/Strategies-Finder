@@ -197,9 +197,8 @@ function findCandleIndexByTime(candles: readonly OHLCVData[], time: Time | null)
 }
 
 function resolveBaseOnlyOosEntryPrice(args: {
-    fullClosed: readonly OHLCVData[];
     baseCandlesByTime: ReadonlyMap<number, OHLCVData>;
-    latestSignalTime: Time | null;
+    boundaryTime: Time | null;
     fillTiming: "signal_close" | "next_open" | "next_close";
     firstHiddenTime: Time | null;
 }): number {
@@ -212,14 +211,8 @@ function resolveBaseOnlyOosEntryPrice(args: {
             ? price
             : Number.NaN;
     };
-    const signalIndex = findCandleIndexByTime(args.fullClosed, args.latestSignalTime);
-    if (signalIndex >= 0) {
-        const fillIndex = signalIndex + (args.fillTiming === "signal_close" ? 0 : 1);
-        const fillPrice = resolvePrice(args.fullClosed[fillIndex]?.time ?? null);
-        if (Number.isFinite(fillPrice)) return fillPrice;
-    }
     return args.fillTiming === "signal_close"
-        ? Number.NaN
+        ? resolvePrice(args.boundaryTime)
         : resolvePrice(args.firstHiddenTime);
 }
 
@@ -1917,25 +1910,24 @@ async function searchOneAsset(args: {
     if (fixedOosBars.length > 0 && oosMeasurementMode === "fixed_horizon") {
         const winnerFresh = freshEvaluations[winnerIndex];
         const firstHiddenBar = fixedOosBars[0];
-        const freshEntryPrice = winnerFresh?.freshEntryPrice ?? Number.NaN;
+        const boundaryCandle = visibleValidationData[visibleValidationData.length - 1];
         const baseOnlyCandlesByTime = oosHorizonBasis === "base_only"
             ? asset.oosBaseCandlesByTime
             : undefined;
         const entryPrice = baseOnlyCandlesByTime && winnerFresh
             ? resolveBaseOnlyOosEntryPrice({
-                fullClosed,
                 baseCandlesByTime: baseOnlyCandlesByTime,
-                latestSignalTime: winnerFresh.latestSignalTime,
+                boundaryTime: boundaryCandle?.time ?? null,
                 fillTiming: winnerFresh.fillTiming,
                 firstHiddenTime: firstHiddenBar?.time ?? null,
             })
-            : input.settings.executionModel === "signal_close"
-                ? winnerFresh?.latestSignalPrice ?? Number.NaN
-                : Number.isFinite(freshEntryPrice)
-                    ? freshEntryPrice
-                    : input.settings.executionModel === "next_open"
-                        ? firstHiddenBar?.open ?? Number.NaN
-                        : firstHiddenBar?.close ?? Number.NaN;
+            // Selection has observed the boundary close. Never backdate this
+            // measurement to a fresh signal's earlier visible-bar fill.
+            : executionModel === "signal_close"
+                ? boundaryCandle?.close ?? Number.NaN
+                : executionModel === "next_open"
+                    ? firstHiddenBar?.open ?? Number.NaN
+                    : firstHiddenBar?.close ?? Number.NaN;
         if (winnerFresh?.freshStatus === "fresh"
             && winnerCandidate
             && winnerFresh.direction

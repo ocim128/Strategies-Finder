@@ -16,6 +16,25 @@ judge, or promote a sort after it has been implemented. Every implemented sort m
 choose candidates only from historical or otherwise available-at-ranking
 fields; forward evaluation results must never be used as sort inputs.
 
+Fixed-horizon OOS selection occurs at the last visible candle's close. The
+measurement entry is that boundary close for `signal_close`, the first hidden
+open for `next_open`, or the first hidden close for `next_close`. A fresh signal
+whose modeled fill was on the visible boundary must not backdate the measurement
+entry. The same rule applies to synthetic BASE-only prices. Horizon N still
+targets hidden candle N, so `next_close` horizon 1 is zero. These are price-return
+diagnostics; they do not replay confirmation, stop loss, take profit, or costs.
+
+Historical ranking excludes trades exiting at the selection window endpoint,
+including forced end-of-data liquidations. Compact execution must calculate
+that adjustment even without retained trade arrays and when an entry time
+filter disables the optimized engine path. The explicit Include Open Positions
+(EOD) mode remains a separate visible-boundary mark-to-market ranking mode.
+
+Archives written before the September 26, 2026 time-filter correction can contain
+unadjusted endpoint metrics and pre-selection gains in fixed-horizon returns.
+Analyze corrected runs separately using `--batch-run-id`; do not pool them with
+legacy runs. See [the audit and rerun protocol](asset-opportunity-time-filter-audit.md).
+
 The companion idea-generation prompt is
 [`archive/prompt-finder-asset-opportunity-resort.txt`](../archive/prompt-finder-asset-opportunity-resort.txt).
 It is deliberately strict: a proposed metric must be a real post-run sort and

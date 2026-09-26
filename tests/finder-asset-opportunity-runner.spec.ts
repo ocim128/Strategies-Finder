@@ -797,12 +797,14 @@ describe("Asset Opportunity runner", () => {
         expect(output.outcomes[0]!.diagnostics?.oosBars).to.equal(4);
     });
 
-    it("uses the actual visible-boundary fill for fixed-horizon next-bar OOS", async () => {
-        const closes = [100, 101, 102, 103, 104, 105, 106, 120, 121];
-        const candles = makeCandles(closes).map((candle, index) => ({
-            ...candle,
-            open: index === 7 ? 200 : candle.open,
-        }));
+    it("does not credit a visible-boundary fill before fixed-horizon next-bar selection", async () => {
+        // Ranking has already observed the boundary rally from 106 to 150.
+        // A new selection buys the hidden open at 200 and loses at its 120 close.
+        const closes = [100, 101, 102, 103, 104, 105, 150, 120, 121];
+        const candles = makeCandles(closes).map((candle, index) => {
+            const open = index === 6 ? 106 : index === 7 ? 200 : candle.open;
+            return { ...candle, open, high: Math.max(candle.high, open + 1), low: Math.min(candle.low, open - 1) };
+        });
         const strategy: Strategy = {
             name: "Fixed Horizon Boundary Fill",
             description: "signals one bar before the visible boundary",
@@ -816,7 +818,11 @@ describe("Asset Opportunity runner", () => {
             },
         };
 
-        for (const executionModel of ["next_open", "next_close"] as const) {
+        const cases = (["next_open", "next_close"] as const).flatMap(executionModel =>
+            (["long", "short"] as const).flatMap(tradeDirection =>
+                (["pair", "base_only"] as const).map(basis => ({ executionModel, tradeDirection, basis }))));
+        for (const { executionModel, tradeDirection, basis } of cases) {
+            const baseCandles = candles.map(candle => ({ ...candle, open: 300, close: 150 }));
             const output = await runAssetOpportunitySearch(makeInput({
                 options: makeOptions({
                     assetOpportunity: {
@@ -825,27 +831,35 @@ describe("Asset Opportunity runner", () => {
                         minFreshSupport: 1,
                         oosIgnoreLastBars: 2,
                         oosHorizons: [1, 3, 5],
+                        oosHorizonBasis: basis,
                     },
                 }),
-                settings: { ...settings, executionModel, tradeDirection: "long" },
+                settings: { ...settings, executionModel, tradeDirection },
                 selectedStrategy: {
                     key: "fixed_boundary_fill",
                     name: strategy.name,
-                    strategy,
+                    strategy: { ...strategy, execute: data => strategy.execute(data, {}).map(signal => ({
+                        ...signal, type: tradeDirection === "short" ? "sell" as const : "buy" as const,
+                    })) },
                 },
-                assets: [{ symbol: `FIXED_BOUNDARY_${executionModel}`, data: candles }],
+                assets: [{
+                    symbol: `FIXED_BOUNDARY_${executionModel}`, data: candles,
+                    ...(basis === "base_only" ? { oosBaseCandlesByTime: new Map(baseCandles.map(bar => [Number(bar.time), bar])) } : {}),
+                }],
                 runIsSearch: makeRetainingStubIsSearch(),
             }), makeCallbacks());
 
             expect(output.results).to.have.length(1);
             expect(output.results[0]!.signalAgeBars).to.equal(1);
-            expect(output.results[0]!.oosHorizonMetrics?.horizons[0]).to.deep.equal({
-                bars: 1,
-                pnlPercent: ((120 - 106) / 106) * 100,
-                averagePnlPercent: ((120 - 106) / 106) * 100,
-                winRatePercent: 100,
-                sampleSize: 1,
-            });
+            const expectedPnl = executionModel === "next_close" ? 0
+                : basis === "base_only" ? -50 : tradeDirection === "short" ? 40 : -40;
+            expect(output.results[0]!.oosHorizonMetrics?.basis).to.equal(basis);
+            const horizon = output.results[0]!.oosHorizonMetrics!.horizons[0]!;
+            expect(horizon.bars).to.equal(1);
+            expect(horizon.pnlPercent).to.be.closeTo(expectedPnl, 1e-9);
+            expect(horizon.averagePnlPercent).to.be.closeTo(expectedPnl, 1e-9);
+            expect(horizon.winRatePercent).to.equal(expectedPnl > 0 ? 100 : 0);
+            expect(horizon.sampleSize).to.equal(1);
         }
     });
 

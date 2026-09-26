@@ -665,6 +665,31 @@ function createEndpointSelectionAccumulator(): EndpointSelectionAccumulator {
     };
 }
 
+function recordEndpointSelectionExit(
+    accumulator: EndpointSelectionAccumulator,
+    lastDataTime: Time | null,
+    exitTime: Time,
+    details: ReturnType<typeof calculateTradeExitDetails>,
+): void {
+    if (lastDataTime !== null && compareTime(exitTime, lastDataTime) >= 0) {
+        accumulator.removedTrades += 1;
+        return;
+    }
+    accumulator.totalTrades += 1;
+    accumulator.netProfit += details.totalPnl;
+    accumulator.pnlPercent.push(details.pnlPercent);
+    if (details.totalPnl > 0) {
+        accumulator.winningTrades += 1;
+        accumulator.totalProfit += details.totalPnl;
+    } else {
+        accumulator.totalLoss += Math.abs(details.totalPnl);
+    }
+    if (Number.isFinite(details.totalPnl)) {
+        accumulator.finitePnlExitTimes.push(exitTime);
+        accumulator.finitePnl.push(details.totalPnl);
+    }
+}
+
 function buildEndpointSelection(
     raw: BacktestResult,
     accumulator: EndpointSelectionAccumulator,
@@ -853,25 +878,7 @@ function runSinglePositionFinderFastPath(args: {
             });
         }
         if (endpointAccumulator) {
-            const beforeEndpoint = endpointLastDataTime === null
-                || compareTime(candle.time, endpointLastDataTime) < 0;
-            if (beforeEndpoint) {
-                endpointAccumulator.totalTrades += 1;
-                endpointAccumulator.netProfit += d.totalPnl;
-                endpointAccumulator.pnlPercent.push(d.pnlPercent);
-                if (d.totalPnl > 0) {
-                    endpointAccumulator.winningTrades += 1;
-                    endpointAccumulator.totalProfit += d.totalPnl;
-                } else {
-                    endpointAccumulator.totalLoss += Math.abs(d.totalPnl);
-                }
-                if (Number.isFinite(d.totalPnl)) {
-                    endpointAccumulator.finitePnlExitTimes.push(candle.time);
-                    endpointAccumulator.finitePnl.push(d.totalPnl);
-                }
-            } else {
-                endpointAccumulator.removedTrades += 1;
-            }
+            recordEndpointSelectionExit(endpointAccumulator, endpointLastDataTime, candle.time, d);
         }
         diagnostics && diagnostics.counts.tradesClosed++;
         pos.realizedPnl += d.totalPnl;
@@ -1844,6 +1851,10 @@ export function runBacktestCompact(
     let signalIdx = 0;
     let signalExitReentryCooldownUntilBarIndex = -1;
     const compactEquity = shouldTrackEquity ? (equityOut ?? new Float64Array(data.length)) : undefined;
+    // Finder needs endpoint exclusion even when this path retains no trades.
+    const endpointAccumulator = options?.endpointSelectionLastDataTime !== undefined
+        ? createEndpointSelectionAccumulator()
+        : undefined;
 
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
@@ -1951,6 +1962,14 @@ export function runBacktestCompact(
         exitReason: Trade['exitReason'] = 'signal',
     ) => {
         const details = calculateTradeExitDetails(pos, exitPrice, exitSize, commissionRate);
+        if (endpointAccumulator) {
+            recordEndpointSelectionExit(
+                endpointAccumulator,
+                options?.endpointSelectionLastDataTime ?? null,
+                data[currentBarIndex]?.time ?? pos.entryTime,
+                details,
+            );
+        }
         capital += details.rawPnl - details.commission;
         totalTrades++;
         if (details.totalPnl > 0) { winningTrades++; totalProfit += details.totalPnl; } else { totalLoss += Math.abs(details.totalPnl); }
@@ -2391,6 +2410,14 @@ export function runBacktestCompact(
     ) as BacktestResult;
     if (options?.requireTradeHistory === true) {
         result.trades = trades;
+    }
+    if (endpointAccumulator) {
+        (result as BacktestResultWithEndpointSelection).endpointSelection = buildEndpointSelection(
+            result,
+            endpointAccumulator,
+            options?.endpointSelectionInitialCapital ?? initialCapital,
+            true,
+        );
     }
     diagnostics && (diagnostics.counts.tradesClosed = totalTrades);
     addBacktestDiagnosticElapsed(diagnostics, "metrics", metricsStartedAt);

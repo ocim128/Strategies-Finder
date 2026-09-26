@@ -2,6 +2,39 @@ import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { OHLCVData, Signal, Time } from '../lib/strategies/index';
 import { runBacktest, runBacktestCompact } from '../lib/strategies/index';
+import { buildSelectionResult } from '../lib/finder/endpoint';
+
+describe('Finder endpoint selection across daily entry-filter paths', () => {
+    for (const executionModel of ['signal_close', 'next_open', 'next_close'] as const) {
+        for (const tradeDirection of ['long', 'short', 'both'] as const) {
+            it(`excludes terminal gains without trade history for ${tradeDirection}/${executionModel}`, () => {
+                const data = makeData(12).map((bar, index) => ({ ...bar, time: (1700000000 + index * 86400) as Time }));
+                const signals: Signal[] = [0, 3, 6].map((index, order) => ({
+                    time: data[index].time,
+                    type: (order === 1) === (tradeDirection !== 'short') ? 'sell' : 'buy',
+                    price: data[index].close,
+                }));
+                const lastDataTime = data[data.length - 1].time;
+                const settings = { executionModel, tradeDirection, entryTimeFilter: 'day_close' as const };
+                const full = runBacktest(data, signals, 10000, 100, 0, settings);
+                const expected = buildSelectionResult(full, lastDataTime, 10000);
+                expect(expected.removedTrades).to.be.greaterThan(0);
+                for (const entryTimeFilterEnabled of [false, true]) {
+                    const result = runBacktestCompact(data, signals, 10000, 100, 0,
+                        { ...settings, entryTimeFilterEnabled }, undefined, undefined, {
+                            omitEquityCurve: true, includeSharpeRatio: false, requireTradeHistory: false,
+                            endpointSelectionLastDataTime: lastDataTime, endpointSelectionInitialCapital: 10000,
+                        });
+                    expect(result.trades).to.deep.equal([]);
+                    expect(result.endpointSelection?.removedTrades).to.equal(expected.removedTrades);
+                    for (const key of ['netProfit', 'totalTrades', 'winningTrades', 'losingTrades', 'avgWin', 'avgLoss', 'expectancy', 'sharpeRatio'] as const) {
+                        expect(result.endpointSelection!.result[key], key).to.be.closeTo(expected.result[key], 1e-9);
+                    }
+                }
+            });
+        }
+    }
+});
 
 // Compact vs full parity tests. The two engine paths deliberately diverge on
 // what they materialize (compact tracks aggregate metrics; full builds Trade[]
