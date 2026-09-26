@@ -342,3 +342,56 @@ describe("Finder fresh-entry detector", () => {
         expect(detected.freshStatus).to.equal("fresh");
     });
 });
+
+describe("resolveSignalBarIndex entry-bar lookup", () => {
+    it("resolves the fill bar identically for boundary, stale, and duplicate-time entries", () => {
+        // Boundary: entry exactly on the latest candle, next_open shift 1
+        // back → signal age 1 (active).
+        const data = candles(3);
+        const onLatest = detectFreshEntry({
+            result: resultWith([
+                trade({ type: "long", entryIndex: 2, exitReason: "end_of_data", entryCandles: data }),
+            ]),
+            candles: data,
+            settings: NEXT_OPEN_SETTINGS,
+        });
+        expect(onLatest.signalAgeBars).to.equal(1);
+        expect(onLatest.freshStatus).to.equal("active");
+
+        // Stale: entry time older than every candle → no fill bar → flat
+        // with no resolvable signal time.
+        const stale = detectFreshEntry({
+            result: resultWith([
+                {
+                    ...trade({ type: "long", entryIndex: 0, exitReason: "signal", entryCandles: data }),
+                    entryTime: 1_699_999_900 as Time,
+                },
+            ]),
+            candles: data,
+            settings: SIGNAL_CLOSE_SETTINGS,
+        });
+        expect(stale.freshStatus).to.equal("flat");
+        expect(stale.latestSignalTime).to.equal(null);
+
+        // Duplicate timestamps equal to the entry time resolve to the
+        // RIGHTMOST duplicate (the previous backward walk kept the last
+        // match): fill bar index 1 of 3 → signal age 1.
+        const dupData = [
+            { ...candle(0, 100), time: 1_700_000_000 as Time },
+            { ...candle(1, 101), time: 1_700_000_000 as Time },
+            { ...candle(2, 102), time: 1_700_000_060 as Time },
+        ];
+        const dup = detectFreshEntry({
+            result: resultWith([
+                {
+                    ...trade({ type: "long", entryIndex: 1, exitReason: "end_of_data", entryCandles: dupData }),
+                    entryTime: 1_700_000_000 as Time,
+                },
+            ]),
+            candles: dupData,
+            settings: SIGNAL_CLOSE_SETTINGS,
+        });
+        expect(dup.signalAgeBars).to.equal(1);
+        expect(dup.freshStatus).to.equal("active");
+    });
+});

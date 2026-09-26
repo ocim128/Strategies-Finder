@@ -266,6 +266,26 @@ export function calculateFinderAssetOosSignalMetrics(args: {
 }
 
 /**
+ * First index whose candle time equals `time` (exact match on the time-sorted
+ * ascending candle array), or -1 when absent/unparseable. Binary-search
+ * replacement for the per-call `findIndex` full scans in the boundary metrics
+ * below; identical first-match semantics on duplicate timestamps.
+ */
+function findCandleIndexByUnixTime(candles: readonly OHLCVData[], time: number | null): number {
+    if (time === null) return -1;
+    let low = 0;
+    let high = candles.length;
+    while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        const middleTime = parseTimeToUnixSeconds(candles[middle]!.time);
+        if (middleTime === null) return -1;
+        if (middleTime < time) low = middle + 1;
+        else high = middle;
+    }
+    return low < candles.length && parseTimeToUnixSeconds(candles[low]!.time) === time ? low : -1;
+}
+
+/**
  * Extract the first engine-recorded exit for the boundary entry. The caller
  * replays the complete timeline; this leaf only matches the entry and turns
  * its first trade event into a scalar OOS observation.
@@ -299,13 +319,9 @@ export function calculateFinderAssetOosNextExitMetrics(args: {
         };
     }
 
-    const entryIndex = boundaryEntrySeconds === null
-        ? -1
-        : args.candles.findIndex((candle) => parseTimeToUnixSeconds(candle.time) === boundaryEntrySeconds);
+    const entryIndex = findCandleIndexByUnixTime(args.candles, boundaryEntrySeconds);
     const exitSeconds = parseTimeToUnixSeconds(trade.exitTime);
-    const exitIndex = exitSeconds === null
-        ? -1
-        : args.candles.findIndex((candle) => parseTimeToUnixSeconds(candle.time) === exitSeconds);
+    const exitIndex = findCandleIndexByUnixTime(args.candles, exitSeconds);
     const barsHeld = entryIndex >= 0 && exitIndex >= entryIndex
         ? exitIndex - entryIndex
         : null;

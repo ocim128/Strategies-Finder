@@ -21,8 +21,10 @@ import {
     splitApplicationCandle,
     deriveAssetSeed,
     assertAssetOpportunityStrategySelection,
+    deriveAssetOpportunitySearchWindows,
     type AssetOpportunityRunInput,
     type AssetIsSearch,
+    type AssetOpportunitySearchDiagnostics,
 } from "../lib/finder/finder-asset-opportunity-runner";
 import type { FinderSelectedStrategy } from "../lib/finder/finder-runner";
 import type { FinderOptions, FinderResult, FinderAssetOpportunityOptions } from "../lib/types/finder";
@@ -2041,5 +2043,73 @@ describe("Asset Opportunity evaluation window (evalLastBars)", () => {
         } finally {
             rustEngine.runBacktestWithStatus = original;
         }
+    });
+});
+
+describe("Asset Opportunity precomputed search windows", () => {
+    it("hoists the per-(asset, holdout) windows without changing results or diagnostics", async () => {
+        const strategy: Strategy = {
+            name: "Precomputed Window Probe",
+            description: "signals one bar before the visible boundary",
+            defaultParams: {},
+            paramLabels: {},
+            execute(data) {
+                const signalCandle = data[data.length - 2];
+                return signalCandle
+                    ? [{ time: signalCandle.time, type: "buy" as const, price: signalCandle.close }]
+                    : [];
+            },
+        };
+        const candles = makeCandles([100, 101, 102, 103, 100, 110, 90, 95, 96]);
+        const options = makeOptions({
+            assetOpportunity: {
+                symbols: ["PRECOMP"],
+                candidatePoolSize: 1,
+                minFreshSupport: 1,
+                oosIgnoreLastBars: 4,
+                oosHorizons: [1, 3, 5],
+            },
+        });
+        let searched: OHLCVData[] = [];
+        const makeRun = (assetOverrides: Partial<NonNullable<AssetOpportunityRunInput["assets"]>[number]> = {}) =>
+            runAssetOpportunitySearch(makeInput({
+                options,
+                settings: { ...settings, executionModel: "next_open", tradeDirection: "long" },
+                selectedStrategy: { key: "precomputed_windows", name: strategy.name, strategy },
+                assets: [{ symbol: "PRECOMP", data: candles, ...assetOverrides }],
+                runIsSearch: async (args) => {
+                    searched = args.ohlcvData;
+                    return makeRetainingStubIsSearch()(args);
+                },
+            }), makeCallbacks());
+
+        const baseline = await makeRun();
+        const precomputed = deriveAssetOpportunitySearchWindows({
+            fullClosed: candles,
+            interval: "1h",
+            settings: { ...settings, executionModel: "next_open", tradeDirection: "long" },
+            options,
+        });
+        const hoisted = await makeRun({
+            precomputedHistorical: precomputed.historical,
+            precomputedVisibleValidationData: precomputed.visibleValidationData,
+            precomputedFixedOosBars: precomputed.fixedOosBars,
+            precomputedSlicedHistorical: precomputed.slicedHistorical,
+        });
+
+        expect(hoisted.results).to.deep.equal(baseline.results);
+        expect(hoisted.outcomes.map((outcome) => outcome.kind)).to.deep.equal(
+            baseline.outcomes.map((outcome) => outcome.kind),
+        );
+        // Timings are wall-clock; every other diagnostic must match exactly.
+        const strip = (diagnostics: AssetOpportunitySearchDiagnostics | undefined) => {
+            if (!diagnostics) return null;
+            const { timingsMs, ...rest } = diagnostics;
+            void timingsMs;
+            return rest;
+        };
+        expect(strip(hoisted.outcomes[0]!.diagnostics)).to.deep.equal(strip(baseline.outcomes[0]!.diagnostics));
+        expect(hoisted.results[0]!.freshStatus).to.equal("fresh");
+        expect(searched.map((bar) => bar.close)).to.deep.equal([100, 101, 102, 103, 100]);
     });
 });

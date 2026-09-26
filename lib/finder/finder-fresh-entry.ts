@@ -76,15 +76,33 @@ function resolveSignalBarIndex(
     candles: OHLCVData[],
     executionShift: number,
 ): number {
-    // Find the entry fill bar: last bar whose time <= entryTimeSec.
-    let entryBarIndex = -1;
-    for (let i = candles.length - 1; i >= 0; i--) {
-        const barSec = parseTimeToUnixSeconds(candles[i]!.time);
-        if (barSec !== null && barSec <= entryTimeSec) {
-            entryBarIndex = i;
-            break;
+    // Find the entry fill bar: last bar whose time <= entryTimeSec. Candle
+    // times are non-decreasing, so the upper-bound binary search returns the
+    // rightmost index satisfying the predicate — identical to the previous
+    // backward walk, including duplicate timestamps equal to the target.
+    let low = 0;
+    let high = candles.length;
+    while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        const barSec = parseTimeToUnixSeconds(candles[middle]!.time);
+        // Unparseable timestamps make the array unsearchable; fall back to the
+        // original walk (which skips nulls) instead of returning a wrong bar.
+        if (barSec === null) {
+            let walked = -1;
+            for (let i = candles.length - 1; i >= 0; i--) {
+                const walkSec = parseTimeToUnixSeconds(candles[i]!.time);
+                if (walkSec !== null && walkSec <= entryTimeSec) {
+                    walked = i;
+                    break;
+                }
+            }
+            const fallbackSignalIndex = walked - executionShift;
+            return fallbackSignalIndex >= 0 ? fallbackSignalIndex : -1;
         }
+        if (barSec <= entryTimeSec) low = middle + 1;
+        else high = middle;
     }
+    const entryBarIndex = low - 1;
     if (entryBarIndex < 0) return -1;
     const signalBarIndex = entryBarIndex - executionShift;
     return signalBarIndex >= 0 ? signalBarIndex : -1;

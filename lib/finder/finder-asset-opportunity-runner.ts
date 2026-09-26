@@ -498,6 +498,30 @@ export interface AssetOpportunityAssetInput {
      * builds it from `data` when absent.
      */
     precomputedFullClosed?: OHLCVData[];
+    /**
+     * Optional caller-precomputed search windows. Each must be exactly the
+     * array `deriveAssetOpportunitySearchWindows` derives from
+     * `precomputedFullClosed` (or `data`) with the SAME `options`/`settings`
+     * the runner receives:
+     * - `precomputedHistorical`: `splitApplicationCandle(fullClosed).historical`
+     *   (closed set minus the reserved application candle);
+     * - `precomputedVisibleValidationData`: `fullClosed.slice(0, -oosIgnoreLastBars)`
+     *   when the normalized `oosIgnoreLastBars` is > 0, otherwise `fullClosed`;
+     * - `precomputedFixedOosBars`: `fullClosed.slice(visibleValidationData.length)`
+     *   when `oosIgnoreLastBars` is > 0, otherwise `[]`;
+     * - `precomputedSlicedHistorical`: `resolveSlicedHistoricalWindow` applied
+     *   to the in-sample window (see `deriveAssetOpportunitySearchWindows`);
+     * - `precomputedIncludeApplicationCandleInSearch`: the helper's
+     *   `includeApplicationCandleInSearch` scalar.
+     * Consumers treat every supplied array as read-only. When ALL fields are
+     * supplied the runner skips the derivation entirely; omitted fields are
+     * derived from `data`/`precomputedFullClosed` as before.
+     */
+    precomputedHistorical?: OHLCVData[];
+    precomputedVisibleValidationData?: OHLCVData[];
+    precomputedFixedOosBars?: OHLCVData[];
+    precomputedSlicedHistorical?: OHLCVData[];
+    precomputedIncludeApplicationCandleInSearch?: boolean;
     /** BASE candles keyed by normalized timestamp for synthetic-pair long-only OOS metrics. */
     oosBaseCandlesByTime?: ReadonlyMap<number, OHLCVData>;
 }
@@ -679,6 +703,80 @@ export function resolveSlicedHistoricalWindow(
         ? Math.max(bounds.start, bounds.end - evalLastBars)
         : bounds.start;
     return historical.slice(start, bounds.end);
+}
+
+/**
+ * Derive the strategy-independent search windows for one asset from its
+ * execution-aware closed view, verbatim from `searchOneAsset`'s derivation
+ * chain (same order and conditions, including the normalize helpers and
+ * `resolveFinderAssetEvalWindowBars`). Pure: no diagnostics writes, no side
+ * effects — safe to call before the runner's failure guards and once per
+ * (asset, holdout) from multi-strategy callers, which thread the fields back
+ * through the `AssetOpportunityAssetInput` `precomputed*` options. The
+ * runner's "insufficient closed candles", "no historical candles", and
+ * "not enough visible candles before the OOS holdout" guards keep their
+ * precedence; this helper returns short arrays instead of throwing on those
+ * shapes.
+ */
+export function deriveAssetOpportunitySearchWindows(args: {
+    fullClosed: OHLCVData[];
+    interval: string;
+    settings: BacktestSettings;
+    options: FinderOptions;
+}): {
+    historical: OHLCVData[];
+    visibleValidationData: OHLCVData[];
+    fixedOosBars: OHLCVData[];
+    inSampleHistorical: OHLCVData[];
+    slicedHistorical: OHLCVData[];
+    includeApplicationCandleInSearch: boolean;
+} {
+    const { fullClosed } = args;
+    const { historical } = splitApplicationCandle(fullClosed);
+    const oosIgnoreLastBars = normalizeFinderAssetOosIgnoreLastBars(
+        args.options.assetOpportunity?.oosIgnoreLastBars,
+    );
+    const oosMeasurementMode = normalizeFinderAssetOosMeasurementMode(
+        args.options.assetOpportunity?.oosMeasurementMode,
+    );
+    const evalLastBars = resolveFinderAssetEvalWindowBars(
+        args.options.assetOpportunity?.evalLastBars,
+        oosIgnoreLastBars,
+        args.options.assetOpportunity?.evalWindowMode,
+    );
+    const visibleValidationData = oosIgnoreLastBars > 0
+        ? fullClosed.slice(0, -oosIgnoreLastBars)
+        : fullClosed;
+    // With no fixed holdout, no data slice, and no evaluation window, the
+    // in-sample search includes the reserved application candle so the
+    // fresh-entry check can reuse the candidate run's retained signals
+    // instead of re-executing every top-K candidate on the same bars (an
+    // evalLastBars cap must NOT include it: the trailing window would
+    // re-capture the application candle into the search window).
+    const executionModel = args.settings.executionModel ?? "signal_close";
+    const canReuseIsSignalsForFreshModel = executionModel !== "signal_close"
+        && oosMeasurementMode !== "next_exit";
+    const includeApplicationCandleInSearch = canReuseIsSignalsForFreshModel
+        && oosIgnoreLastBars === 0
+        && evalLastBars === 0
+        && (args.options.dataSlice ?? "all") === "all";
+    const inSampleHistorical = oosIgnoreLastBars > 0
+        ? visibleValidationData
+        : includeApplicationCandleInSearch
+            ? fullClosed
+            : historical;
+    const fixedOosBars = oosIgnoreLastBars > 0
+        ? fullClosed.slice(visibleValidationData.length)
+        : [];
+    const slicedHistorical = resolveSlicedHistoricalWindow(inSampleHistorical, args.options, evalLastBars);
+    return {
+        historical,
+        visibleValidationData,
+        fixedOosBars,
+        inSampleHistorical,
+        slicedHistorical,
+        includeApplicationCandleInSearch,
+    };
 }
 
 /**
@@ -1023,7 +1121,24 @@ async function searchOneAsset(args: {
         return finish({ kind: "failed", symbol, reason: "insufficient closed candles" });
     }
 
-    const { historical } = splitApplicationCandle(fullClosed);
+    // One derivation per (asset, strategy) pass — skipped entirely when the
+    // multi-strategy iteration caller precomputed every window once per
+    // (asset, holdout) and threaded them through the `asset.precomputed*`
+    // fields below (that is the point of the hoist).
+    const allWindowsPrecomputed = asset.precomputedHistorical !== undefined
+        && asset.precomputedVisibleValidationData !== undefined
+        && asset.precomputedFixedOosBars !== undefined
+        && asset.precomputedSlicedHistorical !== undefined
+        && asset.precomputedIncludeApplicationCandleInSearch !== undefined;
+    const windows = allWindowsPrecomputed
+        ? null
+        : deriveAssetOpportunitySearchWindows({
+            fullClosed,
+            interval: input.interval,
+            settings: input.settings,
+            options: input.options,
+        });
+    const historical = asset.precomputedHistorical ?? windows!.historical;
     diagnostics.historicalBars = historical.length;
     if (historical.length === 0) {
         return finish({ kind: "failed", symbol, reason: "no historical candles after reserving application candle" });
@@ -1053,12 +1168,8 @@ async function searchOneAsset(args: {
             reason: "not enough visible candles before the OOS holdout",
         });
     }
-    // In validation mode the visible chart ends at the signal boundary. The
-    // final N candles are hidden entirely, including the current/latest bar;
-    // the candidate search and boundary replay both stop before that window.
-    const visibleValidationData = oosIgnoreLastBars > 0
-        ? fullClosed.slice(0, -oosIgnoreLastBars)
-        : fullClosed;
+    const visibleValidationData = asset.precomputedVisibleValidationData
+        ?? windows!.visibleValidationData;
     // Retained-signal reuse for fresh-entry detection is only parity-safe for
     // the non-`signal_close` fixed-horizon paths: their recheck runs
     // `signalsOnly`, so `detectFreshEntry` sees an empty-trades result that
@@ -1080,10 +1191,10 @@ async function searchOneAsset(args: {
     // exclude the application candle. An evalLastBars cap must NOT include it:
     // the trailing window would re-capture the application candle into the
     // search window.
-    const includeApplicationCandleInSearch = canReuseIsSignalsForFreshModel
-        && oosIgnoreLastBars === 0
-        && evalLastBars === 0
-        && (input.options.dataSlice ?? "all") === "all";
+    const includeApplicationCandleInSearch = asset.precomputedIncludeApplicationCandleInSearch
+        ?? windows!.includeApplicationCandleInSearch;
+    // inSampleHistorical has no precomputed field: it is a cheap selection
+    // among the (possibly precomputed) arrays, rebuilt here for both paths.
     const inSampleHistorical = oosIgnoreLastBars > 0
         ? visibleValidationData
         : includeApplicationCandleInSearch
@@ -1093,9 +1204,7 @@ async function searchOneAsset(args: {
     const fixedOosSignalIndex = oosIgnoreLastBars > 0
         ? visibleValidationData.length - 1
         : -1;
-    const fixedOosBars = oosIgnoreLastBars > 0
-        ? fullClosed.slice(visibleValidationData.length)
-        : [];
+    const fixedOosBars = asset.precomputedFixedOosBars ?? windows!.fixedOosBars;
     diagnostics.oosBars = fixedOosBars.length;
 
     const assetSeed = deriveAssetSeed(input.runSeed, canonicalAssetSymbol(symbol));
@@ -1115,7 +1224,7 @@ async function searchOneAsset(args: {
     // Shorter datasets keep all bars available before the gap (slice(-N)).
     // One materialization per (asset, strategy) pass; every window array here
     // is treated as read-only.
-    const slicedHistorical = resolveSlicedHistoricalWindow(inSampleHistorical, assetOptions, evalLastBars);
+    const slicedHistorical = asset.precomputedSlicedHistorical ?? windows!.slicedHistorical;
     const historicalConfirmationData = (input.settings.confirmationStrategies?.length ?? 0) > 0
         ? prefixThroughLastBar(fullClosed, slicedHistorical)
         : undefined;
@@ -1540,25 +1649,26 @@ async function searchOneAsset(args: {
         return fresh;
     });
 
-    // Pre-resolve the legacy complementary OOS window once (cheap slice +
-    // closed-candle build) so the per-winner OOS step below does not repeat it.
-    // It must be based on the IS window when a fixed holdout is configured, so
-    // the holdout remains untouched by candidate validation.
+    // Pre-resolve the legacy complementary OOS window slice once (cheap) and
+    // defer the closed-candle build to the fresh-winner branch below so
+    // no-fresh assets skip it. It must be based on the IS window when a fixed
+    // holdout is configured, so the holdout remains untouched by candidate
+    // validation. `oosBars` still maxes with the slice length here; the fresh
+    // path re-maxes with the closed-build length once built (the build can
+    // filter bars, e.g. session gaps).
     const oosStartedAt = performance.now();
     let oosWindowData: OHLCVData[] = [];
+    let oosWindowDataBuilt = false;
+    let oosSliceWindow: OHLCVData[] = [];
     if (input.options.oosValidationEnabled) {
         const oosSlice = resolveOosDataSlice(input.options.dataSlice ?? "all");
         if (oosSlice) {
-            oosWindowData = buildFinderEvaluationData(
-                sliceFinderDataWindow(
-                    inSampleHistorical,
-                    oosSlice,
-                    normalizeFinderDateRange(input.options.dataRangeFrom, input.options.dataRangeTo),
-                ),
-                input.interval,
-                input.settings,
+            oosSliceWindow = sliceFinderDataWindow(
+                inSampleHistorical,
+                oosSlice,
+                normalizeFinderDateRange(input.options.dataRangeFrom, input.options.dataRangeTo),
             );
-            diagnostics.oosBars = Math.max(diagnostics.oosBars, oosWindowData.length);
+            diagnostics.oosBars = Math.max(diagnostics.oosBars, oosSliceWindow.length);
         }
     }
 
@@ -1878,11 +1988,7 @@ async function searchOneAsset(args: {
             // candle, so the boundary entry is the signal candle plus the
             // model's execution shift rather than always the first hidden
             // candle.
-            const latestSignalSeconds = parseTimeToUnixSeconds(winnerFresh.latestSignalTime);
-            const signalIndex = latestSignalSeconds === null
-                ? -1
-                : fullClosed.findIndex((candle) =>
-                    parseTimeToUnixSeconds(candle.time) === latestSignalSeconds);
+            const signalIndex = findCandleIndexByTime(fullClosed, winnerFresh.latestSignalTime);
             const fillIndex = signalIndex >= 0
                 ? signalIndex + (winnerFresh.fillTiming === "signal_close" ? 0 : 1)
                 : -1;
@@ -1936,8 +2042,15 @@ async function searchOneAsset(args: {
             };
         }
     }
-    if (oosWindowData.length > 0 && result.freshStatus === "fresh") {
-        if (winnerCandidate) {
+    if (oosSliceWindow.length > 0 && result.freshStatus === "fresh") {
+        if (!oosWindowDataBuilt) {
+            oosWindowData = buildFinderEvaluationData(oosSliceWindow, input.interval, input.settings);
+            oosWindowDataBuilt = true;
+            diagnostics.oosBars = Math.max(diagnostics.oosBars, oosWindowData.length);
+        }
+        // The pre-deferral gate ran on the BUILT window's length; a closed
+        // build that filtered every bar skips the branch exactly as before.
+        if (oosWindowData.length > 0 && winnerCandidate) {
             // Additive: a fixed-holdout evaluation may already have been
             // counted above; both modes can be active for the same asset.
             diagnostics.oosEvaluations += 1;
@@ -2419,14 +2532,11 @@ function resolveFreshEntryPrice(args: {
             ? args.latestTrade.entryPrice
             : null;
     }
-    const signalSeconds = parseTimeToUnixSeconds(args.signalTime);
-    if (signalSeconds === null) return null;
-    const signalIndex = args.candles.findIndex((candle) => parseTimeToUnixSeconds(candle.time) === signalSeconds);
+    const signalIndex = findCandleIndexByTime(args.candles, args.signalTime);
     if (signalIndex < 0) return null;
     const fillIndex = signalIndex + (args.settings.executionModel === "signal_close" ? 0 : 1);
     const entryIndex = args.latestTrade
-        ? args.candles.findIndex((candle) =>
-            parseTimeToUnixSeconds(candle.time) === parseTimeToUnixSeconds(args.latestTrade!.entryTime))
+        ? findCandleIndexByTime(args.candles, args.latestTrade.entryTime)
         : -1;
     if (args.latestTrade && entryIndex === fillIndex && Number.isFinite(args.latestTrade.entryPrice)) {
         return args.latestTrade.entryPrice;

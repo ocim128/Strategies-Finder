@@ -40,6 +40,7 @@ import type { TypescriptSimulationConcurrencyTracker } from "../../backtest-endp
 import {
     runAssetOpportunitySearch,
     assertAssetOpportunityStrategySelection,
+    deriveAssetOpportunitySearchWindows,
     type AssetOpportunitySearchDiagnostics,
     type AssetOpportunityAssetResult,
     type AssetIsSearch,
@@ -657,6 +658,17 @@ export async function runAssetOpportunityIteration(
                     throw new Error(`no timestamped BASE candles for ${syntheticPair.baseSymbol}`);
                 }
             }
+            // Hoist the strategy-independent search windows out of the
+            // per-strategy runner path: `deriveAssetOpportunitySearchWindows`
+            // is pure, so one materialization per (asset, holdout) serves
+            // every selected strategy via the AssetOpportunityAssetInput
+            // `precomputed*` fields.
+            const precomputedWindows = deriveAssetOpportunitySearchWindows({
+                fullClosed,
+                interval: input.interval,
+                settings: input.settings,
+                options: input.options,
+            });
             let exitSignalCache = input.exitSignalCacheBySymbol?.get(cacheSymbol);
             if (!exitSignalCache) {
                 exitSignalCache = new Map();
@@ -813,6 +825,12 @@ export async function runAssetOpportunityIteration(
                             symbol,
                             data,
                             precomputedFullClosed: fullClosed,
+                            precomputedHistorical: precomputedWindows.historical,
+                            precomputedVisibleValidationData: precomputedWindows.visibleValidationData,
+                            precomputedFixedOosBars: precomputedWindows.fixedOosBars,
+                            precomputedSlicedHistorical: precomputedWindows.slicedHistorical,
+                            precomputedIncludeApplicationCandleInSearch:
+                                precomputedWindows.includeApplicationCandleInSearch,
                             ...(oosBaseCandlesByTime ? { oosBaseCandlesByTime } : {}),
                         }],
                         runIsSearch: isSearch,
