@@ -10,6 +10,27 @@ import type { StrategyParams } from "../types/strategies";
 import { median } from "../statistics-utils";
 
 const MIN_RELIABLE_SYMBOL_TRADES = 15;
+const WILSON_Z_95 = 1.96;
+
+function wilsonLowerBoundPercent(winningTrades: number, totalTrades: number): number {
+    if (totalTrades <= 0 || !Number.isFinite(winningTrades) || !Number.isFinite(totalTrades)) return 0;
+    const n = totalTrades;
+    const p = Math.max(0, Math.min(1, winningTrades / n));
+    const zSquared = WILSON_Z_95 * WILSON_Z_95;
+    const denominator = 1 + zSquared / n;
+    const center = p + zSquared / (2 * n);
+    const margin = WILSON_Z_95 * Math.sqrt((p * (1 - p) / n) + (zSquared / (4 * n * n)));
+    return ((center - margin) / denominator) * 100;
+}
+
+function percentile(values: readonly number[], fraction: number): number {
+    if (values.length === 0) return 0;
+    const sorted = [...values].sort((left, right) => left - right);
+    const position = (sorted.length - 1) * fraction;
+    const lower = Math.floor(position);
+    const upper = Math.ceil(position);
+    return sorted[lower]! + ((sorted[upper]! - sorted[lower]!) * (position - lower));
+}
 
 function clamp01(value: number): number {
     if (!Number.isFinite(value)) return 0;
@@ -101,6 +122,10 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
     let flatSymbols = 0;
     let noTradeSymbols = 0;
     let totalTrades = 0;
+    let totalWinRate = 0;
+    let tradeWeightedWinRateTotal = 0;
+    let tradeWeightedWinRateTrades = 0;
+    const winReliabilityBounds: number[] = [];
     const expectancies: number[] = [];
     const netProfits: number[] = [];
     const sharpes: number[] = [];
@@ -126,6 +151,10 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
 
         activeSymbols += 1;
         totalTrades += result.totalTrades;
+        totalWinRate += result.winRate;
+        tradeWeightedWinRateTotal += result.winRate * result.totalTrades;
+        tradeWeightedWinRateTrades += result.totalTrades;
+        winReliabilityBounds.push(wilsonLowerBoundPercent(result.winningTrades, result.totalTrades));
         expectancies.push(result.expectancy);
         netProfits.push(result.netProfit);
         if (result.sharpeRatioAvailable === true) {
@@ -160,6 +189,11 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
         flatSymbols,
         noTradeSymbols,
         totalTrades,
+        averageWinRate: activeSymbols > 0 ? totalWinRate / activeSymbols : 0,
+        tradeWeightedWinRate: tradeWeightedWinRateTrades > 0
+            ? tradeWeightedWinRateTotal / tradeWeightedWinRateTrades
+            : 0,
+        winReliabilityQ25: percentile(winReliabilityBounds, 0.25),
         medianExpectancy: median(expectancies),
         medianSharpe: median(sharpes),
         medianSharpeAvailable: sharpes.length > 0,
@@ -361,6 +395,12 @@ export function getFinderUniverseMetricValue(
             return item.profitableActiveRatio;
         case "activeSymbols":
             return item.activeSymbols;
+        case "averageWinRate":
+            return Number.isFinite(item.averageWinRate) ? item.averageWinRate : 0;
+        case "tradeWeightedWinRate":
+            return Number.isFinite(item.tradeWeightedWinRate) ? item.tradeWeightedWinRate : 0;
+        case "winReliabilityQ25":
+            return Number.isFinite(item.winReliabilityQ25) ? item.winReliabilityQ25 : 0;
         case "medianExpectancy":
             return item.medianExpectancy;
         case "medianExpectancyWeightedTrades":

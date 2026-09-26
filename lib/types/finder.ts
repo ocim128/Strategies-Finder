@@ -49,6 +49,9 @@ export type FinderUniverseMetric =
     | 'windowStabilityScore'
     | 'profitableActiveRatio'
     | 'activeSymbols'
+    | 'averageWinRate'
+    | 'tradeWeightedWinRate'
+    | 'winReliabilityQ25'
     | 'medianExpectancy'
     | 'medianExpectancyWeightedTrades'
     | 'medianSharpe'
@@ -273,6 +276,12 @@ export interface FinderUniverseCandidate {
     noTradeSymbols: number;
     totalTrades: number;
     profitableActiveRatio: number;
+    /** Arithmetic mean of per-symbol win rates across active symbols. */
+    averageWinRate: number;
+    /** Trade-count-weighted mean of per-symbol win rates across active symbols. */
+    tradeWeightedWinRate: number;
+    /** 25th percentile of 95% Wilson lower bounds for active-symbol win rates. */
+    winReliabilityQ25: number;
     medianExpectancy: number;
     medianSharpe: number;
     /** True when medianSharpe is based on computed symbol Sharpe values. */
