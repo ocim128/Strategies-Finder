@@ -19,8 +19,8 @@ type PreparedData = {
 function normalizeParams(params: StrategyParams): StrategyParams {
 	return {
 		...params,
-		lookback: Math.max(3, Math.round(Number(params.lookback ?? 50))),
-		minKellyFraction: Number(params.minKellyFraction ?? 0.2),
+		lookback: Math.max(3, Math.round(Number(params.lookback ?? 83))),
+		minKellyFraction: Number(params.minKellyFraction ?? 0.5657),
 	};
 }
 
@@ -28,8 +28,8 @@ export const kelly_streak_exhaustion_reversion: Strategy = {
 	name: "Kelly Streak Exhaustion Reversion",
 	description: "Fades directional close return streaks when win probability scaled to streak length yields a positive Kelly allocation above minKellyFraction.",
 	defaultParams: {
-		lookback: 50,
-		minKellyFraction: 0.2,
+		lookback: 83,
+		minKellyFraction: 0.5657,
 	},
 	paramLabels: {
 		lookback: "Lookback Window",

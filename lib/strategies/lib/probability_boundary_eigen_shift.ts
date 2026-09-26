@@ -9,8 +9,8 @@ type ProbabilityBoundaryEigenShiftPrepared = {
 
 function normalizeParams(params: StrategyParams): StrategyParams {
 	return {
-		stateLookback: Math.max(2, Math.round(params.stateLookback ?? 23)),
-		eigenLimit: Number(params.eigenLimit ?? -2)
+		stateLookback: Math.max(2, Math.round(params.stateLookback ?? 45)),
+		eigenLimit: Number(params.eigenLimit ?? -3)
 	};
 }
 
@@ -31,8 +31,8 @@ function getPreparedData(preparedData: unknown, data: OHLCVData[]): ProbabilityB
 
 export const probability_boundary_eigen_shift: Strategy = {
 	name: "Probability Boundary Eigen-Shift",
-	description: "When the typical price (representing the session's Eigenvalue) breaches a 2-sigma boundary of its own rolling state, the local probability density function has failed, forcing violent mean reversion.",
-	defaultParams: { stateLookback: 23, eigenLimit: -2 },
+	description: "When the typical price (representing the session's Eigenvalue) breaches a 3-sigma boundary of its own rolling state, the local probability density function has failed, forcing violent mean reversion.",
+	defaultParams: { stateLookback: 45, eigenLimit: -3 },
 	paramLabels: { stateLookback: "State Lookback", eigenLimit: "Eigen Limit (Z-Score)" },
 	normalizeParams,
 	metadata: { role: "entry", direction: "both", walkForwardParams: ["stateLookback", "eigenLimit"] },

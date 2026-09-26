@@ -17,7 +17,7 @@ function normalizeParams(params: StrategyParams): StrategyParams {
         ...params,
         accelerationStep: Math.min(
             MAXIMUM_ACCELERATION,
-            Math.max(0.001, Number(params.accelerationStep ?? 0.02))
+            Math.max(0.001, Number(params.accelerationStep ?? 0.001))
         ),
     };
 }
@@ -26,7 +26,7 @@ export const parabolic_sar_confirmation: Strategy = {
     name: "Parabolic SAR Confirmation",
     description: "Signals when Parabolic SAR flips direction, using a fixed maximum acceleration of 0.20.",
     defaultParams: {
-        accelerationStep: 0.02,
+        accelerationStep: 0.001,
     },
     paramLabels: {
         accelerationStep: "Acceleration Step",

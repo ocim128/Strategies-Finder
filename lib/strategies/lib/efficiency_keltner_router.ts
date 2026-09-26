@@ -16,9 +16,9 @@ const KELTNER_MULTIPLIER = 2;
 function normalizeEfficiencyKeltnerRouterParams(params: StrategyParams): StrategyParams {
 	return {
 		...params,
-		er_lookback: Math.max(2, Math.round(params.er_lookback ?? 20)),
-		keltner_lookback: Math.max(2, Math.round(params.keltner_lookback ?? 55)),
-		er_threshold: Math.max(0, Math.min(1, Number(params.er_threshold ?? 0.4))),
+		er_lookback: Math.max(2, Math.round(params.er_lookback ?? 2)),
+		keltner_lookback: Math.max(2, Math.round(params.keltner_lookback ?? 162)),
+		er_threshold: Math.max(0, Math.min(1, Number(params.er_threshold ?? 0))),
 	};
 }
 
@@ -54,9 +54,9 @@ export const efficiency_keltner_router: Strategy = {
 	name: "Efficiency Keltner Router",
 	description: "Routes Keltner boundary signals to fades in chop and continuation entries in efficient trends.",
 	defaultParams: {
-		er_lookback: 20,
-		keltner_lookback: 55,
-		er_threshold: 0.4,
+		er_lookback: 2,
+		keltner_lookback: 162,
+		er_threshold: 0,
 	},
 	paramLabels: {
 		er_lookback: "Efficiency Lookback",

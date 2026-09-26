@@ -14,7 +14,7 @@ import { buildRangeSeries } from "./price-action-frequency-core";
 function normalizeParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
-        period: Math.max(2, Math.round(Number(params.period ?? 20))),
+        period: Math.max(2, Math.round(Number(params.period ?? 34))),
     };
 }
 
@@ -22,7 +22,7 @@ export const whipsaw_crossing_burst_reversal: Strategy = {
     name: "Whipsaw Crossing Burst Reversal",
     description: "Whipsaw crossing across moving average with range expansion.",
     defaultParams: {
-        "period": 20
+        "period": 34
     },
     paramLabels: {
         "period": "SMA Period"

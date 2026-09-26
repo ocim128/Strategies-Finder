@@ -13,7 +13,7 @@ import {
 function normalizeParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
-        min_age: Math.max(1, Math.round(Number(params.min_age ?? 8))),
+        min_age: Math.max(1, Math.round(Number(params.min_age ?? 13))),
     };
 }
 
@@ -21,7 +21,7 @@ export const extreme_age_consolidation_decay_fade: Strategy = {
     name: "Extreme Age Consolidation Decay Fade",
     description: "Fades boundary perimeter touches when simultaneous staleness of both extremes indicates deep equilibrium.",
     defaultParams: {
-        min_age: 8,
+        min_age: 13,
     },
     paramLabels: {
         min_age: "Min Age",

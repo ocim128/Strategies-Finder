@@ -12,7 +12,7 @@ function normalizeParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
         lookback: Math.max(1, Math.round(Number(params.lookback ?? 5))),
-        streakMin: Math.max(1, Math.round(Number(params.streakMin ?? 5))),
+        streakMin: Math.max(1, Math.round(Number(params.streakMin ?? 15))),
     };
 }
 
@@ -21,7 +21,7 @@ export const return_sign_streak_fade: Strategy = {
     description: "Fades persistent same-sign return streaks when one leg has outperformed for multiple bars.",
     defaultParams: {
         lookback: 5,
-        streakMin: 5,
+        streakMin: 15,
     },
     paramLabels: {
         lookback: "ROC Period",

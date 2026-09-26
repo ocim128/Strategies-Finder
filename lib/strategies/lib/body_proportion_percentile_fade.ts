@@ -11,8 +11,8 @@ import { buildPercentileRank } from "./price-action-statistics-core";
 function normalizeParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
-        lookback: Math.max(2, Math.round(Number(params.lookback ?? 30))),
-        pctlExtreme: Math.max(0.5, Math.min(0.999, Number(params.pctlExtreme ?? 0.85))),
+        lookback: Math.max(2, Math.round(Number(params.lookback ?? 16))),
+        pctlExtreme: Math.max(0.5, Math.min(0.999, Number(params.pctlExtreme ?? 0.999))),
     };
 }
 
@@ -20,8 +20,8 @@ export const body_proportion_percentile_fade: Strategy = {
     name: "Body Proportion Percentile Fade",
     description: "Fades high body-proportion conviction bars closing near extremes.",
     defaultParams: {
-        lookback: 30,
-        pctlExtreme: 0.85,
+        lookback: 16,
+        pctlExtreme: 0.999,
     },
     paramLabels: {
         lookback: "Lookback Window",

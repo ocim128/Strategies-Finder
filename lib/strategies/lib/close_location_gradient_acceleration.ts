@@ -6,8 +6,8 @@ import { buildRateOfChange, buildPercentileRank } from "./price-action-statistic
 function normalizeParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
-        lookback: Math.max(4, Math.round(Number(params.lookback ?? 25))),
-        gradientPercentileMin: Math.max(0.5, Math.min(0.99, Number(params.gradientPercentileMin ?? 0.65))),
+        lookback: Math.max(4, Math.round(Number(params.lookback ?? 37))),
+        gradientPercentileMin: Math.max(0.5, Math.min(0.99, Number(params.gradientPercentileMin ?? 0.99))),
     };
 }
 
@@ -15,8 +15,8 @@ export const close_location_gradient_acceleration: Strategy = {
     name: "Close Location Gradient Acceleration",
     description: "Follows accelerating directional pressure when close location gradient percentile is elevated with level confirmation.",
     defaultParams: {
-        lookback: 25,
-        gradientPercentileMin: 0.65,
+        lookback: 37,
+        gradientPercentileMin: 0.99,
     },
     paramLabels: {
         lookback: "Lookback",

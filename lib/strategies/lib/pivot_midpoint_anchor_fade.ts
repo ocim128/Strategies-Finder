@@ -2,19 +2,19 @@
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses, getHighs, getLows, buildPivotFlags } from "../strategy-helpers";
 
 function normalizePivotMidpointAnchorFadeParams(params: StrategyParams): StrategyParams {
-	const pivotLeftBars = Math.max(1, Math.round(params.pivotLeftBars ?? 5));
+	const pivotLeftBars = Math.max(1, Math.round(params.pivotLeftBars ?? 9));
 	return {
 		...params,
 		pivotLeftBars,
-		deviationMultiplier: Math.max(0.01, Number(params.deviationMultiplier ?? 0.7)) };
+		deviationMultiplier: Math.max(0.01, Number(params.deviationMultiplier ?? 1.7904)) };
 }
 
 export const pivot_midpoint_anchor_fade: Strategy = {
 	name: "Pivot Midpoint Anchor Fade",
 	description: "The midpoint between the most recent pivot high and low anchors structural fair value. When price deviates significantly from this anchor, reversion is favored.",
 	defaultParams: {
-		pivotLeftBars: 5,
-		deviationMultiplier: 0.7 },
+		pivotLeftBars: 9,
+		deviationMultiplier: 1.7904 },
 	paramLabels: {
 		pivotLeftBars: "Pivot Bars",
 		deviationMultiplier: "Deviation Multiplier" },

@@ -11,8 +11,8 @@ import { buildRateOfChange, buildPercentileRank } from "./price-action-statistic
 function normalizeParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
-        lookback: Math.max(2, Math.round(Number(params.lookback ?? 30))),
-        pctlExtreme: Math.max(0.5, Math.min(0.999, Number(params.pctlExtreme ?? 0.9))),
+        lookback: Math.max(2, Math.round(Number(params.lookback ?? 87))),
+        pctlExtreme: Math.max(0.5, Math.min(0.999, Number(params.pctlExtreme ?? 0.999))),
     };
 }
 
@@ -20,8 +20,8 @@ export const cumulative_return_percentile_reversion: Strategy = {
     name: "Cumulative Return Percentile Reversion",
     description: "Fades cumulative return over lookback when it sits at a percentile extreme of its own history.",
     defaultParams: {
-        lookback: 30,
-        pctlExtreme: 0.9,
+        lookback: 87,
+        pctlExtreme: 0.999,
     },
     paramLabels: {
         lookback: "Lookback Window",

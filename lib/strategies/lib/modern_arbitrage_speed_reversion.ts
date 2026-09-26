@@ -5,9 +5,9 @@ import { buildEfficiencyRatio, buildRollingZScore } from "./price-action-statist
 function normalizeModernArbitrageSpeedReversionParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
-        lookback: Math.max(4, Math.round(Number(params.lookback ?? 25))),
-        zThreshold: Math.max(0, Number(params.zThreshold ?? 1.3)),
-        efficiencyMax: Math.max(0, Math.min(1, Number(params.efficiencyMax ?? 0.35))),
+        lookback: Math.max(4, Math.round(Number(params.lookback ?? 45))),
+        zThreshold: Math.max(0, Number(params.zThreshold ?? 1.2904)),
+        efficiencyMax: Math.max(0, Math.min(1, Number(params.efficiencyMax ?? 0.0769))),
     };
 }
 
@@ -39,9 +39,9 @@ export const modern_arbitrage_speed_reversion: Strategy = {
     name: "Modern Arbitrage Speed Reversion",
     description: "Fast mean reversion enabled by modern arbitrage infrastructure.",
     defaultParams: {
-        lookback: 25,
-        zThreshold: 1.3,
-        efficiencyMax: 0.35,
+        lookback: 45,
+        zThreshold: 1.2904,
+        efficiencyMax: 0.0769,
     },
     paramLabels: {
         lookback: "Lookback",

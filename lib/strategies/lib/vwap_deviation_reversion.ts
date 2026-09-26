@@ -16,7 +16,7 @@ const DEVIATION_BAND = 2;
 function normalizeParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
-        period: Math.max(5, Math.round(Number(params.period ?? 30))),
+        period: Math.max(5, Math.round(Number(params.period ?? 5))),
     };
 }
 
@@ -24,7 +24,7 @@ export const vwap_deviation_reversion: Strategy = {
     name: "VWAP Deviation Reversion",
     description: "Fades multi-ATR excursions from the rolling participation-weighted VWAP anchor.",
     defaultParams: {
-        period: 30,
+        period: 5,
     },
     paramLabels: {
         period: "Anchor Period",

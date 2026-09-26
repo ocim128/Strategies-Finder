@@ -6,8 +6,8 @@ import { buildRollingSkewness, buildRollingZScore, buildRateOfChange } from "./p
 function normalizeTrueRangeSkewnessInitiationParams(params: StrategyParams): StrategyParams {
 	return {
 		...params,
-		skew_window: Math.max(3, Math.round(params.skew_window ?? 20)),
-		zscore_trigger: Math.max(0.5, Number(params.zscore_trigger ?? 2.0)),
+		skew_window: Math.max(3, Math.round(params.skew_window ?? 48)),
+		zscore_trigger: Math.max(0.5, Number(params.zscore_trigger ?? 3)),
 	};
 }
 
@@ -15,8 +15,8 @@ export const true_range_skewness_initiation: Strategy = {
 	name: "True Range Skewness Initiation",
 	description: "A sudden spike in the skewness of True Range indicates unilateral directional panic or euphoria initiating a new auction. Volatility asymmetry signals a structural break.",
 	defaultParams: {
-		skew_window: 20,
-		zscore_trigger: 2.0,
+		skew_window: 48,
+		zscore_trigger: 3,
 	},
 	paramLabels: {
 		skew_window: "Skewness Window",
