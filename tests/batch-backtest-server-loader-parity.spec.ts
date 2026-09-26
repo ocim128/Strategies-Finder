@@ -249,6 +249,159 @@ describe("batch-backtest server loader parity", () => {
         expect(readSource(SERVER_LOADER)).to.include("createBatchDatasetLoaderCore");
     });
 
+
+    it("aligns subdivided cached-pair legs on the target interval like fresh builds", async () => {
+        // Eight rising 30m candles per 4H bucket: the bucket's LAST close is
+        // 108/116 and its opening 30m close is 101/109. Fresh builds resample
+        // the leg to 4H, so aligned closes must carry the last-in-bucket price;
+        // the disk-cache metadata path used to align on the source interval and
+        // pick the bucket-open price instead.
+        const times: number[] = [];
+        for (let bucket = 0; bucket < 2; bucket += 1) {
+            for (let i = 0; i < 8; i += 1) times.push(bucket * 8 * 1800 + i * 1800);
+        }
+        const source: OHLCVData[] = times.map((time, i) => ({
+            time: time as Time,
+            open: 100 + i,
+            high: 100.5 + i,
+            low: 99.5 + i,
+            close: 101 + i,
+            volume: 10,
+        }));
+
+        const coldLoader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => source,
+            acceptOfflineThinData: () => true,
+        });
+        const coldContext = {
+            preferInMemorySyntheticPairs: true,
+            legCache: new SyntheticLegCache<OHLCVData[]>(8),
+            pairCache: new SyntheticLegCache<OHLCVData[]>(8),
+            pairMetadataCache: new SyntheticLegCache<
+                Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">
+            >(8),
+            diagnostics: createBatchDatasetLoadDiagnostics(),
+        };
+        const cold = await coldLoader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", undefined, coldContext);
+        expect(coldContext.diagnostics.sourceLoads).to.equal(2);
+        expect(cold.data.map((bar) => bar.time)).to.deep.equal([0, 14400]);
+        expect(cold.baseCloses).to.deep.equal([108, 116]);
+        expect(cold.quoteCloses).to.deep.equal([108, 116]);
+
+        const cachedLoader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => source,
+            loadCachedSyntheticPair: async () => ({ bars: cold.data }),
+        });
+        const cachedContext = { diagnostics: createBatchDatasetLoadDiagnostics() };
+        const cached = await cachedLoader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", undefined, cachedContext);
+        expect(cachedContext.diagnostics.diskCacheHits).to.equal(1);
+        expect(cached.baseCloses).to.deep.equal(cold.baseCloses);
+        expect(cached.quoteCloses).to.deep.equal(cold.quoteCloses);
+    });
+
+    it("keeps null alignment when a cached pair outlives its legs", async () => {
+        // A cached pair bar with no matching resampled leg bar aligns to null
+        // (the ledger must use null, never a proxy). Only the disk-cache path
+        // can see this: a cold pair is built FROM its legs, so its bars always
+        // have matching buckets.
+        const times: number[] = [];
+        for (let bucket = 0; bucket < 2; bucket += 1) {
+            for (let i = 0; i < 8; i += 1) times.push(bucket * 8 * 1800 + i * 1800);
+        }
+        const source: OHLCVData[] = times.map((time, i) => ({
+            time: time as Time,
+            open: 100 + i,
+            high: 100.5 + i,
+            low: 99.5 + i,
+            close: 101 + i,
+            volume: 10,
+        }));
+        // Cached pair has a third bucket the truncated leg data cannot cover.
+        const cachedBars: OHLCVData[] = [
+            ...source.slice(0, 8).map((bar, i) => ({
+                time: (i === 0 ? 0 : 14400) as Time,
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                volume: bar.volume,
+            })),
+            { time: 28800 as Time, open: 117, high: 117, low: 116, close: 117, volume: 10 },
+        ];
+        cachedBars[7]!.time = 0 as Time;
+        cachedBars.splice(1, 7);
+
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => source.slice(0, 8),
+            acceptOfflineThinData: () => true,
+            loadCachedSyntheticPair: async () => ({ bars: cachedBars }),
+        });
+        const context = { diagnostics: createBatchDatasetLoadDiagnostics() };
+        const result = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", undefined, context);
+        expect(result.data).to.have.length(2);
+        expect(result.baseCloses).to.deep.equal([108, null]);
+    });
+
+    it("builds one shared aligned series per leg across many pairs", async () => {
+        const times: number[] = [];
+        for (let bucket = 0; bucket < 2; bucket += 1) {
+            for (let i = 0; i < 8; i += 1) times.push(bucket * 8 * 1800 + i * 1800);
+        }
+        const source: OHLCVData[] = times.map((time, i) => ({
+            time: time as Time,
+            open: 100 + i,
+            high: 100.5 + i,
+            low: 99.5 + i,
+            close: 101 + i,
+            volume: 10,
+        }));
+
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => source,
+            acceptOfflineThinData: () => true,
+        });
+
+        // One metadata cache per partner pair, but a SHARED context leg cache
+        // like the production Asset Opportunity batch path uses: BASE and QUOTE
+        // each resample once, then every partner alignment reuses the series.
+        const first = {
+            legCache: new SyntheticLegCache<OHLCVData[]>(8),
+            pairMetadataCache: new SyntheticLegCache<
+                Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">
+            >(8),
+            preferInMemorySyntheticPairs: true,
+            diagnostics: createBatchDatasetLoadDiagnostics(),
+        };
+        const second = {
+            legCache: first.legCache,
+            pairMetadataCache: new SyntheticLegCache<
+                Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">
+            >(8),
+            preferInMemorySyntheticPairs: true,
+            diagnostics: createBatchDatasetLoadDiagnostics(),
+        };
+        await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", undefined, first);
+        await loader.loadWithMetadata("BASE\u2022+THIRD\u2022", "4h", undefined, second);
+
+        const builtSeries = (first.diagnostics.alignedSeriesMisses ?? 0)
+            + (second.diagnostics.alignedSeriesMisses ?? 0);
+        const reusedSeries = (first.diagnostics.alignedSeriesHits ?? 0)
+            + (second.diagnostics.alignedSeriesHits ?? 0);
+        // Three distinct legs across the two pairs (BASE, QUOTE, THIRD) build
+        // one series each; BASE is shared, so the second pair's BASE alignment
+        // reuses it instead of resampling a fourth time.
+        expect(builtSeries).to.equal(3);
+        expect(reusedSeries).to.equal(1);
+    });
+
     it("keeps synced crypto CSVs authoritative for thin offline legs", () => {
         const server = readSource(SERVER_LOADER);
         expect(server).to.include("getCryptoCsvMtimeMs");

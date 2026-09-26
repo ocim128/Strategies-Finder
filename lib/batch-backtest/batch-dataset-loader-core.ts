@@ -56,6 +56,12 @@ export interface BatchDatasetCacheStats {
     disk: { hits: number; misses: number; writes: number };
 }
 
+/** Resampled time/close series extracted from one leg for close alignment. */
+interface AlignedLegClosesSeries {
+    times: number[];
+    closes: number[];
+}
+
 /** Per-run load counters used to split the Asset Opportunity data path. */
 export interface BatchDatasetLoadDiagnostics {
     requests: number;
@@ -71,6 +77,9 @@ export interface BatchDatasetLoadDiagnostics {
     sourceBarsLoaded: number;
     pairBuilds: number;
     diskCacheBypasses: number;
+    /** Shared resampled-series reuse: hits = alignments served, misses = series built. */
+    alignedSeriesHits?: number;
+    alignedSeriesMisses?: number;
     timingsMs: {
         total: number;
         fingerprint: number;
@@ -190,6 +199,15 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
     const pairMetadataCache = new SyntheticLegCache<
         Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">
     >(pairCacheMaxEntries);
+    // Bounded per-leg resampled time/close series shared across every pair
+    // aligned at the same target interval. `alignLegCloses` only consumes
+    // timestamps + closes, so resampling a leg once per (leg, interval) removes
+    // the redundant OHLCV aggregation repeats when one symbol participates in
+    // hundreds of pairs. Promises are stored (race-safe dedup like the leg
+    // cache); failed source loads throw before a series is ever built, so the
+    // cache cannot poison downstream alignment. Loader-internal like
+    // `diskStats` — not part of the `getCacheStats()` wire contract.
+    const alignedSeriesCache = new SyntheticLegCache<AlignedLegClosesSeries>(legCacheMaxEntries);
     const diskStats = { hits: 0, misses: 0, writes: 0 };
 
     async function load(
@@ -447,16 +465,17 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                 if (diagnostics) diagnostics.timingsMs.pairWrite += performance.now() - pairWriteStartedAt;
             }
             const data = result.bars;
+            if (!includeMetadata) return { data, baseSymbol, quoteSymbol };
+            const [baseSeries, quoteSeries] = await Promise.all([
+                getSharedAlignedSeries(baseSymbol, sourceInterval, sourceBars, interval, result.base, diagnostics),
+                getSharedAlignedSeries(quoteSymbol, sourceInterval, sourceBars, interval, result.quote, diagnostics),
+            ]);
             return {
                 data,
                 baseSymbol,
                 quoteSymbol,
-                ...(includeMetadata
-                    ? {
-                        baseCloses: alignLegCloses(data, result.base, interval),
-                        quoteCloses: alignLegCloses(data, result.quote, interval),
-                    }
-                    : {}),
+                baseCloses: alignLegClosesFromSeries(data, await baseSeries),
+                quoteCloses: alignLegClosesFromSeries(data, await quoteSeries),
             };
         })();
         if (includeMetadata) {
@@ -526,10 +545,20 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                     subdivided = false;
                 }
             }
-            const alignmentInterval = subdivided ? sourceInterval : interval;
+            // Align on the TARGET interval, matching the fresh-build path
+            // below: the pair carries bucket-open timestamps, so the aligned
+            // close must be the bucket's LAST source close (after resampling),
+            // never the source close AT the bucket-open timestamp. Aligning
+            // subdivided legs with `sourceInterval` used to pick the latter and
+            // diverge from freshly built pairs (last-in-bucket vs
+            // open-of-bucket prices for the same candle).
+            const [baseSeries, quoteSeries] = await Promise.all([
+                getSharedAlignedSeries(baseSymbol, sourceInterval, sourceBars, interval, base, context?.diagnostics),
+                getSharedAlignedSeries(quoteSymbol, sourceInterval, sourceBars, interval, quote, context?.diagnostics),
+            ]);
             return {
-                baseCloses: alignLegCloses(pairBars, base, alignmentInterval),
-                quoteCloses: alignLegCloses(pairBars, quote, alignmentInterval),
+                baseCloses: alignLegClosesFromSeries(pairBars, await baseSeries),
+                quoteCloses: alignLegClosesFromSeries(pairBars, await quoteSeries),
             };
         } catch {
             // The pair itself may come from the pair cache/disk cache even when
@@ -593,6 +622,36 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         return cacheSuccessfulLoad(activeLegCache, legKey, promise, signal);
     }
 
+    /**
+     * Resampled time/close series for one leg at one target interval, shared
+     * across all pairs that align the same leg. Keyed by the leg-cache identity
+     * plus target interval plus a coverage anchor (bar count + first/last
+     * timestamp) so a refetch with newer data cannot silently reuse a stale
+     * series. Only non-failing, resolved leg data reaches this point.
+     */
+    function getSharedAlignedSeries(
+        sourceSymbol: string,
+        sourceInterval: string,
+        sourceBars: number,
+        targetInterval: string,
+        legBars: readonly OHLCVData[],
+        diagnostics?: BatchDatasetLoadDiagnostics,
+    ): Promise<AlignedLegClosesSeries> {
+        const coverageAnchor = legBars.length > 0
+            ? `${legBars.length}:${legBars[0]!.time}:${legBars[legBars.length - 1]!.time}`
+            : "empty";
+        const seriesKey = `${buildLegCacheKey(sourceSymbol, sourceInterval, sourceBars)}|align:${targetInterval}|${coverageAnchor}`;
+        const cached = alignedSeriesCache.get(seriesKey);
+        if (cached) {
+            if (diagnostics) diagnostics.alignedSeriesHits = (diagnostics.alignedSeriesHits ?? 0) + 1;
+            return cached;
+        }
+        if (diagnostics) diagnostics.alignedSeriesMisses = (diagnostics.alignedSeriesMisses ?? 0) + 1;
+        const series = Promise.resolve(buildAlignedLegClosesSeries(legBars, targetInterval));
+        alignedSeriesCache.set(seriesKey, series);
+        return series;
+    }
+
     return {
         load,
         loadWithMetadata,
@@ -600,6 +659,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
             legCache.clear();
             pairCache.clear();
             pairMetadataCache.clear();
+            alignedSeriesCache.clear();
             diskStats.hits = 0;
             diskStats.misses = 0;
             diskStats.writes = 0;
@@ -614,12 +674,37 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
     };
 }
 
-export function alignLegCloses(
-    pairBars: readonly OHLCVData[],
+/**
+ * Resample one leg to the target interval and keep only the fields close
+ * alignment consumes (timestamps + closes). Shared series caches build this
+ * once per (leg, target interval) instead of once per pair.
+ */
+function buildAlignedLegClosesSeries(
     legBars: readonly OHLCVData[],
     interval: string,
-): (number | null)[] {
+): AlignedLegClosesSeries {
     const alignedLegBars = resampleOHLCV(legBars, interval);
+    const times: number[] = [];
+    const closes: number[] = [];
+    for (let index = 0; index < alignedLegBars.length; index += 1) {
+        const bar = alignedLegBars[index]!;
+        if (typeof bar.time !== "number" || !Number.isFinite(bar.time)) continue;
+        times.push(bar.time);
+        closes.push(bar.close);
+    }
+    return { times, closes };
+}
+
+/**
+ * Exact-port of the original `alignLegCloses` scan (two-pointer exact-match,
+ * last-duplicate-time close, repeated-pair-timestamp memo) over a prebuilt
+ * series. Non-finite leg timestamps are dropped at series-build time, matching
+ * the original scan's skip behavior.
+ */
+function alignLegClosesFromSeries(
+    pairBars: readonly OHLCVData[],
+    series: AlignedLegClosesSeries,
+): (number | null)[] {
     const result: (number | null)[] = new Array(pairBars.length);
     let legIndex = 0;
     let matchedTime: number | null = null;
@@ -639,16 +724,11 @@ export function alignLegCloses(
             continue;
         }
 
-        while (legIndex < alignedLegBars.length) {
-            const legTime = alignedLegBars[legIndex]!.time;
-            if (typeof legTime !== "number" || !Number.isFinite(legTime) || legTime < targetSec) {
-                legIndex += 1;
-                continue;
-            }
-            break;
+        while (legIndex < series.times.length && series.times[legIndex]! < targetSec) {
+            legIndex += 1;
         }
 
-        if (legIndex >= alignedLegBars.length || alignedLegBars[legIndex]!.time !== targetSec) {
+        if (legIndex >= series.times.length || series.times[legIndex] !== targetSec) {
             matchedTime = null;
             matchedClose = null;
             result[pairIndex] = null;
@@ -656,11 +736,9 @@ export function alignLegCloses(
         }
 
         let lastMatchIndex = legIndex;
-        let close = alignedLegBars[legIndex]!.close;
-        while (lastMatchIndex + 1 < alignedLegBars.length) {
-            const nextBar = alignedLegBars[lastMatchIndex + 1]!;
-            if (nextBar.time !== targetSec) break;
-            close = nextBar.close;
+        let close = series.closes[legIndex]!;
+        while (lastMatchIndex + 1 < series.times.length && series.times[lastMatchIndex + 1] === targetSec) {
+            close = series.closes[lastMatchIndex + 1]!;
             lastMatchIndex += 1;
         }
         legIndex = lastMatchIndex + 1;
@@ -670,6 +748,14 @@ export function alignLegCloses(
     }
 
     return result;
+}
+
+export function alignLegCloses(
+    pairBars: readonly OHLCVData[],
+    legBars: readonly OHLCVData[],
+    interval: string,
+): (number | null)[] {
+    return alignLegClosesFromSeries(pairBars, buildAlignedLegClosesSeries(legBars, interval));
 }
 
 
