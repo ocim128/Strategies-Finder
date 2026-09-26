@@ -97,6 +97,12 @@ export interface ServerAssetIsSearchInput {
     abortSignal?: AbortSignal;
     /** Persistent cache of normalized default candidate sets for batch runs. */
     paramSetCache?: Map<string, StrategyParams[]>;
+    /**
+     * When false, the injected `generateParamSets` is not deterministic, so
+     * the param-set cache must not serve it repeated results. Undefined (the
+     * production param-space generator) counts as deterministic.
+     */
+    generateParamSetsIsDeterministic?: boolean;
     isCancelled: () => boolean;
     yieldControl: () => Promise<void>;
     /**
@@ -239,6 +245,16 @@ function buildParamSetCacheKey(
     const seed = options.mode === "random" && Number(options.maxRuns) <= 1
         ? ""
         : String(options.randomSeed);
+    // CACHE CONTRACT: generateParamSets is a pure function of
+    // (entryDefaults, options), and entryDefaults is a pure function of
+    // (strategy, settings, the options subset buildFinderSearchBaseParams
+    // reads). Every option below that changes the generated SEQUENCE must be
+    // in this key: `dataSlice` changes the effective entryDefaults through
+    // resolveFinderAssetEvalWindowBars (range_bar mode grows the IS cap by the
+    // holdout), and maxRuns/seed differentiate holdout iterations when the
+    // seed expression changes. With the key covering that full subset plus
+    // serializeParams(entryDefaults), a cache hit reproduces the generated
+    // candidate sequence identically by construction.
     return [
         selectedStrategy.key,
         serializeParams(entryDefaults),
@@ -246,6 +262,7 @@ function buildParamSetCacheKey(
         String(options.maxRuns),
         String(options.rangePercent),
         String(options.steps),
+        String(options.dataSlice ?? "all"),
         seed,
     ].join("\u0001");
 }
@@ -324,7 +341,7 @@ export async function runServerAssetIsSearch(
     const entryDefaults = buildFinderSearchBaseParams(selectedStrategy.strategy, settings, options);
     const canReuseParamSets = input.paramSetCache
         && options.mode === "random"
-        && Number(options.maxRuns) <= 1;
+        && input.generateParamSetsIsDeterministic !== false;
     const paramCacheKey = canReuseParamSets
         ? buildParamSetCacheKey(selectedStrategy, entryDefaults, options)
         : null;

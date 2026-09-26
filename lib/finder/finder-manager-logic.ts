@@ -97,36 +97,61 @@ function finderDateRangeToSec(range: FinderDateRange | undefined): number | unde
     return Number.isFinite(parsed) ? Math.floor(parsed / 1000) + 86399 : undefined;
 }
 
+/**
+ * Resolve the `[start, end)` bar indexes `sliceFinderDataWindow` would select.
+ * Pure index math with the SAME normalization semantics as the slice function,
+ * clamped to `0 <= start <= end <= data.length`; empty data yields `{0, 0}`.
+ *
+ * `date_range` windows are time-filtered rather than contiguous bar ranges, so
+ * they are reported as the sentinel `{0, data.length}`; callers needing exact
+ * bounds for that mode must filter by time themselves. Kept beside the slice
+ * function so the two cannot drift.
+ */
+export function resolveFinderDataWindowBounds(
+    data: readonly unknown[],
+    dataSlice: FinderDataSlice | FinderOosDataSlice,
+    dateRange?: FinderDateRange,
+): { start: number; end: number } {
+    const length = data.length;
+    if (dataSlice === "all" || dataSlice === "date_range" || length === 0) {
+        return { start: 0, end: length };
+    }
+    if (dataSlice === "half_oldest") {
+        return { start: 0, end: Math.floor(length / 2) };
+    }
+    if (dataSlice === "half_newest") {
+        return { start: Math.floor(length / 2), end: length };
+    }
+    if (dataSlice === "date_range_after") {
+        // The OOS complement is every bar strictly after the range end; with
+        // no `to` boundary that window is empty.
+        return finderDateRangeToSec(dateRange) === undefined ? { start: 0, end: 0 } : { start: 0, end: length };
+    }
+    const sliceIndex = Number(dataSlice) - 1;
+    return {
+        start: Math.floor((sliceIndex * length) / 5),
+        end: dataSlice === "5" ? length : Math.floor(((sliceIndex + 1) * length) / 5),
+    };
+}
+
 export function sliceFinderDataWindow<T>(
     data: readonly T[],
     dataSlice: FinderDataSlice | FinderOosDataSlice,
     dateRange?: FinderDateRange,
 ): T[] {
-    if (dataSlice === "all") {
-        return data.slice();
-    }
-    if (data.length === 0) {
-        return [];
-    }
-
-    if (dataSlice === "half_oldest") {
-        return data.slice(0, Math.floor(data.length / 2));
-    }
-    if (dataSlice === "half_newest") {
-        return data.slice(Math.floor(data.length / 2));
-    }
-
+    const { start, end } = resolveFinderDataWindowBounds(data, dataSlice, dateRange);
     if (dataSlice === "date_range" || dataSlice === "date_range_after") {
+        if (start === end) {
+            return [];
+        }
         // 'date_range_after' (the OOS complement) is every bar strictly after
-        // the range end; with no `to` boundary that window is empty.
+        // the range end; `date_range` filters to the inclusive window. Both are
+        // time-filtered, so the resolved bounds only decide empty vs. scan.
         if (dataSlice === "date_range_after") {
             const afterSec = finderDateRangeToSec(dateRange);
-            if (afterSec === undefined) {
-                return [];
-            }
             return data.filter((item) => {
                 const timeSec = parseTimeToUnixSeconds((item as { time?: unknown }).time);
-                return timeSec !== null && timeSec > afterSec;
+                return timeSec !== null && timeSec > afterSec!;
             });
         }
         const fromSec = finderDateRangeFromSec(dateRange);
@@ -139,12 +164,6 @@ export function sliceFinderDataWindow<T>(
             return true;
         });
     }
-
-    const sliceIndex = Number(dataSlice) - 1;
-    const start = Math.floor((sliceIndex * data.length) / 5);
-    const end = dataSlice === "5"
-        ? data.length
-        : Math.floor(((sliceIndex + 1) * data.length) / 5);
     return data.slice(start, end);
 }
 

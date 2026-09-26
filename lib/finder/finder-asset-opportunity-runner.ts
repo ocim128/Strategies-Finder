@@ -86,6 +86,7 @@ import { buildSelectionResult } from "./endpoint";
 import {
     computeFinderOosVerdict,
     normalizeFinderDateRange,
+    resolveFinderDataWindowBounds,
     resolveOosDataSlice,
     sliceFinderDataWindow,
     matchesFinderTradeCountFilter,
@@ -661,6 +662,35 @@ export function splitApplicationCandle(closedData: OHLCVData[]): {
 }
 
 /**
+ * Materialize the in-sample search window: the Finder data-slice fraction of
+ * `historical`, then the `evalLastBars` suffix cap with `slice(-N)` semantics
+ * relative to the SLICED window (not the full history). The time-filtered
+ * `date_range` slice selects by candle time rather than index bounds, so it
+ * takes the slice-function path instead of the bounds shortcut. Every returned array is a fresh copy; consumers treat it
+ * as read-only.
+ */
+export function resolveSlicedHistoricalWindow(
+    historical: OHLCVData[],
+    options: FinderOptions,
+    evalLastBars: number,
+): OHLCVData[] {
+    const dataSlice = options.dataSlice ?? "all";
+    if (dataSlice === "date_range") {
+        const fractionSliced = sliceHistoricalWindow(historical, options);
+        return evalLastBars > 0 ? fractionSliced.slice(-evalLastBars) : fractionSliced;
+    }
+    const bounds = resolveFinderDataWindowBounds(
+        historical,
+        dataSlice,
+        normalizeFinderDateRange(options.dataRangeFrom, options.dataRangeTo),
+    );
+    const start = evalLastBars > 0
+        ? Math.max(bounds.start, bounds.end - evalLastBars)
+        : bounds.start;
+    return historical.slice(start, bounds.end);
+}
+
+/**
  * Apply the Finder data-slice to the historical search data. Mirrors the
  * current-chart Finder: `sliceFinderDataWindow` over the historical window.
  */
@@ -1089,13 +1119,12 @@ async function searchOneAsset(args: {
         ...(input.options.mode === "random" ? { randomSeed: assetSeed } : {}),
     };
 
-    const fractionSlicedHistorical = sliceHistoricalWindow(inSampleHistorical, assetOptions);
     // Cap after the holdout trim and fraction slice. Fixed mode keeps the
     // configured IS cap; Range Bar has already added the holdout length to it.
     // Shorter datasets keep all bars available before the gap (slice(-N)).
-    const slicedHistorical = evalLastBars > 0
-        ? fractionSlicedHistorical.slice(-evalLastBars)
-        : fractionSlicedHistorical;
+    // One materialization per (asset, strategy) pass; every window array here
+    // is treated as read-only.
+    const slicedHistorical = resolveSlicedHistoricalWindow(inSampleHistorical, assetOptions, evalLastBars);
     const historicalConfirmationData = (input.settings.confirmationStrategies?.length ?? 0) > 0
         ? prefixThroughLastBar(fullClosed, slicedHistorical)
         : undefined;

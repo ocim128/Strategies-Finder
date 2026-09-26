@@ -181,6 +181,8 @@ export interface FinderAssetOpportunityRunInput {
     assetLoadContext?: BatchDatasetLoadContext;
     /** Reuse normalized candidate parameter sets across batch holdout tasks. */
     paramSetCache?: Map<string, StrategyParams[]>;
+    /** When false, the injected generateParamSets must not be served from paramSetCache. */
+    generateParamSetsIsDeterministic?: boolean;
     /** Chunked batch workers retain all strategy rows so the coordinator can rebuild top-10 diagnostics exactly. */
     includeFullStrategyBreakdown?: boolean;
     /** Legacy compatibility field; automatic batch archives always use All Sorts. */
@@ -462,8 +464,10 @@ export async function runAssetOpportunityIteration(
             ...(!input.generateParamSets
                 && input.paramSetCache
                 && input.options.mode === "random"
-                && Number(input.options.maxRuns) <= 1
                 ? { paramSetCache: input.paramSetCache }
+                : {}),
+            ...(!input.generateParamSets
+                ? { generateParamSetsIsDeterministic: input.generateParamSetsIsDeterministic }
                 : {}),
             ...(assetDataFetcher ? { dataFetcher: assetDataFetcher } : {}),
             ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),

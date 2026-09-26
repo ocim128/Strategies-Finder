@@ -43,7 +43,7 @@ import { ensureConfirmationStrategiesLoaded } from "../lib/confirmation-signal-f
 import { getLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from "../lib/strategies/built-in-catalog";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions, FinderUniverseCandidate } from "../lib/types/finder";
-import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
+import type { BacktestSettings, OHLCVData, Strategy, StrategyParams, Time } from "../lib/types/strategies";
 
 // The plugin holds module-scope state (runOwner). Each test must reset it via
 // the test internals, mirroring the Batch plugin spec.
@@ -2157,10 +2157,10 @@ describe("Asset Opportunity base-only OOS base caching", () => {
             interval: "5m",
             symbols,
             options: {
-                mode: "random",
+                mode: "random" as const,
                 randomSeed: 7,
                 scope: "asset_opportunity" as const,
-                sortPriority: ["netProfit"],
+                sortPriority: ["netProfit" as const],
                 useAdvancedSort: false,
                 topN: 2,
                 steps: 3,
@@ -2208,5 +2208,129 @@ describe("Asset Opportunity base-only OOS base caching", () => {
         expect(loadCounts.get("AAAUSDT")).to.equal(1);
         expect(loadCounts.get("AAA+ZZZ")).to.equal(2);
         expect(loadCounts.get("AAA+QQQ")).to.equal(2);
+    });
+});
+
+describe("Asset Opportunity param-set cache", () => {
+    // The relaxed cache gate (mode==="random" + deterministic generator, any
+    // maxRuns) must reproduce the generated candidate SEQUENCE exactly: a
+    // cache hit skips the generator AND yields deep-equal results in the same
+    // order; a key-relevant option change (dataSlice) must re-invoke it.
+    it("serves repeated random searches from the cache without re-invoking the generator", async () => {
+        let generatorCalls = 0;
+        const generateParamSets = (): StrategyParams[] => {
+            generatorCalls += 1;
+            // Sequence shape depends only on entryDefaults + options.
+            return [{ threshold: 1 }, { threshold: 2 }, { threshold: 3 }];
+        };
+        const paramSetCache = new Map<string, StrategyParams[]>();
+        const buildInput = () => ({
+            ohlcvData: makeCandles(Array.from({ length: 12 }, (_, index) => 100 + index)),
+            symbol: "PARITY",
+            interval: "5m",
+            options: {
+                ...makeOptions(["PARITY"]),
+                scope: "asset_opportunity" as const,
+                mode: "random" as const,
+                randomSeed: 11,
+                maxRuns: 3,
+                steps: 3,
+                rangePercent: 35,
+                topN: 3,
+            },
+            settings,
+            capitalSettings,
+            selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
+            generateParamSets,
+            generateParamSetsIsDeterministic: true as const,
+            paramSetCache,
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+        });
+        const first = await runServerAssetIsSearch(buildInput());
+        expect(generatorCalls).to.equal(1);
+        const second = await runServerAssetIsSearch(buildInput());
+        expect(generatorCalls).to.equal(1);
+        expect(second.results.map((result) => result.params)).to.deep.equal(
+            first.results.map((result) => result.params),
+        );
+        expect(second.totalCandidatesEvaluated).to.equal(first.totalCandidatesEvaluated);
+    });
+
+    it("re-invokes the generator when a key-relevant option changes", async () => {
+        const paramSetCache = new Map<string, StrategyParams[]>();
+        let generatorCalls = 0;
+        const generateParamSets = (): StrategyParams[] => {
+            generatorCalls += 1;
+            return [{ threshold: 1 }, { threshold: 2 }, { threshold: 3 }];
+        };
+        const buildInput = (dataSlice: "all" | "half_newest") => ({
+            ohlcvData: makeCandles(Array.from({ length: 12 }, (_, index) => 100 + index)),
+            symbol: "PARITY",
+            interval: "5m",
+            options: {
+                ...makeOptions(["PARITY"]),
+                scope: "asset_opportunity" as const,
+                mode: "random" as const,
+                randomSeed: 11,
+                maxRuns: 3,
+                steps: 3,
+                rangePercent: 35,
+                topN: 3,
+                dataSlice,
+            },
+            settings,
+            capitalSettings,
+            selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
+            generateParamSets,
+            generateParamSetsIsDeterministic: true as const,
+            paramSetCache,
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+        });
+        await runServerAssetIsSearch(buildInput("all"));
+        expect(generatorCalls).to.equal(1);
+        // Same key inputs: served from the cache.
+        await runServerAssetIsSearch(buildInput("all"));
+        expect(generatorCalls).to.equal(1);
+        // dataSlice is part of the cache key: the generator must run again.
+        await runServerAssetIsSearch(buildInput("half_newest"));
+        expect(generatorCalls).to.equal(2);
+    });
+
+    it("does not cache a non-deterministic injected generator", async () => {
+        const paramSetCache = new Map<string, StrategyParams[]>();
+        let generatorCalls = 0;
+        const generateParamSets = (): StrategyParams[] => {
+            generatorCalls += 1;
+            return [{ threshold: 1 }];
+        };
+        const buildInput = () => ({
+            ohlcvData: makeCandles(Array.from({ length: 12 }, (_, index) => 100 + index)),
+            symbol: "PARITY",
+            interval: "5m",
+            options: {
+                ...makeOptions(["PARITY"]),
+                scope: "asset_opportunity" as const,
+                mode: "random" as const,
+                randomSeed: 11,
+                maxRuns: 3,
+                steps: 3,
+                rangePercent: 35,
+                topN: 3,
+            },
+            settings,
+            capitalSettings,
+            selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
+            generateParamSets,
+            generateParamSetsIsDeterministic: false as const,
+            paramSetCache,
+            isCancelled: () => false,
+            yieldControl: async () => undefined,
+        });
+        await runServerAssetIsSearch(buildInput());
+        await runServerAssetIsSearch(buildInput());
+        expect(generatorCalls).to.equal(2);
+        expect(paramSetCache.size).to.equal(0);
     });
 });

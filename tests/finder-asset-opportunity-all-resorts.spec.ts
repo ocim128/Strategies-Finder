@@ -15,6 +15,7 @@ import {
     EQUITY_PATH_LINEARITY_METRIC,
     getAssetOpportunityResortMetrics,
     PRIOR_TUPLE_RECURRENCE_METRIC,
+    selectTopAssetOpportunityResults,
     STRATEGY_COVERAGE_GATE_METRIC,
     TOP_DECILE_PROFIT_SHARE_METRIC,
     TOP_RAW_SUPPORT_METRIC,
@@ -250,4 +251,65 @@ describe("Asset Opportunity prior tuple recurrence", () => {
             index,
         })).to.equal(0);
     });
+});
+
+describe("Asset Opportunity top-N selection parity", () => {
+    // selectTopAssetOpportunityResults must return the SAME rows in the SAME
+    // order as sortAssetOpportunityResultsByMetric().slice(0, n) for every
+    // metric, including ties (stable order), missing optional fields, and the
+    // collection-dependent grouped/capped metrics.
+    const pools = (): FinderAssetOpportunityResult[][] => {
+        const tiePool = [
+            makeAsset("AAA", "k", { selectionResult: { ...makeAsset("x", "x").selectionResult, expectancy: 1 } }),
+            makeAsset("BBB", "k", { selectionResult: { ...makeAsset("x", "x").selectionResult, expectancy: 1 } }),
+            makeAsset("CCC", "k", { selectionResult: { ...makeAsset("x", "x").selectionResult, expectancy: 1 } }),
+        ];
+        const missingOptional = [
+            makeAsset("AAA", "k"),
+            makeAsset("BBB", "k", {
+                barrierExitShare: 0.9,
+                tradeGapUniformity: 2,
+                topDecileProfitShare: 0.5,
+                winnerLoserHoldGapBars: 4,
+                equityPathLinearity: 0.7,
+                medianBarsToTp: 3,
+                priorTupleRecurrenceCount: 2,
+            }),
+            makeAsset("CCC", "k", { barrierExitShare: null, tradeGapUniformity: null }),
+        ];
+        const duplicateSymbols = [
+            makeAsset("AAA", "a", { selectionResult: { ...makeAsset("x", "x").selectionResult, profitFactor: 1 } }),
+            makeAsset("AAA", "b", { selectionResult: { ...makeAsset("x", "x").selectionResult, profitFactor: 2 } }),
+            makeAsset("AAA", "c", { selectionResult: { ...makeAsset("x", "x").selectionResult, profitFactor: 3 } }),
+            makeAsset("BBB", "a", { selectionResult: { ...makeAsset("x", "x").selectionResult, profitFactor: 1 } }),
+        ];
+        const wide = Array.from({ length: 50 }, (_, index) => makeAsset(
+            `S${String(index % 7).padStart(2, "0")}`,
+            `k${index % 3}`,
+            {
+                selectionResult: {
+                    ...makeAsset("x", "x").selectionResult,
+                    netProfit: (index % 11) - 3,
+                    totalTrades: (index * 7) % 23,
+                    expectancy: index % 5 === 0 ? 1 : (index % 5),
+                    profitFactor: index % 4 === 0 ? Number.POSITIVE_INFINITY : (index % 4) + 0.5,
+                },
+                priorTupleRecurrenceCount: index % 3,
+                barrierExitShare: index % 2 ? null : (index % 5) / 5,
+            },
+        ));
+        return [[], tiePool, missingOptional, duplicateSymbols, wide];
+    };
+
+    for (const metric of [null, ...getAssetOpportunityResortMetrics()]) {
+        for (const limit of [1, 3, 50]) {
+            it(`selectTop matches sort+slice (${metric ?? "run_default"}, n=${limit})`, () => {
+                for (const results of pools()) {
+                    const expected = sortAssetOpportunityResultsByMetric(results, metric).slice(0, limit);
+                    const actual = selectTopAssetOpportunityResults(results, metric, limit);
+                    expect(actual).to.deep.equal(expected);
+                }
+            });
+        }
+    }
 });

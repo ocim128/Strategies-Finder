@@ -156,8 +156,8 @@ import {
 import {
     ASSET_OPPORTUNITY_ALL_SORTS,
     getAssetOpportunityResortMetrics,
+    selectTopAssetOpportunityResults,
     sortAssetOpportunityResults,
-    sortAssetOpportunityResultsByMetric,
     type FinderAssetOpportunityArchiveSort,
     type FinderAssetOpportunityResortMetric,
 } from "../finder-asset-opportunity-metrics";
@@ -2062,9 +2062,13 @@ export async function processFinderAssetOpportunityBatchRun(
         try {
             const archiveSorts = resolveAssetOpportunityArchiveSorts();
             const archiveBlocks = archiveSorts.map((sortMetric) => {
-                const archiveResults = sortAssetOpportunityResultsByMetric(iteration.results, sortMetric);
-                const topResults = archiveResults
-                    .slice(0, Math.max(1, input.options.topN))
+                // Bounded top-N selection: identical rows/order to sorting then
+                // slicing, without sorting the full collection per sort metric.
+                const topResults = selectTopAssetOpportunityResults(
+                    iteration.results,
+                    sortMetric,
+                    Math.max(1, input.options.topN),
+                )
                     .map((result, index) => buildAssetOpportunityPerformancePayload({
                         result,
                         rank: index + 1,
