@@ -35,6 +35,19 @@ unadjusted endpoint metrics and pre-selection gains in fixed-horizon returns.
 Analyze corrected runs separately using `--batch-run-id`; do not pool them with
 legacy runs. See [the audit and rerun protocol](asset-opportunity-time-filter-audit.md).
 
+For an outlier sensitivity check, run
+[`analyze-asset-opportunity-holdouts-exclude-100-plus.bat`](../archive/asset%20opportunity/analyze-asset-opportunity-holdouts-exclude-100-plus.bat).
+It prompts for the same top K and accepts `--batch-run-id`, but writes separate
+`holdout-analysis-exclude-100-plus-top-K.txt` and `.json` reports. The equivalent
+analyzer flag is `--exclude-gains-100`. Returns at or above +100% are excluded,
+not capped or zero-filled; losses remain included. Fixed horizons are filtered
+independently. Next-exit mode filters the original top K without promoting lower
+ranks. The report records its exclusion count across analyzed sort blocks.
+All-candidate baselines and deltas are unavailable because their archived
+aggregates cannot be trimmed accurately. Original archives and the regular
+launcher are unchanged. This is an outcome-based sensitivity check, not a
+trade-selection rule.
+
 The companion idea-generation prompt is
 [`archive/prompt-finder-asset-opportunity-resort.txt`](../archive/prompt-finder-asset-opportunity-resort.txt).
 It is deliberately strict: a proposed metric must be a real post-run sort and

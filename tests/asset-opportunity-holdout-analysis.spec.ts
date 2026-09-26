@@ -50,6 +50,63 @@ function row(rank: number, pnl: number, sampleSize: number): Record<string, unkn
 }
 
 describe("Asset Opportunity holdout analysis", () => {
+    it("excludes gains at or above 100 per horizon while retaining large losses and source archives", () => {
+        const records = [100, 150, 99.9, -150].flatMap((pnl, index) => parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-09-26T00:00:00.000Z", runId: "robust", holdoutBars: 12 + index,
+            sortMetric: "averageGain",
+            rows: [{ ...row(1, pnl, 1), forwardOosPerformance: {
+                horizons: [{ bars: 12, averagePnlPercent: pnl, sampleSize: 1 }, { bars: 3, averagePnlPercent: 10, sampleSize: 1 }],
+            } }],
+            baseline: { eligibleCandidateCount: 2, horizons: [{ bars: 12, averagePnlPercent: 80,
+                sampleWeightedAveragePnlPercent: 80, positiveResults: 2, observedResults: 2, totalSamples: 2 }] },
+        }), "fixture.txt"));
+        const original = JSON.stringify(records);
+        const regular = analyzeAssetOpportunityArchive(records, { topK: 1 });
+        const filtered = analyzeAssetOpportunityArchive(records, { topK: 1, excludeGains100: true });
+        expect(regular.sorts[0]!.horizons.find(h => h.horizonBars === 12)!.observedRows).to.equal(4);
+        const horizon = filtered.sorts[0]!.horizons.find(h => h.horizonBars === 12)!;
+        expect(horizon.observedRows).to.equal(2);
+        expect(horizon.totalSamples).to.equal(2);
+        expect(horizon.positiveRatePercent).to.equal(50);
+        expect(horizon.averagePnlPercent).to.be.closeTo(-25.05, 1e-9);
+        expect(horizon.sampleWeightedAveragePnlPercent).to.be.closeTo(-25.05, 1e-9);
+        expect(horizon.medianPnlPercent).to.be.closeTo(-25.05, 1e-9);
+        expect(horizon.worstPnlPercent).to.equal(-150);
+        expect(filtered.sorts[0]!.horizons.find(h => h.horizonBars === 3)!.observedRows).to.equal(4);
+        expect(filtered.gainExclusion?.excludedObservations).to.equal(2);
+        expect(regular.baselineAvailable).to.equal(true);
+        expect(filtered.baselineAvailable).to.equal(false);
+        expect(horizon.baselineAveragePnlPercent).to.equal(null);
+        expect(renderAssetOpportunityHoldoutReport(filtered)).to.include("Gain exclusion: >= +100%");
+        expect(JSON.stringify(records)).to.equal(original);
+    });
+
+    it("does not replace an excluded rank-one gain with rank two or a zero return", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-09-26T00:00:00.000Z", runId: "robust", holdoutBars: 12,
+            sortMetric: "averageGain", rows: [row(1, 100, 1), row(2, 5, 1)],
+        }), "fixture.txt");
+        const report = analyzeAssetOpportunityArchive(records, { topK: 1, excludeGains100: true });
+        expect(report.sorts[0]!.horizons[0]!.observedRows).to.equal(0);
+        expect(report.sorts[0]!.horizons[0]!.averagePnlPercent).to.equal(null);
+    });
+
+    it("excludes next-exit gains without promoting lower ranks or classifying exclusions as missing data", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-09-26T00:00:00.000Z", runId: "robust", holdoutBars: 12,
+            sortMetric: "averageGain", measurementMode: "next_exit",
+            rows: [100, 250, -150, 10].map((pnl, index) => ({ ...row(index + 1, pnl, 1),
+                nextExitOosPerformance: { status: "exited", pnlPercent: pnl, exitReason: "signal", barsHeld: 2 },
+            })),
+        }), "fixture.txt");
+        const report = analyzeAssetOpportunityArchive(records, { topK: 3, excludeGains100: true });
+        expect(report.nextExit!.sorts[0]!.observedRows).to.equal(1);
+        expect(report.nextExit!.sorts[0]!.unavailableRows).to.equal(0);
+        expect(report.nextExit!.sorts[0]!.averagePnlPercent).to.equal(-150);
+        expect(report.archiveMaximumRank).to.equal(4);
+        expect(report.gainExclusion?.excludedObservations).to.equal(2);
+    });
+
     it("parses repeated delimited archive blocks", () => {
         const records = parseAssetOpportunityArchiveText(block({
             timestamp: "2026-08-11T00:00:00.000Z",

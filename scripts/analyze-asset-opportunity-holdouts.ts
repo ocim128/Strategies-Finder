@@ -348,6 +348,7 @@ export interface AssetOpportunityHoldoutAnalysisReport {
     selectedBlockCount: number;
     analyzedBlockCount: number;
     measurementMode: "fixed_horizon" | "next_exit";
+    gainExclusion?: { thresholdPercent: number; excludedObservations: number };
     excludedRedundantSortMetrics: string[];
     topK: number;
     archiveMaximumRank: number;
@@ -388,6 +389,7 @@ interface BatchRunGroup {
 }
 
 interface AnalyzeOptions {
+    excludeGains100?: boolean;
     archiveDirectory?: string;
     batchRunId?: string;
     includeAllBatchRuns?: boolean;
@@ -1515,10 +1517,48 @@ export function analyzeAssetOpportunityArchive(
         throw new Error(`Selected batch runs contain mixed forward measurement modes: ${[...measurementModes].sort().join(", ")}`);
     }
     const measurementMode = measurementModes.has("next_exit") ? "next_exit" : "fixed_horizon";
+    const topK = Math.max(1, Math.floor(options.topK ?? DEFAULT_TOP_K));
     const availableSortMetrics = new Set(selected.records.map((record) => record.sortMetric));
     const excludedRedundantSortMetrics = availableSortMetrics.has("netProfit") && availableSortMetrics.has("netProfitPercent")
         ? ["netProfit"]
         : [];
+    const archiveMaximumRank = selected.records.filter(record => !excludedRedundantSortMetrics.includes(record.sortMetric))
+        .reduce((maximum, record) => Math.max(maximum, ...record.topResults.map((row, index) => row.rank ?? index + 1)), 0);
+    let excludedObservations = 0;
+    if (options.excludeGains100) {
+        selected.records = selected.records.map(record => {
+            const countExclusion = !excludedRedundantSortMetrics.includes(record.sortMetric);
+            // Select the original top K before removing outcomes: never promote
+            // a lower-ranked candidate because a winner was excluded afterwards.
+            const rows = measurementMode === "next_exit" ? record.topResults.slice(0, topK) : record.topResults;
+            return {
+                ...record,
+                // Aggregate baselines cannot be accurately trimmed without the
+                // individual outcomes of the full candidate pool.
+                baseline: null,
+                nextExitBaseline: null,
+                topResults: measurementMode === "next_exit"
+                    ? rows.filter(row => {
+                        const pnl = row.nextExitOosPerformance?.pnlPercent;
+                        const excluded = typeof pnl === "number" && Number.isFinite(pnl) && pnl >= 100;
+                        if (excluded && countExclusion) excludedObservations += 1;
+                        return !excluded;
+                    })
+                    : rows.map((row, index) => ({
+                        ...row,
+                        ...(row.forwardOosPerformance ? { forwardOosPerformance: {
+                            ...row.forwardOosPerformance,
+                            horizons: row.forwardOosPerformance.horizons?.map(horizon => {
+                                if (horizon.averagePnlPercent === null || !Number.isFinite(horizon.averagePnlPercent)
+                                    || horizon.averagePnlPercent < 100) return horizon;
+                                if (countExclusion && index < topK && horizon.sampleSize > 0) excludedObservations += 1;
+                                return { ...horizon, averagePnlPercent: null, sampleSize: 0 };
+                            }),
+                        } } : {}),
+                    })),
+            };
+        });
+    }
     const analysisRecords = selected.records.filter((record) => !excludedRedundantSortMetrics.includes(record.sortMetric));
     const recordsBySort = new Map<string, AssetOpportunityArchiveRecord[]>();
     for (const record of analysisRecords) {
@@ -1527,10 +1567,6 @@ export function analyzeAssetOpportunityArchive(
         recordsBySort.set(record.sortMetric, list);
     }
     const holdoutBars = [...selected.holdoutBars].sort((left, right) => left - right);
-    const topK = Math.max(1, Math.floor(options.topK ?? DEFAULT_TOP_K));
-    const archiveMaximumRank = analysisRecords.reduce((maximum, record) => {
-        return Math.max(maximum, ...record.topResults.map((row, index) => row.rank ?? index + 1));
-    }, 0);
     const sortMetrics = [...new Set(analysisRecords.map((record) => record.sortMetric))].sort();
     const baselineHorizonBars = [...new Set(selected.records.flatMap((record) => record.baseline?.horizons.map((horizon) => horizon.bars) ?? []))]
         .sort((left, right) => left - right);
@@ -1590,6 +1626,7 @@ export function analyzeAssetOpportunityArchive(
         selectedBlockCount: selected.records.length,
         analyzedBlockCount: analysisRecords.length,
         measurementMode,
+        ...(options.excludeGains100 ? { gainExclusion: { thresholdPercent: 100, excludedObservations } } : {}),
         excludedRedundantSortMetrics,
         topK,
         archiveMaximumRank,
@@ -1610,6 +1647,11 @@ export function analyzeAssetOpportunityArchive(
             ? [...NEXT_EXIT_REPORT_QUESTIONS]
             : [...REPORT_QUESTIONS],
         notes: [
+            ...(options.excludeGains100 ? [
+                "Robustness sensitivity check: exclude forward gains >= +100%, keep losses unchanged, and never replace excluded top-K picks. This outcome-based exclusion is not a live trading rule.",
+                "Fixed-horizon exclusions apply independently per row/horizon; other horizons and historical selection metadata remain intact. Next-exit exclusions remove outcomes from the original top K before aggregation.",
+                "All-candidate baseline and deltas are unavailable in this variant: archived aggregate baselines cannot be filtered without individual candidate outcomes.",
+            ] : []),
             "Forward OOS metrics are descriptive evidence, not a trading rule or probability.",
             "Holdout values are overlapping/nested windows and must not be treated as independent experiments.",
             ...(selected.batchRunIds.length > 1
@@ -1620,7 +1662,9 @@ export function analyzeAssetOpportunityArchive(
                 : "No parameter fingerprints are present in the selected archive; candidate persistence is symbol+strategyId only.",
             measurementMode === "next_exit"
                 ? "Next-exit PnL uses only observed exits; censored and unavailable rows are reported separately and are not treated as zero PnL."
-                : baseline.length > 0
+                : options.excludeGains100
+                    ? "The filtered report does not compare selected outcomes with the unfiltered archived baseline."
+                    : baseline.length > 0
                     ? "The all-candidate baseline uses every result row before the top-N archive slice; it is not a random-trade simulation."
                     : "The all-candidate baseline is unavailable because older archive blocks contain only top-N rows.",
             ...(measurementMode === "fixed_horizon"
@@ -1933,10 +1977,13 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
         `Holdout windows: ${formatHoldoutWindows(report.holdoutBars)}`,
         `Archive blocks analyzed: ${report.analyzedBlockCount} of ${report.selectedBlockCount} selected (${report.sourceBlockCount} source)`,
         `Forward measurement: ${report.measurementMode}`,
+        ...(report.gainExclusion ? [
+            `Gain exclusion: >= +${report.gainExclusion.thresholdPercent}% (excluded ${report.gainExclusion.excludedObservations} top-K observations across analyzed sort blocks; no replacements)`,
+        ] : []),
         `Outcome rows: cumulative ranks 1–${report.topK} requested (archive maximum rank: ${report.archiveMaximumRank || "none"})`,
         `Candidate identity: ${report.candidateIdentity}`,
         `Parameter fingerprints: ${report.parameterFingerprintAvailable ? "available" : "not available in this archive"}`,
-        `All-candidate baseline: ${report.baselineAvailable || report.nextExit?.baseline ? "available" : "not available in this archive"}`,
+        `All-candidate baseline: ${report.gainExclusion ? "unavailable after gain exclusion (only aggregates archived)" : report.baselineAvailable || report.nextExit?.baseline ? "available" : "not available in this archive"}`,
     ];
     if (report.measurementMode === "next_exit") {
         return renderNextExitReport(report, headerLines);
@@ -2167,6 +2214,7 @@ function main(): void {
             batchRunId: requestedBatchRunId,
             includeAllBatchRuns: requestedBatchRunId === undefined,
             topK,
+            excludeGains100: process.argv.includes("--exclude-gains-100"),
         });
         const renderedReport = renderAssetOpportunityHoldoutReport(report);
         const textPath = `${outputPrefix}.txt`;

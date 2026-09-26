@@ -156,6 +156,7 @@ archive/
 !/archive/asset opportunity/
 /archive/asset opportunity/*
 !/archive/asset opportunity/analyze-asset-opportunity-holdouts.bat
+!/archive/asset opportunity/analyze-asset-opportunity-holdouts-exclude-100-plus.bat
 .vercel
 .wrangler/
 signals/
