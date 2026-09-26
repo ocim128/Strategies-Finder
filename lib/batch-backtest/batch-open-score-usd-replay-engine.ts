@@ -1145,26 +1145,31 @@ interface ScoreDelta {
 
 interface DecisionEvent {
     timeSec: number;
+    // Snapshots are Float64Array (not number[]) purely for retention: eight
+    // asset-length plain arrays per event cost ~2.4x the typed-array payload
+    // and dominated replay-phase heap on large universes. Every consumer is an
+    // index read, so typed arrays are behaviorally identical (including
+    // out-of-bounds `undefined` under `?? 0`).
     /** Per-asset rawScore snapshot after applying all deltas at this time. */
-    rawScore: number[];
-    activePairCount: number[];
+    rawScore: Float64Array;
+    activePairCount: Float64Array;
     /**
      * Profit-gated snapshots: the same accumulation restricted to deltas from
      * pairs whose pair backtest netProfit was strictly positive. Drives the
      * TOP_RAW_PROFIT / TOP_MEAN_PROFIT arms only. Look-ahead filter.
      */
-    rawScoreProfit: number[];
-    activePairCountProfit: number[];
+    rawScoreProfit: Float64Array;
+    activePairCountProfit: Float64Array;
     /**
      * Causal snapshots: restricted to deltas from pairs whose pnl realized
      * at or before this event is strictly positive. Drives the
      * TOP_RAW_PROFIT_NOW / TOP_MEAN_PROFIT_NOW arms.
      */
-    rawScoreProfitNow: number[];
-    activePairCountProfitNow: number[];
+    rawScoreProfitNow: Float64Array;
+    activePairCountProfitNow: Float64Array;
     /** Causal confidence-weighted PROFIT_NOW score snapshot. */
-    rawScoreProfitNowConf: number[];
-    activePairCountProfitNowConf: number[];
+    rawScoreProfitNowConf: Float64Array;
+    activePairCountProfitNowConf: Float64Array;
 }
 
 // ============================================================================
@@ -1563,7 +1568,7 @@ export async function runOpenScoreUsdReplay(
     // Causal PROFIT_NOW vote applicability travels ON each delta
     // (ScoreDelta.voteApplied, precomputed per trade at scan time), so the
     // post-group apply below needs no per-stream state.
-    const events: DecisionEvent[] = [];
+    let events: DecisionEvent[] = [];
     const sampleFrom = options.sampleFromSec;
     const sampleTo = options.sampleToSec;
 
@@ -1644,14 +1649,14 @@ export async function runOpenScoreUsdReplay(
             if ((sampleFrom === undefined || t >= sampleFrom) && (sampleTo === undefined || t <= sampleTo)) {
                 events.push({
                     timeSec: t,
-                    rawScore: [...rawScore],
-                    activePairCount: [...activePairCount],
-                    rawScoreProfit: [...profitRawScore],
-                    activePairCountProfit: [...profitPairCount],
-                    rawScoreProfitNow: [...profitNowRawScore],
-                    activePairCountProfitNow: [...profitNowPairCount],
-                    rawScoreProfitNowConf: [...profitNowConfidenceScore],
-                    activePairCountProfitNowConf: [...profitNowConfidencePairCount],
+                    rawScore: Float64Array.from(rawScore),
+                    activePairCount: Float64Array.from(activePairCount),
+                    rawScoreProfit: Float64Array.from(profitRawScore),
+                    activePairCountProfit: Float64Array.from(profitPairCount),
+                    rawScoreProfitNow: Float64Array.from(profitNowRawScore),
+                    activePairCountProfitNow: Float64Array.from(profitNowPairCount),
+                    rawScoreProfitNowConf: Float64Array.from(profitNowConfidenceScore),
+                    activePairCountProfitNowConf: Float64Array.from(profitNowConfidencePairCount),
                 });
             }
         }
@@ -2027,10 +2032,12 @@ export async function runOpenScoreUsdReplay(
     // --- Phase 4: evaluate USD outcomes per target (load -> consume -> free) -
     // Per event-view, per horizon: net return for each candidate assetIndex.
     // Stored sparsely: only eligible-candidate assets are queried.
-    const returnsByView: Array<Map<number, {
+    let returnsByView: Array<Map<number, {
         long: number[];
         mtmLong: (number | null)[];
-        entryTimes: number[];
+        /** First bar after the decision timestamp — identical for EVERY
+         * horizon of this (event, asset), so stored once, not per horizon. */
+        entryTime: number;
         exitTimes: number[];
         statuses: CandidateOutcomeStatus[];
     }> | null> = new Array(totalEventCount).fill(null);
@@ -2202,15 +2209,15 @@ export async function runOpenScoreUsdReplay(
             if (!perAsset) { perAsset = new Map(); returnsByView[viewIdx] = perAsset; }
             const longReturns: number[] = [];
             const mtmLong: (number | null)[] = [];
-            const entryTimes: number[] = [];
+            // Same entry bar for every horizon (entry is the first bar after
+            // the decision timestamp; horizons only move the exit).
+            const entryTime = times[entryBar] ?? Number.NaN;
             const exitTimes: number[] = [];
             const statuses: CandidateOutcomeStatus[] = [];
             for (const h of horizons) {
                 const exitBar = entryBar + h - 1; // h bars forward, close of that bar
-                const entryTime = times[entryBar] ?? Number.NaN;
                 if (exitBar >= target.data.length) {
                     longReturns.push(Number.NaN);
-                    entryTimes.push(entryTime);
                     exitTimes.push(Number.NaN);
                     statuses.push("right_censored");
                     // Unrealized mark-to-market for the ONGOING detail rows:
@@ -2238,12 +2245,10 @@ export async function runOpenScoreUsdReplay(
                 if (!Number.isFinite(rawOpen) || rawOpen <= 0 || !Number.isFinite(exitClose) || exitClose <= 0) {
                     longReturns.push(Number.NaN);
                     mtmLong.push(null);
-                    entryTimes.push(entryTime);
                     exitTimes.push(Number.NaN);
                     statuses.push("invalid_price");
                     continue;
                 }
-                entryTimes.push(entryTime);
                 exitTimes.push(times[exitBar] ?? Number.NaN);
                 mtmLong.push(null);
             // Long USD trade: buy at next bar open (slippage up), sell at
@@ -2262,7 +2267,7 @@ export async function runOpenScoreUsdReplay(
             perAsset.set(aIdx, {
                 long: longReturns,
                 mtmLong,
-                entryTimes,
+                entryTime,
                 exitTimes,
                 statuses,
             });
@@ -2351,6 +2356,12 @@ export async function runOpenScoreUsdReplay(
             }
         }
     }
+
+    // Last consumer of the event snapshots is the pool-snapshot loop above
+    // (views/candidates/outcomes already extracted their data). Release the
+    // ~8 x assets-per-event payloads before the comparison/aggregation phase
+    // allocates its own structures.
+    events = [];
 
     const usableCandidates = (pool: readonly Candidate[]): Candidate[] =>
         pool.filter((candidate) => !dataGapAssets.has(candidate.assetIndex));
@@ -2694,7 +2705,7 @@ export async function runOpenScoreUsdReplay(
         if (!options.includeEventDetails || selectedAssetIndex < 0) return;
         const outcome = perAsset?.get(selectedAssetIndex);
         if (outcome?.statuses[hIdx] !== "right_censored") return;
-        const entryTime = outcome.entryTimes[hIdx];
+        const entryTime = outcome.entryTime;
         ongoingEventDetails.push({
             decisionTime: timeSec,
             entryTime: Number.isFinite(entryTime) ? entryTime! : null,
@@ -2784,7 +2795,7 @@ export async function runOpenScoreUsdReplay(
         ): void => {
             if (!options.includeEventDetails) return;
             const outcome = perAssetOutcomes.get(selected.assetIndex);
-            const entryTime = outcome?.entryTimes[hIdx];
+            const entryTime = outcome?.entryTime;
             const exitTime = outcome?.exitTimes[hIdx];
             if (
                 entryTime === undefined
@@ -3229,7 +3240,7 @@ export async function runOpenScoreUsdReplay(
             topMeanPortfolioOpportunities.push({
                 asset: assetNames[view.topMean]!,
                 decisionTime: view.timeSec,
-                entryTime: topMeanOutcome.entryTimes[hIdx]!,
+                entryTime: topMeanOutcome.entryTime,
                 exitTime: topMeanOutcome.exitTimes[hIdx]!,
                 netReturn: topMeanReturn,
                 tied: view.ties.MEAN === 1,
@@ -3690,6 +3701,9 @@ export async function runOpenScoreUsdReplay(
             if (positiveRequestedAssets.has(k)) assetsWithData.add(k);
         }
     }
+    // The loop above is the last consumer of the per-(event, asset) outcome
+    // records; drop them before report assembly.
+    returnsByView = [];
     for (const aIdx of positiveRequestedAssets) {
         if (!assetsWithData.has(aIdx) && !dataGapAssets.has(aIdx)) missingAssets.add(aIdx);
     }

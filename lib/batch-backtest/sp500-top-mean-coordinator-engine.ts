@@ -10,6 +10,7 @@ import {
 } from "../backtest-settings-resolver";
 import { getTypescriptEngineRequirementReasons } from "../rust-settings-sanitizer";
 import type { BatchSyntheticPairArtifact } from "./batch-synthetic-artifact";
+import type { BatchSyntheticPairArtifactAdapter } from "./compact-pair-artifact";
 import {
     atomicWriteJsonSync,
     cleanOldArtifacts,
@@ -1173,6 +1174,16 @@ export class TopMeanCoordinatorEngine {
                     : commissionPct,
             };
 
+            // Every replay pass re-reads the same on-disk compact artifacts.
+            // Read them ONCE and hand every pass the cached array: window
+            // filtering, TOP_Z history, and gap eligibility stay computed per
+            // pass INSIDE the engine, so reports are unchanged — only the
+            // duplicated disk reads go away.
+            const cachedReplayArtifacts: BatchSyntheticPairArtifactAdapter[] = [];
+            for await (const artifact of iterateRunCompactArtifacts(this._request.runId, this.baseDir)) {
+                cachedReplayArtifacts.push(artifact);
+            }
+
             let replayPassIndex = 0;
             const runReplayForWindow = (
                 sampleFromSec: number | undefined,
@@ -1182,7 +1193,9 @@ export class TopMeanCoordinatorEngine {
                 const targets = orderTopMeanReplayTargets(replayTargets, replayPassIndex);
                 replayPassIndex += 1;
                 return runOpenScoreUsdReplay(
-                    () => iterateRunCompactArtifacts(this._request.runId, this.baseDir) as unknown as AsyncIterable<BatchSyntheticPairArtifact>,
+                    (async function* () {
+                        for (const artifact of cachedReplayArtifacts) yield artifact;
+                    }) as unknown as () => AsyncIterable<BatchSyntheticPairArtifact>,
                     targetLoader(targets),
                     {
                         horizons: this._request.horizons && this._request.horizons.length > 0 ? this._request.horizons : [12, 24, 48],
