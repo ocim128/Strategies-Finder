@@ -1430,7 +1430,8 @@ async function searchOneAsset(args: {
     // fresh signals on that recent window plus conservative indicator warmup,
     // then replay them on either the full boundary or a safely bounded recent
     // window.
-    const boundedNextExitReplayBars = needsExecutableFreshRecheck
+    const needsExecutableFreshness = needsExecutableFreshRecheck || executionModel === "signal_close";
+    const boundedFreshReplayBars = needsExecutableFreshness
         ? resolveBoundedNextExitReplayBars(input.settings, topK)
         : null;
     let boundedOpenPositionFallbackReason = resolveBoundedOpenPositionReplayBlockReason({
@@ -1454,28 +1455,26 @@ async function searchOneAsset(args: {
         boundaryData: recheckData,
         slicedHistorical,
         // signal_close and next_exit replay need the full boundary timeline
-        // to reconstruct the latest trade unless a finite max-hold bounds the
-        // required execution state. Fixed-horizon next-bar detection only
-        // needs the accepted freshness range (0..1 bars) plus warmup.
-        signalLookbackBars: needsExecutableFreshRecheck
-            ? (boundedNextExitReplayBars ?? 0)
-            : executionModel === "signal_close"
-                ? evalLastBars
-                : Math.max(2, resolveAssetOpportunityFreshnessBars(input.settings) + 1),
+        // to reconstruct the latest trade; a finite max-hold bounds that
+        // execution state, making a recent replay exact. Fixed-horizon
+        // next-bar detection only needs the freshness range plus warmup.
+        signalLookbackBars: needsExecutableFreshness
+            ? (boundedFreshReplayBars ?? 0)
+            : Math.max(2, resolveAssetOpportunityFreshnessBars(input.settings) + 1),
         dataSlice: input.options.dataSlice ?? "all",
         candidates: topK,
         settings: input.settings,
         // signal_close and next_exit consume replayed trades. Fixed-horizon
         // next_open/next_close only consume generated signals, so their
         // signal-only recheck can safely use the same bounded recent window.
-        // A bounded next-exit replay is
-        // also exact when max-hold/cooldown bound all prior execution state.
+        // A bounded trade replay is also exact for either trade-consuming
+        // model when max-hold/cooldown bound all prior execution state.
         canUseBoundedSignalWindow: (
             !needsExecutableFreshRecheck
             && executionModel !== "signal_close"
         ) || (
-            needsExecutableFreshRecheck
-            && boundedNextExitReplayBars !== null
+            needsExecutableFreshness
+            && boundedFreshReplayBars !== null
         ),
     });
     diagnostics.freshSignalWindowBars = freshSignalData?.length ?? 0;
@@ -1508,6 +1507,17 @@ async function searchOneAsset(args: {
             diagnostics.freshReplayMode = "bounded_replay";
             diagnostics.freshReplayFallbackReason = null;
         }
+    } else if (needsExecutableFreshness) {
+        if (freshSignalData !== undefined && freshSignalData.length < recheckData.length) {
+            diagnostics.freshReplayMode = "bounded_replay";
+            diagnostics.freshReplayFallbackReason = null;
+        } else {
+            diagnostics.freshReplayMode = "full_history";
+            diagnostics.freshReplayFallbackReason = boundedFreshReplayBars === null
+                ? (resolveBoundedOpenPositionReplayBlockReason({ enabled: true, settings: input.settings })
+                    ?? "max_hold_limit_unavailable")
+                : "bounded_window_not_shorter_than_history";
+        }
     }
     const activeSignalWindowStartIndex = canScreenBoundedOpenPositions
         ? Math.max(0, recheckData.length - boundedOpenPositionReplayBars! - 1)
@@ -1539,7 +1549,7 @@ async function searchOneAsset(args: {
             ...(freshSignalData ? { signalData: freshSignalData } : {}),
             ...(includeOpenPositions
                 ? { replayData: boundedOpenPositionReplayData }
-                : needsExecutableFreshRecheck && freshSignalData
+                : needsExecutableFreshness && freshSignalData
                     ? { replayData: freshSignalData }
                     : {}),
             symbol,
@@ -1713,6 +1723,12 @@ async function searchOneAsset(args: {
         && !needsExecutableFreshRecheck
         && evalLastBars === 0
         && (input.options.dataSlice ?? "all") === "all"
+        // A bounded fresh recheck truncates the replayed trade list; those
+        // trades must not feed the analytics window. The full-IS winner
+        // re-run below keeps the derived metrics identical instead.
+        && (boundedFreshReplayBars === null
+            || freshSignalData === undefined
+            || freshSignalData.length >= recheckData.length)
         && (
             recheckData.length === slicedHistorical.length
             || recheckData.length === slicedHistorical.length + 1

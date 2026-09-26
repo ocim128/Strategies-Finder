@@ -1730,6 +1730,146 @@ describe("Asset Opportunity runner", () => {
         expect(diagnostics!.freshEntryRechecks).to.equal(2);
         expect(diagnostics!.freshEntryExecutions).to.equal(2);
     });
+
+    function makeBoundedReplayIsSearch(): AssetIsSearch {
+        return async (args) => {
+            const { ohlcvData, selectedStrategies, generateParamSets, options } = args;
+            const strategy = selectedStrategies[0]!.strategy;
+            const paramSets = generateParamSets(strategy.defaultParams, options);
+            const results: FinderResult[] = [];
+            for (const params of paramSets) {
+                const signals = strategy.execute(ohlcvData, params);
+                const backtest = runBacktestForAssetTest(ohlcvData, signals, args.settings);
+                results.push({
+                    key: selectedStrategies[0]!.key,
+                    name: selectedStrategies[0]!.name,
+                    params,
+                    result: backtest,
+                    selectionResult: backtest,
+                    endpointAdjusted: false,
+                    endpointRemovedTrades: 0,
+                });
+            }
+            results.sort((a, b) => b.result.netProfit - a.result.netProfit);
+            return { results: results.slice(0, options.topN), totalCandidatesEvaluated: paramSets.length };
+        };
+    }
+
+    it("replays a bounded signal_close fresh recheck without changing the displayed result", async () => {
+        // One completed stale trade (bars 10-12, far outside any bounded
+        // window) plus a boundary buy on the latest bar. With max-hold+slack
+        // = 11 bars and 64 warmup bars, the bounded window (75 bars) provably
+        // contains every piece of execution state, so the bounded run must
+        // match the full-history run exactly: the boundary buy enters and
+        // stays open (fresh, age 0) in both.
+        const data = makeCandles(Array.from({ length: 200 }, (_, i) => 100 + i));
+        const strategy: Strategy = {
+            name: "Bounded Replay Fresh",
+            description: "stale round trip plus a boundary entry",
+            defaultParams: {},
+            paramLabels: {},
+            execute(candles) {
+                const signals: Signal[] = [];
+                if (candles.length >= 13) {
+                    signals.push({ time: candles[10]!.time, type: "buy", price: candles[10]!.close });
+                    signals.push({ time: candles[12]!.time, type: "sell", price: candles[12]!.close });
+                }
+                const latest = candles[candles.length - 1]!;
+                signals.push({ time: latest.time, type: "buy", price: latest.close });
+                return signals;
+            },
+        };
+        const runWith = (riskMaxHoldEnabled: boolean) => runAssetOpportunitySearch(makeInput({
+            settings: {
+                ...settings,
+                riskMaxHoldEnabled,
+                riskMaxHoldBars: 8,
+                riskCooldownEnabled: false,
+            },
+            selectedStrategy: { key: "bounded_replay_fresh", name: strategy.name, strategy },
+            generateParamSets: () => [{}],
+            assets: [{ symbol: "BOUNDED_FRESH", data }],
+            runIsSearch: makeBoundedReplayIsSearch(),
+        }), makeCallbacks());
+        const boundedOutput = await runWith(true);
+        const unboundedOutput = await runWith(false);
+
+        expect(boundedOutput.outcomes[0]!.diagnostics!.freshReplayMode).to.equal("bounded_replay");
+        expect(boundedOutput.outcomes[0]!.diagnostics!.freshReplayFallbackReason).to.equal(null);
+        expect(boundedOutput.outcomes[0]!.diagnostics!.freshSignalWindowBars).to.be.lessThan(data.length);
+        expect(unboundedOutput.outcomes[0]!.diagnostics!.freshReplayMode).to.equal("full_history");
+        expect(boundedOutput.results).to.have.length(1);
+        expect(unboundedOutput.results).to.have.length(1);
+        expect(boundedOutput.results[0]!.freshStatus).to.equal("fresh");
+        expect(boundedOutput.results[0]!.freshStatus).to.equal(unboundedOutput.results[0]!.freshStatus);
+        expect(boundedOutput.results[0]!.signalAgeBars).to.equal(unboundedOutput.results[0]!.signalAgeBars);
+        expect(boundedOutput.results[0]!.latestSignalTime).to.equal(unboundedOutput.results[0]!.latestSignalTime);
+        // The in-sample search window is untouched by the bounded fresh
+        // replay, so displayed IS metrics stay identical.
+        expect(boundedOutput.results[0]!.selectionResult.totalTrades)
+            .to.equal(unboundedOutput.results[0]!.selectionResult.totalTrades);
+    });
+
+    it("matches unbounded fresh detection when a cooldown blocks re-entry at the boundary", async () => {
+        // A position entered 7 bars before the boundary is signal-exited ON
+        // the boundary bar and its 2-bar cooldown blocks the same-bar
+        // re-entry buy. With max-hold 12 the bounded window (12+2+3 slack,
+        // plus warmup) provably contains that cooldown state, so the bounded
+        // run (100-bar dataset) must agree with the full-history run (80-bar
+        // dataset: the bounded window no longer fits, so the recheck replays
+        // everything) — both report no fresh entry. The cooldown-disabled
+        // control pair proves the block is actually exercised: without it
+        // the boundary re-entry fires (fresh) in both replay modes. Max-hold
+        // stays ENABLED in every run so the engine loop is identical.
+        const strategy: Strategy = {
+            name: "Cooldown Block Replay",
+            description: "exits on the boundary bar and re-enters on the same bar",
+            defaultParams: {},
+            paramLabels: {},
+            execute(candles) {
+                const signals: Signal[] = [];
+                if (candles.length >= 8) {
+                    const entry = candles[candles.length - 7]!;
+                    signals.push({ time: entry.time, type: "buy", price: entry.close });
+                }
+                const latest = candles[candles.length - 1]!;
+                signals.push({ time: latest.time, type: "sell", price: latest.close });
+                signals.push({ time: latest.time, type: "buy", price: latest.close });
+                return signals;
+            },
+        };
+        const runWith = (bars: number, riskCooldownEnabled: boolean) => runAssetOpportunitySearch(makeInput({
+            settings: {
+                ...settings,
+                riskMaxHoldEnabled: true,
+                riskMaxHoldBars: 12,
+                riskCooldownEnabled,
+                riskCooldownBars: 2,
+            },
+            selectedStrategy: { key: "cooldown_block_replay", name: strategy.name, strategy },
+            generateParamSets: () => [{}],
+            assets: [{ symbol: "COOLDOWN_BLOCK", data: makeCandles(Array.from({ length: bars }, (_, i) => 100 + i)) }],
+            runIsSearch: makeBoundedReplayIsSearch(),
+        }), makeCallbacks());
+
+        const boundedOutput = await runWith(100, true);
+        const unboundedOutput = await runWith(80, true);
+        expect(boundedOutput.outcomes[0]!.diagnostics!.freshReplayMode).to.equal("bounded_replay");
+        expect(unboundedOutput.outcomes[0]!.diagnostics!.freshReplayMode).to.equal("full_history");
+        // Cooldown blocks the boundary re-entry in both replay modes.
+        expect(boundedOutput.outcomes[0]!.kind).to.equal(unboundedOutput.outcomes[0]!.kind);
+        expect(boundedOutput.outcomes[0]!.kind).to.equal("no_fresh_entry");
+        expect(boundedOutput.results).to.have.length(0);
+        expect(unboundedOutput.results).to.have.length(0);
+
+        // Control: without the cooldown the same-bar re-entry fires in both.
+        const boundedControl = await runWith(100, false);
+        const unboundedControl = await runWith(80, false);
+        expect(boundedControl.results).to.have.length(1);
+        expect(unboundedControl.results).to.have.length(1);
+        expect(boundedControl.results[0]!.freshStatus).to.equal("fresh");
+        expect(unboundedControl.results[0]!.freshStatus).to.equal("fresh");
+    });
 });
 
 describe("Asset Opportunity evaluation window (evalLastBars)", () => {
