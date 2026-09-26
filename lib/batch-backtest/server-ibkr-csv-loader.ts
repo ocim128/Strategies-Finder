@@ -25,7 +25,9 @@ const IBKR_HEADER = "time,open,high,low,close,volume";
  * it stays always-fresh without an explicit clear.
  *
  * The entries are COLUMNAR (six Float64Arrays per seed, ~1.2 MB per 25k-bar
- * seed) and candle objects are materialized per cache hit. Audit
+ * seed) and candle objects are materialized per cache hit — pair leg loads
+ * (see {@link loadFreshIbkrCandlesFromDisk} `limitBars`) can materialize only
+ * the requested tail. Audit
  * (parse-thrash/GC finding): storing the candles as OBJECTS at this capacity
  * poisoned V8's collector — a 512-entry object cache holds ~12.6M live
  * objects per worker (~1.1 GB live graph), and major-GC cost scales with the
@@ -74,6 +76,30 @@ function candlesFromColumns(columns: ParsedSeedColumns): OHLCVData[] {
     const candles: OHLCVData[] = new Array(n);
     for (let i = 0; i < n; i += 1) {
         candles[i] = {
+            time: columns.time[i]! as OHLCVData["time"],
+            open: columns.open[i]!,
+            high: columns.high[i]!,
+            low: columns.low[i]!,
+            close: columns.close[i]!,
+            volume: columns.volume[i]!,
+        };
+    }
+    return candles;
+}
+
+/**
+ * Materialize only the trailing {@link limitBars} candles from columnar cache
+ * entries. Bars are contiguous by index, so a tail slice is a cheap inner-loop
+ * bound — the columnar entry stays intact for other callers. Pair builders
+ * consume the newest `sourceBars` candles, so a tail is exactly what they need;
+ * standalone targets (limitBars undefined) still materialize the full series.
+ */
+function candlesFromColumnsTail(columns: ParsedSeedColumns, limitBars: number): OHLCVData[] {
+    const n = columns.time.length;
+    const start = n > limitBars ? n - limitBars : 0;
+    const candles: OHLCVData[] = new Array(n - start);
+    for (let i = start; i < n; i += 1) {
+        candles[i - start] = {
             time: columns.time[i]! as OHLCVData["time"],
             open: columns.open[i]!,
             high: columns.high[i]!,
@@ -221,6 +247,14 @@ export async function loadFreshIbkrCandlesFromDisk(
     interval: string,
     signal?: AbortSignal,
     baseDir = process.cwd(),
+    /**
+     * Optional newest-bar budget for synthetic-pair leg loads. Cached seeds
+     * materialize only the trailing {@link limitBars} bars (undefined keeps
+     * the full-series contract for standalone targets). The uncached path
+     * re-parses and stores the full series regardless — the parse cost
+     * dominates and the entry stays whole for other callers.
+     */
+    limitBars?: number,
 ): Promise<OHLCVData[] | null> {
     if (!isIbkrSymbol(symbol) || signal?.aborted) return null;
     const baseInterval = interval.trim().toLowerCase().split("@")[0]!;
@@ -252,7 +286,9 @@ export async function loadFreshIbkrCandlesFromDisk(
                 const cached = await checkParsedCsvCache(filePath, parsedCache);
                 if (cached) {
                     if (signal?.aborted) return null;
-                    return candlesFromColumns(cached.columns);
+                    return limitBars !== undefined
+                        ? candlesFromColumnsTail(cached.columns, limitBars)
+                        : candlesFromColumns(cached.columns);
                 }
 
                 // A TOP_MEAN worker is already an isolated blocking boundary.

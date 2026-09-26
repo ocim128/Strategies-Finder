@@ -446,10 +446,6 @@ function touchFile(path: string, mtimeSecondsAgo: number): void {
     utimesSync(path, atime, mtime);
 }
 
-function waitForImmediate(): Promise<void> {
-    return new Promise((resolve) => setImmediate(resolve));
-}
-
 test("pruneSyntheticPairDiskCache evicts oldest-mtime files first by file-count cap", () => {
     const { paths } = seedCacheFiles(5);
     // Make the order deterministic: index 0 is oldest, 4 is newest.
@@ -519,7 +515,16 @@ test("cache writes defer the directory-wide prune until after the write complete
         "the cache write must return before the directory-wide prune runs",
     );
 
-    await waitForImmediate();
+    // The deferred prune now runs on fs/promises behind the prune lock, so
+    // completion takes a few event-loop turns instead of one setImmediate.
+    // Poll until the eviction lands (bounded) before asserting the cap.
+    for (
+        let waitedMs = 0;
+        waitedMs < 5000 && getSyntheticPairCacheSize().files !== MAX_CACHE_FILES;
+        waitedMs += 25
+    ) {
+        await new Promise((resolveSleep) => setTimeout(resolveSleep, 25));
+    }
     assert.equal(getSyntheticPairCacheSize().files, MAX_CACHE_FILES);
 });
 

@@ -102,7 +102,9 @@ async function fetchServerHistoricalData(
     options?: { signal?: AbortSignal; offline?: boolean },
 ): Promise<OHLCVData[]> {
     if (isIbkrSymbol(symbol)) {
-        const candles = await loadFreshIbkrCandlesFromDisk(symbol, interval, options?.signal);
+        // limitBars tail-materializes cached columnar seeds directly; the
+        // slice below becomes a no-op but stays as the correctness backstop.
+        const candles = await loadFreshIbkrCandlesFromDisk(symbol, interval, options?.signal, undefined, limit);
         if (!candles) return [];
         return candles.length > limit ? candles.slice(-limit) : candles;
     }

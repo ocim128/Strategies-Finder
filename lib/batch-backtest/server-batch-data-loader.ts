@@ -45,7 +45,9 @@ export async function fetchServerHistoricalData(
         // IBKR CSV. Large batches exceed the 24-leg LRU, so a once-per-run or
         // DataCache fallback can reintroduce a pre-sync leg after eviction.
         // Warm pair-disk hits never reach this path.
-        const candles = await loadFreshIbkrCandlesFromDisk(symbol, interval, options?.signal);
+        // limitBars tail-materializes cached columnar seeds directly; the
+        // slice below becomes a no-op but stays as the correctness backstop.
+        const candles = await loadFreshIbkrCandlesFromDisk(symbol, interval, options?.signal, undefined, limit);
         if (!candles) return [];
         return candles.length > limit ? candles.slice(-limit) : candles;
     }

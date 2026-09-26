@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
     __acquireIbkrSyncOwnerForTests,
+    __getIbkrCatalogWriteCountForTests,
     __resetIbkrSyncStateForTests,
     assertSourceConstraints,
     mapAlpacaStopReason,
@@ -575,5 +576,136 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
         const firstStart = Date.parse(new URL(requestedUrls[0]!).searchParams.get("start")!);
         const fallbackStart = Date.parse(new URL(requestedUrls[1]!).searchParams.get("start")!);
         assert.equal(firstStart - fallbackStart, 7 * 24 * 60 * 60 * 1000);
+    });
+});
+
+
+
+describe("alpaca processSyncBatch bounded parallel dispatch", () => {
+    beforeEach(() => __resetIbkrSyncStateForTests());
+    afterEach(() => __resetIbkrSyncStateForTests());
+
+    const waitFor = async (predicate: () => boolean, what: string, timeoutMs = 2000): Promise<void> => {
+        const startedAt = Date.now();
+        while (!predicate()) {
+            if (Date.now() - startedAt > timeoutMs) throw new Error(`timed out waiting for ${what}`);
+            await new Promise((resolveSleep) => setTimeout(resolveSleep, 5));
+        }
+    };
+
+    it("keeps at most 3 symbols in flight and releases symbol events in ascending index order", async () => {
+        // Deferred worker: each symbol's completion is held until the test
+        // resolves it, so in-flight concurrency is directly observable. The
+        // dispatcher runs a sliding window: resolving one symbol immediately
+        // dispatches the next, so the test drains whatever is in flight
+        // instead of expecting fixed window boundaries.
+        const symbols = ["S0", "S1", "S2", "S3", "S4", "S5", "S6"];
+        const events: Array<Record<string, unknown>> = [];
+        let inFlight = 0;
+        let maxInFlight = 0;
+        const deferred = new Map<string, () => void>();
+        let started = 0;
+        const alpacaFetcher = (async (_cat: unknown, symbol: string) => {
+            started += 1;
+            inFlight += 1;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            await new Promise<void>((resolveFetch) => deferred.set(symbol, resolveFetch));
+            inFlight -= 1;
+            return alpacaResult(symbol);
+        }) as AlpacaFetcher;
+
+        const run = processSyncBatch(
+            { symbols, interval: "30m", period: "1m", source: "alpaca" },
+            false,
+            (event) => events.push(event as Record<string, unknown>),
+            __acquireIbkrSyncOwnerForTests(),
+            { alpacaFetcher: alpacaFetcher as never },
+        );
+
+        await waitFor(() => deferred.size === 3, "the dispatch frontier to fill 3 slots");
+        assert.equal(maxInFlight, 3, "concurrency must be bounded at 3 in-flight symbols");
+
+        // Drain all 7 symbols, resolving whatever is currently in flight
+        // (map iteration order resolves newer symbols first, exercising
+        // out-of-order completion against the ordered release loop).
+        let resolved = 0;
+        while (resolved < symbols.length) {
+            await waitFor(() => deferred.size > 0, "in-flight work to resolve");
+            for (const [symbol, resolveFetch] of [...deferred]) {
+                deferred.delete(symbol);
+                resolveFetch();
+                resolved += 1;
+            }
+        }
+        await run;
+
+        assert.equal(started, symbols.length, "every symbol must be dispatched exactly once");
+        assert.equal(maxInFlight, 3, "in-flight must never exceed 3 across the whole run");
+        const symbolEvents = events.filter((e) => e.type === "symbol");
+        assert.deepEqual(
+            symbolEvents.map((e) => e.symbol),
+            symbols,
+            "symbol events must be emitted in ascending original index order",
+        );
+        const done = events[events.length - 1]!;
+        assert.equal(done.type, "done");
+        assert.equal(done.ok, true);
+    });
+
+    it("writes the catalog once per completed symbol and stops writing after Stop", async () => {
+        const symbols = ["C0", "C1", "C2", "C3", "C4", "C5"];
+        const events: Array<Record<string, unknown>> = [];
+        const deferred = new Map<string, () => void>();
+        const controller = new AbortController();
+        const alpacaFetcher = (async (
+            _cat: unknown,
+            symbol: string,
+            _interval: string,
+            _period: string,
+            _syncOnly: boolean,
+            signal?: AbortSignal,
+        ) => {
+            await new Promise<void>((resolveFetch) => deferred.set(symbol, resolveFetch));
+            // Mirror syncOneAlpacaSymbol: an aborted signal yields a cancelled
+            // result with NO writes (the CSV/catalog write is skipped).
+            if (signal?.aborted) {
+                return { ...alpacaResult(symbol), cancelled: true, complete: false };
+            }
+            return alpacaResult(symbol);
+        }) as AlpacaFetcher;
+
+        const run = processSyncBatch(
+            { symbols, interval: "30m", period: "1m", source: "alpaca" },
+            false,
+            (event) => events.push(event as Record<string, unknown>),
+            __acquireIbkrSyncOwnerForTests(),
+            { signal: controller.signal, alpacaFetcher: alpacaFetcher as never },
+        );
+
+        await waitFor(() => deferred.size === 3, "the first 3 symbols to dispatch");
+        for (const symbol of ["C0", "C1", "C2"]) deferred.get(symbol)!();
+        await waitFor(
+            () => __getIbkrCatalogWriteCountForTests() === 3,
+            "one catalog write per completed symbol",
+        );
+
+        // Stop mid-flight: resolve the in-flight window so the workers observe
+        // the aborted signal and return cancelled results (no writes), and no
+        // further symbols are dispatched.
+        controller.abort();
+        await waitFor(() => deferred.size > 0, "the next window to be in flight");
+        for (const [, resolveFetch] of [...deferred]) resolveFetch();
+        await run;
+        await new Promise((resolveSleep) => setTimeout(resolveSleep, 50));
+        assert.equal(
+            __getIbkrCatalogWriteCountForTests(),
+            3,
+            "cancelled symbols must not add catalog writes",
+        );
+        const symbolEvents = events.filter((e) => e.type === "symbol");
+        assert.deepEqual(symbolEvents.map((e) => e.symbol), ["C0", "C1", "C2"]);
+        const done = events[events.length - 1]!;
+        assert.equal(done.type, "done");
+        assert.equal(done.cancelled, true);
     });
 });

@@ -28,8 +28,11 @@
  *
  * The cache is BOUNDED: {@link pruneSyntheticPairDiskCache} enforces both a
  * byte and a file-count cap, evicting oldest-mtime files first. It runs once
- * per process startup and is throttled after writes. Eviction is safe — a miss
- * only causes a rebuild (see AGENTS.md §"synthetic-pair disk cache").
+ * per process startup and is throttled after writes. The throttled post-write
+ * prune runs on fs/promises behind a lockfile guard
+ * ({@link pruneSyntheticPairDiskCacheAsync}); startup keeps the synchronous
+ * walk. Eviction is safe — a miss only causes a rebuild (see AGENTS.md
+ * §"synthetic-pair disk cache").
  */
 
 import {
@@ -41,7 +44,8 @@ import {
     unlinkSync,
     writeFileSync,
 } from "node:fs";
-import { mkdir, readFile, rename, stat, unlink, utimes, writeFile } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rename, stat, unlink, utimes, writeFile } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { serialize as v8Serialize, deserialize as v8Deserialize } from "node:v8";
 import { isMainThread } from "node:worker_threads";
@@ -85,6 +89,13 @@ export const MAX_CACHE_BYTES = 4 * 1024 ** 3; // 4 GiB
 export const MAX_CACHE_FILES = 6_000;
 /** Post-write prune is throttled so a burst of writes doesn't stat the dir per file. */
 const PRUNE_THROTTLE_MS = 60_000;
+/**
+ * Lockfile staleness for the async prune guard. A crashed holder's lock is
+ * stolen after this window; a live holder always finishes well inside it.
+ */
+const PRUNE_LOCK_STALE_MS = 60_000;
+/** The async prune yields to the event loop between unlinks of this many files. */
+const PRUNE_BATCH_SIZE = 64;
 /**
  * A cache HIT bumps the file mtime at most once per this interval so the
  * prune sort (oldest-mtime-first) reflects actual access, not just write
@@ -707,20 +718,28 @@ function maybePruneAfterWrite(): void {
 
     // Directory-wide stat/sort pruning can take seconds on a warmed multi-GB
     // cache (especially on Windows). It is maintenance, not part of serving
-    // the freshly-built pair, so keep it off Finder/Batch's critical path.
+    // the freshly-built pair, so keep it off Finder/Batch's critical path —
+    // and off the event loop: the deferred prune runs on fs/promises and
+    // yields between unlink batches (see pruneSyntheticPairDiskCacheAsync),
+    // behind a lockfile so concurrent workers don't scan the dir concurrently.
     const scheduledGeneration = cacheGeneration;
     pruneScheduled = true;
     setImmediate(() => {
         pruneScheduled = false;
         if (scheduledGeneration !== cacheGeneration) return;
-        if (!startupPruneDone) {
-            pruneOnStartup();
-            return;
-        }
-        const current = Date.now();
-        if (current - lastPruneAt < PRUNE_THROTTLE_MS) return;
-        lastPruneAt = current;
-        pruneSyntheticPairDiskCache();
+        void (async () => {
+            if (!startupPruneDone) {
+                // Same stamps as pruneOnStartup, minus the synchronous walk.
+                startupPruneDone = true;
+                lastPruneAt = Date.now();
+                await pruneSyntheticPairDiskCacheAsync();
+                return;
+            }
+            const current = Date.now();
+            if (current - lastPruneAt < PRUNE_THROTTLE_MS) return;
+            lastPruneAt = current;
+            await pruneSyntheticPairDiskCacheAsync();
+        })();
     });
 }
 
@@ -745,6 +764,123 @@ function collectCacheEntries(dir: string): CacheEntry[] {
         }
     }
     return out;
+}
+
+/**
+ * Best-effort exclusive guard for the async prune scan. Workers and the main
+ * thread all write pair files (each worker runs its own module instance of the
+ * server loaders, and every write can schedule a prune) while sharing one
+ * cache dir, so two scans must not interleave. Acquired with `wx`; a stale
+ * lock is stolen after {@link PRUNE_LOCK_STALE_MS}; contention simply skips
+ * the round (the next throttled window retries). Returns `null` when skipped.
+ */
+async function withPruneLock<T>(fn: () => Promise<T>): Promise<T | null> {
+    const lockPath = resolve(cacheDir(), "prune.lock");
+    let handle: FileHandle;
+    try {
+        handle = await open(lockPath, "wx");
+    } catch {
+        try {
+            const info = await stat(lockPath);
+            if (Date.now() - info.mtimeMs < PRUNE_LOCK_STALE_MS) return null;
+        } catch {
+            return null; // vanished already — treat as contended
+        }
+        try {
+            await unlink(lockPath);
+        } catch { /* raced — skip this round */ }
+        try {
+            handle = await open(lockPath, "wx");
+        } catch {
+            return null;
+        }
+    }
+    try {
+        return await fn();
+    } finally {
+        try { await handle.close(); } catch { /* already closed */ }
+        try { await unlink(lockPath); } catch { /* raced with a stale-lock steal */ }
+    }
+}
+
+/** Async twin of {@link collectCacheEntries} for the deferred prune path. */
+async function collectCacheEntriesAsync(dir: string): Promise<CacheEntry[]> {
+    const out: CacheEntry[] = [];
+    for (const entry of await readdir(dir)) {
+        if (!entry.endsWith(".bin") && !entry.endsWith(".json")) continue;
+        const fullPath = resolve(dir, entry);
+        try {
+            const info = await stat(fullPath);
+            if (info.isFile()) {
+                out.push({ path: fullPath, size: info.size, mtimeMs: info.mtimeMs });
+            }
+        } catch {
+            /* vanished between readdir and stat — skip */
+        }
+    }
+    return out;
+}
+
+/**
+ * Bounded-async twin of {@link pruneSyntheticPairDiskCache} for the deferred
+ * post-write path: readdir/stat/unlink come from `node:fs/promises` and the
+ * eviction loop yields between batches so a warmed multi-GB cache cannot pin
+ * the event loop. Same oldest-mtime-first order, same caps, same result shape;
+ * `null` means the round was skipped because another thread/process held the
+ * prune lock. The startup path keeps the synchronous signature for callers
+ * and tests.
+ */
+export async function pruneSyntheticPairDiskCacheAsync(
+    options: SyntheticPairCachePruneOptions = {},
+): Promise<SyntheticPairCachePruneResult | null> {
+    // Preserve the deferred path's cacheGeneration guard across the async
+    // boundary: if the cache dir is swapped (tests) before the scan starts,
+    // skip instead of pruning the wrong directory.
+    const generationAtStart = cacheGeneration;
+    return withPruneLock(async () => {
+        if (generationAtStart !== cacheGeneration) {
+            return { files: 0, bytes: 0, evictedBytes: 0, evictedFiles: 0 };
+        }
+        const maxBytes = options.maxBytes ?? MAX_CACHE_BYTES;
+        const maxFiles = options.maxFiles ?? MAX_CACHE_FILES;
+
+        const dir = cacheDir();
+        let entries: CacheEntry[];
+        try {
+            entries = await collectCacheEntriesAsync(dir);
+        } catch {
+            // Missing or unreadable cache dir: nothing to prune.
+            return { files: 0, bytes: 0, evictedBytes: 0, evictedFiles: 0 };
+        }
+        // Sort oldest-mtime first so we evict in LRU-by-mtime order.
+        entries.sort((a, b) => a.mtimeMs - b.mtimeMs);
+
+        let totalBytes = entries.reduce((sum, e) => sum + e.size, 0);
+        let totalFiles = entries.length;
+        let evictedBytes = 0;
+        let evictedFiles = 0;
+
+        let batch = 0;
+        for (const entry of entries) {
+            if (totalBytes <= maxBytes && totalFiles <= maxFiles) break;
+            try {
+                await unlink(entry.path);
+                totalBytes -= entry.size;
+                totalFiles -= 1;
+                evictedBytes += entry.size;
+                evictedFiles += 1;
+            } catch {
+                // Best-effort: a failed unlink (locked file) just leaves it; the
+                // next prune retries. Skip counting it as evicted.
+            }
+            batch += 1;
+            if (batch % PRUNE_BATCH_SIZE === 0) {
+                await new Promise((release) => setImmediate(release));
+            }
+        }
+
+        return { files: totalFiles, bytes: totalBytes, evictedBytes, evictedFiles };
+    });
 }
 
 function measureCache(): SyntheticPairCachePruneResult {

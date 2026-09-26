@@ -688,7 +688,25 @@ function readCatalog(): IbkrCatalog {
     }
 }
 
+// Serializes per-symbol catalog writes: parallel workers each mutate the
+// shared in-memory catalog and write it, so the writes must not interleave
+// (temp+rename is per-write atomic, but two concurrent writers could still
+// rename out of order and drop the other's entries from the final file).
+let catalogWriteChain: Promise<void> = Promise.resolve();
+/** Test seam: total `writeCatalog` calls (bounded-parallel specs assert once-per-symbol). */
+let catalogWriteCountForTests = 0;
+
+function writeCatalogSerialized(catalog: IbkrCatalog): Promise<void> {
+    const write = catalogWriteChain.then(() => {
+        writeCatalog(catalog);
+    });
+    // Keep the chain alive after a failed write so later symbols still land.
+    catalogWriteChain = write.catch(() => {});
+    return write;
+}
+
 function writeCatalog(catalog: IbkrCatalog): void {
+    catalogWriteCountForTests += 1;
     // Atomic write via temp+rename, mirroring `writeCsv` below. A direct
     // `writeFileSync` could leave a truncated JSON if the process is killed
     // mid-batch, and `readCatalog` would silently swallow it as empty.
@@ -1810,6 +1828,12 @@ type AlpacaSymbolWorker = (
 
 const ALPACA_SHORT_WINDOW_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 const ALPACA_EMPTY_WINDOW_FALLBACK_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Concurrent in-flight symbols for the Alpaca batch loop. Bounded so Alpaca's
+ * per-key rate limits stay observable; pagination remains sequential WITHIN a
+ * symbol (it lives inside syncOneAlpacaSymbol, untouched here).
+ */
+const ALPACA_SYNC_CONCURRENCY = 3;
 
 export async function syncOneAlpacaSymbol(
     catalog: IbkrCatalog,
@@ -2678,86 +2702,181 @@ export async function processSyncBatch(
     const lostOwnership = () => syncOwner !== owner;
     const wasCancelled = () => lostOwnership() || signal?.aborted === true;
 
-    try {
-        for (let index = 0; index < symbols.length; index += 1) {
-            if (wasCancelled()) {
+    // Alpaca only: bounded parallel dispatch (ALPACA_SYNC_CONCURRENCY in
+    // flight). IBKR keeps the sequential loop — its per-symbol worker talks
+    // to the gateway's session-based market data pipeline, which is inherently
+    // serial per authenticated session.
+    const concurrency = source === "alpaca" ? ALPACA_SYNC_CONCURRENCY : 1;
+
+    // Per-symbol work item. The release loop below emits `symbol` /
+    // `symbol_warning` / `symbol_failed` events in ASCENDING original index
+    // order (the browser consumes them sequentially and keys progress on the
+    // index), buffering completions until the longest consecutive prefix can
+    // flush. `outcome` mirrors the sequential loop's accounting exactly.
+    type SymbolOutcome =
+        | { kind: "result"; index: number; symbol: string; result: Record<string, unknown> }
+        | { kind: "failed"; index: number; symbol: string; message: string }
+        | { kind: "cancelled"; index: number };
+    const pending: Map<number, SymbolOutcome> = new Map();
+    let nextReleaseIndex = 0;
+    const releaseOutcomes = (): boolean => {
+        // Returns false when cancellation is observed; the dispatcher stops.
+        while (pending.has(nextReleaseIndex)) {
+            const outcome = pending.get(nextReleaseIndex)!;
+            pending.delete(nextReleaseIndex);
+            if (outcome.kind === "cancelled") {
                 cancelled = true;
                 if (syncRunState === runState) runState.cancelled = true;
-                break;
+                return false;
             }
-            const symbol = symbols[index]!;
-            if (syncRunState === runState) {
-                runState.index = index;
-                runState.currentSymbol = symbol;
-            }
+            const { index, symbol } = outcome;
             try {
-                const result = await fetcher(catalog, symbol, interval, period, syncOnly, signal);
-                // Re-check ownership/abort after the await: a Stop or newer
-                // sync may have arrived mid-fetch. If so, drop this result and
-                // break without writing — the new owner owns the catalog.
-                if (wasCancelled()) {
-                    cancelled = true;
-                    if (syncRunState === runState) runState.cancelled = true;
-                    break;
-                }
-                // A cancelled per-symbol result (fetch aborted mid-symbol but
-                // observed before ownership changed) also ends the run.
-                if ((result as Record<string, unknown>).cancelled === true) {
-                    cancelled = true;
-                    if (syncRunState === runState) runState.cancelled = true;
-                    break;
-                }
-                results.push(result);
-                const marked = String((result as Record<string, unknown>).markedSymbol ?? "");
-                if (syncRunState === runState) {
-                    runState.completed += 1;
-                    if (marked && !runState.completedSymbols!.includes(marked)) {
-                        runState.completedSymbols!.push(marked);
+                if (outcome.kind === "result") {
+                    results.push(outcome.result);
+                    const marked = String(outcome.result.markedSymbol ?? "");
+                    if (syncRunState === runState) {
+                        runState.completed += 1;
+                        if (marked && !runState.completedSymbols!.includes(marked)) {
+                            runState.completedSymbols!.push(marked);
+                        }
                     }
-                }
-                // Per-symbol catalog write: ensures completed symbols appear
-                // in the catalog even if the batch is interrupted (reload,
-                // crash, fatal on a later symbol). The atomic temp+rename in
-                // writeCatalog keeps each individual write safe.
-                writeCatalog(catalog);
-                writer({ type: "symbol", index, total: symbols.length, ...result });
-                // Partial-max warning: a landed dataset that didn't cover the
-                // full window still counts as success, but the UI must not
-                // treat it as a complete history.
-                if ((result as Record<string, unknown>).complete === false) {
-                    writer({
-                        type: "symbol_warning",
-                        index,
-                        total: symbols.length,
-                        symbol,
-                        reason: String((result as Record<string, unknown>).warning ?? "History fetch did not complete."),
-                        complete: false,
+                    // Per-symbol catalog write: ensures completed symbols appear
+                    // in the catalog even if the batch is interrupted (reload,
+                    // crash, fatal on a later symbol). Writes are serialized by
+                    // catalogWriteChain so parallel workers cannot interleave
+                    // them; the atomic temp+rename keeps each write safe.
+                    void writeCatalogSerialized(catalog).catch(() => {
+                        // The sequential path ignored write failures too — the
+                        // event was still emitted. Swallow here to match.
                     });
+                    writer({ type: "symbol", index, total: symbols.length, ...outcome.result });
+                    // Partial-max warning: a landed dataset that didn't cover the
+                    // full window still counts as success, but the UI must not
+                    // treat it as a complete history.
+                    if (outcome.result.complete === false) {
+                        writer({
+                            type: "symbol_warning",
+                            index,
+                            total: symbols.length,
+                            symbol,
+                            reason: String(outcome.result.warning ?? "History fetch did not complete."),
+                            complete: false,
+                        });
+                    }
+                } else {
+                    debugLogger.warn("ibkr.sync.symbol.failed", {
+                        target: "ibkr",
+                        symbol,
+                        interval,
+                        mode: syncOnly ? "sync" : "download",
+                        error: outcome.message,
+                    });
+                    failed.push({ symbol, error: outcome.message });
+                    if (syncRunState === runState) {
+                        runState.failed += 1;
+                        runState.failedSymbols.push({ symbol, error: outcome.message });
+                    }
+                    writer({ type: "symbol_failed", index, total: symbols.length, symbol, error: outcome.message });
                 }
                 touchRunState();
-            } catch (error) {
-                // Abort during a fetch: mark cancelled, not failed, and break.
-                if (signal?.aborted || isAbortError(error)) {
-                    cancelled = true;
-                    if (syncRunState === runState) runState.cancelled = true;
-                    break;
-                }
-                const message = error instanceof Error ? error.message : String(error);
-                debugLogger.warn("ibkr.sync.symbol.failed", {
-                    target: "ibkr",
-                    symbol,
-                    interval,
-                    mode: syncOnly ? "sync" : "download",
-                    error: message,
-                });
-                failed.push({ symbol, error: message });
-                if (syncRunState === runState) {
-                    runState.failed += 1;
-                    runState.failedSymbols.push({ symbol, error: message });
-                }
-                writer({ type: "symbol_failed", index, total: symbols.length, symbol, error: message });
-                touchRunState();
+            } finally {
+                nextReleaseIndex += 1;
             }
+        }
+        return true;
+    };
+
+    try {
+        let dispatchCursor = 0;
+        let inFlight = 0;
+        // A throw while releasing an outcome (e.g. the NDJSON socket died
+        // mid-write) is surfaced through the awaited batch promise so the
+        // caller's fatal path runs — the sequential loop propagated writer
+        // errors the same way. Never left as an unhandled rejection.
+        let releaseError: unknown = null;
+        // Resolves when every dispatched symbol has been released in order, or
+        // when cancellation stops dispatching. `currentSymbol` tracks the
+        // dispatch frontier (the lowest undispatched symbol) — with in-flight
+        // work there is no single "current" symbol, so the frontier is the
+        // honest, documented choice.
+        await new Promise<void>((resolveBatch) => {
+            const maybeFinish = (): void => {
+                if (inFlight === 0 && dispatchCursor >= symbols.length) resolveBatch();
+            };
+            const dispatch = (): void => {
+                while (inFlight < concurrency && dispatchCursor < symbols.length) {
+                    if (wasCancelled()) {
+                        cancelled = true;
+                        if (syncRunState === runState) runState.cancelled = true;
+                        resolveBatch();
+                        return;
+                    }
+                    const index = dispatchCursor;
+                    dispatchCursor += 1;
+                    inFlight += 1;
+                    if (syncRunState === runState) {
+                        runState.index = index;
+                        runState.currentSymbol = symbols[index]!;
+                    }
+                    const symbol = symbols[index]!;
+                    fetcher(catalog, symbol, interval, period, syncOnly, signal)
+                        .then((result) => {
+                            inFlight -= 1;
+                            // Re-check ownership/abort after the await: a Stop
+                            // or newer sync may have arrived mid-fetch. Drop
+                            // the result without recording it — the new owner
+                            // owns the catalog. syncOneAlpacaSymbol mirrors
+                            // this: it aborts BEFORE any CSV/catalog write, so
+                            // nothing lands for in-flight symbols.
+                            if (wasCancelled() || (result as Record<string, unknown>).cancelled === true) {
+                                pending.set(index, { kind: "cancelled", index });
+                            } else {
+                                pending.set(index, { kind: "result", index, symbol, result });
+                            }
+                        })
+                        .catch((error: unknown) => {
+                            inFlight -= 1;
+                            // Abort during a fetch: cancelled, not failed.
+                            if (wasCancelled() || signal?.aborted || isAbortError(error)) {
+                                pending.set(index, { kind: "cancelled", index });
+                                return;
+                            }
+                            const message = error instanceof Error ? error.message : String(error);
+                            pending.set(index, { kind: "failed", index, symbol, message });
+                        })
+                        .finally(() => {
+                            if (releaseError !== null) {
+                                // A sibling release already failed fatally:
+                                // surface nothing further, dispatch nothing
+                                // further (the sequential loop aborted the
+                                // whole batch on a writer throw).
+                                maybeFinish();
+                                return;
+                            }
+                            try {
+                                if (!releaseOutcomes()) {
+                                    // Cancellation observed at release: stop
+                                    // dispatching new work.
+                                    resolveBatch();
+                                    return;
+                                }
+                                dispatch();
+                                maybeFinish();
+                            } catch (error) {
+                                releaseError = error;
+                                resolveBatch();
+                            }
+                        });
+                }
+                maybeFinish();
+            };
+            dispatch();
+        });
+        if (releaseError !== null) throw releaseError;
+        // Cancellation at the end of the stream of outcomes: mirror the
+        // sequential loop's post-loop state (done event reports cancelled).
+        if (pending.size === 0 && cancelled && wasCancelled()) {
+            if (syncRunState === runState) runState.cancelled = true;
         }
     } finally {
         if (syncRunState === runState) {
@@ -3143,6 +3262,12 @@ export function __resetIbkrSyncStateForTests(): void {
     syncOwnerGen = 0;
     syncRunState = null;
     syncAbortController = null;
+    catalogWriteCountForTests = 0;
+}
+
+/** Test seam: number of `writeCatalog` calls since the last state reset. */
+export function __getIbkrCatalogWriteCountForTests(): number {
+    return catalogWriteCountForTests;
 }
 
 /**
