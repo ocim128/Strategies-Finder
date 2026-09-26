@@ -7,7 +7,7 @@ import {
     type OpenScoreUsdTarget,
     type PoolSnapshotRecord,
 } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
-import { MAX_ACTIVE_BLOCK_COUNT } from "../lib/batch-backtest/max-active-research-contract";
+import { MAX_ACTIVE_BLOCK_COUNT, MAX_ACTIVE_BOOTSTRAP_SEED } from "../lib/batch-backtest/max-active-research-contract";
 import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-artifact";
 import type { BacktestResult, OHLCVData, Time, Trade } from "../lib/types/strategies";
 
@@ -23,6 +23,111 @@ describe("block bootstrap median", () => {
         const result = blockBootstrapMedianCi(blocks, 32);
 
         expect(result).to.deep.equal({ lower: 0.75, upper: 2.25 });
+    });
+});
+
+
+describe("block bootstrap median parity (weighted-rank vs pooled-sort reference)", () => {
+    // Reference twin of the FORMER implementation: identical LCG seed and draw
+    // order, then pool the drawn blocks and fully sort. The old k-way heap
+    // merge emitted exactly this sorted pooled order up to the middle, so the
+    // medians must match the weighted-rank implementation draw-for-draw.
+    function referenceMedianCi(blocks: readonly (readonly number[])[], resamples: number): { lower: number | null; upper: number | null } {
+        const finiteOrNull = (value: number): number | null => (Number.isFinite(value) ? value : null);
+        const b = blocks.length;
+        if (b < MAX_ACTIVE_BLOCK_COUNT) return { lower: null, upper: null };
+        const sortedBlocks = blocks.map((blk) => [...blk].sort((x, y) => x - y));
+        let seed = (Math.floor(MAX_ACTIVE_BOOTSTRAP_SEED) >>> 0) || 0x9e3779b9;
+        const next = (): number => {
+            seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+            return seed / 0x100000000;
+        };
+        const medians: number[] = [];
+        for (let r = 0; r < resamples; r += 1) {
+            const drawnAt: number[] = new Array<number>(b).fill(0);
+            let total = 0;
+            for (let k = 0; k < b; k += 1) {
+                const blockIndex = Math.floor(next() * b);
+                drawnAt[k] = blockIndex;
+                total += sortedBlocks[blockIndex]!.length;
+            }
+            // The former merge emitted equal values in ascending POSITION
+            // order (heap tie-break), so the pooled sequence must concatenate
+            // drawn blocks by position; its stable sort then preserves that
+            // order within equal-value runs.
+            const pooled: number[] = [];
+            for (let k = 0; k < b; k += 1) pooled.push(...sortedBlocks[drawnAt[k]!]!);
+            if (total === 0) {
+                medians.push(0);
+                continue;
+            }
+            pooled.sort((x, y) => x - y);
+            const midLo = (total - 1) >> 1;
+            const midHi = total >> 1;
+            medians.push(midLo === midHi ? pooled[midLo]! : (pooled[midLo]! + pooled[midHi]!) / 2);
+        }
+        medians.sort((x, y) => x - y);
+        const lo = medians[Math.max(0, Math.floor(0.025 * resamples))]!;
+        const hi = medians[Math.min(resamples - 1, Math.floor(0.975 * resamples))]!;
+        return { lower: finiteOrNull(lo), upper: finiteOrNull(hi) };
+    }
+
+    const expectParity = (blocks: readonly (readonly number[])[], resamples: number): void => {
+        expect(blockBootstrapMedianCi(blocks, resamples)).to.deep.equal(referenceMedianCi(blocks, resamples));
+    };
+    // The formal CI requires exactly MAX_ACTIVE_BLOCK_COUNT blocks; pad the
+    // hand-written fixtures up to it so both sides compute real values instead
+    // of returning the same null CI from the insufficient-blocks guard.
+    const pad = (blocks: readonly (readonly number[])[]): readonly (readonly number[])[] => [
+        ...blocks,
+        ...Array.from({ length: MAX_ACTIVE_BLOCK_COUNT - blocks.length }, (_, i) => [10 + i, -(i + 1)] as const),
+    ];
+
+    it("matches the pooled-sort reference with duplicate values across blocks", () => {
+        expectParity(pad([
+            [3, 1, 3, 2],
+            [2, 3, 1],
+            [3, 3, 3],
+            [1, 2],
+        ]), 400);
+    });
+
+    it("matches the reference for even and odd pooled sizes with negatives", () => {
+        expectParity(pad([
+            [-5, -1, -1, 0],
+            [-2, 7],
+            [4, -3, -3, 9, 9],
+            [0],
+        ]), 400);
+        expectParity(pad([
+            [1, 2, 3],
+            [2],
+            [0, -1, 5, 5],
+            [4, 4, 4],
+        ]), 400);
+    });
+
+    it("matches the reference when some sampled blocks are empty", () => {
+        expectParity(pad([
+            [],
+            [6, 2],
+            [2, 2, 1],
+            [7, 3, 3, 3, 0],
+        ]), 400);
+    });
+
+    it("matches the reference on randomized blocks", () => {
+        let seed = 987654321;
+        const rand = (): number => {
+            seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+            return seed / 0x100000000;
+        };
+        for (let trial = 0; trial < 12; trial += 1) {
+            const blocks = Array.from({ length: MAX_ACTIVE_BLOCK_COUNT }, () =>
+                Array.from({ length: 1 + Math.floor(rand() * 8) }, () =>
+                    Math.round((rand() - 0.5) * 10 * 2) / 2));
+            expectParity(blocks, 200);
+        }
     });
 });
 

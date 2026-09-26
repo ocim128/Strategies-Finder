@@ -962,11 +962,13 @@ export function simulateTopMeanPortfolio(
  * resample pools the RAW deltas of the sampled blocks and takes their median,
  * so the interval brackets the reported median delta rather than the mean.
  *
- * Each block is sorted ONCE; a resample then k-way-merges the chosen sorted
- * blocks only up to the middle position instead of sorting the full pooled
- * multiset every time (sorting ~3k events x 2000 resamples x ~30 comparisons
- * dominated the replay phase). The merge emits the same pooled order
- * statistics a full sort would, so results are bit-identical.
+ * Each block is sorted ONCE. A resample counts how often each block was
+ * drawn and locates both middle elements by weighted rank queries over the
+ * blocks' sorted contents (see the implementation comment on
+ * `pooledValueAtRank`) instead of merging the pooled multiset — same draws,
+ * same pooled order statistics, so results are bit-identical without the
+ * per-resample heap work (sorting ~3k events x 2000 resamples dominated the
+ * replay phase, then the merge did too).
  *
  * Phase 0 freeze: a formal CI requires EXACTLY {@link MAX_ACTIVE_BLOCK_COUNT}
  * nonempty chronological blocks. Fewer blocks (incl. one) return null CI —
@@ -983,82 +985,113 @@ export function blockBootstrapMedianCi(blocks: readonly (readonly number[])[], r
         return seed / 0x100000000;
     };
     const medians: number[] = [];
-    const chosen: number[][] = new Array(b);
-    const heads: number[] = new Array<number>(b).fill(0);
-    // Keep the current head of each block in a min-heap: each emitted order
-    // statistic is O(log b), while the block-index tie-break preserves the
-    // deterministic order of the former left-to-right scan.
-    const heapBlocks = new Int32Array(b);
-    let heapSize = 0;
-    const heapValue = (slot: number): number => {
-        const blockIndex = heapBlocks[slot]!;
-        return chosen[blockIndex]![heads[blockIndex]!]!;
-    };
-    const heapLess = (left: number, right: number): boolean => {
-        const leftValue = heapValue(left);
-        const rightValue = heapValue(right);
-        return leftValue < rightValue
-            || (leftValue === rightValue && heapBlocks[left]! < heapBlocks[right]!);
-    };
-    const heapSwap = (left: number, right: number): void => {
-        const blockIndex = heapBlocks[left]!;
-        heapBlocks[left] = heapBlocks[right]!;
-        heapBlocks[right] = blockIndex;
-    };
-    const heapPush = (blockIndex: number): void => {
-        let slot = heapSize;
-        heapBlocks[heapSize] = blockIndex;
-        heapSize += 1;
-        while (slot > 0) {
-            const parent = (slot - 1) >> 1;
-            if (!heapLess(slot, parent)) break;
-            heapSwap(slot, parent);
-            slot = parent;
+    // Weighted-rank median selection. Instead of k-way-merging the sampled
+    // blocks up to their middle element on every resample, precompute ONCE the
+    // sorted distinct value union U of all blocks and, per block, how many of
+    // its elements are <= each U entry (upper bounds). A resample then only
+    // counts how often each block was drawn; the number of pooled elements <=
+    // U[i] is sum(counts[k] * upper[k][i]) — O(b) per rank query, so both
+    // middle elements come from two O(b log|U|) binary searches. The drawn
+    // values and their order are identical to the former heap merge (same LCG
+    // draws, same pooled multiset), so medians are bit-identical; duplicate
+    // values collapse to one U entry whose multiplicity covers every copy.
+    const distinctValues: number[] = [];
+    for (const blk of sortedBlocks) {
+        for (const value of blk) distinctValues.push(value);
+    }
+    distinctValues.sort((x, y) => x - y);
+    const unionValues: number[] = [];
+    for (let i = 0; i < distinctValues.length; i += 1) {
+        if (i === 0 || distinctValues[i] !== distinctValues[i - 1]) unionValues.push(distinctValues[i]!);
+    }
+    // upperByBlock[k][i] = count of elements in sortedBlocks[k] <= unionValues[i];
+    // lowerByBlock[k][i] = count strictly < unionValues[i].
+    const upperByBlock: Int32Array[] = sortedBlocks.map((blk) => {
+        const upper = new Int32Array(unionValues.length);
+        let cursor = 0;
+        for (let i = 0; i < unionValues.length; i += 1) {
+            while (cursor < blk.length && blk[cursor]! <= unionValues[i]!) cursor += 1;
+            upper[i] = cursor;
         }
+        return upper;
+    });
+    const lowerByBlock: Int32Array[] = sortedBlocks.map((blk) => {
+        const lower = new Int32Array(unionValues.length);
+        let cursor = 0;
+        for (let i = 0; i < unionValues.length; i += 1) {
+            while (cursor < blk.length && blk[cursor]! < unionValues[i]!) cursor += 1;
+            lower[i] = cursor;
+        }
+        return lower;
+    });
+    // Per-resample draw assignment: position p drew block drawnAtPosition[p].
+    // The former heap kept one entry per POSITION (ties broken by ascending
+    // position), each walking its block's sorted array — so within a run of
+    // equal-comparing values the emitted order is position order, repeats
+    // included, not block order. Reproducing that order matters for the sign
+    // of zero: the merge emitted stored -0/+0 verbatim, so a rank landing
+    // inside a zero run must return the same stored variant.
+    const drawnAtPosition = new Int32Array(b);
+    const drawCounts = new Int32Array(b);
+    const elementCountUpTo = (unionIndex: number): number => {
+        let totalUpto = 0;
+        for (let k = 0; k < b; k += 1) {
+            const drawn = drawCounts[k]!;
+            if (drawn > 0) totalUpto += drawn * upperByBlock[k]![unionIndex]!;
+        }
+        return totalUpto;
     };
-    const heapPop = (): void => {
-        const minBlock = heapBlocks[0]!;
-        heads[minBlock] += 1;
-        heapSize -= 1;
-        if (heapSize > 0) {
-            heapBlocks[0] = heapBlocks[heapSize]!;
-            let slot = 0;
-            while (true) {
-                const left = slot * 2 + 1;
-                if (left >= heapSize) break;
-                const right = left + 1;
-                let child = left;
-                if (right < heapSize && heapLess(right, left)) child = right;
-                if (!heapLess(child, slot)) break;
-                heapSwap(slot, child);
-                slot = child;
+    const elementCountBelow = (unionIndex: number): number => {
+        let totalBelow = 0;
+        for (let k = 0; k < b; k += 1) {
+            const drawn = drawCounts[k]!;
+            if (drawn > 0) totalBelow += drawn * lowerByBlock[k]![unionIndex]!;
+        }
+        return totalBelow;
+    };
+    // Element at 0-indexed rank m of the pooled multiset: its distinct-value
+    // run is the smallest whose <=-count exceeds m; the offset inside the run
+    // then walks positions in ascending order (each position's block run in
+    // block-sorted order), exactly the former merge's emission order.
+    const pooledValueAtRank = (rank: number): number => {
+        let lo = 0;
+        let hi = unionValues.length - 1;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (elementCountUpTo(mid) > rank) hi = mid;
+            else lo = mid + 1;
+        }
+        let offset = rank - elementCountBelow(lo);
+        for (let p = 0; p < b; p += 1) {
+            const blockIndex = drawnAtPosition[p]!;
+            const runLength = upperByBlock[blockIndex]![lo]! - lowerByBlock[blockIndex]![lo]!;
+            if (offset < runLength) {
+                return sortedBlocks[blockIndex]![lowerByBlock[blockIndex]![lo]! + offset]!;
             }
+            offset -= runLength;
         }
-        if (heads[minBlock]! < chosen[minBlock]!.length) heapPush(minBlock);
+        return unionValues[lo]!;
     };
     for (let r = 0; r < resamples; r += 1) {
         let total = 0;
+        drawCounts.fill(0);
         for (let k = 0; k < b; k += 1) {
-            const blk = sortedBlocks[Math.floor(next() * b)]!;
-            chosen[k] = blk;
-            total += blk.length;
+            const blockIndex = Math.floor(next() * b);
+            drawnAtPosition[k] = blockIndex;
+            drawCounts[blockIndex] += 1;
+            total += sortedBlocks[blockIndex]!.length;
+        }
+        if (total === 0) {
+            // Degenerate all-empty sample: mirrors the former loop, which
+            // pushed its initial prev/last zeros for an empty merge.
+            medians.push(0);
+            continue;
         }
         const midLo = (total - 1) >> 1;
         const midHi = total >> 1;
-        for (let k = 0; k < b; k += 1) heads[k] = 0;
-        heapSize = 0;
-        for (let k = 0; k < b; k += 1) {
-            if (chosen[k]!.length > 0) heapPush(k);
-        }
-        let prev = 0;
-        let last = 0;
-        for (let emitted = 0; emitted <= midHi; emitted += 1) {
-            const minValue = heapValue(0);
-            heapPop();
-            prev = last;
-            last = minValue;
-        }
-        medians.push(midLo === midHi ? last : (prev + last) / 2);
+        const loValue = pooledValueAtRank(midLo);
+        const hiValue = midLo === midHi ? loValue : pooledValueAtRank(midHi);
+        medians.push(midLo === midHi ? loValue : (loValue + hiValue) / 2);
     }
     medians.sort((x, y) => x - y);
     const lo = medians[Math.max(0, Math.floor(0.025 * resamples))]!;
