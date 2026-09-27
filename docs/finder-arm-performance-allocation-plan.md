@@ -1,6 +1,6 @@
 # Finder Arm Performance allocation reduction plan
 
-Status: Proposed; planning only. Code baseline: `da895b84`.
+Status: Implemented 2026-09 (see [Measured outcomes](#measured-outcomes-implemented-2026-09-worktree-choresf-alloc-reduction-tmp)). Original code baseline: `da895b84`.
 
 Scope: three additional allocation costs in Finder's shared replay and
 worker artifact path. The [aggregation plan](finder-arm-performance-aggregation-plan.md)
