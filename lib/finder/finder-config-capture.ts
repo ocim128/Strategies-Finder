@@ -9,6 +9,8 @@
  * keeps a captured config unambiguous: bounds present = filter enforced.
  */
 
+import type { FinderArmPerformanceRunContext } from "../types/finder";
+
 export interface TradeFilterCapture {
     tradeFilterEnabled: boolean;
     minTrades: number | null;
@@ -29,6 +31,25 @@ export function captureTradeFilter(source: {
         maxTrades: enabled && typeof source.maxTrades === "number" && Number.isFinite(source.maxTrades)
             ? source.maxTrades
             : null,
+    };
+}
+
+/** Build the copy payload only from the immutable run context, never live UI state. */
+export function buildFinderArmPerformanceRunConfiguration(
+    context: FinderArmPerformanceRunContext,
+    candidateCount: number,
+    inventoryComplete: boolean,
+) {
+    return {
+        finder: {
+            scope: "arm_performance" as const,
+            ...context,
+            inventoryComplete,
+            candidateCount,
+            defaultSort: "TOP_RAW_PROFIT_NOW by topMean",
+        },
+        backtestSettings: context.backtestSettings,
+        capitalSettings: context.capitalSettings,
     };
 }
 

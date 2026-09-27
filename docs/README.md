@@ -34,6 +34,10 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 ## Records and Audits
 
+- [top-mean-event-sweep-plan.md](top-mean-event-sweep-plan.md) - planned bounded replay sweeps, removal of temporary delta copies, and guarded linear exit-signal merging.
+
+- [top-mean-shard-overhead-plan.md](top-mean-shard-overhead-plan.md) - planned fixes for sparse shard fragmentation, per-shard diagnostic sampling, and sequential artifact loading in TOP_MEAN.
+
 - [complexity-audit-finder-batch-ibkr-crypto-2026-08-27.md](complexity-audit-finder-batch-ibkr-crypto-2026-08-27.md) - point-in-time complexity audit driving the `chore/complexity-reduction` branch; some findings are already addressed.
 
 - [polymarket-removal-plan.md](polymarket-removal-plan.md) - the executed removal plan for the Polymarket subsystems on `chore/remove-polymarket`. Kept as the decision record for why these surfaces no longer exist; fold into the surviving guides when it stops earning its keep.

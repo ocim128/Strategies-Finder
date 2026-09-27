@@ -8,6 +8,7 @@ import {
     type PoolSnapshotRecord,
 } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
 import { MAX_ACTIVE_BLOCK_COUNT, MAX_ACTIVE_BOOTSTRAP_SEED } from "../lib/batch-backtest/max-active-research-contract";
+import { selectClosedCandleWindow, selectExecutionAwareClosedCandles } from "../lib/alert-evaluation-window";
 import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-artifact";
 import type { BacktestResult, OHLCVData, Time, Trade } from "../lib/types/strategies";
 
@@ -2406,6 +2407,49 @@ describe("runOpenScoreUsdReplay pool evaluation baselines (top-mean coordinator 
         expect(ongoingAtH2.find((row) => row.selector === "TOP_RAW_PROFIT_NOW")?.asset).to.equal("BBB");
         expect(ongoingAtH2.find((row) => row.selector === "TOP_Z")?.asset).to.equal("BBB");
         expect(ongoingAtH2.find((row) => row.selector === "TOP_RAW_PROFIT_NOW")?.unrealizedReturn).to.equal(0);
+    });
+
+    it("keeps a next-open bridge candle out of a replay horizon that has not closed", async () => {
+        const decision = T0 + 1000;
+        const markets = ["AAA", "BBB", "CCC"].map((asset) =>
+            makeDirectMarket(asset, [makeTrade("long", decision, null)]),
+        );
+        const incoming = [
+            makeTarget("AAA", 4, (i) => 100 + i),
+            makeTarget("BBB", 4, (i) => 100 + i),
+            makeTarget("CCC", 4, (i) => 100 + i),
+        ];
+        const cutoff = T0 + 3000;
+        const closedByAsset = new Map(incoming.map(({ asset, data }) => [
+            asset,
+            selectClosedCandleWindow(data, "1000s", cutoff, 1)!.candles,
+        ]));
+        const executionData = selectExecutionAwareClosedCandles(
+            incoming[0]!.data,
+            "1000s",
+            { executionModel: "next_open" } as any,
+            { nowSec: cutoff, minClosedCandles: 1 },
+        );
+        expect(executionData).to.have.length(4, "execution may use the next bar's open as an entry bridge");
+        expect(closedByAsset.get("AAA")).to.have.length(3, "replay sees only candles closed at the frozen cutoff");
+
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(incoming.map(({ asset, symbol }) => ({
+                asset,
+                symbol,
+                data: closedByAsset.get(asset)!,
+            }))),
+            {
+                horizons: [2],
+                interval: "1000s",
+                blockCount: 1,
+                includeCandidateOutcomes: true,
+            },
+        );
+
+        expect(result.horizons[0]!.topRaw.events).to.equal(0, "the event is omitted while every horizon outcome is censored");
+        expect(result.candidateOutcomes?.every((row) => row.status === "right_censored" && row.return === null)).to.equal(true);
     });
 
     it("keeps full-window profit pool gates independent of the causal pool gates", async () => {

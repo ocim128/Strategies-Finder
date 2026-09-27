@@ -83,6 +83,7 @@ import {
 import { CAP_TILT_WEIGHTS, isActiveCapTiltWeight } from "./cap-tilt-contract";
 import { createEmptyBacktestResult } from "../strategies/backtest/position-stats";
 import { registerSp500TopMeanRoutes, type BatchOwnerLocks } from "./sp500-top-mean-vite-routes";
+import { getActiveTopMeanCoordinatorEngine } from "./sp500-top-mean-coordinator-engine";
 import { isValidRunId, reconcileInterruptedManifestsOnStartup } from "./sp500-top-mean-artifact-store";
 import { getV8HeapLimitMb, resolveServerHeapWarning } from "../server-heap-guard";
 import { releaseIfOwner as releaseResearchWorkloadIfOwner, tryAcquire as tryAcquireResearchWorkload } from "../server-research-job-coordinator";
@@ -559,6 +560,9 @@ let runOwnerGen = 0;
 // relying only on `runState.runId`, otherwise a Stop in that window can be
 // rejected as stale or clear the lock without preventing the run from starting.
 let runOwnerRunId: string | null = null;
+let runOwnerKind: "batch" | "finder_sweep" | null = null;
+let finderSweepStopCallback: ((runId: string) => boolean) | null = null;
+let finderSweepChildRunId: string | null = null;
 let analysisOwner = RUN_OWNER_NONE;
 let analysisOwnerGen = 0;
 
@@ -1942,6 +1946,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     const owner = ++runOwnerGen;
     runOwner = owner;
     runOwnerRunId = runId;
+    runOwnerKind = "batch";
     const runAbort = new AbortController();
     abortController = runAbort;
     try {
@@ -2033,6 +2038,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
         if (runOwner === owner) {
             runOwner = RUN_OWNER_NONE;
             runOwnerRunId = null;
+            runOwnerKind = null;
         }
         if (abortController === runAbort) abortController = null;
         releaseResearchWorkloadIfOwner(coordinatorToken);
@@ -2054,6 +2060,13 @@ async function handleStopRequest(rawRunId?: unknown): Promise<{ ok: boolean; sto
     const requestedRunId = parseBatchRunId(rawRunId);
     const runWasActive = runOwner !== RUN_OWNER_NONE;
     const analysisWasActive = analysisOwner !== RUN_OWNER_NONE;
+
+    if (runWasActive && runOwnerKind === "finder_sweep") {
+        if (!runOwnerRunId || requestedRunId !== runOwnerRunId) {
+            return { ok: false, stopped: false };
+        }
+        return { ok: true, stopped: finderSweepStopCallback?.(requestedRunId) ?? false };
+    }
 
     // During preflight the new request has already claimed `runOwner`, but
     // `runState` may still belong to the prior generation. Prefer the explicit
@@ -2079,6 +2092,7 @@ async function handleStopRequest(rawRunId?: unknown): Promise<{ ok: boolean; sto
         }
         runOwner = RUN_OWNER_NONE;
         runOwnerRunId = null;
+        runOwnerKind = null;
     } else if (requestedRunId) {
         // Stop arrived before the matching run acquired ownership. Record the
         // run id so the run request finishes cancelled instead of starting
@@ -2669,6 +2683,64 @@ export function batchBacktestVitePlugin(): Plugin {
     };
 }
 
+/** Shared Batch/TOP_MEAN reservation adapter injected into Finder sweeps. */
+export function createBatchOwnerLocksAdapter(): BatchOwnerLocks {
+    return {
+        isBusy: () => runOwner !== RUN_OWNER_NONE || analysisOwner !== RUN_OWNER_NONE,
+        acquire(runId) {
+            const researchToken = tryAcquireResearchWorkload("batch", runId || `batch-analysis-${runOwnerGen + 1}`);
+            if (!researchToken) {
+                throw new HttpStatusError(409, "A Ledger Sweep is running. Stop it before starting TOP_MEAN.");
+            }
+            const ownerGen = ++runOwnerGen;
+            const analysisGen = ++analysisOwnerGen;
+            runOwner = ownerGen;
+            runOwnerRunId = runId;
+            runOwnerKind = "batch";
+            analysisOwner = analysisGen;
+            return { runOwner: ownerGen, analysisOwner: analysisGen, researchToken, ownerKind: "batch" };
+        },
+        acquireFinderSweep(runId, onStop) {
+            if (runOwner !== RUN_OWNER_NONE || analysisOwner !== RUN_OWNER_NONE || getActiveTopMeanCoordinatorEngine() !== null) {
+                throw new HttpStatusError(409, "A batch, analysis, or TOP_MEAN operation is already running.");
+            }
+            const researchToken = tryAcquireResearchWorkload("finder", runId);
+            if (!researchToken) {
+                throw new HttpStatusError(409, "A Ledger Sweep is running. Stop it before starting Finder Arm Performance.");
+            }
+            const ownerGen = ++runOwnerGen;
+            const analysisGen = ++analysisOwnerGen;
+            runOwner = ownerGen;
+            runOwnerRunId = runId;
+            runOwnerKind = "finder_sweep";
+            analysisOwner = analysisGen;
+            finderSweepStopCallback = onStop;
+            finderSweepChildRunId = null;
+            return { runOwner: ownerGen, analysisOwner: analysisGen, researchToken, ownerKind: "finder_sweep" };
+        },
+        setFinderSweepChild(token, childRunId) {
+            if (token.ownerKind === "finder_sweep" && runOwner === token.runOwner) {
+                finderSweepChildRunId = childRunId;
+            }
+        },
+        stopFinderSweepChild(childRunId) {
+            if (runOwnerKind !== "finder_sweep" || finderSweepChildRunId !== childRunId || !runOwnerRunId) return false;
+            return finderSweepStopCallback?.(runOwnerRunId) ?? false;
+        },
+        releaseIfStillOwner(token) {
+            if (runOwner === token.runOwner) {
+                runOwner = RUN_OWNER_NONE;
+                runOwnerRunId = null;
+                runOwnerKind = null;
+                finderSweepStopCallback = null;
+                finderSweepChildRunId = null;
+            }
+            if (analysisOwner === token.analysisOwner) analysisOwner = RUN_OWNER_NONE;
+            if (token.researchToken) releaseResearchWorkloadIfOwner(token.researchToken);
+        },
+    };
+}
+
 /** Install all Batch routes; exposed through test internals for route tests. */
 function registerBatchRoutes(middlewares: any): void {
         // Audit Finding 2 (and the F1 Finder auth gate): every Batch route
@@ -2740,31 +2812,7 @@ function registerBatchRoutes(middlewares: any): void {
         // owner-lock counters so a TOP_MEAN run and a Batch run cannot execute
         // simultaneously; that coupling is expressed through the BatchOwnerLocks
         // adapter below instead of reaching across module scope.
-        const batchOwnerLocks: BatchOwnerLocks = {
-            isBusy: () => runOwner !== RUN_OWNER_NONE || analysisOwner !== RUN_OWNER_NONE,
-            acquire: (runId) => {
-                const researchToken = tryAcquireResearchWorkload("batch", runId || `batch-analysis-${runOwnerGen + 1}`);
-                if (!researchToken) {
-                    throw new HttpStatusError(409, "A Ledger Sweep is running. Stop it before starting TOP_MEAN.");
-                }
-                const ownerGen = ++runOwnerGen;
-                const analysisGen = ++analysisOwnerGen;
-                runOwner = ownerGen;
-                runOwnerRunId = runId;
-                analysisOwner = analysisGen;
-                return { runOwner: ownerGen, analysisOwner: analysisGen, researchToken };
-            },
-            releaseIfStillOwner: (token) => {
-                if (runOwner === token.runOwner) {
-                    runOwner = RUN_OWNER_NONE;
-                    runOwnerRunId = null;
-                }
-                if (analysisOwner === token.analysisOwner) {
-                    analysisOwner = RUN_OWNER_NONE;
-                }
-                if (token.researchToken) releaseResearchWorkloadIfOwner(token.researchToken);
-            },
-        };
+        const batchOwnerLocks = createBatchOwnerLocksAdapter();
         registerSp500TopMeanRoutes(middlewares, {
             maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
             rememberLocalApiOriginFromRequest: (req) => rememberLocalApiOriginFromRequest(req),
@@ -2831,6 +2879,9 @@ export const __testInternals = {
         runOwner = owner;
         if (owner === RUN_OWNER_NONE) {
             runOwnerRunId = null;
+            runOwnerKind = null;
+            finderSweepStopCallback = null;
+            finderSweepChildRunId = null;
             runState = null;
             // Clear the pending-stop slot too so a prior test's Stop marker
             // can't make the next test's run finish cancelled (audit F5).

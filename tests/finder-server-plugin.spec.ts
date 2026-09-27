@@ -1,6 +1,10 @@
 import { expect } from "chai";
+import assert from "node:assert/strict";
 import { describe, it, before, after, afterEach } from "node:test";
 import { Readable } from "node:stream";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { strategyRegistry } from "../strategyRegistry";
 import {
     processFinderUniverseRun,
@@ -62,6 +66,7 @@ const {
     getPendingDatasetCacheInvalidation,
     flushPendingDatasetCacheInvalidation,
     acquireRunOwnershipForTests,
+    prepareFinderArmPerformanceRunForTests,
 } = __testInternals;
 
 type FinderRouteHandler = (req: any, res: any) => Promise<void>;
@@ -1980,6 +1985,7 @@ describe("finder server plugin route-level authorization (audit Finding 1)", () 
         { path: "/api/finder/universe-run", method: "POST" },
         { path: "/api/finder/asset-opportunity-run", method: "POST" },
         { path: "/api/finder/asset-opportunity-batch-run", method: "POST" },
+        { path: "/api/finder/arm-performance-run", method: "POST" },
         { path: "/api/finder/stop", method: "POST" },
         { path: "/api/finder/status", method: "GET" },
         { path: "/api/finder/invalidate-cache", method: "POST" },
@@ -2069,6 +2075,146 @@ describe("finder server plugin route-level authorization (audit Finding 1)", () 
         } finally {
             if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;
         }
+    });
+});
+
+describe("Finder Arm Performance request preflight", () => {
+    it("skips pairs with missing local data and retains available pairs", async () => {
+        const baseDir = mkdtempSync(join(tmpdir(), "finder-arm-preflight-"));
+        const seedDir = join(baseDir, "price-data", "ibkr", "csv", "30m");
+        mkdirSync(seedDir, { recursive: true });
+        writeFileSync(
+            join(baseDir, "price-data", "ibkr", "catalog.json"),
+            JSON.stringify({ entries: [{ symbol: "AAA" }, { symbol: "BBB" }] }),
+        );
+        for (const symbol of ["AAA", "BBB"]) {
+            writeFileSync(join(seedDir, `${symbol}.csv`), "time,open,high,low,close,volume\n");
+        }
+
+        const body = {
+            runId: "arm-skip-missing-data-test",
+            interval: "4h",
+            pairListText: "AAA•+BBB•\nMISSING•+BBB•",
+            strategyKeys: ["ema_confirmation"],
+            settings,
+            capitalSettings,
+            options: {
+                scope: "arm_performance",
+                mode: "random",
+                sortPriority: ["netProfit"],
+                useAdvancedSort: false,
+                topN: 5,
+                steps: 2,
+                rangePercent: 35,
+                maxRuns: 2,
+                tradeFilterEnabled: false,
+                minTrades: 0,
+                maxTrades: Number.POSITIVE_INFINITY,
+                dataSlice: "all",
+                armPerformance: { horizon: 5, dateMode: "full" },
+            },
+        };
+
+        try {
+            const prepared = await prepareFinderArmPerformanceRunForTests(body as any, baseDir);
+            expect(prepared.enumeration.canonicalPairs).to.deep.equal(["AAA•+BBB•"]);
+            expect(prepared.enumeration.skippedPairTokens).to.deep.equal(["MISSING•+BBB•"]);
+            await assert.rejects(
+                prepareFinderArmPerformanceRunForTests({
+                    ...body,
+                    pairListText: "AAA•+AAA•",
+                } as any, baseDir),
+                /Pair preflight rejected 1 invalid pair/,
+            );
+        } finally {
+            rmSync(baseDir, { recursive: true, force: true });
+        }
+    });
+
+    it("fails clearly when every requested pair is skipped for missing data", async () => {
+        const baseDir = mkdtempSync(join(tmpdir(), "finder-arm-no-pairs-"));
+        try {
+            await assert.rejects(
+                prepareFinderArmPerformanceRunForTests({
+                    runId: "arm-no-available-pairs-test",
+                    interval: "4h",
+                    pairListText: "MISSING•+UNKNOWN•",
+                    strategyKeys: ["ema_confirmation"],
+                    settings,
+                    capitalSettings,
+                    options: {
+                        scope: "arm_performance",
+                        mode: "random",
+                        sortPriority: ["netProfit"],
+                        useAdvancedSort: false,
+                        topN: 5,
+                        steps: 2,
+                        rangePercent: 35,
+                        maxRuns: 2,
+                        tradeFilterEnabled: false,
+                        minTrades: 0,
+                        maxTrades: Number.POSITIVE_INFINITY,
+                        dataSlice: "all",
+                        armPerformance: { horizon: 5, dateMode: "full" },
+                    },
+                } as any, baseDir),
+                /No pairs have usable local data at 4h; skipped 1 pair with missing data/,
+            );
+        } finally {
+            rmSync(baseDir, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects Genetic search and malformed date ranges before resolving strategies or loading data", async () => {
+        const base = {
+            runId: "arm-preflight-test",
+            interval: "4h",
+            pairListText: "AAA+BBB",
+            options: {
+                scope: "arm_performance",
+                mode: "genetic",
+                topN: 10,
+                maxRuns: 2,
+                steps: 3,
+                rangePercent: 100,
+                dataSlice: "all",
+                armPerformance: { horizon: 5, dateMode: "full" },
+            },
+        };
+        await assert.rejects(
+            prepareFinderArmPerformanceRunForTests(base as any, process.cwd()),
+            /only Grid Sweep and Random Search/,
+        );
+
+        const invalidDate = {
+            ...base,
+            options: {
+                ...base.options,
+                mode: "random",
+                dataSlice: "date_range",
+                dataRangeFrom: "2024-2-01",
+                dataRangeTo: "2024-03-01",
+                armPerformance: { horizon: 5, dateMode: "date_range" },
+            },
+        };
+        await assert.rejects(
+            prepareFinderArmPerformanceRunForTests(invalidDate as any, process.cwd()),
+            /YYYY-MM-DD/,
+        );
+    });
+
+    it("fails closed when the Batch owner-lock adapter is missing", async () => {
+        const routes = captureFinderRoutes();
+        const handler = routes.get("/api/finder/arm-performance-run")!;
+        const req = Readable.from(["{}"] as any) as any;
+        req.method = "POST";
+        req.url = "/api/finder/arm-performance-run";
+        req.headers = { host: "127.0.0.1:5173", "content-type": "application/json" };
+        req.socket = { remoteAddress: "127.0.0.1", localAddress: "127.0.0.1", localPort: 5173 };
+        const res = makeRouteResponse();
+        await handler(req, res);
+        expect(res.statusCode).to.equal(503);
+        expect(JSON.parse(res.body).error).to.contain("owner-lock adapter");
     });
 });
 

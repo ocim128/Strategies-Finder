@@ -5,7 +5,9 @@ import {
     compactFinderLatestResults,
     normalizeFinderLatestResultsSnapshot,
 } from "../lib/finder/finder-result-snapshot";
-import type { FinderAssetOpportunityResult, FinderLatestResults, FinderResult, FinderUniverseCandidate } from "../lib/types/finder";
+import { FINDER_ARM_PERFORMANCE_REPLAY_FIELDS } from "../lib/finder/finder-arm-performance-metrics";
+import { toScalarArmPerformanceCandidate } from "../lib/finder/server/finder-stream-types";
+import type { FinderArmPerformanceCandidate, FinderAssetOpportunityResult, FinderLatestResults, FinderResult, FinderUniverseCandidate } from "../lib/types/finder";
 import type { BacktestResult, Time } from "../lib/types/strategies";
 
 function makeBacktestResult(overrides: Partial<BacktestResult> = {}): BacktestResult {
@@ -99,6 +101,7 @@ function makeAssetOpportunityResult(index: number): FinderAssetOpportunityResult
         symbol: `ASSET${index}`,
         strategyKey: "strategy_1",
         strategyName: "Strategy 1",
+        horizon: 5,
         params: { lookback: index },
         historicalRank: 1,
         totalCandidatesEvaluated: 10,
@@ -119,6 +122,40 @@ function makeAssetOpportunityResult(index: number): FinderAssetOpportunityResult
             directionAgreementRatio: 1,
         },
         grade: "select",
+    };
+}
+
+function makeArmPerformanceCandidate(index: number): FinderArmPerformanceCandidate {
+    const metrics = Object.fromEntries(Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((arm) => [arm, {
+        events: 1,
+        topMean: index,
+        randomMean: 0,
+        delta: index,
+        topMedian: index,
+        ciLower: index,
+        ciUpper: index,
+        positiveBlocks: 1,
+        totalBlocks: 1,
+        blockMeans: [index],
+        eventDetails: [{ trade: true }],
+    }]));
+    return {
+        candidateId: `arm-${index}`,
+        candidateOrdinal: index,
+        strategyKey: "strategy_1",
+        strategyName: "Strategy 1",
+        params: { lookback: index },
+        backtestSettings: { executionModel: "signal_close" },
+        pairCoverage: {
+            requestedPairs: 500,
+            completedPairs: 500,
+            failedPairs: 0,
+            replayTargetLoadFailures: 0,
+            noTradePairs: 2,
+        },
+        metrics: metrics as FinderArmPerformanceCandidate["metrics"],
+        requestedEngineMode: "typescript",
+        actualEngineMode: "typescript",
     };
 }
 
@@ -228,5 +265,69 @@ describe("Finder result snapshots", () => {
         expect(normalized.results[0]!.worstMaxDrawdownPercent).to.equal(0);
         expect(normalized.results[0]!.medianMaxDrawdownPercent).to.equal(0);
         expect(normalized.results[0]!.medianReturnDrawdownRatio).to.equal(0);
+    });
+
+    it("restores Arm Performance only as a bounded incomplete preview", () => {
+        const runContext = {
+            runId: "arm-run",
+            startedAt: 1,
+            strategyKeys: ["strategy_1"],
+            pairs: ["AAA+BBB"],
+            interval: "4h",
+            horizon: 5,
+            dateMode: "full" as const,
+            evaluationCutoffSec: 100,
+            plannedCandidateCount: 30,
+            actualEngineModes: ["typescript"],
+            capTiltWeight: "off" as const,
+            searchOptions: { mode: "random" } as any,
+            backtestSettings: {} as any,
+            uiBacktestSettings: { riskSettingsToggle: true, stopLossEnabled: true, takeProfitEnabled: true } as any,
+            capitalSettings: {} as any,
+            requestedEngineMode: "typescript" as const,
+        };
+        const rows = Array.from({ length: 30 }, (_, index) => makeArmPerformanceCandidate(index));
+        Object.assign(rows[0]!, {
+            data: [{ close: 10 }],
+            signals: ["buy"],
+            trades: [{ pnl: 1 }],
+            eventDetails: [{ asset: "AAA" }],
+            poolSnapshots: [{ asset: "AAA" }],
+            candidateOutcomes: [{ asset: "AAA" }],
+        });
+        const compact = compactFinderLatestResults({
+            scope: "arm_performance",
+            results: rows,
+            runContext,
+            inventoryComplete: true,
+        });
+
+        expect(compact.scope).to.equal("arm_performance");
+        if (compact.scope !== "arm_performance") throw new Error("unexpected scope");
+        expect(compact.results).to.have.length(FINDER_RESULT_SNAPSHOT_LIMIT);
+        expect(compact.inventoryComplete).to.equal(false);
+        expect(compact.runContext?.pairs).to.deep.equal(["AAA+BBB"]);
+        expect(compact.runContext?.uiBacktestSettings?.riskSettingsToggle).to.equal(true);
+        expect(compact.results[0]!.metrics.TOP_RAW_PROFIT_NOW).not.to.have.property("blockMeans");
+        expect(compact.results[0]!.metrics.TOP_RAW_PROFIT_NOW).not.to.have.property("eventDetails");
+        expect(Object.keys(compact.results[0]!)).not.to.include.members([
+            "data", "signals", "trades", "eventDetails", "poolSnapshots", "candidateOutcomes",
+        ]);
+
+        const wireCandidate = toScalarArmPerformanceCandidate(rows[0]! as any);
+        expect(Object.keys(wireCandidate)).not.to.include.members([
+            "data", "signals", "trades", "eventDetails", "poolSnapshots", "candidateOutcomes",
+        ]);
+        expect(wireCandidate.metrics.TOP_RAW_PROFIT_NOW).not.to.have.property("blockMeans");
+
+        const restored = normalizeFinderLatestResultsSnapshot(compact);
+        expect(restored?.scope).to.equal("arm_performance");
+        if (!restored || restored.scope !== "arm_performance") throw new Error("unexpected restored scope");
+        expect(restored.inventoryComplete).to.equal(false);
+        expect(restored.runContext?.uiBacktestSettings?.stopLossEnabled).to.equal(true);
+        expect(normalizeFinderLatestResultsSnapshot({
+            ...compact,
+            results: [{ ...compact.results[0], metrics: {} }],
+        })).to.equal(null);
     });
 });

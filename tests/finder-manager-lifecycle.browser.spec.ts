@@ -20,6 +20,8 @@ import { ASSET_OPPORTUNITY_ALL_SORTS } from "../lib/finder/finder-asset-opportun
 import { createFakeFinderElement } from "./helpers/fake-finder-manager-dom";
 import type { FinderRunStatusSnapshot } from "../lib/finder/server/finder-stream-types";
 import type {
+    FinderArmPerformanceCandidate,
+    FinderArmPerformanceRunContext,
     FinderAssetOpportunityResult,
     FinderStrategyQualityResult,
     FinderUniverseCandidate,
@@ -157,7 +159,7 @@ function installMockFetch(): void {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-function persistActiveServerRun(runId: string, scope: "symbol_universe" | "asset_opportunity" = "symbol_universe"): void {
+function persistActiveServerRun(runId: string, scope: "symbol_universe" | "asset_opportunity" | "arm_performance" = "symbol_universe"): void {
     (globalThis as any).localStorage.setItem(
         "playground_finder_active_server_run",
         JSON.stringify({
@@ -259,6 +261,67 @@ function terminalDoneSnapshot(runId: string, candidates: FinderUniverseCandidate
     };
 }
 
+function terminalArmPerformanceSnapshot(
+    runId: string,
+    results: FinderArmPerformanceCandidate[],
+    runContext: FinderArmPerformanceRunContext,
+): FinderRunStatusSnapshot {
+    return {
+        ...runningSnapshot(runId),
+        running: false,
+        terminal: true,
+        finishedAt: Date.now(),
+        phase: "done",
+        jobKind: "arm_performance",
+        progressPercent: 100,
+        statusText: "Done",
+        candidateCount: results.length,
+        terminalArmPerformanceResults: results,
+        armPerformanceRunContext: runContext,
+        armPerformance: {
+            plannedCandidates: runContext.plannedCandidateCount,
+            completedCandidates: results.length,
+            pairCount: runContext.pairs.length,
+            currentCandidateOrdinal: null,
+            currentStrategyKey: null,
+            childPhase: null,
+        },
+        summary: "Done",
+    };
+}
+
+function makeArmCandidate(ordinal: number, rawNow: number, raw: number): FinderArmPerformanceCandidate {
+    const metric = (topMean: number) => ({
+        events: 2,
+        topMean,
+        randomMean: 0,
+        delta: topMean / 2,
+        topMedian: topMean,
+        ciLower: topMean / 2,
+        ciUpper: topMean,
+        positiveBlocks: 1,
+        totalBlocks: 1,
+    });
+    const metrics = Object.fromEntries([
+        "TOP_RAW_PROFIT_NOW", "TOP_MEAN_PROFIT_NOW", "TOP_RAW_PROFIT_NOW_CONF", "TOP_Z",
+        "TOP_RAW", "TOP_MEAN", "TOP_MEAN_RAW_UNIQUE", "TOP_RAW_PROFIT", "TOP_MEAN_PROFIT",
+        "BOT_RAW_PROFIT_NOW", "BOT_MEAN_PROFIT_NOW", "BOT_Z", "BOT_RAW", "BOT_MEAN", "BOT_MEAN_RAW_UNIQUE",
+    ].map((arm) => [arm, metric(arm === "TOP_RAW_PROFIT_NOW" ? rawNow : arm === "TOP_RAW" ? raw : ordinal)]));
+    return {
+        candidateId: `arm-candidate-${ordinal}`,
+        candidateOrdinal: ordinal,
+        strategyKey: "arm_test",
+        strategyName: "Arm Test",
+        horizon: 5,
+        params: { threshold: ordinal + 1 },
+        backtestSettings: { executionModel: "signal_close" } as any,
+        pairCoverage: { requestedPairs: 500, completedPairs: 500, failedPairs: 0, replayTargetLoadFailures: 0, noTradePairs: 0 },
+        metrics: metrics as FinderArmPerformanceCandidate["metrics"],
+        requestedEngineMode: "typescript",
+        actualEngineMode: "typescript",
+    };
+}
+
 function terminalFatalSnapshot(runId: string, error: string): FinderRunStatusSnapshot {
     return {
         ...runningSnapshot(runId),
@@ -332,6 +395,11 @@ beforeEach(() => {
     m.symbolUniverseDisplayLimit = 10;
     m.assetOpportunityRunResults = [];
     m.assetOpportunityDefaultResults = [];
+    m.armPerformanceRunResults = [];
+    m.armPerformanceDefaultResults = [];
+    m.armPerformanceRunContext = null;
+    m.armPerformanceInventoryComplete = true;
+    m.armPerformanceDisplayLimit = 10;
     m.uiState.scope = "current_chart";
     (m.ui as any).statusElement = null;
     (m.ui as any).lastStatusText = "";
@@ -456,6 +524,238 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
 
         expect(manager().latestResults.results).to.have.length(1);
         expect(manager().latestResults.results[0]!.params.threshold).to.equal(2);
+    });
+
+    it("reattaches the full Arm Performance inventory and repeatedly re-sorts every arm locally", async () => {
+        const runId = "arm-performance-reattach";
+        persistActiveServerRun(runId, "arm_performance");
+        manager().uiState.topN = 1;
+        manager().uiState.scope = "arm_performance";
+        const rows = [
+            makeArmCandidate(0, 1, 8),
+            makeArmCandidate(1, 9, 2),
+            makeArmCandidate(2, 3, 12),
+        ];
+        const context = {
+            runId,
+            startedAt: 1,
+            strategyKeys: ["arm_test"],
+            pairs: ["AAA+BBB", "CCC+DDD"],
+            failedPairs: [{ symbol: "CCC+DDD", error: "Insufficient candles", failureKind: "missing_data" }],
+            interval: "4h",
+            horizon: 5,
+            dateMode: "full",
+            evaluationCutoffSec: 1_700_000_000,
+            plannedCandidateCount: rows.length,
+            actualEngineModes: ["typescript"],
+            capTiltWeight: "off",
+            searchOptions: { mode: "random" },
+            backtestSettings: {},
+            capitalSettings: {},
+            requestedEngineMode: "typescript",
+        } as FinderArmPerformanceRunContext;
+
+        const reattach = manager().reattachToActiveServerRun();
+        mockFetch.resolveFirst(terminalArmPerformanceSnapshot(runId, rows, context));
+        await reattach;
+
+        expect(manager().latestResults.scope).to.equal("arm_performance");
+        expect(manager().latestResults.results).to.have.length(1);
+        expect(manager().latestResults.results[0]!.candidateOrdinal).to.equal(1);
+        expect(manager().armPerformanceRunResults).to.have.length(3);
+        expect(manager().armPerformanceRunContext.pairs).to.deep.equal(context.pairs);
+        expect(manager().getDom().finderCopyDiagnostics.disabled).to.equal(false);
+
+        let copiedDiagnostics = "";
+        manager().copyTextToClipboard = async (text: string) => { copiedDiagnostics = text; };
+        await manager().copyFinderDiagnostics();
+        const copied = JSON.parse(copiedDiagnostics);
+        expect(copied.scope).to.equal("arm_performance");
+        expect(copied.runContext.failedPairs).to.deep.equal(context.failedPairs);
+
+        manager().getDom().finderResort.value = "TOP_RAW";
+        manager().applyResort();
+        expect(manager().latestResults.results[0]!.candidateOrdinal).to.equal(2);
+
+        manager().getDom().finderResort.value = "TOP_RAW_PROFIT_NOW";
+        manager().applyResort();
+        expect(manager().latestResults.results[0]!.candidateOrdinal).to.equal(1);
+
+        manager().getDom().finderResort.value = "";
+        manager().applyResort();
+        expect(manager().latestResults.results[0]!.candidateOrdinal).to.equal(1);
+        expect(manager().armPerformanceRunResults.map((row: FinderArmPerformanceCandidate) => row.candidateOrdinal))
+            .to.deep.equal([0, 1, 2]);
+    });
+
+    it("reloads the full terminal Arm Performance inventory from the saved context runId", async () => {
+        const runId = "arm-performance-completion-reload";
+        persistActiveServerRun(runId, "arm_performance");
+        manager().uiState.topN = 1;
+        manager().uiState.scope = "arm_performance";
+        const rows = [
+            makeArmCandidate(0, 100, 1),
+            makeArmCandidate(1, 90, 100),
+            makeArmCandidate(2, 80, 1000),
+        ];
+        const context = {
+            runId,
+            startedAt: 1,
+            strategyKeys: ["arm_test"],
+            pairs: ["AAA+BBB"],
+            interval: "4h",
+            horizon: 5,
+            dateMode: "full",
+            evaluationCutoffSec: 1_700_000_000,
+            plannedCandidateCount: rows.length,
+            actualEngineModes: ["typescript"],
+            capTiltWeight: "off",
+            searchOptions: { mode: "random", topN: 1 },
+            backtestSettings: {},
+            uiBacktestSettings: { riskSettingsToggle: true, stopLossEnabled: true, takeProfitEnabled: true } as any,
+            capitalSettings: {},
+            requestedEngineMode: "typescript",
+        } as FinderArmPerformanceRunContext;
+
+        const terminal = terminalArmPerformanceSnapshot(runId, rows, context);
+        const completion = manager().reattachToActiveServerRun();
+        mockFetch.resolveFirst(terminal);
+        await completion;
+
+        const persisted = JSON.parse((globalThis as any).localStorage.getItem("playground_finder_latest_results"));
+        expect(persisted.data.results.results).to.have.length(1, "completion snapshot is only the saved display prefix");
+        expect(persisted.data.results.results[0].candidateOrdinal).to.equal(0);
+        expect(manager().loadPersistedActiveServerRun()).to.equal(null);
+
+        // Simulate a new Finder manager instance restoring the local preview.
+        manager().latestResults = { scope: "current_chart", results: [] };
+        manager().armPerformanceRunResults = [];
+        manager().armPerformanceDefaultResults = [];
+        manager().armPerformanceRunContext = null;
+        manager().armPerformanceInventoryComplete = true;
+        manager().loadPersistedLatestResults();
+        expect(manager().latestResults.inventoryComplete).to.equal(false);
+        expect(manager().latestResults.runContext.uiBacktestSettings.riskSettingsToggle).to.equal(true);
+        const reload = manager().reattachToActiveServerRun();
+        expect(mockFetch.requests[0]?.url).to.include(encodeURIComponent(runId));
+        mockFetch.resolveFirst(terminal);
+        await reload;
+
+        expect(manager().armPerformanceRunResults).to.have.length(3);
+        manager().getDom().finderResort.value = "TOP_RAW";
+        manager().applyResort();
+        expect(manager().latestResults.results[0]!.candidateOrdinal).to.equal(2);
+    });
+
+    it("keeps Copy Diagnostics available when every Arm Performance candidate fails", async () => {
+        const runId = "arm-performance-no-candidates";
+        persistActiveServerRun(runId, "arm_performance");
+        const context = {
+            runId,
+            startedAt: 1,
+            strategyKeys: ["arm_test"],
+            pairs: ["AAA+BBB"],
+            failedPairs: [{ symbol: "AAA+BBB", error: "Insufficient candles", failureKind: "missing_data" }],
+            interval: "4h",
+            horizon: 5,
+            dateMode: "full",
+            evaluationCutoffSec: 1_700_000_000,
+            plannedCandidateCount: 1,
+            actualEngineModes: [],
+            capTiltWeight: "off",
+            searchOptions: { mode: "random" },
+            backtestSettings: {},
+            capitalSettings: {},
+            requestedEngineMode: "typescript",
+        } as FinderArmPerformanceRunContext;
+
+        const reattach = manager().reattachToActiveServerRun();
+        mockFetch.resolveFirst(terminalArmPerformanceSnapshot(runId, [], context));
+        await reattach;
+
+        expect(manager().latestResults.scope).to.equal("arm_performance");
+        expect(manager().armPerformanceRunResults).to.have.length(0);
+        expect(manager().getDom().finderCopyDiagnostics.disabled).to.equal(false);
+
+        manager().latestResults = { scope: "current_chart", results: [] };
+        manager().armPerformanceRunContext = null;
+        manager().loadPersistedLatestResults();
+        expect(manager().latestResults.scope).to.equal("arm_performance");
+        expect(manager().armPerformanceRunContext.failedPairs).to.deep.equal(context.failedPairs);
+        expect(manager().getDom().finderCopyDiagnostics.disabled).to.equal(false);
+
+        let copiedDiagnostics = "";
+        manager().copyTextToClipboard = async (text: string) => { copiedDiagnostics = text; };
+        await manager().copyFinderDiagnostics();
+        const copied = JSON.parse(copiedDiagnostics);
+        expect(copied.runContext.failedPairs).to.deep.equal(context.failedPairs);
+        expect(copied.results).to.deep.equal([]);
+    });
+
+    it("keeps the incomplete Arm Performance preview when its retained server run is gone", async () => {
+        const runId = "arm-performance-expired-preview";
+        const preview = makeArmCandidate(0, 10, 10);
+        manager().latestResults = {
+            scope: "arm_performance",
+            results: [preview],
+            runContext: {
+                runId,
+                startedAt: 1,
+                strategyKeys: ["arm_test"],
+                pairs: ["AAA+BBB"],
+                interval: "4h",
+                horizon: 5,
+                dateMode: "full",
+                evaluationCutoffSec: 1_700_000_000,
+                plannedCandidateCount: 1,
+                actualEngineModes: ["typescript"],
+                capTiltWeight: "off",
+                searchOptions: { mode: "random" },
+                backtestSettings: {},
+                capitalSettings: {},
+                requestedEngineMode: "typescript",
+            } as FinderArmPerformanceRunContext,
+            inventoryComplete: false,
+        };
+
+        const recovery = manager().reattachToActiveServerRun();
+        mockFetch.resolveFirst({ ok: false }, 404);
+        await recovery;
+
+        expect(manager().latestResults.results).to.deep.equal([preview]);
+        expect(manager().latestResults.inventoryComplete).to.equal(false);
+    });
+});
+
+describe("FinderManager Arm Performance scope controls", () => {
+    it("visibly constrains incompatible search and window options without an arm selector", () => {
+        const m = manager();
+        const dom = m.getDom();
+        dom.finderMode.value = "genetic";
+        dom.finderMode.options = [
+            { value: "grid", disabled: false },
+            { value: "random", disabled: false },
+            { value: "genetic", disabled: false },
+        ];
+        dom.finderDataSlice.value = "half_newest";
+        dom.finderDataSlice.options = [
+            { value: "all", disabled: false },
+            { value: "date_range", disabled: false },
+            { value: "half_newest", disabled: false },
+        ];
+        dom.finderScope.value = "arm_performance";
+        m.uiState.scope = "arm_performance";
+        m.applyScopeUi();
+
+        expect(dom.finderMode.options[2].disabled).to.equal(true);
+        expect(dom.finderMode.value).to.equal("random");
+        expect(dom.finderDataSlice.options[0].disabled).to.equal(false);
+        expect(dom.finderDataSlice.options[1].disabled).to.equal(false);
+        expect(dom.finderDataSlice.options[2].disabled).to.equal(true);
+        expect(dom.finderDataSlice.value).to.equal("all");
+        expect(dom.finderUniverseSymbolsLabel.textContent).to.equal("Synthetic Pairs");
+        expect(dom.finderArmPerformanceSettings.style.display).to.equal("");
+        expect(dom.finderTradeFilterSection.style.display).to.equal("none");
     });
 });
 

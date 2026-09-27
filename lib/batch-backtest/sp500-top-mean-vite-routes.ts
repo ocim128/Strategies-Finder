@@ -68,6 +68,12 @@ export interface BatchOwnerLocks {
      * concurrent Stop or release-last-results may have already cleared them).
      */
     releaseIfStillOwner(token: BatchOwnerToken): void;
+    /** Reserve Batch/TOP_MEAN for an entire Finder Arm Performance sweep. */
+    acquireFinderSweep?(runId: string, onStop: (runId: string) => boolean): BatchOwnerToken;
+    /** Track the only TOP_MEAN child owned by the active Finder sweep. */
+    setFinderSweepChild?(token: BatchOwnerToken, childRunId: string | null): void;
+    /** Route a child TOP_MEAN Stop to its Finder sweep parent. */
+    stopFinderSweepChild?(childRunId: string): boolean;
 }
 
 /** Opaque ownership token returned by {@link BatchOwnerLocks.acquire}. */
@@ -75,6 +81,7 @@ export interface BatchOwnerToken {
     readonly runOwner: number;
     readonly analysisOwner: number;
     readonly researchToken?: ResearchWorkloadToken;
+    readonly ownerKind?: "batch" | "finder_sweep";
 }
 
 /**
@@ -126,7 +133,7 @@ export function registerSp500TopMeanRoutes(
         maxBodyBytes: deps.maxBodyBytes,
         unauthorizedMessage,
         onAuthorized: async ({ res, body }) => {
-            const result = await handleSp500TopMeanStopRequest((body as { runId?: unknown })?.runId);
+            const result = await handleSp500TopMeanStopRequest((body as { runId?: unknown })?.runId, deps.ownerLocks);
             sendJson(res, 200, result);
         },
     });
@@ -268,11 +275,7 @@ async function handleSp500TopMeanRunRequest(
     }
 }
 
-export async function handleSp500TopMeanStopRequest(runId?: unknown): Promise<{ ok: boolean; stopped: boolean; runId?: string }> {
-    const activeEngine = getActiveTopMeanCoordinatorEngine();
-    if (!activeEngine) {
-        return { ok: true, stopped: false };
-    }
+export async function handleSp500TopMeanStopRequest(runId?: unknown, ownerLocks?: BatchOwnerLocks): Promise<{ ok: boolean; stopped: boolean; runId?: string }> {
     // Audit (exact stop runId finding): a missing/blank runId used to fall
     // through to stop(), so a stale or malformed local client could cancel an
     // unrelated active run. The browser always sends the run id, so require
@@ -285,6 +288,13 @@ export async function handleSp500TopMeanStopRequest(runId?: unknown): Promise<{ 
     const trimmedRunId = runId.trim();
     if (!isValidRunId(trimmedRunId)) {
         throw new HttpStatusError(400, "Invalid runId.");
+    }
+    if (ownerLocks?.stopFinderSweepChild?.(trimmedRunId)) {
+        return { ok: true, stopped: true, runId: trimmedRunId };
+    }
+    const activeEngine = getActiveTopMeanCoordinatorEngine();
+    if (!activeEngine) {
+        return { ok: true, stopped: false };
     }
     if (activeEngine.request.runId !== trimmedRunId) {
         return { ok: true, stopped: false };

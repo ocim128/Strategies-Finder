@@ -68,6 +68,8 @@ import type {
     FinderAssetOpportunityDiagnostics,
     FinderDiagnostics,
     FinderDataSlice,
+    FinderArmPerformanceCandidate,
+    FinderArmPerformanceRunContext,
     FinderOptions,
     FinderUniverseCandidate,
 } from "../../types/finder";
@@ -77,6 +79,8 @@ import {
 } from "../../batch-backtest/batch-dataset-loader-core";
 import { loadBuiltInStrategyByKey } from "../../../strategyRegistry";
 import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
+import { resolveBacktestSettingsFromRaw } from "../../backtest-settings-resolver";
+import { normalizeStoredBacktestSettings, type BacktestSettingsData } from "../../settings-model";
 import { rustEngine, type RustCapabilities } from "../../rust-engine-client";
 import { requiresTypescriptEngine } from "../../rust-settings-sanitizer";
 import {
@@ -87,6 +91,7 @@ import {
 } from "./server-finder-data-loader";
 import {
     assertCandidateIsScalar,
+    toScalarArmPerformanceCandidate,
     toScalarCandidate,
     type FinderJobPhase,
     type FinderRunStatusSnapshot,
@@ -186,6 +191,16 @@ import {
     type FinderUniverseStrategyRunnerFactory,
 } from "./finder-universe-strategy-pool";
 import { hasCapabilityIndependentTypescriptRequirement } from "../../rust-settings-sanitizer";
+import { enumerateSp500Pairs, type EnumerationResult } from "../../batch-backtest/sp500-pair-enumerator";
+import { validateTopMeanRequestLimits } from "../../batch-backtest/sp500-top-mean-request-limits";
+import { parseTopMeanDateWindow } from "../../batch-backtest/top-mean-date-window";
+import { parseSyntheticPairToken } from "../../synthetic-pair-token";
+import type { BatchOwnerLocks, BatchOwnerToken } from "../../batch-backtest/sp500-top-mean-vite-routes";
+import {
+    buildFinderArmPerformanceCandidatePlans,
+    runFinderArmPerformance,
+} from "../finder-arm-performance-runner";
+import type { FinderArmPerformanceCandidatePlan } from "../finder-arm-performance-runner";
 import type {
     FinderUniverseStrategyWorkerResult,
     FinderUniverseStrategyWorkerTask,
@@ -500,6 +515,7 @@ let runOwnerGen = 0;
 
 let runState: FinderRunSnapshot | null = null;
 let abortController: AbortController | null = null;
+let activeArmPerformanceCoordinator: { stop(): void } | null = null;
 
 /**
  * Stop-before-ownership race closer. When Stop arrives BEFORE the matching
@@ -553,7 +569,7 @@ export type FinderRunSnapshot = {
     finishedAt: number | null;
     interval: string;
     /** Job kind discriminator; defaults to symbol_universe for legacy state. */
-    jobKind?: "symbol_universe" | "asset_opportunity" | "asset_opportunity_batch";
+    jobKind?: "symbol_universe" | "asset_opportunity" | "asset_opportunity_batch" | "arm_performance";
     /** Ordered selected entry strategy keys for the whole job. */
     strategyKeys: string[];
     /** 0-based index of the strategy currently being evaluated. */
@@ -595,6 +611,9 @@ export type FinderRunSnapshot = {
     assetDiagnostics?: FinderAssetOpportunityDiagnostics | null;
     /** Bounded batch counts for asset_opportunity_batch jobs; undefined otherwise. */
     batch?: FinderBatchStatus;
+    armPerformanceResults?: FinderArmPerformanceCandidate[];
+    armPerformanceRunContext?: FinderArmPerformanceRunContext;
+    armPerformance?: FinderRunStatusSnapshot["armPerformance"];
 };
 
 // ---------------------------------------------------------------------------
@@ -2989,6 +3008,7 @@ interface FinderUniverseRequestBody {
     interval: unknown;
     options: unknown;
     settings: unknown;
+    uiBacktestSettings?: unknown;
     capitalSettings: unknown;
     /** Legacy single-strategy field; still accepted (normalized to a 1-list). */
     strategyKey?: unknown;
@@ -2998,6 +3018,490 @@ interface FinderUniverseRequestBody {
     runId?: unknown;
     exitStrategyKeys?: unknown;
     useRustEnginePreference?: unknown;
+}
+
+interface FinderArmPerformanceRequestBody extends FinderUniverseRequestBody {
+    pairListText?: unknown;
+}
+
+const FINDER_ARM_PERFORMANCE_MAX_PAIRS = 5_000;
+
+interface PreparedFinderArmPerformanceRun {
+    runId: string;
+    interval: string;
+    pairListText: string;
+    enumeration: EnumerationResult;
+    options: FinderOptions;
+    settings: BacktestSettings;
+    uiBacktestSettings: BacktestSettingsData;
+    capitalSettings: CapitalSettings;
+    selectedStrategies: FinderSelectedStrategy[];
+    exitStrategyCandidates: FinderSelectedStrategy[];
+    useRustEnginePreference: boolean;
+    sampleFromSec?: number;
+    sampleToSec?: number;
+    plans: FinderArmPerformanceCandidatePlan[];
+}
+
+async function prepareFinderArmPerformanceRun(body: FinderArmPerformanceRequestBody, baseDir: string): Promise<PreparedFinderArmPerformanceRun> {
+    const runId = parseRunId(body.runId);
+    const interval = parseInterval(body.interval);
+    if (body.useRustEnginePreference !== undefined && typeof body.useRustEnginePreference !== "boolean") {
+        throw new HttpStatusError(400, "useRustEnginePreference must be a boolean when provided.");
+    }
+    if (typeof body.pairListText !== "string" || !body.pairListText.trim()) {
+        throw new HttpStatusError(400, "Arm Performance requires a non-empty synthetic pair list; it never loads the default universe.");
+    }
+    const pairTokens = body.pairListText.split(/[\r\n,]+/).map((value) => value.trim()).filter(Boolean);
+    if (pairTokens.length === 0) throw new HttpStatusError(400, "Enter at least one synthetic pair.");
+    if (pairTokens.length > FINDER_ARM_PERFORMANCE_MAX_PAIRS) {
+        throw new HttpStatusError(400, `Arm Performance supports at most ${FINDER_ARM_PERFORMANCE_MAX_PAIRS} pairs.`);
+    }
+    for (let index = 0; index < pairTokens.length; index += 1) {
+        const token = pairTokens[index]!;
+        if (token.indexOf("+") !== token.lastIndexOf("+") || !parseSyntheticPairToken(token)) {
+            throw new HttpStatusError(400, `Pair ${index + 1} must be a synthetic BASE+QUOTE pair: "${token}".`);
+        }
+    }
+
+    const rawOptions = body.options;
+    if (!rawOptions || typeof rawOptions !== "object" || Array.isArray(rawOptions)) {
+        throw new HttpStatusError(400, "options is required.");
+    }
+    const optionSource = rawOptions as Record<string, unknown>;
+    const requireIntegerRange = (field: string, min: number, max: number): number => {
+        const value = optionSource[field];
+        if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
+            throw new HttpStatusError(400, `options.${field} must be an integer between ${min} and ${max}.`);
+        }
+        return value;
+    };
+    const topN = requireIntegerRange("topN", 1, 100);
+    const maxRuns = requireIntegerRange("maxRuns", 1, 1_000);
+    const steps = requireIntegerRange("steps", 2, 7);
+    const rangePercent = optionSource.rangePercent;
+    if (typeof rangePercent !== "number" || !Number.isFinite(rangePercent) || rangePercent < 0 || rangePercent > 1_000) {
+        throw new HttpStatusError(400, "options.rangePercent must be a finite number between 0 and 1000.");
+    }
+    if (optionSource.mode !== "grid" && optionSource.mode !== "random") {
+        throw new HttpStatusError(400, "Arm Performance supports only Grid Sweep and Random Search.");
+    }
+    if (optionSource.tradeFilterEnabled === true || optionSource.oosValidationEnabled === true) {
+        throw new HttpStatusError(400, "Arm Performance does not support Finder trade-count or OOS filters.");
+    }
+    const rawArmOptions = optionSource.armPerformance;
+    if (!rawArmOptions || typeof rawArmOptions !== "object" || Array.isArray(rawArmOptions)) {
+        throw new HttpStatusError(400, "options.armPerformance is required.");
+    }
+    const armOptions = rawArmOptions as Record<string, unknown>;
+    const horizonLimits = validateTopMeanRequestLimits({ horizons: [armOptions.horizon], capTiltWeight: "off" });
+    if (!horizonLimits.ok) throw new HttpStatusError(400, horizonLimits.error);
+    const dateMode = armOptions.dateMode;
+    let dateWindow;
+    try {
+        dateWindow = parseTopMeanDateWindow({
+            mode: dateMode as "full" | "date_range",
+            from: optionSource.dataRangeFrom,
+            to: optionSource.dataRangeTo,
+        });
+    } catch (error) {
+        throw new HttpStatusError(400, error instanceof Error ? error.message : String(error));
+    }
+    const expectedSlice = dateWindow.mode === "date_range" ? "date_range" : "all";
+    if (optionSource.dataSlice !== expectedSlice) {
+        throw new HttpStatusError(400, `Arm Performance dataSlice must be "${expectedSlice}" for this date mode.`);
+    }
+    const randomSeed = optionSource.randomSeed;
+    if (randomSeed !== undefined && (typeof randomSeed !== "number" || !Number.isSafeInteger(randomSeed))) {
+        throw new HttpStatusError(400, "options.randomSeed must be a safe integer when provided.");
+    }
+
+    const options = parseOptions(rawOptions);
+    if (options.scope !== "arm_performance") {
+        throw new HttpStatusError(400, "Arm Performance requires scope arm_performance.");
+    }
+    const normalizedOptions: FinderOptions = {
+        ...options,
+        mode: optionSource.mode,
+        topN,
+        maxRuns,
+        steps,
+        rangePercent,
+        dataSlice: expectedSlice,
+        ...(dateWindow.mode === "date_range"
+            ? { dataRangeFrom: optionSource.dataRangeFrom as string, dataRangeTo: optionSource.dataRangeTo as string }
+            : { dataRangeFrom: undefined, dataRangeTo: undefined }),
+        tradeFilterEnabled: false,
+        minTrades: 0,
+        maxTrades: Number.POSITIVE_INFINITY,
+        oosValidationEnabled: false,
+        armPerformance: { horizon: horizonLimits.value.horizons[0]!, dateMode: dateWindow.mode },
+    };
+
+    const strategyKeys = parseStrategyKeys(body.strategyKeys, body.strategyKey);
+    const selectedStrategies = await resolveSelectedStrategies(strategyKeys);
+    let exitStrategyCandidates: FinderSelectedStrategy[] = [];
+    if (normalizedOptions.exitStrategyOverrideEnabled === true) {
+        const exitKeys = parseStrategyKeys(body.exitStrategyKeys, undefined);
+        exitStrategyCandidates = await resolveSelectedStrategies(exitKeys);
+    }
+    const settingsRaw = body.settings;
+    if (!settingsRaw || typeof settingsRaw !== "object" || Array.isArray(settingsRaw)) {
+        throw new HttpStatusError(400, "settings must be an object.");
+    }
+    const capitalRaw = body.capitalSettings;
+    if (!capitalRaw || typeof capitalRaw !== "object" || Array.isArray(capitalRaw)) {
+        throw new HttpStatusError(400, "capitalSettings must be an object.");
+    }
+    const uiSettingsRaw = body.uiBacktestSettings ?? settingsRaw;
+    if (!uiSettingsRaw || typeof uiSettingsRaw !== "object" || Array.isArray(uiSettingsRaw)) {
+        throw new HttpStatusError(400, "uiBacktestSettings must be an object when provided.");
+    }
+    const settings = resolveBacktestSettingsFromRaw(settingsRaw as BacktestSettings, { coerceWithoutUiToggles: true });
+    const uiBacktestSettings = normalizeStoredBacktestSettings(uiSettingsRaw);
+    const capitalSettings = resolveCapitalSettingsFromRaw(capitalRaw as Record<string, unknown>);
+
+    const enumeration = enumerateSp500Pairs({
+        interval,
+        baseDir,
+        pairListText: pairTokens.join("\n"),
+    });
+    const classifiedPairCount = enumeration.canonicalPairs.length
+        + enumeration.skippedPairTokens.length
+        + enumeration.rejectedPairTokens.length;
+    if (enumeration.rejectedPairTokens.length > 0 || classifiedPairCount !== pairTokens.length) {
+        const preview = (values: readonly string[]): string => {
+            const shown = values.slice(0, 10).join(", ");
+            return values.length > 10 ? `${shown}, and ${values.length - 10} more` : shown;
+        };
+        const details = [
+            enumeration.rejectedPairTokens.length > 0
+                ? `Rejected pairs: ${preview(enumeration.rejectedPairTokens)}.`
+                : "Some pair rows could not be classified.",
+            "Correct malformed, same-asset, or provider-conflicting pairs before running.",
+        ].join(" ");
+        throw new HttpStatusError(
+            400,
+            `Pair preflight rejected ${enumeration.rejectedPairTokens.length} invalid pair(s) at ${interval}. ${details}`,
+        );
+    }
+    const seenPairs = new Set<string>();
+    for (const pair of enumeration.canonicalPairs) {
+        if (seenPairs.has(pair)) throw new HttpStatusError(400, `Duplicate resolved pair identity: "${pair}".`);
+        seenPairs.add(pair);
+    }
+    if (enumeration.canonicalPairs.length === 0) {
+        const skippedPairNoun = enumeration.skippedPairTokens.length === 1 ? "pair" : "pairs";
+        throw new HttpStatusError(
+            400,
+            `No pairs have usable local data at ${interval}; skipped ${enumeration.skippedPairTokens.length} ${skippedPairNoun} with missing data.`,
+        );
+    }
+
+    const plans = buildFinderArmPerformanceCandidatePlans({
+        selectedStrategies,
+        exitStrategyCandidates,
+        settings,
+        options: normalizedOptions,
+    });
+    if (plans.length === 0) throw new HttpStatusError(400, "Finder produced no candidate configurations for this search.");
+
+    return {
+        runId,
+        interval,
+        pairListText: body.pairListText,
+        enumeration,
+        options: normalizedOptions,
+        settings,
+        uiBacktestSettings,
+        capitalSettings,
+        selectedStrategies,
+        exitStrategyCandidates,
+        useRustEnginePreference: body.useRustEnginePreference === true,
+        ...(dateWindow.sampleFromSec !== undefined ? { sampleFromSec: dateWindow.sampleFromSec } : {}),
+        ...(dateWindow.sampleToSec !== undefined ? { sampleToSec: dateWindow.sampleToSec } : {}),
+        plans,
+    };
+}
+
+async function handleArmPerformanceRunRequest(
+    res: ViteHttpResponse,
+    body: FinderArmPerformanceRequestBody,
+    baseDir: string,
+    ownerLocks: BatchOwnerLocks,
+): Promise<void> {
+    if (!ownerLocks.acquireFinderSweep || !ownerLocks.setFinderSweepChild) {
+        throw new HttpStatusError(503, "Finder Arm Performance requires the Batch owner-lock adapter; no sweep was started.");
+    }
+    const prepared = await prepareFinderArmPerformanceRun(body, baseDir);
+    if (consumePendingStopForRun(prepared.runId)) {
+        throw new HttpStatusError(409, "Finder Arm Performance was stopped before it started.");
+    }
+
+    // Both reservations are synchronous and happen without an intervening
+    // await. A partial acquisition releases Finder's lock and research token.
+    const finderReservation = acquireFinderRunOwnership(prepared.runId);
+    const owner = finderReservation.owner;
+    let batchReservation: BatchOwnerToken | null = null;
+    try {
+        batchReservation = ownerLocks.acquireFinderSweep(prepared.runId, stopArmPerformanceParent);
+    } catch (error) {
+        if (runOwner === owner) runOwner = RUN_OWNER_NONE;
+        releaseResearchWorkloadIfOwner(finderReservation.researchToken);
+        throw error;
+    }
+
+    const startedAt = Date.now();
+    const evaluationCutoffSec = Math.floor(startedAt / 1000);
+    const runAbortController = new AbortController();
+    abortController = runAbortController;
+    const context: FinderArmPerformanceRunContext = {
+        runId: prepared.runId,
+        startedAt,
+        strategyKeys: prepared.selectedStrategies.map(({ key }) => key),
+        pairs: [...prepared.enumeration.canonicalPairs],
+        skippedPairs: [...prepared.enumeration.skippedPairTokens],
+        interval: prepared.interval,
+        horizon: prepared.options.armPerformance!.horizon,
+        dateMode: prepared.options.armPerformance!.dateMode,
+        ...(prepared.sampleFromSec !== undefined ? { sampleFromSec: prepared.sampleFromSec } : {}),
+        ...(prepared.sampleToSec !== undefined ? { sampleToSec: prepared.sampleToSec } : {}),
+        evaluationCutoffSec,
+        plannedCandidateCount: prepared.plans.length,
+        actualEngineModes: [],
+        capTiltWeight: "off",
+        searchOptions: { ...prepared.options },
+        backtestSettings: { ...prepared.settings },
+        uiBacktestSettings: { ...prepared.uiBacktestSettings },
+        capitalSettings: { ...prepared.capitalSettings },
+        requestedEngineMode: prepared.useRustEnginePreference ? "rust" : "typescript",
+    };
+    const skippedPairCount = prepared.enumeration.skippedPairTokens.length;
+    const skippedPairNoun = skippedPairCount === 1 ? "pair" : "pairs";
+    const skippedPairSummary = skippedPairCount > 0
+        ? `; skipped ${skippedPairCount} ${skippedPairNoun} with missing data`
+        : "";
+    runState = {
+        runId: prepared.runId,
+        startedAt,
+        finishedAt: null,
+        interval: prepared.interval,
+        jobKind: "arm_performance",
+        strategyKeys: context.strategyKeys,
+        strategyIndex: 0,
+        strategyCount: context.strategyKeys.length,
+        phase: "evaluating",
+        totalSymbols: prepared.enumeration.canonicalPairs.length,
+        progressPercent: 0,
+        statusText: `Preparing ${prepared.plans.length} configurations across ${prepared.enumeration.canonicalPairs.length} pairs${skippedPairSummary}.`,
+        loadedSymbols: 0,
+        failedSymbols: 0,
+        candidates: [],
+        armPerformanceResults: [],
+        armPerformanceRunContext: context,
+        armPerformance: {
+            plannedCandidates: prepared.plans.length,
+            completedCandidates: 0,
+            pairCount: prepared.enumeration.canonicalPairs.length,
+            currentCandidateOrdinal: null,
+            currentStrategyKey: null,
+            childPhase: null,
+        },
+        diagnostics: null,
+        cancelled: false,
+        summary: null,
+        error: null,
+        totals: null,
+    };
+
+    try {
+        await withFinderRunStream<FinderStreamEvent>({
+            res,
+            runId: prepared.runId,
+            owner,
+            abortController: runAbortController,
+            debugEvent: "finder.arm_performance.run.failed",
+            buildFatal: (message) => {
+                const state = runState!;
+                state.phase = runAbortController.signal.aborted ? "cancelled" : "fatal";
+                state.cancelled = runAbortController.signal.aborted;
+                state.finishedAt = Date.now();
+                state.statusText = message;
+                state.summary = message;
+                state.error = state.cancelled ? null : message;
+                state.progressPercent = Math.min(99, state.progressPercent);
+                return {
+                    type: "arm_done",
+                    runId: prepared.runId,
+                    ok: false,
+                    cancelled: state.cancelled,
+                    results: state.armPerformanceResults ?? [],
+                    runContext: state.armPerformanceRunContext ?? context,
+                    summary: message,
+                    error: state.error,
+                };
+            },
+            run: async (safeWrite) => {
+                safeWrite({
+                    type: "arm_start",
+                    runId: prepared.runId,
+                    interval: prepared.interval,
+                    strategyKeys: context.strategyKeys,
+                    plannedCandidates: prepared.plans.length,
+                    pairCount: prepared.enumeration.canonicalPairs.length,
+                    skippedPairCount,
+                    horizon: context.horizon,
+                });
+                try {
+                    await runFinderArmPerformance({
+                        runId: prepared.runId,
+                        interval: prepared.interval,
+                        options: prepared.options,
+                        settings: prepared.settings,
+                        capitalSettings: prepared.capitalSettings,
+                        useRustEnginePreference: prepared.useRustEnginePreference,
+                        evaluationCutoffSec,
+                        ...(prepared.sampleFromSec !== undefined ? { sampleFromSec: prepared.sampleFromSec } : {}),
+                        ...(prepared.sampleToSec !== undefined ? { sampleToSec: prepared.sampleToSec } : {}),
+                        enumeration: prepared.enumeration,
+                        selectedStrategies: prepared.selectedStrategies,
+                        exitStrategyCandidates: prepared.exitStrategyCandidates,
+                        baseDir,
+                        signal: runAbortController.signal,
+                        plans: prepared.plans,
+                        isCancelled: () => runAbortController.signal.aborted || runOwner !== owner,
+                    }, {
+                        onProgress: (progress) => {
+                            const state = runState!;
+                            state.progressPercent = progress.percent;
+                            state.statusText = `${progress.strategyName}: ${progress.text}`;
+                            state.strategyIndex = Math.max(0, context.strategyKeys.indexOf(progress.strategyKey));
+                            state.phase = "evaluating";
+                            state.armPerformance = {
+                                ...state.armPerformance!,
+                                currentCandidateOrdinal: progress.candidateOrdinal,
+                                currentStrategyKey: progress.strategyKey,
+                                childPhase: progress.childPhase,
+                            };
+                            safeWrite({
+                                type: "arm_progress",
+                                runId: prepared.runId,
+                                percent: progress.percent,
+                                text: progress.text,
+                                candidateId: progress.candidateId,
+                                candidateOrdinal: progress.candidateOrdinal,
+                                totalCandidates: progress.totalCandidates,
+                                strategyKey: progress.strategyKey,
+                                strategyName: progress.strategyName,
+                                childPhase: progress.childPhase,
+                            });
+                        },
+                        onPairFailures: (failures) => {
+                            const known = new Set((context.failedPairs ?? []).map((failure) => `${failure.symbol}\u0000${failure.error}`));
+                            for (const failure of failures) {
+                                const key = `${failure.symbol}\u0000${failure.error}`;
+                                if (known.has(key)) continue;
+                                known.add(key);
+                                (context.failedPairs ??= []).push({
+                                    symbol: failure.symbol,
+                                    error: failure.error,
+                                    ...(failure.failureKind ? { failureKind: failure.failureKind } : {}),
+                                });
+                            }
+                        },
+                        onCandidate: (candidate, diagnostics) => {
+                            const state = runState!;
+                            const scalarCandidate = toScalarArmPerformanceCandidate(candidate);
+                            state.armPerformanceResults!.push(scalarCandidate);
+                            state.loadedSymbols = state.armPerformanceResults!.length;
+                            state.progressPercent = Math.min(100, state.loadedSymbols / prepared.plans.length * 100);
+                            state.statusText = `Completed ${state.loadedSymbols}/${prepared.plans.length}: ${candidate.strategyName}.`;
+                            state.armPerformance = {
+                                ...state.armPerformance!,
+                                completedCandidates: state.loadedSymbols,
+                                currentCandidateOrdinal: null,
+                                currentStrategyKey: null,
+                                childPhase: null,
+                            };
+                            const boundary = diagnostics.targetDataBoundary;
+                            if (boundary) {
+                                const previous = context.targetDataBoundary;
+                                context.targetDataBoundary = {
+                                    earliestBarTimeSec: previous?.earliestBarTimeSec === undefined || previous.earliestBarTimeSec === null
+                                        ? boundary.earliestBarTimeSec
+                                        : boundary.earliestBarTimeSec === null
+                                            ? previous.earliestBarTimeSec
+                                            : Math.min(previous.earliestBarTimeSec, boundary.earliestBarTimeSec),
+                                    latestBarTimeSec: previous?.latestBarTimeSec === undefined || previous.latestBarTimeSec === null
+                                        ? boundary.latestBarTimeSec
+                                        : boundary.latestBarTimeSec === null
+                                            ? previous.latestBarTimeSec
+                                            : Math.max(previous.latestBarTimeSec, boundary.latestBarTimeSec),
+                                };
+                            }
+                            if (!context.actualEngineModes.includes(diagnostics.actualEngineMode)) {
+                                context.actualEngineModes.push(diagnostics.actualEngineMode);
+                            }
+                            safeWrite({ type: "arm_candidate", runId: prepared.runId, candidateId: scalarCandidate.candidateId, candidate: scalarCandidate });
+                        },
+                        setActiveCoordinator: (coordinator, childRunId) => {
+                            activeArmPerformanceCoordinator = coordinator;
+                            ownerLocks.setFinderSweepChild!(batchReservation!, childRunId);
+                        },
+                    });
+                    const state = runState!;
+                    state.cancelled = runAbortController.signal.aborted;
+                    state.phase = state.cancelled ? "cancelled" : "done";
+                    state.finishedAt = Date.now();
+                    state.progressPercent = state.cancelled ? state.progressPercent : 100;
+                    state.error = null;
+                    state.summary = state.cancelled
+                        ? `Arm Performance stopped after ${state.armPerformanceResults!.length}/${prepared.plans.length} configurations.`
+                        : `Arm Performance completed ${state.armPerformanceResults!.length} configurations across ${prepared.enumeration.canonicalPairs.length} pairs${skippedPairSummary}${context.failedPairs?.length ? `; skipped ${context.failedPairs.length} pairs with runtime data failures` : ""}.`;
+                    state.statusText = state.summary;
+                    state.totals = {
+                        loadedSymbols: state.loadedSymbols,
+                        failedSymbols: 0,
+                        survivors: state.armPerformanceResults!.length,
+                        oosRemoved: 0,
+                    };
+                } catch (error) {
+                    const state = runState!;
+                    const message = error instanceof Error ? error.message : String(error);
+                    state.cancelled = runAbortController.signal.aborted;
+                    state.phase = state.cancelled ? "cancelled" : "fatal";
+                    state.finishedAt = Date.now();
+                    state.error = state.cancelled ? null : message;
+                    state.summary = state.cancelled
+                        ? `Arm Performance stopped after ${state.armPerformanceResults!.length}/${prepared.plans.length} configurations.`
+                        : message;
+                    state.statusText = state.summary;
+                    state.totals = {
+                        loadedSymbols: state.loadedSymbols,
+                        failedSymbols: state.cancelled ? 0 : 1,
+                        survivors: state.armPerformanceResults!.length,
+                        oosRemoved: 0,
+                    };
+                }
+                const state = runState!;
+                safeWrite({
+                    type: "arm_done",
+                    runId: prepared.runId,
+                    ok: state.phase === "done",
+                    cancelled: state.cancelled,
+                    results: state.armPerformanceResults ?? [],
+                    runContext: state.armPerformanceRunContext ?? context,
+                    summary: state.summary ?? state.statusText,
+                    error: state.error,
+                });
+            },
+        });
+    } finally {
+        activeArmPerformanceCoordinator = null;
+        if (batchReservation) ownerLocks.releaseIfStillOwner(batchReservation);
+        releaseResearchWorkloadIfOwner(finderReservation.researchToken);
+        if (abortController === runAbortController) abortController = null;
+    }
 }
 
 async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseRequestBody): Promise<void> {
@@ -3122,6 +3626,9 @@ async function handleStopRequest(runId: unknown): Promise<{ ok: boolean; stopped
             /* best-effort */
         }
     }
+    if (runWasActive && runState?.jobKind === "arm_performance") {
+        activeArmPerformanceCoordinator?.stop();
+    }
     if (!runWasActive && runState?.runId !== requestedRunId) {
         // Stop arrived before the matching run acquired ownership. Record
         // the run id so the run request can finish cancelled instead of
@@ -3129,6 +3636,18 @@ async function handleStopRequest(runId: unknown): Promise<{ ok: boolean; stopped
         pendingStopRunId = requestedRunId;
     }
     return { ok: true, stopped: runWasActive };
+}
+
+/** Synchronous parent Stop callback used by Batch/TOP_MEAN's shared owner adapter. */
+function stopArmPerformanceParent(runId: string): boolean {
+    if (runOwner === RUN_OWNER_NONE || runState?.jobKind !== "arm_performance" || runState.runId !== runId) return false;
+    try {
+        abortController?.abort();
+    } catch {
+        /* best-effort */
+    }
+    activeArmPerformanceCoordinator?.stop();
+    return true;
 }
 
 /**
@@ -3164,6 +3683,7 @@ function buildStatusSnapshot(): FinderRunStatusSnapshot {
     const state = runState!;
     const jobKind = state.jobKind ?? "symbol_universe";
     const assetOpportunityKind = jobKind === "asset_opportunity" || jobKind === "asset_opportunity_batch";
+    const armPerformanceKind = jobKind === "arm_performance";
     return {
         ok: true,
         running,
@@ -3180,7 +3700,7 @@ function buildStatusSnapshot(): FinderRunStatusSnapshot {
         totalSymbols: state.totalSymbols,
         progressPercent: state.progressPercent,
         statusText: state.statusText,
-        candidateCount: state.candidates.length,
+        candidateCount: armPerformanceKind ? state.armPerformanceResults?.length ?? 0 : state.candidates.length,
         loadedSymbols: state.loadedSymbols,
         failedSymbols: state.failedSymbols,
         cancelled: state.cancelled,
@@ -3191,6 +3711,8 @@ function buildStatusSnapshot(): FinderRunStatusSnapshot {
         // completed iteration on `terminalAssets` instead.
         terminalCandidates: terminal && jobKind === "symbol_universe" ? state.candidates : null,
         terminalAssets: terminal && assetOpportunityKind ? state.assetResults ?? [] : null,
+        terminalArmPerformanceResults: terminal && armPerformanceKind ? state.armPerformanceResults ?? [] : null,
+        armPerformanceRunContext: terminal && armPerformanceKind ? state.armPerformanceRunContext ?? null : null,
         summary: state.summary,
         error: state.error,
         diagnostics: state.diagnostics,
@@ -3198,6 +3720,7 @@ function buildStatusSnapshot(): FinderRunStatusSnapshot {
         assetTotals: terminal && assetOpportunityKind ? state.assetTotals ?? null : null,
         assetDiagnostics: terminal && assetOpportunityKind ? state.assetDiagnostics ?? null : null,
         batch: state.batch ?? null,
+        armPerformance: state.armPerformance ?? null,
     };
 }
 
@@ -3388,14 +3911,14 @@ function buildFinderRunLogSink(root: string, runId: string): FinderRunLogSink {
 // Plugin
 // ---------------------------------------------------------------------------
 
-export function finderVitePlugin(): Plugin {
+export function finderVitePlugin(deps: { batchOwnerLocks?: BatchOwnerLocks } = {}): Plugin {
     return {
         name: "finder-universe-server",
         configureServer(server) {
-            registerFinderRoutes(server.middlewares, server.config.root);
+            registerFinderRoutes(server.middlewares, server.config.root, deps.batchOwnerLocks);
         },
         configurePreviewServer(server) {
-            registerFinderRoutes(server.middlewares, server.config.root);
+            registerFinderRoutes(server.middlewares, server.config.root, deps.batchOwnerLocks);
         },
     };
 }
@@ -3412,7 +3935,7 @@ export function finderVitePlugin(): Plugin {
  * CPU-heavy Finder runs or have results/diagnostics disclosed to a remote
  * caller.
  */
-function registerFinderRoutes(middlewares: any, serverRoot?: string): void {
+function registerFinderRoutes(middlewares: any, serverRoot?: string, batchOwnerLocks?: BatchOwnerLocks): void {
     // The batch archive dir resolves from Vite's configured project root so
     // launching Vite from another working directory cannot write to the wrong
     // archive. Tests call the registration seam without a root and fall back
@@ -3461,6 +3984,25 @@ function registerFinderRoutes(middlewares: any, serverRoot?: string): void {
                 body as unknown as FinderAssetOpportunityBatchRequestBody,
                 archiveRoot,
                 runLogRoot,
+            );
+        },
+    });
+
+    registerLocalJsonRoute(middlewares, "/api/finder/arm-performance-run", {
+        methods: ["POST"],
+        readBody: true,
+        maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
+        onAuthorizedRequest: (req) => rememberLocalApiOriginFromRequest(req),
+        unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
+        onAuthorized: async ({ res, body }) => {
+            if (!batchOwnerLocks?.acquireFinderSweep || !batchOwnerLocks.setFinderSweepChild) {
+                throw new HttpStatusError(503, "Finder Arm Performance requires the Batch owner-lock adapter; no sweep was started.");
+            }
+            await handleArmPerformanceRunRequest(
+                res,
+                body as unknown as FinderArmPerformanceRequestBody,
+                archiveRoot,
+                batchOwnerLocks,
             );
         },
     });
@@ -3524,6 +4066,7 @@ export const __testInternals = {
     resolveAssetOpportunityChunkWorkerCount,
     clearServerFinderDatasetCaches,
     registerFinderRoutesForTests: registerFinderRoutes,
+    prepareFinderArmPerformanceRunForTests: prepareFinderArmPerformanceRun,
     assertUniverseOptions,
     parseStrategyKeys,
     parseRunId,

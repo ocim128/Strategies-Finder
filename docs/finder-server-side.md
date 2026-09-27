@@ -7,6 +7,62 @@ authoritative terminal candidate slice. The browser is the control and
 rendering layer and can reattach to an in-flight or completed job after a tab
 reload. Current-chart Finder remains browser-side.
 
+## Arm Performance
+
+Arm Performance is a server-owned Finder job registered at
+`POST /api/finder/arm-performance-run`. The browser sends the selected entry
+and exit strategy keys, search options, captured backtest/capital settings,
+interval, Rust preference, horizon/date window, and explicit synthetic-pair
+list. The route rejects unsupported modes, malformed limits or dates, blank
+or single-symbol lists, duplicate resolved pair identities, unsupported
+strategies, provider conflicts, and more than 5,000 pairs before reserving
+owners. Pairs whose local legs are unavailable are skipped; at least one
+available pair is required. The route enumerates the trusted pair list once
+and passes that exact enumeration to every child coordinator, retaining the
+skipped pair tokens in the run context.
+At execution time, missing or short candle loads are recorded and omitted from
+that candidate's coverage; the candidate proceeds with pairs that loaded.
+Backtest execution errors still fail the candidate. Pair load reasons and
+replay coverage counts are retained in the terminal run context for Copy
+Diagnostics and reload reattachment, including runs with no completed
+candidates. If no pair loads for a candidate, that candidate cannot be scored.
+
+The Finder plugin holds Finder ownership and the shared Batch/TOP_MEAN
+reservation for the whole sweep, including the gaps between candidates and
+child teardown. It runs one TOP_MEAN coordinator at a time, using its existing
+worker pool for pair backtests. Child archive logging and resume are disabled;
+after worker termination and pending writes drain, the runner removes only
+that validated child's artifact directory. Cleanup failure stops the sweep
+before another child starts and leaves earlier compact result rows available.
+Batch Stop or TOP_MEAN child Stop delegates to the parent Finder run and keeps
+both reservations until teardown finishes. A mismatched run id does not stop
+or release the active sweep.
+
+The coordinator receives one frozen evaluation cutoff across all child runs.
+Pair backtests and annual replay windows use it, and replay target candles are
+trimmed to the same closed-bar boundary. This prevents later candidates from
+gaining newly closed bars during a long sweep. The cutoff is not a market-data
+snapshot: files can still be corrected or replaced while the sweep runs.
+Rust preference is forwarded to each child, and result rows record requested
+and actual engine modes.
+
+Finder streams each scalar candidate once and keeps live `/status` polling
+counts-only. The terminal `arm_done` event and terminal status response carry
+the authoritative completed rows plus the frozen run context: ordered pairs,
+settings, capital, horizon/date window, cutoff, cap-tilt baseline, and engine
+usage. Reload reattaches by the parent Finder run id; a server restart that no
+longer has the run returns unavailable instead of polling indefinitely. The
+bounded browser snapshot is only a preview if the server inventory cannot be
+recovered. Apply and copy use the terminal context rather than current menu
+controls.
+
+The inventory holds compact metrics for all 15 replay arms per successfully
+evaluated configuration; it does not retain candles, trades, event details,
+pool snapshots, or candidate outcomes. Work scales as configurations × pairs,
+so keep the configuration budget small for 500–5,000-pair runs. Large
+server-side TOP_MEAN work should use
+`NODE_OPTIONS=--max-old-space-size=16384` or higher.
+
 ## Asset Opportunity
 
 Asset Opportunity uses the same server owner, run id, Stop route, and reload

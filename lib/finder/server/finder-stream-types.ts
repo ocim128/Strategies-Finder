@@ -34,6 +34,8 @@
 import type { BatchDatasetCacheStats } from "../../batch-backtest/batch-dataset-loader-core";
 import type { FinderAssetOpportunityArchiveSort } from "../finder-asset-opportunity-metrics";
 import type {
+    FinderArmPerformanceCandidate,
+    FinderArmPerformanceRunContext,
     FinderAssetOpportunityDiagnostics,
     FinderAssetOpportunityResult,
     FinderDiagnostics,
@@ -41,6 +43,11 @@ import type {
     FinderUniverseSymbolResult,
 } from "../../types/finder";
 import type { StrategyParams } from "../../types/strategies";
+import {
+    compactFinderArmPerformanceMetric,
+    FINDER_ARM_PERFORMANCE_REPLAY_FIELDS,
+    type FinderArmPerformanceArm,
+} from "../finder-arm-performance-metrics";
 
 // ---------------------------------------------------------------------------
 // Job phase + run identity
@@ -62,7 +69,16 @@ export type FinderJobPhase = "loading" | "evaluating" | "oos" | "done" | "cancel
  * wire-level field so the status snapshot + terminal payload can distinguish
  * which terminal slice they carry.
  */
-export type FinderJobKind = "symbol_universe" | "asset_opportunity" | "asset_opportunity_batch";
+export type FinderJobKind = "symbol_universe" | "asset_opportunity" | "asset_opportunity_batch" | "arm_performance";
+
+export interface FinderArmPerformanceStatus {
+    plannedCandidates: number;
+    completedCandidates: number;
+    pairCount: number;
+    currentCandidateOrdinal: number | null;
+    currentStrategyKey: string | null;
+    childPhase: string | null;
+}
 
 // ---------------------------------------------------------------------------
 // Stream events (NDJSON, one JSON object per line)
@@ -115,6 +131,39 @@ export type FinderStreamEvent =
         candidate: FinderUniverseCandidate;
     }
     | { type: "symbol_failed"; symbol: string; error: string }
+    | {
+        type: "arm_start";
+        runId: string;
+        interval: string;
+        strategyKeys: string[];
+        plannedCandidates: number;
+        pairCount: number;
+        skippedPairCount?: number;
+        horizon: number;
+    }
+    | {
+        type: "arm_progress";
+        runId: string;
+        percent: number;
+        text: string;
+        candidateId: string;
+        candidateOrdinal: number;
+        totalCandidates: number;
+        strategyKey: string;
+        strategyName: string;
+        childPhase: string;
+    }
+    | { type: "arm_candidate"; runId: string; candidateId: string; candidate: FinderArmPerformanceCandidate }
+    | {
+        type: "arm_done";
+        runId: string;
+        ok: boolean;
+        cancelled: boolean;
+        results: FinderArmPerformanceCandidate[];
+        runContext: FinderArmPerformanceRunContext;
+        summary: string;
+        error: string | null;
+    }
     | {
         type: "done";
         ok: boolean;
@@ -364,6 +413,10 @@ export type FinderRunStatusSnapshot = {
     terminalCandidates: FinderUniverseCandidate[] | null;
     /** Present and authoritative only on the terminal asset_opportunity snapshot. */
     terminalAssets: FinderAssetOpportunityResult[] | null;
+    /** Terminal authoritative scalar Arm Performance inventory. */
+    terminalArmPerformanceResults?: FinderArmPerformanceCandidate[] | null;
+    /** Frozen request context retained for Apply / configuration export. */
+    armPerformanceRunContext?: FinderArmPerformanceRunContext | null;
     summary: string | null;
     /** Terminal fatal error; null for running, done, and cancelled jobs. */
     error: string | null;
@@ -388,6 +441,8 @@ export type FinderRunStatusSnapshot = {
      * the server always sends it explicitly.
      */
     batch?: FinderBatchStatus | null;
+    /** Counts-only live progress for an Arm Performance sweep. */
+    armPerformance?: FinderArmPerformanceStatus | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -437,6 +492,33 @@ export function toScalarCandidate(candidate: FinderUniverseCandidate): FinderUni
     if (!Number.isFinite(clone.medianExitAlpha)) delete clone.medianExitAlpha;
     if (!Number.isFinite(clone.medianOosExitAlpha)) delete clone.medianOosExitAlpha;
     return clone;
+}
+
+/** Explicit wire/snapshot serializer for a compact Arm Performance candidate. */
+export function toScalarArmPerformanceCandidate(
+    candidate: FinderArmPerformanceCandidate,
+): FinderArmPerformanceCandidate {
+    const metrics = {} as FinderArmPerformanceCandidate["metrics"];
+    for (const arm of Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as FinderArmPerformanceArm[]) {
+        const metric = candidate.metrics[arm];
+        if (metric) metrics[arm] = compactFinderArmPerformanceMetric(metric);
+    }
+    return {
+        candidateId: candidate.candidateId,
+        candidateOrdinal: candidate.candidateOrdinal,
+        strategyKey: candidate.strategyKey,
+        strategyName: candidate.strategyName,
+        horizon: candidate.horizon,
+        params: { ...candidate.params },
+        backtestSettings: { ...candidate.backtestSettings },
+        ...(candidate.exitStrategyKey ? { exitStrategyKey: candidate.exitStrategyKey } : {}),
+        ...(candidate.exitStrategyName ? { exitStrategyName: candidate.exitStrategyName } : {}),
+        ...(candidate.exitStrategyParams ? { exitStrategyParams: { ...candidate.exitStrategyParams } } : {}),
+        pairCoverage: { ...candidate.pairCoverage },
+        metrics,
+        requestedEngineMode: candidate.requestedEngineMode,
+        actualEngineMode: candidate.actualEngineMode,
+    };
 }
 
 function stripSymbolResultScalars(symbol: FinderUniverseSymbolResult): FinderUniverseSymbolResult {

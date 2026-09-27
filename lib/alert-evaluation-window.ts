@@ -21,26 +21,25 @@ export function selectClosedCandleWindow(
     nowSec: number = Math.floor(Date.now() / 1000),
     minClosedCandles: number = DEFAULT_MIN_CLOSED_CANDLES
 ): ClosedCandleWindow | null {
-    if (candles.length < 2) return null;
+    if (candles.length === 0) return null;
     const intervalSeconds = parseIntervalSeconds(interval);
     if (!intervalSeconds || intervalSeconds <= 0) return null;
 
-    let closedIdx = candles.length - 1;
-    const lastOpenSec = parseTimeToUnixSeconds(candles[closedIdx].time);
-    if (lastOpenSec === null) return null;
-
-    if (nowSec < lastOpenSec + intervalSeconds) {
-        closedIdx -= 1;
+    let closedCount = 0;
+    for (const candle of candles) {
+        const openSec = parseTimeToUnixSeconds(candle.time);
+        if (openSec === null || openSec + intervalSeconds > nowSec) break;
+        closedCount += 1;
     }
-    if (closedIdx < minClosedCandles - 1) return null;
+    if (closedCount < minClosedCandles) return null;
 
-    const closedTime = parseTimeToUnixSeconds(candles[closedIdx].time);
+    const closedTime = parseTimeToUnixSeconds(candles[closedCount - 1]!.time);
     if (closedTime === null) return null;
 
     return {
-        candles: candles.slice(0, closedIdx + 1),
+        candles: candles.slice(0, closedCount),
         closedCandleTimeSec: closedTime,
-        nextOpenCandle: closedIdx + 1 < candles.length ? candles[closedIdx + 1] : null,
+        nextOpenCandle: closedCount < candles.length ? candles[closedCount]! : null,
     };
 }
 

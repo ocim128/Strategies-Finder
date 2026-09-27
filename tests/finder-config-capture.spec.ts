@@ -1,6 +1,10 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { captureTradeFilter, formatCapturedConfiguration } from "../lib/finder/finder-config-capture";
+import {
+    buildFinderArmPerformanceRunConfiguration,
+    captureTradeFilter,
+    formatCapturedConfiguration,
+} from "../lib/finder/finder-config-capture";
 
 describe("finder config capture trade-filter normalization", () => {
     it("nulls the bounds when the toggle is off so a captured config cannot read as an enforced filter", () => {
@@ -70,5 +74,44 @@ describe("finder config capture formatting", () => {
         expect(text).to.contain('"batch": {\n\t\t"startHoldoutBars": 12');
         expect(text).to.contain('"list": []');
         expect(text).to.contain('"map": {}');
+    });
+});
+
+describe("Arm Performance run configuration capture", () => {
+    it("exports the frozen pair universe, window, cutoff, settings, and engine context", () => {
+        const context: any = {
+            runId: "frozen-run",
+            startedAt: 123,
+            strategyKeys: ["strategy_a", "strategy_b"],
+            pairs: Array.from({ length: 5_000 }, (_, index) => `BASE${index}+QUOTE`),
+            interval: "4h",
+            horizon: 12,
+            dateMode: "date_range",
+            sampleFromSec: 1_700_000_000,
+            sampleToSec: 1_710_000_000,
+            evaluationCutoffSec: 1_720_000_000,
+            plannedCandidateCount: 7,
+            targetDataBoundary: { earliestBarTimeSec: 1_700_000_100, latestBarTimeSec: 1_719_999_900 },
+            actualEngineModes: ["typescript", "rust"],
+            capTiltWeight: "off",
+            searchOptions: { mode: "random", randomSeed: 42 },
+            backtestSettings: { executionModel: "next_open", tradeDirection: "long" },
+            capitalSettings: { initialCapital: 25_000, commission: 0.1 },
+            requestedEngineMode: "rust",
+        };
+
+        const captured = buildFinderArmPerformanceRunConfiguration(context, 6, true);
+        const restored = JSON.parse(formatCapturedConfiguration(captured));
+        expect(restored.finder.runId).to.equal("frozen-run");
+        expect(restored.finder.pairs).to.have.length(5_000);
+        expect(restored.finder.searchOptions.randomSeed).to.equal(42);
+        expect(restored.finder.horizon).to.equal(12);
+        expect(restored.finder.sampleFromSec).to.equal(1_700_000_000);
+        expect(restored.finder.evaluationCutoffSec).to.equal(1_720_000_000);
+        expect(restored.finder.capTiltWeight).to.equal("off");
+        expect(restored.finder.actualEngineModes).to.deep.equal(["typescript", "rust"]);
+        expect(restored.backtestSettings).to.deep.equal(context.backtestSettings);
+        expect(restored.capitalSettings).to.deep.equal(context.capitalSettings);
+        expect(restored.finder.defaultSort).to.equal("TOP_RAW_PROFIT_NOW by topMean");
     });
 });

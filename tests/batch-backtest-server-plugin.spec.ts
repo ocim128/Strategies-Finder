@@ -9,6 +9,7 @@ import { strategyRegistry } from "../strategyRegistry";
 import { BATCH_MAX_SYMBOLS } from "../lib/batch-backtest/batch-run-contract";
 import { getRunDir, getArtifactsRootDir } from "../lib/batch-backtest/sp500-top-mean-artifact-store";
 import {
+    createBatchOwnerLocksAdapter,
     processRunBatch,
     processOpenScoreUsdReplay,
     resolveServerBatchHeapWarning,
@@ -16,6 +17,7 @@ import {
     type BatchRunSnapshot,
     __testInternals,
 } from "../lib/batch-backtest/batch-backtest-vite-plugin";
+import { handleSp500TopMeanStopRequest } from "../lib/batch-backtest/sp500-top-mean-vite-routes";
 import type { BatchStatusResponse, BatchStreamEvent } from "../lib/batch-backtest/batch-backtest-stream-types";
 import type { BatchBacktestSymbolResult } from "../lib/batch-backtest/batch-backtest-runner";
 import type { CapitalSettings } from "../lib/types/backtest";
@@ -1359,6 +1361,40 @@ describe("batch-backtest server plugin runId-scoped Stop (audit Finding 5)", () 
         expect(result).to.deep.equal({ ok: true, stopped: true });
         expect(getRunOwnerForTests(), "pre-start reservation is released").to.equal(0);
         expect(getRunStateForTests()?.runId, "prior terminal snapshot is not mistaken for the owner").to.equal("previous-run");
+    });
+
+    it("delegates Batch and TOP_MEAN child Stop to the Finder parent without releasing either reservation", async () => {
+        const locks = createBatchOwnerLocksAdapter();
+        let stopCalls = 0;
+        const token = locks.acquireFinderSweep!("finder-parent", (runId) => {
+            expect(runId).to.equal("finder-parent");
+            stopCalls += 1;
+            return true;
+        });
+        locks.setFinderSweepChild!(token, "finder_arm_child_1");
+        try {
+            expect(locks.isBusy()).to.equal(true);
+
+            const staleBatchStop = await handleStopRequest("stale-parent");
+            expect(staleBatchStop).to.deep.equal({ ok: false, stopped: false });
+            expect(getRunOwnerForTests()).to.equal(token.runOwner);
+
+            const batchStop = await handleStopRequest("finder-parent");
+            expect(batchStop).to.deep.equal({ ok: true, stopped: true });
+            expect(getRunOwnerForTests()).to.equal(token.runOwner);
+            expect(locks.isBusy()).to.equal(true);
+
+            const staleChildStop = await handleSp500TopMeanStopRequest("another_child", locks);
+            expect(staleChildStop.stopped).to.equal(false);
+            const childStop = await handleSp500TopMeanStopRequest("finder_arm_child_1", locks);
+            expect(childStop.stopped).to.equal(true);
+            expect(getRunOwnerForTests()).to.equal(token.runOwner);
+            expect(locks.isBusy()).to.equal(true);
+            expect(stopCalls).to.equal(2);
+        } finally {
+            locks.releaseIfStillOwner(token);
+        }
+        expect(locks.isBusy()).to.equal(false);
     });
 
     it("status snapshot exposes runId on both run and lastRun branches", async () => {

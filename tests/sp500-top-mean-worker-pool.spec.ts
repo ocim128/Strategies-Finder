@@ -319,8 +319,10 @@ async function testFailedPairsRemainVisibleInProgress(): Promise<void> {
     };
     const progressText: string[] = [];
     const pool = new TopMeanWorkerPool();
+    let usage: Awaited<ReturnType<TopMeanWorkerPool["execute"]>>;
+    let shardWrites = 0;
     try {
-        await pool.execute({
+        usage = await pool.execute({
             runId: manifest.runId,
             manifest,
             canonicalPairs: pairs,
@@ -333,12 +335,22 @@ async function testFailedPairsRemainVisibleInProgress(): Promise<void> {
             shardSize: 2,
             useRustEnginePreference: false,
             workerPath: testWorkerPath,
+            writeShardArtifactsBytes: async () => {
+                shardWrites += 1;
+                if (shardWrites === 1) throw new Error("retry the failed-pair shard once");
+            },
             onProgress: (_completed, _total, text) => progressText.push(text),
         });
     } finally {
         pool.cancel();
     }
+    assert.equal(shardWrites, 2, "the shard is replayed once after its first artifact write fails");
     assert.equal(manifest.failedPairsCount, 2);
+    assert.equal(usage.failedPairDetails.length, 2, "retried failed pairs appear once in diagnostics");
+    assert.deepEqual(usage.failedPairDetails.map(({ symbol, error, failureKind }) => ({ symbol, error, failureKind })), [
+        { symbol: pairs[0], error: "deterministic pair failure", failureKind: "missing_data" },
+        { symbol: pairs[1], error: "deterministic pair failure", failureKind: "missing_data" },
+    ]);
     assert.match(progressText[0]!, /Backtesting pair 1\/2 \(0 completed, 1 failed\)/);
     assert.match(progressText[1]!, /Backtesting pair 2\/2 \(0 completed, 2 failed\)/);
 }

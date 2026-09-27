@@ -5,6 +5,7 @@ import type {
     OpenScoreUsdReplayResult,
     ReplayComparison,
 } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
+import { FINDER_ARM_PERFORMANCE_REPLAY_FIELDS } from "../lib/finder/finder-arm-performance-metrics";
 
 function comparison(events: number): ReplayComparison {
     return {
@@ -22,37 +23,33 @@ function comparison(events: number): ReplayComparison {
 }
 
 describe("buildTopMeanHorizonSummaries", () => {
-    it("maps each Latest-picks arm name to its own comparison (no swaps)", () => {
-        // events encodes the arm (1..7) so a swapped mapping cannot pass.
-        const result = {
-            horizons: [{
-                bars: 24,
-                topRaw: comparison(1),
-                topMean: comparison(2),
-                topMeanRawUnique: comparison(3),
-                topRawProfitNow: comparison(4),
-                topMeanProfitNow: comparison(5),
-                topRawProfitNowConf: comparison(6),
-                topZ: comparison(7),
-                topMeanByAsset: [
-                    { asset: "BBB", events: 2, share: 0.5, topMean: 0, randomMean: 0, delta: 0 },
-                    { asset: "AAA", events: 2, share: 0.5, topMean: 0, randomMean: 0, delta: 0 },
-                ],
-            }],
-        } as unknown as OpenScoreUsdReplayResult;
+    it("maps all requested arm names to their own comparisons", () => {
+        const replayHorizon: Record<string, unknown> = {
+            bars: 24,
+            topMeanByAsset: [
+                { asset: "BBB", events: 2, share: 0.5, topMean: 0, randomMean: 0, delta: 0 },
+                { asset: "AAA", events: 2, share: 0.5, topMean: 0, randomMean: 0, delta: 0 },
+            ],
+        };
+        const expected = new Map<string, number>();
+        let value = 1;
+        for (const [arm, field] of Object.entries(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS)) {
+            replayHorizon[field] = comparison(value);
+            expected.set(arm, value);
+            value += 1;
+        }
+
+        const result = { horizons: [replayHorizon] } as unknown as OpenScoreUsdReplayResult;
 
         const summaries = buildTopMeanHorizonSummaries(result);
         expect(summaries).to.have.lengthOf(1);
         const summary = summaries[0]!;
         expect(summary.horizon).to.equal(24);
-        expect(summary.events).to.equal(2);
-        expect(summary.latestArms!.TOP_RAW!.events).to.equal(1);
-        expect(summary.latestArms!.TOP_MEAN!.events).to.equal(2);
-        expect(summary.latestArms!.TOP_MEAN_RAW_UNIQUE!.events).to.equal(3);
-        expect(summary.latestArms!.TOP_RAW_PROFIT_NOW!.events).to.equal(4);
-        expect(summary.latestArms!.TOP_MEAN_PROFIT_NOW!.events).to.equal(5);
-        expect(summary.latestArms!.TOP_RAW_PROFIT_NOW_CONF!.events).to.equal(6);
-        expect(summary.latestArms!.TOP_Z!.events).to.equal(7);
+        expect(summary.events).to.equal(6);
+        for (const [arm, events] of expected) {
+            expect(summary.armComparisons?.[arm as keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS]?.events)
+                .to.equal(events, `${arm} should retain its replay comparison`);
+        }
         // topAssets stays sorted by events desc, then asset name.
         expect(summary.topAssets.map((asset) => asset.asset)).to.deep.equal(["AAA", "BBB"]);
     });

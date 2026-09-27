@@ -5,7 +5,7 @@ Finder controls, ranking metrics, result retention, server routes, or the
 backtest path used by Finder.
 
 The Finder searches strategy parameters and displays the strongest candidates
-for one of four scopes:
+for one of five scopes:
 
 - **Current Chart** searches parameter combinations on the active chart.
 - **Symbol Universe** evaluates selected strategies across a list of symbols
@@ -15,6 +15,9 @@ for one of four scopes:
 - **Strategy Quality Audit** runs each selected strategy with normalized
   defaults across the supplied symbols. It is a baseline quality report, not
   parameter discovery.
+- **Arm Performance** evaluates each generated configuration across the same
+  supplied synthetic-pair universe, then lets the user re-sort the completed
+  configuration inventory by any of the 15 TOP_MEAN replay arms.
 
 The menu is assembled from `html-partials/tab-finder.html`. Its structural DOM
 contract is `lib/finder/finder-manager-dom.ts`; do not rename an id in the
@@ -231,6 +234,70 @@ Asset Opportunity keeps the current iteration's full scalar strategy-level
 rows for re-sort, while the browser normally displays one representative row
 per normalized symbol. Do not send or retain candles, signals, trades, or
 equity curves merely to implement a post-run sort.
+
+### Arm Performance
+
+Arm Performance reuses Finder's selected strategies, Grid Sweep or Random
+Search, Runs / Strategy budget, risk controls, optional exit-strategy sampling,
+Run / Stop, result cards, Apply, and copy actions. Enter one supported local
+synthetic pair per line (or comma-separated), select an interval and one
+positive replay horizon, then run. The server accepts 1–5,000 pairs and rejects
+blank lists, single symbols, duplicate resolved pairs, provider conflicts,
+unsupported built-in strategies, and requests above its validated search
+limits. Pairs with missing local leg data are skipped, and the run reports how
+many were skipped. At least one pair must have usable data. A blank pair list
+never expands to the default S&P 500 universe.
+
+If a pair passes preflight but its candles are missing or too short when a
+candidate runs, that pair is skipped for that candidate and the remaining
+pairs are still evaluated. Backtest execution errors remain fatal. Copy
+Diagnostics includes runtime pair-load failures and per-candidate pair and
+replay coverage counts. If every pair fails to load for a candidate, it cannot
+be scored; the run stops with the pair failures available in Copy Diagnostics.
+
+Each configuration runs through TOP_MEAN over the same ordered pairs and
+returns compact summaries for all 15 arms. There is no arm selector before the
+run. `Re-Sort` sorts the complete retained configuration inventory locally,
+then applies `Top Results`; it does not launch pair backtests or rank individual
+pairs. `Run Sort` restores the default `TOP_RAW_PROFIT_NOW` order. Equal values
+keep candidate order and arms with no eligible events sort last. Grid and
+Random are supported. Genetic search, fifth/half data slices, trade-count
+filters, OOS gates, and chart trade filters are disabled for this scope.
+
+The sort value is the selected arm's **mean forward return** (`topMean`) at the
+chosen horizon. It is an equal-event research statistic, not compounded
+account P&L: events may overlap and do not model position sizing or a shared
+capital limit. The card also shows the comparison mean, eligible event count,
+pair coverage, and `deltaMed CI95`. `delta` is the median paired excess return;
+the interval estimates that median, not `topMean`, and it does not correct for
+searching many configurations. Each configuration is measured on its own
+eligible event dates, so comparisons are not matched-event experiments. No
+minimum event threshold is applied; zero-event or missing means are shown as
+unavailable.
+
+`TOP_RAW_PROFIT` and `TOP_MEAN_PROFIT` use a full-window pair-profit gate that
+is known only after the backtest. They are labeled **LOOK-AHEAD RESEARCH** and
+must not be treated as live signals. BOT arms keep TOP_MEAN's existing long
+return calculation; they are not inverted short returns.
+
+Apply restores the candidate's stored normalized parameters and resolved
+backtest settings, along with the run's interval and capital settings, then
+runs the normal backtest on the current chart. That chart rerun is separate
+from the pair-universe replay. Copy Configuration uses the frozen run context;
+Copy Top Results includes the selected arm, all arm metrics, exact candidate
+settings, and the shared run id. A cached localStorage snapshot is only a
+bounded preview and cannot be re-sorted as a complete inventory.
+
+The evaluation cutoff is fixed for every configuration so later candidates do
+not gain newly closed candles or newly matured outcomes. It does not freeze
+historical files: corrections or replacement during a long sweep can still
+change later data reads. For reproducibility, use fixed local datasets and
+compare a candidate with a standalone TOP_MEAN run using the same pairs,
+settings, horizon, date window, and cutoff. Cost grows with configurations ×
+pairs; a 30-configuration run across 2,000 pairs performs 60,000 pair
+backtests. For large server runs, use
+`NODE_OPTIONS=--max-old-space-size=16384` or higher and a small configuration
+budget.
 
 ### Strategy Quality Audit
 

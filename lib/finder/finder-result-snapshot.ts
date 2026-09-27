@@ -1,4 +1,6 @@
 import type {
+    FinderArmPerformanceCandidate,
+    FinderArmPerformanceRunContext,
     FinderAssetOpportunityResult,
     FinderLatestResults,
     FinderResult,
@@ -8,6 +10,11 @@ import type {
     FinderUniverseSymbolResult,
 } from "../types/finder";
 import type { BacktestResult, StrategyParams } from "../types/strategies";
+import {
+    compactFinderArmPerformanceMetric,
+    FINDER_ARM_PERFORMANCE_REPLAY_FIELDS,
+    type FinderArmPerformanceArm,
+} from "./finder-arm-performance-metrics";
 
 export const FINDER_RESULT_SNAPSHOT_LIMIT = 25;
 const FINDER_UNIVERSE_SYMBOL_SNAPSHOT_LIMIT = 200;
@@ -204,6 +211,44 @@ function compactStrategyQualityResult(result: FinderStrategyQualityResult): Find
     };
 }
 
+function compactArmPerformanceCandidate(candidate: FinderArmPerformanceCandidate): FinderArmPerformanceCandidate {
+    return {
+        candidateId: candidate.candidateId,
+        candidateOrdinal: candidate.candidateOrdinal,
+        strategyKey: candidate.strategyKey,
+        strategyName: candidate.strategyName,
+        horizon: candidate.horizon,
+        params: { ...candidate.params },
+        backtestSettings: { ...candidate.backtestSettings },
+        requestedEngineMode: candidate.requestedEngineMode,
+        actualEngineMode: candidate.actualEngineMode,
+        ...(candidate.exitStrategyParams ? { exitStrategyParams: { ...candidate.exitStrategyParams } } : {}),
+        ...(candidate.exitStrategyKey ? { exitStrategyKey: candidate.exitStrategyKey } : {}),
+        ...(candidate.exitStrategyName ? { exitStrategyName: candidate.exitStrategyName } : {}),
+        pairCoverage: { ...candidate.pairCoverage },
+        metrics: Object.fromEntries(
+            Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((arm) => {
+                const metric = candidate.metrics[arm as FinderArmPerformanceArm];
+                return [arm, metric ? compactFinderArmPerformanceMetric(metric) : undefined];
+            }).filter(([, metric]) => metric !== undefined),
+        ) as FinderArmPerformanceCandidate["metrics"],
+    };
+}
+
+function compactArmPerformanceContext(
+    context: FinderArmPerformanceRunContext | null,
+): FinderArmPerformanceRunContext | null {
+    if (!context) return null;
+    return {
+        ...context,
+        strategyKeys: [...context.strategyKeys],
+        pairs: [...context.pairs],
+        searchOptions: { ...context.searchOptions },
+        backtestSettings: { ...context.backtestSettings },
+        capitalSettings: { ...context.capitalSettings },
+    };
+}
+
 export function compactFinderLatestResults(results: FinderLatestResults): FinderLatestResults {
     if (results.scope === "symbol_universe") {
         return {
@@ -232,6 +277,19 @@ export function compactFinderLatestResults(results: FinderLatestResults): Finder
         };
     }
 
+    if (results.scope === "arm_performance") {
+        return {
+            scope: "arm_performance",
+            results: results.results
+                .slice(0, FINDER_RESULT_SNAPSHOT_LIMIT)
+                .map(compactArmPerformanceCandidate),
+            runContext: compactArmPerformanceContext(results.runContext),
+            // A localStorage snapshot is only a preview. The server terminal
+            // inventory remains authoritative for full-inventory Re-Sort.
+            inventoryComplete: false,
+        };
+    }
+
     return {
         scope: "current_chart",
         results: results.results
@@ -250,11 +308,35 @@ export function normalizeFinderLatestResultsSnapshot(value: unknown): FinderLate
         && candidate.scope !== "symbol_universe"
         && candidate.scope !== "asset_opportunity"
         && candidate.scope !== "strategy_quality"
+        && candidate.scope !== "arm_performance"
     ) {
         return null;
     }
     if (!Array.isArray(candidate.results)) {
         return null;
+    }
+    if (candidate.scope === "arm_performance") {
+        const rows = candidate.results as unknown[];
+        const valid = rows.every((row) => {
+            if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+            const item = row as Record<string, unknown>;
+            if (typeof item.candidateId !== "string" || !Number.isInteger(item.candidateOrdinal)) return false;
+            if (!item.metrics || typeof item.metrics !== "object" || Array.isArray(item.metrics)) return false;
+            const metrics = item.metrics as Record<string, unknown>;
+            return Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).every((arm) => {
+                const metric = metrics[arm];
+                return metric !== null && typeof metric === "object" && !Array.isArray(metric);
+            });
+        });
+        if (!valid) return null;
+        return compactFinderLatestResults({
+            scope: "arm_performance",
+            results: rows as FinderArmPerformanceCandidate[],
+            runContext: candidate.runContext && typeof candidate.runContext === "object"
+                ? candidate.runContext as FinderArmPerformanceRunContext
+                : null,
+            inventoryComplete: false,
+        });
     }
     return compactFinderLatestResults(candidate as FinderLatestResults);
 }

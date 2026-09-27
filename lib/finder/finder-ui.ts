@@ -7,12 +7,13 @@ import {
     formatScore as formatUiScore,
     formatNullableCurrency,
 } from "../ui-formatters";
-import type { FinderAssetOpportunityResult, FinderMode, FinderOosVerdict, FinderRandomBenchmark, FinderResult, FinderStrategyQualityResult, FinderUniverseCandidate, FinderUniverseOosAggregate, FinderUniverseSymbolMetrics } from "../types/finder";
+import type { FinderArmPerformanceCandidate, FinderArmPerformanceRunContext, FinderAssetOpportunityResult, FinderMode, FinderOosVerdict, FinderRandomBenchmark, FinderResult, FinderStrategyQualityResult, FinderUniverseCandidate, FinderUniverseOosAggregate, FinderUniverseSymbolMetrics } from "../types/finder";
 import type { FinderAssetOosNextExitMetrics } from "./finder-asset-opportunity-oos";
 import type { BacktestResult, StrategyParams, Time } from "../types/strategies";
 import { getFinderSelectionResult } from "./finder-engine";
 import { calculateFinderAssetOosAverageHorizonMetrics } from "./finder-asset-opportunity-oos";
 import { computePerformanceVerdict, computeStrategyVerdict } from "./finder-universe-metrics";
+import type { FinderArmPerformanceArm } from "./finder-arm-performance-metrics";
 
 function formatExitAlpha(value: number): string {
     return `${value >= 0 ? "+" : ""}${value.toFixed(2)} pp`;
@@ -637,6 +638,72 @@ export class FinderUI {
         list.appendChild(fragment);
     }
 
+    public renderArmPerformanceResults(
+        results: FinderArmPerformanceCandidate[],
+        context: FinderArmPerformanceRunContext | null,
+        arm: FinderArmPerformanceArm,
+        inventoryIncomplete = false,
+    ): void {
+        const list = this.getListElement();
+        const copyButton = this.getCopyButton();
+        list.innerHTML = "";
+        if (results.length === 0) {
+            setVisible("finderEmpty", true);
+            if (copyButton) copyButton.disabled = true;
+            return;
+        }
+
+        setVisible("finderEmpty", false);
+        if (copyButton) copyButton.disabled = false;
+        const note = document.createElement("div");
+        note.className = "finder-sub finder-arm-performance-note";
+        note.textContent = `Arm Performance compares each configuration on its own eligible events across ${context?.pairs.length ?? "?"} supplied pairs. Mean forward return is a research metric, not account P&L. Bootstrap CI does not correct for searching configurations.${inventoryIncomplete ? " Cached preview: inventory incomplete; re-sort is disabled." : ""}`;
+        list.appendChild(note);
+
+        const fragment = document.createDocumentFragment();
+        results.forEach((item, index) => {
+            const metric = item.metrics[arm];
+            const title = document.createElement("div");
+            title.className = "finder-title";
+            const titleText = document.createElement("span");
+            titleText.textContent = item.strategyName;
+            title.appendChild(titleText);
+            if (arm === "TOP_RAW_PROFIT" || arm === "TOP_MEAN_PROFIT") {
+                const badge = document.createElement("span");
+                badge.className = "finder-title-badge";
+                badge.textContent = "LOOK-AHEAD RESEARCH";
+                title.appendChild(badge);
+            }
+
+            const formatPct = (value: number | null): string =>
+                value === null || !Number.isFinite(value) ? "n/a" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
+            const metrics = document.createElement("div");
+            metrics.className = "finder-metrics";
+            metrics.appendChild(this.createMetricChip(`${arm.replaceAll("_", " ")} · ${item.horizon || context?.horizon || "?"} bars`));
+            metrics.appendChild(this.createMetricChip(`Events ${metric?.events ?? 0}`));
+            metrics.appendChild(this.createMetricChip(`Mean ${formatPct(metric?.topMean ?? null)}`));
+            metrics.appendChild(this.createMetricChip(`Random ${formatPct(metric?.randomMean ?? null)}`));
+            metrics.appendChild(this.createMetricChip(`DeltaMed ${formatPct(metric?.delta ?? null)}`));
+            metrics.appendChild(this.createMetricChip(`deltaMed CI95 [${formatPct(metric?.ciLower ?? null)}, ${formatPct(metric?.ciUpper ?? null)}]`));
+            metrics.appendChild(this.createMetricChip(`Pairs ${item.pairCoverage.completedPairs}/${item.pairCoverage.requestedPairs}`));
+            metrics.appendChild(this.createMetricChip(`No trade ${item.pairCoverage.noTradePairs}`));
+
+            fragment.appendChild(this.createResultRow({
+                index,
+                title,
+                subText: `${item.strategyKey} · candidate ${item.candidateOrdinal + 1} · ${item.actualEngineMode}`,
+                paramsText: this.formatParams(item.params),
+                detailLines: [
+                    `Pair failures ${item.pairCoverage.failedPairs} · replay target load failures ${item.pairCoverage.replayTargetLoadFailures}`,
+                    ...(item.exitStrategyKey ? [`Exit override ${item.exitStrategyName ?? item.exitStrategyKey} (${this.formatParams(item.exitStrategyParams ?? {})})`] : []),
+                ],
+                metrics,
+                applyDisabled: !context,
+            }));
+        });
+        list.appendChild(fragment);
+    }
+
     /**
      * Renders the sampled Exit Strategy Override descriptor for a universe survivor
      * row, mirroring the current-chart `formatDetailLines` shape. Returns an empty
@@ -898,6 +965,7 @@ export class FinderUI {
         detailLines?: string[];
         details?: HTMLElement;
         showApply?: boolean;
+        applyDisabled?: boolean;
     }): HTMLDivElement {
         const row = document.createElement("div");
         row.className = "finder-row";
@@ -941,6 +1009,8 @@ export class FinderUI {
             button.className = "btn btn-secondary finder-apply";
             button.textContent = "Apply";
             button.dataset.index = options.index.toString();
+            button.disabled = options.applyDisabled === true;
+            if (button.disabled) button.title = "Run context is unavailable in this cached preview.";
             row.appendChild(button);
         }
         return row;

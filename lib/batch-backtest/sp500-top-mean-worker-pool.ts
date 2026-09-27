@@ -149,8 +149,15 @@ export function resolveTopMeanShardSize(
 }
 
 export type TopMeanEngineUsage = { rust: number; typescript: number };
+export interface TopMeanPairFailure {
+    pairIndex: number;
+    symbol: string;
+    error: string;
+    failureKind?: "missing_data" | "backtest";
+}
 export type TopMeanWorkerPoolExecutionResult = TopMeanEngineUsage & {
     performance: TopMeanWorkerPoolPerformance;
+    failedPairDetails: TopMeanPairFailure[];
 };
 
 function emptyCacheCounters(): TopMeanCacheCounters {
@@ -408,6 +415,7 @@ export function buildTopMeanShardTasks(
 
 export class TopMeanWorkerPool {
     private activeWorkers = new Set<Worker>();
+    private terminationPromises = new Map<Worker, Promise<unknown>>();
     private isCancelled = false;
     /**
      * Assigned inside execute(): drains queued dispatch callbacks so their
@@ -419,14 +427,26 @@ export class TopMeanWorkerPool {
      */
     private drainQueuedTasks: (() => void) | null = null;
 
+    private terminateWorker(worker: Worker): void {
+        if (this.terminationPromises.has(worker)) return;
+        try {
+            const termination = Promise.resolve(worker.terminate());
+            this.terminationPromises.set(worker, termination);
+            void termination.catch(() => undefined);
+        } catch {
+            this.terminationPromises.set(worker, Promise.resolve());
+        }
+    }
+
+    /** Wait until every requested worker termination has completed. */
+    public async waitForTeardown(): Promise<void> {
+        await Promise.allSettled(this.terminationPromises.values());
+    }
+
     public cancel(): void {
         this.isCancelled = true;
         for (const worker of this.activeWorkers) {
-            try {
-                worker.terminate();
-            } catch {
-                // Ignore worker termination error
-            }
+            this.terminateWorker(worker);
         }
         this.activeWorkers.clear();
         // Settle queued dispatch callbacks ("Operation cancelled") so no
@@ -611,6 +631,9 @@ export class TopMeanWorkerPool {
         // Audit (retry-accounting finding): stable pairIndex → already counted
         // as completed. See the dedupe comment in the progress handler.
         const countedCompletedPairIndexes = new Set<number>();
+        const completedEngineByPairIndex = new Map<number, "rust" | "typescript">();
+        const countedFailedPairIndexes = new Set<number>();
+        const failedPairDetails = new Map<number, TopMeanPairFailure>();
         const workerInFlight = new Map<Worker, InFlight>();
         const freeWorkers: Worker[] = [];
         const pendingTasks: Array<() => void> = [];
@@ -645,9 +668,13 @@ export class TopMeanWorkerPool {
                         // stable pairIndex so each canonical pair contributes
                         // once to the completed count, engine-usage counters,
                         // and progress events.
+                        if (countedFailedPairIndexes.delete(msg.pairIndex)) {
+                            options.manifest.failedPairsCount = Math.max(0, (options.manifest.failedPairsCount || 0) - 1);
+                        }
                         if (!countedCompletedPairIndexes.has(msg.pairIndex)) {
                             countedCompletedPairIndexes.add(msg.pairIndex);
                             completedPairsCount++;
+                            if (msg.engineUsed) completedEngineByPairIndex.set(msg.pairIndex, msg.engineUsed);
                             options.manifest.completedPairsCount = completedPairsCount;
                             if (msg.engineUsed === "rust") engineUsage.rust += 1;
                             else if (msg.engineUsed === "typescript") engineUsage.typescript += 1;
@@ -662,8 +689,25 @@ export class TopMeanWorkerPool {
                                 `Backtesting pair ${processedPairs}/${totalPairs} (${completedPairsCount} completed, ${failedPairsCount} failed): ${msg.symbol}`,
                             );
                         }
+                        failedPairDetails.delete(msg.pairIndex);
                     } else if (msg.status === "failed") {
-                        options.manifest.failedPairsCount = (options.manifest.failedPairsCount || 0) + 1;
+                        if (countedCompletedPairIndexes.delete(msg.pairIndex)) {
+                            completedPairsCount = Math.max(0, completedPairsCount - 1);
+                            options.manifest.completedPairsCount = completedPairsCount;
+                            const engine = completedEngineByPairIndex.get(msg.pairIndex);
+                            if (engine) engineUsage[engine] = Math.max(0, engineUsage[engine] - 1);
+                            completedEngineByPairIndex.delete(msg.pairIndex);
+                        }
+                        failedPairDetails.set(msg.pairIndex, {
+                            pairIndex: msg.pairIndex,
+                            symbol: msg.symbol,
+                            error: msg.error ?? "Pair backtest failed.",
+                            ...(msg.failureKind ? { failureKind: msg.failureKind } : {}),
+                        });
+                        if (!countedFailedPairIndexes.has(msg.pairIndex)) {
+                            countedFailedPairIndexes.add(msg.pairIndex);
+                            options.manifest.failedPairsCount = (options.manifest.failedPairsCount || 0) + 1;
+                        }
                         const failedPairsCount = options.manifest.failedPairsCount;
                         const processedPairs = Math.min(
                             totalPairs,
@@ -761,7 +805,7 @@ export class TopMeanWorkerPool {
                 const freeIdx = freeWorkers.indexOf(worker);
                 if (freeIdx >= 0) freeWorkers.splice(freeIdx, 1);
                 this.activeWorkers.delete(worker);
-                try { worker.terminate(); } catch { /* best-effort */ }
+                this.terminateWorker(worker);
             };
             worker.on("error", onError);
 
@@ -918,7 +962,7 @@ export class TopMeanWorkerPool {
         } catch (err) {
             // If spawn failed mid-loop, terminate what we got and rethrow.
             for (const w of spawned) {
-                try { w.terminate(); } catch { /* best-effort */ }
+                this.terminateWorker(w);
                 this.activeWorkers.delete(w);
             }
             throw err;
@@ -1033,6 +1077,7 @@ export class TopMeanWorkerPool {
         this.cancel();
         return {
             ...engineUsage,
+            failedPairDetails: [...failedPairDetails.values()].sort((a, b) => a.pairIndex - b.pairIndex),
             performance: {
                 ...workerTiming,
                 workers: spawned.length,

@@ -1,5 +1,11 @@
 import type { BacktestDiagnosticsCounts, BacktestDiagnosticsTimings, BacktestResult, StrategyParams, Time } from "../types/strategies";
 import type { BatchDatasetLoadDiagnostics } from "../batch-backtest/batch-dataset-loader-core";
+import type { CapitalSettings } from "./backtest";
+import type { BacktestSettings } from "./strategies";
+import type { BacktestSettingsData } from "../settings-model";
+import type {
+    FinderArmPerformanceCompleteMetrics,
+} from "../finder/finder-arm-performance-metrics";
 
 export type FinderMode = 'default' | 'grid' | 'random' | 'genetic';
 /**
@@ -11,7 +17,7 @@ export type FinderMode = 'default' | 'grid' | 'random' | 'genetic';
  * - `strategy_quality`: run each selected library once at its normalized default parameters
  *   across the supplied symbols for baseline library-quality review.
  */
-export type FinderScope = 'current_chart' | 'symbol_universe' | 'asset_opportunity' | 'strategy_quality';
+export type FinderScope = 'current_chart' | 'symbol_universe' | 'asset_opportunity' | 'strategy_quality' | 'arm_performance';
 export type FinderDataSlice = 'all' | '1' | '2' | '3' | '4' | '5' | 'half_oldest' | 'half_newest' | 'date_range';
 /**
  * OOS-only complement of the `date_range` IS window: every bar strictly AFTER
@@ -104,6 +110,68 @@ export interface FinderAssetOpportunityOptions {
     oosHorizons?: number[];
 }
 
+export interface FinderArmPerformanceOptions {
+    horizon: number;
+    dateMode: "full" | "date_range";
+}
+
+export interface FinderArmPerformanceRunContext {
+    runId: string;
+    startedAt: number;
+    strategyKeys: string[];
+    /** Ordered, resolved synthetic-pair tokens used by every candidate. */
+    pairs: string[];
+    /** Requested pairs skipped before evaluation because one or more legs lacked local data. */
+    skippedPairs?: string[];
+    /** Pairs whose runtime candle load failed and were omitted from candidate evaluation. */
+    failedPairs?: Array<{
+        symbol: string;
+        error: string;
+        failureKind?: "missing_data" | "backtest";
+    }>;
+    interval: string;
+    horizon: number;
+    dateMode: "full" | "date_range";
+    sampleFromSec?: number;
+    sampleToSec?: number;
+    evaluationCutoffSec: number;
+    plannedCandidateCount: number;
+    targetDataBoundary?: { earliestBarTimeSec: number | null; latestBarTimeSec: number | null };
+    actualEngineModes: string[];
+    capTiltWeight: "off";
+    searchOptions: FinderOptions;
+    backtestSettings: BacktestSettings;
+    /** Full UI settings captured for lossless Apply after the server run. */
+    uiBacktestSettings?: BacktestSettingsData;
+    capitalSettings: CapitalSettings;
+    requestedEngineMode: "rust" | "typescript";
+}
+
+export interface FinderArmPerformancePairCoverage {
+    requestedPairs: number;
+    completedPairs: number;
+    failedPairs: number;
+    replayTargetLoadFailures: number;
+    noTradePairs: number;
+}
+
+export interface FinderArmPerformanceCandidate {
+    candidateId: string;
+    candidateOrdinal: number;
+    strategyKey: string;
+    strategyName: string;
+    horizon: number;
+    params: StrategyParams;
+    backtestSettings: BacktestSettings;
+    exitStrategyKey?: string;
+    exitStrategyName?: string;
+    exitStrategyParams?: StrategyParams;
+    pairCoverage: FinderArmPerformancePairCoverage;
+    metrics: FinderArmPerformanceCompleteMetrics;
+    requestedEngineMode: "rust" | "typescript";
+    actualEngineMode: string;
+}
+
 export interface FinderOptions {
     mode: FinderMode;
     sortPriority: FinderMetric[];
@@ -144,6 +212,7 @@ export interface FinderOptions {
      * Asset Opportunity scope options. Honored only when `scope === 'asset_opportunity'`.
      */
     assetOpportunity?: FinderAssetOpportunityOptions;
+    armPerformance?: FinderArmPerformanceOptions;
 }
 
 export interface EndpointSelectionAdjustment {
@@ -553,7 +622,8 @@ export type FinderLatestResults =
     | { scope: 'current_chart'; results: FinderResult[] }
     | { scope: 'symbol_universe'; results: FinderUniverseCandidate[] }
     | { scope: 'asset_opportunity'; results: FinderAssetOpportunityResult[] }
-    | { scope: 'strategy_quality'; results: FinderStrategyQualityResult[] };
+    | { scope: 'strategy_quality'; results: FinderStrategyQualityResult[] }
+    | { scope: 'arm_performance'; results: FinderArmPerformanceCandidate[]; runContext: FinderArmPerformanceRunContext | null; inventoryComplete: boolean };
 
 export interface FinderRandomBenchmark {
     pipeline: 'standard' | 'rust_native' | 'ts_funnel' | 'rust_funnel';

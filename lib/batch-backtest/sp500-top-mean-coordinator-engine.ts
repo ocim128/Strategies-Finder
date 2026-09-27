@@ -1,8 +1,8 @@
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
+import { selectClosedCandleWindow } from "../alert-evaluation-window";
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../types/backtest";
-import { timeToNumber } from "../strategies/backtest/backtest-utils";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import {
     EFFECTIVE_BACKTEST_DEFAULTS,
@@ -25,13 +25,14 @@ import {
     reconcileInterruptedManifestsOnStartup,
     saveManifest,
 } from "./sp500-top-mean-artifact-store";
-import { enumerateSp500Pairs, type CoverageCounts } from "./sp500-pair-enumerator";
+import { enumerateSp500Pairs, type CoverageCounts, type EnumerationResult } from "./sp500-pair-enumerator";
 import type { TopMeanRunManifest } from "./compact-pair-artifact";
 import type { ActiveCapTiltWeight } from "./cap-tilt-contract";
 import {
     TopMeanWorkerPool,
     resolveTopMeanShardSize,
     resolveTopMeanWorkerCount,
+    type TopMeanPairFailure,
 } from "./sp500-top-mean-worker-pool";
 import {
     runOpenScoreUsdReplay,
@@ -85,6 +86,11 @@ import {
     MAX_ACTIVE_BOOTSTRAP_SEED,
     MAX_ACTIVE_TIE_VERSION,
 } from "./max-active-research-contract";
+import {
+    FINDER_ARM_PERFORMANCE_REPLAY_FIELDS,
+    type FinderArmPerformanceArm,
+    type FinderArmPerformanceReplayField,
+} from "../finder/finder-arm-performance-metrics";
 
 export interface TopMeanCoordinatorRunRequest {
     runId: string;
@@ -131,6 +137,8 @@ export interface TopMeanHorizonSummary {
      * capped by the run's blockCount.
      */
     latestArms?: Partial<Record<OpenScoreUsdLatestSelectorName, ReplayComparison>>;
+    /** All Finder Arm Performance comparisons; absent on older result files. */
+    armComparisons?: Partial<Record<FinderArmPerformanceArm, ReplayComparison>>;
 }
 
 export interface TopMeanAnnualReplayWindow {
@@ -191,6 +199,12 @@ export interface TopMeanResultSummary {
      * Optional for backward compatibility with older payloads.
      */
     currentSnapshot?: CurrentTopMeanResult;
+    /** Structured replay target load failures; warnings remain presentation only. */
+    replayTargetLoadFailureCount?: number;
+    /** Target close-time range observed by the replay loader after cutoff. */
+    targetDataBoundary?: { earliestBarTimeSec: number | null; latestBarTimeSec: number | null };
+    /** Successfully backtested pairs which produced no trades. */
+    noTradePairs?: number;
 }
 
 /**
@@ -206,6 +220,13 @@ export function buildTopMeanHorizonSummaries(
             return a.asset.localeCompare(b.asset);
         });
 
+        const armComparisons = {} as Record<FinderArmPerformanceArm, ReplayComparison>;
+        for (const [arm, field] of Object.entries(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as Array<
+            [FinderArmPerformanceArm, FinderArmPerformanceReplayField]
+        >) {
+            armComparisons[arm] = h[field];
+        }
+
         return {
             horizon: h.bars,
             events: h.topMean.events,
@@ -220,6 +241,7 @@ export function buildTopMeanHorizonSummaries(
                             TOP_RAW_PROFIT_NOW_CONF: h.topRawProfitNowConf,
                             TOP_Z: h.topZ,
                         },
+            armComparisons,
         };
     });
 }
@@ -430,6 +452,10 @@ export interface TopMeanCoordinatorEngineDeps {
     archiveCompletedRun?: typeof archiveCompletedTopMeanRun;
     /** Test seam: inject a failing manifest writer to prove terminal-state delivery survives persistence failures. */
     saveManifest?: typeof saveManifest;
+    /** Trusted server preflight, shared by sequential Finder sweep children. */
+    enumeration?: EnumerationResult;
+    /** One sweep-wide cutoff; standalone runs continue to capture their own. */
+    evaluationNowSec?: number;
 }
 
 export class TopMeanCoordinatorEngine {
@@ -457,6 +483,7 @@ export class TopMeanCoordinatorEngine {
     private currentSnapshotResult: CurrentTopMeanResult | null = null;
     /** Aggregated actual engine usage across completed pair backtests. */
     private engineUsage: { rust: number; typescript: number } = { rust: 0, typescript: 0 };
+    private failedPairDetails: TopMeanPairFailure[] = [];
     private performanceStartedAtMs = 0;
     private performanceDiagnostic: TopMeanPerformanceDiagnostic | null = null;
     private canonicalAssets: string[] = [];
@@ -468,6 +495,7 @@ export class TopMeanCoordinatorEngine {
     private resolvedBacktestSettings: BacktestSettings | null = null;
     private resolvedCapitalSettings: CapitalSettings | null = null;
     private latestTargetBarTimeSec: number | null = null;
+    private earliestTargetBarTimeSec: number | null = null;
     private replayCosts = {
         slippageRate: 0,
         commissionRate: 0,
@@ -493,6 +521,11 @@ export class TopMeanCoordinatorEngine {
 
     public get request(): TopMeanCoordinatorRunRequest {
         return this._request;
+    }
+
+    /** Await worker-thread exit and shard-write drainage after completion or Stop. */
+    public async waitForTeardown(): Promise<void> {
+        await this.pool?.waitForTeardown();
     }
 
     public getStatus(): TopMeanStatusResponse {
@@ -524,6 +557,11 @@ export class TopMeanCoordinatorEngine {
                 ? toWireSafeTopMeanResultSummary(this.resultSummary)
                 : undefined,
         };
+    }
+
+    /** Internal diagnostics for the Finder Arm Performance caller; not sent on Batch status wires. */
+    public getFailedPairDetails(): TopMeanPairFailure[] {
+        return this.failedPairDetails.map((failure) => ({ ...failure }));
     }
 
     private resolveActualEngineMode(): string {
@@ -756,7 +794,7 @@ export class TopMeanCoordinatorEngine {
         // own Date.now(), so a long run crossing a candle boundary produced
         // artifacts with different closed-candle cutoffs. One timestamp per
         // coordinator run is threaded through every worker task instead.
-        const runNowSec = Math.floor(Date.now() / 1000);
+        const runNowSec = this.deps?.evaluationNowSec ?? Math.floor(Date.now() / 1000);
         activeEngineInstance = this;
         this.archiveRoot = this.archiveRequested
             ? resolveTopMeanArchiveLogDir(this.baseDir ?? process.cwd())
@@ -774,7 +812,7 @@ export class TopMeanCoordinatorEngine {
             this.progressText = this._request.pairListText?.trim()
                 ? "Preparing custom TOP_MEAN markets..."
                 : "Enumerating S&P 500 assets and pairs...";
-            const enumRes = enumerateSp500Pairs({
+            const enumRes = this.deps?.enumeration ?? enumerateSp500Pairs({
                 interval: this._request.interval,
                 maxPairs: this._request.maxPairs,
                 pairListText: this._request.pairListText,
@@ -952,6 +990,7 @@ export class TopMeanCoordinatorEngine {
                     });
                 },
             });
+            this.failedPairDetails = usage.failedPairDetails;
             this.performanceDiagnostic.phases.backtestingMs = performance.now() - backtestingStartedAt;
             this.performanceDiagnostic.worker = usage.performance;
             this.performanceDiagnostic.completedPairs = manifest.completedPairsCount;
@@ -1176,12 +1215,18 @@ export class TopMeanCoordinatorEngine {
                 const pending = ensureTargetDataset(asset);
                 inFlightTargetDatasets.delete(asset);
                 fillTargetPrefetchWindow();
-                const data = await pending;
-                if (data === null) return null;
-                const lastBar = data[data.length - 1];
-                const timeSec = lastBar ? timeToNumber(lastBar.time) : null;
+                const loadedData = await pending;
+                if (loadedData === null) return null;
+                const closedWindow = selectClosedCandleWindow(loadedData, requestInterval, runNowSec, 1);
+                // Replay outcomes require completed market bars. Execution
+                // bridge candles are only valid in the pair backtest path.
+                const data = closedWindow?.candles ?? [];
+                const timeSec = closedWindow?.closedCandleTimeSec ?? null;
                 if (timeSec !== null && (coordinator.latestTargetBarTimeSec === null || timeSec > coordinator.latestTargetBarTimeSec)) {
                     coordinator.latestTargetBarTimeSec = timeSec;
+                }
+                if (timeSec !== null && (coordinator.earliestTargetBarTimeSec === null || timeSec < coordinator.earliestTargetBarTimeSec)) {
+                    coordinator.earliestTargetBarTimeSec = timeSec;
                 }
                 targetPerformance.replay.targetCacheHits = replayTargetCache.hitCount();
                 targetPerformance.replay.targetDatasets += 1;
@@ -1472,6 +1517,12 @@ export class TopMeanCoordinatorEngine {
                 latestSelections: replayResult.latestSelections,
                 performance: this.performanceDiagnostic,
                 currentSnapshot: currentSnapshotResult,
+                replayTargetLoadFailureCount,
+                targetDataBoundary: {
+                    earliestBarTimeSec: this.earliestTargetBarTimeSec,
+                    latestBarTimeSec: this.latestTargetBarTimeSec,
+                },
+                noTradePairs: runArtifactCorpus.reduce((count, artifact) => count + (artifact.trades.length === 0 ? 1 : 0), 0),
             };
 
             let archiveOutcome: TopMeanArchiveOutcome;
@@ -1583,6 +1634,7 @@ export class TopMeanCoordinatorEngine {
             });
         } finally {
             this.replayAbortController = null;
+            await this.pool?.waitForTeardown();
             if (phase0bWriter) {
                 await phase0bWriter.dispose().catch(() => undefined);
             }

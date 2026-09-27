@@ -73,6 +73,7 @@ if (!isMainThread && parentPort) {
                     symbol: pair.symbol,
                     status: "failed",
                     error: "deterministic pair failure",
+                    failureKind: "missing_data",
                 });
             }
             const artifactsBytes = bytesOf([]);

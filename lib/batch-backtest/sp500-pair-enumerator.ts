@@ -32,6 +32,9 @@ export interface EnumerationResult {
     eligibleTargets: Array<{ asset: string; symbol: string }>;
     canonicalPairs: string[];
     excludedAssets: string[];
+    /** Pair rows skipped because an explicit local/provider leg has no usable data. */
+    skippedPairTokens: string[];
+    rejectedPairTokens: string[];
 }
 
 function resolvePriceDataPath(baseDir: string | undefined, ...parts: string[]): string {
@@ -140,13 +143,20 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
         const canonicalPairs: string[] = [];
         const eligibleTargetsByAsset = new Map<string, string>();
         const excludedAssetsSet = new Set<string>();
-        let invalidPairCount = 0;
+        const skippedPairTokens: string[] = [];
+        const rejectedPairTokens: string[] = [];
+        let excludedPairCount = 0;
 
-        const resolveCustomLeg = (identity: CanonicalLegIdentity): CanonicalLegIdentity | null => {
+        const resolveCustomLeg = (
+            identity: CanonicalLegIdentity,
+            missingDataAssets?: Set<string>,
+        ): CanonicalLegIdentity | null => {
             if (identity.provider !== "ibkr") return identity;
             const check = isTickerUsable(identity.scoringAsset);
             if (!check.usable || !check.symbol) {
-                excludedAssetsSet.add(check.symbol || identity.scoringAsset);
+                const missingAsset = check.symbol || identity.scoringAsset;
+                excludedAssetsSet.add(missingAsset);
+                missingDataAssets?.add(missingAsset);
                 return null;
             }
             return {
@@ -155,7 +165,10 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
                 loaderSymbol: markIbkrSymbol(check.symbol),
             };
         };
-        const resolveCustomToken = (rawToken: string): CanonicalLegIdentity | null => {
+        const resolveCustomToken = (
+            rawToken: string,
+            missingDataAssets?: Set<string>,
+        ): CanonicalLegIdentity | null => {
             const identity = canonicalizeLegIdentity(rawToken);
             if (!identity) return null;
 
@@ -174,7 +187,7 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
                     });
                 }
             }
-            return resolveCustomLeg(identity);
+            return resolveCustomLeg(identity, missingDataAssets);
         };
         const registerTarget = (identity: CanonicalLegIdentity): boolean => {
             const existing = eligibleTargetsByAsset.get(identity.scoringAsset);
@@ -189,9 +202,12 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
         for (const line of rawLines) {
             const parsed = parseSyntheticPairToken(line);
             if (!parsed) {
-                const resolvedDirect = resolveCustomToken(line);
+                const missingDataAssets = new Set<string>();
+                const resolvedDirect = resolveCustomToken(line, missingDataAssets);
                 if (!resolvedDirect || !registerTarget(resolvedDirect)) {
-                    invalidPairCount++;
+                    excludedPairCount++;
+                    if (missingDataAssets.size > 0) skippedPairTokens.push(line);
+                    else rejectedPairTokens.push(line);
                     continue;
                 }
                 canonicalPairs.push(resolvedDirect.loaderSymbol);
@@ -199,14 +215,23 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
             }
 
             const separator = line.indexOf("+");
-            const base = separator >= 0 ? resolveCustomToken(line.slice(0, separator)) : null;
-            const quote = separator >= 0 ? resolveCustomToken(line.slice(separator + 1)) : null;
-            if (!base || !quote || base.scoringAsset === quote.scoringAsset) {
-                invalidPairCount++;
+            const missingDataAssets = new Set<string>();
+            const base = separator >= 0 ? resolveCustomToken(line.slice(0, separator), missingDataAssets) : null;
+            const quote = separator >= 0 ? resolveCustomToken(line.slice(separator + 1), missingDataAssets) : null;
+            if (!base || !quote) {
+                excludedPairCount++;
+                if (missingDataAssets.size > 0) skippedPairTokens.push(line);
+                else rejectedPairTokens.push(line);
+                continue;
+            }
+            if (base.scoringAsset === quote.scoringAsset) {
+                excludedPairCount++;
+                rejectedPairTokens.push(line);
                 continue;
             }
             if (!registerTarget(base) || !registerTarget(quote)) {
-                invalidPairCount++;
+                excludedPairCount++;
+                rejectedPairTokens.push(line);
                 continue;
             }
             canonicalPairs.push(`${base.loaderSymbol}+${quote.loaderSymbol}`);
@@ -228,7 +253,7 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
             usableTargetIntervalCount: sortedEligibleAssets.length,
             pairCount: finalPairs.length,
             excludedAssetsCount: excludedAssetsSet.size,
-            excludedPairsCount: invalidPairCount,
+            excludedPairsCount: excludedPairCount,
         };
 
         return {
@@ -237,6 +262,8 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
             eligibleTargets,
             canonicalPairs: finalPairs,
             excludedAssets: Array.from(excludedAssetsSet),
+            skippedPairTokens,
+            rejectedPairTokens,
         };
     }
 
@@ -310,6 +337,8 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
         })),
         canonicalPairs,
         excludedAssets: excludedAssetsList,
+        skippedPairTokens: [],
+        rejectedPairTokens: [],
     };
 }
 

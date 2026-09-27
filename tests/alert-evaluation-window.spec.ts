@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { selectExecutionAwareClosedCandles } from '../lib/alert-evaluation-window';
+import { prepareClosedCandleData } from '../lib/backtest-executor';
+import { selectClosedCandleWindow, selectExecutionAwareClosedCandles } from '../lib/alert-evaluation-window';
 import type { OHLCVData, Time } from '../lib/strategies/index';
 
 function buildCandles(count: number, startSec = 1_700_000_000, intervalSec = 60): OHLCVData[] {
@@ -42,7 +43,7 @@ describe('Alert Evaluation Window', () => {
             '1m',
             { executionModel: 'signal_close' },
             {
-                nowSec: Number(candles[0].time),
+                nowSec: Number(candles[0].time) + 60,
                 minClosedCandles: 2,
                 fallbackToTrimmedClosed: true,
             }
@@ -74,6 +75,28 @@ describe('Alert Evaluation Window', () => {
         expect(result?.[2].low).to.equal(candles[2].open);
         expect(result?.[2].close).to.equal(candles[2].open);
         expect(result?.[2].volume).to.equal(0);
+    });
+
+    it('limits the frozen cutoff to the full closed prefix across multiple incoming bars', () => {
+        const candles = buildCandles(5, 0);
+        const closedWindow = selectClosedCandleWindow(candles, '1m', 130, 1);
+        const signalClose = selectExecutionAwareClosedCandles(
+            candles,
+            '1m',
+            { executionModel: 'signal_close' },
+            { nowSec: 130, minClosedCandles: 1 },
+        );
+        const pairBacktestData = prepareClosedCandleData(
+            candles,
+            '1m',
+            { executionModel: 'signal_close' } as any,
+            130,
+        );
+
+        expect(closedWindow?.candles.map((candle) => candle.time)).to.deep.equal([0, 60]);
+        expect(closedWindow?.nextOpenCandle?.time).to.equal(120);
+        expect(signalClose?.map((candle) => candle.time)).to.deep.equal([0, 60]);
+        expect(pairBacktestData.map((candle) => candle.time)).to.deep.equal([0, 60]);
     });
 
     it('normalizes ISO and millisecond candle times before deciding which candle is open', () => {

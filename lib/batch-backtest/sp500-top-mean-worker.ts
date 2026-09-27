@@ -80,6 +80,7 @@ export type TopMeanWorkerMessage =
           symbol: string;
           status: "completed" | "failed";
           error?: string;
+          failureKind?: "missing_data" | "backtest";
           /** Engine that actually executed the pair backtest (not the preference). */
           engineUsed?: "rust" | "typescript";
       }
@@ -203,19 +204,25 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
         const quoteAsset = parsed ? parsed.quoteAsset : "";
         const baseSymbol = parsed ? parsed.baseSymbol : (direct?.loaderSymbol ?? pairSymbol);
         const quoteSymbol = parsed ? parsed.quoteSymbol : "";
+        let loadFailed = false;
 
         try {
             const loadStartedAt = performance.now();
             let candles: OHLCVData[];
             try {
-                candles = await loadServerBatchDataset(
-                    pairSymbol,
-                    data.interval,
-                    undefined,
-                    data.preferInMemorySyntheticPairs
-                        ? { preferInMemorySyntheticPairs: true }
-                        : undefined,
-                );
+                try {
+                    candles = await loadServerBatchDataset(
+                        pairSymbol,
+                        data.interval,
+                        undefined,
+                        data.preferInMemorySyntheticPairs
+                            ? { preferInMemorySyntheticPairs: true }
+                            : undefined,
+                    );
+                } catch (error) {
+                    loadFailed = true;
+                    throw error;
+                }
             } finally {
                 timing.loadMs += performance.now() - loadStartedAt;
             }
@@ -230,6 +237,7 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                         symbol: pairSymbol,
                         status: "failed",
                         error: "Insufficient candles or load failure",
+                        failureKind: "missing_data",
                     } as TopMeanWorkerMessage);
                 }
                 continue;
@@ -371,6 +379,7 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                     symbol: pairSymbol,
                     status: "failed",
                     error: message,
+                    failureKind: loadFailed ? "missing_data" : "backtest",
                 } as TopMeanWorkerMessage);
             }
         } finally {

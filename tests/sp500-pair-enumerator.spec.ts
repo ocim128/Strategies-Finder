@@ -83,6 +83,32 @@ function testCustomPairListText(baseDir: string): void {
         ["AAPL•+MSFT•", "AAPL•"],
         "Bare tickers present in the local IBKR catalog should use the IBKR loader.",
     );
+
+    const rejected = enumerateSp500Pairs({
+        interval: "4h",
+        baseDir,
+        pairListText: "AAPL•+MSFT•\nMISSING•+AMGN•\nAAPL•+AAPL•",
+    });
+    assert.deepEqual(rejected.skippedPairTokens, ["MISSING•+AMGN•"]);
+    assert.deepEqual(rejected.rejectedPairTokens, ["AAPL•+AAPL•"]);
+    assert.deepEqual(rejected.excludedAssets, ["MISSING"]);
+
+    const partiallyAvailable = enumerateSp500Pairs({
+        interval: "4h",
+        baseDir,
+        pairListText: "AAPL•+MSFT•\nMISSING•+AMGN•\nUNKNOWN•+PANW•",
+    });
+    assert.deepEqual(partiallyAvailable.canonicalPairs, ["AAPL•+MSFT•"]);
+    assert.deepEqual(partiallyAvailable.eligibleTargets, [
+        { asset: "AAPL", symbol: "AAPL•" },
+        { asset: "MSFT", symbol: "MSFT•" },
+    ]);
+    assert.deepEqual(
+        partiallyAvailable.skippedPairTokens,
+        ["MISSING•+AMGN•", "UNKNOWN•+PANW•"],
+        "a missing leg skips its whole pair without pulling the available mate into the evaluation target set",
+    );
+    assert.deepEqual(partiallyAvailable.rejectedPairTokens, []);
 }
 
 function testCustomCryptoMarkets(): void {

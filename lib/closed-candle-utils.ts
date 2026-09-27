@@ -7,15 +7,15 @@ export function trimToClosedCandles(
     interval: string,
     nowSec: number = Math.floor(Date.now() / 1000)
 ): OHLCVData[] {
-    if (data.length < 2) return data;
-
     const intervalSec = getIntervalSeconds(interval);
     if (!Number.isFinite(intervalSec) || intervalSec <= 0) return data;
 
-    const lastOpenSec = parseTimeToUnixSeconds(data[data.length - 1].time);
-    if (lastOpenSec === null) return data;
+    let closedCount = 0;
+    for (const candle of data) {
+        const openSec = parseTimeToUnixSeconds(candle.time);
+        if (openSec === null || nowSec < openSec + intervalSec) break;
+        closedCount += 1;
+    }
 
-    return nowSec < lastOpenSec + intervalSec
-        ? data.slice(0, -1)
-        : data;
+    return closedCount === data.length ? data : data.slice(0, closedCount);
 }
