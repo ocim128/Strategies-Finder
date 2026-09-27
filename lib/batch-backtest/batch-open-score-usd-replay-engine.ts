@@ -1612,20 +1612,10 @@ export async function runOpenScoreUsdReplay(
     // far). Exits at the event timestamp are applied before the post-group
     // mask evaluation, so their pnl is known at that event.
     const realizedPnlByStream = new Float64Array(profitableStreams.length);
-    // Deltas of the current timestamp group, replayed after the group closes
-    // with per-leg open-vote flags (see the post-group apply below).
-    interface GroupDelta {
-        assetIndex: number;
-        delta: number;
-        streamIdx: number;
-        isEntry: number;
-        voteApplied: boolean;
-        profitNowConfidenceWeight: number;
-    }
-    const groupDeltas: GroupDelta[] = [];
     // Causal PROFIT_NOW vote applicability travels ON each delta
     // (ScoreDelta.voteApplied, precomputed per trade at scan time), so the
-    // post-group apply below needs no per-stream state.
+    // post-group apply below needs no per-stream state; the apply replays the
+    // flat bucket range directly (event-sweep plan phase 3).
     let events: DecisionEvent[] = [];
     const sampleFrom = options.sampleFromSec;
     const sampleTo = options.sampleToSec;
@@ -1656,7 +1646,6 @@ export async function runOpenScoreUsdReplay(
         const t = bucketTimes[b]!;
         if (sampleTo !== undefined && t > sampleTo) break;
         let hasEntry = false;
-        groupDeltas.length = 0;
         // Apply ALL deltas at this timestamp before forming candidates.
         const bucketEnd = bucketStart[b + 1]!;
         for (let i = bucketStart[b]!; i < bucketEnd; i += 1) {
@@ -1680,15 +1669,6 @@ export async function runOpenScoreUsdReplay(
                 const nextPnl = profitPairCount[d.assetIndex]! + countDelta;
                 profitPairCount[d.assetIndex] = nextPnl > 0 ? nextPnl : 0;
             }
-            // Buffered for the causal PROFIT_NOW apply after the group closes.
-            groupDeltas.push({
-                assetIndex: d.assetIndex,
-                delta: d.delta,
-                streamIdx,
-                isEntry: d.isEntry,
-                voteApplied: d.voteApplied,
-                profitNowConfidenceWeight: d.profitNowConfidenceWeight,
-            });
             if (d.isEntry === 1) hasEntry = true;
             popped += 1;
             // A single timestamp can contain many pair deltas. Check and yield
@@ -1714,17 +1694,26 @@ export async function runOpenScoreUsdReplay(
         // pnl-so-far is <= 0 (including those with no per-trade pnl) are
         // muted. Exits are applied before entries so a same-timestamp
         // re-entry accounts both legs of the round trip exactly.
-        for (let g = 0; g < groupDeltas.length; g += 1) {
-            const gd = groupDeltas[g]!;
-            if (!gd.voteApplied) continue;
-            profitNowRawScore[gd.assetIndex]! += gd.delta;
-            const countDeltaNow = gd.isEntry === 1 ? 1 : -1;
-            const nextNow = profitNowPairCount[gd.assetIndex]! + countDeltaNow;
-            profitNowPairCount[gd.assetIndex] = nextNow > 0 ? nextNow : 0;
-            if (gd.profitNowConfidenceWeight > 0) {
-                profitNowConfidenceScore[gd.assetIndex]! += gd.delta * gd.profitNowConfidenceWeight;
-                const nextConfidence = profitNowConfidencePairCount[gd.assetIndex]! + countDeltaNow;
-                profitNowConfidencePairCount[gd.assetIndex] = nextConfidence > 0 ? nextConfidence : 0;
+        //
+        // Event-sweep plan phase 3: replay the SAME bucket range over the
+        // original ScoreDelta objects instead of the per-delta copies this
+        // loop used to consume — the deltas are not mutated between passes,
+        // and the second pass reads only fields the first pass never touches
+        // (voteApplied/delta/isEntry/profitNowConfidenceWeight), so operation
+        // order and every accumulated value are identical without the
+        // per-delta object allocation.
+        const bucketStartIndex = bucketStart[b]!;
+        for (let i = bucketStartIndex; i < bucketEnd; i += 1) {
+            const d = flatDeltas[i]!;
+            if (!d.voteApplied) continue;
+            profitNowRawScore[d.assetIndex]! += d.delta;
+            const countDeltaNow = d.isEntry === 1 ? 1 : -1;
+            const nextNow = profitNowPairCount[d.assetIndex]! + countDeltaNow;
+            profitNowPairCount[d.assetIndex] = nextNow > 0 ? nextNow : 0;
+            if (d.profitNowConfidenceWeight > 0) {
+                profitNowConfidenceScore[d.assetIndex]! += d.delta * d.profitNowConfidenceWeight;
+                const nextConfidence = profitNowConfidencePairCount[d.assetIndex]! + countDeltaNow;
+                profitNowConfidencePairCount[d.assetIndex] = nextConfidence > 0 ? nextConfidence : 0;
             }
         }
         // Exit-only score changes do not create a decision event.
