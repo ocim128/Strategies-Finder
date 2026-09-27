@@ -355,6 +355,18 @@ export function orderTopMeanReplayTargets<T>(
 export const TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES = 512;
 
 /**
+ * Replay target LRU capacity (replay-efficiency plan phase 3): the finder_arm
+ * profile runs exactly ONE full-window pass, so the LRU only needs to hold
+ * the prefetch window (in-flight dedup + in-order consumption), not 512
+ * entries of annual-pass working set. Standalone keeps the large capacity.
+ */
+export function resolveTopMeanReplayTargetCacheCapacity(finderArmProfile: boolean): number {
+    return finderArmProfile
+        ? TOP_MEAN_REPLAY_TARGET_PREFETCH_CONCURRENCY
+        : TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES;
+}
+
+/**
  * Number of replay target loads allowed to be in flight. The replay engine
  * still consumes targets in deterministic order; this only overlaps the
  * I/O for the next targets while the current target is being processed.
@@ -1148,7 +1160,7 @@ export class TopMeanCoordinatorEngine {
             // diagnostic.
             const replayTargetCache = new SyntheticLegCache<
                 Awaited<ReturnType<typeof loadServerBatchDataset>>
-            >(TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES);
+            >(resolveTopMeanReplayTargetCacheCapacity(finderArmProfile));
             const replayAbortController = new AbortController();
             this.replayAbortController = replayAbortController;
             const coordinator = this;
@@ -1319,7 +1331,12 @@ export class TopMeanCoordinatorEngine {
                         // from it and load no target datasets.
                         loadTargetDataset,
                         prefetchTargetDatasets,
-                        sharedTargetCache: sharedTargetOutcomeCache,
+                        // finder_arm runs exactly ONE full-window pass, so a
+                        // cross-window annual cache can never get a second
+                        // hit; omitting it lets each per-target cache entry
+                        // die right after its asset is consumed instead of
+                        // retaining every target until the pass ends.
+                        ...(finderArmProfile ? {} : { sharedTargetCache: sharedTargetOutcomeCache }),
                         horizons: this._request.horizons && this._request.horizons.length > 0 ? this._request.horizons : [12, 24, 48],
                         interval: this._request.interval,
                         slippageRate,

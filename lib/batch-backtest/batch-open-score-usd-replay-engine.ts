@@ -2052,6 +2052,18 @@ export async function runOpenScoreUsdReplay(
     const emaObservedByEvent = diagnosticsEnabled ? new Uint16Array(events.length) : null;
     const emaAboveByEvent = diagnosticsEnabled ? new Uint16Array(events.length) : null;
 
+    // Replay-efficiency plan phase 1: with BOTH diagnostic sinks disabled
+    // (finder_arm), the dense ~8 x assets-per-event Float64Array snapshots
+    // have no remaining consumer after view/profit-only/TOP_Z construction —
+    // the gapped/missing-target backfills and pool-snapshot emission below
+    // are all candidateOutcomes/poolSnapshots-guarded. Release the snapshots
+    // before target loads and outcome allocation so the two largest
+    // allocations never overlap. Diagnostic/archive runs keep them until the
+    // existing release at the end of the outcomes phase.
+    if (!diagnosticsEnabled) {
+        events = [];
+    }
+
     // Group requested event indexes by asset so each target dataset is loaded
     // once, consumed, and released.
     const requestsByAsset = new Map<number, number[]>();
@@ -2676,8 +2688,20 @@ export async function runOpenScoreUsdReplay(
     // candidate views once their target datasets have been inspected so a
     // gapped asset is removed from the selector pool instead of invalidating
     // an otherwise usable event.
+    // No-gap fast path (replay-efficiency plan phase 2): with an empty gap
+    // set, filtering is the identity on every pool, so the ORIGINAL EventView
+    // already IS the gap-filtered view — pushing it reuses the Phase 3
+    // rankings/tie digests verbatim instead of recomputing them. The
+    // re-ranking loop below stays the authoritative path for any real gap.
+    // Downstream is read-only over views (returnsByView keyed per view; the
+    // bot/latest/bottom-side resolvers never mutate pools), so sharing the
+    // reference is safe.
+    const hasDataGaps = dataGapAssets.size > 0;
     const gapFilteredViews: Array<EventView | null> = [];
-    for (let viewIndex = 0; viewIndex < views.length; viewIndex += 1) {
+    if (!hasDataGaps) {
+        for (const source of views) gapFilteredViews.push(source);
+    }
+    for (let viewIndex = hasDataGaps ? 0 : views.length; viewIndex < views.length; viewIndex += 1) {
         const source = views[viewIndex]!;
         const positives = usableCandidates(source.positives);
         if (positives.length < 2) {

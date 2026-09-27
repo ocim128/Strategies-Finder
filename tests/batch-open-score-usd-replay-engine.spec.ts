@@ -2802,3 +2802,70 @@ describe("runOpenScoreUsdReplay event sweep boundaries (event-sweep plan, phase 
         expect(result.horizons[0]!.botZ.events).to.equal(1);
     });
 });
+
+
+describe("replay efficiency plan (finder_arm replay lifetimes)", () => {
+    // 3-asset deterministic fixture; helpers reused from this spec file.
+    const buildReplay = (gapAsset: string | null) => {
+        const pairs = [
+            makePair("AAA", "X1", [
+                makeTrade("long", T0 + 500, T0 + 800, 0.02),
+                makeTrade("long", T0 + 3500, T0 + 3800, 0.03),
+            ], 0.05),
+            makePair("BBB", "X1", [
+                makeTrade("long", T0 + 500, T0 + 800, 0.01),
+                makeTrade("long", T0 + 3500, T0 + 3800, 0.015),
+            ], 0.025),
+            makePair("CCC", "X1", [
+                makeTrade("long", T0 + 1500, T0 + 1800, 0.04),
+            ], 0.04),
+        ];
+        const targets = ["AAA", "BBB", "CCC"].map((asset) => {
+            const target = makeTarget(asset, 60, (i) => 100 + i * (asset === "AAA" ? 1 : asset === "BBB" ? 0.5 : 0.25));
+            if (gapAsset === asset) {
+                target.data = target.data.filter((bar) => Number(bar.time) < T0 + 2000 || Number(bar.time) > T0 + 2600);
+            }
+            return target;
+        });
+        return { pairs, targets };
+    };
+    const opts = (extra: Record<string, unknown> = {}) => ({
+        horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, ...extra,
+    });
+
+    it("phase 1: diagnostics on/off produce identical arm metrics (early event release)", async () => {
+        const { pairs, targets } = buildReplay(null);
+        const plain = await runOpenScoreUsdReplay(() => fromArray(pairs), () => fromArray(targets), opts());
+        const diag = await runOpenScoreUsdReplay(() => fromArray(pairs), () => fromArray(targets), opts({
+            includePoolSnapshots: true,
+            includeCandidateOutcomes: true,
+            catalogAssets: ["AAA", "BBB", "CCC"],
+        }));
+        // The no-diagnostics run takes the phase-1 early release; the
+        // diagnostics run retains events until the existing late release.
+        // Every arm metric, count, and selection must be identical anyway.
+        for (let i = 0; i < plain.horizons.length; i += 1) {
+            expect(diag.horizons[i]).to.deep.equal(plain.horizons[i]);
+        }
+        expect(diag.totalEvents).to.equal(plain.totalEvents);
+        expect(diag.candidateEvents).to.equal(plain.candidateEvents);
+        expect(diag.eligibleEvents).to.equal(plain.eligibleEvents);
+        expect(diag.poolSnapshots?.length ?? 0).to.be.greaterThan(0);
+        expect(diag.candidateOutcomes?.length ?? 0).to.be.greaterThan(0);
+        expect(plain).to.not.have.property("poolSnapshots");
+        expect(plain).to.not.have.property("candidateOutcomes");
+    });
+
+    it("phase 2: an irrelevant data gap re-ranks to identical winners", async () => {
+        // CCC never has >= 2 candidates and never wins, so gapping it forces
+        // the slow re-ranking path (dataGapAssets non-empty) without changing
+        // any usable pool. Output must equal the clean (fast-path) run.
+        const clean = buildReplay(null);
+        const gapped = buildReplay("CCC");
+        const a = await runOpenScoreUsdReplay(() => fromArray(clean.pairs), () => fromArray(clean.targets), opts());
+        const b = await runOpenScoreUsdReplay(() => fromArray(gapped.pairs), () => fromArray(gapped.targets), opts());
+        expect(b.horizons).to.deep.equal(a.horizons);
+        expect(b.totalEvents).to.equal(a.totalEvents);
+        expect(b.eligibleEvents).to.equal(a.eligibleEvents);
+    });
+});

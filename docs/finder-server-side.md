@@ -50,6 +50,17 @@ Batch Stop or TOP_MEAN child Stop delegates to the parent Finder run and keeps
 both reservations until teardown finishes. A mismatched run id does not stop
 or release the active sweep.
 
+Replay efficiency (replay-efficiency plan): the finder_arm child runs ONE
+full-window replay, so its target LRU is sized to the prefetch window (not
+the standalone 512-entry annual working set) and the cross-window shared
+target-outcome cache is omitted — per-target entries die after consumption
+instead of persisting for an annual pass that never comes. Dense per-event
+score snapshots are released before outcome evaluation (they are only
+retained when pool-snapshot/candidate-outcome diagnostics are enabled), and
+clean data (no target gaps) reuses the pre-computed selector winners instead
+of re-ranking every view. Standalone TOP_MEAN keeps the large cache, the
+shared annual outcome cache, and full diagnostics.
+
 The coordinator receives one frozen evaluation cutoff across all child runs.
 Pair backtests and annual replay windows use it, and replay target candles are
 trimmed to the same closed-bar boundary. This prevents later candidates from
