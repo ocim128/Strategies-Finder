@@ -14,7 +14,9 @@
  * --interleave replaces every 9th event with a profit-only event (one
  * ordinary positive, two profit-pool positives) whose decision times
  * interleave chronologically with the ordinary views, so profit-arm series
- * reach splitIntoBlocks out of order.
+ * reach splitIntoBlocks out of order;
+ * --sparse makes every pair short, so +1 votes land on the 10 cycling quote
+ * assets and ordinary positive pools stay tiny (redundant-work plan phase 0).
  */
 
 import * as fs from "node:fs";
@@ -42,6 +44,7 @@ interface BenchArgs {
     missingTargets: boolean;
     ties: boolean;
     interleave: boolean;
+    sparse: boolean;
     label: string;
     outDir: string;
 }
@@ -57,6 +60,7 @@ function parseArgs(argv: readonly string[]): BenchArgs {
         missingTargets: false,
         ties: false,
         interleave: false,
+        sparse: false,
         label: `replay-${Date.now()}`,
         outDir: "artifacts/arm-replay-eff-bench",
     };
@@ -78,6 +82,7 @@ function parseArgs(argv: readonly string[]): BenchArgs {
             case "--missing-targets": args.missingTargets = true; break;
             case "--ties": args.ties = true; break;
             case "--interleave": args.interleave = true; break;
+            case "--sparse": args.sparse = true; break;
             case "--label": args.label = take(); break;
             case "--out-dir": args.outDir = take(); break;
             default: throw new Error(`Unknown flag ${flag}`);
@@ -141,7 +146,7 @@ interface Fixture {
 }
 
 function buildFixture(args: BenchArgs): Fixture {
-    const { assets, events, eventSpacingSec, horizons: horizonArg, gaps, missingTargets, ties, interleave } = args;
+    const { assets, events, eventSpacingSec, horizons: horizonArg, gaps, missingTargets, ties, interleave, sparse } = args;
     const horizons = horizonArg.split(",").map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0);
     const spanSec = events * eventSpacingSec;
     const targetBars = Math.ceil((spanSec + 4 * eventSpacingSec) / BAR_SEC);
@@ -202,7 +207,10 @@ function buildFixture(args: BenchArgs): Fixture {
                 const pnl = ties
                     ? 0.05
                     : (((a * 31 + e * 17) % 41) - 20) / 100;
-                trades.push(makeTrade("long", entry, entry + 120, pnl));
+                // Short pairs put their +1 vote on the quote leg; with the
+                // cycling quotes only 10 assets wide, ordinary positive pools
+                // stay tiny instead of covering half the asset list.
+                trades.push(makeTrade(sparse && a % 2 === 0 ? "short" : "long", entry, entry + 120, pnl));
             }
         }
         pairs.push(makePair(base, quote, trades, trades.reduce((s, t) => s + t.pnl, 0)));
@@ -229,7 +237,7 @@ function buildFixture(args: BenchArgs): Fixture {
 async function main(): Promise<void> {
     const args = parseArgs(process.argv.slice(2));
     const cwd = process.cwd();
-    console.log(`[bench] assets=${args.assets} events=${args.events} spacing=${args.eventSpacingSec}s horizons=${args.horizons} gaps=${args.gaps} missingTargets=${args.missingTargets} ties=${args.ties} interleave=${args.interleave}`);
+    console.log(`[bench] assets=${args.assets} events=${args.events} spacing=${args.eventSpacingSec}s horizons=${args.horizons} gaps=${args.gaps} missingTargets=${args.missingTargets} ties=${args.ties} interleave=${args.interleave} sparse=${args.sparse}`);
 
     const fixture = buildFixture(args);
 
