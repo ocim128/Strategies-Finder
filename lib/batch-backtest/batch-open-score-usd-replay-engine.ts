@@ -1030,7 +1030,21 @@ export function simulateTopMeanPortfolio(
  * nonempty chronological blocks. Fewer blocks (incl. one) return null CI —
  * `INSUFFICIENT_DATA`, never a misleading point CI from a single block.
  */
-export function blockBootstrapMedianCi(blocks: readonly (readonly number[])[], resamples: number): { lower: number | null; upper: number | null } {
+export function blockBootstrapMedianCi(
+    blocks: readonly (readonly number[])[],
+    resamples: number,
+    /**
+     * Redundant-work plan phase 3: optional pre-sorted view of the WHOLE
+     * sample (exactly the multiset of values in `blocks`, ascending). When
+     * supplied, the distinct-value union below scans it instead of
+     * concatenating every sorted block and re-sorting the sample. The union
+     * feeds only <=-rank counts (and a never-reached fallback), so which
+     * stored duplicate represents an equal run — including the -0/+0
+     * variant — cannot change the returned interval; medians are always read
+     * from the sorted blocks. Not mutated, not re-sorted, not cached.
+     */
+    sortedSample?: readonly number[],
+): { lower: number | null; upper: number | null } {
     const b = blocks.length;
     if (b < MAX_ACTIVE_BLOCK_COUNT) return { lower: null, upper: null };
     const sortedBlocks = blocks.map((blk) => [...blk].sort((x, y) => x - y));
@@ -1051,14 +1065,22 @@ export function blockBootstrapMedianCi(blocks: readonly (readonly number[])[], r
     // values and their order are identical to the former heap merge (same LCG
     // draws, same pooled multiset), so medians are bit-identical; duplicate
     // values collapse to one U entry whose multiplicity covers every copy.
-    const distinctValues: number[] = [];
-    for (const blk of sortedBlocks) {
-        for (const value of blk) distinctValues.push(value);
-    }
-    distinctValues.sort((x, y) => x - y);
-    const unionValues: number[] = [];
-    for (let i = 0; i < distinctValues.length; i += 1) {
-        if (i === 0 || distinctValues[i] !== distinctValues[i - 1]) unionValues.push(distinctValues[i]!);
+    let unionValues: number[];
+    if (sortedSample !== undefined) {
+        unionValues = [];
+        for (let i = 0; i < sortedSample.length; i += 1) {
+            if (i === 0 || sortedSample[i] !== sortedSample[i - 1]) unionValues.push(sortedSample[i]!);
+        }
+    } else {
+        const distinctValues: number[] = [];
+        for (const blk of sortedBlocks) {
+            for (const value of blk) distinctValues.push(value);
+        }
+        distinctValues.sort((x, y) => x - y);
+        unionValues = [];
+        for (let i = 0; i < distinctValues.length; i += 1) {
+            if (i === 0 || distinctValues[i] !== distinctValues[i - 1]) unionValues.push(distinctValues[i]!);
+        }
     }
     // upperByBlock[k][i] = count of elements in sortedBlocks[k] <= unionValues[i].
     // lowerByBlock[k][i] (count strictly < unionValues[i]) is NOT stored: the
@@ -3727,7 +3749,12 @@ export async function runOpenScoreUsdReplay(
             // Chronological blocks by event time.
             const blocks = splitIntoBlocks(deltasArr, times, blockCount);
             const blockMeans = blocks.map((blk) => blk.reduce((s, x) => s + x, 0) / blk.length);
-            const { lower, upper } = blockBootstrapMedianCi(blocks, bootstrapSamples);
+            // sortedDeltas is exactly the whole-sample sorted view of
+            // `blocks` (splitIntoBlocks partitions every input value exactly
+            // once), so the bootstrap reuses it instead of concatenating the
+            // sorted blocks and re-sorting the sample (redundant-work plan
+            // phase 3).
+            const { lower, upper } = blockBootstrapMedianCi(blocks, bootstrapSamples, sortedDeltas);
             return {
                 events: sampleCount,
                 topMean,

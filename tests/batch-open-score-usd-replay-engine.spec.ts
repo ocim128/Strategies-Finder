@@ -1787,6 +1787,74 @@ describe("ordinary candidates constructed only when positive", () => {
 });
 
 // ============================================================================
+// Bootstrap sorted-sample reuse (redundant-work plan phase 3): the optional
+// pre-sorted whole-sample view must produce EXACTLY the two-argument path's
+// interval — including the sign of zero — because the union feeds only
+// <=-rank counts while medians come from the sorted blocks. Sign-aware
+// equality (Object.is), non-mutation, and randomized samples pin that.
+// ============================================================================
+
+describe("blockBootstrapMedianCi sorted-sample reuse", () => {
+    // Sign-exact endpoint equality: null only equals null, and -0 never
+    // equals +0 (Object.is).
+    const sameEndpoint = (x: number | null, y: number | null): boolean =>
+        x === null || y === null ? x === null && y === null : Object.is(x, y);
+    const intervalsEqual = (
+        a: { lower: number | null; upper: number | null },
+        b: { lower: number | null; upper: number | null },
+    ): boolean => sameEndpoint(a.lower, b.lower) && sameEndpoint(a.upper, b.upper);
+
+    it("optional and two-argument paths agree exactly across degenerate inputs", () => {
+        const scenarios: Array<[string, number[][]]> = [
+            ["duplicates everywhere", [[1, 1, -2], [1, 0, 0], [-2, 1, 1]]],
+            ["all identical", [[5], [5], [5], [5]]],
+            ["signed zeros", [[0, -0, 1], [-0, 0, -1], [0, 2, -0]]],
+            ["all signed zeros", [[-0, 0], [0, -0], [-0, -0]]],
+            ["negatives only", [[-3, -1], [-2, -1], [-4, -1]]],
+            ["uneven sizes", [[1, 2, 3, 4, 5], [0], [9, -9], [2, 2, 2]]],
+            ["insufficient blocks", [[1, 2], [3, 4]]],
+        ];
+        for (const [name, blocks] of scenarios) {
+            const sorted = Object.freeze([...blocks.flat()].sort((a, b) => a - b));
+            const twoArg = blockBootstrapMedianCi(blocks, 500);
+            const threeArg = blockBootstrapMedianCi(blocks, 500, sorted);
+            if (!intervalsEqual(twoArg, threeArg)) {
+                throw new Error(`${name}: two-arg ${JSON.stringify(twoArg)} != three-arg ${JSON.stringify(threeArg)}`);
+            }
+        }
+    });
+
+    it("optional and two-argument paths agree on randomized duplicate-heavy samples", () => {
+        // Fixed-seed LCG so the scenario set is reproducible.
+        let seed = 0x9e3779b9;
+        const next = (): number => {
+            seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+            return seed / 0x100000000;
+        };
+        for (let trial = 0; trial < 30; trial += 1) {
+            const blockCount = 4 + Math.floor(next() * 5);
+            const blocks: number[][] = [];
+            for (let k = 0; k < blockCount; k += 1) {
+                const len = 1 + Math.floor(next() * 8);
+                const blk: number[] = [];
+                for (let i = 0; i < len; i += 1) {
+                    // Coarse grid -> heavy duplication; occasional zeros.
+                    const roll = next();
+                    blk.push(roll < 0.15 ? (roll < 0.075 ? -0 : 0) : Math.round((next() * 2 - 1) * 10) / 4);
+                }
+                blocks.push(blk);
+            }
+            const sorted = [...blocks.flat()].sort((a, b) => a - b);
+            const twoArg = blockBootstrapMedianCi(blocks, 300);
+            const threeArg = blockBootstrapMedianCi(blocks, 300, sorted);
+            if (!intervalsEqual(twoArg, threeArg)) {
+                throw new Error(`trial ${trial}: ${JSON.stringify(blocks)} -> ${JSON.stringify(twoArg)} != ${JSON.stringify(threeArg)}`);
+            }
+        }
+    });
+});
+
+// ============================================================================
 // Cap-tilt weighting (docs/open-score-cap-tilt.md)
 // ============================================================================
 
