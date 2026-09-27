@@ -1838,14 +1838,21 @@ export async function runOpenScoreUsdReplay(
         for (let a = 0; a < assetCount; a += 1) {
             const raw = ev.rawScore[a]!;
             const cnt = ev.activePairCount[a]!;
-            const candidate: Candidate = {
-                assetIndex: a,
-                raw,
-                adjusted: cnt > 0 ? raw / Math.sqrt(cnt) : raw,
-                mean: cnt > 0 ? raw / cnt : raw,
-                activePairs: cnt,
-            };
+            // Redundant-work plan phase 1: the ordinary literal (and its
+            // adjusted/mean arithmetic) is only worth building for the
+            // positive pool — non-positive assets discarded it immediately.
+            // The profit pools and TOP_Z's history update below still run for
+            // every asset, and the outer loop must NOT continue early:
+            // profitable-pair subsets can be positive with a non-positive
+            // ordinary score.
             if (raw > 0) {
+                const candidate: Candidate = {
+                    assetIndex: a,
+                    raw,
+                    adjusted: cnt > 0 ? raw / Math.sqrt(cnt) : raw,
+                    mean: cnt > 0 ? raw / cnt : raw,
+                    activePairs: cnt,
+                };
                 if (cnt > maxActivePairs) maxActivePairs = cnt;
                 positives.push(candidate);
             }

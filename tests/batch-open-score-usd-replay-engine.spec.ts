@@ -1699,6 +1699,94 @@ describe("ordinary positive-pool aggregation without a per-event return map", ()
 });
 
 // ============================================================================
+// Ordinary candidate construction gated on raw > 0 (redundant-work plan
+// phase 1): the literal and its adjusted/mean arithmetic are only built for
+// the positive pool, while the causal pools and TOP_Z history still process
+// every asset. These tests pin that non-positive ordinary scores never lose
+// profit/causal participation or TOP_Z history coverage.
+// ============================================================================
+
+describe("ordinary candidates constructed only when positive", () => {
+    const detailAt = (
+        result: Awaited<ReturnType<typeof runOpenScoreUsdReplay>>,
+        selector: string,
+        decisionTime: number,
+    ) => (result.eventDetails ?? []).filter((row) => row.selector === selector && row.decisionTime === decisionTime);
+
+    it("keeps causal coverage alive when the ordinary score is negative but causal votes persist", async () => {
+        // At T0+1000 each scored asset (AAA / BBB) carries one profitable,
+        // open LONG entry (+1, voteApplied -> causal vote) and two open
+        // SHORT entries (-2, unprofitable -> not voteApplied), so the
+        // cumulative ordinary score is NEGATIVE and the asset is excluded
+        // from every ordinary pool — while the causal pool {AAA, BBB} stays
+        // intact. The short quotes sit positive but targetless, so the
+        // ordinary comparison is censored; the causal arm must still
+        // complete on {AAA, BBB}.
+        const negativeOrdinarySet = (asset: string, longEntry: number): BatchSyntheticPairArtifact[] => [
+            makePair(asset, `${asset}L`, [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", longEntry, null, 0),
+            ], 10),
+            makePair(asset, `${asset}S1`, [makeTrade("short", T0 + 1000, null, 0)], 0),
+            makePair(asset, `${asset}S2`, [makeTrade("short", T0 + 1000, null, 0)], 0),
+        ];
+        // AAA's fresh entry at T0+900 is alone (no causal pool there);
+        // BBB joins at T0+1000, the single firing event.
+        const pairs = [
+            ...negativeOrdinarySet("AAA", T0 + 900),
+            ...negativeOrdinarySet("BBB", T0 + 1000),
+        ];
+        const targets = [
+            makeTarget("AAA", 30, () => 100),
+            makeTarget("BBB", 30, () => 50),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        expect(detailAt(result, "TOP_RAW", T0 + 1000)).to.have.length(0);
+        expect(result.horizons[0]!.topRawProfitNow.events).to.equal(1);
+        const causalTop = detailAt(result, "TOP_RAW_PROFIT_NOW", T0 + 1000)[0]!;
+        expect(causalTop.eligibleCandidates).to.equal(2);
+        expect(["AAA", "BBB"]).to.include(causalTop.asset);
+    });
+
+    it("emits TOP_Z for causal positives whose ordinary score is negative", async () => {
+        // The same negative-ordinary-score construction for CCC and DDD: the
+        // causal pool {CCC, DDD} exists independently of the ordinary pools,
+        // so TOP_Z must fire on it — a non-positive ordinary score must not
+        // suppress causal arms.
+        const negativeOrdinarySet = (asset: string): BatchSyntheticPairArtifact[] => [
+            makePair(asset, `${asset}L`, [
+                makeTrade("long", T0 + 500, T0 + 800, 10),
+                makeTrade("long", T0 + 900, null, 0),
+            ], 10),
+            makePair(asset, `${asset}S1`, [makeTrade("short", T0 + 1000, null, 0)], 0),
+            makePair(asset, `${asset}S2`, [makeTrade("short", T0 + 1000, null, 0)], 0),
+        ];
+        const pairs = [
+            ...negativeOrdinarySet("CCC"),
+            ...negativeOrdinarySet("DDD"),
+        ];
+        const targets = [
+            makeTarget("CCC", 30, () => 80),
+            makeTarget("DDD", 30, () => 60),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        expect(detailAt(result, "TOP_RAW", T0 + 1000)).to.have.length(0);
+        const topZ = detailAt(result, "TOP_Z", T0 + 1000);
+        expect(topZ).to.have.length(1);
+        expect(topZ[0]!.eligibleCandidates).to.equal(2);
+        expect(["CCC", "DDD"]).to.include(topZ[0]!.asset);
+    });
+});
+
+// ============================================================================
 // Cap-tilt weighting (docs/open-score-cap-tilt.md)
 // ============================================================================
 
