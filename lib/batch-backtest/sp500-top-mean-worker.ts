@@ -117,10 +117,12 @@ export type TopMeanWorkerMessage =
  * Exported for the worker-message contract test.
  */
 export function serializeShardArtifacts(artifacts: CompactPairArtifact[]): ArrayBuffer {
-    const bytes = new TextEncoder().encode(JSON.stringify(artifacts));
-    const owned = new ArrayBuffer(bytes.byteLength);
-    new Uint8Array(owned).set(bytes);
-    return owned;
+    // The encoder returns storage it owns (fresh buffer, byteOffset 0), so its
+    // backing buffer IS the owned bytes: transfer it directly instead of
+    // copying into a second equal-sized ArrayBuffer (allocation reduction
+    // plan phase 3). JSON encoding and durable disk writes are unchanged, and
+    // postResult still transfers exactly this buffer.
+    return new TextEncoder().encode(JSON.stringify(artifacts)).buffer as ArrayBuffer;
 }
 
 function subtractCacheCounters(

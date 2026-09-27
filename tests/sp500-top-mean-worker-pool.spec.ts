@@ -850,6 +850,63 @@ async function testRealWorkerTransfersSerializedBytes(): Promise<void> {
 
 
 /**
+ * Allocation reduction plan phase 3: serializeShardArtifacts must return the
+ * TextEncoder's OWNED backing buffer instead of copying the encoded bytes
+ * into a second equal-sized ArrayBuffer. The wire contract is unchanged:
+ * byte-identical UTF-8 JSON with no slack, and the buffer must remain safe to
+ * transfer away from the sender exactly like postResult's
+ * [artifactsBytes] list — detached on the sender, parseable on the receiver,
+ * across empty, Unicode, and large payloads.
+ */
+async function testSerializeShardArtifactsTransferContract(): Promise<void> {
+    const { serializeShardArtifacts } = await import("../lib/batch-backtest/sp500-top-mean-worker");
+    const encoder = new TextEncoder();
+
+    const expectExactBytes = (artifacts: any, expectedJson: string, label: string): void => {
+        const buffer = serializeShardArtifacts(artifacts);
+        const expected = encoder.encode(expectedJson);
+        assert.ok(buffer instanceof ArrayBuffer, `${label}: must return an ArrayBuffer`);
+        assert.equal(buffer.byteLength, expected.byteLength, `${label}: no slack beyond the encoded bytes`);
+        assert.ok(Buffer.from(buffer).equals(expected), `${label}: byte-identical UTF-8 JSON`);
+    };
+
+    // Empty shard: the JSON array literal (the pool's smallest shard).
+    expectExactBytes([], "[]", "empty shard");
+
+    // Unicode symbols survive byte-exactly (marked pair symbols are non-ASCII).
+    const unicode = [{ symbol: "AAPL\u2022+MSFT\u2022", baseAsset: "\u00c5\u00c4\u00d6", quoteAsset: "\u65e5\u672c" }];
+    expectExactBytes(unicode, JSON.stringify(unicode), "unicode payload");
+
+    // Large payload: multi-hundred-KB JSON, the regime where the removed
+    // payload-sized copy actually cost.
+    const large = Array.from({ length: 2000 }, (_, i) => ({ symbol: `P${i}+Q${i}`, pnl: i * 0.5 }));
+    expectExactBytes(large, JSON.stringify(large), "large payload");
+
+    // Sender detachment: postResult transfers the buffer without reading it
+    // again, so the sender MUST observe detachment while the receiver parses
+    // the same bytes.
+    const buffer = serializeShardArtifacts([{ symbol: "A+B" }] as any);
+    const { MessageChannel } = await import("node:worker_threads");
+    const channel = new MessageChannel();
+    const received = new Promise<ArrayBuffer>((resolve) => {
+        channel.port1.onmessage = (event) => resolve((event.data as { artifactsBytes: ArrayBuffer }).artifactsBytes);
+    });
+    channel.port2.postMessage({ artifactsBytes: buffer }, [buffer]);
+    const transferred = await received;
+    assert.equal(buffer.byteLength, 0, "sender's buffer is detached after the transfer");
+    assert.deepEqual(
+        JSON.parse(Buffer.from(transferred).toString("utf8")),
+        [{ symbol: "A+B" }],
+        "receiver parses the transferred bytes",
+    );
+    channel.port1.close();
+    channel.port2.close();
+
+    console.log("PASS: serializeShardArtifacts returns owned bytes, transfer-safe");
+}
+
+
+/**
  * Finder Arm Performance phase 3: a sweep-scoped pool must reuse the workers
  * retained from a previous execute() — the second execution reports the same
  * worker count with ZERO new spawns — and must still process every shard
@@ -1007,6 +1064,7 @@ async function main(): Promise<void> {
     await testRetrySuccessClearsFailedShard();
     await testShardArtifactPersistenceShape();
     await testRealWorkerTransfersSerializedBytes();
+    await testSerializeShardArtifactsTransferContract();
     await testPoolReuseAcrossSequentialExecutions();
     await testCancelledPoolRefusesLaterExecution();
     console.log("PASS: sp500-top-mean-worker-pool.spec.ts");
