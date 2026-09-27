@@ -1629,11 +1629,32 @@ export async function runOpenScoreUsdReplay(
     let events: DecisionEvent[] = [];
     const sampleFrom = options.sampleFromSec;
     const sampleTo = options.sampleToSec;
+    // Sweep bound (event-sweep plan phase 2): buckets are ascending, so once
+    // a timestamp passes the finite inclusive sampleToSec no further event
+    // can be stored — stop before applying that bucket. The pre-window
+    // buckets still run to completion (starting at sampleFromSec would lose
+    // carried positions and causal state), and the artifact scan, ledger,
+    // static degrees, profitability flags, and cap-tilt coverage above
+    // intentionally describe the full artifact and stay untouched.
+    const sweepDeltaTotal = sampleTo === undefined
+        ? totalDeltas
+        : (() => {
+            let lo = 0;
+            let hi = bucketTimes.length;
+            while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+                if ((bucketTimes[mid] ?? Number.POSITIVE_INFINITY) > sampleTo) hi = mid;
+                else lo = mid + 1;
+            }
+            // Deltas strictly before the first out-of-bounds bucket.
+            return lo < bucketStart.length ? (bucketStart[lo] ?? totalDeltas) : totalDeltas;
+        })();
 
     let popped = 0;
     for (let b = 0; b < bucketTimes.length; b += 1) {
         if (shouldStop()) return emptyResult({ pairs: pairCount, assets: assetCount, reportLines: ["OPEN_SCORE USD | cancelled during event sweep."] });
         const t = bucketTimes[b]!;
+        if (sampleTo !== undefined && t > sampleTo) break;
         let hasEntry = false;
         groupDeltas.length = 0;
         // Apply ALL deltas at this timestamp before forming candidates.
@@ -1675,7 +1696,11 @@ export async function runOpenScoreUsdReplay(
             // all same-time deltas have been applied. Candidate formation still
             // waits until the group is complete below.
             if (popped % 2000 === 0) {
-                onPhase("events", `merged ${popped}/${totalDeltas} deltas`, popped, totalDeltas);
+                // The denominator is the bounded sweep total — the same
+                // bucket-boundary derivation stops the loop — so progress
+                // stays monotonic and reaches 100% without claiming the
+                // unvisited post-bound deltas were processed.
+                onPhase("events", `merged ${popped}/${sweepDeltaTotal} deltas`, popped, sweepDeltaTotal);
                 await yieldLoop();
             }
         }
