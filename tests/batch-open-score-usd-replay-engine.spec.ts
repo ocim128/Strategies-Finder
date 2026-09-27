@@ -2301,3 +2301,190 @@ describe("runOpenScoreUsdReplay shared outcome cache (annual-reload finding)", (
         expect(thrown?.message ?? "").to.match(/targetLoader or loadTargetDataset/);
     });
 });
+
+
+describe("runOpenScoreUsdReplay pool evaluation baselines (top-mean coordinator optimization plan, phase 1)", () => {
+    // Parity baselines for the shared pool evaluation refactor: the four
+    // causal appender calls over one profitNowPositives pool must gate
+    // together (any non-finite member return omits the completed event from
+    // all four at that horizon), a candidate censored at a longer horizon
+    // must not invalidate a shorter horizon, a censored pick must stay
+    // visible as an ongoing row while its completed comparison is omitted,
+    // and the full-window profit / confidence pools must keep their own
+    // gates. These fixtures were captured against the pre-refactor engine;
+    // every value below is part of the locked output.
+    const decision = T0 + 1000;
+    // Entry bar = first bar strictly after the decision timestamp (index 2).
+    // BBB ends at index 2, so horizon 2 is right-censored for BBB only.
+    const baselineTargets = [
+        makeTarget("AAA", 12, (i) => 100 + i),
+        makeTarget("BBB", 3, (i) => 100 + i),
+        makeTarget("CCC", 12, (i) => 100 + 2 * i),
+    ];
+    const baselineOptions = {
+        horizons: [1, 2],
+        slippageRate: 0,
+        commissionRate: 0,
+        blockCount: 1,
+        includeEventDetails: true,
+    };
+    // Realized pnl before the decision gives each asset a causal vote; open
+    // longs at the decision supply the raw signal votes. BBB's second open
+    // long makes it the deterministic raw/z pick (highest open-vote raw) and
+    // the asset censored at horizon 2.
+    const baselineMarkets = [
+        makeDirectMarket("AAA", [
+            makeTrade("long", T0 + 100, T0 + 200, 10),
+            makeTrade("long", decision, null),
+        ]),
+        makeDirectMarket("BBB", [
+            makeTrade("long", T0 + 100, T0 + 200, 40),
+            makeTrade("long", decision, null),
+            makeTrade("long", decision, null),
+        ]),
+        makeDirectMarket("CCC", [
+            makeTrade("long", T0 + 100, T0 + 200, 10),
+            makeTrade("long", decision, null),
+        ]),
+    ];
+    const causalRows = (result: Awaited<ReturnType<typeof runOpenScoreUsdReplay>>, horizonIndex: number) => {
+        const h = result.horizons[horizonIndex]!;
+        return {
+            topRawProfitNow: h.topRawProfitNow.events,
+            topMeanProfitNow: h.topMeanProfitNow.events,
+            topZ: h.topZ.events,
+            topRawProfitNowConf: h.topRawProfitNowConf.events,
+            botRawProfitNow: h.botRawProfitNow.events,
+            botMeanProfitNow: h.botMeanProfitNow.events,
+            botZ: h.botZ.events,
+        };
+    };
+
+    it("gates all four causal appender calls together per horizon and keeps censored picks ongoing", async () => {
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(baselineMarkets),
+            () => fromArray(baselineTargets),
+            baselineOptions,
+        );
+        // Horizon 1 (all returns finite): every causal arm counts the event.
+        expect(causalRows(result, 0)).to.deep.equal({
+            topRawProfitNow: 1,
+            topMeanProfitNow: 1,
+            topZ: 1,
+            topRawProfitNowConf: 1,
+            botRawProfitNow: 1,
+            botMeanProfitNow: 1,
+            botZ: 1,
+        });
+        // Horizon 2: BBB's return is right-censored, so the shared causal
+        // pool is invalid and every causal arm omits the completed event —
+        // the confidence pool gates on the same members and omits too.
+        expect(causalRows(result, 1)).to.deep.equal({
+            topRawProfitNow: 0,
+            topMeanProfitNow: 0,
+            topZ: 0,
+            topRawProfitNowConf: 0,
+            botRawProfitNow: 0,
+            botMeanProfitNow: 0,
+            botZ: 0,
+        });
+        // Horizon-1 completed detail for the BBB pick reports the full pool
+        // and the flat-price control value ((60 - 0) / 2 - 0 with zero costs
+        // and flat prices → all returns 0).
+        const detailAtH1 = result.eventDetails?.find(
+            (row) => row.selector === "TOP_RAW_PROFIT_NOW" && row.horizonBars === 1,
+        );
+        expect(detailAtH1?.asset).to.equal("BBB");
+        expect(detailAtH1?.eligibleCandidates).to.equal(3);
+        expect(detailAtH1?.selectedReturn).to.equal(0);
+        expect(detailAtH1?.controlReturn).to.equal(0);
+        // BBB is right-censored at horizon 2: its ongoing rows survive the
+        // omitted completed event with the mark-to-market fallback.
+        const ongoingAtH2 = result.ongoingEventDetails?.filter(
+            (row) => row.decisionTime === decision && row.horizonBars === 2,
+        ) ?? [];
+        expect(ongoingAtH2.find((row) => row.selector === "TOP_RAW_PROFIT_NOW")?.asset).to.equal("BBB");
+        expect(ongoingAtH2.find((row) => row.selector === "TOP_Z")?.asset).to.equal("BBB");
+        expect(ongoingAtH2.find((row) => row.selector === "TOP_RAW_PROFIT_NOW")?.unrealizedReturn).to.equal(0);
+    });
+
+    it("keeps full-window profit pool gates independent of the causal pool gates", async () => {
+        // BBB is causal-positive (realized +40) but its pair netProfit is 0,
+        // so the look-ahead profit pool excludes it: {CCC, DDD}. At horizon 2
+        // the causal pool omits (BBB censored) while the profit pool still
+        // counts the event — the two pools evaluate independently.
+        const markets = [
+            makeDirectMarket("AAA", [
+                makeTrade("long", T0 + 100, T0 + 200, 10),
+                makeTrade("long", decision, null),
+            ]),
+            makeDirectMarket("BBB", [
+                makeTrade("long", T0 + 100, T0 + 200, 40),
+                makeTrade("long", decision, null),
+                makeTrade("long", decision, null),
+            ]),
+            makeDirectMarket("CCC", [
+                makeTrade("long", T0 + 100, T0 + 200, 10),
+                makeTrade("long", decision, null),
+            ]),
+            makeDirectMarket("DDD", [
+                makeTrade("long", T0 + 100, T0 + 200, -5), // losing: no causal vote
+                makeTrade("long", decision, null),
+            ]),
+        ].map((market, index) => ({ ...market, result: { ...market.result, netProfit: index === 1 || index === 0 ? 0 : 100 } }));
+        const targets = [...baselineTargets, makeTarget("DDD", 12, (i) => 100 + i)];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            baselineOptions,
+        );
+        const h1 = result.horizons[0]!;
+        const h2 = result.horizons[1]!;
+        expect(h1.topRawProfitNow.events).to.equal(1);
+        expect(h1.topRawProfit.events).to.equal(2, "profit pool fires at both entry events (T0+100 and decision)");
+        expect(h2.topRawProfitNow.events).to.equal(0, "causal pool omits: BBB censored at horizon 2");
+        expect(h2.topRawProfit.events).to.equal(2, "profit pool {CCC, DDD} has no censored member and still counts");
+    });
+
+    it("gates the profit-only loop through the shared profit pool evaluation", async () => {
+        // AAA carries one profitable open long (+1 profit score) canceled by
+        // an open short (-1): raw 0, profit pool score +1. BBB carries two
+        // profitable open longs and one open short: raw +2 (in ordinary
+        // positives, but alone — fewer than two), profit score +2. The event
+        // is profit-only: TOP_RAW does not fire; the profit arms share one
+        // pool evaluation and omit together at horizon 2 (BBB censored).
+        // Pair streams let one asset hold a profit-masked (+1) and an
+        // unmasked (-1) open vote at the same time. AAA ends at raw 0 with
+        // profit score +1; BBB ends at raw +2 (the single ordinary positive)
+        // with profit score +2. The decision event is profit-only.
+        const profitOnlyMarkets = [
+            makePair("AAA", "Q1", [makeTrade("long", decision, null)], 100),
+            makePair("AAA", "Q2", [makeTrade("short", decision, null)], -50),
+            makePair("BBB", "Q3", [
+                makeTrade("long", decision, null),
+                makeTrade("long", decision, null),
+                makeTrade("long", decision, null),
+                makeTrade("short", decision, null),
+            ], 100),
+        ];
+        const targets = [baselineTargets[0]!, baselineTargets[1]!];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(profitOnlyMarkets),
+            () => fromArray(targets),
+            baselineOptions,
+        );
+        const h1 = result.horizons[0]!;
+        const h2 = result.horizons[1]!;
+        expect(h1.topRaw.events).to.equal(0, "only one ordinary positive: no ordinary arm fires");
+        expect(h1.topRawProfit.events).to.equal(1);
+        expect(h1.topMeanProfit.events).to.equal(1);
+        expect(h1.topRawProfitNow.events).to.equal(0, "nothing realized before the decision: causal pools empty");
+        // Horizon 2: BBB (the deterministic raw-profit pick) is censored, so
+        // the shared profit pool evaluation invalidates the completed event.
+        expect(h2.topRawProfit.events).to.equal(0);
+        const ongoingAtH2 = result.ongoingEventDetails?.filter((row) => row.horizonBars === 2) ?? [];
+        expect(ongoingAtH2.find((row) => row.selector === "TOP_RAW_PROFIT")?.asset).to.equal("BBB");
+        const report = result.reportLines.join("\n");
+        expect(report).to.include("TOP_RAW_PROFIT selected assets = BBB");
+    });
+});

@@ -17,6 +17,8 @@ import {
 } from "../lib/batch-backtest/sp500-top-mean-worker-pool";
 import type { TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
 import { TOP_MEAN_WORKER_COUNT_MAX } from "../lib/batch-backtest/sp500-top-mean-request-limits";
+import { readShardArtifactsAsync, writeShardArtifactsAsync } from "../lib/batch-backtest/sp500-top-mean-artifact-store";
+import assert from "node:assert/strict";
 
 const testWorkerPath = fileURLToPath(new URL("./helpers/top-mean-test-worker.cjs", import.meta.url));
 const dieOnFirstTaskWorkerPath = fileURLToPath(new URL("./helpers/top-mean-die-on-retry-worker.cjs", import.meta.url));
@@ -714,6 +716,64 @@ function testRunLevelNowSecThreadsIntoWorkerTasks(): void {
     assert.equal(noNowSec.preferInMemorySyntheticPairs, false);
 }
 
+/**
+ * Phase 1 persistence baseline (top-mean coordinator optimization plan):
+ * lock the current JSON.stringify semantics of persisted shard artifacts —
+ * optional fields stay absent when not set, nonfinite numbers serialize to
+ * null, and Unicode symbols survive the round trip byte-for-byte. The
+ * byte-transfer phase must keep these exact semantics.
+ */
+async function testShardArtifactPersistenceShape(): Promise<void> {
+    const baseDir = mkdtempSync(join(tmpdir(), "sp500-pool-shard-shape-"));
+    try {
+        const artifacts = [
+            {
+                schema: "compact_pair_artifact.v1",
+                pairIndex: 0,
+                symbol: "STRÜM•A+STRÜM•B",
+                baseAsset: "STRÜM•A",
+                quoteAsset: "STRÜM•B",
+                baseSymbol: "STRÜM•A",
+                quoteSymbol: "STRÜM•B",
+                trades: [
+                    { type: "long", entryTime: 1700000000, exitTime: 1700003600, pnl: 12.5 },
+                    { type: "short", entryTime: 1700003600, exitTime: Number.NaN, pnl: Number.POSITIVE_INFINITY },
+                ],
+                netProfit: Number.NaN,
+                dataEndTime: 1701038400,
+            },
+            {
+                schema: "compact_pair_artifact.v1",
+                pairIndex: 1,
+                symbol: "AAA+BBB",
+                baseAsset: "AAA",
+                quoteAsset: "BBB",
+                baseSymbol: "AAA",
+                quoteSymbol: "BBB",
+                trades: [],
+            },
+        ];
+        await writeShardArtifactsAsync("spec_shard_shape", 0, artifacts, baseDir);
+        const parsed = await readShardArtifactsAsync("spec_shard_shape", 0, baseDir);
+        assert.ok(parsed, "the persisted shard must be readable");
+        assert.equal(parsed.length, 2);
+        // Unicode identity survives the round trip.
+        assert.equal(parsed[0]!.symbol, "STRÜM•A+STRÜM•B");
+        // Optional fields present stay present.
+        assert.equal(parsed[0]!.dataEndTime, 1701038400);
+        // Nonfinite numbers serialize to null (JSON.stringify semantics).
+        assert.equal((parsed[0] as any).netProfit, null);
+        assert.equal((parsed[0]!.trades[1] as any).exitTime, null);
+        assert.equal((parsed[0]!.trades[1] as any).pnl, null);
+        // Optional fields absent stay absent (no zero-filling).
+        assert.equal("netProfit" in parsed[1]!, false);
+        assert.equal("dataEndTime" in parsed[1]!, false);
+        console.log("PASS: shard artifact persistence shape (optional/Unicode/nonfinite)");
+    } finally {
+        rmSync(baseDir, { recursive: true, force: true });
+    }
+}
+
 async function main(): Promise<void> {
     testWorkerCountResolution();
     testShardSizeFeedsEveryWorker();
@@ -729,6 +789,7 @@ async function main(): Promise<void> {
     await testAllWorkersDyingDuringQueuedRetryRejects();
     await testWorkerExitCodeZeroFailsInFlightTask();
     await testRetrySuccessClearsFailedShard();
+    await testShardArtifactPersistenceShape();
     console.log("PASS: sp500-top-mean-worker-pool.spec.ts");
 }
 
