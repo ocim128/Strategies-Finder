@@ -10,7 +10,11 @@
  * Fixture modes (composable): --gaps punches a candle gap into one base
  * asset's target (exercises the gap-rerank path); --missing-targets drops one
  * asset's target entirely (missing-target backfill); --ties makes all assets'
- * pnl identical per event (tie-heavy selection, FNV digest path).
+ * pnl identical per event (tie-heavy selection, FNV digest path);
+ * --interleave replaces every 9th event with a profit-only event (one
+ * ordinary positive, two profit-pool positives) whose decision times
+ * interleave chronologically with the ordinary views, so profit-arm series
+ * reach splitIntoBlocks out of order.
  */
 
 import * as fs from "node:fs";
@@ -37,6 +41,7 @@ interface BenchArgs {
     gaps: boolean;
     missingTargets: boolean;
     ties: boolean;
+    interleave: boolean;
     label: string;
     outDir: string;
 }
@@ -51,6 +56,7 @@ function parseArgs(argv: readonly string[]): BenchArgs {
         gaps: false,
         missingTargets: false,
         ties: false,
+        interleave: false,
         label: `replay-${Date.now()}`,
         outDir: "artifacts/arm-replay-eff-bench",
     };
@@ -71,6 +77,7 @@ function parseArgs(argv: readonly string[]): BenchArgs {
             case "--gaps": args.gaps = true; break;
             case "--missing-targets": args.missingTargets = true; break;
             case "--ties": args.ties = true; break;
+            case "--interleave": args.interleave = true; break;
             case "--label": args.label = take(); break;
             case "--out-dir": args.outDir = take(); break;
             default: throw new Error(`Unknown flag ${flag}`);
@@ -134,7 +141,7 @@ interface Fixture {
 }
 
 function buildFixture(args: BenchArgs): Fixture {
-    const { assets, events, eventSpacingSec, horizons: horizonArg, gaps, missingTargets, ties } = args;
+    const { assets, events, eventSpacingSec, horizons: horizonArg, gaps, missingTargets, ties, interleave } = args;
     const horizons = horizonArg.split(",").map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0);
     const spanSec = events * eventSpacingSec;
     const targetBars = Math.ceil((spanSec + 4 * eventSpacingSec) / BAR_SEC);
@@ -149,6 +156,39 @@ function buildFixture(args: BenchArgs): Fixture {
 
     const pairs: BatchSyntheticPairArtifact[] = [];
     const targets: OpenScoreUsdTarget[] = [];
+    // Dedicated profit-only event assets/pairs (--interleave). At an
+    // interleave slot every IVOTEx pair enters long, so ordinary scores are
+    // PIA +2, PIB1 0, PIB2 0, PIQ -2 (one positive -> no ordinary view) while
+    // profit scores are PIB1 +1, PIB2 +1 (profit-only event). The slot sits
+    // BETWEEN ordinary slots, so profit-arm decision times interleave with
+    // the ordinary views' times.
+    const interleaveSlot = (e: number): boolean => interleave && e % 9 === 4;
+    const interleaveTarget = (name: string, assetIdx: number): OpenScoreUsdTarget => ({
+        asset: name,
+        symbol: `${name}USDT`,
+        data: Array.from({ length: targetBars }, (_, i) => {
+            const p = priceAt(assetIdx)(i);
+            return { time: (T0 + i * BAR_SEC) as Time, open: p, high: p, low: p, close: p, volume: 1 };
+        }),
+    });
+    const interleaveVote = (base: string, quote: string, profit: boolean): BatchSyntheticPairArtifact => {
+        const trades: Trade[] = [];
+        for (let e = 0; e < events; e += 1) {
+            if (!interleaveSlot(e)) continue;
+            const entry = T0 + e * eventSpacingSec + 60;
+            trades.push(makeTrade("long", entry, entry + 120, profit ? 0.2 : -0.1));
+        }
+        return makePair(base, quote, trades, trades.reduce((s, t) => s + t.pnl, 0));
+    };
+    if (interleave) {
+        pairs.push(interleaveVote("PIA", "PIB1", false));
+        pairs.push(interleaveVote("PIA", "PIB2", false));
+        pairs.push(interleaveVote("PIB1", "PIQ", true));
+        pairs.push(interleaveVote("PIB2", "PIQ", true));
+        targets.push(interleaveTarget("PIA", 1000 + assets));
+        targets.push(interleaveTarget("PIB1", 1000 + assets + 1));
+        targets.push(interleaveTarget("PIB2", 1000 + assets + 2));
+    }
     for (let a = 0; a < assets; a += 1) {
         const base = `B${String(a).padStart(3, "0")}`;
         const quote = `Q${String(a % 10).padStart(3, "0")}`;
@@ -156,6 +196,7 @@ function buildFixture(args: BenchArgs): Fixture {
         // deterministically), so most events have >= 2 pool candidates.
         const trades: Trade[] = [];
         for (let e = 0; e < events; e += 1) {
+            if (interleaveSlot(e)) continue;
             if ((e + a) % 2 === 0 && (e * 7 + a * 13) % 5 !== 0) {
                 const entry = T0 + e * eventSpacingSec + 60;
                 const pnl = ties
@@ -188,7 +229,7 @@ function buildFixture(args: BenchArgs): Fixture {
 async function main(): Promise<void> {
     const args = parseArgs(process.argv.slice(2));
     const cwd = process.cwd();
-    console.log(`[bench] assets=${args.assets} events=${args.events} spacing=${args.eventSpacingSec}s horizons=${args.horizons} gaps=${args.gaps} missingTargets=${args.missingTargets} ties=${args.ties}`);
+    console.log(`[bench] assets=${args.assets} events=${args.events} spacing=${args.eventSpacingSec}s horizons=${args.horizons} gaps=${args.gaps} missingTargets=${args.missingTargets} ties=${args.ties} interleave=${args.interleave}`);
 
     const fixture = buildFixture(args);
 
