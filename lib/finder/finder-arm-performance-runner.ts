@@ -32,6 +32,7 @@ import {
     type TopMeanResultSummary,
     type TopMeanStatusResponse,
 } from "../batch-backtest/sp500-top-mean-coordinator-engine";
+import type { ReplayComparison } from "../batch-backtest/batch-open-score-usd-replay-engine";
 import type { TopMeanPairFailure } from "../batch-backtest/sp500-top-mean-worker-pool";
 import type { EnumerationResult } from "../batch-backtest/sp500-pair-enumerator";
 import type { CapitalSettings } from "../types/backtest";
@@ -194,9 +195,34 @@ function buildCandidateResult(args: {
 }): FinderArmPerformanceCandidate {
     const { plan, candidateId, status, result, input, failedPairDetails } = args;
     const horizon = result.horizons.find((item) => item.horizon === input.options.armPerformance?.horizon);
-    const armComparisons = horizon?.armComparisons;
-    if (!armComparisons || Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).some((arm) => !armComparisons[arm as keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS])) {
-        throw new Error(`TOP_MEAN child did not return every arm comparison for horizon ${input.options.armPerformance?.horizon}.`);
+    const emptyComparison: ReplayComparison = {
+        events: 0,
+        topMean: null,
+        randomMean: null,
+        delta: null,
+        topMedian: null,
+        blockMeans: [],
+        ciLower: null,
+        ciUpper: null,
+        positiveBlocks: 0,
+        totalBlocks: 0,
+    };
+    const armComparisons = horizon?.armComparisons ?? (
+        result.completed && result.horizons.length === 0
+            ? Object.fromEntries(
+                Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((arm) => [arm, emptyComparison]),
+            ) as Record<keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS, ReplayComparison>
+            : undefined
+    );
+    const missingArms = (Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as Array<keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS>)
+        .filter((arm) => !armComparisons?.[arm]);
+    if (missingArms.length > 0) {
+        const returnedHorizons = result.horizons.map((item) => item.horizon).join(", ") || "none";
+        throw new Error(
+            "TOP_MEAN child omitted arm comparison(s) [" + missingArms.join(", ")
+            + "] for horizon " + input.options.armPerformance?.horizon
+            + "; returned horizons [" + returnedHorizons + "].",
+        );
     }
     const resolved = resolveCandidateSettings(plan, input);
     const pairCount = input.enumeration.canonicalPairs.length;
