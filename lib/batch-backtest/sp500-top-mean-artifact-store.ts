@@ -305,20 +305,67 @@ export async function readShardArtifactsAsync(
     }
 }
 
+/**
+ * Ordered read-ahead window over a run's completed shards (shard-overhead
+ * plan phase 3): at most {@link TOP_MEAN_SHARD_READ_AHEAD} shard reads are in
+ * flight while results are consumed strictly in the manifest's existing
+ * completedShards order — the window overlaps filesystem latency without
+ * loading the whole shard set concurrently or changing artifact order.
+ * Unreadable shards (null) are skipped exactly like the serial
+ * implementation, and the reader's mtime validation, parsed-cache cap, and
+ * error behavior are reused unchanged. Exported only as a narrow seam for
+ * the read-ahead spec; production callers use the public iterators below.
+ */
+export const TOP_MEAN_SHARD_READ_AHEAD = 4;
+
+export async function* iterateRunShardsWithReadAhead<T>(
+    runId: string,
+    baseDir: string | undefined,
+    adapt: (artifact: CompactPairArtifact) => T,
+    readShard: (runId: string, shardIndex: number, baseDir?: string) => Promise<CompactPairArtifact[] | null> = readShardArtifactsAsync,
+): AsyncGenerator<T> {
+    const manifest = loadManifest(runId, baseDir);
+    if (!manifest) return;
+    const completedShards = manifest.completedShards;
+    let nextToStart = 0;
+    const inFlight = new Map<number, Promise<CompactPairArtifact[] | null>>();
+    const fillWindow = (): void => {
+        while (nextToStart < completedShards.length && inFlight.size < TOP_MEAN_SHARD_READ_AHEAD) {
+            const shardIndex = completedShards[nextToStart]!;
+            inFlight.set(nextToStart, readShard(runId, shardIndex, baseDir));
+            nextToStart += 1;
+        }
+    };
+    try {
+        fillWindow();
+        for (let i = 0; i < completedShards.length; i += 1) {
+            const pending = inFlight.get(i);
+            if (!pending) {
+                throw new Error(`Shard read ${i} was not prefetched`);
+            }
+            const shardArtifacts = await pending;
+            inFlight.delete(i);
+            fillWindow();
+            if (!shardArtifacts) continue;
+            for (const artifact of shardArtifacts) {
+                yield adapt(artifact);
+            }
+        }
+    } finally {
+        // Early consumer exit (break/throw/return): stop scheduling and
+        // settle every outstanding read so no rejection is orphaned and no
+        // work detaches into the background. readShardArtifactsAsync resolves
+        // null on failure, but settle defensively regardless of the reader.
+        await Promise.allSettled([...inFlight.values()]);
+        inFlight.clear();
+    }
+}
+
 export async function* iterateRunCompactArtifacts(
     runId: string,
     baseDir?: string,
 ): AsyncGenerator<BatchSyntheticPairArtifactAdapter> {
-    const manifest = loadManifest(runId, baseDir);
-    if (!manifest) return;
-
-    for (const shardIndex of manifest.completedShards) {
-        const shardArtifacts = await readShardArtifactsAsync(runId, shardIndex, baseDir);
-        if (!shardArtifacts) continue;
-        for (const artifact of shardArtifacts) {
-            yield toBatchSyntheticPairAdapter(artifact);
-        }
-    }
+    yield* iterateRunShardsWithReadAhead(runId, baseDir, toBatchSyntheticPairAdapter);
 }
 
 /**
@@ -331,16 +378,7 @@ export async function* iterateRunRawCompactArtifacts(
     runId: string,
     baseDir?: string,
 ): AsyncGenerator<CompactPairArtifact> {
-    const manifest = loadManifest(runId, baseDir);
-    if (!manifest) return;
-
-    for (const shardIndex of manifest.completedShards) {
-        const shardArtifacts = await readShardArtifactsAsync(runId, shardIndex, baseDir);
-        if (!shardArtifacts) continue;
-        for (const artifact of shardArtifacts) {
-            yield artifact;
-        }
-    }
+    yield* iterateRunShardsWithReadAhead(runId, baseDir, (artifact) => artifact);
 }
 
 export function cleanOldArtifacts(baseDir?: string, maxAgeMs = DEFAULT_RETENTION_MS): void {

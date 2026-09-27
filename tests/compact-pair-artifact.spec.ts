@@ -9,6 +9,9 @@ import {
     writeShardArtifacts,
     readShardArtifacts,
     iterateRunCompactArtifacts,
+    iterateRunRawCompactArtifacts,
+    iterateRunShardsWithReadAhead,
+    TOP_MEAN_SHARD_READ_AHEAD,
     reconcileInterruptedManifestsOnStartup,
 } from "../lib/batch-backtest/sp500-top-mean-artifact-store";
 
@@ -143,7 +146,143 @@ async function runTests(): Promise<void> {
         const reconciled = loadManifest(runId2, testBaseDir);
         assert.equal(reconciled?.status, "interrupted", "Running manifest should be marked interrupted on startup");
 
-        console.log("PASS: compact-pair-artifact.spec.ts");
+        // Shard-overhead plan phase 3: bounded ordered read-ahead.
+        const readAheadRunId = "spec_read_ahead_run";
+        const readAheadShards: CompactPairArtifact[][] = [];
+        for (let shardIndex = 0; shardIndex < 10; shardIndex += 1) {
+            const shardArtifacts: CompactPairArtifact[] = [
+                {
+                    schema: "compact_pair_artifact.v1",
+                    pairIndex: shardIndex,
+                    symbol: `PAIR\u2022${shardIndex}+OTHER\u2022${shardIndex}`,
+                    baseAsset: `PAIR\u2022${shardIndex}`,
+                    quoteAsset: `OTHER\u2022${shardIndex}`,
+                    baseSymbol: `PAIR\u2022${shardIndex}`,
+                    quoteSymbol: `OTHER\u2022${shardIndex}`,
+                    trades: [],
+                    netProfit: shardIndex,
+                },
+            ];
+            readAheadShards.push(shardArtifacts);
+            writeShardArtifacts(readAheadRunId, shardIndex, shardArtifacts, testBaseDir);
+        }
+        const readAheadManifest: TopMeanRunManifest = {
+            schema: "top_mean_run_manifest.v1",
+            runId: readAheadRunId,
+            status: "completed",
+            fingerprint: "readahead",
+            strategyKey: "test_strategy",
+            interval: "4h",
+            pairCount: 10,
+            shardSize: 1,
+            totalShards: 10,
+            completedShards: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            failedShards: [],
+            completedPairsCount: 10,
+            failedPairsCount: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        };
+        saveManifest(readAheadManifest, testBaseDir);
+
+        // (a) Raw and adapted sequences match the serial baseline exactly.
+        const rawSequence: number[] = [];
+        for await (const artifact of iterateRunRawCompactArtifacts(readAheadRunId, testBaseDir)) {
+            rawSequence.push(artifact.pairIndex);
+        }
+        assert.deepEqual(rawSequence, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], "raw iterator preserves completedShards order");
+        const adaptedSequence: number[] = [];
+        for await (const adapter of iterateRunCompactArtifacts(readAheadRunId, testBaseDir)) {
+            adaptedSequence.push(adapter.result.netProfit as number);
+        }
+        assert.deepEqual(adaptedSequence, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], "adapted iterator preserves the same order");
+
+        // (b) Out-of-order completion: an injected reader resolving shards in
+        // REVERSE order must not change the consumed order, and concurrent
+        // reads must stay within the four-slot window (a 10-shard manifest
+        // keeps the whole window busy).
+        let activeReads = 0;
+        let maxActiveReads = 0;
+        const readAheadHarness = async (runIdArg: string, shardIndex: number): Promise<CompactPairArtifact[] | null> => {
+            activeReads += 1;
+            maxActiveReads = Math.max(maxActiveReads, activeReads);
+            const shardArtifacts = readAheadShards[shardIndex]!;
+            const delayMs = (readAheadShards.length - shardIndex) * 5;
+            await new Promise((resolveTick) => setTimeout(resolveTick, delayMs));
+            activeReads -= 1;
+            return shardArtifacts;
+        };
+        const reordered: number[] = [];
+        for await (const artifact of iterateRunShardsWithReadAhead(readAheadRunId, testBaseDir, (a) => a, readAheadHarness)) {
+            reordered.push(artifact.pairIndex);
+        }
+        assert.deepEqual(reordered, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], "out-of-order completion must not change consumed order");
+        assert.ok(
+            maxActiveReads <= TOP_MEAN_SHARD_READ_AHEAD,
+            `concurrent reads must stay within the window (peak ${maxActiveReads})`,
+        );
+        assert.equal(maxActiveReads, TOP_MEAN_SHARD_READ_AHEAD, "a long manifest keeps the full read-ahead window busy");
+
+        // (c) Early iterator return: reads started before the exit are all
+        // settled (no orphaned background work). The window refills as slots
+        // are consumed, so one refill may land before the consumer sees the
+        // first artifact and breaks: 4 initial reads + 1 refill, never more.
+        let earlyStarted = 0;
+        let earlySettled = 0;
+        const earlyHarness = async (runIdArg: string, shardIndex: number): Promise<CompactPairArtifact[] | null> => {
+            earlyStarted += 1;
+            await new Promise((resolveTick) => setTimeout(resolveTick, 5));
+            earlySettled += 1;
+            return readAheadShards[shardIndex]!;
+        };
+        const earlyIterator = iterateRunShardsWithReadAhead(readAheadRunId, testBaseDir, (a) => a, earlyHarness);
+        for await (const artifact of earlyIterator) {
+            if (artifact.pairIndex === 0) break;
+        }
+        await new Promise((resolveTick) => setTimeout(resolveTick, 60));
+        assert.ok(earlyStarted <= TOP_MEAN_SHARD_READ_AHEAD + 1, `no reads scheduled past the consumed slot's refill (started ${earlyStarted})`);
+        assert.equal(earlySettled, earlyStarted, `every started read settles (started ${earlyStarted}, settled ${earlySettled})`);
+
+        // (d) Unreadable shards are skipped exactly like the serial reader.
+        const { getShardPath } = await import("../lib/batch-backtest/sp500-top-mean-artifact-store");
+        const fsModule = await import("node:fs");
+        fsModule.rmSync(getShardPath(readAheadRunId, 4, testBaseDir), { force: true });
+        const withHole: number[] = [];
+        for await (const artifact of iterateRunRawCompactArtifacts(readAheadRunId, testBaseDir)) {
+            withHole.push(artifact.pairIndex);
+        }
+        assert.deepEqual(withHole, [0, 1, 2, 3, 5, 6, 7, 8, 9], "an unreadable shard is skipped without breaking order");
+
+        // (e) mtime invalidation still applies through the read-ahead path:
+        // replacing a shard file yields the new content on the next pass.
+        const replacement: CompactPairArtifact[] = [
+            {
+                schema: "compact_pair_artifact.v1",
+                pairIndex: 5,
+                symbol: "REPLACED",
+                baseAsset: "REPLACED",
+                quoteAsset: "OTHER",
+                baseSymbol: "REPLACED",
+                quoteSymbol: "OTHER",
+                trades: [],
+            },
+        ];
+        writeShardArtifacts(readAheadRunId, 5, replacement, testBaseDir);
+        const afterReplace: string[] = [];
+        for await (const artifact of iterateRunRawCompactArtifacts(readAheadRunId, testBaseDir)) {
+            afterReplace.push(artifact.symbol);
+        }
+        assert.ok(afterReplace.includes("REPLACED"), "a replaced shard is re-read, not served stale from the parsed cache");
+
+        // (f) Empty manifest yields nothing.
+        saveManifest({ ...readAheadManifest, completedShards: [] }, testBaseDir);
+        const empty: number[] = [];
+        for await (const artifact of iterateRunRawCompactArtifacts(readAheadRunId, testBaseDir)) {
+            empty.push(artifact.pairIndex);
+        }
+        assert.equal(empty.length, 0);
+
+        console.log("PASS: read-ahead shard iterator: order, window bound, early exit, holes, mtime, empty");
     } finally {
         cleanup();
     }
