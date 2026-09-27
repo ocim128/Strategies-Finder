@@ -7,7 +7,7 @@ import { Worker } from "node:worker_threads";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import type { TopMeanRunManifest } from "./compact-pair-artifact";
-import { saveManifest, saveManifestAsync, writeShardArtifactsAsync } from "./sp500-top-mean-artifact-store";
+import { saveManifest, saveManifestAsync, writeShardArtifactsBytesAsync } from "./sp500-top-mean-artifact-store";
 import type { TopMeanWorkerMessage, TopMeanWorkerTaskData } from "./sp500-top-mean-worker";
 import { debugLogger } from "../debug-logger";
 import type {
@@ -220,8 +220,8 @@ export interface WorkerPoolRunOptions {
     nowSec?: number;
     /** Test seam for deterministic worker lifecycle specs; production uses the resolved worker bundle. */
     workerPath?: string;
-    /** Test seam; production uses the atomic async artifact writer. */
-    writeShardArtifacts?: typeof writeShardArtifactsAsync;
+    /** Test seam; production uses the atomic async artifact byte writer. */
+    writeShardArtifactsBytes?: (runId: string, shardIndex: number, bytes: Uint8Array, baseDir?: string) => Promise<void>;
     onProgress?: (completedPairs: number, totalPairs: number, text: string) => void;
 }
 
@@ -680,10 +680,14 @@ export class TopMeanWorkerPool {
                     // Keeping the worker occupied until this settles bounds
                     // retained artifact closures to the worker count and lets
                     // the existing task retry path handle write failures.
-                    const writePromise = (options.writeShardArtifacts ?? writeShardArtifactsAsync)(
+                    // The payload is the worker-serialized UTF-8 JSON; it is
+                    // persisted verbatim — no decode, no re-stringify. The
+                    // destination derives from coordinator-owned run/shard
+                    // identifiers, never from payload content.
+                    const writePromise = (options.writeShardArtifactsBytes ?? writeShardArtifactsBytesAsync)(
                         options.runId,
                         msg.shardIndex,
-                        msg.artifacts,
+                        new Uint8Array(msg.artifactsBytes),
                         options.baseDir,
                     ).then(() => {
                         if (!completedSet.has(msg.shardIndex)) {

@@ -74,12 +74,15 @@ if (!isMainThread && parentPort) {
                 engineUsed: "typescript",
             });
         }
+        const encoded = Buffer.from(JSON.stringify([]), "utf8");
+        const artifactsBytes = new ArrayBuffer(encoded.length);
+        new Uint8Array(artifactsBytes).set(encoded);
         parentPort.postMessage({
             type: "shard_complete",
             shardIndex: data.shardIndex,
-            artifacts: [],
+            artifactsBytes,
             engineUsage: { rust: 0, typescript: data.pairs.length },
             performance: timing(data),
-        });
+        }, [artifactsBytes]);
     });
 }

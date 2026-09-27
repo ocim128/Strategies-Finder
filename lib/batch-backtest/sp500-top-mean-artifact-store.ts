@@ -140,14 +140,20 @@ export function atomicWriteJsonSync(targetPath: string, data: unknown): void {
  * block the event loop on multi-hundred-KB shard artifacts. The retry wait
  * uses real `setTimeout` (no `Atomics.wait`) so other microtasks can run.
  */
-export async function atomicWriteJson(targetPath: string, data: unknown): Promise<void> {
+/**
+ * Shared async atomic write/rename core (shard byte-transfer phase): same
+ * temp-file placement, Windows retry policy, cleanup, and error propagation
+ * as {@link atomicWriteJsonSync}, but writes raw bytes — the worker already
+ * serialized the payload, so the coordinator never re-stringifies it.
+ */
+export async function atomicWriteBytes(targetPath: string, bytes: Uint8Array): Promise<void> {
     const dir = dirname(targetPath);
     // Avoid an `existsSync` syscall roundtrip — `mkdir({ recursive: true })`
     // is a no-op when the dir already exists and is cheaper than a separate
     // existence check + mkdir in the common case.
     await mkdir(dir, { recursive: true });
     const tempPath = `${targetPath}.${Date.now()}.${Math.random().toString(36).substring(2, 8)}.tmp`;
-    await writeFile(tempPath, JSON.stringify(data), "utf8");
+    await writeFile(tempPath, bytes);
 
     const attempts = process.platform === "win32" ? 10 : 1;
     let lastError: unknown = null;
@@ -172,6 +178,10 @@ export async function atomicWriteJson(targetPath: string, data: unknown): Promis
         // Preserve the original rename failure; cleanup is best effort.
     }
     throw lastError;
+}
+
+export async function atomicWriteJson(targetPath: string, data: unknown): Promise<void> {
+    await atomicWriteBytes(targetPath, new TextEncoder().encode(JSON.stringify(data)));
 }
 
 export function saveManifest(manifest: TopMeanRunManifest, baseDir?: string): void {
@@ -232,6 +242,23 @@ export async function writeShardArtifactsAsync(
 ): Promise<void> {
     const shardPath = getShardPath(runId, shardIndex, baseDir);
     await atomicWriteJson(shardPath, artifacts);
+}
+
+/**
+ * Byte-writing shard entry point (shard byte-transfer phase): the worker
+ * serializes its artifact array once and transfers the UTF-8 bytes; this
+ * persists them without decoding or re-stringifying. Same path construction
+ * and atomic-write semantics as {@link writeShardArtifactsAsync} — the
+ * parsed output is byte-identical JSON.
+ */
+export async function writeShardArtifactsBytesAsync(
+    runId: string,
+    shardIndex: number,
+    bytes: Uint8Array,
+    baseDir?: string,
+): Promise<void> {
+    const shardPath = getShardPath(runId, shardIndex, baseDir);
+    await atomicWriteBytes(shardPath, bytes);
 }
 
 export function readShardArtifacts(

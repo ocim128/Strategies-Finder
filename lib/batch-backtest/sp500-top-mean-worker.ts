@@ -59,7 +59,13 @@ export type TopMeanWorkerMessage =
     | {
           type: "shard_complete";
           shardIndex: number;
-          artifacts: CompactPairArtifact[];
+          /**
+           * UTF-8 JSON of the shard's CompactPairArtifact array, serialized
+           * once in the worker and TRANSFERRED (owned ArrayBuffer) so the
+           * coordinator never structured-clones artifact objects or
+           * re-stringifies them for persistence (shard byte-transfer phase).
+           */
+          artifactsBytes: ArrayBuffer;
           engineUsage?: { rust: number; typescript: number };
           performance: TopMeanWorkerTiming;
       }
@@ -68,6 +74,18 @@ export type TopMeanWorkerMessage =
           shardIndex: number;
           error: string;
       };
+
+/**
+ * Serialize a shard's artifacts into a dedicated owned ArrayBuffer for the
+ * shard_complete transfer (top-mean coordinator optimization plan, idea #3).
+ * Exported for the worker-message contract test.
+ */
+export function serializeShardArtifacts(artifacts: CompactPairArtifact[]): ArrayBuffer {
+    const bytes = new TextEncoder().encode(JSON.stringify(artifacts));
+    const owned = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(owned).set(bytes);
+    return owned;
+}
 
 function subtractCacheCounters(
     after: ReturnType<typeof getServerBatchDatasetCacheStats>,
@@ -346,13 +364,17 @@ if (!isMainThread && parentPort) {
     // task arrives via the message listener. The single helper below replaces
     // the byte-identical then/catch bodies the two branches used to share.
     const postResult = (msg: TopMeanWorkerTaskData, result: Awaited<ReturnType<typeof processTopMeanShard>>): void => {
+        // Serialize once here and transfer the owned bytes: the coordinator
+        // persists them verbatim instead of structured-cloning artifact
+        // objects and re-stringifying them (shard byte-transfer phase).
+        const artifactsBytes = serializeShardArtifacts(result.artifacts);
         parentPort?.postMessage({
             type: "shard_complete",
             shardIndex: msg.shardIndex,
-            artifacts: result.artifacts,
+            artifactsBytes,
             engineUsage: result.engineUsage,
             performance: result.performance,
-        } as TopMeanWorkerMessage);
+        } as TopMeanWorkerMessage, [artifactsBytes]);
     };
     const postError = (msg: TopMeanWorkerTaskData, err: unknown): void => {
         parentPort?.postMessage({
@@ -364,7 +386,16 @@ if (!isMainThread && parentPort) {
 
     parentPort.on("message", (msg: TopMeanWorkerTaskData) => {
         processTopMeanShard(msg).then(
-            (result) => postResult(msg, result),
+            (result) => {
+                // A throw inside this fulfillment handler would NOT reach the
+                // sibling failure handler — serialization/posting errors must
+                // still surface as a shard error message.
+                try {
+                    postResult(msg, result);
+                } catch (err) {
+                    postError(msg, err);
+                }
+            },
             (err) => postError(msg, err),
         );
     });

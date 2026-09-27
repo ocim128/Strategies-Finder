@@ -457,7 +457,7 @@ async function testShardCompletesOnlyAfterDurableWrite(): Promise<void> {
             shardSize: 1,
             useRustEnginePreference: false,
             workerPath: testWorkerPath,
-            writeShardArtifacts: async () => {
+            writeShardArtifactsBytes: async () => {
                 writes += 1;
                 if (writes === 1) throw new Error("simulated disk failure");
             },
@@ -774,6 +774,61 @@ async function testShardArtifactPersistenceShape(): Promise<void> {
     }
 }
 
+/**
+ * Shard byte-transfer contract (top-mean coordinator optimization plan,
+ * idea #3): the REAL worker bundle posts shard_complete with a TRANSFERRED
+ * owned ArrayBuffer of UTF-8 JSON — not structured-cloned artifact objects.
+ * A regression to a plain-object payload shows up here as a non-ArrayBuffer
+ * artifactsBytes. The written file must parse back to the artifacts the
+ * worker produced.
+ */
+async function testRealWorkerTransfersSerializedBytes(): Promise<void> {
+    const { resolveTopMeanWorkerPath } = await import("../lib/batch-backtest/sp500-top-mean-worker-pool");
+    const { serializeShardArtifacts } = await import("../lib/batch-backtest/sp500-top-mean-worker");
+    const { Worker } = await import("node:worker_threads");
+    const workerPath = await resolveTopMeanWorkerPath();
+    assert.equal(serializeShardArtifacts([]).byteLength, 2, "empty shard serializes to the JSON array literal");
+    const worker = new Worker(workerPath);
+    const baseDir = mkdtempSync(join(tmpdir(), "sp500-pool-bytes-"));
+    try {
+        const done = new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("real worker did not emit shard_complete in time")), 30_000);
+            worker.on("message", (msg: any) => {
+                if (msg.type !== "shard_complete") return;
+                clearTimeout(timeout);
+                try {
+                    assert.ok(msg.artifactsBytes instanceof ArrayBuffer, "artifactsBytes must be a transferred ArrayBuffer");
+                    const parsed = JSON.parse(Buffer.from(msg.artifactsBytes).toString("utf8"));
+                    assert.ok(Array.isArray(parsed), "the transferred bytes decode to the artifact array");
+                    assert.equal(typeof msg.performance.signalGenerationMs, "number");
+                    resolve();
+                } catch (err) {
+                    reject(err);
+                }
+            });
+            worker.on("error", (err: Error) => {
+                clearTimeout(timeout);
+                reject(err);
+            });
+        });
+        worker.postMessage({
+            shardIndex: 0,
+            pairs: [{ pairIndex: 0, symbol: "AAPL•+MSFT•" }],
+            strategyKey: "dema_confirmation",
+            strategyParams: { lookback: 20, threshold: 0.5 },
+            backtestSettings: { direction: "long", slippage: 0, commission: 0 },
+            capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 },
+            interval: "4h",
+            useRustEnginePreference: false,
+        });
+        await done;
+        console.log("PASS: real worker transfers serialized shard bytes");
+    } finally {
+        await worker.terminate();
+        rmSync(baseDir, { recursive: true, force: true });
+    }
+}
+
 async function main(): Promise<void> {
     testWorkerCountResolution();
     testShardSizeFeedsEveryWorker();
@@ -790,6 +845,7 @@ async function main(): Promise<void> {
     await testWorkerExitCodeZeroFailsInFlightTask();
     await testRetrySuccessClearsFailedShard();
     await testShardArtifactPersistenceShape();
+    await testRealWorkerTransfersSerializedBytes();
     console.log("PASS: sp500-top-mean-worker-pool.spec.ts");
 }
 

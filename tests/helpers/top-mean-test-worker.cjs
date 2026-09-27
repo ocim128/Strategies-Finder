@@ -47,6 +47,13 @@ function timing(data) {
 }
 
 if (!isMainThread && parentPort) {
+    function bytesOf(value) {
+        const encoded = Buffer.from(JSON.stringify(value), "utf8");
+        const owned = new ArrayBuffer(encoded.length);
+        new Uint8Array(owned).set(encoded);
+        return owned;
+    }
+
     parentPort.on("message", (data) => {
         if (data.strategyKey === "__test_retry__") {
             parentPort.postMessage({
@@ -68,13 +75,14 @@ if (!isMainThread && parentPort) {
                     error: "deterministic pair failure",
                 });
             }
+            const artifactsBytes = bytesOf([]);
             parentPort.postMessage({
                 type: "shard_complete",
                 shardIndex: data.shardIndex,
-                artifacts: [],
+                artifactsBytes,
                 engineUsage: { rust: 0, typescript: 0 },
                 performance: timing(data),
-            });
+            }, [artifactsBytes]);
             return;
         }
 
@@ -88,12 +96,13 @@ if (!isMainThread && parentPort) {
                 engineUsed: "typescript",
             });
         }
+        const artifactsBytes = bytesOf([]);
         parentPort.postMessage({
             type: "shard_complete",
             shardIndex: data.shardIndex,
-            artifacts: [],
+            artifactsBytes,
             engineUsage: { rust: 0, typescript: data.pairs.length },
             performance: timing(data),
-        });
+        }, [artifactsBytes]);
     });
 }
