@@ -5,7 +5,7 @@ import type {
 } from "../types/finder";
 
 export function buildFinderArmPerformanceApplySettings(
-    context: FinderArmPerformanceRunContext,
+    context: Pick<FinderArmPerformanceRunContext, "uiBacktestSettings" | "capitalSettings">,
     candidate: FinderArmPerformanceCandidate,
 ) {
     return normalizeStoredBacktestSettings({

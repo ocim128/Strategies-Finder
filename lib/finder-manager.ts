@@ -608,6 +608,7 @@ export class FinderManager {
 	private armPerformanceRunResults: FinderArmPerformanceCandidate[] = [];
 	private armPerformanceDefaultResults: FinderArmPerformanceCandidate[] = [];
 	private armPerformanceRunContext: FinderArmPerformanceRunContext | null = null;
+	private armPerformanceApplyContext: Pick<FinderArmPerformanceRunContext, "interval" | "uiBacktestSettings" | "capitalSettings"> | null = null;
 	private armPerformanceDisplayLimit = DEFAULT_FINDER_UI_STATE.topN;
 	private armPerformanceInventoryComplete = true;
 	/**
@@ -2023,6 +2024,7 @@ const applicable = oosCapableWindow;
 		this.armPerformanceRunResults = [];
 		this.armPerformanceDefaultResults = [];
 		this.armPerformanceRunContext = null;
+		this.armPerformanceApplyContext = null;
 		this.armPerformanceInventoryComplete = true;
 		this.clearLatestResultsSnapshot();
 
@@ -2030,6 +2032,9 @@ const applicable = oosCapableWindow;
 		this.lastFinderRunBacktestSettings = this.cloneBacktestSettings(settingsSnapshot);
 		const options = this.readOptions(settingsSnapshot);
 		this.lastFinderOptions = this.cloneBacktestSettings(options);
+		if (options.scope === 'arm_performance') {
+			this.armPerformanceInventoryComplete = false;
+		}
 		this.symbolUniverseDisplayLimit = Math.max(1, options.topN);
 		this.armPerformanceDisplayLimit = Math.max(1, options.topN);
 
@@ -2058,7 +2063,11 @@ const applicable = oosCapableWindow;
 		this.ui.renderRandomBenchmark(options.mode);
 		// Run-start clear is a volatile UI reset; the previous snapshot was
 		// already cleared explicitly via clearLatestResultsSnapshot().
-		this.setLatestResults(emptyFinderLatestResults(options.scope ?? 'current_chart'), false);
+		if (options.scope === 'arm_performance') {
+			this.setArmPerformanceLatestResults([], false, options.topN, false);
+		} else {
+			this.setLatestResults(emptyFinderLatestResults(options.scope ?? 'current_chart'), false);
+		}
 		this.renderLatestResults();
 
 		try {
@@ -2577,8 +2586,12 @@ gate is not applicable (toggle off, non-half window, cancelled).
 	/** Recover the server's retained full inventory when localStorage has only the bounded preview. */
 	private async restoreSavedArmPerformanceInventory(): Promise<void> {
 		const saved = this.latestResults;
-		if (saved.scope !== 'arm_performance' || saved.inventoryComplete || !saved.runContext?.runId) return;
-		const runId = saved.runContext.runId;
+		if (saved.scope !== 'arm_performance' || saved.inventoryComplete) return;
+		const candidateRunId = saved.results
+			.map((candidate) => candidate.candidateId.match(/^(.+):candidate-\d+$/)?.[1])
+			.find((runId): runId is string => Boolean(runId));
+		const runId = saved.runContext?.runId ?? candidateRunId;
+		if (!runId) return;
 		const abortController = new AbortController();
 		this.reattachAbortController = abortController;
 		const request = createFinderStatusRequestSignal(abortController.signal);
@@ -3233,6 +3246,11 @@ gate is not applicable (toggle off, non-half window, cancelled).
 	): Promise<{ ok: boolean; cancelled: boolean; error: string | null }> {
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
+		this.armPerformanceApplyContext = {
+			interval: state.currentInterval,
+			uiBacktestSettings: settingsManager.getBacktestSettings(),
+			capitalSettings,
+		};
 		const response = await fetch('/api/finder/arm-performance-run', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -3266,7 +3284,10 @@ gate is not applicable (toggle off, non-half window, cancelled).
 		let finalized = false;
 		const renderFrame = coalesceAnimationFrame(() => {
 			if (!finalized && isStillActive()) {
-				const sorted = sortFinderArmPerformanceResults([...candidatesById.values()], 'TOP_RAW_PROFIT_NOW');
+				const selectedArm = this.getDom().finderResort.value as FinderArmPerformanceArm;
+				const availableArms = Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as FinderArmPerformanceArm[];
+				const sortArm = availableArms.includes(selectedArm) ? selectedArm : 'TOP_RAW_PROFIT_NOW';
+				const sorted = sortFinderArmPerformanceResults([...candidatesById.values()], sortArm);
 				this.armPerformanceRunResults = sorted;
 				this.setArmPerformanceLatestResults(sorted, false, options.topN, false);
 				this.renderLatestResults();
@@ -4232,16 +4253,14 @@ if (oosWindowActive) {
 				options.push({ value: metric, label: STRATEGY_QUALITY_METRIC_FULL_LABELS[metric] });
 			}
 		} else if (scope === 'arm_performance') {
-			if (this.armPerformanceInventoryComplete) {
-				for (const arm of Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as FinderArmPerformanceArm[]) {
-					const label = arm.replaceAll('_', ' ');
-					options.push({
-						value: arm,
-						label: arm === 'TOP_RAW_PROFIT' || arm === 'TOP_MEAN_PROFIT'
-							? `${label} (look-ahead research)`
-							: label,
-					});
-				}
+			for (const arm of Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as FinderArmPerformanceArm[]) {
+				const label = arm.replaceAll('_', ' ');
+				options.push({
+					value: arm,
+					label: arm === 'TOP_RAW_PROFIT' || arm === 'TOP_MEAN_PROFIT'
+						? `${label} (look-ahead research)`
+						: label,
+				});
 			}
 		} else {
 			const results = this.latestResults.scope === "current_chart" ? this.latestResults.results : [];
@@ -4264,7 +4283,7 @@ if (oosWindowActive) {
 		}
 		// Reset to default on scope change; the previous metric may not apply.
 		dom.finderResort.value = "";
-		dom.finderResort.disabled = scope === 'arm_performance' && !this.armPerformanceInventoryComplete;
+		dom.finderResort.disabled = false;
 		void previousValue;
 	}
 
@@ -4343,10 +4362,6 @@ if (oosWindowActive) {
 			const sorted = sortStrategyQualityResultsByMetric(results, metric as FinderStrategyQualityMetric);
 			this.setLatestResults({ scope: 'strategy_quality', results: sorted });
 		} else if (scope === 'arm_performance') {
-			if (!this.armPerformanceInventoryComplete) {
-				this.setStatus('This cached Arm Performance preview is incomplete; load the server run before re-sorting.');
-				return;
-			}
 			const sorted = sortFinderArmPerformanceResults(
 				this.armPerformanceRunResults,
 				metric as FinderArmPerformanceArm,
@@ -4800,12 +4815,20 @@ if (oosWindowActive) {
 	}
 
 	private async applyArmPerformanceCandidate(candidate: FinderArmPerformanceCandidate): Promise<void> {
-		const context = this.armPerformanceRunContext
+		const runContext = this.armPerformanceRunContext
 			?? (this.latestResults.scope === 'arm_performance' ? this.latestResults.runContext : null);
-		if (!context) {
-			uiManager.showToast('Arm Performance run context is unavailable; Apply is disabled for this preview.', 'error');
-			return;
-		}
+		const savedInterval = (candidate.backtestSettings as unknown as { interval?: unknown }).interval;
+		const context = runContext
+			?? this.armPerformanceApplyContext
+			?? {
+				interval: typeof savedInterval === 'string' ? savedInterval : state.currentInterval,
+				uiBacktestSettings: settingsManager.getBacktestSettings(),
+				capitalSettings: backtestService.getCapitalSettings(),
+			};
+		const interval = runContext?.interval
+			?? this.armPerformanceApplyContext?.interval
+			?? (typeof savedInterval === 'string' ? savedInterval : state.currentInterval);
+		const usedFallbackContext = !runContext && !this.armPerformanceApplyContext;
 		const strategy = await this.resolveFinderResultStrategy(candidate.strategyKey);
 		if (!strategy) {
 			uiManager.showToast(`Strategy no longer available: ${candidate.strategyKey}. Apply aborted.`, 'error');
@@ -4813,9 +4836,9 @@ if (oosWindowActive) {
 		}
 
 		try {
-			if (state.currentInterval !== context.interval) {
-				setCurrentInterval(context.interval);
-				await dataManager.loadData(state.currentSymbol, context.interval);
+			if (state.currentInterval !== interval) {
+				setCurrentInterval(interval);
+				await dataManager.loadData(state.currentSymbol, interval);
 			}
 			setCurrentStrategyKey(candidate.strategyKey);
 			uiManager.updateStrategyDropdown(candidate.strategyKey);
@@ -4828,6 +4851,9 @@ if (oosWindowActive) {
 				`Applied ${candidate.strategyName} from Arm Performance. The normal backtest is running on the current chart; the pair-universe replay is not a chart P&L result.`,
 				'info',
 			);
+			if (usedFallbackContext) {
+				uiManager.showToast('Original Arm Performance context was unavailable; used saved candidate settings and current capital settings.', 'info');
+			}
 		} catch (error) {
 			debugLogger.error('finder.apply_arm_performance_backtest_failed', {
 				candidateId: candidate.candidateId,

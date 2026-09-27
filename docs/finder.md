@@ -283,10 +283,13 @@ return calculation; they are not inverted short returns.
 Apply restores the candidate's stored normalized parameters and resolved
 backtest settings, along with the run's interval and capital settings, then
 runs the normal backtest on the current chart. That chart rerun is separate
-from the pair-universe replay. Copy Configuration uses the frozen run context;
-Copy Top Results includes the selected arm, all arm metrics, exact candidate
-settings, and the shared run id. A cached localStorage snapshot is only a
-bounded preview and cannot be re-sorted as a complete inventory.
+from the pair-universe replay. If an older cached preview has no retained run
+context, Apply uses the candidate settings, its saved interval when available,
+and the current capital settings. Copy Configuration uses the frozen run
+context; Copy Top Results includes the selected arm, all arm metrics, exact
+candidate settings, and the shared run id. A cached localStorage snapshot is a
+bounded preview: Re-Sort ranks the candidates currently available, while
+unseen candidates may rank higher until the full server inventory is restored.
 
 The evaluation cutoff is fixed for every configuration so later candidates do
 not gain newly closed candles or newly matured outcomes. It does not freeze

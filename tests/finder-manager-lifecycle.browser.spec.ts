@@ -695,6 +695,7 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
     it("keeps the incomplete Arm Performance preview when its retained server run is gone", async () => {
         const runId = "arm-performance-expired-preview";
         const preview = makeArmCandidate(0, 10, 10);
+        preview.candidateId = runId + ":candidate-0";
         manager().latestResults = {
             scope: "arm_performance",
             results: [preview],
@@ -718,12 +719,38 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
             inventoryComplete: false,
         };
 
+        manager().latestResults.runContext = null;
         const recovery = manager().reattachToActiveServerRun();
+        expect(mockFetch.requests[0]?.url).to.include(runId);
         mockFetch.resolveFirst({ ok: false }, 404);
         await recovery;
 
         expect(manager().latestResults.results).to.deep.equal([preview]);
         expect(manager().latestResults.inventoryComplete).to.equal(false);
+    });
+
+    it("keeps Re-Sort available for an incomplete Arm Performance preview", () => {
+        const results = [
+            makeArmCandidate(0, 10, 10),
+            makeArmCandidate(1, 10, 100),
+        ];
+        const m = manager();
+        m.uiState.scope = "arm_performance";
+        m.getDom().finderScope.value = "arm_performance";
+        m.armPerformanceRunResults = [...results];
+        m.armPerformanceDefaultResults = [...results];
+        m.armPerformanceInventoryComplete = false;
+        m.setArmPerformanceLatestResults(results, false, 20, false);
+        m.populateResortOptions();
+
+        expect(m.getDom().finderResort.disabled).to.equal(false);
+        expect(m.getDom().finderResort.children.some((option) => option.value === "TOP_RAW")).to.equal(true);
+
+        m.getDom().finderResort.value = "TOP_RAW";
+        m.applyResort();
+
+        expect(m.latestResults.results[0]!.candidateOrdinal).to.equal(1);
+        expect(m.latestResults.inventoryComplete).to.equal(false);
     });
 });
 
@@ -912,6 +939,26 @@ describe("FinderManager result persistence (audit Finding 4)", () => {
         // saveLatestResultsSnapshot stores { savedAt, symbol, interval, results }
         // where `results` is itself a FinderLatestResults { scope, results }.
         expect(stored.data.results.results).to.have.length(1);
+    });
+});
+
+describe("FinderUI Arm Performance preview actions", () => {
+    it("keeps Apply enabled when an incomplete cached preview has no run context", () => {
+        const ui = new FinderUI();
+        ui.renderArmPerformanceResults([makeArmCandidate(0, 10, 10)], null, "TOP_RAW", true);
+
+        const findApply = (node: any): any => {
+            if (node?.className === "btn btn-secondary finder-apply") return node;
+            for (const child of node?.children ?? []) {
+                const found = findApply(child);
+                if (found) return found;
+            }
+            return null;
+        };
+        const button = findApply(elsById.get("finderList"));
+        expect(button, "the result has an Apply button").to.not.equal(null);
+        expect(button.disabled, "missing run context does not disable Apply").to.equal(false);
+        expect(button.title ?? "").to.not.include("unavailable");
     });
 });
 

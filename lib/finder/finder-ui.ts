@@ -657,7 +657,7 @@ export class FinderUI {
         if (copyButton) copyButton.disabled = false;
         const note = document.createElement("div");
         note.className = "finder-sub finder-arm-performance-note";
-        note.textContent = `Arm Performance compares each configuration on its own eligible events across ${context?.pairs.length ?? "?"} supplied pairs. Mean forward return is a research metric, not account P&L. Bootstrap CI does not correct for searching configurations.${inventoryIncomplete ? " Cached preview: inventory incomplete; re-sort is disabled." : ""}`;
+        note.textContent = `Arm Performance compares each configuration on its own eligible events across ${context?.pairs.length ?? "?"} supplied pairs. Mean forward return is a research metric, not account P&L. Bootstrap CI does not correct for searching configurations.${inventoryIncomplete ? " Cached preview: Re-Sort ranks only the candidates currently available; unseen candidates may rank higher." : ""}${context ? "" : " Apply uses saved candidate settings and current capital settings because the original run context is unavailable."}`;
         list.appendChild(note);
 
         const fragment = document.createDocumentFragment();
@@ -698,7 +698,6 @@ export class FinderUI {
                     ...(item.exitStrategyKey ? [`Exit override ${item.exitStrategyName ?? item.exitStrategyKey} (${this.formatParams(item.exitStrategyParams ?? {})})`] : []),
                 ],
                 metrics,
-                applyDisabled: !context,
             }));
         });
         list.appendChild(fragment);
