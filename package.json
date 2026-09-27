@@ -20,6 +20,7 @@
     "paper:trade": "esno scripts/paper-trader.ts",
     "alpha:surgical": "esno scripts/surgical-optimization.ts",
     "validate:spread-quality": "esno scripts/validate-spread-quality.ts",
+    "bench:arm-worker-reuse": "esno scripts/bench-finder-arm-worker-reuse.ts",
     "research:open-score": "esno scripts/replay-open-score-run.ts",
     "synthetic:pair": "esno scripts/build-synthetic-pair.ts",
     "ibkr:aggregate": "esno scripts/ibkr-aggregate-csv.ts",

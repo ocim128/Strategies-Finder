@@ -2,9 +2,9 @@ import { expect } from "chai";
 import assert from "node:assert/strict";
 import { describe, it, before, after, afterEach } from "node:test";
 import { Readable } from "node:stream";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { strategyRegistry } from "../strategyRegistry";
 import {
     processFinderUniverseRun,
@@ -2478,5 +2478,30 @@ describe("Asset Opportunity param-set cache", () => {
         await runServerAssetIsSearch(buildInput());
         expect(generatorCalls).to.equal(2);
         expect(paramSetCache.size).to.equal(0);
+    });
+});
+
+
+describe("Finder Arm Performance worker reuse opt-in (worker-reuse plan phase 2)", () => {
+    it("enables sweep-scoped worker reuse at the production runner call site", () => {
+        // The flag is data on the runner input, so the honest production lock
+        // is a source assertion: the single runFinderArmPerformance call in
+        // the plugin must opt in, or candidate-owned pools silently return.
+        const sourcePath = resolve(process.cwd(), "lib", "finder", "server", "finder-vite-plugin.ts");
+        expect(existsSync(sourcePath), `plugin source not found at ${sourcePath}`).to.equal(true);
+        const source = readFileSync(sourcePath, "utf8");
+        const callSite = source.indexOf("runFinderArmPerformance({");
+        expect(callSite, "production runFinderArmPerformance call not found").to.be.greaterThan(-1);
+        const inputWindow = source.slice(callSite, source.indexOf("onProgress:", callSite));
+        expect(inputWindow).to.contain("enableWorkerReuse: true");
+    });
+
+    it("keeps the runner default off so other callers and tests opt in explicitly", () => {
+        const runnerPath = resolve(process.cwd(), "lib", "finder", "finder-arm-performance-runner.ts");
+        expect(existsSync(runnerPath), `runner source not found at ${runnerPath}`).to.equal(true);
+        const source = readFileSync(runnerPath, "utf8");
+        expect(source).to.contain("input.enableWorkerReuse");
+        // The runner itself must never hard-enable the production default.
+        expect(source).to.not.contain("enableWorkerReuse: true");
     });
 });

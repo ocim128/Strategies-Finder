@@ -29,9 +29,10 @@ candidates. If no pair loads for a candidate, that candidate cannot be scored.
 
 The Finder plugin holds Finder ownership and the shared Batch/TOP_MEAN
 reservation for the whole sweep, including the gaps between candidates and
-child teardown. It runs one TOP_MEAN coordinator at a time. Worker reuse is OPT-IN
-(`enableWorkerReuse` on the sweep request), off by default pending the
-optimization plan's Phase 0 measurements. When enabled, the runner owns a
+child teardown. It runs one TOP_MEAN coordinator at a time. Worker reuse is ENABLED for production sweeps (`enableWorkerReuse`): the
+benchmark (docs/finder-arm-performance-worker-reuse-plan.md) measured 10-21%
+faster multi-candidate sweeps with identical deterministic results and
+comparable peak memory. The runner owns a
 single sweep-scoped TOP_MEAN worker pool lent to every child: a successful
 child execution leaves the workers alive so the next candidate skips worker
 startup, and before each reused execution the pool makes every retained

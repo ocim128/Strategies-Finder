@@ -81,13 +81,21 @@ export interface FinderArmPerformanceRunnerInput {
     isCancelled(): boolean;
     plans?: readonly FinderArmPerformanceCandidatePlan[];
     /**
-     * Phase 3 measurement gate (plan): sweep-scoped worker reuse is OFF by
-     * default — enable only after Phase 0 cold/warm timings, cache counters,
-     * and memory numbers prove the benefit within the existing budget. Off =
-     * one pool per candidate (the pre-reuse behavior), still with the
-     * finder_arm profile savings from phases 1-2.
+     * Sweep-scoped worker reuse: when true, one pool serves every sequential
+     * candidate (startup amortized; the per-candidate cache reset handshake
+     * still runs). Phase 1 of the worker-reuse plan measured 10-21% faster
+     * multi-candidate sweeps with identical deterministic results, so the
+     * production server caller enables it; other callers and tests opt in
+     * explicitly. Unset = one pool per candidate.
      */
     enableWorkerReuse?: boolean;
+    /**
+     * Optional worker-count cap threaded to every child coordinator request
+     * (benchmark seam; the harness pins it so pool-reuse comparisons hold
+     * worker count fixed). Unset keeps the auto policy (memory-ceiling
+     * derived) unchanged.
+     */
+    workerCount?: number;
 }
 
 export interface FinderArmPerformanceRunnerCallbacks {
@@ -383,6 +391,7 @@ async function runFinderArmPerformanceCandidates(
             resume: false,
             saveArchiveLog: false,
             useRustEnginePreference: input.useRustEnginePreference,
+            ...(input.workerCount !== undefined ? { workerCount: input.workerCount } : {}),
             ...(input.sampleFromSec !== undefined ? { sampleFromSec: input.sampleFromSec } : {}),
             ...(input.sampleToSec !== undefined ? { sampleToSec: input.sampleToSec } : {}),
         };
@@ -395,7 +404,8 @@ async function runFinderArmPerformanceCandidates(
             executionProfile: "finder_arm",
             // Sweep-scoped pool (enableWorkerReuse): executed (but never torn
             // down) by the child; final termination stays with this runner's
-            // finally. Off by default pending the plan's Phase 0 measurements.
+            // finally. The production server caller opts in via
+            // enableWorkerReuse; other callers and tests choose explicitly.
             ...(pool && sweepState.poolUsable ? { pool } : {}),
         });
         type ChildTerminal =

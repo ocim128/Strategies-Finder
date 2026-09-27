@@ -3368,6 +3368,11 @@ async function handleArmPerformanceRunRequest(
                         exitStrategyCandidates: prepared.exitStrategyCandidates,
                         baseDir,
                         signal: runAbortController.signal,
+                        // Worker reuse (plan phase 2): one sweep-scoped pool
+                        // serves every candidate; per-candidate cache reset
+                        // preserved. Measured 2026-09, see
+                        // docs/finder-arm-performance-worker-reuse-plan.md.
+                        enableWorkerReuse: true,
                         plans: prepared.plans,
                         isCancelled: () => runAbortController.signal.aborted || runOwner !== owner,
                     }, {
