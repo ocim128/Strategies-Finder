@@ -3360,8 +3360,14 @@ export async function runOpenScoreUsdReplay(
                 profitNowEvaluation,
             );
 
-            // Collect returns for all positives this horizon.
-            const retByAsset = new Map<number, number>();
+            // Validate every positive candidate's return for this horizon
+            // and accumulate the control total in the SAME traversal
+            // (allocation reduction plan phase 1). view.positives is the
+            // former map's insertion order, so floating-point addition order
+            // is unchanged; the pool holds unique asset indices by
+            // construction (one candidate per asset, built in a forward
+            // asset-index loop).
+            let totalReturn = 0;
             let allValid = true;
             for (const c of view.positives) {
                 const arr = perAsset.get(c.assetIndex);
@@ -3370,7 +3376,7 @@ export async function runOpenScoreUsdReplay(
                     allValid = false;
                     break;
                 }
-                retByAsset.set(c.assetIndex, r);
+                totalReturn += r;
             }
             // The TOP_MEAN portfolio opportunity uses the incumbent outcome even
             // when another positive candidate makes the ordinary all-positive
@@ -3389,16 +3395,19 @@ export async function runOpenScoreUsdReplay(
                 continue; // censored or missing -> omit from both arms
             }
 
-            let totalReturn = 0;
-            for (const r of retByAsset.values()) totalReturn += r;
+            const positiveCount = view.positives.length;
+            const ordinaryReturnOf = (assetIdx: number): number | undefined => {
+                const arr = perAsset.get(assetIdx);
+                return arr ? arr.long[hIdx] : undefined;
+            };
             const randomMeanOf = (selectedIdx: number): number => {
-                const selectedReturn = retByAsset.get(selectedIdx);
-                return selectedReturn === undefined || retByAsset.size < 2
+                const selectedReturn = ordinaryReturnOf(selectedIdx);
+                return selectedReturn === undefined || positiveCount < 2
                     ? Number.NaN
-                    : (totalReturn - selectedReturn) / (retByAsset.size - 1);
+                    : (totalReturn - selectedReturn) / (positiveCount - 1);
             };
             const appendSelection = (series: SelectorSeries, selectedIdx: number): void => {
-                const selectedReturn = retByAsset.get(selectedIdx)!;
+                const selectedReturn = ordinaryReturnOf(selectedIdx)!;
                 const randomMean = randomMeanOf(selectedIdx);
                 series.returns.push(selectedReturn);
                 series.deltas.push(selectedReturn - randomMean);
@@ -3408,10 +3417,10 @@ export async function runOpenScoreUsdReplay(
             const appendTopMeanRawUniqueV1Selection = (): void => {
                 if (view.topMeanRawUnique < 0) return;
                 const tiedReturns = view.topMeanRawUniquePool
-                    .map((candidate) => retByAsset.get(candidate.assetIndex))
+                    .map((candidate) => ordinaryReturnOf(candidate.assetIndex))
                     .filter((value): value is number => value !== undefined && Number.isFinite(value));
                 if (tiedReturns.length !== view.topMeanRawUniquePool.length || tiedReturns.length === 0) return;
-                const selectedReturn = retByAsset.get(view.topMeanRawUnique);
+                const selectedReturn = ordinaryReturnOf(view.topMeanRawUnique);
                 if (selectedReturn === undefined) return;
                 const controlReturn = tiedReturns.reduce((sum, value) => sum + value, 0) / tiedReturns.length;
                 const delta = selectedReturn - controlReturn;
@@ -3439,26 +3448,26 @@ export async function runOpenScoreUsdReplay(
             };
             appendSelection(topRaw, view.topRaw);
             appendSelection(topMean, view.topMean);
-            const topMeanReturn = retByAsset.get(view.topMean)!;
+            const topMeanReturn = ordinaryReturnOf(view.topMean)!;
             const topMeanOutcome = incumbentOutcome!;
             appendTopMeanRawUniqueV1Selection();
             appendEventDetail(
                 "TOP_RAW",
                 "long",
                 view.positives.find((candidate) => candidate.assetIndex === view.topRaw)!,
-                retByAsset.get(view.topRaw)!,
+                ordinaryReturnOf(view.topRaw)!,
                 randomMeanOf(view.topRaw),
-                retByAsset.size,
+                positiveCount,
             );
             appendEventDetail(
                 "TOP_MEAN",
                 "long",
                 view.positives.find((candidate) => candidate.assetIndex === view.topMean)!,
-                retByAsset.get(view.topMean)!,
+                ordinaryReturnOf(view.topMean)!,
                 randomMeanOf(view.topMean),
-                retByAsset.size,
+                positiveCount,
             );
-            // Inverted ordinary arms: same retByAsset pool and leave-one-out
+            // Inverted ordinary arms: same ordinary positive pool and leave-one-out
             // control as TOP_RAW/TOP_MEAN; the LOWEST raw/mean is selected.
             appendSelection(botRaw, botPicks.raw);
             appendSelection(botMean, botPicks.mean);
@@ -3466,17 +3475,17 @@ export async function runOpenScoreUsdReplay(
                 "BOT_RAW",
                 "long",
                 view.positives.find((candidate) => candidate.assetIndex === botPicks.raw)!,
-                retByAsset.get(botPicks.raw)!,
+                ordinaryReturnOf(botPicks.raw)!,
                 randomMeanOf(botPicks.raw),
-                retByAsset.size,
+                positiveCount,
             );
             appendEventDetail(
                 "BOT_MEAN",
                 "long",
                 view.positives.find((candidate) => candidate.assetIndex === botPicks.mean)!,
-                retByAsset.get(botPicks.mean)!,
+                ordinaryReturnOf(botPicks.mean)!,
                 randomMeanOf(botPicks.mean),
-                retByAsset.size,
+                positiveCount,
             );
             const botRawName = assetNames[botPicks.raw]!;
             botRawSelectedByAsset.set(botRawName, (botRawSelectedByAsset.get(botRawName) ?? 0) + 1);
@@ -3503,9 +3512,9 @@ export async function runOpenScoreUsdReplay(
                 const botMeanWinner = view.positives.find((candidate) => candidate.assetIndex === botPicks.mean)!;
                 const botTiedPool = view.positives.filter((candidate) => candidate.mean === botMeanWinner.mean);
                 const botTiedReturns = botTiedPool
-                    .map((candidate) => retByAsset.get(candidate.assetIndex))
+                    .map((candidate) => ordinaryReturnOf(candidate.assetIndex))
                     .filter((value): value is number => value !== undefined && Number.isFinite(value));
-                const botUniqueReturn = retByAsset.get(botPicks.meanRawUnique);
+                const botUniqueReturn = ordinaryReturnOf(botPicks.meanRawUnique);
                 if (botTiedPool.length > 0 && botTiedReturns.length === botTiedPool.length && botUniqueReturn !== undefined) {
                     const botControlReturn = botTiedReturns.reduce((sum, value) => sum + value, 0) / botTiedReturns.length;
                     const botUniqueDelta = botUniqueReturn - botControlReturn;
