@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import {
+    isTopMeanEngineDiagnosticSample,
     processTopMeanShard,
+    resolveTopMeanEngineRunOptions,
     TOP_MEAN_BACKTEST_RUN_OPTIONS,
+    TOP_MEAN_ENGINE_DIAGNOSTIC_SAMPLE_STRIDE,
     type TopMeanWorkerTaskData,
 } from "../lib/batch-backtest/sp500-top-mean-worker";
 import { prepareClosedCandleData } from "../lib/backtest-executor";
@@ -125,8 +128,47 @@ function testDataEndTimeFromClosedCandleArray(): void {
     console.log("PASS: dataEndTime from closedCandleTimeSec, not raw or bridged array tail (F2)");
 }
 
+function testDiagnosticSamplingByOriginalPairIndex(): void {
+    // Shard-overhead plan phase 2: detailed diagnostics sample by ORIGINAL
+    // pairIndex with a fixed stride — independent of shard boundaries,
+    // assignment, or resume — replacing the former first-pair-per-shard rule
+    // that sampled ~53% of pairs once tiles shrank shards.
+    assert.equal(TOP_MEAN_ENGINE_DIAGNOSTIC_SAMPLE_STRIDE, 250);
+    for (const selected of [0, 250, 500, 25_000]) {
+        assert.equal(isTopMeanEngineDiagnosticSample(selected), true, `pairIndex ${selected} must be sampled`);
+    }
+    for (const unselected of [1, 249, 251, 499, 1234]) {
+        assert.equal(isTopMeanEngineDiagnosticSample(unselected), false, `pairIndex ${unselected} must not be sampled`);
+    }
+    // Repartitioning invariance: eligibility is a pure function of the
+    // original index, so regrouping pairs into different shards changes
+    // nothing.
+    const indexes = Array.from({ length: 1000 }, (_, i) => i);
+    const groupedByShardsOfOne = indexes.map((pairIndex) => isTopMeanEngineDiagnosticSample(pairIndex));
+    const groupedByShardsOfForty = [];
+    for (let start = 0; start < indexes.length; start += 40) {
+        for (const pairIndex of indexes.slice(start, start + 40)) {
+            groupedByShardsOfForty.push(isTopMeanEngineDiagnosticSample(pairIndex));
+        }
+    }
+    assert.deepEqual(groupedByShardsOfForty, groupedByShardsOfOne, "eligibility must not depend on shard partitioning");
+
+    // The REAL execution options: sampled pairs ride a diagnostics-enabled
+    // copy of the frozen defaults (still collecting executor timings);
+    // unsampled pairs run on the shared frozen object untouched.
+    const sampled = resolveTopMeanEngineRunOptions(true);
+    assert.equal(sampled.collectDiagnostics, true);
+    assert.equal(sampled.collectExecutorTimings, true);
+    assert.equal(sampled.skipDrawdown, TOP_MEAN_BACKTEST_RUN_OPTIONS.skipDrawdown);
+    assert.equal(sampled.omitEquityCurve, TOP_MEAN_BACKTEST_RUN_OPTIONS.omitEquityCurve);
+    const unsampled = resolveTopMeanEngineRunOptions(false);
+    assert.equal(unsampled, TOP_MEAN_BACKTEST_RUN_OPTIONS, "unsampled pairs must run on the shared frozen options object");
+    console.log("PASS: diagnostic sampling follows original pairIndex stride with real execution options");
+}
+
 async function main(): Promise<void> {
     testDiscardedDrawdownIsSkippedWithoutSelectingCompactResults();
+    testDiagnosticSamplingByOriginalPairIndex();
     await runWorkerParityTest();
     testDataEndTimeFromClosedCandleArray();
     console.log("PASS: sp500-top-mean-worker.spec.ts");

@@ -23,6 +23,33 @@ export const TOP_MEAN_BACKTEST_RUN_OPTIONS = Object.freeze({
     skipResultPostProcessing: true,
 });
 
+/**
+ * Detailed engine-diagnostic sampling stride (shard-overhead plan phase 2):
+ * a pair is sampled when its ORIGINAL pairIndex is divisible by this stride,
+ * independently of shard boundaries — the former first-pair-per-shard rule
+ * turned diagnostic sampling into near-full instrumentation once the tile
+ * layout shrank shards to a couple of pairs. Exported for the worker spec.
+ */
+export const TOP_MEAN_ENGINE_DIAGNOSTIC_SAMPLE_STRIDE = 250;
+
+export function isTopMeanEngineDiagnosticSample(pairIndex: number): boolean {
+    return pairIndex % TOP_MEAN_ENGINE_DIAGNOSTIC_SAMPLE_STRIDE === 0;
+}
+
+/**
+ * The exact run options a worker hands to executeBacktest. Exported so the
+ * spec can assert the real execution options, not just the sampling
+ * predicate: detailed diagnostics ride a copy of the frozen defaults,
+ * everything else runs on the shared frozen object unchanged.
+ */
+export function resolveTopMeanEngineRunOptions(
+    collectEngineDiagnostics: boolean,
+): typeof TOP_MEAN_BACKTEST_RUN_OPTIONS | (typeof TOP_MEAN_BACKTEST_RUN_OPTIONS & { collectDiagnostics: true }) {
+    return collectEngineDiagnostics
+        ? { ...TOP_MEAN_BACKTEST_RUN_OPTIONS, collectDiagnostics: true }
+        : TOP_MEAN_BACKTEST_RUN_OPTIONS;
+}
+
 export interface TopMeanWorkerTaskData {
     shardIndex: number;
     pairs: Array<{
@@ -234,7 +261,12 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
             timing.prepareMs += performance.now() - prepareStartedAt;
 
             const backtestStartedAt = performance.now();
-            const collectEngineDiagnostics = timing.engineDiagnosticPairs === 0;
+            // Detailed diagnostics sample by ORIGINAL pair index (shard-
+            // overhead plan phase 2), so the same pairs are eligible no matter
+            // how shards are partitioned, assigned, or resumed. Executor
+            // timings still collect for every pair; the diagnostic counters
+            // below accumulate only results that actually contain them.
+            const collectEngineDiagnostics = isTopMeanEngineDiagnosticSample(pair.pairIndex);
             const output = await executeBacktest({
                 ohlcvData: candles,
                 closedCandleDataOverride: closedCandleData,
@@ -253,9 +285,7 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                     useRustEnginePreference: data.useRustEnginePreference,
                     nowSec,
                 },
-                backtestRunOptions: collectEngineDiagnostics
-                    ? { ...TOP_MEAN_BACKTEST_RUN_OPTIONS, collectDiagnostics: true }
-                    : TOP_MEAN_BACKTEST_RUN_OPTIONS,
+                backtestRunOptions: resolveTopMeanEngineRunOptions(collectEngineDiagnostics),
             });
             timing.backtestMs += performance.now() - backtestStartedAt;
             if (output.executorTimings) {
