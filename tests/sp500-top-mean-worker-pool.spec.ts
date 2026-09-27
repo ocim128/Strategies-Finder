@@ -109,46 +109,58 @@ function testCacheAwareShardPlanning(): void {
         "Dâ€¢+Eâ€¢",
     ];
 
-    // Cache-locality finding: the default layout is asset_tile_v1 — every
-    // pair's BOTH legs must belong to its shard's combined leg set so a
-    // worker's 24-leg LRU warms once per shard instead of churning one new
-    // second leg per pair.
-    const tiled = buildTopMeanShardTasks(pairs, 3);
-    const legsOf = (symbol: string): string[] => symbol.split("+").map((leg) => leg.trim().toUpperCase());
-    for (const task of tiled) {
-        const legs = new Set<string>();
-        for (const { symbol } of task.pairs) {
-            for (const leg of legsOf(symbol)) legs.add(leg);
-        }
-        assert.ok(
-            legs.size <= 2 * TOP_MEAN_SHARD_TILE_ASSETS,
-            `shard ${task.shardIndex} must keep its combined leg set within the worker LRU budget`,
-        );
-    }
+    // Shard-overhead plan phase 1: the DEFAULT layout is back to
+    // leg_affinity_v1 — sparse pair graphs fragment the tile layout into
+    // disproportionate task/file counts (a real 39,943-pair run produced
+    // 21,156 shards at 1.89 pairs per shard). The affinity planner orders by
+    // one shared leg and chunks by the resolved shard size.
+    const grouped = buildTopMeanShardTasks(pairs, 3);
     assert.deepEqual(
-        tiled.flatMap((task) => task.pairs)
+        grouped[0]!.pairs.map((pair) => pair.pairIndex),
+        [1, 3, 6],
+        "the default layout groups the three pairs sharing canonical leg A",
+    );
+    const expectedTasks = Math.ceil(pairs.length / 3);
+    assert.equal(grouped.length, expectedTasks, "the coarse planner produces ceil(pairCount / shardSize) tasks");
+    assert.deepEqual(
+        grouped.flatMap((task) => task.pairs)
             .sort((a, b) => a.pairIndex - b.pairIndex)
             .map((pair) => pair.symbol),
         pairs,
-        "tile scheduling retains every symbol and its original pair index",
+        "the default layout retains every symbol and its original pair index",
     );
+    for (const task of grouped) {
+        assert.ok(task.pairs.length <= 3, "task size stays bounded by the resolved shard size");
+    }
     assert.deepEqual(
         buildTopMeanShardTasks(pairs, 3),
-        tiled,
-        "tile partitioning is deterministic so resumed runs recompute identical shard indexes",
+        grouped,
+        "the default partition is deterministic so resumed runs recompute identical shard indexes",
     );
 
-    // With more legs than one tile holds, shards are one (groupA, groupB)
-    // combination each and never mix a foreign leg into a shard's leg set.
-    const wideLegs = Array.from({ length: 30 }, (_, i) => `L${String(i).padStart(2, "0")}•`);
-    const widePairs: string[] = [];
-    for (let i = 0; i < wideLegs.length; i += 1) {
-        for (let j = i + 1; j < wideLegs.length; j += 1) {
-            widePairs.push(`${wideLegs[i]!}+${wideLegs[j]!}`);
+    // Dense fixture comparison (plan: dense universes may favor tiles): both
+    // layouts cover every pair exactly once with original indexes; tiles
+    // trade a different task count for bounded leg sets.
+    const denseLegs = Array.from({ length: 30 }, (_, i) => `L${String(i).padStart(2, "0")}•`);
+    const densePairs: string[] = [];
+    for (let i = 0; i < denseLegs.length; i += 1) {
+        for (let j = i + 1; j < denseLegs.length; j += 1) {
+            densePairs.push(`${denseLegs[i]!}+${denseLegs[j]!}`);
         }
     }
-    const wideTiled = buildTopMeanShardTasks(widePairs, 250);
-    for (const task of wideTiled) {
+    const denseAffinity = buildTopMeanShardTasks(densePairs, 50);
+    const denseTiled = buildTopMeanShardTasks(densePairs, 50, false, "asset_tile_v1");
+    const legsOf = (symbol: string): string[] => symbol.split("+").map((leg) => leg.trim().toUpperCase());
+    for (const planned of [denseAffinity, denseTiled]) {
+        assert.deepEqual(
+            planned.flatMap((task) => task.pairs)
+                .sort((a, b) => a.pairIndex - b.pairIndex)
+                .map((pair) => pair.symbol),
+            densePairs,
+            "both layouts keep every dense-matrix pair exactly once with its original index",
+        );
+    }
+    for (const task of denseTiled) {
         const legs = new Set<string>();
         for (const { symbol } of task.pairs) {
             for (const leg of legsOf(symbol)) legs.add(leg);
@@ -158,20 +170,14 @@ function testCacheAwareShardPlanning(): void {
             "every tile shard stays inside the combined leg budget",
         );
     }
-    assert.deepEqual(
-        wideTiled.flatMap((task) => task.pairs)
-            .sort((a, b) => a.pairIndex - b.pairIndex)
-            .map((pair) => pair.symbol),
-        widePairs,
-        "the dense matrix keeps every pair exactly once with its original index",
-    );
 
-    // Legacy affinity layout stays reachable for manifests pinned to it.
-    const grouped = buildTopMeanShardTasks(pairs, 3, false, "leg_affinity_v1");
+    // The tile layout stays reachable for manifests explicitly stamped
+    // asset_tile_v1, and remains deterministic.
+    const tiled = buildTopMeanShardTasks(pairs, 3, false, "asset_tile_v1");
     assert.deepEqual(
-        grouped[0]!.pairs.map((pair) => pair.pairIndex),
-        [1, 3, 6],
-        "a leg_affinity_v1 shard groups the three pairs sharing canonical leg A",
+        buildTopMeanShardTasks(pairs, 3, false, "asset_tile_v1"),
+        tiled,
+        "tile partitioning is deterministic so resumed tile runs recompute identical shard indexes",
     );
 
     const resumed = buildTopMeanShardTasks(pairs, 3, true);
@@ -240,7 +246,7 @@ async function testPersistentWorkerPoolEndToEnd(): Promise<void> {
         interval: "4h",
         pairCount: pairs.length,
         shardSize: 2,
-        totalShards: 6,
+        totalShards: 14,
         completedShards: [],
         failedShards: [],
         completedPairsCount: 0,
@@ -282,11 +288,11 @@ async function testPersistentWorkerPoolEndToEnd(): Promise<void> {
 
     // All shards completed and the deterministic worker emitted one empty
     // artifact result per pair.
-    assert.equal(manifest.completedShards.length, 6, "All 6 tile shards must complete even when pairs fail to load");
+    assert.equal(manifest.completedShards.length, 14, "All 14 coarse shards must complete even when pairs fail to load");
     assert.equal(
         manifest.shardOrder,
-        "asset_tile_v1",
-        "new manifests persist the tile partition so an interrupted run resumes identically",
+        "leg_affinity_v1",
+        "new manifests persist the affinity partition so an interrupted run resumes identically",
     );
     assert.equal(manifest.failedPairsCount, 0, "deterministic worker should not report pair failures");
     assert.equal(progressCalls.length, pairs.length, "every completed pair should emit progress");

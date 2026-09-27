@@ -367,7 +367,11 @@ export function buildTopMeanShardTasks(
     canonicalPairs: string[],
     shardSize: number,
     preserveInputOrder = false,
-    layout: TopMeanShardLayout = "asset_tile_v1",
+    // Default restored to leg_affinity_v1 (shard-overhead plan phase 1):
+    // sparse pair graphs fragment the tile layout into disproportionate
+    // task/file counts, so tiles are opt-in via an explicitly stamped
+    // manifest rather than the default.
+    layout: TopMeanShardLayout = "leg_affinity_v1",
 ): ShardTask[] {
     if (preserveInputOrder) {
         const orderedPairs = canonicalPairs.map((symbol, pairIndex) => ({ pairIndex, symbol }));
@@ -438,18 +442,21 @@ export class TopMeanWorkerPool {
         // Completed shard indexes are meaningful only under the partition
         // that created them. The persisted shardOrder pins that layout: a
         // resumed run must recompute exactly the partition its completed
-        // indexes refer to. New runs adopt asset_tile_v1; legacy manifests
-        // keep their original behavior.
+        // indexes refer to. New runs adopt leg_affinity_v1 (shard-overhead
+        // plan phase 1: sparse pair graphs fragment the tile layout — a real
+        // 39,943-pair run produced 21,156 shards at 1.89 pairs per shard and
+        // measurably worse leg-cache reuse); manifests stamped asset_tile_v1
+        // keep their tile partition, and legacy manifests keep input order.
         const hasPersistedShardPartition = (
             options.manifest.completedShards.length > 0
             || options.manifest.failedShards.length > 0
         );
         if (!options.manifest.shardOrder && !hasPersistedShardPartition) {
-            options.manifest.shardOrder = "asset_tile_v1";
+            options.manifest.shardOrder = "leg_affinity_v1";
         }
-        const shardLayout: TopMeanShardLayout = options.manifest.shardOrder === "leg_affinity_v1"
-            ? "leg_affinity_v1"
-            : "asset_tile_v1";
+        const shardLayout: TopMeanShardLayout = options.manifest.shardOrder === "asset_tile_v1"
+            ? "asset_tile_v1"
+            : "leg_affinity_v1";
         const preserveInputShardOrder = options.manifest.shardOrder !== "leg_affinity_v1"
             && options.manifest.shardOrder !== "asset_tile_v1";
         const resumedShardSize = hasPersistedShardPartition
