@@ -4142,7 +4142,22 @@ function firstBarAfter(times: readonly (number | null)[], t: number): number {
 function splitIntoBlocks(values: readonly number[], times: readonly number[], blockCount: number): number[][] {
     const n = values.length;
     if (n === 0) return [];
-    const order = times.map((_, i) => i).sort((a, b) => times[a]! - times[b]!);
+    // Checked chronological fast path (allocation reduction plan phase 2):
+    // ordinary selector series append in view order, so their times are
+    // usually already nondecreasing and neither the index array nor the sort
+    // is needed. The O(n) scan is finite-guarded; profit-only appends can
+    // break chronology, and any out-of-order, missing, or non-finite
+    // timestamp selects the original stable index-sort path unchanged.
+    let ordered = true;
+    for (let i = 1; i < n; i += 1) {
+        const prev = times[i - 1]!;
+        const curr = times[i]!;
+        if (!Number.isFinite(prev) || !Number.isFinite(curr) || curr < prev) {
+            ordered = false;
+            break;
+        }
+    }
+    const order = ordered ? null : times.map((_, i) => i).sort((a, b) => times[a]! - times[b]!);
     const k = Math.max(1, Math.min(blockCount, n));
     const blocks: number[][] = [];
     for (let b = 0; b < k; b += 1) {
@@ -4150,7 +4165,11 @@ function splitIntoBlocks(values: readonly number[], times: readonly number[], bl
         const end = Math.floor(((b + 1) * n) / k);
         if (end <= start) continue;
         const slice: number[] = [];
-        for (let i = start; i < end; i += 1) slice.push(values[order[i]!]!);
+        if (order === null) {
+            for (let i = start; i < end; i += 1) slice.push(values[i]!);
+        } else {
+            for (let i = start; i < end; i += 1) slice.push(values[order[i]!]!);
+        }
         if (slice.length > 0) blocks.push(slice);
     }
     return blocks;

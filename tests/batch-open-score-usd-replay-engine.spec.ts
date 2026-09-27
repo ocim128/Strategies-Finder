@@ -1495,6 +1495,210 @@ describe("batch-open-score-usd-replay-engine", () => {
 });
 
 // ============================================================================
+// Ordinary positive-pool aggregation (allocation reduction plan phase 1):
+// the replay validates and sums the ordinary pool in ONE traversal over
+// view.positives instead of building a per-(event, horizon) return map. These
+// tests pin the semantics that made the map removable: a unique positive
+// pool, picks/tied pools as subsets of it, perAsset shared with profit-only
+// assets, exact leave-one-out control math, and censoring that omits the
+// whole ordinary comparison.
+// ============================================================================
+
+describe("ordinary positive-pool aggregation without a per-event return map", () => {
+    const detailAt = (
+        result: Awaited<ReturnType<typeof runOpenScoreUsdReplay>>,
+        selector: string,
+        decisionTime: number,
+    ) => (result.eventDetails ?? []).filter((row) => row.selector === selector && row.decisionTime === decisionTime);
+
+    it("scores the TOP_RAW winner against the exact leave-one-out control at every horizon", async () => {
+        // Two independent events; per event AAA raw +2, BBB raw +1. Unequal
+        // ramp rates make winner and control returns unequal so the exact
+        // control math is observable per horizon (h=1 lands on a same-bar
+        // exit and both returns are 0).
+        const pairs = [
+            makePair("AAA", "X", [makeTrade("long", T0 + 1000, null), makeTrade("long", T0 + 5000, null)]),
+            makePair("AAA", "Y", [makeTrade("long", T0 + 1000, null), makeTrade("long", T0 + 5000, null)]),
+            makePair("BBB", "Z", [makeTrade("long", T0 + 1000, null), makeTrade("long", T0 + 5000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 12, (i) => 100 * (1 + 0.2 * i)),
+            makeTarget("BBB", 12, (i) => 50 * (1 + 0.04 * i)),
+            makeTarget("X", 12, () => 10),
+            makeTarget("Y", 12, () => 10),
+            makeTarget("Z", 12, () => 10),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [1, 3], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        expect(result.eligibleEvents).to.equal(2);
+        for (const bars of [1, 3]) {
+            const rows = detailAt(result, "TOP_RAW", T0 + 1000).filter((row) => row.horizonBars === bars);
+            expect(rows).to.have.length(1);
+            const top = rows[0]!;
+            expect(top.asset).to.equal("AAA");
+            expect(top.direction).to.equal("long");
+            // The control pool is exactly {BBB}: denominator 2 — never
+            // perAsset's size, which also carries profit-only assets.
+            expect(top.eligibleCandidates).to.equal(2);
+            // Decision at T0+1000 (bar 1): entry at bar 2's open, exit at
+            // close of bar 2 + bars - 1.
+            // Entry is bar 2's OPEN (price index 2); exit is the close of
+            // bar 2 + bars - 1 (price index bars + 1). At bars=1 both legs
+            // are bar 2 and the return is exactly 0.
+            const aaaReturn = (1 + 0.2 * (1 + bars)) / (1 + 0.2 * 2) - 1;
+            const bbbReturn = (1 + 0.04 * (1 + bars)) / (1 + 0.04 * 2) - 1;
+            expect(top.selectedReturn).to.be.closeTo(aaaReturn, 1e-12);
+            expect(top.controlReturn).to.be.closeTo(bbbReturn, 1e-12);
+            expect(top.delta).to.be.closeTo(aaaReturn - bbbReturn, 1e-12);
+        }
+    });
+
+    it("breaks raw-score ties deterministically and reports the tie rate", async () => {
+        // Per event AAA and BBB raw +1 each (mean = raw with one active pair),
+        // so BOTH selectors tie at every event and the FNV digest path runs.
+        const pairs = [
+            makePair("AAA", "X", [makeTrade("long", T0 + 1000, null), makeTrade("long", T0 + 5000, null)]),
+            makePair("BBB", "Y", [makeTrade("long", T0 + 1000, null), makeTrade("long", T0 + 5000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 12, () => 100),
+            makeTarget("BBB", 12, () => 50),
+            makeTarget("X", 12, () => 10),
+            makeTarget("Y", 12, () => 10),
+        ];
+        const run = () => runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        const first = await run();
+        const second = await run();
+        expect(first.horizons[0]!.tieRates.RAW.sameSelection).to.equal(2);
+        expect(first.horizons[0]!.tieRates.MEAN.sameSelection).to.equal(2);
+        expect(first.horizons[0]!.topRaw.topMean).to.equal(second.horizons[0]!.topRaw.topMean);
+        const picks = (res: Awaited<ReturnType<typeof runOpenScoreUsdReplay>>) =>
+            (res.eventDetails ?? [])
+                .filter((row) => row.selector === "TOP_RAW")
+                .map((row) => `${row.decisionTime}:${row.asset}`)
+                .sort();
+        expect(picks(first)).to.deep.equal(picks(second));
+    });
+
+    it("keeps profit-only assets out of the ordinary pool and its control denominator", async () => {
+        // T0+1000 event: ordinary scores AAA +4, BBB +1, PPP 0 (its +1 is
+        // cancelled by QQQ's cross vote); the causal realized-pnl pool is
+        // {AAA, BBB, PPP}. The ordinary control for the TOP_RAW winner must
+        // stay {BBB} (eligibleCandidates 2) while the causal arm's control is
+        // {BBB, PPP} (eligibleCandidates 3): a leaked PPP would inflate the
+        // ordinary denominator even though PPP's ordinary score is zero.
+        // Four AAA legs give AAA mean 4/3 > BBB's 1.0, so no mean tie and the
+        // digest never hands a pick to the censored asset in the TOP arms.
+        const entry = (pnl: number): Trade[] => [
+            makeTrade("long", T0 + 500, T0 + 800, pnl),
+            makeTrade("long", T0 + 1000, null, 0),
+        ];
+        const pairs = [
+            makePair("AAA", "P1", entry(10), 10),
+            makePair("AAA", "P2", entry(10), 10),
+            makePair("AAA", "P4", entry(10), 10),
+            makePair("AAA", "P5", entry(10), 10),
+            makePair("BBB", "P3", entry(5), 5),
+            makePair("PPP", "QQQ", entry(7), 7),
+            makePair("QQQ", "PPP", [makeTrade("long", T0 + 1000, null, 0)], 0),
+        ];
+        const targets = [
+            makeTarget("AAA", 12, (i) => 100 + i),
+            makeTarget("BBB", 12, () => 50),
+            makeTarget("PPP", 12, () => 70),
+            makeTarget("P1", 12, () => 10),
+            makeTarget("P2", 12, () => 10),
+            makeTarget("P3", 12, () => 10),
+            makeTarget("P4", 12, () => 10),
+            makeTarget("P5", 12, () => 10),
+            makeTarget("QQQ", 12, () => 10),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        // Ordinary views at T0+500 and T0+1000; causal arms fire only on
+        // T0+1000 where realized pnl exists.
+        expect(result.horizons[0]!.topRaw.events).to.equal(2);
+        expect(result.horizons[0]!.topRawProfitNow.events).to.equal(1);
+        const ordinaryTop = detailAt(result, "TOP_RAW", T0 + 1000)[0]!;
+        expect(ordinaryTop.asset).to.equal("AAA");
+        expect(ordinaryTop.eligibleCandidates).to.equal(2);
+        const causalTop = detailAt(result, "TOP_RAW_PROFIT_NOW", T0 + 1000)[0]!;
+        expect(causalTop.asset).to.equal("AAA");
+        expect(causalTop.eligibleCandidates).to.equal(3);
+    });
+
+    it("omits the ordinary comparison when a pool return is censored while the causal arms still fire", async () => {
+        // T0+1000 event: ordinary pool {AAA +4, BBB +1}; BBB realized a LOSS
+        // so the causal pool is {AAA, PPP} (BBB muted). BBB's 4-bar target
+        // covers the T0+500 event's horizon but is one bar short for the
+        // T0+1000 event: the ordinary comparison there must be omitted
+        // (ONGOING rows, never a zero-filled return) while TOP_RAW_PROFIT_NOW
+        // still completes on the untouched causal pool. Four AAA legs keep
+        // AAA's mean (4/3) strictly above BBB's (1.0), so the digest cannot
+        // hand a TOP pick to the censored asset.
+        const entry = (pnl: number): Trade[] => [
+            makeTrade("long", T0 + 500, T0 + 800, pnl),
+            makeTrade("long", T0 + 1000, null, 0),
+        ];
+        const pairs = [
+            makePair("AAA", "P1", entry(10), 10),
+            makePair("AAA", "P2", entry(10), 10),
+            makePair("AAA", "P4", entry(10), 10),
+            makePair("AAA", "P5", entry(10), 10),
+            makePair("BBB", "P3", entry(-3), -3),
+            makePair("PPP", "QQQ", entry(7), 7),
+            makePair("QQQ", "PPP", [makeTrade("long", T0 + 1000, null, 0)], 0),
+        ];
+        const targets = [
+            makeTarget("AAA", 12, () => 100),
+            makeTarget("BBB", 4, () => 50),
+            makeTarget("PPP", 12, () => 70),
+            makeTarget("P1", 12, () => 10),
+            makeTarget("P2", 12, () => 10),
+            makeTarget("P3", 12, () => 10),
+            makeTarget("P4", 12, () => 10),
+            makeTarget("P5", 12, () => 10),
+            makeTarget("QQQ", 12, () => 10),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [3], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        // Ordinary h=3 series: only the T0+500 event; the censored T0+1000
+        // event is omitted entirely.
+        expect(result.horizons[0]!.topRaw.events).to.equal(1);
+        // Every positive asset's mean is exactly raw/cnt = 1.0 with all-+1
+        // positional votes, so TOP_MEAN ties and the frozen FNV digest
+        // deterministically picks BBB — the censored asset — which surfaces as
+        // an ONGOING row. TOP_RAW (raw +4 vs +1) completes with AAA and earns
+        // no ONGOING row. The picks are censored-event reports, never
+        // zero-filled returns.
+        const ongoingAtEvent = (result.ongoingEventDetails ?? []).filter((row) => row.decisionTime === T0 + 1000);
+        expect(ongoingAtEvent.map((row) => row.selector).sort()).to.deep.equal([
+            "BOT_MEAN", "BOT_MEAN_RAW_UNIQUE", "BOT_RAW", "TOP_MEAN",
+        ]);
+        for (const row of ongoingAtEvent) expect(row.asset).to.equal("BBB");
+        // The causal pool {AAA, PPP} is intact: the arm fires with its own
+        // two-member denominator.
+        expect(result.horizons[0]!.topRawProfitNow.events).to.equal(1);
+        const causalTop = detailAt(result, "TOP_RAW_PROFIT_NOW", T0 + 1000)[0]!;
+        expect(causalTop.asset).to.equal("AAA");
+        expect(causalTop.eligibleCandidates).to.equal(2);
+    });
+});
+
+// ============================================================================
 // Cap-tilt weighting (docs/open-score-cap-tilt.md)
 // ============================================================================
 
