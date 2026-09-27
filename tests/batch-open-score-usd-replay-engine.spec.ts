@@ -2577,3 +2577,184 @@ describe("runOpenScoreUsdReplay diagnostic long-outcome reuse (top-mean coordina
         )?.unrealizedReturn);
     });
 });
+
+describe("runOpenScoreUsdReplay event sweep boundaries (event-sweep plan, phase 1)", () => {
+    // Parity baselines for the bounded event sweep: a bounded (annual) window
+    // must capture events exactly as the unbounded sweep's storage filter
+    // does — pre-window positions carry in, the inclusive upper bound is
+    // stored, later events are excluded — while cap-tilt coverage keeps
+    // counting ALL scanned history. These fixtures were captured against the
+    // unbounded-sweep implementation; every value is part of the locked
+    // output that the sweep-bound and delta-copy changes must reproduce
+    // exactly.
+    const boundedFrom = T0 + 5000;
+    const boundedTo = T0 + 9000;
+    const baselineSweepOptions = {
+        horizons: [1],
+        slippageRate: 0,
+        commissionRate: 0,
+        blockCount: 1,
+        includeEventDetails: true,
+    };
+    const assertBoundedWindow = (
+        result: Awaited<ReturnType<typeof runOpenScoreUsdReplay>>,
+        from: number,
+        to: number,
+    ): void => {
+        for (const row of result.eventDetails ?? []) {
+            expect(row.decisionTime).to.be.at.least(from);
+            expect(row.decisionTime).to.be.at.most(to);
+        }
+    };
+
+    it("bounds annual events inclusively while carrying pre-window positions and excluding later trades", async () => {
+        // pair1: a pre-window position (entered T0+1000) that exits and
+        // re-enters AT the same in-window timestamp (T0+6000) — its causal
+        // vote applies because realized pnl (+10) precedes the re-entry.
+        // pair2: an event exactly AT the inclusive upper bound (T0+9000).
+        // pair3: an event beyond the bound (T0+9500) that must never appear
+        // in the bounded run.
+        // Long pairs credit their BASE leg +1 and quote leg -1, so the
+        // positive candidates are the bases: AAA (pair1's re-entry after its
+        // pre-window round trip) and BBB (pair2, whose realized +40 makes its
+        // re-entry a causal vote).
+        const markets = [
+            makePair("AAA", "CCC", [
+                makeTrade("long", T0 + 1000, T0 + 6000, 10),
+                makeTrade("long", T0 + 6000, null),
+            ], 100),
+            makePair("BBB", "DDD", [
+                makeTrade("long", T0 + 2000, T0 + 3000, 40),
+                makeTrade("long", T0 + 6000, null),
+                makeTrade("long", boundedTo, null),
+            ], 100),
+            makePair("EEE", "FFF", [makeTrade("long", T0 + 9500, null)], 100),
+        ];
+        const targets = [
+            makeTarget("AAA", 12, (i) => 100 + i),
+            makeTarget("CCC", 12, (i) => 100 + i),
+            makeTarget("BBB", 12, (i) => 100 + 2 * i),
+            makeTarget("DDD", 12, (i) => 100 + 2 * i),
+            makeTarget("EEE", 12, (i) => 100 + 3 * i),
+            makeTarget("FFF", 12, (i) => 100 + 3 * i),
+        ];
+        const bounded = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            { ...baselineSweepOptions, sampleFromSec: boundedFrom, sampleToSec: boundedTo },
+        );
+        const unbounded = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            baselineSweepOptions,
+        );
+
+        assertBoundedWindow(bounded, boundedFrom, boundedTo);
+        // The bound is INCLUSIVE: the T0+9000 event is stored.
+        const atBound = bounded.eventDetails?.find(
+            (row) => row.selector === "TOP_RAW" && row.decisionTime === boundedTo,
+        );
+        expect(atBound).to.not.equal(undefined);
+        expect(atBound?.eligibleCandidates).to.equal(2);
+        // Pre-window carry: at T0+6000 the causal pool is AAA+BBB (both
+        // re-entries apply their realized-pnl votes) and the causal arm
+        // fires.
+        const carried = bounded.eventDetails?.find(
+            (row) => row.selector === "TOP_RAW" && row.decisionTime === T0 + 6000,
+        );
+        expect(carried?.eligibleCandidates).to.equal(2);
+        // The causal arm fires at both in-window events: AAA's carried vote
+        // plus each re-entry's realized-pnl vote.
+        expect(bounded.horizons[0]!.topRawProfitNow.events).to.equal(2);
+        // The unbounded run additionally stores the pre-window and post-bound
+        // events (entries at T0+1000, T0+2000, and T0+9500).
+        expect(unbounded.totalEvents).to.equal(5);
+        expect(bounded.totalEvents).to.equal(2);
+    });
+
+    it("keeps cap-tilt coverage over all scanned history beyond the sweep bound", async () => {
+        const markets = [
+            makePair("AAA", "CCC", [
+                makeTrade("long", T0 + 1000, T0 + 6000, 10),
+                makeTrade("long", T0 + 6000, null),
+            ], 100),
+            makePair("BBB", "DDD", [
+                makeTrade("long", T0 + 2000, T0 + 3000, 40),
+                makeTrade("long", T0 + 6000, null),
+                makeTrade("long", boundedTo, null),
+            ], 100),
+            makePair("EEE", "FFF", [makeTrade("long", T0 + 9500, null)], 100),
+        ];
+        const targets = [
+            makeTarget("AAA", 12, (i) => 100 + i),
+            makeTarget("CCC", 12, (i) => 100 + i),
+            makeTarget("BBB", 12, (i) => 100 + 2 * i),
+            makeTarget("DDD", 12, (i) => 100 + 2 * i),
+            makeTarget("EEE", 12, (i) => 100 + 3 * i),
+            makeTarget("FFF", 12, (i) => 100 + 3 * i),
+        ];
+        const capOptions = {
+            horizons: [1],
+            slippageRate: 0,
+            commissionRate: 0,
+            blockCount: 1,
+            capTiltWeight: "smallBase2x" as const,
+            // CCC/DDD/FFF quotes are larger than their bases (ratio 2 <= 3):
+            // every long entry on these pairs is cap-tilt weighted.
+            lookupMarketCap: (symbol: string) => (symbol === "CCC" || symbol === "DDD" ? 10 : 5),
+        };
+        const bounded = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            { ...capOptions, sampleFromSec: boundedFrom, sampleToSec: boundedTo },
+        );
+        const unbounded = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            capOptions,
+        );
+        // Six long entries exist across the artifact (two on pair1, three on
+        // pair2, one on pair3) — the historical coverage line must count ALL
+        // of them in the bounded run too, even the entry beyond the bound.
+        const coverageLine = (result: Awaited<ReturnType<typeof runOpenScoreUsdReplay>>) =>
+            result.reportLines.find((line) => line.startsWith("cap tilt coverage |"));
+                // pair3's equal caps (5/5) deliberately stay weight 1: "larger/smaller
+        // entry cap <= 3" weights only the five unequal-cap entries.
+        expect(coverageLine(bounded)).to.equal("cap tilt coverage | long=6 known=6 weighted=5 unknown=0");
+        expect(coverageLine(bounded)).to.equal(coverageLine(unbounded));
+    });
+
+    it("applies exits, re-entries, and exit-only timestamps without creating phantom events", async () => {
+        // Direct-market fixture: BBB's exit-only timestamp (T0+7000) updates
+        // accumulators but forms no event; AAA exits and re-enters on the
+        // same timestamp; the confidence and inverted arms share the gate.
+        const decision = T0 + 6000;
+        const markets = [
+            makeDirectMarket("AAA", [
+                makeTrade("long", T0 + 1000, T0 + 6000, 10),
+                makeTrade("long", decision, null),
+            ]),
+            makeDirectMarket("BBB", [
+                makeTrade("long", T0 + 2000, T0 + 3000, 40),
+                makeTrade("long", decision, null),
+                makeTrade("long", T0 + 2500, T0 + 7000, 5), // exits at T0+7000: exit-only timestamp
+            ]),
+        ];
+        const targets = [
+            makeTarget("AAA", 12, (i) => 100 + i),
+            makeTarget("BBB", 12, (i) => 100 + 2 * i),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            { ...baselineSweepOptions, sampleFromSec: boundedFrom, sampleToSec: boundedTo },
+        );
+        expect(result.totalEvents).to.equal(1, "only the T0+6000 entry event is in window");
+        expect(result.eventDetails?.some((row) => row.decisionTime === T0 + 7000)).to.equal(false);
+        expect(result.eventDetails?.some((row) => row.decisionTime === decision)).to.equal(true);
+        expect(result.horizons[0]!.topRawProfitNow.events).to.equal(1);
+        expect(result.horizons[0]!.topZ.events).to.equal(1);
+        expect(result.horizons[0]!.topRawProfitNowConf.events).to.equal(1);
+        expect(result.horizons[0]!.botZ.events).to.equal(1);
+    });
+});
