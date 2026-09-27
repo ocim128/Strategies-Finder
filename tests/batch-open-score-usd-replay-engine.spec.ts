@@ -2073,3 +2073,231 @@ describe("batch-open-score-usd-replay-engine inverted (BOT_*) arms", () => {
         expect(report).to.include("BOT_Z_EX_");
     });
 });
+
+describe("runOpenScoreUsdReplay shared outcome cache (annual-reload finding)", () => {
+    // Annual windows are time slices of the first pass's window, so their
+    // per-event request sets are strict subsets. Outcomes are pure functions
+    // of (dataset, decision time, horizon) — the shared cache must therefore
+    // serve every later pass with ZERO additional dataset loads and produce
+    // results identical to a cold run of the same window.
+    const cacheMarkets = (decision1: number, decision2: number) => [
+        makeDirectMarket("AAA", [
+            makeTrade("long", T0 + 100, T0 + 200, 10),
+            makeTrade("long", decision1, null),
+            makeTrade("long", decision2, null),
+        ]),
+        makeDirectMarket("BBB", [
+            makeTrade("long", T0 + 100, T0 + 200, 10),
+            makeTrade("long", decision1, null),
+            makeTrade("long", decision2, null),
+        ]),
+    ];
+    const cacheTargets = new Map([
+        ["AAA", makeTarget("AAA", 12, () => 100).data],
+        ["BBB", makeTarget("BBB", 12, (i) => 100 + i).data],
+    ]);
+    const cacheLoaderOptions = {
+        horizons: [2],
+        slippageRate: 0,
+        commissionRate: 0,
+        blockCount: 1,
+        includeEventDetails: true,
+        loadTargetDataset: async (asset: string): Promise<OHLCVData[] | null> => cacheTargets.get(asset) ?? null,
+    };
+    type SharedCacheSpec = import("../lib/batch-backtest/batch-open-score-usd-replay-engine").OpenScoreUsdSharedTargetCacheEntry;
+
+    it("serves annual passes from the cache with zero loads and identical results", async () => {
+        const decision1 = T0 + 1000;
+        const decision2 = T0 + 5000;
+        const sharedTargetCache = new Map<string, SharedCacheSpec>();
+        let loads = 0;
+        const countingLoader = async (asset: string): Promise<OHLCVData[] | null> => {
+            loads += 1;
+            return cacheLoaderOptions.loadTargetDataset(asset);
+        };
+        const run = (sampleFromSec: number) => runOpenScoreUsdReplay(
+            () => fromArray(cacheMarkets(decision1, decision2)),
+            undefined,
+            {
+                ...cacheLoaderOptions,
+                loadTargetDataset: countingLoader,
+                prefetchTargetDatasets: () => undefined,
+                sharedTargetCache,
+                sampleFromSec,
+            },
+        );
+
+        const fullPass = await run(T0);
+        const loadsAfterFullPass = loads;
+        expect(loadsAfterFullPass).to.equal(2, "each target dataset loads exactly once");
+
+        const annualPass = await run(decision2);
+        expect(loads).to.equal(loadsAfterFullPass, "the annual pass must load zero additional datasets");
+
+        const coldAnnual = await runOpenScoreUsdReplay(
+            () => fromArray(cacheMarkets(decision1, decision2)),
+            undefined,
+            { ...cacheLoaderOptions, sampleFromSec: decision2 },
+        );
+        expect(coldAnnual.horizons).to.deep.equal(annualPass.horizons);
+        expect(coldAnnual.eventDetails).to.deep.equal(annualPass.eventDetails);
+        expect(coldAnnual.eligibleEvents).to.equal(annualPass.eligibleEvents);
+
+        const coldFull = await runOpenScoreUsdReplay(
+            () => fromArray(cacheMarkets(decision1, decision2)),
+            undefined,
+            { ...cacheLoaderOptions, sampleFromSec: T0 },
+        );
+        expect(coldFull.horizons).to.deep.equal(fullPass.horizons);
+        expect(coldFull.eventDetails).to.deep.equal(fullPass.eventDetails);
+    });
+
+    it("noData markers are cached so later passes never reload the dataset", async () => {
+        // decision2 is beyond the dataset end: entry resolution fails for it.
+        // The null marker must be cached, not re-discovered by a reload.
+        const decision1 = T0 + 1000;
+        const decision2 = T0 + 900_000; // last bar is T0 + 11_000
+        const shortDatasets = new Map([
+            ["AAA", makeTarget("AAA", 12, () => 100).data],
+            ["BBB", makeTarget("BBB", 12, () => 50).data],
+        ]);
+        const sharedTargetCache = new Map<string, SharedCacheSpec>();
+        let loads = 0;
+        const run = (sampleFromSec: number) => runOpenScoreUsdReplay(
+            () => fromArray(cacheMarkets(decision1, decision2)),
+            undefined,
+            {
+                ...cacheLoaderOptions,
+                loadTargetDataset: async (asset: string): Promise<OHLCVData[] | null> => {
+                    loads += 1;
+                    return shortDatasets.get(asset) ?? null;
+                },
+                prefetchTargetDatasets: () => undefined,
+                sharedTargetCache,
+                sampleFromSec,
+            },
+        );
+
+        const fullPass = await run(T0);
+        const annualPass = await run(decision2);
+        expect(loads).to.equal(2, "noData events must not trigger dataset reloads");
+        const coldAnnual = await runOpenScoreUsdReplay(
+            () => fromArray(cacheMarkets(decision1, decision2)),
+            undefined,
+            {
+                ...cacheLoaderOptions,
+                loadTargetDataset: async (asset: string): Promise<OHLCVData[] | null> => shortDatasets.get(asset) ?? null,
+                sampleFromSec: decision2,
+            },
+        );
+        expect(coldAnnual.horizons).to.deep.equal(annualPass.horizons);
+        expect(coldAnnual.eventDetails).to.deep.equal(annualPass.eventDetails);
+        expect(coldAnnual.warnings.filter((w) => w.includes("no target bar"))).to.deep.equal(
+            annualPass.warnings.filter((w) => w.includes("no target bar")),
+        );
+        expect(fullPass.warnings.some((w) => w.includes("no target bar"))).to.equal(true);
+    });
+
+    it("cached gap intervals reproduce per-window data-gap exclusions", async () => {
+        // BBB carries a 41-day candle hole strictly after window1 but before
+        // decision2: excluded from the full-window and window2 pools, usable
+        // in window1. CCC keeps every event above the two-usable-candidates
+        // floor so eligibleCounts differ per window. Cached passes must agree
+        // with cold runs while each dataset loads exactly once (plus BBB's
+        // one fallback reload for window1, where its gap does not apply).
+        const day = 86_400;
+        // Day-scale bars so both decision timestamps resolve entry bars.
+        const dayBars = (price: (i: number) => number): OHLCVData[] =>
+            Array.from({ length: 80 }, (_, i) => {
+                const p = price(i);
+                return { time: (T0 + i * day) as Time, open: p, high: p, low: p, close: p, volume: 1 };
+            });
+        const bbbData: OHLCVData[] = [
+            ...Array.from({ length: 16 }, (_, i) => {
+                const p = 100;
+                return { time: (T0 + i * day) as Time, open: p, high: p, low: p, close: p, volume: 1 };
+            }),
+            ...Array.from({ length: 15 }, (_, i) => {
+                const p = 110;
+                return { time: (T0 + (56 + i) * day) as Time, open: p, high: p, low: p, close: p, volume: 1 };
+            }),
+        ];
+        const gappedDatasets = new Map([
+            ["AAA", dayBars((i) => 100 + i)],
+            ["BBB", bbbData],
+            ["CCC", dayBars((i) => 90 - i)],
+        ]);
+        const gappedMarkets = (decision1: number, decision2: number) => [
+            ...cacheMarkets(decision1, decision2),
+            makeDirectMarket("CCC", [
+                makeTrade("long", T0 + 100, T0 + 200, 10),
+                makeTrade("long", decision1, null),
+                makeTrade("long", decision2, null),
+            ]),
+        ];
+        const decision1 = T0 + 5 * day;
+        const decision2 = T0 + 30 * day;
+        const window1From = T0;
+        const window1To = T0 + 10 * day;
+        const window2From = T0 + 20 * day;
+        const sharedTargetCache = new Map<string, SharedCacheSpec>();
+        let loads = 0;
+        const run = (sampleFromSec: number, sampleToSec?: number) => runOpenScoreUsdReplay(
+            () => fromArray(gappedMarkets(decision1, decision2)),
+            undefined,
+            {
+                ...cacheLoaderOptions,
+                loadTargetDataset: async (asset: string): Promise<OHLCVData[] | null> => {
+                    loads += 1;
+                    return gappedDatasets.get(asset) ?? null;
+                },
+                prefetchTargetDatasets: () => undefined,
+                sharedTargetCache,
+                sampleFromSec,
+                ...(sampleToSec !== undefined ? { sampleToSec } : {}),
+            },
+        );
+
+        const fullPass = await run(T0);
+        const window1Pass = await run(window1From, window1To);
+        const window2Pass = await run(window2From);
+        // BBB is gap-excluded in the full pass, so its decision1 outcome was
+        // never computed: window1 (where the gap does not apply) reloads BBB
+        // exactly once and caches the outcomes.
+        expect(loads).to.equal(4, "gap-skipped assets reload once for windows where the gap does not apply");
+
+        const detailWith = (result: Awaited<ReturnType<typeof run>>, decision: number) =>
+            result.eventDetails?.find((row) => row.selector === "TOP_RAW" && row.decisionTime === decision);
+        // Full window: the gap overlaps it -> BBB excluded from the decision2 pool.
+        expect(detailWith(fullPass, decision2)?.eligibleCandidates).to.equal(2);
+        // Window1: the hole starts after window1To -> BBB stays usable.
+        expect(detailWith(window1Pass, decision1)?.eligibleCandidates).to.equal(3);
+        // Window2: the hole overlaps it -> BBB excluded again.
+        expect(detailWith(window2Pass, decision2)?.eligibleCandidates).to.equal(2);
+
+        const coldWindow1 = await runOpenScoreUsdReplay(
+            () => fromArray(gappedMarkets(decision1, decision2)),
+            undefined,
+            {
+                ...cacheLoaderOptions,
+                loadTargetDataset: async (asset: string): Promise<OHLCVData[] | null> => gappedDatasets.get(asset) ?? null,
+                sampleFromSec: window1From,
+                sampleToSec: window1To,
+            },
+        );
+        expect(coldWindow1.horizons).to.deep.equal(window1Pass.horizons);
+        expect(coldWindow1.eventDetails).to.deep.equal(window1Pass.eventDetails);
+    });
+
+    it("requires a target source: neither loader nor lazy dataset source throws", async () => {
+        let thrown: Error | null = null;
+        try {
+            await runOpenScoreUsdReplay(() => fromArray(cacheMarkets(T0 + 1000, T0 + 5000)), undefined, {
+                horizons: [2],
+            });
+        } catch (error) {
+            thrown = error as Error;
+        }
+        expect(thrown?.message ?? "").to.match(/targetLoader or loadTargetDataset/);
+    });
+});

@@ -10,13 +10,16 @@ import {
 } from "../backtest-settings-resolver";
 import { getTypescriptEngineRequirementReasons } from "../rust-settings-sanitizer";
 import type { BatchSyntheticPairArtifact } from "./batch-synthetic-artifact";
-import type { BatchSyntheticPairArtifactAdapter } from "./compact-pair-artifact";
+import {
+    toBatchSyntheticPairAdapter,
+    type BatchSyntheticPairArtifactAdapter,
+    type CompactPairArtifact,
+} from "./compact-pair-artifact";
 import {
     atomicWriteJsonSync,
     cleanOldArtifacts,
     computeRunFingerprint,
     getRunDir,
-    iterateRunCompactArtifacts,
     iterateRunRawCompactArtifacts,
     loadManifest,
     reconcileInterruptedManifestsOnStartup,
@@ -35,6 +38,7 @@ import {
     type OpenScoreUsdReplayResult,
     type OpenScoreUsdEventDetail,
     type OpenScoreUsdOngoingEventDetail,
+    type OpenScoreUsdSharedTargetCacheEntry,
     type CandidateOutcomeRecord,
     type PoolSnapshotRecord,
     type OpenScoreUsdLatestSelections,
@@ -383,8 +387,7 @@ export interface TopMeanStatusResponse {
 }
 
 async function deriveReplayTargetsFromCompletedArtifacts(
-    runId: string,
-    baseDir?: string,
+    corpus: readonly CompactPairArtifact[],
 ): Promise<Array<{ asset: string; symbol: string }>> {
     const symbolByAsset = new Map<string, string>();
     const addTarget = (asset: string, symbol: string): void => {
@@ -392,7 +395,7 @@ async function deriveReplayTargetsFromCompletedArtifacts(
         if (key !== "" && !symbolByAsset.has(key)) symbolByAsset.set(key, symbol);
     };
 
-    for await (const artifact of iterateRunRawCompactArtifacts(runId, baseDir)) {
+    for (const artifact of corpus) {
         addTarget(artifact.baseAsset, artifact.baseSymbol);
         addTarget(artifact.quoteAsset, artifact.quoteSymbol);
     }
@@ -974,8 +977,22 @@ export class TopMeanCoordinatorEngine {
             emitNdjson({ type: "progress", phase: "replay", text: this.progressText });
 
             const snapshotStartedAt = performance.now();
+            // Shared artifact corpus (corpus-sharing finding): the Phase-1
+            // snapshot, the replay-target derivation, and every replay pass
+            // read the same immutable compact artifacts. Parse the shards
+            // ONCE here instead of re-traversing the corpus per consumer.
+            // The raw array lives through the replay phase; that phase
+            // already retained the same trades for its whole duration via
+            // its adapter array, so peak retention is unchanged.
+            const runArtifactCorpus: CompactPairArtifact[] = [];
+            for await (const artifact of iterateRunRawCompactArtifacts(this._request.runId, this.baseDir)) {
+                if (this.isStopped) break;
+                runArtifactCorpus.push(artifact);
+            }
             const currentSnapshotResult = await computeCurrentTopMeanSnapshot(
-                () => iterateRunRawCompactArtifacts(this._request.runId, this.baseDir),
+                () => (async function* () {
+                    for (const artifact of runArtifactCorpus) yield artifact;
+                })(),
                 { shouldStop: () => this.isStopped },
             );
             this.performanceDiagnostic.phases.snapshotMs = performance.now() - snapshotStartedAt;
@@ -1040,7 +1057,7 @@ export class TopMeanCoordinatorEngine {
             // every catalog target.
             const replayTargets = phase0bWriter !== null
                 ? enumRes.eligibleTargets
-                : await deriveReplayTargetsFromCompletedArtifacts(this._request.runId, this.baseDir);
+                : await deriveReplayTargetsFromCompletedArtifacts(runArtifactCorpus);
             const requestInterval = this._request.interval;
 
             const targetPerformance = this.performanceDiagnostic;
@@ -1063,101 +1080,113 @@ export class TopMeanCoordinatorEngine {
             const coordinator = this;
             const replayTargetLoadFailures: string[] = [];
             let replayTargetLoadFailureCount = 0;
-            const targetLoader = (targets: readonly typeof replayTargets[number][]) => () => (async function* () {
-                type TargetData = Awaited<ReturnType<typeof loadServerBatchDataset>>;
-                type LoadedTarget = {
-                    asset: typeof targets[number]["asset"];
-                    symbol: string;
-                    data: TargetData;
-                };
+            // Lazy per-asset target loader (annual-reload finding): the replay
+            // engine pulls datasets per work-list asset and skips assets fully
+            // served by the shared outcome cache, so annual passes typically
+            // load zero datasets instead of re-traversing the target universe
+            // (measured: 18,848 misses / 22,432 accesses under the streaming
+            // loader). The bounded LRU + prefetch window keep the populating
+            // pass's I/O overlapped exactly like the previous generator.
+            type TargetDataset = Awaited<ReturnType<typeof loadServerBatchDataset>>;
+            const symbolByReplayAsset = new Map<string, string>();
+            for (const target of replayTargets) {
+                symbolByReplayAsset.set(target.asset.trim().toUpperCase(), target.symbol);
+            }
+            const sharedTargetOutcomeCache = new Map<string, OpenScoreUsdSharedTargetCacheEntry>();
+            const inFlightTargetDatasets = new Map<string, Promise<TargetDataset | null>>();
+            let prefetchList: readonly string[] = [];
+            let prefetchCursor = 0;
 
-                const inFlight = new Map<number, Promise<LoadedTarget>>();
-                let nextToStart = 0;
-
-                const startTargetLoad = (index: number): Promise<LoadedTarget> => {
-                    const { asset, symbol } = targets[index]!;
+            const ensureTargetDataset = (asset: string): Promise<TargetDataset | null> => {
+                const existing = inFlightTargetDatasets.get(asset);
+                if (existing) return existing;
+                const symbol = symbolByReplayAsset.get(asset);
+                let pending: Promise<TargetDataset | null>;
+                if (!symbol) {
+                    pending = Promise.resolve(null);
+                } else {
                     const cached = replayTargetCache.get(symbol);
                     if (cached) {
-                        return cached.then((data) => ({ asset, symbol, data }));
-                    }
-
-                    // Audit (replay-abort finding): the abort signal makes
-                    // Stop cancel the load itself instead of only checking
-                    // isStopped between datasets.
-                    const targetLoadStartedAt = performance.now();
-                    const pending = loadServerBatchDataset(symbol, requestInterval, replayAbortController.signal)
-                        .catch((error: unknown) => {
-                            if (replayAbortController.signal.aborted || coordinator.isStopped) throw error;
-                            const message = error instanceof Error ? error.message : String(error);
-                            replayTargetLoadFailureCount += 1;
-                            if (replayTargetLoadFailures.length < 25) {
-                                replayTargetLoadFailures.push(`${symbol}: ${message}`);
-                            }
-                            debugLogger.warn("sp500_top_mean.replay_target_load_failed", {
-                                runId: coordinator._request.runId,
-                                asset,
-                                symbol,
-                                error: message,
+                        pending = cached;
+                    } else {
+                        // Audit (replay-abort finding): the abort signal makes
+                        // Stop cancel the load itself instead of only checking
+                        // isStopped between datasets.
+                        const targetLoadStartedAt = performance.now();
+                        const load = loadServerBatchDataset(symbol, requestInterval, replayAbortController.signal)
+                            .catch((error: unknown): TargetDataset => {
+                                if (replayAbortController.signal.aborted || coordinator.isStopped) throw error;
+                                const message = error instanceof Error ? error.message : String(error);
+                                replayTargetLoadFailureCount += 1;
+                                if (replayTargetLoadFailures.length < 25) {
+                                    replayTargetLoadFailures.push(`${symbol}: ${message}`);
+                                }
+                                debugLogger.warn("sp500_top_mean.replay_target_load_failed", {
+                                    runId: coordinator._request.runId,
+                                    asset,
+                                    symbol,
+                                    error: message,
+                                });
+                                return [];
                             });
-                            return [];
-                        });
-                    replayTargetCache.set(symbol, pending);
-                    targetPerformance.replay.targetCacheMisses = replayTargetCache.missCount();
-                    if (replayTargetCache.size > targetPerformance.replay.targetCachePeakEntries) {
-                        targetPerformance.replay.targetCachePeakEntries = replayTargetCache.size;
-                    }
-
-                    const recordLoadTime = (): void => {
-                        targetPerformance.replay.targetLoadMs += performance.now() - targetLoadStartedAt;
-                    };
-                    return pending.then(
-                        (data) => {
-                            recordLoadTime();
-                            return { asset, symbol, data };
-                        },
-                        (error: unknown) => {
-                            recordLoadTime();
-                            throw error;
-                        },
-                    );
-                };
-
-                const fillPrefetchWindow = (): void => {
-                    while (
-                        nextToStart < targets.length
-                        && inFlight.size < TOP_MEAN_REPLAY_TARGET_PREFETCH_CONCURRENCY
-                    ) {
-                        const index = nextToStart;
-                        nextToStart += 1;
-                        inFlight.set(index, startTargetLoad(index));
-                    }
-                };
-
-                try {
-                    fillPrefetchWindow();
-                    for (let i = 0; i < targets.length; i++) {
-                        const pending = inFlight.get(i);
-                        if (!pending) throw new Error(`Replay target ${i} was not prefetched`);
-                        const { asset, symbol, data } = await pending;
-                        inFlight.delete(i);
-                        fillPrefetchWindow();
-
-                        const lastBar = data[data.length - 1];
-                        const timeSec = lastBar ? timeToNumber(lastBar.time) : null;
-                        if (timeSec !== null && (coordinator.latestTargetBarTimeSec === null || timeSec > coordinator.latestTargetBarTimeSec)) {
-                            coordinator.latestTargetBarTimeSec = timeSec;
+                        replayTargetCache.set(symbol, load);
+                        targetPerformance.replay.targetCacheMisses = replayTargetCache.missCount();
+                        if (replayTargetCache.size > targetPerformance.replay.targetCachePeakEntries) {
+                            targetPerformance.replay.targetCachePeakEntries = replayTargetCache.size;
                         }
-                        targetPerformance.replay.targetCacheHits = replayTargetCache.hitCount();
-                        targetPerformance.replay.targetDatasets += 1;
-                        yield { asset, symbol, data };
+                        pending = load.then(
+                            (data) => {
+                                targetPerformance.replay.targetLoadMs += performance.now() - targetLoadStartedAt;
+                                return data;
+                            },
+                            (error: unknown) => {
+                                targetPerformance.replay.targetLoadMs += performance.now() - targetLoadStartedAt;
+                                throw error;
+                            },
+                        );
                     }
-                } finally {
-                    // If Stop aborts the currently-consumed target, consume
-                    // every prefetched rejection before the generator exits so
-                    // parallel aborts cannot become unhandled promise errors.
-                    await Promise.allSettled(inFlight.values());
                 }
-            })();
+                // Prefetch-observability only: an abandoned load (Stop aborts
+                // a prefetched dataset nobody awaits) must not surface as an
+                // unhandled rejection. Awaiters still observe the rejection.
+                void pending.catch(() => undefined);
+                inFlightTargetDatasets.set(asset, pending);
+                return pending;
+            };
+
+            const fillTargetPrefetchWindow = (): void => {
+                while (
+                    prefetchCursor < prefetchList.length
+                    && inFlightTargetDatasets.size < TOP_MEAN_REPLAY_TARGET_PREFETCH_CONCURRENCY
+                ) {
+                    const asset = prefetchList[prefetchCursor]!;
+                    prefetchCursor += 1;
+                    ensureTargetDataset(asset);
+                }
+            };
+
+            const prefetchTargetDatasets = (assets: readonly string[]): void => {
+                prefetchList = assets;
+                prefetchCursor = 0;
+                fillTargetPrefetchWindow();
+            };
+
+            const loadTargetDataset = async (assetRaw: string): Promise<TargetDataset | null> => {
+                const asset = assetRaw.trim().toUpperCase();
+                const pending = ensureTargetDataset(asset);
+                inFlightTargetDatasets.delete(asset);
+                fillTargetPrefetchWindow();
+                const data = await pending;
+                if (data === null) return null;
+                const lastBar = data[data.length - 1];
+                const timeSec = lastBar ? timeToNumber(lastBar.time) : null;
+                if (timeSec !== null && (coordinator.latestTargetBarTimeSec === null || timeSec > coordinator.latestTargetBarTimeSec)) {
+                    coordinator.latestTargetBarTimeSec = timeSec;
+                }
+                targetPerformance.replay.targetCacheHits = replayTargetCache.hitCount();
+                targetPerformance.replay.targetDatasets += 1;
+                return data;
+            };
 
             const slippageBps = Number(this._request.backtestSettings?.slippageBps) || 0;
             const commissionPct = Number(this._request.capitalSettings?.commission) || 0;
@@ -1178,11 +1207,10 @@ export class TopMeanCoordinatorEngine {
             // Read them ONCE and hand every pass the cached array: window
             // filtering, TOP_Z history, and gap eligibility stay computed per
             // pass INSIDE the engine, so reports are unchanged — only the
-            // duplicated disk reads go away.
-            const cachedReplayArtifacts: BatchSyntheticPairArtifactAdapter[] = [];
-            for await (const artifact of iterateRunCompactArtifacts(this._request.runId, this.baseDir)) {
-                cachedReplayArtifacts.push(artifact);
-            }
+            // duplicated disk reads go away. (Corpus-sharing finding: the
+            // adapters are built from the same parsed corpus the snapshot
+            // used — no second shard traversal or JSON re-parse.)
+            const cachedReplayArtifacts: BatchSyntheticPairArtifactAdapter[] = runArtifactCorpus.map(toBatchSyntheticPairAdapter);
 
             let replayPassIndex = 0;
             const runReplayForWindow = (
@@ -1190,14 +1218,28 @@ export class TopMeanCoordinatorEngine {
                 sampleToSec: number | undefined,
             ): Promise<OpenScoreUsdReplayResult> => {
                 const includePhase0bDiagnostics = replayPassIndex === 0 && phase0bWriter !== null && !phase0bWriterFailed;
-                const targets = orderTopMeanReplayTargets(replayTargets, replayPassIndex);
                 replayPassIndex += 1;
+                const markPhase0bWriterFailed = (error: unknown): void => {
+                    debugLogger.warn("sp500_top_mean.phase0b_writer_failed", {
+                        runId: this._request.runId,
+                        error: error instanceof Error ? error.message : String(error),
+                    });
+                    phase0bWriterError ??= error instanceof Error ? error.message : String(error);
+                    phase0bWriterFailed = true;
+                };
                 return runOpenScoreUsdReplay(
                     (async function* () {
                         for (const artifact of cachedReplayArtifacts) yield artifact;
                     }) as unknown as () => AsyncIterable<BatchSyntheticPairArtifact>,
-                    targetLoader(targets),
+                    undefined,
                     {
+                        // Lazy per-asset dataset source + cross-window outcome
+                        // cache (annual-reload finding): the first (full-window)
+                        // pass populates the cache; annual passes are served
+                        // from it and load no target datasets.
+                        loadTargetDataset,
+                        prefetchTargetDatasets,
+                        sharedTargetCache: sharedTargetOutcomeCache,
                         horizons: this._request.horizons && this._request.horizons.length > 0 ? this._request.horizons : [12, 24, 48],
                         interval: this._request.interval,
                         slippageRate,
@@ -1222,17 +1264,27 @@ export class TopMeanCoordinatorEngine {
                                         phase0bWriterFailed = true;
                                     }
                                 },
-                                onCandidateOutcome: async (row) => {
+                                onCandidateOutcome: (row) => {
                                     if (phase0bWriterFailed) return;
                                     try {
-                                        await phase0bWriter?.onCandidateOutcome(row);
+                                        // The buffered outcome writer returns
+                                        // undefined on its in-memory fast path;
+                                        // only a 256-row flush that hits stream
+                                        // backpressure needs a promise. Returning
+                                        // undefined keeps the replay engine's
+                                        // `if (pending) await` guard off the
+                                        // microtask queue for every outcome row.
+                                        const pending = phase0bWriter?.onCandidateOutcome(row);
+                                        if (!pending) return;
+                                        // The replay loop awaits the returned
+                                        // promise with no try/catch of its own,
+                                        // so a drain rejection must be caught
+                                        // here to keep the warn + flag +
+                                        // continue failure semantics.
+                                        return pending.catch(markPhase0bWriterFailed);
                                     } catch (error) {
-                                        debugLogger.warn("sp500_top_mean.phase0b_writer_failed", {
-                                            runId: this._request.runId,
-                                            error: error instanceof Error ? error.message : String(error),
-                                        });
-                                        phase0bWriterError ??= error instanceof Error ? error.message : String(error);
-                                        phase0bWriterFailed = true;
+                                        markPhase0bWriterFailed(error);
+                                        return;
                                     }
                                 },
                             }

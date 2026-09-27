@@ -52,7 +52,7 @@
  */
 import type { OHLCVData } from "../types/strategies";
 import { applySlippage, timeToNumber } from "../strategies/backtest/backtest-utils";
-import { findCandleGapOverlapping, type CandleGap } from "../ibkr-data/candle-gap";
+import { findCandleGaps, type CandleGap } from "../ibkr-data/candle-gap";
 import type { BatchSyntheticPairArtifact } from "./batch-synthetic-artifact";
 import {
     tieBreakDigest,
@@ -542,6 +542,33 @@ export interface OpenScoreUsdTarget {
     data: OHLCVData[];
 }
 
+/**
+ * One (decision time, target) outcome shared across replay windows
+ * (annual-reload finding): outcome values are pure functions of the target
+ * dataset and the decision timestamp — censoring is dataset-end based and
+ * entry resolution is dataset-only — so the full-window pass can populate
+ * this cache once and every annual pass is served from it without loading
+ * target datasets again. Records are never mutated after caching.
+ */
+export interface OpenScoreUsdSharedOutcomeRecord {
+    long: number[];
+    mtmLong: (number | null)[];
+    entryTime: number;
+    exitTimes: number[];
+    statuses: CandidateOutcomeStatus[];
+}
+
+export interface OpenScoreUsdSharedTargetCacheEntry {
+    /** Chronological candle-gap intervals of the target dataset. */
+    gapIntervals: CandleGap[];
+    /**
+     * Outcome per decision timestamp. `null` marks "no entry bar strictly
+     * after the decision timestamp" so later passes never reload the dataset
+     * to re-discover the same noData event.
+     */
+    outcomesByEventTimeSec: Map<number, OpenScoreUsdSharedOutcomeRecord | null>;
+}
+
 /** Cap-tilt weighting for OPEN_SCORE USD (docs/open-score-cap-tilt.md). */
 export type OpenScoreUsdCapTiltWeight = CapTiltWeight;
 
@@ -592,6 +619,35 @@ export interface RunOpenScoreUsdReplayOptions {
      * unknown cap for that symbol/date -> tilt weight falls back to 1.
      */
     lookupMarketCap?: (symbol: string, timeSec: number) => number | null;
+    /**
+     * Streaming target source. Optional when `loadTargetDataset` is provided;
+     * exactly one of the two must be available or the outcomes phase throws.
+     * When `loadTargetDataset` is set, this iterable is never consumed.
+     */
+    targetLoader?: () => AsyncIterable<OpenScoreUsdTarget>;
+    /**
+     * Lazy per-target dataset source (annual-reload finding): the outcomes
+     * phase loads only the assets it actually needs — assets fully served by
+     * `sharedTargetCache` are never loaded at all, so annual passes typically
+     * load zero datasets. Resolve `null` = no such target (absent from the
+     * replay universe, diagnostic backfill applies); resolve `[]` = load
+     * failed (the caller owns failure accounting).
+     */
+    loadTargetDataset?: (asset: string) => Promise<OHLCVData[] | null>;
+    /**
+     * Optional prefetch hint with the assets the outcomes phase will need to
+     * LOAD (work list minus shared-cache hits), in consumption order, so the
+     * caller can overlap I/O the way a streaming loader would.
+     */
+    prefetchTargetDatasets?: (assets: readonly string[]) => void;
+    /**
+     * Cross-window shared target cache keyed by upper-cased asset name.
+     * Owned by the caller for the whole replay phase: the first pass
+     * populates it, later passes (whose request sets are strict subsets —
+     * annual windows are time slices of the first pass's window) are served
+     * from it. Entries are never mutated after insertion.
+     */
+    sharedTargetCache?: Map<string, OpenScoreUsdSharedTargetCacheEntry>;
 }
 
 // ============================================================================
@@ -1182,11 +1238,13 @@ interface DecisionEvent {
  *   next load — never holds the full pair universe in memory.
  * @param targetLoader Async iterator yielding one target dataset at a time.
  *   Consumed after events are formed; each dataset is released once all event
- *   requests for that asset are consumed.
+ *   requests for that asset are consumed. Optional when
+ *   `options.loadTargetDataset` supplies a lazy per-asset source instead —
+ *   exactly one of the two must be available.
  */
 export async function runOpenScoreUsdReplay(
     artifactLoader: () => AsyncIterable<BatchSyntheticPairArtifact>,
-    targetLoader: () => AsyncIterable<OpenScoreUsdTarget>,
+    targetLoader: (() => AsyncIterable<OpenScoreUsdTarget>) | undefined,
     options: RunOpenScoreUsdReplayOptions,
 ): Promise<OpenScoreUsdReplayResult> {
     const startedAt = Date.now();
@@ -2052,24 +2110,166 @@ export async function runOpenScoreUsdReplay(
     const diagnosticTargetsSeen = diagnosticsEnabled ? new Set<number>() : null;
     const totalTargets = diagnosticsEnabled ? diagnosticAssetNames.length : requestsByAsset.size;
     onPhase("outcomes", "evaluating USD outcomes", 0, totalTargets);
-    for await (const target of targetLoader()) {
+
+    // Work list: every requested asset plus every diagnostic asset, ascending
+    // by the matched name. Per-target processing is independent, so traversal
+    // order cannot change results — only progress text.
+    const workItems: Array<{
+        name: string;
+        aIdx: number | undefined;
+        diagnosticIdx: number | undefined;
+        requests: number[] | undefined;
+    }> = [];
+    const workItemNames = new Set<string>();
+    const addWorkItem = (rawName: string): void => {
+        const name = rawName.trim().toUpperCase();
+        if (workItemNames.has(name)) return;
+        workItemNames.add(name);
+        const aIdx = assetIndexByName.get(name);
+        workItems.push({
+            name,
+            aIdx,
+            diagnosticIdx: diagnosticAssetIndexByName?.get(name),
+            requests: aIdx === undefined ? undefined : requestsByAsset.get(aIdx),
+        });
+    };
+    for (const aIdx of requestsByAsset.keys()) {
+        const name = assetNames[aIdx];
+        if (name) addWorkItem(name);
+    }
+    for (const name of diagnosticAssetNames) addWorkItem(name);
+    workItems.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
+    // Dataset resolution (annual-reload finding). When a lazy loader is
+    // injected, only assets NOT fully served by the shared target cache are
+    // loaded at all — annual passes whose request sets are cached load zero
+    // datasets. Without a lazy loader the streaming `targetLoader` is drained
+    // up front and matched by name (prior behavior; also the test path).
+    if (!options.loadTargetDataset && !targetLoader) {
+        throw new Error("runOpenScoreUsdReplay requires targetLoader or loadTargetDataset");
+    }
+    const datasetByAsset = new Map<string, OpenScoreUsdTarget>();
+    if (!options.loadTargetDataset && targetLoader) {
+        for await (const target of targetLoader()) {
+            if (shouldStop()) return emptyResult({ pairs: pairCount, assets: assetCount, totalEvents, reportLines: ["OPEN_SCORE USD | cancelled during outcome evaluation."] });
+            datasetByAsset.set(target.asset.trim().toUpperCase(), target);
+        }
+    }
+    if (options.prefetchTargetDatasets) {
+        options.prefetchTargetDatasets(workItems
+            .filter((item) => item.diagnosticIdx !== undefined || !options.sharedTargetCache?.has(item.name))
+            .map((item) => item.name));
+    }
+    // Window-scoped first-overlap test over cached gap intervals — identical
+    // to findCandleGapOverlapping's scan, but derived from the intervals
+    // captured when the dataset was first loaded.
+    const firstGapOverlapping = (gapIntervals: readonly CandleGap[]): CandleGap | null => {
+        for (const gap of gapIntervals) {
+            if (gap.to > (options.sampleFromSec ?? Number.NEGATIVE_INFINITY)
+                && gap.from < (options.sampleToSec ?? Number.POSITIVE_INFINITY)) {
+                return gap;
+            }
+        }
+        return null;
+    };
+    // Outcome per (decision time, target) — pure function of the dataset, so
+    // the same record serves this pass and every later window's pass.
+    const computeSharedOutcomeRecord = (
+        data: OHLCVData[],
+        times: (number | null)[],
+        entryBar: number,
+    ): OpenScoreUsdSharedOutcomeRecord => {
+        const longReturns: number[] = [];
+        const mtmLong: (number | null)[] = [];
+        // Same entry bar for every horizon (entry is the first bar after
+        // the decision timestamp; horizons only move the exit).
+        const entryTime = times[entryBar] ?? Number.NaN;
+        const exitTimes: number[] = [];
+        const statuses: CandidateOutcomeStatus[] = [];
+        for (const h of horizons) {
+            const exitBar = entryBar + h - 1; // h bars forward, close of that bar
+            if (exitBar >= data.length) {
+                longReturns.push(Number.NaN);
+                exitTimes.push(Number.NaN);
+                statuses.push("right_censored");
+                // Unrealized mark-to-market for the ONGOING detail rows:
+                // entry open (slippage-adjusted) to the last available bar
+                // close, same cost model as the completed path. Null when
+                // either price is unusable.
+                const rawOpen = data[entryBar]!.open;
+                const lastClose = data[data.length - 1]!.close;
+                if (
+                    Number.isFinite(rawOpen) && rawOpen > 0
+                    && Number.isFinite(lastClose) && lastClose > 0
+                ) {
+                    const mtmEntry = applySlippage(rawOpen, "buy", slippageRate);
+                    const mtmExit = applySlippage(lastClose, "sell", slippageRate);
+                    const mtmFees = (mtmEntry + mtmExit) * commissionRate;
+                    const mtm = (mtmExit - mtmEntry - mtmFees) / mtmEntry;
+                    mtmLong.push(Number.isFinite(mtm) ? mtm : null);
+                } else {
+                    mtmLong.push(null);
+                }
+                continue;
+            }
+            const rawOpen = data[entryBar]!.open;
+            const exitClose = data[exitBar]!.close;
+            if (!Number.isFinite(rawOpen) || rawOpen <= 0 || !Number.isFinite(exitClose) || exitClose <= 0) {
+                longReturns.push(Number.NaN);
+                mtmLong.push(null);
+                exitTimes.push(Number.NaN);
+                statuses.push("invalid_price");
+                continue;
+            }
+            exitTimes.push(times[exitBar] ?? Number.NaN);
+            mtmLong.push(null);
+            // Long USD trade: buy at next bar open (slippage up), sell at
+            // horizon close (slippage down), round-trip commission. Commission
+            // is applied canonically (matches position-stats.ts): entryValue*rate
+            // + exitValue*rate for a 1-unit notional. This is NOT a flat drag
+            // off gross return — it varies with price level.
+            const entryPrice = applySlippage(rawOpen, "buy", slippageRate);
+            const exitPrice = applySlippage(exitClose, "sell", slippageRate);
+            // size = 1 unit of the asset; entryValue=entryPrice, exitValue=exitPrice.
+            const fees = (entryPrice + exitPrice) * commissionRate;
+            const netReturn = (exitPrice - entryPrice - fees) / entryPrice;
+            longReturns.push(Number.isFinite(netReturn) ? netReturn : Number.NaN);
+            statuses.push(Number.isFinite(netReturn) ? "ok" : "invalid_price");
+        }
+        return { long: longReturns, mtmLong, entryTime, exitTimes, statuses };
+    };
+
+    for (const item of workItems) {
         if (shouldStop()) return emptyResult({ pairs: pairCount, assets: assetCount, totalEvents, reportLines: ["OPEN_SCORE USD | cancelled during outcome evaluation."] });
-        const targetAsset = target.asset.trim().toUpperCase();
-        const aIdx = assetIndexByName.get(targetAsset);
-        const diagnosticIdx = diagnosticAssetIndexByName?.get(targetAsset);
-        const requests = aIdx === undefined ? undefined : requestsByAsset.get(aIdx);
-        const dataGap = findCandleGapOverlapping(
-            target.data,
-            options.sampleFromSec,
-            options.sampleToSec,
-        );
+        let data: OHLCVData[] | null = null;
+        let cacheEntry = options.sharedTargetCache?.get(item.name) ?? null;
+        if (item.diagnosticIdx !== undefined || !cacheEntry) {
+            const loaded = options.loadTargetDataset
+                ? await options.loadTargetDataset(item.name)
+                : datasetByAsset.get(item.name)?.data ?? null;
+            // Absent target (mode-dependent): the missing-target backfill
+            // below covers it, matching the prior loader-yield semantics.
+            if (loaded === null) continue;
+            data = loaded;
+            if (!cacheEntry) {
+                cacheEntry = {
+                    gapIntervals: findCandleGaps(data),
+                    outcomesByEventTimeSec: new Map(),
+                };
+                options.sharedTargetCache?.set(item.name, cacheEntry);
+            }
+        }
+        const aIdx = item.aIdx;
+        const diagnosticIdx = item.diagnosticIdx;
+        const requests = item.requests;
+        const dataGap = firstGapOverlapping(cacheEntry!.gapIntervals);
         if ((!requests || requests.length === 0) && diagnosticIdx === undefined) {
             if (dataGap && aIdx !== undefined) dataGapAssets.set(aIdx, dataGap);
             continue;
         }
         targetsSeen += 1;
         if (diagnosticIdx !== undefined) diagnosticTargetsSeen?.add(diagnosticIdx);
-        const times = target.data.map((b) => timeToNumber(b.time));
+        let times = data ? data.map((b) => timeToNumber(b.time)) : null;
         if (dataGap) {
             if (aIdx !== undefined) dataGapAssets.set(aIdx, dataGap);
             if (candidateOutcomes && diagnosticIdx !== undefined) {
@@ -2110,7 +2310,7 @@ export async function runOpenScoreUsdReplay(
             }
             onPhase(
                 "outcomes",
-                `skipped ${target.asset} (data gap ${new Date(dataGap.from * 1000).toISOString()}..${new Date(dataGap.to * 1000).toISOString()})`,
+                `skipped ${item.name} (data gap ${new Date(dataGap.from * 1000).toISOString()}..${new Date(dataGap.to * 1000).toISOString()})`,
                 targetsSeen,
                 totalTargets,
             );
@@ -2118,18 +2318,22 @@ export async function runOpenScoreUsdReplay(
             continue;
         }
         if (diagnosticIdx !== undefined) {
-            const ema200 = buildEma200(target.data);
+            // Diagnostic assets always resolve with a dataset above — the
+            // resolver loads them before a cache entry can serve this asset.
+            const diagnosticData = data!;
+            const diagnosticTimes = times!;
+            const ema200 = buildEma200(diagnosticData);
             let entryBar = 0;
             for (let eventIdx = 0; eventIdx < events.length; eventIdx += 1) {
                 const event = events[eventIdx]!;
-                while (entryBar < times.length) {
-                    const barTime = times[entryBar];
+                while (entryBar < diagnosticTimes.length) {
+                    const barTime = diagnosticTimes[entryBar];
                     if (barTime === null || barTime <= event.timeSec) entryBar += 1;
                     else break;
                 }
-                const resolvedEntryBar = entryBar < times.length ? entryBar : -1;
+                const resolvedEntryBar = entryBar < diagnosticTimes.length ? entryBar : -1;
                 const trendBar = resolvedEntryBar - 1;
-                const trendClose = trendBar >= 0 ? target.data[trendBar]!.close : Number.NaN;
+                const trendClose = trendBar >= 0 ? diagnosticData[trendBar]!.close : Number.NaN;
                 const trendEma = trendBar >= 0 ? ema200[trendBar]! : Number.NaN;
                 const emaSide = Number.isFinite(trendClose) && Number.isFinite(trendEma)
                     ? trendClose > trendEma ? 1 : trendClose < trendEma ? 2 : 0
@@ -2147,8 +2351,8 @@ export async function runOpenScoreUsdReplay(
                 for (let hIdx = 0; hIdx < horizons.length; hIdx += 1) {
                     const horizonBars = horizons[hIdx]!;
                     const longOutcome = computeDiagnosticOutcome(
-                        target.data,
-                        times,
+                        diagnosticData,
+                        diagnosticTimes,
                         resolvedEntryBar,
                         horizonBars,
                         "long",
@@ -2156,8 +2360,8 @@ export async function runOpenScoreUsdReplay(
                         commissionRate,
                     );
                     const shortOutcome = computeDiagnosticOutcome(
-                        target.data,
-                        times,
+                        diagnosticData,
+                        diagnosticTimes,
                         resolvedEntryBar,
                         horizonBars,
                         "short",
@@ -2199,81 +2403,42 @@ export async function runOpenScoreUsdReplay(
         if (aIdx === undefined || !requests || requests.length === 0) continue;
         for (const viewIdx of requests) {
             const eventTime = eventTimeOf(viewIdx);
-            // First target bar strictly after the decision timestamp.
-            const entryBar = firstBarAfter(times, eventTime);
-            if (entryBar < 0) {
+            let record = cacheEntry
+                ? cacheEntry.outcomesByEventTimeSec.get(eventTime)
+                : undefined;
+            if (record === undefined && (!data || !times)) {
+                // Subset-invariant fallback: the cache was populated by a
+                // narrower event set than this pass requests. Reload and
+                // compute rather than misreport the event.
+                const reloaded = options.loadTargetDataset
+                    ? await options.loadTargetDataset(item.name)
+                    : datasetByAsset.get(item.name)?.data ?? null;
+                if (reloaded === null) continue;
+                data = reloaded;
+                times = data.map((b) => timeToNumber(b.time));
+            }
+            if (record === undefined) {
+                // First target bar strictly after the decision timestamp.
+                const entryBar = firstBarAfter(times!, eventTime);
+                if (entryBar < 0) {
+                    cacheEntry?.outcomesByEventTimeSec.set(eventTime, null);
+                    if (positiveRequestedAssets.has(aIdx)) noDataEvents.add(viewIdx);
+                    continue;
+                }
+                record = computeSharedOutcomeRecord(data!, times!, entryBar);
+                cacheEntry?.outcomesByEventTimeSec.set(eventTime, record);
+            }
+            if (!record) {
+                // Cached noData marker for this decision timestamp.
                 if (positiveRequestedAssets.has(aIdx)) noDataEvents.add(viewIdx);
                 continue;
             }
             let perAsset = returnsByView[viewIdx];
             if (!perAsset) { perAsset = new Map(); returnsByView[viewIdx] = perAsset; }
-            const longReturns: number[] = [];
-            const mtmLong: (number | null)[] = [];
-            // Same entry bar for every horizon (entry is the first bar after
-            // the decision timestamp; horizons only move the exit).
-            const entryTime = times[entryBar] ?? Number.NaN;
-            const exitTimes: number[] = [];
-            const statuses: CandidateOutcomeStatus[] = [];
-            for (const h of horizons) {
-                const exitBar = entryBar + h - 1; // h bars forward, close of that bar
-                if (exitBar >= target.data.length) {
-                    longReturns.push(Number.NaN);
-                    exitTimes.push(Number.NaN);
-                    statuses.push("right_censored");
-                    // Unrealized mark-to-market for the ONGOING detail rows:
-                    // entry open (slippage-adjusted) to the last available bar
-                    // close, same cost model as the completed path. Null when
-                    // either price is unusable.
-                    const rawOpen = target.data[entryBar]!.open;
-                    const lastClose = target.data[target.data.length - 1]!.close;
-                    if (
-                        Number.isFinite(rawOpen) && rawOpen > 0
-                        && Number.isFinite(lastClose) && lastClose > 0
-                    ) {
-                        const mtmEntry = applySlippage(rawOpen, "buy", slippageRate);
-                        const mtmExit = applySlippage(lastClose, "sell", slippageRate);
-                        const mtmFees = (mtmEntry + mtmExit) * commissionRate;
-                        const mtm = (mtmExit - mtmEntry - mtmFees) / mtmEntry;
-                        mtmLong.push(Number.isFinite(mtm) ? mtm : null);
-                    } else {
-                        mtmLong.push(null);
-                    }
-                    continue;
-                }
-                const rawOpen = target.data[entryBar]!.open;
-                const exitClose = target.data[exitBar]!.close;
-                if (!Number.isFinite(rawOpen) || rawOpen <= 0 || !Number.isFinite(exitClose) || exitClose <= 0) {
-                    longReturns.push(Number.NaN);
-                    mtmLong.push(null);
-                    exitTimes.push(Number.NaN);
-                    statuses.push("invalid_price");
-                    continue;
-                }
-                exitTimes.push(times[exitBar] ?? Number.NaN);
-                mtmLong.push(null);
-            // Long USD trade: buy at next bar open (slippage up), sell at
-            // horizon close (slippage down), round-trip commission. Commission
-            // is applied canonically (matches position-stats.ts): entryValue*rate
-            // + exitValue*rate for a 1-unit notional. This is NOT a flat drag
-            // off gross return — it varies with price level.
-            const entryPrice = applySlippage(rawOpen, "buy", slippageRate);
-            const exitPrice = applySlippage(exitClose, "sell", slippageRate);
-            // size = 1 unit of the asset; entryValue=entryPrice, exitValue=exitPrice.
-                const fees = (entryPrice + exitPrice) * commissionRate;
-                const netReturn = (exitPrice - entryPrice - fees) / entryPrice;
-                longReturns.push(Number.isFinite(netReturn) ? netReturn : Number.NaN);
-                statuses.push(Number.isFinite(netReturn) ? "ok" : "invalid_price");
-            }
-            perAsset.set(aIdx, {
-                long: longReturns,
-                mtmLong,
-                entryTime,
-                exitTimes,
-                statuses,
-            });
-            if (longReturns.some((r) => !Number.isFinite(r))) censoredEvents.add(viewIdx);
+            perAsset.set(aIdx, record);
+            if (record.long.some((r) => !Number.isFinite(r))) censoredEvents.add(viewIdx);
         }
-        onPhase("outcomes", `evaluated ${target.asset} (${targetsSeen}/${totalTargets})`, targetsSeen, totalTargets);
+        onPhase("outcomes", `evaluated ${item.name} (${targetsSeen}/${totalTargets})`, targetsSeen, totalTargets);
         await yieldLoop();
         // target OHLCV reference released here (goes out of scope next iteration).
     }

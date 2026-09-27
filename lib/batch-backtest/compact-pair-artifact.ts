@@ -59,9 +59,12 @@ export interface TopMeanRunManifest {
     totalShards: number;
     /**
      * Optional for backward compatibility. Manifests written before affinity
-     * scheduling used contiguous input-order shards.
+     * scheduling used contiguous input-order shards. "asset_tile_v1" pins the
+     * asset-tile partition (see buildTopMeanAssetTileShardTasks): a resumed
+     * run must recompute exactly the partition that produced its persisted
+     * completed-shard indexes.
      */
-    shardOrder?: "input" | "leg_affinity_v1";
+    shardOrder?: "input" | "leg_affinity_v1" | "asset_tile_v1";
     completedShards: number[];
     failedShards: number[];
     completedPairsCount: number;

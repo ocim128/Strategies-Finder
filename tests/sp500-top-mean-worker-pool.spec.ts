@@ -11,6 +11,7 @@ import {
     resolveTopMeanWorkerCount,
     shouldBypassTopMeanSyntheticPairDiskCache,
     TOP_MEAN_DISK_CACHE_BYPASS_PAIR_THRESHOLD,
+    TOP_MEAN_SHARD_TILE_ASSETS,
     TOP_MEAN_WORKER_FOOTPRINT_BYTES,
     TopMeanWorkerPool,
 } from "../lib/batch-backtest/sp500-top-mean-worker-pool";
@@ -106,18 +107,69 @@ function testCacheAwareShardPlanning(): void {
         "Dâ€¢+Eâ€¢",
     ];
 
-    const grouped = buildTopMeanShardTasks(pairs, 3);
+    // Cache-locality finding: the default layout is asset_tile_v1 — every
+    // pair's BOTH legs must belong to its shard's combined leg set so a
+    // worker's 24-leg LRU warms once per shard instead of churning one new
+    // second leg per pair.
+    const tiled = buildTopMeanShardTasks(pairs, 3);
+    const legsOf = (symbol: string): string[] => symbol.split("+").map((leg) => leg.trim().toUpperCase());
+    for (const task of tiled) {
+        const legs = new Set<string>();
+        for (const { symbol } of task.pairs) {
+            for (const leg of legsOf(symbol)) legs.add(leg);
+        }
+        assert.ok(
+            legs.size <= 2 * TOP_MEAN_SHARD_TILE_ASSETS,
+            `shard ${task.shardIndex} must keep its combined leg set within the worker LRU budget`,
+        );
+    }
     assert.deepEqual(
-        grouped[0]!.pairs.map((pair) => pair.pairIndex),
-        [1, 3, 6],
-        "a cold-cache shard groups the three pairs sharing canonical leg A",
-    );
-    assert.deepEqual(
-        grouped.flatMap((task) => task.pairs)
+        tiled.flatMap((task) => task.pairs)
             .sort((a, b) => a.pairIndex - b.pairIndex)
             .map((pair) => pair.symbol),
         pairs,
-        "cache-aware scheduling retains every symbol and its original pair index",
+        "tile scheduling retains every symbol and its original pair index",
+    );
+    assert.deepEqual(
+        buildTopMeanShardTasks(pairs, 3),
+        tiled,
+        "tile partitioning is deterministic so resumed runs recompute identical shard indexes",
+    );
+
+    // With more legs than one tile holds, shards are one (groupA, groupB)
+    // combination each and never mix a foreign leg into a shard's leg set.
+    const wideLegs = Array.from({ length: 30 }, (_, i) => `L${String(i).padStart(2, "0")}•`);
+    const widePairs: string[] = [];
+    for (let i = 0; i < wideLegs.length; i += 1) {
+        for (let j = i + 1; j < wideLegs.length; j += 1) {
+            widePairs.push(`${wideLegs[i]!}+${wideLegs[j]!}`);
+        }
+    }
+    const wideTiled = buildTopMeanShardTasks(widePairs, 250);
+    for (const task of wideTiled) {
+        const legs = new Set<string>();
+        for (const { symbol } of task.pairs) {
+            for (const leg of legsOf(symbol)) legs.add(leg);
+        }
+        assert.ok(
+            legs.size <= 2 * TOP_MEAN_SHARD_TILE_ASSETS,
+            "every tile shard stays inside the combined leg budget",
+        );
+    }
+    assert.deepEqual(
+        wideTiled.flatMap((task) => task.pairs)
+            .sort((a, b) => a.pairIndex - b.pairIndex)
+            .map((pair) => pair.symbol),
+        widePairs,
+        "the dense matrix keeps every pair exactly once with its original index",
+    );
+
+    // Legacy affinity layout stays reachable for manifests pinned to it.
+    const grouped = buildTopMeanShardTasks(pairs, 3, false, "leg_affinity_v1");
+    assert.deepEqual(
+        grouped[0]!.pairs.map((pair) => pair.pairIndex),
+        [1, 3, 6],
+        "a leg_affinity_v1 shard groups the three pairs sharing canonical leg A",
     );
 
     const resumed = buildTopMeanShardTasks(pairs, 3, true);
@@ -159,13 +211,24 @@ async function testWorkerPathResolution(): Promise<void> {
  * the end) shows up here as either a hang or a stale-worker assertion.
  */
 async function testPersistentWorkerPoolEndToEnd(): Promise<void> {
-    // 9 pairs, shardSize 2 → 5 shards; with workerCount 2, at least one
-    // worker MUST process three shards (exercises the reuse path repeatedly).
+    // 27 legs spanning three 12-asset tiles → six non-empty (groupA, groupB)
+    // shard combinations; with workerCount 2 at least one worker MUST process
+    // more than one shard (exercises the reuse path repeatedly).
+    const legs = Array.from({ length: 27 }, (_, i) => `FAKE_L${String(i).padStart(2, "0")}•`);
     const pairs = [
-        "FAKE_A•+FAKE_B•", "FAKE_C•+FAKE_D•", "FAKE_E•+FAKE_F•",
-        "FAKE_G•+FAKE_H•", "FAKE_I•+FAKE_J•", "FAKE_K•+FAKE_L•",
-        "FAKE_M•+FAKE_N•", "FAKE_O•+FAKE_P•", "FAKE_Q•+FAKE_R•",
+        `${legs[0]!}+${legs[1]!}`,   // (0,0)
+        `${legs[0]!}+${legs[12]!}`,  // (0,1)
+        `${legs[0]!}+${legs[24]!}`,  // (0,2)
+        `${legs[12]!}+${legs[13]!}`, // (1,1)
+        `${legs[12]!}+${legs[24]!}`, // (1,2)
+        `${legs[24]!}+${legs[25]!}`, // (2,2)
     ];
+    // Introduce every remaining leg so the leg universe really spans three
+    // tiles; each filler pair stays inside its own group.
+    for (let i = 2; i < legs.length; i += 1) {
+        if (i === 12 || i === 13 || i === 24 || i === 25) continue;
+        pairs.push(`${legs[i]!}+${legs[i - (i % 12)]!}`);
+    }
     const manifest: TopMeanRunManifest = {
         schema: "top_mean_run_manifest.v1",
         runId: "smoke_test_persistent_pool",
@@ -175,7 +238,7 @@ async function testPersistentWorkerPoolEndToEnd(): Promise<void> {
         interval: "4h",
         pairCount: pairs.length,
         shardSize: 2,
-        totalShards: 5,
+        totalShards: 6,
         completedShards: [],
         failedShards: [],
         completedPairsCount: 0,
@@ -217,11 +280,11 @@ async function testPersistentWorkerPoolEndToEnd(): Promise<void> {
 
     // All shards completed and the deterministic worker emitted one empty
     // artifact result per pair.
-    assert.equal(manifest.completedShards.length, 5, "All 5 shards must complete even when pairs fail to load");
+    assert.equal(manifest.completedShards.length, 6, "All 6 tile shards must complete even when pairs fail to load");
     assert.equal(
         manifest.shardOrder,
-        "leg_affinity_v1",
-        "new manifests persist the affinity partition so an interrupted run resumes identically",
+        "asset_tile_v1",
+        "new manifests persist the tile partition so an interrupted run resumes identically",
     );
     assert.equal(manifest.failedPairsCount, 0, "deterministic worker should not report pair failures");
     assert.equal(progressCalls.length, pairs.length, "every completed pair should emit progress");
@@ -302,6 +365,9 @@ async function testRetryDrainsAcrossWorkerRelease(): Promise<void> {
         interval: "4h",
         pairCount: pairs.length,
         shardSize: 1,   // force one pair per shard → 5 shards, each errors + retries
+        // Pin the legacy layout: this test locks retry-drain semantics that
+        // assume one pair per shard, not the tile partition.
+        shardOrder: "leg_affinity_v1",
         totalShards: pairs.length,
         completedShards: [],
         failedShards: [],
@@ -432,6 +498,9 @@ async function testAllWorkersDyingDuringQueuedRetryRejects(): Promise<void> {
             interval: "4h",
             pairCount: pairs.length,
             shardSize: 1,
+            // Pin the legacy layout so both pairs are separate shards and
+            // both workers die mid-task (worker-loss semantics fixture).
+            shardOrder: "leg_affinity_v1",
             totalShards: 2,
             completedShards: [],
             failedShards: [],
@@ -505,6 +574,9 @@ async function testWorkerExitCodeZeroFailsInFlightTask(): Promise<void> {
         interval: "4h",
         pairCount: pairs.length,
         shardSize: 1,
+        // Pin the legacy layout so both pairs are separate shards and both
+        // workers die mid-task (worker-loss semantics fixture).
+        shardOrder: "leg_affinity_v1",
         totalShards: 2,
         completedShards: [],
         failedShards: [],

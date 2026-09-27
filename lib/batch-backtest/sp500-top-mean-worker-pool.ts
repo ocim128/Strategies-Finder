@@ -274,6 +274,84 @@ function pairAffinityKey(symbol: string): string {
 }
 
 /**
+ * Canonical legs of a pair token, ordered and uppercased. A token without a
+ * usable separator degenerates to the whole symbol as both legs so it still
+ * lands in a deterministic tile.
+ */
+function pairLegs(symbol: string): [string, string] {
+    const separator = symbol.indexOf("+");
+    if (separator < 1 || separator === symbol.length - 1) {
+        const single = symbol.trim().toUpperCase();
+        return [single, single];
+    }
+    const left = symbol.slice(0, separator).trim().toUpperCase();
+    const right = symbol.slice(separator + 1).trim().toUpperCase();
+    return left <= right ? [left, right] : [right, left];
+}
+
+/**
+ * Assets per tile for the "asset_tile_v1" shard layout. A tile shard covers
+ * one (groupA, groupB) combination, so its combined leg set is at most
+ * 2 × TOP_MEAN_SHARD_TILE_ASSETS legs — sized to fit the worker's 24-leg LRU
+ * exactly. Pinned by the layout version: changing it requires a new
+ * shardOrder value so resumed runs keep their original partition.
+ */
+export const TOP_MEAN_SHARD_TILE_ASSETS = 12;
+
+/**
+ * Group pairs into asset-tile shards (asset_tile_v1 layout, cache-locality
+ * finding): every pair's BOTH legs belong to the shard's combined leg set, so
+ * a worker warms its LRU once per shard (≤ 24 legs) instead of churning
+ * through one new second leg per pair. The prior leg_affinity_v1 layout kept
+ * only the lexicographically smaller leg shared per shard; measured runs
+ * showed ~1 leg miss per pair (39,888 misses / 39,944 pairs).
+ *
+ * Deterministic from `canonicalPairs` alone: assets sort ascending, groups
+ * are consecutive slices of TOP_MEAN_SHARD_TILE_ASSETS, and a pair maps to
+ * the (groupOf(smallerLeg), groupOf(largerLeg)) combination. Shards order by
+ * that combination lexicographically; pairs within a shard keep ascending
+ * original pairIndex. Empty combinations never materialize, so a resumed run
+ * (or a rerun over the same frozen pair list) recomputes identical shard
+ * indexes and boundaries.
+ */
+export function buildTopMeanAssetTileShardTasks(canonicalPairs: string[]): ShardTask[] {
+    const legs = new Set<string>();
+    for (const symbol of canonicalPairs) {
+        const [left, right] = pairLegs(symbol);
+        legs.add(left);
+        legs.add(right);
+    }
+    const sortedLegs = [...legs].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const groupIndexByLeg = new Map<string, number>();
+    sortedLegs.forEach((leg, index) => groupIndexByLeg.set(leg, Math.floor(index / TOP_MEAN_SHARD_TILE_ASSETS)));
+
+    const groupCount = Math.ceil(sortedLegs.length / TOP_MEAN_SHARD_TILE_ASSETS);
+    const pairIndexesByGroupPair = new Map<string, Array<{ pairIndex: number; symbol: string }>>();
+    canonicalPairs.forEach((symbol, pairIndex) => {
+        const [left, right] = pairLegs(symbol);
+        const leftGroup = groupIndexByLeg.get(left)!;
+        const rightGroup = groupIndexByLeg.get(right)!;
+        const first = Math.min(leftGroup, rightGroup);
+        const second = Math.max(leftGroup, rightGroup);
+        const key = `${first}:${second}`;
+        let list = pairIndexesByGroupPair.get(key);
+        if (!list) { list = []; pairIndexesByGroupPair.set(key, list); }
+        list.push({ pairIndex, symbol });
+    });
+
+    const tasks: ShardTask[] = [];
+    for (let first = 0; first < groupCount; first += 1) {
+        for (let second = first; second < groupCount; second += 1) {
+            const pairs = pairIndexesByGroupPair.get(`${first}:${second}`);
+            if (!pairs || pairs.length === 0) continue;
+            pairs.sort((a, b) => a.pairIndex - b.pairIndex);
+            tasks.push({ shardIndex: tasks.length, pairs });
+        }
+    }
+    return tasks;
+}
+
+/**
  * Group synthetic pairs that share a leg into the same shards. TOP_MEAN
  * workers keep a deliberately bounded 24-leg LRU; shuffled custom pair lists
  * otherwise evict both legs between nearly every pair and repeatedly parse the
@@ -283,21 +361,36 @@ function pairAffinityKey(symbol: string): string {
  * replay semantics stay unchanged. Resumed runs can request the legacy input
  * order because their persisted completed-shard indexes predate this planner.
  */
+export type TopMeanShardLayout = "leg_affinity_v1" | "asset_tile_v1";
+
 export function buildTopMeanShardTasks(
     canonicalPairs: string[],
     shardSize: number,
     preserveInputOrder = false,
+    layout: TopMeanShardLayout = "asset_tile_v1",
 ): ShardTask[] {
-    const orderedPairs = canonicalPairs.map((symbol, pairIndex) => ({ pairIndex, symbol }));
-    if (!preserveInputOrder) {
-        orderedPairs.sort((a, b) => {
-            const left = pairAffinityKey(a.symbol);
-            const right = pairAffinityKey(b.symbol);
-            if (left < right) return -1;
-            if (left > right) return 1;
-            return a.pairIndex - b.pairIndex;
-        });
+    if (preserveInputOrder) {
+        const orderedPairs = canonicalPairs.map((symbol, pairIndex) => ({ pairIndex, symbol }));
+        const tasks: ShardTask[] = [];
+        for (let i = 0; i < orderedPairs.length; i += shardSize) {
+            tasks.push({
+                shardIndex: tasks.length,
+                pairs: orderedPairs.slice(i, i + shardSize),
+            });
+        }
+        return tasks;
     }
+    if (layout === "asset_tile_v1") {
+        return buildTopMeanAssetTileShardTasks(canonicalPairs);
+    }
+    const orderedPairs = canonicalPairs.map((symbol, pairIndex) => ({ pairIndex, symbol }));
+    orderedPairs.sort((a, b) => {
+        const left = pairAffinityKey(a.symbol);
+        const right = pairAffinityKey(b.symbol);
+        if (left < right) return -1;
+        if (left > right) return 1;
+        return a.pairIndex - b.pairIndex;
+    });
 
     const tasks: ShardTask[] = [];
     for (let i = 0; i < orderedPairs.length; i += shardSize) {
@@ -342,17 +435,23 @@ export class TopMeanWorkerPool {
         const workerCount = resolveTopMeanWorkerCount(options.workerCount);
         const totalPairs = options.canonicalPairs.length;
         const preferInMemorySyntheticPairs = shouldBypassTopMeanSyntheticPairDiskCache(totalPairs);
-        // Completed shard indexes are meaningful only under the size that
-        // created them. A resumed run must preserve that persisted partition;
-        // new runs are free to use the dynamic worker-fed size.
+        // Completed shard indexes are meaningful only under the partition
+        // that created them. The persisted shardOrder pins that layout: a
+        // resumed run must recompute exactly the partition its completed
+        // indexes refer to. New runs adopt asset_tile_v1; legacy manifests
+        // keep their original behavior.
         const hasPersistedShardPartition = (
             options.manifest.completedShards.length > 0
             || options.manifest.failedShards.length > 0
         );
         if (!options.manifest.shardOrder && !hasPersistedShardPartition) {
-            options.manifest.shardOrder = "leg_affinity_v1";
+            options.manifest.shardOrder = "asset_tile_v1";
         }
-        const preserveInputShardOrder = options.manifest.shardOrder !== "leg_affinity_v1";
+        const shardLayout: TopMeanShardLayout = options.manifest.shardOrder === "leg_affinity_v1"
+            ? "leg_affinity_v1"
+            : "asset_tile_v1";
+        const preserveInputShardOrder = options.manifest.shardOrder !== "leg_affinity_v1"
+            && options.manifest.shardOrder !== "asset_tile_v1";
         const resumedShardSize = hasPersistedShardPartition
             ? options.manifest.shardSize
             : undefined;
@@ -455,13 +554,14 @@ export class TopMeanWorkerPool {
             if (manifestFlushError) throw manifestFlushError;
         };
 
-        // Existing completed shard indexes refer to the legacy contiguous
-        // input partition. Preserve it on resume; new runs use cache-aware
-        // grouping while retaining every pair's original pairIndex.
+        // The persisted shardOrder decides the partition (see the layout
+        // resolution above). Every layout retains each pair's original
+        // pairIndex, so artifacts and replay semantics stay unchanged.
         const shardTasks = buildTopMeanShardTasks(
             options.canonicalPairs,
             shardSize,
             preserveInputShardOrder,
+            shardLayout,
         );
 
         options.manifest.totalShards = shardTasks.length;
