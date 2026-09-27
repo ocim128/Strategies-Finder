@@ -4,7 +4,8 @@ import { calculateBacktestStats, OHLCVData, Signal, Time, Trade, type BacktestSe
 import { calculateSharpeRatioFromEquityCurve } from '../lib/strategies/performance-metrics';
 import { runBacktest, runBacktestCompact } from '../lib/strategies/index';
 import { precomputeIndicators } from '../lib/strategies/backtest';
-import { normalizeBacktestSettings } from '../lib/strategies/backtest/backtest-utils';
+import { normalizeBacktestSettings, compareTime } from '../lib/strategies/backtest/backtest-utils';
+import { mergeExitStrategySignals } from '../lib/exit-strategy-merge';
 import { buildPositionFromSignal } from '../lib/strategies/backtest/position-builder';
 import { getOpenPositionForScanner } from '../lib/strategies/backtest/signal-preparation';
 import { resolveScannerBacktestSettings } from '../lib/scanner/scanner-engine';
@@ -12,6 +13,56 @@ import { resolveBacktestSettingsFromRaw } from '../lib/backtest-settings-resolve
 import { resolveEntryRiskTargets } from '../lib/entry-risk-targets';
 import { buildSelectionResult } from '../lib/finder/endpoint';
 import { ADVANCED_SIZING_DEFAULTS } from '../lib/advanced-sizing-settings';
+describe('Exit merge order does not change fills (event-sweep plan, phase 4)', () => {
+    const data: OHLCVData[] = [
+        { time: 1 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+        { time: 2 as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 },
+        { time: 3 as Time, open: 101, high: 103, low: 100, close: 102, volume: 1000 },
+        { time: 4 as Time, open: 102, high: 104, low: 101, close: 103, volume: 1000 },
+        { time: 5 as Time, open: 103, high: 105, low: 102, close: 104, volume: 1000 },
+        { time: 6 as Time, open: 104, high: 106, low: 103, close: 105, volume: 1000 },
+    ];
+    const entrySignals: Signal[] = [
+        { time: 1 as Time, type: 'buy', price: 100 },
+        { time: 3 as Time, type: 'sell', price: 102 },
+        { time: 4 as Time, type: 'buy', price: 103 },
+        { time: 6 as Time, type: 'sell', price: 105 },
+    ];
+    const overrideSignals: Signal[] = [
+        { time: 2 as Time, type: 'sell', price: 101 },
+        { time: 5 as Time, type: 'buy', price: 104 },
+    ];
+    const settingsFor = (direction: 'long' | 'short' | 'both', executionModel: string) => ({
+        tradeDirection: direction,
+        executionModel,
+        disableSignalExits: true,
+        exitStrategyOverrideEnabled: true,
+    });
+
+    for (const direction of ['long', 'short', 'both'] as const) {
+        for (const executionModel of ['signal_close', 'next_open', 'next_close'] as const) {
+            it(`fills match for ${direction} / ${executionModel}`, () => {
+                const merged = mergeExitStrategySignals([...entrySignals], overrideSignals);
+                // The merge must equal the original tag/concatenate/stable-sort
+                // reference stream: same times, same order, entries untagged.
+                const reference = [
+                    ...entrySignals.map((s) => ({ ...s })),
+                    ...overrideSignals.map((s) => ({ ...s, exitOnly: true })),
+                ].sort((a, b) => compareTime(a.time, b.time));
+                expect(merged.map((s) => [s.time, s.type, s.exitOnly === true, s.price]))
+                    .to.deep.equal(reference.map((s) => [s.time, s.type, s.exitOnly === true, s.price]));
+
+                const settings = settingsFor(direction, executionModel);
+                const viaMerge = runBacktest(data, merged, 1000, 100, 0, settings);
+                const viaReference = runBacktest(data, reference, 1000, 100, 0, settings);
+                expect(viaMerge.trades).to.deep.equal(viaReference.trades);
+                expect(viaMerge.netProfit).to.equal(viaReference.netProfit);
+                expect(viaMerge.totalTrades).to.be.at.least(1, 'the scenario must actually trade');
+            });
+        }
+    }
+});
+
 describe('Backtesting Engine', () => {
     it('should execute trades and calculate profit correctly', () => {
         const data: OHLCVData[] = [
