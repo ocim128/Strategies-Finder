@@ -236,6 +236,34 @@ describe("batch-open-score-usd-replay-engine Phase 3 MAX_ACTIVE extensions", () 
         expect(result.reportLines.join("\n")).to.include("MEAN_EX_TOPCONTRIB_");
     });
 
+    it("MEAN_EX_TOPCONTRIB equals MEAN_EX_DOM when both exclusions resolve to the same asset (aggregation plan phase 1)", async () => {
+        // One event, one asset selected: most-frequent AND largest
+        // contribution are the same identity, so the second comparison must
+        // be numerically identical to the first (now reused, not recomputed).
+        const pairs = [
+            makePair("AAA", "QQQ", [makeTrade("long", T0 + 1000, T0 + 1400)]),
+            makePair("BBB", "QQQ", [makeTrade("long", T0 + 1000, T0 + 1400)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, () => 100),
+            makeTarget("BBB", 10, () => 50),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        const h = result.horizons[0]!;
+        expect(h.topMeanDominantAsset).to.equal(h.topMeanTopContribAsset);
+        // Identity reuse must preserve every field, including signed zeros.
+        expect(Object.is(h.topMeanExTopContrib.topMean, h.topMeanExDominant.topMean)).to.equal(true);
+        expect(Object.is(h.topMeanExTopContrib.delta, h.topMeanExDominant.delta)).to.equal(true);
+        expect(h.topMeanExTopContrib).to.deep.equal(h.topMeanExDominant);
+        // Object independence: mutating one result must not touch the other.
+        h.topMeanExTopContrib.blockMeans.push(123);
+        expect(h.topMeanExDominant.blockMeans).to.have.length(h.topMeanExTopContrib.blockMeans.length - 1);
+    });
+
     it("tie rates are surfaced per selector", async () => {
         // Two positives with equal raw score -> RAW selector has a tie.
         const pairs = [

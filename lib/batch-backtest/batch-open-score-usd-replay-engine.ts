@@ -1060,8 +1060,12 @@ export function blockBootstrapMedianCi(blocks: readonly (readonly number[])[], r
     for (let i = 0; i < distinctValues.length; i += 1) {
         if (i === 0 || distinctValues[i] !== distinctValues[i - 1]) unionValues.push(distinctValues[i]!);
     }
-    // upperByBlock[k][i] = count of elements in sortedBlocks[k] <= unionValues[i];
-    // lowerByBlock[k][i] = count strictly < unionValues[i].
+    // upperByBlock[k][i] = count of elements in sortedBlocks[k] <= unionValues[i].
+    // lowerByBlock[k][i] (count strictly < unionValues[i]) is NOT stored: the
+    // union is sorted and distinct, so lower[k][i] === (i === 0 ? 0 :
+    // upper[k][i - 1]) exactly — for any totally ordered values under < (NaN
+    // inputs already break the union sort, so this adds no new failure mode).
+    // Selection-aggregation plan phase 2: one rank-count matrix instead of two.
     const upperByBlock: Int32Array[] = sortedBlocks.map((blk) => {
         const upper = new Int32Array(unionValues.length);
         let cursor = 0;
@@ -1071,15 +1075,8 @@ export function blockBootstrapMedianCi(blocks: readonly (readonly number[])[], r
         }
         return upper;
     });
-    const lowerByBlock: Int32Array[] = sortedBlocks.map((blk) => {
-        const lower = new Int32Array(unionValues.length);
-        let cursor = 0;
-        for (let i = 0; i < unionValues.length; i += 1) {
-            while (cursor < blk.length && blk[cursor]! < unionValues[i]!) cursor += 1;
-            lower[i] = cursor;
-        }
-        return lower;
-    });
+    const lowerAt = (blockIndex: number, unionIndex: number): number =>
+        unionIndex === 0 ? 0 : upperByBlock[blockIndex]![unionIndex - 1]!;
     // Per-resample draw assignment: position p drew block drawnAtPosition[p].
     // The former heap kept one entry per POSITION (ties broken by ascending
     // position), each walking its block's sorted array — so within a run of
@@ -1101,7 +1098,7 @@ export function blockBootstrapMedianCi(blocks: readonly (readonly number[])[], r
         let totalBelow = 0;
         for (let k = 0; k < b; k += 1) {
             const drawn = drawCounts[k]!;
-            if (drawn > 0) totalBelow += drawn * lowerByBlock[k]![unionIndex]!;
+            if (drawn > 0) totalBelow += drawn * lowerAt(k, unionIndex);
         }
         return totalBelow;
     };
@@ -1120,9 +1117,10 @@ export function blockBootstrapMedianCi(blocks: readonly (readonly number[])[], r
         let offset = rank - elementCountBelow(lo);
         for (let p = 0; p < b; p += 1) {
             const blockIndex = drawnAtPosition[p]!;
-            const runLength = upperByBlock[blockIndex]![lo]! - lowerByBlock[blockIndex]![lo]!;
+            const lower = lowerAt(blockIndex, lo);
+            const runLength = upperByBlock[blockIndex]![lo]! - lower;
             if (offset < runLength) {
-                return sortedBlocks[blockIndex]![lowerByBlock[blockIndex]![lo]! + offset]!;
+                return sortedBlocks[blockIndex]![lower + offset]!;
             }
             offset -= runLength;
         }
@@ -1903,7 +1901,20 @@ export async function runOpenScoreUsdReplay(
             // tie-breaks. On a digest collision (astronomically unlikely),
             // asset-name order keeps execution deterministic.
             const eventTimeSec = ev.timeSec;
-            const digestFor = (c: Candidate): string => tieBreakDigest(eventTimeSec, assetNames[c.assetIndex]!);
+            // Selection-aggregation plan phase 3: the digest key is only
+            // (version, seed, event time, asset), so one asset's digest is
+            // identical across every pickMax in this event. Lazily memoize
+            // per assetIndex — the map is allocated only when a tie actually
+            // requests a digest and becomes unreachable with the event, so
+            // nothing is retained across events.
+            let eventDigestCache: Map<number, string> | null = null;
+            const digestFor = (c: Candidate): string => {
+                const cached = eventDigestCache?.get(c.assetIndex);
+                if (cached !== undefined) return cached;
+                const digest = tieBreakDigest(eventTimeSec, assetNames[c.assetIndex]!);
+                (eventDigestCache ??= new Map()).set(c.assetIndex, digest);
+                return digest;
+            };
             type RankKey = "raw" | "mean" | "activePairs" | "z";
             const rankValue = (candidate: Candidate, key: RankKey): number =>
                 key === "z" ? candidate.z ?? Number.NEGATIVE_INFINITY : candidate[key];
@@ -3886,7 +3897,17 @@ export async function runOpenScoreUsdReplay(
                 topMeanTopContribAsset = asset;
             }
         }
-        const topMeanExTopContrib = buildExDominantComparison(topMean, topMeanTopContribAsset, buildComparison);
+        // Selection-aggregation plan phase 1: when the most-frequent and the
+        // largest-contribution assets are the SAME asset (both resolved by
+        // their own tie rules before this check), the filtered series are
+        // identical including order, so the second full comparison (sort,
+        // blocks, seeded bootstrap) would reproduce the first. Copy the
+        // comparison (with a fresh blockMeans array) to keep the two result
+        // fields object-independent; different identities keep independent
+        // computations.
+        const topMeanExTopContrib = topMeanTopContribAsset !== null && topMeanTopContribAsset === topMeanDominantAsset
+            ? { ...topMeanExDominant, blockMeans: [...topMeanExDominant.blockMeans] }
+            : buildExDominantComparison(topMean, topMeanTopContribAsset, buildComparison);
         const topMeanPnl = computeSelectorPnl(topMean.returns, topMean.times);
         const randomPnlReturns: number[] = [];
         for (let i = 0; i < topMean.returns.length; i += 1) {

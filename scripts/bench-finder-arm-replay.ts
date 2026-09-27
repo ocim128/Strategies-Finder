@@ -232,7 +232,24 @@ async function main(): Promise<void> {
         phaseDurations[`until_${phase}`] = Math.round(delta);
     }
 
-    const fingerprint = createHash("sha256").update(JSON.stringify(result)).digest("hex");
+    // Canonical result serialization for the fingerprint (aggregation plan
+    // phase 0): JSON.stringify collapses -0 to 0, so a plain stringify cannot
+    // detect signed-zero regressions; this walker renders -0 distinctly. The
+    // wall-clock `elapsed=` line in reportLines is instrumentation, not a
+    // result, and is normalized before hashing.
+    const serializeCanonical = (v: unknown): string => {
+        if (typeof v === "number") return Object.is(v, -0) ? "-0" : JSON.stringify(v);
+        if (Array.isArray(v)) return `[${v.map(serializeCanonical).join(",")}]`;
+        if (v !== null && typeof v === "object") {
+            return `{${Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}:${serializeCanonical(x)}`).join(",")}}`;
+        }
+        return JSON.stringify(v) ?? "null";
+    };
+    const normalizedResult = {
+        ...result,
+        reportLines: result.reportLines.map((line) => line.replace(/elapsed=[0-9.]+s/, "elapsed=Xs")),
+    };
+    const fingerprint = createHash("sha256").update(serializeCanonical(normalizedResult)).digest("hex");
     const metrics = {
         label: args.label,
         wallMs,
