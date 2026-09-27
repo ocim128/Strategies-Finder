@@ -2322,6 +2322,9 @@ export async function runOpenScoreUsdReplay(
             // resolver loads them before a cache entry can serve this asset.
             const diagnosticData = data!;
             const diagnosticTimes = times!;
+            const requestedTimes = requests && requests.length > 0
+                ? new Set(requests.map((viewIdx) => eventTimeOf(viewIdx)))
+                : null;
             const ema200 = buildEma200(diagnosticData);
             let entryBar = 0;
             for (let eventIdx = 0; eventIdx < events.length; eventIdx += 1) {
@@ -2345,7 +2348,28 @@ export async function runOpenScoreUsdReplay(
                     if (emaSide === 1) emaAboveByEvent[eventIdx] += 1;
                 }
                 if (!candidateOutcomes) continue;
-                const rawScore = aIdx === undefined ? 0 : events[eventIdx]!.rawScore[aIdx] ?? 0;
+                // Selector-requested timestamps for this asset (top-mean
+                // coordinator optimization plan, idea #1): their outcome
+                // records are built right here from the resolved entry bar
+                // and the diagnostic long results, so the request loop below
+                // consumes them from the cache without repeating the entry
+                // lookup or long-return computation. Only requested events
+                // are cached — never every diagnostic row.
+                const cacheRecord = resolvedEntryBar >= 0 && requestedTimes?.has(event.timeSec)
+                    ? {
+                        long: [] as number[],
+                        mtmLong: [] as (number | null)[],
+                        entryTime: Number.isFinite(diagnosticTimes[resolvedEntryBar]) ? diagnosticTimes[resolvedEntryBar]! : Number.NaN,
+                        exitTimes: [] as number[],
+                        statuses: [] as CandidateOutcomeStatus[],
+                    }
+                    : null;
+                if (resolvedEntryBar < 0 && requestedTimes?.has(event.timeSec)) {
+                    // Missing entry is the existing null cache entry —
+                    // distinct from an absent cache key.
+                    cacheEntry!.outcomesByEventTimeSec.set(event.timeSec, null);
+                }
+                const rawScore = aIdx === undefined ? 0 : event.rawScore[aIdx] ?? 0;
                 const longEligible = rawScore > 0;
                 const shortEligible = rawScore < 0;
                 for (let hIdx = 0; hIdx < horizons.length; hIdx += 1) {
@@ -2368,6 +2392,39 @@ export async function runOpenScoreUsdReplay(
                         slippageRate,
                         commissionRate,
                     );
+                    if (cacheRecord) {
+                        // Same arithmetic, mapped into the selector record's
+                        // representation (censored-before-price status
+                        // precedence is identical in both builders). Censored
+                        // mark-to-market uses the existing formula —
+                        // diagnostic realized returns cannot supply it.
+                        if (longOutcome.status === "right_censored") {
+                            cacheRecord.long.push(Number.NaN);
+                            cacheRecord.exitTimes.push(Number.NaN);
+                            cacheRecord.statuses.push("right_censored");
+                            const rawOpen = diagnosticData[resolvedEntryBar]!.open;
+                            const lastClose = diagnosticData[diagnosticData.length - 1]!.close;
+                            if (Number.isFinite(rawOpen) && rawOpen > 0 && Number.isFinite(lastClose) && lastClose > 0) {
+                                const mtmEntry = applySlippage(rawOpen, "buy", slippageRate);
+                                const mtmExit = applySlippage(lastClose, "sell", slippageRate);
+                                const mtmFees = (mtmEntry + mtmExit) * commissionRate;
+                                const mtm = (mtmExit - mtmEntry - mtmFees) / mtmEntry;
+                                cacheRecord.mtmLong.push(Number.isFinite(mtm) ? mtm : null);
+                            } else {
+                                cacheRecord.mtmLong.push(null);
+                            }
+                        } else if (longOutcome.status === "ok") {
+                            cacheRecord.long.push(longOutcome.returnValue!);
+                            cacheRecord.exitTimes.push(longOutcome.exitTimeSec ?? Number.NaN);
+                            cacheRecord.statuses.push("ok");
+                            cacheRecord.mtmLong.push(null);
+                        } else {
+                            cacheRecord.long.push(Number.NaN);
+                            cacheRecord.exitTimes.push(Number.NaN);
+                            cacheRecord.statuses.push("invalid_price");
+                            cacheRecord.mtmLong.push(null);
+                        }
+                    }
                     const eventId = phase0bEventId(options.interval, event.timeSec);
                     const pendingLongWrite = emitCandidateOutcome({
                         eventId,
@@ -2397,6 +2454,9 @@ export async function runOpenScoreUsdReplay(
                         status: shortOutcome.status,
                     });
                     if (pendingShortWrite) await pendingShortWrite;
+                }
+                if (cacheRecord) {
+                    cacheEntry!.outcomesByEventTimeSec.set(event.timeSec, cacheRecord);
                 }
             }
         }

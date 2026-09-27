@@ -2488,3 +2488,92 @@ describe("runOpenScoreUsdReplay pool evaluation baselines (top-mean coordinator 
         expect(report).to.include("TOP_RAW_PROFIT selected assets = BBB");
     });
 });
+
+describe("runOpenScoreUsdReplay diagnostic long-outcome reuse (top-mean coordinator optimization plan, idea #1)", () => {
+    // The diagnostic pass builds selector outcome records for requested
+    // events straight from its resolved entry bars and long results;
+    // diagnostics-on (records reused) and diagnostics-off (records computed
+    // by the request loop) must produce identical selector output, including
+    // the censored pick's ongoing mark-to-market.
+    const decision = T0 + 1000;
+    const reuseTargets = [
+        makeTarget("AAA", 12, (i) => 100 + i),
+        makeTarget("BBB", 3, (i) => 100 + i),
+        makeTarget("CCC", 12, (i) => 100 + 2 * i),
+    ];
+    const reuseMarkets = [
+        makeDirectMarket("AAA", [
+            makeTrade("long", T0 + 100, T0 + 200, 10),
+            makeTrade("long", decision, null),
+        ]),
+        makeDirectMarket("BBB", [
+            makeTrade("long", T0 + 100, T0 + 200, 40),
+            makeTrade("long", decision, null),
+            makeTrade("long", decision, null),
+        ]),
+        makeDirectMarket("CCC", [
+            makeTrade("long", T0 + 100, T0 + 200, 10),
+            makeTrade("long", decision, null),
+        ]),
+    ];
+    const reuseOptions = {
+        horizons: [1, 2],
+        slippageRate: 0.001,
+        commissionRate: 0.0005,
+        blockCount: 1,
+        includeEventDetails: true,
+    };
+
+    it("diagnostics-on and diagnostics-off runs produce identical selector output", async () => {
+        const withDiagnostics = await runOpenScoreUsdReplay(
+            () => fromArray(reuseMarkets),
+            () => fromArray(reuseTargets),
+            {
+                ...reuseOptions,
+                includePoolSnapshots: true,
+                includeCandidateOutcomes: true,
+                catalogAssets: ["AAA", "BBB", "CCC"],
+            },
+        );
+        const withoutDiagnostics = await runOpenScoreUsdReplay(
+            () => fromArray(reuseMarkets),
+            () => fromArray(reuseTargets),
+            reuseOptions,
+        );
+        expect(withDiagnostics.horizons).to.deep.equal(withoutDiagnostics.horizons);
+        expect(withDiagnostics.eventDetails).to.deep.equal(withoutDiagnostics.eventDetails);
+        expect(withDiagnostics.ongoingEventDetails).to.deep.equal(withoutDiagnostics.ongoingEventDetails);
+        expect(withDiagnostics.eligibleEvents).to.equal(withoutDiagnostics.eligibleEvents);
+        expect(withoutDiagnostics.candidateOutcomes).to.equal(undefined);
+
+        // Cross-representation consistency on the reuse path: the archived
+        // diagnostic long row for the selected (asset, horizon) carries the
+        // same return the selector recorded from the cached record.
+        const detail = withDiagnostics.eventDetails?.find(
+            (row) => row.selector === "TOP_RAW_PROFIT_NOW" && row.horizonBars === 1,
+        );
+        expect(detail?.asset).to.equal("BBB");
+        const okRow = withDiagnostics.candidateOutcomes?.find(
+            (row) => row.asset === "BBB" && row.horizonBars === 1 && row.direction === "long"
+                && row.decisionTimeSec === detail?.decisionTime,
+        );
+        expect(okRow?.status).to.equal("ok");
+        expect(okRow?.return).to.equal(detail?.selectedReturn);
+        // The censored horizon-2 diagnostic row stays right_censored with a
+        // null return, while the selector record carries the NaN long with
+        // the mark-to-market fallback visible in the ongoing row.
+        const censoredRow = withDiagnostics.candidateOutcomes?.find(
+            (row) => row.asset === "BBB" && row.horizonBars === 2 && row.direction === "long"
+                && row.decisionTimeSec === detail?.decisionTime,
+        );
+        expect(censoredRow?.status).to.equal("right_censored");
+        expect(censoredRow?.return).to.equal(null);
+        const ongoingH2 = withDiagnostics.ongoingEventDetails?.find(
+            (row) => row.selector === "TOP_RAW_PROFIT_NOW" && row.horizonBars === 2,
+        );
+        expect(ongoingH2?.asset).to.equal("BBB");
+        expect(ongoingH2?.unrealizedReturn).to.equal(withoutDiagnostics.ongoingEventDetails?.find(
+            (row) => row.selector === "TOP_RAW_PROFIT_NOW" && row.horizonBars === 2,
+        )?.unrealizedReturn);
+    });
+});
