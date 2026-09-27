@@ -2989,6 +2989,31 @@ export async function runOpenScoreUsdReplay(
         // event from that pair of arms only (never zero-filled); missing data on
         // a non-gated positive is irrelevant. Hoisted to horizon scope so the
         // profit-only events (no ordinary view) reuse the identical logic.
+        //
+        // Shared pool evaluation (top-mean coordinator optimization plan,
+        // idea #2): the eligibility scan and return total are computed ONCE
+        // per (event, horizon, pool) by `evaluatePool` at the call site and
+        // passed in explicitly, instead of every appender call rebuilding a
+        // temporary return map. The four causal appender calls over the same
+        // profitNowPositives pool therefore evaluate it once.
+        const evaluatePool = (
+            pool: readonly Candidate[],
+            perAssetOutcomes: ViewReturns,
+        ): { count: number; total: number } | null => {
+            // Pool uniqueness: positives arrays are built with at most one
+            // candidate per asset index per event, so pool.length equals the
+            // former per-appender return-map size and pool-order summation
+            // matches the former Map insertion-order total bit for bit.
+            if (pool.length < 2) return null;
+            if (pool.some((candidate) => dataGapAssets.has(candidate.assetIndex))) return null;
+            let total = 0;
+            for (const c of pool) {
+                const r = perAssetOutcomes.get(c.assetIndex)?.long[hIdx];
+                if (r === undefined || !Number.isFinite(r)) return null;
+                total += r;
+            }
+            return { count: pool.length, total };
+        };
         const appendProfitArms = (
             timeSec: number,
             perAssetOutcomes: ViewReturns,
@@ -3003,24 +3028,15 @@ export async function runOpenScoreUsdReplay(
             rawSamplesByAsset: Map<string, { returns: number[]; deltas: number[] }>,
             meanSelectedByAsset: Map<string, number>,
             meanSamplesByAsset: Map<string, { returns: number[]; deltas: number[] }>,
+            evaluation: { count: number; total: number } | null,
         ): void => {
             // Report each pick as ONGOING before the pool gates: a pick whose
             // own horizon is incomplete is an open position even when another
             // pool member's censoring omits the event from the series.
             if (rawPick >= 0) appendOngoingEventDetail(timeSec, perAssetOutcomes, hIdx, rawSelector, rawPick, pool.length);
             if (meanPick >= 0) appendOngoingEventDetail(timeSec, perAssetOutcomes, hIdx, meanSelector, meanPick, pool.length);
-            if (pool.length < 2 || rawPick < 0 || meanPick < 0) return;
-            if (pool.some((candidate) => dataGapAssets.has(candidate.assetIndex))) return;
-            const poolRetByAsset = new Map<number, number>();
-            let poolValid = true;
-            for (const c of pool) {
-                const r = perAssetOutcomes.get(c.assetIndex)?.long[hIdx];
-                if (r === undefined || !Number.isFinite(r)) { poolValid = false; break; }
-                poolRetByAsset.set(c.assetIndex, r);
-            }
-            if (!poolValid) return;
-            let poolTotal = 0;
-            for (const r of poolRetByAsset.values()) poolTotal += r;
+            if (!evaluation || rawPick < 0 || meanPick < 0) return;
+            const poolTotal = evaluation.total;
             const appendProfitSelection = (
                 series: SelectorSeries,
                 selector: OpenScoreUsdEventDetailSelector,
@@ -3028,9 +3044,9 @@ export async function runOpenScoreUsdReplay(
                 selectedByAsset: Map<string, number>,
                 samplesByAsset: Map<string, { returns: number[]; deltas: number[] }>,
             ): void => {
-                const selectedReturn = poolRetByAsset.get(selectedIdx);
+                const selectedReturn = perAssetOutcomes.get(selectedIdx)?.long[hIdx];
                 if (selectedReturn === undefined) return;
-                const randomReturn = (poolTotal - selectedReturn) / (poolRetByAsset.size - 1);
+                const randomReturn = (poolTotal - selectedReturn) / (evaluation.count - 1);
                 const delta = selectedReturn - randomReturn;
                 series.returns.push(selectedReturn);
                 series.deltas.push(delta);
@@ -3044,7 +3060,7 @@ export async function runOpenScoreUsdReplay(
                     pool.find((candidate) => candidate.assetIndex === selectedIdx)!,
                     selectedReturn,
                     randomReturn,
-                    poolRetByAsset.size,
+                    evaluation.count,
                 );
                 const asset = assetNames[selectedIdx]!;
                 selectedByAsset.set(asset, (selectedByAsset.get(asset) ?? 0) + 1);
@@ -3075,26 +3091,17 @@ export async function runOpenScoreUsdReplay(
             selector: OpenScoreUsdEventDetailSelector,
             selectedByAsset: Map<string, number>,
             samplesByAsset: Map<string, { returns: number[]; deltas: number[] }>,
+            evaluation: { count: number; total: number } | null,
         ): void => {
             // Same ONGOING pick report as the paired profit arms: emit before
             // the pool gates so a censored pick stays visible when another
             // pool member's censoring omits the event from the series.
             if (selectedIdx >= 0) appendOngoingEventDetail(timeSec, perAssetOutcomes, hIdx, selector, selectedIdx, pool.length);
-            if (pool.length < 2 || selectedIdx < 0) return;
-            if (pool.some((candidate) => dataGapAssets.has(candidate.assetIndex))) return;
-            const poolRetByAsset = new Map<number, number>();
-            let poolValid = true;
-            for (const c of pool) {
-                const r = perAssetOutcomes.get(c.assetIndex)?.long[hIdx];
-                if (r === undefined || !Number.isFinite(r)) { poolValid = false; break; }
-                poolRetByAsset.set(c.assetIndex, r);
-            }
-            if (!poolValid) return;
-            const selectedReturn = poolRetByAsset.get(selectedIdx);
+            if (!evaluation || selectedIdx < 0) return;
+            const selectedReturn = perAssetOutcomes.get(selectedIdx)?.long[hIdx];
             if (selectedReturn === undefined) return;
-            let poolTotal = 0;
-            for (const r of poolRetByAsset.values()) poolTotal += r;
-            const randomReturn = (poolTotal - selectedReturn) / (poolRetByAsset.size - 1);
+            const poolTotal = evaluation.total;
+            const randomReturn = (poolTotal - selectedReturn) / (evaluation.count - 1);
             const delta = selectedReturn - randomReturn;
             series.returns.push(selectedReturn);
             series.deltas.push(delta);
@@ -3108,7 +3115,7 @@ export async function runOpenScoreUsdReplay(
                 pool.find((candidate) => candidate.assetIndex === selectedIdx)!,
                 selectedReturn,
                 randomReturn,
-                poolRetByAsset.size,
+                evaluation.count,
             );
             const asset = assetNames[selectedIdx]!;
             selectedByAsset.set(asset, (selectedByAsset.get(asset) ?? 0) + 1);
@@ -3125,6 +3132,7 @@ export async function runOpenScoreUsdReplay(
             perAssetOutcomes: ViewReturns,
             pool: readonly Candidate[],
             selectedIdx: number,
+            evaluation: { count: number; total: number } | null,
         ): void => appendSingleCausalArm(
             timeSec,
             perAssetOutcomes,
@@ -3134,6 +3142,7 @@ export async function runOpenScoreUsdReplay(
             "TOP_RAW_PROFIT_NOW_CONF",
             topRawProfitNowConfSelectedByAsset,
             topRawProfitNowConfSamplesByAsset,
+            evaluation,
         );
 
         for (let v = 0; v < views.length; v += 1) {
@@ -3155,6 +3164,12 @@ export async function runOpenScoreUsdReplay(
             ): void => {
                 pushEventDetail(perAsset, view.timeSec, selector, direction, selected, selectedReturn, controlReturn, eligibleCandidates);
             };
+            // One evaluation per (event, horizon, pool), shared by every
+            // appender call over that pool: profitNowPositives is evaluated
+            // once for its four causal callers.
+            const profitEvaluation = evaluatePool(view.profitPositives, perAsset);
+            const profitNowEvaluation = evaluatePool(view.profitNowPositives, perAsset);
+            const confidenceEvaluation = evaluatePool(view.profitNowConfidencePositives, perAsset);
             // Full-window profit arms: research-only look-ahead filter.
             appendProfitArms(
                 view.timeSec,
@@ -3170,6 +3185,7 @@ export async function runOpenScoreUsdReplay(
                 topRawProfitSamplesByAsset,
                 topMeanProfitSelectedByAsset,
                 topMeanProfitSamplesByAsset,
+                profitEvaluation,
             );
             // Causal point-in-time profit arms: live-selectable in principle.
             appendProfitArms(
@@ -3186,12 +3202,14 @@ export async function runOpenScoreUsdReplay(
                 topRawProfitNowSamplesByAsset,
                 topMeanProfitNowSelectedByAsset,
                 topMeanProfitNowSamplesByAsset,
+                profitNowEvaluation,
             );
             appendConfidenceProfitArm(
                 view.timeSec,
                 perAsset,
                 view.profitNowConfidencePositives,
                 view.topRawProfitNowConf,
+                confidenceEvaluation,
             );
             appendSingleCausalArm(
                 view.timeSec,
@@ -3202,6 +3220,7 @@ export async function runOpenScoreUsdReplay(
                 "TOP_Z",
                 topZSelectedByAsset,
                 topZSamplesByAsset,
+                profitNowEvaluation,
             );
             // Inverted causal arms: same pools and gates, LOWEST rank wins.
             appendProfitArms(
@@ -3218,6 +3237,7 @@ export async function runOpenScoreUsdReplay(
                 botRawProfitNowSamplesByAsset,
                 botMeanProfitNowSelectedByAsset,
                 botMeanProfitNowSamplesByAsset,
+                profitNowEvaluation,
             );
             appendSingleCausalArm(
                 view.timeSec,
@@ -3228,6 +3248,7 @@ export async function runOpenScoreUsdReplay(
                 "BOT_Z",
                 botZSelectedByAsset,
                 botZSamplesByAsset,
+                profitNowEvaluation,
             );
 
             // Collect returns for all positives this horizon.
@@ -3476,6 +3497,10 @@ export async function runOpenScoreUsdReplay(
             const pe = gapFilteredProfitOnlyEvents[pi];
             const perAssetProfitOnly = returnsByView[views.length + pi];
             if (!perAssetProfitOnly) continue;
+            // Same one-evaluation-per-pool sharing as the ordinary views.
+            const peProfitEvaluation = evaluatePool(pe.profitPositives, perAssetProfitOnly);
+            const peProfitNowEvaluation = evaluatePool(pe.profitNowPositives, perAssetProfitOnly);
+            const peConfidenceEvaluation = evaluatePool(pe.profitNowConfidencePositives, perAssetProfitOnly);
             appendProfitArms(
                 pe.timeSec,
                 perAssetProfitOnly,
@@ -3490,6 +3515,7 @@ export async function runOpenScoreUsdReplay(
                 topRawProfitSamplesByAsset,
                 topMeanProfitSelectedByAsset,
                 topMeanProfitSamplesByAsset,
+                peProfitEvaluation,
             );
             appendProfitArms(
                 pe.timeSec,
@@ -3505,12 +3531,14 @@ export async function runOpenScoreUsdReplay(
                 topRawProfitNowSamplesByAsset,
                 topMeanProfitNowSelectedByAsset,
                 topMeanProfitNowSamplesByAsset,
+                peProfitNowEvaluation,
             );
             appendConfidenceProfitArm(
                 pe.timeSec,
                 perAssetProfitOnly,
                 pe.profitNowConfidencePositives,
                 pickFromPool(pe.profitNowConfidencePositives, "raw", pe.timeSec),
+                peConfidenceEvaluation,
             );
             appendSingleCausalArm(
                 pe.timeSec,
@@ -3521,6 +3549,7 @@ export async function runOpenScoreUsdReplay(
                 "TOP_Z",
                 topZSelectedByAsset,
                 topZSamplesByAsset,
+                peProfitNowEvaluation,
             );
             // Inverted causal arms on profit-only events: same re-resolution
             // pattern as the TOP_* calls above, min instead of max.
@@ -3538,6 +3567,7 @@ export async function runOpenScoreUsdReplay(
                 botRawProfitNowSamplesByAsset,
                 botMeanProfitNowSelectedByAsset,
                 botMeanProfitNowSamplesByAsset,
+                peProfitNowEvaluation,
             );
             appendSingleCausalArm(
                 pe.timeSec,
@@ -3548,6 +3578,7 @@ export async function runOpenScoreUsdReplay(
                 "BOT_Z",
                 botZSelectedByAsset,
                 botZSamplesByAsset,
+                peProfitNowEvaluation,
             );
         }
 
